@@ -67,6 +67,9 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   const [effectiveDate, setEffectiveDate] = React.useState(today);
   /* R-2292: ₹/seat/year typed for THIS quote only. Blank = the subscription's rate. */
   const [rateStr, setRateStr] = React.useState("");
+  /* R-2372: a draft purchase order for the added seats is the operator's choice — unticked by
+     default. A seat change used to draft one silently (staging, 2 Nov: PO-A378-27-0775). */
+  const [draftPo, setDraftPo] = React.useState(false);
   /* Re-seed when the dialog is REOPENED for a different subscription. Without this the
      box keeps whatever was typed the last time it was open, which on a prefilled dialog
      means the second customer silently inherits the first one's gap. */
@@ -75,6 +78,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       setSeatsStr(String(initialSeats ?? 1));
       setEffectiveDate(istToday());
       setRateStr("");
+      setDraftPo(false);
     }
   }, [open, initialSeats, sub.id]);
   const [submitting, setSubmitting] = React.useState(false);
@@ -101,7 +105,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
      attempt wrote nothing, so pressing the button again after fixing the cause is a
      retry of the same intent, not a new one. */
   const keyRef = React.useRef<string | null>(null);
-  React.useEffect(() => { keyRef.current = null; }, [open, sub.id, additionalSeats, effectiveDate, typedRate]);
+  React.useEffect(() => { keyRef.current = null; }, [open, sub.id, additionalSeats, effectiveDate, typedRate, draftPo]);
 
   /* Pro-rata preview — the server is the source of truth, and this now uses its rules:
      R-527 seatChargeWindow (a split-billed subscription is charged to the end of the CURRENT
@@ -182,7 +186,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       const res  = await fetch(`/api/subscriptions/${sub.id}/add-seats`, {
         method:  "POST",
         headers: { "content-type": "application/json" },
-        body:    JSON.stringify({ additional_seats: additionalSeats, idempotency_key: keyRef.current, effective_date: chargeFrom, ...(typedRate !== null ? { annual_rate_per_seat: typedRate } : {}) }),
+        body:    JSON.stringify({ additional_seats: additionalSeats, idempotency_key: keyRef.current, effective_date: chargeFrom, draft_purchase_order: draftPo, ...(typedRate !== null ? { annual_rate_per_seat: typedRate } : {}) }),
       });
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) {
@@ -201,6 +205,10 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
           : `+${additionalSeats} seats added · Quote ${ok.quoteId} (${rupee(ok.amount)})${
               ok.poId ? ` · PO ${ok.poId} drafted` : ""
             }`,
+        /* R-2372 §24: asked for a PO and none came back — say so and where to make it. */
+        draftPo && !ok.poId && !ok.replayed
+          ? { description: "The seats and quote are saved, but the purchase order could not be drafted. Order the seats with your distributor directly, or use Report a problem." }
+          : undefined,
       );
       onOpenChange(false);
       router.push(`/quotes/${ok.quoteId}`);
@@ -391,6 +399,23 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
                 <p className="font-medium text-ink tabular-nums">{rupee(newMrr)}/mo</p>
               </div>
             </div>
+
+            {/* R-2372: opt-in — no purchase order unless ticked. */}
+            <label className="flex items-start gap-2 rounded-md border border-hairline bg-paper-2/40 px-3 py-2 mb-4 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-amber"
+                checked={draftPo}
+                onChange={(e) => setDraftPo(e.target.checked)}
+                aria-describedby="add-seats-po-help"
+              />
+              <span className="text-xs text-ink-2">
+                Also draft a purchase order for the {additionalSeats} new seat{additionalSeats === 1 ? "" : "s"}
+                <span id="add-seats-po-help" className="block text-2xs text-ink-3">
+                  For the distributor. Leave off if you already ordered them or buy them another way.
+                </span>
+              </span>
+            </label>
 
             <p className="text-2xs text-ink-3 leading-relaxed mb-1">
               Seats are added <b className="text-ink-2">immediately</b> — provision them with the

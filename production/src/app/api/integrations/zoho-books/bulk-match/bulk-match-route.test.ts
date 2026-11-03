@@ -22,6 +22,18 @@ const st = vi.hoisted(() => ({
   filters: [] as Array<[string, string, string, unknown]>,
   writes: 0,
   busyOn: null as string | null,
+  /* R-2419: the facts reads — rows per table, and the user-session RPC calls. */
+  tables: {} as Record<string, Array<Record<string, unknown>>>,
+  rpcs: [] as Array<[string, Record<string, unknown>]>,
+}));
+
+vi.mock("@/lib/supabase/server", () => ({
+  createClient: () => ({
+    rpc: async (fn: string, args: Record<string, unknown>) => {
+      st.rpcs.push([fn, args]);
+      return { data: fn === "bank_credit_open_items" ? (st.tables["open_items"] ?? []) : null, error: null };
+    },
+  }),
 }));
 
 vi.mock("@/lib/integrations/zoho-books/store", () => ({
@@ -29,12 +41,14 @@ vi.mock("@/lib/integrations/zoho-books/store", () => ({
     userId: "u1", tenantId: TENANT, role: st.role, canManage: true,
     admin: {
       from: (table: string) => {
-        const rows = table === "customers" ? st.customers : st.lines;
+        const rows = table === "customers" ? st.customers : table === "bank_transactions" ? st.lines : (st.tables[table] ?? []);
         const q: Record<string, unknown> = {
           select: () => q,
           eq: (k: string, v: unknown) => { st.filters.push([table, "eq", k, v]); return q; },
           is: (k: string, v: unknown) => { st.filters.push([table, "is", k, v]); return q; },
           gt: (k: string, v: unknown) => { st.filters.push([table, "gt", k, v]); return q; },
+          in: (k: string, v: unknown) => { st.filters.push([table, "in", k, v]); return q; },
+          not: () => q, gte: () => q, lte: () => q, limit: () => q,
           order: () => q,
           range: async () => ({ data: rows, error: null }),
           then: (res: (v: unknown) => unknown) => Promise.resolve({ data: rows, error: null }).then(res),
@@ -93,6 +107,7 @@ beforeEach(() => {
   ];
   st.customers = [];
   st.filters = []; st.writes = 0; st.busyOn = null; zohoCalls.length = 0;
+  st.tables = {}; st.rpcs = [];
   vi.stubEnv("ZOHO_BOOKS_CLIENT_ID", "test-id");
   vi.stubEnv("ZOHO_BOOKS_CLIENT_SECRET", "test-secret");
   vi.stubGlobal("fetch", fakeFetch);
@@ -125,6 +140,29 @@ describe("R-2402 bulk-match route", () => {
     expect(body.zohoCalls).toBe(zohoCalls.length);
     expect(zohoCalls.filter((p) => p.endsWith("/customerpayments"))).toHaveLength(1);
     expect(tenantFilters("customers")).toEqual([TENANT]);
+    expect(st.writes).toBe(0);
+  });
+
+  it("R-2419: an app customer's row carries what the app has — open quotes (the user's own RPC), opening invoices, receipts — every read own tenant", async () => {
+    st.customers = [{ id: "c-ranz", name: "RANZ INTERNATIONAL LLC", gstin: null }];
+    st.tables = {
+      open_items: [{ kind: "renewal", quote_id: "Q-1", invoice_id: null, doc_date: "2026-10-20", amount_due: 3823, taxable_value: 3240, makes_subscription: false }],
+      quotes: [{ id: "Q-1", below_cost: true, approval_status: "pending" }],
+      invoices: [{ id: "OPN-1", customer_id: "c-ranz", external_number: "INV/25-26/9", invoice_date: "2025-05-01", amount: 5000, net_payable: 5000, paid_amount: 1000 }],
+      payments: [{ id: "pay-1", customer_id: "c-ranz", amount: 3823, received_at: "2026-10-15T10:00:00Z", reference: "UTR9" }],
+      opening_balances: [{ as_of: "2026-03-31" }],
+    };
+    const body = await (await POST(req({ accountId: ACCOUNT, txnIds: [L1] }))).json();
+    expect(body.rows[0].booksStart).toBe("2026-04-01");
+    expect(body.rows[0].facts).toMatchObject({
+      customerId: "c-ranz",
+      openItems: [{ quoteId: "Q-1", due: 3823, taxable: 3240 }],
+      openings: [{ id: "OPN-1", number: "INV/25-26/9", due: 4000 }],
+      receipts: [{ id: "pay-1", date: "2026-10-15", amount: 3823, reference: "UTR9" }],
+    });
+    expect(body.rows[0].facts.openItems[0].approvalBlock).toMatch(/below cost/);
+    expect(st.rpcs).toEqual([["bank_credit_open_items", { p_customer_id: "c-ranz" }]]);
+    for (const t of ["invoices", "payments", "subscriptions", "quotes", "opening_balances"]) expect(tenantFilters(t)).toEqual([TENANT]);
     expect(st.writes).toBe(0);
   });
 

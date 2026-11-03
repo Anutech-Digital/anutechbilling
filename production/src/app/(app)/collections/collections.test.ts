@@ -219,6 +219,7 @@ function fakeSupabase(tables: Record<string, Row[]>) {
         gt: (col: string, v: number) => { rows = rows.filter((r) => Number(r[col]) > v); return q; },
         lte: (col: string, v: string) => { rows = rows.filter((r) => r[col] != null && String(r[col]) <= v); return q; },
         neq: (col: string, v: unknown) => { rows = rows.filter((r) => r[col] !== v); return q; },
+        eq: (col: string, v: unknown) => { rows = rows.filter((r) => r[col] === v); return q; },
         is: (col: string, v: null) => { rows = rows.filter((r) => (r[col] ?? null) === v); return q; },
         order: () => q,
         range: (from: number, to: number) =>

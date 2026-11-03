@@ -10,13 +10,19 @@
  *     (lib/collections/reminder-draft.server.ts). Every amount is checked by the money guard.
  *   • Also returns where it can go: the WhatsApp number or why not, the email or why not, and
  *     what the follow-up should be about (the oldest bill).
+ *   • R-2412 "Send reminder → This invoice": the reminder is about ONE open bill — `line` from
+ *     the picker, else the most overdue one. Its amount and its UPI pay link only; `lines` lists
+ *     every open bill for the picker, `payLinkNotice` says why there is no link and the fix (§24).
+ *     A bill that is no longer open → 409 (never another bill's money).
  */
 import { z } from "zod";
 import { withRoute, RouteError } from "@/lib/api/with-route";
 import { resolveGeminiConfig } from "@/lib/ai/gemini";
 import { trustedOrigin } from "@/lib/app-url";
 import { istToday } from "@/lib/dates/ist";
-import { buildReminderContext, emailTarget, whatsappTarget } from "@/lib/collections/reminder-draft";
+import {
+  buildReminderContext, emailTarget, payLinkNotice, reminderLineChoices, whatsappTarget,
+} from "@/lib/collections/reminder-draft";
 import { draftReminder, loadReminderRaw } from "@/lib/collections/reminder-draft.server";
 
 export const dynamic = "force-dynamic";
@@ -24,6 +30,11 @@ export const runtime = "nodejs";
 
 const bodySchema = z.object({
   customerId: z.string().uuid("Open Remind from a customer row and try again."),
+  /** R-2412: the bill picked under "This invoice" (absent → the most overdue one). */
+  line: z.object({
+    kind: z.enum(["invoice", "subscription"]),
+    id: z.string().trim().min(1).max(200),
+  }).strict().optional(),
 }).strict("Only the customer may be sent — reload the page and try again.");
 
 export const POST = withRoute(
@@ -45,9 +56,15 @@ export const POST = withRoute(
       throw new RouteError(404, "This customer is not in your list any more — reload Payment Follow-up and pick them again.");
     }
 
-    const ctx = buildReminderContext(loaded.raw, istToday());
-    if (ctx.amountDue <= 0) {
+    const today = istToday();
+    const all = buildReminderContext(loaded.raw, today);
+    if (all.amountDue <= 0) {
       throw new RouteError(409, "This customer owes nothing now — there is nothing to remind them about. Reload the list.");
+    }
+    const pick = input.line ?? { kind: all.lines[0].kind, id: all.lines[0].id };
+    const ctx = buildReminderContext(loaded.raw, today, pick);
+    if (ctx.amountDue <= 0) {
+      throw new RouteError(409, "That bill is paid or closed now — pick another bill in the list, or choose Full statement.");
     }
 
     const gemini = await resolveGeminiConfig(supabase, tenantId);
@@ -62,6 +79,10 @@ export const POST = withRoute(
       mode: draft.mode,
       note: draft.note,
       amountDue: ctx.amountDue,
+      line: pick,
+      lines: reminderLineChoices(all),
+      payLink: ctx.payLink,
+      payLinkNotice: payLinkNotice(ctx),
       whatsapp: wa.ok ? wa.to : null,
       whatsappBlocked: wa.ok ? null : wa.reason,
       email: em.ok ? em.to : null,

@@ -56,6 +56,7 @@ import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { invoiceEinvoiceNotice } from "@/lib/compliance/einvoice";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { InvoiceLateCharges } from "@/components/features/late-charges/invoice-late-charges";
+import { OnlineFeeBillCard } from "@/components/features/payments/online-fee-bill-card";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -472,6 +473,16 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
 
             {/* R-530: late fee + interest — switch, accrued, bill (debit note) / waive. */}
             <InvoiceLateCharges invoiceId={invoice.id} />
+
+            {/* R-2416: who pays the online (Razorpay) fee on this bill — read-only; owner/manager can waive. */}
+            <OnlineFeeBillCard
+              kind="invoice"
+              id={invoice.id}
+              billTotal={total ?? 0}
+              customerId={invoice.customer_id}
+              linked={{ kind: "quote", id: invoice.quote_id }}
+              role={me?.role}
+            />
 
             {/* 🔽 Collapsible Panel 4: Internal Notes */}
             <Card className="p-4">

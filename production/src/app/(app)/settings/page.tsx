@@ -33,6 +33,7 @@ import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { NotificationsCard } from "@/components/features/settings/notifications-card";
 import { ComplianceProfileCard } from "@/components/features/compliance/compliance-profile-card";
 import { SellModeCard } from "@/components/features/settings/sell-mode-card";
+import { OnlineFeeCard } from "@/components/features/settings/online-fee-card";
 import { BusinessTypePrompt } from "@/components/features/compliance/business-type-prompt";
 import { PartnersRegisterCard } from "@/components/features/partners/partners-register-card";
 import { DirectorsRegisterCard } from "@/components/features/company/directors-register-card";
@@ -572,6 +573,9 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
 
       {/* R-1860: Subscriptions / One-time / Both → what the menu and dashboard show first. */}
       <SellModeCard isOwner={isOwner} />
+
+      {/* R-2416: who pays Razorpay's fee on online payments (Customer / Us), rate, threshold. */}
+      <OnlineFeeCard isOwner={isOwner} />
 
       {/* R-337: aggregate turnover → e-invoice (IRN) warnings on invoices. */}
       <TurnoverCard isOwner={isOwner} />

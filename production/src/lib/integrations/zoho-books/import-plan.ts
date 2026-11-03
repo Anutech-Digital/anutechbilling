@@ -268,6 +268,32 @@ export interface InvoicePayload {
 
 export interface CatalogItem { name: string; vendor: string }
 
+/**
+ * R-2406: a sale already in the app (not an opening invoice). Bank reconcile books the money
+ * Zoho still shows as due as a NEW sale here and keeps the Zoho number on it (R-2360).
+ */
+export interface AppSale {
+  id: string;
+  customerId: string | null;
+  /** Whole rupees. */
+  amount: number;
+  paidAmount: number;
+  /** YYYY-MM-DD */
+  invoiceDate: string;
+  /** The Zoho invoice number kept on the sale (invoices.external_number), if any. */
+  externalNumber: string | null;
+}
+
+/** R-2406: a Zoho open invoice whose money is already booked in the app — never imported. */
+export interface PaidInApp {
+  number: string;
+  customerName: string;
+  balance: number;
+  /** The app invoice that carries it. */
+  appInvoice: string;
+  by: "zoho_number" | "customer_amount";
+}
+
 export interface PlanInput {
   contacts: readonly ZohoContactRec[];
   invoices: readonly ZohoInvoiceRec[];
@@ -276,6 +302,8 @@ export interface PlanInput {
   items: readonly CatalogItem[];
   /** Zoho invoice numbers already imported as opening invoices (upper-cased). */
   existingInvoiceNumbers: ReadonlySet<string>;
+  /** R-2406: the app's own sales (no opening invoices) — finds Zoho open invoices already paid here. */
+  appSales?: readonly AppSale[];
   /** YYYY-MM-DD (IST). */
   today: string;
   /** Subscriptions are read from invoices dated on/after this day (YYYY-MM-DD). */
@@ -290,6 +318,8 @@ export interface ImportPlan {
   matches: Record<string, CustomerMatch>;
   subscriptions: SubscriptionPayload[];
   invoices: InvoicePayload[];
+  /** R-2406: open in Zoho, but the payment is already booked in the app — not imported. */
+  paidInApp: PaidInApp[];
   problems: Problem[];
   counts: {
     contacts: number;
@@ -303,8 +333,10 @@ export interface ImportPlan {
     oneTimeInvoices: number;
     invoicesToImport: number;
     invoicesAlready: number;
+    /** R-2406 */
+    invoicesPaidInApp: number;
   };
-  totals: { mrr: number; openBalance: number };
+  totals: { mrr: number; openBalance: number; paidInAppBalance: number };
 }
 
 const rupees = (n: number) => Math.round(n);
@@ -587,13 +619,50 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
 
   // ── Open invoices (R-1739 rules) ──
   const invoices: InvoicePayload[] = [];
+  const paidInApp: PaidInApp[] = [];
   let invoicesAlready = 0;
+  /* R-2406: a sale here that carries the Zoho number (bank reconcile, R-2360) — or, failing
+     that, a PAID sale of the same (already-here) customer for the same total, dated on or
+     after the Zoho invoice; each sale is used once, oldest Zoho invoice first. */
+  const sales = input.appSales ?? [];
+  const saleByNumber = new Map<string, AppSale>();
+  for (const x of sales) if (x.externalNumber?.trim()) saleByNumber.set(x.externalNumber.trim().toUpperCase(), x);
+  const usedSales = new Set<string>();
+  const paidSale = (inv: ZohoInvoiceRec): { sale: AppSale; by: PaidInApp["by"] } | null => {
+    const byNumber = saleByNumber.get(inv.number.trim().toUpperCase());
+    if (byNumber) return { sale: byNumber, by: "zoho_number" };
+    const m = matches[inv.zohoCustomerId];
+    if (m?.kind !== "existing" || inv.total == null || !inv.date) return null;
+    const total = rupees(inv.total);
+    const date = inv.date;
+    const hit = sales
+      .filter((x) => !x.externalNumber?.trim() && x.customerId === m.id && !usedSales.has(x.id)
+        && x.amount === total && x.paidAmount >= x.amount && x.invoiceDate >= date)
+      .sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate) || a.id.localeCompare(b.id))[0];
+    return hit ? { sale: hit, by: "customer_amount" } : null;
+  };
+  const isOpen = (inv: ZohoInvoiceRec) =>
+    !["void", "draft", "writtenoff", "written_off"].includes(inv.status.toLowerCase())
+    && inv.balance != null && inv.balance > 0 && !input.existingInvoiceNumbers.has(inv.number.toUpperCase());
+  const paidByZohoId = new Map<string, PaidInApp>();
+  if (sales.length > 0) {
+    const byDate = input.invoices.filter(isOpen)
+      .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? "") || a.number.localeCompare(b.number));
+    for (const inv of byDate) {
+      const paid = paidSale(inv);
+      if (!paid) continue;
+      usedSales.add(paid.sale.id);
+      paidByZohoId.set(inv.zohoId, { number: inv.number, customerName: inv.customerName, balance: rupees(inv.balance ?? 0), appInvoice: paid.sale.id, by: paid.by });
+    }
+  }
   for (const inv of input.invoices) {
     const status = inv.status.toLowerCase();
     if (["void", "draft", "writtenoff", "written_off"].includes(status)) continue;
     if (inv.balance == null || inv.balance <= 0) continue;
     const ref = inv.number;
     if (input.existingInvoiceNumbers.has(inv.number.toUpperCase())) { invoicesAlready++; continue; }
+    const paid = paidByZohoId.get(inv.zohoId);
+    if (paid) { paidInApp.push(paid); continue; }
     let problem: string | null = null;
     if (inv.total == null) problem = "no Total";
     else if (!inv.date) problem = "no invoice date";
@@ -629,6 +698,7 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
     matches,
     subscriptions,
     invoices,
+    paidInApp,
     problems,
     counts: {
       contacts: input.contacts.length,
@@ -641,10 +711,12 @@ export function buildImportPlan(input: PlanInput): ImportPlan {
       oneTimeInvoices,
       invoicesToImport: invoices.length,
       invoicesAlready,
+      invoicesPaidInApp: paidInApp.length,
     },
     totals: {
       mrr: subscriptions.reduce((s, x) => s + x.mrr, 0),
       openBalance: invoices.reduce((s, x) => s + x.balance, 0),
+      paidInAppBalance: paidInApp.reduce((s, x) => s + x.balance, 0),
     },
   };
 }

@@ -21,6 +21,8 @@ import { rupee, formatDate } from "@/lib/utils";
 import type { SettlementPlan } from "@/lib/razorpay/settlement-match";
 import { useRazorpaySettlement, useReconcileRazorpaySettlement } from "@/lib/queries/razorpay-settlement";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
+import { settlementFeeSplit } from "@/lib/razorpay/fee-report";
+import { useSettlementFeeCharged } from "@/lib/queries/online-fee-report";
 
 export interface RazorpaySettlementLine {
   id: string;
@@ -57,6 +59,10 @@ export function RazorpaySettlementSection({ line, onDone, onFooterSave }: {
   const r = open ? q.data : undefined;
   const plan = r?.state === "plan" ? r.plan : null;
   const blockers = plan ? remainingBlockers(plan, picks) : [];
+  /* R-2418: of Razorpay's fee on this payout, how much its matched payments recovered from customers. */
+  const matchedIds = plan ? [...plan.payments.flatMap((p) => p.paymentIds), ...Object.values(picks).filter(Boolean)] : [];
+  const charged = useSettlementFeeCharged(matchedIds, !!plan);
+  const feeSplit = plan ? settlementFeeSplit(plan.totals.fee, charged.data ?? []) : null;
 
   async function reconcile() {
     try {
@@ -201,6 +207,12 @@ export function RazorpaySettlementSection({ line, onDone, onFooterSave }: {
             <dt className="text-ink-3">{plan.payments.length} payment{plan.payments.length === 1 ? "" : "s"}</dt><dd className="text-right">{rupee(plan.totals.gross)}</dd>
             {plan.totals.refunds > 0 && <><dt className="text-ink-3">Refunds</dt><dd className="text-right">−{rupee(plan.totals.refunds)}</dd></>}
             <dt className="text-ink-3">Razorpay fee (incl. GST {rupee(plan.totals.feeGst)})</dt><dd className="text-right">−{rupee(plan.totals.fee)}</dd>
+            {feeSplit && feeSplit.fee > 0 && (
+              <>
+                <dt className="text-ink-3 pl-3">Fee recovered from customers</dt><dd className="text-right text-ink-3">{rupee(feeSplit.recovered)}</dd>
+                <dt className="text-ink-3 pl-3">Fee absorbed by us</dt><dd className="text-right text-ink-3">{rupee(feeSplit.absorbed)}</dd>
+              </>
+            )}
             {plan.totals.other !== 0 && <><dt className="text-ink-3">Adjustments</dt><dd className="text-right">{rupee(plan.totals.other)}</dd></>}
             <dt className="text-ink font-medium border-t border-hairline pt-0.5">Settlement</dt><dd className="text-right font-medium border-t border-hairline pt-0.5">{rupee(plan.totals.net)}</dd>
             <dt className="text-ink-3">This bank line</dt><dd className={`text-right ${plan.totals.net === Math.round(plan.totals.bank) ? "text-emerald" : "text-rose-ink"}`}>{rupee(plan.totals.bank)}</dd>

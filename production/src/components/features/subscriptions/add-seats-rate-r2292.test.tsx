@@ -85,3 +85,30 @@ describe("Manage seats — rate and its source (R-2292)", () => {
     expect((screen.getByRole("button", { name: "Add 1 seat" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+/* R-2372 — "Also draft a purchase order" is an explicit, unticked-by-default choice. */
+describe("Manage seats — purchase order only when chosen (R-2372)", () => {
+  const post = async (tick: boolean) => {
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ quoteId: "Q-1", amount: 1, newSeats: 35, newMrr: 9179, poId: tick ? "PO-1" : null }), { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      show();
+      const box = screen.getByRole("checkbox", { name: /Also draft a purchase order/ }) as HTMLInputElement;
+      expect(box.checked).toBe(false);
+      if (tick) fireEvent.click(box);
+      fireEvent.click(screen.getByRole("button", { name: "Add 1 seat" }));
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
+      return JSON.parse(String((fetchMock.mock.calls[0] as unknown as [string, RequestInit])[1].body));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  };
+
+  it("unticked by default → the server is told NOT to draft a PO", async () => {
+    expect((await post(false)).draft_purchase_order).toBe(false);
+  });
+
+  it("ticked → the server is asked to draft one", async () => {
+    expect((await post(true)).draft_purchase_order).toBe(true);
+  });
+});

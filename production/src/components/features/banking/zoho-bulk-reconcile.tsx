@@ -27,16 +27,17 @@ import { useCustomers, useCreateCustomer } from "@/lib/queries/customers";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useItems } from "@/lib/queries/items";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
-import { useNewSaleFromBankCredit } from "@/lib/queries/bank-credit-pay-for";
+import { useNewSaleFromBankCredit, usePayItemFromBankCredit } from "@/lib/queries/bank-credit-pay-for";
+import { istToday } from "@/lib/dates/ist";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 import {
-  BULK_PAGE, planFromResult, type BulkMatchRow, type PlanContext, type PlanRow,
+  BULK_PAGE, planAll, type BulkMatchRow, type PlanContext, type PlanRow,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 import { expectedPageCost, paceWaitMs, ZOHO_BUSY_WAIT_MS, type PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
-import { bookRows, type BookDeps, type BookedRow, type BookRun, type NewCustomerPayload, type SubForFix } from "./zoho-bulk-book";
+import { bookRows, payOpeningInvoice, type BookDeps, type BookedRow, type BookRun, type NewCustomerPayload, type SubForFix } from "./zoho-bulk-book";
 import { ZohoBulkTable } from "./zoho-bulk-table";
 
 export const ZOHO_BULK_URL = "/api/integrations/zoho-books/bulk-match";
@@ -46,7 +47,8 @@ type Failure = { error: string; why: string; next: Next };
 
 /** What is kept in this browser tab so a closed sheet (or Zoho busy) continues where it stopped. */
 interface Progress { ids: string[]; cursor: number; matches: BulkMatchRow[]; booked: string[] }
-const storeKey = (accountId: string) => `ros_zoho_bulk_v1:${accountId}`;
+/* R-2419: v2 — a run read before the double-booking checks (no facts) is not picked up again. */
+const storeKey = (accountId: string) => `ros_zoho_bulk_v2:${accountId}`;
 function loadProgress(accountId: string): Progress | null {
   try {
     const raw = window.sessionStorage.getItem(storeKey(accountId));
@@ -86,6 +88,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const createCustomer = useCreateCustomer();
   const setLinePayer = useSetBankLinePayer();
   const newSale = useNewSaleFromBankCredit();
+  const payItem = usePayItemFromBankCredit();
 
   const [ids, setIds] = React.useState<string[] | null>(null);
   const [cursor, setCursor] = React.useState(0);
@@ -116,12 +119,14 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
     return {
       customers, subscriptions, catalog: catalog.filter((i) => i.is_active),
       payers: memory.payers, ownNames: memory.ownNames, noGst: Boolean(billOfSupplyStatus(gst.data?.saved ?? null)),
+      today: istToday(),
     };
   }, [customers, subscriptions, catalog, memory.payers, memory.ownNames, gst.data]);
 
   const plan: PlanRow[] = React.useMemo(() => {
     if (!ctx) return [];
-    return matches.map((m) => planFromResult(m.line, m.result, m.contact, ctx)).filter((r): r is PlanRow => !!r);
+    /* R-2419: the whole run at once — one new subscription per customer + domain + product. */
+    return planAll(matches, ctx);
   }, [matches, ctx]);
 
   const ticked = React.useMemo(() => {
@@ -206,6 +211,8 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
     },
     setPayer: (a) => setLinePayer.mutateAsync(a),
     newSale: (i) => newSale.mutateAsync(i),
+    payItem: (i) => payItem.mutateAsync(i),
+    payOpening: (i) => payOpeningInvoice(i, accountId, (fn, args) => (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> }).rpc(fn, args)),
     saleSubscriptions: async (quoteId) => {
       const { data, error } = await createClient().from("subscriptions")
         .select("id, plan, seats, domain, start_date, renewal_date").eq("quote_id", quoteId);
@@ -216,7 +223,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       const { error } = await createClient().from("subscriptions").update({ start_date: start, renewal_date: renewal }).eq("id", subId);
       if (error) throw new Error(error.message);
     },
-  }), [createCustomer, setLinePayer, newSale]);
+  }), [createCustomer, setLinePayer, newSale, payItem, accountId]);
 
   const book = async () => {
     setPhase("booking"); setFailure(null); setLastRun(null);

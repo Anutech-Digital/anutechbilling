@@ -33,6 +33,7 @@ import { pagePaidToDate, paidToDateLine, PAID_TO_DATE_LABEL } from "@/lib/quotes
 import { useNextPartRequest } from "./next-part-request";
 import { useQuotePartInvoices } from "./part-invoices";
 import { PaymentHistoryCard } from "./payment-history-card";
+import { OnlineFeeBillCard } from "@/components/features/payments/online-fee-bill-card";
 import { planForQuote, splitDue } from "@/lib/billing/instalments";
 import { quoteTotalPeriods, quoteTotalPeriodsText } from "@/lib/quotes/per-period-figures";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
@@ -2055,6 +2056,16 @@ export default function QuoteDetailPage() {
           <p className="text-sm text-ink-2 whitespace-pre-wrap">{staffDisplayNotes(quote.notes)}</p>
         </Card>
       )}
+
+      {/* R-2416: who pays the online (Razorpay) fee on this bill — read-only; owner/manager can waive. */}
+      <OnlineFeeBillCard
+        kind="quote"
+        id={quote.id}
+        billTotal={total}
+        customerId={quote.customer_id}
+        linked={{ kind: "invoice", id: quote.invoice_id }}
+        role={me?.role}
+      />
 
       {/* Payment history (installments) — payment-history-card.tsx */}
       {paymentHistory && paymentHistory.length > 0 && (

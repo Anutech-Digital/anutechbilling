@@ -45,6 +45,8 @@ import { runOverdueSuspension, type OverdueSuspensionResult } from "@/lib/collec
 import { runSupportOverduePause, type SupportPauseResult } from "@/lib/collections/support-overdue-pause.server";
 import { loadLateCharges } from "@/lib/late-charges/load";
 import { lateChargesSentence } from "@/lib/late-charges/charges";
+import { loadCollectionHolds, holdKey } from "@/lib/collections/collection-hold.server";
+import type { CollectionHold } from "@/lib/collections/followup-rules";
 import { istToday } from "@/lib/dates/ist";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
@@ -139,6 +141,12 @@ interface DunningResult {
   support_pause?: SupportPauseResult | { error: string };
   /** R-530: the late-charges line could not be worked out — reminders went without it. */
   late_charges_error?: string;
+  /**
+   * R-2411: steps NOT sent today because the customer promised to pay (until that date) or
+   * disputes the bill (until resolved) — logged in the Follow-up dialog. They go on the first
+   * run after the hold ends (the ladder's catch-up rule). Counted in `skipped` too.
+   */
+  on_hold: { invoice_id: string; customer_id: string; step: DunningStep; hold: CollectionHold["kind"]; until?: string; reason?: string | null }[];
 }
 
 async function handle(req: Request): Promise<NextResponse<DunningResult | { error: string }>> {
@@ -166,7 +174,7 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
     dry_run: dryRun,
     email_mode: isEmailConfigured() ? "real" : "stub",
     considered: 0, emails_sent: 0, no_recipient: 0, emails_failed: 0, not_delivered: [],
-    escalations: 0, suspends: 0, skipped: 0, details: [], errors: [],
+    escalations: 0, suspends: 0, skipped: 0, details: [], errors: [], on_hold: [],
   };
 
   /* Only invoices that could possibly be chased. 'paid'/'void'/'draft' and
@@ -231,6 +239,16 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
     creditQuoteIds = new Set((rows as { id: string }[]).map((r) => r.id));
   } catch (e) {
     if (!isMissingDbObject(e)) return NextResponse.json({ error: errorMessage(e) }, { status: 500 });
+  }
+
+  /* R-2411: a promise to pay (until its date) or an open dispute holds this customer's reminders —
+     the same rule the Follow-up dialog shows (followup-rules.ts collectionHold). A failed read
+     stops the run like the prefetches above: chasing someone who disputes the bill is the worse error. */
+  let holds = new Map<string, CollectionHold>();
+  try {
+    holds = await loadCollectionHolds(supabase, invoices.map((i) => ({ tenantId: i.tenant_id, customerId: i.customer_id })), istToday(asOf));
+  } catch (e) {
+    return cronDbFailure("invoice-dunning", e, errorMessage(e));
   }
 
   /* dunningRank() is IMPORTED, not redeclared. This block used to keep its own copy of
@@ -315,6 +333,18 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
     }
 
     if (!decision.shouldSend || decision.action === "none") { result.skipped++; continue; }
+
+    /* R-2411: held → no email, no WhatsApp, no owner escalation, nothing logged; the step goes
+       on the first run after the hold ends. Reported so a dry run shows who was held and why. */
+    const hold = inv.customer_id ? holds.get(holdKey(inv.tenant_id, inv.customer_id)) : undefined;
+    if (hold && inv.customer_id) {
+      result.skipped++;
+      result.on_hold.push({
+        invoice_id: inv.id, customer_id: inv.customer_id, step: decision.step, hold: hold.kind,
+        ...(hold.kind === "promise" ? { until: hold.until } : { reason: hold.reason }),
+      });
+      continue;
+    }
 
     result.details.push({
       invoice_id: inv.id, step: decision.step, action: decision.action,

@@ -21,6 +21,7 @@
 import { z } from "zod";
 import { addDaysISO, toIstDate } from "@/lib/dates/ist";
 import { cashReceived } from "@/lib/payments/cash-received";
+import { formatDate } from "@/lib/utils";
 
 export const FOLLOWUP_KINDS = ["call", "whatsapp", "email", "meeting", "note", "promise"] as const;
 export type FollowupKind = (typeof FOLLOWUP_KINDS)[number];
@@ -40,7 +41,14 @@ export const FOLLOWUP_KIND_LABEL: Record<FollowupKind, string> = {
  * page's decision status "Confirmed". It needs the subscription it is about.
  */
 export const RENEWAL_CONFIRMED = "renewal_confirmed" as const;
-export const FOLLOWUP_OUTCOMES = [RENEWAL_CONFIRMED] as const;
+/**
+ * R-2411: the customer disputes the bill (the note says why). Automatic payment reminders stop
+ * for this customer until a later entry says "dispute_resolved" (the dialog's "Mark dispute
+ * resolved"). See collectionHold below.
+ */
+export const DISPUTED = "disputed" as const;
+export const DISPUTE_RESOLVED = "dispute_resolved" as const;
+export const FOLLOWUP_OUTCOMES = [RENEWAL_CONFIRMED, DISPUTED, DISPUTE_RESOLVED] as const;
 export type FollowupOutcome = (typeof FOLLOWUP_OUTCOMES)[number];
 export const CONFIRMED_NOTE = "Customer confirmed the renewal.";
 export const CONFIRMED_NEEDS_RENEWAL =
@@ -101,6 +109,10 @@ const blankToUndefined = (v: unknown) => (v === "" || v === null || v === undefi
 export const NEXT_REQUIRED = "Pick the next follow-up date — every customer needs one, so nobody is forgotten.";
 export const PROMISE_DATE_REQUIRED = "A promise to pay needs a date — when did they say they will pay?";
 export const WHOLE_RUPEES = "Whole rupees only (no paise), 0 or more.";
+export const DISPUTE_REASON_REQUIRED =
+  "Write why the customer disputes the bill (e.g. wrong rate, licences not used) — whoever resolves it needs to know.";
+export const DISPUTE_NOT_PROMISE =
+  "A customer who disputes the bill has not promised to pay — pick another \"What happened\", or untick \"Customer disputes the bill\".";
 
 const nextDate = z.string({ required_error: NEXT_REQUIRED }).regex(ISO_DATE, NEXT_REQUIRED);
 const optDate = z.preprocess(blankToUndefined, z.string().regex(ISO_DATE, "Pick a valid date.").optional());
@@ -126,12 +138,28 @@ function promiseRule(v: { kind: FollowupKind; promisedOn?: string }, ctx: z.Refi
   }
 }
 
+/** R-2411: a dispute says why (the note), and is not also a promise to pay. */
+function disputeRule(v: { kind: FollowupKind; note?: string }, ctx: z.RefinementCtx, flagPath: "disputed" | "outcome") {
+  if (!v.note || v.note.trim().length < 3) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["note"], message: DISPUTE_REASON_REQUIRED });
+  }
+  if (v.kind === "promise") {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: [flagPath], message: DISPUTE_NOT_PROMISE });
+  }
+}
+
+function formRule(v: { kind: FollowupKind; note?: string; promisedOn?: string; disputed?: boolean }, ctx: z.RefinementCtx) {
+  promiseRule(v, ctx);
+  if (v.disputed) disputeRule(v, ctx, "disputed");
+}
+
 /** R-2404: "confirmed the renewal" is about one subscription. */
 function requestRule(
-  v: { kind: FollowupKind; promisedOn?: string; outcome?: FollowupOutcome; subscriptionId?: string },
+  v: { kind: FollowupKind; note?: string; promisedOn?: string; outcome?: FollowupOutcome; subscriptionId?: string },
   ctx: z.RefinementCtx,
 ) {
   promiseRule(v, ctx);
+  if (v.outcome === DISPUTED) disputeRule(v, ctx, "outcome");
   if (v.outcome === RENEWAL_CONFIRMED && !v.subscriptionId) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["outcome"], message: CONFIRMED_NEEDS_RENEWAL });
   }
@@ -145,8 +173,10 @@ export const followupFormSchema = z
     link: z.string().optional(),
     /** R-2404: the renewal Follow-up's "Customer confirmed the renewal" tick. */
     confirmed: z.boolean().optional(),
+    /** R-2411: "Customer disputes the bill — pause reminders". The note is the reason. */
+    disputed: z.boolean().optional(),
   })
-  .superRefine(promiseRule);
+  .superRefine(formRule);
 export type FollowupFormValues = z.input<typeof followupFormSchema>;
 export type FollowupFormData = z.output<typeof followupFormSchema>;
 
@@ -204,11 +234,13 @@ export function toFollowupRequest(
   const isPromise = data.kind === "promise";
   /* R-2404: only with the renewal it is about (the API refuses it without one); the note says it,
      so the history (the renewal's activity log) shows it too. */
-  const outcome = data.confirmed && link?.subscriptionId ? RENEWAL_CONFIRMED : undefined;
+  const confirmed = data.confirmed && link?.subscriptionId ? RENEWAL_CONFIRMED : undefined;
+  /* R-2411: a dispute's note IS its reason (the form insists on one). */
+  const outcome = confirmed ?? (data.disputed ? DISPUTED : undefined);
   return {
     customerId: ctx.customerId,
     kind: data.kind,
-    note: outcome ? `${CONFIRMED_NOTE}${data.note ? ` ${data.note}` : ""}` : data.note,
+    note: confirmed ? `${CONFIRMED_NOTE}${data.note ? ` ${data.note}` : ""}` : data.note,
     promisedAmount: isPromise ? data.promisedAmount : undefined,
     promisedOn: isPromise ? data.promisedOn : undefined,
     nextFollowUpOn: data.nextFollowUpOn,
@@ -237,6 +269,22 @@ export function buildFollowupInsert(req: FollowupRequest, tenantId: string, assi
     subscription_id: req.subscriptionId ?? null,
     /* R-2404: only when there is one — the other doors write no outcome, as before. */
     ...(req.outcome ? { outcome: req.outcome } : {}),
+  };
+}
+
+/**
+ * R-2411: "Mark dispute resolved" — one note entry with outcome "dispute_resolved". It ends the
+ * open dispute (collectionHold), so the automatic reminders go again; next follow-up in 3 days.
+ */
+export const DISPUTE_RESOLVED_NOTE = "Dispute resolved.";
+export function resolveDisputeRequest(opts: { customerId: string; today: string; how?: string }): FollowupRequest {
+  const how = opts.how?.trim();
+  return {
+    customerId: opts.customerId,
+    kind: "note",
+    outcome: DISPUTE_RESOLVED,
+    note: how ? `${DISPUTE_RESOLVED_NOTE} ${how}` : DISPUTE_RESOLVED_NOTE,
+    nextFollowUpOn: defaultNextFollowUp(opts.today),
   };
 }
 
@@ -386,4 +434,71 @@ export function buildFollowupHistory(
         : null;
       return { ...r, promiseStatus: status, broken: status === "broken" };
     });
+}
+
+// ─── Reminder hold (R-2411) — THE one rule ───────────────────────────────────
+//
+// The automatic payment reminders (cron invoice-dunning: email + WhatsApp) skip a customer who
+// is ON HOLD. The Follow-up dialog shows the same answer, and the /collections list can too
+// (isOnHold / holdLabel / stageFor), so the screen never says "paused" while the cron sends.
+//
+//   dispute — the newest dispute entry of the customer is "disputed" (no "dispute_resolved"
+//             after it). Held until someone resolves it. Wins over a promise.
+//   promise — the NEWEST promise entry's date is today or later (IST): held through that day.
+//             The day after, if the money did not come, reminders resume by themselves and the
+//             list shows the promise broken (promiseStatus above).
+// Customer level, not invoice level: a promise or a dispute logged against one invoice holds
+// all of that customer's reminders (decision recorded on the card).
+
+/** The columns collectionHold reads (payment_followups). */
+export interface HoldRow {
+  id: string;
+  created_at: string;
+  kind: string;
+  note: string | null;
+  outcome?: string | null;
+  promised_on: string | null;
+  promised_amount?: number | null;
+}
+
+export type CollectionHold =
+  | { kind: "promise"; until: string; amount: number | null }
+  | { kind: "dispute"; since: string; reason: string | null; entryId: string };
+
+/** The open dispute (newest "disputed" with no "dispute_resolved" after it), or null. */
+export function openDispute(rows: readonly HoldRow[]): Extract<CollectionHold, { kind: "dispute" }> | null {
+  const newest = [...rows]
+    .filter((r) => r.outcome === DISPUTED || r.outcome === DISPUTE_RESOLVED)
+    .sort(compareFollowupsNewestFirst)[0];
+  if (!newest || newest.outcome !== DISPUTED) return null;
+  return { kind: "dispute", since: toIstDate(newest.created_at), reason: newest.note?.trim() || null, entryId: newest.id };
+}
+
+/** Is this customer's chasing paused today (YYYY-MM-DD, IST)? null = remind as usual. */
+export function collectionHold(rows: readonly HoldRow[], today: string): CollectionHold | null {
+  const dispute = openDispute(rows);
+  if (dispute) return dispute;
+  const promise = [...rows].filter((r) => !!r.promised_on).sort(compareFollowupsNewestFirst)[0];
+  const until = promise?.promised_on?.slice(0, 10);
+  if (promise && until && until >= today) {
+    return { kind: "promise", until, amount: promise.promised_amount != null && promise.promised_amount > 0 ? Math.round(promise.promised_amount) : null };
+  }
+  return null;
+}
+
+export function isOnHold(rows: readonly HoldRow[], today: string): boolean {
+  return collectionHold(rows, today) !== null;
+}
+
+/** One short line for a row / the dialog. */
+export function holdLabel(hold: CollectionHold): string {
+  return hold.kind === "dispute" ? "Disputed — reminders paused" : `Promised · ${formatDate(hold.until)} — reminders paused`;
+}
+
+/** The hold part of a row's stage (R-2409 adds Not contacted / Reminded / Part-paid around it). */
+export type HoldStage = "disputed" | "promised" | "broken";
+export function stageFor(r: { hold: CollectionHold | null; promiseBroken: boolean }): HoldStage | null {
+  if (r.hold?.kind === "dispute") return "disputed";
+  if (r.hold?.kind === "promise") return "promised";
+  return r.promiseBroken ? "broken" : null;
 }

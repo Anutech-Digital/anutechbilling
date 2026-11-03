@@ -17,6 +17,9 @@ const ACTION_TONE: Record<PlanLine["action"], string> = {
   existing_sub: "text-indigo-ink",
   add_seats: "text-indigo-ink",
   one_time: "text-ink-3",
+  /* R-2419: a past-period charge / a charge on the run's newest subscription — no subscription. */
+  past_charge: "text-amber-ink",
+  charge_on_new: "text-ink-3",
 };
 
 interface Props {
@@ -101,13 +104,14 @@ export function ZohoBulkTable({ rows, ticked, booked, onToggle, onToggleAll, dis
                   : <span className="text-ink-3">—</span>}
               </td>
               <td className="py-2 pr-2">
+                {r.summary && <div className="mb-1 font-medium text-indigo-ink" data-testid={`zoho-summary-${r.txnId}`}>{r.summary}</div>}
                 <ul className="space-y-1">
                   {r.lines.map((l, i) => (
                     <li key={i}>
                       <span className="text-ink">{l.qty} × {l.name}</span>
                       {l.domain && <span className="text-ink-3"> · {l.domain}</span>}
                       <span className="text-ink-3"> · {rupee(l.rate, { decimals: l.rate % 1 ? 2 : 0 })}</span>
-                      <div className={ACTION_TONE[l.action]}>{l.text}</div>
+                      {!r.summary && <div className={ACTION_TONE[l.action]}>{l.text}</div>}
                     </li>
                   ))}
                 </ul>

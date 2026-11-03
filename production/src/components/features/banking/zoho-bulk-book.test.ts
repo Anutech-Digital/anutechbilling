@@ -44,6 +44,8 @@ function deps(over: Partial<BookDeps> = {}): BookDeps & { calls: string[] } {
     newSale: vi.fn(async (i) => { calls.push(`sale ${i.transactionId} ${i.customerId} sub=${i.createSubscription} ${i.subStart}->${i.subRenewal}`); return result(); }),
     saleSubscriptions: vi.fn(async () => []),
     setSubDates: vi.fn(async (id, s, r) => { calls.push(`dates ${id} ${s}->${r}`); }),
+    payItem: vi.fn(async (i) => { calls.push(`pay ${i.transactionId} ${i.quoteId ?? i.invoiceId}`); return result(); }),
+    payOpening: vi.fn(async (i) => { calls.push(`opening ${i.transactionId} ${i.invoiceId}`); return { paymentId: "pay-o", alreadyRecorded: false }; }),
     ...over,
   };
 }

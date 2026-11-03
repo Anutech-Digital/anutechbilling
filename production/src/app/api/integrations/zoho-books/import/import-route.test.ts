@@ -17,6 +17,8 @@ const h = vi.hoisted(() => ({
   tokenError: null as unknown,
   saved: [] as unknown[],
   dropped: 0,
+  /* R-2406: more Zoho invoices for the plan (an open one) */
+  extraInvoices: [] as unknown[],
 }));
 
 vi.mock("@/lib/integrations/zoho-books/store", () => ({
@@ -40,7 +42,7 @@ vi.mock("@/lib/integrations/zoho-books/import-store", async (orig) => ({
     invoices: [{ zohoId: "i1", number: "INV-T-001", date: "2026-04-01", dueDate: "2026-04-15", zohoCustomerId: "c1", customerName: "T-Alpha Pvt Ltd",
       status: "paid", total: 10620, balance: 0, currency: "INR", gstin: null, placeOfSupply: null, subsPeriod: "Yearly", newBusiness: null, serviceExpiry: null,
       lines: [{ plan: "Google Workspace Business Starter", quantity: 5, itemTotal: 9000, rate: 1800,
-        description: "Domain Name: t-alpha.in Subscription Period: 1 Year/s (01/04/2026 - 31/03/2027)" }] }],
+        description: "Domain Name: t-alpha.in Subscription Period: 1 Year/s (01/04/2026 - 31/03/2027)" }] }, ...h.extraInvoices],
     existingCustomers: [], existingSubscriptions: [], items: [], existingInvoiceNumbers: new Set(),
   }),
 }));
@@ -66,7 +68,7 @@ beforeEach(() => {
   h.caller = owner();
   h.conn = { refreshToken: "rt", orgId: "60000001", orgName: "T-Org", connectedAt: null };
   h.runs = { open: null, lastImport: null };
-  h.started = []; h.rpc = []; h.rpcError = null; h.rpcErrorFn = null; h.tokenError = null; h.saved = []; h.dropped = 0;
+  h.started = []; h.rpc = []; h.rpcError = null; h.rpcErrorFn = null; h.tokenError = null; h.saved = []; h.dropped = 0; h.extraInvoices = [];
   h.stepData = { run_id: "run-1", stage: "customers", offset: 150, totals: { customers: 1245, subscriptions: 1371, invoices: 246 }, done: false, result: null };
 });
 
@@ -163,5 +165,46 @@ describe("import route", () => {
     expect(JSON.stringify(body)).not.toMatch(/access has ended|Disconnect/);
     expect(h.saved).toEqual([{ last_error: ZOHO_BUSY_MESSAGE }]);
     expect(h.dropped).toBe(0);
+  });
+
+  describe("R-2406 choose what comes in", () => {
+    const openInvoice = { zohoId: "i2", number: "INV-T-002", date: "2026-09-01", dueDate: "2026-09-15", zohoCustomerId: "c1", customerName: "T-Alpha Pvt Ltd",
+      status: "overdue", total: 5900, balance: 5900, currency: "INR", gstin: null, placeOfSupply: null, subsPeriod: null, newBusiness: null, serviceExpiry: null, lines: [] };
+    const ready = () => { h.runs = { open: { id: "run-1", org_id: "60000001", since: "2024-10-22", phase: "ready", import_stage: null }, lastImport: null }; };
+
+    it("Import with no choice sent: Open invoices are OFF — no receivable reaches the database", async () => {
+      ready(); h.extraInvoices = [openInvoice];
+      expect((await post({ action: "import" })).status).toBe(200);
+      const { fn, args } = h.rpc[0];
+      expect(fn).toBe("zoho_books_import_begin");
+      expect(args.p_invoices).toEqual([]);
+      expect((args.p_subscriptions as unknown[]).length).toBe(1);
+    });
+
+    it("Open invoices ticked → sent; Customers + Subscriptions only → none", async () => {
+      ready(); h.extraInvoices = [openInvoice];
+      await post({ action: "import", parts: { customers: true, subscriptions: true, invoices: true } });
+      expect((h.rpc[0].args.p_invoices as Array<{ number: string }>).map((i) => i.number)).toEqual(["INV-T-002"]);
+      h.rpc = [];
+      await post({ action: "import", parts: { customers: true, subscriptions: true, invoices: false } });
+      expect(h.rpc[0].args.p_invoices).toEqual([]);
+    });
+
+    it("nothing ticked → 400, nothing reaches the database", async () => {
+      ready();
+      const res = await post({ action: "import", parts: { customers: false, subscriptions: false, invoices: false } });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/Tick at least one part/);
+      expect(h.rpc).toHaveLength(0);
+    });
+
+    it("dry run: the chosen counts and the Open invoices tick off by default", async () => {
+      ready(); h.extraInvoices = [openInvoice];
+      const body = await (await post({ action: "dry_run" })).json();
+      expect(body.summary.choice).toEqual({ customers: true, subscriptions: true, invoices: false, customerMonths: 12 });
+      expect(body.summary.counts.invoicesToImport).toBe(1);
+      expect(body.summary.chosen).toMatchObject({ invoices: 0, subscriptions: 1, customersNew: 1 });
+      expect(h.rpc).toHaveLength(0);
+    });
   });
 });

@@ -43,6 +43,8 @@ vi.mock("@/lib/queries/razorpay-settlement", () => ({
     ({ data: enabled ? s.rzpData : undefined, isLoading: false, isError: false, refetch: vi.fn() }),
   useReconcileRazorpaySettlement: () => ({ mutateAsync: s.rzp, isPending: false }),
 }));
+/* R-2418: the settlement box reads the matched payments' fee_charged. */
+vi.mock("@/lib/queries/online-fee-report", () => ({ useSettlementFeeCharged: () => ({ data: [] }) }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
 import { ReconcileFooter, type FooterSave } from "./reconcile-who-tiles";

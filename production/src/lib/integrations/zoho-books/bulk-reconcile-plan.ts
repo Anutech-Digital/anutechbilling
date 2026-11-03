@@ -21,6 +21,23 @@
  * A row with a problem (no state, amounts differ by more than ₹1, payer differs without a UTR match,
  * mixed terms, …) is UNTICKED by default and says why. Booking goes through the Reconcile sheet's
  * own path (reconcile_bank_credit_new_sale) — no new money RPC.
+ *
+ * R-2419 (3 Nov, first real run on staging, 4523: 40 ticked, six kinds of wrong entries) — before a
+ * row is ticked:
+ *   (a) a Zoho invoice of an EARLIER financial year (INV/25-26/…, or dated before the books' start)
+ *       is last year's revenue → it settles the customer's OPENING receivable (the opening invoice
+ *       imported from Zoho: record_multi_invoice_payment → reconcile_bank_txn), never a new sale;
+ *       no opening invoice in the app → unticked with the reason.
+ *   (b) one new subscription per customer + domain + product in a run — the newest line makes it,
+ *       older lines are charges on it (planAll).
+ *   (c) a subscription whose Zoho term has already ended is never created — a past-period charge.
+ *   (d) TDS only when the withheld amount is 1 / 2 / 10 % of the taxable value (±₹2); else
+ *       unticked "Short by ₹X".
+ *   (e) an open quote / invoice of the customer for the same money (±₹2) → the plan PAYS it
+ *       (reconcile_bank_credit_to_item); priced below cost and not approved → "approve it first".
+ *   (f) possible doubles are unticked with the reason: the same amount received from the customer
+ *       within 35 days; a subscription billed in parts already billed for that period; a
+ *       subscription the app already has paid past the Zoho period.
  */
 import {
   salePreview, type SaleCycle, type SaleLine,
@@ -30,7 +47,10 @@ import {
 } from "@/lib/banking/customer-payer";
 import { tdsSectionGuess } from "@/lib/banking/tds-section";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
-import { GST_STATE_BY_CODE, rupee } from "@/lib/utils";
+import { GST_STATE_BY_CODE, formatDate, rupee } from "@/lib/utils";
+import { istToday } from "@/lib/dates/ist";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import type { BillingCycle } from "@/lib/supabase/database.types";
 import { parsePlaceOfSupply } from "@/lib/import/zoho-opening-invoices";
 import type { FindZohoResult, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 import { mapZohoCustomer, normCompanyName, zohoSaleLine, zohoSaleNumber } from "./payment-prefill";
@@ -41,6 +61,10 @@ export const BULK_PAGE = 8;
 export const AMOUNT_SLACK = 1;
 /** Days a pro-rata line's end may sit from an existing subscription's renewal and still be its add-on. */
 export const ADD_ON_DAY_SLACK = 3;
+/** R-2419: ₹ an open quote's due, a TDS amount or an earlier receipt may differ and still be "the same". */
+export const MATCH_SLACK = 2;
+/** R-2419 (f): days around a line in which the same amount from the same customer reads as a double. */
+export const DOUBLE_DAYS = 35;
 
 // ── Inputs ────────────────────────────────────────────────────────────────────────────────
 
@@ -52,8 +76,47 @@ export interface BulkLine {
   reference: string | null;
 }
 
-/** One line of the bulk-match route's answer. */
-export interface BulkMatchRow { line: BulkLine; result: FindZohoResult; contact: ZohoContactInfo | null }
+/** One line of the bulk-match route's answer. R-2419: `facts` = what the app already has for the
+ *  app customer Zoho's customer maps to (null: a customer new from Zoho); `booksStart` = the day
+ *  after the company's opening balances (null: none set). Absent = read before R-2419. */
+export interface BulkMatchRow {
+  line: BulkLine;
+  result: FindZohoResult;
+  contact: ZohoContactInfo | null;
+  facts?: CustomerFacts | null;
+  booksStart?: string | null;
+}
+
+/** R-2419 (e): one open quote / unpaid invoice of the customer (bank_credit_open_items). */
+export interface OpenItemFact {
+  kind: string;
+  quoteId: string | null;
+  invoiceId: string | null;
+  docDate: string | null;
+  /** Whole rupees still owed (the database's figure). */
+  due: number;
+  taxable: number;
+  makesSubscription: boolean;
+  /** The quote is priced below cost and not approved — the refusal text; null = can be paid. */
+  approvalBlock: string | null;
+}
+
+/** R-2419 (a): an opening invoice imported from Zoho that still has money due. */
+export interface OpeningFact { id: string; number: string | null; date: string | null; due: number }
+
+/** R-2419 (f): a receipt already booked for the customer. */
+export interface ReceiptFact { id: string; date: string; amount: number; reference: string | null }
+
+/** R-2419 (f): a billed period of one of the customer's subscriptions. */
+export interface BilledFact { subId: string; start: string; end: string; invoiceId: string }
+
+export interface CustomerFacts {
+  customerId: string;
+  openItems: OpenItemFact[];
+  openings: OpeningFact[];
+  receipts: ReceiptFact[];
+  billed: BilledFact[];
+}
 
 /** What Zoho says about the customer (its contact), for a customer the app does not have yet. */
 export interface ZohoContactInfo {
@@ -88,6 +151,12 @@ export interface PlanSubRow {
   status: string;
   start_date: string | null;
   renewal_date: string | null;
+  /** R-2419 (f): how it is billed (monthly / quarterly … = billed in parts). Absent = unknown. */
+  billing_cycle?: BillingCycle | null;
+  billed_externally_until?: string | null;
+  /** Made by a sale in the app (its quote) — an imported subscription has none. */
+  quote_id?: string | null;
+  external_source?: string | null;
 }
 
 type CatalogArg = Parameters<typeof zohoSaleLine>[1];
@@ -100,11 +169,16 @@ export interface PlanContext {
   ownNames: readonly string[];
   /** The company issues bills of supply (no GST) — every sale is at 0%. */
   noGst?: boolean;
+  /** R-2419 (c): today (IST, YYYY-MM-DD). Absent = today in IST. */
+  today?: string;
 }
 
 // ── Output ────────────────────────────────────────────────────────────────────────────────
 
-export type LineAction = "new_sub" | "existing_sub" | "add_seats" | "one_time";
+/** R-2419: past_charge — (c) its term already ended; charge_on_new — (b) an older line of a
+ *  customer + domain + product whose NEWEST line in this run makes the subscription. Neither
+ *  makes a subscription. */
+export type LineAction = "new_sub" | "existing_sub" | "add_seats" | "one_time" | "past_charge" | "charge_on_new";
 
 export interface PlanLine {
   name: string;
@@ -145,7 +219,31 @@ export interface PlanPayer {
 /** A dated subscription the RPC made with the sale's one start/renewal — corrected after booking. */
 export interface DateFix { name: string; qty: number; domain: string | null; start: string; renewal: string }
 
+/** R-2419: what "Book selected" does with the row. */
+export type BookKind = "new_sale" | "pay_item" | "opening";
+
+/** (e) pay this open quote / invoice — reconcile_bank_credit_to_item. */
+export interface PayItemSpec {
+  quoteId: string | null;
+  invoiceId: string | null;
+  due: number;
+  createSubscription: boolean | null;
+  subStart: string | null;
+}
+
+/** (a) settle this opening invoice — record_multi_invoice_payment, then reconcile_bank_txn. */
+export interface OpeningSpec {
+  invoiceId: string;
+  number: string | null;
+  /** The bank money (whole rupees) — the receipt. */
+  received: number;
+  reference: string;
+}
+
 export interface BookSpec {
+  kind: BookKind;
+  item: PayItemSpec | null;
+  opening: OpeningSpec | null;
   lines: SaleLine[];
   createSubscription: boolean;
   subStart: string | null;
@@ -164,6 +262,8 @@ export interface PlanRow {
   credit: number;
   description: string | null;
   kind: "match" | "several";
+  /** R-2419: one sentence for a row that pays an open quote / settles an opening balance. */
+  summary: string | null;
   zoho: {
     paymentId: string | null;
     paymentNumber: string | null;
@@ -267,12 +367,76 @@ const near = (a: string | null, b: string | null, days: number) =>
 /** The pick-one row ("several Zoho payments could be this line"). */
 export function severalRow(line: BulkLine, candidates: number): PlanRow {
   return {
-    txnId: line.id, txnDate: line.txnDate, credit: line.credit, description: line.description, kind: "several",
+    txnId: line.id, txnDate: line.txnDate, credit: line.credit, description: line.description, kind: "several", summary: null,
     zoho: { paymentId: null, paymentNumber: null, by: null, amount: null, invoiceNumbers: [], candidates },
     customer: null, lines: [], seatDiffs: [], saleTotal: null, tds: 0, payer: null,
     problems: [`Zoho has ${candidates} payments that could be this line — open the line's Reconcile and use Find in Zoho to pick one.`],
     notes: [], ticked: false, book: null,
   };
+}
+
+// ── R-2419 helpers ───────────────────────────────────────────────────────────────────────
+
+const daysApart = (a: string, b: string) => Math.abs(day(a) - day(b)) / 86_400_000;
+function prevDay(iso: string): string {
+  const d = new Date(day(iso));
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+const normNo = (s: string | null | undefined) => (s ?? "").trim().toUpperCase().replace(/\s+/g, "");
+
+/** The financial year (the calendar year of its April) a date falls in. */
+export function fyOf(iso: string): number {
+  const y = Number(iso.slice(0, 4));
+  return Number(iso.slice(5, 7)) >= 4 ? y : y - 1;
+}
+
+/** The financial year printed in an invoice number ("INV/25-26/0412" → 2025); null = none. */
+export function fyInNumber(no: string): number | null {
+  const m = /(?:^|[^0-9])(\d{2})-(\d{2})(?:[^0-9]|$)/.exec(no);
+  if (!m) return null;
+  const a = Number(m[1]);
+  return (a + 1) % 100 === Number(m[2]) ? 2000 + a : null;
+}
+
+/** (a) A Zoho invoice of an earlier financial year than the bank line, or dated before the books'
+ *  start — last year's revenue, so its money settles the opening receivable. */
+export function isLastYearInvoice(inv: { number: string; date: string | null }, lineDate: string, booksStart: string | null): boolean {
+  if (booksStart && inv.date && inv.date.slice(0, 10) < booksStart) return true;
+  const fy = fyInNumber(inv.number) ?? (inv.date ? fyOf(inv.date) : null);
+  return fy !== null && fy < fyOf(lineDate);
+}
+
+/** (d) The TDS % (1 / 2 / 10) the withheld amount is of the taxable value, within ₹2; null = none. */
+export function tdsPctWithin(tds: number, taxable: number): 1 | 2 | 10 | null {
+  if (!(tds > 0) || !(taxable > 0)) return null;
+  for (const k of [1, 2, 10] as const) if (Math.abs(tds - (taxable * k) / 100) <= MATCH_SLACK) return k;
+  return null;
+}
+
+/** (f) The day an existing subscription is paid till, when that is past the Zoho period — null when
+ *  it is not, or when the app cannot tell (billed in parts: see the billed periods instead). */
+export function paidPast(sub: PlanSubRow, period: { start: string | null; end: string | null }): string | null {
+  if (!period.end) return null;
+  if (sub.billed_externally_until && sub.billed_externally_until >= period.end) return sub.billed_externally_until;
+  if (!sub.billing_cycle || isSplitBilled(sub.billing_cycle)) return null;
+  if (!sub.renewal_date || sub.renewal_date <= period.end) return null;
+  if (sub.start_date && period.start && sub.start_date > period.start) return null;
+  return prevDay(sub.renewal_date);
+}
+
+const shortByText = (tds: number, taxable: number) =>
+  `Short by ${rupees(tds)}: Zoho records it as TDS, but it is not 1%, 2% or 10% of the taxable ${rupees(taxable)}. Check the payment in Zoho, or reconcile this line by hand.`;
+
+/** Options of one row's plan. */
+export interface PlanOptions {
+  /** What the app already has for the customer (route); undefined = not read. */
+  facts?: CustomerFacts | null;
+  booksStart?: string | null;
+  /** planAll: an app customer's row must carry facts, else it is not ticked. */
+  requireFacts?: boolean;
+  /** (b) line index → the newest line of the same customer + domain + product in this run. */
+  chargeOnNew?: ReadonlyMap<number, { label: string; date: string }>;
 }
 
 // ── The plan for one line ────────────────────────────────────────────────────────────────
@@ -282,9 +446,18 @@ export function planRow(
   match: ZohoPaymentMatch,
   contact: ZohoContactInfo | null,
   ctx: PlanContext,
+  opts: PlanOptions = {},
 ): PlanRow {
-  const problems: string[] = [];
+  /* R-2419: problems by kind — which ones count depends on what the row books (new sale / pay an
+     open item / settle an opening balance). */
+  const custProblems: string[] = [];
+  const zohoProblems: string[] = [];
+  const saleProblems: string[] = [];
+  const doubleProblems: string[] = [];
+  const payerProblems: string[] = [];
   const notes: string[] = [];
+  const today = ctx.today ?? istToday();
+  const facts = opts.facts;
 
   /* 1. Customer — the app's (GSTIN, then name) or a new one from Zoho. */
   const mapped = mapZohoCustomer(match.customer, ctx.customers);
@@ -293,7 +466,7 @@ export function planRow(
   if (mapped && appCust) {
     customer = { kind: "existing", id: mapped.id, name: mapped.name, by: mapped.by };
     if (isIndia(appCust.country) && !(appCust.state_code ?? "").trim()) {
-      problems.push(`No state: ${appCust.name} has no state in the app, so its GST invoice cannot be raised. Add the state in Customers, then run this again.`);
+      custProblems.push(`No state: ${appCust.name} has no state in the app, so its GST invoice cannot be raised. Add the state in Customers, then run this again.`);
     }
   } else {
     const c = contact ?? {
@@ -309,10 +482,10 @@ export function planRow(
       contactName: c.personName, gstTreatment: c.gstTreatment, customerType: c.customerType,
     };
     if (!foreign && !c.stateCode) {
-      problems.push(`No state: Zoho has no state or GSTIN for ${c.name}. Add the place of contact in Zoho, or reconcile this line by hand.`);
+      custProblems.push(`No state: Zoho has no state or GSTIN for ${c.name}. Add the place of contact in Zoho, or reconcile this line by hand.`);
     }
     if (c.country === "") {
-      problems.push(`No country: Zoho marks ${c.name} as overseas but has no country. Reconcile this line by hand.`);
+      custProblems.push(`No country: Zoho marks ${c.name} as overseas but has no country. Reconcile this line by hand.`);
     }
     if (!c.email && !c.phone) notes.push(`${c.name}: Zoho has no email or phone — the customer is created without one; add it later.`);
   }
@@ -327,8 +500,9 @@ export function planRow(
     for (const zl of inv.lines) {
       const made = zohoSaleLine(zl, ctx.catalog);
       if (!made) continue;
+      const idx = lines.length;
       if (!made.inCatalog) unmatched.push(zl.name.trim());
-      if (!(made.line.rate > 0)) problems.push(`${zl.name.trim()}: Zoho gives no price for this line.`);
+      if (!(made.line.rate > 0)) saleProblems.push(`${zl.name.trim()}: Zoho gives no price for this line.`);
       const renewal = zl.start && zl.end && zl.end >= zl.start ? nextDay(zl.end) : null;
       const base = {
         name: made.line.name, qty: made.line.qty, rate: made.line.rate, cycle: made.cycle,
@@ -339,6 +513,7 @@ export function planRow(
       const sub = made.cycle !== "one_time" && custForSubs ? liveSubFor(zl, custForSubs, ctx.subscriptions) : null;
       const subLite = sub ? { id: sub.id, plan: sub.plan, seats: sub.seats, renewal_date: sub.renewal_date, domain: sub.domain } : null;
       const where = (d: string | null) => (d ? ` (${d})` : "");
+      const demote = opts.chargeOnNew?.get(idx) ?? null;
       if (made.cycle === "one_time") {
         pl = { ...base, action: "one_time", sub: null, text: "One-time — no subscription" };
       } else if (sub && partTerm(zl, made.cycle) && (near(renewal, sub.renewal_date, ADD_ON_DAY_SLACK) || near(zl.end, sub.renewal_date, ADD_ON_DAY_SLACK))) {
@@ -348,6 +523,26 @@ export function planRow(
         if (sub.seats !== zl.qty) {
           seatDiffs.push({ subId: sub.id, plan: sub.plan, domain: sub.domain ?? base.domain, appSeats: sub.seats, zohoSeats: zl.qty });
         }
+        /* (f) the app already has this period: billed in parts → a bill for it; else paid past it. */
+        const label = `${sub.plan}${where(sub.domain ?? base.domain)}`;
+        const billed = facts && zl.start && zl.end
+          ? facts.billed.find((b) => b.subId === sub.id && b.start <= zl.end! && b.end >= zl.start!) ?? null
+          : null;
+        const till = paidPast(sub, zl);
+        if (billed) {
+          doubleProblems.push(`Already billed: ${label} has invoice ${billed.invoiceId} for ${formatDate(billed.start)} – ${formatDate(billed.end)}, the same period as this Zoho bill.`);
+        } else if (till && !sub.quote_id && sub.external_source) {
+          notes.push(`${label} was imported (paid till ${formatDate(till)} in the app, with no sale here) — this payment is booked as a charge on it; check its dates.`);
+        } else if (till) {
+          doubleProblems.push(`Already paid: ${label} is paid till ${formatDate(till)} in the app, and this Zoho bill is for ${formatDate(zl.start)} – ${formatDate(zl.end)} — it looks booked already.`);
+        }
+      } else if (zl.end && zl.end < today) {
+        /* (c) never a subscription whose term has already ended. */
+        pl = { ...base, action: "past_charge", sub: null, text: `Term ended ${formatDate(zl.end)} — booked as a past-period charge, no subscription` };
+        notes.push(`${made.line.name}${where(base.domain)}: Zoho's term ended ${formatDate(zl.end)} — no subscription made. If the customer still uses it, renew it from Subscriptions.`);
+      } else if (demote) {
+        /* (b) the newest line of this customer + domain + product in the run makes the subscription. */
+        pl = { ...base, action: "charge_on_new", sub: null, text: `Charge only — the newest line for ${demote.label} (${formatDate(demote.date)}) makes the subscription` };
       } else {
         pl = { ...base, action: "new_sub", sub: null, text: base.start && renewal ? `New subscription — renews ${renewal}` : "New subscription" };
         if (partTerm(zl, made.cycle)) notes.push(`${made.line.name}: Zoho billed ${zl.months} month${zl.months === 1 ? "" : "s"} — check the yearly price on the new subscription before it renews.`);
@@ -356,8 +551,8 @@ export function planRow(
       saleLines.push(made.line);
     }
   }
-  if (lines.length === 0) problems.push("The Zoho invoice has no product lines to book.");
-  if (match.moreInvoices.length) problems.push(`The Zoho payment covers more invoices (${match.moreInvoices.join(", ")}) than are read here. Reconcile this line by hand.`);
+  if (lines.length === 0) saleProblems.push("The Zoho invoice has no product lines to book.");
+  if (match.moreInvoices.length) zohoProblems.push(`The Zoho payment covers more invoices (${match.moreInvoices.join(", ")}) than are read here. Reconcile this line by hand.`);
   if (unmatched.length) notes.push(`Not in the catalogue, booked with Zoho's name and price: ${[...new Set(unmatched)].join(", ")}.`);
 
   /* 2b. A pro-rata add-on whose main line is a NEW subscription in this same bill (no sub yet). */
@@ -377,19 +572,22 @@ export function planRow(
   /* 3. One sale: which lines make subscriptions. */
   const monthly = lines.some((l) => l.cycle === "monthly");
   const annual = lines.some((l) => l.cycle === "annual_yearly");
-  if (monthly && annual) problems.push("The Zoho bill mixes monthly and yearly lines — one sale is one billing term. Reconcile this line by hand.");
+  if (monthly && annual) saleProblems.push("The Zoho bill mixes monthly and yearly lines — one sale is one billing term. Reconcile this line by hand.");
   const newSub = lines.filter((l) => l.action === "new_sub");
   const kept = lines.filter((l) => l.action === "existing_sub" || l.action === "add_seats");
   let createSubscription = newSub.length > 0;
-  let bookLines = saleLines;
+  /* (b)/(c) a past-period or older line is a plain charge on this sale — never a subscription. */
+  let bookLines = saleLines.map((sl, i) => (lines[i].action === "past_charge" || lines[i].action === "charge_on_new")
+    ? { ...sl, cycle: "one_time" as const, typedFor: "one_time" as const, domain: null }
+    : sl);
   if (newSub.length > 0 && kept.length > 0) {
     /* Mixed: the lines of existing subscriptions are booked as one-time charges on this sale, so
        the RPC makes subscriptions ONLY for the new ones (the same as unticking "Create subscription"
        for those lines in the sheet). */
     if (newSub.some((l) => l.cycle === "monthly")) {
-      problems.push("A new monthly subscription and lines of existing subscriptions are on one bill — reconcile this line by hand.");
+      saleProblems.push("A new monthly subscription and lines of existing subscriptions are on one bill — reconcile this line by hand.");
     }
-    bookLines = saleLines.map((sl, i) => (lines[i].action === "existing_sub" || lines[i].action === "add_seats")
+    bookLines = bookLines.map((sl, i) => (lines[i].action === "existing_sub" || lines[i].action === "add_seats")
       ? { ...sl, cycle: "one_time" as const, typedFor: "one_time" as const, domain: null }
       : sl);
     notes.push(`${kept.map((l) => l.name).join(", ")}: booked as a charge on the existing subscription — no new subscription.`);
@@ -403,16 +601,18 @@ export function planRow(
     .filter((l) => l.start !== first!.start || l.renewal !== first!.renewal)
     .map((l) => ({ name: l.name, qty: l.qty, domain: l.domain, start: l.start!, renewal: l.renewal! }));
 
-  /* 4. Money: Zoho payment vs bank line; sale total vs bank + TDS. */
+  /* 4. Money: Zoho payment vs bank line; sale total vs bank + TDS; (d) TDS only at 1 / 2 / 10 %. */
   const foreign = customer.kind === "new" ? !isIndia(customer.country) : !isIndia(appCust?.country);
   const gstRate = ctx.noGst || foreign ? 0 : 18;
   const preview = salePreview(bookLines, gstRate);
   const tds = Math.max(0, Math.round(match.payment.taxWithheld ?? 0));
+  const money = line.credit + tds;
   if (Math.abs(match.payment.amount - line.credit) > AMOUNT_SLACK) {
-    problems.push(`Amount differs: Zoho payment ${rupees(match.payment.amount)}, bank line ${rupees(line.credit)}.`);
-  } else if (lines.length && Math.abs(preview.total - (line.credit + tds)) > AMOUNT_SLACK) {
-    problems.push(`Amount differs: the sale comes to ${rupees(preview.total)}, the bank line${tds ? ` + TDS ${rupees(tds)}` : ""} is ${rupees(line.credit + tds)}.`);
+    zohoProblems.push(`Amount differs: Zoho payment ${rupees(match.payment.amount)}, bank line ${rupees(line.credit)}.`);
+  } else if (lines.length && Math.abs(preview.total - money) > AMOUNT_SLACK) {
+    saleProblems.push(`Amount differs: the sale comes to ${rupees(preview.total)}, the bank line${tds ? ` + TDS ${rupees(tds)}` : ""} is ${rupees(money)}.`);
   }
+  if (tds > 0 && lines.length && tdsPctWithin(tds, preview.taxable) === null) saleProblems.push(shortByText(tds, preview.taxable));
   const rate = tdsRate(tds, preview.taxable);
   const custGstin = customer.kind === "new" ? customer.gstin : appCust?.gstin ?? null;
   const section = tds > 0 ? tdsSectionGuess(rate, custGstin).section : null;
@@ -426,7 +626,7 @@ export function planRow(
     const hit = known.find((k) => k.payer_name_key === narr.key) ?? null;
     const differs = !payerMatchesCustomer(narr, customer.name, known);
     if (differs && match.by !== "utr") {
-      problems.push(`Payer differs: the bank says ${narr.name}, Zoho's customer is ${customer.name}, and Zoho matched by amount and date, not the UTR. Check it in the line's Reconcile.`);
+      payerProblems.push(`Payer differs: the bank says ${narr.name}, Zoho's customer is ${customer.name}, and Zoho matched by amount and date, not the UTR. Check it in the line's Reconcile.`);
       payer = { name: narr.name, payer: narr, record: null, differs };
     } else if (differs) {
       payer = { name: narr.name, payer: narr, differs, record: { relation: "third_party", note: `Zoho payment ${match.payment.number || match.payment.zohoId} carries this bank UTR` } };
@@ -435,38 +635,177 @@ export function planRow(
     }
   }
 
-  const externalNumber = zohoSaleNumber({ invoiceNumbers: [...match.invoices.map((i) => i.number), ...match.moreInvoices] });
-  const book: BookSpec = {
-    lines: bookLines,
-    createSubscription,
-    subStart: createSubscription && first ? first.start : null,
-    subRenewal: createSubscription && first ? first.renewal : null,
-    billingCycle: monthly && !annual ? "monthly" : null,
-    externalNumber,
+  /* 6. R-2419: what the row books — settle an opening balance (a), pay an open item (e), or a new
+     sale (with the double checks of f). A row that must not be booked as a sale has no book. */
+  const invoiceNumbers = [...match.invoices.map((i) => i.number), ...match.moreInvoices];
+  let kind = "new_sale" as BookKind;
+  let summary: string | null = null;
+  let item: PayItemSpec | null = null;
+  let opening: OpeningSpec | null = null;
+  const pathProblems: string[] = [];
+  let noBook = false;
+  const isExisting = customer.kind === "existing";
+  const firstZoho = match.invoices.flatMap((i) => i.lines).find((l) => l.start || l.end) ?? null;
+
+  const payItem = (it: OpenItemFact) => {
+    kind = "pay_item";
+    const ref = it.invoiceId ?? it.quoteId ?? "";
+    summary = `Pays open ${it.invoiceId ? "invoice" : "quote"} ${ref} (${rupees(it.due)} due) — no new sale`;
+    if (it.approvalBlock) {
+      pathProblems.push(`Approve ${it.quoteId ?? ref} first: ${it.approvalBlock} Then run this again.`);
+      noBook = true;
+    }
+    if (tds > 0 && tdsPctWithin(tds, it.taxable) === null) pathProblems.push(shortByText(tds, it.taxable));
+    const ended = !!firstZoho?.end && firstZoho.end < today;
+    const makeSub = it.makesSubscription ? !ended : null;
+    if (it.makesSubscription && ended) notes.push(`Zoho's term ended ${formatDate(firstZoho!.end)} — the quote is paid without making a subscription.`);
+    item = { quoteId: it.invoiceId ? null : it.quoteId, invoiceId: it.invoiceId, due: it.due, createSubscription: makeSub, subStart: makeSub ? firstZoho?.start ?? null : null };
+  };
+  const sameMoney = (due: number) => Math.abs(due - money) <= MATCH_SLACK;
+  const itemHits = facts ? facts.openItems.filter((o) => sameMoney(o.due)) : [];
+  const severalItems = () => {
+    pathProblems.push(`${itemHits.length} open quotes / invoices of ${customer.name} are for ${rupees(money)} (${itemHits.map((o) => o.invoiceId ?? o.quoteId).join(", ")}) — pick the right one in the line's Reconcile.`);
+    noBook = true;
+  };
+
+  const lastYear = match.invoices.length > 0 && match.invoices.some((inv) => isLastYearInvoice(inv, line.txnDate, opts.booksStart ?? null));
+  if (isExisting && facts == null && opts.requireFacts) {
+    pathProblems.push("Not checked for doubles: the app's open quotes and receipts for this customer were not read with this line — press Start again to read it afresh.");
+    noBook = true;
+  } else if (lastYear) {
+    kind = "opening";
+    const nos = invoiceNumbers.join(", ");
+    if (!match.invoices.every((inv) => isLastYearInvoice(inv, line.txnDate, opts.booksStart ?? null))) {
+      pathProblems.push(`The Zoho payment mixes last year's and this year's invoices (${nos}) — reconcile this line by hand.`);
+      noBook = true;
+    } else if (!isExisting) {
+      pathProblems.push(`No opening balance: ${customer.name} is not in the app, so it has no opening balance to settle — ${nos} is last year's invoice, never a new sale. Import Zoho's open invoices (Invoices → Import from Zoho), then run this again.`);
+      noBook = true;
+    } else if (invoiceNumbers.length > 1) {
+      pathProblems.push(`The Zoho payment settles several of last year's invoices (${nos}) — record it in Record payment against those opening invoices, then match the line by hand.`);
+      noBook = true;
+    } else {
+      const inv = match.invoices[0];
+      const byNo = (facts?.openings ?? []).find((o) => normNo(o.number) === normNo(inv.number)) ?? null;
+      const byAmount = (facts?.openings ?? []).filter((o) => sameMoney(o.due));
+      const op = byNo ?? (byAmount.length === 1 ? byAmount[0] : null);
+      if (op) {
+        summary = `Last year's invoice ${inv.number} — settles its opening balance (${rupees(op.due)} due), no new sale`;
+        if (!byNo) notes.push(`Opening invoice ${op.number ?? op.id} matched by amount (Zoho's number is ${inv.number}).`);
+        if (line.credit !== Math.round(line.credit)) {
+          pathProblems.push(`The bank line has paise (${line.credit}) — a receipt is in whole rupees. Reconcile this line by hand.`);
+        } else if (money > op.due) {
+          pathProblems.push(`Opening invoice ${op.number ?? op.id} has only ${rupees(op.due)} due, but the bank line${tds ? ` + TDS` : ""} is ${rupees(money)}. Reconcile this line by hand.`);
+          noBook = true;
+        }
+        if (tds > 0 && tdsPctWithin(tds, preview.taxable) === null) pathProblems.push(shortByText(tds, preview.taxable));
+        opening = { invoiceId: op.id, number: op.number, received: Math.round(line.credit), reference: (line.reference ?? "").trim() || `BANK-${line.id}` };
+      } else if (itemHits.length === 1) {
+        payItem(itemHits[0]);
+      } else if (itemHits.length > 1) {
+        severalItems();
+      } else {
+        pathProblems.push(`No opening balance: ${customer.name} has no open opening invoice ${inv.number} in the app — it is last year's invoice, so it is never booked as a new sale. Import Zoho's open invoices (Invoices → Import from Zoho), or reconcile this line by hand.`);
+        noBook = true;
+      }
+    }
+  } else if (isExisting && itemHits.length === 1) {
+    payItem(itemHits[0]);
+  } else if (isExisting && itemHits.length > 1) {
+    severalItems();
+  } else if (isExisting && facts) {
+    /* (f) the same money from this customer within 35 days. */
+    const dup = facts.receipts.find((r) => (Math.abs(r.amount - line.credit) <= MATCH_SLACK || Math.abs(r.amount - money) <= MATCH_SLACK)
+      && daysApart(r.date, line.txnDate) <= DOUBLE_DAYS);
+    if (dup) {
+      doubleProblems.push(`Possible double: ${customer.name} already paid ${rupees(dup.amount)} on ${formatDate(dup.date)}${dup.reference ? ` (ref ${dup.reference})` : ""} — within ${DOUBLE_DAYS} days. Check it is not this payment booked already.`);
+    }
+  }
+
+  const problems = kind === "new_sale"
+    ? [...custProblems, ...zohoProblems, ...saleProblems, ...pathProblems, ...doubleProblems, ...payerProblems]
+    : kind === "pay_item"
+      ? [...custProblems, ...zohoProblems, ...pathProblems, ...payerProblems]
+      : [...(isExisting ? [] : custProblems), ...zohoProblems, ...pathProblems, ...payerProblems];
+
+  const externalNumber = zohoSaleNumber({ invoiceNumbers });
+  const sale = kind === "new_sale";
+  const book: BookSpec | null = noBook ? null : {
+    kind,
+    item,
+    opening,
+    lines: sale ? bookLines : [],
+    createSubscription: sale ? createSubscription : false,
+    subStart: sale && createSubscription && first ? first.start : null,
+    subRenewal: sale && createSubscription && first ? first.renewal : null,
+    billingCycle: sale && bookLines.some((l) => l.cycle === "monthly") && !bookLines.some((l) => l.cycle === "annual_yearly") ? "monthly" : null,
+    externalNumber: sale ? externalNumber : null,
     tdsAmount: tds,
     tdsRatePct: tds > 0 ? rate : null,
     tdsSection: section,
-    dateFixes: createSubscription ? dateFixes : [],
+    dateFixes: sale && createSubscription ? dateFixes : [],
   };
 
   return {
-    txnId: line.id, txnDate: line.txnDate, credit: line.credit, description: line.description, kind: "match",
+    txnId: line.id, txnDate: line.txnDate, credit: line.credit, description: line.description, kind: "match", summary,
     zoho: {
       paymentId: match.payment.zohoId, paymentNumber: match.payment.number || null, by: match.by,
-      amount: match.payment.amount, invoiceNumbers: [...match.invoices.map((i) => i.number), ...match.moreInvoices], candidates: 1,
+      amount: match.payment.amount, invoiceNumbers, candidates: 1,
     },
-    customer, lines, seatDiffs, saleTotal: lines.length ? preview.total : null, tds, payer,
-    problems, notes, ticked: problems.length === 0, book,
+    customer, lines, seatDiffs: sale ? seatDiffs : [], saleTotal: lines.length ? preview.total : null, tds, payer,
+    problems, notes, ticked: problems.length === 0 && book !== null, book,
   };
 }
 
 /** One answer of the bulk-match route → its plan row; "none" (not in Zoho) → null (left out). */
 export function planFromResult(
-  line: BulkLine, result: FindZohoResult, contact: ZohoContactInfo | null, ctx: PlanContext,
+  line: BulkLine, result: FindZohoResult, contact: ZohoContactInfo | null, ctx: PlanContext, opts: PlanOptions = {},
 ): PlanRow | null {
   if (result.kind === "none") return null;
   if (result.kind === "several") return severalRow(line, result.candidates.length);
-  return planRow(line, result.match, contact, ctx);
+  return planRow(line, result.match, contact, ctx, opts);
+}
+
+/**
+ * R-2419 — the plan of a whole run. Each row as planFromResult (with the app's facts, which an app
+ * customer's row must carry), then (b): of the NEW subscriptions one customer + domain + product
+ * would get across the run, only the newest line (Zoho period start, then bank date) makes it; the
+ * older lines become charges on it.
+ */
+export function planAll(rows: readonly BulkMatchRow[], ctx: PlanContext): PlanRow[] {
+  const opt = (r: BulkMatchRow, chargeOnNew?: ReadonlyMap<number, { label: string; date: string }>): PlanOptions =>
+    ({ facts: r.facts, booksStart: r.booksStart ?? null, requireFacts: true, chargeOnNew });
+  const plans = rows.map((r) => planFromResult(r.line, r.result, r.contact, ctx, opt(r)));
+
+  type Cand = { row: number; idx: number; when: string; txn: string; label: string };
+  const groups = new Map<string, Cand[]>();
+  plans.forEach((p, row) => {
+    if (!p || p.kind !== "match" || !p.customer || (p.book && p.book.kind !== "new_sale")) return;
+    const ck = p.customer.kind === "existing" ? `id:${p.customer.id}` : newCustomerKey(p.customer);
+    p.lines.forEach((l, idx) => {
+      if (l.action !== "new_sub") return;
+      const key = `${ck}|${l.domain ?? ""}|${normProduct(l.name)}`;
+      const list = groups.get(key) ?? [];
+      list.push({ row, idx, when: l.start ?? p.txnDate, txn: p.txnDate, label: l.domain ?? l.name });
+      groups.set(key, list);
+    });
+  });
+  const demote = new Map<number, Map<number, { label: string; date: string }>>();
+  for (const list of groups.values()) {
+    if (new Set(list.map((c) => c.row)).size < 2) continue;
+    const win = list.reduce((a, b) => (b.when > a.when || (b.when === a.when && (b.txn > a.txn || (b.txn === a.txn && b.row > a.row))) ? b : a));
+    for (const c of list) {
+      if (c.row === win.row) continue;
+      const m = demote.get(c.row) ?? new Map<number, { label: string; date: string }>();
+      m.set(c.idx, { label: win.label, date: win.when });
+      demote.set(c.row, m);
+    }
+  }
+  return plans.map((p, i) => {
+    const d = demote.get(i);
+    const r = rows[i];
+    return d ? planFromResult(r.line, r.result, r.contact, ctx, opt(r, d)) : p;
+  }).filter((p): p is PlanRow => !!p);
 }
 
 /** The rows "Book selected" sends: ticked, bookable, not booked already (in this run or before). */

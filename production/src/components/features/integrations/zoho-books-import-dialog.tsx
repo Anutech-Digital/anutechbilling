@@ -11,6 +11,10 @@
  * said on screen, because older live multi-year terms are not seen.
  * R-1760: Import (and Undo) go part by part — "Importing… 300 of 1,245 customers" — and keep
  * calling until done; after an error the reason shows with "Continue import", which resumes.
+ * R-2406: the dry run shows the three parts with ticks — Customers (optionally only those with a
+ * Zoho invoice in the last N months) / Subscriptions / Open invoices (OFF by default, the reason
+ * said: their money is booked here through bank reconcile). Open invoices already paid in the
+ * app are listed as "Already paid in the app" and never imported. Only ticked parts are imported.
  */
 import * as React from "react";
 import { toast } from "sonner";
@@ -21,6 +25,9 @@ import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { useAskText, useConfirm } from "@/components/providers/confirm-provider";
 import { formatDate, rupee } from "@/lib/utils";
+import {
+  CUSTOMER_MONTHS, DEFAULT_CHOICE, OPEN_INVOICES_OFF_REASON, type ImportChoice,
+} from "@/lib/integrations/zoho-books/import-choice";
 import {
   importPercent, importProgressText, undoProgressText, UNDO_STOPPED_TEXT, type ImportProgress, type ImportStage,
 } from "@/lib/integrations/zoho-books/import-parts";
@@ -55,6 +62,20 @@ interface Summary {
   };
   totals: { mrr: number; openBalance: number };
   problems: ProblemGroup[];
+  /* R-2406: what the ticks bring in */
+  choice?: ImportChoice;
+  chosen?: { customersNew: number; customersForOtherParts: number; customersLeftOut: number; subscriptions: number; invoices: number };
+  chosenTotals?: { mrr: number; openBalance: number };
+  recentSince?: string | null;
+  paidInApp?: { count: number; balance: number; examples: string[] };
+}
+
+/** R-2406: the request fields for a choice. */
+export function choiceBody(c: ImportChoice) {
+  return {
+    parts: { customers: c.customers, subscriptions: c.subscriptions, invoices: c.invoices },
+    customer_months: c.customerMonths ?? "all",
+  };
 }
 
 const fmt = (n: number) => n.toLocaleString("en-IN");
@@ -79,6 +100,14 @@ export function phaseText(r: RunView): string {
   return "Read from Zoho";
 }
 
+/** R-2406: what the ticks bring in (an older answer without the choice → everything). */
+export function chosenCounts(s: Summary) {
+  return s.chosen ?? {
+    customersNew: s.counts.customersNew, customersForOtherParts: 0, customersLeftOut: 0,
+    subscriptions: s.counts.subscriptionsToImport, invoices: s.counts.invoicesToImport,
+  };
+}
+
 export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
   open: boolean; onOpenChange: (v: boolean) => void; orgName: string;
 }) {
@@ -95,6 +124,7 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
   const [loaded, setLoaded] = React.useState(false);
   const [progress, setProgress] = React.useState<ImportProgress | null>(null);
   const [undoText, setUndoText] = React.useState<string | null>(null);
+  const [choice, setChoice] = React.useState<ImportChoice>(DEFAULT_CHOICE);
   const openRef = React.useRef(open);
   openRef.current = open;
 
@@ -113,10 +143,10 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
     void load();
   }, [open, load]);
 
-  const loadSummary = React.useCallback(async () => {
+  const loadSummary = React.useCallback(async (c: ImportChoice) => {
     setBusy("dry");
     try {
-      const { ok, data } = await post({ action: "dry_run" });
+      const { ok, data } = await post({ action: "dry_run", ...choiceBody(c) });
       if (!ok) { setError(String(data.error ?? "Could not work out the dry run.")); return; }
       setSummary(data.summary as Summary);
     } finally { setBusy(null); }
@@ -147,9 +177,16 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
   React.useEffect(() => {
     if (open && run?.phase === "ready" && !run.import_stage && !summary && busy !== "dry") {
       setReading(false);
-      void loadSummary();
+      void loadSummary(choice);
     }
-  }, [open, run, summary, busy, loadSummary]);
+  }, [open, run, summary, busy, loadSummary, choice]);
+
+  /* R-2406: a tick (or the months) changed → the dry run is worked out again for it. */
+  function changeChoice(patch: Partial<ImportChoice>) {
+    const next = { ...choice, ...patch };
+    setChoice(next);
+    if (run?.phase === "ready" && !run.import_stage) void loadSummary(next);
+  }
 
   async function startDryRun() {
     if (run) {
@@ -173,10 +210,10 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
 
   async function doImport() {
     if (!summary) return;
-    const c = summary.counts;
+    const c = chosenCounts(summary);
     const ok = await confirm({
       title: "Import from Zoho Books?",
-      body: `${fmt(c.customersNew)} new customers, ${fmt(c.subscriptionsToImport)} live subscriptions and ${fmt(c.invoicesToImport)} open invoices come into this company, part by part — keep this window open until it finishes.\nExisting customers are not changed. Open invoices do not count as GST or revenue. You can undo the import until a payment is recorded on it.`,
+      body: `${fmt(c.customersNew)} new customers, ${fmt(c.subscriptions)} live subscriptions and ${fmt(c.invoices)} open invoices come into this company, part by part — keep this window open until it finishes.\nExisting customers are not changed.${c.invoices > 0 ? " Open invoices do not count as GST or revenue." : " No open invoices are imported, so nothing new shows as due."} You can undo the import until a payment is recorded on it.`,
       confirmLabel: "Import",
     });
     if (!ok) return;
@@ -189,7 +226,7 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
     setError(null);
     try {
       for (let guard = 0; guard < 2000; guard++) {
-        const { ok: fine, data } = await post({ action: "import" });
+        const { ok: fine, data } = await post({ action: "import", ...choiceBody(choice) });
         if (!fine) {
           setError(String(data.error ?? "The import stopped. Press Continue import."));
           await load();
@@ -276,6 +313,9 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
       totals: run.import_totals ?? { customers: 0, subscriptions: 0, invoices: 0 }, done: false, result: null,
     } : null);
   const undoing = Boolean(run?.undo_started_at);
+  const chosen = summary
+    ? chosenCounts(summary)
+    : { customersNew: 0, customersForOtherParts: 0, customersLeftOut: 0, subscriptions: 0, invoices: 0 };
   const result = lastImport && !lastImport.undone_at ? lastImport.result : null;
   const pct = run?.phase === "details" && run.details_total > 0
     ? Math.round((run.details_done / run.details_total) * 100)
@@ -375,23 +415,55 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
 
           {summary && run?.phase === "ready" && !importNow && (
             <div className="space-y-3" data-testid="zoho-dry-run">
-              <dl className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-                <div className="rounded-lg border border-hairline p-3">
-                  <dt className="text-xs text-ink-3">New customers</dt>
-                  <dd className="text-lg font-semibold tabular-nums text-ink">{fmt(summary.counts.customersNew)}</dd>
-                  <dd className="text-2xs text-ink-3">{fmt(summary.counts.customersExisting)} already here</dd>
+              <fieldset className="grid grid-cols-1 gap-2 sm:grid-cols-3" disabled={busy !== null}>
+                <legend className="mb-1 text-xs font-medium text-ink-2">Tick what to import</legend>
+                <div className="rounded-lg border border-hairline p-3" data-testid="zoho-part-customers">
+                  <label className="flex items-center gap-2 text-xs text-ink-3">
+                    <input type="checkbox" checked={choice.customers} onChange={(e) => changeChoice({ customers: e.target.checked })} />
+                    New customers
+                  </label>
+                  <p className="text-lg font-semibold tabular-nums text-ink">{fmt(chosen.customersNew)}</p>
+                  <p className="text-2xs text-ink-3">{fmt(summary.counts.customersExisting)} already here · {fmt(chosen.customersLeftOut)} left out</p>
+                  {chosen.customersForOtherParts > 0 && (
+                    <p className="text-2xs text-ink-3">{fmt(chosen.customersForOtherParts)} come in only for their subscriptions or invoices</p>
+                  )}
+                  <label htmlFor="zoho-customer-months" className="mt-2 block text-2xs text-ink-3">With a Zoho invoice in the last</label>
+                  <select id="zoho-customer-months" value={choice.customerMonths ?? "all"} disabled={!choice.customers || busy !== null}
+                    onChange={(e) => changeChoice({ customerMonths: e.target.value === "all" ? null : Number(e.target.value) })}
+                    className="mt-0.5 w-full rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink">
+                    {CUSTOMER_MONTHS.map((m) => <option key={m} value={m}>{m} months</option>)}
+                    <option value="all">Any time (every Zoho customer)</option>
+                  </select>
                 </div>
-                <div className="rounded-lg border border-hairline p-3">
-                  <dt className="text-xs text-ink-3">Live subscriptions</dt>
-                  <dd className="text-lg font-semibold tabular-nums text-ink">{fmt(summary.counts.subscriptionsToImport)}</dd>
-                  <dd className="text-2xs text-ink-3">MRR {rupee(summary.totals.mrr)} · {fmt(summary.counts.subscriptionsAlready)} already here</dd>
+                <div className="rounded-lg border border-hairline p-3" data-testid="zoho-part-subscriptions">
+                  <label className="flex items-center gap-2 text-xs text-ink-3">
+                    <input type="checkbox" checked={choice.subscriptions} onChange={(e) => changeChoice({ subscriptions: e.target.checked })} />
+                    Live subscriptions
+                  </label>
+                  <p className="text-lg font-semibold tabular-nums text-ink">{fmt(chosen.subscriptions)}</p>
+                  <p className="text-2xs text-ink-3">MRR {rupee(summary.totals.mrr)} · {fmt(summary.counts.subscriptionsAlready)} already here</p>
                 </div>
-                <div className="rounded-lg border border-hairline p-3">
-                  <dt className="text-xs text-ink-3">Open invoices</dt>
-                  <dd className="text-lg font-semibold tabular-nums text-ink">{fmt(summary.counts.invoicesToImport)}</dd>
-                  <dd className="text-2xs text-ink-3">{rupee(summary.totals.openBalance)} due · {fmt(summary.counts.invoicesAlready)} already here</dd>
+                <div className="rounded-lg border border-hairline p-3" data-testid="zoho-part-invoices">
+                  <label className="flex items-center gap-2 text-xs text-ink-3">
+                    <input type="checkbox" checked={choice.invoices} onChange={(e) => changeChoice({ invoices: e.target.checked })} />
+                    Open invoices
+                  </label>
+                  <p className="text-lg font-semibold tabular-nums text-ink">{fmt(chosen.invoices)}</p>
+                  <p className="text-2xs text-ink-3">{fmt(summary.counts.invoicesToImport)} open in Zoho · {rupee(summary.totals.openBalance)} due · {fmt(summary.counts.invoicesAlready)} already here</p>
                 </div>
-              </dl>
+              </fieldset>
+              {!choice.invoices && <p className="text-xs text-amber-ink" data-testid="zoho-invoices-off-reason">{OPEN_INVOICES_OFF_REASON}</p>}
+              {summary.paidInApp && summary.paidInApp.count > 0 && (
+                <details className="rounded-md border border-hairline px-3 py-2 text-xs" data-testid="zoho-paid-in-app">
+                  <summary className="cursor-pointer text-ink">
+                    {fmt(summary.paidInApp.count)} · Already paid in the app ({rupee(summary.paidInApp.balance)}) — not imported
+                  </summary>
+                  <ul className="mt-1 space-y-0.5 text-ink-3 break-words">
+                    {summary.paidInApp.examples.map((m, i) => <li key={i}>{m}</li>)}
+                    {summary.paidInApp.count > summary.paidInApp.examples.length && <li>…and {fmt(summary.paidInApp.count - summary.paidInApp.examples.length)} more</li>}
+                  </ul>
+                </details>
+              )}
               {summary.problems.length === 0
                 ? <p className="text-xs text-ink-3">No problems found.</p>
                 : (
@@ -443,7 +515,8 @@ export function ZohoBooksImportDialog({ open, onOpenChange, orgName }: {
           )}
           {run?.phase === "ready" && !importNow && (
             <Button variant="primary" onClick={doImport} loading={busy === "import" || busy === "dry"}
-              disabled={!summary || busy !== null || (summary.counts.customersNew + summary.counts.subscriptionsToImport + summary.counts.invoicesToImport) === 0}>
+              disabled={!summary || busy !== null || !(choice.customers || choice.subscriptions || choice.invoices)
+                || chosen.customersNew + chosen.subscriptions + chosen.invoices === 0}>
               Import
             </Button>
           )}
