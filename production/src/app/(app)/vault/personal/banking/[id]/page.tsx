@@ -46,7 +46,7 @@ import { rowLabel } from "@/lib/vault/personal/income-expense";
 import { isLiabilityAccount, type AccountKind } from "@/lib/vault/personal/net-worth";
 import { parseRupees } from "@/lib/vault/personal/parse-rupees";
 import { istToday } from "@/lib/dates/ist";
-import { formatDate } from "@/lib/utils";
+import { formatDate, rupee } from "@/lib/utils";
 
 const STATUS_LABEL = { unmatched: "Unmatched", matched: "Matched", entry: "Typed" } as const;
 
@@ -158,9 +158,9 @@ export default function PersonalBankAccountPage() {
         <Card className="p-4">
           <p className="text-2xs uppercase tracking-wide text-ink-3">In / Out</p>
           <p className="mt-1 text-sm text-ink">
-            <span className="text-emerald">+₹{(totals?.moneyIn ?? 0).toLocaleString("en-IN")}</span>
+            <span className="text-emerald">+{rupee(totals?.moneyIn ?? 0)}</span>
             {" · "}
-            <span>−₹{(totals?.moneyOut ?? 0).toLocaleString("en-IN")}</span>
+            <span>−{rupee(totals?.moneyOut ?? 0)}</span>
           </p>
         </Card>
         <Card className="p-4" data-testid="vba-check">
@@ -168,11 +168,11 @@ export default function PersonalBankAccountPage() {
           {check ? (
             <>
               <p className={`mt-1 text-sm font-medium ${check.matches ? "text-emerald" : "text-rose"}`}>
-                {check.matches ? "Matches the statement" : `Difference ₹${Math.abs(check.difference).toLocaleString("en-IN")}`}
+                {check.matches ? "Matches the statement" : `Difference ${rupee(Math.abs(check.difference))}`}
               </p>
               <p className="text-3xs text-ink-3 mt-0.5">
-                Statement ₹{check.statementBalance.toLocaleString("en-IN")} on {formatDate(check.statementDate)}
-                {!check.matches && <> · here ₹{check.appBalance.toLocaleString("en-IN")}</>}
+                Statement {rupee(check.statementBalance)} on {formatDate(check.statementDate)}
+                {!check.matches && <> · here {rupee(check.appBalance)}</>}
               </p>
               {!check.matches && <p className="text-3xs text-ink-2 mt-0.5">{statementCheckText(check)}</p>}
             </>
@@ -247,9 +247,9 @@ export default function PersonalBankAccountPage() {
                       {r.tx.party && <> · {r.tx.party}</>}
                     </p>
                   </td>
-                  <td className="px-2 py-2 text-right tabular-nums text-emerald">{r.moneyIn ? `₹${r.moneyIn.toLocaleString("en-IN")}` : ""}</td>
-                  <td className="px-2 py-2 text-right tabular-nums">{r.moneyOut ? `₹${r.moneyOut.toLocaleString("en-IN")}` : ""}</td>
-                  <td className="px-2 py-2 text-right tabular-nums text-ink-2">₹{r.running.toLocaleString("en-IN")}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-emerald">{r.moneyIn ? rupee(r.moneyIn) : ""}</td>
+                  <td className="px-2 py-2 text-right tabular-nums">{r.moneyOut ? rupee(r.moneyOut) : ""}</td>
+                  <td className="px-2 py-2 text-right tabular-nums text-ink-2">{rupee(r.running)}</td>
                   <td className="px-4 py-2 text-right">
                     {r.status === "unmatched" && <Button size="sm" variant="primary" onClick={() => setSheetLine(r.tx)}>Match</Button>}
                     {r.status === "matched" && <Button size="sm" variant="ghost" onClick={() => setSheetLine(r.tx)}>View</Button>}

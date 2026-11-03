@@ -47,7 +47,7 @@ import {
 import { EXPENSE_FORM_CATEGORIES, INCOME_SOURCES, KIND_LABEL, rowLabel } from "@/lib/vault/personal/income-expense";
 import { PAYMENT_KIND_LABEL, type LoanPaymentKind } from "@/lib/vault/personal/loans";
 import { OWE_HOLD_KIND_LABEL, type OweHoldKind } from "@/lib/vault/personal/owe-hold";
-import { formatDate } from "@/lib/utils";
+import { formatDate, rupee } from "@/lib/utils";
 
 const NEW = "__new__";
 const NONE = "__none__";
@@ -58,13 +58,6 @@ interface Props {
   accounts: readonly PersonalAccount[];
   onOpenChange: (open: boolean) => void;
 }
-
-const Field = ({ id, label, children }: { id: string; label: string; children: React.ReactNode }) => (
-  <div>
-    <label htmlFor={id} className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">{label}</label>
-    {children}
-  </div>
-);
 
 export function BankReconcileSheet({ line, account, accounts, onOpenChange }: Props) {
   return (
@@ -123,15 +116,18 @@ function SheetBody({ line, account, accounts, onDone }: { line: AccountTx; accou
   const ownExpense = (categoriesQ.data ?? []).filter((c) => c.direction === "expense").map((c) => c.name);
   const expenseCats = [...new Set([...EXPENSE_FORM_CATEGORIES, ...ownExpense])];
 
+  /** Something the owner still has to pick — what is missing, and what to do (§24). */
+  const need = (what: string, how: string) => { toast.error(what, { description: how }); };
+
   const save = async () => {
     let payload: Record<string, string | number | null | undefined> = {};
     switch (action) {
       case "expense":
-        if (!category) { toast.error("Pick a category."); return; }
+        if (!category) { need("Pick a category.", "Choose one in the Category box, then press Save match. Nothing was saved."); return; }
         payload = { category, party, rule_text: makeRule ? ruleText.trim() : undefined };
         break;
       case "income":
-        if (!incomeSource) { toast.error("Pick where the money came from."); return; }
+        if (!incomeSource) { need("Pick where the money came from.", "Choose the source (salary, rent, interest…), then press Save match. Nothing was saved."); return; }
         payload = { income_source: incomeSource, party, rule_text: makeRule ? ruleText.trim() : undefined };
         break;
       case "drawing":
@@ -142,25 +138,25 @@ function SheetBody({ line, account, accounts, onDone }: { line: AccountTx; accou
         payload = { other_account_id: otherAccount === NONE ? undefined : otherAccount };
         break;
       case "transfer":
-        if (otherAccount === NONE) { toast.error("Pick the other account."); return; }
+        if (otherAccount === NONE) { need("Pick the other account.", "Choose the account the money moved to or from. Nothing was saved."); return; }
         payload = { other_account_id: otherAccount, pair_tx_id: pairWith === NEW ? undefined : pairWith };
         break;
       case "loan":
-        if (!loanId) { toast.error("Pick the loan."); return; }
-        if (interest && !/^\d+$/.test(interest.replace(/,/g, ""))) { toast.error("Interest must be a whole amount in rupees."); return; }
+        if (!loanId) { need("Pick the loan.", "Choose the loan this EMI belongs to — or add the loan on the Loans page first. Nothing was saved."); return; }
+        if (interest && !/^\d+$/.test(interest.replace(/,/g, ""))) { need("Interest must be a whole amount in rupees.", "Type digits only, like 14167 — or leave it empty for the scheduled split. Nothing was saved."); return; }
         payload = { loan_id: loanId, pay_kind: payKind || undefined, interest: interest ? interest.replace(/,/g, "") : undefined };
         break;
       case "owe_hold":
         if (holdId === NEW) {
-          if (sign === -1) { toast.error("Pick the entry this payment settles."); return; }
-          if (!party.trim()) { toast.error("Type whose money it is."); return; }
+          if (sign === -1) { need("Pick the entry this payment settles.", "Choose the byana / held-money entry this payment is for. Nothing was saved."); return; }
+          if (!party.trim()) { need("Type whose money it is.", "Type the buyer or person the money belongs to. Nothing was saved."); return; }
           payload = { hold_kind: holdKind, party };
         } else {
           payload = { owe_hold_id: holdId };
         }
         break;
       case "match":
-        if (!matchId) { toast.error("Pick the entry this line is."); return; }
+        if (!matchId) { need("Pick the entry this line is.", "Choose one of the entries listed, or pick another type above. Nothing was saved."); return; }
         payload = { match_tx_id: matchId };
         break;
     }
@@ -229,33 +225,37 @@ function SheetBody({ line, account, accounts, onDone }: { line: AccountTx; accou
 
             {action === "expense" && (
               <>
-                <Field id="vbr-category" label="Category">
+                <div>
+                <label htmlFor="vbr-category" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Category</label>
                   <Select value={category} onValueChange={setCategory}>
                     <SelectTrigger id="vbr-category"><SelectValue placeholder="Pick a category" /></SelectTrigger>
                     <SelectContent>
                       {expenseCats.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                </Field>
-                <Field id="vbr-party" label="Paid to (optional)">
+                </div>
+                <div>
+                <label htmlFor="vbr-party" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Paid to (optional)</label>
                   <Input id="vbr-party" value={party} onChange={(e) => setParty(e.target.value)} placeholder="Shop / person" />
-                </Field>
+                </div>
               </>
             )}
 
             {action === "income" && (
               <>
-                <Field id="vbr-source" label="Where it came from">
+                <div>
+                <label htmlFor="vbr-source" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Where it came from</label>
                   <Select value={incomeSource} onValueChange={setIncomeSource}>
                     <SelectTrigger id="vbr-source"><SelectValue placeholder="Pick a source" /></SelectTrigger>
                     <SelectContent>
                       {INCOME_SOURCES.map((s) => <SelectItem key={s.id} value={s.id}>{s.label}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                </Field>
-                <Field id="vbr-party" label="Paid by (optional)">
+                </div>
+                <div>
+                <label htmlFor="vbr-party" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Paid by (optional)</label>
                   <Input id="vbr-party" value={party} onChange={(e) => setParty(e.target.value)} placeholder="Employer / tenant" />
-                </Field>
+                </div>
               </>
             )}
 
@@ -272,13 +272,15 @@ function SheetBody({ line, account, accounts, onDone }: { line: AccountTx; accou
             )}
 
             {action === "drawing" && (
-              <Field id="vbr-party" label="Company (optional)">
+              <div>
+                <label htmlFor="vbr-party" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Company (optional)</label>
                 <Input id="vbr-party" value={party} onChange={(e) => setParty(e.target.value)} placeholder="Your company" />
-              </Field>
+              </div>
             )}
 
             {(action === "card_payment" || action === "atm_cash" || action === "transfer") && (
-              <Field id="vbr-other" label={action === "card_payment" ? (account.kind === "credit_card" ? "Paid from" : "Card paid") : action === "atm_cash" ? "Cash kept in (optional)" : sign === -1 ? "Moved to" : "Moved from"}>
+              <div>
+                <label htmlFor="vbr-other" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">{action === "card_payment" ? (account.kind === "credit_card" ? "Paid from" : "Card paid") : action === "atm_cash" ? "Cash kept in (optional)" : sign === -1 ? "Moved to" : "Moved from"}</label>
                 <Select value={otherAccount} onValueChange={(v) => { setOtherAccount(v); setPairWith(NEW); }}>
                   <SelectTrigger id="vbr-other"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -290,7 +292,7 @@ function SheetBody({ line, account, accounts, onDone }: { line: AccountTx; accou
                 {action !== "transfer" && otherAccount !== NONE && (
                   <p className="mt-1 text-3xs text-ink-3">The same amount is added on {otherAcc?.label} too.</p>
                 )}
-              </Field>
+              </div>
             )}
 
             {action === "transfer" && otherAcc && (
@@ -313,26 +315,29 @@ function SheetBody({ line, account, accounts, onDone }: { line: AccountTx; accou
 
             {action === "loan" && (
               <>
-                <Field id="vbr-loan" label={direction === "taken" ? "Loan you took" : "Loan you gave"}>
+                <div>
+                <label htmlFor="vbr-loan" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">{direction === "taken" ? "Loan you took" : "Loan you gave"}</label>
                   <Select value={loanId} onValueChange={setLoanId}>
                     <SelectTrigger id="vbr-loan"><SelectValue placeholder={loans.length ? "Pick the loan" : "No open loan — add it on Loans"} /></SelectTrigger>
                     <SelectContent>
                       {loans.map((l) => <SelectItem key={l.id} value={l.id}>{l.party}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                </Field>
+                </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field id="vbr-paykind" label="Payment">
+                  <div>
+                <label htmlFor="vbr-paykind" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Payment</label>
                     <Select value={payKind || payKinds[0]} onValueChange={(v) => setPayKind(v as LoanPaymentKind)}>
                       <SelectTrigger id="vbr-paykind"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         {payKinds.map((k) => <SelectItem key={k} value={k}>{PAYMENT_KIND_LABEL[k]}</SelectItem>)}
                       </SelectContent>
                     </Select>
-                  </Field>
-                  <Field id="vbr-interest" label="Interest part (₹)">
+                  </div>
+                  <div>
+                <label htmlFor="vbr-interest" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Interest part (₹)</label>
                     <Input id="vbr-interest" value={interest} onChange={(e) => setInterest(e.target.value)} inputMode="numeric" placeholder="Scheduled" />
-                  </Field>
+                  </div>
                 </div>
                 <p className="text-3xs text-ink-3">Leave the interest empty for the scheduled split. The rest of the line is principal.</p>
               </>
@@ -340,29 +345,32 @@ function SheetBody({ line, account, accounts, onDone }: { line: AccountTx; accou
 
             {action === "owe_hold" && (
               <>
-                <Field id="vbr-hold" label="Entry">
+                <div>
+                <label htmlFor="vbr-hold" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Entry</label>
                   <Select value={holdId} onValueChange={setHoldId}>
                     <SelectTrigger id="vbr-hold"><SelectValue /></SelectTrigger>
                     <SelectContent>
                       {sign === 1 && <SelectItem value={NEW}>New entry</SelectItem>}
                       {sign === -1 && <SelectItem value={NEW}>Pick an entry</SelectItem>}
-                      {holds.map((h) => <SelectItem key={h.id} value={h.id}>{h.party} · ₹{h.amount.toLocaleString("en-IN")}</SelectItem>)}
+                      {holds.map((h) => <SelectItem key={h.id} value={h.id}>{h.party} · {rupee(h.amount)}</SelectItem>)}
                     </SelectContent>
                   </Select>
-                </Field>
+                </div>
                 {sign === 1 && holdId === NEW && (
                   <div className="grid grid-cols-2 gap-3">
-                    <Field id="vbr-holdkind" label="Type">
+                    <div>
+                <label htmlFor="vbr-holdkind" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Type</label>
                       <Select value={holdKind} onValueChange={(v) => setHoldKind(v as OweHoldKind)}>
                         <SelectTrigger id="vbr-holdkind"><SelectValue /></SelectTrigger>
                         <SelectContent>
                           {(["advance_received", "held_for_other"] as const).map((k) => <SelectItem key={k} value={k}>{OWE_HOLD_KIND_LABEL[k]}</SelectItem>)}
                         </SelectContent>
                       </Select>
-                    </Field>
-                    <Field id="vbr-party" label="Whose money">
+                    </div>
+                    <div>
+                <label htmlFor="vbr-party" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Whose money</label>
                       <Input id="vbr-party" value={party} onChange={(e) => setParty(e.target.value)} placeholder="Buyer / daughter" />
-                    </Field>
+                    </div>
                   </div>
                 )}
                 <p className="text-3xs text-ink-3">Held money stays in the account but is taken off Net worth while it is open.</p>

@@ -13,6 +13,7 @@ import type { CategoryRule } from "@/lib/banking/categorise";
 import type { PersonalImportLine as MappedLine } from "./import";
 import { PERSONAL_INCOME_CATEGORIES } from "./categories";
 import { ACCOUNT_KIND_LABEL, type AccountKind } from "./net-worth";
+import { rupee } from "@/lib/utils";
 
 export const IN_KINDS: ReadonlySet<string> = new Set([
   "drawing", "dividend", "salary", "interest", "other_income", "transfer_in", "refund",
@@ -177,10 +178,10 @@ export function checkAgainstStatement(rows: readonly LedgerRow[]): StatementBala
 /** One plain sentence for the check. */
 export function statementCheckText(c: StatementBalanceCheck): string {
   if (c.matches) return "Matches the statement.";
-  const amt = Math.abs(c.difference).toLocaleString("en-IN");
+  const amt = rupee(Math.abs(c.difference));
   return c.difference > 0
-    ? `₹${amt} more here than on the statement. Check for money in counted twice, a money-out line missing here, or a wrong opening balance.`
-    : `₹${amt} less here than on the statement. Check for an entry counted twice (match it with "Already entered"), a money-in line missing here, or a wrong opening balance.`;
+    ? `${amt} more here than on the statement. Check for money in counted twice, a money-out line missing here, or a wrong opening balance.`
+    : `${amt} less here than on the statement. Check for an entry counted twice (match it with "Already entered"), a money-in line missing here, or a wrong opening balance.`;
 }
 
 // ─── what a line can be matched to ───────────────────────────────────────────

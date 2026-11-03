@@ -14,6 +14,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { requireIdentity, invalidateAll } from "@/lib/queries/personal-vault";
 import type { LedgerTx, ReconcileAction } from "@/lib/vault/personal/bank-ledger";
 
@@ -21,21 +22,21 @@ const db = () => createClient() as unknown as SupabaseClient;
 
 export type AccountTx = LedgerTx & { tenant_id: string; owner_user_id: string; import_batch_id: string | null };
 
-/** Every line on one account, oldest first (a personal account has hundreds, not lakhs). */
+/** Every line on one account, oldest first. */
 export function useAccountTransactions(accountId: string | null | undefined) {
   return useQuery({
     queryKey: ["personal-vault", "account-transactions", accountId],
     enabled: !!accountId,
     queryFn: async (): Promise<AccountTx[]> => {
-      const { data, error } = await db()
+      // Paged (the data gateway answers at most 1000 rows a request); the order ends on id.
+      return fetchAllRows<AccountTx>((from, to) => db()
         .from("personal_transactions")
         .select("*")
         .eq("account_id", accountId!)
         .order("occurred_on", { ascending: true })
         .order("created_at", { ascending: true })
-        .limit(5000);
-      if (error) throw error;
-      return (data ?? []) as AccountTx[];
+        .order("id", { ascending: true })
+        .range(from, to) as unknown as PromiseLike<{ data: AccountTx[] | null; error: unknown }>);
     },
     staleTime: 15_000,
   });
