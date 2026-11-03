@@ -289,6 +289,38 @@ export function useNewSaleFromBankCredit() {
   });
 }
 
+/** R-2427 (3): the reconcile_bank_credit_new_sale_fx arguments for the sheet's Save of a Find-in-Zoho
+ *  prefill in a foreign currency — no TDS (a foreign customer deducts none); the Zoho number always sent. */
+export function newSaleFxRpcArgs(i: NewSaleInput, fx: { currency: string; rate: number; foreignAmount: number }) {
+  const a = newSaleArgs(i);
+  return {
+    p_txn_id: a.p_txn_id, p_customer_id: a.p_customer_id, p_lines: a.p_lines,
+    p_create_subscription: a.p_create_subscription, p_sub_start: a.p_sub_start, p_sub_renewal: a.p_sub_renewal,
+    p_billing_cycle: a.p_billing_cycle, p_external_number: i.externalNumber?.trim() || null,
+    p_currency: fx.currency, p_fx_rate: fx.rate, p_foreign_amount: fx.foreignAmount,
+  };
+}
+
+/** R-2427 (3): a new sale in the remittance's currency at the bank's rate (one atomic call: sale,
+ *  receipt, reconcile, quote + invoice stamped with the currency and rate). Never billed in parts. */
+export function useNewSaleFxFromBankCredit() {
+  const after = useAfterPay();
+  return useMutation({
+    mutationFn: async ({ input, fx }: { input: NewSaleInput; fx: { currency: string; rate: number; foreignAmount: number } }): Promise<PayForResult> => {
+      if (input.billingCycle && isSplitBilled(input.billingCycle)) {
+        throw new Error(`A sale in ${fx.currency} billed in parts cannot be booked here — choose a yearly term, or book it in ₹.`);
+      }
+      if (input.tdsAmount > 0) throw new Error(`A customer abroad deducts no Indian TDS — clear the TDS to book this sale in ${fx.currency}.`);
+      const { data, error } = await rpc("reconcile_bank_credit_new_sale_fx", newSaleFxRpcArgs(input, fx));
+      if (error) throw error;
+      if (!data) throw new Error("The sale was not confirmed — refresh the page to see whether it was saved.");
+      return data as PayForResult;
+    },
+    onSuccess: after,
+    onError: onPayError,
+  });
+}
+
 /* ─── R-2025 (0): which reconciled bank lines are customer ADVANCES (row badge "Advance") ─── */
 
 /** The payment ids (matched_to_id of "payment" lines) that are R-1863 advances — read-only. */

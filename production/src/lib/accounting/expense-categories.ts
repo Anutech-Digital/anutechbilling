@@ -45,5 +45,8 @@ export const EXPENSE_CATEGORIES = [
      P&L (lib/accounting/credit-line.ts). Booked by Banking → Reconcile → Loan / EMI → Credit line
      / loan repayment; the principal part reduces the loan and is never an expense. */
   "Interest on loans / OD",
+  /* R-2427: the exchange difference when an export invoice is paid at another rate than it was
+     issued at (AS-11) — booked by Reconcile from Zoho on the bank line; a gain is a negative amount. */
+  "Foreign Exchange Gain / Loss",
   "Other",
 ] as const;
