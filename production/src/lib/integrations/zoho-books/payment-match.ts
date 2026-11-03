@@ -19,8 +19,12 @@ import {
   CF_SERVICE_EXPIRY, CF_SUBS_PERIOD, getContact, getCustomerPayment, getInvoiceDetail, invoiceFieldValue,
   listCustomerPaymentsPage,
 } from "./api";
-import { monthsOf, parseLineDescription, subsPeriodMonths } from "./import-plan";
-import { parseZohoDate } from "@/lib/import/zoho-opening-invoices";
+import { mapGstTreatment, monthsOf, parseLineDescription, subsPeriodMonths } from "./import-plan";
+import { parsePlaceOfSupply, parseZohoDate } from "@/lib/import/zoho-opening-invoices";
+import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
+import { normalizeCountry } from "@/lib/gst/countries";
+import { GST_STATE_BY_CODE } from "@/lib/utils";
+import type { CustomerGstTreatment } from "@/lib/gst/customer-gst-treatment";
 import { parseInwardRemittance, type InwardRemittance } from "@/lib/banking/inward-remittance";
 
 /** ₹ either side of the bank amount the fallback accepts (bank charges / round-off). */
@@ -80,10 +84,47 @@ export interface ZohoMatchInvoice {
   lines: ZohoMatchLine[];
 }
 
+/** The Zoho customer of a match. R-2363: also WHERE it is, so "Create customer" makes it right
+ *  (optional only so older hand-built matches in tests still type-check). */
+export interface ZohoMatchCustomer {
+  zohoId: string;
+  name: string;
+  gstin: string | null;
+  /** "India", a foreign country's list name, or "" (Zoho says overseas but gives no country). */
+  country?: string;
+  /** Zoho's GST treatment in our words; null = Zoho gave none (the form picks from the facts). */
+  gstTreatment?: CustomerGstTreatment | null;
+  /** Indian GST state name, or the foreign state / province Zoho has; null = not known. */
+  state?: string | null;
+}
+
+/**
+ * R-2363 — where a Zoho customer is, from a Zoho contact (or invoice) record. Staging, 2 Nov: Ranz
+ * International LLC (Zoho: gst_treatment "overseas", billing country U.A.E) was created from Find in
+ * Zoho as India / unregistered. Overseas → the billing country ("" when Zoho has none — never India)
+ * and its own state; otherwise India, the state from place of contact, else the GSTIN, else an
+ * invoice's place of supply, else the billing state (the bulk "Reconcile from Zoho" — zohoContactInfo —
+ * reads the same contact fields in the same order). Nothing known
+ * → no state, never a guess.
+ */
+export function zohoCustomerPlace(
+  raw: Record<string, unknown>, gstin: string | null,
+): { country: string; gstTreatment: CustomerGstTreatment | null; state: string | null } {
+  const code = str(raw.gst_treatment);
+  const billing = (raw.billing_address && typeof raw.billing_address === "object") ? raw.billing_address as Record<string, unknown> : {};
+  if ((code ?? "").toLowerCase() === "overseas") {
+    return { country: normalizeCountry(str(billing.country) ?? str(raw.country) ?? ""), gstTreatment: "overseas", state: str(billing.state) };
+  }
+  /* An invoice's place_of_supply is where ONE sale went (a branch), so it comes after the GSTIN. */
+  const stateCode = parsePlaceOfSupply(str(raw.place_of_contact)) ?? stateCodeFromGstin(gstin)
+    ?? parsePlaceOfSupply(str(raw.place_of_supply)) ?? parsePlaceOfSupply(str(billing.state));
+  return { country: "India", gstTreatment: mapGstTreatment(code), state: stateCode ? GST_STATE_BY_CODE[stateCode] ?? null : null };
+}
+
 export interface ZohoPaymentMatch {
   by: "utr" | "amount_date" | "picked";
   payment: ZohoPaymentRow;
-  customer: { zohoId: string; name: string; gstin: string | null };
+  customer: ZohoMatchCustomer;
   invoices: ZohoMatchInvoice[];
   /** Invoice numbers the payment was applied to beyond MAX_INVOICES (not read). */
   moreInvoices: string[];
@@ -264,8 +305,11 @@ export async function readZohoPaymentMatch(
 
   const invoices: ZohoMatchInvoice[] = [];
   let gstin: string | null = null;
+  /* R-2363: the record that says where the customer is — the invoice that gave the GSTIN, else the contact. */
+  let placeFrom: Record<string, unknown> = {};
   for (const a of applied.slice(0, MAX_INVOICES)) {
     const inv = await getInvoiceDetail(deps.orgId, deps.token, a.id, f);
+    if (!gstin && str(inv.gst_no)) placeFrom = inv;
     gstin = gstin ?? str(inv.gst_no);
     invoices.push({
       zohoId: a.id,
@@ -279,11 +323,20 @@ export async function readZohoPaymentMatch(
   if (!gstin && payment.customerZohoId) {
     const contact = await getContact(deps.orgId, deps.token, payment.customerZohoId, f);
     gstin = str(contact.gst_no);
+    placeFrom = contact;
   }
+  const upperGstin = gstin ? gstin.toUpperCase() : null;
+  const place = zohoCustomerPlace(placeFrom, upperGstin);
   return {
     by,
     payment,
-    customer: { zohoId: payment.customerZohoId, name: payment.customerName, gstin: gstin ? gstin.toUpperCase() : null },
+    customer: {
+      zohoId: payment.customerZohoId, name: payment.customerName,
+      /* Kept even for an overseas customer: the app-customer match (mapZohoCustomer) uses it;
+         the Add-customer seed drops it for overseas (newCustomerSeedFromZoho). */
+      gstin: upperGstin,
+      ...place,
+    },
     invoices,
     moreInvoices: applied.slice(MAX_INVOICES).map((a) => a.number),
   };

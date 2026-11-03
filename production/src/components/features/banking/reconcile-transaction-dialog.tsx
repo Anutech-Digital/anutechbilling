@@ -64,6 +64,7 @@ import { payeeFromNarration, TEST_TRANSFER_MAX } from "@/lib/banking/narration";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
+import type { NewCustomerSeed } from "./zoho-find-panel";
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
 import { CreditPayForSection } from "@/components/features/banking/credit-pay-for-section";
 import { RazorpaySettlementSection } from "@/components/features/banking/razorpay-settlement-section";
@@ -350,7 +351,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      picks the customer it creates. */
   const [newCustomerOpen, setNewCustomerOpen] = React.useState(false);
   /* R-2360: "Create customer" from Find in Zoho starts the form with Zoho's name + GSTIN. */
-  const [newCustomerSeed, setNewCustomerSeed] = React.useState<{ name: string; gstin: string | null } | null>(null);
+  const [newCustomerSeed, setNewCustomerSeed] = React.useState<NewCustomerSeed | null>(null);
   const [createdCustomer, setCreatedCustomer] = React.useState<string | null>(null);
   /* R-2095 (Sept reconcile): the new customer is picked only once the list has it — before, the pick
      sometimes landed before the customers list refetched and the drawer showed no customer. */
