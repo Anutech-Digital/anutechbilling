@@ -8,7 +8,7 @@
 --
 -- Proves:
 --   A. Sole owner (+ an active manager + sales) — own MANAGER-tier and no-tier quotes, NO
---      reason → refused ("only approver … write why").
+--      reason → refused ("You are the only owner of this company, so approving … needs a reason").
 --   B. Same, with a reason → approved; approval_note saved; approved_by = owner;
 --      activity_log 'quote.self_approved' "Self-approved by sole owner: <reason>".
 --   C. Two active owners → the maker owner is refused even with a reason (owner tier and

@@ -182,7 +182,7 @@ export const SELF_APPROVAL_MIN_REASON = 10;
  * decides at any tier. `team` = the company's ACTIVE logins; undefined = not loaded yet → no.
  * The server trigger trg_quote_approval_not_by_maker applies the same rule.
  */
-export function isSoleApprover(
+export function isSoleOwner(
   viewer: { id: string; role: string | null | undefined },
   team: readonly { id: string; role: string | null | undefined }[] | undefined,
 ): boolean {
@@ -237,7 +237,7 @@ export type SendGate =
  * banner and the approvals queue can never name different people.
  */
 /** R-2383/R-2426: the next step the company's only owner sees on their own quote. */
-export const SOLE_APPROVER_STEP = "You are the only owner — open Review & decide and write why this price is OK.";
+export const SOLE_APPROVER_STEP = "As the only owner you may approve it yourself — open Review & decide and write why this price is OK.";
 
 export function canSend(
   record: ApprovalRecord,
@@ -323,7 +323,7 @@ export function canApprove(
   if (ownRequest || madeIt) {
     /* R-2426: the company's only owner may clear it — with a written reason,
        which the drawer asks for and the server insists on. Anyone else stays refused. */
-    if (isSoleApprover(viewer, team)) return { allowed: true, selfApproval: true };
+    if (isSoleOwner(viewer, team)) return { allowed: true, selfApproval: true };
     /* R-2426: `ownQuote` lets the drawer say "ask ANOTHER owner", not "ask the owner". */
     return ownRequest
       ? { allowed: false, ownQuote: true, reason: "You cannot approve your own quote." }

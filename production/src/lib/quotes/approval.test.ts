@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   requiredApproval, discountBps, marginBps, isStale, canSend, canApprove, approvalBadge,
-  isSoleApprover, SOLE_APPROVER_STEP, SELF_APPROVAL_MIN_REASON,
+  isSoleOwner, SOLE_APPROVER_STEP, SELF_APPROVAL_MIN_REASON,
   AUTO_APPROVE_DISCOUNT_BPS, MANAGER_MAX_DISCOUNT_BPS, OWNER_MARGIN_FLOOR_BPS,
   type QuoteEconomics, type ApprovalRecord,
 } from "./approval";
@@ -204,12 +204,12 @@ describe("R-2383: the company's sole owner may approve their own quote (with a r
     expect(canApprove(owner, rec({ makers: ["o1"] }), belowCost).allowed).toBe(false);
   });
 
-  it("isSoleApprover ignores the viewer themself", () => {
-    expect(isSoleApprover(owner, [owner])).toBe(true);
-    expect(isSoleApprover(owner, [owner, { id: "m1", role: "manager" }])).toBe(true);
-    expect(isSoleApprover(owner, [owner, { id: "o2", role: "owner" }])).toBe(false);
-    expect(isSoleApprover(owner, undefined)).toBe(false);
-    expect(isSoleApprover({ id: "o1", role: "manager" }, [])).toBe(false);
+  it("isSoleOwner ignores the viewer themself", () => {
+    expect(isSoleOwner(owner, [owner])).toBe(true);
+    expect(isSoleOwner(owner, [owner, { id: "m1", role: "manager" }])).toBe(true);
+    expect(isSoleOwner(owner, [owner, { id: "o2", role: "owner" }])).toBe(false);
+    expect(isSoleOwner(owner, undefined)).toBe(false);
+    expect(isSoleOwner({ id: "o1", role: "manager" }, [])).toBe(false);
   });
 
   it("canSend tells the sole owner the way on instead of 'nobody can approve'", () => {

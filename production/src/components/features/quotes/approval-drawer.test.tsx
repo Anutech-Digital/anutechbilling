@@ -139,6 +139,31 @@ describe("R-2426: the only owner is not blocked by a manager", () => {
     expect(screen.getByText("Ask a manager or another owner to open this quote and decide.")).toBeTruthy();
   });
 
+  it("a non-owner maker is told to ask THE owner, never 'another owner'", () => {
+    const mgr = { id: "m1", role: "manager" };
+    render(
+      <ApprovalDrawer
+        open onOpenChange={() => {}} quoteId="Q-5" quoteLabel="Q-5"
+        economics={floorEconomics} requirement={floorNeed} record={rec({ status: "pending", tier: "owner", requestedBy: "m1", makers: ["m1"] })}
+        viewer={mgr} team={[owner, mgr]}
+      />,
+    );
+    expect(screen.queryByText(/another owner/)).toBeNull();
+    expect(screen.getByText(/Ask (a manager or )?the owner to open this quote and decide\./)).toBeTruthy();
+  });
+
+  it("team still loading → no refusal shown to the owner yet", () => {
+    render(
+      <ApprovalDrawer
+        open onOpenChange={() => {}} quoteId="Q-6" quoteLabel="Q-6"
+        economics={floorEconomics} requirement={floorNeed} record={rec({ status: "pending", tier: "owner", requestedBy: "o1" })}
+        viewer={owner} team={undefined}
+      />,
+    );
+    expect(screen.getByText("Checking who else is an owner…")).toBeTruthy();
+    expect(screen.queryByText("You cannot approve your own quote.")).toBeNull();
+  });
+
   it("owner + manager, manager-tier quote → the only owner may still clear it", () => {
     const disc = { subtotal: 85_000, listTotal: 100_000, totalCost: 20_000 };
     render(

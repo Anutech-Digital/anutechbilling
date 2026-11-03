@@ -43,7 +43,7 @@ export function ApprovalDrawer({
   requirement: ApprovalRequirement;
   record: ApprovalRecord;
   viewer: { id: string; role: string | null | undefined };
-  /** R-2383: the company's active logins — decides whether the viewer is the only approver.
+  /** R-2383/R-2426: the company's active logins — decides whether the viewer is the only OWNER.
    *  Undefined = not loaded (a maker is then refused). */
   team?: readonly { id: string; role: string | null | undefined }[];
 }) {
@@ -56,6 +56,9 @@ export function ApprovalDrawer({
 
   const permission = canApprove(viewer, record, requirement, team);
   const selfApproval = permission.allowed && permission.selfApproval === true;
+  /* R-2426: an owner's own quote while the team is still loading — not a refusal yet. */
+  const ownerMaker = permission.ownQuote === true && viewer.role === "owner";
+  const teamLoading = ownerMaker && team === undefined;
   const noteOk = note.trim().length >= SELF_APPROVAL_MIN_REASON;
   const pct = (bps: number | null) => (bps === null ? "unknown" : `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 2)}%`);
   const discountRupees = Math.max(0, economics.listTotal - economics.subtotal);
@@ -185,11 +188,15 @@ export function ApprovalDrawer({
             </div>
           )}
 
-          {!permission.allowed && (
+          {teamLoading && (
+            <p className="text-[12px] leading-snug text-ink-3" role="status">Checking who else is an owner…</p>
+          )}
+
+          {!permission.allowed && !teamLoading && (
             <div className="rounded-lg border border-hairline bg-paper-2/60 p-3 text-[12px] leading-snug text-ink-2">
               <b className="text-ink">{permission.reason}</b>
               <p className="mt-0.5 text-ink-3">
-                {permission.ownQuote
+                {ownerMaker
                   ? requirement.tier === "owner"
                     ? "Ask another owner to open this quote and decide."
                     : "Ask a manager or another owner to open this quote and decide."

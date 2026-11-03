@@ -54,7 +54,7 @@ begin
 
     /* R-2426: the company's ONLY active owner may clear their own quote, at any tier, with a
        reason. Owner of THIS quote's company, active; no other owner who is not switched off. */
-    v_tier := coalesce(old.approval_tier::text, new.approval_tier::text);
+    v_tier := coalesce(old.approval_tier::text, new.approval_tier::text);   -- for the activity log only; the tier no longer decides
 
     if not exists (select 1 from public.users u
                     where u.id = v_uid and u.tenant_id = new.tenant_id
