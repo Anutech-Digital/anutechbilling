@@ -53,7 +53,7 @@ import { isSplitBilled } from "@/lib/billing/instalments";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { parsePlaceOfSupply } from "@/lib/import/zoho-opening-invoices";
 import {
-  formatRemittance, parseInwardRemittance, remittanceFitsCredit, type InwardRemittance,
+  exportLutProblem, formatRemittance, parseInwardRemittance, remittanceFitsCredit, type ExportLut, type InwardRemittance,
 } from "@/lib/banking/inward-remittance";
 import { formatForeign } from "@/lib/currency";
 import type { FindZohoResult, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
@@ -175,6 +175,9 @@ export interface PlanContext {
   noGst?: boolean;
   /** R-2419 (c): today (IST, YYYY-MM-DD). Absent = today in IST. */
   today?: string;
+  /** R-2440: the company's LUT (Settings → Company). An export receipt is booked at 0% only under an
+   *  LUT for its financial year; absent = not loaded (the server still refuses without one). */
+  lut?: ExportLut;
 }
 
 // ── Output ────────────────────────────────────────────────────────────────────────────────
@@ -669,7 +672,11 @@ export function planRow(
       zohoProblems.push(`Zoho records TDS on a payment in ${fx.currency} — a foreign customer does not deduct Indian TDS. Check the payment in Zoho, or reconcile this line by hand.`);
     }
     if (fx && lines.some((l) => l.action === "new_sub")) notes.push(`The new subscription renews from the app in ₹ — before its renewal, set the renewal quote to ${fx.currency} (Quotes → Bill in currency).`);
-    if (fx) notes.push(`Export receipt ${formatRemittance(remittance!)}: booked in ${fx.currency} at the bank's rate, ₹ = the bank credit; 0% GST (export of services, zero-rated under LUT — check your LUT in Settings).`);
+    /* R-2440 (tax memo §1): 0% export only under an LUT for this line's FY — else unticked with the step. */
+    const lutProblem = fx && ctx.lut !== undefined ? exportLutProblem(ctx.lut, line.txnDate) : null;
+    if (lutProblem) saleProblems.push(lutProblem);
+    const lutNo = ctx.lut?.number?.trim();
+    if (fx) notes.push(`Export receipt ${formatRemittance(remittance!)}: booked in ${fx.currency} at the bank's rate, ₹ = the bank credit; 0% GST (export of services, zero-rated under ${lutNo ? `LUT ${lutNo}` : "LUT — check your LUT in Settings"}).`);
   } else if (Math.abs(match.payment.amount - line.credit) > AMOUNT_SLACK) {
     zohoProblems.push(`Amount differs: Zoho payment ${rupees(match.payment.amount)}, bank line ${rupees(line.credit)}.`);
   } else if (lines.length && Math.abs(preview.total - money) > AMOUNT_SLACK) {

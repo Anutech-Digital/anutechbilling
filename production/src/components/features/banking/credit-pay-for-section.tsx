@@ -58,7 +58,7 @@ import { cleanAmount, pickDefault, pickProblem, splitBlocked, splitPartPaid, spl
 import { CreditPaySplit } from "./credit-pay-for-split";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
-import { zohoKeptLines, zohoSaleNumber, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
+import { zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
 
 const NEW_CUSTOMER = "__new_customer__";
@@ -297,8 +297,10 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const tdsSection = tdsSectionPick ?? tdsGuess.section;
   const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
+  /* R-2440: Find in Zoho left prices in USD (no bank rate fitting Zoho's) — no Save until they are in ₹. */
+  const fxUnconverted = mode === "sale" || (mode === "split" && splitSale) ? zohoUnconvertedProblem(zohoFill, lines) : null;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
-    && !approvalBlocked
+    && !approvalBlocked && !fxUnconverted
     && !(relink && saleBelowCost)   // R-2397: the server refuses a relink to a below-cost sale
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
@@ -400,7 +402,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   useFooterSaveReport(onFooterSave, credit > 0 && !result && customerId
     ? {
         label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: busy,
-        disabledReason: payerUnanswered && mode !== null ? "Say who paid before saving." : null,
+        disabledReason: fxUnconverted ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
       }
     : null);
 
@@ -644,6 +646,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             )}
             {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={() => onProjectPayment(customerId)}>Project payment</Button>}
           </div>
+          {fxUnconverted && !onFooterSave && <p className="text-xs text-amber-ink break-words">{fxUnconverted}</p>}
           {payerUnanswered && mode !== null && !onFooterSave && <p className="text-xs text-amber-ink">Say who paid (above) before saving.</p>}
         </>
       )}

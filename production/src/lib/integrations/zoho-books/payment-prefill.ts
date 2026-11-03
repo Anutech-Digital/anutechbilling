@@ -31,6 +31,10 @@ export interface ZohoPrefill {
   invoiceNumbers: string[];
   /** Plain notes for the owner (e.g. a part-year term). */
   notes: string[];
+  /** R-2440: Zoho billed in a foreign currency and no bank rate fitting Zoho's was found, so the
+   *  prices were left in that currency — each line's key, name and foreign price. Save stays blocked
+   *  (zohoUnconvertedProblem) until each is typed in ₹. Null = nothing left unconverted. */
+  unconverted: { currency: string; lines: Array<{ key: string; name: string; rate: number }> } | null;
 }
 
 const SUFFIXES = /\b(private limited|pvt ltd|pvt limited|private ltd|limited|ltd|llp|opc)\b/g;
@@ -141,7 +145,7 @@ export function zohoPrefill(
   const zr = match.payment.exchangeRate ?? null;
   const fxRate = implied && (!zr || Math.abs(implied - zr) / zr <= 0.02) ? implied : null;
   if (cur && implied && !fxRate) {
-    notes.push(`Zoho billed in ${cur} at ${rupee(zr ?? 0, { decimals: 2 })} but the money received works out to ${rupee(implied, { decimals: 2 })} per ${cur} — the remitting bank may have kept charges. Prices are left in ${cur} as Zoho has them: set them in ₹ by hand, or use Reconcile from Zoho.`);
+    notes.push(`Zoho billed in ${cur} at ${rupee(zr ?? 0, { decimals: 2 })} but the money received works out to ${rupee(implied, { decimals: 2 })} per ${cur} — the remitting bank may have kept charges. Prices are left in ${cur} as Zoho has them: type each price in ₹ before saving, or use Reconcile from Zoho.`);
   }
   if (cur && fxRate) {
     notes.push(`Zoho billed in ${cur}: prices are filled in ₹ at the bank's rate (${rupee(fxRate, { decimals: 4 })} per ${cur}), so the sale equals the money received. 0% GST — export of services under LUT. To book it in ${cur} on the invoice, use Reconcile from Zoho.`);
@@ -164,6 +168,11 @@ export function zohoPrefill(
   starts.sort(); ends.sort();
   const subStart = starts[0] ?? null;
   const subRenewal = subStart && ends.length ? nextDay(ends[ends.length - 1]) : null;
+  /* R-2440: a foreign bill not converted (no bank rate that fits Zoho's) has its prices in that
+     currency — Save is blocked until each is typed in ₹ (review 2: ₹1,024 sale + ₹94,822 advance). */
+  const unconverted = cur && !fxRate && lines.length
+    ? { currency: cur, lines: lines.map((l) => ({ key: l.key, name: l.name, rate: l.rate })) }
+    : null;
   return {
     customer: mapZohoCustomer(match.customer, ctx.customers),
     lines,
@@ -172,7 +181,24 @@ export function zohoPrefill(
     subRenewal,
     invoiceNumbers: [...match.invoices.map((i) => i.number), ...match.moreInvoices],
     notes,
+    unconverted,
   };
+}
+
+/**
+ * R-2440: why Save is blocked — a line Find in Zoho filled in a foreign currency still has that
+ * foreign price (same line, same rate). Null once every such line has a ₹ price typed (or was
+ * removed), or when nothing was left unconverted.
+ */
+export function zohoUnconvertedProblem(
+  prefill: Pick<ZohoPrefill, "unconverted"> | null | undefined,
+  lines: ReadonlyArray<{ key: string; rate: number }>,
+): string | null {
+  const u = prefill?.unconverted;
+  if (!u) return null;
+  const still = u.lines.filter((o) => lines.some((l) => l.key === o.key && l.rate === o.rate));
+  if (still.length === 0) return null;
+  return `Prices are still in ${u.currency} as Zoho has them (${still.map((o) => o.name).join(", ")}) — type each price in ₹ before saving.`;
 }
 
 /**

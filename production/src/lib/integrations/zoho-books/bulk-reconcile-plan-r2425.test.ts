@@ -175,3 +175,30 @@ describe("R-2425: Find in Zoho (the Reconcile sheet) fills a USD bill in ₹ at 
     expect(p.notes.join(" ")).toContain("may have kept charges");
   });
 });
+
+/* R-2440 (tax memo 3 Nov §1): an export sale at 0% needs the company's LUT for the receipt's FY —
+   the plan unticks the line with the Settings step (reconcile_bank_credit_new_sale_fx refuses it too). */
+describe("R-2440: Reconcile from Zoho books an export receipt only under an LUT", () => {
+  const usdLine = () => line(95846, "INW 070826I049902623 USD1024.0@93.6");
+  it("no LUT on file → unticked, says to add it in Settings", () => {
+    const row = planRow(usdLine(), usd("Design Box", [zl()], 1024), null, { ...ctx, lut: { number: null, validUpto: null } });
+    expect(row.ticked).toBe(false);
+    expect(row.problems.join(" ")).toContain("No LUT for FY 2026-27 on file");
+    expect(row.problems.join(" ")).toContain("Settings");
+  });
+  it("last year's LUT → unticked", () => {
+    const row = planRow(usdLine(), usd("Design Box", [zl()], 1024), null, { ...ctx, lut: { number: "AD070425000999X", validUpto: "2026-03-31" } });
+    expect(row.ticked).toBe(false);
+    expect(row.problems.join(" ")).toContain("No LUT for FY 2026-27");
+  });
+  it("this year's LUT → Ready, and the note names it", () => {
+    const row = planRow(usdLine(), usd("Design Box", [zl()], 1024), null, { ...ctx, lut: { number: "AD070426000123X", validUpto: "2027-03-31" } });
+    expect(row.problems).toEqual([]);
+    expect(row.ticked).toBe(true);
+    expect(row.notes.join(" ")).toContain("LUT AD070426000123X");
+  });
+  it("an INR line is never asked for an LUT", () => {
+    const row = planRow(line(1000, "NEFT CR-HDFC0000001-DESI TRADERS"), usd("Desi Traders", [zl({ rate: 1000 })], 1000, { currency: undefined }), null, { ...ctx, lut: { number: null, validUpto: null } });
+    expect(row.problems.join(" ")).not.toContain("LUT");
+  });
+});

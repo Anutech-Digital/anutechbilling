@@ -28,6 +28,9 @@ select set_config('request.jwt.claims', '', true);
 insert into public.tenants (id, name, email, state_code, doc_code) values
   ('dddddddd-0000-0000-0000-000000242501','R2425 Export Co','r2425@example.in','07','R242'),
   ('dddddddd-0000-0000-0000-000000242502','R2425 Other Co','r2425b@example.in','07','R243');
+-- R-2440: an export sale at 0% needs an LUT for the line's FY (2026-27).
+update public.tenants set lut_number = 'AD070426000242X', lut_valid_upto = '2027-03-31'
+ where id = 'dddddddd-0000-0000-0000-000000242501';
 insert into auth.users (id, email) values ('aaaaaaaa-0000-0000-0000-000000242501','owner2425@example.in');
 insert into public.users (id, tenant_id, email, full_name, role, created_at) values
   ('aaaaaaaa-0000-0000-0000-000000242501','dddddddd-0000-0000-0000-000000242501','owner2425@example.in','Owner 2425','owner', now() - interval '1 day');

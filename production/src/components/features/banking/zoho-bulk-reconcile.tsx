@@ -34,6 +34,7 @@ import { useNewSaleFromBankCredit, usePayItemFromBankCredit } from "@/lib/querie
 import { istToday } from "@/lib/dates/ist";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 import {
@@ -88,6 +89,10 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const { data: catalog } = useItems();
   const memory = usePayerMemory();
   const gst = useGstRegistration();
+  /* R-2440: the company's LUT (Settings → Company) — an export receipt is booked at 0% only under one. */
+  const { data: me } = useCurrentUser();
+  const lutNumber = me ? me.tenantLutNumber : undefined;
+  const lutValidUpto = me ? me.tenantLutValidUpto : undefined;
   const createCustomer = useCreateCustomer();
   const setLinePayer = useSetBankLinePayer();
   const newSale = useNewSaleFromBankCredit();
@@ -124,8 +129,9 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       customers, subscriptions, catalog: catalog.filter((i) => i.is_active),
       payers: memory.payers, ownNames: memory.ownNames, noGst: Boolean(billOfSupplyStatus(gst.data?.saved ?? null)),
       today: istToday(),
+      ...(lutNumber !== undefined ? { lut: { number: lutNumber, validUpto: lutValidUpto } } : {}),
     };
-  }, [customers, subscriptions, catalog, memory.payers, memory.ownNames, gst.data]);
+  }, [customers, subscriptions, catalog, memory.payers, memory.ownNames, gst.data, lutNumber, lutValidUpto]);
 
   const plan: PlanRow[] = React.useMemo(() => {
     if (!ctx) return [];

@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  formatRemittance, parseInwardRemittance, remittanceFitsCredit, remittanceInr,
+  exportLutProblem, formatRemittance, parseInwardRemittance, remittanceFitsCredit, remittanceInr,
 } from "./inward-remittance";
 
 describe("parseInwardRemittance — real HDFC narrations", () => {
@@ -52,5 +52,30 @@ describe("formatRemittance", () => {
     expect(formatRemittance({ currency: "USD", amount: 759.5, rate: 93.55 })).toBe("$759.50 @ ₹93.55");
     expect(formatRemittance({ currency: "EUR", amount: 2500, rate: 101.2345 })).toBe("€2,500 @ ₹101.2345");
     expect(formatRemittance({ currency: "AED", amount: 10, rate: 25.48 })).toBe("AED 10 @ ₹25.48");
+  });
+});
+
+/* R-2440 (independent review 2 of R-2425; tax memo 3 Nov §1): 0% export only under an LUT for the
+   bank line's financial year — the same rule reconcile_bank_credit_new_sale_fx refuses on. */
+describe("exportLutProblem — LUT for the receipt's financial year", () => {
+  it("an LUT valid up to 31 Mar 2027 covers an August 2026 receipt", () => {
+    expect(exportLutProblem({ number: "AD070426000123X", validUpto: "2027-03-31" }, "2026-08-07")).toBeNull();
+  });
+  it("no LUT number → refused, with the FY and the Settings step", () => {
+    const p = exportLutProblem({ number: null, validUpto: null }, "2026-08-07");
+    expect(p).toContain("No LUT for FY 2026-27 on file");
+    expect(p).toContain("Settings");
+  });
+  it("a number without 'Valid up to' → refused (the FY cannot be told)", () => {
+    expect(exportLutProblem({ number: "AD070426000123X", validUpto: null }, "2026-08-07")).toContain("No LUT for FY 2026-27");
+  });
+  it("last year's LUT (valid up to 31 Mar 2026) → refused for an FY 2026-27 receipt", () => {
+    expect(exportLutProblem({ number: "AD070425000999X", validUpto: "2026-03-31" }, "2026-08-07")).toContain("No LUT for FY 2026-27");
+  });
+  it("next year's LUT does not cover a March 2026 receipt (FY 2025-26)", () => {
+    expect(exportLutProblem({ number: "AD070426000123X", validUpto: "2027-03-31" }, "2026-03-20")).toContain("No LUT for FY 2025-26");
+  });
+  it("blank spaces are no LUT number", () => {
+    expect(exportLutProblem({ number: "   ", validUpto: "2027-03-31" }, "2026-08-07")).not.toBeNull();
   });
 });
