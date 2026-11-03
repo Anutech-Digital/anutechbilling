@@ -82,7 +82,8 @@ async function readOne(row: CollectionRow, mode: BulkSendMode): Promise<BulkReci
       if (!d.email) return { row, reason: d.emailBlocked ? `${d.emailBlocked}` : NO_EMAIL };
       return { row, email: d.email, subject: d.subject, text: d.message, amount: d.amountDue, about: d.about, requestId: crypto.randomUUID() };
     }
-    const p = await readJson<PendingDuesPreview>(pendingDuesUrl(customerId));
+    /* R-2439: POST makes / reuses the statement's Razorpay link (the GET only reads it). */
+    const p = await postJson<PendingDuesPreview>(pendingDuesUrl(customerId), {});
     if (p.total <= 0) return { row, reason: "owes nothing now" };
     if (!p.email) return { row, reason: p.emailBlocked ? `${p.emailBlocked}` : NO_EMAIL };
     return { row, email: p.email, subject: p.subject, text: p.emailText, amount: p.total, about: p.about, requestId: crypto.randomUUID() };

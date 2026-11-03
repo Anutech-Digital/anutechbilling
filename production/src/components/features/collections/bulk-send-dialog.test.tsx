@@ -69,7 +69,7 @@ beforeEach(() => {
         about: { invoiceId: `INV-${id}`, subscriptionId: null, quoteId: null },
       });
     }
-    if (url.startsWith("/api/customers/") && (init?.method ?? "GET") === "GET") {
+    if (url.startsWith("/api/customers/") && url.endsWith("/pending-dues")) {   // R-2439: a POST (makes the link)
       const id = url.split("/")[3];
       const em = emailOf[id];
       return ok({ customerName: id, asOn: "2026-11-03", lines: [], total: 1_000, qrNotice: null, hasBank: true,

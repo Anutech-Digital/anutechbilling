@@ -19,7 +19,7 @@
  * No link → the dialog says why and the next step (§24: add the UPI ID in Settings).
  *
  * R-2415: next to the UPI link, ONE Razorpay link (card / UPI / net banking) for that bill or
- * the statement total — made by the draft / statement read the first time, the SAME link on
+ * the statement total — made by the draft / statement POST the first time (R-2439: a GET only reads), the SAME link on
  * every later opening, replaced when the amount changes (lib/payments/payment-link.server).
  * The text already carries it; the dialog says what it asks for (and TEST MODE on a test key),
  * or why there is none and the fix. Razorpay sends nothing itself.
@@ -191,7 +191,9 @@ export function SendReminderDialog({
   const preview = useQuery({
     queryKey: ["pending-dues", customerId],
     enabled: open && scope === "statement",
-    queryFn: () => readJson<PendingDuesPreview>(pendingDuesUrl(customerId)),
+    /* R-2439: POST — opening "Full statement" makes / reuses the statement's Razorpay link; a GET
+       of the same URL only reads it (a prefetch or reload can never make or cancel one). */
+    queryFn: () => postJson<PendingDuesPreview>(pendingDuesUrl(customerId), {}),
     staleTime: 0,
     gcTime: 0,
     retry: false,

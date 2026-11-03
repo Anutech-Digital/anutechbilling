@@ -331,7 +331,9 @@ export type NoCardLinkReason =
   | "not_configured"
   | "live_key_on_staging"
   | "busy"
-  | "gateway_error";
+  | "gateway_error"
+  /** R-2439: a read (GET) found no live link that fits the bills — reads never make one. */
+  | "not_made";
 
 /**
  * Which bills may carry a Razorpay link, and for how much each.
@@ -393,6 +395,8 @@ export function cardLinkNotice(reason: NoCardLinkReason, detail?: string | null)
       return { reason, text: "No card / net-banking link — a bill on this message is paid or closed now. Reload Payment Follow-up and try again." };
     case "busy":
       return { reason, text: "The card / net-banking link is being made by someone else right now — press Draft again in a few seconds." };
+    case "not_made":
+      return { reason, text: "No card / net-banking link yet — it is made (or brought up to date) when you open Send reminder for this customer." };
     case "gateway_error":
       return { reason, text: `Could not make the card / net-banking link${detail ? ` (${detail.slice(0, 160)})` : ""}. The UPI link is in the message — try Draft again later.` };
   }

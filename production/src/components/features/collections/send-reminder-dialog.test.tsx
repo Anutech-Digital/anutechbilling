@@ -141,7 +141,7 @@ describe("Send reminder — one dialog", () => {
     expect(screen.getByRole("link", { name: /Open statement PDF/ })).toBeTruthy();
     expect(st.calls.map((c) => [c.method, c.url])).toEqual([
       ["POST", "/api/collections/reminder/draft"],
-      ["GET", `/api/customers/${CUST}/pending-dues`],
+      ["POST", `/api/customers/${CUST}/pending-dues`],   // R-2439: POST makes the link; GET only reads
     ]);
     expect(sends()).toHaveLength(0);
     expect(st.mutate).not.toHaveBeenCalled();

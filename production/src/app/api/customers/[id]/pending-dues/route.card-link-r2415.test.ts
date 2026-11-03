@@ -94,7 +94,7 @@ vi.stubEnv("PDF_SIGNING_SECRET", "test-only-signing-secret-r1526");
 const card = vi.hoisted(() => ({ fn: vi.fn() }));
 vi.mock("@/lib/payments/payment-link.server", () => ({ getOrCreateInvoicePayLink: (...a: unknown[]) => card.fn(...a) }));
 
-import { GET as preview } from "./route";
+import { GET as preview, POST as make } from "./route";
 
 const ctx = (id = CUST) => ({ params: Promise.resolve({ id }) });
 const get = (path: string) => new NextRequest(`https://app.example${path}`);
@@ -128,5 +128,32 @@ describe("R-2415 — Full statement carries ONE Razorpay link for the total", ()
     expect(j.whatsappText).not.toContain("net banking");
     expect(j.cardLink).toBeNull();
     expect(j.cardLinkNotice.reason).toBe("not_configured");
+  });
+});
+
+/* R-2439 (review of R-2415, item 2): a GET only READS the link (prefetch / reload must never make
+   or cancel one); the dialog's POST is what makes or brings it up to date. */
+describe("R-2439 — GET reads the link, POST makes it", () => {
+  const post = (path: string) => new NextRequest(`https://app.example${path}`, {
+    method: "POST", headers: { "content-type": "application/json", origin: "https://app.example" }, body: "{}",
+  });
+
+  it("GET asks read-only", async () => {
+    card.fn.mockResolvedValue({ link: null, notice: { reason: "not_made", text: "No card / net-banking link yet" } });
+    const j = await (await preview(get(`/api/customers/${CUST}/pending-dues`), ctx())).json();
+    expect(card.fn).toHaveBeenCalledTimes(1);
+    expect(card.fn.mock.calls[0][0]).toMatchObject({ readOnly: true });
+    expect(j.cardLink).toBeNull();
+  });
+
+  it("POST makes / reuses the link and returns the same preview with it in both messages", async () => {
+    card.fn.mockResolvedValue({ link: { url: "https://rzp.io/i/stmt2", amount: 72_300, billAmount: 72_300, mode: "test" }, notice: null });
+    const res = await make(post(`/api/customers/${CUST}/pending-dues`), ctx());
+    expect(res.status).toBe(200);
+    const j = await res.json();
+    expect(card.fn).toHaveBeenCalledTimes(1);
+    expect(card.fn.mock.calls[0][0].readOnly).not.toBe(true);
+    expect(j.whatsappText).toContain("https://rzp.io/i/stmt2");
+    expect(j.total).toBe(72_300);
   });
 });
