@@ -167,3 +167,55 @@ describe("renewal follow-up (R-2404)", () => {
     expect(screen.queryByLabelText(/Customer confirmed the renewal/)).toBeNull();
   });
 });
+
+describe("promise / dispute hold (R-2411)", () => {
+  const disputeRow = {
+    id: "d1", created_at: "2026-11-01T05:00:00Z", kind: "call", note: "Says the rate is wrong", outcome: "disputed",
+    promised_amount: null, promised_on: null, next_follow_up_on: "2026-12-01", assigned_to: OWNER, created_by: ME,
+    invoice_id: null, quote_id: null, subscription_id: null,
+  };
+
+  it("ticking 'Customer disputes the bill' asks for the reason and sends outcome 'disputed'", async () => {
+    renderDialog();
+    fireEvent.click(screen.getByLabelText(/Customer disputes the bill/));
+    fireEvent.click(screen.getByRole("button", { name: /Save follow-up/ }));
+    expect(await screen.findByText(/Write why the customer disputes the bill/)).toBeTruthy();
+    expect(st.mutate).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText(/Why do they dispute it/), { target: { value: "Says the rate is wrong" } });
+    fireEvent.click(screen.getByRole("button", { name: /Save follow-up/ }));
+    await waitFor(() => expect(st.mutate).toHaveBeenCalledTimes(1));
+    expect(st.mutate.mock.calls[0][0]).toMatchObject({ customerId: CUST, outcome: "disputed", note: "Says the rate is wrong" });
+  });
+
+  it("an open dispute shows its reason, hides 'Draft a reminder', and 'Mark dispute resolved' logs the resolution", async () => {
+    st.history = [disputeRow];
+    render(
+      <FollowupDialog open onOpenChange={() => {}} customerId={CUST} customerName="Acme" ownerId={OWNER}
+        items={[]} stillOwes amountDue={100} onRemind={() => {}} />,
+    );
+    const banner = screen.getByRole("status", { name: /Disputed/ });
+    expect(banner.textContent).toContain("Says the rate is wrong");
+    expect(banner.textContent).toMatch(/reminders are paused/i);
+    expect(screen.queryByRole("button", { name: /Draft a reminder/ })).toBeNull();
+    expect(screen.queryByLabelText(/Customer disputes the bill/)).toBeNull();
+    fireEvent.click(within(banner).getByRole("button", { name: /Mark dispute resolved/ }));
+    await waitFor(() => expect(st.mutate).toHaveBeenCalledTimes(1));
+    expect(st.mutate.mock.calls[0][0]).toMatchObject({ customerId: CUST, kind: "note", outcome: "dispute_resolved" });
+  });
+
+  it("a promise says reminders stop until its date", () => {
+    renderDialog();
+    fireEvent.change(screen.getByLabelText(/What happened/), { target: { value: "promise" } });
+    expect(screen.getByText(/Automatic payment reminders stop until this date/)).toBeTruthy();
+  });
+
+  it("the renewal Follow-up has no dispute tick (R-2404 stays as it was)", () => {
+    render(
+      <FollowupDialog open onOpenChange={() => {}} customerId={CUST} customerName="Acme" ownerId={OWNER}
+        items={[{ kind: "subscription", id: "66666666-6666-4666-8666-666666666666", label: "WS", quoteId: null }]}
+        stillOwes renewal={{ subscriptionId: "66666666-6666-4666-8666-666666666666" }} />,
+    );
+    expect(screen.queryByLabelText(/Customer disputes the bill/)).toBeNull();
+    expect(screen.getByLabelText(/Customer confirmed the renewal/)).toBeTruthy();
+  });
+});

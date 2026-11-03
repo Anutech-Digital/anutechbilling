@@ -8,6 +8,7 @@ import {
   followupFormSchema, followupRequestSchema, linkOptions, mayReassignFollowup,
   NEXT_REQUIRED, PROMISE_DATE_REQUIRED, REASSIGN_REFUSED, resolveAssignee, toFollowupRequest,
   type FollowupHistoryRow,
+  DISPUTED, DISPUTE_RESOLVED, DISPUTE_REASON_REQUIRED, DISPUTE_NOT_PROMISE, resolveDisputeRequest,
 } from "./followup-rules";
 
 const CUST = "33333333-3333-4333-8333-333333333333";
@@ -146,5 +147,47 @@ describe("history", () => {
     const owed = Object.fromEntries(buildFollowupHistory(rows, "2026-10-17", true).map((r) => [r.id, r.broken]));
     expect(owed).toEqual({ past: true, today: false, ahead: false, call: false });
     expect(buildFollowupHistory(rows, "2026-10-17", false).some((r) => r.broken)).toBe(false);
+  });
+});
+
+describe("R-2411 — dispute and its resolution", () => {
+  const base = { kind: "call", nextFollowUpOn: "2026-11-06" };
+
+  it("a dispute needs its reason (the note) — refused on the note field, with what to write", () => {
+    const r = followupFormSchema.safeParse({ ...base, disputed: true, note: "" });
+    expect(messages(r)).toEqual([`note: ${DISPUTE_REASON_REQUIRED}`]);
+  });
+
+  it("a dispute is not also a promise to pay", () => {
+    const r = followupFormSchema.safeParse({ ...base, kind: "promise", promisedOn: "2026-11-10", disputed: true, note: "Wrong rate" });
+    expect(messages(r)).toEqual([`disputed: ${DISPUTE_NOT_PROMISE}`]);
+  });
+
+  it("the form sends outcome 'disputed' with the reason as the note", () => {
+    const data = followupFormSchema.parse({ ...base, disputed: true, note: "Wrong rate on INV-1" });
+    const body = toFollowupRequest(data, { customerId: CUST, links: [], canReassign: false });
+    expect(body).toMatchObject({ outcome: DISPUTED, note: "Wrong rate on INV-1", kind: "call" });
+    expect(followupRequestSchema.safeParse(body).success).toBe(true);
+    expect(buildFollowupInsert(followupRequestSchema.parse(body), "T1", null)).toMatchObject({ outcome: DISPUTED, note: "Wrong rate on INV-1" });
+  });
+
+  it("the API refuses a dispute without a reason too", () => {
+    const r = followupRequestSchema.safeParse({ customerId: CUST, kind: "call", nextFollowUpOn: "2026-11-06", outcome: DISPUTED });
+    expect(messages(r)).toEqual([`note: ${DISPUTE_REASON_REQUIRED}`]);
+  });
+
+  it("resolveDisputeRequest: a note entry with outcome 'dispute_resolved' the API accepts", () => {
+    const body = resolveDisputeRequest({ customerId: CUST, today: "2026-11-03", how: "  Credit note given  " });
+    expect(body).toEqual({
+      customerId: CUST, kind: "note", outcome: DISPUTE_RESOLVED,
+      note: "Dispute resolved. Credit note given", nextFollowUpOn: "2026-11-06",
+    });
+    expect(followupRequestSchema.safeParse(body).success).toBe(true);
+    expect(resolveDisputeRequest({ customerId: CUST, today: "2026-11-03" }).note).toBe("Dispute resolved.");
+  });
+
+  it("no tick → no outcome, as before (renewal_confirmed still works)", () => {
+    const data = followupFormSchema.parse({ ...base, note: "Called" });
+    expect(toFollowupRequest(data, { customerId: CUST, links: [], canReassign: false }).outcome).toBeUndefined();
   });
 });
