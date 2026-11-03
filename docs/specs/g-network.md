@@ -34,12 +34,14 @@ Measure:
 
 ## Rules
 
-- Identity = **verified GSTIN** (`tenants.gstin_verified_at`) on both sides, when the request is made
-  AND when it is accepted, and still the GSTIN the request named. Connect per GSTIN (one per state).
+- Identity = **owner-verified GSTIN** on both sides (R-2445): registered with GSTN (`gstin_verified_at`)
+  AND proved to be this company's (`gstin_owner_verified_at` for that same GSTIN), when the request is
+  made AND when it is accepted, and still the GSTIN the request named. Connect per GSTIN (one per state).
+  Registered alone is not enough — anyone can type and "verify" a public GSTIN.
 - A connection is always **request → accept by the other company's owner**. Group links (sister
   companies, same owner) too — marked `related_party`, both owners still accept.
-- **Never** suggest or connect a personal workspace (`workspace_kind = 'personal'`); never suggest an
-  unverified GSTIN.
+- **Never** suggest or connect a personal workspace (`workspace_kind = 'personal'`); never suggest a
+  GSTIN that is not owner-verified, and never to a company that has not proved its own.
 - Each side chooses its own **scopes**: invoices, payments, statements, pos (purchase orders),
   catalogue, partner_metrics. A scope is what THIS side shares with the other.
 - **Revoke** (either owner) stops every future read and sync at once; documents already delivered
@@ -53,6 +55,26 @@ Measure:
 - The receiver gets a **copy** frozen at issue, never a live link into the other company. Dedupe by
   seller GSTIN + document number + FY. Accepted documents lock; changes only by credit / debit note.
 - Receiver keeps its own ITC decision; nothing is filed on the GST portal by our Accept.
+
+## GSTIN ownership (R-2445)
+
+- Our GSTN lookup (Sandbox public search) returns names, address, status — not the registered email /
+  mobile — so OTP to the GST contact needs a new paid API (GSP taxpayer OTP). Built instead: the owner
+  presses **Prove you own this GSTIN** (Settings → Network, optional note); the platform admin opens
+  **Platform → GSTIN ownership checks** (`/platform/gstin-claims`), sees company + GSTIN + GSTN legal /
+  trade name + how many companies saved that GSTIN, checks REG-06 or calls the registered contact, and
+  approves or rejects with a reason the company sees. Revoke (reason required) undoes a wrong approval.
+- One owner per GSTIN (unique index). **Never first come**: the admin approves the real owner even if a
+  squatter asked first; approving rejects every other open claim on that GSTIN; a later claim on a held
+  GSTIN is refused with the next step (support + REG-06). A squatter is never suggested and cannot
+  request, accept, or block the real owner (requests find only the proved owner).
+- Any GSTIN change drops the proof at once (trigger); request roles can never write the proof columns.
+- Backfill: the two companies of each operator-set parent link were marked owner-verified (`how =
+  parent_link`) when their GSTIN was filled in and unique; those links keep working regardless.
+- Data: `tenants.gstin_owner_verified_at / _gstin / _how / _by`, table `gstin_ownership_claims`
+  (pending → approved / rejected / withdrawn; revoked); functions `network_claim_gstin_ownership`,
+  `network_my_gstin_ownership`, internal `network_gstin_owned`, service-role-only
+  `platform_gstin_claims`, `platform_decide_gstin_claim`, `platform_revoke_gstin_owner`.
 
 ## Data
 
@@ -93,7 +115,8 @@ Measure:
 |---|---|
 | N0 R-2432 Fix today's invoice → vendor-bill mirror | — |
 | N1 R-2433 Connections: request / accept, scopes, revoke, suggestions, group link | — |
-| N2 Invoice → buyer draft bill (Accept / Reject / Pending, dedupe, CN / DN, void, lock) | N0, N1 |
+| R-2445 GSTIN ownership proof (platform-admin check) before connecting | N1 |
+| N2 Invoice → buyer draft bill (Accept / Reject / Pending, dedupe, CN / DN, void, lock) | N0, N1, R-2445 |
 | N3 Payment made → seller's matched receipt (TDS shown) | N2 |
 | N5 Dispute thread on a shared document | N2 |
 | N6 Distributor: reseller PO → distributor quote; catalogue through the connection | N1 |
