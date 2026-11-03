@@ -3,7 +3,7 @@
  * R-2425) books the sale IN USD with the narration's figures (reconcile_bank_credit_new_sale_fx), so
  * the invoice no longer stays INR. Pure; Zoho is never called.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { prefillSaleFx, zohoPrefill } from "./payment-prefill";
 import type { ZohoPaymentMatch } from "./payment-match";
 import { newSaleFxRpcArgs } from "@/lib/queries/bank-credit-pay-for";
@@ -54,5 +54,26 @@ describe("R-2427 (3): Find in Zoho → Save books the sale in USD", () => {
       "p_fx_rate", "p_lines", "p_sub_renewal", "p_sub_start", "p_txn_id",
     ]);
     expect(a).toMatchObject({ p_currency: "USD", p_fx_rate: 93.6, p_foreign_amount: 1024, p_external_number: "INV/26-27/0501" });
+  });
+});
+
+describe("R-2427 (3): the sheet's new-sale save with fx goes to the foreign-currency RPC", () => {
+  const sale = {
+    transactionId: "t", customerId: "c", lines: [], createSubscription: false, subStart: null, subRenewal: null,
+    tdsAmount: 0, tdsRatePct: null, billingCycle: null, externalNumber: "INV/26-27/0501",
+  };
+  const fx = { currency: "USD", rate: 93.6, foreignAmount: 1024 };
+  it("calls reconcile_bank_credit_new_sale_fx with the narration's figures", async () => {
+    const { newSaleInCurrency } = await import("@/lib/queries/bank-credit-pay-for");
+    const call = vi.fn(async () => ({ data: { quote_id: "Q-1" }, error: null }));
+    await newSaleInCurrency(sale, fx, call);
+    expect(call).toHaveBeenCalledWith("reconcile_bank_credit_new_sale_fx", expect.objectContaining({ p_currency: "USD", p_fx_rate: 93.6, p_foreign_amount: 1024 }));
+  });
+  it("refuses TDS or a sale billed in parts before any call", async () => {
+    const { newSaleInCurrency } = await import("@/lib/queries/bank-credit-pay-for");
+    const call = vi.fn(async () => ({ data: {}, error: null }));
+    await expect(newSaleInCurrency({ ...sale, tdsAmount: 1000 }, fx, call)).rejects.toThrow("deducts no Indian TDS");
+    await expect(newSaleInCurrency({ ...sale, billingCycle: "quarterly" }, fx, call)).rejects.toThrow("billed in parts");
+    expect(call).not.toHaveBeenCalled();
   });
 });
