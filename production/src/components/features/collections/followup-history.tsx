@@ -13,7 +13,7 @@ import { LoadError } from "@/components/shared/load-error";
 import { formatDate, rupee } from "@/lib/utils";
 import { formatIstDate, formatIstTime } from "@/lib/dates/ist";
 import type { UserName } from "@/lib/hooks/useUserNames";
-import { FOLLOWUP_KIND_LABEL, type FollowupHistoryEntry, type FollowupKind } from "@/lib/collections/followup-rules";
+import { DISPUTE_RESOLVED, DISPUTED, FOLLOWUP_KIND_LABEL, type FollowupHistoryEntry, type FollowupKind } from "@/lib/collections/followup-rules";
 
 const kindLabel = (k: string) => FOLLOWUP_KIND_LABEL[k as FollowupKind] ?? k;
 
@@ -53,6 +53,9 @@ export function FollowupHistory({
               </span>
               {e.broken && <Badge kind="danger" dot>Promise broken</Badge>}
               {e.promiseStatus === "kept" && <Badge kind="success" dot>Promise kept</Badge>}
+              {/* R-2411: a dispute pauses the automatic reminders until a "resolved" entry. */}
+              {e.outcome === DISPUTED && <Badge kind="warning" dot>Disputed</Badge>}
+              {e.outcome === DISPUTE_RESOLVED && <Badge kind="success" dot>Dispute resolved</Badge>}
             </div>
             {e.note && <p className="mt-1.5 text-ink break-words whitespace-pre-line">{e.note}</p>}
             <dl className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-ink-3">

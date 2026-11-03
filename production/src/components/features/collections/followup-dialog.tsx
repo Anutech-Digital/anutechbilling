@@ -27,10 +27,10 @@ import { describeError } from "@/lib/errors/toast-error";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUserNames } from "@/lib/hooks/useUserNames";
 import { istToday } from "@/lib/dates/ist";
-import { rupee } from "@/lib/utils";
+import { formatDate, rupee } from "@/lib/utils";
 import {
-  buildFollowupHistory, defaultAssignee, defaultNextFollowUp, FOLLOWUP_KIND_LABEL, FOLLOWUP_KINDS,
-  followupFormSchema, linkOptions, mayReassignFollowup, toFollowupRequest,
+  buildFollowupHistory, collectionHold, defaultAssignee, defaultNextFollowUp, FOLLOWUP_KIND_LABEL, FOLLOWUP_KINDS,
+  followupFormSchema, linkOptions, mayReassignFollowup, resolveDisputeRequest, toFollowupRequest,
   type FollowupFormData, type FollowupLinkSource, type PromisePayment,
 } from "@/lib/collections/followup-rules";
 import { FollowupSaveError, useAddFollowup, useCustomerFollowups } from "@/lib/queries/payment-followups";
@@ -92,6 +92,10 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
     [names, assigneeDefault],
   );
   const nameOf = (id: string | null) => (id ? names?.get(id)?.label ?? "a colleague" : "nobody yet");
+  /* R-2411: the same answer the dunning cron uses — the whole customer's entries, not the renewal's slice. */
+  const hold = React.useMemo(() => collectionHold(history.data ?? [], today), [history.data, today]);
+  const dispute = hold?.kind === "dispute" ? hold : null;
+  const [resolveHow, setResolveHow] = React.useState("");
 
   const blank = React.useCallback((): FollowupFormData => ({
     kind: "call",
@@ -102,13 +106,14 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
     assignedTo: undefined,
     link: links.length === 1 ? links[0].value : "",
     confirmed: false,
+    disputed: false,
   }), [links]);
 
   const form = useForm<FollowupFormData>({ resolver: zodResolver(followupFormSchema), defaultValues: blank() });
   const { register, handleSubmit, reset, watch, setValue, getFieldState, formState: { errors } } = form;
 
   React.useEffect(() => {
-    if (open) { reset(blank()); setServerError(null); }
+    if (open) { reset(blank()); setServerError(null); setResolveHow(""); }
     // Only on open: a later re-render must not wipe what is being typed.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -119,15 +124,27 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
   }, [open, assigneeDefault, getFieldState, setValue]);
 
   const kind = watch("kind");
+  const disputed = watch("disputed");
+
+  const onSaveError = (e: unknown) => setServerError({
+    message: e instanceof FollowupSaveError ? e.message : "The follow-up was not saved — press Save again.",
+    status: e instanceof FollowupSaveError ? e.status : 0,
+  });
 
   const onSubmit = (data: FollowupFormData) => {
     setServerError(null);
     add.mutate(toFollowupRequest(data, { customerId, links, canReassign }), {
       onSuccess: () => onOpenChange(false),
-      onError: (e) => setServerError({
-        message: e instanceof FollowupSaveError ? e.message : "The follow-up was not saved — press Save again.",
-        status: e instanceof FollowupSaveError ? e.status : 0,
-      }),
+      onError: onSaveError,
+    });
+  };
+
+  /* R-2411: logs a "dispute_resolved" entry — the reminders go again from the next run. */
+  const resolveDispute = () => {
+    setServerError(null);
+    add.mutate(resolveDisputeRequest({ customerId, today, how: resolveHow }), {
+      onSuccess: () => setResolveHow(""),
+      onError: onSaveError,
     });
   };
 
@@ -140,7 +157,7 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
             {amountDue && amountDue > 0 ? <>Still owes <b className="text-ink">{rupee(amountDue)}</b>. </> : null}
             Log what happened and when to follow up next — every entry needs a next date, so nobody is forgotten.
           </DialogDescription>
-          {onRemind && stillOwes && (
+          {onRemind && stillOwes && !dispute && (
             <div>
               <Button type="button" size="sm" variant="default" icon="send" className="mt-2" onClick={onRemind}>
                 Draft a reminder (WhatsApp / email)
@@ -148,6 +165,31 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
             </div>
           )}
         </DialogHeader>
+
+        {/* R-2411: what the automatic reminders do for this customer right now. */}
+        {dispute && (
+          <div role="status" aria-label="Disputed" className="rounded-md border border-amber/50 bg-amber-soft/40 px-3 py-2.5 text-sm space-y-2">
+            <p className="text-ink">
+              <b>Disputed</b> since {formatDate(dispute.since)}{dispute.reason ? <>: {dispute.reason}</> : null}
+            </p>
+            <p className="text-ink-2 text-xs">Automatic payment reminders are paused until the dispute is resolved. Sort it out with the customer, then mark it resolved.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input
+                aria-label="How was it resolved? (optional)" placeholder="How was it resolved? (optional)"
+                value={resolveHow} onChange={(e) => setResolveHow(e.target.value)} className="flex-1 min-w-[12rem]" maxLength={500}
+              />
+              <Button type="button" size="sm" variant="default" icon="check" loading={add.isPending} onClick={resolveDispute}>
+                Mark dispute resolved
+              </Button>
+            </div>
+          </div>
+        )}
+        {hold?.kind === "promise" && (
+          <p role="status" className="rounded-md border border-hairline bg-paper-2/40 px-3 py-2 text-sm text-ink-2">
+            Promised to pay by <b className="text-ink">{formatDate(hold.until)}</b>
+            {hold.amount != null ? <> ({rupee(hold.amount)})</> : null} — automatic payment reminders are paused until then.
+          </p>
+        )}
 
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -165,6 +207,7 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 rounded-md border border-hairline bg-paper-2/40 p-3">
               <FormField label="Will pay on" required htmlFor="fu-promised-on">
                 <Input id="fu-promised-on" type="date" error={errors.promisedOn?.message} {...register("promisedOn")} />
+                <p className="mt-1 text-xs text-ink-3">Automatic payment reminders stop until this date.</p>
               </FormField>
               <FormField label="Amount promised (₹, optional)" htmlFor="fu-promised-amount">
                 <Input
@@ -177,8 +220,23 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
             </div>
           )}
 
-          <FormField label="Note" htmlFor="fu-note">
-            <Textarea id="fu-note" rows={3} placeholder="e.g. Spoke to accounts — cheque on Friday" {...register("note")} />
+          {/* R-2411: not on the renewal Follow-up, and not while a dispute is already open. */}
+          {!renewal && !dispute && (
+            <div>
+              <label className="flex items-center gap-2 text-sm text-ink cursor-pointer">
+                <input type="checkbox" className="accent-amber cursor-pointer" {...register("disputed")} />
+                Customer disputes the bill — pause reminders
+              </label>
+              {errors.disputed?.message && <p className="mt-1 text-xs text-rose">{errors.disputed.message}</p>}
+            </div>
+          )}
+
+          <FormField label={disputed ? "Why do they dispute it?" : "Note"} required={!!disputed} htmlFor="fu-note">
+            <Textarea
+              id="fu-note" rows={3}
+              placeholder={disputed ? "e.g. Says 2 licences were never used" : "e.g. Spoke to accounts — cheque on Friday"}
+              {...register("note")}
+            />
           </FormField>
           {errors.note?.message && <p className="-mt-3 text-xs text-rose">{errors.note.message}</p>}
 
