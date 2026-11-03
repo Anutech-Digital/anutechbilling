@@ -3,8 +3,9 @@
  *
  * Layout:
  *   - Page header (eyebrow/title/subtitle + Export / Bulk reminder)
- *   - Insights strip (closed by default, R-2266): money line, tiles that open a tab / filter,
- *     6-month forecast, Renewal AI top pick
+ *   - Tiles (R-2405, tiles.ts): Overdue · Due in 30 / 31–60 / 61–90 days · Won't renew ·
+ *     Renewed this month — count + renewal ₹; a press shows exactly those rows in the queue
+ *   - Forecast strip (closed by default, R-2266): 6-month forecast, Renewal AI top pick
  *   - Grace over list (R-1621)
  *   - The queue: tabs Overdue · ≤7 days · 8–30 · 31–60 · 61–90 (every row in exactly one —
  *     queue.ts queueTabs); search, sort (date / amount), filters (product, status, vendor, At
@@ -29,7 +30,6 @@ import { useRouter } from "next/navigation";
 import { useSubscriptions, useOpenRenewalQuotes } from "@/lib/queries/subscriptions";
 import { renewalForecast } from "@/lib/renewals/forecast";
 import { toast } from "sonner";
-import { GeminiCard } from "@/components/shared/gemini-card";
 import { AiDraftButton } from "@/components/shared/ai-draft-button";
 import { VoiceNoteButton } from "@/components/shared/voice-note-button";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -74,7 +74,10 @@ import {
   sortQueue, filterQueue, filterOptions, bulkQuoteTargets, bulkQuoteConfirm,
   type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RowStatus, type RenewalAmount, type RowStatusKey,
 } from "./queue";
-import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, type RowContact } from "./queue-data";
+import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, useRenewalPaymentsForMonth, type RowContact } from "./queue-data";
+import { monthOf, renewalTiles, tileMatches, paidRenewalsInMonth, type TileKey, type TileRow } from "./tiles";
+import { RenewalTileRow, TileViewBar } from "./tiles-card";
+import { ForecastPanel } from "./forecast-panel";
 import {
   renewalFollowup, renewalDecision, showDecision, filterByFollowup, bulkAssignRequests, bulkAssignReport,
   DECISION_LABEL, DECISION_TONE, NO_FOLLOWUP_FILTERS, ASSIGN_NEEDS_ROLE,
@@ -510,6 +513,10 @@ export default function RenewalsPage() {
   const [selected, setSelected] = React.useState<Set<string>>(() => new Set());
   const graceDays = me?.tenantGracePeriodDays ?? 0;
   const today = new Date();
+  /* R-2405: the pressed tile (null = the tabs) and this IST month's paid renewals. */
+  const [tile, setTile] = React.useState<TileKey | null>(null);
+  const month = monthOf(istToday(today));
+  const { data: monthQuotes } = useRenewalPaymentsForMonth(month);
 
   /* Rows on the page within 90 days: their contacts and renewal quotes (hooks run before any early return). */
   const listed = React.useMemo(() => (subs ?? [])
@@ -604,21 +611,12 @@ export default function RenewalsPage() {
   const quoteOf = (sub: Subscription) => quoteInfo?.get(sub.renewal_quote_id ?? "");
   const paid = (r: { sub: Subscription }) => isPaidRenewalQuote(r.sub, quoteOf(r.sub));
   const groups   = classifyRenewals(enriched, (r) => renewalRisk(r.sub).level === "high", today, paid);
-  const urgent   = groups.urgentTab;
-  const upcoming = groups.upcoming;
   const tabs     = queueTabs(groups);
-
-  // KPI aggregates
-  const urgentMrr   = urgent.reduce((s, r)   => s + r.sub.mrr, 0);
-  const upcomingMrr = upcoming.reduce((s, r) => s + r.sub.mrr, 0);
-  const overdueMrr  = tabs.overdue.reduce((s, r) => s + r.sub.mrr, 0);
-  const due7Mrr     = tabs.due7.reduce((s, r) => s + r.sub.mrr, 0);
 
   /* Forecast (audit B7): agle 6 mahine, mahina-war — "is quarter kitna aayega?"
      ab list jodne se nahi, curve se dikhta hai. Flex alag (12x-sabak: forecast.ts). */
   /* R-2225: a Won't renew subscription brings no renewal money. */
   const forecast = renewalForecast(all.filter(chasedRenewal), new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata" }).format(new Date()));
-  const maxForecast = Math.max(1, ...forecast.months.map((m) => m.amount));
 
   /* R-2225: the renewals pipeline export leaves out Won't renew subscriptions. */
   /* R-2232: nor a flex subscription's next monthly part (a billing part, not a renewal). */
@@ -663,6 +661,13 @@ export default function RenewalsPage() {
   for (const t of QUEUE_TABS) items[t] = tabs[t].map(toItem);
   const allItems = QUEUE_TABS.flatMap((t) => items[t]);
 
+  /* R-2405: the tiles add up the rows' own renewal amounts; a pressed tile lists those rows. */
+  const tileRowOf = new Map<string, TileRow>(QUEUE_TABS.flatMap((t) => items[t].map((i) => [i.sub.id, {
+    id: i.sub.id, tab: t, statusKey: i.status.key, amount: i.amount.value, renewalDate: i.sub.renewal_date,
+  }] as const)));
+  const tileFigures = renewalTiles([...tileRowOf.values()], monthQuotes ?? [], month);
+  const paidSubs = new Set(paidRenewalsInMonth(monthQuotes ?? [], month).map((q) => q.renewal_subscription_id ?? ""));
+
   const counts = Object.fromEntries(QUEUE_TABS.map((t) => [t, tabs[t].length])) as Record<QueueTab, number>;
   const resolved = (LEGACY_BUCKETS as readonly string[]).includes(bucketRaw)
     ? resolveBucket(bucketRaw as LegacyBucket, counts)
@@ -677,10 +682,12 @@ export default function RenewalsPage() {
     statusKey: i.status.key, atRisk: i.atRisk, customer: i.sub.customer_name, item: i,
   });
   /* R-2404: Mine · Follow-up due · Promise broken narrow the tabs the same way. */
-  const shownIn = (t: QueueTab): QueueItem[] =>
-    sortQueue(filterQueue(filterByFollowup(items[t], fuFilters, me?.userId).filter((i) => matchesRenewalSearch(i.sub, search)).map(asQueueRow), activeFilters), sort)
+  const narrow = (list: QueueItem[]): QueueItem[] =>
+    sortQueue(filterQueue(filterByFollowup(list, fuFilters, me?.userId).filter((i) => matchesRenewalSearch(i.sub, search)).map(asQueueRow), activeFilters), sort)
       .map((r) => r.item);
-  const shown = Object.fromEntries(QUEUE_TABS.map((t) => [t, shownIn(t)])) as Record<QueueTab, QueueItem[]>;
+  const shown = Object.fromEntries(QUEUE_TABS.map((t) => [t, narrow(items[t])])) as Record<QueueTab, QueueItem[]>;
+  /* R-2405: a pressed tile lists its rows from every tab (search / filters / sort still apply). */
+  const tileShown = narrow(tile ? allItems.filter((i) => tileMatches(tile, tileRowOf.get(i.sub.id)!, month, paidSubs)) : []);
 
   const productOptions = filterOptions(allItems.map((i) => i.sub.plan));
   const vendorOptions  = filterOptions(allItems.map((i) => i.sub.vendor));
@@ -705,7 +712,9 @@ export default function RenewalsPage() {
       ]
     : [];
 
-  const openTab = (t: string) => { setSelected(new Set()); setBucketTab(t); };
+  const openTab = (t: string) => { setSelected(new Set()); setTile(null); setBucketTab(t); };
+  /* R-2405: press a tile → its rows; press it again → back to the tabs. */
+  const pickTile = (k: TileKey) => { setSelected(new Set()); setTile((cur) => (cur === k ? null : k)); };
   const setAtRisk = (on: boolean) => {
     if (bucketRaw === "risk") setBucketTab(bucketTab);   // the old ?bucket=risk link → a plain tab + the chip
     setFilters((f) => ({ ...f, atRisk: on }));
@@ -899,21 +908,18 @@ export default function RenewalsPage() {
         </div>
       </div>
 
-      {/* R-2266: ONE strip, closed by default (remembered per user). The closed line carries the
-          money (the tabs below carry the counts — one fact, one place); the Renewal AI top pick
-          is a link on the line. */}
+      {/* R-2405: the tiles — count + renewal ₹ in the table's own money; a press lists those rows. */}
+      <RenewalTileRow tiles={tileFigures} month={month} active={tile} onPick={pickTile} />
+
+      {/* R-2266: ONE strip, closed by default (remembered per user). R-2405: the tiles above carry
+          the money and counts (one fact, one place) — the strip keeps the forecast and the
+          Renewal AI top pick, a link on its line. */}
       <CollapsibleKpiStrip
         stripId="renewals"
         userId={me?.userId}
-        title="Insights"
+        title="Forecast"
         className="mb-4"
-        summary={
-          <>
-            <StripFact label="Urgent MRR" value={rupee(urgentMrr, { compact: true })} tone="rose" />
-            <StripFact label="Upcoming 30d MRR" value={rupee(upcomingMrr, { compact: true })} tone="amber" />
-            <StripFact label="At risk ARR" value={rupee(groups.atRiskArr, { compact: true })} tone="rose" />
-          </>
-        }
+        summary={<StripFact label="Next 6 months" value={rupee(forecast.totalAmount, { compact: true })} />}
         extras={highRiskSubs.length > 0 ? (
           <StripLink
             tone="rose"
@@ -927,84 +933,14 @@ export default function RenewalsPage() {
           </StripLink>
         ) : undefined}
       >
-          <>
-            {/* R-2403: each tile opens its tab (or the At risk filter) — the tabs are the work queue. */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-              <button type="button" onClick={() => openTab("overdue")} aria-pressed={bucketTab === "overdue"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Overdue</p>
-                <p className="font-serif text-lg font-bold text-rose-600 tabular-nums mt-0.5">{tabs.overdue.length} <span className="text-xs text-ink-3 font-normal">({rupee(overdueMrr, { compact: true })} MRR)</span></p>
-              </button>
-              <button type="button" onClick={() => openTab("due7")} aria-pressed={bucketTab === "due7"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Due in 7 days</p>
-                <p className="font-serif text-lg font-bold text-rose-600 tabular-nums mt-0.5">{tabs.due7.length} <span className="text-xs text-ink-3 font-normal">({rupee(due7Mrr, { compact: true })} MRR)</span></p>
-              </button>
-              <button type="button" onClick={() => openTab("d30")} aria-pressed={bucketTab === "d30"} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Due in 8–30 days</p>
-                <p className="font-serif text-lg font-bold text-amber-ink tabular-nums mt-0.5">{upcoming.length} <span className="text-xs text-ink-3 font-normal">({rupee(upcomingMrr, { compact: true })} MRR)</span></p>
-              </button>
-              <button type="button" onClick={() => setAtRisk(!atRiskOn)} aria-pressed={atRiskOn} className="bg-paper-2/40 border border-hairline rounded-lg p-3 text-left hover:border-amber/60 transition-all cursor-pointer">
-                <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">At risk ARR</p>
-                <p className="font-serif text-lg font-bold text-rose-600 tabular-nums mt-0.5">{rupee(groups.atRiskArr, { compact: true })} <span className="text-xs text-ink-3 font-normal">({highRiskSubs.length} subs)</span></p>
-                <p className="text-2xs text-ink-3">Overdue unpaid + high risk ≤90d + won&apos;t renew</p>
-              </button>
-            </div>
-
-            {/* ── Renewal revenue forecast — agle 6 mahine (audit B7) ── */}
-            <div className="bg-paper-2/40 border border-hairline rounded-lg p-3">
-              <div className="flex items-baseline justify-between gap-3 flex-wrap">
-                <p className="text-3xs uppercase font-semibold text-ink-3 tracking-wider">Renewal forecast · next 6 months</p>
-                <p className="text-xs text-ink-3">Annual renewals {rupee(forecast.totalAmount, { compact: true })} ({forecast.totalCount}){forecast.flexCount > 0 ? <> · flex run-rate {rupee(forecast.flexMonthlyRunRate, { compact: true })}/mo ({forecast.flexCount}) — not in total</> : null}</p>
-              </div>
-              <div className="mt-2 grid grid-cols-3 sm:grid-cols-6 gap-2">
-                {forecast.months.map((m) => (
-                  <div key={m.key} className="text-center">
-                    <div className="h-16 flex items-end justify-center">
-                      <div
-                        className="w-7 rounded-t bg-amber/80"
-                        style={{ height: `${Math.round((m.amount / maxForecast) * 100)}%`, minHeight: m.amount > 0 ? 4 : 0 }}
-                        title={`${m.label}: ${rupee(m.amount)} (${m.count})`}
-                      />
-                    </div>
-                    <p className="mt-1 text-3xs text-ink-3">{m.label.slice(0, 3)}</p>
-                    <p className="text-2xs tabular-nums text-ink-2">{m.amount > 0 ? rupee(m.amount, { compact: true }) : "—"}</p>
-                  </div>
-                ))}
-              </div>
-              <p className="mt-1.5 text-3xs text-ink-3">Estimate: MRR × 12 in the renewal month (ex-GST); excludes churn and expansion.</p>
-            </div>
-
-            {/* Gemini AI next-best-actions */}
-            {highRiskSubs.length > 0 && (
-              <GeminiCard
-                title="Renewal AI · Next best actions"
-                actions={
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      variant="primary"
-                      size="sm"
-                      onClick={() => {
-                        const cid = highRiskSubs[0]?.sub.customer_id;
-                        router.push((cid ? `/customers/${cid}` : "/customers") as never);
-                      }}
-                    >
-                      <Icon name="user" size={12} />
-                      Open {topHighRisk}
-                    </Button>
-                  </div>
-                }
-                compact
-              >
-                <strong className="text-ink">
-                  {highRiskSubs.length} renewal
-                  {highRiskSubs.length !== 1 ? "s" : ""} at risk, worth{" "}
-                  {rupee(groups.atRiskArr, { compact: true })} ARR.
-                </strong>{" "}
-                Top priority: <strong>{topHighRisk}</strong>
-                {topReasons.length > 0 ? <> — {topReasons.join(" · ").toLowerCase()}</> : null}.
-                Call or WhatsApp this week to secure the renewal.
-              </GeminiCard>
-            )}
-          </>
+        <ForecastPanel
+          forecast={forecast}
+          atRiskCount={highRiskSubs.length}
+          atRiskArr={groups.atRiskArr}
+          topName={topHighRisk}
+          topCustomerId={highRiskSubs[0]?.sub.customer_id ?? null}
+          topReasons={topReasons}
+        />
       </CollapsibleKpiStrip>
 
       {/* R-1621: grace ended unpaid → the owner stops the service or gives more days. */}
@@ -1013,16 +949,20 @@ export default function RenewalsPage() {
       {/* ── The renewal queue — tabs by time window (R-2403) ── */}
       <Card flush>
         <div className="px-3 pt-3 sm:px-4">
-          <TabBar
-            value={bucketTab}
-            onChange={openTab}
-            items={QUEUE_TABS.map((t) => ({
-              id: t,
-              label: QUEUE_TAB_LABEL[t],
-              count: shown[t].length || undefined,
-              dot: t === "overdue" || t === "due7" ? "rose" : t === "d30" ? "amber" : undefined,
-            })) satisfies TabBarItem[]}
-          />
+          {tile ? (
+            <TileViewBar tile={tile} count={tileShown.length} onClear={() => pickTile(tile)} />
+          ) : (
+            <TabBar
+              value={bucketTab}
+              onChange={openTab}
+              items={QUEUE_TABS.map((t) => ({
+                id: t,
+                label: QUEUE_TAB_LABEL[t],
+                count: shown[t].length || undefined,
+                dot: t === "overdue" || t === "due7" ? "rose" : t === "d30" ? "amber" : undefined,
+              })) satisfies TabBarItem[]}
+            />
+          )}
           <div className="mt-2 mb-2 flex flex-wrap items-center gap-2">
             <Input
               type="search"
@@ -1102,9 +1042,9 @@ export default function RenewalsPage() {
         </div>
         <div className="border-t border-hairline">
           <RenewalQueue
-            rows={shown[bucketTab]}
+            rows={tile ? tileShown : shown[bucketTab]}
             graceDays={graceDays}
-            strong={bucketTab === "overdue" || bucketTab === "due7"}
+            strong={tile ? tile === "overdue" || tile === "due30" : bucketTab === "overdue" || bucketTab === "due7"}
             selected={selected}
             onSelect={onSelect}
             emptyText={tabEmpty}

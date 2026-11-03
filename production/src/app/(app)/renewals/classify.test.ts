@@ -93,14 +93,16 @@ describe("R-1124 page wiring", () => {
   it("header 'at risk' and the High risk card read the same number", () => {
     expect(page).toContain("classifyRenewals(");
     expect(page).not.toMatch(/const arrAtRisk/);
-    expect(page.match(/groups\.atRiskArr/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
+    /* R-2405 (changed expectation): the Insights money line and its At risk ARR tile gave way to the
+       action tiles (tiles.ts) — the one at-risk figure left is the Renewal AI card's, from the same groups. */
+    expect(page.match(/groups\.atRiskArr/g)?.length ?? 0).toBeGreaterThanOrEqual(1);
   });
   /* R-2403 (changed expectation): the Urgent tab with its "Expired · in grace" group is now two
      tabs — Overdue (expired + stopped) and ≤7 days — built by queueTabs from these groups, so a
      lapsed row is still never listed under "next 7 days" (queue.test.ts proves the split). */
   it("Overdue and ≤7 days are separate tabs built from the one classification", () => {
     expect(page).toContain("const tabs     = queueTabs(groups);");
-    expect(page).toContain("rows={shown[bucketTab]}");
+    expect(page).toContain("rows={tile ? tileShown : shown[bucketTab]}");   // R-2405: a pressed tile lists its rows
     expect(page).not.toContain('title="Expired · in grace"');
   });
   it("bulk reminder passes the company grace", () => {
