@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  SMALL_LEFTOVER_LIMIT, isSmallLeftover, isTdsLeftoverLine, leftoverLines, mayCloseLeftovers, splitLeftovers,
+  SMALL_LEFTOVER_LIMIT, TDS_LEFTOVER_LIMIT, isSmallLeftover, isTdsLeftoverLine, leftoverLines, mayCloseLeftovers, splitLeftovers,
 } from "./small-leftovers";
 import { buildCollectionRows, tdsHint, type CollectionRow, type OwedItem } from "@/lib/queries/collections";
 import { matchTdsShortfall } from "@/lib/accounting/tds-match";
@@ -30,14 +30,16 @@ function row(key: string, items: OwedItem[], p: Partial<CollectionRow> = {}): Co
 /* ₹432 = 2% (194J) of a ₹21,600 pre-GST invoice (₹25,488 with 18% GST), customer paid ₹25,056. */
 const tds432 = matchTdsShortfall({ totalInclGst: 25_488, received: 25_056, gstRatePct: 18 });
 
-const dust55 = row("dust55", [item("INV-55", 55, 172)]);
-const dust1 = row("dust1", [item("INV-1", 1, 157)]);
-const tds = row("tds432", [item("INV-432", 432, 40, { tdsHint: tds432 })]);
+/* R-2421: a leftover is what is LEFT after a payment — every leftover fixture below was part-paid. */
+const paid = { partPaid: true } as const;
+const dust55 = row("dust55", [item("INV-55", 55, 172, paid)]);
+const dust1 = row("dust1", [item("INV-1", 1, 157, paid)]);
+const tds = row("tds432", [item("INV-432", 432, 40, { ...paid, tdsHint: tds432 })]);
 const bigTds = row("bigtds", [item("INV-A378", 25_500, 20, {
-  tdsHint: matchTdsShortfall({ totalInclGst: 300_900, received: 275_400, gstRatePct: 18 }),
+  ...paid, tdsHint: matchTdsShortfall({ totalInclGst: 300_900, received: 275_400, gstRatePct: 18 }),
 })]);
 const real = row("real", [item("INV-R", 11_800, 30)]);
-const mixed = row("mixed", [item("INV-M1", 300, 50), item("INV-M2", 900, 10)]);
+const mixed = row("mixed", [item("INV-M1", 300, 50, paid), item("INV-M2", 900, 10, paid)]);
 
 describe("R-2410 which customers are small leftovers", () => {
   it("the TDS fixture really is 194J 2% (₹432)", () => {
@@ -51,20 +53,48 @@ describe("R-2410 which customers are small leftovers", () => {
     expect(isSmallLeftover(real)).toBe(false);
   });
 
-  it("a balance that is exactly TDS is a leftover even above ₹500 (INV-A378 ₹25,500 = 10%)", () => {
-    expect(isSmallLeftover(bigTds)).toBe(true);
+  it("R-2421: a TDS-looking balance is a leftover only up to ₹5,000 — INV-A378's ₹25,500 stays chased", () => {
+    expect(TDS_LEFTOVER_LIMIT).toBe(5_000);
+    expect(isSmallLeftover(bigTds)).toBe(false);
+    /* ₹4,720 = 2% of a ₹2,36,000 pre-GST bill → still folded away */
+    const tds4720 = matchTdsShortfall({ totalInclGst: 278_480, received: 273_760, gstRatePct: 18 });
+    expect(tds4720).toMatchObject({ tds: 4_720 });
+    expect(isSmallLeftover(row("t", [item("I", 4_720, 9, { ...paid, tdsHint: tds4720 })]))).toBe(true);
+    /* the ₹1 L case from the review: 10% of an ₹11.8 L bill left → chased */
+    const tds1L = matchTdsShortfall({ totalInclGst: 1_180_000, received: 1_080_000, gstRatePct: 18 });
+    expect(isSmallLeftover(row("l", [item("I", 100_000, 9, { ...paid, tdsHint: tds1L })]))).toBe(false);
   });
 
   it("the limit is the whole balance: ₹500 in, ₹501 out; two lines adding to ₹1,200 stay chased", () => {
     expect(SMALL_LEFTOVER_LIMIT).toBe(500);
-    expect(isSmallLeftover(row("x", [item("I", 500, 9)]))).toBe(true);
-    expect(isSmallLeftover(row("y", [item("I", 501, 9)]))).toBe(false);
+    expect(isSmallLeftover(row("x", [item("I", 500, 9, paid)]))).toBe(true);
+    expect(isSmallLeftover(row("y", [item("I", 501, 9, paid)]))).toBe(false);
     expect(isSmallLeftover(mixed)).toBe(false);
+  });
+
+  it("R-2421: a WHOLE unpaid ₹354 hosting bill is real money — it stays in the chase list", () => {
+    expect(isSmallLeftover(row("u354", [item("INV-354", 354, 60)]))).toBe(false);
+    expect(isSmallLeftover(row("u354b", [item("INV-354", 354, 60, { partPaid: false })]))).toBe(false);
+    /* several whole small bills adding to ≤ ₹500 stay chased too */
+    expect(isSmallLeftover(row("two", [item("A", 200, 30), item("B", 250, 20)]))).toBe(false);
+    /* a part-paid ₹55 next to an unpaid ₹300 bill → the customer is chased (the ₹300 is real) */
+    expect(isSmallLeftover(row("mix", [item("D", 55, 90, paid), item("U", 300, 10)]))).toBe(false);
+    /* part-paid ₹55 still folds away */
+    expect(isSmallLeftover(row("p55", [item("D", 55, 90, paid)]))).toBe(true);
+  });
+
+  it("R-2421: an unpaid invoice whose whole balance happens to match a TDS rate is not a TDS leftover", () => {
+    expect(isTdsLeftoverLine({ kind: "invoice", amountDue: 432, tdsHint: tds432 })).toBe(false);
+    expect(isTdsLeftoverLine({ kind: "invoice", amountDue: 432, tdsHint: tds432, partPaid: true })).toBe(true);
+  });
+
+  it("R-2421: a subscription balance is never a leftover (it stays chased)", () => {
+    expect(isSmallLeftover(row("s", [item("sub-1", 300, 40, { kind: "subscription" })]))).toBe(false);
   });
 
   it("nothing owed, or a renewal still to chase → stays in the list", () => {
     expect(isSmallLeftover(row("z", []))).toBe(false);
-    const withRenewal = row("w", [item("I", 20, 9)], {
+    const withRenewal = row("w", [item("I", 20, 9, paid)], {
       renewals: [{ kind: "renewal", id: "s", label: "acme.in", href: "/s", quoteId: null, quoteHref: null,
         amount: 3000, estimate: true, daysOverdue: 2, renewalDate: "2026-11-01", sub: {} as CollectionRow["renewals"][number]["sub"] }],
     });
@@ -80,20 +110,26 @@ describe("R-2410 which customers are small leftovers", () => {
 
 describe("R-2410 actions per line", () => {
   it("TDS line → Book as TDS (and Write off too while ≤ ₹500); dust → Write off only; oldest first", () => {
-    const lines = leftoverLines([tds, dust1, dust55, bigTds]);
+    const lines = leftoverLines([tds, dust1, dust55]);
     expect(lines.map((l) => [l.item.id, l.reason, l.canBookTds, l.canWriteOff])).toEqual([
       ["INV-55", "small", false, true],
       ["INV-1", "small", false, true],
       ["INV-432", "tds", true, true],
-      ["INV-A378", "tds", true, false],
     ]);
   });
 
   it("a subscription balance (no invoice) can be neither booked nor written off here", () => {
-    const sub = row("sub", [item("sub-1", 40, 12, { kind: "subscription" })]);
+    const sub = row("sub", [item("sub-1", 40, 12, { kind: "subscription", partPaid: true })]);
     const [l] = leftoverLines([sub]);
     expect([l.canBookTds, l.canWriteOff]).toEqual([false, false]);
-    expect(isTdsLeftoverLine({ kind: "subscription", amountDue: 40, tdsHint: tds432 })).toBe(false);
+    expect(isTdsLeftoverLine({ kind: "subscription", amountDue: 40, tdsHint: tds432, partPaid: true })).toBe(false);
+  });
+
+  it("R-2421: Write off is offered only on a part-paid invoice line (the RPC refuses the rest)", () => {
+    const [l] = leftoverLines([row("u", [item("INV-354", 354, 60)])]);
+    expect(l.canWriteOff).toBe(false);
+    const [p] = leftoverLines([row("p", [item("INV-55", 55, 60, paid)])]);
+    expect(p.canWriteOff).toBe(true);
   });
 
   it("only the owner or the accountant closes leftovers (unknown role = not yet)", () => {
