@@ -120,7 +120,7 @@ export function CollectionsOwnerReport({ owing }: { owing: readonly ReportOwing[
                       <span className="shrink-0 font-mono tabular-nums text-ink-2">{rupee(c.amountDue)}</span>
                     </li>
                   ))}
-                  {report.quiet.length > 8 && <li className="py-1.5 text-xs text-ink-3">and {report.quiet.length - 8} more in the list below</li>}
+                  {report.quiet.length > 8 && <li className="py-1.5 text-xs text-ink-3">and {report.quiet.length - 8} more in the list above</li>}
                 </ul>
               )}
             </section>

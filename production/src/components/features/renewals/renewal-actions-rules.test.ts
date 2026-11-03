@@ -83,7 +83,8 @@ describe("R-2401 one component on both pages", () => {
   const read = (p: string) => readFileSync(join(process.cwd(), p), "utf8");
   it("Renewals and Payment Follow-up both render RenewalActions; the old Generate / Send now labels are gone", () => {
     const renewals = read("src/app/(app)/renewals/page.tsx");
-    const collections = read("src/app/(app)/collections/page.tsx");
+    /* R-2408: the Payment Follow-up row cells moved to owed-cells.tsx (page.tsx renders them). */
+    const collections = read("src/app/(app)/collections/page.tsx") + read("src/app/(app)/collections/owed-cells.tsx");
     expect(renewals).toMatch(/<RenewalActions\b/);
     expect(collections).toMatch(/<RenewalActions\b/);
     expect(renewals).not.toMatch(/>\s*Generate( quote)?\s*</);
