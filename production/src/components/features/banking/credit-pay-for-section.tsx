@@ -39,7 +39,7 @@ import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { useOpenInvoicesForCreditMatch, type BankTransactionRow } from "@/lib/queries/bank";
 import { matchCreditToInvoices } from "@/lib/banking/invoice-credit-match";
 import {
-  useAdvanceFromBankCredit, useBankCreditOpenItems, useNewSaleFromBankCredit, usePayItemFromBankCredit,
+  useAdvanceFromBankCredit, useBankCreditOpenItems, useNewSaleFromBankCredit, useNewSaleFxFromBankCredit, usePayItemFromBankCredit,
   useRelinkOneOffSale, useSplitFromBankCredit, type RelinkTarget,
 } from "@/lib/queries/bank-credit-pay-for";
 import {
@@ -58,7 +58,7 @@ import { cleanAmount, pickDefault, pickProblem, splitBlocked, splitPartPaid, spl
 import { CreditPaySplit } from "./credit-pay-for-split";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
-import { zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
+import { prefillSaleFx, zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
 
 const NEW_CUSTOMER = "__new_customer__";
@@ -278,14 +278,15 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* ── 4. Save ─────────────────────────────────────────────────────────────────── */
   const payItem = usePayItemFromBankCredit();
   const newSale = useNewSaleFromBankCredit();
+  const newSaleFx = useNewSaleFxFromBankCredit();
   const advance = useAdvanceFromBankCredit();
   const relinkSale = useRelinkOneOffSale();
   const splitPay = useSplitFromBankCredit();
   const [result, setResult] = React.useState<PayForResult | null>(null);
   React.useEffect(() => { setResult(null); }, [transaction.id]);
   const splitCount = splitPicked.length + (splitSale ? 1 : 0);
-  const busy = payItem.isPending || newSale.isPending || advance.isPending || relinkSale.isPending || splitPay.isPending || setLinePayer.isPending;
-  const saveErrorObj = splitPay.error ?? newSale.error ?? payItem.error ?? advance.error ?? relinkSale.error ?? setLinePayer.error;
+  const busy = payItem.isPending || newSale.isPending || newSaleFx.isPending || advance.isPending || relinkSale.isPending || splitPay.isPending || setLinePayer.isPending;
+  const saveErrorObj = splitPay.error ?? newSale.error ?? newSaleFx.error ?? payItem.error ?? advance.error ?? relinkSale.error ?? setLinePayer.error;
   const saveError = saveErrorObj ? (saveErrorObj as { message?: string }).message ?? String(saveErrorObj) : null;
 
   const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
@@ -299,6 +300,9 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const payerUnanswered = payerMismatch && !payerAnswer;
   /* R-2440: Find in Zoho left prices in USD (no bank rate fitting Zoho's) — no Save until they are in ₹. */
   const fxUnconverted = saleShown ? zohoUnconvertedProblem(zohoFill, lines) : null;
+  /* R-2427 (3): a Find-in-Zoho bill in USD filled in ₹ at the bank's rate is saved IN USD (the narration's figures) —
+     the quote and invoice carry the currency and rate, as Reconcile from Zoho books it. Not on a relink. */
+  const saleFx = mode === "sale" && !relink ? prefillSaleFx(zohoFill, transaction.description, credit) : null;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
     && !approvalBlocked && !fxUnconverted
     && !(relink && saleBelowCost)   // R-2397: the server refuses a relink to a below-cost sale
@@ -379,7 +383,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         : target.path === "item"
           ? await payItem.mutateAsync(target)
           : target.path === "new_sale"
-            ? await newSale.mutateAsync(target)
+            ? saleFx ? await newSaleFx.mutateAsync({ input: target, fx: saleFx }) : await newSale.mutateAsync(target)
             : await advance.mutateAsync(target);
       setResult(r);
       if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
@@ -647,6 +651,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={() => onProjectPayment(customerId)}>Project payment</Button>}
           </div>
           {fxUnconverted && !onFooterSave && <p className="text-xs text-amber-ink break-words">{fxUnconverted}</p>}
+          {saleFx && <p className="text-xs text-muted-foreground break-words">Saved in {saleFx.currency} at the bank&apos;s rate (₹{saleFx.rate}) — the invoice shows {saleFx.currency}; 0% GST, export of services under LUT.</p>}
           {payerUnanswered && mode !== null && !onFooterSave && <p className="text-xs text-amber-ink">Say who paid (above) before saving.</p>}
         </>
       )}

@@ -13,6 +13,7 @@
  *   dates     the earliest line start → renews the day after the latest line end.
  */
 import { rupee } from "@/lib/utils";
+import { parseInwardRemittance, remittanceFitsCredit } from "@/lib/banking/inward-remittance";
 import { defaultCycle, saleLineFromItem, type SaleCycle, type SaleLine } from "@/lib/banking/credit-pay-for";
 import type { ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 
@@ -35,6 +36,26 @@ export interface ZohoPrefill {
    *  prices were left in that currency — each line's key, name and foreign price. Save stays blocked
    *  (zohoUnconvertedProblem) until each is typed in ₹. Null = nothing left unconverted. */
   unconverted: { currency: string; lines: Array<{ key?: string; name: string; rate: number }> } | null;
+  /** R-2427: Zoho billed in this currency and the prices were filled in ₹ at the bank's rate — Save
+   *  books the sale in it (reconcile_bank_credit_new_sale_fx, prefillSaleFx). Absent / null = a ₹ sale. */
+  fx?: { currency: string; zohoAmount: number } | null;
+}
+
+/**
+ * R-2427 (3): the sheet's Save of a Find-in-Zoho prefill in a foreign currency books the sale in it
+ * — the narration's currency, amount and rate (what reconcile_bank_credit_new_sale_fx accepts), only
+ * when they are Zoho's amount and fit the credit. Null = save as a ₹ sale (as before).
+ */
+export function prefillSaleFx(
+  prefill: Pick<ZohoPrefill, "fx"> | null | undefined,
+  description: string | null | undefined,
+  credit: number,
+): { currency: string; rate: number; foreignAmount: number } | null {
+  const fx = prefill?.fx;
+  if (!fx) return null;
+  const r = parseInwardRemittance(description);
+  if (!r || r.currency !== fx.currency || Math.abs(r.amount - fx.zohoAmount) > 0.005 || !remittanceFitsCredit(r, credit)) return null;
+  return { currency: r.currency, rate: r.rate, foreignAmount: r.amount };
 }
 
 const SUFFIXES = /\b(private limited|pvt ltd|pvt limited|private ltd|limited|ltd|llp|opc)\b/g;
@@ -148,7 +169,7 @@ export function zohoPrefill(
     notes.push(`Zoho billed in ${cur} at ${rupee(zr ?? 0, { decimals: 2 })} but the money received works out to ${rupee(implied, { decimals: 2 })} per ${cur} — the remitting bank may have kept charges. Prices are left in ${cur} as Zoho has them: type each price in ₹ before saving, or use Reconcile from Zoho.`);
   }
   if (cur && fxRate) {
-    notes.push(`Zoho billed in ${cur}: prices are filled in ₹ at the bank's rate (${rupee(fxRate, { decimals: 4 })} per ${cur}), so the sale equals the money received. 0% GST — export of services under LUT. To book it in ${cur} on the invoice, use Reconcile from Zoho.`);
+    notes.push(`Zoho billed in ${cur}: prices are filled in ₹ at the bank's rate (${rupee(fxRate, { decimals: 4 })} per ${cur}), so the sale equals the money received. 0% GST — export of services under LUT. When the bank narration carries the amount and rate, Save books the sale in ${cur} on the invoice.`);
   }
   const starts: string[] = [];
   const ends: string[] = [];
@@ -182,6 +203,7 @@ export function zohoPrefill(
     invoiceNumbers: [...match.invoices.map((i) => i.number), ...match.moreInvoices],
     notes,
     unconverted,
+    fx: cur && fxRate ? { currency: cur, zohoAmount: match.payment.amount } : null,
   };
 }
 
