@@ -44,12 +44,14 @@ create function pg_temp.r2441_login(p_uid text) returns text language sql as $l$
 $l$;
 
 -- Expect the approval (optionally also writing approval_tier) to be refused with a message starting with p_like.
-create function pg_temp.r2441_refused(p_case text, p_id text, p_note text, p_like text, p_set_tier text default null) returns void
+create function pg_temp.r2441_refused(p_case text, p_id text, p_note text, p_like text, p_set_tier text default null,
+                                      p_disc int default 1500, p_margin int default 2000) returns void
 language plpgsql as $r$
 declare v_msg text;
 begin
   begin
     update public.quotes set approval_status = 'approved', approved_at = now(), approval_note = p_note,
+           approved_discount_bps = p_disc, approved_margin_bps = p_margin,
            approval_tier = coalesce(p_set_tier::public.quote_approval_tier, approval_tier)
      where id = p_id;
     raise exception 'FAIL %: % was approved', p_case, p_id;
@@ -63,10 +65,14 @@ begin
   end if;
 end $r$;
 
-create function pg_temp.r2441_approved(p_case text, p_id text, p_note text, p_by uuid) returns void
+-- The drawer signs the quote's current numbers (approved_discount_bps / approved_margin_bps);
+-- defaults = manager-tier numbers (15% discount, 20% margin).
+create function pg_temp.r2441_approved(p_case text, p_id text, p_note text, p_by uuid,
+                                       p_disc int default 1500, p_margin int default 2000) returns void
 language plpgsql as $a$
 begin
-  update public.quotes set approval_status = 'approved', approved_at = now(), approval_note = p_note where id = p_id;
+  update public.quotes set approval_status = 'approved', approved_at = now(), approval_note = p_note,
+         approved_discount_bps = p_disc, approved_margin_bps = p_margin where id = p_id;
   if (select approval_status::text from public.quotes where id = p_id) <> 'approved'
      or (select approved_by from public.quotes where id = p_id) is distinct from p_by then
     raise exception 'FAIL %: % not approved by %', p_case, p_id, p_by;
@@ -169,6 +175,46 @@ begin
   perform pg_temp.r2441_approved('3d', 'Q-R2441-A5', null, 'aaaaaaaa-0000-0000-0000-000000244101');
   raise notice 'PASS 3d: the owner clears owner-tier and below-cost quotes';
 end $$;
+-- 3f. lowering the stored tier in an EARLIER update (the trigger does not watch approval_tier)
+--     does not let a manager sign owner-tier numbers: discount over 20%, margin under 12%, or margin unknown
+select pg_temp.r2441_login('aaaaaaaa-0000-0000-0000-000000244104');
+select pg_temp.r2441_quote('Q-R2441-A7', 'dddddddd-0000-0000-0000-000000244101', 'cccccccc-0000-0000-0000-000000244101', 'owner');
+select pg_temp.r2441_quote('Q-R2441-A8', 'dddddddd-0000-0000-0000-000000244101', 'cccccccc-0000-0000-0000-000000244101', 'manager');
+select pg_temp.r2441_login('aaaaaaaa-0000-0000-0000-000000244103');
+update public.quotes set approval_tier = 'manager' where id = 'Q-R2441-A7';
+do $$
+begin
+  perform pg_temp.r2441_refused('3f', 'Q-R2441-A7', null, 'Only the owner can approve Q-R2441-A7', null, 2500, 2000);
+  perform pg_temp.r2441_refused('3f', 'Q-R2441-A7', null, 'Only the owner can approve Q-R2441-A7', null, 1500, 800);
+  perform pg_temp.r2441_refused('3f', 'Q-R2441-A7', null, 'Only the owner can approve Q-R2441-A7', null, 1500, null);
+  raise notice 'PASS 3f: a pre-lowered tier does not let a manager sign owner-tier numbers';
+end $$;
+-- 3g. a rejection is a decision too: sales cannot reject in the owner's name; a manager rejects a
+--     manager-tier quote in their own name
+select pg_temp.r2441_login('aaaaaaaa-0000-0000-0000-000000244105');
+do $$
+declare v_msg text;
+begin
+  begin
+    update public.quotes set approval_status = 'rejected', approved_by = 'aaaaaaaa-0000-0000-0000-000000244101',
+           approval_rejection_reason = 'too cheap' where id = 'Q-R2441-A8';
+    raise exception 'FAIL 3g: billing rejected Q-R2441-A8';
+  exception when others then
+    v_msg := sqlerrm;
+    if v_msg like 'FAIL%' then raise; end if;
+    if v_msg not like 'Only a manager or the owner can reject Q-R2441-A8%' then raise exception 'FAIL 3g: wrong refusal: %', v_msg; end if;
+  end;
+end $$;
+select pg_temp.r2441_login('aaaaaaaa-0000-0000-0000-000000244103');
+update public.quotes set approval_status = 'rejected', approved_by = 'aaaaaaaa-0000-0000-0000-000000244101',
+       approval_rejection_reason = 'too cheap' where id = 'Q-R2441-A8';
+do $$
+begin
+  if (select approved_by from public.quotes where id = 'Q-R2441-A8') is distinct from 'aaaaaaaa-0000-0000-0000-000000244103'::uuid then
+    raise exception 'FAIL 3g: the rejection is not in the manager''s own name';
+  end if;
+  raise notice 'PASS 3g: rejection needs the role and is in the signer''s own name';
+end $$;
 -- 3e. no login (service / cron path) is unchanged
 select set_config('request.jwt.claims', '', true);
 do $$
@@ -186,7 +232,8 @@ declare r text;
 begin
   foreach r in array array['NEFT-000000000000', 'UPI/000000000000', 'UTR:0000000000', 'IMPS/000000',
                            'RTGS 000000000000000', 'neft/utr/000000000000', 'UTR NO 000000000', 'UPIREF000000',
-                           'NEFT-', 'UPI/XXXXXXXX'] loop
+                           'NEFT-', 'UPI/XXXXXXXX', 'NEFT N/A', 'UTR NOT AVAILABLE', 'REF NONE', 'UTR NIL',
+                           'TXN-001', 'NEFT-12', 'UTR NO 12', 'IMPS NOT PROVIDED'] loop
     if public.bank_reference_is_real(r) then raise exception 'FAIL 2: % counted as a real reference', r; end if;
     if public.payment_ref_key('bank_transfer', r) is not null then raise exception 'FAIL 2: % got a key', r; end if;
   end loop;

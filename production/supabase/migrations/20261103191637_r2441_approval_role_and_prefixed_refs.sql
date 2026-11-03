@@ -21,13 +21,21 @@
 --   billing login who can see a teammate's quote could approve it. Now, for any signed-in
 --   approval (a service / cron path with no login is unchanged), the approver must hold, by
 --   current_user_has_role and in the quote's company:
---     • owner — when the tier is 'owner' before OR after the update (a manager cannot lower the
---       tier in the same update to slip past the owner), or the quote is below cost (R-2213:
---       margin < 0, which lib/quotes/approval.ts puts at the owner tier);
---     • owner or manager — otherwise (manager tier, or no tier recorded).
---   Same matrix as MANAGER_APPROVERS / OWNER_APPROVERS in src/lib/quotes/approval.ts. The
---   maker branch (R-2367/R-2383/R-2426) is unchanged apart from fix 1: the sole owner passes it
---   with owner role already.
+--     • owner — when the stored tier is 'owner' before OR after the update, the quote is below
+--       cost (R-2213), or the numbers being signed (approved_margin_bps / approved_discount_bps,
+--       which the drawer fills from the quote as it stands) are owner-tier by requiredApproval():
+--       margin unknown or under 12%, discount over 20%. So lowering the stored tier — in the same
+--       update or an earlier one the trigger does not see — does not let a manager sign
+--       owner-tier numbers; signing numbers that are not the quote's makes the approval stale on
+--       screen (isStale) and the quote cannot be sent;
+--     • owner or manager — otherwise.
+--   A REJECTION is a decision too: it is now in the signer's own name (approved_by forced) and
+--   needs the same role (owner tier → owner, else owner or manager).
+--   Same matrix as MANAGER_APPROVERS / OWNER_APPROVERS and the 1200 / 2000 bps limits in
+--   src/lib/quotes/approval.ts — keep them in step. The maker branch (R-2367/R-2383/R-2426) is
+--   unchanged apart from fix 1: the sole owner passes it with owner role already.
+--   Not covered (left on the card): a quote INSERTED already approved, and a separate update of
+--   below_cost; both need a column guard of their own.
 --
 --   Body of tg_quote_approval_not_by_maker() taken from its latest definition (R-2426,
 --   20261103153445). Trigger trg_quote_approval_not_by_maker itself is unchanged.
@@ -36,15 +44,16 @@
 --   bank_reference_is_real (latest: R-2424, 20261103144041) caught '000000000000000' but not
 --   'NEFT-000000000000', 'UPI/000000000000', 'UTR:0000000000' or 'IMPS/000000': after keeping
 --   letters and digits they read 'NEFT000000000000' — not one repeated character — so two
---   different credits with them still blocked each other. Now leading rail words
---   (NEFT, RTGS, IMPS, UPI, UTR, REF, TXN, NO — any run of them) are set aside before the
---   "one character repeated" test; what is left must be non-empty and not one repeated
---   character. The 6-character minimum still counts the whole reference, and a real UTR with
---   a prefix keeps exactly its R-1676 key (payment_ref_key is unchanged). Same rule as
+--   different credits with them still blocked each other. Now leading rail words are set aside
+--   first: the placeholder-word test looks past NEFT/RTGS/IMPS/UPI/UTR/REF/TXN ('UTR NOT
+--   AVAILABLE'), and what is left after those and NO ('UTR NO 000000') must be 6+ characters
+--   and not one character repeated ('NEFT N/A', 'TXN-001' are placeholders now). A real UTR
+--   with a prefix keeps exactly its R-1676 key (payment_ref_key is unchanged). Same rule as
 --   isRealBankReference() in src/lib/payments/bank-reference.ts.
 --   Note (R-2424 minor 4, recorded): since R-2424 the 6-character minimum counts letters and
---   digits only, so e.g. '12/3-4' is not keyed.
---   payments_ref_key_idx (an index on payment_ref_key(), which reads this function) is rebuilt.
+--   digits only, so e.g. '12/3-4' is not keyed; since R-2441 it counts after the rail prefix.
+--   payments_ref_key_idx (an index on payment_ref_key(), which reads this function) is rebuilt
+--   inside the same transaction.
 --
 -- Test: supabase/tests/r2441_review_fixes.test.sql
 -- (+ r2426_sole_owner_any_tier, r2383_sole_owner_self_approval, r2367_quote_chain_self_approval,
@@ -62,8 +71,30 @@ declare
   v_uid   uuid := auth.uid();
   v_tier  text;
   v_note  text;
+  v_owner_tier boolean;
+  v_in_company boolean;
 begin
   if v_uid is null then return new; end if;
+
+  /* R-2441: the tier this decision is for — owner when the stored tier is 'owner' before OR after
+     this update (no lowering it in the same write), or the quote is below cost (R-2213). */
+  v_owner_tier := old.approval_tier::text = 'owner' or new.approval_tier::text = 'owner'
+                  or coalesce(new.below_cost, false) or coalesce(old.below_cost, false);
+  v_in_company := exists (select 1 from public.users u where u.id = v_uid and u.tenant_id = new.tenant_id);
+
+  /* R-2441: a rejection is a decision too — in the signer's own name, by a role that may decide
+     that tier (a sales / billing login cannot reject a teammate's quote in the owner's name). */
+  if new.approval_status::text = 'rejected'
+     and (old.approval_status::text is distinct from 'rejected' or new.approved_by is distinct from old.approved_by) then
+    new.approved_by := v_uid;
+    if not (v_in_company and (case when v_owner_tier then public.current_user_has_role('owner')
+                                   else public.current_user_has_role('owner', 'manager') end)) then
+      raise exception 'Only % can reject % — it is their decision.', case when v_owner_tier then 'the owner' else 'a manager or the owner' end, new.id
+        using errcode = '42501';
+    end if;
+    return new;
+  end if;
+
   if new.approval_status::text <> 'approved' then return new; end if;
   if old.approval_status::text = 'approved' and new.approved_by is not distinct from old.approved_by then
     return new;
@@ -83,9 +114,7 @@ begin
        off or past access_ends_on. */
     v_tier := coalesce(old.approval_tier::text, new.approval_tier::text);   -- for the activity log only; the tier no longer decides
 
-    if not (public.current_user_has_role('owner')
-            and exists (select 1 from public.users u
-                         where u.id = v_uid and u.tenant_id = new.tenant_id))
+    if not (v_in_company and public.current_user_has_role('owner'))
        or exists (select 1 from public.users u
                    where u.tenant_id = new.tenant_id and u.id <> v_uid
                      and u.is_active is not false
@@ -112,16 +141,20 @@ begin
   end if;
 
   /* R-2441: a non-maker needs the role for the tier (lib/quotes/approval.ts OWNER_APPROVERS /
-     MANAGER_APPROVERS). Owner tier before OR after this update, or below cost → owner. */
-  if old.approval_tier::text = 'owner' or new.approval_tier::text = 'owner'
-     or coalesce(new.below_cost, false) or coalesce(old.below_cost, false) then
-    if not (public.current_user_has_role('owner')
-            and exists (select 1 from public.users u where u.id = v_uid and u.tenant_id = new.tenant_id)) then
+     MANAGER_APPROVERS). Owner when: the stored tier is 'owner' (before or after), below cost, or
+     the numbers being signed are owner-tier by the same matrix as requiredApproval() — margin
+     unknown or under 12% (OWNER_MARGIN_FLOOR_BPS 1200), discount over 20%
+     (MANAGER_MAX_DISCOUNT_BPS 2000). So lowering the stored tier in an EARLIER update does not
+     let a manager sign owner-tier numbers; signing numbers that are not the quote's makes the
+     approval stale on screen (isStale) and the quote cannot be sent. */
+  if v_owner_tier
+     or new.approved_margin_bps is null or new.approved_margin_bps < 1200
+     or coalesce(new.approved_discount_bps, 0) > 2000 then
+    if not (v_in_company and public.current_user_has_role('owner')) then
       raise exception 'Only the owner can approve % — it needs owner sign-off.', new.id
         using errcode = '42501';
     end if;
-  elsif not (public.current_user_has_role('owner', 'manager')
-             and exists (select 1 from public.users u where u.id = v_uid and u.tenant_id = new.tenant_id)) then
+  elsif not (v_in_company and public.current_user_has_role('owner', 'manager')) then
     raise exception 'Only a manager or the owner can approve % — ask one of them to clear it.', new.id
       using errcode = '42501';
   end if;
@@ -141,23 +174,30 @@ immutable
 parallel safe
 set search_path to 'public'
 as $$
-  /* R-2424: letters and digits only, upper-case; real = 6+ of them, not a placeholder word, and
-     R-2441: what is left after leading rail words (NEFT/RTGS/IMPS/UPI/UTR/REF/TXN/NO) is
-     non-empty and not one character repeated — 'NEFT-000000000000' is a placeholder. */
-  select length(v) >= 6
-     and length(r) > 0
+  /* R-2424: letters and digits only, upper-case; not a placeholder word, not one character repeated.
+     R-2441: leading rail words are set aside first — the placeholder-word test looks past
+     NEFT/RTGS/IMPS/UPI/UTR/REF/TXN ("UTR NOT AVAILABLE"), and what is left after those and NO
+     ("UTR NO 000000") must be 6+ characters and not one character repeated — so
+     NEFT-000000000000, NEFT N/A and TXN-001 are placeholders, while a real UTR with a prefix
+     stays real (and keeps its R-1676 key: payment_ref_key is unchanged). */
+  select length(r) >= 6
      and length(replace(r, left(r, 1), '')) > 0
-     and v <> all (array['NOTAVAILABLE', 'NOTAPPLICABLE', 'NOREFERENCE', 'NOTPROVIDED'])
-    from (select v, regexp_replace(v, '^(NEFT|RTGS|IMPS|UPI|UTR|REF|TXN|NO)+', '') as r
+     and v  <> all (array['NOTAVAILABLE', 'NOTAPPLICABLE', 'NOREFERENCE', 'NOTPROVIDED'])
+     and rw <> all (array['NOTAVAILABLE', 'NOTAPPLICABLE', 'NOREFERENCE', 'NOTPROVIDED'])
+    from (select v,
+                 regexp_replace(v, '^(NEFT|RTGS|IMPS|UPI|UTR|REF|TXN)+', '')    as rw,
+                 regexp_replace(v, '^(NEFT|RTGS|IMPS|UPI|UTR|REF|TXN|NO)+', '') as r
             from (select upper(regexp_replace(coalesce(p_reference, ''), '[^A-Za-z0-9]', '', 'g')) as v) s0) s
 $$;
 
 comment on function public.bank_reference_is_real(text) is
-  'R-2424/R-2441: false for a placeholder bank reference (under 6 letters/digits, a placeholder word, or — after leading NEFT/RTGS/IMPS/UPI/UTR/REF/TXN/NO — empty or one character repeated, such as 000000000000000 or NEFT-000000000000). It is not a UTR and must not block another payment.';
+  'R-2424/R-2441: false for a placeholder bank reference: a placeholder word (also after a NEFT/RTGS/IMPS/UPI/UTR/REF/TXN prefix), or — after leading NEFT/RTGS/IMPS/UPI/UTR/REF/TXN/NO — under 6 letters/digits or one character repeated (000000000000000, NEFT-000000000000, NEFT N/A, TXN-001). It is not a UTR and must not block another payment.';
 
 revoke all on function public.bank_reference_is_real(text) from public, anon;
 grant execute on function public.bank_reference_is_real(text) to authenticated, service_role;
 
-commit;
-
+-- R-2441: rebuilt in the same transaction as the function change, so the new rule and the
+-- index keys never disagree (a non-concurrent REINDEX is allowed inside a transaction).
 reindex index public.payments_ref_key_idx;
+
+commit;
