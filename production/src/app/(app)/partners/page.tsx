@@ -8,6 +8,9 @@
  * Backed by get_partner_metrics() SECURITY DEFINER RPC (migration 0044).
  *
  * Slice 3 of parent-child reseller system.
+ *
+ * R-2433 (G-NETWORK): a partner shows only while IT shares "Partner metrics" with you on an
+ * accepted connection (Settings → Network) — the database function checks it, not this page.
  */
 "use client";
 
@@ -80,7 +83,7 @@ export default function PartnersPage() {
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Sales</p>
         <h1 className="font-serif text-3xl md:text-4xl leading-tight">Partners</h1>
         <p className="text-sm text-ink-3 mt-1">
-          Your sub-reseller channel · aggregated metrics, no end-customer leak
+          Your sub-reseller channel · aggregated metrics, no end-customer leak · only partners who share Partner metrics with you (<Link href="/settings?tab=network" className="underline underline-offset-2 hover:text-amber-ink">Network</Link>)
         </p>
       </div>
 
@@ -134,7 +137,8 @@ export default function PartnersPage() {
             <EmptyState
               icon="users"
               title="No partners yet"
-              body="Channel partners linked to your company will show here with their subscriptions, MRR and renewals."
+              body="Channel partners connected to your company who share Partner metrics with you show here with their subscriptions, MRR and renewals. Each partner turns this on or off in their Settings → Network."
+              action={<Button asChild variant="primary" size="sm"><Link href="/settings?tab=network">Open Network</Link></Button>}
             />
           )}
 
