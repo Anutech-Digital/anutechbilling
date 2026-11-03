@@ -10,6 +10,7 @@
  * foreign amount and rate say what was billed and at what rate the bank converted it.
  */
 import { formatForeign } from "@/lib/currency";
+import { fyBounds, fyLabel } from "@/lib/dates/ist";
 
 export interface InwardRemittance {
   /** ISO code, upper case, never INR. */
@@ -20,7 +21,8 @@ export interface InwardRemittance {
   rate: number;
 }
 
-/** Codes a remittance narration is read for (the billing currencies + a few common ones). */
+/** Codes a remittance narration is read for (the billing currencies + a few common ones).
+ *  R-2440: reconcile_bank_credit_new_sale_fx (migration 20261103163318) holds the same list twice — change all three together. */
 const CODES = ["USD", "EUR", "GBP", "AED", "SGD", "AUD", "CAD", "CHF", "JPY", "NZD", "HKD", "SAR"];
 const RE = new RegExp(`(?:^|[^A-Z])(${CODES.join("|")})\\s*([0-9][0-9,]*(?:\\.[0-9]+)?)\\s*@\\s*([0-9]+(?:\\.[0-9]+)?)`, "i");
 
@@ -55,14 +57,6 @@ export function formatRemittance(r: InwardRemittance): string {
 /** R-2440: the company's Letter of Undertaking as saved in Settings (tenants.lut_number / lut_valid_upto). */
 export interface ExportLut { number: string | null | undefined; validUpto: string | null | undefined }
 
-/** "2026-08-07" → "2026-27" (Indian financial year, 1 Apr – 31 Mar). */
-function fyLabel(isoDate: string): { label: string; end: string } {
-  const y = Number(isoDate.slice(0, 4));
-  const m = Number(isoDate.slice(5, 7));
-  const endYear = m >= 4 ? y + 1 : y;
-  return { label: `${endYear - 1}-${String(endYear % 100).padStart(2, "0")}`, end: `${endYear}-03-31` };
-}
-
 /**
  * R-2440 (tax memo 3 Nov §1; independent review 2 of R-2425): an export sale at 0% GST needs an LUT
  * for the receipt's financial year — the LUT number set and its "Valid up to" inside that FY, on or
@@ -70,9 +64,9 @@ function fyLabel(isoDate: string): { label: string; end: string } {
  * (migration 20261103163318), which refuses the booking too.
  */
 export function exportLutProblem(lut: ExportLut | null | undefined, txnDate: string): string | null {
-  const fy = fyLabel(txnDate);
+  const fyEnd = fyBounds(txnDate).end;
   const num = (lut?.number ?? "").trim();
   const upto = (lut?.validUpto ?? "").slice(0, 10);
-  if (num && upto && upto >= txnDate && upto <= fy.end) return null;
-  return `No LUT for FY ${fy.label} on file. An export sale at 0% GST needs your Letter of Undertaking: add its ARN as "LUT number" with "Valid up to" in Settings → Company, then try again. Without an LUT, reconcile this line by hand with IGST.`;
+  if (num && upto && upto >= txnDate && upto <= fyEnd) return null;
+  return `No LUT for FY ${fyLabel(txnDate)} on file. An export sale at 0% GST needs your Letter of Undertaking: add its ARN as "LUT number" with "Valid up to" in Settings → Company, then try again.`;
 }

@@ -112,7 +112,7 @@ begin
     from public.tenants tn where tn.id = v_txn.tenant_id;
   v_fy_end := make_date(extract(year from v_txn.txn_date)::int + case when extract(month from v_txn.txn_date) >= 4 then 1 else 0 end, 3, 31);
   if v_lut is null or v_lut_upto is null or v_lut_upto < v_txn.txn_date or v_lut_upto > v_fy_end then
-    raise exception 'No LUT for FY %-% on file. An export sale at 0%% GST needs your Letter of Undertaking: add its ARN as "LUT number" with "Valid up to" in Settings → Company, then try again. Without an LUT, reconcile this line by hand with IGST.',
+    raise exception 'No LUT for FY %-% on file. An export sale at 0%% GST needs your Letter of Undertaking: add its ARN as "LUT number" with "Valid up to" in Settings → Company, then try again.',
       extract(year from v_fy_end)::int - 1, lpad(((extract(year from v_fy_end)::int) % 100)::text, 2, '0')
       using errcode = 'check_violation';
   end if;
