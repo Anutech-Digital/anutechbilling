@@ -102,12 +102,27 @@ export async function attachCustomerFacts(
     }
   }
 
+  /* R-2427: an open invoice in a foreign currency (its rate at issue) — an export receipt pays it in that currency. */
+  const invoiceIds = [...new Set([...items.values()].flat().map((r) => r.invoice_id).filter((x): x is string => !!x))];
+  const invFx = new Map<string, { currency: string; fxRate: number }>();
+  if (invoiceIds.length > 0) {
+    const iv = await admin.from("invoices").select("id, currency, fx_rate").eq("tenant_id", tenantId).in("id", invoiceIds);
+    if (iv.error) throw new FactsReadError("the open invoices' currency");
+    for (const row of (iv.data ?? []) as Array<{ id: string; currency: string | null; fx_rate: number | string | null }>) {
+      const cur = (row.currency ?? "").trim().toUpperCase();
+      const rate = Number(row.fx_rate ?? 0);
+      if (cur && cur !== "INR" && rate > 0) invFx.set(row.id, { currency: cur, fxRate: rate });
+    }
+  }
+
   const facts = new Map<string, CustomerFacts>(ids.map((id) => [id, {
     customerId: id,
     openItems: (items.get(id) ?? []).map((r): OpenItemFact => ({
       kind: r.kind, quoteId: r.quote_id, invoiceId: r.invoice_id, docDate: r.doc_date ? String(r.doc_date).slice(0, 10) : null,
       due: num(r.amount_due), taxable: num(r.taxable_value), makesSubscription: Boolean(r.makes_subscription),
       approvalBlock: r.quote_id ? blocks.get(r.quote_id) ?? null : null,
+      currency: r.invoice_id ? invFx.get(r.invoice_id)?.currency ?? null : null,
+      fxRate: r.invoice_id ? invFx.get(r.invoice_id)?.fxRate ?? null : null,
     })),
     openings: [], receipts: [], billed: [],
   }]));

@@ -235,6 +235,18 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       invalidateReceivables(qc);
       return data as PayForResult;
     },
+    /* R-2427: an export receipt paying an invoice in its currency — receipt + Bank Charges / forex lines in one call. */
+    payFxInvoice: async (args) => {
+      const { data, error } = await (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> })
+        .rpc("reconcile_bank_credit_fx_invoice", args);
+      if (error) throw error;
+      if (!data) throw new Error("The payment was not confirmed — refresh the page to see whether it was saved.");
+      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+      qc.invalidateQueries({ queryKey: ["bank_credit_open_items"] });
+      qc.invalidateQueries({ queryKey: ["expenses"] });
+      invalidateReceivables(qc);
+      return data as PayForResult;
+    },
     payOpening: (i) => payOpeningInvoice(i, accountId, (fn, args) => (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> }).rpc(fn, args)),
     saleSubscriptions: async (quoteId) => {
       const { data, error } = await createClient().from("subscriptions")

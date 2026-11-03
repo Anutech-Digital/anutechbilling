@@ -103,6 +103,10 @@ export interface OpenItemFact {
   makesSubscription: boolean;
   /** The quote is priced below cost and not approved — the refusal text; null = can be paid. */
   approvalBlock: string | null;
+  /** R-2427: the invoice's currency when it is not INR (its ₹ due is at fxRate); null/absent = ₹. */
+  currency?: string | null;
+  /** R-2427: the rate the invoice was issued at (₹ per unit). */
+  fxRate?: number | null;
 }
 
 /** R-2419 (a): an opening invoice imported from Zoho that still has money due. */
@@ -236,6 +240,22 @@ export interface PayItemSpec {
   due: number;
   createSubscription: boolean | null;
   subStart: string | null;
+  /** R-2427: an export receipt paying an invoice in its currency — reconcile_bank_credit_fx_invoice
+   *  (the ₹ due as the receipt, the gap → Bank Charges / Foreign Exchange Gain / Loss). */
+  fx?: FxInvoicePay | null;
+}
+
+/** R-2427: what reconcile_bank_credit_fx_invoice is sent, and what it will book (the plan's own sums). */
+export interface FxInvoicePay {
+  currency: string;
+  /** The bank's rate and foreign amount — the narration's. */
+  rate: number;
+  foreignAmount: number;
+  invoiceRate: number;
+  foreignDue: number;
+  bankCharges: number;
+  /** ₹; < 0 = an exchange gain. */
+  forex: number;
 }
 
 /** (a) settle this opening invoice — record_multi_invoice_payment, then reconcile_bank_txn. */
@@ -266,8 +286,35 @@ export interface BookSpec {
   fx: SaleFx | null;
 }
 
-/** R-2425: the foreign side of an export sale booked from an inward remittance. */
-export interface SaleFx { currency: string; rate: number; foreignAmount: number }
+/** R-2425: the foreign side of an export sale booked from an inward remittance. R-2427: billed =
+ *  Zoho's amount when the remitting bank kept charges (more than foreignAmount, ≤ 5%). */
+export interface SaleFx { currency: string; rate: number; foreignAmount: number; billed?: number | null }
+
+/** R-2427: the most a remittance may be short and still read as the remitting bank's charges. */
+export const FX_CHARGES_MAX_SHARE = 0.05;
+/** R-2427: the bank's rate may differ from the invoice's by this share before it reads as a wrong match. */
+export const FX_RATE_MAX_DRIFT = 0.25;
+
+/**
+ * R-2427: an export receipt settling a foreign invoice in full — the same sums as
+ * reconcile_bank_credit_fx_invoice (migration 20261103220000): the receipt is the ₹ due; the short
+ * part × the bank's rate is Bank Charges; due − charges − credit is the exchange difference
+ * (< 0 = gain). problem = why it cannot be booked this way; null = it can.
+ */
+export function fxInvoiceSettlement(
+  due: number, invoiceRate: number, remittance: InwardRemittance, credit: number,
+): { foreignDue: number; short: number; bankCharges: number; forex: number; problem: string | null } {
+  const foreignDue = Math.round((due / invoiceRate) * 100) / 100;
+  const short = Math.round((foreignDue - remittance.amount) * 100) / 100;
+  const bankCharges = Math.max(0, Math.round(Math.max(short, 0) * remittance.rate));
+  const forex = Math.round(due - bankCharges - credit);
+  const f = (n: number) => formatForeign(n, remittance.currency, Number.isInteger(n) ? 0 : 2);
+  let problem: string | null = null;
+  if (short < -0.01) problem = `The bank got ${f(remittance.amount)} but the invoice has only ${f(foreignDue)} due — reconcile this line by hand (the extra is an advance).`;
+  else if (short > foreignDue * FX_CHARGES_MAX_SHARE) problem = `The bank got ${f(remittance.amount)} but the invoice has ${f(foreignDue)} due — ${f(short)} short is more than bank charges (5%). Record it as a part payment in the line's Reconcile.`;
+  else if (Math.abs(remittance.rate / invoiceRate - 1) > FX_RATE_MAX_DRIFT) problem = `The bank's rate (₹${remittance.rate}) is more than 25% away from the invoice's (₹${invoiceRate}) — this money is probably for something else. Reconcile this line by hand.`;
+  return { foreignDue, short, bankCharges, forex, problem };
+}
 
 export interface PlanRow {
   txnId: string;
@@ -525,10 +572,16 @@ export function planRow(
       fxProblems.push(`Currency differs: the bank received ${formatRemittance(remittance)}, the Zoho payment is ${z(match.payment.amount)}. Reconcile this line by hand.`);
     } else if (!remittanceFitsCredit(remittance, line.credit)) {
       fxProblems.push(`The bank narration says ${formatRemittance(remittance)}, which is not the ${rupee(line.credit)} credited. Reconcile this line by hand.`);
+    } else if (match.payment.amount > remittance.amount + 0.005 && match.payment.amount - remittance.amount <= match.payment.amount * FX_CHARGES_MAX_SHARE) {
+      /* R-2427 (2): the remitting bank kept its charges abroad — the bill is settled in full, the
+         short part × the bank's rate is Bank Charges (not TDS). */
+      const gap = Math.round((match.payment.amount - remittance.amount) * 100) / 100;
+      fx = { currency: remittance.currency, rate: remittance.rate, foreignAmount: remittance.amount, billed: match.payment.amount };
+      notes.push(`Short by ${z(gap)}: Zoho's payment is ${z(match.payment.amount)}, the bank received ${z(remittance.amount)} — the remitting bank kept it as charges: ${rupees(Math.round(gap * remittance.rate))} is booked as Bank Charges and the bill is settled in full.`);
     } else if (Math.abs(match.payment.amount - remittance.amount) > 0.005) {
       const gap = Math.round(Math.abs(match.payment.amount - remittance.amount) * 100) / 100;
       fxProblems.push(match.payment.amount > remittance.amount
-        ? `Short by ${z(gap)}: Zoho's payment is ${z(match.payment.amount)}, the bank received ${z(remittance.amount)} — the remitting bank probably kept it as charges. Reconcile this line by hand (bank charges on export receipts come in R-2427).`
+        ? `Short by ${z(gap)}: Zoho's payment is ${z(match.payment.amount)}, the bank received ${z(remittance.amount)} — more than bank charges (5%), so this is a part payment. Reconcile this line by hand.`
         : `Amount differs: Zoho's payment is ${z(match.payment.amount)}, the bank received ${z(remittance.amount)}. Reconcile this line by hand.`);
     } else {
       fx = { currency: remittance.currency, rate: remittance.rate, foreignAmount: remittance.amount };
@@ -662,8 +715,10 @@ export function planRow(
   if (foreignMoney) {
     /* R-2425: compared in the foreign currency above (fxProblems); the sale in ₹ against the credit. */
     zohoProblems.push(...fxProblems);
-    if (lines.length && lineFx && Math.abs(preview.total - money) > AMOUNT_SLACK) {
-      saleProblems.push(`Amount differs: the Zoho bill at the bank's rate comes to ${rupees(preview.total)}, the bank line is ${rupees(money)}.`);
+    /* R-2427: with charges kept abroad the sale is the BILLED amount at the bank's rate (the bank line + charges). */
+    const expected = fx?.billed ? Math.round(fx.billed * fx.rate) : money;
+    if (lines.length && lineFx && Math.abs(preview.total - expected) > AMOUNT_SLACK) {
+      saleProblems.push(`Amount differs: the Zoho bill at the bank's rate comes to ${rupees(preview.total)}, ${fx?.billed ? `Zoho's ${formatForeign(fx.billed, fx.currency)} at the bank's rate is` : "the bank line is"} ${rupees(expected)}.`);
     }
     if (fx && !foreign) {
       custProblems.push(`${customer.name} is in India in the app, but this money came from abroad in ${fx.currency}. Set the customer's country (export), or reconcile this line by hand.`);
@@ -714,6 +769,7 @@ export function planRow(
   let opening: OpeningSpec | null = null;
   const pathProblems: string[] = [];
   let noBook = false;
+  let fxPaid = false as boolean;
   const isExisting = customer.kind === "existing";
   const firstZoho = match.invoices.flatMap((i) => i.lines).find((l) => l.start || l.end) ?? null;
 
@@ -729,10 +785,32 @@ export function planRow(
     const ended = !!firstZoho?.end && firstZoho.end < today;
     const makeSub = it.makesSubscription ? !ended : null;
     if (it.makesSubscription && ended) notes.push(`Zoho's term ended ${formatDate(firstZoho!.end)} — the quote is paid without making a subscription.`);
-    item = { quoteId: it.invoiceId ? null : it.quoteId, invoiceId: it.invoiceId, due: it.due, createSubscription: makeSub, subStart: makeSub ? firstZoho?.start ?? null : null };
+    /* R-2427 (1)/(2): an export receipt paying an invoice in its own currency — settled in full; the
+       short part → Bank Charges, the rest of the ₹ gap → Foreign Exchange Gain / Loss. */
+    let fxPay: FxInvoicePay | null = null;
+    if (fx && remittance && it.invoiceId && it.currency === fx.currency && it.fxRate && it.fxRate > 0) {
+      const s = fxInvoiceSettlement(it.due, it.fxRate, remittance, line.credit);
+      if (s.problem) {
+        pathProblems.push(s.problem);
+        noBook = true;
+      } else {
+        fxPaid = true;
+        fxPay = { currency: fx.currency, rate: fx.rate, foreignAmount: fx.foreignAmount, invoiceRate: it.fxRate, foreignDue: s.foreignDue, bankCharges: s.bankCharges, forex: s.forex };
+        const parts = [
+          s.bankCharges > 0 ? `${rupees(s.bankCharges)} Bank Charges (remitting bank)` : null,
+          s.forex < 0 ? `${rupees(-s.forex)} forex gain` : s.forex > 0 ? `${rupees(s.forex)} forex loss` : null,
+        ].filter(Boolean);
+        summary = `Pays open invoice ${it.invoiceId} (${formatForeign(s.foreignDue, fx.currency, Number.isInteger(s.foreignDue) ? 0 : 2)} at ₹${it.fxRate} = ${rupees(it.due)}) in full${parts.length ? ` — ${parts.join(", ")}` : ""}`;
+        notes.push(`Export receipt ${formatRemittance(remittance)}: invoice ${it.invoiceId} was issued at ₹${it.fxRate}; the receipt is its ${rupees(it.due)} due${parts.length ? `, and ${parts.join(" + ")} on the bank line's date` : ""}.`);
+      }
+    }
+    item = { quoteId: it.invoiceId ? null : it.quoteId, invoiceId: it.invoiceId, due: it.due, createSubscription: makeSub, subStart: makeSub ? firstZoho?.start ?? null : null, fx: fxPay };
   };
   const sameMoney = (due: number) => Math.abs(due - money) <= MATCH_SLACK;
-  const itemHits = facts ? facts.openItems.filter((o) => sameMoney(o.due)) : [];
+  /* R-2427: an invoice in the remittance's currency is matched by its FOREIGN due (Zoho's amount, or what the bank got). */
+  const fxHit = (o: OpenItemFact) => !!fx && !!o.invoiceId && o.currency === fx.currency && !!o.fxRate && o.fxRate > 0
+    && [fx.billed ?? fx.foreignAmount, fx.foreignAmount].some((a) => Math.abs(o.due / o.fxRate! - a) <= 0.05);
+  const itemHits = facts ? facts.openItems.filter((o) => (o.currency ? fxHit(o) : sameMoney(o.due))) : [];
   const severalItems = () => {
     pathProblems.push(`${itemHits.length} open quotes / invoices of ${customer.name} are for ${rupees(money)} (${itemHits.map((o) => o.invoiceId ?? o.quoteId).join(", ")}) — pick the right one in the line's Reconcile.`);
     noBook = true;
@@ -792,13 +870,20 @@ export function planRow(
     }
   }
 
-  /* R-2425: an export receipt is booked only as a new sale in its currency. Paying an open quote /
-     invoice (or last year's) at the bank's rate would leave a forex difference — a later card. */
-  if (fx && kind !== "new_sale") {
-    pathProblems.push(`This export receipt matches ${kind === "opening" ? "last year's invoice" : "an open quote / invoice"} in the app — paying it at the bank's rate needs a forex gain / loss entry, which comes in a later card. Reconcile this line by hand.`);
+  /* R-2425: an export receipt is booked as a new sale in its currency, or (R-2427) pays an open
+     invoice in that same currency with the forex / charges lines. Anything else (a ₹ quote or
+     invoice, last year's opening invoice) is left for a person. */
+  if (fx && kind !== "new_sale" && !fxPaid && !noBook) {
+    pathProblems.push(`This export receipt matches ${kind === "opening" ? "last year's invoice" : "an open quote / invoice in ₹"} in the app — it is paid in ${fx.currency} only against an invoice in ${fx.currency}. Reconcile this line by hand.`);
     noBook = true;
   }
-  if (fx && lines.some((l) => l.cycle === "monthly")) {
+  if (fxPaid) {
+    /* R-2427: no new sale — the new-sale notes (sale in USD at the bank's rate, renewal quote) do not apply. */
+    for (let n = notes.length - 1; n >= 0; n--) {
+      if (notes[n].includes(": booked in ") || notes[n].startsWith("The new subscription renews from the app")) notes.splice(n, 1);
+    }
+  }
+  if (fx && kind === "new_sale" && lines.some((l) => l.cycle === "monthly")) {
     saleProblems.push(`A monthly sale in ${fx.currency} is billed in parts — reconcile this line by hand.`);
   }
 
