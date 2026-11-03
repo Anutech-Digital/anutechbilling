@@ -22,6 +22,8 @@ import { usePersonalAccounts, usePersonalHoldings, usePersonalTransactions } fro
 import { usePersonalOweHold } from "@/lib/queries/personal-owe-hold";
 import { usePersonalLoans, usePersonalLoanPayments } from "@/lib/queries/personal-loans";
 import { loanTotals } from "@/lib/vault/personal/loans";
+import { usePersonalPropertySales } from "@/lib/queries/personal-property-sales";
+import { openSaleAdvances } from "@/lib/vault/personal/property-sale";
 import { computeNetWorth, STALE_AFTER_DAYS } from "@/lib/vault/personal/net-worth";
 import { summariseIncomeExpense } from "@/lib/vault/personal/income-expense";
 import { VaultPinSettings } from "@/components/features/vault/vault-pin-settings";
@@ -38,10 +40,12 @@ export default function PersonalVaultOverview() {
   // R-2388: loans given (asset) and taken (owed) + the next EMI reminder.
   const loansQ = usePersonalLoans();
   const loanPaymentsQ = usePersonalLoanPayments();
+  // R-2393: money received on a property sale not yet registered is owed to the buyer.
+  const salesQ = usePersonalPropertySales();
 
   const loading = accountsQ.isLoading || holdingsQ.isLoading || txQ.isLoading || oweHoldQ.isLoading
-    || loansQ.isLoading || loanPaymentsQ.isLoading;
-  const error = accountsQ.error || holdingsQ.error || txQ.error || oweHoldQ.error || loansQ.error || loanPaymentsQ.error;
+    || loansQ.isLoading || loanPaymentsQ.isLoading || salesQ.isLoading;
+  const error = accountsQ.error || holdingsQ.error || txQ.error || oweHoldQ.error || loansQ.error || loanPaymentsQ.error || salesQ.error;
 
   const now = React.useMemo(() => new Date(), []);
   const loans = React.useMemo(
@@ -49,8 +53,9 @@ export default function PersonalVaultOverview() {
     [loansQ.data, loanPaymentsQ.data],
   );
   const nw = React.useMemo(
-    () => computeNetWorth(accountsQ.data ?? [], holdingsQ.data ?? [], now, oweHoldQ.data ?? [], loans),
-    [accountsQ.data, holdingsQ.data, oweHoldQ.data, loans, now],
+    () => computeNetWorth(accountsQ.data ?? [], holdingsQ.data ?? [], now,
+      [...(oweHoldQ.data ?? []), ...openSaleAdvances(salesQ.data?.sales ?? [], salesQ.data?.receipts ?? [])], loans),
+    [accountsQ.data, holdingsQ.data, oweHoldQ.data, salesQ.data, loans, now],
   );
 
   // This financial year so far — the window an Indian owner thinks in.
@@ -73,7 +78,7 @@ export default function PersonalVaultOverview() {
   );
 
   if (error) {
-    return <VaultLoadError error={error} onRetry={() => { void accountsQ.refetch(); void holdingsQ.refetch(); void txQ.refetch(); void oweHoldQ.refetch(); void loansQ.refetch(); void loanPaymentsQ.refetch(); }} />;
+    return <VaultLoadError error={error} onRetry={() => { void accountsQ.refetch(); void holdingsQ.refetch(); void txQ.refetch(); void oweHoldQ.refetch(); void loansQ.refetch(); void loanPaymentsQ.refetch(); void salesQ.refetch(); }} />;
   }
 
   if (loading) {
