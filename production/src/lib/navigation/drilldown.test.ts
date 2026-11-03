@@ -213,13 +213,16 @@ describe("subscription money tiles open status = active", () => {
 describe("renewals and payments tiles", () => {
   /* R-2403 (changed expectation): the tiles open the queue tabs; "At risk" is a filter chip now
      (the At risk tab duplicated Overdue). The old ?bucket= values stay accepted (resolveBucket). */
-  it("every renewals tile opens a tab the page has; the At risk tile turns the At risk filter on", () => {
+  /* R-2405 (changed expectation): the tiles no longer open a tab — each one lists exactly the rows
+     it adds up (tiles.ts tileMatches; proven in renewals/tiles-r2405.test.ts). The tabs, the old
+     ?bucket= values and the At risk chip stay. */
+  it("every renewals tab is a ?bucket= value; the tiles filter the queue; the At risk chip turns the filter on", async () => {
     const page = read("app/(app)/renewals/page.tsx");
-    const opened = [...page.matchAll(/onClick=\{\(\) => openTab\("([a-z0-9]+)"\)\}/g)].map((m) => m[1]);
-    expect(opened).toEqual(["overdue", "due7", "d30"]);
-    for (const b of opened) expect(RENEWAL_BUCKETS as readonly string[]).toContain(b);
+    const { QUEUE_TABS } = await import("@/app/(app)/renewals/queue");
+    for (const b of QUEUE_TABS) expect(RENEWAL_BUCKETS as readonly string[]).toContain(b);
     for (const old of ["urgent", "upcoming", "future", "risk"]) expect(RENEWAL_BUCKETS as readonly string[]).toContain(old);
-    expect(page).toMatch(/onClick=\{\(\) => setAtRisk\(!atRiskOn\)\} aria-pressed=\{atRiskOn\}/);
+    expect(page).toMatch(/<RenewalTileRow[^>]*onPick=\{pickTile\}/);
+    expect(page).toMatch(/aria-pressed=\{atRiskOn\}\s*onClick=\{\(\) => setAtRisk\(!atRiskOn\)\}/);
   });
   it("PAYMENT_FOCUS / QUOTE_FOCUS match their pages", async () => {
     const { PAYMENT_FOCI, paymentInFocus, projectReceivedInMonth } = await import("@/lib/payments/focus");

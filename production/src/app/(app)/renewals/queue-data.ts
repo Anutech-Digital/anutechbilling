@@ -10,10 +10,11 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRowsIn } from "@/lib/ops/fetch-all";
+import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import { primaryContactsFor } from "@/lib/contacts/primary";
 import type { RenewalQuoteInfo } from "./queue";
 import type { RenewalFollowupRow } from "./followup";
+import type { RenewalQuotePayment } from "./tiles";
 
 export interface RowContact {
   name: string | null;
@@ -127,6 +128,29 @@ export function useRenewalFollowups(subscriptionIds: readonly string[], customer
           .range(from, to),
       );
       return { rows, ownerByCustomer: new Map(owners.map((c) => [c.id, c.account_manager_id])) };
+    },
+  });
+}
+
+/**
+ * R-2405: this month's renewal quotes (renewal_term_date = the renewal date each one renews, in
+ * this IST month) with what was paid on them — the "Renewed this month" tile (tiles.ts decides
+ * which are fully paid). Read on the signed-in session: RLS keeps it to this company.
+ */
+export function useRenewalPaymentsForMonth(month: { start: string; end: string }) {
+  return useQuery({
+    queryKey: ["quotes", "renewal-payments-month", month.start, month.end],
+    staleTime: 60_000,
+    queryFn: async (): Promise<RenewalQuotePayment[]> => {
+      const supabase = createClient();
+      return fetchAllRows<RenewalQuotePayment>((from, to) => supabase
+        .from("quotes")
+        .select("id, amount, payment_amount, payment_status, status, renewal_subscription_id, renewal_term_date")
+        .eq("is_renewal", true)
+        .gte("renewal_term_date", month.start)
+        .lte("renewal_term_date", month.end)
+        .order("id", { ascending: true })
+        .range(from, to));
     },
   });
 }
