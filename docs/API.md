@@ -232,7 +232,7 @@ The real guards are the ratchet tests `src/app/api/admin-client-ratchet.test.ts`
 
 | Path | Methods | Who may call | File |
 |---|---|---|---|
-| `/api/customers/:id/pending-dues` | GET | session + role | [api/customers/[id]/pending-dues/route.ts](../production/src/app/api/customers/%5Bid%5D/pending-dues/route.ts) |
+| `/api/customers/:id/pending-dues` | GET, POST | session + role | [api/customers/[id]/pending-dues/route.ts](../production/src/app/api/customers/%5Bid%5D/pending-dues/route.ts) |
 | `/api/customers/:id/pending-dues/email` | POST | session + role | [api/customers/[id]/pending-dues/email/route.ts](../production/src/app/api/customers/%5Bid%5D/pending-dues/email/route.ts) |
 | `/api/customers/:id/pending-dues/pdf` | GET | session + role | [api/customers/[id]/pending-dues/pdf/route.ts](../production/src/app/api/customers/%5Bid%5D/pending-dues/pdf/route.ts) |
 

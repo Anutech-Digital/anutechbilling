@@ -364,4 +364,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2426soleownersanytier", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2426%')" },
   { key: "r2425banksal", peek: "to_regprocedure('public.reconcile_bank_credit_new_sale_fx(uuid,uuid,jsonb,boolean,date,date,text,text,text,numeric,numeric)') is not null" },
   { key: "r2440fxsalet", peek: "exists (select 1 from pg_proc where proname = 'reconcile_bank_credit_new_sale_fx' and prosrc like '%R-2440%')" },
+  { key: "r2439settlepaymentlinkv2", peek: "exists(select 1 from pg_proc p where p.oid = to_regprocedure('public.settle_invoice_payment_link(text,text,bigint,text)') and p.prosrc like '%R-2439%')" },
 ];
