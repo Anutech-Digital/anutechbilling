@@ -222,7 +222,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   v_caller   uuid;
   v_trusted  boolean;
@@ -259,7 +259,7 @@ begin
            p_create_subscription, p_sub_start, p_sub_renewal)
          || jsonb_build_object('new_quote', true, 'quote_total', (v_sale->>'quote_total')::int, 'tax_rate', (v_sale->>'tax_rate')::int);
 end;
-$;
+$$;
 
 
 -- ── 4. reconcile_bank_credit_split (from 20261029135130_r2098_round_off_full_only) ───────────
@@ -274,7 +274,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 /* R-2098. The round-off limit (₹50) is ROUND_OFF_LIMIT in src/lib/banking/credit-pay-for-multi.ts.
    R-2098 round-off full only: a round-off only when every item (and a new sale) ends settled in full. */
 /* R-2397: a new sale priced below cost is not booked — its quote waits in Needs approval and
@@ -512,7 +512,7 @@ begin
     'round_off',      v_round,
     'payment_id',     v_first);
 end;
-$;
+$$;
 
 
 -- ── 5. R-2360 overloads (from 20261102061607_r2360_zoho_invoice_number_on_sale) ──────────────
@@ -533,7 +533,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   v_num   text;
   v_res   jsonb;
@@ -557,7 +557,7 @@ begin
   v_saved := public.bank_sale_keep_external_number(p_txn_id, nullif(v_res->>'invoice_id', ''), v_num);
   return v_res || jsonb_build_object('external_number', v_num, 'external_number_saved', v_saved);
 end;
-$;
+$$;
 
 
 create or replace function public.reconcile_bank_credit_split(
@@ -572,7 +572,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   v_num   text;
   v_res   jsonb;
@@ -603,7 +603,7 @@ begin
   v_saved := public.bank_sale_keep_external_number(p_txn_id, v_inv, v_num);
   return v_res || jsonb_build_object('external_number', v_num, 'external_number_saved', v_saved);
 end;
-$;
+$$;
 
 
 -- ── 6. relink_bank_one_off_sale (from 20261028020622_r2026_new_sale_billing_cycle) ───────────
@@ -612,7 +612,7 @@ returns jsonb
 language plpgsql
 security definer
 set search_path = public
-as $
+as $$
 declare
   v_caller  uuid;
   v_trusted boolean;
@@ -697,7 +697,7 @@ begin
     'old_invoice_voided',    v_undo->>'invoice_voided',
     'old_credit_note_id',    v_undo->>'credit_note_id');
 end;
-$;
+$$;
 
 
 commit;
