@@ -51,3 +51,28 @@ export function formatRemittance(r: InwardRemittance): string {
   const rate = r.rate.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: Math.max(2, decimals) });
   return `${formatForeign(r.amount, r.currency, whole ? 0 : 2)} @ ₹${rate}`;
 }
+
+/** R-2440: the company's Letter of Undertaking as saved in Settings (tenants.lut_number / lut_valid_upto). */
+export interface ExportLut { number: string | null | undefined; validUpto: string | null | undefined }
+
+/** "2026-08-07" → "2026-27" (Indian financial year, 1 Apr – 31 Mar). */
+function fyLabel(isoDate: string): { label: string; end: string } {
+  const y = Number(isoDate.slice(0, 4));
+  const m = Number(isoDate.slice(5, 7));
+  const endYear = m >= 4 ? y + 1 : y;
+  return { label: `${endYear - 1}-${String(endYear % 100).padStart(2, "0")}`, end: `${endYear}-03-31` };
+}
+
+/**
+ * R-2440 (tax memo 3 Nov §1; independent review 2 of R-2425): an export sale at 0% GST needs an LUT
+ * for the receipt's financial year — the LUT number set and its "Valid up to" inside that FY, on or
+ * after the receipt's date. Null = covered. Same rule (and words) as reconcile_bank_credit_new_sale_fx
+ * (migration 20261103163318), which refuses the booking too.
+ */
+export function exportLutProblem(lut: ExportLut | null | undefined, txnDate: string): string | null {
+  const fy = fyLabel(txnDate);
+  const num = (lut?.number ?? "").trim();
+  const upto = (lut?.validUpto ?? "").slice(0, 10);
+  if (num && upto && upto >= txnDate && upto <= fy.end) return null;
+  return `No LUT for FY ${fy.label} on file. An export sale at 0% GST needs your Letter of Undertaking: add its ARN as "LUT number" with "Valid up to" in Settings → Company, then try again. Without an LUT, reconcile this line by hand with IGST.`;
+}
