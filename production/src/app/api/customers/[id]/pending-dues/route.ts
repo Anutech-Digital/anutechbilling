@@ -37,11 +37,7 @@ export const runtime = "nodejs";
 
 const idSchema = z.string().uuid();
 
-const ROUTE_OPTS = {
-  route: "api/customers/pending-dues",
-  pages: ["/collections"],
-  roleHint: "Your role cannot send pending-dues statements. Ask your manager to give you access to Payment Follow-up.",
-};
+const ROLE_HINT = "Your role cannot send pending-dues statements. Ask your manager to give you access to Payment Follow-up.";
 
 /** The statement preview. `makeLink` false = read the card link only (GET); true = make / reuse it (POST). */
 async function statementPreview({ req, supabase, params, tenantId }: RouteContext<undefined>, makeLink: boolean) {
@@ -123,7 +119,13 @@ async function statementPreview({ req, supabase, params, tenantId }: RouteContex
 }
 
 /** Read only — never makes or cancels a Razorpay link (R-2439). */
-export const GET = withRoute(ROUTE_OPTS, (ctx) => statementPreview(ctx, false));
+export const GET = withRoute(
+  { route: "api/customers/pending-dues", pages: ["/collections"], roleHint: ROLE_HINT },
+  (ctx) => statementPreview(ctx, false),
+);
 
 /** The same preview; makes / reuses / replaces the statement's Razorpay link. Sends nothing. */
-export const POST = withRoute(ROUTE_OPTS, (ctx) => statementPreview(ctx, true));
+export const POST = withRoute(
+  { route: "api/customers/pending-dues", pages: ["/collections"], roleHint: ROLE_HINT },
+  (ctx) => statementPreview(ctx, true),
+);
