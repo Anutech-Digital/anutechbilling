@@ -8,6 +8,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
@@ -180,7 +181,8 @@ export default function PlatformSignupsPage() {
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Platform Control</p>
           <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Reseller Signups</h1>
-          <p className="text-sm text-ink-3 mt-1">Every registered cloud reseller business on ResellerOS. Founder view.</p>
+          <p className="text-sm text-ink-3 mt-1">Every registered cloud reseller business on ResellerOS. Founder view.{" "}
+            {/* R-2445 */}<Link href="/platform/gstin-claims" className="text-primary underline underline-offset-2">GSTIN ownership checks</Link></p>
         </div>
 
         <div className="w-full sm:w-72">
