@@ -42,6 +42,7 @@ import { quoteDueNowUpiAmount } from "@/lib/payments/quote-due-now";
 import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { rupee } from "@/lib/utils";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { supplyStateMissing } from "@/lib/quotes/quote-assist";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
@@ -176,6 +177,21 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     ? await supabase.from("leads").select("state_code, gstin, country, contact_name, contact_email, contact_phone").eq("id", quote.lead_id).maybeSingle()
     : { data: null };
   const pos = quotePlaceOfSupply({ customer, lead, quote, seller: tenant });
+  /* R-2442: a saved draft for a customer with no state (e.g. "Not known yet", R-2363) has no
+     place of supply — CGST + SGST or IGST is undecided, and generate_invoice would refuse its
+     GST invoice after the customer paid. The builder's Send already stops here with the same
+     rule (supplyStateMissing); this route must too, before anything is rendered or emailed. */
+  if (quote.customer_id && customer && supplyStateMissing({ isExport: pos.isExport, buyerStateCode: pos.posCode })) {
+    const name = customer.name || quote.customer_name || "This customer";
+    /* No closing full stop: the client toast (quoteEmailErrorOutcome) adds ". Nothing was sent…". */
+    return NextResponse.json(
+      {
+        error: `${name} has no state on record — the state decides CGST + SGST or IGST. Set the customer's state on the customer page, then send`,
+        nextStep: { label: "Set the customer's state", href: `/customers/${quote.customer_id}` },
+      },
+      { status: 409 },
+    );
+  }
 
   // ── 5. Resolve recipient ─────────────────────────────────────────
   /* The customer's PRIMARY CONTACT. customers.contact_email stopped being the truth on
