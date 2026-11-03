@@ -56,11 +56,11 @@ describe("R-2425: a USD inward remittance is matched in dollars and booked at th
     expect(row.problems).toEqual([]);
   });
 
-  it("short in dollars (remitting bank kept charges) → unticked, said in dollars, never 'Amount differs ₹'", () => {
-    const row = planRow(line(93550, "INW 050826I049900001 USD1000.0@93.55"), usd("Design Box", [zl({ rate: 1024 })], 1024), null, ctx);
+  it("short in dollars by MORE than bank charges (R-2427: > 5%) → unticked, said in dollars, never 'Amount differs ₹'", () => {
+    const row = planRow(line(89808, "INW 050826I049900001 USD960.0@93.55"), usd("Design Box", [zl({ rate: 1024 })], 1024), null, ctx);
     expect(row.ticked).toBe(false);
     expect(row.book?.fx ?? null).toBeNull();
-    expect(row.problems[0]).toMatch(/^Short by \$24: Zoho's payment is \$1,024, the bank received \$1,000/);
+    expect(row.problems[0]).toMatch(/^Short by \$64: Zoho's payment is \$1,024, the bank received \$960 — more than bank charges/);
     expect(row.problems.join(" ")).not.toContain("₹1,024");
   });
 
@@ -96,12 +96,12 @@ describe("R-2425: a USD inward remittance is matched in dollars and booked at th
     expect(row.ticked).toBe(true);
   });
 
-  it("an export receipt that matches an open item is not paid at the bank's rate (forex is a later card)", () => {
+  it("an export receipt that matches an open item in ₹ is not paid at the bank's rate (R-2427 pays only an invoice in USD)", () => {
     const facts = { customerId: "c-dbox", openItems: [{ kind: "invoice", quoteId: "Q-1", invoiceId: "INV-9", docDate: "2026-07-01", due: 95846, taxable: 95846, makesSubscription: false, approvalBlock: null }], openings: [], receipts: [], billed: [] };
     const [row] = planAll([{ line: line(95846, "INW 070826I049902623 USD1024.0@93.6"), result: { kind: "match", match: usd("Design Box", [zl()], 1024) }, contact: null, facts, booksStart: null }], ctx);
     expect(row.ticked).toBe(false);
     expect(row.book).toBeNull();
-    expect(row.problems.join(" ")).toContain("forex gain / loss");
+    expect(row.problems.join(" ")).toContain("paid in USD only against an invoice in USD");
   });
 
   it("an overseas customer billed in ₹ in Zoho, paid by remittance → an ordinary ₹ sale (no fx), Ready", () => {

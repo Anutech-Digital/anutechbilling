@@ -31,7 +31,7 @@ import { describeError } from "@/lib/errors/toast-error";
 import { defaultContactName } from "@/components/features/customers/new-customer-contact";
 import { bankLinePaymentReference } from "@/lib/payments/bank-line-reference";
 import {
-  newCustomerKey, rowsToBook, type DateFix, type PlanCustomer, type PlanRow, type SaleFx,
+  newCustomerKey, rowsToBook, type DateFix, type FxInvoicePay, type PlanCustomer, type PlanRow, type SaleFx,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 
 type NewCustomer = Extract<PlanCustomer, { kind: "new" }>;
@@ -85,6 +85,19 @@ export interface BookDeps {
   payOpening: (i: OpeningPayInput) => Promise<OpeningPaid>;
   /** R-2425: an export receipt — the sale in its currency at the bank's rate (reconcile_bank_credit_new_sale_fx). */
   newSaleFx?: (i: NewSaleInput, fx: SaleFx) => Promise<PayForResult>;
+  /** R-2427: an export receipt paying an invoice in its currency (reconcile_bank_credit_fx_invoice). */
+  payFxInvoice?: (args: ReturnType<typeof fxInvoiceArgs>) => Promise<PayForResult>;
+}
+
+/** R-2427: the reconcile_bank_credit_fx_invoice arguments — the narration's currency, rate and amount. */
+export function fxInvoiceArgs(txnId: string, invoiceId: string, fx: FxInvoicePay) {
+  return {
+    p_txn_id: txnId,
+    p_invoice_id: invoiceId,
+    p_currency: fx.currency,
+    p_fx_rate: fx.rate,
+    p_foreign_amount: fx.foreignAmount,
+  };
 }
 
 /** R-2425: the reconcile_bank_credit_new_sale_fx arguments — exported so the test pins what reaches
@@ -103,6 +116,8 @@ export function newSaleFxArgs(i: NewSaleInput, fx: SaleFx) {
     p_currency: fx.currency,
     p_fx_rate: fx.rate,
     p_foreign_amount: fx.foreignAmount,
+    /* R-2427: Zoho billed more (charges kept abroad) → the 12-argument function books them as Bank Charges. */
+    ...(fx.billed && fx.billed > fx.foreignAmount ? { p_foreign_billed: fx.billed } : {}),
   };
 }
 
@@ -204,6 +219,10 @@ export async function bookRows(
       if (book.kind === "new_sale" && book.fx && !deps.newSaleFx) {
         throw new Error(`This line is an export receipt in ${book.fx.currency}, and this screen cannot book it in that currency. Reload the page and try again.`);
       }
+      const fxPay = book.kind === "pay_item" ? book.item?.fx ?? null : null;
+      if (fxPay && (!deps.payFxInvoice || !book.item?.invoiceId)) {
+        throw new Error(`This line is an export receipt in ${fxPay.currency}, and this screen cannot pay an invoice in that currency. Reload the page and try again.`);
+      }
       if (await deps.isReconciled(row.txnId)) {
         const r: BookedRow = {
           txnId: row.txnId, txnDate: row.txnDate, credit: row.credit, outcome: "skipped", customerName: cust.name, customerCreated: false,
@@ -245,7 +264,10 @@ export async function bookRows(
         done.push(r); onEach?.(r, i, queue.length);
         continue;
       }
-      const res = book.kind === "pay_item" && book.item
+      const res = fxPay && book.item?.invoiceId && deps.payFxInvoice
+        /* R-2427: settled in full in its currency; Bank Charges / forex lines in the same call. */
+        ? await deps.payFxInvoice(fxInvoiceArgs(row.txnId, book.item.invoiceId, fxPay))
+        : book.kind === "pay_item" && book.item
         ? await deps.payItem({
           /* R-2419 (e): the open quote / invoice of this money — the sheet's own "This money is for". */
           transactionId: row.txnId, quoteId: book.item.quoteId, invoiceId: book.item.invoiceId,
@@ -287,8 +309,9 @@ export async function bookRows(
         subscriptions: (res.subscriptions ?? []).map((s) => ({ id: s.id, plan: s.plan })),
         todo,
         text: res.already_recorded ? "Already recorded before — nothing booked again."
+          : fxPay ? `Paid invoice ${book.item?.invoiceId} in full in ${fxPay.currency}${fxPay.bankCharges ? ` — Bank Charges ₹${fxPay.bankCharges.toLocaleString("en-IN")}` : ""}${fxPay.forex ? ` — forex ${fxPay.forex < 0 ? "gain" : "loss"} ₹${Math.abs(fxPay.forex).toLocaleString("en-IN")}` : ""} — line reconciled.`
           : book.kind === "pay_item" ? `Paid open ${book.item?.invoiceId ? `invoice ${book.item.invoiceId}` : `quote ${book.item?.quoteId ?? res.quote_id}`} — line reconciled.`
-          : book.fx ? `Booked in ${book.fx.currency} at the bank's rate (₹${book.fx.rate}) and reconciled.`
+          : book.fx ? `Booked in ${book.fx.currency} at the bank's rate (₹${book.fx.rate}) and reconciled.${book.fx.billed && book.fx.billed > book.fx.foreignAmount ? " The short part is booked as Bank Charges." : ""}`
           : "Booked and reconciled.",
       };
       done.push(r); onEach?.(r, i, queue.length);
