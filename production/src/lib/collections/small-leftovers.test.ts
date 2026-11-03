@@ -63,6 +63,14 @@ describe("R-2410 which customers are small leftovers", () => {
     /* the ₹1 L case from the review: 10% of an ₹11.8 L bill left → chased */
     const tds1L = matchTdsShortfall({ totalInclGst: 1_180_000, received: 1_080_000, gstRatePct: 18 });
     expect(isSmallLeftover(row("l", [item("I", 100_000, 9, { ...paid, tdsHint: tds1L })]))).toBe(false);
+    /* the cap is the customer's TDS total: two ₹4,720 TDS lines (₹9,440) stay chased */
+    expect(isSmallLeftover(row("t2", [
+      item("I1", 4_720, 9, { ...paid, tdsHint: tds4720 }), item("I2", 4_720, 8, { ...paid, tdsHint: tds4720 }),
+    ]))).toBe(false);
+  });
+
+  it("R-2421: lines are rounded to whole rupees one by one (as Write off and the RPC do)", () => {
+    expect(isSmallLeftover(row("r", [item("A", 250.4, 9, paid), item("B", 250.4, 8, paid)]))).toBe(true);
   });
 
   it("the limit is the whole balance: ₹500 in, ₹501 out; two lines adding to ₹1,200 stay chased", () => {

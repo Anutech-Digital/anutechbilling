@@ -11,9 +11,10 @@
  *                              rule, OwedItem.tdsHint → lib/accounting/tds-match). Opens the
  *                              existing Record payment sheet in TDS mode (record_desk_payment →
  *                              record_payment_with_tds); nothing new on the money side.
- *   - Write off small balance — an invoice line of ₹1–₹500, with a reason
- *                              (write_off_small_invoice_balance, migration 20261103123242 — the
- *                              database enforces the same ₹500 and owner/accountant rule).
+ *   - Write off small balance — the ₹1–₹500 left on a PART-PAID invoice, with a reason
+ *                              (write_off_small_invoice_balance, migrations 20261103123242 +
+ *                              20261103134813 — the database enforces the same ₹500, part-paid
+ *                              and owner/accountant rules).
  *
  * Pure — tested in small-leftovers.test.ts.
  */
@@ -57,7 +58,7 @@ export function isTdsLeftoverLine(i: LeftoverItem): boolean {
 /**
  * A customer row is a small leftover when it owes something, has no renewal to chase (moving it
  * would hide the renewal), and every open line is a part-paid invoice's remainder: TDS matches
- * (each up to TDS_LEFTOVER_LIMIT) and other remainders adding up to at most the limit.
+ * adding up to at most TDS_LEFTOVER_LIMIT and other remainders adding up to at most the limit.
  */
 export function isSmallLeftover(
   r: Pick<CollectionRow, "amountDue" | "items" | "renewals">,
@@ -66,8 +67,15 @@ export function isSmallLeftover(
   if (r.amountDue <= 0 || r.renewals.length > 0) return false;
   const open = r.items.filter((i) => i.amountDue > 0);
   if (open.length === 0 || !open.every(isPartPaidInvoiceLine)) return false;
-  const smallTotal = open.filter((i) => !isTdsLeftoverLine(i)).reduce((s, i) => s + i.amountDue, 0);
-  return Math.round(smallTotal) <= limit;
+  /* Whole rupees per line, as canWriteOff and the write-off RPC round them. */
+  let smallTotal = 0;
+  let tdsTotal = 0;
+  for (const i of open) {
+    if (isTdsLeftoverLine(i)) tdsTotal += Math.round(i.amountDue);
+    else smallTotal += Math.round(i.amountDue);
+  }
+  /* The TDS cap holds for the customer's total too — ten ₹4,900 TDS lines are ₹49,000 to chase. */
+  return smallTotal <= limit && tdsTotal <= TDS_LEFTOVER_LIMIT;
 }
 
 export type LeftoverReason = "tds" | "small";
@@ -78,7 +86,7 @@ export interface LeftoverLine {
   reason: LeftoverReason;
   /** "Book as TDS" fits this line. */
   canBookTds: boolean;
-  /** "Write off small balance" fits this line (an invoice within the limit). */
+  /** "Write off small balance" fits this line (a PART-PAID invoice within the limit — R-2421). */
   canWriteOff: boolean;
 }
 
