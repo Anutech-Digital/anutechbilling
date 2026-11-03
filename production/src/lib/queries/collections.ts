@@ -37,8 +37,12 @@ import { invoiceReceivable, subscriptionReceivable } from "@/lib/payments/receiv
 import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { istDayStartUtc, istToday, toIstDate } from "@/lib/dates/ist";
 import {
-  promiseLoggedOn, promiseReceipts, promiseStatus, type PromisePayment, type PromiseStatus,
+  collectionHold, promiseLoggedOn, promiseReceipts, promiseStatus,
+  type CollectionHold, type PromisePayment, type PromiseStatus,
 } from "@/lib/collections/followup-rules";
+import {
+  comparePriority, isTodayWork, priorityScore, rowStage, wasReminded, type CollectionStage,
+} from "@/lib/collections/priority";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
 import { addDaysISO } from "@/lib/dates/ist";
@@ -129,6 +133,13 @@ export interface CollectionFollowup {
   next_follow_up_on: string | null;
   assigned_to: string | null;
   created_at: string;
+  /** R-2411 / R-2409: "disputed" / "dispute_resolved" / "renewal_confirmed" — the hold and the stage read it. */
+  outcome?: string | null;
+}
+
+/** R-2409: an automatic reminder the dunning cron delivered (invoice_dunning_log, status "sent"). */
+export interface CollectionDunningSent {
+  invoice_id: string | null;
 }
 
 export interface CollectionsInput {
@@ -150,6 +161,8 @@ export interface CollectionsInput {
   renewals?: readonly CollectionRenewalSub[];
   /** R-2401: those renewals' renewal quotes. */
   renewalQuotes?: readonly CollectionRenewalQuote[];
+  /** R-2409: delivered automatic reminders for the open invoices ("Reminded" stage). */
+  dunningSent?: readonly CollectionDunningSent[];
 }
 
 // ─── What the page shows ─────────────────────────────────────────────────────
@@ -167,6 +180,8 @@ export interface OwedItem {
   daysOverdue: number;
   /** "Shayad TDS hai" — the balance equals a common TDS of the invoice's pre-GST value (R-1520 helper). */
   tdsHint: TdsShortfallMatch | null;
+  /** R-2409: some money already came in on this open invoice (paid_amount of at least 1 rupee). */
+  partPaid?: boolean;
 }
 
 /**
@@ -223,9 +238,16 @@ export interface CollectionRow {
   followUpDue: boolean;
   lastNote: string | null;
   lastNoteOn: string | null;
+  /** R-2411: reminders paused for a promise / an open dispute (collectionHold), or null. */
+  hold: CollectionHold | null;
+  /** R-2409: the ONE stage chip (priority.ts rowStage). */
+  stage: CollectionStage;
+  /** R-2409: sum of (rupees due x days late) over the late lines — the "Today's work first" order. */
+  priorityScore: number;
 }
 
-export const COLLECTION_VIEWS = ["mine", "all", "broken"] as const;
+/** R-2409: "today" = follow-ups due + promises due today + broken promises (priority.ts isTodayWork). */
+export const COLLECTION_VIEWS = ["today", "mine", "all", "broken"] as const;
 export type CollectionView = (typeof COLLECTION_VIEWS)[number];
 
 // ─── Pure rules ──────────────────────────────────────────────────────────────
@@ -282,18 +304,16 @@ export function needsActionToday(r: Pick<CollectionRow, "followUpDue" | "promise
 }
 
 /**
- * Order: (1) follow-up due today or earlier, or promise broken; (2) the rest. Inside each,
- * the most overdue first, then the biggest amount, then name (stable for equal rows).
+ * Order ("Today's work first", R-2409 priority.ts comparePriority): (1) broken promises;
+ * (2) follow-up due today or earlier, or a promise due today; (3) the rest. Inside each, the
+ * biggest score (rupees due x days late) first, then most days late, biggest amount (renewals
+ * included), name — stable for equal rows.
  */
 export function compareCollectionRows(a: CollectionRow, b: CollectionRow): number {
-  const ta = needsActionToday(a) ? 0 : 1;
-  const tb = needsActionToday(b) ? 0 : 1;
-  if (ta !== tb) return ta - tb;
-  if (a.daysOverdue !== b.daysOverdue) return b.daysOverdue - a.daysOverdue;
-  const ma = a.amountDue + (a.renewalAmount ?? 0);
-  const mb = b.amountDue + (b.renewalAmount ?? 0);
-  if (ma !== mb) return mb - ma;
-  return a.customerName.localeCompare(b.customerName);
+  return comparePriority(
+    { ...a, amountDue: a.amountDue + (a.renewalAmount ?? 0) },
+    { ...b, amountDue: b.amountDue + (b.renewalAmount ?? 0) },
+  );
 }
 
 /**
@@ -349,6 +369,9 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
         followUpDue: false,
         lastNote: null,
         lastNoteOn: null,
+        hold: null,
+        stage: "notContacted",
+        priorityScore: 0,
       };
       rows.set(key, row);
     }
@@ -371,6 +394,7 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
       amountDue: due,
       daysOverdue: daysSince(inv.due_date ?? inv.invoice_date, today),
       tdsHint: tdsHint(inv),
+      partPaid: Math.round(inv.paid_amount ?? 0) >= 1,
     });
   }
 
@@ -424,6 +448,12 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
     else followupsByCustomer.set(f.customer_id, [f]);
   }
 
+  /* R-2409: delivered automatic reminders per open invoice. */
+  const dunningByInvoice = new Map<string, number>();
+  for (const d of input.dunningSent ?? []) {
+    if (d.invoice_id) dunningByInvoice.set(d.invoice_id, (dunningByInvoice.get(d.invoice_id) ?? 0) + 1);
+  }
+
   const paymentsByCustomer = new Map<string, PromisePayment[]>();
   for (const p of input.payments ?? []) {
     if (!p.customer_id) continue;
@@ -468,6 +498,21 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
       }).status;
       row.promiseBroken = row.promiseStatus === "broken";
     }
+    /* R-2409: the one stage chip and the priority score. */
+    row.hold = collectionHold(fus, today);
+    /* A renewal past its date ranks like an overdue invoice of the same age (R-2401). */
+    row.priorityScore = priorityScore([...row.items, ...row.renewals.map((i) => ({ amountDue: i.amount, daysOverdue: i.daysOverdue }))]);
+    row.stage = rowStage({
+      hold: row.hold,
+      promiseBroken: row.promiseBroken,
+      partPaid: row.items.some((i) => i.partPaid === true),
+      reminded: wasReminded({
+        today,
+        daysOverdue: row.daysOverdue,
+        followups: fus,
+        autoReminders: row.items.reduce((n, i) => n + (i.kind === "invoice" ? dunningByInvoice.get(i.id) ?? 0 : 0), 0),
+      }),
+    });
   }
 
   return [...rows.values()]
@@ -506,6 +551,7 @@ export function isMine(r: Pick<CollectionRow, "ownerId" | "assignedTo">, meId: s
 }
 
 export function filterCollectionRows(rows: readonly CollectionRow[], view: CollectionView, meId: string | null | undefined): CollectionRow[] {
+  if (view === "today") return rows.filter(isTodayWork);
   if (view === "mine") return rows.filter((r) => isMine(r, meId));
   if (view === "broken") return rows.filter((r) => r.promiseBroken);
   return [...rows];
@@ -591,7 +637,8 @@ export async function fetchCollectionsInput(supabase: Client, customerId?: strin
       .range(from, to)),
     fetchAllRowsIn<CollectionFollowup, string>(customerIds, (ids, from, to) => supabase
       .from("payment_followups")
-      .select("id, customer_id, kind, note, promised_amount, promised_on, next_follow_up_on, assigned_to, created_at")
+      /* R-2411 / R-2409: outcome — the dispute hold and the stage chip read it. */
+      .select("id, customer_id, kind, note, promised_amount, promised_on, next_follow_up_on, assigned_to, created_at, outcome")
       .in("customer_id", ids)
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
@@ -617,7 +664,20 @@ export async function fetchCollectionsInput(supabase: Client, customerId?: strin
       .range(from, to),
   );
 
-  return { ...owed, ...due, payments, quoteSubscriptions, customers, followups };
+  /* R-2409: automatic reminders delivered for the open invoices — the "Reminded" stage. RLS
+     (invoice_dunning_log_select) keeps it to the caller's company. */
+  const dunningSent = await fetchAllRowsIn<CollectionDunningSent & { id: string }, string>(
+    invoices.map((i) => i.id),
+    (ids, from, to) => supabase
+      .from("invoice_dunning_log")
+      .select("id, invoice_id")
+      .in("invoice_id", ids)
+      .eq("status", "sent")
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+
+  return { ...owed, ...due, payments, quoteSubscriptions, customers, followups, dunningSent };
 }
 
 type OwedRows = Pick<CollectionsInput, "invoices" | "subscriptions" | "invoicedQuoteIds">;
