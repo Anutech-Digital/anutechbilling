@@ -387,6 +387,7 @@ MIGS=(
   "r2410writeoffsmallbalance|20261103123242_r2410_write_off_small_balance.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.write_off_small_invoice_balance(text,text)') and prosrc like '%R-2410%')"
   "r2421leftoverpartpaidwaivelock|20261103134813_r2421_leftover_part_paid_and_waive_lock.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.write_off_small_invoice_balance(text,text)') and prosrc like '%R-2421%') and exists(select 1 from pg_trigger where tgname = 'trg_books_lock' and tgrelid = to_regclass('public.invoices') and pg_get_triggerdef(oid) like '%online_fee_waive_reason%')"
   "r2423partlinename|20261103141332_r2423_part_request_line_name.sql|resellersos_migration|to_regprocedure('public.part_request_line_name(text,text,integer,text,integer,integer)') is not null and to_regprocedure('public.part_request_parts_in_term(integer,text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2423%')"
+  "r2426soleownersanytier|20261103150500_r2426_sole_owner_any_tier.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2426%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

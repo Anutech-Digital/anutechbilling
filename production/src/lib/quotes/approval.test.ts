@@ -117,7 +117,7 @@ describe("nobody approves their own quote", () => {
   it("refuses the author even when the author is the OWNER", () => {
     /* The hole that makes every other rule decorative. */
     const r = canApprove({ id: "u1", role: "owner" }, rec({ requestedBy: "u1", status: "pending" }), need);
-    expect(r).toEqual({ allowed: false, reason: "You cannot approve your own quote." });
+    expect(r).toEqual({ allowed: false, ownQuote: true, reason: "You cannot approve your own quote." });
   });
 
   it("lets a different manager approve", () => {
@@ -179,12 +179,25 @@ describe("R-2383: the company's sole owner may approve their own quote (with a r
     expect(r.selfApproval).toBeUndefined();
   });
 
-  it("a manager counts as a second approver for a manager-tier quote, not for an owner-tier one", () => {
-    const team = [owner, { id: "m1", role: "manager" }];
-    expect(canApprove(owner, rec({ makers: ["o1"] }), managerTier, team).allowed).toBe(false);
-    expect(canApprove(owner, rec({ makers: ["o1"] }), belowCost, team).allowed).toBe(true);
-    /* the RECORDED tier wins (same as the server): asked at manager tier → manager may clear it */
-    expect(canApprove(owner, rec({ makers: ["o1"], tier: "manager" }), belowCost, team).allowed).toBe(false);
+  it("R-2426: a manager does NOT count — the only owner may clear any tier with a reason", () => {
+    /* Staging 3 Nov: one owner + a manager login → the owner's own quote said "You cannot
+       approve your own quote". Only a second owner blocks now (same as the server trigger). */
+    const team = [owner, { id: "m1", role: "manager" }, { id: "s1", role: "sales" }];
+    const sole = { allowed: true, selfApproval: true };
+    expect(canApprove(owner, rec({ makers: ["o1"] }), managerTier, team)).toEqual(sole);
+    expect(canApprove(owner, rec({ makers: ["o1"] }), belowCost, team)).toEqual(sole);
+    expect(canApprove(owner, rec({ makers: ["o1"], tier: "manager" }), belowCost, team)).toEqual(sole);
+    expect(canApprove(owner, rec({ requestedBy: "o1", status: "pending", tier: "manager" }), managerTier, team)).toEqual(sole);
+  });
+
+  it("R-2426: two owners → the maker is refused at every tier, flagged as their own quote", () => {
+    const team = [owner, { id: "o2", role: "owner" }];
+    for (const need of [managerTier, belowCost]) {
+      const r = canApprove(owner, rec({ requestedBy: "o1", status: "pending" }), need, team);
+      expect(r).toEqual({ allowed: false, ownQuote: true, reason: "You cannot approve your own quote." });
+    }
+    /* …and the other owner clears it as before */
+    expect(canApprove({ id: "o2", role: "owner" }, rec({ requestedBy: "o1", status: "pending" }), belowCost, team).allowed).toBe(true);
   });
 
   it("team not loaded yet → refused (no guess)", () => {
@@ -192,8 +205,11 @@ describe("R-2383: the company's sole owner may approve their own quote (with a r
   });
 
   it("isSoleApprover ignores the viewer themself", () => {
-    expect(isSoleApprover(owner, { tier: null }, belowCost, [owner])).toBe(true);
-    expect(isSoleApprover({ id: "o1", role: "manager" }, { tier: null }, belowCost, [])).toBe(false);
+    expect(isSoleApprover(owner, [owner])).toBe(true);
+    expect(isSoleApprover(owner, [owner, { id: "m1", role: "manager" }])).toBe(true);
+    expect(isSoleApprover(owner, [owner, { id: "o2", role: "owner" }])).toBe(false);
+    expect(isSoleApprover(owner, undefined)).toBe(false);
+    expect(isSoleApprover({ id: "o1", role: "manager" }, [])).toBe(false);
   });
 
   it("canSend tells the sole owner the way on instead of 'nobody can approve'", () => {
