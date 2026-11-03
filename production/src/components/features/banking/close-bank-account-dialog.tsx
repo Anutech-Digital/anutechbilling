@@ -6,6 +6,8 @@
  * hides the account from the Banking list and from every picker for new money; its lines,
  * matches and report figures stay. "Reopen" on a closed account undoes it.
  * When the balance is not ₹0 the dialog says why and offers no Close button.
+ * R-2389: when the server refuses (e.g. staging's 403 "permission denied for function
+ * ist_today"), the reason shows INSIDE the dialog — a toast behind the open dialog went unseen.
  */
 "use client";
 
@@ -21,6 +23,7 @@ import { Icon } from "@/components/ui/icon";
 import { istToday } from "@/lib/dates/ist";
 import { useCloseBankAccount, type BankAccountRow } from "@/lib/queries/bank";
 import { closeAccountProblem } from "@/lib/banking/account-close";
+import { describeError } from "@/lib/errors/toast-error";
 
 interface Props {
   open: boolean;
@@ -32,8 +35,11 @@ export function CloseBankAccountDialog({ open, onOpenChange, account }: Props) {
   const close = useCloseBankAccount();
   const [closedOn, setClosedOn] = React.useState(istToday());
   const [note, setNote] = React.useState("");
+  const [refusal, setRefusal] = React.useState<{ reason: string; serverText?: string } | null>(null);
 
-  React.useEffect(() => { if (open) { setClosedOn(istToday()); setNote(""); } }, [open, account?.id]);
+  React.useEffect(() => {
+    if (open) { setClosedOn(istToday()); setNote(""); setRefusal(null); }
+  }, [open, account?.id]);
 
   if (!account) return null;
   const problem = closeAccountProblem(account);
@@ -41,10 +47,16 @@ export function CloseBankAccountDialog({ open, onOpenChange, account }: Props) {
   async function submit(e?: React.FormEvent) {
     e?.preventDefault();
     if (!account || problem || !closedOn) return;
+    setRefusal(null);
     try {
       await close.mutateAsync({ id: account.id, closedOn, note });
       onOpenChange(false);
-    } catch { /* hook toasts the server's reason */ }
+    } catch (err) {
+      /* R-2389: the hook toasts too, but the dialog stays open over it — say it here as well,
+         with the server's own words when the friendly text replaced them. */
+      const d = describeError(err, "Could not close the account");
+      setRefusal({ reason: d.message, serverText: d.translated && d.raw && d.raw !== d.message ? d.raw : undefined });
+    }
   }
 
   return (
@@ -85,6 +97,15 @@ export function CloseBankAccountDialog({ open, onOpenChange, account }: Props) {
                   placeholder="e.g. FD broken on 10 Apr, money moved to HDFC Current"
                 />
               </FormField>
+              {refusal && (
+                <div role="alert" className="flex items-start gap-2 rounded-md border border-rose/40 bg-rose-soft/40 px-3 py-2 text-sm text-rose-ink">
+                  <Icon name="alert" size={15} className="mt-0.5 shrink-0" />
+                  <span>
+                    Could not close: {refusal.reason}
+                    {refusal.serverText && <span className="mt-0.5 block text-xs">Server said: {refusal.serverText}</span>}
+                  </span>
+                </div>
+              )}
             </div>
           )}
 

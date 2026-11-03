@@ -71,9 +71,16 @@ describe("R-2125 personal caller — allowed", () => {
   });
   test("every personal money page table is reachable", () => {
     for (const t of ["personal_accounts", "personal_transactions", "personal_holdings", "personal_categories",
-      "personal_category_rules", "personal_import_batches"]) {
+      "personal_category_rules", "personal_import_batches", "personal_owe_hold",
+      "personal_loans", "personal_loan_payments", "personal_loan_balances"]) {
       expect(checkPersonalRequest("GET", t, q("select=*"))).toBeNull();
     }
+  });
+  test("R-2388 loans: add / edit / delete a loan; pay and undo through the RPCs; balances read-only", () => {
+    for (const m of ["POST", "PATCH", "DELETE"]) expect(checkPersonalRequest(m, "personal_loans", q(""))).toBeNull();
+    expect(checkPersonalRequest("POST", "rpc/personal_loan_record_payment", q(""))).toBeNull();
+    expect(checkPersonalRequest("POST", "rpc/personal_loan_undo_payment", q(""))).toBeNull();
+    expect(checkPersonalRequest("PATCH", "personal_loan_balances", q(""))).not.toBeNull();
   });
   test("own user / workspace rows can be read (app shell, personal-vault requireIdentity)", () => {
     expect(checkPersonalRequest("GET", "users", q("select=tenant_id&id=eq.x"))).toBeNull();

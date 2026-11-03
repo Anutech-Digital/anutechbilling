@@ -69,6 +69,28 @@ describe("R-2384 Close account dialog", () => {
   });
 });
 
+describe("R-2389 Close account: the server's refusal shows in the dialog", () => {
+  it("staging 403 (permission denied for function ist_today): stays open and shows the server's words", async () => {
+    const onOpenChange = vi.fn();
+    state.close.mockRejectedValue({ code: "42501", message: "permission denied for function ist_today" });
+    render(<CloseBankAccountDialog open onOpenChange={onOpenChange} account={fd()} />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Close account" })); });
+    const alert = screen.getByRole("alert");
+    expect(alert.textContent).toContain("Could not close: You don't have access to this.");
+    expect(alert.textContent).toContain("Server said: permission denied for function ist_today");
+    expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+
+  it("a guard's own sentence is shown as written (no 'Server said' twice)", async () => {
+    state.close.mockRejectedValue({ message: "The closed date cannot be before the last line on this account (10 Apr 2026)" });
+    render(<CloseBankAccountDialog open onOpenChange={() => {}} account={fd()} />);
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Close account" })); });
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Could not close: The closed date cannot be before the last line on this account (10 Apr 2026)",
+    );
+  });
+});
+
 describe("R-2384 Fixed deposit: last-4 and IFSC optional", () => {
   it("an FD saves with no last-4 and no IFSC", async () => {
     render(<AddBankAccountForm open onOpenChange={() => {}} account={fd()} />);

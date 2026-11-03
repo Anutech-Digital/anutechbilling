@@ -48,7 +48,8 @@ import { cn } from "@/lib/utils";
 const TABS = [
   { href: "/vault/personal", label: "Overview", icon: "chart" },
   { href: "/vault/personal/banking", label: "Banking", icon: "wallet" },
-  { href: "/vault/personal/expenses", label: "Drawings & Expenses", personalLabel: "Expenses", icon: "receipt" },
+  { href: "/vault/personal/expenses", label: "Income & Expenses", personalLabel: "Income & Expenses", icon: "receipt" },
+  { href: "/vault/personal/loans", label: "Loans", icon: "rupee" },        // R-2388 taken / given, EMIs
   { href: "/vault/personal/wealth", label: "Wealth", icon: "trending_up" },
 ] as const;
 

@@ -50,6 +50,23 @@ vi.mock("@/lib/queries/personal-vault", () => ({
   useVerifyPin: () => noopMutation,
 }));
 
+// R-2386: Overview + Banking read "Money I owe / hold for others" from its own module.
+vi.mock("@/lib/queries/personal-owe-hold", () => {
+  const none = { mutate: () => {}, mutateAsync: async () => {}, isPending: false };
+  return {
+    usePersonalOweHold: () => ({ data: [], isLoading: false, error: null, refetch: () => {} }),
+    useSavePersonalOweHold: () => none,
+    useSettlePersonalOweHold: () => none,
+    useDeletePersonalOweHold: () => none,
+  };
+});
+
+// R-2388: the Overview also reads Loans (Net worth, next EMI) from its own module.
+vi.mock("@/lib/queries/personal-loans", () => ({
+  usePersonalLoans: () => ({ data: [], isLoading: false, error: null, refetch: () => {} }),
+  usePersonalLoanPayments: () => ({ data: [], isLoading: false, error: null, refetch: () => {} }),
+}));
+
 vi.mock("@/components/providers/confirm-provider", () => ({
   useConfirm: () => vi.fn().mockResolvedValue(true),
 }));

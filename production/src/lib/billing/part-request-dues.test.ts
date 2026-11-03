@@ -2,7 +2,7 @@
 // counts what the part requests still owe. The owner's real case: a quarterly part's request of
 // ₹1,632 showed "₹1,632 due · No payment due date", and the customer page said "Unpaid invoices
 // now ₹0" next to Outstanding ₹1,632.
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   partRequestsOwed, oldestPartDue, oldestPartDueBySubscription, partRequestFor, unpaidNow,
   partRequestChipText, type OpenPartRequest,
@@ -12,6 +12,11 @@ import { subscriptionExceptions } from "@/lib/subscriptions/exceptions";
 import { creditExposure } from "@/lib/credit/activate-on-credit";
 
 const TODAY = "2026-11-02";
+// R-2391: the "N days left" chip reads the clock (todayIST()), so the test pins it to TODAY in
+// IST — at both ends of that IST day (00:01 IST = 18:31 UTC the day before; 23:59 IST). Before
+// R-2391 it read the real clock and went red at 00:00 IST 3 Nov ("13 days left").
+const TODAY_EDGES = ["2026-11-01T18:31:00Z", "2026-11-02T18:29:00Z"] as const;
+afterEach(() => { vi.useRealTimers(); });
 const req = (o: Partial<OpenPartRequest> = {}): OpenPartRequest => ({
   quote_id: "Q-27-0101", customer_id: "c1", subscription_id: "S1", billing_id: "B1",
   term_start: "2026-08-01", period_index: 2, due_on: "2026-11-16", still_due: 1632, is_lead: true, ...o,
@@ -49,7 +54,9 @@ describe("R-2230 — what open part requests owe", () => {
 });
 
 describe("R-2230 — the subscriptions list / Payments row get the request's due date", () => {
-  it("no invoice, an open part request → pay by its due date (was: No payment due date)", () => {
+  it.each(TODAY_EDGES)("no invoice, an open part request → pay by its due date (was: No payment due date) — clock %s", (now) => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(now));
     const [row] = buildDuesRows([sub()], [], [], [], [], TODAY, undefined, [req()]);
     expect(row.pay_by).toBe("2026-11-16");
     expect(row.pay_by_kind).toBe("request");
