@@ -12,7 +12,7 @@ import { OPENING_INVOICE_KIND } from "@/lib/accounting/sale-documents";
 import type { createAdminClientFor } from "@/lib/supabase/server";
 import type { ScanRecord, ScanRun, ScanStore } from "./import-scan";
 import type {
-  CatalogItem, ExistingCustomer, ZohoContactRec, ZohoInvoiceRec, ZohoLineRec,
+  AppSale, CatalogItem, ExistingCustomer, ZohoContactRec, ZohoInvoiceRec, ZohoLineRec,
 } from "./import-plan";
 import type { TrackedSubscription } from "@/lib/subscriptions/import-dedupe";
 
@@ -125,7 +125,7 @@ export async function loadPlanInputs(admin: Db, tenantId: string, runId: string)
     if (r.kind === "contact") contacts.push(r.data as ZohoContactRec);
     else invoices.push({ ...(r.data as Omit<ZohoInvoiceRec, "lines">), lines: r.lines ?? null });
   }
-  const [customers, subs, items, numbers] = await Promise.all([
+  const [customers, subs, items, numbers, sales] = await Promise.all([
     fetchAllRows<ExistingCustomer>((from, to) =>
       db.from("customers").select("id, name, gstin").eq("tenant_id", tenantId).order("id", { ascending: true }).range(from, to)),
     fetchAllRows<TrackedSubscription>((from, to) =>
@@ -135,6 +135,11 @@ export async function loadPlanInputs(admin: Db, tenantId: string, runId: string)
     fetchAllRows<{ external_number: string | null }>((from, to) =>
       db.from("invoices").select("id, external_number").eq("tenant_id", tenantId).eq("document_kind", OPENING_INVOICE_KIND)
         .order("id", { ascending: true }).range(from, to)),
+    /* R-2406: the app's own sales — a Zoho open invoice already paid here (bank reconcile) is not imported. */
+    fetchAllRows<{ id: string; customer_id: string | null; amount: number | null; paid_amount: number | null; invoice_date: string; external_number: string | null }>((from, to) =>
+      db.from("invoices").select("id, customer_id, amount, paid_amount, invoice_date, external_number").eq("tenant_id", tenantId)
+        .neq("document_kind", OPENING_INVOICE_KIND).neq("status", "void")
+        .order("id", { ascending: true }).range(from, to)),
   ]);
   return {
     contacts,
@@ -143,5 +148,9 @@ export async function loadPlanInputs(admin: Db, tenantId: string, runId: string)
     existingSubscriptions: subs,
     items,
     existingInvoiceNumbers: new Set(numbers.map((n) => (n.external_number ?? "").toUpperCase()).filter(Boolean)),
+    appSales: sales.map((x): AppSale => ({
+      id: x.id, customerId: x.customer_id, amount: Math.round(Number(x.amount ?? 0)), paidAmount: Math.round(Number(x.paid_amount ?? 0)),
+      invoiceDate: String(x.invoice_date).slice(0, 10), externalNumber: x.external_number,
+    })),
   };
 }

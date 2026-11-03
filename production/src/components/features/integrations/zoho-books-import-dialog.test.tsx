@@ -5,7 +5,7 @@
  */
 import * as React from "react";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, cleanup, screen, fireEvent, waitFor, within } from "@testing-library/react";
 
 const toastMock = vi.hoisted(() => Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn() }));
 vi.mock("sonner", () => ({ toast: toastMock }));
@@ -46,6 +46,11 @@ beforeEach(() => {
         totals: { mrr: 750, openBalance: 1180 },
         problems: [{ code: "no_period", label: "Subscription line with no period (not imported)", blocks: true, count: 1,
           examples: ["INV-T-004 · Google Workspace Business Starter (t-gamma.in): no period."] }],
+        /* R-2406: what the ticks bring in */
+        choice: { ...(body.parts as object), customerMonths: body.customer_months === "all" ? null : body.customer_months },
+        chosen: { customersNew: 1, customersForOtherParts: 0, customersLeftOut: 4, subscriptions: 1,
+          invoices: (body.parts as { invoices?: boolean } | undefined)?.invoices ? 1 : 0 },
+        paidInApp: { count: 1, balance: 2360, examples: ["INV-T-007 · T-Here · ₹2,360 — booked here as INV-APP-1"] },
       } });
     }
     if (body.action === "import") {
@@ -80,6 +85,25 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 describe("Import from Zoho dialog", () => {
+  it("R-2406: the dry run shows the three parts with ticks — Open invoices off with the reason; ticking it asks again; paid-in-app listed", async () => {
+    render(<ZohoBooksImportDialog open onOpenChange={() => undefined} orgName="T-Acme Org" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Dry run" }));
+    expect(await screen.findByTestId("zoho-dry-run", {}, { timeout: 3000 })).toBeTruthy();
+    expect(posts.at(-1)).toEqual({ action: "dry_run", parts: { customers: true, subscriptions: true, invoices: false }, customer_months: 12 });
+    const box = (name: string) => screen.getByRole("checkbox", { name }) as HTMLInputElement;
+    expect([box("New customers").checked, box("Live subscriptions").checked, box("Open invoices").checked]).toEqual([true, true, false]);
+    expect(screen.getByTestId("zoho-invoices-off-reason").textContent).toMatch(/count the same money twice/);
+    expect(within(screen.getByTestId("zoho-part-invoices")).getByText("0")).toBeTruthy();
+    expect(screen.getByTestId("zoho-paid-in-app").textContent).toContain("1 · Already paid in the app (₹2,360) — not imported");
+
+    fireEvent.change(screen.getByLabelText("With a Zoho invoice in the last"), { target: { value: "all" } });
+    await waitFor(() => expect(posts.at(-1)).toMatchObject({ action: "dry_run", customer_months: "all" }));
+    fireEvent.click(box("Open invoices"));
+    await waitFor(() => expect(posts.at(-1)).toMatchObject({ action: "dry_run", parts: { invoices: true } }));
+    await waitFor(() => expect(within(screen.getByTestId("zoho-part-invoices")).getByText("1")).toBeTruthy());
+    expect(screen.queryByTestId("zoho-invoices-off-reason")).toBeNull();
+  });
+
   it("dry run reads Zoho, shows counts + problems; Import sends one import; Undo import sends the batch id", async () => {
     render(<ZohoBooksImportDialog open onOpenChange={() => undefined} orgName="T-Acme Org" />);
     expect(await screen.findByText(/Nothing is imported until you press Import/)).toBeTruthy();
@@ -93,7 +117,7 @@ describe("Import from Zoho dialog", () => {
     expect(screen.getByText(/Subscription line with no period/)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: "Import" }));
-    await waitFor(() => expect(posts.at(-1)).toEqual({ action: "import" }));
+    await waitFor(() => expect(posts.at(-1)).toEqual({ action: "import", parts: { customers: true, subscriptions: true, invoices: false }, customer_months: 12 }));
     expect(await screen.findByTestId("zoho-last-import")).toBeTruthy();
     expect(screen.getByText(/1 customers, 1 subscriptions, 1 open invoices/)).toBeTruthy();
 
