@@ -287,3 +287,18 @@ describe("R-2292 — a rate typed for this quote only", () => {
     expect(state.apply).not.toHaveBeenCalled();
   });
 });
+
+describe("R-2372 — a purchase order only when ticked", () => {
+  const draftArg = () =>
+    ((state.apply as ReturnType<typeof vi.fn>).mock.calls[0][0] as { draftPurchaseOrder?: boolean }).draftPurchaseOrder;
+
+  it("absent → no PO asked for", async () => {
+    await post({ additional_seats: 1, idempotency_key: KEY });
+    expect(draftArg()).toBe(false);
+  });
+
+  it("draft_purchase_order: true → passed to applySeatIncrease", async () => {
+    await post({ additional_seats: 1, idempotency_key: KEY, draft_purchase_order: true });
+    expect(draftArg()).toBe(true);
+  });
+});

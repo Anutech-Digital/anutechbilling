@@ -105,6 +105,8 @@ export async function applySeatIncrease(args: {
   requestedBy?: string | null;
   /** R-2292: ₹/seat/year typed in Manage seats for this quote only (addSeats annualPerSeatOverride). */
   annualPerSeatOverride?: number | null;
+  /** R-2372: draft a PO for the added seats — only when the operator ticked it. Absent = no PO. */
+  draftPurchaseOrder?: boolean;
 }): Promise<AddSeatsResult | AddSeatsError> {
   const { supabase, sub, additionalSeats, graceDays } = args;
 
@@ -165,6 +167,7 @@ export async function applySeatIncrease(args: {
     effectiveDateSetBy: args.effectiveDateSetBy ?? null,
     requestedBy:    args.requestedBy ?? null,
     annualPerSeatOverride: args.annualPerSeatOverride ?? null,
+    draftPurchaseOrder: args.draftPurchaseOrder === true,
     previousTerm:   plan?.previous
       ? { to: plan.previous.to, remainingDays: plan.previous.remainingDays, termDays: plan.previous.termDays }
       : null,
