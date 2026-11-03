@@ -22,7 +22,17 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/supabase/database.types";
 
-export type PersonalAccount = Database["public"]["Tables"]["personal_accounts"]["Row"];
+/**
+ * R-2394: `balance` on a row from usePersonalAccounts is the COMPUTED balance
+ * (personal_account_balances: opening_balance + money in − money out; a card: amount owed).
+ * The old hand-typed column is no longer shown — the owner types `opening_balance` (+ the
+ * as-of date). `typed_balance` keeps the old column's value for reference only.
+ */
+export type PersonalAccount = Database["public"]["Tables"]["personal_accounts"]["Row"] & {
+  opening_as_of?: string | null;
+  typed_balance?: number;
+  txn_count?: number;
+};
 export type PersonalTransaction = Database["public"]["Tables"]["personal_transactions"]["Row"];
 export type PersonalHolding = Database["public"]["Tables"]["personal_holdings"]["Row"];
 
@@ -59,6 +69,27 @@ export function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
 
 // ─── Accounts ────────────────────────────────────────────────────────────────
 
+/**
+ * R-2394: put the computed balance (personal_account_balances) on each account — the Assets
+ * list, the Overview and Net worth all read it from here. An account the view does not
+ * return (should not happen — same table) falls back to its opening balance.
+ */
+export function withComputedBalances(
+  accounts: readonly PersonalAccount[],
+  balances: readonly { account_id: string | null; balance: number | null; txn_count?: number | null }[],
+): PersonalAccount[] {
+  const byId = new Map(balances.map((b) => [b.account_id, b] as const));
+  return accounts.map((a) => {
+    const b = byId.get(a.id);
+    return {
+      ...a,
+      typed_balance: a.balance,
+      balance: b?.balance ?? a.opening_balance ?? 0,
+      txn_count: b?.txn_count ?? 0,
+    };
+  });
+}
+
 export function usePersonalAccounts(includeInactive = false) {
   return useQuery({
     queryKey: ["personal-vault", "accounts", includeInactive],
@@ -66,9 +97,13 @@ export function usePersonalAccounts(includeInactive = false) {
       const supabase = createClient();
       let q = supabase.from("personal_accounts").select("*").order("kind").order("label");
       if (!includeInactive) q = q.eq("is_active", true);
-      const { data, error } = await q;
+      const [{ data, error }, bal] = await Promise.all([
+        q,
+        supabase.from("personal_account_balances").select("account_id, balance, txn_count"),
+      ]);
       if (error) throw error;
-      return (data ?? []) as PersonalAccount[];
+      if (bal.error) throw bal.error;
+      return withComputedBalances((data ?? []) as PersonalAccount[], bal.data ?? []);
     },
     staleTime: 30_000,
   });
@@ -77,8 +112,9 @@ export function usePersonalAccounts(includeInactive = false) {
 export function useSavePersonalAccount() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: Omit<PersonalAccountInsert, "tenant_id" | "owner_user_id"> & { id?: string }) => {
-      const supabase = createClient();
+    // R-2394: opening_as_of is newer than the generated DB types — the client is used untyped for this write.
+    mutationFn: async (input: Omit<PersonalAccountInsert, "tenant_id" | "owner_user_id"> & { id?: string; opening_as_of?: string | null }) => {
+      const supabase = createClient() as unknown as SupabaseClient;
       const { userId, tenantId } = await requireIdentity();
       const { id, ...fields } = input;
 
