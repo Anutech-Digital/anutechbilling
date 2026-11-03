@@ -32,6 +32,7 @@ vi.mock("@/lib/queries/bank-credit-pay-for", async (orig) => ({
   useBankAdvancePaymentIds: noData, useBankSplitLinePayments: noData, useOldOneOffBookings: noData,
 }));
 vi.mock("@/lib/queries/customers", async (orig) => ({ ...(await orig<object>()), useCustomers: noData }));
+vi.mock("@/lib/queries/customer-payers", async (orig) => ({ ...(await orig<object>()), usePayerMemory: () => ({ payers: [], ownNames: [] }) }));
 vi.mock("@/lib/queries/vendors", async (orig) => ({ ...(await orig<object>()), useVendors: noData }));
 vi.mock("@/lib/queries/txn-category-rules", async (orig) => ({ ...(await orig<object>()), useTxnCategoryRules: noData }));
 vi.mock("@/lib/queries/bank-debit-pay-for", async (orig) => ({ ...(await orig<object>()), useVendorNarrationAliases: noData }));

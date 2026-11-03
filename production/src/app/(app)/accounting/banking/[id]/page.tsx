@@ -43,6 +43,7 @@ import type { OldOneOffBooking } from "@/lib/banking/credit-pay-for";
 import { useBankAdvancePaymentIds, useBankSplitLinePayments, useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
 import { bankRowStatusLabel, splitPaymentsTitle, type SplitLinePayment } from "@/lib/banking/bank-row-label";
 import { useCustomers } from "@/lib/queries/customers";
+import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { RelinkOneOffDialog } from "@/components/features/banking/old-one-off-bookings";
 import { InvoiceMatchChip } from "@/components/features/banking/invoice-match-chip";
 import { RemittanceText } from "@/components/features/banking/remittance-text";
@@ -191,14 +192,13 @@ export default function BankAccountDetailPage() {
   );
 
   /* R-1863: "Money in · no customer yet" — unmatched credits the Reconcile sheet cannot guess a
-     customer for (no name in the narration, no certain invoice match). */
+     customer for (no name in the narration, no certain invoice match). R-2371: same payer memory
+     as the sheet, so our own name in a narration is never a customer. */
   const { data: customers } = useCustomers({ enabled: canWrite && hasUnmatchedCredit });
-  const noCustomerIds = React.useMemo(() => new Set(
-    noCustomerYet(transactions ?? [], customers ?? [], (t) => matchCreditToInvoices(
-      { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference },
-      openInvoices ?? [],
-    )).map((t) => t.id),
-  ), [transactions, customers, openInvoices]);
+  const payerMemory = usePayerMemory();
+  const noCustomerIds = React.useMemo(() => new Set(noCustomerYet(transactions ?? [], customers ?? [], (t) => matchCreditToInvoices(
+    { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference }, openInvoices ?? [],
+  ), payerMemory).map((t) => t.id)), [transactions, customers, openInvoices, payerMemory]);
   /* R-1863: lines booked before R-1838 as a one-off "bank sale" — each can be relinked. */
   const { data: oldBookings } = useOldOneOffBookings(accountId, canWrite);
   const oldById = React.useMemo(() => new Map((oldBookings ?? []).map((b) => [b.txn_id, b])), [oldBookings]);

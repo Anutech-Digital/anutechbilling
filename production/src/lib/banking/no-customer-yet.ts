@@ -6,18 +6,20 @@
  * other unmatched credit already opens the Reconcile sheet with its customer filled in.
  * Pure — the bank page's chip (and any later filter) calls it; never duplicate the rule.
  */
-import { guessCustomer, type CustomerLite } from "@/lib/banking/credit-pay-for";
+import { guessCustomer, type CustomerLite, type PayerMemory } from "@/lib/banking/credit-pay-for";
 
 export interface NoCustomerTxn { credit: number; matched_to_type: string | null; description: string | null }
 export type InvoiceMatchLite = { customerName: string | null; confidence: string };
 
-/** One line: unmatched, money in, and no customer can be guessed. */
+/** One line: unmatched, money in, and no customer can be guessed. R-2371: pass the payer memory
+ *  (known payers + our own names) so the chip agrees with the Reconcile sheet's guess. */
 export function isNoCustomerYet(
   txn: NoCustomerTxn,
   customers: readonly CustomerLite[],
   invoiceMatches: ReadonlyArray<InvoiceMatchLite> = [],
+  memory?: PayerMemory,
 ): boolean {
-  return txn.matched_to_type === null && txn.credit > 0 && guessCustomer(txn, customers, invoiceMatches) === null;
+  return txn.matched_to_type === null && txn.credit > 0 && guessCustomer(txn, customers, invoiceMatches, memory) === null;
 }
 
 /** The lines of a list that are "no customer yet". */
@@ -25,6 +27,7 @@ export function noCustomerYet<T extends NoCustomerTxn>(
   txns: readonly T[],
   customers: readonly CustomerLite[],
   invoiceMatchesOf: (t: T) => ReadonlyArray<InvoiceMatchLite> = () => [],
+  memory?: PayerMemory,
 ): T[] {
-  return txns.filter((t) => isNoCustomerYet(t, customers, invoiceMatchesOf(t)));
+  return txns.filter((t) => isNoCustomerYet(t, customers, invoiceMatchesOf(t), memory));
 }
