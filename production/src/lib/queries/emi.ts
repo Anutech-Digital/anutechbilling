@@ -221,6 +221,8 @@ function invalidateEmi(qc: ReturnType<typeof useQueryClient>) {
 export type EmiAssetPurchaseInput = {
   name: string; block: AssetBlock; cost: number; purchasedOn: string;
   downPayment: number; accountId: string | null; downBankTxnId?: string | null;
+  /** R-2395: the owner paid the down payment himself (capital introduced, no bank line). */
+  paidByOwner?: boolean; partner?: string | null;
   lender: string; lenderRef?: string | null; interestRate: number; noCost: boolean;
   processingFee: number; processingFeeGst: number; schedule: ScheduleRow[]; notes?: string | null;
 };
@@ -235,6 +237,7 @@ export function useRecordEmiAssetPurchase() {
         p: {
           name: input.name, block: input.block, cost: Math.round(input.cost), purchased_on: input.purchasedOn,
           down_payment: Math.round(input.downPayment), account_id: input.accountId, down_bank_txn_id: input.downBankTxnId ?? null,
+          paid_by_owner: input.paidByOwner ?? false, partner: input.partner ?? null,
           lender: input.lender, lender_ref: input.lenderRef ?? null, interest_rate: input.noCost ? 0 : input.interestRate,
           no_cost: input.noCost, processing_fee: Math.round(input.processingFee), processing_fee_gst: Math.round(input.processingFeeGst),
           schedule: toRpcRows(input.schedule), notes: input.notes ?? null,
@@ -347,6 +350,60 @@ export function useUndoEmiPayment() {
       if (error) throw error;
     },
     onSuccess: () => { invalidateEmi(qc); toast.success("Payment undone — the schedule is back as it was"); },
+    onError: (err) => toastError(err),
+  });
+}
+
+/* ── R-2395: where the down payment was paid from ────────────────────────────────────────── */
+
+/** Where an asset's down payment (down + processing fee) sits now. */
+export type EmiDownPaymentSource =
+  | { kind: "account"; accountId: string; imported: boolean; amount: number; date: string }
+  | { kind: "owner"; amount: number; date: string; partner: string | null }
+  | { kind: "none" };
+
+export function useEmiDownPayment(purchase: Pick<EmiPurchase, "id" | "down_bank_txn_id"> | null | undefined) {
+  return useQuery({
+    queryKey: ["emi-purchases", "down-payment", purchase?.id, purchase?.down_bank_txn_id ?? null],
+    enabled: Boolean(purchase?.id),
+    queryFn: async (): Promise<EmiDownPaymentSource> => {
+      const supabase = loose();
+      if (purchase!.down_bank_txn_id) {
+        const { data, error } = await supabase.from<{ id: string; bank_account_id: string; source: string; txn_date: string; debit: number }>("bank_transactions")
+          .select("id, bank_account_id, source, txn_date, debit").eq("id", purchase!.down_bank_txn_id);
+        if (error) throw error;
+        const t = data?.[0];
+        if (t) return { kind: "account", accountId: t.bank_account_id, imported: t.source !== "manual", amount: t.debit, date: t.txn_date };
+      }
+      const { data, error } = await supabase.from<{ amount: number; movement_date: string; partner_name: string | null }>("owner_equity_movements")
+        .select("amount, movement_date, partner_name").eq("emi_purchase_id", purchase!.id);
+      if (error) throw error;
+      const m = data?.[0];
+      return m ? { kind: "owner", amount: m.amount, date: m.movement_date, partner: m.partner_name } : { kind: "none" };
+    },
+  });
+}
+
+/** Move the down payment to another account / Petty Cash, or to "paid by owner" (capital introduced). One server step. */
+export function useChangeEmiDownPaymentSource() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { purchaseId: string; accountId: string | null; paidByOwner: boolean; partner?: string | null }) => {
+      const supabase = loose();
+      const { data, error } = await supabase.rpc("change_emi_down_payment_source", {
+        p_purchase_id: input.purchaseId, p_account_id: input.paidByOwner ? null : input.accountId,
+        p_paid_by_owner: input.paidByOwner, p_partner: input.partner ?? null, p_note: null,
+      });
+      if (error) throw error;
+      return data as { amount: number; after: { kind: "account" | "owner"; account_name?: string } };
+    },
+    onSuccess: (r) => {
+      invalidateEmi(qc);
+      qc.invalidateQueries({ queryKey: ["owner_equity_movements"] });
+      toast.success(r.after.kind === "owner"
+        ? `Down payment ${rupee(r.amount)} now shows as paid by the owner (capital introduced)`
+        : `Down payment ${rupee(r.amount)} now paid from ${r.after.account_name ?? "the account you picked"}`);
+    },
     onError: (err) => toastError(err),
   });
 }
