@@ -33,7 +33,7 @@ const subs: PlanSubRow[] = [
   { id: "s-old", customer_id: "c-crest", plan: "Google Workspace Business Starter", domain: "old.crestsol.in", seats: 2, status: "cancelled", start_date: "2025-01-01", renewal_date: "2026-01-01" },
 ];
 
-const ctx: PlanContext = { customers, subscriptions: subs, catalog, payers: [], ownNames: ["Excel Technologies"] };
+const ctx: PlanContext = { customers, subscriptions: subs, catalog, payers: [], ownNames: ["Our Own Company"] };
 
 const zl = (over: Partial<ZohoMatchLine>): ZohoMatchLine => ({
   invoiceNumber: "INV/26-27/1000", name: "Google Workspace Business Starter", sku: "GWS-BS", qty: 1, rate: 1000, itemTotal: null,

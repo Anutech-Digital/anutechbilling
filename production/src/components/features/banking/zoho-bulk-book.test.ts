@@ -12,7 +12,7 @@ import type { PayForResult } from "@/lib/banking/credit-pay-for";
 
 const ctx: PlanContext = {
   customers: [{ id: "c-zuna", name: "Zuna Private Limited", gstin: null, state_code: "06", country: "India", domain: "zuna.one" }],
-  subscriptions: [], catalog: [], payers: [], ownNames: ["Excel Technologies"],
+  subscriptions: [], catalog: [], payers: [], ownNames: ["Our Own Company"],
 };
 const zl = (over: Partial<ZohoMatchLine>): ZohoMatchLine => ({
   invoiceNumber: "INV/26-27/1", name: "Workspace", sku: null, qty: 1, rate: 1000, itemTotal: null,

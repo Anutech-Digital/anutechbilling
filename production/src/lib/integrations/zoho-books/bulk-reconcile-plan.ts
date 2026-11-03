@@ -1,7 +1,7 @@
 /**
  * R-2402 — "Reconcile from Zoho" (bulk): the PLAN for each open money-in bank line. Pure, no I/O.
  *
- * Pardeep (3 Nov, Excel Technologies HDFC 4523): ~199 open money-in lines; one-by-one Reconcile →
+ * Pardeep (3 Nov, HDFC 4523): ~199 open money-in lines; one-by-one Reconcile →
  * Find in Zoho → check the subscription → fix dates → Save is 5–8 min a line. Doing 7 by hand
  * found the traps this plan avoids (Anutech-HQ/drafts/RECON-4523/progress-2026-11-03.md):
  *
