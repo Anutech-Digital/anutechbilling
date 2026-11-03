@@ -17,6 +17,9 @@
 --   D. New sale path (reconcile_bank_credit_new_sale → to_item) with a zero ref → receipt BANK-<id>.
 --   E. Advance (reconcile_bank_credit_as_advance) with a zero ref → quote + receipt carry BANK-<id>.
 --   F. A real UTR keeps its own (trimmed) reference, as before.
+--   G. A ₹5,000 receipt typed by hand with 000000000000000 (on no bank line): the first zero-ref
+--      ₹5,000 line is matched to THAT receipt (no second one); the next zero-ref line books its own.
+--   H. Split: the same kind of kept receipt on the item → refused, nothing saved.
 
 begin;
 
@@ -50,7 +53,7 @@ select v.id, 'dddddddd-0000-0000-0000-000000243001', 'cccccccc-0000-0000-0000-00
        11800, 10000, 0, 18, 'accepted', 'awaiting', 'yearly',
        jsonb_build_array(jsonb_build_object('name', 'Service ' || v.id, 'qty', 1, 'rate', 10000, 'one_time', true)),
        true, '2026-10-10'
-  from (values ('Q-R2430-A'), ('Q-R2430-C'), ('Q-R2430-F')) as v(id);
+  from (values ('Q-R2430-A'), ('Q-R2430-C'), ('Q-R2430-F'), ('Q-R2430-G'), ('Q-R2430-H')) as v(id);
 
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
   ('11111111-0000-0000-0000-000000243001','dddddddd-0000-0000-0000-000000243001','bbbbbbbb-0000-0000-0000-000000243001','2026-10-20','NEFT ACME 2430 PART 1',0,5000,'000000000000000','manual'),
@@ -59,10 +62,13 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('11111111-0000-0000-0000-000000243004','dddddddd-0000-0000-0000-000000243001','bbbbbbbb-0000-0000-0000-000000243001','2026-10-23','NEFT ACME 2430 SPLIT 2',0,5000,'0000-0000-0000','manual'),
   ('11111111-0000-0000-0000-000000243005','dddddddd-0000-0000-0000-000000243001','bbbbbbbb-0000-0000-0000-000000243001','2026-10-24','NEFT ACME 2430 SALE',0,1180,'000000000000000','manual'),
   ('11111111-0000-0000-0000-000000243006','dddddddd-0000-0000-0000-000000243001','bbbbbbbb-0000-0000-0000-000000243001','2026-10-25','NEFT ACME 2430 ADVANCE',0,2000,'NA','manual'),
-  ('11111111-0000-0000-0000-000000243007','dddddddd-0000-0000-0000-000000243001','bbbbbbbb-0000-0000-0000-000000243001','2026-10-26','NEFT ACME 2430 REAL',0,5000,' R2430UTR778899 ','manual');
+  ('11111111-0000-0000-0000-000000243007','dddddddd-0000-0000-0000-000000243001','bbbbbbbb-0000-0000-0000-000000243001','2026-10-26','NEFT ACME 2430 REAL',0,5000,' R2430UTR778899 ','manual'),
+  ('11111111-0000-0000-0000-000000243008','dddddddd-0000-0000-0000-000000243001','bbbbbbbb-0000-0000-0000-000000243001','2026-10-27','NEFT ACME 2430 HAND 1',0,5000,'000000000000000','manual'),
+  ('11111111-0000-0000-0000-000000243009','dddddddd-0000-0000-0000-000000243001','bbbbbbbb-0000-0000-0000-000000243001','2026-10-28','NEFT ACME 2430 HAND 2',0,5000,'000000000000000','manual'),
+  ('11111111-0000-0000-0000-000000243010','dddddddd-0000-0000-0000-000000243001','bbbbbbbb-0000-0000-0000-000000243001','2026-10-29','NEFT ACME 2430 SPLIT KEPT',0,5000,'000000000000000','manual');
 
 select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000243001","role":"authenticated"}', true);
-select public.generate_invoice(q) from unnest(array['Q-R2430-A','Q-R2430-C','Q-R2430-F']) q;
+select public.generate_invoice(q) from unnest(array['Q-R2430-A','Q-R2430-C','Q-R2430-F','Q-R2430-G','Q-R2430-H']) q;
 
 create function pg_temp.inv(p_quote text) returns text language sql as $f$ select invoice_id from public.quotes where id = p_quote $f$;
 create function pg_temp.received(p_quote text) returns bigint language sql as $f$
@@ -167,6 +173,35 @@ begin
   if (select reference from public.payments where id = (r->>'payment_id')::uuid) <> 'R2430UTR778899' then
     raise exception 'FAIL F: real UTR receipt reference %', (select reference from public.payments where id = (r->>'payment_id')::uuid); end if;
   raise notice 'PASS F: a real UTR stays the receipt''s reference';
+end $$;
+
+-- ── G. a hand-typed zero-ref receipt is adopted once ─────────────────────────────────────────
+do $$
+declare v_hand uuid; r1 jsonb; r2 jsonb;
+begin
+  v_hand := (public.record_payment('Q-R2430-G', 5000, 'bank_transfer', '000000000000000', 'typed from the statement')->>'payment_id')::uuid;
+  r1 := public.reconcile_bank_credit_to_item('11111111-0000-0000-0000-000000243008', null, pg_temp.inv('Q-R2430-G'));
+  if (r1->>'payment_id')::uuid <> v_hand or pg_temp.received('Q-R2430-G') <> 5000 then
+    raise exception 'FAIL G: line 1 made receipt % / ₹% (want the hand receipt %, ₹5,000)', r1->>'payment_id', pg_temp.received('Q-R2430-G'), v_hand; end if;
+  r2 := public.reconcile_bank_credit_to_item('11111111-0000-0000-0000-000000243009', null, pg_temp.inv('Q-R2430-G'));
+  if (r2->>'payment_id')::uuid = v_hand or pg_temp.received('Q-R2430-G') <> 10000 then
+    raise exception 'FAIL G: line 2 → % / ₹% (want its own receipt, ₹10,000)', r2->>'payment_id', pg_temp.received('Q-R2430-G'); end if;
+  raise notice 'PASS G: hand-typed zero-ref receipt matched once, the next zero-ref line books its own';
+end $$;
+
+-- ── H. split with a kept zero-ref receipt on the item → refused ──────────────────────────────
+do $$
+declare ok boolean := false;
+begin
+  perform public.record_payment('Q-R2430-H', 5000, 'bank_transfer', '000000000000000', 'typed from the statement');
+  begin
+    perform public.reconcile_bank_credit_split('11111111-0000-0000-0000-000000243010', 'cccccccc-0000-0000-0000-000000243001',
+              jsonb_build_array(jsonb_build_object('invoice_id', pg_temp.inv('Q-R2430-H'), 'amount', 5000)), null, null);
+  exception when unique_violation then ok := sqlerrm like '%already has a ₹5000 receipt with reference 000000000000000 that is on no bank line%';
+  end;
+  if not ok or pg_temp.received('Q-R2430-H') <> 5000 then
+    raise exception 'FAIL H: split over a kept zero-ref receipt not refused (₹% received)', pg_temp.received('Q-R2430-H'); end if;
+  raise notice 'PASS H: split refuses when a kept zero-ref receipt is on the item';
 end $$;
 
 select 'R-2430 placeholder ref per bank line: ALL PASS' as result;

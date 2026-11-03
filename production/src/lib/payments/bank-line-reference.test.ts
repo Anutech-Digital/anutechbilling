@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { bankLinePaymentReference } from "./bank-line-reference";
 
@@ -17,5 +19,13 @@ describe("bankLinePaymentReference (R-2430)", () => {
     const other = "11111111-0000-0000-0000-000000243002";
     expect(bankLinePaymentReference("000000000000000", id)).not.toBe(bankLinePaymentReference("000000000000000", other));
     expect(bankLinePaymentReference("000000000000000", id)).toBe(bankLinePaymentReference("000000000000000", id));
+  });
+  it("trims spaces only, as Postgres btrim()", () => {
+    expect(bankLinePaymentReference("HDFCN5202605191234\t", id)).toBe("HDFCN5202605191234\t");
+  });
+  it("the bank screen's record_payment calls use it (useBookCreditAsInvoice, useMatchCreditToInvoice)", () => {
+    const src = readFileSync(join(__dirname, "../queries/bank.ts"), "utf8");
+    expect(src.split("bankLinePaymentReference(input.reference, input.transactionId)").length - 1).toBe(2);
+    expect(src).not.toContain('.trim() || `BANK-${input.transactionId}`');
   });
 });

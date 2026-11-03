@@ -19,6 +19,10 @@
 --     what the RPCs already used for an EMPTY reference. Every bank line then gives its receipt its
 --     own reference: two zero-ref lines → two receipts; the same line booked again → the same
 --     reference → still a replay (booked once).
+--   * bank_line_kept_receipt_ref(...): a receipt ALREADY on the quote with the line's placeholder
+--     reference as printed, the same amount and on no bank line (typed by hand from the statement, or
+--     booked from this line before R-2430 and kept when it was un-reconciled) is this money —
+--     "This money is for" matches the line to THAT receipt (as before); the split refuses (as before).
 --   * Redefined from their LATEST bodies, the one reference line changed (+ this note):
 --       reconcile_bank_credit_to_item   ← 20261029054707_r2098_bank_credit_split
 --         (reconcile_bank_credit_new_sale, its R-2360 overload and reconcile_bank_credit_new_sale_fx
@@ -39,7 +43,7 @@ begin;
 create or replace function public.bank_line_payment_reference(p_reference text, p_txn_id uuid)
 returns text
 language sql
-immutable
+stable            -- reads bank_reference_is_real, which a later migration may redefine (R-2441)
 parallel safe
 set search_path to 'public'
 as $$
@@ -53,6 +57,44 @@ comment on function public.bank_line_payment_reference(text, uuid) is
 
 revoke all on function public.bank_line_payment_reference(text, uuid) from public, anon;
 grant execute on function public.bank_line_payment_reference(text, uuid) to authenticated, service_role;
+
+create or replace function public.bank_line_kept_receipt_ref(
+  p_tenant_id  uuid,
+  p_reference  text,
+  p_quote_id   text,
+  p_invoice_id text,
+  p_amount     integer
+)
+returns text
+language sql
+stable
+set search_path to 'public'
+as $$
+  /* R-2430: a receipt already on this quote with the line's PLACEHOLDER reference as printed, the
+     same amount, and on no bank line — typed by hand from the statement, or booked from a bank line
+     before R-2430 and kept when that line was un-reconciled. Returns that reference (so the line is
+     matched to THAT receipt, never a second one), else null. A real UTR never comes here. */
+  select btrim(p_reference)
+   where nullif(btrim(coalesce(p_reference, '')), '') is not null
+     and not public.bank_reference_is_real(p_reference)
+     and exists (
+       select 1 from public.payments p
+        where p.tenant_id = p_tenant_id
+          and p.status = 'received'
+          and p.reference = btrim(p_reference)
+          and p.amount = p_amount
+          and p.quote_id = coalesce(p_quote_id,
+                (select i.quote_id from public.invoices i where i.id = p_invoice_id and i.tenant_id = p_tenant_id))
+          and p.bank_txn_id is null
+          and not exists (select 1 from public.bank_transactions t
+                           where t.tenant_id = p_tenant_id and t.matched_to_type = 'payment' and t.matched_to_id = p.id::text))
+$$;
+
+comment on function public.bank_line_kept_receipt_ref(uuid, text, text, text, integer) is
+  'R-2430: the placeholder reference of an existing receipt on this quote (same amount, on no bank line) a placeholder-reference bank line should be matched to, else null.';
+
+revoke all on function public.bank_line_kept_receipt_ref(uuid, text, text, text, integer) from public, anon, authenticated;
+grant execute on function public.bank_line_kept_receipt_ref(uuid, text, text, text, integer) to service_role;
 
 -- ── reconcile_bank_credit_to_item (from 20261029054707_r2098_bank_credit_split) ──────────────
 create or replace function public.reconcile_bank_credit_to_item(
@@ -110,8 +152,13 @@ begin
   end if;
 
   /* The line's UTR is the payment reference (record_payment replays on quote + reference). */
-  /* R-2430: a placeholder reference (000000000000000) is not this line's UTR — BANK-<line id> instead. */
-  v_ref := public.bank_line_payment_reference(v_txn.reference, v_txn.id);
+  /* R-2430: a placeholder reference (000000000000000) is not this line's UTR — BANK-<line id> instead;
+     but a receipt already on this quote with that placeholder, the same amount and on no bank line
+     (typed by hand, or kept from before R-2430) is THIS money: keep its reference so it replays. */
+  v_ref := coalesce(
+    public.bank_line_kept_receipt_ref(v_txn.tenant_id, v_txn.reference, p_quote_id, p_invoice_id,
+                                      v_txn.credit::int + greatest(0, coalesce(p_tds_amount, 0))),
+    public.bank_line_payment_reference(v_txn.reference, v_txn.id));
   v_core := public.bank_credit_pay_item(
     p_txn_id, v_txn.credit, v_ref, p_quote_id, p_invoice_id, p_tds_amount, p_tds_rate_pct, p_tds_section,
     p_create_subscription, p_sub_start, p_sub_renewal);
@@ -174,6 +221,8 @@ begin
               else 18
             end;
 
+  v_ref := public.bank_line_payment_reference(v_txn.reference, v_txn.id);   -- R-2430: placeholder → BANK-<line id>
+
   /* The ₹0 holder quote the receipt hangs on (payments need a quote). Nothing to invoice. */
   v_qid := public.next_document_number('quote', v_txn.tenant_id, public.ist_today());
   if v_qid is null then raise exception 'Could not allocate a quote number'; end if;
@@ -184,14 +233,13 @@ begin
   ) values (
     v_qid, v_txn.tenant_id, p_customer_id, v_cust.name, 'Advance on account', 0, 0, 0, v_rate, 0,
     '[]'::jsonb, 'accepted', 'received', p_amount, 'bank_transfer',
-    public.bank_line_payment_reference(v_txn.reference, v_txn.id),   -- R-2430
+    v_ref,
     (v_txn.txn_date::timestamp at time zone 'UTC'), true, 'yearly', public.ist_today(),
     'Advance received in the bank on ' || to_char(v_txn.txn_date, 'DD Mon YYYY')
       || ' — kept as customer credit, nothing invoiced yet (R-1863).'
   );
 
   /* The receipt, as record_payment writes it (voucher from the series, bank date — R-1118). */
-  v_ref := public.bank_line_payment_reference(v_txn.reference, v_txn.id);   -- R-2430
   v_voucher := public.next_document_number('receipt_voucher', v_txn.tenant_id, public.ist_today());
   insert into public.payments (tenant_id, quote_id, customer_id, amount, method, reference, notes,
                                status, received_at, receipt_voucher_no, recorded_by, bank_account_id)
@@ -401,6 +449,16 @@ begin
 
   /* Each item as if paid on its own. */
   for v_item in select value from jsonb_array_elements(p_items) loop
+    /* R-2430: a receipt already on this item with the line's placeholder reference, the same amount and
+       on no bank line is probably this money — refused as before R-2430 (a replay), never a second receipt. */
+    v_key := public.bank_line_kept_receipt_ref(v_txn.tenant_id, v_txn.reference,
+               case when nullif(v_item->>'invoice_id', '') is null then v_item->>'quote_id' end,
+               nullif(v_item->>'invoice_id', ''), (v_item->>'amount')::numeric::int);
+    if v_key is not null then
+      raise exception '% already has a ₹% receipt with reference % that is on no bank line. Pick it with "This money is for" on this line alone, or delete that receipt first. Nothing was saved.',
+        coalesce(v_item->>'invoice_id', v_item->>'quote_id'), (v_item->>'amount')::numeric::int, v_key
+        using errcode = 'unique_violation';
+    end if;
     v_core := public.bank_credit_pay_item(
       p_txn_id, (v_item->>'amount')::numeric::int, v_ref,
       case when nullif(v_item->>'invoice_id', '') is null then v_item->>'quote_id' end,

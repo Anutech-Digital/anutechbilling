@@ -14,5 +14,6 @@ import { isRealBankReference } from "./bank-reference";
  * (migration 20261103194201_r2430_placeholder_ref_bank_line).
  */
 export function bankLinePaymentReference(reference: string | null | undefined, bankTxnId: string): string {
-  return isRealBankReference(reference) ? (reference ?? "").trim() : `BANK-${bankTxnId}`;
+  /* Spaces only, as Postgres btrim() — a tab kept here is kept there too (one reference per line). */
+  return isRealBankReference(reference) ? (reference ?? "").replace(/^ +| +$/g, "") : `BANK-${bankTxnId}`;
 }
