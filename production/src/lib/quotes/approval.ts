@@ -42,6 +42,7 @@
  * approved".
  */
 import type { UserRole } from "@/lib/auth/roles";
+import { istToday } from "@/lib/dates/ist";
 
 export type ApprovalTier = "none" | "manager" | "owner";
 export type ApprovalStatus = "not_required" | "pending" | "approved" | "rejected";
@@ -184,10 +185,15 @@ export const SELF_APPROVAL_MIN_REASON = 10;
  */
 export function isSoleOwner(
   viewer: { id: string; role: string | null | undefined },
-  team: readonly { id: string; role: string | null | undefined }[] | undefined,
+  team: readonly { id: string; role: string | null | undefined; access_ends_on?: string | null }[] | undefined,
+  /** IST today, YYYY-MM-DD (tests pass a fixed day). */
+  today: string = istToday(),
 ): boolean {
   if (viewer.role !== "owner" || !team) return false;
-  return !team.some((u) => u.id !== viewer.id && u.role === "owner");
+  /* R-2441: an owner whose access has ended (users.access_ends_on before today, R-1896) is not a
+     second owner — the server (trg_quote_approval_not_by_maker) does not count them either. */
+  return !team.some((u) => u.id !== viewer.id && u.role === "owner"
+    && (u.access_ends_on == null || u.access_ends_on >= today));
 }
 
 /**
@@ -329,6 +335,8 @@ export function canApprove(
       ? { allowed: false, ownQuote: true, reason: "You cannot approve your own quote." }
       : { allowed: false, ownQuote: true, reason: "You made or revised this quote (or an earlier version of it) — another approver must clear it." };
   }
+  /* R-2441: the server applies the same role-per-tier rule (trg_quote_approval_not_by_maker) —
+     an owner-tier or below-cost quote needs an owner, anything else an owner or manager. */
   if (!now.approvers.includes((viewer.role ?? "") as UserRole)) {
     return {
       allowed: false,

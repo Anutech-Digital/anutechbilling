@@ -10,10 +10,15 @@
  * A reference is real when, after keeping only letters and digits, it is at least 6 characters
  * long, is not one character repeated ("000000000000000", "111111", "XXXXXXXX", "NA", "-") and is
  * not a placeholder word ("NOT AVAILABLE", "NOT APPLICABLE", "NO REFERENCE", "NOT PROVIDED").
- * The database applies the SAME rule in public.bank_reference_is_real(text) (migration
- * 20261103144041_r2424_placeholder_bank_ref), which public.payment_ref_key uses — a placeholder
- * gets no key, so it never blocks and is never blocked. Keep the two in step:
- * bank-reference.test.ts and supabase/tests/r2424_placeholder_bank_ref.test.sql check the same cases.
+ * R-2441: leading rail words (NEFT/RTGS/IMPS/UPI/UTR/REF/TXN, and NO) are set aside first: the
+ * word test looks past them ("UTR NOT AVAILABLE"), and what is left must be 6+ characters and not
+ * one character repeated — so "NEFT-000000000000", "NEFT N/A" and "TXN-001" are placeholders too;
+ * a real UTR with such a prefix stays real and keeps its key.
+ * The database applies the SAME rule in public.bank_reference_is_real(text) (migrations
+ * 20261103144041_r2424_placeholder_bank_ref, 20261103194534_r2441_approval_role_and_prefixed_refs),
+ * which public.payment_ref_key uses — a placeholder gets no key, so it never blocks and is never
+ * blocked. Keep the two in step: bank-reference.test.ts checks the same cases as
+ * supabase/tests/r2424_placeholder_bank_ref.test.sql AND r2441_review_fixes.test.sql (part 2).
  */
 
 /** ASCII letters and digits only, upper-case — what the placeholder test looks at (as SQL). */
@@ -24,11 +29,20 @@ function alnum(ref: string | null | undefined): string {
 /** Words banks and people type when there is no UTR (letters/digits only, upper-case). */
 const PLACEHOLDER_WORDS = new Set(["NOTAVAILABLE", "NOTAPPLICABLE", "NOREFERENCE", "NOTPROVIDED"]);
 
-/** False for empty, under 6 letters/digits, one character repeated (all zeros etc.) or a placeholder word. */
+/** R-2441: payment-rail words a bank puts in front of a reference ("NEFT-000000000000",
+ *  "UTR NOT AVAILABLE"). The word test looks past RAIL_WORDS; the length and "one character
+ *  repeated" tests look past RAIL_WORDS_AND_NO ("UTR NO 000000"). */
+const RAIL_WORDS = /^(NEFT|RTGS|IMPS|UPI|UTR|REF|TXN)+/;
+const RAIL_WORDS_AND_NO = /^(NEFT|RTGS|IMPS|UPI|UTR|REF|TXN|NO)+/;
+
+/** False for empty, a placeholder word (also after a rail prefix), or — after leading rail
+ *  words (R-2441) — under 6 letters/digits or one character repeated (all zeros etc.). */
 export function isRealBankReference(ref: string | null | undefined): boolean {
   const v = alnum(ref);
-  if (v.length < 6 || PLACEHOLDER_WORDS.has(v)) return false;
-  return v.split("").some((ch) => ch !== v[0]);
+  if (PLACEHOLDER_WORDS.has(v) || PLACEHOLDER_WORDS.has(v.replace(RAIL_WORDS, ""))) return false;
+  const rest = v.replace(RAIL_WORDS_AND_NO, "");
+  if (rest.length < 6) return false;
+  return rest.split("").some((ch) => ch !== rest[0]);
 }
 
 /**

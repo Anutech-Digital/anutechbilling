@@ -212,6 +212,17 @@ describe("R-2383: the company's sole owner may approve their own quote (with a r
     expect(isSoleOwner({ id: "o1", role: "manager" }, [])).toBe(false);
   });
 
+  it("R-2441: an owner whose access has ended is not a second owner (same as the server)", () => {
+    const today = "2026-11-04";
+    const exited = { id: "o2", role: "owner", access_ends_on: "2026-11-03" };
+    const lastDay = { id: "o3", role: "owner", access_ends_on: "2026-11-04" };
+    expect(isSoleOwner(owner, [owner, exited], today)).toBe(true);
+    expect(isSoleOwner(owner, [owner, lastDay], today)).toBe(false);
+    expect(isSoleOwner(owner, [owner, { id: "o4", role: "owner", access_ends_on: null }], today)).toBe(false);
+    expect(canApprove(owner, rec({ requestedBy: "o1", status: "pending" }), belowCost, [owner, exited]))
+      .toMatchObject({ allowed: true, selfApproval: true });
+  });
+
   it("canSend tells the sole owner the way on instead of 'nobody can approve'", () => {
     const g = canSend(rec({ status: "pending", tier: "owner", requestedBy: "o1" }), belowCost, null, { selfApproval: true });
     expect(g.allowed).toBe(false);

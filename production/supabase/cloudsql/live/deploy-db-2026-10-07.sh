@@ -395,6 +395,7 @@ MIGS=(
   "r2439settlepaymentlinkv2|20261103190855_r2439_settle_payment_link_v2.sql|resellersos_migration|exists(select 1 from pg_proc p where p.oid = to_regprocedure('public.settle_invoice_payment_link(text,text,bigint,text)') and p.prosrc like '%R-2439%')"
   "r2428salarylop|20261103192246_r2428_salary_lop_adjust.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.adjust_salary_lop(uuid,numeric,integer,text)') and prosrc like '%R-2428%')"
   "r2432partnermirrorv2|20261103192959_r2432_partner_mirror_v2.sql|resellersos_migration|exists (select 1 from pg_proc where proname = 'tg_mirror_invoice_to_child_vendor_bill' and prosrc like '%R-2432%') and to_regprocedure('public.tg_partner_credit_note_to_child_bill()') is not null"
+  "r2441approvalroleprefixedrefs|20261103194534_r2441_approval_role_and_prefixed_refs.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2441%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_reference_is_real(text)') and prosrc like '%NEFT%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
