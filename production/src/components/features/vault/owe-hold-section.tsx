@@ -48,6 +48,7 @@ import { isLiabilityAccount } from "@/lib/vault/personal/net-worth";
 import { parseRupees, MAX_RUPEES } from "@/lib/vault/personal/parse-rupees";
 import { istToday } from "@/lib/dates/ist";
 import { formatDate, rupee } from "@/lib/utils";
+import { PersonPicker } from "@/components/features/vault/person-picker";
 
 const NO_ACCOUNT = "none";
 
@@ -55,6 +56,8 @@ interface FormState {
   id?: string;
   kind: OweHoldKind;
   party: string;
+  /** R-2392: the picked person (People); null = a name typed without a contact. */
+  contact_id: string | null;
   occurred_on: string;
   amount: string;
   account_id: string;
@@ -62,7 +65,7 @@ interface FormState {
 }
 
 const emptyForm = (): FormState => ({
-  kind: "advance_received", party: "", occurred_on: istToday(), amount: "", account_id: NO_ACCOUNT, note: "",
+  kind: "advance_received", party: "", contact_id: null, occurred_on: istToday(), amount: "", account_id: NO_ACCOUNT, note: "",
 });
 
 const SETTLE_NOTE_DEFAULT: Record<OweHoldSettledHow, string> = {
@@ -95,7 +98,7 @@ export function OweHoldSection({ accounts }: { accounts: PersonalAccount[] }) {
   const openNew = () => { setForm(emptyForm()); setAmountIssue(null); setOpen(true); };
   const openEdit = (r: PersonalOweHold) => {
     setForm({
-      id: r.id, kind: r.kind, party: r.party, occurred_on: r.occurred_on, amount: String(r.amount),
+      id: r.id, kind: r.kind, party: r.party, contact_id: r.contact_id ?? null, occurred_on: r.occurred_on, amount: String(r.amount),
       account_id: r.account_id ?? NO_ACCOUNT, note: r.note ?? "",
     });
     setAmountIssue(null);
@@ -105,7 +108,7 @@ export function OweHoldSection({ accounts }: { accounts: PersonalAccount[] }) {
   const handleSave = async () => {
     if (!form.party.trim()) {
       toast.error(form.kind === "advance_received" ? "Who paid the advance?" : "Who is the money held for?", {
-        description: "Type a name, like the buyer or your daughter. Nothing was saved.",
+        description: "Pick the person from your People, or add them — like the buyer or your daughter. Nothing was saved.",
       });
       return;
     }
@@ -126,6 +129,7 @@ export function OweHoldSection({ accounts }: { accounts: PersonalAccount[] }) {
         id: form.id,
         kind: form.kind,
         party: form.party.trim(),
+        contact_id: form.contact_id,
         occurred_on: form.occurred_on,
         amount: p.value,
         account_id: form.account_id === NO_ACCOUNT ? null : form.account_id,
@@ -282,9 +286,9 @@ export function OweHoldSection({ accounts }: { accounts: PersonalAccount[] }) {
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label htmlFor="oh-party" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">{OWE_HOLD_PARTY_LABEL[form.kind]}</label>
-                <Input id="oh-party" value={form.party}
-                  onChange={(e) => setForm((f) => ({ ...f, party: e.target.value }))}
-                  placeholder={form.kind === "advance_received" ? "Buyer's name" : "Daughter / son"} />
+                <PersonPicker id="oh-party" allowText value={{ contactId: form.contact_id, name: form.party }}
+                  onChange={(v) => setForm((f) => ({ ...f, party: v.name, contact_id: v.contactId }))}
+                  placeholder={form.kind === "advance_received" ? "Pick the buyer" : "Pick the person"} />
               </div>
               <div>
                 <label htmlFor="oh-amount" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Amount (₹)</label>

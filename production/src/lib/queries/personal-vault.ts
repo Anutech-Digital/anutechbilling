@@ -18,6 +18,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toastError } from "@/lib/errors/toast-error";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/supabase/database.types";
 
@@ -138,8 +139,10 @@ export function usePersonalTransactions(limit = 200) {
 export function useSavePersonalTransaction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: Omit<PersonalTransactionInsert, "tenant_id" | "owner_user_id"> & { id?: string }) => {
-      const supabase = createClient();
+    // R-2392: contact_id (People) is newer than the generated DB types — the client is used
+    // untyped for this write (like personal-owe-hold.ts / personal-loans.ts).
+    mutationFn: async (input: Omit<PersonalTransactionInsert, "tenant_id" | "owner_user_id"> & { id?: string; contact_id?: string | null }) => {
+      const supabase = createClient() as unknown as SupabaseClient;
       const { userId, tenantId } = await requireIdentity();
       const { id, ...fields } = input;
 

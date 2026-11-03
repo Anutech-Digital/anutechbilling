@@ -64,6 +64,7 @@ export const PERSONAL_TABLES: Readonly<Record<string, readonly Method[]>> = {
   personal_loans: ALL,             // R-2388 Loans taken / given
   personal_loan_payments: ALL,     // R-2388 (writes go through personal_loan_record_payment)
   personal_loan_balances: READ,    // R-2388 view: outstanding per loan
+  personal_contacts: ALL,          // R-2392 People (personal contacts; owner-only RLS)
   users: READ,
   tenants: READ,
   notifications: ["GET", "HEAD", "PATCH"],

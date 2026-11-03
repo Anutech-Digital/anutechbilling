@@ -34,6 +34,8 @@ export interface PersonalOweHold {
   note: string | null;
   /** Where the cash sits — one of the owner's personal accounts. */
   account_id: string | null;
+  /** R-2392: the person (personal_contacts) the money is owed to / held for; party keeps the name. */
+  contact_id?: string | null;
   status: OweHoldStatus;
   settled_on: string | null;
   settled_how: OweHoldSettledHow | null;
@@ -42,7 +44,7 @@ export interface PersonalOweHold {
   updated_at: string;
 }
 
-export type PersonalOweHoldInput = Pick<PersonalOweHold, "kind" | "party" | "occurred_on" | "amount" | "note" | "account_id"> & { id?: string };
+export type PersonalOweHoldInput = Pick<PersonalOweHold, "kind" | "party" | "occurred_on" | "amount" | "note" | "account_id"> & { id?: string; contact_id?: string | null };
 
 const OWE_HOLD = "personal_owe_hold";
 const oweHoldDb = () => createClient() as unknown as SupabaseClient;
