@@ -11,11 +11,18 @@
  *      invoice number, exactly as useNewSaleFromBankCredit);
  *   4. each further new subscription gets its OWN start / renewal from its Zoho line.
  *
+ * R-2419: a row whose plan PAYS an open quote / invoice goes through reconcile_bank_credit_to_item
+ * (the sheet's "This money is for" step — a below-cost quote is still refused there until it is
+ * approved); a row that settles last year's OPENING invoice is recorded on it with
+ * record_multi_invoice_payment (Record payment's own call — a retry with the same reference is a
+ * replay, never a second receipt) and the bank line is then matched to that payment with
+ * reconcile_bank_txn (as "Match & record payment" does).
+ *
  * Never twice: a row already booked in this run, or a line the database already shows as reconciled,
  * is skipped (the RPC refuses a reconciled line too). The first error STOPS the run and is reported;
  * rows after it stay unbooked for the next press.
  */
-import type { NewSaleInput } from "@/lib/queries/bank-credit-pay-for";
+import type { NewSaleInput, PayItemInput } from "@/lib/queries/bank-credit-pay-for";
 import type { PayForResult } from "@/lib/banking/credit-pay-for";
 import type { LinePayerAnswer } from "@/lib/queries/customer-payers";
 import { mapGstTreatment } from "@/lib/integrations/zoho-books/import-plan";
@@ -71,6 +78,65 @@ export interface BookDeps {
   /** The sale's subscriptions (quote_id), for the per-line dates. */
   saleSubscriptions: (quoteId: string) => Promise<SubForFix[]>;
   setSubDates: (subId: string, start: string, renewal: string) => Promise<void>;
+  /** R-2419 (e): pay an open quote / invoice — reconcile_bank_credit_to_item. */
+  payItem: (i: PayItemInput) => Promise<PayForResult>;
+  /** R-2419 (a): settle an opening invoice and match the line to that receipt (payOpeningInvoice). */
+  payOpening: (i: OpeningPayInput) => Promise<OpeningPaid>;
+}
+
+/** R-2419 (a): one bank line settling one opening invoice imported from Zoho. */
+export interface OpeningPayInput {
+  transactionId: string;
+  customerId: string;
+  invoiceId: string;
+  /** The bank money, whole rupees. */
+  received: number;
+  receivedOn: string;
+  reference: string;
+  tdsAmount: number;
+  tdsRatePct: number | null;
+  tdsSection: string | null;
+}
+export interface OpeningPaid { paymentId: string; alreadyRecorded: boolean }
+
+type Rpc = (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+
+/** The record_multi_invoice_payment arguments — exported so the test pins what reaches the server. */
+export function openingPaymentArgs(i: OpeningPayInput, bankAccountId: string) {
+  const tds = Math.max(0, Math.round(i.tdsAmount));
+  return {
+    p_customer_id: i.customerId,
+    p_received_on: i.receivedOn,
+    p_method: "bank_transfer",
+    p_bank_account_id: bankAccountId,
+    p_reference: i.reference,
+    p_received: Math.round(i.received),
+    p_allocations: [{
+      invoice_id: i.invoiceId, amount: Math.round(i.received), tds_amount: tds,
+      ...(tds > 0 ? { tds_section: i.tdsSection || "194J", tds_rate_pct: i.tdsRatePct } : {}),
+    }],
+    p_excess_to_credit: false,
+    p_notes: "Reconcile from Zoho: last year's invoice, settled from the bank line",
+  };
+}
+
+/**
+ * R-2419 (a): two existing calls, in order — (1) record_multi_invoice_payment records the receipt on
+ * the opening invoice (a retry with the same reference returns the SAME payment: idempotent_replay),
+ * (2) reconcile_bank_txn matches the bank line to it. If (2) fails, pressing Book again replays (1)
+ * and retries (2) — the money is never recorded twice.
+ */
+export async function payOpeningInvoice(i: OpeningPayInput, bankAccountId: string, rpc: Rpc): Promise<OpeningPaid> {
+  const { data, error } = await rpc("record_multi_invoice_payment", openingPaymentArgs(i, bankAccountId));
+  if (error) throw new Error(error.message);
+  const out = (data ?? {}) as { idempotent_replay?: boolean; lines?: Array<{ payment_id?: string | null }> };
+  const paymentId = out.lines?.find((l) => l?.payment_id)?.payment_id ?? null;
+  if (!paymentId) throw new Error("The receipt on the opening invoice was not confirmed — refresh the page and check the invoice before trying again.");
+  const { error: e2 } = await rpc("reconcile_bank_txn", {
+    p_txn_id: i.transactionId, p_matched_to_type: "payment", p_matched_to_id: paymentId, p_match_confidence: "manual",
+  });
+  if (e2) throw new Error(`The receipt was recorded on the opening invoice, but the bank line was not matched to it: ${e2.message} Press Book selected again — it matches the same receipt, never a second one.`);
+  return { paymentId, alreadyRecorded: Boolean(out.idempotent_replay) };
 }
 
 export interface BookedRow {
@@ -129,7 +195,31 @@ export async function bookRows(
       if (row.payer?.record) {
         await deps.setPayer({ transactionId: row.txnId, customerId, payer: row.payer.payer, relation: row.payer.record.relation, note: row.payer.record.note });
       }
-      const res = await deps.newSale({
+      if (book.kind === "opening" && book.opening) {
+        /* R-2419 (a): last year's invoice — a receipt on its opening invoice, never a new sale. */
+        const paid = await deps.payOpening({
+          transactionId: row.txnId, customerId, invoiceId: book.opening.invoiceId, received: book.opening.received,
+          receivedOn: row.txnDate, reference: book.opening.reference,
+          tdsAmount: book.tdsAmount, tdsRatePct: book.tdsRatePct, tdsSection: book.tdsSection,
+        });
+        const r: BookedRow = {
+          txnId: row.txnId, txnDate: row.txnDate, credit: row.credit, outcome: "booked", customerName: cust.name, customerCreated,
+          quoteId: null, invoiceId: book.opening.invoiceId, subscriptions: [], todo: [...row.notes],
+          text: paid.alreadyRecorded
+            ? `Receipt was already on opening invoice ${book.opening.number ?? book.opening.invoiceId} — line matched to it.`
+            : `Opening balance settled — receipt on ${book.opening.number ?? book.opening.invoiceId}, line reconciled.`,
+        };
+        done.push(r); onEach?.(r, i, queue.length);
+        continue;
+      }
+      const res = book.kind === "pay_item" && book.item
+        ? await deps.payItem({
+          /* R-2419 (e): the open quote / invoice of this money — the sheet's own "This money is for". */
+          transactionId: row.txnId, quoteId: book.item.quoteId, invoiceId: book.item.invoiceId,
+          tdsAmount: book.tdsAmount, tdsRatePct: book.tdsRatePct, tdsSection: book.tdsSection,
+          createSubscription: book.item.createSubscription, subStart: book.item.subStart, subRenewal: null,
+        })
+        : await deps.newSale({
         transactionId: row.txnId, customerId, lines: book.lines, createSubscription: book.createSubscription,
         subStart: book.subStart, subRenewal: book.subRenewal, tdsAmount: book.tdsAmount, tdsRatePct: book.tdsRatePct,
         tdsSection: book.tdsSection, billingCycle: book.billingCycle, externalNumber: book.externalNumber,
@@ -162,7 +252,10 @@ export async function bookRows(
         txnId: row.txnId, txnDate: row.txnDate, credit: row.credit, outcome: "booked", customerName: cust.name, customerCreated,
         quoteId: res.quote_id, invoiceId: res.invoice_issued ?? res.invoice_id ?? null,
         subscriptions: (res.subscriptions ?? []).map((s) => ({ id: s.id, plan: s.plan })),
-        todo, text: res.already_recorded ? "Already recorded before — nothing booked again." : "Booked and reconciled.",
+        todo,
+        text: res.already_recorded ? "Already recorded before — nothing booked again."
+          : book.kind === "pay_item" ? `Paid open ${book.item?.invoiceId ? `invoice ${book.item.invoiceId}` : `quote ${book.item?.quoteId ?? res.quote_id}`} — line reconciled.`
+          : "Booked and reconciled.",
       };
       done.push(r); onEach?.(r, i, queue.length);
     } catch (e) {

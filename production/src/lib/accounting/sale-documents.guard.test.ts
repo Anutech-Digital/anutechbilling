@@ -164,6 +164,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/app/(public)/buy/workspace/thanks/fetch-order.ts": "R-1971: the number of this order's own GST invoice (by quote_id) for the buyer's thanks page — not a list or a total",
   "src/lib/exports/read-rows.server.ts": "R-1007: the invoice-register CSV lists every invoice the user ticked or can see (opening ones too, as the Invoices screen does) — not GST or revenue",
   "src/lib/integrations/zoho-books/import-store.ts": "R-1753: Zoho numbers already imported as opening invoices (so a second import skips them)",
+  "src/app/api/integrations/zoho-books/bulk-match/customer-facts.ts": "R-2419: a customer's OPEN opening invoices (document_kind opening_invoice) so Reconcile from Zoho settles last year's invoice on them — never a sale, not GST or revenue",
   "src/lib/privacy/queries.ts": "R-2013: one person's own invoices for their DPDP data export (every kind, as the person sees them) — not GST or revenue",
   "src/app/(app)/accounting/aging/read.ts": "aging of open balances — includes opening invoices on purpose",
   "src/app/(app)/invoices/[id]/page.tsx": "one invoice; an opening invoice gets its own view",

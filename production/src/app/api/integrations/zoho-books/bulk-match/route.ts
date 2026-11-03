@@ -12,6 +12,8 @@
  * Lines are read HERE, filtered by the caller's own tenant + account + still unmatched (a line
  * booked meanwhile is `skipped`, never planned twice). READ-ONLY: nothing is written to Zoho or the
  * app — booking is the Reconcile sheet's own RPC, row by row, from the browser.
+ * R-2419: each row also carries `facts` / `booksStart` (customer-facts.ts) — what the app already has
+ * for that customer, so the plan can stop double bookings.
  * Owner / accountant only (as Find in Zoho). Every refusal says what, why and the next step (§24).
  */
 import { NextResponse, type NextRequest } from "next/server";
@@ -24,6 +26,8 @@ import {
 import { cachedZohoPayments, findInPaymentList, paymentWindow } from "@/lib/integrations/zoho-books/payment-batch";
 import { mapZohoCustomer } from "@/lib/integrations/zoho-books/payment-prefill";
 import { BULK_PAGE, zohoContactInfo, type BulkLine, type BulkMatchRow, type ZohoContactInfo } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
+import { createClient } from "@/lib/supabase/server";
+import { attachCustomerFacts, FactsReadError } from "./customer-facts";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -132,19 +136,30 @@ export async function POST(req: NextRequest) {
     }
   };
 
+  /* R-2419: each row carries what the app already has for its customer (open quotes, opening
+     invoices, recent receipts, billed periods) — the plan's double-booking checks need it. */
+  const answer = async (stopped: boolean) => {
+    try {
+      const rows = await attachCustomerFacts(out, caller, createClient() as unknown as Parameters<typeof attachCustomerFacts>[2], appCustomers);
+      return NextResponse.json({ ok: true, rows, skipped, zohoCalls, ...(stopped ? { stopped: { code: "busy", message: "Zoho is busy — waiting a minute, then it carries on." } } : {}) });
+    } catch (e) {
+      const what = e instanceof FactsReadError ? e.message : "the app's records";
+      return fail(500, "read_failed", `Could not read ${what} for these customers.`,
+        "Without them the plan cannot tell a new sale from a payment already booked, so nothing is planned.", { label: "Press Continue to try again" });
+    }
+  };
+
   try {
     const payments = await withRetry(() => cachedZohoPayments(caller.tenantId, win.from, win.to, deps()));
     for (const line of wanted) {
       try {
         out.push(await withRetry(() => planOne(line, payments)));
       } catch (e) {
-        if (e instanceof ZohoApiError && (e.code === "busy" || e.status === 429)) {
-          return NextResponse.json({ ok: true, rows: out, skipped, zohoCalls, stopped: { code: "busy", message: "Zoho is busy — waiting a minute, then it carries on." } });
-        }
+        if (e instanceof ZohoApiError && (e.code === "busy" || e.status === 429)) return answer(true);
         throw e;
       }
     }
-    return NextResponse.json({ ok: true, rows: out, skipped, zohoCalls });
+    return answer(false);
   } catch (e) {
     if (e instanceof ZohoApiError) {
       if (e.status === 401 || e.code === "reconnect") {
@@ -152,9 +167,7 @@ export async function POST(req: NextRequest) {
           "The Zoho connection has ended, or it was made before payment reading was added (2 Nov 2026).",
           { label: "Disconnect and connect Zoho Books again", href: SETTINGS_RETURN });
       }
-      if (e.code === "busy" || e.status === 429) {
-        return NextResponse.json({ ok: true, rows: out, skipped, zohoCalls, stopped: { code: "busy", message: "Zoho is busy — waiting a minute, then it carries on." } });
-      }
+      if (e.code === "busy" || e.status === 429) return answer(true);
       return fail(502, "zoho_error", e.message, "Zoho Books answered with an error.", { label: "Press Continue to try again" });
     }
     return fail(502, "zoho_error", "Could not read from Zoho Books.", "The lookup stopped part way.", { label: "Press Continue to try again" });
