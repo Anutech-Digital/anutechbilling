@@ -18,6 +18,25 @@ describe("R-2424 isRealBankReference", () => {
   });
 });
 
+/* R-2441 — the same cases as supabase/tests/r2441_review_fixes.test.sql (part 2). */
+const PREFIXED_PLACEHOLDERS = ["NEFT-000000000000", "UPI/000000000000", "UTR:0000000000", "IMPS/000000", "RTGS 000000000000000",
+  "neft/utr/000000000000", "UTR NO 000000000", "UPIREF000000", "NEFT-", "UPI/XXXXXXXX"];
+const PREFIXED_REAL = ["UPI/412345678901", "NEFT-N123260512345678", "UTR:HDFCN52026051912345678", "IMPS/612345000000", "NEFT100000"];
+
+describe("R-2441 rail prefixes (NEFT/RTGS/IMPS/UPI/UTR/REF/TXN/NO) before a placeholder", () => {
+  it.each(PREFIXED_PLACEHOLDERS)("%j is a placeholder, not a UTR", (ref) => {
+    expect(isRealBankReference(ref)).toBe(false);
+    expect(bankReferenceKey("bank_transfer", ref)).toBeNull();
+  });
+  it.each(PREFIXED_REAL)("%j stays a real reference", (ref) => {
+    expect(isRealBankReference(ref)).toBe(true);
+  });
+  it("a real prefixed UTR keeps exactly its R-1676 key", () => {
+    expect(bankReferenceKey("upi", "UPI/412345678901")).toBe("BANK:UPI/412345678901");
+    expect(bankReferenceKey("bank_transfer", "NEFT-N123260512345678")).toBe("BANK:NEFTN123260512345678");
+  });
+});
+
 describe("R-2424 bankReferenceKey (twin of public.payment_ref_key)", () => {
   it("staging case: two different credits with an all-zero reference get no key, so neither blocks the other", () => {
     expect(bankReferenceKey("bank_transfer", "000000000000000")).toBeNull();

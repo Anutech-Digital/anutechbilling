@@ -329,6 +329,8 @@ export function canApprove(
       ? { allowed: false, ownQuote: true, reason: "You cannot approve your own quote." }
       : { allowed: false, ownQuote: true, reason: "You made or revised this quote (or an earlier version of it) — another approver must clear it." };
   }
+  /* R-2441: the server applies the same role-per-tier rule (trg_quote_approval_not_by_maker) —
+     an owner-tier or below-cost quote needs an owner, anything else an owner or manager. */
   if (!now.approvers.includes((viewer.role ?? "") as UserRole)) {
     return {
       allowed: false,

@@ -10,8 +10,11 @@
  * A reference is real when, after keeping only letters and digits, it is at least 6 characters
  * long, is not one character repeated ("000000000000000", "111111", "XXXXXXXX", "NA", "-") and is
  * not a placeholder word ("NOT AVAILABLE", "NOT APPLICABLE", "NO REFERENCE", "NOT PROVIDED").
- * The database applies the SAME rule in public.bank_reference_is_real(text) (migration
- * 20261103144041_r2424_placeholder_bank_ref), which public.payment_ref_key uses — a placeholder
+ * R-2441: leading rail words (NEFT/RTGS/IMPS/UPI/UTR/REF/TXN/NO) are set aside before the
+ * "one character repeated" test, so "NEFT-000000000000" / "UPI/000000000000" are placeholders too;
+ * a real UTR with such a prefix stays real and keeps its key.
+ * The database applies the SAME rule in public.bank_reference_is_real(text) (migrations
+ * 20261103144041_r2424_placeholder_bank_ref, 20261103172531_r2441_approval_role_and_prefixed_refs), which public.payment_ref_key uses — a placeholder
  * gets no key, so it never blocks and is never blocked. Keep the two in step:
  * bank-reference.test.ts and supabase/tests/r2424_placeholder_bank_ref.test.sql check the same cases.
  */
@@ -24,11 +27,17 @@ function alnum(ref: string | null | undefined): string {
 /** Words banks and people type when there is no UTR (letters/digits only, upper-case). */
 const PLACEHOLDER_WORDS = new Set(["NOTAVAILABLE", "NOTAPPLICABLE", "NOREFERENCE", "NOTPROVIDED"]);
 
-/** False for empty, under 6 letters/digits, one character repeated (all zeros etc.) or a placeholder word. */
+/** R-2441: payment-rail words a bank puts in front of a reference ("NEFT-000000000000",
+ *  "UPI/000000000000", "UTR NO 000000") — set aside before the "one character repeated" test. */
+const RAIL_PREFIX = /^(NEFT|RTGS|IMPS|UPI|UTR|REF|TXN|NO)+/;
+
+/** False for empty, under 6 letters/digits, a placeholder word, or — after leading rail words
+ *  (R-2441) — nothing left or one character repeated (all zeros etc.). */
 export function isRealBankReference(ref: string | null | undefined): boolean {
   const v = alnum(ref);
   if (v.length < 6 || PLACEHOLDER_WORDS.has(v)) return false;
-  return v.split("").some((ch) => ch !== v[0]);
+  const rest = v.replace(RAIL_PREFIX, "");
+  return rest.split("").some((ch) => ch !== rest[0]);
 }
 
 /**
