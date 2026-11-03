@@ -20,6 +20,7 @@ import type { PayForResult } from "@/lib/banking/credit-pay-for";
 import type { LinePayerAnswer } from "@/lib/queries/customer-payers";
 import { mapGstTreatment } from "@/lib/integrations/zoho-books/import-plan";
 import { suggestGstTreatment, panFromGstin } from "@/lib/gst/customer-gst-treatment";
+import { describeError } from "@/lib/errors/toast-error";
 import { defaultContactName } from "@/components/features/customers/new-customer-contact";
 import {
   newCustomerKey, rowsToBook, type DateFix, type PlanCustomer, type PlanRow,
@@ -87,9 +88,10 @@ export interface BookedRow {
   text: string;
 }
 
-export interface BookRun { done: BookedRow[]; error: { txnId: string; txnDate: string; credit: number; message: string } | null }
+export interface BookRun { done: BookedRow[]; error: { txnId: string; txnDate: string; credit: number; reason: string } | null }
 
-const msg = (e: unknown) => (e instanceof Error ? e.message : typeof e === "object" && e && "message" in e ? String((e as { message: unknown }).message) : String(e));
+/** §24: plumbing errors in plain words (describeError); an RPC guard's own sentence as written. */
+const msg = (e: unknown) => { const d = describeError(e); return d.description ? `${d.message} ${d.description}` : d.message; };
 
 export async function bookRows(
   rows: readonly PlanRow[], ticked: ReadonlySet<string>, alreadyBooked: ReadonlySet<string>, deps: BookDeps,
@@ -164,7 +166,7 @@ export async function bookRows(
       };
       done.push(r); onEach?.(r, i, queue.length);
     } catch (e) {
-      return { done, error: { txnId: row.txnId, txnDate: row.txnDate, credit: row.credit, message: msg(e) } };
+      return { done, error: { txnId: row.txnId, txnDate: row.txnDate, credit: row.credit, reason: msg(e) } };
     }
   }
   return { done, error: null };

@@ -72,7 +72,7 @@ describe("R-2402 Book selected", () => {
     const b = row("t-b", m("Zuna Private Limited", [zl({})]));
     const d = deps({ newSale: vi.fn(async () => { throw new Error("Zuna Private Limited has no state on record"); }) });
     const run = await bookRows([a, b], new Set(["t-a", "t-b"]), new Set(), d);
-    expect(run.error).toMatchObject({ txnId: "t-a", message: "Zuna Private Limited has no state on record" });
+    expect(run.error).toMatchObject({ txnId: "t-a", reason: "Zuna Private Limited has no state on record" });
     expect(d.newSale).toHaveBeenCalledTimes(1);
   });
 

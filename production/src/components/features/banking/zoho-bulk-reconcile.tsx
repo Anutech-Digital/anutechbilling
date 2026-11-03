@@ -300,7 +300,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
           {lastRun?.error && (
             <div role="alert" className="rounded-md border border-rose/30 bg-rose-soft/40 px-3 py-2 text-xs">
               <p className="font-medium text-ink">Stopped at the {rupee(lastRun.error.credit)} line of {formatDate(lastRun.error.txnDate)} — nothing was booked for it.</p>
-              <p className="text-ink-2">{lastRun.error.message}</p>
+              <p className="text-ink-2">{lastRun.error.reason}</p>
               <p className="text-ink-2">Fix it (or untick the row), then press Book selected again — rows already booked are skipped.</p>
             </div>
           )}
@@ -358,5 +358,23 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** R-2402: the bank page's button — opens the sheet (mounted only while open). */
+export function ZohoBulkReconcileButton({ accountId, accountName, count }: { accountId: string; accountName: string; count: number }) {
+  const [open, setOpen] = React.useState(false);
+  return (
+    <>
+      <Button
+        icon="link"
+        variant="default"
+        onClick={() => setOpen(true)}
+        title="Look up every open money-in line in Zoho Books, review the plan per line, then book the ones you tick"
+      >
+        {`Reconcile from Zoho (${count})`}
+      </Button>
+      {open && <ZohoBulkReconcile accountId={accountId} accountName={accountName} open={open} onOpenChange={setOpen} />}
+    </>
   );
 }

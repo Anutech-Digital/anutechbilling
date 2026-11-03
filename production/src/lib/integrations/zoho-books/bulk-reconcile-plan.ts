@@ -30,7 +30,7 @@ import {
 } from "@/lib/banking/customer-payer";
 import { tdsSectionGuess } from "@/lib/banking/tds-section";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
-import { GST_STATE_BY_CODE } from "@/lib/utils";
+import { GST_STATE_BY_CODE, rupee } from "@/lib/utils";
 import { parsePlaceOfSupply } from "@/lib/import/zoho-opening-invoices";
 import type { FindZohoResult, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 import { mapZohoCustomer, normCompanyName, zohoSaleLine, zohoSaleNumber } from "./payment-prefill";
@@ -198,7 +198,7 @@ export function nextDay(iso: string): string {
   d.setUTCDate(d.getUTCDate() + 1);
   return d.toISOString().slice(0, 10);
 }
-const rupees = (n: number) => `₹${Math.round(n).toLocaleString("en-IN")}`;
+const rupees = (n: number) => rupee(Math.round(n));
 const normDom = (d: string | null | undefined) => (d ?? "").trim().toLowerCase() || null;
 const normProduct = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const LIVE = new Set(["active", "paused"]);

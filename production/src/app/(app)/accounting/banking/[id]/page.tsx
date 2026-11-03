@@ -90,7 +90,7 @@ import { useZohoMatchSet } from "@/components/features/banking/use-zoho-match-co
 import { ReconcileCoverageTile } from "@/components/features/banking/reconcile-coverage-tile";
 import { lineNoteLines, useOwnerBookingNotes, type LineNoteLines } from "@/lib/banking/manual-reconcile";
 import { downloadCSV } from "@/lib/csv";
-import { ZohoBulkReconcile } from "@/components/features/banking/zoho-bulk-reconcile";
+import { ZohoBulkReconcileButton } from "@/components/features/banking/zoho-bulk-reconcile";
 import { istToday } from "@/lib/dates/ist";
 
 /* R-1869: one filter system — status tabs, Money in / out, a Filters panel (date, amount, matched
@@ -133,8 +133,6 @@ export default function BankAccountDetailPage() {
   const setStatus = (status: StatusFilter) => setFilters({ ...filters, status });
   const [importOpen,    setImportOpen]    = React.useState(false);
   const [salaryOpen,    setSalaryOpen]    = React.useState(false);
-  /* R-2402: "Reconcile from Zoho" (bulk) — owner / accountant, when Zoho Books is connected. */
-  const [zohoBulkOpen,  setZohoBulkOpen]  = React.useState(false);
   const [aaConnectOpen, setAaConnectOpen] = React.useState(false);
   const [reconcileTxn,  setReconcileTxn]  = React.useState<BankTransactionRow | null>(null);
   /* Un-reconcile goes through a confirm that says what the line leaves behind (and can
@@ -548,17 +546,8 @@ export default function BankAccountDetailPage() {
                 {`Salary lines (${salaryLineCount})`}
               </Button>
             )}
-            {/* R-2402: the bulk Zoho reconcile — only when Zoho has payments for this account's lines. */}
-            {zohoIds && zohoIds.size > 0 && (role === "owner" || role === "accountant") && (
-              <Button
-                icon="link"
-                variant="default"
-                onClick={() => setZohoBulkOpen(true)}
-                title="Look up every open money-in line in Zoho Books, review the plan per line, then book the ones you tick"
-              >
-                {`Reconcile from Zoho (${zohoIds.size})`}
-              </Button>
-            )}
+            {/* R-2402: bulk "Reconcile from Zoho" — owner / accountant, when Zoho has payments for these lines. */}
+            {zohoIds && zohoIds.size > 0 && (role === "owner" || role === "accountant") && <ZohoBulkReconcileButton accountId={account.id} accountName={account.name} count={zohoIds.size} />}
             <Button
               icon="sparkles"
               variant="default"
@@ -727,7 +716,6 @@ export default function BankAccountDetailPage() {
 
       <ImportStatementDialog open={importOpen} onOpenChange={setImportOpen} accountId={account.id} />
       <SalaryLinesDialog open={salaryOpen} onOpenChange={setSalaryOpen} accountId={account.id} transactions={allTxns} />
-      {zohoBulkOpen && <ZohoBulkReconcile open={zohoBulkOpen} onOpenChange={setZohoBulkOpen} accountId={account.id} accountName={account.name} />}
       <ConnectAaDialog
         open={aaConnectOpen}
         onOpenChange={setAaConnectOpen}
