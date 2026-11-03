@@ -42,6 +42,8 @@ import { quoteDueNowUpiAmount } from "@/lib/payments/quote-due-now";
 import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { rupee } from "@/lib/utils";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { supplyStateMissing } from "@/lib/quotes/quote-assist";
+import { companyStateFixFor } from "@/lib/onboarding/setup-links";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
@@ -156,13 +158,6 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     return NextResponse.json({ error: "tenant not found" }, { status: 404 });
   }
 
-  /* The mailbox the app READS — Reply-To must land there, or the customer's answer never
-     reaches the pipeline. See lib/email/reply-to.ts. */
-  const { data: ingestBoxes } = await supabase
-    .from("user_google_tokens")
-    .select("google_email")
-    .eq("tenant_id", me.tenant_id);
-
   const { data: customer } = quote.customer_id
     ? await supabase
         .from("customers")
@@ -176,6 +171,42 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     ? await supabase.from("leads").select("state_code, gstin, country, contact_name, contact_email, contact_phone").eq("id", quote.lead_id).maybeSingle()
     : { data: null };
   const pos = quotePlaceOfSupply({ customer, lead, quote, seller: tenant });
+  /* R-2442: a saved draft whose place of supply is unknown — the buyer's state ("Not known yet",
+     R-2363) or the company's own — leaves CGST + SGST vs IGST undecided, and generate_invoice
+     refuses its GST invoice after the customer has paid. The builder's Send already stops on
+     both halves (sellerStateMissing, supplyStateMissing); this route must too, before anything
+     is rendered or emailed. Messages have no closing full stop: the client toast
+     (quoteEmailErrorOutcome) adds ". Nothing was sent…". */
+  if (pos.head.kind === "seller_state_missing") {
+    const fix = companyStateFixFor(me.role);
+    return NextResponse.json(
+      { error: `${fix.title}. ${fix.description.replace(/\.$/, "")}`, nextStep: fix.action },
+      { status: 409 },
+    );
+  }
+  if (supplyStateMissing({ isExport: pos.isExport, buyerStateCode: pos.posCode })) {
+    const name = customer?.name || quote.customer_name || "This customer";
+    const nextStep = quote.customer_id
+      ? { label: "Set the customer's state", href: `/customers/${quote.customer_id}` }
+      : quote.lead_id
+        ? { label: "Set the lead's state", href: `/leads?lead=${encodeURIComponent(quote.lead_id)}` }
+        : { label: "Pick the customer's state", href: `/quotes/${encodeURIComponent(quote.id)}/edit` };
+    const where = quote.customer_id ? "on the customer page" : quote.lead_id ? "on the lead" : "on the quote";
+    return NextResponse.json(
+      {
+        error: `${name} has no state on record — the state decides CGST + SGST or IGST. ${nextStep.label} ${where}, then send`,
+        nextStep,
+      },
+      { status: 409 },
+    );
+  }
+
+  /* The mailbox the app READS — Reply-To must land there, or the customer's answer never
+     reaches the pipeline. See lib/email/reply-to.ts. */
+  const { data: ingestBoxes } = await supabase
+    .from("user_google_tokens")
+    .select("google_email")
+    .eq("tenant_id", me.tenant_id);
 
   // ── 5. Resolve recipient ─────────────────────────────────────────
   /* The customer's PRIMARY CONTACT. customers.contact_email stopped being the truth on
