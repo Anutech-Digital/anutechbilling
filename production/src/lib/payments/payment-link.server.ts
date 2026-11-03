@@ -424,6 +424,10 @@ export async function sweepStaleInvoicePayLinks(args: {
  * Never throws: Send reminder must open with the UPI link even when Razorpay is down; the
  * answer then carries a notice saying why there is no card link (§24).
  * `tenantId` / `customerId` come from the route, which has already checked the caller.
+ *
+ * R-2439: `readOnly: true` (a GET) only READS — it returns the live link while it still fits
+ * the bills and otherwise none ("not_made"); it never calls Razorpay, never sweeps, never writes
+ * a row, so a prefetch or a reload cannot make a link or cancel the one a customer already has.
  */
 export async function getOrCreateInvoicePayLink(args: {
   tenantId: string;
@@ -437,8 +441,11 @@ export async function getOrCreateInvoicePayLink(args: {
   admin?: ReturnType<typeof createAdminClient>;
   fetchImpl?: Fetch;
   nowMs?: number;
+  /** R-2439: read only — never make, replace or cancel a link (GET routes). */
+  readOnly?: boolean;
 }): Promise<CardPayLinkResult> {
   const nowMs = args.nowMs ?? Date.now();
+  const readOnly = args.readOnly === true;
   const fetchImpl = args.fetchImpl ?? fetch;
   const none = (reason: NoCardLinkReason, detail?: string | null): CardPayLinkResult => ({ link: null, notice: cardLinkNotice(reason, detail) });
   try {
@@ -468,8 +475,8 @@ export async function getOrCreateInvoicePayLink(args: {
     const keys = await tenantKeys(db, args.tenantId);
     if ("refusal" in keys) return none(keys.refusal, keys.detail);
 
-    /* Links of this customer's bills that were paid / closed another way go first. */
-    await sweepStaleInvoicePayLinks({ admin: args.admin, tenantId: args.tenantId, customerId: args.customerId, fetchImpl })
+    /* Links of this customer's bills that were paid / closed another way go first (not on a read). */
+    if (!readOnly) await sweepStaleInvoicePayLinks({ admin: args.admin, tenantId: args.tenantId, customerId: args.customerId, fetchImpl })
       .catch((e: unknown) => console.error("[payment-link] sweep failed:", e instanceof Error ? e.message : e));
 
     const billAmount = pick.allocations.reduce((s, a) => s + a.amount, 0);
@@ -492,6 +499,7 @@ export async function getOrCreateInvoicePayLink(args: {
        account (a test link takes no real money; the new key cannot cancel it) — retire it here
        and make one with the current key. */
     if (existing && existing.status === "active" && existing.mode && existing.mode !== keys.mode) {
+      if (readOnly) return none("not_made");
       const ok = await markLink(db, args.tenantId, existing.id, {
         status: "cancelled", cancelled_at: new Date(nowMs).toISOString(), cancel_reason: `Razorpay key changed to ${keys.mode}`,
       });
@@ -507,6 +515,8 @@ export async function getOrCreateInvoicePayLink(args: {
         notice: null,
       };
     }
+    /* R-2439: a read stops here — making / replacing / cancelling is the POST's job. */
+    if (readOnly) return none("not_made");
     if (existing && plan.action !== "create") {
       if (existing.razorpay_link_id) {
         const dead = await cancelRazorpayLink(keys, existing.razorpay_link_id, fetchImpl);

@@ -68,7 +68,7 @@ describe("Send pending dues dialog", () => {
     expect(screen.getByText(/Add your UPI ID in Settings/)).toBeTruthy();
     expect(screen.getByRole("link", { name: "Open Settings" }).getAttribute("href")).toMatch(/^\/settings/);
     expect(screen.getByRole("link", { name: /Open statement PDF/ }).getAttribute("href")).toBe(`/api/customers/${CUST}/pending-dues/pdf`);
-    expect(st.calls.map((c) => c.method)).toEqual(["GET"]);
+    expect(st.calls.map((c) => [c.method, c.url])).toEqual([["POST", `/api/customers/${CUST}/pending-dues`]]);   // R-2439: reads + makes the link; sends nothing
     expect(st.mutate).not.toHaveBeenCalled();
   });
 
