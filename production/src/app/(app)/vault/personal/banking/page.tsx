@@ -15,6 +15,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
@@ -43,6 +44,7 @@ import {
   type AccountKind,
 } from "@/lib/vault/personal/net-worth";
 import { formatDate, rupee } from "@/lib/utils";
+import { istToday } from "@/lib/dates/ist";
 import { parseRupees, MAX_RUPEES } from "@/lib/vault/personal/parse-rupees";
 
 interface FormState {
@@ -51,7 +53,9 @@ interface FormState {
   label: string;
   institution: string;
   account_last4: string;
+  /** R-2394: the OPENING balance (card: owed at the start). The balance shown is computed. */
   balance: string;
+  opening_as_of: string;
   credit_limit: string;
   interest_rate: string;
   maturity_date: string;
@@ -60,7 +64,7 @@ interface FormState {
 
 const EMPTY: FormState = {
   kind: "savings", label: "", institution: "", account_last4: "",
-  balance: "", credit_limit: "", interest_rate: "", maturity_date: "", notes: "",
+  balance: "", opening_as_of: "", credit_limit: "", interest_rate: "", maturity_date: "", notes: "",
 };
 
 /**
@@ -95,7 +99,8 @@ export default function PersonalBankingPage() {
       label: a.label,
       institution: a.institution ?? "",
       account_last4: a.account_last4 ?? "",
-      balance: String(a.balance ?? 0),
+      balance: String(a.opening_balance ?? 0),
+      opening_as_of: a.opening_as_of ?? "",
       credit_limit: a.credit_limit === null ? "" : String(a.credit_limit),
       interest_rate: a.interest_rate === null ? "" : String(a.interest_rate),
       maturity_date: a.maturity_date ?? "",
@@ -147,7 +152,9 @@ export default function PersonalBankingPage() {
         label: form.label.trim(),
         institution: form.institution.trim() || null,
         account_last4: form.account_last4 || null,
-        balance,
+        // R-2394: what the owner types is the opening balance; the balance is computed from it.
+        opening_balance: balance,
+        opening_as_of: form.opening_as_of || (form.id ? null : istToday()),
         credit_limit: creditLimit,
         interest_rate: rate,
         maturity_date: form.maturity_date || null,
@@ -243,7 +250,10 @@ export default function PersonalBankingPage() {
                   <li key={a.id} className="px-4 py-3 flex items-center gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-ink">{a.label}</span>
+                        {/* R-2394: each account opens its own page — statement, lines, reconcile. */}
+                        <Link href={`/vault/personal/banking/${a.id}`} className="text-sm font-medium text-ink hover:underline focus-visible:underline">
+                          {a.label}
+                        </Link>
                         <Badge kind="muted" size="sm">{ACCOUNT_KIND_LABEL[a.kind]}</Badge>
                         {!a.is_active && <Badge kind="muted" size="sm">closed</Badge>}
                       </div>
@@ -268,6 +278,9 @@ export default function PersonalBankingPage() {
                       )}
                     </div>
                     <div className="flex gap-1 flex-shrink-0">
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={`/vault/personal/banking/${a.id}`} aria-label={`Open ${a.label}`}>Open</Link>
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={() => openEdit(a)} aria-label="Edit">
                         <Icon name="edit" size={14} />
                       </Button>
@@ -310,7 +323,7 @@ export default function PersonalBankingPage() {
               </div>
               <div>
                 <label htmlFor="vb-balance" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">
-                  {isCard ? "Owed (₹)" : "Balance (₹)"}
+                  {isCard ? "Owed at start (₹)" : "Opening balance (₹)"}
                 </label>
                 <Input id="vb-balance"
                   value={form.balance}
@@ -327,6 +340,18 @@ export default function PersonalBankingPage() {
                   <p id="vb-balance-error" role="alert" className="mt-1 text-xs text-rose">{amountIssue.text}</p>
                 )}
               </div>
+            </div>
+
+            <div>
+              <label htmlFor="vb-as-of" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Opening as of</label>
+              <Input id="vb-as-of"
+                type="date"
+                value={form.opening_as_of}
+                onChange={(e) => setForm((f) => ({ ...f, opening_as_of: e.target.value }))}
+              />
+              <p className="mt-1 text-3xs text-ink-3">
+                The balance shown is this opening plus every entry and statement line after it.
+              </p>
             </div>
 
             <div>

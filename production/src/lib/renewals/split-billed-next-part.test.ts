@@ -1,6 +1,7 @@
 /* R-2095 (staging, 30 Oct): Renewals → Generate on a monthly-billed subscription whose month ended
    refused ("billed monthly…") with no part bill anywhere — month 2 could not be billed. */
 import { describe, expect, it } from "vitest";
+import { istToday } from "@/lib/dates/ist";
 import { nextPartMessage, rolledRenewalDate, billDueTermsOldestFirst, partsDue, termsMessage, type TermBill } from "./split-billed-next-part";
 
 const monthly = { billing_cycle: "monthly" as const, term_months: 1, start_date: "2026-09-01", renewal_date: "2026-09-30", renewal_quote_id: null };
@@ -96,5 +97,57 @@ describe("R-2095 Generate on a monthly sub months behind bills every month, olde
     expect(m.ok).toBe(true);
     expect(m.href).toBe("/quotes/Q-SEP");
     expect(m.text).toMatch(/2 periods.*Q-SEP.*11 Sep.*Q-OCT/s);
+  });
+});
+
+/* R-2398 (staging, 3 Nov ~02:xx UTC = 08:xx IST): Renewals → Generate on Abraf (monthly, 15th–14th)
+   made Q-0905 for 15 Sep–14 Oct AND Q-0906 for 15 Oct–14 Nov; Farmagain (monthly, calendar month)
+   made Q-0907 for Oct AND Q-0908 for Nov. Both second periods had STARTED by 3 Nov — the code bills
+   only periods whose start ≤ today (IST), so this was correct catch-up, not a double period. Pinned
+   here: one due month → one bill, two → two (oldest first), a month starting tomorrow → none. */
+describe("R-2398 Generate bills only the periods whose start has come (IST today)", () => {
+  const req = (q: string): TermBill => ({ raised: [], requests: [{ period_index: 1, quote_id: q }], requestsOpen: [], skip: null });
+  function run(sub: { billing_cycle: "monthly"; term_months: number; start_date: string; renewal_date: string; renewal_quote_id: null }, todayISO: string) {
+    let renewal = sub.renewal_date;
+    let n = 0;
+    return billDueTermsOldestFirst({
+      sub, todayISO,
+      roll: async (_from, to) => { renewal = to; },
+      billCurrentTerm: async () => req(`Q-${++n}@${renewal}`),
+    });
+  }
+  const abraf = { billing_cycle: "monthly" as const, term_months: 1, start_date: "2026-08-15", renewal_date: "2026-09-14", renewal_quote_id: null };
+  const farmagain = { billing_cycle: "monthly" as const, term_months: 1, start_date: "2026-08-01", renewal_date: "2026-09-30", renewal_quote_id: null };
+  const periods = (o: Awaited<ReturnType<typeof run>>) => o.terms.map((t) => [t.periodStart, t.periodEnd]);
+
+  it("Abraf on 3 Nov: 15 Sep–14 Oct and 15 Oct–14 Nov have both started → two bills, oldest first", async () => {
+    expect(periods(await run(abraf, "2026-11-03"))).toEqual([["2026-09-15", "2026-10-14"], ["2026-10-15", "2026-11-14"]]);
+    expect(partsDue(abraf, "2026-11-03")?.text).toBe("2 months due");
+  });
+  it("Farmagain on 3 Nov: Oct and Nov have both started → two bills", async () => {
+    expect(periods(await run(farmagain, "2026-11-03"))).toEqual([["2026-10-01", "2026-10-31"], ["2026-11-01", "2026-11-30"]]);
+  });
+  it("exactly one due month → exactly one bill", async () => {
+    expect(periods(await run(farmagain, "2026-10-31"))).toEqual([["2026-10-01", "2026-10-31"]]);
+    expect(periods(await run(abraf, "2026-10-14"))).toEqual([["2026-09-15", "2026-10-14"]]);
+    expect(partsDue(farmagain, "2026-10-31")?.text).toBe("1 month due");
+  });
+  it("a month starting tomorrow is not billed (not yet due → no roll, no bill)", async () => {
+    const out = await run({ ...farmagain, renewal_date: "2026-11-30" }, "2026-11-30");
+    expect(out.terms.map((t) => t.periodStart)).toEqual(["2026-11-01"]); // the running month's own part only
+    expect(partsDue({ ...farmagain, renewal_date: "2026-11-30" }, "2026-11-30")).toBeNull();
+  });
+  it("around IST midnight: 1 Nov starts at 18:30 UTC on 31 Oct, not before", async () => {
+    expect(istToday(new Date("2026-10-31T18:29:59Z"))).toBe("2026-10-31");
+    expect(istToday(new Date("2026-10-31T18:30:00Z"))).toBe("2026-11-01");
+    expect(periods(await run(farmagain, istToday(new Date("2026-10-31T18:29:59Z"))))).toHaveLength(1);
+    expect(periods(await run(farmagain, istToday(new Date("2026-10-31T18:30:00Z"))))).toHaveLength(2);
+  });
+  it("the result names every period made", () => {
+    const m = termsMessage("Abraf", { heldBy: null, error: null, stoppedReason: null, terms: [
+      { periodStart: "2026-09-15", periodEnd: "2026-10-14", bill: req("Q-0905") },
+      { periodStart: "2026-10-15", periodEnd: "2026-11-14", bill: req("Q-0906") },
+    ] });
+    expect(m.text).toBe("2 periods billed for Abraf, oldest first: Q-0905 (15 Sep–14 Oct), Q-0906 (15 Oct–14 Nov).");
   });
 });

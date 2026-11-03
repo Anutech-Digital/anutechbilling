@@ -45,6 +45,8 @@ export interface PersonalLoan {
   first_due_on: string | null;
   account_id: string | null;
   note: string | null;
+  /** R-2392: the person (personal_contacts) for a loan from / to a person; party keeps the name. */
+  contact_id?: string | null;
   status: LoanStatus;
   closed_on: string | null;
   created_at: string;
@@ -67,7 +69,7 @@ export type PersonalLoanInput = Pick<
   PersonalLoan,
   | "direction" | "loan_kind" | "party" | "principal" | "start_date" | "annual_rate" | "repay_type"
   | "tenure_months" | "emi_amount" | "first_due_on" | "account_id" | "note"
-> & { id?: string };
+> & { id?: string; contact_id?: string | null };
 
 export interface RecordLoanPaymentInput {
   loan_id: string;

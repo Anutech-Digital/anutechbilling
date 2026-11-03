@@ -17,6 +17,10 @@ vi.mock("next/navigation", () => ({ usePathname: () => "/vault/personal" }));
 vi.mock("@/components/features/vault/vault-pin-gate", () => ({
   VaultPinGate: ({ children }: { children: React.ReactNode }) => <>{children}</>,
 }));
+/* R-2396: the personal welcome reads the person's rows (react-query) — its own test covers it. */
+vi.mock("@/components/features/personal/personal-welcome", () => ({
+  PersonalWelcome: () => <p>personal welcome</p>,
+}));
 
 import PersonalVaultLayout from "./layout";
 
@@ -43,6 +47,14 @@ describe("vault/personal layout — who may open it (GP-07a)", () => {
     expect(screen.getByText("vault body")).toBeTruthy();
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe("Private Vault");
     expect(screen.getByRole("link", { name: /income & expenses/i })).toBeTruthy();
+  });
+
+  it("R-2396: the personal welcome shows on the Overview for a personal login, never for the owner", () => {
+    renderAs("personal");
+    expect(screen.getByText("personal welcome")).toBeTruthy();
+    cleanup();
+    renderAs("owner");
+    expect(screen.queryByText("personal welcome")).toBeNull();
   });
 
   it("R-2388: both see a Loans tab", () => {

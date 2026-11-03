@@ -158,6 +158,11 @@ Object.assign(env, {
   NEXT_PUBLIC_APP_ENV: "local",
   NEXT_PUBLIC_APP_URL: `http://localhost:${port}`,
   CRON_SECRET: "local-dev-cron-secret",
+  /* R-2396 (G-PERSONAL): the free personal account (signup choice + kind 'personal') is ON for
+     localhost only, so the owner can see it. Set HERE, never in .env.local, ALLOW or Cloud Run:
+     staging and live keep it OFF until the owner decides. PERSONAL_SIGNUP_ENABLED=0 in the
+     shell turns it off locally too. */
+  PERSONAL_SIGNUP_ENABLED: process.env.PERSONAL_SIGNUP_ENABLED === "0" ? "0" : "1",
   /* R-1502 (22 Oct 2026): the website (cart, checkout, hosting trial) files its orders under
      BUY_PAGE_TENANT_ID. Blanked above, it fell back to the LIVE tenant's id, which the local
      database (supabase/seed.sql) does not have — every local order stopped at "Could not

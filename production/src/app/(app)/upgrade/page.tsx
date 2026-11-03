@@ -9,10 +9,13 @@
 import { Card } from "@/components/ui/card";
 import { Icon } from "@/components/ui/icon";
 
+/* R-2396: what a business account adds, in plain words — still no price (the owner sets it). */
 const BRINGS = [
-  "GST invoices and quotations",
-  "Customers and leads",
-  "Payments received and reminders",
+  "GST invoices and quotations with your company name and GSTIN",
+  "Customers and leads, with follow-ups",
+  "Payments received and payment reminders",
+  "Accounts and GST reports for your CA",
+  "Team logins, each with its own role",
   "Your Money pages stay exactly as they are — private to you",
 ];
 
@@ -21,7 +24,7 @@ export default function UpgradePage() {
     <div className="p-4 md:p-6 lg:p-8 max-w-[720px] mx-auto space-y-5">
       <div>
         <h1 className="text-2xl md:text-3xl font-serif text-ink">Upgrade to business</h1>
-        <p className="text-sm text-ink-3 mt-1">Use the same login to run your business.</p>
+        <p className="text-sm text-ink-3 mt-1">Use the same login to run your business. A business account adds:</p>
       </div>
       <Card className="p-6 space-y-4">
         <ul className="space-y-2">

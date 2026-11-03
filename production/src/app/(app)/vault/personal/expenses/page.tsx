@@ -69,6 +69,7 @@ import { formatDate, rupee } from "@/lib/utils";
 // pre-fill yesterday's date.
 import { fyStartISO, fyLabel, istToday, istMonth, formatMonthLabel } from "@/lib/dates/ist";
 import { parseRupees, MAX_RUPEES } from "@/lib/vault/personal/parse-rupees";
+import { PersonPicker } from "@/components/features/vault/person-picker";
 
 /** income / expense / drawing are the three buttons; "other" keeps an imported transfer's kind. */
 type Mode = "income" | "expense" | "drawing" | "other";
@@ -86,6 +87,8 @@ interface FormState {
   category: string;
   account_id: string;
   party: string;
+  /** R-2392: the picked person (People); null = typed text or nobody. */
+  contact_id: string | null;
   note: string;
   repeat: boolean;
 }
@@ -125,6 +128,7 @@ function blankForm(mode: Mode): FormState {
     category: "",
     account_id: "",
     party: "",
+    contact_id: null,
     note: "",
     // salary is the first source and comes every month
     repeat: mode === "income",
@@ -150,6 +154,7 @@ function formFromRow(t: LedgerRow & { id?: string }): FormState {
     category: t.category ?? "",
     account_id: t.account_id ?? "",
     party: t.party ?? "",
+    contact_id: (t as { contact_id?: string | null }).contact_id ?? null,
     note: t.note ?? "",
     repeat: Boolean(t.repeat_monthly),
   };
@@ -248,6 +253,7 @@ export default function PersonalExpensesPage() {
         category: form.mode === "expense" || form.mode === "other" ? (form.category || null) : null,
         account_id: form.account_id || null,
         party: form.party.trim().slice(0, 120) || null,
+        contact_id: form.party.trim() ? form.contact_id : null,
         note: form.note.trim() || null,
         repeat_monthly: form.mode === "other" ? false : form.repeat,
       });
@@ -577,11 +583,10 @@ export default function PersonalExpensesPage() {
               </div>
               <div>
                 <label htmlFor="ve-party" className={LABEL}>{form.mode === "expense" ? "Paid to" : "Received from"}</label>
-                <Input id="ve-party"
-                  value={form.party}
-                  maxLength={120}
-                  onChange={(e) => setForm((f) => ({ ...f, party: e.target.value }))}
-                  placeholder={form.mode === "income" ? "employer, tenant…" : "optional"}
+                <PersonPicker id="ve-party" allowText
+                  value={{ contactId: form.contact_id, name: form.party }}
+                  onChange={(v) => setForm((f) => ({ ...f, party: v.name, contact_id: v.contactId }))}
+                  placeholder={form.mode === "income" ? "Employer, tenant, a person…" : "Optional — shop or person"}
                 />
               </div>
             </div>
