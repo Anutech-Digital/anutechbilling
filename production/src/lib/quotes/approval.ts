@@ -218,6 +218,12 @@ export function isStale(record: ApprovalRecord, now: ApprovalRequirement): boole
      something the approver could not have seen. */
   if (wasM !== null && nowM === null) return true;
 
+  /* R-2447 (review F1): no signed number while the quote has one — nobody signed what the
+     quote says now (a direct update could null the signed numbers and then reprice). Same rule
+     in the DB: tg_quote_approval_not_by_maker sends such an edit back to pending. */
+  if (wasD === null && nowD !== null) return true;
+  if (wasM === null && nowM !== null) return true;
+
   return false;
 }
 

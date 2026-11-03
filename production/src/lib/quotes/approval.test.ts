@@ -258,6 +258,20 @@ describe("an approval is for specific numbers", () => {
     expect(isStale(approvedAt15, now)).toBe(false);
   });
 
+  it("R-2447 (review F1): goes stale when the signed numbers are missing but the quote's are known", () => {
+    /* A direct update could null the signed numbers and reprice the lines; a null "was" used to
+       skip the check, so a 45%-off quote went out under the old approval. */
+    const deep = requiredApproval({ subtotal: 55_000, listTotal: 100_000, totalCost: 60_000 });
+    expect(isStale(rec({ status: "approved", tier: "manager", approvedDiscountBps: null, approvedMarginBps: null }), deep)).toBe(true);
+    expect(isStale(rec({ status: "approved", tier: "manager", approvedDiscountBps: 1500, approvedMarginBps: null }), deep)).toBe(true);
+    expect(isStale(rec({ status: "approved", tier: "manager", approvedDiscountBps: null, approvedMarginBps: 3000 }), requiredApproval(healthy))).toBe(true);
+  });
+
+  it("R-2447: signed as unknown and still unknown is not stale", () => {
+    const unknown = requiredApproval({ subtotal: 50_000, listTotal: 0, totalCost: 0, costUnknown: true });
+    expect(isStale(rec({ status: "approved", tier: "owner", approvedDiscountBps: null, approvedMarginBps: null }), unknown)).toBe(false);
+  });
+
   it("only applies to approved records", () => {
     const now = requiredApproval({ subtotal: 50_000, listTotal: 100_000, totalCost: 40_000 });
     expect(isStale(rec({ status: "pending" }), now)).toBe(false);

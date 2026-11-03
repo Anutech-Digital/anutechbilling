@@ -43,7 +43,7 @@
 --   approved quotes under a login — neither may knock the approval off.
 --   A service path with no login is unchanged (as since R-2367).
 --
--- Test: supabase/tests/r2447_quote_approval_insert_and_money_change.sql
+-- Test: supabase/tests/r2447_quote_approval_insert_and_money_change.test.sql
 -- (+ r2441_review_fixes, r2426_sole_owner_any_tier, r2383_sole_owner_self_approval,
 --  r2367_quote_chain_self_approval, r1527_combine_quotes).
 
