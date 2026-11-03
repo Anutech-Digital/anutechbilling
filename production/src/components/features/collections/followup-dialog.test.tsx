@@ -117,3 +117,53 @@ describe("history", () => {
     expect(within(items[0]).queryByText("Promise broken")).toBeNull();
   });
 });
+
+/* R-2404: opened from a Renewals row — about that subscription, its own history (activity log),
+   the picker starts on the renewal's owner, and "Customer confirmed the renewal" can be ticked. */
+describe("renewal follow-up (R-2404)", () => {
+  const SUB = "66666666-6666-4666-8666-666666666666";
+  const OTHER_SUB = "77777777-7777-4777-8777-777777777777";
+  const hist = (id: string, created_at: string, subscription_id: string | null, assigned_to: string) => ({
+    id, created_at, kind: "call", note: `note ${id}`, promised_amount: null, promised_on: null, next_follow_up_on: "2026-12-01",
+    assigned_to, created_by: ME, invoice_id: null, quote_id: null, subscription_id,
+  });
+  const renderRenewal = () =>
+    render(
+      <FollowupDialog
+        open
+        onOpenChange={() => {}}
+        customerId={CUST}
+        customerName="Acme"
+        ownerId={OWNER}
+        items={[{ kind: "subscription", id: SUB, label: "Workspace · renews 10/11/2026", quoteId: "Q-9" }]}
+        stillOwes
+        renewal={{ subscriptionId: SUB }}
+      />,
+    );
+
+  it("history shows only this renewal's entries; the picker starts on the renewal's owner", async () => {
+    st.role = "manager";
+    st.history = [hist("mine", "2026-10-20T05:00:00Z", SUB, OTHER), hist("theirs", "2026-10-25T05:00:00Z", OTHER_SUB, OWNER)];
+    renderRenewal();
+    expect(screen.getByText(/Renewal follow-up · Acme/)).toBeTruthy();
+    const items = within(screen.getByRole("list", { name: /Follow-up history/ })).getAllByRole("listitem");
+    expect(items).toHaveLength(1);
+    expect(items[0].textContent).toContain("note mine");
+    const picker = screen.getByLabelText(/Follow-up with/) as HTMLSelectElement;
+    await waitFor(() => expect(picker.value).toBe(OTHER));
+  });
+
+  it("ticking 'Customer confirmed the renewal' sends the outcome with the subscription", async () => {
+    renderRenewal();
+    fireEvent.click(screen.getByLabelText(/Customer confirmed the renewal/));
+    fireEvent.click(screen.getByRole("button", { name: /Save follow-up/ }));
+    await waitFor(() => expect(st.mutate).toHaveBeenCalledTimes(1));
+    const body = st.mutate.mock.calls[0][0];
+    expect(body).toMatchObject({ customerId: CUST, subscriptionId: SUB, quoteId: "Q-9", outcome: "renewal_confirmed", note: "Customer confirmed the renewal." });
+  });
+
+  it("a customer's general follow-up has no 'confirmed' tick", () => {
+    renderDialog();
+    expect(screen.queryByLabelText(/Customer confirmed the renewal/)).toBeNull();
+  });
+});

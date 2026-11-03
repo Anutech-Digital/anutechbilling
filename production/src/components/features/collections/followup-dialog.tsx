@@ -54,6 +54,12 @@ export interface FollowupDialogProps {
   amountDue?: number;
   /** R-1518: switch to the Remind dialog (AI-drafted reminder a person sends). Absent → no button. */
   onRemind?: () => void;
+  /**
+   * R-2404: opened from a Renewals row — the follow-up is about this subscription (pass it as the
+   * one `items` link), the history shows only this renewal's entries (its activity log), the
+   * picker starts on the renewal's owner, and "Customer confirmed the renewal" can be ticked.
+   */
+  renewal?: { subscriptionId: string };
 }
 
 /** §24: the API's own sentence shows as written; database plumbing becomes plain words + next step. */
@@ -62,7 +68,7 @@ function errorText(err: unknown): string {
   return d.description ? `${d.message} ${d.description}` : d.message;
 }
 
-export function FollowupDialog({ open, onOpenChange, customerId, customerName, ownerId, items, stillOwes, payments, amountDue, onRemind }: FollowupDialogProps) {
+export function FollowupDialog({ open, onOpenChange, customerId, customerName, ownerId, items, stillOwes, payments, amountDue, onRemind, renewal }: FollowupDialogProps) {
   const { data: me } = useCurrentUser();
   const { data: names } = useUserNames();
   const history = useCustomerFollowups(open ? customerId : null);
@@ -72,8 +78,15 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
   const today = istToday();
   const canReassign = mayReassignFollowup(me?.role);
   const links = React.useMemo(() => linkOptions(items), [items]);
-  const entries = React.useMemo(() => buildFollowupHistory(history.data ?? [], today, stillOwes, payments), [history.data, today, stillOwes, payments]);
-  const assigneeDefault = defaultAssignee({ latestAssignedTo: entries[0]?.assigned_to, ownerId, meId: me?.userId });
+  const allEntries = React.useMemo(() => buildFollowupHistory(history.data ?? [], today, stillOwes, payments), [history.data, today, stillOwes, payments]);
+  /* R-2404: a renewal's own activity log. */
+  const entries = React.useMemo(
+    () => (renewal ? allEntries.filter((e) => e.subscription_id === renewal.subscriptionId) : allEntries),
+    [allEntries, renewal],
+  );
+  /* Who it goes to. A reassigner's picker starts on the renewal's owner; anyone else saves to the
+     customer's current default — exactly what the server (logFollowup) will store. */
+  const assigneeDefault = defaultAssignee({ latestAssignedTo: (canReassign ? entries : allEntries)[0]?.assigned_to, ownerId, meId: me?.userId });
   const team = React.useMemo(
     () => [...(names?.values() ?? [])].filter((u) => !u.inactive || u.id === assigneeDefault).sort((a, b) => a.label.localeCompare(b.label)),
     [names, assigneeDefault],
@@ -88,6 +101,7 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
     nextFollowUpOn: defaultNextFollowUp(istToday()),
     assignedTo: undefined,
     link: links.length === 1 ? links[0].value : "",
+    confirmed: false,
   }), [links]);
 
   const form = useForm<FollowupFormData>({ resolver: zodResolver(followupFormSchema), defaultValues: blank() });
@@ -121,7 +135,7 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="md:!max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Follow-up · {customerName}</DialogTitle>
+          <DialogTitle>{renewal ? "Renewal follow-up" : "Follow-up"} · {customerName}</DialogTitle>
           <DialogDescription>
             {amountDue && amountDue > 0 ? <>Still owes <b className="text-ink">{rupee(amountDue)}</b>. </> : null}
             Log what happened and when to follow up next — every entry needs a next date, so nobody is forgotten.
@@ -167,6 +181,15 @@ export function FollowupDialog({ open, onOpenChange, customerId, customerName, o
             <Textarea id="fu-note" rows={3} placeholder="e.g. Spoke to accounts — cheque on Friday" {...register("note")} />
           </FormField>
           {errors.note?.message && <p className="-mt-3 text-xs text-rose">{errors.note.message}</p>}
+
+          {/* R-2404: the one decision step a person sets — Quote sent / Invoiced / Paid come from the app,
+              Won't renew is the row's own "Customer not renewing". */}
+          {renewal && (
+            <label className="flex items-center gap-2 text-sm text-ink cursor-pointer">
+              <input type="checkbox" className="accent-amber cursor-pointer" {...register("confirmed")} />
+              Customer confirmed the renewal
+            </label>
+          )}
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             {links.length > 0 && (

@@ -96,7 +96,7 @@ describe("R-2403 renewed / paid rows leave Overdue", () => {
       row("unpaid", -2, { renewal_date: "2026-11-01", renewal_quote_id: "Q-U" }),
     ];
     const quotes = new Map([
-      ["Q-P", { id: "Q-P", amount: 1180, status: "accepted", payment_status: "paid" }],
+      ["Q-P", { id: "Q-P", amount: 1180, status: "accepted", payment_status: "received" }],
       ["Q-U", { id: "Q-U", amount: 1180, status: "sent", payment_status: "none" }],
     ]);
     const g = classifyRenewals(rows, () => false, TODAY, (r) => isPaidRenewalQuote(r.sub, quotes.get(r.sub.renewal_quote_id ?? "")));
@@ -269,7 +269,7 @@ describe("R-2403 the page wires the one queue", () => {
     expect(page).toMatch(/aria-pressed=\{atRiskOn\}\s+onClick=\{\(\) => setAtRisk\(!atRiskOn\)\}/);
   });
   it("every row's status and amount come from queue.ts — no '/mo' MRR column, no second status chip", () => {
-    expect(page).toContain("status: renewalRowStatus(r.sub, r.daysUntil,");
+    expect(page).toContain("= renewalRowStatus(r.sub, r.daysUntil,");   // R-2404: computed once, also feeds the decision status
     expect(page).toContain("amount: renewalAmount(r.sub, quoteOf(r.sub)),");
     expect(page).not.toContain(">/mo<");
     expect(page).not.toMatch(/renewalStateLabel|expiredGraceText|Expired \{Math\.abs/);

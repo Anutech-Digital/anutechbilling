@@ -253,7 +253,10 @@ export function renewalAmount(sub: AmountSub & { renewal_quote_id?: string | nul
 
 /** A renewal quote that is paid — the row is renewed even if its date has not moved yet. */
 export function isPaidRenewalQuote(sub: { renewal_quote_id?: string | null }, quote: RenewalQuoteInfo | null | undefined): boolean {
-  return !!quote && sub.renewal_quote_id === quote.id && quote.payment_status === "paid";
+  /* R-2404: quotes.payment_status is none / awaiting / partial / received / invoiced — there is no
+     "paid" (R-2403 asked for it, so no paid renewal ever left Overdue). "received" = the money is
+     in; "invoiced" is not proof of payment (an invoice can be raised on an accepted, unpaid quote). */
+  return !!quote && sub.renewal_quote_id === quote.id && quote.payment_status === "received";
 }
 
 // ─── Sort + filter ──────────────────────────────────────────────────────────

@@ -74,7 +74,20 @@ import {
   sortQueue, filterQueue, filterOptions, bulkQuoteTargets, bulkQuoteConfirm,
   type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RowStatus, type RenewalAmount, type RowStatusKey,
 } from "./queue";
-import { useRenewalContacts, useRenewalQuoteInfo, type RowContact } from "./queue-data";
+import { useRenewalContacts, useRenewalQuoteInfo, useRenewalFollowups, type RowContact } from "./queue-data";
+import {
+  renewalFollowup, renewalDecision, showDecision, filterByFollowup, bulkAssignRequests, bulkAssignReport,
+  DECISION_LABEL, DECISION_TONE, NO_FOLLOWUP_FILTERS, ASSIGN_NEEDS_ROLE,
+  type RenewalFollowup, type RenewalDecision, type FollowupFilters,
+} from "./followup";
+import { FollowupDialog } from "@/components/features/collections/followup-dialog";
+import { postFollowup, FollowupSaveError } from "@/lib/queries/payment-followups";
+import { mayReassignFollowup } from "@/lib/collections/followup-rules";
+import { useUserNames, type UserName } from "@/lib/hooks/useUserNames";
+import { istToday } from "@/lib/dates/ist";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
@@ -172,6 +185,72 @@ function AtRiskMark({ reason }: { reason: string }) {
   );
 }
 
+/**
+ * R-2404: where the customer's decision stands, who works the renewal and when they follow up
+ * next, the promise to pay. Under the ONE status chip; "Paid" / "Won't renew" are that chip already.
+ */
+function FollowupLine({ followup, decision, names }: { followup: RenewalFollowup; decision: RenewalDecision; names: Map<string, UserName> | undefined }) {
+  const owner = followup.ownerId ? names?.get(followup.ownerId)?.label ?? "a colleague" : null;
+  return (
+    <div className="mt-1.5 space-y-0.5 text-2xs">
+      {showDecision(decision) && <Badge kind={DECISION_TONE[decision]} size="sm">{DECISION_LABEL[decision]}</Badge>}
+      <p className={cn("truncate", owner ? "text-ink-2" : "text-ink-3")} title={owner ? `Owner: ${owner}` : "No owner yet"}>
+        <Icon name="user" size={10} className="mr-0.5 inline shrink-0" />{owner ?? "No owner"}
+      </p>
+      {followup.nextFollowUpOn && (
+        <p className={cn("tabular-nums", followup.followUpDue ? "font-medium text-rose-600" : "text-ink-3")}>
+          Next: {formatDate(followup.nextFollowUpOn)}
+        </p>
+      )}
+      {followup.promisedOn && followup.promiseStatus !== "kept" && (
+        <p className={cn("tabular-nums", followup.promiseBroken ? "font-medium text-rose-600" : "text-ink-2")}>
+          {followup.promiseBroken ? "Promise broken" : "Promised"} · {formatDate(followup.promisedOn)}
+          {followup.promisedAmount ? ` · ${rupee(followup.promisedAmount)}` : ""}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** R-2404: bulk "Assign owner" — pick a person; each ticked renewal gets a follow-up given to them. */
+function AssignOwnerDialog({
+  open, onOpenChange, count, team, onAssign, busy,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  count: number;
+  team: UserName[];
+  onAssign: (person: UserName) => void;
+  busy: boolean;
+}) {
+  const [pick, setPick] = React.useState("");
+  React.useEffect(() => { if (open) setPick(""); }, [open]);
+  const person = team.find((u) => u.id === pick);
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Assign owner</DialogTitle>
+          <DialogDescription>
+            Give the {count} selected renewal{count === 1 ? "" : "s"} to one person. It shows in their &quot;Mine&quot; list and in each renewal&apos;s follow-up history.
+          </DialogDescription>
+        </DialogHeader>
+        <label htmlFor="assign-owner" className="text-xs font-semibold uppercase tracking-wider text-ink-3">Owner</label>
+        <select id="assign-owner" value={pick} onChange={(e) => setPick(e.target.value)} className={cn(SELECT_CLS, "w-full min-h-[44px] md:min-h-0 text-sm")}>
+          <option value="">Pick a person</option>
+          {team.map((u) => <option key={u.id} value={u.id}>{u.label}</option>)}
+        </select>
+        <DialogFooter>
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
+          <Button type="button" variant="primary" icon="check" disabled={!person} loading={busy} onClick={() => person && onAssign(person)}>
+            {person ? `Give ${count} to ${person.label}` : "Assign"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 // ─── The queue (table ≥1280px, cards below) ───────────────────────────────────
 
 interface QueueItem {
@@ -182,6 +261,10 @@ interface QueueItem {
   contact: RowContact | undefined;
   atRisk: boolean;
   riskReason: string;
+  /** R-2404 */
+  followup: RenewalFollowup;
+  decision: RenewalDecision;
+  customerOwnerId: string | null;
 }
 
 interface RenewalQueueProps {
@@ -191,9 +274,12 @@ interface RenewalQueueProps {
   selected: ReadonlySet<string>;
   onSelect: (ids: string[], on: boolean) => void;
   emptyText: string;
+  /** R-2404: open the renewal's Follow-up dialog. */
+  onFollowup: (item: QueueItem) => void;
+  names: Map<string, UserName> | undefined;
 }
 
-function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText }: RenewalQueueProps) {
+function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, onFollowup, names }: RenewalQueueProps) {
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
      home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
@@ -208,8 +294,13 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText }
     return <div className="py-10 text-center text-sm text-ink-3">{emptyText}</div>;
   }
 
+  const byId = new Map(rows.map((r) => [r.sub.id, r]));
   const extraFor = (sub: Subscription) => (sub.customer_id ? (
     <>
+      {/* R-2404: owner, next date, promise, notes, "confirmed" — Payment Follow-up's dialog, for this renewal. */}
+      <Button size="sm" variant="default" icon="phone" onClick={() => { const it = byId.get(sub.id); if (it) onFollowup(it); }}>
+        Follow-up
+      </Button>
       <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" label="✨ Nudge" variant="ghost" />
       <VoiceNoteButton customerId={sub.customer_id} purpose="renewal" customerName={sub.customer_name} label="🔊 Voice" variant="ghost" />
     </>
@@ -219,7 +310,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText }
     <>
       {/* Cards — viewports < 1280px (phones and small laptops), two per row from md. */}
       <ul className="xl:hidden p-3 space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
-        {rows.map(({ sub, daysUntil: days, status, amount, contact, atRisk, riskReason }) => {
+        {rows.map(({ sub, daysUntil: days, status, amount, contact, atRisk, riskReason, followup, decision }) => {
           const priorDue = priorTermDueText(sub);  // R-1703
           const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
           return (
@@ -243,7 +334,10 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText }
               </div>
 
               <div className="flex items-start justify-between gap-2 mb-2">
-                <StatusChip status={status} size="sm" />
+                <div className="min-w-0">
+                  <StatusChip status={status} size="sm" />
+                  <FollowupLine followup={followup} decision={decision} names={names} />
+                </div>
                 <div className="shrink-0 text-right">
                   <p className="text-xs text-ink-2">{sub.renewal_date ? formatDate(sub.renewal_date) : "—"}</p>
                   {atRisk && <AtRiskMark reason={riskReason} />}
@@ -306,7 +400,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText }
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ sub, daysUntil: days, status, amount, contact, atRisk, riskReason }) => {
+            {rows.map(({ sub, daysUntil: days, status, amount, contact, atRisk, riskReason, followup, decision }) => {
               const priorDue = priorTermDueText(sub);  // R-1703
               const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
               return (
@@ -366,6 +460,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText }
                   {/* ONE status */}
                   <td className="px-3 py-3">
                     <StatusChip status={status} />
+                    <FollowupLine followup={followup} decision={decision} names={names} />
                   </td>
 
                   {/* Actions */}
@@ -423,6 +518,18 @@ export default function RenewalsPage() {
     .filter((s) => daysUntilRenewal(s.renewal_date!) <= RENEWAL_FUTURE_DAYS), [subs, openRenewalMap]);
   const { data: contacts } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
   const { data: quoteInfo } = useRenewalQuoteInfo(listed.map((s) => s.renewal_quote_id));
+  /* R-2404: owner / next follow-up / promise per renewal — Payment Follow-up's rows for these subscriptions. */
+  const { data: fuData } = useRenewalFollowups(listed.map((s) => s.id), listed.map((s) => s.customer_id ?? ""));
+  const { data: names } = useUserNames();
+  const [fuFilters, setFuFilters] = React.useState<FollowupFilters>(NO_FOLLOWUP_FILTERS);
+  const [followupFor, setFollowupFor] = React.useState<QueueItem | null>(null);
+  const [assignOpen, setAssignOpen] = React.useState(false);
+  const [assigning, setAssigning] = React.useState(false);
+  const canReassign = mayReassignFollowup(me?.role);
+  const team = React.useMemo(
+    () => [...(names?.values() ?? [])].filter((u) => !u.inactive).sort((a, b) => a.label.localeCompare(b.label)),
+    [names],
+  );
 
   if (isLoading) {
     return (
@@ -520,12 +627,28 @@ export default function RenewalsPage() {
   const atRiskIds    = new Set(highRiskSubs.map((r) => r.sub.id));
 
   /* R-2403: each listed row gets its ONE status, its renewal amount and its contact. */
+  const todayIst = istToday(today);
   const toItem = (r: { sub: Subscription; daysUntil: number }): QueueItem => {
     const risk = renewalRisk(r.sub);
+    const status = renewalRowStatus(r.sub, r.daysUntil, { tenantGraceDays: graceDays, today, renewalPaid: paid(r) });
+    /* R-2404: the renewal's follow-up state + where the decision stands. */
+    const customerOwnerId = r.sub.customer_id ? fuData?.ownerByCustomer.get(r.sub.customer_id) ?? null : null;
+    const followup = renewalFollowup(r.sub.id, fuData?.rows ?? [], { customerOwnerId, today: todayIst, paid: status.key === "renewed" });
+    const linkedQuote = quoteOf(r.sub);
     return {
       sub: r.sub,
       daysUntil: r.daysUntil,
-      status: renewalRowStatus(r.sub, r.daysUntil, { tenantGraceDays: graceDays, today, renewalPaid: paid(r) }),
+      status,
+      followup,
+      customerOwnerId,
+      decision: renewalDecision(r.sub, {
+        statusKey: status.key,
+        /* the draft/sent status from the open renewal quotes, else the linked quote's own */
+        quote: r.sub.renewal_quote_id
+          ? { id: r.sub.renewal_quote_id, status: quoteStatusMap.get(r.sub.renewal_quote_id) ?? linkedQuote?.status ?? null, payment_status: linkedQuote?.payment_status ?? null }
+          : null,
+        followup,
+      }),
       amount: renewalAmount(r.sub, quoteOf(r.sub)),
       contact: r.sub.customer_id ? contacts?.get(r.sub.customer_id) : undefined,
       atRisk: atRiskIds.has(r.sub.id),
@@ -553,15 +676,22 @@ export default function RenewalsPage() {
     id: i.sub.id, daysUntil: i.daysUntil, amount: i.amount.value, plan: i.sub.plan, vendor: i.sub.vendor,
     statusKey: i.status.key, atRisk: i.atRisk, customer: i.sub.customer_name, item: i,
   });
+  /* R-2404: Mine · Follow-up due · Promise broken narrow the tabs the same way. */
   const shownIn = (t: QueueTab): QueueItem[] =>
-    sortQueue(filterQueue(items[t].filter((i) => matchesRenewalSearch(i.sub, search)).map(asQueueRow), activeFilters), sort)
+    sortQueue(filterQueue(filterByFollowup(items[t], fuFilters, me?.userId).filter((i) => matchesRenewalSearch(i.sub, search)).map(asQueueRow), activeFilters), sort)
       .map((r) => r.item);
   const shown = Object.fromEntries(QUEUE_TABS.map((t) => [t, shownIn(t)])) as Record<QueueTab, QueueItem[]>;
 
   const productOptions = filterOptions(allItems.map((i) => i.sub.plan));
   const vendorOptions  = filterOptions(allItems.map((i) => i.sub.vendor));
   const statusOptions  = (Object.keys(STATUS_FILTER_LABEL) as RowStatusKey[]).filter((k) => allItems.some((i) => i.status.key === k));
-  const filtered = !!(filters.product || filters.status || filters.vendor || atRiskOn);
+  const fuOn = fuFilters.mine || fuFilters.followUpDue || fuFilters.promiseBroken;
+  const filtered = !!(filters.product || filters.status || filters.vendor || atRiskOn || fuOn);
+  /* R-2404: chip counts — whole queue, so a person sees "Mine (12)" before pressing it. */
+  const fuCount = (f: Partial<FollowupFilters>) => filterByFollowup(allItems, { ...NO_FOLLOWUP_FILTERS, ...f }, me?.userId).length;
+  const mineCount = fuCount({ mine: true });
+  const dueCount = fuCount({ followUpDue: true });
+  const brokenCount = fuCount({ promiseBroken: true });
 
   const activeSubs    = all.filter((s) => s.status === "active").length;
   const topHighRisk   = highRiskSubs[0]?.sub.customer_name ?? "a key customer";
@@ -697,6 +827,31 @@ export default function RenewalsPage() {
     const m = bulkReminderReport(result, verbs);
     const failedRows = result.failed.map((f) => f.row);
     const retry = { label: "Retry failed", onClick: () => retryFailed(failedRows) };
+    if (m.tone === "success") toast.success(m.title);
+    else if (m.tone === "warning") toast.warning(m.title, { description: m.description, action: retry, duration: 15_000 });
+    else toast.error(m.title, { description: m.description, action: retry, duration: 15_000 });
+  }
+
+  /* R-2404: bulk Assign owner — one follow-up per ticked renewal through the same API as the
+     Follow-up dialog (it and the DB re-check who may give work to someone else). */
+  async function assignOwner(rows: QueueItem[], person: UserName) {
+    if (assigning) return;
+    const { requests, skipped } = bulkAssignRequests(rows, { id: person.id, name: person.label }, todayIst);
+    setAssigning(true);
+    const failed: { row: QueueItem; name: string; error: string }[] = skipped.map((s) => ({ row: s.row, name: s.row.sub.customer_name, error: s.reason }));
+    let done = 0;
+    for (const r of requests) {
+      try { await postFollowup(r.body); done += 1; }
+      catch (e) { failed.push({ row: r.row, name: r.row.sub.customer_name, error: e instanceof FollowupSaveError ? e.message : "not saved — check your internet" }); }
+    }
+    setAssigning(false);
+    setAssignOpen(false);
+    void qc.invalidateQueries({ queryKey: ["collections"] });
+    void qc.invalidateQueries({ queryKey: ["payment-followups"] });
+    if (failed.length === 0) setSelected(new Set());
+    const m = bulkAssignReport(done, failed, person.label);
+    const retryRows = failed.filter((f) => f.row.sub.customer_id).map((f) => f.row);
+    const retry = retryRows.length > 0 ? { label: "Retry failed", onClick: () => void assignOwner(retryRows, person) } : undefined;
     if (m.tone === "success") toast.success(m.title);
     else if (m.tone === "warning") toast.warning(m.title, { description: m.description, action: retry, duration: 15_000 });
     else toast.error(m.title, { description: m.description, action: retry, duration: 15_000 });
@@ -906,8 +1061,29 @@ export default function RenewalsPage() {
               <Icon name="alert" size={12} />
               At risk{highRiskSubs.length > 0 ? ` (${highRiskSubs.length})` : ""}
             </button>
+            {/* R-2404: the follow-up person's own lists. */}
+            {([
+              { key: "mine", label: "Mine", count: mineCount, icon: "user", title: "Renewals whose owner is you" },
+              { key: "followUpDue", label: "Follow-up due", count: dueCount, icon: "clock", title: "Next follow-up is today or already past" },
+              { key: "promiseBroken", label: "Promise broken", count: brokenCount, icon: "alert", title: "The customer promised to pay by a date that has passed, and the renewal is not paid" },
+            ] as const).map((c) => (
+              <button
+                key={c.key}
+                type="button"
+                aria-pressed={fuFilters[c.key]}
+                onClick={() => setFuFilters((f) => ({ ...f, [c.key]: !f[c.key] }))}
+                title={c.title}
+                className={cn(
+                  "inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors",
+                  fuFilters[c.key] ? "border-amber bg-amber-soft text-amber-ink" : "border-hairline bg-paper text-ink-2 hover:border-amber/60",
+                )}
+              >
+                <Icon name={c.icon} size={12} />
+                {c.label}{c.count > 0 ? ` (${c.count})` : ""}
+              </button>
+            ))}
             {filtered && (
-              <button type="button" onClick={() => { setFilters(NO_FILTERS); if (bucketRaw === "risk") setBucketTab(bucketTab); }} className="text-xs text-ink-3 underline underline-offset-2 hover:text-ink">
+              <button type="button" onClick={() => { setFilters(NO_FILTERS); setFuFilters(NO_FOLLOWUP_FILTERS); if (bucketRaw === "risk") setBucketTab(bucketTab); }} className="text-xs text-ink-3 underline underline-offset-2 hover:text-ink">
                 Clear filters
               </button>
             )}
@@ -932,9 +1108,34 @@ export default function RenewalsPage() {
             selected={selected}
             onSelect={onSelect}
             emptyText={tabEmpty}
+            onFollowup={setFollowupFor}
+            names={names}
           />
         </div>
       </Card>
+
+      {/* R-2404: Payment Follow-up's own dialog, about this renewal (its history = the renewal's activity log). */}
+      {followupFor?.sub.customer_id && (
+        <FollowupDialog
+          open
+          onOpenChange={(o) => { if (!o) setFollowupFor(null); }}
+          customerId={followupFor.sub.customer_id}
+          customerName={followupFor.sub.customer_name}
+          ownerId={followupFor.customerOwnerId}
+          items={[{ kind: "subscription", id: followupFor.sub.id, label: `${followupFor.sub.plan ?? "subscription"} · renews ${followupFor.sub.renewal_date ? formatDate(followupFor.sub.renewal_date) : "—"}`, quoteId: followupFor.sub.renewal_quote_id }]}
+          stillOwes={followupFor.status.key !== "renewed"}
+          amountDue={followupFor.amount.value}
+          renewal={{ subscriptionId: followupFor.sub.id }}
+        />
+      )}
+      <AssignOwnerDialog
+        open={assignOpen}
+        onOpenChange={setAssignOpen}
+        count={selectedRows.length}
+        team={team}
+        busy={assigning}
+        onAssign={(p) => void assignOwner(selectedRows, p)}
+      />
 
       {/* R-2403: tick rows → the existing send-now route, after the existing kind of confirm. */}
       <BulkActionBar count={selectedRows.length} noun="renewal" onClear={() => setSelected(new Set())}>
@@ -943,6 +1144,16 @@ export default function RenewalsPage() {
         </BulkBarButton>
         <BulkBarButton icon="mail" onClick={() => void handleSelectedReminder()} disabled={bulkSending}>
           Send reminder
+        </BulkBarButton>
+        <BulkBarButton
+          icon="user"
+          disabled={assigning}
+          onClick={() => {
+            if (canReassign) setAssignOpen(true);
+            else toast.info("You cannot assign renewals", { description: ASSIGN_NEEDS_ROLE });
+          }}
+        >
+          Assign owner
         </BulkBarButton>
       </BulkActionBar>
 
