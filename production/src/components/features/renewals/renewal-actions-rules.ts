@@ -15,7 +15,7 @@
  *   Grace over — owner decides  → "Renew anyway" (VendorHoldBadge, R-1796) and "Cancel" side by side.
  *
  * R-2232 is kept: the row's ONE action comes from renewalRowAction — once a renewal quote exists
- * nothing offers to create another one. Pure rules here (tested in renewal-actions.test.ts).
+ * nothing offers to create another one. Pure rules here (tested in renewal-actions-rules.test.ts).
  */
 import { renewalRowAction, type RowAction, type RowActionSub } from "@/app/(app)/renewals/row-action";
 import { isSplitBilled } from "@/lib/billing/instalments";

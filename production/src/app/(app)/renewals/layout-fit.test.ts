@@ -17,9 +17,11 @@ describe("R-1720 — Renewals table fits its card", () => {
     expect(page).toMatch(/<ul className="2xl:hidden[^"]*xl:grid-cols-2/);
   });
   it("action buttons wrap rather than widen the row (table and card)", () => {
-    const actionRows = page.match(/<div className="flex (?:flex-wrap )?items-center gap-1\.5[^"]*">/g) ?? [];
+    /* R-2401: the buttons are the shared RenewalActions (page + component are checked). */
+    const shared = readFileSync("src/components/features/renewals/renewal-actions.tsx", "utf8");
+    const actionRows = (page + shared).match(/className=(?:"|\{cn\(")flex (?:flex-wrap )?items-center gap-1\.5[^"]*"/g) ?? [];
     expect(actionRows.length).toBeGreaterThanOrEqual(1);
     for (const r of actionRows) expect(r).toContain("flex-wrap");
-    expect(page).toMatch(/className="flex flex-wrap items-center gap-1\.5 pt-2 border-t/);
+    expect(page).toMatch(/className="pt-2 border-t[^"]*">\s*<RenewalActions/);
   });
 });

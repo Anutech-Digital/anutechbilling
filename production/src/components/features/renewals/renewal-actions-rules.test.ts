@@ -9,7 +9,7 @@ import {
   renewalActionSet, isGraceOver,
   SEND_RENEWAL_QUOTE, CREATE_QUOTE_NO_SEND, BILL_NEXT_PART, CUSTOMER_NOT_RENEWING, CANCEL_LABEL, RESEND_RENEWAL_QUOTE,
   type RenewalActionSub,
-} from "./renewal-actions";
+} from "./renewal-actions-rules";
 
 const sub = (p: Partial<RenewalActionSub> = {}): RenewalActionSub => ({
   id: "s1", renewal_state: "grace_period", renewal_date: "2026-10-28", term_months: 12, status: "active",
