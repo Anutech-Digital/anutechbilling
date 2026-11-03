@@ -115,6 +115,54 @@ begin
   end if;
 end $$;
 
+-- 7: review cases
+--   7a credit note stored with inter_state=false on an IGST bill → IGST comes down, never CGST/SGST.
+insert into public.credit_notes (id, tenant_id, invoice_id, customer_id, customer_name, amount, taxable_value, tax_amount, tax_rate, inter_state)
+values ('CN-R2432-2', 'd2432000-0000-0000-0000-0000000000f0', 'INV-R2432-B', 'd2432000-0000-0000-0000-0000000001c2', 'R2432 Reseller Mumbai',
+        2100, 2000, 100, 5, false);
+--   7b a credit note from ANOTHER company naming the distributor's invoice moves nothing.
+insert into public.credit_notes (id, tenant_id, invoice_id, customer_name, amount, taxable_value, tax_amount, tax_rate, inter_state)
+values ('CN-R2432-X', 'd2432000-0000-0000-0000-0000000000e1', 'INV-R2432-C', 'Someone', 1180, 1000, 180, 18, false);
+--   7c a bill the OLD trigger made for a draft (/1.18 guess, no document_type) is rebuilt on issue.
+insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, net_payable, taxable_value, tax_amount, tax_rate, inter_state)
+values ('INV-R2432-O', 'd2432000-0000-0000-0000-0000000000f0', 'd2432000-0000-0000-0000-0000000001c1', 'R2432 Reseller Delhi',
+        10500, 'draft', current_date, 10500, 10000, 500, 5, false);
+insert into public.vendor_bills (id, tenant_id, vendor_name, bill_no, bill_date, category, subtotal, cgst, sgst, igst, total, status, source_tenant_invoice_id)
+values ('VB-PARTNER-INV-R2432-O', 'd2432000-0000-0000-0000-0000000000c1', 'R2432 Distributor', 'INV-R2432-O', current_date, 'cloud_subscriptions',
+        8898, 801, 801, 0, 10500, 'unpaid', 'INV-R2432-O');
+update public.invoices set status = 'pending' where id = 'INV-R2432-O';
+--   7d a third reseller (Pune) already has a vendor with the distributor's NAME but another GSTIN.
+insert into public.tenants (id, name, email, state_code, parent_tenant_id) values
+  ('d2432000-0000-0000-0000-0000000000c3', 'R2432 Reseller Pune', 'r2432-pune@example.test', '27', 'd2432000-0000-0000-0000-0000000000f0');
+insert into public.customers (id, tenant_id, name, linked_tenant_id) values
+  ('d2432000-0000-0000-0000-0000000001c3', 'd2432000-0000-0000-0000-0000000000f0', 'R2432 Reseller Pune', 'd2432000-0000-0000-0000-0000000000c3');
+insert into public.vendors (tenant_id, name, gstin) values
+  ('d2432000-0000-0000-0000-0000000000c3', 'R2432 Distributor', '27AAACZ9999Z1Z5');
+insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, net_payable, taxable_value, tax_amount, tax_rate, inter_state)
+values ('INV-R2432-N', 'd2432000-0000-0000-0000-0000000000f0', 'd2432000-0000-0000-0000-0000000001c3', 'R2432 Reseller Pune',
+        1180, 'pending', current_date, 1180, 1000, 180, 18, true);
+
+do $$
+declare b record; v record;
+begin
+  select * into b from public.vendor_bills where source_tenant_invoice_id = 'INV-R2432-B';
+  if (b.subtotal, b.cgst, b.sgst, b.igst, b.total) is distinct from (8000, 0, 0, 400, 8400) then
+    raise exception 'FAIL 7a: IGST bill after a note flagged intra-state is % / % / % / % / % (want 8000 / 0 / 0 / 400 / 8400)',
+      b.subtotal, b.cgst, b.sgst, b.igst, b.total;
+  end if;
+  select * into b from public.vendor_bills where source_tenant_invoice_id = 'INV-R2432-C';
+  if b.total <> 5900 then raise exception 'FAIL 7b: another company''s credit note moved the bill to %', b.total; end if;
+  select * into b from public.vendor_bills where source_tenant_invoice_id = 'INV-R2432-O';
+  if (b.subtotal, b.cgst, b.sgst, b.total, b.document_type) is distinct from (10000, 250, 250, 10500, 'tax_invoice') or b.vendor_id is null then
+    raise exception 'FAIL 7c: old draft bill not rebuilt: % / % / % / % / % vendor %', b.subtotal, b.cgst, b.sgst, b.total, b.document_type, b.vendor_id;
+  end if;
+  select * into b from public.vendor_bills where source_tenant_invoice_id = 'INV-R2432-N';
+  select * into v from public.vendors where id = b.vendor_id;
+  if v.gstin is distinct from '07AAACR2432A1Z5' or v.pan is distinct from 'AAACR2432A' then
+    raise exception 'FAIL 7d: bill linked to vendor % (gstin %, pan %) — want a new vendor with the distributor GSTIN + PAN', v.name, v.gstin, v.pan;
+  end if;
+end $$;
+
 -- 6: isolation + void-at-insert
 insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, net_payable, taxable_value, tax_amount, tax_rate, inter_state)
 values
