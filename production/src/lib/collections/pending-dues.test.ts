@@ -140,6 +140,13 @@ describe("the words", () => {
     expect(text.split("\n")[0]).toContain("4 bills");
   });
 
+  it("R-2412: the email carries the UPI pay link for the TOTAL when there is one", () => {
+    const upi = "upi://pay?pa=demo%40hdfc&am=20400&cu=INR";
+    expect(pendingDuesEmailText(st, { greetName: "Rahul", sellerName: "Demo Co", upiLink: upi }))
+      .toContain(`Pay the total by UPI (open on your phone): ${upi}`);
+    expect(pendingDuesEmailText(st, { greetName: "Rahul", sellerName: "Demo Co", upiLink: null })).not.toContain("upi://");
+  });
+
   it("file name is safe; the notice says it is not a tax invoice", () => {
     expect(pendingDuesFileName("Acme & Sons / Pvt", "2026-10-17")).toBe("Pending-dues-Acme-Sons-Pvt-2026-10-17.pdf");
     expect(STATEMENT_NOTICE).toMatch(/not a tax invoice/);

@@ -57,10 +57,15 @@ const renderDialog = () => {
 // R-2174: the box renders as soon as the draft arrives, but the dialog fills it in an effect AFTER
 // that commit. findByLabelText could resolve in between (CI on 10c1fda11: expected '' to contain
 // FIRST), so wait until the draft text is IN the box — then reading or editing it is deterministic.
+// R-2412: the box is re-read inside waitFor — the channel (WhatsApp first, email fallback) is
+// set from the draft, and switching channel swaps the box.
 const message = async () => {
-  const box = (await screen.findByLabelText(/Message/)) as HTMLTextAreaElement;
-  await waitFor(() => expect(box.value).toBe(st.draft.message));
-  return box;
+  let box: HTMLTextAreaElement | null = null;
+  await waitFor(() => {
+    box = screen.getByLabelText(/Message/) as HTMLTextAreaElement;
+    expect(box.value).toBe(st.draft.message);
+  });
+  return box as unknown as HTMLTextAreaElement;
 };
 
 describe("Remind dialog", () => {
@@ -92,11 +97,13 @@ describe("Remind dialog", () => {
     expect(body.nextFollowUpOn).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
-  it("no phone → WhatsApp off with the reason; clicking does nothing", async () => {
+  it("no phone → email is the fallback; WhatsApp off with the reason; clicking does nothing", async () => {
     st.draft = { ...st.draft, whatsapp: null, whatsappBlocked: "No mobile number for this customer — add one to the primary contact on the customer page to send on WhatsApp." };
     const open = vi.spyOn(window, "open").mockReturnValue(null);
     renderDialog();
     await message();
+    expect(screen.getByRole("button", { name: "Send email" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "WhatsApp" }));
     const btn = screen.getByRole("button", { name: "Open WhatsApp" }) as HTMLButtonElement;
     expect(btn.disabled).toBe(true);
     expect(screen.getByText(/No mobile number for this customer/)).toBeTruthy();
@@ -118,6 +125,7 @@ describe("Remind dialog", () => {
   it("Send email posts the edited subject + text to the email route (no recipient in the body)", async () => {
     renderDialog();
     await message();
+    fireEvent.click(screen.getByRole("button", { name: "Email" }));
     fireEvent.click(screen.getByRole("button", { name: "Send email" }));
     await waitFor(() => expect(st.calls.map((c) => c.url)).toContain("/api/collections/reminder/email"));
     const sent = st.calls.find((c) => c.url.endsWith("/email"))!.body;
