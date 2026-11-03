@@ -96,6 +96,33 @@ function nextDay(iso: string): string {
 
 let typedSeq = 0;
 
+/**
+ * R-2402: one Zoho invoice line → the sale line the Reconcile sheet books (catalogue product by sku /
+ * name, else a typed line), Zoho's seats and rate kept as a typed price. Null for a blank line or
+ * one with no quantity. Shared by zohoPrefill (the sheet) and the bulk "Reconcile from Zoho" plan.
+ */
+export function zohoSaleLine(zl: ZohoMatchLine, catalog: readonly CatalogLite[]): { line: SaleLine; cycle: SaleCycle; inCatalog: boolean } | null {
+  if (!zl.name.trim() || !(zl.qty > 0)) return null;
+  const item = matchCatalogItem(zl, catalog) as CatalogLite | null;
+  const cycle = cycleFor(zl, item);
+  const base: SaleLine = item
+    ? saleLineFromItem(item, cycle, zl.qty)
+    : { key: `zoho-line-${++typedSeq}`, itemId: null, name: zl.name.trim(), qty: zl.qty, rate: 0, cost: 0, cycle, perSeat: true, monthPriced: false };
+  const rate = zl.rate ?? (zl.itemTotal !== null && zl.qty > 0 ? zl.itemTotal / zl.qty : base.rate);
+  return {
+    line: {
+      ...base,
+      qty: zl.qty,
+      rate: Math.round(rate * 100) / 100,
+      priceTyped: true,
+      typedFor: cycle,
+      ...(zl.domain ? { domain: zl.domain } : {}),
+    },
+    cycle,
+    inCatalog: Boolean(item),
+  };
+}
+
 export function zohoPrefill(
   match: ZohoPaymentMatch,
   ctx: { customers: readonly AppCustomerLite[]; catalog: readonly CatalogLite[]; txnDate: string },
@@ -107,22 +134,11 @@ export function zohoPrefill(
   const ends: string[] = [];
   for (const inv of match.invoices) {
     for (const zl of inv.lines) {
-      if (!zl.name.trim() || !(zl.qty > 0)) continue;
-      const item = matchCatalogItem(zl, ctx.catalog) as CatalogLite | null;
-      const cycle = cycleFor(zl, item);
-      const base: SaleLine = item
-        ? saleLineFromItem(item, cycle, zl.qty)
-        : { key: `zoho-line-${++typedSeq}`, itemId: null, name: zl.name.trim(), qty: zl.qty, rate: 0, cost: 0, cycle, perSeat: true, monthPriced: false };
-      if (!item) unmatched.push(zl.name.trim());
-      const rate = zl.rate ?? (zl.itemTotal !== null && zl.qty > 0 ? zl.itemTotal / zl.qty : base.rate);
-      lines.push({
-        ...base,
-        qty: zl.qty,
-        rate: Math.round(rate * 100) / 100,
-        priceTyped: true,
-        typedFor: cycle,
-        ...(zl.domain ? { domain: zl.domain } : {}),
-      });
+      const made = zohoSaleLine(zl, ctx.catalog);
+      if (!made) continue;
+      const { cycle } = made;
+      if (!made.inCatalog) unmatched.push(zl.name.trim());
+      lines.push(made.line);
       if (zl.start && zl.end) { starts.push(zl.start); ends.push(zl.end); }
       if (cycle === "annual_yearly" && zl.months !== null && zl.months !== 12) {
         notes.push(`${zl.name.trim()}: Zoho billed ${zl.months} month${zl.months === 1 ? "" : "s"} — check the price per year.`);
