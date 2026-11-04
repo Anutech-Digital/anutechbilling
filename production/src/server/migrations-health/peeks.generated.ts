@@ -372,4 +372,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2430placeholderrefbankline", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2430%')" },
   { key: "r2447quoteapprovalinsertmoneychange", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2447%') and exists(select 1 from pg_trigger where tgname = 'trg_quote_insert_approval_guard' and tgrelid = to_regclass('public.quotes'))" },
   { key: "r2445gstinownerverified", peek: "to_regclass('public.gstin_ownership_claims') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.network_has_scope(uuid,uuid,text)') and prosrc like '%R-2445%')" },
+  { key: "r2376loaninteresttds", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenants' and column_name = 'loan_interest_tds') and exists(select 1 from pg_proc where oid = to_regprocedure('public.set_loan_interest_tds(text,text,text)') and prosrc like '%R-2376%')" },
 ];

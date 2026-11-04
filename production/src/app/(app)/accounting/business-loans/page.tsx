@@ -45,6 +45,7 @@ import { isLoanOnly } from "@/lib/accounting/loan-setup";
 import { EmiLoansTaken, useEmiLoansInterest } from "@/components/features/banking/emi-loans-taken";
 import { LoanMoneyLinePicker, useLoanMoneyLine, type LinePick } from "@/components/features/banking/loan-money-line-picker";
 import { CreditLineDialog } from "@/components/features/banking/credit-line-section";
+import { LoanInterestTdsCard } from "@/components/features/accounting/loan-interest-tds-card";
 
 function todayISO(): string {
   return istToday();
@@ -127,6 +128,9 @@ export default function BusinessLoansPage() {
           <KPI label="Interest paid (total)" value={rupee(totalInterest)} />
         </div>
       )}
+
+      {/* R-2376: "TDS 10% due" on interest to a non-bank lender above ₹10,000 in the FY. */}
+      {anyLoan && <LoanInterestTdsCard />}
 
       <EmiLoansTaken loans={emiLoans} />
 
