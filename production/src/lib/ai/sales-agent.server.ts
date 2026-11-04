@@ -438,13 +438,18 @@ export async function heldQuoteForLead(
   const row = data as { id?: string | null; status?: string | null } | null;
   if (!row?.id || row.status !== "draft") return null;
   /* Loaded on demand: send-auto-quote pulls in the PDF and mail stack, which every importer of
-     this file (webhooks, crons, tests) would otherwise load for one read. */
-  const { autoQuoteHoldFor } = await import("@/lib/quotes/send-auto-quote");
-  return autoQuoteHoldFor(admin as unknown as Parameters<typeof autoQuoteHoldFor>[0], {
-    tenantId,
-    leadId,
-    quoteId: row.id,
-  });
+     this file (webhooks, crons, tests) would otherwise load for one read. A failed load holds
+     too — the same fail-closed answer as a failed read. */
+  try {
+    const { autoQuoteHoldFor } = await import("@/lib/quotes/send-auto-quote");
+    return await autoQuoteHoldFor(admin as unknown as Parameters<typeof autoQuoteHoldFor>[0], {
+      tenantId,
+      leadId,
+      quoteId: row.id,
+    });
+  } catch {
+    return { kind: "approval", totals: [] };
+  }
 }
 
 export async function runSalesAgent(args: {

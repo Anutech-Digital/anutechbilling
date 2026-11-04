@@ -204,12 +204,16 @@ async function runSalesAgentForLeadInner(args: RunSalesAgentArgs): Promise<void>
      supply / needs approval): stating it would hand the customer a price nobody approved. The
      hold comes from ingest when it just tried to send; otherwise the draft is checked here,
      because the customer's NEXT message re-runs the agent with no send attempt at all. A sent
-     quote is never re-checked — it already reached them. */
-  const held: SendAutoQuoteHeld | null =
+     quote is never re-checked — it already reached them.
+     R-2468: a FAILED quote read passes undefined, not null — "checked, not held" would be a lie,
+     so runSalesAgent runs its own check (heldQuoteForLead, which holds on a failed read). */
+  const held: SendAutoQuoteHeld | null | undefined =
     args.heldQuote ??
-    (quote.id && quote.status === "draft"
-      ? await autoQuoteHoldFor(args.admin, { tenantId: args.tenantId, leadId: args.leadId, quoteId: quote.id })
-      : null);
+    (quote.readFailed
+      ? undefined
+      : quote.id && quote.status === "draft"
+        ? await autoQuoteHoldFor(args.admin, { tenantId: args.tenantId, leadId: args.leadId, quoteId: quote.id })
+        : null);
 
   const run = await runSalesAgent({
     admin: args.admin,
@@ -410,8 +414,12 @@ async function latestQuote(
   admin: Admin,
   tenantId: string,
   leadId: string,
-): Promise<{ id: string | null; status: string | null; deliveredId: string | null; totals: number[] }> {
-  const { data } = await admin
+): Promise<{
+  id: string | null; status: string | null; deliveredId: string | null; totals: number[];
+  /** R-2468: the read itself failed — "no quote" is then unknown, not a fact. */
+  readFailed?: boolean;
+}> {
+  const { data, error } = await admin
     .from("quotes")
     .select("id, status, subtotal, amount")
     .eq("tenant_id", tenantId)
@@ -427,6 +435,7 @@ async function latestQuote(
 
   const row = data as
     { id?: string; status?: string | null; subtotal?: number | null; amount?: number | null } | null;
+  if (error) return { id: null, status: null, deliveredId: null, totals: [], readFailed: true };
   if (!row?.id) return { id: null, status: null, deliveredId: null, totals: [] };
 
   /* Both, because a covering email legitimately says either the pre-GST subtotal or the gross.

@@ -6,6 +6,7 @@ import { describe, it, expect, vi } from "vitest";
 
 const runSalesAgent = vi.fn();
 const quoteOrder: string[] = [];
+let quoteError: unknown = null;
 
 vi.mock("@/lib/supabase/bare", () => ({ createBareClient: () => ({}) }));
 vi.mock("./sales-agent.server", () => ({
@@ -35,7 +36,7 @@ function fakeAdmin() {
       b.maybeSingle = async () => ({
         data: table === "leads" ? { company: "Acme", seats: 10, plan: "Google Workspace Business Starter" }
           : table === "quotes" ? { id: "Q-1", status: "sent", subtotal: 100, amount: 118 } : null,
-        error: null,
+        error: table === "quotes" ? quoteError : null,
       });
       return b;
     },
@@ -53,5 +54,19 @@ describe("R-2468 — newest quote by created_at", () => {
       fromEmail: "sales@seller.test", sellerName: "Seller Pvt Ltd",
     });
     expect(quoteOrder).toEqual(["created_date desc", "created_at desc"]);
+  });
+
+  it("a FAILED quote read passes heldQuote undefined (runSalesAgent then checks itself), never null", async () => {
+    quoteError = { message: "connection reset" };
+    runSalesAgent.mockClear().mockResolvedValue({ ok: false, reason: "stop here" });
+    await runSalesAgentForLead({
+      admin: fakeAdmin(), tenantId: "t-1", leadId: "lead-1", incoming: "price?",
+      customerContact: "asha@acme.test", channel: "email", senderIsOurs: false, isSelfTest: false,
+      fromEmail: "sales@seller.test", sellerName: "Seller Pvt Ltd",
+    });
+    const a = runSalesAgent.mock.calls[0][0] as { heldQuote: unknown; extraAuthorisedTotals: number[] };
+    expect(a.heldQuote).toBeUndefined();
+    expect(a.extraAuthorisedTotals).toEqual([]);
+    quoteError = null;
   });
 });

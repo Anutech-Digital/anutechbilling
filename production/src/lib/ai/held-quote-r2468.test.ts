@@ -32,7 +32,7 @@ const ITEM_ROW = {
   msrp: 270, wholesale: 200, prices: null,
 };
 
-const st = { quote: null as Record<string, unknown> | null, quoteOrder: [] as string[] };
+const st = { quote: null as Record<string, unknown> | null, quoteOrder: [] as string[], quoteError: null as unknown };
 
 /** Answers the catalogue read (items, awaited as a list) and the newest-quote read (quotes). */
 function fakeAdmin() {
@@ -44,7 +44,7 @@ function fakeAdmin() {
         if (table === "quotes") st.quoteOrder.push(`${c} ${o?.ascending === false ? "desc" : "asc"}`);
         return b;
       };
-      b.maybeSingle = async () => ({ data: table === "quotes" ? st.quote : null, error: null });
+      b.maybeSingle = async () => ({ data: table === "quotes" ? st.quote : null, error: table === "quotes" ? st.quoteError : null });
       b.then = (ok: (v: unknown) => unknown) =>
         Promise.resolve({ data: table === "items" ? [ITEM_ROW] : [], error: null }).then(ok);
       return b;
@@ -95,7 +95,7 @@ beforeEach(() => {
   vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "");
   geminiJson.mockReset();
   autoQuoteHoldFor.mockReset();
-  st.quote = null; st.quoteOrder = []; prompts.length = 0;
+  st.quote = null; st.quoteOrder = []; st.quoteError = null; prompts.length = 0;
 });
 
 const call = (extra: Record<string, unknown> = {}) =>
@@ -161,5 +161,14 @@ describe("R-2468 — runSalesAgent checks the hold itself", () => {
     expect(autoQuoteHoldFor).not.toHaveBeenCalled();
     if (!r.ok) throw new Error(r.reason);
     expect(r.decision.action_required).toBe("REPLY");
+  });
+
+  it("the newest-quote read FAILS → held (fail closed): a reply naming the amount goes to a person", async () => {
+    st.quoteError = { message: "connection reset" };
+    agentSays(PRICE_REPLY);
+    const r = await call();
+    if (!r.ok) throw new Error(r.reason);
+    expect(prompts[0]).toMatch(/QUOTATION ON HOLD/);
+    expect(r.decision.action_required).toBe("HANDOVER_TO_HUMAN");
   });
 });

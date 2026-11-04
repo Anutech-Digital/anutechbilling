@@ -106,8 +106,10 @@ async function latestQuoteFor(
 ): Promise<{
   id: string | null; status: string | null;
   createdAt: Date | null; expiresOn: string | null; settled: boolean;
+  /** R-2468: the read itself failed — the hold is then unknown, not "none". */
+  readFailed: boolean;
 }> {
-  const { data } = await admin
+  const { data, error } = await admin
     .from("quotes")
     .select("id, created_date, expires_date, status, payment_status")
     .eq("tenant_id", tenantId)
@@ -134,6 +136,7 @@ async function latestQuoteFor(
     /* R-115: yes, no or paid ends the chase — see shouldNudge. */
     settled:
       row?.status === "accepted" || row?.status === "rejected" || row?.payment_status === "paid",
+    readFailed: Boolean(error),
   };
 }
 
@@ -380,11 +383,15 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
          The customer-copy gate may be holding the lead's newest draft (no place of supply /
          needs approval). Same check as runSalesAgentForLead: the agent is told the quotation is
          on hold, and a reply naming one of its figures is handed to a person, not sent. A sent
-         quote is never re-checked — it already reached the customer. */
-      const heldQuote: SendAutoQuoteHeld | null =
-        quoteRow.id && quoteRow.status === "draft"
+         quote is never re-checked — it already reached the customer.
+         R-2468: a FAILED quote read leaves it undefined ("unknown", not "not held"): the brief
+         then says nothing about a quotation, and runSalesAgent runs its own check, which holds. */
+      const heldQuote: SendAutoQuoteHeld | null | undefined = quoteRow.readFailed
+        ? undefined
+        : quoteRow.id && quoteRow.status === "draft"
           ? await autoQuoteHoldFor(admin, { tenantId: loop.tenantId, leadId: loop.leadId, quoteId: quoteRow.id })
           : null;
+      const noQuoteToMention = heldQuote !== null;
 
       /* The trigger condition IS the brief. Passed as the incoming message so the follow-up
          can refer to what it is following up on — the difference between "checking in" and
@@ -415,13 +422,13 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
           /* R-2467: while the draft is held the customer has NO quotation — the step's "did you
              look at the quote" / "the quote expires on …" would be about a document they never
              got, so those briefs and the expiry date are left out. */
-          heldQuote && outcome.step.kind !== "value"
+          noQuoteToMention && outcome.step.kind !== "value"
             ? "Our quotation is on hold and has NOT been sent to them. Do not refer to a quotation " +
               "they have, its date or its expiry."
             : outcome.step.intent,
           outcome.channelNote ? `Channel note: ${outcome.channelNote}` : "",
           outcome.step.kind === "value" && valueDrop ? `Our own write-up, use it as given:\n${valueDrop}` : "",
-          outcome.step.kind === "expiry" && !heldQuote ? expiryFact(quoteExpiresOn, now) ?? "" : "",
+          outcome.step.kind === "expiry" && !noQuoteToMention ? expiryFact(quoteExpiresOn, now) ?? "" : "",
           loop.triggerCondition,
         ].filter(Boolean).join("\n"),
         sellerName: (await sellerFor(loop.tenantId)).sellerName,
@@ -468,11 +475,11 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
       });
 
       /* R-2468: a HANDOVER sent the customer nothing — the lead is flagged for a person — so it
-         is not a nudge, and the cadence does not schedule the next touch by itself: the person
-         who picks the lead up decides (and the flag would skip that step anyway). */
-      const handedOver = dispatched.outcome === "handed_over";
+         is not counted as a nudge. The next step is still scheduled: it cannot reach the
+         customer while the flag is set (shouldNudge skips a lead that needs a person), and once
+         a person clears the flag the cadence carries on — nothing else re-arms it. */
       if (dispatched.outcome === "failed") result.failed++;
-      else if (handedOver) result.handed_over++;
+      else if (dispatched.outcome === "handed_over") result.handed_over++;
       else result.nudged++;
 
       result.outcomes.push({ lead_id: loop.leadId, result: dispatched.detail });
@@ -481,7 +488,6 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
         tenantId: loop.tenantId,
         outcome: `follow-up ${dispatched.outcome} — ${dispatched.detail}`,
       });
-      if (handedOver) continue;
 
       /* ── ADVANCE THE CADENCE ────────────────────────────────────────────────
          The row above was closed, so there is no pending row to collide with the unique
