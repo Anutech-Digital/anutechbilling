@@ -31,6 +31,9 @@ import {
 } from "@/lib/accounting/credit-line";
 import { lenderInNarration } from "@/lib/banking/loan-disbursal-lines";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
+import { useLoanInterestTds } from "@/lib/queries/loan-interest-tds";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { suggestTdsForPayment, sectionLabel, fyStartOf } from "@/lib/accounting/loan-interest-tds";
 
 type Txn = { id: string; credit: number | null; debit: number | null; txn_date: string; description: string | null };
 
@@ -59,7 +62,25 @@ export function CreditLineSection({ transaction, onDone, onFooterSave }: {
 
   /* Money out: interest-only by default (the monthly ACH); type the interest → the rest is principal. */
   const [interest, setInterest] = React.useState(String(line));
-  const [tds, setTds] = React.useState("0");
+  /* R-2376: once the owner types the interest, the TDS box is filled with the TDS due to a
+     non-bank lender (s.393(1) T5(iii), old 194A) — 0 for a bank, an unmarked lender, a business
+     that need not deduct, or while the FY total is not above ₹10,000. The owner's own figure stays. */
+  const [tdsTxt, setTdsTxt] = React.useState<string | null>(null);
+  const [interestTyped, setInterestTyped] = React.useState(false);
+  const tdsQ = useLoanInterestTds();
+  const profileQ = useComplianceProfile();
+  const loanRows = loansQ.data;
+  const businessType = profileQ.data?.businessType ?? null;
+  const suggestedTds = React.useMemo(() => {
+    const d = tdsQ.data;
+    if (isIn || !loan || !d?.ready) return 0;
+    const raw = (loanRows ?? []).find((l) => l.id === loan.id);
+    return suggestTdsForPayment({
+      events: d.events, settings: d.settings, businessType,
+      lender: loan.lender, lenderType: raw?.director_id ? "non_bank" : null, on: transaction.txn_date, interest: num(interest),
+    });
+  }, [tdsQ.data, businessType, isIn, loan, loanRows, transaction.txn_date, interest]);
+  const tds = tdsTxt ?? (interestTyped ? String(suggestedTds) : "0");
   const [principalTxt, setPrincipalTxt] = React.useState<string | null>(null);
   const principal = principalTxt !== null ? num(principalTxt) : principalFromLine(line, num(interest), num(tds));
   const errors = !isIn && loan
@@ -129,7 +150,7 @@ export function CreditLineSection({ transaction, onDone, onFooterSave }: {
               <div className="grid grid-cols-3 gap-2">
                 <div>
                   <label htmlFor="cl-interest" className="block text-xs font-medium text-ink-2 mb-1">Interest (₹)</label>
-                  <Input id="cl-interest" type="number" min={0} value={interest} onChange={(e) => { setInterest(e.target.value); setPrincipalTxt(null); }} />
+                  <Input id="cl-interest" type="number" min={0} value={interest} onChange={(e) => { setInterest(e.target.value); setInterestTyped(true); setPrincipalTxt(null); }} />
                 </div>
                 <div>
                   <label htmlFor="cl-principal" className="block text-xs font-medium text-ink-2 mb-1">Principal (₹)</label>
@@ -137,13 +158,15 @@ export function CreditLineSection({ transaction, onDone, onFooterSave }: {
                 </div>
                 <div>
                   <label htmlFor="cl-tds" className="block text-xs font-medium text-ink-2 mb-1">TDS 194A (₹)</label>
-                  <Input id="cl-tds" type="number" min={0} value={tds} onChange={(e) => { setTds(e.target.value); setPrincipalTxt(null); }} />
+                  <Input id="cl-tds" type="number" min={0} value={tds} onChange={(e) => { setTdsTxt(e.target.value); setPrincipalTxt(null); }} />
                 </div>
               </div>
               <p className="text-xs text-ink-3">
                 Loan reduces by {rupee(principal)} · {rupee(num(interest))} to {INTEREST_ON_LOANS} (Finance cost)
                 {num(tds) > 0 && <> · {rupee(num(tds))} TDS kept back (payable to the government)</>}.
-                TDS stays 0 unless you deducted it from the interest.
+                {suggestedTds > 0
+                  ? <> TDS 10% is due to {loan.lender} ({sectionLabel(fyStartOf(transaction.txn_date))}): {rupee(suggestedTds)} on this interest — set TDS to 0 if you paid the interest in full.</>
+                  : <> TDS stays 0 unless you deducted it from the interest.</>}
               </p>
               {errors.length > 0 && <ul className="text-xs text-rose-ink space-y-0.5">{errors.map((e) => <li key={e}>{e}</li>)}</ul>}
             </div>
