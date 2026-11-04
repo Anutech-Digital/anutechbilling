@@ -34,7 +34,7 @@ import { useNewSaleFromBankCredit, usePayItemFromBankCredit } from "@/lib/querie
 import { istToday } from "@/lib/dates/ist";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
-import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { useTenantLuts } from "@/lib/queries/tenant-luts";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 import {
@@ -89,12 +89,12 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const { data: catalog } = useItems();
   const memory = usePayerMemory();
   const gst = useGstRegistration();
-  /* R-2440: the company's LUT (Settings → Company) — an export receipt is booked at 0% only under one. */
-  const { data: me } = useCurrentUser();
-  /* Not loaded yet → no plan (never "covered by default"); loaded with no LUT → export rows unticked. */
-  const meLoaded = me !== undefined;
-  const lutNumber = me?.tenantLutNumber ?? null;
-  const lutValidUpto = me?.tenantLutValidUpto ?? null;
+  /* R-2440 / R-2444: the company's LUTs per FY (Settings → Company → LUT) — an export receipt is booked
+     at 0% only under the LUT of its own FY. Not loaded yet → no plan (never "covered by default");
+     loaded with none for that FY → the export row is unticked with the step. */
+  const luts = useTenantLuts(open);
+  const lutRows = luts.data;
+  const lutError = luts.isError;
   const createCustomer = useCreateCustomer();
   const setLinePayer = useSetBankLinePayer();
   const newSale = useNewSaleFromBankCredit();
@@ -126,14 +126,15 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   }, [open, accountId]);
 
   const ctx: PlanContext | null = React.useMemo(() => {
-    if (!customers || !subscriptions || !catalog || !meLoaded) return null;
+    /* A failed LUT read → planned without the LUT check (lut undefined); the server still refuses. */
+    if (!customers || !subscriptions || !catalog || (!lutRows && !lutError)) return null;
     return {
       customers, subscriptions, catalog: catalog.filter((i) => i.is_active),
       payers: memory.payers, ownNames: memory.ownNames, noGst: Boolean(billOfSupplyStatus(gst.data?.saved ?? null)),
       today: istToday(),
-      lut: { number: lutNumber, validUpto: lutValidUpto },
+      lut: lutRows,
     };
-  }, [customers, subscriptions, catalog, memory.payers, memory.ownNames, gst.data, meLoaded, lutNumber, lutValidUpto]);
+  }, [customers, subscriptions, catalog, memory.payers, memory.ownNames, gst.data, lutRows, lutError]);
 
   const plan: PlanRow[] = React.useMemo(() => {
     if (!ctx) return [];

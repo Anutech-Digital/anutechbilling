@@ -53,8 +53,9 @@ import { isSplitBilled } from "@/lib/billing/instalments";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { parsePlaceOfSupply } from "@/lib/import/zoho-opening-invoices";
 import {
-  exportLutProblem, formatRemittance, parseInwardRemittance, remittanceFitsCredit, type ExportLut, type InwardRemittance,
+  exportLutProblem, exportLutRows, formatRemittance, parseInwardRemittance, remittanceFitsCredit, type ExportLut, type InwardRemittance,
 } from "@/lib/banking/inward-remittance";
+import { lutFor } from "@/lib/gst/export-lut";
 import { formatForeign } from "@/lib/currency";
 import type { FindZohoResult, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 import { mapZohoCustomer, normCompanyName, zohoSaleLine, zohoSaleNumber } from "./payment-prefill";
@@ -180,7 +181,8 @@ export interface PlanContext {
   /** R-2419 (c): today (IST, YYYY-MM-DD). Absent = today in IST. */
   today?: string;
   /** R-2440: the company's LUT (Settings → Company). An export receipt is booked at 0% only under an
-   *  LUT for its financial year; absent = not loaded (the server still refuses without one). */
+   *  LUT for its financial year; absent = not loaded (the server still refuses without one). R-2444:
+   *  the per-FY list (tenant_luts); the old single-LUT shape is still read. */
   lut?: ExportLut;
 }
 
@@ -732,12 +734,19 @@ export function planRow(
     /* R-2440 (tax memo §1): 0% export only under an LUT for this line's FY — else unticked with the step. */
     const lutProblem = fx && ctx.lut !== undefined ? exportLutProblem(ctx.lut, line.txnDate) : null;
     if (lutProblem) saleProblems.push(lutProblem);
-    const lutNo = lutProblem ? null : ctx.lut?.number?.trim();
+    /* R-2444: the ARN of THIS line's FY (an FY 2025-26 receipt names the FY 2025-26 LUT). */
+    const lutNo = lutProblem ? null : lutFor(exportLutRows(ctx.lut), line.txnDate)?.arn.trim();
     if (fx) notes.push(`Export receipt ${formatRemittance(remittance!)}: booked in ${fx.currency} at the bank's rate, ₹ = the bank credit; 0% GST (export of services, zero-rated under ${lutNo ? `LUT ${lutNo}` : "LUT — check your LUT in Settings"}).`);
   } else if (Math.abs(match.payment.amount - line.credit) > AMOUNT_SLACK) {
     zohoProblems.push(`Amount differs: Zoho payment ${rupees(match.payment.amount)}, bank line ${rupees(line.credit)}.`);
   } else if (lines.length && Math.abs(preview.total - money) > AMOUNT_SLACK) {
     saleProblems.push(`Amount differs: the sale comes to ${rupees(preview.total)}, the bank line${tds ? ` + TDS ${rupees(tds)}` : ""} is ${rupees(money)}.`);
+  }
+  /* R-2444: a ₹ sale to a foreign customer is a 0% export too — the server refuses it without the LUT
+     of the line's FY (trg_invoices_zz_export_lut), so the plan leaves it unticked with the step. */
+  if (!fx && foreign && !ctx.noGst && lines.length && ctx.lut !== undefined) {
+    const inrLutProblem = exportLutProblem(ctx.lut, line.txnDate);
+    if (inrLutProblem) saleProblems.push(inrLutProblem);
   }
   if (tds > 0 && lines.length && tdsPctWithin(tds, preview.taxable) === null) saleProblems.push(shortByText(tds, preview.taxable));
   const rate = tdsRate(tds, preview.taxable);

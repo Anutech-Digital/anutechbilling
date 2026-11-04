@@ -14,6 +14,8 @@
 
 import * as React from "react";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { useTenantLuts } from "@/lib/queries/tenant-luts";
+import { lutFor } from "@/lib/gst/export-lut";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { useRouter } from "next/navigation";
 
@@ -140,6 +142,8 @@ export function TaxInvoiceDialog({
      chhodi nahi; par wajah waise ki waise hai, aur doosra parent kabhi bhi wapas aa sakta
      hai.) */
   const { data: me } = useCurrentUser();
+  /* R-2444: the LUTs per FY — the PDF prints the ARN of this invoice's FY. */
+  const { data: lutRows } = useTenantLuts();
   const router = useRouter();
   const [downloadingPdf, setDownloadingPdf] = React.useState(false);
 
@@ -280,8 +284,9 @@ export function TaxInvoiceDialog({
       tenantName, tenantGstin, tenantEmail, tenantPhone,
       tenantAddress, tenantState, placeOfSupply,
       tenantLogo: await logoDataUri(me?.tenantLogoUrl),
-      /* R-334: LUT ARN for the Rule 46 export endorsement — same source as the server PDF. */
-      lutNumber: me?.tenantLutNumber ?? null,
+      /* R-334: LUT ARN for the Rule 46 export endorsement — same source as the server PDF.
+         R-2444: the ARN of the invoice's own financial year (tenant_luts). */
+      lutNumber: invoice.invoice_date ? lutFor(lutRows, invoice.invoice_date)?.arn ?? null : null,
       /* R-1670 (2): the same TDS split the dialog shows. */
       advanceTds,
     });

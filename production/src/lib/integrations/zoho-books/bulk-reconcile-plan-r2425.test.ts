@@ -203,3 +203,42 @@ describe("R-2440: Reconcile from Zoho books an export receipt only under an LUT"
     expect(row.problems.join(" ")).not.toContain("LUT");
   });
 });
+
+/* R-2444: the LUT per FY (tenant_luts). Owner's case: the Zoho backlog has FY 2025-26 receipts while
+   Settings held only the FY 2026-27 LUT — they were refused. And a ₹ sale to a foreign customer is a
+   0% export too: the server now refuses it without the LUT, so the plan unticks it with the step. */
+describe("R-2444: Reconcile from Zoho reads the LUT of the line's own FY, also for a ₹ export sale", () => {
+  const fy2526 = { fyStart: "2025-04-01", arn: "AD070425000999X", validFrom: "2025-04-01", validUpto: "2026-03-31" };
+  const fy2627 = { fyStart: "2026-04-01", arn: "AD070426000123X", validFrom: "2026-04-01", validUpto: "2027-03-31" };
+  const marchLine = (): BulkLine => ({ id: "t-mar", txnDate: "2026-03-24", credit: 85200, description: "INW 240326I049902623 USD1000.0@85.2", reference: null });
+  const marchPay = () => usd("Design Box", [zl({ rate: 1000 })], 1000, { date: "2026-03-24", reference: "240326I049902623", exchangeRate: 85.2 });
+
+  it("FY 2025-26 receipt with the FY 2025-26 LUT on file → Ready, and the note names THAT year's ARN", () => {
+    const row = planRow(marchLine(), marchPay(), null, { ...ctx, lut: [fy2627, fy2526] });
+    expect(row.problems).toEqual([]);
+    expect(row.ticked).toBe(true);
+    expect(row.notes.join(" ")).toContain("LUT AD070425000999X");
+    expect(row.notes.join(" ")).not.toContain("AD070426000123X");
+  });
+  it("FY 2025-26 receipt with only the FY 2026-27 LUT → unticked, names FY 2025-26", () => {
+    const row = planRow(marchLine(), marchPay(), null, { ...ctx, lut: [fy2627] });
+    expect(row.ticked).toBe(false);
+    expect(row.problems.join(" ")).toContain("No LUT for FY 2025-26 on file");
+  });
+  it("a ₹ receipt from a foreign customer (0% export) with no LUT → unticked with the step", () => {
+    const inr = usd("Design Box", [zl({ rate: 1000 })], 1000, { currency: undefined });
+    const row = planRow(line(1000, "NEFT CR-CITI0000001-DESIGN BOX"), inr, null, { ...ctx, lut: [] });
+    expect(row.ticked).toBe(false);
+    expect(row.problems.join(" ")).toContain("No LUT for FY 2026-27 on file");
+    expect(row.problems.join(" ")).toContain("bill this sale with IGST");
+  });
+  it("the same ₹ receipt under this year's LUT → no LUT problem", () => {
+    const inr = usd("Design Box", [zl({ rate: 1000 })], 1000, { currency: undefined });
+    const row = planRow(line(1000, "NEFT CR-CITI0000001-DESIGN BOX"), inr, null, { ...ctx, lut: [fy2627] });
+    expect(row.problems.join(" ")).not.toContain("LUT");
+  });
+  it("an Indian customer's ₹ receipt is never asked for an LUT", () => {
+    const row = planRow(line(1000, "NEFT CR-HDFC0000001-DESI TRADERS"), usd("Desi Traders", [zl({ rate: 1000 })], 1000, { currency: undefined }), null, { ...ctx, lut: [] });
+    expect(row.problems.join(" ")).not.toContain("LUT");
+  });
+});
