@@ -7,11 +7,12 @@
 --
 -- Expect "PASS r2469_replace_stale_invite". Failures are collected and listed together.
 --
---   Owner of A (Excel) MAY clear (returns true, invite gone):
+--   Owner of A (Excel) MAY clear ('released', invite gone):
 --     an EXPIRED pending invite in a real company R; an invite in a blank workspace B whose only
---     member is the invitee (the 4 Nov Pratik case); an ACCEPTED invite in R for someone who is
+--     member is the invitee (accidental blank workspace); an ACCEPTED invite in R for someone who is
 --     no longer a member there.
---   Owner of A may NOT clear (returns false, invite stays):
+--   Owner of A may NOT clear ('in_use' / 'member_elsewhere' / 'none', invite stays) — 'member_elsewhere'
+--   for anyone in a real company (the 4 Nov staging case: Pratik is a member of another company):
 --     a pending unexpired invite in R; an invite in an empty workspace whose member is someone
 --     ELSE; an accepted invite in R for someone still in R; an invite in a solo workspace that
 --     holds records; A's own invite.
@@ -110,24 +111,26 @@ begin
     insert into r2469_fail(label, detail) values ('refused callers', 'a refused caller still deleted the invite'); end if;
 
   -- ── must stay ───────────────────────────────────────────────────────────
-  perform pg_temp.r2469_expect('pending unexpired invite in a real company', a, 'r2469-pending-d@example.test', 'false');
-  perform pg_temp.r2469_expect('empty workspace of SOMEONE ELSE',            a, 'r2469-fresh-c@example.test',   'false');
-  perform pg_temp.r2469_expect('accepted invite, still a member of R',       a, 'r2469-staff-d@example.test',   'false');
-  perform pg_temp.r2469_expect('solo workspace that holds records',          a, 'r2469-solo-e@example.test',    'false');
-  perform pg_temp.r2469_expect('A''s own invite',                            a, 'r2469-own-a@example.test',     'false');
-  perform pg_temp.r2469_expect('no invite anywhere',                         a, 'r2469-nobody@example.test',    'false');
+  perform pg_temp.r2469_expect('pending unexpired invite in a real company', a, 'r2469-pending-d@example.test', 'in_use');
+  perform pg_temp.r2469_expect('empty workspace of SOMEONE ELSE',            a, 'r2469-fresh-c@example.test',   'in_use');
+  perform pg_temp.r2469_expect('accepted invite, still a member of R',       a, 'r2469-staff-d@example.test',   'member_elsewhere');
+  perform pg_temp.r2469_expect('solo workspace that holds records',          a, 'r2469-solo-e@example.test',    'member_elsewhere');
+  -- the 4 Nov staging case: an active member of another real company, no invite left anywhere
+  perform pg_temp.r2469_expect('member of a real company, no invite',        a, 'R2469-Owner-D@example.test',   'member_elsewhere');
+  perform pg_temp.r2469_expect('A''s own invite',                           a, 'r2469-own-a@example.test',     'none');
+  perform pg_temp.r2469_expect('no invite anywhere',                         a, 'r2469-nobody@example.test',    'none');
   if (select count(*) from public.team_invites where email in (
         'r2469-pending-d@example.test', 'r2469-fresh-c@example.test', 'r2469-staff-d@example.test',
         'r2469-solo-e@example.test', 'r2469-own-a@example.test')) <> 5 then
     insert into r2469_fail(label, detail) values ('must stay', 'an invite that must stay was deleted'); end if;
 
   -- ── may be cleared ──────────────────────────────────────────────────────
-  perform pg_temp.r2469_expect('EXPIRED pending invite in a real company', a, 'r2469-expired@example.test', 'true');
-  perform pg_temp.r2469_expect('accepted invite, person has left R',       a, 'r2469-left-d@example.test',  'true');
-  perform pg_temp.r2469_expect('blank workspace whose only member is the invitee (Pratik)', a, '  R2469-Pratik@Example.test ', 'true');
+  perform pg_temp.r2469_expect('EXPIRED pending invite in a real company', a, 'r2469-expired@example.test', 'released');
+  perform pg_temp.r2469_expect('accepted invite, person has left R',       a, 'r2469-left-d@example.test',  'released');
+  perform pg_temp.r2469_expect('blank workspace whose only member is the invitee (Pratik)', a, '  R2469-Pratik@Example.test ', 'released');
   if exists (select 1 from public.team_invites where email in (
         'r2469-expired@example.test', 'r2469-left-d@example.test', 'r2469-pratik@example.test')) then
-    insert into r2469_fail(label, detail) values ('may be cleared', 'invite still there after true'); end if;
+    insert into r2469_fail(label, detail) values ('may be cleared', 'invite still there after released'); end if;
 
   -- ── audit: in A, never names the other workspace ────────────────────────
   if (select count(*) from public.activity_log where tenant_id = ta and action = 'stale_invite_released') <> 3 then
