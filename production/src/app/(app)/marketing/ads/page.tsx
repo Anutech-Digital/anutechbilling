@@ -30,9 +30,10 @@ import {
   PLATFORM_LABEL, PLATFORM_CHANNEL, totalsOf, campaignStats, pacing, reconcileMonths, dailySeries, adCsvRows, AD_CSV_HEADERS,
   type AdPlatform,
 } from "@/lib/marketing/ad-platforms";
-import { useAdsStatus, useAdSpend, useBookedAdSpendByMonth, useLeadsByCampaign, useAdSyncRuns, useAdsSync, type AdsStatus } from "@/lib/queries/ads";
+import { useAdsStatus, useAdSpend, useBookedAdSpendByMonth, useLeadsByCampaign, useAdSyncRuns, type AdsStatus } from "@/lib/queries/ads";
 import { syncAdsWindow } from "@/lib/queries/ads";
-import { linkedInHistoryChunks, linkedInOldestDay, linkedInDailyFrom } from "@/lib/marketing/linkedin-history";
+import { adSyncChunks, metaOldestDay } from "@/lib/marketing/ad-sync-windows";
+import { linkedInOldestDay, linkedInDailyFrom } from "@/lib/marketing/linkedin-history";
 import { useBudgets } from "@/lib/queries/marketing-budget";
 import { approvedMonthlyBudget, canAskBudget } from "@/lib/marketing-budget/budget";
 import { AskBudgetDialog } from "@/components/features/marketing-budget/budget-page";
@@ -60,21 +61,16 @@ const MSG: Record<string, { ok: boolean; text: string }> = {
 
 export default function AdPlatformsPage() {
   const status = useAdsStatus();
-  const sync = useAdsSync();
   const budgets = useBudgets();
   const [range, setRange] = React.useState<Range>("90");
   const [pf, setPf] = React.useState<PlatformFilter>("all");
   const [selectedAccountId, setSelectedAccountId] = React.useState("all");
   const [syncPickerOpen, setSyncPickerOpen] = React.useState(false);
   const [syncSelection, setSyncSelection] = React.useState<string[]>([]);
+  const [syncing, setSyncing] = React.useState(false);
+  const [syncProgress, setSyncProgress] = React.useState<{ done: number; total: number; rows: number } | null>(null);
   const [budgetPlatform, setBudgetPlatform] = React.useState<AdPlatform | null>(null);
   const [why, setWhy] = React.useState<string | null>(null);
-  const [showHistorySync, setShowHistorySync] = React.useState(false);
-  const [historyMode, setHistoryMode] = React.useState<"all" | "custom">("all");
-  const [historyFrom, setHistoryFrom] = React.useState("");
-  const [historyTo, setHistoryTo] = React.useState("");
-  const [historyProgress, setHistoryProgress] = React.useState<{ done: number; total: number; rows: number } | null>(null);
-  const [historySyncing, setHistorySyncing] = React.useState(false);
   const [customFrom, setCustomFrom] = React.useState("");
   const [customTo, setCustomTo] = React.useState("");
 
@@ -112,6 +108,7 @@ export default function AdPlatformsPage() {
   const enabledAccounts = accounts.filter((a) => a.enabled);
   function openSyncPicker() {
     setSyncSelection(selectedAccount?.enabled ? [selectedAccount.id] : []);
+    setSyncProgress(null);
     setSyncPickerOpen(true);
   }
   React.useEffect(() => {
@@ -145,33 +142,36 @@ export default function AdPlatformsPage() {
 
   const exportCsv = () => downloadCSV(`ad-spend-${from}-${to}.csv`, AD_CSV_HEADERS, adCsvRows(inRange, new Map(accounts.map((a) => [a.id, a.name]))));
 
-  async function syncHistory() {
-    const start = historyMode === "all" ? historyStart : historyFrom;
-    const end = historyMode === "all" ? today : historyTo;
-    let chunks;
-    try { chunks = linkedInHistoryChunks(start, end, today); }
-    catch (e) { toast.error(e instanceof Error ? e.message : "Choose valid dates."); return; }
-    const historyAccountId = selectedAccount?.platform === "linkedin-ads" ? selectedAccount.id : undefined;
-    if (historyAccountId && !selectedAccount?.enabled) {
-      toast.error("Turn on sync for this LinkedIn account first."); return;
+  async function syncSelectedAccounts() {
+    const selected = enabledAccounts.filter((account) => syncSelection.includes(account.id));
+    if (!selected.length || selected.length !== syncSelection.length) {
+      toast.error("Choose at least one active ad account."); return;
     }
-    setHistorySyncing(true);
-    setHistoryProgress({ done: 0, total: chunks.length, rows: 0 });
+    let requests: { platform: AdPlatform; from: string; to: string; accountIds: string[] }[];
+    try {
+      requests = (["google-ads", "meta-ads", "linkedin-ads"] as const).flatMap((platform) => {
+        const ids = selected.filter((account) => account.platform === platform).map((account) => account.id);
+        return ids.length ? adSyncChunks(platform, from, to, today).map((chunk) => ({ platform, from: chunk.from, to: chunk.to, accountIds: ids })) : [];
+      });
+    } catch (e) { toast.error(e instanceof Error ? e.message : "Choose valid dates."); return; }
+    setSyncing(true);
+    setSyncProgress({ done: 0, total: requests.length, rows: 0 });
     let written = 0;
     try {
-      for (let i = 0; i < chunks.length; i++) {
-        const result = await syncAdsWindow({ from: chunks[i].from, to: chunks[i].to, accountId: historyAccountId });
+      for (let i = 0; i < requests.length; i++) {
+        const result = await syncAdsWindow(requests[i]);
         if (result.errors.length) throw new Error(result.errors[0]);
-        if (!result.accounts) throw new Error("No enabled LinkedIn ad account was found for this sync.");
+        if (result.accounts !== requests[i].accountIds.length) throw new Error("Some selected accounts were not synced. Check their connection and try again.");
         written += result.rowsWritten;
-        setHistoryProgress({ done: i + 1, total: chunks.length, rows: written });
+        setSyncProgress({ done: i + 1, total: requests.length, rows: written });
       }
       await Promise.all([spend.refetch(), status.refetch(), runs.refetch()]);
-      toast.success(`LinkedIn history synced — ${written} campaign rows.`);
+      toast.success(`Synced ${selected.length} ${selected.length === 1 ? "account" : "accounts"} for ${formatDate(from)} – ${formatDate(to)}.`);
+      setSyncPickerOpen(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "LinkedIn history sync failed.");
+      toast.error(e instanceof Error ? e.message : "Ad account sync failed.");
       await Promise.all([spend.refetch(), status.refetch(), runs.refetch()]);
-    } finally { setHistorySyncing(false); }
+    } finally { setSyncing(false); }
   }
 
   return (
@@ -186,40 +186,9 @@ export default function AdPlatformsPage() {
           </p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
-          {anyConnected && (
-            <>
-              <Button variant="default" icon="download" onClick={exportCsv} disabled={inRange.length === 0}>Export CSV</Button>
-              {accounts.length > 0 && <>
-                {status.data?.linkedin.connected && (pf === "all" || pf === "linkedin-ads") && <Button variant="outline" onClick={() => setShowHistorySync((v) => !v)} disabled={historySyncing}>{showHistorySync ? "Hide LinkedIn history" : "Sync LinkedIn history"}</Button>}
-                <Button variant="primary" icon="refresh" onClick={openSyncPicker} disabled={historySyncing || sync.isPending || enabledAccounts.length === 0}>Choose accounts to sync</Button>
-              </>}
-            </>
-          )}
+          {anyConnected && <Button variant="default" icon="download" onClick={exportCsv} disabled={inRange.length === 0}>Export CSV</Button>}
         </div>
       </header>
-
-      {showHistorySync && status.data?.linkedin.connected && (
-        <Card>
-          <div className="space-y-4">
-            <div>
-              <h2 className="font-semibold text-ink">Sync LinkedIn Ads history</h2>
-              <p className="text-sm text-ink-3 mt-1">Fetch campaign-group spend, clicks and impressions for {selectedAccount?.platform === "linkedin-ads" ? selectedAccount.name : "all LinkedIn accounts"}. Keep this page open until the sync finishes. Re-sync older dates to replace the old ad-set-level report.</p>
-            </div>
-            <TabBar value={historyMode} onChange={(v) => { setHistoryMode(v as "all" | "custom"); setHistoryProgress(null); }} items={[{ id: "all", label: "All available history" }, { id: "custom", label: "Custom dates" }]} />
-            {historyMode === "custom" && (
-              <div className="grid gap-4 sm:grid-cols-2 max-w-xl">
-                <FormField label="From" htmlFor="history-from"><Input id="history-from" type="date" min={historyStart} max={today} value={historyFrom || addDays(today, -365)} onChange={(e) => setHistoryFrom(e.target.value)} /></FormField>
-                <FormField label="To" htmlFor="history-to"><Input id="history-to" type="date" min={historyStart} max={today} value={historyTo || today} onChange={(e) => setHistoryTo(e.target.value)} /></FormField>
-              </div>
-            )}
-            <p className="text-xs text-ink-3">LinkedIn keeps standard ad performance for up to 10 years. Older results are synced as full-month totals; recent results are daily. Custom dates in older months include those full months.</p>
-            <div className="flex items-center gap-3 flex-wrap">
-              <Button variant="primary" onClick={() => void syncHistory()} loading={historySyncing} disabled={sync.isPending}>{historySyncing ? "Syncing history…" : "Start history sync"}</Button>
-              {historyProgress && <span role="status" className="text-sm text-ink-3">{historyProgress.done}/{historyProgress.total} date windows · {historyProgress.rows} rows saved</span>}
-            </div>
-          </div>
-        </Card>
-      )}
 
       {why && <Card className="p-3 border-rose/30 bg-rose-soft/30 text-sm text-ink">{why}</Card>}
 
@@ -284,7 +253,7 @@ export default function AdPlatformsPage() {
                 <p className="text-sm font-semibold text-ink">Spend &amp; results</p>
                 <p className="text-xs text-ink-3">{formatDate(from)} – {formatDate(to)}{isPreset ? ` vs previous ${range} days` : ""}</p>
               </div>
-              <div className="flex gap-2 flex-wrap items-center">
+              <div className="flex flex-1 gap-2 flex-wrap items-center">
                 <TabBar value={pf} onChange={(v) => { setPf(v as PlatformFilter); setSelectedAccountId("all"); }} items={[{ id: "all", label: "All" }, { id: "google-ads", label: "Google" }, { id: "meta-ads", label: "Meta" }, { id: "linkedin-ads", label: "LinkedIn" }]} />
                 {accounts.length > 0 && <label className="flex items-center gap-2 text-xs text-ink-3">Ad account
                   <select aria-label="Ad account" className="rounded-md border border-hairline bg-paper px-2 py-1.5 text-sm text-ink max-w-56" value={selectedAccountId} onChange={(e) => { const id = e.target.value; setSelectedAccountId(id); const account = accounts.find((a) => a.id === id); if (account) setPf(account.platform); }}>
@@ -293,9 +262,11 @@ export default function AdPlatformsPage() {
                   </select>
                 </label>}
                 <TabBar value={range} onChange={(v) => setRange(v as Range)} items={[{ id: "7", label: "7 days" }, { id: "30", label: "30 days" }, { id: "90", label: "90 days" }, { id: "all", label: "All time" }, { id: "custom", label: "Custom" }]} />
+                <Button variant="primary" icon="refresh" className="ml-auto" onClick={openSyncPicker} disabled={syncing || enabledAccounts.length === 0}>Sync selected dates</Button>
               </div>
             </div>
             {range === "custom" && <div className="flex flex-wrap items-end gap-3 mb-4"><FormField label="From" htmlFor="report-from"><Input id="report-from" type="date" min={historyStart} max={to} value={customFrom || addDays(today, -89)} onChange={(e) => setCustomFrom(e.target.value)} /></FormField><FormField label="To" htmlFor="report-to"><Input id="report-to" type="date" min={from} max={today} value={customTo || today} onChange={(e) => setCustomTo(e.target.value)} /></FormField></div>}
+            {syncing && syncProgress && <p role="status" className="text-xs text-ink-3 mb-3">Syncing {syncProgress.done}/{syncProgress.total} date windows · {syncProgress.rows} rows saved. Keep this page open.</p>}
             {(range === "all" || range === "custom") && from < dailyFrom && <p className="text-xs text-ink-3 mb-3">Older LinkedIn results are monthly. A custom date inside an older month includes that full month.</p>}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               <Kpi label="Spend" value={rupee(totals.spend)} change={pct(totals.spend, prev.spend)} compare={isPreset} />
@@ -328,7 +299,7 @@ export default function AdPlatformsPage() {
             <div className="p-4 pb-2">
               <p className="text-sm font-semibold text-ink">Campaigns · {isPreset ? `last ${range} days` : `${formatDate(from)} – ${formatDate(to)}`}</p>
               <p className="text-xs text-ink-3">LinkedIn rows show Campaign Groups, the top campaign level. Leads match utm_campaign to the name. Conversions are the platform's number.</p>
-              {linkedinAccounts.length > 0 && <p className="text-xs text-ink-3 mt-1">For LinkedIn dates synced before this change, use <button type="button" className="underline" onClick={() => setShowHistorySync(true)}>Sync older data</button> to load Campaign Groups.</p>}
+              {linkedinAccounts.length > 0 && <p className="text-xs text-ink-3 mt-1">To refresh older LinkedIn Campaign Groups, choose All time or Custom above and sync the LinkedIn account.</p>}
             </div>
             {campaigns.length === 0 ? (
               <div className="p-4"><EmptyState icon="target" title="No spend in this range" body="Campaigns appear here after a sync." /></div>
@@ -432,26 +403,28 @@ export default function AdPlatformsPage() {
         </>
       )}
       {budgetPlatform && <AskBudgetDialog open onClose={() => setBudgetPlatform(null)} initialChannel={budgetPlatform} />}
-      <Dialog open={syncPickerOpen} onOpenChange={(open) => { if (!sync.isPending) setSyncPickerOpen(open); }}>
+      <Dialog open={syncPickerOpen} onOpenChange={(open) => { if (!syncing) setSyncPickerOpen(open); }}>
         <DialogContent className="sm:!max-w-lg">
           <DialogHeader>
             <DialogTitle>Sync ad accounts</DialogTitle>
-            <DialogDescription>Choose exactly which accounts to sync now. This does not change their nightly sync settings.</DialogDescription>
+            <DialogDescription>Sync {formatDate(from)} – {formatDate(to)} for only the accounts you choose. Nightly sync settings stay the same.</DialogDescription>
           </DialogHeader>
+          {syncSelection.some((id) => accounts.find((account) => account.id === id)?.platform === "meta-ads") && from < metaOldestDay(today) && <p className="text-xs text-ink-3">Meta Ads can provide only recent history, so its sync starts {formatDate(metaOldestDay(today))}. Other selected platforms use the full chosen range.</p>}
           <div className="flex items-center gap-3 text-sm">
-            <button type="button" className="text-amber-ink hover:underline" onClick={() => setSyncSelection(enabledAccounts.map((account) => account.id))}>Select all</button>
-            <button type="button" className="text-ink-3 hover:underline" onClick={() => setSyncSelection([])}>Clear</button>
+            <button type="button" className="text-amber-ink hover:underline disabled:opacity-50" disabled={syncing} onClick={() => setSyncSelection(enabledAccounts.map((account) => account.id))}>Select all</button>
+            <button type="button" className="text-ink-3 hover:underline disabled:opacity-50" disabled={syncing} onClick={() => setSyncSelection([])}>Clear</button>
             <span className="ml-auto text-ink-3">{syncSelection.length} selected</span>
           </div>
           <div className="max-h-72 space-y-1 overflow-y-auto rounded-md border border-hairline p-2">
             {enabledAccounts.map((account) => <label key={account.id} className="flex cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-paper-2">
-              <input type="checkbox" className="mt-1 accent-orange-700" checked={syncSelection.includes(account.id)} onChange={(event) => setSyncSelection((current) => event.target.checked ? [...current, account.id] : current.filter((id) => id !== account.id))} disabled={sync.isPending} />
+              <input type="checkbox" className="mt-1 accent-orange-700" checked={syncSelection.includes(account.id)} onChange={(event) => setSyncSelection((current) => event.target.checked ? [...current, account.id] : current.filter((id) => id !== account.id))} disabled={syncing} />
               <span className="min-w-0"><span className="block text-sm font-medium text-ink">{account.name}</span><span className="block text-xs text-ink-3">{PLATFORM_LABEL[account.platform]} · {account.account_id}</span></span>
             </label>)}
           </div>
+          {syncProgress && <p role="status" className="text-sm text-ink-3">{syncProgress.done}/{syncProgress.total} date windows · {syncProgress.rows} rows saved{syncing ? ". Keep this page open." : ""}</p>}
           <DialogFooter>
-            <Button variant="ghost" onClick={() => setSyncPickerOpen(false)} disabled={sync.isPending}>Cancel</Button>
-            <Button variant="primary" icon="refresh" loading={sync.isPending} disabled={syncSelection.length === 0} onClick={() => sync.mutate(syncSelection, { onSuccess: () => setSyncPickerOpen(false) })}>Sync {syncSelection.length || "selected"} {syncSelection.length === 1 ? "account" : "accounts"}</Button>
+            <Button variant="ghost" onClick={() => setSyncPickerOpen(false)} disabled={syncing}>Cancel</Button>
+            <Button variant="primary" icon="refresh" loading={syncing} disabled={syncSelection.length === 0} onClick={() => void syncSelectedAccounts()}>{syncing ? "Syncing…" : `Sync ${syncSelection.length || "selected"} ${syncSelection.length === 1 ? "account" : "accounts"}`}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
