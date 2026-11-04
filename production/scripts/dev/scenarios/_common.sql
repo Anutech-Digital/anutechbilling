@@ -365,7 +365,7 @@ declare
   got jsonb := pg_temp.scn_extra_count(p_tenant, p_txns, p_extra);
   ids record;
   x_tables text[] := array['bank_transactions', 'payments', 'customers', 'salary_payments', 'expenses', 'employees',
-    'business_loan_payments', 'business_loans', 'tenants'];
+    'business_loan_payments', 'business_loans', 'tenants', 'reimbursements'];
   opt_tables text[] := array['network_documents', 'tenant_connections', 'gstin_ownership_claims'];
 begin
   if (select sum(v::int) from jsonb_each_text(got) as t(k, v)) = 0 then
@@ -401,6 +401,8 @@ begin
   -- the Salaries bills pay_salary booked for the scenario's people
   with gone as (delete from public.salary_payments where id = any(ids.sal) returning expense_id)
   delete from public.expenses x using gone g where x.tenant_id = p_tenant and x.id = g.expense_id;
+  -- R-2407: money owed back to a scenario's person (booked from its bank line while testing)
+  delete from public.reimbursements where tenant_id = p_tenant and employee_id = any(ids.e);
   delete from public.employees where id = any(ids.e);
   delete from public.business_loan_payments where tenant_id = p_tenant and loan_id = any(ids.l);
   delete from public.business_loans where id = any(ids.l);

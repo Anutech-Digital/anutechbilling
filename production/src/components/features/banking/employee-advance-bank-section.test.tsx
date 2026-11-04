@@ -94,7 +94,7 @@ describe("R-1871 employee advance from a bank line", () => {
      owed back to her. */
   it("R-2407 money-in, no open advance: all active employees listed, owed back to the named one", async () => {
     const done = vi.fn();
-    render(<EmployeeAdvanceBankSection transaction={txn({ debit: 0, credit: 16000, description: "UPI/NEELAM SHARMA/EXCEL TECHNOLOGIES" })} onDone={done} />);
+    render(<EmployeeAdvanceBankSection transaction={txn({ debit: 0, credit: 16000, description: "UPI/NEELAM SHARMA/PAID BY MISTAKE" })} onDone={done} />);
     expect(screen.getByText("Money in from an employee?")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Book return" }));
     expect(screen.queryByRole("radiogroup")).toBeNull();     // no advance to return → only "owed back"
@@ -137,7 +137,7 @@ describe("R-1871 employee advance from a bank line", () => {
 
   it("R-2407 money-in from someone with no advance while others hold one: owed back is pre-picked, return still offered", async () => {
     advances = [{ id: "a2", employee_name: "Suresh Pal", status: "active", remaining_balance: 900, disbursed_date: "2026-10-02" }];
-    render(<EmployeeAdvanceBankSection transaction={txn({ debit: 0, credit: 16000, description: "UPI/NEELAM SHARMA/EXCEL TECHNOLOGIES" })} onDone={vi.fn()} />);
+    render(<EmployeeAdvanceBankSection transaction={txn({ debit: 0, credit: 16000, description: "UPI/NEELAM SHARMA/PAID BY MISTAKE" })} onDone={vi.fn()} />);
     fireEvent.click(screen.getByRole("button", { name: "Book return" }));
     expect((screen.getByRole("radio", { name: /Paid to us by mistake/ }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText("Employee") as HTMLSelectElement).value).toBe("e3");

@@ -236,6 +236,17 @@ export const SCENARIOS = [
     ],
   },
   {
+    name: "employee-owed-back",
+    about: "SCN Neelam Sharma: last month's ₹30,000 salary (made with pay_salary, unpaid), a ₹16,000 money-in line 'UPI/…/SCN NEELAM SHARMA/PAID BY MISTAKE' (no advance held) and a ₹46,000 'NEFT DR-…-SALARY-SCN NEELAM SHARMA' line (salary + the ₹16,000 back).",
+    cards: ["R-2407"],
+    scope: { vendors: [], txns: [x(103), x(104)], docs: [], names: [], upis: [], extra: [x(101)] },
+    expect: { ...NO_OLD, txns: 2, ...NO_EXTRA, employees: 1, salaries: 1 },
+    pages: [
+      { path: "banking", for: "R-2407 the ₹16,000 SCN Neelam line → Reconcile → Employee return → every employee listed → 'Paid to us by mistake — we owe it back' → Book; then the ₹46,000 line → Employee / salary → 'Also pays back ₹16,000 owed to SCN Neelam Sharma' → Pay salary + ₹16,000 owed back" },
+      { path: "payroll", for: "R-2407 SCN Neelam Sharma's salary Paid (₹30,000) — no extra salary" },
+    ],
+  },
+  {
     name: "nbfc-interest",
     about: "Business Loans: SCN Bajaj Finance Ltd (NBFC) ₹13,000 interest this FY (2 EMIs × ₹6,500) and SCN HDFC Bank ₹8,000; a ₹15,000 'ACH DR-SCN BAJAJ FINANCE LTD-EMI' money-out line.",
     cards: ["R-2376"],
