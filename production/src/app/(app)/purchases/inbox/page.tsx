@@ -40,7 +40,9 @@ const INBOX_TABS = ["email", "network"] as const;
 export default function PurchaseInboxPage() {
   const router = useRouter();
   const { data: pending, isLoading, error, refetch } = useInboundPurchases("pending");
-  const importMut = useImportPurchase();
+  /* R-2462: "Add to expenses" books once — a second click / second person gets
+     "Already added to expenses" with an "Open it" button (router, no full reload). */
+  const importMut = useImportPurchase({ openHref: (href) => router.push(href as never) });
   const ignoreMut = useIgnorePurchase();
   const [busyId, setBusyId] = React.useState<number | null>(null);
   const { data: me } = useCurrentUser();
@@ -55,11 +57,12 @@ export default function PurchaseInboxPage() {
 
   const doImport = async (row: InboundPurchase) => {
     setBusyId(row.id);
-    try { await importMut.mutateAsync(row); } finally { setBusyId(null); }
+    /* R-2462: a refusal is already toasted by the hook (toastError) — no unhandled rejection. */
+    try { await importMut.mutateAsync(row); } catch { /* toasted */ } finally { setBusyId(null); }
   };
   const doIgnore = async (id: number) => {
     setBusyId(id);
-    try { await ignoreMut.mutateAsync(id); } finally { setBusyId(null); }
+    try { await ignoreMut.mutateAsync(id); } catch { /* toasted */ } finally { setBusyId(null); }
   };
 
   return (
