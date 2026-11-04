@@ -31,8 +31,9 @@ import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { NetworkInboxTab } from "@/components/features/purchases/network-inbox-tab";
 import { useNetworkInbox } from "@/components/features/purchases/network-inbox-queries";
 import { canActOnNetwork } from "@/components/features/purchases/network-inbox-model";
-import { isRouteAllowed } from "@/lib/nav";
-import { isUserRole } from "@/lib/auth/roles";
+import { canOpenRoute } from "@/lib/nav";
+
+const FORWARDING_SETUP_HREF = "/settings?tab=integrations";
 
 const INBOX_TABS = ["email", "network"] as const;
 
@@ -48,8 +49,9 @@ export default function PurchaseInboxPage() {
   const networkPending = (network.data ?? []).filter((d) => d.status === "pending").length;
   const [tabChoice, setTab] = useUrlChoice("tab", INBOX_TABS, "email");
   const tab = showNetwork ? tabChoice : "email";
-  /* R-2461: the accountant opens this page but not /settings — no button that would bounce. */
-  const canSetUpForwarding = isUserRole(me?.role) && isRouteAllowed(me.role, "/settings");
+  /* R-2461: the accountant opens this page but not /settings — no button that would bounce.
+     canOpenRoute counts a still-loading role as allowed, so the owner's button never flickers. */
+  const canSetUpForwarding = React.useMemo(() => canOpenRoute(me?.role, FORWARDING_SETUP_HREF), [me?.role]);
 
   const doImport = async (row: InboundPurchase) => {
     setBusyId(row.id);
@@ -107,9 +109,9 @@ export default function PurchaseInboxPage() {
           title="Inbox is empty"
           body={canSetUpForwarding
             ? "Forward your Amazon order emails here (one-time Gmail filter setup) and each purchase will land here for a quick review."
-            : "Forwarded Amazon order emails land here for a quick review. Your owner or manager sets up email forwarding in Settings."}
+            : "Forwarded Amazon order emails land here for a quick review. Ask your owner or manager to set up email forwarding."}
           action={canSetUpForwarding
-            ? <Button icon="book" onClick={() => router.push("/settings?tab=integrations" as never)}>Set up email forwarding</Button>
+            ? <Button icon="book" onClick={() => router.push(FORWARDING_SETUP_HREF as never)}>Set up email forwarding</Button>
             : undefined}
         />
       )}
