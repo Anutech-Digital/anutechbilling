@@ -15,13 +15,14 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
    ───────────────────────────────────────────────────────────────────────────── */
 
 const sendCustomerEmail = vi.fn();
-const notifyTenantOwners = vi.fn();
+const notifyPeople = vi.fn();
+const renderQuotePDF = vi.fn();
 
 vi.mock("@/lib/messaging", () => ({ sendCustomerEmail: (...a: unknown[]) => sendCustomerEmail(...a) }));
 vi.mock("@/lib/notifications/notify.server", () => ({
-  notifyTenantOwners: (...a: unknown[]) => notifyTenantOwners(...a),
+  notifyPeople: (...a: unknown[]) => notifyPeople(...a),
 }));
-vi.mock("@/lib/pdf", () => ({ renderQuotePDF: async () => new Blob(["%PDF"]) }));
+vi.mock("@/lib/pdf", () => ({ renderQuotePDF: (...a: unknown[]) => renderQuotePDF(...a) }));
 vi.mock("@/lib/pdf/logo", () => ({ logoDataUri: async () => null }));
 vi.mock("@/lib/compliance/gst-registration-server", () => ({
   readTenantGstRegistration: async () => ({ registered: true }),
@@ -44,7 +45,7 @@ function fakeAdmin(tables: Record<string, Row | Row[] | null>) {
       return { data, error: null };
     };
     const b: Record<string, unknown> = {};
-    for (const m of ["select", "eq", "in", "or", "order", "limit"]) b[m] = () => b;
+    for (const m of ["select", "eq", "in", "is", "or", "order", "limit"]) b[m] = () => b;
     b.insert = (values: unknown) => { op = "insert"; writes.push({ table, op, values }); return b; };
     b.update = (values: unknown) => { op = "update"; writes.push({ table, op, values }); return b; };
     b.maybeSingle = async () => {
@@ -98,7 +99,8 @@ const ARGS = {
 
 beforeEach(() => {
   sendCustomerEmail.mockReset().mockResolvedValue({ status: "sent" });
-  notifyTenantOwners.mockReset().mockResolvedValue(undefined);
+  notifyPeople.mockReset().mockResolvedValue(undefined);
+  renderQuotePDF.mockReset().mockResolvedValue(new Blob(["%PDF"]));
 });
 
 describe("R-2456 — a lead with no state: the auto-quote is NOT emailed", () => {
@@ -120,12 +122,29 @@ describe("R-2456 — a lead with no state: the auto-quote is NOT emailed", () =>
     const notes = writes.filter((w) => w.table === "lead_activities").map((w) => (w.values as Row).detail as string);
     expect(notes.some((d) => /Auto-quote not sent — set the state/.test(d) && d.includes("Q-TEST-2026-27-0001"))).toBe(true);
     // The owner's bell, with the link that fixes it.
-    expect(notifyTenantOwners).toHaveBeenCalledTimes(1);
-    const n = notifyTenantOwners.mock.calls[0][0] as Row;
+    expect(notifyPeople).toHaveBeenCalledTimes(1);
+    const n = notifyPeople.mock.calls[0][0] as Row;
     expect(n.tenantId).toBe("t-1");
     expect(n.title).toMatch(/^Auto-quote not sent — set the state/);
     expect(n.href).toBe("/leads?lead=lead-1");
     expect(n.entityId).toBe("Q-TEST-2026-27-0001");
+    expect(n.kind).toBe("quote.not_sent");
+    expect(notifyPeople.mock.calls[0][1]).toEqual({ roles: ["owner", "manager"] });
+  });
+
+  it("a follow-up re-running the same held draft does not ring the bell twice", async () => {
+    const { admin, writes } = fakeAdmin({
+      quotes: QUOTE, tenants: TENANT, user_google_tokens: [],
+      leads: { state_code: null, gstin: null, country: "India", stage: "new" },
+      customers: null,
+      notifications: [{ id: "n-1" }], // an unread quote.not_sent for this quote already exists
+    });
+
+    expect(await sendAutoQuote(admin, ARGS)).toBe("failed");
+    expect(sendCustomerEmail).not.toHaveBeenCalled();
+    expect(notifyPeople).not.toHaveBeenCalled();
+    // The timeline still records this attempt.
+    expect(writes.some((w) => w.table === "lead_activities" && /Auto-quote not sent/.test(String((w.values as Row).detail)))).toBe(true);
   });
 
   it("the company's own state missing also stops it — link to Settings → Company", async () => {
@@ -139,9 +158,11 @@ describe("R-2456 — a lead with no state: the auto-quote is NOT emailed", () =>
 
     expect(out).toBe("failed");
     expect(sendCustomerEmail).not.toHaveBeenCalled();
-    const n = notifyTenantOwners.mock.calls[0][0] as Row;
+    const n = notifyPeople.mock.calls[0][0] as Row;
     expect(n.title).toMatch(/^Auto-quote not sent — set the company state/);
     expect(String(n.href)).toMatch(/settings/);
+    // Only the owner can set the company state — a manager is not sent a fix they cannot do.
+    expect(notifyPeople.mock.calls[0][1]).toEqual({ roles: ["owner"] });
   });
 });
 
@@ -158,7 +179,7 @@ describe("R-2456 — the approval half of the same gate", () => {
 
     expect(out).toBe("failed");
     expect(sendCustomerEmail).not.toHaveBeenCalled();
-    const n = notifyTenantOwners.mock.calls[0][0] as Row;
+    const n = notifyPeople.mock.calls[0][0] as Row;
     expect(n.title).toMatch(/^Auto-quote not sent — needs approval/);
     expect(n.href).toBe("/quotes/Q-TEST-2026-27-0001");
   });
@@ -177,6 +198,24 @@ describe("R-2456 — a lead WITH a state: the auto-quote is sent as before", () 
     expect(out).toBe("sent");
     expect(sendCustomerEmail).toHaveBeenCalledTimes(1);
     expect(writes.some((w) => w.table === "quotes" && (w.values as Row).status === "sent")).toBe(true);
-    expect(notifyTenantOwners).not.toHaveBeenCalled();
+    expect(notifyPeople).not.toHaveBeenCalled();
+    // Haryana buyer, Delhi seller → IGST, printed as such (was a blanket intra-state).
+    const pdf = renderQuotePDF.mock.calls[0][0] as Row;
+    expect(pdf.interState).toBe(true);
+    expect(pdf.placeOfSupply).toBe("Haryana (06) · IGST");
+    expect(String((sendCustomerEmail.mock.calls[0][0] as Row).text)).toMatch(/inter-state/);
+  });
+
+  it("a same-state lead stays intra-state (CGST + SGST)", async () => {
+    const { admin } = fakeAdmin({
+      quotes: QUOTE, tenants: TENANT, user_google_tokens: [],
+      leads: { state_code: "07", gstin: null, country: "India", stage: "new" },
+      customers: null,
+    });
+
+    expect(await sendAutoQuote(admin, ARGS)).toBe("sent");
+    const pdf = renderQuotePDF.mock.calls[0][0] as Row;
+    expect(pdf.interState).toBe(false);
+    expect(pdf.placeOfSupply).toBe("Delhi (07) · CGST + SGST");
   });
 });
