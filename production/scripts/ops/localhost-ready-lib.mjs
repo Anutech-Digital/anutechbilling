@@ -71,7 +71,7 @@ const SHELLS = new Set(["node.exe", "node", "cmd.exe"]);
  * tree goes and nothing restarts a half. Never this script (selfPid) or anything above it.
  * → { ok: true, pid, chain } | { ok: false, reason }
  */
-export function pickKillTarget({ listenerPid, procs, selfPid, selfAncestors = [] }) {
+export function pickKillTarget({ listenerPid, procs, selfPid, selfAncestors = [], productionDir = null }) {
   const listener = procs.get(Number(listenerPid));
   if (!listener) return { ok: false, reason: `pid ${listenerPid} not found in the process list — not killing` };
   if (listener.pid === selfPid) return { ok: false, reason: "the listener is this script — not killing" };
@@ -88,8 +88,17 @@ export function pickKillTarget({ listenerPid, procs, selfPid, selfAncestors = []
     chain.push(parent.pid);
     cur = parent;
   }
+  /* Review R-2457: a worker's dev:local or another project's next dev on the same port is not ours —
+     some process of the chain must name THIS checkout (next's own files sit under <productionDir>/node_modules). */
+  if (productionDir) {
+    const dir = norm(productionDir);
+    if (!chain.some((pid) => norm(procs.get(pid)?.cmd).includes(dir))) {
+      return { ok: false, reason: `the dev server on this port is not from ${productionDir} (no process of pid ${listener.pid}'s tree names it) — not killing` };
+    }
+  }
   return { ok: true, pid: cur.pid, chain };
 }
+const norm = (s) => String(s ?? "").replace(/\\/g, "/").replace(/\/+/g, "/").toLowerCase();
 
 /**
  * Fallback when the process list cannot be read (4 Nov: PowerShell/WMI did not answer in 90 s on the
@@ -97,11 +106,15 @@ export function pickKillTarget({ listenerPid, procs, selfPid, selfAncestors = []
  * port and checkout, and only while that pid is still a node.exe (tasklist image) — else refuse.
  * → { ok: true, pid, chain, via: "pidfile" } | { ok: false, reason }
  */
-export function pidFileTarget({ record, port, image, productionDir }) {
+export function pidFileTarget({ record, port, image, productionDir, listeners = [] }) {
   if (!record || !Number.isInteger(record.pid) || record.pid <= 4) return { ok: false, reason: "process list unreadable and no localhost:ready pid file — not killing; stop the server by hand (Ctrl+C in its window), then run localhost:ready again" };
   if (Number(record.port) !== Number(port)) return { ok: false, reason: `pid file is for port ${record.port}, not ${port} — not killing` };
   if (productionDir && record.dir && path_eq(record.dir, productionDir) === false) return { ok: false, reason: `pid file is for ${record.dir}, not this checkout — not killing` };
   if (!/^node(\.exe)?$/i.test(String(image ?? ""))) return { ok: false, reason: `pid ${record.pid} from the pid file is no longer node (${image || "gone"}) — not killing` };
+  /* Review R-2457: a recycled pid can be node too — the port's CURRENT listener must be one this script
+     saw answer for that server (recorded after it came up). */
+  const seen = new Set((record.listenerPids ?? []).map(Number));
+  if (!listeners.some((l) => seen.has(Number(l)))) return { ok: false, reason: `the server on port ${port} (pid ${listeners.join(", ") || "?"}) is not the one localhost:ready started — not killing; stop it by hand (Ctrl+C in its window)` };
   return { ok: true, pid: record.pid, chain: [record.pid], via: "pidfile" };
 }
 const path_eq = (a, b) => String(a).replace(/\\/g, "/").toLowerCase() === String(b).replace(/\\/g, "/").toLowerCase();
@@ -148,10 +161,28 @@ export function updateNeedsRestart(lines) {
   return (lines ?? []).some((l) => /restart par hi lagta hai/.test(String(l)));
 }
 
+/** What to do when POST /api/dev/test-login fails, by its status. */
+export function loginHint(status) {
+  if (status === 404) return "the :3001 server is not `npm run dev:local` (NEXT_PUBLIC_APP_ENV=local) or is not reached as localhost — start it with localhost:ready / dev:local, never plain `npm run dev`.";
+  if (status === 400) return "unknown role — use owner, manager, accountant, sales or owner2.";
+  if (status === 412 || status === 401) return "seed the test users once — E2E_ALLOW_SEED=1 node e2e/fixtures/seed-e2e-tenant.mjs (local DB only), and keep production/.env.test.";
+  return "read the dev server log (the route answered no ok) and try the Local test login button on /login.";
+}
+
+/** A warmed page that a checker would hit as broken: 5xx, no answer, or bounced to /login (session not taken). */
+export function warmVerdict(w) {
+  if (w == null || w.status == null || typeof w.status !== "number") return "gave no answer";
+  if (w.status >= 500) return `answered ${w.status}`;
+  if (w.status >= 300 && w.status < 400 && /\/login\b/.test(String(w.location ?? ""))) return "sent the signed-in session to /login";
+  return null;
+}
+
+export const TEST_ROLES = ["owner", "manager", "accountant", "sales", "owner2"];
+
 export function parseReadyArgs(argv) {
   const out = {
     dryRun: false, port: 3001, restart: true, update: true, warm: DEFAULT_WARM,
-    probeTimeoutMs: 30_000, probes: 3, startTimeoutMs: 300_000, role: "owner", help: false,
+    probeTimeoutMs: 60_000, probes: 3, startTimeoutMs: 300_000, role: "owner", help: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -163,9 +194,12 @@ export function parseReadyArgs(argv) {
       const list = String(argv[++i] ?? "").split(",").map((s) => s.trim()).filter(Boolean);
       for (const p of list) if (!/^\/[A-Za-z0-9/_\-.?=&]*$/.test(p) || p.startsWith("//")) throw new Error(`--warm takes app paths like /quotes, not "${p}"`);
       out.warm = list;
-    } else if (a === "--probe-timeout") out.probeTimeoutMs = Math.max(1, Number(argv[++i]) || 30) * 1000;
+    } else if (a === "--probe-timeout") out.probeTimeoutMs = Math.max(1, Number(argv[++i]) || 60) * 1000;
     else if (a === "--start-timeout") out.startTimeoutMs = Math.max(10, Number(argv[++i]) || 300) * 1000;
-    else if (a === "--role") out.role = String(argv[++i] ?? "owner");
+    else if (a === "--role") {
+      out.role = String(argv[++i] ?? "").trim().toLowerCase();
+      if (!TEST_ROLES.includes(out.role)) throw new Error(`--role must be one of ${TEST_ROLES.join(", ")}`);
+    }
     else if (a === "--help" || a === "-h") out.help = true;
     else throw new Error(`Unknown argument ${a} (--dry-run / --port <n> / --no-restart / --no-update / --warm /a,/b / --probe-timeout <s> / --start-timeout <s> / --role owner)`);
   }
@@ -177,8 +211,9 @@ export function parseReadyArgs(argv) {
 /**
  * deps: print, now(), sleep(ms), selfPid, selfAncestors (pids, or procs → pids), guard() → reason|null, dbContainer() → name|null,
  * startDb() → bool, update({ dryRun }) → { code, lines }, listeners(port) → pids, processes() → Map,
- * probe(url, timeoutMs) → { ok, status?, ms?, error? }, kill(pid) → bool, start(port) → { pid, log },
- * testLogin(base, role) → { ok, status, cookie?, error? }, warmPage(path, base, cookie) → { status, ms }.
+ * probe(url, timeoutMs) → { ok, status?, ms?, error? }, kill(pid) → bool, start(port) → { pid, log, exited?() → code|null },
+ * pidFileTarget(port, listeners), recordStarted(port, listeners), forgetStarted(port), productionDir,
+ * testLogin(base, role) → { ok, status, cookie?, error? }, warmPage(path, base, cookie) → { status, ms, location? }.
  */
 export async function runReady({ args, ...d }) {
   const lines = [];
@@ -192,7 +227,7 @@ export async function runReady({ args, ...d }) {
 
   /* 1. local DB container (cold laptop) + guard */
   if (!d.dbContainer()) {
-    if (args.dryRun) say("[dry-run] local Supabase DB container is not running — would run `npx supabase start`.");
+    if (args.dryRun) return result(EXIT_READY.notReady, "NOT READY [dry-run] — local Supabase DB container is not running; would run `npx supabase start`, then update, probe and start dev:local.");
     else {
       say("Local Supabase DB is not running — starting it (npx supabase start)…");
       if (!d.startDb() || !d.dbContainer()) return result(EXIT_READY.notReady, "NOT READY — local Supabase did not start (is Docker Desktop running?).");
@@ -206,7 +241,7 @@ export async function runReady({ args, ...d }) {
   if (args.update) {
     const u = d.update({ dryRun: args.dryRun });
     for (const l of u.lines) say(`  update │ ${l}`);
-    if (u.code !== 0 && u.code !== 4) return result(EXIT_READY.notReady, `NOT READY — localhost:update stopped (exit ${u.code}); see its lines above.`);
+    if (u.code !== 0) return result(EXIT_READY.notReady, `NOT READY — localhost:update stopped (exit ${u.code}); see its lines above.`);
     needRestart = updateNeedsRestart(u.lines);
   }
 
@@ -236,14 +271,14 @@ export async function runReady({ args, ...d }) {
     const targets = [];
     if (procs.size === 0) {
       say("Process list could not be read (PowerShell/WMI) — falling back to localhost:ready's own pid file.");
-      const t = d.pidFileTarget ? d.pidFileTarget(args.port) : { ok: false, reason: "no pid-file fallback" };
+      const t = d.pidFileTarget ? d.pidFileTarget(args.port, listenersNow()) : { ok: false, reason: "no pid-file fallback" };
       if (!t.ok) return result(EXIT_READY.notReady, `NOT READY — ${t.reason}`);
       targets.push(t);
     } else {
       for (const pid of listenersNow()) {
-        const t = pickKillTarget({ listenerPid: pid, procs, selfPid: d.selfPid, selfAncestors });
+        const t = pickKillTarget({ listenerPid: pid, procs, selfPid: d.selfPid, selfAncestors, productionDir: d.productionDir ?? null });
         if (!t.ok) return result(EXIT_READY.notReady, `NOT READY — ${t.reason}`);
-        targets.push(t);
+        if (!targets.some((x) => x.pid === t.pid)) targets.push(t);
       }
     }
     for (const t of targets) {
@@ -253,6 +288,7 @@ export async function runReady({ args, ...d }) {
       if (!d.kill(t.pid)) return result(EXIT_READY.notReady, `NOT READY — could not kill pid ${t.pid}.`);
     }
     if (args.dryRun) return result(EXIT_READY.notReady, `NOT READY [dry-run] — server ${state}; would restart dev:local on port ${args.port}.`);
+    d.forgetStarted?.(args.port);
     for (let i = 0; i < 20 && listenersNow().length; i++) await d.sleep(500);
     if (listenersNow().length) return result(EXIT_READY.notReady, `NOT READY — port ${args.port} is still taken after the kill.`);
     state = "down";
@@ -266,12 +302,15 @@ export async function runReady({ args, ...d }) {
     const until = d.now() + args.startTimeoutMs;
     let up = false;
     while (d.now() < until) {
+      const gone = s.exited?.();
+      if (gone != null) return result(EXIT_READY.notReady, `NOT READY — dev:local stopped by itself (exit ${gone}); read ${s.log}.`);
       const p = await d.probe(probeUrl, args.probeTimeoutMs);
       if (p.status != null && p.status < 500) { up = true; say(`  answered ${p.status} after ${secs()} s`); break; }
       await d.sleep(5000);
     }
     if (!up) return result(EXIT_READY.notReady, `NOT READY — dev:local did not answer in ${Math.round(args.startTimeoutMs / 1000)} s; read ${s.log}.`);
     state = "up";
+    d.recordStarted?.(args.port, listenersNow());
   }
 
   /* 4. Local test login works (no password here — the app's own /api/dev/test-login holds it) */
@@ -282,18 +321,22 @@ export async function runReady({ args, ...d }) {
   const login = await d.testLogin(base, args.role);
   if (!login.ok) {
     say(`Local test login (${args.role}) failed: ${login.status ?? ""} ${login.error ?? ""}`.trim());
-    say("  Fix: seed the test users once — E2E_ALLOW_SEED=1 node e2e/fixtures/seed-e2e-tenant.mjs (local DB only), and keep production/.env.test.");
+    say(`  Fix: ${loginHint(login.status)}`);
     return result(EXIT_READY.notReady, `NOT READY — server up, but Local test login (${args.role}) does not work.`);
   }
   say(`Local test login ${args.role}: ok → company "E2E Test Co" (what Chrome lands in after clicking the ${args.role} button).`);
 
   /* 5. warm pages */
   const warmed = [];
+  const bad = [];
   for (const p of args.warm) {
     const w = await d.warmPage(p, base, login.cookie);
     warmed.push(`${p} ${w.status ?? "?"} ${Math.round((w.ms ?? 0) / 100) / 10}s`);
+    const v = warmVerdict(w);
+    if (v) bad.push(`${p} ${v}`);
   }
   if (warmed.length) say(`Warmed: ${warmed.join(" · ")}`);
+  if (bad.length) return result(EXIT_READY.notReady, `NOT READY — server up and login ok, but ${bad.join(", ")} — open it / read the server log before checking cards.`);
 
   return result(EXIT_READY.ready, `READY ${base} — ${restarted ? "restarted, " : ""}login ${args.role} ok, ${warmed.length} pages warm, ${secs()} s`);
 }

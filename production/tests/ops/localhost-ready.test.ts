@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseNetstatListeners, parseProcessList, isOurDevServerCmd, pickKillTarget, classifyServer,
   localGuardReason, updateNeedsRestart, parseReadyArgs, runReady, EXIT_READY, DEFAULT_WARM,
-  pidFileTarget, parseTasklistImage,
+  pidFileTarget, parseTasklistImage, warmVerdict, loginHint,
   // @ts-expect-error — plain .mjs ops script, no types
 } from "../../scripts/ops/localhost-ready-lib.mjs";
 
@@ -78,6 +78,12 @@ describe("pickKillTarget", () => {
     expect(t.pid).toBe(300);
     expect(t.chain).toEqual([9001, 700, 600, 500, 400, 300]);
   });
+  it("review: with productionDir, refuses a next dev from another checkout (a worker's dev:local)", () => {
+    expect(pickKillTarget({ listenerPid: 9001, procs, selfPid: 1, productionDir: "C:/Users/x/reselleros-deploy/production" }).ok).toBe(true);
+    const t = pickKillTarget({ listenerPid: 9001, procs, selfPid: 1, productionDir: "C:/Users/x/reselleros-w-r-1/production" });
+    expect(t.ok).toBe(false);
+    expect(t.reason).toMatch(/not from/);
+  });
   it("refuses a listener that is not our next dev server", () => {
     const other = parseProcessList(JSON.stringify([
       { ProcessId: 50, ParentProcessId: 1, Name: "node.exe", CommandLine: "node C:\\tools\\other-app.js" },
@@ -103,20 +109,25 @@ describe("pickKillTarget", () => {
 });
 
 describe("pidFileTarget + parseTasklistImage (process list unreadable — 4 Nov PowerShell/WMI hang)", () => {
-  const rec = { pid: 500, port: 3001, dir: "C:\\Users\\x\\reselleros-deploy\\production" };
+  const rec = { pid: 500, port: 3001, dir: "C:\\Users\\x\\reselleros-deploy\\production", listenerPids: [9001] };
   it("reads tasklist CSV", () => {
     expect(parseTasklistImage('"node.exe","500","Console","1","120,000 K"')).toBe("node.exe");
     expect(parseTasklistImage("INFO: No tasks are running which match the specified criteria.")).toBeNull();
   });
   it("trusts only our own pid file: same port, same checkout, still node", () => {
-    expect(pidFileTarget({ record: rec, port: 3001, image: "node.exe", productionDir: "c:/users/x/reselleros-deploy/production" }))
+    expect(pidFileTarget({ record: rec, port: 3001, image: "node.exe", productionDir: "c:/users/x/reselleros-deploy/production", listeners: [9001] }))
       .toEqual({ ok: true, pid: 500, chain: [500], via: "pidfile" });
     expect(pidFileTarget({ record: null, port: 3001, image: null }).ok).toBe(false);
     expect(pidFileTarget({ record: rec, port: 3005, image: "node.exe" }).ok).toBe(false);
     expect(pidFileTarget({ record: rec, port: 3001, image: "node.exe", productionDir: "C:/other/production" }).ok).toBe(false);
     expect(pidFileTarget({ record: rec, port: 3001, image: "chrome.exe" }).ok).toBe(false);
     expect(pidFileTarget({ record: rec, port: 3001, image: null }).ok).toBe(false);
-    expect(pidFileTarget({ record: { ...rec, pid: 4 }, port: 3001, image: "node.exe" }).ok).toBe(false);
+    expect(pidFileTarget({ record: { ...rec, pid: 4 }, port: 3001, image: "node.exe", listeners: [9001] }).ok).toBe(false);
+  });
+  it("review: a recycled pid that is node again is refused unless the port's listener is the one it recorded", () => {
+    expect(pidFileTarget({ record: rec, port: 3001, image: "node.exe", listeners: [7777] }).ok).toBe(false);
+    expect(pidFileTarget({ record: { ...rec, listenerPids: [] }, port: 3001, image: "node.exe", listeners: [9001] }).ok).toBe(false);
+    expect(pidFileTarget({ record: rec, port: 3001, image: "node.exe", listeners: [9001] }).ok).toBe(true);
   });
 });
 
@@ -149,6 +160,21 @@ describe("localGuardReason", () => {
   });
 });
 
+describe("warmVerdict / loginHint (review)", () => {
+  it("5xx, no answer and a bounce to /login are broken; 200 and other redirects are fine", () => {
+    expect(warmVerdict({ status: 500, ms: 1 })).toMatch(/500/);
+    expect(warmVerdict({ status: "timeout", ms: 1 })).toMatch(/no answer/);
+    expect(warmVerdict({ status: 307, location: "/login?next=%2Fquotes" })).toMatch(/login/);
+    expect(warmVerdict({ status: 200 })).toBeNull();
+    expect(warmVerdict({ status: 307, location: "/dashboard" })).toBeNull();
+  });
+  it("gives the fix that matches the status", () => {
+    expect(loginHint(404)).toMatch(/dev:local/);
+    expect(loginHint(400)).toMatch(/owner2/);
+    expect(loginHint(412)).toMatch(/seed-e2e-tenant/);
+  });
+});
+
 describe("updateNeedsRestart / parseReadyArgs", () => {
   it("spots localhost:update's restart hint", () => {
     expect(updateNeedsRestart(["! production/next.config.ts badla — ye dev server restart par hi lagta hai. Restart coordinator ka faisla"])).toBe(true);
@@ -159,6 +185,8 @@ describe("updateNeedsRestart / parseReadyArgs", () => {
     expect(parseReadyArgs(["--dry-run", "--port", "3005", "--no-restart", "--no-update", "--warm", "/a,/b"]))
       .toMatchObject({ dryRun: true, port: 3005, restart: false, update: false, warm: ["/a", "/b"] });
     expect(() => parseReadyArgs(["--kill-all"])).toThrow(/Unknown/);
+    expect(parseReadyArgs(["--role", "Owner2"]).role).toBe("owner2");
+    expect(() => parseReadyArgs(["--role", "admin"])).toThrow(/role/);
     expect(() => parseReadyArgs(["--warm", "http://evil.example/x"])).toThrow(/path/);
   });
 });
@@ -322,6 +350,64 @@ describe("runReady", () => {
     expect(d.calls).toContain("kill 300");
     expect(r.restarted).toBe(true);
     expect(r.code).toBe(EXIT_READY.ready);
+  });
+
+  it("review: localhost:update exit 4 (DB not reachable, migrations not checked) is NOT READY", async () => {
+    const d = fakeDeps({ update: () => { d.calls.push("update"); return { code: 4, lines: ["! Local DB nahi mila"] }; } });
+    const r = await runReady({ ...d, args: parseReadyArgs([]) });
+    expect(r.code).toBe(EXIT_READY.notReady);
+    expect(d.calls).toEqual(["update"]);
+  });
+
+  it("review: two listeners in one tree → one kill, READY", async () => {
+    let n = 0;
+    const d = fakeDeps({
+      probe: async () => (++n <= 3 ? { ok: false, error: "timeout" } : { ok: true, status: 200, ms: 900 }),
+      listeners: () => (d.calls.includes("kill 300") && !d.calls.includes("start") ? [] : [9001, 700]),
+    });
+    const r = await runReady({ ...d, args: parseReadyArgs([]) });
+    expect(d.calls.filter((c) => c.startsWith("kill"))).toEqual(["kill 300"]);
+    expect(r.code).toBe(EXIT_READY.ready);
+  });
+
+  it("review: dev:local that exits at once is reported straight away, not after 5 min", async () => {
+    const d = fakeDeps({
+      listeners: () => [],
+      start: () => { d.calls.push("start"); return { pid: 77, log: "x.log", exited: () => 2 }; },
+      probe: async () => ({ ok: false, error: "ECONNREFUSED" }),
+    });
+    const r = await runReady({ ...d, args: parseReadyArgs([]) });
+    expect(r.code).toBe(EXIT_READY.notReady);
+    expect(r.readyLine).toMatch(/stopped by itself \(exit 2\)/);
+  });
+
+  it("review: the started server's listeners are recorded; a kill forgets the pid file", async () => {
+    let n = 0;
+    const rec: unknown[] = [];
+    const d = fakeDeps({
+      probe: async () => (++n <= 3 ? { ok: false, error: "timeout" } : { ok: true, status: 200, ms: 900 }),
+      listeners: () => (d.calls.includes("kill 300") && !d.calls.includes("start") ? [] : [9001]),
+      recordStarted: (port: number, l: number[]) => rec.push([port, l]),
+      forgetStarted: () => d.calls.push("forget"),
+    });
+    await runReady({ ...d, args: parseReadyArgs([]) });
+    expect(d.calls).toContain("forget");
+    expect(rec).toEqual([[3001, [9001]]]);
+  });
+
+  it("review: a warmed page bounced to /login is NOT READY", async () => {
+    const d = fakeDeps({ warmPage: async (p: string) => { d.calls.push(`warm ${p}`); return { status: 307, ms: 5, location: "/login" }; } });
+    const r = await runReady({ ...d, args: parseReadyArgs(["--warm", "/quotes"]) });
+    expect(r.code).toBe(EXIT_READY.notReady);
+    expect(r.readyLine).toMatch(/\/quotes/);
+  });
+
+  it("review: --dry-run on a cold laptop says what it would do (no guard refusal)", async () => {
+    const d = fakeDeps({ dbContainer: () => null, guard: () => "no local Supabase DB container" });
+    const r = await runReady({ ...d, args: parseReadyArgs(["--dry-run"]) });
+    expect(r.code).toBe(EXIT_READY.notReady);
+    expect(r.readyLine).toMatch(/\[dry-run\].*supabase start/);
+    expect(d.calls).toEqual([]);
   });
 
   it("a failed localhost:update (migration failed) is NOT READY and does not start anything", async () => {

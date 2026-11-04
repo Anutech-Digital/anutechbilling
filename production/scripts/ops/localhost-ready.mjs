@@ -14,7 +14,7 @@
  *   2. `localhost:update` (R-2106): code → newest anutech/manager-pardeep, every pending migration on
  *      the LOCAL DB. It refuses a checkout on a branch, so a worker worktree is never moved.
  *   3. Probe http://localhost:<port>/api/version (public, no DB). Hung = the port LISTENS but 3 probes
- *      of 30 s get no answer (4 Nov: 4+ min). Only then — or when localhost:update changed a file that
+ *      of 60 s (3 min) get no answer (4 Nov: 4+ min; a compile after an update can take ~2 min). Only then — or when localhost:update changed a file that
  *      needs a restart — it kills the process tree of OUR dev server (the listener must be node running
  *      next dev / dev-local.mjs; anything else → refused) with `taskkill /T /F`, and starts
  *      `node scripts/dev-local.mjs -p <port>` detached (log in the temp folder). 5xx → reported, no kill.
@@ -73,7 +73,7 @@ function processes() {
 /** Written by start(): the dev-local node process localhost:ready itself started (fallback kill target). */
 const pidFile = (port) => path.join(os.tmpdir(), `reselleros-localhost-${port}.json`);
 
-function readPidFileTarget(port) {
+function readPidFileTarget(port, listenersNow = []) {
   let record = null;
   try { record = JSON.parse(fs.readFileSync(pidFile(port), "utf8")); } catch { record = null; }
   let image = null;
@@ -82,7 +82,7 @@ function readPidFileTarget(port) {
       ? parseTasklistImage(sh("tasklist", ["/FI", `PID eq ${record.pid}`, "/FO", "CSV", "/NH"], { timeout: 20_000 }))
       : (sh("ps", ["-p", String(record.pid), "-o", "comm="]).trim().split("/").pop() || null);
   }
-  return pidFileTarget({ record, port, image, productionDir });
+  return pidFileTarget({ record, port, image, productionDir, listeners: listenersNow });
 }
 
 function ancestorsOf(pid, procs) {
@@ -104,9 +104,23 @@ function start(port) {
   const child = spawn(process.execPath, [path.join("scripts", "dev-local.mjs"), "-p", String(port)], {
     cwd: productionDir, detached: true, stdio: ["ignore", fd, fd], windowsHide: true,
   });
+  let exitCode = null;
+  child.on("exit", (code) => { exitCode = code ?? 1; });
   child.unref();
-  try { fs.writeFileSync(pidFile(port), JSON.stringify({ pid: child.pid, port, dir: productionDir, startedAt: new Date().toISOString(), log })); } catch {}
-  return { pid: child.pid, log };
+  try { fs.writeFileSync(pidFile(port), JSON.stringify({ pid: child.pid, port, dir: productionDir, startedAt: new Date().toISOString(), log, listenerPids: [] })); } catch {}
+  return { pid: child.pid, log, exited: () => exitCode };
+}
+
+/** After the started server answered: remember which pids listen for it (the pid-file fallback trusts only these). */
+function recordStarted(port, listenerPids) {
+  try {
+    const rec = JSON.parse(fs.readFileSync(pidFile(port), "utf8"));
+    fs.writeFileSync(pidFile(port), JSON.stringify({ ...rec, listenerPids }));
+  } catch { /* no pid file → the fallback simply refuses later */ }
+}
+
+function forgetStarted(port) {
+  try { fs.unlinkSync(pidFile(port)); } catch { /* none */ }
 }
 
 async function probe(url, timeoutMs) {
@@ -141,7 +155,7 @@ async function warmPage(p, base, cookie) {
   try {
     const res = await fetch(`${base}${p}`, { redirect: "manual", headers: cookie ? { cookie } : {}, signal: AbortSignal.timeout(180_000) });
     await res.arrayBuffer().catch(() => {});
-    return { status: res.status, ms: Date.now() - t };
+    return { status: res.status, ms: Date.now() - t, location: res.headers.get("location") ?? "" };
   } catch { return { status: "timeout", ms: Date.now() - t }; }
 }
 
@@ -172,6 +186,9 @@ async function main(argv) {
     listeners,
     processes,
     pidFileTarget: readPidFileTarget,
+    recordStarted,
+    forgetStarted,
+    productionDir,
     probe,
     kill,
     start,
