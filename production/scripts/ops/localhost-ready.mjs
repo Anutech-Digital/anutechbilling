@@ -18,6 +18,8 @@
  *      needs a restart — it kills the process tree of OUR dev server (the listener must be node running
  *      next dev / dev-local.mjs; anything else → refused) with `taskkill /T /F`, and starts
  *      `node scripts/dev-local.mjs -p <port>` detached (log in the temp folder). 5xx → reported, no kill.
+ *      Process list unreadable (PowerShell/WMI did not answer in 90 s on 4 Nov) → only the pid file of a
+ *      server THIS script started (temp folder; same port + checkout; still node.exe) may be killed; else refused.
  *   4. Local test login: POST /api/dev/test-login {role} — the app's own local-only route holds the test
  *      password (never this script, never printed). Fails → the seed hint.
  *   5. Warms the pages with that session, prints ONE line: READY … / NOT READY — <reason>.
@@ -33,6 +35,7 @@ import { fileURLToPath } from "node:url";
 import { parseSupabaseStatus } from "../dev/local-guard.mjs";
 import {
   parseReadyArgs, runReady, localGuardReason, parseNetstatListeners, parseProcessList, EXIT_READY,
+  pidFileTarget, parseTasklistImage,
 } from "./localhost-ready-lib.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -64,7 +67,22 @@ function listeners(port) {
 function processes() {
   if (!win) return new Map();
   const ps = "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress";
-  return parseProcessList(sh("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { timeout: 60_000 }));
+  return parseProcessList(sh("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { timeout: 45_000 }));
+}
+
+/** Written by start(): the dev-local node process localhost:ready itself started (fallback kill target). */
+const pidFile = (port) => path.join(os.tmpdir(), `reselleros-localhost-${port}.json`);
+
+function readPidFileTarget(port) {
+  let record = null;
+  try { record = JSON.parse(fs.readFileSync(pidFile(port), "utf8")); } catch { record = null; }
+  let image = null;
+  if (record?.pid) {
+    image = win
+      ? parseTasklistImage(sh("tasklist", ["/FI", `PID eq ${record.pid}`, "/FO", "CSV", "/NH"], { timeout: 20_000 }))
+      : (sh("ps", ["-p", String(record.pid), "-o", "comm="]).trim().split("/").pop() || null);
+  }
+  return pidFileTarget({ record, port, image, productionDir });
 }
 
 function ancestorsOf(pid, procs) {
@@ -87,6 +105,7 @@ function start(port) {
     cwd: productionDir, detached: true, stdio: ["ignore", fd, fd], windowsHide: true,
   });
   child.unref();
+  try { fs.writeFileSync(pidFile(port), JSON.stringify({ pid: child.pid, port, dir: productionDir, startedAt: new Date().toISOString(), log })); } catch {}
   return { pid: child.pid, log };
 }
 
@@ -152,6 +171,7 @@ async function main(argv) {
     update,
     listeners,
     processes,
+    pidFileTarget: readPidFileTarget,
     probe,
     kill,
     start,

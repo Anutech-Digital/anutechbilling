@@ -92,6 +92,27 @@ export function pickKillTarget({ listenerPid, procs, selfPid, selfAncestors = []
 }
 
 /**
+ * Fallback when the process list cannot be read (4 Nov: PowerShell/WMI did not answer in 90 s on the
+ * loaded laptop): the pid file localhost:ready wrote when IT started dev:local. Trusted only for the same
+ * port and checkout, and only while that pid is still a node.exe (tasklist image) — else refuse.
+ * → { ok: true, pid, chain, via: "pidfile" } | { ok: false, reason }
+ */
+export function pidFileTarget({ record, port, image, productionDir }) {
+  if (!record || !Number.isInteger(record.pid) || record.pid <= 4) return { ok: false, reason: "process list unreadable and no localhost:ready pid file — not killing; stop the server by hand (Ctrl+C in its window), then run localhost:ready again" };
+  if (Number(record.port) !== Number(port)) return { ok: false, reason: `pid file is for port ${record.port}, not ${port} — not killing` };
+  if (productionDir && record.dir && path_eq(record.dir, productionDir) === false) return { ok: false, reason: `pid file is for ${record.dir}, not this checkout — not killing` };
+  if (!/^node(\.exe)?$/i.test(String(image ?? ""))) return { ok: false, reason: `pid ${record.pid} from the pid file is no longer node (${image || "gone"}) — not killing` };
+  return { ok: true, pid: record.pid, chain: [record.pid], via: "pidfile" };
+}
+const path_eq = (a, b) => String(a).replace(/\\/g, "/").toLowerCase() === String(b).replace(/\\/g, "/").toLowerCase();
+
+/** `tasklist /FI "PID eq n" /FO CSV /NH` → image name ("node.exe") or null. */
+export function parseTasklistImage(text) {
+  const m = /^"([^"]+)","(\d+)"/m.exec(String(text ?? ""));
+  return m ? m[1] : null;
+}
+
+/**
  * up: something answered below 500 · broken: it answers but only 5xx (Build Error — a restart does not
  * help) · hung: it LISTENS but no probe got an answer · down: nothing listens.
  */
@@ -213,10 +234,17 @@ export async function runReady({ args, ...d }) {
     const procs = d.processes();
     const selfAncestors = typeof d.selfAncestors === "function" ? d.selfAncestors(procs) : (d.selfAncestors ?? []);
     const targets = [];
-    for (const pid of listenersNow()) {
-      const t = pickKillTarget({ listenerPid: pid, procs, selfPid: d.selfPid, selfAncestors });
+    if (procs.size === 0) {
+      say("Process list could not be read (PowerShell/WMI) — falling back to localhost:ready's own pid file.");
+      const t = d.pidFileTarget ? d.pidFileTarget(args.port) : { ok: false, reason: "no pid-file fallback" };
       if (!t.ok) return result(EXIT_READY.notReady, `NOT READY — ${t.reason}`);
       targets.push(t);
+    } else {
+      for (const pid of listenersNow()) {
+        const t = pickKillTarget({ listenerPid: pid, procs, selfPid: d.selfPid, selfAncestors });
+        if (!t.ok) return result(EXIT_READY.notReady, `NOT READY — ${t.reason}`);
+        targets.push(t);
+      }
     }
     for (const t of targets) {
       const cmd = procs.get(t.pid)?.cmd ?? "";
