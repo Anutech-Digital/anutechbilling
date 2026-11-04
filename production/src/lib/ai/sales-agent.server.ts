@@ -409,6 +409,44 @@ function seatsHeardIn(history: readonly SalesAgentTurn[]): number | null {
   return null;
 }
 
+/**
+ * R-2468: is the lead's newest quotation a draft the customer-copy gate is HOLDING (no place of
+ * supply / needs approval)? Lives here, beside runSalesAgent, so the held-quote rule (R-2460)
+ * cannot be skipped by a caller that forgets it — R-2467 found the follow-up cron had.
+ *
+ * Newest by `created_date`, same-day ties by the row's own `created_at` — never the text id,
+ * which sorts wrong when the prefix changes or the number passes 9999. Only a DRAFT is checked:
+ * a sent quote already reached the customer. autoQuoteHoldFor never throws (a failed check comes
+ * back as an approval hold — fail closed); a failed READ of the newest quote holds too, because
+ * "could not tell" must not authorise a price.
+ */
+export async function heldQuoteForLead(
+  admin: SupabaseClient<Database>,
+  tenantId: string,
+  leadId: string,
+): Promise<HeldQuoteBrief | null> {
+  const { data, error } = await admin
+    .from("quotes")
+    .select("id, status")
+    .eq("tenant_id", tenantId)
+    .eq("lead_id", leadId)
+    .order("created_date", { ascending: false })
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) return { kind: "approval", totals: [] };
+  const row = data as { id?: string | null; status?: string | null } | null;
+  if (!row?.id || row.status !== "draft") return null;
+  /* Loaded on demand: send-auto-quote pulls in the PDF and mail stack, which every importer of
+     this file (webhooks, crons, tests) would otherwise load for one read. */
+  const { autoQuoteHoldFor } = await import("@/lib/quotes/send-auto-quote");
+  return autoQuoteHoldFor(admin as unknown as Parameters<typeof autoQuoteHoldFor>[0], {
+    tenantId,
+    leadId,
+    quoteId: row.id,
+  });
+}
+
 export async function runSalesAgent(args: {
   admin: SupabaseClient<Database>;
   tenantId: string;
@@ -442,6 +480,10 @@ export async function runSalesAgent(args: {
    * approval). The agent is told to ask for what is missing / say the quotation will follow,
    * no total is authorised, and the held figures are struck from the money guard's list — so a
    * reply that states one is handed to a person instead of sent. See BuildPromptArgs.heldQuote.
+   *
+   * R-2468: OMITTED (undefined) → this function checks the lead's newest quote itself
+   * (heldQuoteForLead), so no caller can skip the rule. A caller that already checked passes
+   * its result — the hold, or null for "checked, not held" — to save the second read.
    */
   heldQuote?: HeldQuoteBrief | null;
 }): Promise<SalesAgentRun> {
@@ -465,6 +507,12 @@ export async function runSalesAgent(args: {
         "No sellable products found in this workspace's catalogue, so the agent has no prices it is allowed to quote. Add products under Items first.",
     };
   }
+
+  /* R-2468: the held-quote rule, here so every caller gets it — see heldQuoteForLead. */
+  const heldQuote: HeldQuoteBrief | null =
+    args.heldQuote !== undefined
+      ? args.heldQuote
+      : await heldQuoteForLead(args.admin, args.tenantId, args.lead.leadId);
 
   const history = await loadSalesThread({
     tenantId: args.tenantId,
@@ -542,7 +590,7 @@ export async function runSalesAgent(args: {
     tradeInFacts: observed?.tradeIn,
     qualifierBrief: merged ? qualifierBriefing(merged) : undefined,
     recallFacts: recall,
-    heldQuote: args.heldQuote ?? null,
+    heldQuote,
   });
 
   let failure = "";
@@ -594,10 +642,10 @@ export async function runSalesAgent(args: {
      The money guard reads currency-marked figures only, so "the total is 38,232 including
      GST" would pass it. While the draft is held, a held figure in any form hands over. */
   const heldNamed =
-    args.heldQuote && ruled.decision.action_required !== "HANDOVER_TO_HUMAN"
+    heldQuote && ruled.decision.action_required !== "HANDOVER_TO_HUMAN"
       ? heldTotalsNamed(
           `${ruled.decision.generated_response.body_text}\n${ruled.decision.generated_response.whatsapp_summary}`,
-          args.heldQuote.totals,
+          heldQuote.totals,
         )
       : [];
   const heldReason = heldNamed.length > 0

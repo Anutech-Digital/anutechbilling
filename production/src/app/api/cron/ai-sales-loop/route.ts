@@ -170,6 +170,8 @@ interface CronResult {
   ran_at: string;
   due: number;
   nudged: number;
+  /** R-2468: the agent's follow-up went to a person instead of the customer. */
+  handed_over: number;
   skipped: number;
   failed: number;
   outcomes: LoopOutcome[];
@@ -212,6 +214,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
     ran_at: now.toISOString(),
     due: due.length,
     nudged: 0,
+    handed_over: 0,
     skipped: 0,
     failed: 0,
     outcomes: [],
@@ -464,7 +467,12 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
         isSelfTest: false,
       });
 
+      /* R-2468: a HANDOVER sent the customer nothing — the lead is flagged for a person — so it
+         is not a nudge, and the cadence does not schedule the next touch by itself: the person
+         who picks the lead up decides (and the flag would skip that step anyway). */
+      const handedOver = dispatched.outcome === "handed_over";
       if (dispatched.outcome === "failed") result.failed++;
+      else if (handedOver) result.handed_over++;
       else result.nudged++;
 
       result.outcomes.push({ lead_id: loop.leadId, result: dispatched.detail });
@@ -473,6 +481,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
         tenantId: loop.tenantId,
         outcome: `follow-up ${dispatched.outcome} — ${dispatched.detail}`,
       });
+      if (handedOver) continue;
 
       /* ── ADVANCE THE CADENCE ────────────────────────────────────────────────
          The row above was closed, so there is no pending row to collide with the unique

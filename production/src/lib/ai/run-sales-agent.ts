@@ -418,8 +418,10 @@ async function latestQuote(
     .eq("lead_id", leadId)
     .order("created_date", { ascending: false })
     /* R-2460: created_date is a DATE — two quotes on one day tied, and the hold check below
-       could read the sent one and miss a held draft. Ids are a gapless series, newest last. */
-    .order("id", { ascending: false })
+       could read the sent one and miss a held draft. R-2468: the row's own timestamp breaks
+       the tie (as heldQuoteForLead and the follow-up cron do) — not the text id, which sorts
+       wrong when the prefix changes or the number passes 9999. */
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
