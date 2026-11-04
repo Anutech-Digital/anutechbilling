@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
-import { parseDeployHeaders, defaultKey, selectFiles, filesInScript, replaceMigs, splitScript, generate, buildMigsBody, ENVS, peeksFromScript, renderPeeksModule, PEEKS_FILE } from "../scripts/ops/gen-deploy-db.mjs";
+import { parseDeployHeaders, supersedePeeks, pgProcPeekChecks, functionsDefined, defaultKey, selectFiles, filesInScript, replaceMigs, splitScript, generate, buildMigsBody, ENVS, peeksFromScript, renderPeeksModule, PEEKS_FILE } from "../scripts/ops/gen-deploy-db.mjs";
 
 // R-385 (7 Oct 2026): the MIGS array of the day's staging + live deploy-db scripts is generated
 // from `-- deploy-peek:` headers in the migrations instead of hand-edited (6 hand edits on 7 Oct).
@@ -180,5 +180,96 @@ describe("R-1721 peeks.generated.ts (what /api/health/migrations checks)", () =>
     const out = renderPeeksModule([{ key: "a", peek: "x like '%\\%'" }], "s.sh");
     expect(out).toContain(`{ key: "a", peek: "x like '%\\\\%'" },`);
     expect(out).toMatch(/^\/\* GENERATED/);
+  });
+});
+
+/* R-2473 (4 Nov 2026): the staging train's DB step and smoke said "DB step chhoot gaya:
+   r2383soleownerapproval" although every migration was applied. R-2383's peek greps
+   tg_quote_approval_not_by_maker()'s prosrc for 'R-2383'; R-2426, R-2441 and R-2447 redefined that
+   function and the newest body no longer carries the text. Worse, the next DB step would see the peek
+   false and RE-APPLY R-2383 — bringing the old function body back over R-2447.
+   Rule: when a later migration in the deploy list redefines a function, an older peek's prosrc text
+   check on that function also accepts the NEWEST redefiner's own prosrc marker for it. */
+describe("R-2473 a peek on a function a later migration redefines", () => {
+  const older = "-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'q' and column_name = 'note') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_f()') and prosrc like '%R-1%')\n-- deploy-key: r1\ncreate or replace function public.tg_f() returns trigger language plpgsql as $$ begin /* R-1 */ return new; end $$;\n";
+  const mid = "-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_f()') and prosrc like '%R-2%')\n-- deploy-key: r2\ncreate or replace function public.tg_f() returns trigger language plpgsql as $$ begin /* R-2 */ return new; end $$;\n";
+  const newest = "-- deploy-peek: exists(select 1 from pg_proc where proname = 'tg_f' and pronamespace = 'public'::regnamespace and prosrc ilike '%R-3%') and to_regclass('public.other') is not null\n-- deploy-key: r3\ncreate or replace function public.tg_f() returns trigger language plpgsql as $$ begin /* R-3 */ return new; end $$;\n";
+  const parse = (sql: string, f: string) => ({ ...parseDeployHeaders(sql, f), sql });
+
+  it("older prosrc markers also accept the newest redefiner's marker; columns/tables stay as they were", () => {
+    const out = supersedePeeks([parse(older, "20261101000000_a.sql"), parse(mid, "20261102000000_b.sql"), parse(newest, "20261103000000_c.sql")]);
+    expect(out[0].peek).toBe("exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'q' and column_name = 'note') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_f()') and (prosrc like '%R-1%' or prosrc ilike '%R-3%'))");
+    expect(out[1].peek).toBe("exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_f()') and (prosrc like '%R-2%' or prosrc ilike '%R-3%'))");
+    expect(out[2].peek).toBe(parse(newest, "c").peek);
+  });
+
+  it("a skipped migration never counts as the redefiner; a different function is untouched", () => {
+    const skipped = { ...parse(newest, "20261103000000_c.sql"), skip: "not yet" };
+    const other = parse(mid.replace(/tg_f/g, "tg_g"), "20261104000000_d.sql");
+    const out = supersedePeeks([parse(older, "20261101000000_a.sql"), skipped, other]);
+    expect(out[0].peek).toBe(parse(older, "a").peek);
+  });
+
+  it("a newest redefiner with no prosrc marker on that function: the older check accepts its whole peek", () => {
+    const bare = "-- deploy-peek: to_regprocedure('public.tg_f()') is not null and to_regclass('public.t2') is not null\ncreate or replace function public.tg_f() returns trigger language plpgsql as $$ begin return new; end $$;\n";
+    const out = supersedePeeks([parse(older, "20261101000000_a.sql"), parse(bare, "20261105000000_e.sql")]);
+    expect(out[0].peek).toContain("and (prosrc like '%R-1%' or (to_regprocedure('public.tg_f()') is not null and to_regclass('public.t2') is not null)))");
+  });
+
+  it("keeps a table alias on the marker it adds (p.prosrc)", () => {
+    const aliased = "-- deploy-peek: exists(select 1 from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and p.proname = 'tg_f' and p.prosrc like '%R-1%')\ncreate function public.tg_f() returns int language sql as $$ select 1 $$;\n";
+    const out = supersedePeeks([parse(aliased, "20261101000000_a.sql"), parse(mid, "20261102000000_b.sql")]);
+    expect(out[0].peek).toContain("and (p.prosrc like '%R-1%' or p.prosrc like '%R-2%'))");
+  });
+
+  /* Review findings (4 Nov): these shapes must never be widened or broken. */
+  it("leaves a not-exists check (body must be GONE) and a block comment's 'create function' alone", () => {
+    const gone = "-- deploy-peek: not exists(select 1 from pg_proc where proname = 'tg_f' and prosrc like '%legacy%')\ncreate or replace function public.tg_f() returns int language sql as $$ select 1 $$;\n";
+    const commentOnly = "-- deploy-peek: to_regclass('public.x') is not null\n/* was: create or replace function public.tg_f() */\ncreate table public.x();\n";
+    expect(supersedePeeks([parse(gone, "20261101000000_a.sql"), parse(mid, "20261102000000_b.sql")])[0].peek).toBe(parse(gone, "a").peek);
+    expect(supersedePeeks([parse(older, "20261101000000_a.sql"), parse(commentOnly, "20261102000000_b.sql")])[0].peek).toBe(parse(older, "a").peek);
+  });
+
+  it("a nested pg_proc block is widened once, for its own function only", () => {
+    const nested = "-- deploy-peek: exists(select 1 from pg_proc p where p.oid = to_regprocedure('public.tg_a()') and exists(select 1 from pg_proc q where q.oid = to_regprocedure('public.tg_f()') and q.prosrc like '%R-1%'))\ncreate function public.tg_a() returns int language sql as $$ select 1 $$;\n";
+    const out = supersedePeeks([parse(nested, "20261101000000_a.sql"), parse(mid, "20261102000000_b.sql")]);
+    expect(out[0].peek).toBe("exists(select 1 from pg_proc p where p.oid = to_regprocedure('public.tg_a()') and exists(select 1 from pg_proc q where q.oid = to_regprocedure('public.tg_f()') and (q.prosrc like '%R-1%' or q.prosrc like '%R-2%')))");
+  });
+
+  it("an overload's marker is not taken for another argument list; a quoted '' stays inside its literal", () => {
+    const twoArg = "-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.f(text, integer)') and prosrc like '%can''t%')\ncreate function public.f(a text, b integer) returns int language sql as $$ select 1 $$;\n";
+    const otherOverload = "-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.f(text)') and prosrc like '%R-9%')\ncreate function public.f(a text) returns int language sql as $$ select 1 $$;\n";
+    const out = supersedePeeks([parse(twoArg, "20261101000000_a.sql"), parse(otherOverload, "20261102000000_b.sql")]);
+    /* No same-signature marker → falls back to the newest migration's whole peek, never its 1-arg marker alone. */
+    expect(out[0].peek).toBe("exists(select 1 from pg_proc where oid = to_regprocedure('public.f(text, integer)') and (prosrc like '%can''t%' or (exists(select 1 from pg_proc where oid = to_regprocedure('public.f(text)') and prosrc like '%R-9%'))))");
+  });
+
+  /* The class, not just r2383: every prosrc marker in today's MIGS lines on a function that a later
+     listed migration redefines must also accept that newest redefiner's marker (or its whole peek). */
+  it("today's scripts: every superseded prosrc marker accepts the newest redefiner's", () => {
+    const script = fs.readFileSync(path.join(supabaseDir, "cloudsql", "staging", "deploy-db-2026-10-07.sh"), "utf8");
+    const peeks = peeksFromScript(script, "staging") as Array<{ key: string; peek: string }>;
+    const files = filesInScript(script, "staging") as string[];
+    const sqlOf = (f: string) => {
+      const a = path.join(supabaseDir, "migrations", f);
+      return fs.readFileSync(fs.existsSync(a) ? a : path.join(supabaseDir, "..", "prisma", "migrations", f.replace(/\.sql$/, ""), "migration.sql"), "utf8");
+    };
+    const defines = files.map((f) => functionsDefined(sqlOf(f)) as Set<string>);
+    const ownPeek = files.map((f) => parseDeployHeaders(sqlOf(f), f).peek as string);
+    const misses: string[] = [];
+    peeks.forEach((p, i) => {
+      for (const c of pgProcPeekChecks(ownPeek[i]) as Array<{ fn: string; sig: string | null; tests: Array<{ test: string }> }>) {
+        let j = -1;
+        for (let k = files.length - 1; k > i; k--) if (defines[k].has(c.fn)) { j = k; break; }
+        if (j < 0) continue;
+        const own = (pgProcPeekChecks(ownPeek[j]) as Array<{ fn: string; sig: string | null; tests: Array<{ test: string }> }>).find((n) => n.fn === c.fn && (!n.sig || !c.sig || n.sig === c.sig))?.tests[0]?.test;
+        const ok = own ? p.peek.toLowerCase().includes(own.toLowerCase()) : p.peek.includes(`(${peeks[j].peek})`);
+        if (!ok) misses.push(`${p.key}: ${c.fn}() redefined by ${files[j]}`);
+      }
+    });
+    expect(misses).toEqual([]);
+    const r2383 = peeks.find((p) => p.key === "r2383soleownerapproval")!.peek;
+    expect(r2383).toContain("column_name = 'approval_note'");
+    expect(r2383).toContain("(prosrc like '%R-2383%' or prosrc like '%R-2447%')");
   });
 });

@@ -80,6 +80,113 @@ export function parseDeployHeaders(sql, file) {
   return out;
 }
 
+/* ── R-2473 (4 Nov 2026): a peek on a function that a LATER migration redefines ─────────────────
+   4 Nov staging train: the DB step and the smoke said "DB step chhoot gaya: r2383soleownerapproval"
+   although all 23 migrations were applied. R-2383's peek greps tg_quote_approval_not_by_maker()'s
+   prosrc for '%R-2383%'; R-2426, R-2441 and R-2447 redefined that function and the newest body no
+   longer has the text. A false peek is also dangerous: the next DB step would RE-APPLY R-2383 and put
+   its old function body back over R-2447. So when a later (not skipped) migration in the list
+   redefines the function, an older peek's `prosrc like/ilike '<x>'` test on it is written as
+   `(prosrc like '<x>' or <the newest redefiner's own prosrc test on that function>)`. Checks on
+   columns, tables, triggers etc. are left exactly as written. The migration files are never edited
+   (CI's migration-order-check refuses that) — only the generated MIGS lines and peeks.generated.ts. */
+
+/** Functions a migration creates or replaces — lower case, no schema. SQL comments (-- and block) are ignored. */
+export function functionsDefined(sql) {
+  const src = String(sql ?? "").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, "");
+  const out = new Set();
+  for (const m of src.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?/gi)) out.add(m[1].toLowerCase());
+  return out;
+}
+
+/** Index of the ")" closing the "(" at `open`, skipping quoted text ('' inside a literal toggles twice); -1 if unbalanced. */
+function closeParen(s, open) {
+  let depth = 0;
+  let quoted = false;
+  for (let i = open; i < s.length; i++) {
+    const c = s[i];
+    if (c === "'") quoted = !quoted;
+    else if (quoted) continue;
+    else if (c === "(") depth++;
+    else if (c === ")" && --depth === 0) return i;
+  }
+  return -1;
+}
+
+/**
+ * The `exists(select … from pg_proc where … prosrc like '…')` blocks of a peek that name one function
+ * (by `to_regprocedure('public.f(…)')` or `proname = 'f'`):
+ * [{ fn, sig (normalised argument list, or null for proname), tests: [{ text, index, alias, test }] }].
+ * alias = the table alias before prosrc (`p.` or ""), test = the rest (`like '%R-1%'`).
+ * Never touched (review, 4 Nov): `not exists(…)` (a check that a body is GONE — an added "or" would flip
+ * it), `prosrc not ilike`, and a test inside a nested pg_proc block counts for the innermost block only.
+ */
+export function pgProcPeekChecks(peek) {
+  const s = String(peek);
+  const blocks = [];
+  for (const m of s.matchAll(/(\bnot\s+)?\bexists\s*\(/gi)) {
+    const end = closeParen(s, m.index + m[0].length - 1);
+    if (end < 0) continue;
+    const block = s.slice(m.index, end + 1);
+    if (!/\bfrom\s+pg_proc\b/i.test(block)) continue;
+    const reg = /to_regprocedure\(\s*'(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s*\(([^)']*)\)'/i.exec(block);
+    const fn = (reg ?? /\bproname\s*=\s*'([a-z_][a-z0-9_]*)'/i.exec(block))?.[1]?.toLowerCase();
+    blocks.push({ start: m.index, end: end + 1, negated: Boolean(m[1]), fn, sig: reg ? reg[2].replace(/\s+/g, "").toLowerCase() : null });
+  }
+  const out = [];
+  for (const b of blocks) {
+    if (b.negated || !b.fn) continue;
+    /* Inside a negated block nothing is a marker; a nested pg_proc block owns its own tests. */
+    if (blocks.some((o) => o !== b && o.negated && o.start <= b.start && o.end >= b.end)) continue;
+    const inner = blocks.filter((o) => o !== b && o.start > b.start && o.end <= b.end);
+    const tests = [...s.slice(b.start, b.end).matchAll(/((?:[a-z_][a-z0-9_]*\.)?)prosrc\s+(i?like\s+'(?:[^']|'')*')/gi)]
+      .map((t) => ({ text: t[0], index: b.start + t.index, alias: t[1], test: t[2] }))
+      .filter((t) => !inner.some((o) => t.index >= o.start && t.index < o.end));
+    if (tests.length) out.push({ fn: b.fn, sig: b.sig, tests });
+  }
+  return out;
+}
+
+/**
+ * entries: parsed headers in apply order, each with `sql` (the migration text) and `skip`.
+ * Returns new entries whose peeks accept the newest redefiner's marker (see above). The marker must be on
+ * the same function and, when both name one, the same argument list (an overload is another function).
+ * When the newest redefiner's peek has no such prosrc test (26 such pairs on 4 Nov — old headers may not
+ * be edited), the alternative is that migration's whole peek: "the newest migration is in", which is
+ * exactly what the deploy step uses to skip that migration — and then the older body is gone by design
+ * (localhost-update skips such a file as superseded for the same reason).
+ */
+export function supersedePeeks(entries) {
+  const defines = entries.map((e) => (e.skip ? new Set() : functionsDefined(e.sql)));
+  const checks = entries.map((e) => (e.skip ? [] : pgProcPeekChecks(e.peek)));
+  const newestFor = new Map(); // fn → newest index defining it, filled as we walk back
+  const out = [...entries];
+  /* Newest first, so a redefiner's own (already widened) peek is what an older one embeds. */
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i];
+    if (e.skip) continue;
+    const edits = [];
+    for (const c of checks[i]) {
+      const j = newestFor.get(c.fn);
+      if (j === undefined) continue;
+      const own = checks[j].find((n) => n.fn === c.fn && (!n.sig || !c.sig || n.sig === c.sig))?.tests[0];
+      for (const t of c.tests) {
+        /* The marker is re-qualified with THIS block's alias (`p.prosrc` here, bare `prosrc` there). */
+        if (own && own.test.toLowerCase() === t.test.toLowerCase()) continue;
+        edits.push({ ...t, mark: own ? `${t.alias}prosrc ${own.test}` : `(${out[j].peek})` });
+      }
+    }
+    for (const fn of defines[i]) if (!newestFor.has(fn)) newestFor.set(fn, i);
+    if (!edits.length) continue;
+    let peek = e.peek;
+    for (const d of edits.sort((a, b) => b.index - a.index)) {
+      peek = `${peek.slice(0, d.index)}(${d.text} or ${d.mark})${peek.slice(d.index + d.text.length)}`;
+    }
+    out[i] = { ...e, peek };
+  }
+  return out;
+}
+
 /** One MIGS line, exactly as the scripts have always had it. */
 export function migsLine(e) {
   return `  "${e.key}|${e.file}|${e.user}|${e.peek}"`;
@@ -185,13 +292,17 @@ export function generate({ supabaseDir, date, since, fromScript }) {
   const errors = [];
   const entries = [];
   for (const f of files) {
-    try { entries.push(parseDeployHeaders(fs.readFileSync(where.get(f), "utf8"), f)); }
-    catch (e) { errors.push(e.message); }
+    try {
+      const sql = fs.readFileSync(where.get(f), "utf8");
+      entries.push({ ...parseDeployHeaders(sql, f), sql });
+    } catch (e) { errors.push(e.message); }
   }
   if (errors.length) throw new Error(errors.join("\n"));
+  /* R-2473: an older prosrc marker on a function a later migration redefines also accepts the newest one's. */
+  const peeked = supersedePeeks(entries).map(({ sql: _sql, ...e }) => e);
   /* R-531 (10 Oct 2026): a file can stay in the repo but out of every deploy — `-- deploy-skip: <why>`. */
-  const skipped = entries.filter((e) => e.skip);
-  const body = buildMigsBody(entries.filter((e) => !e.skip));
+  const skipped = peeked.filter((e) => e.skip);
+  const body = buildMigsBody(peeked.filter((e) => !e.skip));
   for (const env of ENVS) scripts[env].after = replaceMigs(scripts[env].before, body, `${env} script`);
   return { files: files.filter((f) => !skipped.some((e) => e.file === f)), skipped, scripts };
 }
