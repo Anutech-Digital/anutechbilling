@@ -24,12 +24,16 @@
 --         remittance books through R-2427's reconcile_bank_credit_fx_invoice with the forex line.
 --         The return type changes → drop + create (grants re-made). Callers read by column name:
 --         reconcile_bank_credit_split (select o.*), the sheet, bulk-match customer-facts.ts.
---   bank_credit_pay_item(...)          ← 20261029054707_r2098_bank_credit_split (latest; R-2430 /
+--   bank_credit_pay_item(...)          ← 20261030123423_r2095_sale_invoice_on_receipt (latest; R-2430 /
 --       R-2427 call it unchanged): an opening invoice → _record_opening_invoice_payment (receipt
---       voucher, bank account, bank date, TDS receivable), the invoice row locked; a receipt already
---       on it with this reference → that receipt (replay, booked once — record_payment's rule); more
---       than its due → refused (no customer credit on an opening invoice — use Several quotes /
---       invoices + advance). Everything else is the R-2098 body unchanged.
+--       voucher, bank account, bank date, TDS receivable — the same call Record payment makes), the
+--       invoice row locked; a receipt already on it with this reference → that receipt (replay, booked
+--       once — record_payment's rule); more than its due → refused (no customer credit on an opening
+--       invoice — use Several quotes / invoices + advance). Everything else is the R-2095 body unchanged.
+--   bank_line_kept_receipt_ref(...)    ← 20261103200938_r2430_placeholder_ref_bank_line: a receipt typed
+--       by hand on an OPENING invoice (no quote) with the line's placeholder reference, same amount, on
+--       no bank line, is that line's money too — matched to it ("This money is for"), refused by the
+--       split — never a second receipt.
 --   Not changed: reconcile_bank_credit_to_item (R-2430), reconcile_bank_credit_split (R-2430),
 --   reconcile_bank_credit_fx_invoice (R-2427), _record_opening_invoice_payment (R-1739). Books lock:
 --   trg_books_lock on payments. Tenant gate + line lock: the callers (unchanged).
@@ -143,7 +147,7 @@ begin
          coalesce(qi.line_items, '[]'::jsonb),
          fx.cur,
          case when fx.cur <> 'INR'
-              then coalesce(nullif(i.fx_rate, 0),
+              then coalesce(i.fx_rate,   -- reconcile_bank_credit_fx_invoice's own rule (no nullif): 0 = no rate there too
                             case when upper(coalesce(qi.currency, '')) = fx.cur and coalesce(qi.exchange_rate, 0) > 0 then qi.exchange_rate end)
          end
     from public.invoices i
@@ -169,7 +173,48 @@ $$;
 revoke all on function public.bank_credit_open_items(uuid) from public, anon;
 grant execute on function public.bank_credit_open_items(uuid) to authenticated, service_role;
 
--- ── 2. bank_credit_pay_item (from 20261029054707_r2098_bank_credit_split) ────────────────────────
+-- ── 2. bank_line_kept_receipt_ref (from 20261103200938_r2430_placeholder_ref_bank_line) ──────────
+create or replace function public.bank_line_kept_receipt_ref(
+  p_tenant_id  uuid,
+  p_reference  text,
+  p_quote_id   text,
+  p_invoice_id text,
+  p_amount     integer
+)
+returns text
+language sql
+stable
+set search_path to 'public'
+as $$
+  /* R-2430: a receipt already on this quote with the line's PLACEHOLDER reference as printed, the
+     same amount, and on no bank line — typed by hand from the statement, or booked from a bank line
+     before R-2430 and kept when that line was un-reconciled. Returns that reference (so the line is
+     matched to THAT receipt, never a second one), else null. A real UTR never comes here.
+     R-2466: on an opening invoice (no quote) the receipt is found by the invoice itself. */
+  select btrim(p_reference)
+   where nullif(btrim(coalesce(p_reference, '')), '') is not null
+     and not public.bank_reference_is_real(p_reference)
+     and exists (
+       select 1 from public.payments p
+        where p.tenant_id = p_tenant_id
+          and p.status = 'received'
+          and p.reference = btrim(p_reference)
+          and p.amount = p_amount
+          and (p.quote_id = coalesce(p_quote_id,
+                 (select i.quote_id from public.invoices i where i.id = p_invoice_id and i.tenant_id = p_tenant_id))
+               or (p_invoice_id is not null and p.quote_id is null and p.invoice_id = p_invoice_id))
+          and p.bank_txn_id is null
+          and not exists (select 1 from public.bank_transactions t
+                           where t.tenant_id = p_tenant_id and t.matched_to_type = 'payment' and t.matched_to_id = p.id::text))
+$$;
+
+comment on function public.bank_line_kept_receipt_ref(uuid, text, text, text, integer) is
+  'R-2430: the placeholder reference of an existing receipt on this quote (R-2466: or on this opening invoice; same amount, on no bank line) a placeholder-reference bank line should be matched to, else null.';
+
+revoke all on function public.bank_line_kept_receipt_ref(uuid, text, text, text, integer) from public, anon;
+grant execute on function public.bank_line_kept_receipt_ref(uuid, text, text, text, integer) to authenticated, service_role;   -- R-401: Cloud SQL needs the explicit grant; invoker, so RLS still applies
+
+-- ── 3. bank_credit_pay_item (from 20261030123423_r2095_sale_invoice_on_receipt) ───────────────────
 create or replace function public.bank_credit_pay_item(
   p_txn_id              uuid,
   p_amount              integer,
@@ -188,7 +233,9 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-/* R-2098: one item paid from a bank credit — no line lock, no reconcile (the caller does both).
+/* R-2095 (Sept reconcile): a sale booked from a bank receipt (quotes.invoice_on_receipt) is invoiced on
+   its FIRST receipt, part-paid or not; a split-billed sale's renewal date is the end of the commitment.
+   R-2098: one item paid from a bank credit — no line lock, no reconcile (the caller does both).
    Called by reconcile_bank_credit_to_item (amount = the whole credit) and
    reconcile_bank_credit_split (amount = the item's share).
    R-2466: an imported Zoho opening invoice (no quote) → _record_opening_invoice_payment. */
@@ -326,6 +373,19 @@ begin
       if p_sub_start is not null and p_sub_renewal is not null and p_sub_renewal <= p_sub_start then
         raise exception 'The renewal date (%) must be after the start date (%).', p_sub_renewal, p_sub_start using errcode = '22023';
       end if;
+      /* R-2095: billed in parts on a 1-year commitment — the renewal date is the END of the year,
+         never the next part's date. Staging: renewal 19 Dec 2026 on a half-yearly sale from 19 Jun
+         made the schedule count the year back from it (term start 20 Dec 2025), so the "next half"
+         request covered the paid half again. */
+      if p_sub_renewal is not null
+         and coalesce(v_quote.billing_cycle, 'yearly') in ('monthly', 'quarterly', 'half_yearly')
+         and exists (select 1 from jsonb_array_elements(case when jsonb_typeof(v_quote.line_items) = 'array' then v_quote.line_items else '[]'::jsonb end) li
+                      where jsonb_typeof(li) = 'object' and li->>'commitment' = 'annual_yearly')
+         and p_sub_renewal < (coalesce(p_sub_start, v_txn.txn_date) + interval '12 months' - interval '1 day')::date then
+        raise exception 'Billed % on a 1-year commitment: the renewal date is the end of the year (%), not the next part''s date. The next part is billed on its own date.',
+          replace(v_quote.billing_cycle, '_', '-'), to_char(coalesce(p_sub_start, v_txn.txn_date) + interval '12 months', 'FMDD Mon YYYY')
+          using errcode = '22023';
+      end if;
       select jsonb_agg(
                case when jsonb_typeof(li) = 'object' and public.quote_line_is_subscription(li, v_quote.tenant_id, false)
                     then li
@@ -369,11 +429,15 @@ begin
   v_replay := coalesce((v_res->>'already_recorded')::boolean, false)
            or coalesce((v_res->>'idempotent_replay')::boolean, false);
 
-  /* Invoice once fully paid, when the quote has none (record_payment never issues one). */
+  /* Invoice once fully paid, when the quote has none (record_payment never issues one).
+     R-2095: a sale booked from a bank receipt is invoiced on its first receipt even if part-paid —
+     the licence is live, so the tax invoice is for the whole supply with the balance due (Zoho does
+     the same). A quote sent before payment keeps the fully-paid rule. */
   if v_quote_id is not null and not v_replay then
     select q.invoice_id into v_inv_now from public.quotes q where q.id = v_quote_id;
     if v_inv_now is null
-       and coalesce((v_res->>'is_fully_paid')::boolean, false)
+       and (coalesce((v_res->>'is_fully_paid')::boolean, false)
+            or coalesce((select q2.invoice_on_receipt from public.quotes q2 where q2.id = v_quote_id), false))
        and not exists (select 1 from public.subscriptions s
                         where s.tenant_id = v_txn.tenant_id and s.quote_id = v_quote_id
                           and s.billing_cycle is distinct from 'yearly'::public.billing_cycle)

@@ -40,16 +40,15 @@ type PlanItem = Pick<OpenItem, "kind" | "invoice_id" | "quote_id" | "amount_due"
 export function itemPayPlan(item: PlanItem, line: { description: string | null | undefined; credit: number }, opts: { relink?: boolean } = {}): ItemPayPlan {
   const id = item.invoice_id ?? item.quote_id ?? "This item";
   const cur = (item.currency ?? "").trim().toUpperCase() || "INR";
-  if (cur === "INR" || !item.invoice_id) {
+  const refuse = (problem: string): ItemPayPlan => ({ fx: null, problem });
+  if (cur === "INR") {
     if (item.kind === "opening" && line.credit > item.amount_due) {
-      return {
-        fx: null,
-        problem: `${id} is last year's invoice from Zoho with ${rupee(item.amount_due)} due — it takes no more. Choose "Several quotes / invoices" and keep the rest as advance.`,
-      };
+      return refuse(`${id} is last year's invoice from Zoho with ${rupee(item.amount_due)} due — it takes no more. Choose "Several quotes / invoices" and keep the rest as advance.`);
     }
     return { fx: null, problem: null };
   }
-  const refuse = (problem: string): ItemPayPlan => ({ fx: null, problem });
+  /* reconcile_bank_credit_fx_invoice pays an INVOICE; a foreign quote booked in ₹ would keep the forex gain as credit. */
+  if (!item.invoice_id) return refuse(`${id} is a quote in ${cur} with no invoice yet — an export receipt pays an invoice in ${cur}. Reconcile this line by hand.`);
   if (opts.relink) return refuse(`${id} is in ${cur} — a relink books in ₹ only. Reconcile this line by hand.`);
   const r = parseInwardRemittance(line.description);
   if (!r) return refuse(`${id} is in ${cur}, but this bank line's narration has no ${cur} amount and rate (like "${cur}1024.0@93.6"). Reconcile this line by hand.`);
@@ -62,6 +61,14 @@ export function itemPayPlan(item: PlanItem, line: { description: string | null |
     fx: { currency: cur, rate: r.rate, foreignAmount: r.amount, invoiceRate, foreignDue: s.foreignDue, bankCharges: s.bankCharges, forex: s.forex },
     problem: null,
   };
+}
+
+/** "Several quotes / invoices" books each item in ₹ (reconcile_bank_credit_split) — a foreign item is
+ *  paid on its own, the R-2427 way. null = no foreign item ticked. */
+export function splitFxProblem(items: ReadonlyArray<Pick<OpenItem, "invoice_id" | "quote_id" | "currency">>): string | null {
+  const f = items.find((i) => ((i.currency ?? "").trim().toUpperCase() || "INR") !== "INR");
+  if (!f) return null;
+  return `${f.invoice_id ?? f.quote_id} is in ${(f.currency ?? "").toUpperCase()} — pay it on its own with "An open quote / invoice" (forex and bank charges are booked there). Several items are booked in ₹ only.`;
 }
 
 /** One sentence for the sheet: what the export receipt books. */

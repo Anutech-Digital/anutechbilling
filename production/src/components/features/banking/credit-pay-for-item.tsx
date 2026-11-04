@@ -54,9 +54,9 @@ export function OpenItemRow({ item, credit, selected, onPick }: { item: OpenItem
 
 /** R-2466: the export receipt it books, or why Save is locked. Nothing for a plain ₹ item. */
 export function ItemPlanNote({ plan, item }: { plan: ItemPayPlan | null; item: OpenItem | null }) {
-  if (!plan || !item) return null;
+  if (!plan) return null;
   if (plan.problem) return <p role="alert" className="text-xs text-amber-ink break-words">{plan.problem}</p>;
-  if (!plan.fx || !item.invoice_id) return null;
+  if (!plan.fx || !item?.invoice_id) return null;
   return (
     <p className="text-xs text-ink-2 bg-paper rounded-md border border-hairline px-2.5 py-2 break-words">
       {itemFxText(item.invoice_id, plan.fx, item.amount_due)}

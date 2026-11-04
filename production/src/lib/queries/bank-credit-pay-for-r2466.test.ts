@@ -29,6 +29,13 @@ describe("R-2466 payItemCall", () => {
     expect(call).not.toHaveBeenCalled();
   });
 
+  it("review: a changed 'Renews on' date cannot go the export way (the fx RPC takes the term's own date)", async () => {
+    const call = vi.fn();
+    await expect(payItemCall({ ...base, fx, createSubscription: true, subStart: "2026-11-01", subRenewal: "2027-12-31" }, call))
+      .rejects.toThrow(/Renews on/);
+    expect(call).not.toHaveBeenCalled();
+  });
+
   it("a ₹ item → reconcile_bank_credit_to_item as before", async () => {
     const call = vi.fn(async () => ({ data: { kind: "opening", payment_id: "p2" }, error: null }));
     await payItemCall({ ...base, quoteId: null, invoiceId: "OPN-1" }, call);

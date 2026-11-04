@@ -89,7 +89,9 @@ export async function attachCustomerFacts(
   for (const id of ids) {
     const { data, error } = await userDb.rpc("bank_credit_open_items", { p_customer_id: id });
     if (error) throw new FactsReadError("the open quotes and invoices");
-    items.set(id, (data ?? []) as OpenItemRow[]);
+    /* R-2466: the list now carries Zoho opening invoices too (kind "opening"); the plan matches those
+       through `openings` (last year's invoice by number), never by amount as a this-year item. */
+    items.set(id, ((data ?? []) as OpenItemRow[]).filter((r) => r.kind !== "opening"));
   }
   const quoteIds = [...new Set([...items.values()].flat().map((r) => r.quote_id).filter((x): x is string => !!x))];
   const blocks = new Map<string, string>();

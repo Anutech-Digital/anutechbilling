@@ -83,6 +83,16 @@ describe("R-2466 quote-less invoices in 'An open quote / invoice'", () => {
     });
   });
 
+  it("review: 'Several quotes / invoices' with a USD invoice ticked → Save locked with the reason", () => {
+    state.items = [item({ kind: "invoice", quote_id: "Q-SCN-USD-1", invoice_id: "INV-SCN-USD-1", amount_due: 168000, currency: "USD", fx_rate: 84 })];
+    render(<CreditPayForSection transaction={txn(177000, "INW 041126I0SCN0000022 USD2000.0@88.5")} customers={customers} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("Customer who paid"), { target: { value: "c2" } });
+    fireEvent.click(screen.getByRole("button", { name: /Several quotes \/ invoices/ }));
+    fireEvent.click(screen.getByLabelText("Pay INV-SCN-USD-1"));
+    expect(screen.getByText(/INV-SCN-USD-1 is in USD — pay it on its own/)).toBeTruthy();
+    expect((screen.getByRole("button", { name: /Record on 1 item & reconcile/ }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
   it("a USD invoice with a ₹ narration is not booked in ₹", () => {
     state.items = [item({ kind: "invoice", quote_id: "Q-SCN-USD-1", invoice_id: "INV-SCN-USD-1", amount_due: 168000, currency: "USD", fx_rate: 84 })];
     openItems(177000, "NEFT CR TIMBERGLOSS", "c2");

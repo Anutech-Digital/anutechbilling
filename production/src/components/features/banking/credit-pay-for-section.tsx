@@ -59,7 +59,7 @@ import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 import { prefillSaleFx, zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
-import { itemPayPlan } from "@/lib/banking/item-fx-pay";
+import { itemPayPlan, splitFxProblem } from "@/lib/banking/item-fx-pay";
 import { ItemPlanNote, OpenItemRow } from "./credit-pay-for-item";
 
 const NEW_CUSTOMER = "__new_customer__";
@@ -266,7 +266,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   ]);
   const split = splitSummary(credit, [...splitPicked.map((i) => picks[itemKey(i)]), saleAmt], { partPaid: splitPart });
   const rest = splitRest(split.state, restChoice);
-  const splitInvalid = (splitPicked.length === 0 && !splitSale)
+  const splitFx = mode === "split" ? splitFxProblem(splitPicked) : null;   // R-2466: the split books ₹ only
+  const splitInvalid = Boolean(splitFx) || (splitPicked.length === 0 && !splitSale)
     || splitPicked.some((i) => pickProblem(i, picks[itemKey(i)]) !== null)
     || (splitSale && (saleInvalidOf(lines, preview.taxable) || saleAmt <= 0 || saleAmt > preview.total))
     || splitBlocked(split.state)
@@ -411,7 +412,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   useFooterSaveReport(onFooterSave, credit > 0 && !result && customerId
     ? {
         label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: busy,
-        disabledReason: fxUnconverted ?? itemPlan?.problem ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
+        disabledReason: fxUnconverted ?? itemPlan?.problem ?? splitFx ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
       }
     : null);
 
@@ -639,7 +640,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice}
             section={tdsSection} sectionReason={tdsSectionPick ? null : tdsGuess.reason} onSection={setTdsSectionPick} noRoundOff={Boolean(relink)} />}
           {/* R-2466: an export receipt on a foreign invoice / an opening invoice paid over its due. */}
-          <ItemPlanNote plan={itemPlan} item={picked} />
+          <ItemPlanNote plan={splitFx ? { fx: null, problem: splitFx } : itemPlan} item={picked} />
 
           {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
               server's reason is shown here too, not only as a toast. */}

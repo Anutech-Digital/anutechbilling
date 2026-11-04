@@ -22,6 +22,10 @@
 --   G. Books locked up to the line's date → refused, nothing saved.
 --   H. Another company's login: nothing listed, booking refused.
 --   I. A tax invoice with no quote / instalment / project link is still not listed (no path).
+--   J. A subscription-billing (instalment) invoice — quote_id NULL on purpose — is listed and paid
+--      (it already was, through its subscription_billings row: passes with or without the migration).
+--   K. A ₹2,000 receipt typed by hand on an opening invoice with 000000000000000 (on no bank line):
+--      the matching zero-ref ₹2,000 line is matched to THAT receipt (no second one); the split refuses.
 
 begin;
 
@@ -258,6 +262,37 @@ begin
   if (select status::text from public.invoices where id = v_inv) <> 'paid' then
     raise exception 'FAIL J: instalment invoice % after ₹2,360 (want paid) — %', (select status from public.invoices where id = v_inv), res; end if;
   raise notice 'PASS J: a quote-less subscription-billing invoice is listed (instalment) and paid from the line';
+end $$;
+
+-- ── K. a hand-typed zero-ref receipt on an opening invoice is that line's money ───────────────
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
+  ('11111111-0000-0000-0000-000000246608','dddddddd-0000-0000-0000-000000246601','bbbbbbbb-0000-0000-0000-000000246601','2026-10-26','NEFT ZOHO OLD HAND',0,2000,'000000000000000','manual'),
+  ('11111111-0000-0000-0000-000000246609','dddddddd-0000-0000-0000-000000246601','bbbbbbbb-0000-0000-0000-000000246601','2026-10-27','NEFT ZOHO OLD HAND SPLIT',0,1000,'000000000000000','manual');
+select public.import_opening_invoices(
+  '[{"number":"ZB-R2466-4","invoice_date":"2026-02-13","due_date":"2026-03-15","customer_id":"cccccccc-0000-0000-0000-000000246601","total":4000,"balance":4000},
+    {"number":"ZB-R2466-5","invoice_date":"2026-02-14","due_date":"2026-03-16","customer_id":"cccccccc-0000-0000-0000-000000246601","total":3000,"balance":3000}]'::jsonb,
+  'Invoice2.csv');
+do $$
+declare v4 text := pg_temp.opn('ZB-R2466-4'); v5 text := pg_temp.opn('ZB-R2466-5'); v_hand text; r jsonb; n int;
+begin
+  perform public.record_multi_invoice_payment('cccccccc-0000-0000-0000-000000246601', '2026-10-26', 'bank_transfer', null,
+    '000000000000000', 2000, jsonb_build_array(jsonb_build_object('invoice_id', v4, 'amount', 2000)), false, 'typed from the statement');
+  perform public.record_multi_invoice_payment('cccccccc-0000-0000-0000-000000246601', '2026-10-27', 'bank_transfer', null,
+    '000000000000000', 1000, jsonb_build_array(jsonb_build_object('invoice_id', v5, 'amount', 1000)), false, 'typed from the statement');
+  v_hand := (select id::text from public.payments where invoice_id = v4 and status = 'received');
+  r := public.reconcile_bank_credit_to_item('11111111-0000-0000-0000-000000246608', null, v4);
+  select count(*) into n from public.payments where invoice_id = v4 and status = 'received';
+  if n <> 1 or pg_temp.received(v4) <> 2000 or r->>'payment_id' <> v_hand
+     or (select matched_to_id from public.bank_transactions where id = '11111111-0000-0000-0000-000000246608') <> v_hand then
+    raise exception 'FAIL K: % receipts / ₹% on the opening invoice, line on % (want 1 / 2,000 / the hand receipt %)', n, pg_temp.received(v4), r->>'payment_id', v_hand; end if;
+  begin
+    perform public.reconcile_bank_credit_split('11111111-0000-0000-0000-000000246609', 'cccccccc-0000-0000-0000-000000246601',
+      jsonb_build_array(jsonb_build_object('invoice_id', v5, 'amount', 1000)), null, null);
+    raise exception 'FAIL K: the split booked a second receipt beside the hand-typed one';
+  exception when unique_violation then null;
+  end;
+  if pg_temp.received(v5) <> 1000 then raise exception 'FAIL K: split changed the receipts: ₹%', pg_temp.received(v5); end if;
+  raise notice 'PASS K: a hand-typed zero-ref receipt on an opening invoice is matched, never doubled';
 end $$;
 
 rollback;

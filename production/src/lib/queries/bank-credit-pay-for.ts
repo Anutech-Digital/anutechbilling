@@ -213,6 +213,8 @@ export async function payItemCall(input: PayItemInput, call: typeof rpc = rpc): 
   if (input.fx) {
     if (!input.invoiceId) throw new Error(`Only an invoice can take an export receipt in ${input.fx.currency}.`);
     if (input.tdsAmount > 0) throw new Error(`A customer abroad deducts no Indian TDS — clear the TDS to book this receipt in ${input.fx.currency}.`);
+    /* reconcile_bank_credit_fx_invoice files the subscription on its term's own renewal date. */
+    if (input.createSubscription && input.subRenewal) throw new Error(`An export receipt in ${input.fx.currency} takes the term's own renewal date — clear the changed "Renews on" date, or change it on the subscription afterwards.`);
   }
   const { data, error } = input.fx
     ? await call("reconcile_bank_credit_fx_invoice", payItemFxArgs(input, input.fx))

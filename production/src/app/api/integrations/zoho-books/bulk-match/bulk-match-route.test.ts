@@ -146,7 +146,9 @@ describe("R-2402 bulk-match route", () => {
   it("R-2419: an app customer's row carries what the app has — open quotes (the user's own RPC), opening invoices, receipts — every read own tenant", async () => {
     st.customers = [{ id: "c-ranz", name: "RANZ INTERNATIONAL LLC", gstin: null }];
     st.tables = {
-      open_items: [{ kind: "renewal", quote_id: "Q-1", invoice_id: null, doc_date: "2026-10-20", amount_due: 3823, taxable_value: 3240, makes_subscription: false }],
+      open_items: [{ kind: "renewal", quote_id: "Q-1", invoice_id: null, doc_date: "2026-10-20", amount_due: 3823, taxable_value: 3240, makes_subscription: false },
+        /* R-2466: the list now carries opening invoices too — the plan reads them as `openings`, not as open items */
+        { kind: "opening", quote_id: null, invoice_id: "OPN-1", doc_date: "2025-05-01", amount_due: 4000, taxable_value: 0, makes_subscription: false }],
       quotes: [{ id: "Q-1", below_cost: true, approval_status: "pending" }],
       invoices: [{ id: "OPN-1", customer_id: "c-ranz", external_number: "INV/25-26/9", invoice_date: "2025-05-01", amount: 5000, net_payable: 5000, paid_amount: 1000 }],
       payments: [{ id: "pay-1", customer_id: "c-ranz", amount: 3823, received_at: "2026-10-15T10:00:00Z", reference: "UTR9" }],
@@ -160,6 +162,7 @@ describe("R-2402 bulk-match route", () => {
       openings: [{ id: "OPN-1", number: "INV/25-26/9", due: 4000 }],
       receipts: [{ id: "pay-1", date: "2026-10-15", amount: 3823, reference: "UTR9" }],
     });
+    expect(body.rows[0].facts.openItems).toHaveLength(1);
     expect(body.rows[0].facts.openItems[0].approvalBlock).toMatch(/below cost/);
     expect(st.rpcs).toEqual([["bank_credit_open_items", { p_customer_id: "c-ranz" }]]);
     for (const t of ["invoices", "payments", "subscriptions", "quotes", "opening_balances"]) expect(tenantFilters(t)).toEqual([TENANT]);
