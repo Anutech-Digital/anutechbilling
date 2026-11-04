@@ -22,7 +22,7 @@
  * is skipped (the RPC refuses a reconciled line too). The first error STOPS the run and is reported;
  * rows after it stay unbooked for the next press.
  */
-import { newSaleArgs, type NewSaleInput, type PayItemInput } from "@/lib/queries/bank-credit-pay-for";
+import { newSaleFxRpcArgs, type NewSaleInput, type PayItemInput } from "@/lib/queries/bank-credit-pay-for";
 import type { PayForResult } from "@/lib/banking/credit-pay-for";
 import type { LinePayerAnswer } from "@/lib/queries/customer-payers";
 import { mapGstTreatment } from "@/lib/integrations/zoho-books/import-plan";
@@ -91,35 +91,35 @@ export interface BookDeps {
 }
 
 /** R-2427: the reconcile_bank_credit_fx_invoice arguments — the narration's currency, rate and amount. */
-export function fxInvoiceArgs(txnId: string, invoiceId: string, fx: FxInvoicePay) {
+export function fxInvoiceArgs(txnId: string, invoiceId: string, fx: FxInvoicePay, sub: { createSubscription: boolean | null; subStart: string | null } = { createSubscription: null, subStart: null }) {
   return {
     p_txn_id: txnId,
     p_invoice_id: invoiceId,
     p_currency: fx.currency,
     p_fx_rate: fx.rate,
     p_foreign_amount: fx.foreignAmount,
+    /* the plan's subscription choice (e.g. Zoho's term already ended → none), as payItem sends it */
+    p_create_subscription: sub.createSubscription,
+    p_sub_start: sub.createSubscription ? sub.subStart : null,
   };
 }
 
 /** R-2425: the reconcile_bank_credit_new_sale_fx arguments — exported so the test pins what reaches
  *  the server. No TDS (a foreign customer deducts none); the Zoho number always sent (null = none). */
 export function newSaleFxArgs(i: NewSaleInput, fx: SaleFx) {
-  const a = newSaleArgs(i);
   return {
-    p_txn_id: a.p_txn_id,
-    p_customer_id: a.p_customer_id,
-    p_lines: a.p_lines,
-    p_create_subscription: a.p_create_subscription,
-    p_sub_start: a.p_sub_start,
-    p_sub_renewal: a.p_sub_renewal,
-    p_billing_cycle: a.p_billing_cycle,
-    p_external_number: i.externalNumber?.trim() || null,
-    p_currency: fx.currency,
-    p_fx_rate: fx.rate,
-    p_foreign_amount: fx.foreignAmount,
+    /* R-2427: one builder for the 11 arguments (lib/queries — the Reconcile sheet uses it too). */
+    ...newSaleFxRpcArgs(i, fx),
     /* R-2427: Zoho billed more (charges kept abroad) → the 12-argument function books them as Bank Charges. */
     ...(fx.billed && fx.billed > fx.foreignAmount ? { p_foreign_billed: fx.billed } : {}),
   };
+}
+
+/** R-2427: what the server booked (its bank_charges / forex_difference; the plan's figures only if it gave none). */
+export function fxPaidText(invoiceId: string, currency: string, res: { bank_charges?: number; forex_difference?: number }, plan: FxInvoicePay): string {
+  const charges = Number(res.bank_charges ?? plan.bankCharges) || 0;
+  const forex = Number(res.forex_difference ?? plan.forex) || 0;
+  return `Paid invoice ${invoiceId} in full in ${currency}${charges ? ` — Bank Charges ${rupee(charges)}` : ""}${forex ? ` — forex ${forex < 0 ? "gain" : "loss"} ${rupee(Math.abs(forex))}` : ""} — line reconciled.`;
 }
 
 /** R-2425: an export receipt goes through the foreign-currency sale; everything else as before. */
@@ -267,7 +267,7 @@ export async function bookRows(
       }
       const res = fxPay && book.item?.invoiceId && deps.payFxInvoice
         /* R-2427: settled in full in its currency; Bank Charges / forex lines in the same call. */
-        ? await deps.payFxInvoice(fxInvoiceArgs(row.txnId, book.item.invoiceId, fxPay))
+        ? await deps.payFxInvoice(fxInvoiceArgs(row.txnId, book.item.invoiceId, fxPay, book.item))
         : book.kind === "pay_item" && book.item
         ? await deps.payItem({
           /* R-2419 (e): the open quote / invoice of this money — the sheet's own "This money is for". */
@@ -310,7 +310,7 @@ export async function bookRows(
         subscriptions: (res.subscriptions ?? []).map((s) => ({ id: s.id, plan: s.plan })),
         todo,
         text: res.already_recorded ? "Already recorded before — nothing booked again."
-          : fxPay ? `Paid invoice ${book.item?.invoiceId} in full in ${fxPay.currency}${fxPay.bankCharges ? ` — Bank Charges ${rupee(fxPay.bankCharges)}` : ""}${fxPay.forex ? ` — forex ${fxPay.forex < 0 ? "gain" : "loss"} ${rupee(Math.abs(fxPay.forex))}` : ""} — line reconciled.`
+          : fxPay ? fxPaidText(book.item?.invoiceId ?? "", fxPay.currency, res as PayForResult & { bank_charges?: number; forex_difference?: number }, fxPay)
           : book.kind === "pay_item" ? `Paid open ${book.item?.invoiceId ? `invoice ${book.item.invoiceId}` : `quote ${book.item?.quoteId ?? res.quote_id}`} — line reconciled.`
           : book.fx ? `Booked in ${book.fx.currency} at the bank's rate (₹${book.fx.rate}) and reconciled.${book.fx.billed && book.fx.billed > book.fx.foreignAmount ? " The short part is booked as Bank Charges." : ""}`
           : "Booked and reconciled.",

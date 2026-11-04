@@ -58,7 +58,7 @@ describe("R-2427 Book selected — export receipt on a USD invoice", () => {
     const run = await bookRows([payRow], new Set(["t-a"]), new Set(), d);
     expect(run.error).toBeNull();
     expect(d.payItem).not.toHaveBeenCalled();
-    expect(d.payFxInvoice).toHaveBeenCalledWith({ p_txn_id: "t-a", p_invoice_id: "INV-A", p_currency: "USD", p_fx_rate: 84.5, p_foreign_amount: 1000 });
+    expect(d.payFxInvoice).toHaveBeenCalledWith(expect.objectContaining({ p_txn_id: "t-a", p_invoice_id: "INV-A", p_currency: "USD", p_fx_rate: 84.5, p_foreign_amount: 1000 }));
     expect(run.done[0].text).toBe("Paid invoice INV-A in full in USD — forex gain ₹1,500 — line reconciled.");
   });
 
@@ -70,9 +70,17 @@ describe("R-2427 Book selected — export receipt on a USD invoice", () => {
     expect(run.error?.reason).toContain("cannot pay an invoice in that currency");
   });
 
-  it("fxInvoiceArgs: the 5 arguments of reconcile_bank_credit_fx_invoice", () => {
+  it("fxInvoiceArgs: the 7 arguments of reconcile_bank_credit_fx_invoice, with the plan's subscription choice", () => {
     expect(Object.keys(fxInvoiceArgs("t", "INV-A", payRow.book!.item!.fx!)).sort()).toEqual(
-      ["p_currency", "p_foreign_amount", "p_fx_rate", "p_invoice_id", "p_txn_id"]);
+      ["p_create_subscription", "p_currency", "p_foreign_amount", "p_fx_rate", "p_invoice_id", "p_sub_start", "p_txn_id"]);
+    expect(fxInvoiceArgs("t", "INV-A", payRow.book!.item!.fx!, { createSubscription: false, subStart: "2026-07-01" }))
+      .toMatchObject({ p_create_subscription: false, p_sub_start: null });
+  });
+
+  it("the booked text says what the SERVER booked (its bank_charges / forex_difference)", async () => {
+    const d = deps({ payFxInvoice: vi.fn(async () => ({ ...result, bank_charges: 12, forex_difference: -1400 } as PayForResult)) });
+    const run = await bookRows([payRow], new Set(["t-a"]), new Set(), d);
+    expect(run.done[0].text).toBe("Paid invoice INV-A in full in USD — Bank Charges ₹12 — forex gain ₹1,400 — line reconciled.");
   });
 });
 
