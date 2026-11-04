@@ -75,6 +75,21 @@ insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, 
   ('INV-R2466-NOQ', 'dddddddd-0000-0000-0000-000000246601', 'cccccccc-0000-0000-0000-000000246601', 'Zoho Old 2466', 1180, 'pending',
    '2026-09-25', '2026-10-25', 1000, 180, 18, false, 0, 'tax_invoice', '[{"name": "x", "qty": 1, "rate": 1000}]'::jsonb);
 
+-- J (coordinator, 4 Nov): a subscription billed quarterly — raise_subscription_billing raises each
+-- part's invoice with quote_id NULL on purpose; it is listed through its subscription_billings row.
+insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items, invoice_id) values
+  ('Q-R2466-SUB', 'dddddddd-0000-0000-0000-000000246601', 'cccccccc-0000-0000-0000-000000246601', 'Zoho Old 2466', 9440, 8000, 18, 'accepted', 'none', '[]'::jsonb, null);
+insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, billing_cycle, quote_id) values
+  ('eeeeeeee-0000-0000-0000-000000246601', 'dddddddd-0000-0000-0000-000000246601', 'cccccccc-0000-0000-0000-000000246601', 'Zoho Old 2466',
+   'Workspace Starter', 'google'::vendor, 2, 667, 'quarterly'::billing_cycle, 'Q-R2466-SUB');
+insert into public.subscription_billings (id, tenant_id, subscription_id, term_start, period_index, bill_on, period_start, period_end, taxable_amount, tax_rate) values
+  ('eeeeeeee-0000-0000-0000-000000246611', 'dddddddd-0000-0000-0000-000000246601', 'eeeeeeee-0000-0000-0000-000000246601',
+   '2026-07-01', 1, '2026-07-01', '2026-07-01', '2026-09-28', 2000, 18);
+create temp table r2466_inst (id text) on commit drop;
+insert into r2466_inst select invoice_id from public.raise_subscription_billing('eeeeeeee-0000-0000-0000-000000246611');
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
+  ('11111111-0000-0000-0000-000000246607','dddddddd-0000-0000-0000-000000246601','bbbbbbbb-0000-0000-0000-000000246601','2026-10-25','NEFT ZOHO OLD QUARTER',0,2360,'R2466UTR000007','manual');
+
 select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000246601","role":"authenticated"}', true);
 select public.generate_invoice('Q-R2466-USD');
 
@@ -227,6 +242,22 @@ begin
   if exists (select 1 from public.bank_credit_open_items('cccccccc-0000-0000-0000-000000246601') o where o.invoice_id = 'INV-R2466-NOQ') then
     raise exception 'FAIL I: a tax invoice with no quote / instalment / project link is listed (it cannot take a payment)'; end if;
   raise notice 'PASS I: a quote-less tax invoice with no payment path is still left out';
+end $$;
+
+-- ── J. a subscription-billing (instalment) invoice — quote_id NULL — is listed and paid ─────
+do $$
+declare r record; v_inv text := (select id from r2466_inst limit 1); res jsonb;
+begin
+  if v_inv is null or (select quote_id from public.invoices where id = v_inv) is not null then
+    raise exception 'FAIL J: setup — raise_subscription_billing gave % (want an invoice with quote_id NULL)', v_inv; end if;
+  select * into r from public.bank_credit_open_items('cccccccc-0000-0000-0000-000000246601') o where o.invoice_id = v_inv;
+  if not found or r.kind <> 'instalment' or r.amount_due <> 2360 or r.quote_id is not null
+     or r.subscription_id <> 'eeeeeeee-0000-0000-0000-000000246601' then
+    raise exception 'FAIL J: instalment row % (want instalment, ₹2,360 due, its subscription)', to_jsonb(r); end if;
+  res := public.reconcile_bank_credit_to_item('11111111-0000-0000-0000-000000246607', null, v_inv);
+  if (select status::text from public.invoices where id = v_inv) <> 'paid' then
+    raise exception 'FAIL J: instalment invoice % after ₹2,360 (want paid) — %', (select status from public.invoices where id = v_inv), res; end if;
+  raise notice 'PASS J: a quote-less subscription-billing invoice is listed (instalment) and paid from the line';
 end $$;
 
 rollback;
