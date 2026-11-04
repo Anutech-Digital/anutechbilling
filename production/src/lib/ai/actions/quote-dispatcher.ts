@@ -31,7 +31,10 @@ import type { CatalogueItemPrice } from "@/lib/quotes/quote-from-enquiry";
 import { resolveAutonomy, type AiAction } from "../autonomy";
 import { loadAutonomyPolicy, logAiAction } from "../autonomy.server";
 import { recordSalesTurn, flagLeadForHumanAttention } from "../sales-agent.server";
-import { quoteIsWarranted, heldTotalsNamed, type SalesAgentDecision, type SalesChannel } from "../sales-agent";
+import {
+  quoteIsWarranted, heldTotalsNamed, moneyFiguresNamed, HELD_STATE_QUESTION,
+  type SalesAgentDecision, type SalesChannel,
+} from "../sales-agent";
 
 /* Typed as the RETURN of createAdminClient — hand-rolling this shape is what produced the
    TS2589 "excessively deep" failure in lib/email/owner-alert.ts. */
@@ -485,26 +488,43 @@ export async function dispatchSalesDecision(args: DispatchArgs): Promise<Dispatc
          The agent wrote this reply BEFORE the draft existed, with seats × list and the net
          cost authorised. The customer-copy gate then held the draft (no place of supply /
          needs approval) — so a reply stating one of its figures would hand the customer the
-         price the gate just refused to send. Such a reply goes to a person (draft on the
-         timeline); one that names no held figure (asks for the state) still goes out. */
+         price the gate just refused to send. And not only the held figures themselves: every
+         amount in it (list total, discount saved, instalment) was worked out for a quotation
+         that is not going out. So a reply naming ANY money figure — or a held figure as a bare
+         number — goes to a person (draft on the timeline). A reply with no figure still goes
+         out; when the hold is the customer's own missing state, it also asks for it (the reply
+         was written before anyone knew to ask). */
+      let replyArgs = args;
       if (quoted.held) {
-        const named = heldTotalsNamed(
-          `${decision.generated_response.body_text}\n${decision.generated_response.whatsapp_summary}`,
-          quoted.held.totals,
-        );
+        const text = `${decision.generated_response.body_text}\n${decision.generated_response.whatsapp_summary}`;
+        const named = [...new Set([...moneyFiguresNamed(text), ...heldTotalsNamed(text, quoted.held.totals)])];
         if (named.length > 0) {
           return await handOver(
             args,
-            `${quoted.reason} The agent's reply named the held quote's amount ` +
+            `${quoted.reason} The agent's reply named an amount for the held quotation ` +
               `(${named.map((n) => `Rs ${n.toLocaleString("en-IN")}`).join(", ")}), so it was not sent.`,
           );
+        }
+        if (quoted.held.kind === "customer_state") {
+          const gr = decision.generated_response;
+          replyArgs = {
+            ...args,
+            decision: {
+              ...decision,
+              generated_response: {
+                ...gr,
+                body_text: `${gr.body_text.trimEnd()}\n\n${HELD_STATE_QUESTION}`,
+                whatsapp_summary: `${gr.whatsapp_summary.trimEnd()} ${HELD_STATE_QUESTION}`,
+              },
+            },
+          };
         }
       }
 
       /* No quotation reached them — it was refused, held for review, or the send failed, and
          each of those already wrote its reason on the timeline. They are still owed an
          answer, so the agent's reply goes out as it did before. */
-      const sent = await sendReply(args);
+      const sent = await sendReply(replyArgs);
       return {
         outcome: sent.outcome === "replied" ? "quoted" : sent.outcome,
         detail: `Quote drafted for ${seats ?? "?"} × ${item?.name ?? "an unmatched product"} · ${sent.detail}`,

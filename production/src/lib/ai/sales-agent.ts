@@ -293,29 +293,44 @@ export interface HeldQuoteBrief {
  * says the quotation will follow — no internal reason.
  */
 export function heldQuoteLines(h: HeldQuoteBrief): string[] {
+  /* "will follow", never "has been prepared" — the lead-facts block below forbids saying a
+     drafted quotation is prepared (unbackedQuoteClaim hands such a reply to a person). */
   return [
     "QUOTATION ON HOLD — READ THIS FIRST",
-    "- A quotation has been drafted for this lead but it is HELD and has NOT been sent.",
-    "- Do NOT state any total, subtotal, GST amount or payable amount for this deal — not one",
-    "  from earlier in the conversation, and not one you work out. Per-seat list prices from the",
-    "  catalogue are still allowed. Do not give a quotation number.",
+    "- Our quotation for this lead is on hold and has NOT been sent.",
+    "- Do NOT state any total, subtotal, GST amount, discount amount, instalment or payable",
+    "  amount for this deal — not one from earlier in the conversation, and not one you work out.",
+    "  Per-seat list prices from the catalogue are still allowed. Do not give a quotation number.",
     h.kind === "customer_state"
       ? "- Ask the customer which state their business is registered in (or their GST billing " +
         "address), because the GST on the quotation depends on it, and say the quotation will " +
         "follow as soon as we have it."
-      : "- Tell the customer their quotation is being prepared and will follow shortly. Do not " +
-        "give an internal reason.",
+      : "- Say their quotation will follow shortly. Do not give an internal reason.",
   ];
 }
 
+/** R-2460: the question added to a reply when a quote is held for the customer's own state. */
+export const HELD_STATE_QUESTION =
+  "One thing we need before we send your quotation: which state is your business registered in " +
+  "(or your GST billing address)? The GST on the quotation depends on it — we will send it as " +
+  "soon as we have this.";
+
 /**
- * R-2460: the held figures a reply names — empty when it names none. Used by the dispatcher on
- * the agent's own quote path, where the reply was written BEFORE the draft was held.
+ * R-2460: the held figures a text names — empty when it names none. Bare numbers of 1,000 and up
+ * count too ("the total is 38,232 including GST" carries no ₹ sign and is still the price): a
+ * bare number only matters here when it EQUALS a held figure, so a year or a seat count cannot
+ * trip it by accident.
  */
 export function heldTotalsNamed(text: string, totals: readonly number[]): number[] {
   if (totals.length === 0) return [];
   const held = new Set(totals.map((t) => Math.round(t)));
-  return verifyDraftMoney(text, []).found.map((n) => Math.round(n)).filter((n) => held.has(n));
+  return verifyDraftMoney(text, [], { bareNumberFloor: 1000 }).found
+    .map((n) => Math.round(n)).filter((n) => held.has(n));
+}
+
+/** R-2460: every currency-marked figure a text names (₹ / Rs / INR / "/-"). */
+export function moneyFiguresNamed(text: string): number[] {
+  return verifyDraftMoney(text, []).found.map((n) => Math.round(n));
 }
 
 export interface BuiltPrompt {

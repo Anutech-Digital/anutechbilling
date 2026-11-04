@@ -186,11 +186,13 @@ export function autoQuoteNotSentReason(r: Exclude<SendAutoQuoteResult, "sent">):
 export function heldQuoteTotals(q: {
   subtotal?: number | null; discount_pct?: number | null; tax_rate?: number | null; amount?: number | null;
 }): number[] {
+  /* The SAME arithmetic sendAutoQuote prints (18% when unset, R-804 display tax, the stored
+     total when there is one) — so a figure the customer would have read is a figure held here. */
   const subtotal = q.subtotal ?? 0;
   const taxable = taxableAfterDiscount(subtotal, q.discount_pct ?? 0);
-  const amount = q.amount ?? 0;
-  const tax = amount > 0 ? amount - taxable : Math.round(taxable * ((q.tax_rate ?? 0) / 100));
-  return [...new Set([subtotal, taxable, tax, amount].map((n) => Math.round(n)).filter((n) => n > 0))];
+  const tax = quoteDisplayTax(taxable, q.tax_rate ?? 18, q.amount);
+  const total = q.amount ?? taxable + tax;
+  return [...new Set([subtotal, taxable, tax, total].map((n) => Math.round(n)).filter((n) => n > 0))];
 }
 
 /**

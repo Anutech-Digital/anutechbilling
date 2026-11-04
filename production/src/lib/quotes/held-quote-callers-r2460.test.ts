@@ -50,6 +50,8 @@ describe("R-2460 — the held result and its words", () => {
     expect(heldQuoteTotals({ subtotal: 10000, discount_pct: 10, tax_rate: 18, amount: 10620 }))
       .toEqual([10000, 9000, 1620, 10620]);
     expect(heldQuoteTotals({ subtotal: null, amount: null })).toEqual([]);
+    // An older row with no tax rate and no stored total: the send path prices it at 18%.
+    expect(heldQuoteTotals({ subtotal: 10000, tax_rate: null, amount: null })).toEqual([10000, 1800, 11800]);
   });
 });
 

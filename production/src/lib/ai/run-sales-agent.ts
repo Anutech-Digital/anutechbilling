@@ -417,6 +417,9 @@ async function latestQuote(
     .eq("tenant_id", tenantId)
     .eq("lead_id", leadId)
     .order("created_date", { ascending: false })
+    /* R-2460: created_date is a DATE — two quotes on one day tied, and the hold check below
+       could read the sent one and miss a held draft. Ids are a gapless series, newest last. */
+    .order("id", { ascending: false })
     .limit(1)
     .maybeSingle();
 

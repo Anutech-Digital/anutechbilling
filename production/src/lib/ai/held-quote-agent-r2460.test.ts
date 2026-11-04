@@ -107,6 +107,14 @@ describe("R-2460 — a held quote's total never goes out in the agent's reply", 
     expect(r.decision.action_required).toBe("HANDOVER_TO_HUMAN");
   });
 
+  it("held: the gross written as a bare number (no ₹ sign) is stopped too", async () => {
+    agentSays("Namaste Asha,\n\nFor 10 users the total is 38,232 including GST.\n\nRegards");
+    const r = await run(HELD);
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.decision.action_required).toBe("HANDOVER_TO_HUMAN");
+    expect(r.overruleReason).toMatch(/on hold/);
+  });
+
   it("held: a reply that asks for the state and says the quote will follow still goes out", async () => {
     agentSays(
       "Namaste Asha,\n\nThanks! Which state is your business registered in? GST on the quotation " +

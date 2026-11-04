@@ -93,9 +93,42 @@ describe("R-2460 — dispatcher: a held quote's figure never rides out on the co
     expect(notes.some((n) => /Quote held/.test(n))).toBe(true);
   });
 
-  it("reply that names no held figure (asks for the state) still goes out", async () => {
+  it("any amount worked out for the held quotation (list total, discount saved) → not emailed", async () => {
+    for (const body of [
+      "Namaste Asha, 10 users at list come to ₹32,000 + GST.",
+      "Namaste Asha, you save Rs 1,600 with the volume rate.",
+    ]) {
+      sendCustomerEmail.mockClear();
+      const { admin } = fakeAdmin();
+      const r = await dispatchSalesDecision(args(body, admin));
+      expect(sendCustomerEmail, body).not.toHaveBeenCalled();
+      expect(r.outcome, body).toBe("handed_over");
+    }
+  });
+
+  it("the held gross written as a bare number (no ₹) is caught too", async () => {
     const { admin } = fakeAdmin();
-    await dispatchSalesDecision(args("Namaste Asha, which state is your business registered in? Your quotation will follow.", admin));
+    const r = await dispatchSalesDecision(args("Namaste Asha, the total is 38,232 including GST.", admin));
+    expect(sendCustomerEmail).not.toHaveBeenCalled();
+    expect(r.outcome).toBe("handed_over");
+  });
+
+  it("a reply with no amount still goes out — and asks for the missing state", async () => {
+    const { admin } = fakeAdmin();
+    await dispatchSalesDecision(args("Namaste Asha, thanks — your quotation will follow.", admin));
     expect(sendCustomerEmail).toHaveBeenCalledTimes(1);
+    const text = String((sendCustomerEmail.mock.calls[0][0] as { text: string }).text);
+    expect(text).toMatch(/which state is your business registered in/);
+    expect(text).not.toContain("38,232");
+  });
+
+  it("held for approval: no state question (that is ours to sort out)", async () => {
+    autoQuoteForLead.mockResolvedValue({
+      emailed: false, reason: "Quote held — needs approval.", held: { ...HELD, kind: "approval" },
+    });
+    const { admin } = fakeAdmin();
+    await dispatchSalesDecision(args("Namaste Asha, thanks — your quotation will follow.", admin));
+    expect(sendCustomerEmail).toHaveBeenCalledTimes(1);
+    expect(String((sendCustomerEmail.mock.calls[0][0] as { text: string }).text)).not.toMatch(/which state/);
   });
 });
