@@ -258,6 +258,20 @@ export default function QuotesPage() {
     seller: { state_code: me.tenantStateCode, gstin: me.tenantGstin },
     role: me.role,
   } : null), [copyParties, me]);
+  const copyBlocks = React.useMemo(
+    () => new Map((quotes ?? []).map((q) => [q.id, customerCopyBlockForRow(q, copyCtx)] as const)),
+    [quotes, copyCtx],
+  );
+  /* A locked follow-up is never a silent dead button: the click says why, with the gate's own fix. */
+  const followUpOnWhatsApp = (q: Quote) => {
+    const copyBlock = copyBlocks.get(q.id) ?? null;
+    if (copyBlock) return void toast.error("WhatsApp follow-up locked", {
+      description: customerCopyBlockTitle(copyBlock),
+      ...(copyBlock.action ? { action: { label: copyBlock.action.label, onClick: () => router.push(copyBlock.action!.href as never) } } : {}),
+    });
+    const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+    window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
+  };
   const { data: teamTree } = useTeamTree();
   const team = React.useMemo(() => teamTree ?? [], [teamTree]);
   const meMember = React.useMemo(
@@ -987,12 +1001,7 @@ export default function QuotesPage() {
                   const expiringSoon = dl !== null && dl >= 0 && dl <= 7;
                   const kbSelected = rowIndex === keys.index;
                   /* R-2459: approval / no place of supply locks the WhatsApp follow-up like every customer copy. */
-                  const copyBlock = customerCopyBlockForRow(q, copyCtx);
-                  const followUpOnWhatsApp = () => {
-                    if (copyBlock) return;
-                    const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
-                    window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
-                  };
+                  const copyBlock = copyBlocks.get(q.id) ?? null;
                   return (
                     <tr
                       key={q.id}
@@ -1146,21 +1155,22 @@ export default function QuotesPage() {
                             </Button>
                           )}
                           {(q.status === "sent" || q.status === "viewed") && (
-                            /* R-2459: a disabled button gets no hover in some browsers — the reason sits on the wrapper. */
-                            <span className="min-w-0 overflow-hidden" title={customerCopyBlockTitle(copyBlock)}>
-                              <Button
-                                size="sm"
-                                icon="whatsapp"
-                                disabled={!!copyBlock}
-                                aria-label={copyBlock ? `WhatsApp locked — ${customerCopyBlockTitle(copyBlock)}` : undefined}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  followUpOnWhatsApp();
-                                }}
-                              >
-                                WhatsApp
-                              </Button>
-                            </span>
+                            /* R-2459: locked = greyed + aria-disabled, but still tappable — the tap
+                               (touch has no hover) and the tooltip give the reason and the fix. */
+                            <Button
+                              size="sm"
+                              icon="whatsapp"
+                              aria-disabled={copyBlock ? true : undefined}
+                              className={copyBlock ? "opacity-50" : undefined}
+                              title={customerCopyBlockTitle(copyBlock)}
+                              aria-label={copyBlock ? `WhatsApp locked — ${customerCopyBlockTitle(copyBlock)}` : undefined}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                followUpOnWhatsApp(q);
+                              }}
+                            >
+                              WhatsApp
+                            </Button>
                           )}
                           {q.status === "accepted" && (() => {
                             // What happens NEXT on an accepted quote depends on
@@ -1244,9 +1254,8 @@ export default function QuotesPage() {
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 className="gap-2.5 py-2 cursor-pointer text-emerald font-medium"
-                                disabled={!!copyBlock}
-                                title={customerCopyBlockTitle(copyBlock)}
-                                onClick={followUpOnWhatsApp}
+                                aria-disabled={copyBlock ? true : undefined}
+                                onClick={() => followUpOnWhatsApp(q)}
                               >
                                 <Icon name="whatsapp" size={15} />
                                 <span className="min-w-0">

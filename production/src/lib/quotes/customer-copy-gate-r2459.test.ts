@@ -43,9 +43,14 @@ describe("R-2459: the no-state fix link is never a dead end", () => {
     );
   });
 
-  it("viewed / expired typed-prospect quotes also go to Revise — only a draft opens in the editor", () => {
+  it("a viewed one goes to Revise too; one Revise refuses gets the copy — never a dead end", () => {
     expect(customerCopyBlock(q({ status: "viewed" }), prospectOnly)?.action?.href).toBe("/quotes/Q-F588-27-0008?revise=1");
-    expect(customerCopyBlock(q({ status: "expired" }), prospectOnly)?.action?.href).toBe("/quotes/Q-F588-27-0008?revise=1");
+    const copy = { label: "Duplicate as a new quote", href: "/quotes/new?duplicate=Q-F588-27-0008&company=R802+Renewed+Co" };
+    expect(customerCopyBlock(q({ status: "expired" }), prospectOnly)?.action).toEqual(copy);
+    expect(customerCopyBlock(q({ payment_status: "partial" }), prospectOnly)?.action).toEqual(copy);
+    expect(customerCopyBlock(q({ superseded_by: "Q-F588-27-0008-R2" }), prospectOnly)?.action).toEqual(copy);
+    expect(customerCopyBlock(q({ subscription_billing_id: "b1" }), prospectOnly)?.action).toEqual(copy);
+    expect(customerCopyBlock(q({ status: "expired" }), prospectOnly)?.message).toMatch(/Duplicate as a new quote and pick the customer's state on the copy first$/);
     expect(customerCopyBlock(q({ status: "draft" }), prospectOnly)?.action).toEqual({
       label: "Pick the customer's state", href: "/quotes/Q-F588-27-0008/edit",
     });
@@ -106,17 +111,23 @@ describe("R-2459 wiring", () => {
     expect(LIST).toContain("useQuoteCopyParties(");
     // each opener is in a handler that first returns on a block
     const chunks = LIST.split("web.whatsapp.com/send").slice(0, -1);
-    for (const before of chunks) expect(before.slice(-700)).toMatch(/if \(copyBlock\) return;/);
+    expect(chunks).toHaveLength(1);
+    for (const before of chunks) expect(before.slice(-900)).toMatch(/if \(copyBlock\) return void toast\.error\(/);
   });
 
-  it("the list's WhatsApp button and menu item are disabled with the reason", () => {
-    expect(LIST).toMatch(/disabled=\{!!copyBlock\}/);
+  it("the list's WhatsApp button and menu item look locked, and a tap says why with the gate's fix", () => {
+    expect(LIST.match(/aria-disabled=\{copyBlock \? true : undefined\}/g)).toHaveLength(2);
     expect(LIST).toContain("customerCopyBlockTitle(copyBlock)");
+    expect(LIST).toContain("copyBlock.action.label");
+    expect(LIST.match(/followUpOnWhatsApp\(q\)/g)).toHaveLength(2);
   });
 
   it("the quote page acts on ?revise=1 — asks first, never revises on load", () => {
     expect(PAGE).toContain('searchParams.get("revise")');
     const effect = PAGE.slice(PAGE.indexOf('searchParams.get("revise")'));
     expect(effect.slice(0, 2500)).toContain("setConfirm(");
+    // only when THIS quote's fix is Revise, and a second click after Cancel asks again
+    expect(effect.slice(0, 2500)).toContain("customerBlock?.action?.href !==");
+    expect(effect.slice(0, 2500)).toContain("reviseIntentHandled.current = false");
   });
 });

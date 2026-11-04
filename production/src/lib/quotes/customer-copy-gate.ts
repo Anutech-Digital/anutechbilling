@@ -31,6 +31,8 @@ import { quoteApprovalRecord, quoteEconomics } from "./approval-economics";
 import { quotePlaceOfSupply, type BuyerPlace } from "./quote-place-of-supply";
 import { supplyStateMissing } from "./quote-assist";
 import { companyStateFixFor } from "@/lib/onboarding/setup-links";
+import { canReviseQuote } from "./revise";
+import { duplicateQuoteHref } from "./duplicate-customer";
 
 export type CustomerCopyQuote = Pick<Quote,
   | "status" | "line_items"
@@ -38,7 +40,10 @@ export type CustomerCopyQuote = Pick<Quote,
   | "approved_discount_bps" | "approved_margin_bps" | "approval_rejection_reason">
   /* R-2448: who the quote is for — read by the place-of-supply half (only with `parties`). */
   & Partial<Pick<Quote,
-  | "id" | "customer_id" | "lead_id" | "customer_name" | "prospect_state_code" | "prospect_country" | "invoice_id">>;
+  | "id" | "customer_id" | "lead_id" | "customer_name" | "prospect_state_code" | "prospect_country" | "invoice_id"
+  /* R-2459: whether a sent typed-prospect quote can be revised (canReviseQuote) — its fix link. */
+  | "payment_status" | "superseded_by">>
+  & { subscription_billing_id?: string | null };
 
 /** R-2448: the buyer and seller the place of supply is decided from (as the send route reads them). */
 export interface CustomerCopyParties {
@@ -130,15 +135,21 @@ export function supplyCopyBlock(quote: CustomerCopyQuote, parties: CustomerCopyP
   /* R-2459: a typed prospect's state lives on the quote itself, and only a DRAFT opens in the
      editor — a sent quote's /edit says "can't be edited" (dead end, Chrome check 4 Nov,
      Q-F588-27-0008). Past draft the way to a state is Revise: a draft copy where it is picked,
-     which replaces this quote once sent. The quote page reads `?revise=1` and asks first. */
-  const quoteId = encodeURIComponent(quote.id ?? "");
+     which replaces this quote once sent. The quote page reads `?revise=1` and asks first. A quote
+     Revise refuses (expired, replaced, paid, a part request) gets the copy instead. Money received
+     is not known here — payment_status stands for it, and the page re-checks with its rows. */
+  const id = quote.id ?? "";
+  const quoteId = encodeURIComponent(id);
+  const revisable = canReviseQuote({ ...quote, id }, 0).ok;
   const [action, where]: [CustomerCopyNextStep, string] = quote.customer_id
     ? [{ label: "Set the customer's state", href: `/customers/${quote.customer_id}` }, "on the customer page"]
     : quote.lead_id
       ? [{ label: "Set the lead's state", href: `/leads?lead=${encodeURIComponent(quote.lead_id)}` }, "on the lead"]
       : quote.status === "draft"
         ? [{ label: "Pick the customer's state", href: `/quotes/${quoteId}/edit` }, "on the quote"]
-        : [{ label: "Revise the quote", href: `/quotes/${quoteId}?revise=1` }, "and pick the customer's state on the new draft"];
+        : revisable
+          ? [{ label: "Revise the quote", href: `/quotes/${quoteId}?revise=1` }, "and pick the customer's state on the new draft"]
+          : [{ label: "Duplicate as a new quote", href: duplicateQuoteHref({ ...quote, id }) }, "and pick the customer's state on the copy"];
   const reason = `${name} has no state on record — the state decides CGST + SGST or IGST.`;
   const nextStep = `${action.label} ${where} first`;
   return { kind: "customer_state", reason, nextStep, message: `${reason} ${nextStep}`, action };

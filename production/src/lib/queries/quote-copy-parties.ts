@@ -31,21 +31,20 @@ export function useQuoteCopyParties(customerIds: readonly string[], leadIds: rea
     staleTime: 60_000,
     queryFn: async (): Promise<QuoteCopyParties> => {
       const supabase = createClient();
+      const chunks = (ids: string[]) => Array.from({ length: Math.ceil(ids.length / CHUNK) }, (_, i) => ids.slice(i * CHUNK, (i + 1) * CHUNK));
+      const [customerReads, leadReads] = await Promise.all([
+        Promise.all(chunks(cIds).map((part) => supabase
+          .from("customers").select("id, name, state_code, gstin, country, gst_treatment").in("id", part))),
+        Promise.all(chunks(lIds).map((part) => supabase
+          .from("leads").select("id, state_code, gstin, country").in("id", part))),
+      ]);
       const customers = new Map<string, CustomerPlace>();
       const leads = new Map<string, LeadPlace>();
-      for (let i = 0; i < cIds.length; i += CHUNK) {
-        const { data, error } = await supabase
-          .from("customers")
-          .select("id, name, state_code, gstin, country, gst_treatment")
-          .in("id", cIds.slice(i, i + CHUNK));
+      for (const { data, error } of customerReads) {
         if (error) throw error;
         for (const { id, ...row } of data ?? []) customers.set(id, row);
       }
-      for (let i = 0; i < lIds.length; i += CHUNK) {
-        const { data, error } = await supabase
-          .from("leads")
-          .select("id, state_code, gstin, country")
-          .in("id", lIds.slice(i, i + CHUNK));
+      for (const { data, error } of leadReads) {
         if (error) throw error;
         for (const { id, ...row } of data ?? []) leads.set(id, row);
       }
