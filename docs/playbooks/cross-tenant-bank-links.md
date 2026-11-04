@@ -63,26 +63,42 @@ docker exec -i supabase_db_resellerosv3 psql -X -U postgres -d postgres -v ON_ER
 - **Section 0 — login check.** `tenants_visible` should equal the number of companies and
   `bank_lines_visible` the number of bank lines. If it shows 0 or 1 company, row security is
   hiding rows: reconnect as the table owner and run again — a "0 rows" then would mean nothing.
+- **Section 0b — what was not checked.** `(0 rows)` = every check ran on every row. A row with
+  `ran = f` = that table / column is not on this database (normal on live before a deploy: no
+  table, nothing to link). A row with `may_hide_rows = t` = row security on that table can hide
+  rows from this login — reconnect as the table owner before trusting section 1.
 - **Section 1 — the finds.** `(0 rows)` = clean: nothing to do. Each row has a `section`:
   - `A forward` — the line (`bank_txn_id`, company `line_tenant_id`) is matched to a record
-    (`linked_table`, `linked_id`) of another company (`linked_tenant_id`).
-  - `B reverse` — another company's record (e.g. `payments.bank_txn_id` for split receipts,
-    `project_payments.bank_txn_id`, `expenses.reconciled_txn_id`) points at this line.
+    (`linked_table`, `linked_id`) of another company (`linked_tenant_id`) — R-2472's 11 types.
+  - `B reverse` — another company's record points at this line; `linked_table` names the column
+    (e.g. `payments.bank_txn_id` for split receipts, `project_payments.bank_txn_id`,
+    `expenses.reconciled_txn_id`, `business_loans.disbursal_bank_txn_id` — every foreign key to
+    bank lines is found by itself).
   - `C salary` — a salary of another company whose paid status came from this line.
+  - `D other type` — a line booked by its own flow (statutory, prepaid, owner equity, vendor
+    payment, EMI, referral commission, customer refund, …) whose `matched_to_id` is another
+    company's record in any table.
   The same link can show in more than one section (e.g. a salary match shows in A and C).
   `rows_in_section` gives the count per section.
 - Any row → write it on R-2479's card (count per section only, no ids in chat) and Pardeep
   decides the repair (a new card). Before R-2472 is deployed on that database, a row may also be a
   link made since — run it again after the deploy for the final word.
+- Run it when no deploy step is running on that database: it reads about 200 tables and waits for
+  any table a migration has locked (locally it takes ~2 s).
 
 ## Tests
 
 `production/tests/ops/report-cross-tenant-bank-links.test.ts`: no write keyword outside comments,
-read-only wrapper, no name/contact column; on the local DB (skipped where the container does not
-run, e.g. CI) a planted cross-company link (payment, salary, reverse project receipt) is found in
-sections A/B/C, still found when a mapped table is missing, a same-company link gives 0 rows, and
-everything is rolled back.
+read-only wrapper, no name/contact column, the map block identical in 0b and 1; on the local DB
+(skipped where the container does not run, e.g. CI) one planted cross-company link of every kind
+(payment, salary, text-id expense, transfer, project receipt, loan disbursal found via its foreign
+key, salary reconciled_txn_id, a prepaid line) is found in its section A/B/C/D, a missing table is
+skipped and listed in 0b, same-company links give 0 rows, and everything is rolled back.
 
 ## Lessons log
 
-- 4 Nov 2026 (R-2479): local DB — 0 rows (41 companies, 2990 bank lines).
+- 4 Nov 2026 (R-2479): local DB — 0 rows in 0b and 1 (42 companies, 2990 bank lines), ~1.5 s. The
+  first version let Postgres inline the per-table checks and took 107 s; the checks are now
+  `materialized` (each runs once).
+- 4 Nov 2026 (R-2479): the local test waits up to 30 s per table lock — another worker's SQL test
+  holding a table (e.g. quotes) in a long transaction makes it fail with "lock timeout"; rerun.
