@@ -744,6 +744,7 @@ export type Database = {
         Row: {
           access_token: string | null
           account_id: string
+          archived_at: string | null
           connected_user_id: string | null
           created_at: string
           currency: string
@@ -761,6 +762,7 @@ export type Database = {
         Insert: {
           access_token?: string | null
           account_id: string
+          archived_at?: string | null
           connected_user_id?: string | null
           created_at?: string
           currency?: string
@@ -778,6 +780,7 @@ export type Database = {
         Update: {
           access_token?: string | null
           account_id?: string
+          archived_at?: string | null
           connected_user_id?: string | null
           created_at?: string
           currency?: string

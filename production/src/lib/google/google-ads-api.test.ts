@@ -6,7 +6,7 @@
  * nothing calls Google.
  */
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { fetchCampaignSpend, explainGoogleAdsError } from "./google-ads-api";
+import { fetchCampaignSpend, explainGoogleAdsError, listAdAccounts } from "./google-ads-api";
 
 const original = process.env.GOOGLE_ADS_DEVELOPER_TOKEN;
 afterEach(() => {
@@ -47,11 +47,24 @@ describe("Google Ads developer token is optional (sunset 9 Sep 2026)", () => {
       "DEVELOPER_TOKEN_NOT_APPROVED",
       "The developer token is only approved for use with test accounts",
       "PERMISSION_DENIED: Google Ads API has not been used in project 123 before or it is disabled",
+      '[{"error":{"status":"PERMISSION_DENIED","details":[{"errors":[{"errorCode":{"authorizationError":"CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION"}}]}]}}]',
     ]) {
       const msg = explainGoogleAdsError(403, body);
       expect(msg).toMatch(/Cloud project/i);
       expect(msg).toContain("https://developers.google.com/google-ads/api/docs/api-policy/access-levels");
       expect(msg).not.toMatch(/GOOGLE_ADS_DEVELOPER_TOKEN is not set/);
     }
+    expect(explainGoogleAdsError(403, "CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION")).toMatch(/Explorer access/i);
+  });
+
+  it("skips a disabled account and continues to an active account", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string) => {
+      if (url.includes("listAccessibleCustomers")) return Response.json({ resourceNames: ["customers/111", "customers/222"] });
+      if (url.includes("customers/111/")) return Response.json([{ error: { code: 403, status: "PERMISSION_DENIED", details: [{ errors: [{ errorCode: { authorizationError: "CUSTOMER_NOT_ENABLED" } }] }] } }], { status: 403 });
+      return Response.json([{ results: [{ customer: { id: "222", descriptiveName: "Active Ads", currencyCode: "INR", manager: false } }] }]);
+    }));
+    await expect(listAdAccounts("fake-access")).resolves.toEqual([
+      { id: "222", name: "Active Ads", currency: "INR", manager: false, loginCustomerId: null },
+    ]);
   });
 });

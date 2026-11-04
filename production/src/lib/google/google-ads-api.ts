@@ -30,6 +30,9 @@ const BASE = () => `https://googleads.googleapis.com/${apiVersion()}`;
 
 /** Google's page on API access levels (Cloud project based since 9 Sep 2026). */
 export const GOOGLE_ADS_ACCESS_LEVELS_URL = "https://developers.google.com/google-ads/api/docs/api-policy/access-levels";
+const TEST_ACCESS_MESSAGE =
+  "This Google Cloud project has Test access to the Google Ads API. Open Google Ads API > Access levels in Google Cloud and apply for Explorer access to sync live campaigns: "
+  + GOOGLE_ADS_ACCESS_LEVELS_URL;
 const ACCESS_LEVEL_MESSAGE =
   "Google Ads API access is not approved for this Google Cloud project (test accounts only, or the API is off) — "
   + "in the Google Cloud project of the OAuth client, enable the Google Ads API and apply for Explorer/Basic access level: "
@@ -37,9 +40,11 @@ const ACCESS_LEVEL_MESSAGE =
 
 export function explainGoogleAdsError(status: number, body: string): string {
   // R-1884: access level now sits on the Cloud project — not on a developer token.
+  if (/CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION/i.test(body)) return TEST_ACCESS_MESSAGE;
   if (/DEVELOPER_TOKEN_NOT_APPROVED|only approved for use with test accounts|has not been used in project|SERVICE_DISABLED|access level/i.test(body)) {
     return ACCESS_LEVEL_MESSAGE;
   }
+  if (/CUSTOMER_NOT_ENABLED/i.test(body)) return "CUSTOMER_NOT_ENABLED: This Google Ads account is disabled or not yet enabled.";
   if (/DEVELOPER_TOKEN_INVALID/i.test(body)) return "Google rejected the developer token — developer tokens were retired on 9 Sep 2026: remove GOOGLE_ADS_DEVELOPER_TOKEN from env (access now comes from the Google Cloud project).";
   if (status === 404 && /version/i.test(body)) return `Google Ads API ${apiVersion()} is retired — put the new version in env GOOGLE_ADS_API_VERSION.`;
   if (/PERMISSION_DENIED|USER_PERMISSION_DENIED/i.test(body)) return "This Google login has no access to this Ads account — connect with the email that opens ads.google.com.";
@@ -98,7 +103,15 @@ export async function listAdAccounts(token: string): Promise<GoogleAdsAccount[]>
   for (const rn of acc.resourceNames ?? []) {
     const id = rn.replace("customers/", "");
     type CustRow = { customer?: { id?: string; descriptiveName?: string; currencyCode?: string; manager?: boolean } };
-    const chunks = await searchStream(token, id, "SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.manager FROM customer", id);
+    let chunks: GoogleSearchStreamChunk[];
+    try {
+      chunks = await searchStream(token, id, "SELECT customer.id, customer.descriptive_name, customer.currency_code, customer.manager FROM customer", id);
+    } catch (error) {
+      // Google can list an old disabled account alongside active accounts. Keep discovering
+      // the others; access-level and permission errors still stop the connection.
+      if ((error as Error).message.includes("CUSTOMER_NOT_ENABLED")) continue;
+      throw error;
+    }
     const c = ((chunks[0]?.results ?? []) as CustRow[])[0]?.customer;
     if (!c) continue;
     if (!c.manager) { out.set(id, { id, name: c.descriptiveName ?? id, currency: c.currencyCode ?? "INR", manager: false, loginCustomerId: null }); continue; }

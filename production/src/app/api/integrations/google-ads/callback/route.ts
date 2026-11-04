@@ -1,6 +1,6 @@
 /**
  * GET /api/integrations/google-ads/callback — store the token, list the Ads accounts this
- * login can see into ad_accounts, and run the first spend sync. Redirects to /marketing/ads
+ * login can see into ad_accounts, and run the first spend sync. Redirects to account management
  * with a one-word status the page turns into a toast.
  */
 import { NextResponse, type NextRequest } from "next/server";
@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   const origin = originFromRequest(request);
   const url = new URL(request.url);
   const done = (status: string, extra = "") => {
-    const res = NextResponse.redirect(`${origin}/marketing/ads?google=${status}${extra}`);
+    const res = NextResponse.redirect(`${origin}/marketing/ads/accounts?platform=google-ads&google=${status}${extra}`);
     res.cookies.delete("g_ads_oauth_state");
     return res;
   };
@@ -64,17 +64,23 @@ export async function GET(request: NextRequest) {
       const accounts = await listAdAccounts(token);
       if (accounts.length === 0) return done("noaccounts");
       for (const a of accounts) {
+        const { data: existing, error: existingError } = await admin.from("ad_accounts")
+          .select("enabled, archived_at").eq("tenant_id", me.tenant_id).eq("platform", "google-ads").eq("account_id", a.id).maybeSingle();
+        if (existingError) throw existingError;
         const { error: accountError } = await admin.from("ad_accounts").upsert({
           tenant_id: me.tenant_id, platform: "google-ads", account_id: a.id, name: a.name, currency: a.currency,
-          login_customer_id: a.loginCustomerId, connected_user_id: user.id, updated_at: new Date().toISOString(),
+          login_customer_id: a.loginCustomerId, connected_user_id: user.id, archived_at: null,
+          enabled: existing && !existing.archived_at ? existing.enabled : true, updated_at: new Date().toISOString(),
         }, { onConflict: "tenant_id,platform,account_id" });
         if (accountError) throw accountError;
       }
       const sync = await syncTenantAds(admin, me.tenant_id, "connect");
       if (sync.errors.length) throw new Error(sync.errors[0]);
     } catch (e) {
-      console.error("[google-ads/callback] discovery/sync failed:", (e as Error).message);
-      return done("connected_syncfailed", `&why=${encodeURIComponent((e as Error).message.slice(0, 300))}`);
+      const message = (e as Error).message;
+      await admin.from("user_google_tokens").update({ last_error: message }).eq("user_id", user.id);
+      console.error("[google-ads/callback] discovery/sync failed:", message);
+      return done("connected_syncfailed", `&why=${encodeURIComponent(message.slice(0, 300))}`);
     }
     return done(lossNote ? "connected_scopelost" : "connected");
   } catch (e) {

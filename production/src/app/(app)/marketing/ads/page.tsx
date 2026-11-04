@@ -20,7 +20,6 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Switch } from "@/components/ui/switch";
 import { TabBar } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LoadError, LoadErrorInline } from "@/components/shared/load-error";
@@ -30,7 +29,7 @@ import {
   PLATFORM_LABEL, PLATFORM_CHANNEL, totalsOf, campaignStats, pacing, reconcileMonths, dailySeries, adCsvRows, AD_CSV_HEADERS,
   type AdPlatform,
 } from "@/lib/marketing/ad-platforms";
-import { useAdsStatus, useAdSpend, useBookedAdSpendByMonth, useLeadsByCampaign, useAdSyncRuns, useAdsSync, useToggleAdAccount, type AdsStatus } from "@/lib/queries/ads";
+import { useAdsStatus, useAdSpend, useBookedAdSpendByMonth, useLeadsByCampaign, useAdSyncRuns, useAdsSync, type AdsStatus } from "@/lib/queries/ads";
 import { syncAdsWindow } from "@/lib/queries/ads";
 import { linkedInHistoryChunks, linkedInOldestDay, linkedInDailyFrom } from "@/lib/marketing/linkedin-history";
 import { useBudgets } from "@/lib/queries/marketing-budget";
@@ -61,13 +60,11 @@ const MSG: Record<string, { ok: boolean; text: string }> = {
 export default function AdPlatformsPage() {
   const status = useAdsStatus();
   const sync = useAdsSync();
-  const toggle = useToggleAdAccount();
   const budgets = useBudgets();
   const [range, setRange] = React.useState<Range>("90");
   const [pf, setPf] = React.useState<PlatformFilter>("all");
   const [selectedAccountId, setSelectedAccountId] = React.useState("all");
   const [budgetPlatform, setBudgetPlatform] = React.useState<AdPlatform | null>(null);
-  const [setupPlatform, setSetupPlatform] = React.useState<"google-ads" | "meta-ads" | null>(null);
   const [why, setWhy] = React.useState<string | null>(null);
   const [showHistorySync, setShowHistorySync] = React.useState(false);
   const [historyMode, setHistoryMode] = React.useState<"all" | "custom">("all");
@@ -84,6 +81,7 @@ export default function AdPlatformsPage() {
     if (requestedPlatform === "google-ads" || requestedPlatform === "meta-ads" || requestedPlatform === "linkedin-ads") {
       setPf(requestedPlatform);
     }
+    if (q.get("account")) setSelectedAccountId(q.get("account")!);
     for (const key of ["google", "meta", "linkedin"]) {
       const v = q.get(key); if (!v) continue;
       const m = MSG[v]; if (m) (m.ok ? toast.success : toast.error)(`${key === "google" ? "Google Ads" : key === "meta" ? "Meta Ads" : "LinkedIn Ads"}: ${m.text}`);
@@ -108,6 +106,9 @@ export default function AdPlatformsPage() {
   const linkedinAccounts = accounts.filter((a) => a.platform === "linkedin-ads");
   const selectableAccounts = accounts.filter((a) => pf === "all" || a.platform === pf);
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
+  React.useEffect(() => {
+    if (status.data && selectedAccountId !== "all" && !status.data.accounts.some((a) => a.id === selectedAccountId)) setSelectedAccountId("all");
+  }, [status.data, selectedAccountId]);
 
   const allRows = React.useMemo(() => spend.data ?? [], [spend.data]);
   const rows = React.useMemo(() => allRows.filter((r) => (pf === "all" || r.platform === pf) && (selectedAccountId === "all" || r.account_id === selectedAccountId)), [allRows, pf, selectedAccountId]);
@@ -126,8 +127,13 @@ export default function AdPlatformsPage() {
   const paceM = pacing(allRows.filter((r) => r.platform === "meta-ads" && (selectedAccountId === "all" || r.account_id === selectedAccountId)), today, selectedAccountId === "all" ? budgetFor("meta-ads") : null);
   const paceL = pacing(allRows.filter((r) => r.platform === "linkedin-ads" && (selectedAccountId === "all" || r.account_id === selectedAccountId)), today, selectedAccountId === "all" ? budgetFor("linkedin-ads") : null);
 
-  const anyConnected = accounts.length > 0;
-  const foreign = accounts.filter((a) => a.enabled && a.currency !== "INR" && (selectedAccountId === "all" || a.id === selectedAccountId));
+  const anyConnected = accounts.length > 0 || allRows.length > 0;
+  const foreign = accounts.filter((a) => a.enabled && a.currency !== "INR" && (pf === "all" || a.platform === pf) && (selectedAccountId === "all" || a.id === selectedAccountId));
+  const comparisonPlatforms = (["google-ads", "meta-ads", "linkedin-ads"] as const).filter((platform) => pf === "all" || pf === platform);
+  const monthlyComparisons = comparisonPlatforms.flatMap((adPlatform) =>
+    reconcileMonths(allRows.filter((row) => row.platform === adPlatform), booked.data?.[PLATFORM_CHANNEL[adPlatform]] ?? new Map(), adPlatform)
+      .slice(0, 6).map((row) => ({ ...row, adPlatform })),
+  ).sort((a, b) => b.month.localeCompare(a.month) || a.adPlatform.localeCompare(b.adPlatform));
 
   const exportCsv = () => downloadCSV(`ad-spend-${from}-${to}.csv`, AD_CSV_HEADERS, adCsvRows(inRange, new Map(accounts.map((a) => [a.id, a.name]))));
 
@@ -165,7 +171,7 @@ export default function AdPlatformsPage() {
       <header className="flex items-end justify-between gap-3 flex-wrap">
         <div>
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Marketing &amp; Advertising</p>
-          <h1 className="font-serif text-3xl md:text-4xl leading-tight">Ad accounts (live)</h1>
+          <h1 className="font-serif text-3xl md:text-4xl leading-tight">Paid ads performance</h1>
           <p className="text-sm text-ink-3 mt-1 max-w-3xl">
             Google, Facebook / Instagram and LinkedIn spend by campaign, pulled from the platforms every night. The books (Spend page) are the
             billed truth, this is the platform's view — both side by side here. ROAS &amp; CAC uses the books.
@@ -175,8 +181,10 @@ export default function AdPlatformsPage() {
           {anyConnected && (
             <>
               <Button variant="default" icon="download" onClick={exportCsv} disabled={inRange.length === 0}>Export CSV</Button>
-              {status.data?.linkedin.connected && <Button variant="outline" onClick={() => setShowHistorySync((v) => !v)} disabled={historySyncing}>{showHistorySync ? "Hide history sync" : "Sync older data"}</Button>}
-              <Button variant="primary" icon="refresh" onClick={() => sync.mutate(selectedAccountId === "all" ? undefined : selectedAccountId)} loading={sync.isPending} disabled={historySyncing || (selectedAccount ? !selectedAccount.enabled : false)}>{sync.isPending ? "Syncing…" : "Sync now"}</Button>
+              {accounts.length > 0 && <>
+                {status.data?.linkedin.connected && (pf === "all" || pf === "linkedin-ads") && <Button variant="outline" onClick={() => setShowHistorySync((v) => !v)} disabled={historySyncing}>{showHistorySync ? "Hide LinkedIn history" : "Sync LinkedIn history"}</Button>}
+                <Button variant="primary" icon="refresh" onClick={() => sync.mutate(selectedAccountId === "all" ? undefined : selectedAccountId)} loading={sync.isPending} disabled={historySyncing || (selectedAccount ? !selectedAccount.enabled : false)}>{sync.isPending ? "Syncing…" : selectedAccount ? "Sync this account" : "Sync all accounts"}</Button>
+              </>}
             </>
           )}
         </div>
@@ -212,14 +220,14 @@ export default function AdPlatformsPage() {
       ) : status.isError ? (
         <LoadError what="Ad account status" error={status.error} onRetry={() => void status.refetch()} />
       ) : (
-        <div className="grid gap-3 md:grid-cols-3">
-          <PlatformCard platform="google-ads" status={status.data} accounts={accounts.filter((a) => a.platform === "google-ads")} onToggle={(id, enabled) => toggle.mutate({ accountId: id, enabled })} onSetup={() => setSetupPlatform((current) => current === "google-ads" ? null : "google-ads")} />
-          <PlatformCard platform="meta-ads" status={status.data} accounts={accounts.filter((a) => a.platform === "meta-ads")} onToggle={(id, enabled) => toggle.mutate({ accountId: id, enabled })} onSetup={() => setSetupPlatform((current) => current === "meta-ads" ? null : "meta-ads")} />
-          <PlatformCard platform="linkedin-ads" status={status.data} accounts={accounts.filter((a) => a.platform === "linkedin-ads")} onToggle={(id, enabled) => toggle.mutate({ accountId: id, enabled })} />
-        </div>
+        <>
+          <div className="grid gap-3 md:grid-cols-3">
+            {(["google-ads", "meta-ads", "linkedin-ads"] as const).map((platform) => (
+              <PlatformCard key={platform} platform={platform} status={status.data} accounts={accounts.filter((a) => a.platform === platform)} />
+            ))}
+          </div>
+        </>
       )}
-
-      {setupPlatform && <AdsSetupGuide platform={setupPlatform} onClose={() => setSetupPlatform(null)} />}
 
       {anyConnected && (
         <>
@@ -237,7 +245,7 @@ export default function AdPlatformsPage() {
           {/* This month's pace */}
           {budgets.isError && <LoadErrorInline what="Approved ad budgets" error={budgets.error} onRetry={() => void budgets.refetch()} />}
           <div className="grid gap-3 md:grid-cols-3">
-            {([["google-ads", paceG], ["meta-ads", paceM], ["linkedin-ads", paceL]] as const).filter(([p]) => !selectedAccount || p === selectedAccount.platform).map(([p, pc]) => (
+            {([["google-ads", paceG], ["meta-ads", paceM], ["linkedin-ads", paceL]] as const).filter(([p]) => (pf === "all" || p === pf) && (!selectedAccount || p === selectedAccount.platform)).map(([p, pc]) => (
               <Card key={p} className="p-4">
                 <div className="flex items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-ink">{PLATFORM_LABEL[p]} · {pc.month}</p>
@@ -262,7 +270,7 @@ export default function AdPlatformsPage() {
           <p className="text-xs text-ink-3">The owner approves requests in <Link href={"/marketing/budget" as Route} className="underline">Budget &amp; Payments</Link>. Approved amounts appear here automatically.</p>
 
           {/* Range KPIs + chart */}
-          <Card className="p-4">
+          <Card id="ad-results" className="p-4 scroll-mt-24">
             <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
               <div>
                 <p className="text-sm font-semibold text-ink">Spend &amp; results</p>
@@ -344,42 +352,58 @@ export default function AdPlatformsPage() {
             )}
           </Card>
 
-          {/* Platform vs books */}
-          {selectedAccount && <p className="text-xs text-ink-3">Choose all accounts to compare platform spend with the books. Booked expenses are recorded by platform.</p>}
+          {/* Ad platform spend against recorded expenses */}
+          {selectedAccount && <p className="text-xs text-ink-3">Choose all accounts to compare platform spend with recorded expenses. Expenses are recorded by platform.</p>}
           {!selectedAccount && <Card className="p-4">
-            <p className="text-sm font-semibold text-ink">Platform vs books · by month</p>
-            <p className="text-xs text-ink-3 mb-3">Platform = amount consumed; books = channel-tagged marketing expenses (incl. GST). The reason for any difference is shown alongside.</p>
-            {booked.isError ? (
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h2 className="text-base font-semibold text-ink">Ad spend vs recorded expenses</h2>
+                <p className="mt-1 max-w-3xl text-sm text-ink-3">Check whether each platform’s monthly ad spend has been recorded as an expense. Difference means recorded expense minus ad spend. GST, prepaid top-ups, and missing entries can explain a gap.</p>
+              </div>
+              <Link href={"/marketing/reports" as Route} className="text-sm font-medium text-amber-ink hover:underline">See revenue return →</Link>
+            </div>
+            {booked.isLoading ? <Skeleton className="mt-4 h-40 rounded-md" /> : booked.isError ? (
               <LoadErrorInline what="The booked marketing expenses" error={booked.error} onRetry={() => void booked.refetch()} />
             ) : (
-            <div className="grid gap-4 lg:grid-cols-3">
-              {(["google-ads", "meta-ads", "linkedin-ads"] as const).map((p) => {
-                const rec = reconcileMonths(allRows.filter((r) => r.platform === p), booked.data?.[PLATFORM_CHANNEL[p]] ?? new Map(), p).slice(0, 6);
-                return (
-                  <div key={p}>
-                    <p className="text-xs font-semibold text-ink-2 mb-1">{PLATFORM_LABEL[p]}</p>
-                    {rec.length === 0 ? <p className="text-xs text-ink-3">Nothing yet</p> : (
-                      <table className="w-full text-xs">
-                        <thead><tr className="text-left text-3xs uppercase tracking-wider text-ink-3"><th className="py-1">Month</th><th className="py-1 text-right">Platform</th><th className="py-1 text-right">Books</th><th className="py-1 text-right">Difference</th><th className="py-1 pl-2">Reason</th></tr></thead>
-                        <tbody>
-                          {rec.map((r) => (
-                            <tr key={r.month} className="border-t border-hairline">
-                              <td className="py-1.5 tabular-nums">{r.month}</td>
-                              <td className="py-1.5 text-right tabular-nums">{rupee(r.platform)}</td>
-                              <td className="py-1.5 text-right tabular-nums">{rupee(r.books)}</td>
-                              <td className={cn("py-1.5 text-right tabular-nums", Math.abs(r.diff) < 1 ? "text-ink-3" : r.diff > 0 ? "text-emerald" : "text-rose")}>{r.diff > 0 ? "+" : ""}{rupee(r.diff)}{r.diffPct !== null ? ` (${r.diffPct > 0 ? "+" : ""}${r.diffPct}%)` : ""}</td>
-                              <td className="py-1.5 pl-2 text-ink-3">{r.note}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
+              <div className="mt-4 space-y-4">
+                <div className={cn("grid gap-3", comparisonPlatforms.length > 1 && "md:grid-cols-3")}>
+                  {comparisonPlatforms.map((platform) => {
+                    const latest = monthlyComparisons.find((row) => row.adPlatform === platform);
+                    return <div key={platform} className="min-w-0 rounded-md border border-hairline bg-paper p-4">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <p className="text-sm font-semibold text-ink">{PLATFORM_LABEL[platform]}</p>
+                        {latest && <span className="text-xs text-ink-3">{monthLabel(latest.month)}</span>}
+                      </div>
+                      {latest ? <>
+                        <div className="mt-3 grid grid-cols-2 gap-3">
+                          <div><p className="text-xs text-ink-3">Ad platform spent</p><p className="mt-0.5 font-serif text-xl tabular-nums text-ink">{rupee(latest.platform)}</p></div>
+                          <div><p className="text-xs text-ink-3">Expense recorded</p><p className="mt-0.5 font-serif text-xl tabular-nums text-ink">{rupee(latest.books)}</p></div>
+                        </div>
+                        <p className="mt-3 border-t border-hairline pt-3 text-sm font-medium text-ink">Difference: {latest.diff > 0 ? "+" : ""}{rupee(latest.diff)}</p>
+                        <p className="mt-1 text-xs leading-relaxed text-ink-3">{latest.note}</p>
+                      </> : <p className="mt-3 text-sm text-ink-3">No spend or recorded expenses yet.</p>}
+                    </div>;
+                  })}
+                </div>
+                {monthlyComparisons.length > 0 && <details className="rounded-md border border-hairline">
+                  <summary className="cursor-pointer select-none p-3 text-sm font-medium text-ink">View monthly comparison ({monthlyComparisons.length})</summary>
+                  <div className="overflow-x-auto border-t border-hairline">
+                    <table className="min-w-[820px] w-full text-sm">
+                      <thead className="bg-paper-2 text-left text-xs text-ink-3"><tr><th className="p-3">Month</th><th className="p-3">Platform</th><th className="p-3 text-right">Ad spend</th><th className="p-3 text-right">Recorded expense</th><th className="p-3 text-right">Difference</th><th className="p-3">What it means</th></tr></thead>
+                      <tbody>{monthlyComparisons.map((row) => <tr key={`${row.adPlatform}-${row.month}`} className="border-t border-hairline align-top">
+                        <td className="p-3 whitespace-nowrap tabular-nums">{monthLabel(row.month)}</td>
+                        <td className="p-3 whitespace-nowrap">{PLATFORM_LABEL[row.adPlatform]}</td>
+                        <td className="p-3 text-right whitespace-nowrap tabular-nums">{rupee(row.platform)}</td>
+                        <td className="p-3 text-right whitespace-nowrap tabular-nums">{rupee(row.books)}</td>
+                        <td className="p-3 text-right whitespace-nowrap tabular-nums">{row.diff > 0 ? "+" : ""}{rupee(row.diff)}</td>
+                        <td className="p-3 text-ink-3">{row.note}</td>
+                      </tr>)}</tbody>
+                    </table>
                   </div>
-                );
-              })}
-            </div>
+                </details>}
+              </div>
             )}
-            <p className="text-xs text-ink-3 mt-3"><Link href={"/marketing/spend" as Route} className="underline">Spend page</Link>: book or tag expenses · <Link href={"/accounting/prepaid" as Route} className="underline">Prepaid</Link>: draw down the Facebook advance.</p>
+            <p className="mt-4 text-xs text-ink-3">Need to record an expense? Open <Link href={"/marketing/spend" as Route} className="underline">Marketing Spend</Link>. For prepaid Meta ads, use <Link href={"/accounting/prepaid" as Route} className="underline">Prepaid</Link>.</p>
           </Card>}
           </>)}
 
@@ -405,6 +429,7 @@ export default function AdPlatformsPage() {
 }
 
 function pct(cur: number, prev: number): number | null { return prev > 0 ? Math.round(((cur - prev) / prev) * 1000) / 10 : null; }
+function monthLabel(month: string): string { return new Date(`${month}-01T00:00:00Z`).toLocaleDateString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" }); }
 
 function monthlySeries(rows: readonly import("@/lib/marketing/ad-platforms").AdSpendRow[]): ReturnType<typeof dailySeries> {
   const byMonth = new Map<string, ReturnType<typeof dailySeries>[number]>();
@@ -437,79 +462,32 @@ function Kpi({ label, value, change, hint, invert, compare }: { label: string; v
   );
 }
 
-function PlatformCard({ platform, status, accounts, onToggle, onSetup }: { platform: AdPlatform; status?: AdsStatus; accounts: AdsStatus["accounts"]; onToggle: (id: string, enabled: boolean) => void; onSetup?: () => void }) {
+function PlatformCard({ platform, status, accounts }: { platform: AdPlatform; status?: AdsStatus; accounts: AdsStatus["accounts"] }) {
   const isG = platform === "google-ads";
   const isMeta = platform === "meta-ads";
   const configured = isG ? status?.google.configured : isMeta ? status?.meta.configured : status?.linkedin.configured;
-  const connected = isG ? status?.google.connected : isMeta ? status?.meta.connected : status?.linkedin.connected;
-  const connectHref = isG ? "/api/integrations/google-ads/connect" : isMeta ? "/api/integrations/meta-ads/connect" : "/api/integrations/linkedin-ads/connect";
+  const connected = accounts.length > 0;
+  const googleNeedsAccess = isG && connected && accounts.length === 0 && Boolean(status?.google.lastError);
   const expiry = isMeta ? status?.meta.tokenExpiresAt : platform === "linkedin-ads" ? status?.linkedin.tokenExpiresAt : null;
   const expired = expiry ? Date.parse(expiry) <= Date.now() : false;
   const expiringSoon = expiry ? !expired && Date.parse(expiry) - Date.now() < 7 * 86_400_000 : false;
-  const setupNote = isG
-    ? (!configured ? "Google OAuth keys are not set." : null)
-    : isMeta ? (!configured ? "META_APP_ID / META_APP_SECRET are not set (Meta app with Marketing API, ads_read)." : null)
-    : (!configured ? "LINKEDIN_CLIENT_ID / LINKEDIN_CLIENT_SECRET are not set." : connected ? `${accounts.length} account` : "Advertising API approval is required before connecting.");
+  const syncingCount = accounts.filter((account) => account.enabled).length;
+  const pausedCount = accounts.length - syncingCount;
   return (
     <Card className="p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-sm font-semibold text-ink inline-flex items-center gap-2">
             {PLATFORM_LABEL[platform]}
-            {expired ? <Badge kind="danger" size="sm">Token expired</Badge> : connected ? <Badge kind="success" size="sm">Connected</Badge> : configured ? <Badge kind="warning" size="sm">Connect</Badge> : <Badge kind="muted" size="sm">Setup</Badge>}
+            {expired ? <Badge kind="danger" size="sm">Token expired</Badge> : googleNeedsAccess ? <Badge kind="danger" size="sm">Needs API access</Badge> : connected ? <Badge kind="success" size="sm">Connected</Badge> : configured ? <Badge kind="warning" size="sm">Connect</Badge> : <Badge kind="muted" size="sm">Setup</Badge>}
             {expiringSoon && <Badge kind="danger" size="sm">Token expires {formatDate(expiry!)}</Badge>}
           </p>
-          <p className="text-xs text-ink-3 mt-0.5">{setupNote ?? (isG && status?.google.email ? status.google.email : connected ? `${accounts.length} account` : "Connect with the login that runs your ads.")}</p>
+          <p className="text-xs text-ink-3 mt-0.5">{accounts.length} {accounts.length === 1 ? "account" : "accounts"} · {syncingCount} syncing{pausedCount ? ` · ${pausedCount} paused` : ""}</p>
+          {isG && status?.google.email && accounts.length > 0 && <p className="text-xs text-ink-3 mt-1 truncate">Connected as {status.google.email}</p>}
           {isG && status?.google.lastError && <p className="text-xs text-rose-ink mt-1">{status.google.lastError}</p>}
         </div>
-        {configured ? (
-          <Button asChild size="sm" variant={connected && !expired ? "outline" : "primary"}><a href={connectHref}>{expired ? "Reconnect" : connected ? "Add account" : "Connect"}</a></Button>
-        ) : platform === "linkedin-ads" ? (
-          <Button asChild size="sm" variant="outline"><Link href="/marketing/linkedin-ads?setup=1">Setup</Link></Button>
-        ) : <Button size="sm" variant="outline" onClick={onSetup}>Setup</Button>}
+        <Button asChild size="sm" variant="outline"><Link href={`/marketing/ads/accounts?platform=${platform}` as Route}>View accounts</Link></Button>
       </div>
-      {accounts.length > 0 && (
-        <ul className="mt-3 divide-y divide-hairline">
-          {accounts.map((a) => (
-            <li key={a.id} className="py-2 flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-sm text-ink truncate">{a.name} <span className="text-xs text-ink-3 font-mono">{a.account_id}</span> <span className="text-xs text-ink-3">{a.currency}</span></p>
-                <p className="text-xs text-ink-3">{a.last_synced_at ? `synced ${formatDate(a.last_synced_at)}` : "not synced yet"}{a.last_error ? <span className="text-rose-ink"> · {a.last_error}</span> : ""}</p>
-              </div>
-              <label className="flex items-center gap-2 text-xs text-ink-3 shrink-0">
-                <Switch checked={a.enabled} onCheckedChange={(v) => onToggle(a.id, v)} aria-label={`Sync ${a.name}`} /> sync
-              </label>
-            </li>
-          ))}
-        </ul>
-      )}
-    </Card>
-  );
-}
-
-function AdsSetupGuide({ platform, onClose }: { platform: "google-ads" | "meta-ads"; onClose: () => void }) {
-  const google = platform === "google-ads";
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") || "http://localhost:3001";
-  const callback = `${appUrl}/api/integrations/${google ? "google-ads" : "meta-ads"}/callback`;
-  return (
-    <Card className="p-5" aria-label={`${google ? "Google Ads" : "Meta Ads"} setup`}>
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-base font-semibold text-ink">{google ? "Google Ads" : "Facebook / Instagram Ads"} setup</h2>
-          <p className="mt-1 text-sm text-ink-3">This server has no app keys yet. Add them once, restart the application, then connect your ad account.</p>
-        </div>
-        <Button size="sm" variant="ghost" onClick={onClose}>Close</Button>
-      </div>
-      <ol className="mt-4 list-decimal space-y-2 pl-5 text-sm text-ink-2">
-        <li>Open {google ? "Google Cloud Console and create an OAuth client for Google Ads" : "Meta Developers and create an app with Marketing API and ads_read"}.</li>
-        <li>Register this redirect URL: <code className="break-all rounded bg-paper-2 px-1 text-xs">{callback}</code></li>
-        <li>In this local application, add <code>{google ? "GOOGLE_OAUTH_CLIENT_ID" : "META_APP_ID"}</code> and <code>{google ? "GOOGLE_OAUTH_CLIENT_SECRET" : "META_APP_SECRET"}</code> to <code>production/.env.development.local</code>.</li>
-        <li>Restart the application. The Setup button will become Connect.</li>
-      </ol>
-      <p className="mt-3 text-xs text-ink-3">Keep the secret on the server. Do not paste it into this page or chat.</p>
-      <a href={google ? "https://console.cloud.google.com/apis/credentials" : "https://developers.facebook.com/apps/"} target="_blank" rel="noopener noreferrer" className="mt-4 inline-flex text-sm font-medium text-amber-ink hover:underline">
-        Open {google ? "Google Cloud Console" : "Meta Developers"} ↗
-      </a>
     </Card>
   );
 }

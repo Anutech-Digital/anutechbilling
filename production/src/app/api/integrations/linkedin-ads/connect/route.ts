@@ -13,10 +13,10 @@ export async function GET(request: NextRequest) {
   const { data: { user } } = await createClient().auth.getUser();
   if (!user) return NextResponse.redirect(`${origin}/login`);
   const { data: me } = await createClient().from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
-  if (!mayDo(me?.role, "integration.company")) return NextResponse.redirect(`${origin}/marketing/ads?linkedin=role`);
-  if (!me?.tenant_id) return NextResponse.redirect(`${origin}/marketing/ads?linkedin=error`);
+  if (!mayDo(me?.role, "integration.company")) return NextResponse.redirect(`${origin}/marketing/ads/accounts?platform=linkedin-ads&linkedin=role`);
+  if (!me?.tenant_id) return NextResponse.redirect(`${origin}/marketing/ads/accounts?platform=linkedin-ads&linkedin=error`);
   const creds = await readLinkedInAdsCredentials(createAdminClientFor(user.id), me.tenant_id) ?? linkedInCreds();
-  if (!creds) return NextResponse.redirect(`${origin}/marketing/ads?linkedin=notconfigured`);
+  if (!creds) return NextResponse.redirect(`${origin}/marketing/ads/accounts?platform=linkedin-ads&linkedin=notconfigured`);
   const state = crypto.randomUUID();
   const res = NextResponse.redirect(linkedInAuthUrl(creds.clientId, linkedInAdsRedirectUri(origin), state, LINKEDIN_ADS_SCOPES));
   res.cookies.set("linkedin_ads_oauth_state", state, { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 600 });

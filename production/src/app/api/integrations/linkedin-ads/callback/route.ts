@@ -16,7 +16,7 @@ export const maxDuration = 120;
 
 export async function GET(request: NextRequest) {
   const origin = originFromRequest(request); const url = new URL(request.url);
-  const done = (status: string, why = "") => { const r = NextResponse.redirect(`${origin}/marketing/ads?linkedin=${status}${why}`); r.cookies.delete("linkedin_ads_oauth_state"); return r; };
+  const done = (status: string, why = "") => { const r = NextResponse.redirect(`${origin}/marketing/ads/accounts?platform=linkedin-ads&linkedin=${status}${why}`); r.cookies.delete("linkedin_ads_oauth_state"); return r; };
   if (url.searchParams.get("error")) return done("denied");
   const code = url.searchParams.get("code");
   if (!code || request.cookies.get("linkedin_ads_oauth_state")?.value !== url.searchParams.get("state")) return done("badstate");
@@ -32,7 +32,10 @@ export async function GET(request: NextRequest) {
     if (!accounts.length) return done("noaccounts");
     const admin = createAdminClient(); const sealed = sealLinkedInAdsToken(accessToken);
     for (const a of accounts) {
-      const { error } = await admin.from("ad_accounts").upsert({ tenant_id: me.tenant_id, platform: "linkedin-ads", account_id: a.id, name: a.name, currency: a.currency, connected_user_id: user.id, access_token: sealed, token_expires_at: expiresAt, enabled: a.active, updated_at: new Date().toISOString() }, { onConflict: "tenant_id,platform,account_id" });
+      const { data: existing, error: existingError } = await admin.from("ad_accounts")
+        .select("enabled, archived_at").eq("tenant_id", me.tenant_id).eq("platform", "linkedin-ads").eq("account_id", a.id).maybeSingle();
+      if (existingError) throw existingError;
+      const { error } = await admin.from("ad_accounts").upsert({ tenant_id: me.tenant_id, platform: "linkedin-ads", account_id: a.id, name: a.name, currency: a.currency, connected_user_id: user.id, access_token: sealed, token_expires_at: expiresAt, archived_at: null, enabled: a.active && (existing && !existing.archived_at ? existing.enabled : true), updated_at: new Date().toISOString() }, { onConflict: "tenant_id,platform,account_id" });
       if (error) throw new Error(`Could not save LinkedIn ad account ${a.id}: ${error.message}`);
     }
     try {

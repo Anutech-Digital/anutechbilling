@@ -302,6 +302,7 @@ model ad_accounts {
   access_token      String?
   token_expires_at  DateTime?        @db.Timestamptz(6)
   enabled           Boolean          @default(true)
+  archived_at       DateTime?        @db.Timestamptz(6)
   last_synced_at    DateTime?        @db.Timestamptz(6)
   last_error        String?
   created_at        DateTime         @default(now()) @db.Timestamptz(6)

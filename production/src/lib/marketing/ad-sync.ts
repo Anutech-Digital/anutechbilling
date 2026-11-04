@@ -25,7 +25,7 @@ export async function syncTenantAds(admin: Admin, tenantId: string, trigger: "ma
   const result: AdSyncResult = { accounts: 0, rowsWritten: 0, errors: [] };
   const today = istToday();
   try {
-    let accountQuery = admin.from("ad_accounts").select("*").eq("tenant_id", tenantId).eq("enabled", true);
+    let accountQuery = admin.from("ad_accounts").select("*").eq("tenant_id", tenantId).eq("enabled", true).is("archived_at", null);
     if (window) accountQuery = accountQuery.eq("platform", window.platform);
     const targetAccountId = window?.accountId ?? accountId;
     if (targetAccountId) accountQuery = accountQuery.eq("id", targetAccountId);

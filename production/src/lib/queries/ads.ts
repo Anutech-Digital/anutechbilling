@@ -159,3 +159,19 @@ export function useToggleAdAccount() {
     onError: (e) => toastError(e),
   });
 }
+
+export function useRemoveAdAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (accountId: string) => {
+      const res = await fetch("/api/marketing/ads", { method: "DELETE", headers: { "content-type": "application/json" }, body: JSON.stringify({ accountId }) });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(body?.error ?? "Could not remove account");
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ADS_KEY });
+      toast.success("Account removed. Past reports are kept.");
+    },
+    onError: (error) => toastError(error),
+  });
+}
