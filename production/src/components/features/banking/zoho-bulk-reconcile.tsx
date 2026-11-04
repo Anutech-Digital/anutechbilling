@@ -30,7 +30,7 @@ import { useItems } from "@/lib/queries/items";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { PayForResult } from "@/lib/banking/credit-pay-for";
-import { useNewSaleFromBankCredit, usePayItemFromBankCredit } from "@/lib/queries/bank-credit-pay-for";
+import { useNewSaleFromBankCredit, usePayItemFromBankCredit, useSplitFromBankCredit } from "@/lib/queries/bank-credit-pay-for";
 import { istToday } from "@/lib/dates/ist";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
@@ -41,7 +41,7 @@ import {
   BULK_PAGE, planAll, type BulkMatchRow, type PlanContext, type PlanRow,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 import { expectedPageCost, paceWaitMs, ZOHO_BUSY_WAIT_MS, type PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
-import { bookRows, newSaleFxArgs, payOpeningInvoice, type BookDeps, type BookedRow, type BookRun, type NewCustomerPayload, type SubForFix } from "./zoho-bulk-book";
+import { bookRows, ensureOpeningInvoices, newSaleFxArgs, payOpeningInvoice, type BookDeps, type OpeningInvoiceRow, type BookedRow, type BookRun, type NewCustomerPayload, type SubForFix } from "./zoho-bulk-book";
 import { ZohoBulkTable } from "./zoho-bulk-table";
 
 export const ZOHO_BULK_URL = "/api/integrations/zoho-books/bulk-match";
@@ -99,6 +99,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const setLinePayer = useSetBankLinePayer();
   const newSale = useNewSaleFromBankCredit();
   const payItem = usePayItemFromBankCredit();
+  const paySplit = useSplitFromBankCredit();
   const qc = useQueryClient();
 
   const [ids, setIds] = React.useState<string[] | null>(null);
@@ -260,7 +261,23 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       const { error } = await createClient().from("subscriptions").update({ start_date: start, renewal_date: renewal }).eq("id", subId);
       if (error) throw new Error(error.message);
     },
-  }), [createCustomer, setLinePayer, newSale, payItem, accountId, qc]);
+    /* R-2474: last year's invoice made as an opening invoice from Zoho (import_opening_invoices; the
+       Zoho number is the key, so a re-run uses the same invoice), then paid through R-2466's path. */
+    ensureOpenings: async (customerId, creates) => {
+      const sb = createClient();
+      const ids = await ensureOpeningInvoices(customerId, creates,
+        (fn, args) => (sb as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> }).rpc(fn, args),
+        async (numbers) => {
+          const { data, error } = await sb.from("invoices").select("id, external_number, customer_id, document_kind").in("external_number", numbers);
+          if (error) throw new Error(`Could not read the opening invoices back: ${error.message}`);
+          return (data ?? []) as OpeningInvoiceRow[];
+        });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      qc.invalidateQueries({ queryKey: ["invoice-import-batches"] });
+      return ids;
+    },
+    paySplit: (i) => paySplit.mutateAsync(i),
+  }), [createCustomer, setLinePayer, newSale, payItem, paySplit, accountId, qc]);
 
   const book = async () => {
     setPhase("booking"); setFailure(null); setLastRun(null);
