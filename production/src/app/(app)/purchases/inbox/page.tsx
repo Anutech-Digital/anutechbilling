@@ -32,6 +32,7 @@ import { NetworkInboxTab } from "@/components/features/purchases/network-inbox-t
 import { useNetworkInbox } from "@/components/features/purchases/network-inbox-queries";
 import { canActOnNetwork } from "@/components/features/purchases/network-inbox-model";
 import { isRouteAllowed } from "@/lib/nav";
+import { isUserRole } from "@/lib/auth/roles";
 
 const INBOX_TABS = ["email", "network"] as const;
 
@@ -48,7 +49,7 @@ export default function PurchaseInboxPage() {
   const [tabChoice, setTab] = useUrlChoice("tab", INBOX_TABS, "email");
   const tab = showNetwork ? tabChoice : "email";
   /* R-2461: the accountant opens this page but not /settings — no button that would bounce. */
-  const canSetUpForwarding = !!me?.role && isRouteAllowed(me.role, "/settings");
+  const canSetUpForwarding = isUserRole(me?.role) && isRouteAllowed(me.role, "/settings");
 
   const doImport = async (row: InboundPurchase) => {
     setBusyId(row.id);
