@@ -51,11 +51,13 @@ export function useBookBankTxnAsEmployeeAdvance() {
     mutationFn: async (input: {
       transactionId: string; kind: EmployeeAdvanceBankKind; name?: string | null;
       advanceId?: string | null; reimbursementId?: string | null; note?: string | null;
+      /** R-2407 owed_back: the employee's id (the RPC takes it in p_name — two people can share a name). */
+      employeeId?: string | null;
     }) => {
       const { data, error } = await untyped().rpc("book_bank_txn_as_employee_advance", {
         p_txn_id: input.transactionId,
         p_kind: input.kind,
-        p_name: input.name ?? null,
+        p_name: input.employeeId ?? input.name ?? null,
         p_advance_id: input.advanceId ?? null,
         p_reimbursement_id: input.reimbursementId ?? null,
         p_note: input.note ?? null,

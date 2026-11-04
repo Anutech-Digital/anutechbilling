@@ -34,8 +34,9 @@ export function SalaryOwedBackSection({ transaction, salaries, onDone, onFooterS
   const key = (m: { salary: { id: string }; owed: { id: string } }) => `${m.salary.id}|${m.owed.id}`;
   const [pick, setPick] = React.useState("");
   React.useEffect(() => { setPick(""); }, [transaction.id]);
-  // Pre-pick the first (exact first) match; a pick that no longer matches is dropped.
-  const picked = matches.find((m) => key(m) === pick) ?? matches[0] ?? null;
+  /* One fit → pre-picked. Several → the owner picks; a pick that stops fitting (data refetched)
+     is NOT swapped for another pair silently — the Save goes away until they pick again. */
+  const picked = pick ? matches.find((m) => key(m) === pick) ?? null : matches.length === 1 ? matches[0] : null;
 
   const save: FooterSave | null = picked ? {
     label: `Pay salary + ${rupee(picked.owed.amount)} owed back · ${picked.salary.employee_name}`,
@@ -44,7 +45,7 @@ export function SalaryOwedBackSection({ transaction, salaries, onDone, onFooterS
   } : null;
   useFooterSaveReport(onFooterSave, save);
 
-  if (!picked) return null;
+  if (matches.length === 0) return null;
 
   async function submit() {
     if (!picked) return;
@@ -57,14 +58,16 @@ export function SalaryOwedBackSection({ transaction, salaries, onDone, onFooterS
   return (
     <div className="rounded-md border border-emerald/40 bg-emerald/5 p-3" data-testid="salary-owed-back">
       <p className="text-xs font-semibold text-ink-2 mb-1">
-        Also pays back {rupee(picked.owed.amount)} owed to {picked.salary.employee_name}
+        {picked ? <>Also pays back {rupee(picked.owed.amount)} owed to {picked.salary.employee_name}</>
+          : <>Also pays back money owed to the employee?</>}
       </p>
       <p className="text-xs text-ink-3 mb-2 leading-relaxed">
         This line is the salary plus money owed back to the employee (e.g. paid to us by mistake). It is split: the salary is paid and what is owed is settled — no extra salary expense.
       </p>
       {matches.length > 1 && (
-        <select aria-label="Salary and amount owed back" value={key(picked)} onChange={(e) => setPick(e.target.value)}
+        <select aria-label="Salary and amount owed back" value={picked ? key(picked) : ""} onChange={(e) => setPick(e.target.value)}
           className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-emerald/40 mb-2">
+          <option value="" disabled>Pick the salary…</option>
           {matches.map((m) => (
             <option key={key(m)} value={key(m)}>
               {m.salary.employee_name} · {m.salary.period} · {rupee(m.salaryPart)} salary + {rupee(m.owed.amount)} owed back
@@ -72,11 +75,13 @@ export function SalaryOwedBackSection({ transaction, salaries, onDone, onFooterS
           ))}
         </select>
       )}
-      <p className="text-xs text-ink-2">
-        <span className="text-emerald font-medium">{rupee(picked.salaryPart)}</span> → salary {picked.salary.period} ({picked.exact ? "paid in full" : `${rupee(picked.salary.remaining - picked.salaryPart)} still due`})
-        {" · "}
-        <span className="text-emerald font-medium">{rupee(picked.owed.amount)}</span> → owed back (settled)
-      </p>
+      {picked && (
+        <p className="text-xs text-ink-2">
+          <span className="text-emerald font-medium">{rupee(picked.salaryPart)}</span> → salary {picked.salary.period} (paid in full)
+          {" · "}
+          <span className="text-emerald font-medium">{rupee(picked.owed.amount)}</span> → owed back (settled)
+        </p>
+      )}
     </div>
   );
 }

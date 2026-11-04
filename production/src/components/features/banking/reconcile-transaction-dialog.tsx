@@ -696,6 +696,15 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     disabled: !commissionPick,
     loading: bookCommission.isPending,
   } : null;
+  /* R-2407: a salary + money owed back to the same employee leads the Employee footer when the line
+     fits it — unless the line is also exactly some salary still due (then the salary list leads and
+     the owed-back box saves only once clicked). */
+  const salaryExactFit = !isCredit && (payableSalaries ?? []).some((s) => s.remaining === amount);
+  const employeeForms = (): Array<readonly [string, FooterSave | null]> => {
+    const owed = ["owed_back", isCredit || (salaryExactFit && footerPick !== "owed_back") ? null : owedBackSave] as const;
+    const salary = ["salary", isCredit ? null : salaryPaySave ?? salarySplitSave ?? (salaryHint ? salarySave : null)] as const;
+    return [owed, salary, ["advance", empAdvanceSave], ["incentive", isCredit ? null : incentiveSave]];
+  };
   /* R-2354: on Own transfer and money-in Other, the section's save is the footer's one primary;
      "Mark reconciled manually" moves into its box as a secondary button. */
   const tileSave: FooterSave | null = !tile ? null
@@ -707,13 +716,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     : tile === "loan" ? pickFooterSave([["emi", isCredit ? null : emiSave], ["receipt", isCredit ? loanReceiptSave : null], ["credit_line", creditLineSave], ["advance", advanceSave]], footerPick)
     : tile === "vendor" ? (isCredit ? null : pickFooterSave([["vendor", vendorSave], ["commission", commissionSave]], footerPick))
     : tile === "customer" ? (isCredit && showProject ? projectSave : customerSave)
-    : tile === "employee" ? pickFooterSave([
-        /* R-2407: salary + money owed back to the same employee comes first when the line fits it. */
-        ["owed_back", isCredit ? null : owedBackSave],
-        ["salary", isCredit ? null : salaryPaySave ?? salarySplitSave ?? (salaryHint ? salarySave : null)],
-        ["advance", empAdvanceSave],
-        ["incentive", isCredit ? null : incentiveSave],
-      ], footerPick)
+    : tile === "employee" ? pickFooterSave(employeeForms(), footerPick)
     : null;
   /* R-2354: a fetched Razorpay settlement (its box sits above the tiles) owns the footer while no
      tile is chosen, when it was the last box clicked, or when the chosen tile has nothing to save. */
