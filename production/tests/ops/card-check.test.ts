@@ -85,6 +85,91 @@ describe("dataNeeds", () => {
     expect(needs("HDFC 4523 line kholo")).toContain("a named real bank account / company (not in E2E Test Co)");
     expect(needs("Quotes kholo")).toEqual([]);
   });
+
+  /* R-2458: each data need names the scenario that loads it — or says plainly why no fixture can. */
+  it("maps each need to an existing scenario, or gives the reason there is none", () => {
+    const names = new Set(SCENARIOS.map((s: { name: string }) => s.name));
+    const one = (t: string) => dataNeeds([t])[0] as { need: string; scenario?: string; noFixture?: string };
+    const cases: Array<[string, string]> = [
+      ["customer jiska State 'Not known yet' ho", "customer-no-state"],
+      ["'INW … USD1024.0@93.6' wali line", "usd-inw-lines"],
+      ["Settings → Network: Connected businesses", "connected-companies"],
+      ["Payroll → jis salary ka kuch hissa paid (Partially paid) hai", "salary-part-paid"],
+      ["ek salary line jiski narration me FULL N FINAL ho", "salary-part-paid"],
+      ["do credit lines, dono ka reference 000000000000000", "zero-ref-credits"],
+      ["₹55 jaisa bacha hai, woh 'Small leftovers' group me", "small-leftover"],
+      ["NBFC (Bajaj / Tata Capital) ko ₹10,000 se zyada interest", "nbfc-interest"],
+      ["Settings me LUT number aur 'Valid up to' bharo", "lut-per-fy"],
+      ["Sales login se ek quote kholo jo manager ne approve kiya hai", "approved-quote"],
+      ["Renewals: Monthly commitment (flex)", "ads-month"],
+    ];
+    for (const [step, scn] of cases) {
+      expect(one(step)?.scenario, step).toBe(scn);
+      expect(names.has(scn), scn).toBe(true);
+    }
+    expect(one("Razorpay se pay karo")).toMatchObject({ need: "Razorpay test key" });
+    expect(one("Razorpay se pay karo").noFixture).toMatch(/Settings → Integrations/);
+    expect(one("Reconcile from Zoho chalao").noFixture).toMatch(/Zoho/);
+    expect(one("Ek company kholo jisme sirf EK owner ho").noFixture).toMatch(/Owner 2/);
+    expect(one("Banking → HDFC 4523 kholo").noFixture).toMatch(/SCN HDFC Current/);
+  });
+
+  it("does not point a lead's missing state, or ₹55,000, at a scenario (review R-2458)", () => {
+    expect(dataNeeds(["Ek nayi lead banao jiska State khaali ho"])).toEqual([]);
+    expect(dataNeeds(["Invoice ₹55,000 ka banao"])).toEqual([]);
+    expect(dataNeeds(["₹55 bacha hai"])[0]).toMatchObject({ scenario: "small-leftover" });
+    const out = renderChecklist({ card: { id: "R-2456", title: "t", howToCheck: ["Ek nayi lead banao jiska State khaali ho"] },
+      host: "localhost:3001", links: LINKS, scenarios: SCENARIOS }).join("\n");
+    expect(out).not.toMatch(/Test data:/);
+    expect(out).toMatch(/No ready-made data for: none needed/);
+  });
+});
+
+/* R-2458: the 29 cards waiting for a localhost check on 4 Nov — each one's checklist names the data to load
+   (a scenario) or says no ready-made data exists and why. Steps are the cards' own howToCheck, shortened. */
+describe("card:check names the fixture for the 4 Nov cards", () => {
+  const cards: Array<[string, string[], string | null]> = [
+    ["R-2363", ["Customers list me Pathak Fabrication par 'State missing' badge", "Not known yet"], "customer-no-state"],
+    ["R-2376", ["Business Loans: NBFC (Bajaj / Tata Capital) ko is saal ₹10,000 se zyada interest"], "nbfc-interest"],
+    ["R-2413", ["localhost:3001/collections kholo → 3 customers ke aage tick lagao"], "small-leftover"],
+    ["R-2421", ["Payment Follow-up kholo: koi poora unpaid chhota bill (₹354)"], "small-leftover"],
+    ["R-2422", ["Renewals kholo: 'Monthly commitment (flex)'"], "ads-month"],
+    ["R-2424", ["Record payment: Reference 000000000000000"], "zero-ref-credits"],
+    ["R-2425", ["Banking → 'INW … USD1024.0@93.6' wali line"], "usd-inw-lines"],
+    ["R-2427", ["jis INW USD line ka invoice app me pehle se USD me hai"], "usd-inw-lines"],
+    ["R-2428", ["salary line jiski narration me FULL N FINAL ho"], "salary-part-paid"],
+    ["R-2430", ["do alag credit lines, dono ka reference 000000000000000"], "zero-ref-credits"],
+    ["R-2431", ["Renewals: monthly (flex) rows bhi gine"], "ads-month"],
+    ["R-2433", ["Company A me Settings → Network kholo"], "connected-companies"],
+    ["R-2434", ["Purchases → Inbox → 'From network' me woh Pending dikhe"], "connected-companies"],
+    ["R-2440", ["USD wali line (jaise 'USD1024.0@93.6') par 'No LUT for FY 2026-27'"], "usd-inw-lines"],
+    ["R-2441", ["Quotes kholo, apna (owner) ek quote jisme approval chahiye"], "approved-quote"],
+    ["R-2442", ["Customers mein ek customer kholo jiski State 'Not known yet' hai"], "customer-no-state"],
+    ["R-2444", ["Settings → Company: LUT for exports (one per financial year)"], "lut-per-fy"],
+    ["R-2445", ["Settings → Network kholo: 'Prove you own this GSTIN'"], "connected-companies"],
+    ["R-2447", ["Sales login se ek quote kholo jo manager ne approve kiya hai"], "approved-quote"],
+    ["R-2448", ["Ek customer kholo jiska State 'Not known yet' ho"], "customer-no-state"],
+    ["R-2449", ["Purchases → Purchase Inbox → 'From network' tab"], "connected-companies"],
+    ["R-2450", ["Anutech (connected customer) ko gaya invoice: 'Network · Pending'"], "connected-companies"],
+    ["R-2432", ["Distributor company me linked reseller ke liye ek DRAFT invoice"], "connected-companies"],
+    // no ready-made data: the reason is printed instead
+    ["R-2415", ["Settings → Integrations me Razorpay TEST key (rzp_test_…) save ho"], null],
+    ["R-2439", ["Razorpay test key ho to TEST MODE dikhe"], null],
+    ["R-2426", ["Ek company kholo jisme sirf EK owner ho"], null],
+    ["R-2371", ["jis Money-in line me humara apna company naam ho"], null],
+    ["R-2423", ["Quotes list kholo, ek payment request (renewal part) wali row"], null],
+    ["R-2456", ["Ek nayi lead banao jiska State khaali ho"], null],
+  ];
+  it("covers all 29 cards", () => expect(new Set(cards.map((c) => c[0])).size).toBe(29));
+  for (const [id, howToCheck, scn] of cards) {
+    it(`${id} → ${scn ?? "no fixture (reason)"}`, () => {
+      const out = renderChecklist({ card: { id, title: "t", howToCheck }, host: "localhost:3001", links: LINKS, scenarios: SCENARIOS }).join("\n");
+      if (scn) expect(out).toContain(`node scripts/dev/scenario.mjs ${scn}`);
+      else expect(out).toMatch(/No ready-made data/);
+      // the old "fixtures card R-2458" pointer is gone now that the fixtures exist
+      expect(out).not.toMatch(/fixtures card R-2458/);
+    });
+  }
 });
 
 describe("scenariosFor", () => {
