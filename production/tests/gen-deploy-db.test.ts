@@ -222,6 +222,28 @@ describe("R-2473 a peek on a function a later migration redefines", () => {
     expect(out[0].peek).toContain("and (p.prosrc like '%R-1%' or p.prosrc like '%R-2%'))");
   });
 
+  /* Review findings (4 Nov): these shapes must never be widened or broken. */
+  it("leaves a not-exists check (body must be GONE) and a block comment's 'create function' alone", () => {
+    const gone = "-- deploy-peek: not exists(select 1 from pg_proc where proname = 'tg_f' and prosrc like '%legacy%')\ncreate or replace function public.tg_f() returns int language sql as $$ select 1 $$;\n";
+    const commentOnly = "-- deploy-peek: to_regclass('public.x') is not null\n/* was: create or replace function public.tg_f() */\ncreate table public.x();\n";
+    expect(supersedePeeks([parse(gone, "20261101000000_a.sql"), parse(mid, "20261102000000_b.sql")])[0].peek).toBe(parse(gone, "a").peek);
+    expect(supersedePeeks([parse(older, "20261101000000_a.sql"), parse(commentOnly, "20261102000000_b.sql")])[0].peek).toBe(parse(older, "a").peek);
+  });
+
+  it("a nested pg_proc block is widened once, for its own function only", () => {
+    const nested = "-- deploy-peek: exists(select 1 from pg_proc p where p.oid = to_regprocedure('public.tg_a()') and exists(select 1 from pg_proc q where q.oid = to_regprocedure('public.tg_f()') and q.prosrc like '%R-1%'))\ncreate function public.tg_a() returns int language sql as $$ select 1 $$;\n";
+    const out = supersedePeeks([parse(nested, "20261101000000_a.sql"), parse(mid, "20261102000000_b.sql")]);
+    expect(out[0].peek).toBe("exists(select 1 from pg_proc p where p.oid = to_regprocedure('public.tg_a()') and exists(select 1 from pg_proc q where q.oid = to_regprocedure('public.tg_f()') and (q.prosrc like '%R-1%' or q.prosrc like '%R-2%')))");
+  });
+
+  it("an overload's marker is not taken for another argument list; a quoted '' stays inside its literal", () => {
+    const twoArg = "-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.f(text, integer)') and prosrc like '%can''t%')\ncreate function public.f(a text, b integer) returns int language sql as $$ select 1 $$;\n";
+    const otherOverload = "-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.f(text)') and prosrc like '%R-9%')\ncreate function public.f(a text) returns int language sql as $$ select 1 $$;\n";
+    const out = supersedePeeks([parse(twoArg, "20261101000000_a.sql"), parse(otherOverload, "20261102000000_b.sql")]);
+    /* No same-signature marker → falls back to the newest migration's whole peek, never its 1-arg marker alone. */
+    expect(out[0].peek).toBe("exists(select 1 from pg_proc where oid = to_regprocedure('public.f(text, integer)') and (prosrc like '%can''t%' or (exists(select 1 from pg_proc where oid = to_regprocedure('public.f(text)') and prosrc like '%R-9%'))))");
+  });
+
   /* The class, not just r2383: every prosrc marker in today's MIGS lines on a function that a later
      listed migration redefines must also accept that newest redefiner's marker (or its whole peek). */
   it("today's scripts: every superseded prosrc marker accepts the newest redefiner's", () => {
@@ -230,17 +252,17 @@ describe("R-2473 a peek on a function a later migration redefines", () => {
     const files = filesInScript(script, "staging") as string[];
     const sqlOf = (f: string) => {
       const a = path.join(supabaseDir, "migrations", f);
-      return fs.readFileSync(fs.existsSync(a) ? a : path.join(supabaseDir, "..", "prisma", "migrations", f.replace(/.sql$/, ""), "migration.sql"), "utf8");
+      return fs.readFileSync(fs.existsSync(a) ? a : path.join(supabaseDir, "..", "prisma", "migrations", f.replace(/\.sql$/, ""), "migration.sql"), "utf8");
     };
     const defines = files.map((f) => functionsDefined(sqlOf(f)) as Set<string>);
     const ownPeek = files.map((f) => parseDeployHeaders(sqlOf(f), f).peek as string);
     const misses: string[] = [];
     peeks.forEach((p, i) => {
-      for (const c of pgProcPeekChecks(ownPeek[i]) as Array<{ fn: string; tests: Array<{ test: string }> }>) {
+      for (const c of pgProcPeekChecks(ownPeek[i]) as Array<{ fn: string; sig: string | null; tests: Array<{ test: string }> }>) {
         let j = -1;
         for (let k = files.length - 1; k > i; k--) if (defines[k].has(c.fn)) { j = k; break; }
         if (j < 0) continue;
-        const own = (pgProcPeekChecks(ownPeek[j]) as Array<{ fn: string; tests: Array<{ test: string }> }>).find((n) => n.fn === c.fn)?.tests[0]?.test;
+        const own = (pgProcPeekChecks(ownPeek[j]) as Array<{ fn: string; sig: string | null; tests: Array<{ test: string }> }>).find((n) => n.fn === c.fn && (!n.sig || !c.sig || n.sig === c.sig))?.tests[0]?.test;
         const ok = own ? p.peek.toLowerCase().includes(own.toLowerCase()) : p.peek.includes(`(${peeks[j].peek})`);
         if (!ok) misses.push(`${p.key}: ${c.fn}() redefined by ${files[j]}`);
       }

@@ -91,15 +91,15 @@ export function parseDeployHeaders(sql, file) {
    columns, tables, triggers etc. are left exactly as written. The migration files are never edited
    (CI's migration-order-check refuses that) — only the generated MIGS lines and peeks.generated.ts. */
 
-/** Functions a migration creates or replaces — lower case, no schema. SQL comments are ignored. */
+/** Functions a migration creates or replaces — lower case, no schema. SQL comments (-- and block) are ignored. */
 export function functionsDefined(sql) {
-  const src = String(sql ?? "").replace(/--[^\n]*/g, "");
+  const src = String(sql ?? "").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, "");
   const out = new Set();
   for (const m of src.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?/gi)) out.add(m[1].toLowerCase());
   return out;
 }
 
-/** Index of the ")" closing the "(" at `open`, skipping quoted text; -1 if unbalanced. */
+/** Index of the ")" closing the "(" at `open`, skipping quoted text ('' inside a literal toggles twice); -1 if unbalanced. */
 function closeParen(s, open) {
   let depth = 0;
   let quoted = false;
@@ -115,54 +115,68 @@ function closeParen(s, open) {
 
 /**
  * The `exists(select … from pg_proc where … prosrc like '…')` blocks of a peek that name one function
- * (by `to_regprocedure('public.f(…)')` or `proname = 'f'`): [{ fn, tests: [{ text, index, alias, test }] }].
- * `prosrc not ilike` is a negative check, not a marker, and is never matched.
+ * (by `to_regprocedure('public.f(…)')` or `proname = 'f'`):
+ * [{ fn, sig (normalised argument list, or null for proname), tests: [{ text, index, alias, test }] }].
+ * alias = the table alias before prosrc (`p.` or ""), test = the rest (`like '%R-1%'`).
+ * Never touched (review, 4 Nov): `not exists(…)` (a check that a body is GONE — an added "or" would flip
+ * it), `prosrc not ilike`, and a test inside a nested pg_proc block counts for the innermost block only.
  */
 export function pgProcPeekChecks(peek) {
   const s = String(peek);
-  const out = [];
-  for (const m of s.matchAll(/exists\s*\(/gi)) {
+  const blocks = [];
+  for (const m of s.matchAll(/(\bnot\s+)?\bexists\s*\(/gi)) {
     const end = closeParen(s, m.index + m[0].length - 1);
     if (end < 0) continue;
     const block = s.slice(m.index, end + 1);
     if (!/\bfrom\s+pg_proc\b/i.test(block)) continue;
-    const fn = (/to_regprocedure\(\s*'(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s*\(/i.exec(block) ?? /\bproname\s*=\s*'([a-z_][a-z0-9_]*)'/i.exec(block))?.[1]?.toLowerCase();
-    if (!fn) continue;
-    /* alias = the table alias before prosrc (`p.` or ""), test = the rest (`like '%R-1%'`). */
-    const tests = [...block.matchAll(/((?:[a-z_][a-z0-9_]*\.)?)prosrc\s+(i?like\s+'[^']*')/gi)]
-      .map((t) => ({ text: t[0], index: m.index + t.index, alias: t[1], test: t[2] }));
-    if (tests.length) out.push({ fn, tests });
+    const reg = /to_regprocedure\(\s*'(?:public\.)?"?([a-z_][a-z0-9_]*)"?\s*\(([^)']*)\)'/i.exec(block);
+    const fn = (reg ?? /\bproname\s*=\s*'([a-z_][a-z0-9_]*)'/i.exec(block))?.[1]?.toLowerCase();
+    blocks.push({ start: m.index, end: end + 1, negated: Boolean(m[1]), fn, sig: reg ? reg[2].replace(/\s+/g, "").toLowerCase() : null });
+  }
+  const out = [];
+  for (const b of blocks) {
+    if (b.negated || !b.fn) continue;
+    /* Inside a negated block nothing is a marker; a nested pg_proc block owns its own tests. */
+    if (blocks.some((o) => o !== b && o.negated && o.start <= b.start && o.end >= b.end)) continue;
+    const inner = blocks.filter((o) => o !== b && o.start > b.start && o.end <= b.end);
+    const tests = [...s.slice(b.start, b.end).matchAll(/((?:[a-z_][a-z0-9_]*\.)?)prosrc\s+(i?like\s+'(?:[^']|'')*')/gi)]
+      .map((t) => ({ text: t[0], index: b.start + t.index, alias: t[1], test: t[2] }))
+      .filter((t) => !inner.some((o) => t.index >= o.start && t.index < o.end));
+    if (tests.length) out.push({ fn: b.fn, sig: b.sig, tests });
   }
   return out;
 }
 
 /**
  * entries: parsed headers in apply order, each with `sql` (the migration text) and `skip`.
- * Returns new entries whose peeks accept the newest redefiner's marker (see above). When the newest
- * redefiner's peek has no prosrc test on that function (26 such pairs on 4 Nov — old headers may not
- * be edited), the alternative is that migration's whole peek: "the newest body is in", which is what
- * the deploy step itself uses to call that migration applied — and then the older body is gone by
- * design (localhost-update skips such a file as superseded for the same reason).
+ * Returns new entries whose peeks accept the newest redefiner's marker (see above). The marker must be on
+ * the same function and, when both name one, the same argument list (an overload is another function).
+ * When the newest redefiner's peek has no such prosrc test (26 such pairs on 4 Nov — old headers may not
+ * be edited), the alternative is that migration's whole peek: "the newest migration is in", which is
+ * exactly what the deploy step uses to skip that migration — and then the older body is gone by design
+ * (localhost-update skips such a file as superseded for the same reason).
  */
 export function supersedePeeks(entries) {
   const defines = entries.map((e) => (e.skip ? new Set() : functionsDefined(e.sql)));
+  const checks = entries.map((e) => (e.skip ? [] : pgProcPeekChecks(e.peek)));
+  const newestFor = new Map(); // fn → newest index defining it, filled as we walk back
   const out = [...entries];
   /* Newest first, so a redefiner's own (already widened) peek is what an older one embeds. */
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
     if (e.skip) continue;
     const edits = [];
-    for (const c of pgProcPeekChecks(e.peek)) {
-      let j = -1;
-      for (let k = entries.length - 1; k > i; k--) if (defines[k].has(c.fn)) { j = k; break; }
-      if (j < 0) continue;
-      const own = pgProcPeekChecks(entries[j].peek).find((n) => n.fn === c.fn)?.tests[0];
+    for (const c of checks[i]) {
+      const j = newestFor.get(c.fn);
+      if (j === undefined) continue;
+      const own = checks[j].find((n) => n.fn === c.fn && (!n.sig || !c.sig || n.sig === c.sig))?.tests[0];
       for (const t of c.tests) {
         /* The marker is re-qualified with THIS block's alias (`p.prosrc` here, bare `prosrc` there). */
         if (own && own.test.toLowerCase() === t.test.toLowerCase()) continue;
         edits.push({ ...t, mark: own ? `${t.alias}prosrc ${own.test}` : `(${out[j].peek})` });
       }
     }
+    for (const fn of defines[i]) if (!newestFor.has(fn)) newestFor.set(fn, i);
     if (!edits.length) continue;
     let peek = e.peek;
     for (const d of edits.sort((a, b) => b.index - a.index)) {
