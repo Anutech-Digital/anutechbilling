@@ -91,12 +91,23 @@ export function parseDeployHeaders(sql, file) {
    columns, tables, triggers etc. are left exactly as written. The migration files are never edited
    (CI's migration-order-check refuses that) — only the generated MIGS lines and peeks.generated.ts. */
 
-/** Functions a migration creates or replaces — lower case, no schema. SQL comments (-- and block) are ignored. */
-export function functionsDefined(sql) {
+/**
+ * THE parser (R-2480: one copy — localhost-update.mjs imports it): functions and views a migration
+ * (re)defines — objects a later `create or replace` overwrites. ["function f", "view v"], lower case,
+ * no schema. SQL comments (-- and block) are ignored.
+ */
+export function redefinedObjects(sql) {
   const src = String(sql ?? "").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, "");
+  const id = String.raw`(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?`;
   const out = new Set();
-  for (const m of src.matchAll(/create\s+(?:or\s+replace\s+)?function\s+(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?/gi)) out.add(m[1].toLowerCase());
-  return out;
+  for (const m of src.matchAll(new RegExp(String.raw`create\s+(?:or\s+replace\s+)?function\s+${id}`, "gi"))) out.add(`function ${m[1].toLowerCase()}`);
+  for (const m of src.matchAll(new RegExp(String.raw`create\s+(?:or\s+replace\s+)?(?:materialized\s+)?view\s+(?:if\s+not\s+exists\s+)?${id}`, "gi"))) out.add(`view ${m[1].toLowerCase()}`);
+  return [...out];
+}
+
+/** Functions a migration creates or replaces — the function part of redefinedObjects, as a Set of names. */
+export function functionsDefined(sql) {
+  return new Set(redefinedObjects(sql).filter((o) => o.startsWith("function ")).map((o) => o.slice("function ".length)));
 }
 
 /** Index of the ")" closing the "(" at `open`, skipping quoted text ('' inside a literal toggles twice); -1 if unbalanced. */
@@ -187,6 +198,83 @@ export function supersedePeeks(entries) {
   return out;
 }
 
+/* ── R-2480 (5 Nov 2026): never RE-RUN a superseded migration ────────────────────────────────────
+   R-2473's widened peek accepts only a migration's own marker or the NEWEST redefiner's. Staging sat on
+   the R-2447 body of tg_quote_approval_not_by_maker while R-2470 (the newest redefiner) was not in yet,
+   so R-2383's (and R-2426's, R-2441's) peek read false and the DB step would have re-run them — their
+   older, weaker approval rule back on staging, with R-2447 not re-run after them (its peek is true).
+   The deploy scripts now get a SUPS block next to MIGS, one line per migration whose function/view a
+   LATER listed migration redefines:  "key|<later keys, space separated>|<rest peek or empty>".
+   rest = the migration's own peek with its prosrc tests on those redefined functions read as `true`:
+   "are its OTHER parts (columns, tables, triggers, other functions) in?". Empty = same as the peek.
+   The script (plan(), after the read-only PEEK) then decides per migration whose peek is false:
+     - a later redefiner is in (or itself superseded) and rest is true → SUPERSEDED: not re-run, reported;
+     - a later redefiner is in but rest is not true → STOP before any change (re-running brings the old
+       body back, skipping loses a column/table — a new migration is the fix; the safe rule);
+     - no later redefiner is in (a fresh DB) → applied in file order, exactly as before.
+   The peek is the file's truth: a part its peek never checks cannot be seen here either. */
+
+/** The peek with its prosrc text tests on `fns` (function names) read as `true`. Negated blocks stay as written. */
+export function residualPeek(peek, fns) {
+  const tests = pgProcPeekChecks(peek).filter((c) => fns.has(c.fn)).flatMap((c) => c.tests);
+  let out = String(peek);
+  for (const t of tests.sort((a, b) => b.index - a.index)) out = `${out.slice(0, t.index)}true${out.slice(t.index + t.text.length)}`;
+  return out;
+}
+
+/**
+ * entries: parsed headers in apply order, each with `sql`, `peek` (its OWN header peek) and `skip`.
+ * → [{ key, later: [keys of later, not skipped migrations redefining one of its functions/views], rest: sql | null }].
+ */
+export function supersededEntries(entries) {
+  const live = entries.filter((e) => !e.skip);
+  const objs = live.map((e) => new Set(redefinedObjects(e.sql)));
+  const out = [];
+  live.forEach((e, i) => {
+    const later = [];
+    const shared = new Set();
+    for (let j = i + 1; j < live.length; j++) {
+      const both = [...objs[i]].filter((o) => objs[j].has(o));
+      if (!both.length) continue;
+      later.push(live[j].key);
+      for (const o of both) shared.add(o);
+    }
+    if (!later.length) return;
+    const fns = new Set([...shared].filter((o) => o.startsWith("function ")).map((o) => o.slice("function ".length)));
+    const rest = residualPeek(e.peek, fns);
+    out.push({ key: e.key, later, rest: rest === e.peek ? null : rest });
+  });
+  return out;
+}
+
+export function supsLine(s) {
+  return `  "${s.key}|${s.later.join(" ")}|${s.rest ?? ""}"`;
+}
+
+/** Does the script have a `SUPS=(` block (deploy scripts since R-2480; a bare test fixture may not)? */
+export function hasSups(text) {
+  return /(^|\r?\n)SUPS=\(\r?\n/.test(String(text));
+}
+
+/** SUPS lines → [{ key, later, rest }] ([] for a script without the block). */
+export function supsFromScript(text, label = "script") {
+  if (!hasSups(text)) return [];
+  return splitBlock(text, "SUPS", label).body
+    .map((l) => /^\s*"([^|]+)\|([^|]*)\|([^|]*)"\s*$/.exec(l))
+    .filter(Boolean)
+    .map((m) => ({ key: m[1], later: m[2].split(" ").filter(Boolean), rest: m[3] || null }));
+}
+
+/**
+ * What /api/health/migrations checks: a migration with a separate rest check is green when its own
+ * marker OR its rest is in — a superseded file's other parts are there, and its function's newer body is
+ * checked by the later migration's own entry in the same list.
+ */
+export function healthPeeks(peeks, sups) {
+  const rest = new Map(sups.filter((s) => s.rest).map((s) => [s.key, s.rest]));
+  return peeks.map((p) => (rest.has(p.key) ? { key: p.key, peek: `(${p.peek}) or (${rest.get(p.key)})` } : p));
+}
+
 /** One MIGS line, exactly as the scripts have always had it. */
 export function migsLine(e) {
   return `  "${e.key}|${e.file}|${e.user}|${e.peek}"`;
@@ -201,15 +289,20 @@ export function buildMigsBody(entries) {
   return entries.map(migsLine);
 }
 
-/** Splits a deploy script at its MIGS block: { before, body (lines), after }. Keeps the file's own line ending. */
-export function splitScript(text, label = "script") {
+/** Splits a deploy script at its `<name>=(` block: { before, body (lines), after }. Keeps the file's own line ending. */
+export function splitBlock(text, name, label = "script") {
   const eol = text.includes("\r\n") ? "\r\n" : "\n";
   const lines = text.split(eol);
-  const start = lines.findIndex((l) => l === "MIGS=(");
-  if (start < 0) throw new Error(`${label}: no "MIGS=(" line.`);
+  const start = lines.findIndex((l) => l === `${name}=(`);
+  if (start < 0) throw new Error(`${label}: no "${name}=(" line.`);
   const end = lines.findIndex((l, i) => i > start && l === ")");
-  if (end < 0) throw new Error(`${label}: MIGS=( has no closing ")" line.`);
+  if (end < 0) throw new Error(`${label}: ${name}=( has no closing ")" line.`);
   return { eol, before: lines.slice(0, start + 1), body: lines.slice(start + 1, end), after: lines.slice(end) };
+}
+
+/** Splits a deploy script at its MIGS block. */
+export function splitScript(text, label = "script") {
+  return splitBlock(text, "MIGS", label);
 }
 
 /** Migration file names currently listed in a script's MIGS block. */
@@ -220,7 +313,11 @@ export function filesInScript(text, label) {
 }
 
 export function replaceMigs(text, bodyLines, label) {
-  const s = splitScript(text, label);
+  return replaceBlock(text, "MIGS", bodyLines, label);
+}
+
+export function replaceBlock(text, name, bodyLines, label) {
+  const s = splitBlock(text, name, label);
   return [...s.before, ...bodyLines, ...s.after].join(s.eol);
 }
 
@@ -303,7 +400,13 @@ export function generate({ supabaseDir, date, since, fromScript }) {
   /* R-531 (10 Oct 2026): a file can stay in the repo but out of every deploy — `-- deploy-skip: <why>`. */
   const skipped = peeked.filter((e) => e.skip);
   const body = buildMigsBody(peeked.filter((e) => !e.skip));
-  for (const env of ENVS) scripts[env].after = replaceMigs(scripts[env].before, body, `${env} script`);
+  /* R-2480: which migrations a later one supersedes, and their "other parts" check (from the OWN peeks). */
+  const sups = supersededEntries(entries).map(supsLine);
+  for (const env of ENVS) {
+    const migs = replaceMigs(scripts[env].before, body, `${env} script`);
+    /* A script without the SUPS block has no plan() either (only bare test fixtures) — MIGS only, as before. */
+    scripts[env].after = hasSups(migs) ? replaceBlock(migs, "SUPS", sups, `${env} script`) : migs;
+  }
   return { files: files.filter((f) => !skipped.some((e) => e.file === f)), skipped, scripts };
 }
 
@@ -343,7 +446,8 @@ function main(argv) {
   const appDir = path.resolve(supabaseDir, "..");
   const peeksAbs = path.join(appDir, ...PEEKS_FILE.split("/"));
   const source = path.relative(appDir, res.scripts.staging.file).split(path.sep).join("/");
-  const peeksAfter = renderPeeksModule(peeksFromScript(res.scripts.staging.after, "staging script"), source);
+  const stagingAfter = res.scripts.staging.after;
+  const peeksAfter = renderPeeksModule(healthPeeks(peeksFromScript(stagingAfter, "staging script"), supsFromScript(stagingAfter, "staging script")), source);
   const peeksBefore = fs.existsSync(peeksAbs) ? fs.readFileSync(peeksAbs, "utf8").replace(/\r\n/g, "\n") : null;
   if (peeksBefore === peeksAfter) console.log(`= ${PEEKS_FILE} — no change`);
   else if (opts.check) { changed++; console.log(`✗ ${PEEKS_FILE} — out of date`); }
