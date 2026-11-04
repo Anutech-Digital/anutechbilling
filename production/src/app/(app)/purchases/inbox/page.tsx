@@ -40,7 +40,9 @@ const INBOX_TABS = ["email", "network"] as const;
 export default function PurchaseInboxPage() {
   const router = useRouter();
   const { data: pending, isLoading, error, refetch } = useInboundPurchases("pending");
-  const importMut = useImportPurchase();
+  /* R-2462: "Add to expenses" books once — a second click / second person gets
+     "Already added to expenses" with an "Open it" button (router, no full reload). */
+  const importMut = useImportPurchase({ openHref: (href) => router.push(href as never) });
   const ignoreMut = useIgnorePurchase();
   const [busyId, setBusyId] = React.useState<number | null>(null);
   const { data: me } = useCurrentUser();

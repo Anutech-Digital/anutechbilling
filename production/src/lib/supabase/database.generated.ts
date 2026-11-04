@@ -15833,6 +15833,7 @@ export type Database = {
         }
         Returns: Json
       }
+      import_inbound_purchase: { Args: { p_id: number }; Returns: Json }
       import_indiamart_lead: {
         Args: {
           p_company: string
@@ -16750,6 +16751,10 @@ export type Database = {
       set_employee_pin: {
         Args: { p_employee_id: string; p_pin: string }
         Returns: undefined
+      }
+      set_inbound_purchase_status: {
+        Args: { p_id: number; p_status: string }
+        Returns: string
       }
       set_late_fee_mode: {
         Args: { p_entity_id: string; p_entity_type: string; p_mode: string }
