@@ -10,7 +10,7 @@
  * foreign amount and rate say what was billed and at what rate the bank converted it.
  */
 import { formatForeign } from "@/lib/currency";
-import { fyBounds, fyLabel } from "@/lib/dates/ist";
+import { exportLutRefusal, legacyLutRows, type TenantLut } from "@/lib/gst/export-lut";
 
 export interface InwardRemittance {
   /** ISO code, upper case, never INR. */
@@ -54,19 +54,27 @@ export function formatRemittance(r: InwardRemittance): string {
   return `${formatForeign(r.amount, r.currency, whole ? 0 : 2)} @ ₹${rate}`;
 }
 
-/** R-2440: the company's Letter of Undertaking as saved in Settings (tenants.lut_number / lut_valid_upto). */
-export interface ExportLut { number: string | null | undefined; validUpto: string | null | undefined }
+/** R-2440: the company's Letter of Undertaking. R-2444: one per financial year — the list from
+ *  tenant_luts (Settings → Company → LUT). The old single LUT (tenants.lut_number / lut_valid_upto)
+ *  is still accepted and read as the LUT of its "valid up to" FY. */
+export type ExportLut =
+  | readonly TenantLut[]
+  | { number: string | null | undefined; validUpto: string | null | undefined };
+
+/** The LUT rows of either shape. */
+export function exportLutRows(lut: ExportLut | null | undefined): readonly TenantLut[] {
+  if (!lut) return [];
+  if (Array.isArray(lut)) return lut as readonly TenantLut[];
+  const one = lut as { number: string | null | undefined; validUpto: string | null | undefined };
+  return legacyLutRows(one.number, one.validUpto);
+}
 
 /**
  * R-2440 (tax memo 3 Nov §1; independent review 2 of R-2425): an export sale at 0% GST needs an LUT
- * for the receipt's financial year — the LUT number set and its "Valid up to" inside that FY, on or
- * after the receipt's date. Null = covered. Same rule (and words) as reconcile_bank_credit_new_sale_fx
- * (migration 20261103163318), which refuses the booking too.
+ * for the receipt's financial year. R-2444: the LUT OF THAT FY (tenant_luts), so an FY 2025-26
+ * receipt books under the FY 2025-26 LUT. Null = covered. Same rule (and words) as
+ * export_lut_refusal in SQL (migration 20261104023601), which every 0% export invoice passes too.
  */
 export function exportLutProblem(lut: ExportLut | null | undefined, txnDate: string): string | null {
-  const fyEnd = fyBounds(txnDate).end;
-  const num = (lut?.number ?? "").trim();
-  const upto = (lut?.validUpto ?? "").slice(0, 10);
-  if (num && upto && upto >= txnDate && upto <= fyEnd) return null;
-  return `No LUT for FY ${fyLabel(txnDate)} on file. An export sale at 0% GST needs your Letter of Undertaking: add its ARN as "LUT number" with "Valid up to" in Settings → Company, then try again.`;
+  return exportLutRefusal(exportLutRows(lut), txnDate);
 }

@@ -405,6 +405,7 @@ MIGS=(
   "r2427exportreceiptfx|20261104001617_r2427_export_receipt_fx.sql|resellersos_migration|to_regprocedure('public.reconcile_bank_credit_fx_invoice(uuid,text,text,numeric,numeric,boolean,date)') is not null and to_regprocedure('public.reconcile_bank_credit_new_sale_fx(uuid,uuid,jsonb,boolean,date,date,text,text,text,numeric,numeric,numeric)') is not null"
   "r2434networkdocuments|20261104005856_r2434_network_documents.sql|resellersos_migration|to_regclass('public.network_documents') is not null and exists(select 1 from pg_proc where proname = 'tg_mirror_invoice_to_child_vendor_bill' and prosrc like '%R-2434%')"
   "r2450networksellerstatus|20261104015448_r2450_network_seller_status.sql|resellersos_migration|to_regprocedure('public.network_seller_document_status(text[],boolean)') is not null"
+  "r2444lutperfy|20261104023601_r2444_lut_per_fy.sql|resellersos_migration|to_regclass('public.tenant_luts') is not null and to_regprocedure('public.lut_for(uuid,date)') is not null and exists (select 1 from pg_proc where proname = 'reconcile_bank_credit_new_sale_fx' and prosrc like '%R-2444%')"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

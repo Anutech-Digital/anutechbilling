@@ -40,6 +40,7 @@ import { DirectorsRegisterCard } from "@/components/features/company/directors-r
 import { ShareCapitalCard } from "@/components/features/company/share-capital-card";
 import { TurnoverCard } from "@/components/features/compliance/turnover-card";
 import { GstRegistrationCard } from "@/components/features/compliance/gst-registration-card";
+import { LutListCard } from "@/components/features/settings/lut-list";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { ImportZohoInvoicesDialog, canImportOpeningInvoices } from "@/components/features/invoices/import-zoho-invoices-dialog";
 import { useUpdateTenant, useSetTenantLogo } from "@/lib/queries/tenant";
@@ -134,8 +135,6 @@ const companySchema = z.object({
   phone:      z.string().trim().max(20).optional(),
   address:    z.string().trim().max(300).optional(),
   pin_code:   z.string().trim().regex(/^\d{0,6}$/, "6-digit PIN (or blank)").optional(),
-  lut_number:     z.string().trim().max(40).optional(),
-  lut_valid_upto: z.string().trim().optional(),
   // Validated with the SAME helper that builds the QR, so Settings can never
   // accept a VPA the invoice would then silently refuse to print.
   upi_vpa: z.string().trim().max(80).optional()
@@ -181,8 +180,6 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
       phone:        me?.tenantPhone       ?? "",
       address:      me?.tenantAddress     ?? "",
       pin_code:     me?.tenantPinCode     ?? "",
-      lut_number:     me?.tenantLutNumber    ?? "",
-      lut_valid_upto: me?.tenantLutValidUpto ?? "",
       upi_vpa:        me?.tenantUpiVpa       ?? "",
       upi_payee_name: me?.tenantUpiPayeeName ?? "",
       remit_bank_name:      me?.tenantRemitBankName      ?? "",
@@ -240,8 +237,6 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
       phone:        values.phone?.trim()        || null,
       address:      values.address?.trim()      || null,
       pin_code:     values.pin_code?.trim()     || null,
-      lut_number:     values.lut_number?.trim()     || null,
-      lut_valid_upto: values.lut_valid_upto?.trim() || null,
       upi_vpa:        values.upi_vpa?.trim()        || null,
       upi_payee_name: values.upi_payee_name?.trim() || null,
       remit_bank_name:      values.remit_bank_name?.trim()      || null,
@@ -428,23 +423,7 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
                 )}
               </Field>
 
-              {/* LUT — for exporters shipping without IGST (CGST Rule 96A). */}
-              <div className="grid grid-cols-1 sm:grid-cols-[1fr_180px] gap-4">
-                <Field htmlFor="settings-lut-number-exports-optional" label="LUT number (exports — optional)">
-                  <Input id="settings-lut-number-exports-optional"
-                    placeholder="e.g. AD290425000000X — for zero-rated exports"
-                    className="font-mono"
-                    error={errors.lut_number?.message}
-                    {...register("lut_number")}
-                  />
-                  <p className="mt-1 text-xs text-ink-3">
-                    Have an LUT for exports? Store its ARN here — it lets you bill international clients at 0% GST (no IGST) legally and label those sales correctly for GSTR-1.
-                  </p>
-                </Field>
-                <Field htmlFor="settings-valid-up-to" label="Valid up to">
-                  <Input id="settings-valid-up-to" type="date" error={errors.lut_valid_upto?.message} {...register("lut_valid_upto")} />
-                </Field>
-              </div>
+              {/* R-2444: the LUT moved to its own card below — one per financial year. */}
 
               {/* UPI — prints a scan-to-pay QR on every invoice PDF. Works with
                   any UPI app and needs no Razorpay, so it can be switched on
@@ -561,6 +540,9 @@ function CompanyTab({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => voi
 
       {/* R-1529: Registered / Not registered / Composition → Tax Invoice or Bill of Supply. */}
       <GstRegistrationCard isOwner={isOwner} gstin={me?.tenantGstin} />
+
+      {/* R-2444: the LUT for exports, one per financial year (owner or accountant edits). */}
+      <LutListCard canEdit={isOwner || me?.role === "accountant"} />
 
       <InvoiceNumberingCard isOwner={isOwner} />
 

@@ -377,4 +377,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2427exportreceiptfx", peek: "to_regprocedure('public.reconcile_bank_credit_fx_invoice(uuid,text,text,numeric,numeric,boolean,date)') is not null and to_regprocedure('public.reconcile_bank_credit_new_sale_fx(uuid,uuid,jsonb,boolean,date,date,text,text,text,numeric,numeric,numeric)') is not null" },
   { key: "r2434networkdocuments", peek: "to_regclass('public.network_documents') is not null and exists(select 1 from pg_proc where proname = 'tg_mirror_invoice_to_child_vendor_bill' and prosrc like '%R-2434%')" },
   { key: "r2450networksellerstatus", peek: "to_regprocedure('public.network_seller_document_status(text[],boolean)') is not null" },
+  { key: "r2444lutperfy", peek: "to_regclass('public.tenant_luts') is not null and to_regprocedure('public.lut_for(uuid,date)') is not null and exists (select 1 from pg_proc where proname = 'reconcile_bank_credit_new_sale_fx' and prosrc like '%R-2444%')" },
 ];

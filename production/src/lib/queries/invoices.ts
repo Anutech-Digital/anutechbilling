@@ -13,7 +13,7 @@ import { grossAmount, isQuoteAmountConsistent, taxableAfterDiscount } from "@/li
 import type { Invoice } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { lutMissingWarning } from "@/lib/gst/export-lut";
+import { exportLutFix, lutMissingWarning } from "@/lib/gst/export-lut";
 import { invoiceIssueFix } from "@/lib/onboarding/setup-links";
 import { customerBeforeInvoice } from "@/lib/quotes/quote-page-actions";
 import { pendingPartAction, partGenerateResult, type PartGenerateAnswer, type PartGenerateResult, type SplitSaleStatus } from "@/lib/invoices/split-sale-pending";
@@ -24,7 +24,8 @@ import { pendingPartAction, partGenerateResult, type PartGenerateAnswer, type Pa
  */
 export function toastInvoiceIssueError(err: unknown): void {
   /* R-1643: the company's GSTIN / address refusal gets the same one-click fix. */
-  const fix = invoiceIssueFix(err);
+  /* R-2444: a 0% export with no LUT for its FY gets the button to the LUT card. */
+  const fix = invoiceIssueFix(err) ?? exportLutFix(err);
   if (fix) {
     toastError(err, {
       duration: 15000,

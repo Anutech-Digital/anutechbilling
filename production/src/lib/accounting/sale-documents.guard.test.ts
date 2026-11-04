@@ -30,6 +30,8 @@ const SQL_SALE = new Set([
   "get_partner_metrics",   // invoiced this month (reseller children)
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  tg_tenants_lut_to_fy: "R-2444: checks only whether 0% export Tax Invoices of one FY exist, so an old writer of tenants.lut_number never drops the LUT they rely on; no amounts or totals",
+  delete_tenant_lut: "R-2444: counts the company's 0% export Tax Invoices of one FY (document_kind 'tax_invoice' — never an opening invoice) only to refuse deleting the LUT they rely on; no amounts or totals",
   bank_line_kept_receipt_ref: "R-2430: reads only the quote_id of the ONE invoice a bank line is being matched to (by id), to find a kept receipt on that quote — no amounts, lists or totals",
   settle_invoice_payment_link: "R-2415: the invoices one paid Razorpay pay link was frozen for (by id) — checks each is open and its due, then record_payment books it; no list or total",
   personal_my_invoices: "R-2132: a personal login's own document list (like a customer portal) — shows each of its linked customer's invoices with its own amount and balance; it totals nothing and no report or GST figure reads it",
