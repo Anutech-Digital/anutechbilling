@@ -42,6 +42,7 @@ import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import type { createAdminClient } from "@/lib/supabase/server";
 import type { QuoteLineItem, BillingCycle } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { taxableAfterDiscount } from "./amounts";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "./bill-of-supply";
 import {
@@ -186,7 +187,7 @@ export function heldQuoteTotals(q: {
   subtotal?: number | null; discount_pct?: number | null; tax_rate?: number | null; amount?: number | null;
 }): number[] {
   const subtotal = q.subtotal ?? 0;
-  const taxable = subtotal - Math.round(subtotal * ((q.discount_pct ?? 0) / 100));
+  const taxable = taxableAfterDiscount(subtotal, q.discount_pct ?? 0);
   const amount = q.amount ?? 0;
   const tax = amount > 0 ? amount - taxable : Math.round(taxable * ((q.tax_rate ?? 0) / 100));
   return [...new Set([subtotal, taxable, tax, amount].map((n) => Math.round(n)).filter((n) => n > 0))];
