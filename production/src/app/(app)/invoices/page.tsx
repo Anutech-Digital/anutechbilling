@@ -72,6 +72,8 @@ import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
+import { NetworkChip, useNetworkChips } from "@/components/features/invoices/network-status";
+import type { NetworkStatusView } from "@/components/features/invoices/network-status-model";
 import { invoiceHref, legacyOpenRedirect, NEW_INVOICE_HREF } from "./invoice-href";
 import type { PendingPartAction, PartGenerateResult } from "@/lib/invoices/split-sale-pending";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
@@ -136,6 +138,13 @@ function InvoicesPageInner() {
   const { data: projectInvoiceIds } = useProjectInvoiceIds();
   // R-009: credit / debit note totals for every invoice — one query for the whole list.
   const { data: noteTotals } = useInvoiceNoteTotals();
+  /* R-2450: the customer's answer on the network copy (R-2434) — a small chip under the status.
+     Only issued invoices can have a copy; a customer not on the network has none (no chip). */
+  const issuedIds = React.useMemo(
+    () => (invoices ?? []).filter((i) => i.status !== "draft").map((i) => i.id),
+    [invoices],
+  );
+  const networkChips = useNetworkChips(issuedIds);
   const { data: pending } = useQuotesAwaitingInvoice();
   const generateInvoice = useGenerateInvoice();
   /* R-2057: a sale billed in parts — Generate issues the due PART's invoice (the billing job's path),
@@ -915,13 +924,14 @@ function InvoicesPageInner() {
             </>
           }
           mobileCard={(inv) => (
-            <MobileInvoiceCard inv={inv} notes={noteTotals?.get(inv.id)} />
+            <MobileInvoiceCard inv={inv} notes={noteTotals?.get(inv.id)} network={networkChips.get(inv.id)} />
           )}
           renderRow={(inv, ctx) => (
             <InvoiceRow
               inv={inv}
               ctx={ctx}
               notes={noteTotals?.get(inv.id)}
+              network={networkChips.get(inv.id)}
               isProject={projectInvoiceIds?.has(inv.id) ?? false}
             />
           )}
@@ -1005,7 +1015,7 @@ function InvoiceNoteLines({ notes, net }: { notes?: NoteTotals; net: number }) {
 // ============================================================
 // Mobile Invoice Card — phones only
 // ============================================================
-function MobileInvoiceCard({ inv, notes }: { inv: Invoice; notes?: NoteTotals }) {
+function MobileInvoiceCard({ inv, notes, network }: { inv: Invoice; notes?: NoteTotals; network?: NetworkStatusView }) {
   const net = netAfterNotes(inv.amount, notes);
 
   /* R-086: a real link to the invoice's own page (was a sheet over the list). */
@@ -1050,6 +1060,7 @@ function MobileInvoiceCard({ inv, notes }: { inv: Invoice; notes?: NoteTotals })
                 </Badge>
               );
             })()}
+            {network && <NetworkChip view={network} />}
           </div>
         </div>
       </Link>
@@ -1063,6 +1074,7 @@ function InvoiceRow({
   inv,
   ctx,
   notes,
+  network,
   isProject = false,
 }: {
   inv: Invoice;
@@ -1070,6 +1082,8 @@ function InvoiceRow({
   ctx: RowCtx;
   /** R-009: credit / debit note totals for this invoice (absent = none). */
   notes?: NoteTotals;
+  /** R-2450: the customer's answer on the network copy (absent = not sent on the network). */
+  network?: NetworkStatusView;
   /** Invoice came from a project milestone (vs a subscription quote). */
   isProject?: boolean;
 }) {
@@ -1167,10 +1181,13 @@ function InvoiceRow({
              R-238: the label lives in ./invoice-status.ts so /invoices/<id> shows the same word. */
           const sb = invoiceStatusBadge(inv, undefined, notes);
           const badge = sb ? <Badge kind={sb.kind} dot={sb.kind !== "muted"}>{sb.label}</Badge> : null;
+          /* R-2450: the network chip sits under the payment badge (no new column — fits 1280). */
+          const chip = network ? <div className="mt-1"><NetworkChip view={network} /></div> : null;
           // Draft/void have no receipts — badge stays static. Others toggle the
           // payment-receipts accordion on click.
-          if (inv.status === "draft" || inv.status === "void") return badge;
+          if (inv.status === "draft" || inv.status === "void") return <>{badge}{chip}</>;
           return (
+            <>
             <button
               type="button"
               onClick={() => setExpanded((e) => !e)}
@@ -1181,6 +1198,8 @@ function InvoiceRow({
               {badge}
               <Icon name={expanded ? "chevron_up" : "chevron_down"} size={12} className="text-ink-3" />
             </button>
+            {chip}
+            </>
           );
         })()}
       </td>
