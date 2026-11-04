@@ -106,7 +106,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
     : undefined;
   const statusBadge = invoiceStatusBadge(invoice, undefined, invoiceNotes);
   /* R-2450: what the customer answered on the network copy (R-2434) — this invoice and its notes. */
-  const network = useNetworkSentStatus(invoice.status === "draft" ? [] : [invoice.id]);
+  const networkIds = React.useMemo(() => (invoice.status === "draft" ? [] : [invoice.id]), [invoice.status, invoice.id]);
+  const network = useNetworkSentStatus(networkIds);
   const [payOpen, setPayOpen] = React.useState(false);
   /* R-1682: Credit note from the invoice itself, at every width. It lived only in the
      invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way
@@ -262,6 +263,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 rows={network.data}
                 error={network.error}
                 onRetry={() => void network.refetch()}
+                creditedInFull={(invoiceNotes?.credit ?? 0) >= invoice.amount}
               />
             </div>
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0" data-invoice-actions>

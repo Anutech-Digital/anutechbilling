@@ -33,7 +33,7 @@ const fmtIstDate = (iso: string | null): string => {
     : d.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
 };
 
-export function networkStatusView(d: NetworkSentDoc): NetworkStatusView {
+export function networkStatusView(d: NetworkSentDoc, opts: { creditedInFull?: boolean } = {}): NetworkStatusView {
   const buyer = d.buyerName.trim() || "your customer";
   const head = `Sent to ${buyer} on network`;
   const isInvoice = d.kind === "invoice";
@@ -55,11 +55,22 @@ export function networkStatusView(d: NetworkSentDoc): NetworkStatusView {
         line: `${head} — Rejected by customer: ${d.rejectReason?.trim() || "no reason given"}`,
         tone: "danger",
         nextStep: isInvoice
-          ? "Issue a credit note and a fresh invoice."
+          ? opts.creditedInFull
+            ? "Done — a credit note covers this invoice. Issue a fresh invoice if it is still owed."
+            : "Issue a credit note and a fresh invoice."
           : "Talk to your customer — if this note is wrong, issue a fresh note.",
       };
     case "cancelled":
-      return { chip: "Cancelled", line: `${head} — Cancelled`, tone: "muted", nextStep: null };
+      return {
+        chip: "Cancelled",
+        line: `${head} — Cancelled`,
+        tone: "muted",
+        /* Why it was cancelled (R-2434): an invoice voided, or a note changed / deleted (or its
+           invoice voided) before the customer answered — they did not get it. */
+        nextStep: isInvoice
+          ? "You voided this invoice before your customer answered."
+          : "This note was changed or deleted, or its invoice voided, before your customer answered — issue a fresh note if they still need it.",
+      };
     case "pending":
     default:
       return { chip: "Pending", line: `${head} — Pending`, tone: "info", nextStep: null };

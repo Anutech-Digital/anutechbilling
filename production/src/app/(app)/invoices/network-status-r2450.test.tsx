@@ -79,9 +79,20 @@ describe("invoice page status line (R-2450)", () => {
   });
 
   it("a read error says so in words, with a retry — never the raw text, never silent (§24)", () => {
-    render(<NetworkStatusLine invoiceId="INV-1" rows={undefined} error={new Error('relation "network_documents" does not exist')} onRetry={noop} />);
+    const retry = vi.fn();
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(<NetworkStatusLine invoiceId="INV-1" rows={undefined} error={new Error('relation "network_documents" does not exist')} onRetry={retry} />);
     expect(document.body.textContent).not.toContain("network_documents");
-    expect(document.body.textContent?.toLowerCase()).toContain("network answer");
+    expect(screen.getByRole("alert").textContent).toContain("Could not check whether your customer answered on the network.");
+    screen.getByRole("button", { name: "Try again" }).click();
+    expect(retry).toHaveBeenCalledOnce();
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
+
+  it("rejected, then corrected with a full credit note: the step says it is done", () => {
+    render(<NetworkStatusLine invoiceId="INV-1" rows={[sent({ status: "rejected", rejectReason: "x" })]} onRetry={noop} creditedInFull />);
+    expect(screen.getByRole("status").textContent).toContain("Done — a credit note covers this invoice.");
   });
 });
 
@@ -136,7 +147,8 @@ describe("invoices list chip (R-2450)", () => {
 
   it("is wired on the invoice page: one read, the line under the header, the notes through context", () => {
     const src = readFileSync(join(__dirname, "invoice-detail.tsx"), "utf8");
-    expect(src).toContain('const network = useNetworkSentStatus(invoice.status === "draft" ? [] : [invoice.id]);');
+    expect(src).toContain("const network = useNetworkSentStatus(networkIds);");
+    expect(src).toContain("creditedInFull={(invoiceNotes?.credit ?? 0) >= invoice.amount}");
     expect(src).toContain("<NetworkStatusLine");
     expect(src).toContain("<NetworkRowsContext.Provider value={network.data}>");
     expect(src).toContain("<NetworkNoteStatusFromPage noteId={n.id} />");

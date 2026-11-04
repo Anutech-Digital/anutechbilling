@@ -1,6 +1,6 @@
 -- R-2450 (G-NETWORK N2c) — the SELLER sees its customer's answer on its own invoice, credit note
 -- and debit note, and as a chip in the invoices list. Migration: 2026110*_r2450_network_seller_status.sql
--- adds network_seller_document_status(text[]): one read for a page of invoice ids. FAILS without it.
+-- adds network_seller_document_status(text[], boolean): one read for many invoice ids. FAILS without it.
 --
 --   1. an issued invoice to a connected customer reads "pending" with the buyer's name; an invoice to a
 --      customer who is not on the network reads nothing (no badge)
@@ -9,7 +9,7 @@
 --   3. the buyer rejects → the seller reads "rejected" + the reason; accepts → "accepted" + when
 --   4. a credit note on an accepted invoice comes back under the same invoice id (kind credit_note,
 --      seller_note_id = the note)
---   5. more than 500 ids in one call is refused (the list pages are 50 – 200 rows)
+--   5. more than 500 ids in one call is refused; invoice-copies-only (the list chips) leaves the notes out
 --
 -- SAFETY: synthetic tenants + identities, one transaction ending in ROLLBACK.
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 \
@@ -110,7 +110,7 @@ reset role;
 
 do $$
 begin
-  if has_function_privilege('anon', 'public.network_seller_document_status(text[])', 'execute') then
+  if has_function_privilege('anon', 'public.network_seller_document_status(text[], boolean)', 'execute') then
     raise exception 'FAIL 2f: anon may execute network_seller_document_status';
   end if;
   if not exists (select 1 from pg_proc where proname = 'network_seller_document_status' and prosecdef
@@ -157,6 +157,8 @@ begin
   if r.seller_note_id <> 'CN-R2450-1' or r.status <> 'pending' or r.seller_invoice_id <> 'INV-R2450-B' then
     raise exception 'FAIL 4b: credit note row % % %', r.seller_note_id, r.status, r.seller_invoice_id;
   end if;
+  select count(*) into n from public.network_seller_document_status(array['INV-R2450-B'], true);
+  if n <> 1 then raise exception 'FAIL 4c: invoice-copies-only reads % rows (want 1, the note left out)', n; end if;
 end $$;
 
 -- ── 5. a page, not the whole book ────────────────────────────────────────────────────

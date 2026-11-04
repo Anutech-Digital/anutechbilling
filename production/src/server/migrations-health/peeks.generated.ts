@@ -376,5 +376,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2376loaninteresttds", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenants' and column_name = 'loan_interest_tds') and exists(select 1 from pg_proc where oid = to_regprocedure('public.set_loan_interest_tds(text,text,text)') and prosrc like '%R-2376%')" },
   { key: "r2427exportreceiptfx", peek: "to_regprocedure('public.reconcile_bank_credit_fx_invoice(uuid,text,text,numeric,numeric,boolean,date)') is not null and to_regprocedure('public.reconcile_bank_credit_new_sale_fx(uuid,uuid,jsonb,boolean,date,date,text,text,text,numeric,numeric,numeric)') is not null" },
   { key: "r2434networkdocuments", peek: "to_regclass('public.network_documents') is not null and exists(select 1 from pg_proc where proname = 'tg_mirror_invoice_to_child_vendor_bill' and prosrc like '%R-2434%')" },
-  { key: "r2450networksellerstatus", peek: "to_regprocedure('public.network_seller_document_status(text[])') is not null" },
+  { key: "r2450networksellerstatus", peek: "to_regprocedure('public.network_seller_document_status(text[],boolean)') is not null" },
 ];

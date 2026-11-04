@@ -61,12 +61,23 @@ describe("networkStatusView — the one status line on the seller's invoice", ()
     );
   });
 
-  it("cancelled: voided before the customer answered", () => {
+  it("cancelled: says why (voided / note changed) so the seller knows the customer did not get it", () => {
     const v = networkStatusView(doc({ status: "cancelled" }));
     expect(v.line).toBe("Sent to Anutech Digital on network — Cancelled");
     expect(v.chip).toBe("Cancelled");
     expect(v.tone).toBe("muted");
-    expect(v.nextStep).toBeNull();
+    expect(v.nextStep).toBe("You voided this invoice before your customer answered.");
+    expect(networkStatusView(doc({ status: "cancelled", kind: "credit_note", sellerNoteId: "CN-1" })).nextStep).toBe(
+      "This note was changed or deleted, or its invoice voided, before your customer answered — issue a fresh note if they still need it.",
+    );
+  });
+
+  it("rejected invoice already credited in full: no more 'issue a credit note'", () => {
+    expect(networkStatusView(doc({ status: "rejected", rejectReason: "x" }), { creditedInFull: true }).nextStep).toBe(
+      "Done — a credit note covers this invoice. Issue a fresh invoice if it is still owed.",
+    );
+    // only a rejected copy changes; an accepted one keeps its lock sentence
+    expect(networkStatusView(doc({ status: "accepted" }), { creditedInFull: true }).nextStep).toMatch(/locked/);
   });
 
   it("notes: a credit / debit note gets its own words, never 'credit note and a fresh invoice'", () => {

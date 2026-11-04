@@ -1,4 +1,4 @@
--- deploy-peek: to_regprocedure('public.network_seller_document_status(text[])') is not null
+-- deploy-peek: to_regprocedure('public.network_seller_document_status(text[],boolean)') is not null
 -- deploy-key: r2450networksellerstatus
 -- 20261104015448_r2450_network_seller_status.sql
 --
@@ -9,8 +9,9 @@
 -- R-2434's network_seller_documents(text) reads one invoice (or all) for owner / manager /
 -- accountant. The screens need two more things, so this adds ONE read-only function next to it
 -- (R-2434's function is left as it is — R-2449 builds on that migration right now):
---   * a page of invoice ids in one call (the list shows 50 – 200 rows; one call per row would be
---     200 round trips) — capped at 500 ids;
+--   * many invoice ids in one call (one call per row would be hundreds of round trips) — capped at
+--     500 ids; p_invoice_copies_only = true (the list's chips) returns only the invoice copies, so a
+--     call stays under PostgREST's max_rows (1000) however many notes those invoices carry;
 --   * the billing role: billing issues and reads invoices (MONEY_RECORD_ROLES, 197 invoice-side
 --     functions gate owner / manager / accountant / billing), so it must see the answer too.
 --
@@ -22,7 +23,7 @@
 
 begin;
 
-create or replace function public.network_seller_document_status(p_invoice_ids text[])
+create or replace function public.network_seller_document_status(p_invoice_ids text[], p_invoice_copies_only boolean default false)
 returns table (
   id uuid, kind text, seller_invoice_id text, seller_note_id text, doc_number text,
   buyer_name text, buyer_gstin text, status text, reject_reason text, responded_at timestamptz, created_at timestamptz)
@@ -53,10 +54,11 @@ begin
     join public.tenants b on b.id = d.buyer_tenant_id
    where d.seller_tenant_id = v_t
      and d.seller_invoice_id = any (p_invoice_ids)
+     and (not coalesce(p_invoice_copies_only, false) or d.kind = 'invoice')
    order by d.created_at desc;
 end $function$;
 
-revoke all on function public.network_seller_document_status(text[]) from public, anon;
-grant execute on function public.network_seller_document_status(text[]) to authenticated;
+revoke all on function public.network_seller_document_status(text[], boolean) from public, anon;
+grant execute on function public.network_seller_document_status(text[], boolean) to authenticated;
 
 commit;
