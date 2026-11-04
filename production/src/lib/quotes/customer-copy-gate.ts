@@ -71,6 +71,12 @@ export interface CustomerCopyBlock {
 /** One short line for a disabled button's tooltip / a refused route. */
 export const CUSTOMER_COPY_BLOCKED_TITLE = "Needs approval first — the customer copy is locked until it is approved.";
 
+/** R-2459: a disabled button's tooltip — the short locked line for approval, the whole refusal (with its fix) otherwise. */
+export function customerCopyBlockTitle(block: CustomerCopyBlock | null | undefined): string | undefined {
+  if (!block) return undefined;
+  return block.kind === "approval" ? CUSTOMER_COPY_BLOCKED_TITLE : block.message;
+}
+
 /** Closed statuses — the place-of-supply rule leaves these alone (the send route refuses them anyway). */
 const SUPPLY_CLOSED_STATUSES = new Set(["accepted", "rejected"]);
 
@@ -121,12 +127,18 @@ export function supplyCopyBlock(quote: CustomerCopyQuote, parties: CustomerCopyP
   }
   if (!supplyStateMissing({ isExport: pos.isExport, buyerStateCode: pos.posCode })) return null;
   const name = parties.customer?.name || quote.customer_name || "This customer";
-  const action: CustomerCopyNextStep = quote.customer_id
-    ? { label: "Set the customer's state", href: `/customers/${quote.customer_id}` }
+  /* R-2459: a typed prospect's state lives on the quote itself, and only a DRAFT opens in the
+     editor — a sent quote's /edit says "can't be edited" (dead end, Chrome check 4 Nov,
+     Q-F588-27-0008). Past draft the way to a state is Revise: a draft copy where it is picked,
+     which replaces this quote once sent. The quote page reads `?revise=1` and asks first. */
+  const quoteId = encodeURIComponent(quote.id ?? "");
+  const [action, where]: [CustomerCopyNextStep, string] = quote.customer_id
+    ? [{ label: "Set the customer's state", href: `/customers/${quote.customer_id}` }, "on the customer page"]
     : quote.lead_id
-      ? { label: "Set the lead's state", href: `/leads?lead=${encodeURIComponent(quote.lead_id)}` }
-      : { label: "Pick the customer's state", href: `/quotes/${encodeURIComponent(quote.id ?? "")}/edit` };
-  const where = quote.customer_id ? "on the customer page" : quote.lead_id ? "on the lead" : "on the quote";
+      ? [{ label: "Set the lead's state", href: `/leads?lead=${encodeURIComponent(quote.lead_id)}` }, "on the lead"]
+      : quote.status === "draft"
+        ? [{ label: "Pick the customer's state", href: `/quotes/${quoteId}/edit` }, "on the quote"]
+        : [{ label: "Revise the quote", href: `/quotes/${quoteId}?revise=1` }, "and pick the customer's state on the new draft"];
   const reason = `${name} has no state on record — the state decides CGST + SGST or IGST.`;
   const nextStep = `${action.label} ${where} first`;
   return { kind: "customer_state", reason, nextStep, message: `${reason} ${nextStep}`, action };

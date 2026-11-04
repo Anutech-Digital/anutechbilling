@@ -21,6 +21,9 @@ import { QUOTE_FOCI, QUOTE_FOCUS_LABEL, quoteInFocus, focusValue, type QuoteFocu
 import { FocusBanner } from "@/components/shared/focus-banner";
 import { useQuotes, useDeleteQuote, quoteDeleteBlockReason, useSubscriptionBillingDueDates, useCustomerStopped } from "@/lib/queries/quotes";
 import { useQuoteLeadContacts } from "@/lib/queries/quote-lead-contacts";
+import { useQuoteCopyParties } from "@/lib/queries/quote-copy-parties";
+import { customerCopyBlockForRow, type CustomerCopyRowsContext } from "@/lib/quotes/customer-copy-rows";
+import { customerCopyBlockTitle, supplyRuleApplies } from "@/lib/quotes/customer-copy-gate";
 import { quoteMatchesSearch, quotePartyName } from "@/lib/quotes/quote-party-name";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -240,6 +243,21 @@ export default function QuotesPage() {
      20260818150000_user_hierarchy_visibility.sql and is not applied yet, which is why the
      toggle carries a caveat rather than implying privacy. */
   const { data: me } = useCurrentUser();
+  /* R-2459: the row's WhatsApp follow-up is a customer copy too — it asks the same gate as the
+     quote page (customerCopyBlockForRow), with the buyers' states read once for the whole list. */
+  const copyPartyIds = React.useMemo(() => {
+    const open = (quotes ?? []).filter((q) => supplyRuleApplies(q));
+    return {
+      customers: open.map((q) => q.customer_id).filter((id): id is string => !!id),
+      leads: open.filter((q) => !q.customer_id).map((q) => q.lead_id).filter((id): id is string => !!id),
+    };
+  }, [quotes]);
+  const { data: copyParties } = useQuoteCopyParties(copyPartyIds.customers, copyPartyIds.leads);
+  const copyCtx = React.useMemo<CustomerCopyRowsContext | null>(() => (copyParties && me ? {
+    ...copyParties,
+    seller: { state_code: me.tenantStateCode, gstin: me.tenantGstin },
+    role: me.role,
+  } : null), [copyParties, me]);
   const { data: teamTree } = useTeamTree();
   const team = React.useMemo(() => teamTree ?? [], [teamTree]);
   const meMember = React.useMemo(
@@ -968,6 +986,13 @@ export default function QuotesPage() {
                   const dl = q.expires_date ? daysBetween(new Date(), q.expires_date) : null;
                   const expiringSoon = dl !== null && dl >= 0 && dl <= 7;
                   const kbSelected = rowIndex === keys.index;
+                  /* R-2459: approval / no place of supply locks the WhatsApp follow-up like every customer copy. */
+                  const copyBlock = customerCopyBlockForRow(q, copyCtx);
+                  const followUpOnWhatsApp = () => {
+                    if (copyBlock) return;
+                    const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                    window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
+                  };
                   return (
                     <tr
                       key={q.id}
@@ -1121,17 +1146,21 @@ export default function QuotesPage() {
                             </Button>
                           )}
                           {(q.status === "sent" || q.status === "viewed") && (
-                            <Button
-                              size="sm"
-                              icon="whatsapp"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
-                                window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
-                              }}
-                            >
-                              WhatsApp
-                            </Button>
+                            /* R-2459: a disabled button gets no hover in some browsers — the reason sits on the wrapper. */
+                            <span className="min-w-0 overflow-hidden" title={customerCopyBlockTitle(copyBlock)}>
+                              <Button
+                                size="sm"
+                                icon="whatsapp"
+                                disabled={!!copyBlock}
+                                aria-label={copyBlock ? `WhatsApp locked — ${customerCopyBlockTitle(copyBlock)}` : undefined}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  followUpOnWhatsApp();
+                                }}
+                              >
+                                WhatsApp
+                              </Button>
+                            </span>
                           )}
                           {q.status === "accepted" && (() => {
                             // What happens NEXT on an accepted quote depends on
@@ -1215,12 +1244,20 @@ export default function QuotesPage() {
                               </DropdownMenuItem>
                               <DropdownMenuItem
                                 className="gap-2.5 py-2 cursor-pointer text-emerald font-medium"
-                                onClick={() => {
-                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
-                                  window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
-                                }}
+                                disabled={!!copyBlock}
+                                title={customerCopyBlockTitle(copyBlock)}
+                                onClick={followUpOnWhatsApp}
                               >
-                                <Icon name="whatsapp" size={15} /> Send / nudge on WhatsApp
+                                <Icon name="whatsapp" size={15} />
+                                <span className="min-w-0">
+                                  Send / nudge on WhatsApp
+                                  {/* R-2459: the reason, visible — a menu item has no hover on touch. */}
+                                  {copyBlock && (
+                                    <span className="block text-2xs font-normal text-amber-ink">
+                                      Locked — {copyBlock.kind === "approval" ? "needs approval first" : `${copyBlock.reason} ${copyBlock.nextStep}`}
+                                    </span>
+                                  )}
+                                </span>
                               </DropdownMenuItem>
                               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => router.push(`/quotes/${q.id}` as any)}>
                                 <Icon name="edit" size={15} /> Open / edit

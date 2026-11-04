@@ -109,7 +109,7 @@ import { eligibleApprovers, approverSentence } from "@/lib/quotes/awaiting-appro
 import { useTeamMembers } from "@/lib/queries/team";
 import { quoteEconomics, quoteApprovalRecord } from "@/lib/quotes/approval-economics";
 import { linesMissingCost, missingCostReason, namedApprovalReasons, addCostHref } from "@/lib/quotes/missing-cost-reason";
-import { customerCopyBlock, CUSTOMER_COPY_BLOCKED_TITLE } from "@/lib/quotes/customer-copy-gate";
+import { customerCopyBlock, customerCopyBlockTitle } from "@/lib/quotes/customer-copy-gate";
 import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { useRequestApproval, useQuoteChainMakers } from "@/lib/queries/quotes";
 import { recordPaymentBlock, recordPaymentStep, quoteHeaderStatus, withApprovalStep, activateOnCreditBlock } from "./payment-approval-gate";
@@ -259,7 +259,7 @@ export default function QuoteDetailPage() {
     seller: { state_code: me.tenantStateCode, gstin: me.tenantGstin },
     role: me.role,
   } : null) : null), [quote, partiesSettled, buyerReadable, customer, lead, me]);
-  const customerBlockTitle = customerBlock?.kind === "approval" ? CUSTOMER_COPY_BLOCKED_TITLE : customerBlock?.message;
+  const customerBlockTitle = customerCopyBlockTitle(customerBlock);
   /** R-2448: a 409 refusal is refused again on retry — its own words, its fix as the button when
    *  it names one ("Set the customer's state"), and no "try again". */
   const refusalFix = (err: unknown) => {
@@ -641,6 +641,34 @@ export default function QuoteDetailPage() {
     },
     onError: (e) => toastError(e, { fallback: "Couldn't start the revision." }),
   });
+
+  /* R-2459: "Revise the quote" — the no-state fix link of a SENT typed-prospect quote
+     (customerCopyBlock) lands here with ?revise=1. A link never creates a quote by itself: it
+     opens the same confirm as the page's own Revise, or says why this one can't be revised and
+     offers the copy instead. Waits for the payments read — canReviseQuote counts them. */
+  const reviseIntent = searchParams.get("revise");
+  const reviseIntentHandled = React.useRef(false);
+  React.useEffect(() => {
+    if (reviseIntentHandled.current || reviseIntent !== "1" || !quote || paymentHistory === undefined) return;
+    reviseIntentHandled.current = true;
+    router.replace(`/quotes/${quote.id}` as never);   // clean the URL
+    const check = canReviseQuote(quote, sumReceived(paymentHistory));
+    if (check.ok) {
+      setConfirm({
+        title: `Revise ${quote.id} to pick the customer's state?`,
+        body: "This makes a draft copy where you pick the customer's state (it decides CGST + SGST or IGST). Nothing changes for the customer until that draft is sent — then this quote is marked replaced.",
+        confirmLabel: "Revise",
+        icon: "edit",
+        onConfirm: () => startRevision.mutate(),
+      });
+    } else {
+      const dupHref = duplicateQuoteHref(quote);
+      toast.info("This quote can't be revised", {
+        description: check.reason,
+        action: { label: "Duplicate as a new quote", onClick: () => router.push(dupHref as never) },
+      });
+    }
+  }, [reviseIntent, quote, paymentHistory, router, startRevision]);
 
   /* R-452: "Mark rejected" asks why (same reasons as a lost lead) and, when this was the
      lead's last open quote, offers to mark the lead Lost in the same step — before, the
