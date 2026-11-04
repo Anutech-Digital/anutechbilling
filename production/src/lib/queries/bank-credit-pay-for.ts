@@ -24,6 +24,7 @@ import { isSplitBilled } from "@/lib/billing/instalments";
 import { splitArgs, type SplitInput } from "@/lib/banking/credit-pay-for-multi";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { paymentApprovalBlock } from "@/lib/quotes/payment-approval";
+import type { ItemFx } from "@/lib/banking/item-fx-pay";
 
 /* The generated types do not know the R-1838 functions yet (migration not applied there). */
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }> };
@@ -57,6 +58,9 @@ export function useBankCreditOpenItems(customerId: string | null) {
         ...r,
         amount_due: Number(r.amount_due) || 0,
         taxable_value: Number(r.taxable_value) || 0,
+        /* R-2466: numeric comes back as a string; absent on a DB before the migration → ₹. */
+        currency: r.currency ?? "INR",
+        fx_rate: r.fx_rate == null ? null : Number(r.fx_rate) || null,
         approval_block: r.quote_id ? blocks.get(r.quote_id) ?? null : null,
       }));
     },
@@ -77,6 +81,9 @@ export interface PayItemInput {
   subStart: string | null;
   /** Sent only when the operator changed it; else the term decides. */
   subRenewal: string | null;
+  /** R-2466: an invoice in a foreign currency paid by its inward remittance (lib/banking/item-fx-pay)
+   *  → reconcile_bank_credit_fx_invoice (R-2427). null / absent = ₹, reconcile_bank_credit_to_item. */
+  fx?: ItemFx | null;
 }
 
 export interface NewSaleInput {
@@ -188,15 +195,39 @@ function useAfterPay() {
 /** A missing company GSTIN / address (R-1643) gets its one-click fix; anything else is said plainly. */
 const onPayError = (err: unknown) => toastInvoiceIssueError(err);
 
+/** R-2466: the RPC arguments of an export receipt on one invoice (reconcile_bank_credit_fx_invoice). */
+export function payItemFxArgs(i: PayItemInput, fx: ItemFx) {
+  return {
+    p_txn_id: i.transactionId,
+    p_invoice_id: i.invoiceId,
+    p_currency: fx.currency,
+    p_fx_rate: fx.rate,
+    p_foreign_amount: fx.foreignAmount,
+    p_create_subscription: i.createSubscription,
+    p_sub_start: i.createSubscription ? i.subStart : null,
+  };
+}
+
+/** One item paid from the line — ONE server call. R-2466: a foreign invoice goes the R-2427 way. */
+export async function payItemCall(input: PayItemInput, call: typeof rpc = rpc): Promise<PayForResult> {
+  if (input.fx) {
+    if (!input.invoiceId) throw new Error(`Only an invoice can take an export receipt in ${input.fx.currency}.`);
+    if (input.tdsAmount > 0) throw new Error(`A customer abroad deducts no Indian TDS — clear the TDS to book this receipt in ${input.fx.currency}.`);
+    /* reconcile_bank_credit_fx_invoice files the subscription on its term's own renewal date. */
+    if (input.createSubscription && input.subRenewal) throw new Error(`An export receipt in ${input.fx.currency} takes the term's own renewal date — clear the changed "Renews on" date, or change it on the subscription afterwards.`);
+  }
+  const { data, error } = input.fx
+    ? await call("reconcile_bank_credit_fx_invoice", payItemFxArgs(input, input.fx))
+    : await call("reconcile_bank_credit_to_item", payItemArgs(input));
+  if (error) throw error;
+  if (!data) throw new Error("The payment was not confirmed — refresh the page to see whether it was saved.");
+  return data as PayForResult;
+}
+
 export function usePayItemFromBankCredit() {
   const after = useAfterPay();
   return useMutation({
-    mutationFn: async (input: PayItemInput): Promise<PayForResult> => {
-      const { data, error } = await rpc("reconcile_bank_credit_to_item", payItemArgs(input));
-      if (error) throw error;
-      if (!data) throw new Error("The payment was not confirmed — refresh the page to see whether it was saved.");
-      return data as PayForResult;
-    },
+    mutationFn: (input: PayItemInput): Promise<PayForResult> => payItemCall(input),
     onSuccess: after,
     onError: onPayError,
   });

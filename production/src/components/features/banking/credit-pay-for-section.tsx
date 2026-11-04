@@ -27,11 +27,10 @@ import * as React from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee } from "@/lib/utils";
 import { useItems } from "@/lib/queries/items";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
@@ -43,7 +42,7 @@ import {
   useRelinkOneOffSale, useSplitFromBankCredit, type RelinkTarget,
 } from "@/lib/queries/bank-credit-pay-for";
 import {
-  amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
+  amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemKey,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
   paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
   tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem, saleLinesBelowCost, BANK_SALE_BELOW_COST_TEXT,
@@ -60,6 +59,8 @@ import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 import { prefillSaleFx, zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
+import { itemPayPlan, splitFxProblem } from "@/lib/banking/item-fx-pay";
+import { ItemPlanNote, OpenItemRow } from "./credit-pay-for-item";
 
 const NEW_CUSTOMER = "__new_customer__";
 
@@ -243,7 +244,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* An advance has nothing due — the whole credit is kept as the customer's credit. */
   const due = mode === "item" ? (picked?.amount_due ?? null) : mode === "sale" && preview.total > 0 ? schedule.dueNow : null;
   const taxable = mode === "item" ? (picked?.taxable_value ?? 0) : schedule.dueTaxable;
-  const check: AmountCheck | null = due === null ? null : amountCheck(credit, due, taxable);
+  /* R-2466: a foreign invoice paid by its inward remittance books the R-2427 way (forex / Bank Charges,
+     no TDS, no "kept as credit"); a Zoho opening invoice takes no more than its due. Either way the
+     ₹ over / short check does not apply. */
+  const itemPlan = mode === "item" && picked
+    ? itemPayPlan(picked, { description: transaction.description, credit }, { relink: Boolean(relink) }) : null;
+  const itemFx = itemPlan?.fx ?? null;
+  const check: AmountCheck | null = due === null || itemFx || itemPlan?.problem ? null : amountCheck(credit, due, taxable);
   /* R-2052: annual commitment billed in parts — Renews on stays the end of the year; this says
      how far the money pays, and takes over the "Next N bills" line (the next bill said once). */
   const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0
@@ -259,7 +266,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   ]);
   const split = splitSummary(credit, [...splitPicked.map((i) => picks[itemKey(i)]), saleAmt], { partPaid: splitPart });
   const rest = splitRest(split.state, restChoice);
-  const splitInvalid = (splitPicked.length === 0 && !splitSale)
+  const splitFx = mode === "split" ? splitFxProblem(splitPicked) : null;   // R-2466: the split books ₹ only
+  const splitInvalid = Boolean(splitFx) || (splitPicked.length === 0 && !splitSale)
     || splitPicked.some((i) => pickProblem(i, picks[itemKey(i)]) !== null)
     || (splitSale && (saleInvalidOf(lines, preview.taxable) || saleAmt <= 0 || saleAmt > preview.total))
     || splitBlocked(split.state)
@@ -302,7 +310,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* R-2427 (3): a Find-in-Zoho USD bill (₹ at the bank's rate) saves IN USD with the narration's figures; not on a relink. */
   const saleFx = mode === "sale" && !relink ? prefillSaleFx(zohoFill, transaction.description, credit) : null;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
-    && !approvalBlocked && !fxUnconverted
+    && !approvalBlocked && !fxUnconverted && !itemPlan?.problem
     && !(relink && saleBelowCost)   // R-2397: the server refuses a relink to a below-cost sale
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
@@ -361,7 +369,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     const target: RelinkTarget = mode === "item" && picked
       ? {
           path: "item", transactionId: transaction.id, quoteId: picked.quote_id, invoiceId: picked.invoice_id,
-          tdsAmount, tdsRatePct: tdsRate, tdsSection, ...subArgs,
+          tdsAmount: itemFx ? 0 : tdsAmount, tdsRatePct: itemFx ? null : tdsRate, tdsSection, ...subArgs, fx: itemFx,
         }
       : mode === "sale"
         ? {
@@ -404,7 +412,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   useFooterSaveReport(onFooterSave, credit > 0 && !result && customerId
     ? {
         label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: busy,
-        disabledReason: fxUnconverted ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
+        disabledReason: fxUnconverted ?? itemPlan?.problem ?? splitFx ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
       }
     : null);
 
@@ -631,6 +639,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           {/* 3. Amount check */}
           {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice}
             section={tdsSection} sectionReason={tdsSectionPick ? null : tdsGuess.reason} onSection={setTdsSectionPick} noRoundOff={Boolean(relink)} />}
+          {/* R-2466: an export receipt on a foreign invoice / an opening invoice paid over its due. */}
+          <ItemPlanNote plan={splitFx ? { fx: null, problem: splitFx } : itemPlan} item={picked} />
 
           {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
               server's reason is shown here too, not only as a toast. */}
@@ -653,34 +663,6 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         </>
       )}
     </section>
-  );
-}
-
-function OpenItemRow({ item, credit, selected, onPick }: { item: OpenItem; credit: number; selected: boolean; onPick: () => void }) {
-  const exact = item.amount_due === credit;
-  return (
-    <li>
-      <button
-        type="button"
-        role="radio"
-        aria-checked={selected}
-        onClick={onPick}
-        className={`w-full text-left rounded-md border p-2.5 flex items-start gap-2 ${selected ? "border-amber bg-amber/10" : "border-hairline bg-paper hover:border-hairline-strong"}`}
-      >
-        <span aria-hidden className={`mt-1 h-3 w-3 shrink-0 rounded-full border ${selected ? "border-amber bg-amber" : "border-hairline-strong"}`} />
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1.5">
-            <Badge kind={item.kind === "renewal" ? "info" : item.kind === "add_seats" ? "warning" : item.kind === "new" ? "success" : "muted"} size="sm">
-              {kindLabel(item.kind)}
-            </Badge>
-            {exact && <Badge kind="success" size="sm">Exact amount</Badge>}
-            {item.approval_block && <Badge kind="warning" size="sm">{NEEDS_APPROVAL_LABEL}</Badge>}
-          </span>
-          <span className="block text-sm text-ink break-words mt-0.5">{itemDetail(item)}</span>
-          <span className="block text-xs text-ink-3">Due {rupee(item.amount_due)} · {formatDate(item.doc_date)}</span>
-        </span>
-      </button>
-    </li>
   );
 }
 
