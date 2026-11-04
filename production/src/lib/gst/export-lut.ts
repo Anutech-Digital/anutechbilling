@@ -10,6 +10,8 @@
  * where it was (quote builder / place-of-supply).
  */
 
+import { fyBounds, fyLabel, fyStartISO } from "@/lib/dates/ist";
+
 /** The Rule 46 endorsement for an export without payment of IGST, verbatim. */
 export const EXPORT_LUT_ENDORSEMENT =
   "SUPPLY MEANT FOR EXPORT UNDER LETTER OF UNDERTAKING WITHOUT PAYMENT OF INTEGRATED TAX";
@@ -70,22 +72,20 @@ export interface TenantLut {
   validUpto: string;
 }
 
-/** The first day (1 April) of the Indian financial year a YYYY-MM-DD date falls in. */
+/** The first day (1 April) of the Indian financial year a YYYY-MM-DD date falls in (R-1609: the
+ *  April-FY rule lives once, in @/lib/dates/ist). */
 export function lutFyStart(date: string): string {
-  const y = Number(date.slice(0, 4));
-  const m = Number(date.slice(5, 7));
-  return `${m >= 4 ? y : y - 1}-04-01`;
+  return fyStartISO(date.slice(0, 10));
 }
 
 /** "2025-26" for any date from 1 Apr 2025 to 31 Mar 2026. */
 export function lutFyLabel(date: string): string {
-  const y = Number(lutFyStart(date).slice(0, 4));
-  return `${y}-${String((y + 1) % 100).padStart(2, "0")}`;
+  return fyLabel(date.slice(0, 10));
 }
 
-/** The last day (31 March) of the FY that starts on fyStart. */
+/** The last day (31 March) of the FY a date (e.g. its 1 April start) falls in. */
 export function lutFyEnd(fyStart: string): string {
-  return `${Number(fyStart.slice(0, 4)) + 1}-03-31`;
+  return fyBounds(fyStart.slice(0, 10)).end;
 }
 
 /** The LUT row covering the date (its FY's row, validFrom ≤ date ≤ validUpto), else null. */
@@ -104,7 +104,7 @@ function longDate(d: string): string {
 
 /**
  * Null = a 0% export on this date is covered. Else why not, with the next step (§24): add the LUT
- * for that FY in Settings → Company → LUT, or bill the sale with IGST. Same words as
+ * for that FY in Settings → Company → LUT (the app bills a foreign customer at 0% only). Same words as
  * export_lut_refusal in SQL.
  */
 export function exportLutRefusal(luts: readonly TenantLut[] | null | undefined, date: string): string | null {
@@ -114,10 +114,10 @@ export function exportLutRefusal(luts: readonly TenantLut[] | null | undefined, 
   const row = (luts ?? []).find((l) => l.fyStart.slice(0, 10) === lutFyStart(d));
   if (row) {
     return `No LUT for FY ${fy} covers ${longDate(d)}: the LUT saved for that year runs ${longDate(row.validFrom)} – ${longDate(row.validUpto)}. `
-      + "An export at 0% GST needs a Letter of Undertaking on its date: correct the LUT dates in Settings → Company → LUT, or bill this sale with IGST.";
+      + "An export at 0% GST needs a Letter of Undertaking on its date: correct the LUT dates in Settings → Company → LUT, then try again.";
   }
   return `No LUT for FY ${fy} on file. An export sale at 0% GST needs your Letter of Undertaking for that year: `
-    + "add its ARN in Settings → Company → LUT, then try again — or bill this sale with IGST.";
+    + "add its ARN in Settings → Company → LUT (file Form GST RFD-11 on gst.gov.in if you have none), then try again.";
 }
 
 /** The old single LUT (tenants.lut_number + lut_valid_upto) as a one-row list — its FY is the FY of

@@ -53,7 +53,7 @@ describe("R-334 wiring", () => {
     expect(readFileSync("src/lib/pdf/build-props.ts", "utf8")).toMatch(/lutNumber:\s+tenant\.lut_number/);
     expect(readFileSync("src/app/api/v1/documents/invoice/[id]/pdf/route.ts", "utf8")).toMatch(/lut_number/);
     /* R-2444: the in-app PDF prints the ARN of the invoice's own FY, and so does the server route. */
-    expect(readFileSync("src/components/features/quotes/tax-invoice-dialog.tsx", "utf8")).toMatch(/lutNumber:\s*invoice\.invoice_date \? lutFor\(lutRows, invoice\.invoice_date\)/);
+    expect(readFileSync("src/components/features/quotes/tax-invoice-dialog.tsx", "utf8")).toMatch(/lutFor\(lutRows \?\? legacyLutRows\(me\?\.tenantLutNumber, me\?\.tenantLutValidUpto\), invoice\.invoice_date\)/);
     expect(readFileSync("src/app/api/v1/documents/invoice/[id]/pdf/route.ts", "utf8")).toMatch(/readLutArnFor\(/);
   });
   it("issuing an invoice warns (not blocks) when the LUT is missing", () => {
@@ -87,7 +87,7 @@ describe("R-2444 LUT per financial year", () => {
     const why = exportLutRefusal([fy2627], "2026-03-20");
     expect(why).toMatch(/^No LUT for FY 2025-26 on file\./);
     expect(why).toContain("Settings → Company → LUT");
-    expect(why).toContain("bill this sale with IGST");
+    expect(why).toContain("RFD-11");
     expect(exportLutRefusal([], "2026-08-07")).toMatch(/^No LUT for FY 2026-27 on file/);
     expect(exportLutRefusal(null, "2026-08-07")).toMatch(/^No LUT for FY 2026-27 on file/);
   });
@@ -97,7 +97,7 @@ describe("R-2444 LUT per financial year", () => {
     expect(lutFor([late], "2026-06-01")).toBeNull();
     expect(exportLutRefusal([late], "2026-06-01")).toBe(
       "No LUT for FY 2026-27 covers 01 Jun 2026: the LUT saved for that year runs 15 Jun 2026 – 31 Mar 2027. "
-      + "An export at 0% GST needs a Letter of Undertaking on its date: correct the LUT dates in Settings → Company → LUT, or bill this sale with IGST.");
+      + "An export at 0% GST needs a Letter of Undertaking on its date: correct the LUT dates in Settings → Company → LUT, then try again.");
     expect(lutFor([late], "2026-06-15")?.arn).toBe("AD070426000123X");
   });
 
@@ -113,8 +113,8 @@ describe("R-2444 LUT per financial year", () => {
 
   it("the SQL refusal says the same words", () => {
     const sql = readFileSync("supabase/migrations/20261104014038_r2444_lut_per_fy.sql", "utf8");
-    expect(sql).toContain("No LUT for FY %s on file. An export sale at 0%% GST needs your Letter of Undertaking for that year: add its ARN in Settings → Company → LUT, then try again — or bill this sale with IGST.");
-    expect(sql).toContain("An export at 0%% GST needs a Letter of Undertaking on its date: correct the LUT dates in Settings → Company → LUT, or bill this sale with IGST.");
+    expect(sql).toContain("No LUT for FY %s on file. An export sale at 0%% GST needs your Letter of Undertaking for that year: add its ARN in Settings → Company → LUT (file Form GST RFD-11 on gst.gov.in if you have none), then try again.");
+    expect(sql).toContain("An export at 0%% GST needs a Letter of Undertaking on its date: correct the LUT dates in Settings → Company → LUT, then try again.");
   });
 
   it("the PDF reads the ARN of the invoice's FY; no table yet → the old LUT; other errors → none", async () => {

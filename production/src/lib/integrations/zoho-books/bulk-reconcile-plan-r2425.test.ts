@@ -230,7 +230,7 @@ describe("R-2444: Reconcile from Zoho reads the LUT of the line's own FY, also f
     const row = planRow(line(1000, "NEFT CR-CITI0000001-DESIGN BOX"), inr, null, { ...ctx, lut: [] });
     expect(row.ticked).toBe(false);
     expect(row.problems.join(" ")).toContain("No LUT for FY 2026-27 on file");
-    expect(row.problems.join(" ")).toContain("bill this sale with IGST");
+    expect(row.problems.join(" ")).toContain("Settings → Company → LUT");
   });
   it("the same ₹ receipt under this year's LUT → no LUT problem", () => {
     const inr = usd("Design Box", [zl({ rate: 1000 })], 1000, { currency: undefined });

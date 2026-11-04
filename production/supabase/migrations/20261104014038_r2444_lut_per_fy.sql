@@ -16,14 +16,14 @@
 --      FY. The existing tenants LUT moves in (its FY = the FY of its "valid up to").
 --   2. lut_for(tenant, date) → the ARN covering that date (null = none). export_lut_refusal(tenant,
 --      date) → null, or the §24 refusal: which FY has no LUT, and the next step (add it in Settings →
---      Company, or bill with IGST). TS twin: lutFor / exportLutRefusal in src/lib/gst/export-lut.ts.
+--      Company → LUT; file RFD-11 if there is none). TS twin: lutFor / exportLutRefusal in src/lib/gst/export-lut.ts.
 --   3. EVERY 0% export path refuses without it — one BEFORE INSERT trigger on invoices
 --      (trg_invoices_zz_export_lut, runs after the party snapshot fills gst_treatment): a Tax Invoice to
---      an 'overseas' customer with no GST needs the LUT of its invoice date's FY. That covers
---      generate_invoice (quote → invoice), raise_subscription_billing, the bank sale RPCs (Find in Zoho
---      / Reconcile from Zoho), project and direct invoices — without copying their bodies. Billing the
---      same customer WITH IGST is never refused; opening invoices (Zoho import) and Bills of Supply
---      are not ours to zero-rate and are left alone.
+--      an 'overseas' customer (or one whose country is outside India) with no GST needs the LUT of its
+--      invoice date's FY. That covers generate_invoice (quote → invoice), raise_subscription_billing,
+--      the bank sale RPCs (Find in Zoho / Reconcile from Zoho), project and direct invoices — without
+--      copying their bodies. An invoice that charges GST is never refused; opening invoices (Zoho
+--      import) and Bills of Supply are not ours to zero-rate and are left alone.
 --   4. reconcile_bank_credit_new_sale_fx (11 args, latest body R-2440 20261103163318) and the 12-arg
 --      overload (latest body R-2427 20261104001617) read the LUT through export_lut_refusal instead of
 --      tenants.lut_number — the only change in their bodies.
@@ -120,10 +120,10 @@ begin
   end if;
   select * into v_row from public.tenant_luts l where l.tenant_id = p_tenant and l.fy_start = public.lut_fy_start(p_date);
   if found then
-    return format('No LUT for FY %s covers %s: the LUT saved for that year runs %s – %s. An export at 0%% GST needs a Letter of Undertaking on its date: correct the LUT dates in Settings → Company → LUT, or bill this sale with IGST.',
+    return format('No LUT for FY %s covers %s: the LUT saved for that year runs %s – %s. An export at 0%% GST needs a Letter of Undertaking on its date: correct the LUT dates in Settings → Company → LUT, then try again.',
                   v_fy, to_char(p_date, 'DD Mon YYYY'), to_char(v_row.valid_from, 'DD Mon YYYY'), to_char(v_row.valid_upto, 'DD Mon YYYY'));
   end if;
-  return format('No LUT for FY %s on file. An export sale at 0%% GST needs your Letter of Undertaking for that year: add its ARN in Settings → Company → LUT, then try again — or bill this sale with IGST.', v_fy);
+  return format('No LUT for FY %s on file. An export sale at 0%% GST needs your Letter of Undertaking for that year: add its ARN in Settings → Company → LUT (file Form GST RFD-11 on gst.gov.in if you have none), then try again.', v_fy);
 end;
 $$;
 
@@ -177,7 +177,15 @@ begin
       return new;
     end if;
     v_old_arn := nullif(btrim(coalesce(old.lut_number, '')), '');
-    if v_old_arn is not null and old.lut_valid_upto is not null then
+    /* Not when 0% export invoices of that FY rely on it (delete_tenant_lut's rule) — then it stays. */
+    if v_old_arn is not null and old.lut_valid_upto is not null
+       and not exists (select 1 from public.invoices i
+                        where i.tenant_id = new.id and i.document_kind = 'tax_invoice'
+                          and coalesce(i.tax_amount, 0) = 0 and coalesce(i.tax_rate, 0) = 0
+                          and (i.gst_treatment = 'overseas'
+                               or coalesce(nullif(lower(btrim(i.customer_country)), ''), 'india') not in ('india', 'in', 'ind', 'bharat'))
+                          and i.invoice_date >= public.lut_fy_start(old.lut_valid_upto)
+                          and i.invoice_date < (public.lut_fy_start(old.lut_valid_upto) + interval '1 year')::date) then
       delete from public.tenant_luts
        where tenant_id = new.id and fy_start = public.lut_fy_start(old.lut_valid_upto) and arn = v_old_arn;
     end if;
@@ -265,7 +273,9 @@ begin
     raise exception 'Only the owner or an accountant can change the company''s LUT.' using errcode = '42501';
   end if;
   select count(*) into v_n from public.invoices i
-   where i.tenant_id = v_t and i.gst_treatment = 'overseas' and i.document_kind = 'tax_invoice'
+   where i.tenant_id = v_t and i.document_kind = 'tax_invoice'
+     and (i.gst_treatment = 'overseas'
+          or coalesce(nullif(lower(btrim(i.customer_country)), ''), 'india') not in ('india', 'in', 'ind', 'bharat'))
      and coalesce(i.tax_amount, 0) = 0 and coalesce(i.tax_rate, 0) = 0
      and i.invoice_date >= v_fy and i.invoice_date < (v_fy + interval '1 year')::date;
   if v_n > 0 then
@@ -292,8 +302,12 @@ declare
   v_msg text;
 begin
   /* R-2444. Runs after trg_invoice_document_kind and trg_invoice_snapshot_parties (name order), so
-     document_kind and gst_treatment are already set. IGST charged → not zero-rated → no LUT needed. */
-  if new.document_kind is distinct from 'tax_invoice' or new.gst_treatment is distinct from 'overseas'
+     document_kind, gst_treatment and customer_country are already set. An export = treatment
+     'overseas' OR a customer country outside India (generate_invoice decides 0% on the country, and a
+     customer whose country changed may still carry an old treatment). GST charged → no LUT needed. */
+  if new.document_kind is distinct from 'tax_invoice'
+     or (new.gst_treatment is distinct from 'overseas'
+         and coalesce(nullif(lower(btrim(new.customer_country)), ''), 'india') in ('india', 'in', 'ind', 'bharat'))
      or coalesce(new.tax_amount, 0) <> 0 or coalesce(new.tax_rate, 0) <> 0
      or coalesce(new.taxable_value, new.amount, 0) <= 0 then
     return new;

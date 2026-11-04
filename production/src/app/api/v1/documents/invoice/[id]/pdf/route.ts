@@ -75,9 +75,12 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
   const logo = await logoDataUri((tenant as { logo_url?: string | null } | null)?.logo_url);
 
   /* R-2444: the LUT ARN of the invoice's OWN financial year (tenant_luts), not the last one saved —
-     an FY 2025-26 export invoice prints the FY 2025-26 ARN (CGST rule 46). */
-  const lutArn = await readLutArnFor(admin as unknown as Parameters<typeof readLutArnFor>[0], inv.tenant_id, inv.invoice_date,
-    (tenant as { lut_number?: string | null } | null)?.lut_number);
+     an FY 2025-26 export invoice prints the FY 2025-26 ARN (CGST rule 46). Only a no-GST invoice
+     (export / SEZ without payment) prints an ARN, so a taxed one skips the read. */
+  const lutArn = Number(inv.tax_amount ?? 0) === 0
+    ? await readLutArnFor(admin as unknown as Parameters<typeof readLutArnFor>[0], inv.tenant_id, inv.invoice_date,
+        (tenant as { lut_number?: string | null } | null)?.lut_number)
+    : null;
 
   const props = buildInvoicePdfProps({
     logoDataUri: logo,

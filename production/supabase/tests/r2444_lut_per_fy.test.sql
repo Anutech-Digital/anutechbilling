@@ -6,8 +6,8 @@
 --   A. A company created with the old single LUT (tenants.lut_number + lut_valid_upto 31 Mar 2027)
 --      → tenant_luts holds it as FY 2026-27; lut_for finds it for Aug 2026 and not for Mar 2026.
 --   B. Quote → invoice (generate_invoice) for a foreign customer at 0% with NO LUT → refused with the
---      FY and the next step (Settings → Company → LUT, or IGST). The same customer billed WITH IGST
---      → issued (the guard never blocks IGST).
+--      FY and the next step (Settings → Company → LUT; RFD-11). The same customer billed WITH GST
+--      → issued (the guard never blocks a taxed invoice).
 --   C. Find in Zoho / a ₹ sale from a bank line (reconcile_bank_credit_new_sale) for a foreign customer
 --      dated 20 Mar 2026 (FY 2025-26) while only the FY 2026-27 LUT is on file → refused; nothing booked.
 --   D. FY 2025-26 LUT added in Settings (save_tenant_lut) → the same ₹ sale books; its invoice is
@@ -17,6 +17,9 @@
 --   F. tenants.lut_number mirrors the LATEST FY's LUT (old readers keep working).
 --   G. Deleting the FY 2025-26 LUT is refused — export invoices of that FY rely on it.
 --   H. A sales user cannot save an LUT.
+--   I. An old writer of tenants.lut_number replaces an unused LUT but never drops one invoices rely on.
+--   K. A customer in Germany still marked unregistered_business (treatment never updated): the 0%
+--      invoice is an export by its country, so it is refused without the LUT too.
 
 begin;
 
@@ -47,7 +50,11 @@ insert into public.users (id, tenant_id, email, full_name, role, created_at) val
 insert into public.customers (id, tenant_id, name, state_code, country, domain) values
   ('cccccccc-0000-0000-0000-000000244401','dddddddd-0000-0000-0000-000000244401','Design Box LLC',null,'United States','designbox2444.example'),
   ('cccccccc-0000-0000-0000-000000244402','dddddddd-0000-0000-0000-000000244402','Ranz International LLC',null,'United Arab Emirates','ranz2444.example');
+-- K: entered as an Indian business, later moved abroad — its treatment was never updated.
+insert into public.customers (id, tenant_id, name, state_code, country, domain, gst_treatment) values
+  ('cccccccc-0000-0000-0000-000000244403','dddddddd-0000-0000-0000-000000244402','Berlin Tools GmbH',null,'Germany','berlin2444.example','unregistered_business');
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items) values
+  ('Q-R2444-DE0',  'dddddddd-0000-0000-0000-000000244402', 'cccccccc-0000-0000-0000-000000244403', 'Berlin Tools GmbH',      50000,  50000,  0, 'accepted', 'received', '[]'::jsonb),
   ('Q-R2444-EXP0', 'dddddddd-0000-0000-0000-000000244402', 'cccccccc-0000-0000-0000-000000244402', 'Ranz International LLC', 100000, 100000,  0, 'accepted', 'received', '[]'::jsonb),
   ('Q-R2444-IGST', 'dddddddd-0000-0000-0000-000000244402', 'cccccccc-0000-0000-0000-000000244402', 'Ranz International LLC', 118000, 100000, 18, 'accepted', 'received', '[]'::jsonb);
 insert into public.bank_accounts (id, tenant_id, name, bank_name) values
@@ -78,7 +85,7 @@ begin
     perform public.generate_invoice('Q-R2444-EXP0');
   exception when check_violation then
     get stacked diagnostics v_msg = message_text;
-    ok := v_msg like 'No LUT for FY 20__-__ on file%Settings → Company → LUT%IGST%';
+    ok := v_msg like 'No LUT for FY 20__-__ on file%Settings → Company → LUT%RFD-11%';
     if not ok then raise exception 'FAIL B: wrong message "%"', v_msg; end if;
   end;
   if not ok then raise exception 'FAIL B: a 0%% export invoice was issued with no LUT'; end if;
@@ -154,6 +161,31 @@ begin
   end;
   if not ok then raise exception 'FAIL G: an LUT that issued export invoices rely on was deleted'; end if;
   raise notice 'G PASS: delete refused while invoices rely on it';
+
+  -- I. an old writer of tenants.lut_number (old Settings form) cannot drop an LUT invoices rely on.
+  update public.tenants set lut_number = 'AD070425000999X', lut_valid_upto = '2026-03-31' where id = c_t1;
+  if exists (select 1 from public.tenant_luts where tenant_id = c_t1 and fy_start = '2026-04-01') then
+    raise exception 'FAIL I: the old writer''s previous LUT (FY 2026-27, no invoices) was not replaced';
+  end if;
+  update public.tenants set lut_number = null, lut_valid_upto = null where id = c_t1;
+  if public.lut_for(c_t1, '2026-03-20') is distinct from 'AD070425000999X' then
+    raise exception 'FAIL I: clearing tenants.lut_number dropped the FY 2025-26 LUT that 2 export invoices rely on';
+  end if;
+  raise notice 'I PASS: old writer replaces an unused LUT, never one invoices rely on';
+
+  -- K. a customer abroad whose GST treatment was never updated (still unregistered_business): the
+  --    0% decision follows the country, so the LUT check does too.
+  perform set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000244402","role":"authenticated"}', true);
+  ok := false;
+  begin
+    perform public.generate_invoice('Q-R2444-DE0');
+  exception when check_violation then
+    get stacked diagnostics v_msg = message_text;
+    ok := v_msg like 'No LUT for FY 20__-__ on file%';
+    if not ok then raise exception 'FAIL K: wrong message "%"', v_msg; end if;
+  end;
+  if not ok then raise exception 'FAIL K: a 0%% invoice to a customer in Germany (treatment not updated) skipped the LUT check'; end if;
+  raise notice 'K PASS: country outside India → LUT checked even with an old treatment';
 end $$;
 
 select 'R-2444 LUT per FY on every export path: ALL PASS' as result;

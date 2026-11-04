@@ -126,13 +126,14 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   }, [open, accountId]);
 
   const ctx: PlanContext | null = React.useMemo(() => {
-    /* A failed LUT read → planned without the LUT check (lut undefined); the server still refuses. */
+    /* A failed LUT read → planned as "no LUT" (fail closed: export rows unticked, never "covered by
+       default"); reopening the sheet reads again. */
     if (!customers || !subscriptions || !catalog || (!lutRows && !lutError)) return null;
     return {
       customers, subscriptions, catalog: catalog.filter((i) => i.is_active),
       payers: memory.payers, ownNames: memory.ownNames, noGst: Boolean(billOfSupplyStatus(gst.data?.saved ?? null)),
       today: istToday(),
-      lut: lutRows,
+      lut: lutRows ?? [],
     };
   }, [customers, subscriptions, catalog, memory.payers, memory.ownNames, gst.data, lutRows, lutError]);
 

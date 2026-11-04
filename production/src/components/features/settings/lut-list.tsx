@@ -1,8 +1,8 @@
 /**
  * R-2444 — Settings → Company → LUT: the company's Letter of Undertaking (Form RFD-11) for each
  * financial year. An LUT is filed per FY, and a 0% export needs the LUT of its own date's FY
- * (tax memo 3 Nov §1): without one the app refuses to bill the export at 0% (bill it with IGST, or
- * add the LUT here). The invoice PDF prints the ARN of the invoice's FY.
+ * (tax memo 3 Nov §1): without one the app refuses to bill the export at 0% until the LUT is added
+ * here. The invoice PDF prints the ARN of the invoice's FY.
  *
  * Owner or accountant edits (save_tenant_lut / delete_tenant_lut check it again); others view.
  */
@@ -20,10 +20,11 @@ import { lutFyEnd, lutFyLabel, lutFyStart, type TenantLut } from "@/lib/gst/expo
 import { useDeleteTenantLut, useSaveTenantLut, useTenantLuts } from "@/lib/queries/tenant-luts";
 import { useConfirm } from "@/components/providers/confirm-provider";
 
-/** The FYs offered when adding: this one and the three before it (the Zoho backlog), newest first. */
+/** The FYs offered when adding, newest first: next year (an LUT is usually filed in March, before its
+ *  FY starts), this one and the six before it (the Zoho backlog; re-issued old exports). */
 export function lutFyChoices(today: string): string[] {
   const y = Number(lutFyStart(today).slice(0, 4));
-  return [0, 1, 2, 3].map((k) => `${y - k}-04-01`);
+  return [-1, 0, 1, 2, 3, 4, 5, 6].map((k) => `${y - k}-04-01`);
 }
 
 interface Draft { fyStart: string; arn: string; validFrom: string; validUpto: string }
@@ -63,8 +64,8 @@ export function LutListCard({ canEdit }: { canEdit: boolean }) {
       </div>
       <p className="mb-3 text-xs text-ink-3">
         A sale to a customer outside India is billed at 0% GST only under a Letter of Undertaking for that
-        sale&apos;s financial year (Form GST RFD-11 on gst.gov.in). Without one, the app asks you to add it
-        here or bill the sale with IGST. The invoice prints the ARN of its own year.
+        sale&apos;s financial year (Form GST RFD-11 on gst.gov.in). Without one, the app does not issue the
+        export invoice until it is added here. The invoice prints the ARN of its own year.
       </p>
 
       {luts.isError ? (
@@ -115,7 +116,7 @@ export function LutListCard({ canEdit }: { canEdit: boolean }) {
 
       {canEdit && !draft && missing.length > 0 && !luts.isLoading && !luts.isError && (
         <div className="mt-3">
-          <Button type="button" size="sm" icon="plus" onClick={() => setDraft(draftFor(missing[0]))}>Add LUT</Button>
+          <Button type="button" size="sm" icon="plus" onClick={() => setDraft(draftFor(missing.find((fy) => fy === lutFyStart(today)) ?? missing[0]))}>Add LUT</Button>
         </div>
       )}
 

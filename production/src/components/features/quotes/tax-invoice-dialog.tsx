@@ -15,7 +15,7 @@
 import * as React from "react";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useTenantLuts } from "@/lib/queries/tenant-luts";
-import { lutFor } from "@/lib/gst/export-lut";
+import { legacyLutRows, lutFor } from "@/lib/gst/export-lut";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { useRouter } from "next/navigation";
 
@@ -286,7 +286,10 @@ export function TaxInvoiceDialog({
       tenantLogo: await logoDataUri(me?.tenantLogoUrl),
       /* R-334: LUT ARN for the Rule 46 export endorsement — same source as the server PDF.
          R-2444: the ARN of the invoice's own financial year (tenant_luts). */
-      lutNumber: invoice.invoice_date ? lutFor(lutRows, invoice.invoice_date)?.arn ?? null : null,
+      /* Still loading / failed → the latest LUT (tenants mirror) only when it is this invoice's FY. */
+      lutNumber: invoice.invoice_date
+        ? lutFor(lutRows ?? legacyLutRows(me?.tenantLutNumber, me?.tenantLutValidUpto), invoice.invoice_date)?.arn ?? null
+        : null,
       /* R-1670 (2): the same TDS split the dialog shows. */
       advanceTds,
     });
