@@ -297,7 +297,7 @@ export const FX_RATE_MAX_DRIFT = 0.25;
 
 /**
  * R-2427: an export receipt settling a foreign invoice in full — the same sums as
- * reconcile_bank_credit_fx_invoice (migration 20261103223644): the receipt is the ₹ due; the short
+ * reconcile_bank_credit_fx_invoice (migration 20261104001617): the receipt is the ₹ due; the short
  * part × the bank's rate is Bank Charges; due − charges − credit is the exchange difference
  * (< 0 = gain). problem = why it cannot be booked this way; null = it can.
  */
