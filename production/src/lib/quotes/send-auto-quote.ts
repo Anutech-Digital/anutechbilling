@@ -44,6 +44,9 @@ import type { QuoteLineItem, BillingCycle } from "@/lib/supabase/database.types"
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "./bill-of-supply";
+import { customerCopyBlock, CUSTOMER_COPY_COLUMNS, type CustomerCopyBlock, type CustomerCopyQuote } from "./customer-copy-gate";
+import { loadCustomerCopyParties } from "./customer-copy-supply";
+import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 
 export interface SendAutoQuoteArgs {
   tenantId: string;
@@ -102,6 +105,19 @@ interface QuoteRow {
   extension_months: number | null;
   status: string | null;
   billing_cycle: string | null;
+  /* R-2456: what customerCopyBlock reads — who the quote is for, and its approval state. */
+  customer_id: string | null;
+  lead_id: string | null;
+  invoice_id: string | null;
+  prospect_state_code: string | null;
+  prospect_country: string | null;
+  approval_status: string | null;
+  approval_tier: string | null;
+  approval_requested_by: string | null;
+  approved_by: string | null;
+  approved_discount_bps: number | null;
+  approved_margin_bps: number | null;
+  approval_rejection_reason: string | null;
 }
 
 interface TenantRow {
@@ -134,7 +150,7 @@ export async function sendAutoQuote(
 
   const { data: q } = await admin
     .from("quotes")
-    .select("id, customer_name, line_items, subtotal, discount_pct, tax_rate, amount, created_date, expires_date, notes, is_renewal, is_extension, extension_months, status, billing_cycle")
+    .select(`id, customer_name, subtotal, discount_pct, tax_rate, amount, created_date, expires_date, notes, is_renewal, is_extension, extension_months, billing_cycle, customer_id, lead_id, invoice_id, prospect_state_code, prospect_country, ${CUSTOMER_COPY_COLUMNS}`)
     .eq("id", args.quoteId)
     .eq("tenant_id", args.tenantId)
     .maybeSingle();
@@ -149,6 +165,31 @@ export async function sendAutoQuote(
      sending, because the customer gets two prices and has to ask which one counts. */
   if (quote.status !== "draft") {
     await note(`Quote ${args.quoteId} was already ${quote.status} — not sent again.`);
+    return "failed";
+  }
+
+  /* ── R-2456: THE SAME CUSTOMER-COPY GATE AS "Send" ─────────────────────────
+     R-2448 put the place-of-supply rule into customerCopyBlock for every manual path (Send,
+     Mark as sent, the PDF link, the quote page's buttons). This sender still mailed a GST
+     quote whose lead had no state — CGST + SGST vs IGST undecided, and generate_invoice
+     refuses the invoice after the customer has paid. Same gate here (approval half too), with
+     the same buyer and seller rows the send route reads, scoped to this workspace. Role
+     "owner": the notice goes to the owner, the one person who can set the company state.
+     A failed read is not "no state" — it stops the send too, and says so. */
+  let block: CustomerCopyBlock | null;
+  try {
+    const parties = await loadCustomerCopyParties(
+      admin,
+      { tenant_id: args.tenantId, customer_id: quote.customer_id, lead_id: quote.lead_id ?? args.leadId },
+      "owner",
+    );
+    block = customerCopyBlock({ ...quote, lead_id: quote.lead_id ?? args.leadId } as unknown as CustomerCopyQuote, parties);
+  } catch (e) {
+    await note(`Quote ${quote.id} was not emailed automatically — ${(e as Error).message}. The draft is saved; send it by hand.`);
+    return "failed";
+  }
+  if (block) {
+    await holdAutoQuote(args, quote.id, block, note);
     return "failed";
   }
 
@@ -423,4 +464,38 @@ quoteEmailBody({
      "customer ko kuch nahi mila" nahi banati — isliye "sent". Ye nateeja hi tay karta hai ki
      sales agent chup rahega ya nahi. */
   return "sent";
+}
+
+/** R-2456: the bell's and the timeline line's opening words — the one thing the owner must do. */
+export function autoQuoteHoldTitle(block: Pick<CustomerCopyBlock, "kind">): string {
+  if (block.kind === "company_state") return "Auto-quote not sent — set the company state";
+  if (block.kind === "customer_state") return "Auto-quote not sent — set the state";
+  return "Auto-quote not sent — needs approval";
+}
+
+/**
+ * R-2456: a refused auto-quote stays a draft (nothing is written to it), and the owner hears
+ * about it twice — on the lead's timeline and in the bell — with the link that fixes it. The
+ * bell is best-effort (notifyTenantOwners never throws); the timeline line is the record.
+ */
+async function holdAutoQuote(
+  args: SendAutoQuoteArgs,
+  quoteId: string,
+  block: CustomerCopyBlock,
+  note: (detail: string) => Promise<void>,
+): Promise<void> {
+  const title = autoQuoteHoldTitle(block);
+  const href = block.action?.href ?? `/quotes/${encodeURIComponent(quoteId)}`;
+  await note(
+    `${title}: quote ${quoteId} was NOT emailed to ${args.recipient} — ${block.message}. ` +
+    `The draft is saved; send it from the quote once that is done.`,
+  );
+  await notifyTenantOwners({
+    tenantId: args.tenantId,
+    kind:     "quote.not_sent",
+    title:    `${title} (${quoteId})`,
+    body:     block.message,
+    href,
+    entityId: quoteId,
+  });
 }
