@@ -82,6 +82,26 @@ export interface ZohoMatchInvoice {
   amountApplied: number | null;
   total: number | null;
   lines: ZohoMatchLine[];
+  /** R-2474: what Zoho's invoice says was paid / credited and when — the plan makes last year's
+   *  opening invoice from it (balance as at the FY start). Absent = read before R-2474. */
+  history?: ZohoInvoiceHistory | null;
+}
+
+/** R-2474: one Zoho invoice's money history (from the invoice detail the match already reads). */
+export interface ZohoInvoiceHistory {
+  dueDate: string | null;
+  /** Zoho's currency code (null = none given). */
+  currency: string | null;
+  /** What Zoho says is still due today. */
+  balance: number | null;
+  writeOff: number;
+  gstin: string | null;
+  /** GST state code of the invoice's place of supply ("07"), null = none. */
+  placeOfSupply: string | null;
+  /** Receipts applied to the invoice: cash amount + TDS withheld, by date. */
+  payments: Array<{ paymentId: string | null; date: string | null; amount: number; tds: number }>;
+  /** Credit notes applied to the invoice, by date. */
+  credits: Array<{ date: string | null; amount: number }>;
 }
 
 /** The Zoho customer of a match. R-2363: also WHERE it is, so "Create customer" makes it right
@@ -265,6 +285,27 @@ export async function findZohoPayment(line: BankCreditLine, deps: ZohoReadDeps):
   return { kind: "none", utrs, from, to };
 }
 
+/** R-2474: a Zoho invoice detail → its money history (payments, credits, write-off, balance). No
+ *  extra Zoho call: readZohoPaymentMatch already reads each invoice's detail. */
+export function zohoInvoiceHistory(inv: Record<string, unknown>): ZohoInvoiceHistory {
+  const arr = (v: unknown) => (Array.isArray(v) ? (v as Array<Record<string, unknown>>) : []);
+  const gstin = str(inv.gst_no);
+  return {
+    dueDate: parseZohoDate(str(inv.due_date)),
+    currency: str(inv.currency_code)?.toUpperCase() ?? null,
+    balance: num(inv.balance),
+    writeOff: num(inv.write_off_amount) ?? 0,
+    gstin: gstin ? gstin.toUpperCase() : null,
+    placeOfSupply: parsePlaceOfSupply(str(inv.place_of_supply)),
+    payments: arr(inv.payments).map((p) => ({
+      paymentId: str(p.payment_id), date: parseZohoDate(str(p.date)), amount: num(p.amount) ?? 0, tds: num(p.tax_amount_withheld) ?? 0,
+    })),
+    credits: arr(inv.credits).map((c) => ({
+      date: parseZohoDate(str(c.credited_date) ?? str(c.date)), amount: num(c.credited_amount) ?? num(c.amount) ?? 0,
+    })),
+  };
+}
+
 /** One invoice's lines with their periods. */
 export function matchLinesFromInvoice(inv: Record<string, unknown>): ZohoMatchLine[] {
   const number = str(inv.invoice_number) ?? "";
@@ -318,6 +359,7 @@ export async function readZohoPaymentMatch(
       amountApplied: a.amount,
       total: num(inv.total),
       lines: matchLinesFromInvoice({ ...inv, invoice_number: str(inv.invoice_number) ?? a.number }),
+      history: zohoInvoiceHistory(inv),
     });
   }
   if (!gstin && payment.customerZohoId) {

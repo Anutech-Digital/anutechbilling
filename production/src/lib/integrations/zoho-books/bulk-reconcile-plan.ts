@@ -57,7 +57,7 @@ import {
 } from "@/lib/banking/inward-remittance";
 import { lutFor } from "@/lib/gst/export-lut";
 import { formatForeign } from "@/lib/currency";
-import type { FindZohoResult, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
+import type { FindZohoResult, ZohoMatchInvoice, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 import { mapZohoCustomer, normCompanyName, zohoSaleLine, zohoSaleNumber } from "./payment-prefill";
 
 /** Lines the bulk-match route plans per request (each costs about 2–4 Zoho calls). */
@@ -262,11 +262,77 @@ export interface FxInvoicePay {
 
 /** (a) settle this opening invoice — record_multi_invoice_payment, then reconcile_bank_txn. */
 export interface OpeningSpec {
-  invoiceId: string;
+  /** The one opening invoice already in the app; null = R-2474 parts (made from Zoho / several). */
+  invoiceId: string | null;
   number: string | null;
   /** The bank money (whole rupees) — the receipt. */
   received: number;
   reference: string;
+  /** R-2474: each of last year's invoices this line settles — one receipt across them. Absent =
+   *  planned before R-2474 (the single invoiceId above). */
+  parts?: OpeningPart[];
+}
+
+/** R-2474: one of last year's invoices the bank line settles. */
+export interface OpeningPart {
+  /** The opening invoice in the app; null = made from Zoho (create) in the Book step first. */
+  invoiceId: string | null;
+  number: string;
+  /** Cash applied to it (whole rupees). */
+  amount: number;
+  tds: number;
+  create: OpeningCreate | null;
+}
+
+/** R-2474: an opening invoice made from Zoho's own invoice — import_opening_invoices' row (R-1739:
+ *  no GST, no revenue — they were filed from Zoho). Keyed by the Zoho number: a re-run skips it. */
+export interface OpeningCreate {
+  zohoId: string;
+  number: string;
+  invoiceDate: string;
+  dueDate: string | null;
+  total: number;
+  /** Due as at the FY start (books' start): total − Zoho receipts / TDS / credits dated before it. */
+  balance: number;
+  gstin: string | null;
+  posStateCode: string | null;
+}
+
+const fmtDay = (iso: string) => formatDate(iso);
+const whole = (n: number) => Math.abs(n - Math.round(n)) < 0.005;
+
+/**
+ * R-2474: Zoho's invoice as it stood on `cutoff` (the books' start / 1 Apr) → the opening invoice to
+ * make. Refused (with the reason) when Zoho's own history does not add up to its balance today, when
+ * a write-off / paise / a foreign currency is involved, or when nothing was due on the cutoff.
+ */
+export function openingFromZoho(
+  inv: ZohoMatchInvoice, cutoff: string,
+): { ok: true; create: OpeningCreate } | { ok: false; problem: string } {
+  const h = inv.history;
+  const no = inv.number;
+  if (!h) return { ok: false, problem: `Zoho's invoice ${no} was not read with its payments — press Start again.` };
+  if (h.currency && h.currency !== "INR") return { ok: false, problem: `Zoho's invoice ${no} is in ${h.currency} — only a rupee invoice becomes an opening invoice. Reconcile this line by hand.` };
+  const total = inv.total;
+  if (total === null || !(total > 0) || !inv.date) return { ok: false, problem: `Zoho's invoice ${no} has no total or date. Reconcile this line by hand.` };
+  if (h.writeOff > 0) return { ok: false, problem: `Zoho's invoice ${no} has ${rupees(h.writeOff)} written off — Zoho does not say when, so its 1 Apr balance is not certain. Reconcile this line by hand.` };
+  const paidAll = h.payments.reduce((s, p) => s + p.amount + p.tds, 0) + h.credits.reduce((s, c) => s + c.amount, 0);
+  if (h.balance === null || Math.abs(total - paidAll - h.balance) > 0.5) {
+    return { ok: false, problem: `Zoho's invoice ${no} does not add up: total ${rupees(total)}, receipts and credits ${rupees(paidAll)}, balance ${rupees(h.balance ?? 0)}. Check it in Zoho, or reconcile this line by hand.` };
+  }
+  if ([...h.payments, ...h.credits].some((x) => !x.date)) return { ok: false, problem: `A receipt on Zoho's invoice ${no} has no date. Reconcile this line by hand.` };
+  const before = h.payments.filter((p) => p.date! < cutoff).reduce((s, p) => s + p.amount + p.tds, 0)
+    + h.credits.filter((c) => c.date! < cutoff).reduce((s, c) => s + c.amount, 0);
+  const balance = total - before;
+  if (!whole(total) || !whole(balance)) return { ok: false, problem: `Zoho's invoice ${no} has paise (total ${total}, due on ${fmtDay(cutoff)} ${Math.round(balance * 100) / 100}) — an opening invoice is in whole rupees. Reconcile this line by hand.` };
+  if (Math.round(balance) <= 0) return { ok: false, problem: `Zoho's invoice ${no} was paid before ${fmtDay(cutoff)} — nothing was due on ${fmtDay(cutoff)}, so this line is not for its opening balance. Reconcile this line by hand.` };
+  return {
+    ok: true,
+    create: {
+      zohoId: inv.zohoId, number: no, invoiceDate: inv.date.slice(0, 10), dueDate: h.dueDate,
+      total: Math.round(total), balance: Math.round(balance), gstin: h.gstin, posStateCode: h.placeOfSupply,
+    },
+  };
 }
 
 export interface BookSpec {
@@ -839,17 +905,18 @@ export function planRow(
     if (!match.invoices.every((inv) => isLastYearInvoice(inv, line.txnDate, opts.booksStart ?? null))) {
       pathProblems.push(`The Zoho payment mixes last year's and this year's invoices (${nos}) — reconcile this line by hand.`);
       noBook = true;
-    } else if (!isExisting) {
-      pathProblems.push(`No opening balance: ${customer.name} is not in the app, so it has no opening balance to settle — ${nos} is last year's invoice, never a new sale. Import Zoho's open invoices (Invoices → Import from Zoho), then run this again.`);
-      noBook = true;
-    } else if (invoiceNumbers.length > 1) {
-      pathProblems.push(`The Zoho payment settles several of last year's invoices (${nos}) — record it in Record payment against those opening invoices, then match the line by hand.`);
-      noBook = true;
     } else {
+      const reference = (line.reference ?? "").trim() || `BANK-${line.id}`;
+      const openings = facts?.openings ?? [];
+      const single = match.invoices.length === 1 && match.moreInvoices.length === 0;
       const inv = match.invoices[0];
-      const byNo = (facts?.openings ?? []).find((o) => normNo(o.number) === normNo(inv.number)) ?? null;
-      const byAmount = (facts?.openings ?? []).filter((o) => sameMoney(o.due));
+      const byNo = single && isExisting ? openings.find((o) => normNo(o.number) === normNo(inv.number)) ?? null : null;
+      const byAmount = single && isExisting ? openings.filter((o) => sameMoney(o.due)) : [];
       const op = byNo ?? (byAmount.length === 1 ? byAmount[0] : null);
+      /* R-2474: each invoice is either an opening invoice the app has (by Zoho number) or one Zoho's
+         own invoice history can make. */
+      const fromZoho = match.moreInvoices.length === 0 && match.invoices.every((i) =>
+        !!i.history || openings.some((o) => normNo(o.number) === normNo(i.number)));
       if (op) {
         summary = `Last year's invoice ${inv.number} — settles its opening balance (${rupees(op.due)} due), no new sale`;
         if (!byNo) notes.push(`Opening invoice ${op.number ?? op.id} matched by amount (Zoho's number is ${inv.number}).`);
@@ -860,11 +927,70 @@ export function planRow(
           noBook = true;
         }
         if (tds > 0 && tdsPctWithin(tds, preview.taxable) === null) pathProblems.push(shortByText(tds, preview.taxable));
-        opening = { invoiceId: op.id, number: op.number, received: Math.round(line.credit), reference: (line.reference ?? "").trim() || `BANK-${line.id}` };
-      } else if (itemHits.length === 1) {
+        opening = {
+          invoiceId: op.id, number: op.number, received: Math.round(line.credit), reference,
+          parts: [{ invoiceId: op.id, number: op.number ?? inv.number, amount: Math.round(line.credit), tds, create: null }],
+        };
+      } else if (single && isExisting && itemHits.length === 1) {
         payItem(itemHits[0]);
-      } else if (itemHits.length > 1) {
+      } else if (single && isExisting && itemHits.length > 1) {
         severalItems();
+      } else if (fromZoho) {
+        /* R-2474: the opening invoice(s) from Zoho's own invoice — as it stood on the books' start
+           (1 Apr) — then one receipt across them with this line. */
+        const cutoff = opts.booksStart ?? `${fyOf(line.txnDate)}-04-01`;
+        const several = match.invoices.length > 1;
+        const probs: string[] = [];
+        const parts: OpeningPart[] = [];
+        let dueSum = 0;
+        if (!whole(line.credit)) probs.push(`The bank line has paise (${line.credit}) — a receipt is in whole rupees. Reconcile this line by hand.`);
+        if (several && tds > 0) {
+          probs.push(`The Zoho payment settles several of last year's invoices (${nos}) with TDS ${rupees(tds)} — Zoho does not say which invoice the TDS is on. Record it in Record payment against those invoices, then match the line by hand.`);
+        }
+        for (const zi of match.invoices) {
+          const amount = several ? zi.amountApplied ?? 0 : Math.round(line.credit);
+          const partTds = several ? 0 : tds;
+          if (several && (!(amount > 0) || !whole(amount))) {
+            probs.push(`Zoho applied ${zi.amountApplied ?? 0} to ${zi.number} — not whole rupees. Reconcile this line by hand.`);
+            continue;
+          }
+          const have = openings.find((o) => normNo(o.number) === normNo(zi.number)) ?? null;
+          let due: number;
+          let create: OpeningCreate | null = null;
+          if (have) {
+            due = have.due;
+          } else {
+            const made = openingFromZoho(zi, cutoff);
+            if (!made.ok) { probs.push(made.problem); continue; }
+            create = made.create;
+            due = made.create.balance;
+            notes.push(`Opening invoice ${zi.number} is made from Zoho: total ${rupees(made.create.total)}, ${rupees(made.create.balance)} due on ${fmtDay(cutoff)} — GST and revenue stay in Zoho's books, not counted again.`);
+          }
+          dueSum += due;
+          if (Math.round(amount) + partTds > due) {
+            probs.push(`${zi.number} ${have ? "has" : "had"} only ${rupees(due)} due${have ? "" : ` on ${fmtDay(cutoff)}`}, but the bank line${partTds ? " + TDS" : ""}${several ? " puts" : " is"} ${rupees(Math.round(amount) + partTds)}${several ? " on it" : ""}. Reconcile this line by hand.`);
+          }
+          parts.push({ invoiceId: have?.id ?? null, number: zi.number, amount: Math.round(amount), tds: partTds, create });
+        }
+        if (several && probs.length === 0) {
+          const applied = parts.reduce((s, p) => s + p.amount, 0);
+          if (applied !== Math.round(line.credit)) probs.push(`Zoho applied ${rupees(applied)} to ${nos}, but the bank line is ${rupees(line.credit)}. Reconcile this line by hand.`);
+        }
+        if (!several && tds > 0 && tdsPctWithin(tds, preview.taxable) === null) probs.push(shortByText(tds, preview.taxable));
+        if (probs.length) {
+          pathProblems.push(...probs);
+          noBook = true;
+        } else {
+          const made = parts.some((p) => p.create);
+          summary = `${made ? `Opening invoice${several ? "s" : ""} from Zoho → paid` : "Settles opening balances"}: ${nos} (${rupees(dueSum)} due on ${fmtDay(cutoff)}) — last year's invoice${several ? "s" : ""}, no new sale`;
+          opening = { invoiceId: null, number: several ? null : parts[0].number, received: Math.round(line.credit), reference, parts };
+        }
+      } else if (!isExisting) {
+        pathProblems.push(`No opening balance: ${customer.name} is not in the app, so it has no opening balance to settle — ${nos} is last year's invoice, never a new sale. Import Zoho's open invoices (Invoices → Import from Zoho), then run this again.`);
+        noBook = true;
+      } else if (!single) {
+        pathProblems.push(`The Zoho payment settles several of last year's invoices (${nos}) — record it in Record payment against those opening invoices, then match the line by hand.`);
+        noBook = true;
       } else {
         pathProblems.push(`No opening balance: ${customer.name} has no open opening invoice ${inv.number} in the app — it is last year's invoice, so it is never booked as a new sale. Import Zoho's open invoices (Invoices → Import from Zoho), or reconcile this line by hand.`);
         noBook = true;
