@@ -1,6 +1,10 @@
 /**
  * Purchase Inbox — Amazon (& co.) order emails auto-captured, awaiting review.
  *
+ * R-2449: a second tab, "From network" — invoices / notes a connected seller issued to us on
+ * ResellerOS, to Accept (→ one bill) or Reject (with a reason). Only owner / manager / accountant
+ * see it (the same roles network_inbox answers); everyone else sees the email inbox as before.
+ *
  * Each row was parsed from a forwarded order email (webhook + Gemini). NOTHING
  * is in the books yet: the owner reviews and clicks "Add to expenses" (→ a draft
  * expense they can tweak) or "Ignore". Human-in-loop keeps money correct.
@@ -18,9 +22,17 @@ import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/shared/empty-state";
 import { loadErrorBody } from "@/components/shared/load-error";
 import { rupee, formatDate } from "@/lib/utils";
+import { TabBar } from "@/components/ui/tabs";
 import {
   useInboundPurchases, useImportPurchase, useIgnorePurchase, type InboundPurchase,
 } from "@/lib/queries/inbound-purchases";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { useUrlChoice } from "@/lib/hooks/use-url-choice";
+import { NetworkInboxTab } from "@/components/features/purchases/network-inbox-tab";
+import { useNetworkInbox } from "@/components/features/purchases/network-inbox-queries";
+import { canActOnNetwork } from "@/components/features/purchases/network-inbox-model";
+
+const INBOX_TABS = ["email", "network"] as const;
 
 export default function PurchaseInboxPage() {
   const router = useRouter();
@@ -28,6 +40,12 @@ export default function PurchaseInboxPage() {
   const importMut = useImportPurchase();
   const ignoreMut = useIgnorePurchase();
   const [busyId, setBusyId] = React.useState<number | null>(null);
+  const { data: me } = useCurrentUser();
+  const showNetwork = canActOnNetwork(me?.role);
+  const network = useNetworkInbox(showNetwork);
+  const networkPending = (network.data ?? []).filter((d) => d.status === "pending").length;
+  const [tabChoice, setTab] = useUrlChoice("tab", INBOX_TABS, "email");
+  const tab = showNetwork ? tabChoice : "email";
 
   const doImport = async (row: InboundPurchase) => {
     setBusyId(row.id);
@@ -46,11 +64,29 @@ export default function PurchaseInboxPage() {
           <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Purchases</p>
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Purchase Inbox</h1>
           <p className="text-sm text-ink-3 mt-1">
-            Order emails auto-captured from Amazon &amp; co. Review, then add to expenses — nothing hits your books until you do.
+            {tab === "network"
+              ? "Invoices your connected suppliers issued to you on ResellerOS. Accept to book a bill, or reject with a reason they will see."
+              : "Order emails auto-captured from Amazon & co. Review, then add to expenses — nothing hits your books until you do."}
           </p>
         </div>
-        <Button icon="refresh" variant="ghost" onClick={() => refetch()}>Refresh</Button>
+        <Button icon="refresh" variant="ghost" onClick={() => (tab === "network" ? network.refetch() : refetch())}>Refresh</Button>
       </div>
+
+      {showNetwork && (
+        <TabBar
+          className="mb-4"
+          value={tab}
+          onChange={(id) => setTab(id === "network" ? "network" : "email")}
+          items={[
+            { id: "email", label: "From email", count: pending?.length ?? 0 },
+            { id: "network", label: "From network", count: networkPending },
+          ]}
+        />
+      )}
+
+      {tab === "network" && <NetworkInboxTab />}
+
+      {tab === "email" && (<>
 
       {error && (
         <EmptyState icon="alert" title="Could not load" body={loadErrorBody(error)}
@@ -117,6 +153,7 @@ export default function PurchaseInboxPage() {
           })}
         </div>
       )}
+      </>)}
     </div>
   );
 }
