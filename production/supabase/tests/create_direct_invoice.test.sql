@@ -42,6 +42,14 @@ select set_config('request.jwt.claims', '{"role":"service_role"}', true);
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('c0de0001-0000-4000-8000-000000000001', 'DIRECT INVOICE TEST', 'di@example.in', '07', 'DIT1');
 
+-- R-2444: a 0% export invoice needs the company's LUT for its FY (trg_invoices_zz_export_lut) — this
+-- fixture's exports are made under one, for every FY from 2024-25 up to today's.
+insert into public.tenant_luts (tenant_id, fy_start, arn, valid_from, valid_upto)
+select t.id, g.fy::date, 'AD07TESTLUT' || to_char(g.fy, 'YY'), g.fy::date, (g.fy + interval '1 year' - interval '1 day')::date
+  from (values ('c0de0001-0000-4000-8000-000000000001'::uuid)) as t(id),
+       generate_series('2024-04-01'::date, public.lut_fy_start(public.ist_today()), interval '1 year') as g(fy)
+on conflict (tenant_id, fy_start) do nothing;
+
 /* Two customers instead of one mutated one — the old file toggled `country` on a single row,
    which is why it needed to write to a real customer at all. */
 insert into public.customers (id, tenant_id, name, country, state_code, state)
