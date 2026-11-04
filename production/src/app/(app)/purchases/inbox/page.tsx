@@ -57,11 +57,12 @@ export default function PurchaseInboxPage() {
 
   const doImport = async (row: InboundPurchase) => {
     setBusyId(row.id);
-    try { await importMut.mutateAsync(row); } finally { setBusyId(null); }
+    /* R-2462: a refusal is already toasted by the hook (toastError) — no unhandled rejection. */
+    try { await importMut.mutateAsync(row); } catch { /* toasted */ } finally { setBusyId(null); }
   };
   const doIgnore = async (id: number) => {
     setBusyId(id);
-    try { await ignoreMut.mutateAsync(id); } finally { setBusyId(null); }
+    try { await ignoreMut.mutateAsync(id); } catch { /* toasted */ } finally { setBusyId(null); }
   };
 
   return (

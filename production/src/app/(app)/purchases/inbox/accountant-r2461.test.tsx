@@ -6,6 +6,8 @@
  * tabs and can work the email rows. Only the "Set up email forwarding" button points at /settings,
  * which the accountant cannot open — so for them the empty inbox says to ask the owner/manager
  * instead of offering a button that would bounce.
+ * R-2462: the email-row writes now go through import_inbound_purchase / set_inbound_purchase_status
+ * (owner / manager / accountant), and the UPDATE policy is limited to those roles.
  */
 import * as React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
