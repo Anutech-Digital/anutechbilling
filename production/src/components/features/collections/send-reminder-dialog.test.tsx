@@ -141,7 +141,7 @@ describe("Send reminder — one dialog", () => {
     expect(screen.getByRole("link", { name: /Open statement PDF/ })).toBeTruthy();
     expect(st.calls.map((c) => [c.method, c.url])).toEqual([
       ["POST", "/api/collections/reminder/draft"],
-      ["GET", `/api/customers/${CUST}/pending-dues`],
+      ["POST", `/api/customers/${CUST}/pending-dues`],   // R-2439: POST makes the link; GET only reads
     ]);
     expect(sends()).toHaveLength(0);
     expect(st.mutate).not.toHaveBeenCalled();
@@ -187,5 +187,66 @@ describe("Send reminder — one dialog", () => {
     expect(open).toHaveBeenCalledTimes(1);
     expect(decodeURIComponent(String(open.mock.calls[0][0]).split("text=")[1])).toContain(UPI_TWO);
     expect(st.mutate.mock.calls[0][0]).toMatchObject({ customerId: CUST, kind: "whatsapp", invoiceId: "INV-105" });
+  });
+});
+
+/* R-2415 — the bill's / statement's ONE Razorpay link, next to the UPI link. */
+describe("Send reminder — Razorpay card / net-banking link (R-2415)", () => {
+  const stubWith = (extra: (url: string) => Record<string, unknown>) =>
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      const body = init?.body ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+      st.calls.push({ url, method: init?.method ?? "GET", body });
+      const base = url.endsWith("/reminder/draft") ? draftFor("INV-101") : url.endsWith("/pending-dues") ? preview() : { ok: true };
+      return { ok: true, status: 200, json: async () => ({ ...base, ...extra(url) }) } as unknown as Response;
+    }));
+
+  it("This invoice: says the link is in the message, for the bill amount, and marks a test key", async () => {
+    stubWith(() => ({ cardLink: { url: "https://rzp.io/i/abc", amount: 68000, billAmount: 68000, mode: "test" }, cardLinkNotice: null }));
+    wrap(<SendReminderDialog open onOpenChange={() => {}} customerId={CUST} customerName="Sharma Traders" />);
+    await box("₹68,000 is pending");
+    expect(screen.getByText(/Card \/ UPI \/ net-banking link in the message/).textContent).toContain("₹68,000");
+    expect(screen.getByText("Test mode — takes no real money")).toBeTruthy();
+    expect(sends()).toHaveLength(0);
+  });
+
+  it("Full statement: the link for the total", async () => {
+    stubWith((url) => (url.endsWith("/pending-dues")
+      ? { cardLink: { url: "https://rzp.io/i/all", amount: 73900, billAmount: 73900, mode: "live" }, cardLinkNotice: null }
+      : {}));
+    wrap(<SendReminderDialog open onOpenChange={() => {}} customerId={CUST} customerName="Sharma Traders" defaultScope="statement" />);
+    await waitFor(() => expect(screen.getByText(/Card \/ UPI \/ net-banking link in the message/).textContent).toContain("₹73,900"));
+    expect(screen.queryByText("Test mode — takes no real money")).toBeNull();
+  });
+
+  it("no Razorpay link → why, and the step to fix it (§24)", async () => {
+    stubWith(() => ({
+      cardLink: null,
+      cardLinkNotice: { reason: "not_configured", text: "No card / net-banking link — Razorpay is not connected.", action: { label: "Open Settings", href: "/settings?tab=integrations" } },
+    }));
+    wrap(<SendReminderDialog open onOpenChange={() => {}} customerId={CUST} customerName="Sharma Traders" />);
+    await waitFor(() => expect(screen.getByText(/Razorpay is not connected/)).toBeTruthy());
+    expect(screen.getByRole("link", { name: "Open Settings" }).getAttribute("href")).toBe("/settings?tab=integrations");
+  });
+});
+
+/* R-2439: the statement preview is a POST (it makes the Razorpay link). A demo visitor's POSTs
+   are all refused by middleware ({demo: true}) — the dialog then READS the statement with GET
+   (no link is made for a demo), instead of showing an error. */
+describe("Full statement for a demo visitor (R-2439)", () => {
+  it("POST refused as demo → falls back to the read-only GET and shows the statement", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (url: string, init?: { method?: string; body?: string }) => {
+      const method = init?.method ?? "GET";
+      st.calls.push({ url, method, body: null });
+      if (method !== "GET") {
+        return { ok: false, status: 403, json: async () => ({ ok: false, error: "This is a demo — changes are off.", demo: true }) } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => preview() } as unknown as Response;
+    }));
+    wrap(<SendReminderDialog open onOpenChange={() => {}} customerId={CUST} customerName="Sharma Traders" defaultScope="statement" />);
+    await box("₹73,900 across 2 bills");
+    expect(st.calls.map((c) => [c.method, c.url])).toEqual([
+      ["POST", `/api/customers/${CUST}/pending-dues`],
+      ["GET", `/api/customers/${CUST}/pending-dues`],
+    ]);
   });
 });

@@ -34,8 +34,8 @@ import {
   liveEmail, checkEmail, liveDomain, checkDomain,
 } from "@/lib/forms/poka-yoke";
 import { CountryCombobox } from "./country-combobox";
-import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
-import { useCustomerForm } from "./use-customer-form";
+import { GST_STATE_OPTIONS, STATE_NOT_KNOWN, STATE_NOT_KNOWN_LABEL, STATE_NOT_KNOWN_NOTE } from "@/lib/gst/gstin-state";
+import { useCustomerForm, type CustomerSeed } from "./use-customer-form";
 import { ScanCardPanel } from "./scan-card-panel";
 import type { Customer } from "@/lib/supabase/database.types";
 
@@ -46,8 +46,9 @@ interface AddCustomerFormProps {
   customer?: Customer | null;
   /** Called with the new customer's id after a successful CREATE (lets a caller auto-select it). */
   onCreated?: (id: string) => void;
-  /** R-2360: a NEW customer starts with these (Find in Zoho: Zoho's company name + GSTIN). Ignored on an edit. */
-  initial?: { name?: string | null; gstin?: string | null } | null;
+  /** R-2360 / R-2363: a NEW customer starts with these (Find in Zoho: Zoho's company name, GSTIN,
+   *  country, GST treatment, state). Ignored on an edit. */
+  initial?: CustomerSeed | null;
 }
 
 export function AddCustomerForm({ open, onOpenChange, customer, onCreated, initial }: AddCustomerFormProps) {
@@ -57,7 +58,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated, initi
     verification, setVerification, watchedGstin,
     isForeign, foreignStates, country, onCountryPick, submit,
     gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
-    contactMissing, saveWithoutContact,
+    contactMissing, saveWithoutContact, applySeed,
   } = useCustomerForm({
     customer,
     open,
@@ -69,11 +70,17 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated, initi
   /* R-2360: after the hook's own open-reset (declared above, so it runs first), fill the seed. */
   const seedName = initial?.name?.trim() ?? "";
   const seedGstin = initial?.gstin?.trim() ?? "";
+  const seedCountry = initial?.country?.trim() ?? "";
+  const seedTreatment = initial?.gst_treatment ?? null;
+  const seedState = initial?.state?.trim() ?? "";
   React.useEffect(() => {
     if (!open || isEdit) return;
-    if (seedName) setValue("name", seedName, { shouldDirty: true });
-    if (seedGstin) setValue("gstin", liveGstin(seedGstin), { shouldDirty: true });
-  }, [open, isEdit, seedName, seedGstin, setValue]);
+    /* R-2363: country, GST treatment and state too — the hook's applySeed. */
+    applySeed({
+      name: seedName, gstin: seedGstin ? liveGstin(seedGstin) : null,
+      country: seedCountry, gst_treatment: seedTreatment, state: seedState,
+    });
+  }, [open, isEdit, seedName, seedGstin, seedCountry, seedTreatment, seedState, applySeed]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -230,12 +237,16 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated, initi
                   {...register("state")}
                 >
                   <option value="">Select state…</option>
-                  {watch("state") && !GST_STATE_OPTIONS.some((o) => o.name.toLowerCase() === watch("state")!.toLowerCase()) && (
+                  {/* R-2363: an advance-only customer whose state nobody knows yet — saved with no
+                      state, never a guess; its quote / GST invoice still waits for the state. */}
+                  <option value={STATE_NOT_KNOWN}>{STATE_NOT_KNOWN_LABEL}</option>
+                  {watch("state") && watch("state") !== STATE_NOT_KNOWN && !GST_STATE_OPTIONS.some((o) => o.name.toLowerCase() === watch("state")!.toLowerCase()) && (
                     <option value={watch("state")!}>{watch("state")} (not a GST state — pick one)</option>
                   )}
                   {GST_STATE_OPTIONS.map((o) => <option key={o.code} value={o.name}>{o.name}</option>)}
                 </select>
               )}
+              {!isForeign && watch("state") === STATE_NOT_KNOWN && <p className="mt-1 text-xs text-amber-ink">{STATE_NOT_KNOWN_NOTE}</p>}
               {errors.state?.message && <p className="mt-1 text-xs text-rose">{String(errors.state.message)}</p>}
             </FormField>
             <FormField label={isForeign ? "Postal / ZIP code" : "PIN code"} htmlFor="pin_code">

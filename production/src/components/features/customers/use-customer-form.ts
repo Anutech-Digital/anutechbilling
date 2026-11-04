@@ -22,11 +22,11 @@ import { toast } from "sonner";
 import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
 
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/queries/customers";
-import { validateGstin, gstStateFromGstin } from "@/lib/utils";
+import { validateGstin, gstStateFromGstin, GST_STATE_BY_CODE } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { getStatesForCountry } from "@/lib/gst/states-by-country";
 import { normalizeCountry } from "@/lib/gst/countries";
-import { stateRequiredMessage } from "@/lib/gst/gstin-state";
+import { stateRequiredMessage, stateCodeFromGstin, STATE_NOT_KNOWN } from "@/lib/gst/gstin-state";
 import {
   CUSTOMER_GST_TREATMENTS, suggestGstTreatment, nextGstTreatment, gstTreatmentProblem,
   gstTreatmentOption, panFromGstin, isValidPan, type CustomerGstTreatment,
@@ -141,6 +141,17 @@ export const customerSchema = z.object({
 
 export type CustomerFormData = z.infer<typeof customerSchema>;
 
+/** R-2360 / R-2363: what a NEW customer can start with (Find in Zoho: Zoho's contact). */
+export interface CustomerSeed {
+  name?: string | null;
+  gstin?: string | null;
+  /** Any spelling normalizeCountry knows ("U.A.E" → United Arab Emirates); empty = leave India. */
+  country?: string | null;
+  gst_treatment?: CustomerGstTreatment | null;
+  /** Indian GST state name, or the foreign state / province. */
+  state?: string | null;
+}
+
 interface UseCustomerFormOptions {
   /** When provided, the form is in EDIT mode (prefilled + updates this customer). */
   customer?: Customer | null;
@@ -213,7 +224,12 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
         group_id:      customer.group_id ?? "",
         domain:        customer.domain ?? "",
         gstin:         customer.gstin ?? "",
-        state:         normalizedState,
+        /* R-2363: an Indian customer saved with no state at all (no code, no valid GSTIN) opens as
+           "Not known yet" — what the record says — so editing its email never dead-ends on the
+           state; the invoice still waits for a real state. */
+        state:         !isExportSupply(normalizeCountry(customer.country) || "India")
+          && !normalizedState.trim() && !(customer.state_code ?? "").trim() && !stateCodeFromGstin(customer.gstin)
+          ? STATE_NOT_KNOWN : normalizedState,
         state_code:    customer.state_code ?? "",
         /* R-2180: an old short form ("USA") opens as its list name ("United States") — the
            picker shows it and the treatment rules read the same value. */
@@ -306,6 +322,9 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     // Export (non-India) customers have no GSTIN / Indian state code — never
     // persist a stale one if the user typed then switched country.
     const foreign = isExportSupply(data.country);
+    /* R-2363: "Not known yet" is ignored when a valid GSTIN proves the state — then that state is saved. */
+    const gstinCode = data.state === STATE_NOT_KNOWN && !foreign ? stateCodeFromGstin(data.gstin) : null;
+    const stateNotKnown = data.state === STATE_NOT_KNOWN;
     // Combined display name from the split fields (falls back to the legacy
     // single "contact_name" input for anyone still using it).
     const combinedName = [data.contact_first_name?.trim(), data.contact_last_name?.trim()]
@@ -375,8 +394,9 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       group_id:      data.group_id?.trim()      || null,
       domain:        data.domain?.trim()        || null,
       gstin:         foreign ? null : (data.gstin?.trim()      || null),
-      state:         data.state?.trim()         || null,
-      state_code:    foreign ? null : (data.state_code?.trim() || null),
+      /* R-2363: "Not known yet" is saved as NO state (never a guess) — the invoice still waits. */
+      state:         stateNotKnown ? (gstinCode ? GST_STATE_BY_CODE[gstinCode] ?? null : null) : (data.state?.trim() || null),
+      state_code:    foreign ? null : stateNotKnown ? gstinCode : (data.state_code?.trim() || null),
       /* R-1736: always sent, so an edit never leaves an old treatment behind. */
       gst_treatment: data.gst_treatment
         ?? suggestGstTreatment({ country: data.country, gstin: foreign ? "" : data.gstin, customerType: type }),
@@ -442,7 +462,27 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     setValue("state", "", { shouldDirty: true });
   };
 
+  /* R-2360 / R-2363: a NEW customer started from Zoho (Find in Zoho → Create customer) gets Zoho's
+     name, GSTIN AND where it is — country, GST treatment, state. Staging, 2 Nov: Ranz International
+     LLC (Dubai, Zoho "overseas") was created as India / unregistered because only the name and
+     GSTIN were carried. A treatment from Zoho counts as picked, so the auto-pick never replaces it. */
+  const applySeed = React.useCallback((seed: CustomerSeed) => {
+    const name = seed.name?.trim();
+    const seedCountry = normalizeCountry(seed.country);
+    const foreignSeed = !!seedCountry && isExportSupply(seedCountry);
+    const gstin = foreignSeed ? "" : (seed.gstin?.trim() ?? "");
+    if (name) setValue("name", name, { shouldDirty: true });
+    if (seedCountry) setValue("country", seedCountry, { shouldDirty: true });
+    if (gstin) setValue("gstin", gstin.toUpperCase(), { shouldDirty: true });
+    if (seed.state?.trim()) setValue("state", seed.state.trim(), { shouldDirty: true });
+    if (seed.gst_treatment) {
+      treatmentManual.current = true;
+      setValue("gst_treatment", seed.gst_treatment, { shouldDirty: true });
+    }
+  }, [setValue]);
+
   return {
+    applySeed,
     form,
     register,
     setValue,

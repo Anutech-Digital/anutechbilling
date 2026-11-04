@@ -43,7 +43,7 @@ import { readQuoteDueNow } from "@/lib/checkout/quote-order";
 import { rupee } from "@/lib/utils";
 import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
-import { customerCopyBlock } from "@/lib/quotes/customer-copy-gate";
+import { customerCopyBlock, supplyCopyBlock } from "@/lib/quotes/customer-copy-gate";
 import { buildCustomerQuoteHtml } from "@/lib/email/quote-template";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
@@ -141,7 +141,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const approvalBlock = customerCopyBlock(quote);
   if (approvalBlock) {
     return NextResponse.json(
-      { error: `Needs approval first — ${approvalBlock.reason} ${approvalBlock.nextStep}` },
+      { error: approvalBlock.message },
       { status: 409 },
     );
   }
@@ -156,13 +156,6 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     return NextResponse.json({ error: "tenant not found" }, { status: 404 });
   }
 
-  /* The mailbox the app READS — Reply-To must land there, or the customer's answer never
-     reaches the pipeline. See lib/email/reply-to.ts. */
-  const { data: ingestBoxes } = await supabase
-    .from("user_google_tokens")
-    .select("google_email")
-    .eq("tenant_id", me.tenant_id);
-
   const { data: customer } = quote.customer_id
     ? await supabase
         .from("customers")
@@ -176,6 +169,26 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     ? await supabase.from("leads").select("state_code, gstin, country, contact_name, contact_email, contact_phone").eq("id", quote.lead_id).maybeSingle()
     : { data: null };
   const pos = quotePlaceOfSupply({ customer, lead, quote, seller: tenant });
+  /* R-2442 / R-2448: a quote whose place of supply is unknown — the buyer's state ("Not known
+     yet", R-2363) or the company's own — leaves CGST + SGST vs IGST undecided, and generate_invoice
+     refuses its GST invoice after the customer has paid. The ONE customer-copy gate (the same one
+     Mark as sent and the PDF link ask) refuses it before anything is rendered or emailed, naming
+     the fix ("Set the customer's state" → the customer page). Messages have no closing full stop:
+     the client toast (quoteEmailErrorOutcome) adds ". Nothing was sent…". */
+  const supplyBlock = supplyCopyBlock(quote, { customer, lead, seller: tenant, role: me.role });
+  if (supplyBlock) {
+    return NextResponse.json(
+      { error: supplyBlock.message, ...(supplyBlock.action ? { nextStep: supplyBlock.action } : {}) },
+      { status: 409 },
+    );
+  }
+
+  /* The mailbox the app READS — Reply-To must land there, or the customer's answer never
+     reaches the pipeline. See lib/email/reply-to.ts. */
+  const { data: ingestBoxes } = await supabase
+    .from("user_google_tokens")
+    .select("google_email")
+    .eq("tenant_id", me.tenant_id);
 
   // ── 5. Resolve recipient ─────────────────────────────────────────
   /* The customer's PRIMARY CONTACT. customers.contact_email stopped being the truth on

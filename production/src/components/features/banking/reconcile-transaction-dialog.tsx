@@ -64,6 +64,7 @@ import { payeeFromNarration, TEST_TRANSFER_MAX } from "@/lib/banking/narration";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
+import type { NewCustomerSeed } from "./zoho-find-panel";
 import { ProjectPaymentSection } from "@/components/features/banking/project-payment-section";
 import { CreditPayForSection } from "@/components/features/banking/credit-pay-for-section";
 import { RazorpaySettlementSection } from "@/components/features/banking/razorpay-settlement-section";
@@ -87,6 +88,9 @@ import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { useReconcileSuggestion, SuggestionCard, logSuggestion } from "@/components/features/banking/reconcile-suggestion-card";
 import { dropReconciledExpenses, expenseSuggestionIds, useReconciledExpenseIds } from "@/lib/banking/reconciled-suggestions";
 import { ManualReconcileDialog } from "@/components/features/banking/manual-reconcile-dialog";
+import { SalaryBookRisks } from "@/components/features/payroll/salary-book-risks";
+import { FnfExitPrompt, type FnfExitPromptInput } from "@/components/features/payroll/fnf-exit-prompt";
+import type { SalaryLineRisk } from "@/lib/banking/salary-lines";
 import {
   WhoTiles, ChosenTileBar, ReconcileFooter, SectionSlot, tileLabel, pickFooterSave,
   type WhoTile, type FooterSave,
@@ -184,6 +188,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         matchedToId:   salaryId,
         confidence:    "manual",
       });
+      /* R-2428: a full & final paid into a salary already in Payroll → "Start exit?" too. */
+      const sal = (payableSalaries ?? []).find((s) => s.id === salaryId);
+      if (salaryFnf && sal) setFnfPrompt({ employeeId: sal.employee_id, lastDay: transaction.txn_date, amount: transaction.debit });
       onOpenChange(false);
     } catch { /* hook toasts */ }
   };
@@ -350,7 +357,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      picks the customer it creates. */
   const [newCustomerOpen, setNewCustomerOpen] = React.useState(false);
   /* R-2360: "Create customer" from Find in Zoho starts the form with Zoho's name + GSTIN. */
-  const [newCustomerSeed, setNewCustomerSeed] = React.useState<{ name: string; gstin: string | null } | null>(null);
+  const [newCustomerSeed, setNewCustomerSeed] = React.useState<NewCustomerSeed | null>(null);
   const [createdCustomer, setCreatedCustomer] = React.useState<string | null>(null);
   /* R-2095 (Sept reconcile): the new customer is picked only once the list has it — before, the pick
      sometimes landed before the customers list refetched and the drawer showed no customer. */
@@ -475,6 +482,14 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const bookSalary = useBookSalaryLines();
   const [salaryEmp, setSalaryEmp] = React.useState("");
   const [salaryPeriod, setSalaryPeriod] = React.useState("");
+  /* R-2428: checks before a NEW salary record (left already / before joining / after F&F …),
+     and a full & final → "Start exit?" once it is booked. */
+  const [salaryRisk, setSalaryRisk] = React.useState<SalaryLineRisk>({ block: null, warnings: [] });
+  const [salaryFnf, setSalaryFnf] = React.useState(false);
+  const [fnfPrompt, setFnfPrompt] = React.useState<FnfExitPromptInput | null>(null);
+  const salaryEmployee = (employees ?? []).find((e) => e.id === salaryEmp) ?? null;
+  React.useEffect(() => { setSalaryFnf(salaryHint?.fullAndFinal ?? false); }, [transaction?.id, salaryHint]);
+  React.useEffect(() => { if (!salaryEmployee) setSalaryRisk({ block: null, warnings: [] }); }, [salaryEmployee]);
   React.useEffect(() => {
     if (!salaryHint) { setSalaryEmp(""); setSalaryPeriod(""); return; }
     const m = matchEmployee(salaryHint.name, employees ?? []);
@@ -497,6 +512,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
       /* The hook's toast gives the count; a refusal (e.g. month already paid) carries
          its own sentence — show it and keep the sheet open. */
       if (r && !r.ok) { toast.error(r.message); return; }
+      if (salaryFnf && r?.employeeId) setFnfPrompt({ employeeId: r.employeeId, lastDay: transaction.txn_date, amount: transaction.debit });
       onOpenChange(false);
     } catch { /* hook toasts */ }
   };
@@ -641,7 +657,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     label: `Book ${rupee(amount)} as salary${salaryPeriod ? ` · ${salaryPeriod}` : ""}`,
     onSave: handleBookSalary,
     loading: bookSalary.isPending,
-    disabledReason: !salaryEmp ? "Pick the employee." : !salaryPeriod ? "Pick the salary month." : null,
+    disabledReason: !salaryEmp ? "Pick the employee." : !salaryPeriod ? "Pick the salary month."
+      : salaryRisk.block ?? (salaryRisk.warnings.length > 0 ? "Read the warning above — tick “book it anyway” if this salary is right." : null),
   };
   /* R-2348: the buttons that used to sit inside the forms, now in the footer — same label, same
      disabled rule, same handler. "Pay a salary (full or part)": the picked salary. */
@@ -1021,6 +1038,13 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                 {!salaryHint.periodFromNarration && (
                   <p className="text-xs text-amber-ink">No month in the narration — assumed the month before payment. Change it if needed.</p>
                 )}
+                {salaryEmployee && salaryPeriod && (
+                  <SalaryBookRisks employee={salaryEmployee} period={salaryPeriod} onChange={setSalaryRisk} />
+                )}
+                <label className="inline-flex items-center gap-1.5 text-xs text-ink-2">
+                  <input type="checkbox" className="accent-emerald" checked={salaryFnf} onChange={(e) => setSalaryFnf(e.target.checked)} />
+                  Full &amp; final settlement — they are leaving (asks to start their exit after saving)
+                </label>
               </div>
             )}
 
@@ -1365,6 +1389,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   };
 
   return (
+    <>
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="right"
@@ -1492,6 +1517,9 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         />
       )}
     </Sheet>
+    {/* R-2428: outside the sheet — it stays up after the sheet closes on save. */}
+    {fnfPrompt && <FnfExitPrompt prompt={fnfPrompt} onClose={() => setFnfPrompt(null)} />}
+    </>
   );
 }
 

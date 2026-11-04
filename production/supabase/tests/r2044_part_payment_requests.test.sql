@@ -107,7 +107,10 @@ begin
    where id = v_q and amount = 2360 and subtotal = 2000 and status = 'sent' and is_one_off
      and subscription_billing_id = 'bbbbbbbb-0000-0000-0000-000000204412'
      and payment_terms_days = 0 and expires_date is null
-     and line_items->0->>'name' = 'Advance payment for Q2 · '
+     /* R-2423: the line names the product, seats, period and part; the old label is its description. */
+     and line_items->0->>'name' = 'Workspace Starter · 2 seats · '
+           || to_char(public.ist_today(), 'FMDD Mon') || '–' || to_char(public.ist_today() + 88, 'FMDD Mon YYYY') || ' (part 2 of 4)'
+     and line_items->0->>'description' = 'Advance payment for Q2 · '
            || to_char(public.ist_today(), 'FMDD Mon') || '–' || to_char(public.ist_today() + 88, 'FMDD Mon YYYY');
   if v_n <> 1 then raise exception 'C FAIL: request % not as expected: %', v_q,
     (select jsonb_build_object('name', line_items->0->>'name', 'terms', payment_terms_days, 'expires', expires_date) from public.quotes where id = v_q); end if;

@@ -58,7 +58,7 @@ import path from "node:path";
 import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL_STEP } from "./worker-tsc-cache.mjs";
 import { execSync, execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites } from "./push-guard-suites.mjs";
+import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites, slowestSuites } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderGate } from "./worker-lock-guards.mjs";
 import { runRelatedSql } from "./worker-lock-sql.mjs";
 import { stashSnapshot, enforceStash, stashGit } from "./worker-lock-stash.mjs";
@@ -381,12 +381,15 @@ export function runGuardSuites(card) {
         { cwd: root, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
     } catch (e) { crashed = String(e.stderr ?? e.message ?? "").slice(-1500); }
     const ms = Date.now() - t0;
-    let failed = [];
-    try { failed = failedSuites(JSON.parse(fs.readFileSync(out, "utf8")), root); } catch {}
+    let failed = [], slow = [];
+    try { const json = JSON.parse(fs.readFileSync(out, "utf8")); failed = failedSuites(json, root); slow = slowestSuites(json, root, 5); } catch {}
     fs.rmSync(out, { force: true });
     if (crashed && !failed.length) failed = [`(vitest fail, koi file naam nahi mila)\n${crashed}`];
     console.log(`${failed.length ? "✗" : "✓"} guard tests: ${files.length} files, ${(ms / 1000).toFixed(0)} s`);
-    if (ms > PUSH_GUARD_BUDGET_MS) console.log(`(guard tests ${Math.round(ms / 1000)} s le gaye — ${PUSH_GUARD_BUDGET_MS / 1000} s se zyada; manager ko batao, list chhoti karni hai)`);
+    if (ms > PUSH_GUARD_BUDGET_MS) { // R-2443: also name the slowest files, so the next trim is measured
+      console.log(`(guard tests ${Math.round(ms / 1000)} s le gaye — ${PUSH_GUARD_BUDGET_MS / 1000} s se zyada; manager ko batao, list chhoti karni hai)`);
+      if (slow.length) console.log(`  sabse dheemi (test time; fork/imports alag): ${slow.map((s) => `${s.file} ${(s.ms / 1000).toFixed(1)} s`).join(", ")}`);
+    }
     return failed;
   });
 }

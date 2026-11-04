@@ -17,3 +17,4 @@ before go-live").
 |---|---|
 | [RECONCILE.md](RECONCILE.md) | Bank money-in reconcile against Zoho Books on staging |
 | [ZOHO-BILLING.md](ZOHO-BILLING.md) | Comparing with Zoho Billing: its measured pro-rata/credit/GST rules, safe testing in a Zoho test org, 31 Oct process lessons |
+| [localhost-check.md](localhost-check.md) | Checking built cards in Chrome on localhost: `npm run localhost:ready`, `npm run card:check -- R-xxxx`, which test login / company, missing local data (R-2457) |

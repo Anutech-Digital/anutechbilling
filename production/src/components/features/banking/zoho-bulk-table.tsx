@@ -9,6 +9,7 @@
 import * as React from "react";
 
 import { rupee, formatDate } from "@/lib/utils";
+import { formatRemittance } from "@/lib/banking/inward-remittance";
 import type { PlanLine, PlanRow } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 import type { BookedRow } from "./zoho-bulk-book";
 
@@ -76,6 +77,8 @@ export function ZohoBulkTable({ rows, ticked, booked, onToggle, onToggleAll, dis
               </td>
               <td className="py-2 pr-2">
                 <div className="font-medium text-ink tabular-nums">{rupee(r.credit)}</div>
+                {/* R-2425: an export receipt shows what the bank converted — "$1,024 @ ₹93.60". */}
+                {r.remittance && <div className="text-ink-2 tabular-nums">{formatRemittance(r.remittance)}</div>}
                 <div className="text-ink-3">{formatDate(r.txnDate)}</div>
                 {r.tds > 0 && <div className="text-ink-3">+ TDS {rupee(r.tds)}</div>}
               </td>

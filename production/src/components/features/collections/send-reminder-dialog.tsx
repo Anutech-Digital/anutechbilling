@@ -7,7 +7,8 @@
  *   • "This invoice" — one open bill (the most overdue unless they pick another). The AI drafts
  *     the reminder (POST /api/collections/reminder/draft with the bill), money-checked; the text
  *     carries a UPI pay link for exactly that bill's amount.
- *   • "Full statement" — every open bill and the total (GET /api/customers/{id}/pending-dues).
+ *   • "Full statement" — every open bill and the total (POST /api/customers/{id}/pending-dues —
+ *     R-2439: the POST also makes the Razorpay link; a GET only reads it).
  *     WhatsApp carries the 7-day statement PDF link; email attaches the PDF. Both carry the UPI
  *     pay link for the total.
  * …and HOW: WhatsApp first (when the customer has a mobile number), email as the fallback.
@@ -17,6 +18,12 @@
  * that code (lib/payments/payment-link*, R-1608) is quote-only, sends its own email, and minting
  * one per dialog opening would leave a bill with many live links (see lib/invoices/pay-link.ts).
  * No link → the dialog says why and the next step (§24: add the UPI ID in Settings).
+ *
+ * R-2415: next to the UPI link, ONE Razorpay link (card / UPI / net banking) for that bill or
+ * the statement total — made by the draft / statement POST the first time (R-2439: a GET only reads), the SAME link on
+ * every later opening, replaced when the amount changes (lib/payments/payment-link.server).
+ * The text already carries it; the dialog says what it asks for (and TEST MODE on a test key),
+ * or why there is none and the fix. Razorpay sends nothing itself.
  *
  * DECISION (Pardeep, 17 Oct, R-1514): nothing goes out on its own. Opening the dialog, switching
  * the choice or picking a bill only DRAFTS / READS. A message leaves only when the person presses
@@ -57,11 +64,20 @@ import {
   reminderNote, waMeUrl, type PayLinkNotice, type ReminderLineChoice, type ReminderLineRef,
 } from "@/lib/collections/reminder-draft";
 import type { DuesLine, StatementQrNotice } from "@/lib/collections/pending-dues";
+import type { CardLinkNotice } from "@/lib/payments/payment-link";
 import { followupsKey, useAddFollowup } from "@/lib/queries/payment-followups";
 
 // ─── What the two reads return ───────────────────────────────────────────────
 
 type About = { invoiceId: string | null; subscriptionId: string | null; quoteId: string | null };
+
+/** R-2415: the bill's / statement's Razorpay link, or why there is none. */
+export interface CardLinkInfo {
+  url: string;
+  amount: number;
+  billAmount: number;
+  mode: "live" | "test";
+}
 
 interface Reach {
   whatsapp: string | null;
@@ -81,6 +97,8 @@ export interface ReminderDraftResponse extends Reach {
   lines?: ReminderLineChoice[];
   payLink?: string | null;
   payLinkNotice?: PayLinkNotice | null;
+  cardLink?: CardLinkInfo | null;
+  cardLinkNotice?: CardLinkNotice | null;
   about: About;
 }
 
@@ -96,10 +114,14 @@ export interface PendingDuesPreview extends Reach {
   whatsappText: string;
   /** R-2412: the UPI pay link for the total that both messages carry (null = none). */
   payLink?: string | null;
+  cardLink?: CardLinkInfo | null;
+  cardLinkNotice?: CardLinkNotice | null;
   about: About;
 }
 
 class SendError extends Error {}
+/** R-2439: middleware refused a write because this is a demo visitor (read-only). */
+class DemoRefusal extends SendError {}
 
 async function readJson<T>(url: string, init?: RequestInit): Promise<T> {
   let res: Response;
@@ -108,7 +130,8 @@ async function readJson<T>(url: string, init?: RequestInit): Promise<T> {
   } catch {
     throw new SendError("Could not reach the server — check your internet and try again.");
   }
-  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+  const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; demo?: boolean };
+  if (!res.ok && json.demo === true) throw new DemoRefusal(json.error || "This is a demo — changes are off.");
   if (!res.ok || !json.ok) throw new SendError(json.error || "Something went wrong — try again.");
   return json as T;
 }
@@ -116,6 +139,20 @@ const postJson = <T,>(url: string, body: unknown) =>
   readJson<T>(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
 
 export const pendingDuesUrl = (customerId: string) => `/api/customers/${encodeURIComponent(customerId)}/pending-dues`;
+
+/**
+ * R-2439: the statement preview. POST — it also makes / reuses the statement's Razorpay link
+ * (a GET of the same URL only reads it, so a prefetch or reload can never make or cancel one).
+ * A demo visitor's POSTs are refused by middleware: they get the read-only GET (no link made).
+ */
+export async function readStatementPreview(customerId: string): Promise<PendingDuesPreview> {
+  try {
+    return await postJson<PendingDuesPreview>(pendingDuesUrl(customerId), {});
+  } catch (e) {
+    if (e instanceof DemoRefusal) return readJson<PendingDuesPreview>(pendingDuesUrl(customerId));
+    throw e;
+  }
+}
 
 // ─── The form (same for both choices) ────────────────────────────────────────
 
@@ -172,7 +209,7 @@ export function SendReminderDialog({
   const preview = useQuery({
     queryKey: ["pending-dues", customerId],
     enabled: open && scope === "statement",
-    queryFn: () => readJson<PendingDuesPreview>(pendingDuesUrl(customerId)),
+    queryFn: () => readStatementPreview(customerId),   // R-2439: POST (makes the link); demo → GET
     staleTime: 0,
     gcTime: 0,
     retry: false,
@@ -342,6 +379,8 @@ export function SendReminderDialog({
   const payAmount = scope === "invoice" ? d?.amountDue ?? 0 : p?.total ?? 0;
   const noLink: { text: string; action?: { label: string; href: string } } | null =
     scope === "invoice" ? d?.payLinkNotice ?? null : p && !p.payLink ? p.qrNotice : null;
+  const cardLink = scope === "invoice" ? d?.cardLink ?? null : p?.cardLink ?? null;
+  const cardNotice = scope === "invoice" ? d?.cardLinkNotice ?? null : p?.cardLinkNotice ?? null;
   const textField: "whatsappText" | "emailText" = channel === "email" ? "emailText" : "whatsappText";
   const lines = d?.lines ?? [];
 
@@ -452,6 +491,25 @@ export function SendReminderDialog({
                 {noLink.action && (
                   <Link href={noLink.action.href as Route} className="inline-flex items-center min-h-[44px] md:min-h-0 rounded-full border border-hairline bg-paper px-3 py-1 text-sm hover:border-amber/60">
                     {noLink.action.label}
+                  </Link>
+                )}
+              </div>
+            ) : null}
+            {cardLink ? (
+              <p className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
+                <Icon name="check" size={14} className="shrink-0 text-ink-3" />
+                <span className="min-w-0 flex-1">
+                  Card / UPI / net-banking link in the message: <b className="font-mono tabular-nums text-ink">{rupee(cardLink.amount)}</b> (Razorpay — the same link every time you send this, until the amount changes).
+                </span>
+                {cardLink.mode === "test" && <Badge kind="warning">Test mode — takes no real money</Badge>}
+              </p>
+            ) : cardNotice ? (
+              <div role="note" className="flex flex-wrap items-center gap-2 rounded-md border border-hairline bg-paper-2 px-3 py-2 text-xs text-ink-2">
+                <Icon name="info" size={14} className="shrink-0" />
+                <span className="flex-1 min-w-0">{cardNotice.text}</span>
+                {cardNotice.action && (
+                  <Link href={cardNotice.action.href as Route} className="inline-flex items-center min-h-[44px] md:min-h-0 rounded-full border border-hairline bg-paper px-3 py-1 text-sm hover:border-amber/60">
+                    {cardNotice.action.label}
                   </Link>
                 )}
               </div>

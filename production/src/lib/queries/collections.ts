@@ -318,8 +318,10 @@ export function compareCollectionRows(a: CollectionRow, b: CollectionRow): numbe
 
 /**
  * R-2401: is this renewal one to chase on Payment Follow-up? Due in ≤7 days or past its date, not
- * paid (renewed), not Won't renew, not cancelled, service not stopped, and not a flex month (a
- * billing part, R-2232) — the Renewals page's Urgent-tab rules (classify.ts) minus "stopped".
+ * paid (renewed), not Won't renew, not cancelled, service not stopped — the Renewals page's
+ * Urgent-tab rules (classify.ts) minus "stopped". R-2431: a flex (monthly-commitment) row is a
+ * renewal (R-2422) — chased once its part date has PASSED unbilled; a part still ahead is not
+ * (isFlexNextPart: the billing job raises its payment request on that date, R-2044).
  */
 export function isFollowUpRenewal(s: CollectionRenewalSub, today: string): boolean {
   if (!s.renewal_date) return false;

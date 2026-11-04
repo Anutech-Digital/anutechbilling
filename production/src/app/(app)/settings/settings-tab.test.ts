@@ -45,3 +45,21 @@ describe("settings page wiring (R-252)", () => {
     expect(src).not.toMatch(/"grid grid-cols-2 /);
   });
 });
+
+describe("Settings → Network (R-2433, G-NETWORK)", () => {
+  const src = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
+  const tab = fs.readFileSync(path.join(__dirname, "network-tab.tsx"), "utf8");
+  it("?tab=network opens the Network tab (Partners links here)", () => {
+    expect(src).toMatch(/\{ id: "network",\s+label: "Network"\s+\}/);
+    expect(src).toMatch(/tab === "network"\s+&& <NetworkTab \/>/);
+    expect(resolveSettingsTab("network", [...IDS, "network"])).toBe("network");
+  });
+  it("only the owner gets the change buttons; suggestions say 'connect?'", () => {
+    expect(tab).toMatch(/const isOwner = me\?\.role === "owner"/);
+    expect(tab).toMatch(/is on ResellerOS — connect\?/);
+    expect(tab).toMatch(/Send request/);
+    expect(tab).toMatch(/Accept/);
+    expect(tab).toMatch(/Disconnect/);
+    expect(tab).toMatch(/Group company \(same owner\)/);
+  });
+});

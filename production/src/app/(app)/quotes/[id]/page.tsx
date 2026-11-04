@@ -10,6 +10,7 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { QuoteSendRefusedError, refusedFrom } from "@/lib/quotes/send-quote-email";
 import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 
 import { useQuote, useDeleteQuote, quoteDeleteBlockReason, useQuotesByLead, useCustomerStopped } from "@/lib/queries/quotes";
@@ -79,7 +80,7 @@ import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-vouch
 import { CustomerAdvanceView } from "@/components/features/quotes/customer-advance-view";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { SendQuoteDialog } from "@/components/features/quotes/send-quote-dialog";
-import { copyLinkMarkingSent } from "@/components/features/quotes/failed-send-toast";
+import { copyLinkMarkingSent, STAY_UNTIL_DISMISSED } from "@/components/features/quotes/failed-send-toast";
 import { openWhatsAppMarkingSent, markSentBeforeShare } from "@/components/features/quotes/share-marking-sent";
 import { markQuoteSent } from "@/lib/quotes/mark-quote-sent";
 import { PayQrNotice } from "@/components/features/quotes/pay-qr-notice";
@@ -132,6 +133,11 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyBuilderLine, billOfSupplyStatus, quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
+import { quoteKindFor, quoteSubscriptionId, subscriptionForLine, type QuoteKindQuote } from "@/lib/quotes/quote-kind";
+import { usePartFacts } from "@/lib/quotes/quote-kind-facts";
+import { withPartCosts } from "@/lib/quotes/part-cost";
+import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
+import { QuoteKindStamp } from "@/components/features/quotes/quote-kind-stamp";
 
 // ============================================================
 // Status meta
@@ -168,10 +174,10 @@ export default function QuoteDetailPage() {
   const { data: paymentHistory } = usePaymentsByQuote(params.id);
   /* R-1718: the timeline says "Sent to customer" only for an email that really went. */
   const { data: quoteSends } = useQuoteSends(params.id);
-  const { data: customer } = useCustomer(quote?.customer_id ?? undefined);
+  const { data: customer, isLoading: customerLoading } = useCustomer(quote?.customer_id ?? undefined);
   // Prospect quotes have no customer yet — fall back to the lead's phone so the
   // WhatsApp recipient still prefills (quotes usually go to that same contact).
-  const { data: lead } = useLead(quote?.lead_id ?? undefined);
+  const { data: lead, isLoading: leadLoading } = useLead(quote?.lead_id ?? undefined);
   const updateLeadStage = useUpdateLeadStage();
   const logActivity     = useLogLeadActivity();
   const recipientPhone = React.useMemo(() => {
@@ -187,7 +193,7 @@ export default function QuoteDetailPage() {
   /* R-1485: the buyer's GSTIN — the customer row's (a customer quote never borrows the lead's),
      else the lead's. Same value on the page, the preview and the downloaded PDF. */
   const buyerGstin = quoteBuyerGstin(quote?.customer_id ? (customer ?? { gstin: null }) : null, lead);
-  const { data: me } = useCurrentUser();
+  const { data: me, isLoading: meLoading } = useCurrentUser();
   /* R-718: recording a payment is owner / manager / accountant / billing — sales, support and
      delivery see the money state but no Record button (the database refuses them). */
   const mayRecordMoney = canRecordMoney(me?.role);
@@ -240,13 +246,43 @@ export default function QuoteDetailPage() {
   const sendIntentHandled = React.useRef(false);
   /* R-1669: every way a copy reaches the customer (PDF, WhatsApp, link, email) is locked while
      the quote waits for — or was refused — discount / margin approval. Preview stays open. */
-  const customerBlock = React.useMemo(() => (quote ? customerCopyBlock(quote) : null), [quote]);
+  /* R-2448: and while the place of supply is unknown (no state on the customer / lead / prospect,
+     or on the company) — the same gate the send, mark-sent and PDF-link routes ask. Judged only
+     once the buyer and the company have loaded, so a slow fetch never flashes "no state"; a
+     customer / lead row this user cannot read is left to the server (it reads it with the admin
+     client), never judged here as "no state". */
+  const partiesSettled = !!quote && !meLoading && !customerLoading && !leadLoading;
+  const buyerReadable = !quote ? false : quote.customer_id ? !!customer : quote.lead_id ? !!lead : true;
+  const customerBlock = React.useMemo(() => (quote ? customerCopyBlock(quote, partiesSettled && me && buyerReadable ? {
+    customer: customer ?? null,
+    lead: lead ?? null,
+    seller: { state_code: me.tenantStateCode, gstin: me.tenantGstin },
+    role: me.role,
+  } : null) : null), [quote, partiesSettled, buyerReadable, customer, lead, me]);
+  const customerBlockTitle = customerBlock?.kind === "approval" ? CUSTOMER_COPY_BLOCKED_TITLE : customerBlock?.message;
+  /** R-2448: a 409 refusal is refused again on retry — its own words, its fix as the button when
+   *  it names one ("Set the customer's state"), and no "try again". */
+  const refusalFix = (err: unknown) => {
+    if (!(err instanceof QuoteSendRefusedError) || err.status !== 409) return null;
+    const fix = err.nextStep;
+    return fix
+      ? { action: { label: fix.label, onClick: () => router.push(fix.href as never) }, duration: STAY_UNTIL_DISMISSED }
+      : { duration: 20000 };
+  };
   React.useEffect(() => {
     if (sendIntentHandled.current) return;
     if (!quote)                     return;            // wait for data
+    if (!partiesSettled)            return;            // R-2448: and for the state check
     if (customerBlock && (sendIntent === "whatsapp" || sendIntent === "email")) {
       sendIntentHandled.current = true;
-      toast.error("Needs approval first", { description: customerBlock.reason });
+      if (customerBlock.kind === "approval") toast.error("Needs approval first", { description: customerBlock.reason });
+      else {
+        const fix = customerBlock.action;
+        toast.error("Not sent — the state is missing", {
+          description: customerBlock.message,
+          ...(fix ? { action: { label: fix.label, onClick: () => router.push(fix.href as never) } } : {}),
+        });
+      }
       router.replace(`/quotes/${quote.id}` as never);
       return;
     }
@@ -259,7 +295,7 @@ export default function QuoteDetailPage() {
       sendIntentHandled.current = true;
       router.replace(`/quotes/${quote.id}` as never);
     }
-  }, [sendIntent, quote, router, customerBlock]);
+  }, [sendIntent, quote, router, customerBlock, partiesSettled]);
 
   /* Approval state. Derived from the quote's own lines every render rather than read
      from a stored flag — the flag records a DECISION, the lines are the facts, and if
@@ -320,6 +356,16 @@ export default function QuoteDetailPage() {
     .filter((s) => quote && s.quote_id === quote.id)
     .sort((a, b) => (a.created_at ?? "").localeCompare(b.created_at ?? ""))[0];
   const { data: nextPartRequest = null } = useNextPartRequest(quote && !partRequest ? saleSub?.id : null);
+  /* R-2423: a payment request's part(s) and subscription — for the type stamp, the "For
+     subscription" line and the part's vendor cost (its lines are made with cost 0). */
+  const leadBillingId = partRequest ? ((quote as { subscription_billing_id?: string | null } | undefined)?.subscription_billing_id ?? null) : null;
+  const partBillingIds = React.useMemo(
+    () => (leadBillingId && quote
+      ? [leadBillingId, ...(Array.isArray(quote.line_items) ? quote.line_items : []).map((l) => (l as { billing_id?: string | null }).billing_id ?? null)]
+      : []),
+    [leadBillingId, quote],
+  );
+  const { data: partFacts } = usePartFacts(partBillingIds);
   /* R-2101: the parts' tax invoices (linked through subscription_billings) tick INVOICED. Not
      loaded / failed → null: the step falls back to quote.invoice_id alone (as before R-2101). */
   const { data: partInvoices = null, isLoading: partInvoicesLoading } = useQuotePartInvoices(
@@ -537,7 +583,7 @@ export default function QuoteDetailPage() {
         r.leadMoved || !r.leadReason ? undefined : { description: r.leadReason },
       );
     },
-    onError: (e) => toastError(e),
+    onError: (e) => toastError(e, refusalFix(e) ?? {}),
   });
 
   /**
@@ -781,6 +827,16 @@ export default function QuoteDetailPage() {
       : PAYMENT_META[paymentBadge]
     : null;
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
+  /* R-2423: WHAT this quote is (quote-kind.ts — stored facts only, no stamp when they do not say)
+     and which subscription it is for. */
+  const leadPart = leadBillingId ? partFacts?.get(leadBillingId) ?? null : null;
+  const kindStamp = quoteKindFor(quote as typeof quote & QuoteKindQuote, leadPart?.facts ?? null);
+  const forSubId = quoteSubscriptionId(
+    quote as typeof quote & QuoteKindQuote & { add_seats_subscription_id?: string | null },
+    allSubs ?? [], leadPart?.billing.subscription_id ?? null,
+  );
+  const forSub = leadPart?.sub ?? (allSubs ?? []).find((s) => s.id === forSubId) ?? null;
+  const forSubText = subscriptionForLine(forSub);
   /* R-542: an add-seats quote's line is a pro-rata charge for the days left in the current
      term — paid once. Its commitment is "annual_yearly" (the seats' term), which printed
      "₹851/yr" as if it recurred yearly. No per-period suffix on those lines. */
@@ -914,9 +970,14 @@ export default function QuoteDetailPage() {
      this page reported "100% est. margin" on a 17.5% deal. The lines are the facts
      and there is one of them per product, so they are what both this page and the
      approval matrix read — one source, and they cannot disagree. */
-  const lineCostTotal = items.reduce((s, l) => s + l.qty * l.cost, 0);
+  /* R-2423 (4): a payment request's lines carry cost 0 — its cost is the subscription's own
+     (subscriptionCogs) for the part's months (part-cost.ts). Display only; the saved lines stay. */
+  const marginItems = partRequest
+    ? withPartCosts(items, leadBillingId, (id) => partFacts?.get(id)?.cost ?? null)
+    : items;
+  const lineCostTotal = marginItems.reduce((s, l) => s + l.qty * l.cost, 0);
   /* R-388: shared rule — our own support plan at ₹0 is a known cost. */
-  const marginKnown   = !anyCostUnknown(items);
+  const marginKnown   = !anyCostUnknown(marginItems);
   const margin = computeMargin(lineCostTotal, taxable);
 
   const acceptUrl = `${typeof window !== "undefined" ? window.location.origin : ""}/quote/${quote.id}/accept?t=${encodeURIComponent(quote.public_token)}`;
@@ -977,12 +1038,13 @@ export default function QuoteDetailPage() {
     try {
       const res = await fetch(`/api/quotes/${encodeURIComponent(quote.id)}/pdf-link?template=proforma`);
       const json = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
-      if (!res.ok || !json.url) throw new Error(json.error ?? `Could not make the Proforma PDF (${res.status})`);
+      if (!res.ok) throw refusedFrom(res, json, `Could not make the Proforma PDF (${res.status})`);
+      if (!json.url) throw new Error(`Could not make the Proforma PDF (${res.status})`);
       if (win) win.location.href = json.url;
       else window.location.href = json.url;
     } catch (err) {
       win?.close();
-      toastError(err, { description: "Try again. If it keeps failing, use Download PDF for the Quotation copy." });
+      toastError(err, refusalFix(err) ?? { description: "Try again. If it keeps failing, use Download PDF for the Quotation copy." });
     }
   };
 
@@ -1094,9 +1156,13 @@ export default function QuoteDetailPage() {
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
               Revenue · {quote.is_extension ? "Extension Quote" : upgradeQuote ? "Upgrade Quote" : quote.is_renewal ? "Renewal Quote" : "Quote"}
             </p>
-            <h1 className="font-serif text-3xl md:text-4xl leading-tight">
-              {quote.id}
-            </h1>
+            <div className="flex items-center gap-3 flex-wrap">
+              <h1 className="font-serif text-3xl md:text-4xl leading-tight">
+                {quote.id}
+              </h1>
+              {/* R-2423: the type stamp — RENEWAL · Part 1 of 12 · Nov 2026 (· PAID <date>, green). */}
+              <QuoteKindStamp stamp={kindStamp} />
+            </div>
             <p className="text-sm text-ink-3 mt-1 flex items-center gap-2 flex-wrap">
               <span>
                 For{" "}
@@ -1172,7 +1238,7 @@ export default function QuoteDetailPage() {
                   <span>·</span>
                   <Badge kind="warning">{extTitle ?? "Extension"}</Badge>
                 </>
-              ) : quote.is_renewal && (
+              ) : quote.is_renewal && !kindStamp && (
                 <>
                   <span>·</span>
                   <Badge kind="info">{upgradeQuote ? "Upgrade" : "Renewal"}</Badge>
@@ -1185,6 +1251,15 @@ export default function QuoteDetailPage() {
                 </>
               )}
             </p>
+            {/* R-2423 (2): which subscription this quote is for — opens it. */}
+            {forSub && forSubText && (
+              <p className="text-sm text-ink-3 mt-1" data-testid="quote-for-subscription">
+                For subscription:{" "}
+                <Link href={subscriptionOpenHref(forSub) as never} className="font-medium text-ink hover:text-amber-ink hover:underline">
+                  {forSubText}
+                </Link>
+              </p>
+            )}
           </div>
         </div>
 
@@ -1200,7 +1275,7 @@ export default function QuoteDetailPage() {
             loading={sharingWa}
             disabled={!!customerBlock}
             onClick={shareQuoteOnWhatsApp}
-            title={customerBlock ? CUSTOMER_COPY_BLOCKED_TITLE : "Send on WhatsApp — the PDF downloads so you can attach it in the chat"}
+            title={customerBlock ? customerBlockTitle : "Send on WhatsApp — the PDF downloads so you can attach it in the chat"}
           >
             Send on WhatsApp
           </Button>
@@ -1211,7 +1286,7 @@ export default function QuoteDetailPage() {
             icon="link"
             disabled={!!customerBlock}
             loading={copyingLink}
-            title={customerBlock ? CUSTOMER_COPY_BLOCKED_TITLE
+            title={customerBlock ? customerBlockTitle
               : quote.status === "draft" ? "Marks the quote as sent, then copies the customer's accept link — a draft's link opens nothing"
               : "Copy the customer's accept link — share it by email, WhatsApp or chat"}
             /* R-1956: a draft's link is dead (the accept page hides drafts), so copying marks it
@@ -1228,7 +1303,7 @@ export default function QuoteDetailPage() {
             icon="download"
             loading={downloadingPdf}
             disabled={!!customerBlock}
-            title={customerBlock ? CUSTOMER_COPY_BLOCKED_TITLE : undefined}
+            title={customerBlock ? customerBlockTitle : undefined}
             onClick={async () => {
               setDownloadingPdf(true);
               try {
@@ -1246,7 +1321,15 @@ export default function QuoteDetailPage() {
           </Button>
           {customerBlock && (
             <p className="basis-full text-2xs leading-snug text-amber-ink" role="status">
-              Download PDF, WhatsApp, email and the customer link are locked until this quote is approved — {customerBlock.reason} Preview still works.
+              {customerBlock.kind === "approval"
+                ? <>Download PDF, WhatsApp, email and the customer link are locked until this quote is approved — {customerBlock.reason} Preview still works.</>
+                : <>
+                    {/* R-2448: no place of supply — locked until the state is set, with the fix one tap away. */}
+                    Download PDF, WhatsApp, email and the customer link are locked — {customerBlock.reason} Preview still works.{" "}
+                    {customerBlock.action && (
+                      <Link href={customerBlock.action.href as never} className="font-semibold underline">{customerBlock.action.label}</Link>
+                    )}
+                  </>}
             </p>
           )}
           {/* Secondary utilities collapse into an overflow menu so the header
@@ -1519,8 +1602,8 @@ export default function QuoteDetailPage() {
                   variant="default"
                   icon="send"
                   loading={sendQuote.isPending}
-                  disabled={!!sendGate && !sendGate.allowed}
-                  title={sendGate && !sendGate.allowed ? sendGate.reason : undefined}
+                  disabled={(!!sendGate && !sendGate.allowed) || !!customerBlock}
+                  title={sendGate && !sendGate.allowed ? sendGate.reason : customerBlock ? customerBlockTitle : undefined}
                   onClick={() => sendQuote.mutate()}
                 >
                   Mark as sent

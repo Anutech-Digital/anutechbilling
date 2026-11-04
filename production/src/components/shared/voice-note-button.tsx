@@ -29,6 +29,17 @@ interface Props {
 export function VoiceNoteButton({
   customerId, purpose = "reminder", label = "🔊 Voice note", customerName, size = "sm", variant = "ghost",
 }: Props) {
+  const { send, sending } = useVoiceNoteSend({ customerId, purpose, customerName });
+  return (
+    <Button size={size} variant={variant} loading={sending} onClick={send}>{label}</Button>
+  );
+}
+
+/**
+ * R-2422: the send itself (phone check → confirm → /api/voice/whatsapp-note), so a row's ⋯ menu
+ * can offer "Voice note" without a second copy of it. VoiceNoteButton is this hook + a button.
+ */
+export function useVoiceNoteSend({ customerId, purpose = "reminder", customerName }: Pick<Props, "customerId" | "purpose" | "customerName">) {
   const [sending, setSending] = React.useState(false);
   const confirm = useConfirm();
   const router = useRouter();
@@ -81,7 +92,5 @@ export function VoiceNoteButton({
     }
   }
 
-  return (
-    <Button size={size} variant={variant} loading={sending} onClick={send}>{label}</Button>
-  );
+  return { send, sending };
 }

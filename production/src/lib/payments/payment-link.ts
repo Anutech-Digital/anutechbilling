@@ -1,6 +1,9 @@
-// Not wired yet — R-1608 (built, kept for later)
 /**
- * Building a Razorpay payment link for a quote — the decision and the request body.
+ * Building a Razorpay payment link — the decision and the request body.
+ *
+ * R-1608 built the quote half (not wired yet). R-2415 adds the INVOICE half used by Send
+ * reminder: one link per open invoice / statement total (invoice_payment_links), reused,
+ * replaced when the amount changes, booked once by the payment_link.paid webhook.
  *
  * Pure. The HTTP call is in payment-link.server.ts; what may be charged, to whom, and in what
  * unit is decided here where it can be tested against a table.
@@ -235,4 +238,279 @@ export function paymentLinkMessage(input: {
     "The GST invoice follows automatically once the payment is confirmed." +
     testWarning
   );
+}
+
+// ─── R-2415: one Razorpay link per open invoice / statement total ───────────
+
+/** Tag on every invoice link's notes — payment.captured leaves such a payment to payment_link.paid. */
+export const INVOICE_LINK_PURPOSE = "invoice_payment_link";
+
+/** An invoice link lives 30 days; the next Send reminder after that makes a fresh one. */
+export const INVOICE_LINK_TTL_DAYS = 30;
+
+/** A link that expires within a day is replaced rather than sent. */
+const EXPIRING_MS = 24 * 60 * 60 * 1000;
+
+/** A "creating" row older than this was left by a crash — replace it. */
+const CREATING_STUCK_MS = 2 * 60 * 1000;
+
+export type InvoiceLinkScope = "invoice" | "statement";
+
+/** One bill the link pays, frozen when the link is made (invoice_payment_links.allocations). */
+export interface LinkAllocation {
+  invoice_id: string;
+  quote_id: string;
+  /** Whole rupees. */
+  amount: number;
+}
+
+/**
+ * THE SEAM FOR R-2417. What the link asks for, in whole rupees.
+ *
+ * Today: the bill amount only — the business bears the online fee, and the webhook records the
+ * bearer as before (recordFeeBearer). R-2417 changes THIS function to add `onlineFeeFor(...)`'s
+ * fee + GST when the customer bears it (and books it on a debit note); invoice_payment_links
+ * keeps `bill_amount` and `amount` apart for that, and settle_invoice_payment_link books only
+ * the bill amounts.
+ */
+export function linkAmountFor(input: { billAmount: number }): number {
+  return Math.round(input.billAmount);
+}
+
+export function invoiceLinkKey(scope: InvoiceLinkScope, id: string): string {
+  return `${scope}:${id}`;
+}
+
+export interface ExistingInvoiceLink {
+  status: string;
+  amount: number;
+  allocations: readonly LinkAllocation[];
+  created_at: string;
+  expires_at: string | null;
+}
+
+export type InvoiceLinkPlan =
+  | { action: "create" }
+  | { action: "reuse" }
+  | { action: "wait" }
+  | { action: "replace"; reason: "amount changed" | "bills changed" | "expiring" | "stuck" };
+
+function allocationKey(a: readonly LinkAllocation[]): string {
+  return a.map((x) => `${x.invoice_id}=${Math.round(x.amount)}`).sort().join("|");
+}
+
+/**
+ * The live link (status creating/active) for this bill, against what the bill needs now.
+ * Never a second live link: the unique index refuses one, and this says what to do instead.
+ */
+export function planInvoiceLink(
+  existing: ExistingInvoiceLink | null,
+  want: { amount: number; allocations: readonly LinkAllocation[] },
+  nowMs: number,
+): InvoiceLinkPlan {
+  if (!existing) return { action: "create" };
+  if (existing.status === "creating") {
+    const age = nowMs - Date.parse(existing.created_at);
+    return Number.isFinite(age) && age < CREATING_STUCK_MS ? { action: "wait" } : { action: "replace", reason: "stuck" };
+  }
+  if (Math.round(existing.amount) !== Math.round(want.amount)) return { action: "replace", reason: "amount changed" };
+  if (allocationKey(existing.allocations) !== allocationKey(want.allocations)) return { action: "replace", reason: "bills changed" };
+  if (existing.expires_at) {
+    const left = Date.parse(existing.expires_at) - nowMs;
+    if (Number.isFinite(left) && left < EXPIRING_MS) return { action: "replace", reason: "expiring" };
+  }
+  return { action: "reuse" };
+}
+
+export type NoCardLinkReason =
+  | "nothing_due"
+  | "not_invoice"
+  | "no_own_quote"
+  | "non_inr"
+  | "not_open"
+  | "not_configured"
+  | "live_key_on_staging"
+  | "busy"
+  | "gateway_error"
+  /** R-2439: a read (GET) found no live link that fits the bills — reads never make one. */
+  | "not_made";
+
+/**
+ * Which bills may carry a Razorpay link, and for how much each.
+ *
+ * Only an open INR invoice of THIS customer with a quote of its own — the webhook books it with
+ * record_payment on that quote (the same call as the desk's Record payment). A subscription line
+ * has no invoice yet, and an instalment invoice is booked by record_instalment_payment, which needs
+ * a signed-in company — those keep the UPI link only.
+ */
+export function invoiceLinkAllocations(input: {
+  customerId: string;
+  lines: readonly { kind: "invoice" | "subscription"; id: string; amountDue: number }[];
+  invoices: readonly { id: string; customer_id: string | null; quote_id: string | null; currency: string | null; status: string }[];
+  quotes: readonly { id: string; invoice_id: string | null }[];
+}): { ok: true; allocations: LinkAllocation[] } | { ok: false; reason: NoCardLinkReason } {
+  const lines = input.lines.filter((l) => Math.round(l.amountDue) > 0);
+  if (lines.length === 0) return { ok: false, reason: "nothing_due" };
+  const out: LinkAllocation[] = [];
+  for (const l of lines) {
+    if (l.kind !== "invoice") return { ok: false, reason: "not_invoice" };
+    const inv = input.invoices.find((i) => i.id === l.id);
+    if (!inv || inv.customer_id !== input.customerId || (inv.status !== "pending" && inv.status !== "overdue")) {
+      return { ok: false, reason: "not_open" };
+    }
+    if ((inv.currency ?? "INR").trim().toUpperCase() !== "INR") return { ok: false, reason: "non_inr" };
+    const q = inv.quote_id ? input.quotes.find((x) => x.id === inv.quote_id) : undefined;
+    if (!q || q.invoice_id !== inv.id) return { ok: false, reason: "no_own_quote" };
+    out.push({ invoice_id: inv.id, quote_id: q.id, amount: Math.round(l.amountDue) });
+  }
+  return { ok: true, allocations: out };
+}
+
+export interface CardLinkNotice {
+  reason: NoCardLinkReason;
+  text: string;
+  action?: { label: string; href: string };
+}
+
+/** CLAUDE.md §24: why the message has no card / net-banking link, and the next step. */
+export function cardLinkNotice(reason: NoCardLinkReason, detail?: string | null): CardLinkNotice | null {
+  switch (reason) {
+    case "nothing_due":
+      return null;
+    case "not_configured":
+      return {
+        reason,
+        text: "No card / net-banking link — Razorpay is not connected. Save the Razorpay key in Settings → Integrations and the message will carry one.",
+        action: { label: "Open Settings", href: "/settings?tab=integrations" },
+      };
+    case "live_key_on_staging":
+      return { reason, text: detail?.trim() || "No card / net-banking link — a live Razorpay key cannot make links on this test copy." };
+    case "not_invoice":
+      return { reason, text: "No card / net-banking link — a subscription not yet invoiced has no bill to book it on. The UPI link still works; raise the invoice to get a card link." };
+    case "no_own_quote":
+      return { reason, text: "No card / net-banking link for an instalment bill — the UPI link still works. Record the payment when it comes." };
+    case "non_inr":
+      return { reason, text: "No card / net-banking link — Razorpay links here are in INR and this bill is in another currency." };
+    case "not_open":
+      return { reason, text: "No card / net-banking link — a bill on this message is paid or closed now. Reload Payment Follow-up and try again." };
+    case "busy":
+      return { reason, text: "The card / net-banking link is being made by someone else right now — press Draft again in a few seconds." };
+    case "not_made":
+      return { reason, text: "No card / net-banking link yet — it is made (or brought up to date) when you open Send reminder for this customer." };
+    case "gateway_error":
+      return { reason, text: `Could not make the card / net-banking link${detail ? ` (${detail.slice(0, 160)})` : ""}. The UPI link is in the message — try Draft again later.` };
+  }
+}
+
+/**
+ * The Razorpay request body for an invoice / statement link. Same rules as paymentLinkRequest:
+ * paise via toPaise, Razorpay sends NO SMS / email / reminder (we send the reminder), and the
+ * tenant travels in notes. `reference_id` is our invoice_payment_links row id (36 chars, under
+ * Razorpay's 40) — Razorpay refuses a second link with the same reference.
+ */
+export function invoiceLinkRequest(input: {
+  rowId: string;
+  tenantId: string;
+  scope: InvoiceLinkScope;
+  /** Invoice number, or "3 bills" for a statement. */
+  label: string;
+  /** Whole rupees — from linkAmountFor. */
+  amount: number;
+  sellerName: string;
+  customerName: string | null;
+  customerEmail: string | null;
+  customerPhone: string | null;
+  nowMs: number;
+}): PaymentLinkRequest {
+  const what = input.scope === "invoice" ? `invoice ${input.label}` : `statement, ${input.label}`;
+  return {
+    amount: toPaise(input.amount),
+    currency: "INR",
+    description: `${input.sellerName.trim() || "Payment"} — ${what}`.slice(0, MAX_DESCRIPTION),
+    reference_id: input.rowId,
+    customer: {
+      ...(input.customerName?.trim() ? { name: input.customerName.trim() } : {}),
+      ...(input.customerEmail?.trim() ? { email: input.customerEmail.trim() } : {}),
+      ...(input.customerPhone?.trim() ? { contact: input.customerPhone.trim() } : {}),
+    },
+    notify: { sms: false, email: false },
+    reminder_enable: false,
+    notes: { tenant_id: input.tenantId, purpose: INVOICE_LINK_PURPOSE, link_row: input.rowId },
+    expire_by: Math.floor((input.nowMs + INVOICE_LINK_TTL_DAYS * 24 * 60 * 60 * 1000) / 1000),
+  };
+}
+
+/** True when a captured payment came through one of our invoice links (its notes carry the tag). */
+export function isInvoiceLinkPayment(
+  paymentNotes: Record<string, unknown> | null | undefined,
+  orderNotes: Record<string, unknown> | null | undefined,
+): boolean {
+  return paymentNotes?.purpose === INVOICE_LINK_PURPOSE || orderNotes?.purpose === INVOICE_LINK_PURPOSE;
+}
+
+export interface PaymentLinkPaid {
+  linkId: string;
+  paymentId: string;
+  /** What Razorpay actually captured, in paise. */
+  paidPaise: number;
+  currency: string;
+  method: string | null;
+  orderId: string | null;
+  notes: Record<string, string>;
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
+
+/** The payment_link.paid body, read defensively — null when it names no captured payment. */
+export function parsePaymentLinkPaid(body: unknown): PaymentLinkPaid | null {
+  if (!isObj(body) || !isObj(body.payload)) return null;
+  const pl = isObj(body.payload.payment_link) && isObj(body.payload.payment_link.entity) ? body.payload.payment_link.entity : null;
+  const pay = isObj(body.payload.payment) && isObj(body.payload.payment.entity) ? body.payload.payment.entity : null;
+  if (!pl || !pay) return null;
+  const linkId = typeof pl.id === "string" ? pl.id.trim() : "";
+  const paymentId = typeof pay.id === "string" ? pay.id.trim() : "";
+  const paidPaise = typeof pay.amount === "number" && Number.isInteger(pay.amount) ? pay.amount : NaN;
+  if (!linkId.startsWith("plink_") || !paymentId.startsWith("pay_") || !(paidPaise > 0)) return null;
+  if (pay.status !== "captured") return null;
+  const notes: Record<string, string> = {};
+  if (isObj(pl.notes)) for (const [k, v] of Object.entries(pl.notes)) if (typeof v === "string") notes[k] = v;
+  return {
+    linkId,
+    paymentId,
+    paidPaise,
+    currency: typeof pay.currency === "string" ? pay.currency : "INR",
+    method: typeof pay.method === "string" ? pay.method : null,
+    orderId: typeof pay.order_id === "string" ? pay.order_id : null,
+    notes,
+  };
+}
+
+/**
+ * Put the card / net-banking link into a reminder, next to the UPI link: right after the UPI
+ * line, else before "Please ignore…", else before the "— <company> team" sign-off, else at the
+ * end. Never twice.
+ */
+export function withCardPayLink(message: string, url: string): string {
+  if (message.includes(url)) return message;
+  const line = `Pay by card / UPI / net banking: ${url}`;
+  const lines = message.split("\n");
+  const upi = lines.findIndex((l) => l.includes("upi://"));
+  if (upi >= 0) {
+    lines.splice(upi + 1, 0, line);
+    return lines.join("\n");
+  }
+  const ignore = lines.findIndex((l) => /^please ignore/i.test(l.trim()));
+  if (ignore >= 0) {
+    lines.splice(ignore, 0, line, "");
+    return lines.join("\n");
+  }
+  let sign = -1;
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (/^[—-]\s/.test(lines[i].trim())) { sign = i; break; }
+  }
+  if (sign > 0) {
+    lines.splice(sign, 0, line);
+    return lines.join("\n");
+  }
+  return `${message}\n\n${line}`;
 }

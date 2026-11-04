@@ -84,7 +84,11 @@ export function showFailedSendToast(args: {
   /** R-1956: "Copy link instead" marked the draft sent — refresh the caller's cache. */
   onMarkedSent?: () => void;
 }): void {
-  const b = failedSendButtons(args.res, { role: args.role, quoteId: args.quoteId, onQuotePage: args.onQuotePage });
+  /* R-2448: a refusal that names its fix (route nextStep, e.g. "Set the customer's state") gets that
+     button alone; a 409 never offers "Try again" — the same send is refused the same way. */
+  const b = failedSendButtons(args.res, {
+    role: args.role, quoteId: args.quoteId, onQuotePage: args.onQuotePage, nextStep: args.out.nextStep,
+  });
   const press = (btn: FailedSendButton) => () => {
     if (btn.kind === "copy-link") {
       void copyLinkMarkingSent({
@@ -95,7 +99,7 @@ export function showFailedSendToast(args: {
     else args.navigate(btn.href);
   };
   const usable = (btn: FailedSendButton | undefined) =>
-    btn && (btn.kind !== "retry" || args.onRetry) ? btn : undefined;
+    btn && (btn.kind !== "retry" || (args.onRetry && !args.out.noRetry)) ? btn : undefined;
   const [first, second] = [usable(b.primary), usable(b.secondary)].filter(Boolean) as FailedSendButton[];
   toast.error(args.out.title, {
     description: [args.out.description, b.note].filter(Boolean).join(" "),

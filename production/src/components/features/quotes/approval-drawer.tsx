@@ -14,10 +14,11 @@
  *    guess, and the guess is usually "lower the price again" — the opposite of what a
  *    margin rejection meant. The reason is shown to them verbatim.
  *
- * 3. R-2383: when the viewer made the quote but is the company's ONLY possible approver (an
- *    owner, nobody else who may approve this tier), approving needs a written reason of at
- *    least 10 characters. It is stored on the quote and in the activity log — the server
- *    trigger refuses the same approval without it.
+ * 3. R-2383 / R-2426: when the viewer made the quote but is the company's ONLY active owner
+ *    (managers do not count, any tier), approving needs a written reason of at least 10
+ *    characters and the button says "Approve as sole owner". It is stored on the quote and in
+ *    the activity log — the server trigger refuses the same approval without it. With two or
+ *    more owners the maker is refused and told to ask ANOTHER owner.
  */
 import * as React from "react";
 import { toast } from "sonner";
@@ -28,8 +29,8 @@ import { cn, rupee } from "@/lib/utils";
 import { useDecideApproval } from "@/lib/queries/quotes";
 import { canApprove, SELF_APPROVAL_MIN_REASON, type ApprovalRequirement, type ApprovalRecord, type QuoteEconomics } from "@/lib/quotes/approval";
 
-/** R-2383: the heading of the reason box a sole owner sees on their own quote. */
-export const SOLE_APPROVER_PROMPT = "You are the only approver — write why this price is OK";
+/** R-2383/R-2426: the heading of the reason box the only owner sees on their own quote. */
+export const SOLE_APPROVER_PROMPT = "You are the only owner — write why this price is OK";
 
 export function ApprovalDrawer({
   open, onOpenChange, quoteId, quoteLabel, economics, requirement, record, viewer, team,
@@ -42,7 +43,7 @@ export function ApprovalDrawer({
   requirement: ApprovalRequirement;
   record: ApprovalRecord;
   viewer: { id: string; role: string | null | undefined };
-  /** R-2383: the company's active logins — decides whether the viewer is the only approver.
+  /** R-2383/R-2426: the company's active logins — decides whether the viewer is the only OWNER.
    *  Undefined = not loaded (a maker is then refused). */
   team?: readonly { id: string; role: string | null | undefined }[];
 }) {
@@ -55,6 +56,9 @@ export function ApprovalDrawer({
 
   const permission = canApprove(viewer, record, requirement, team);
   const selfApproval = permission.allowed && permission.selfApproval === true;
+  /* R-2426: an owner's own quote while the team is still loading — not a refusal yet. */
+  const ownerMaker = permission.ownQuote === true && viewer.role === "owner";
+  const teamLoading = ownerMaker && team === undefined;
   const noteOk = note.trim().length >= SELF_APPROVAL_MIN_REASON;
   const pct = (bps: number | null) => (bps === null ? "unknown" : `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 2)}%`);
   const discountRupees = Math.max(0, economics.listTotal - economics.subtotal);
@@ -144,7 +148,7 @@ export function ApprovalDrawer({
                 {SOLE_APPROVER_PROMPT}
               </label>
               <p className="mt-0.5 text-[12px] leading-snug text-ink-3">
-                You made this quote and nobody else here can approve it. Your reason is saved on the quote and in the activity log.
+                You made this quote and you are the only owner here. Your reason is saved on the quote and in the activity log.
               </p>
               <textarea
                 id="self-approval-reason"
@@ -184,11 +188,19 @@ export function ApprovalDrawer({
             </div>
           )}
 
-          {!permission.allowed && (
+          {teamLoading && (
+            <p className="text-[12px] leading-snug text-ink-3" role="status">Checking who else is an owner…</p>
+          )}
+
+          {!permission.allowed && !teamLoading && (
             <div className="rounded-lg border border-hairline bg-paper-2/60 p-3 text-[12px] leading-snug text-ink-2">
               <b className="text-ink">{permission.reason}</b>
               <p className="mt-0.5 text-ink-3">
-                {requirement.tier === "owner"
+                {ownerMaker
+                  ? requirement.tier === "owner"
+                    ? "Ask another owner to open this quote and decide."
+                    : "Ask a manager or another owner to open this quote and decide."
+                  : requirement.tier === "owner"
                   ? "Ask the owner to open this quote and decide."
                   : "Ask a manager or the owner to open this quote and decide."}
               </p>
@@ -200,7 +212,7 @@ export function ApprovalDrawer({
           {permission.allowed && !rejecting && (
             <>
               <Button onClick={() => submit("approved")} disabled={decide.isPending || (selfApproval && !noteOk)} icon="check">
-                Approve
+                {selfApproval ? "Approve as sole owner" : "Approve"}
               </Button>
               <Button variant="default" onClick={() => setRejecting(true)} disabled={decide.isPending}>
                 Reject…

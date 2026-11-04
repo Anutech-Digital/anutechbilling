@@ -55,17 +55,17 @@ describe("R-2403 tabs: Overdue · ≤7 days · 8–30 · 31–60 · 61–90 — 
 
   it("windows by IST days", () => {
     expect(ids("overdue")).toEqual(["lapsed", "stopped"]);
-    expect(ids("due7")).toEqual(["today", "week"]);
+    expect(ids("due7")).toEqual(["today", "week", "flex"]);   // R-2422: a monthly commitment is a renewal
     expect(ids("d30")).toEqual(["eight", "month", "leaver"]);
     expect(ids("d60")).toEqual(["d31", "d60"]);
     expect(ids("d90")).toEqual(["d61", "d90"]);
   });
 
-  it("no row appears in two tabs; past 90 days and flex parts are not listed", () => {
+  it("no row appears in two tabs; past 90 days is not listed; flex IS listed (R-2422)", () => {
     const all = QUEUE_TABS.flatMap((t) => ids(t));
     expect(new Set(all).size).toBe(all.length);
     expect(all).not.toContain("far");
-    expect(all).not.toContain("flex");
+    expect(all).toContain("flex");
   });
 
   it("the At risk tab is gone: at-risk rows are a filter on these tabs, not a second list", () => {
@@ -179,7 +179,7 @@ describe("R-2403 ONE status per row", () => {
 describe("R-2403 the renewal amount for the term (not MRR /mo)", () => {
   it("yearly: the term amount '/yr' + GST (MAHARSHI 26 seats ₹6,500/mo → ₹78,000/yr)", () => {
     const a = renewalAmount({ mrr: 6500, term_months: 12, term_amount: 78_000, billing_cycle: "yearly", renewal_quote_id: null }, null);
-    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", billing: null, fromQuote: false });
+    expect(a).toEqual({ value: 78_000, text: "₹78,000/yr", gst: "+ GST", fromQuote: false });
   });
 
   it("no term_amount → mrr × term months", () => {
@@ -197,10 +197,6 @@ describe("R-2403 the renewal amount for the term (not MRR /mo)", () => {
     const sub = { mrr: 100, term_months: 12, billing_cycle: "yearly", renewal_quote_id: "Q-1" };
     expect(renewalAmount(sub, { id: "Q-1", amount: 5000, status: "rejected" }).fromQuote).toBe(false);
     expect(renewalAmount(sub, { id: "Q-2", amount: 5000, status: "sent" }).fromQuote).toBe(false);
-  });
-
-  it("billed in parts says so", () => {
-    expect(renewalAmount({ mrr: 205_000, term_months: 12, billing_cycle: "monthly" }, null).billing).toBe("billed monthly");
   });
 
   it("term suffixes", () => {
@@ -226,6 +222,13 @@ describe("R-2403 sort and filter", () => {
     expect(filterQueue(rows, { ...NO_FILTERS, status: "overdue" }).map((r) => r.id)).toEqual(["a"]);
     expect(filterQueue(rows, { ...NO_FILTERS, vendor: "google" }).map((r) => r.id)).toEqual(["b", "a"]);
     expect(filterQueue(rows, { ...NO_FILTERS, atRisk: true }).map((r) => r.id)).toEqual(["a"]);
+  });
+  it("R-2422 Commitment filter: All · Annual · Monthly", () => {
+    const mixed = [q("ann", 5, 1, { commitment: "annual" }), q("flex", 3, 1, { commitment: "monthly" }), q("unknown", 4, 1, { commitment: null })];
+    expect(NO_FILTERS.commitment).toBe("all");
+    expect(filterQueue(mixed, NO_FILTERS).map((r) => r.id)).toEqual(["ann", "flex", "unknown"]);
+    expect(filterQueue(mixed, { ...NO_FILTERS, commitment: "annual" }).map((r) => r.id)).toEqual(["ann"]);
+    expect(filterQueue(mixed, { ...NO_FILTERS, commitment: "monthly" }).map((r) => r.id)).toEqual(["flex"]);
   });
   it("filter options are distinct and sorted", () => {
     expect(filterOptions(["M365", "Workspace", "M365", null, ""])).toEqual(["M365", "Workspace"]);
@@ -282,7 +285,7 @@ describe("R-2403 the page wires the one queue", () => {
     }
     expect(page).toMatch(/<BulkActionBar count=\{selectedRows\.length\} noun="renewal"/);
     expect(page).toContain("bulkQuoteTargets(selectedRows,");
-    expect(page).toContain("bulkReminderTargets(selectedRows, today, graceDays)");
+    expect(page).toContain("bulkReminderPlan(selectedRows, today, graceDays)");   // R-2431: send + named skips
     expect(page.match(/"\/api\/renewals\/send-now"/g)?.length).toBe(1);   // the existing route, one call site
   });
 });

@@ -19,6 +19,13 @@
  * the owner / accountant books the TDS or writes the balance off. Rules:
  * lib/collections/small-leftovers.ts.
  *
+ * R-2413 — owner / manager / accountant tick rows (a tick-box column, select-all in the header)
+ * → the bulk bar: Assign owner (./bulk-assign-dialog.tsx — suggests each customer's account
+ * manager), Send reminder and Send statement (components/features/collections/bulk-send-dialog.tsx
+ * — lists who is skipped and why, one Email button). The ⋯ menu's "Remind" + "Send pending dues"
+ * are one "Send reminder" (R-2412's dialog). Only rows on screen act — a ticked row hidden by a
+ * filter is left alone. Rules: lib/collections/bulk-actions.ts.
+ *
  * Rules and reads live in lib/queries/collections.ts (tested in ./collections.test.ts):
  * the balance is the same invoiceAmountDue as Customer Aging, every read pages past 1000.
  */
@@ -39,8 +46,11 @@ import { useUserNames } from "@/lib/hooks/useUserNames";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { canOpenRoute } from "@/lib/nav";
 import { FollowupDialog } from "@/components/features/collections/followup-dialog";
-import { ReminderDialog } from "@/components/features/collections/reminder-dialog";
-import { PendingDuesDialog } from "@/components/features/collections/pending-dues-dialog";
+import { SendReminderDialog } from "@/components/features/collections/send-reminder-dialog";
+import { BulkSendDialog } from "@/components/features/collections/bulk-send-dialog";
+import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
+import { mayBulkCollect, type BulkSendMode } from "@/lib/collections/bulk-actions";
+import { BulkAssignDialog } from "./bulk-assign-dialog";
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 import { canRecordMoney } from "@/lib/auth/roles";
 import { CollectionsOwnerReport } from "@/components/features/collections/owner-report";
@@ -50,7 +60,7 @@ import {
   type CollectionRow, type CollectionView,
 } from "@/lib/queries/collections";
 import {
-  AGE_LABEL, AGE_VIEWS, DEFAULT_AGE, SORT_KEYS, UNASSIGNED, WORKLIST_COLS,
+  AGE_LABEL, AGE_VIEWS, DEFAULT_AGE, SORT_KEYS, UNASSIGNED, worklistCols,
   buildWorklist, hasOverdueLine, matchesSearch, ownerKey, ownerKeys, type AgeKey, type AgeView,
 } from "./worklist";
 import { AgeTileRow } from "./age-tiles";
@@ -113,6 +123,28 @@ export default function CollectionsPage() {
   const closeIf = (o: boolean) => { if (!o) setDialog(null); };
   const canPay = canRecordMoney(role);
   const showReport = maySeeCollectionsReport(role);
+
+  /* R-2413: tick rows → bulk bar. Only rows on screen act (a filter hides the rest). */
+  const canBulk = mayBulkCollect(role);
+  const cols = worklistCols(canBulk);
+  const [selected, setSelected] = React.useState<ReadonlySet<string>>(new Set());
+  /* The rows are frozen when a bulk dialog opens: the list re-reads after each save, and a row
+     leaving the view must not change (or re-read) the run in progress. */
+  const [bulk, setBulk] = React.useState<{ kind: "assign" | BulkSendMode; rows: CollectionRow[] } | null>(null);
+  const selectedRows = canBulk ? shown.filter((r) => selected.has(r.key)) : [];
+  const allOn = shown.length > 0 && shown.every((r) => selected.has(r.key));
+  const someOn = selectedRows.length > 0;
+  const tick = (keys: readonly string[], on: boolean) => setSelected((s) => {
+    const n = new Set(s);
+    for (const k of keys) { if (on) n.add(k); else n.delete(k); }
+    return n;
+  });
+  const team = React.useMemo(
+    () => [...(names?.values() ?? [])].filter((u) => !u.inactive).sort((a, b) => a.label.localeCompare(b.label)),
+    [names],
+  );
+  const inactiveIds = React.useMemo(() => new Set([...(names?.values() ?? [])].filter((u) => u.inactive).map((u) => u.id)), [names]);
+  const openBulk = (kind: "assign" | BulkSendMode) => setBulk({ kind, rows: selectedRows });
   const owing = React.useMemo(
     /* R-2401: a renewal-only row owes nothing yet — the weekly report stays real dues.
        R-2408: "No follow-up for 7+ days" counts only customers with a late line. */
@@ -201,7 +233,8 @@ export default function CollectionsPage() {
               <li key={r.key}>
                 <Card className="p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 break-words font-medium text-ink leading-tight"><CustomerName r={r} canOpen={canOpen} /></div>
+                    {canBulk && <RowTick r={r} on={selected.has(r.key)} onTick={tick} className="mt-0.5" />}
+                    <div className="min-w-0 flex-1 break-words font-medium text-ink leading-tight"><CustomerName r={r} canOpen={canOpen} /></div>
                     <div className="shrink-0 text-right"><AmountCell r={r} className="font-serif text-lg leading-none" /></div>
                   </div>
                   <div className="flex flex-wrap gap-1.5 mt-1.5">
@@ -225,18 +258,30 @@ export default function CollectionsPage() {
           <Card className="hidden md:block overflow-hidden">
             <table className="w-full table-fixed text-sm">
               <colgroup>
-                {WORKLIST_COLS.map((c) => <col key={c.key} style={c.width ? { width: c.width } : undefined} />)}
+                {cols.map((c) => <col key={c.key} style={c.width ? { width: c.width } : undefined} />)}
               </colgroup>
               <thead className="bg-paper-2/50 text-3xs uppercase tracking-wider text-ink-3 font-semibold">
                 <tr>
-                  {WORKLIST_COLS.map((c) => (
+                  {cols.map((c) => (c.key === "select" ? (
+                    <th key={c.key} scope="col" className="pl-3 pr-1 py-2 text-left">
+                      <input
+                        type="checkbox"
+                        aria-label={allOn ? "Untick every customer on screen" : "Tick every customer on screen"}
+                        className="cursor-pointer accent-amber align-middle"
+                        checked={allOn}
+                        ref={(el) => { if (el) el.indeterminate = someOn && !allOn; }}
+                        onChange={(e) => tick(shown.map((r) => r.key), e.target.checked)}
+                      />
+                    </th>
+                  ) : (
                     <th key={c.key} scope="col" className={`px-3 py-2 ${c.align === "right" ? "text-right" : "text-left"}`}>{c.label}</th>
-                  ))}
+                  )))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
                 {shown.map((r) => (
-                  <tr key={r.key} className="align-top hover:bg-paper-2/40">
+                  <tr key={r.key} className={`align-top hover:bg-paper-2/40 ${selected.has(r.key) && canBulk ? "bg-amber-soft/40" : ""}`}>
+                    {canBulk && <td className="pl-3 pr-1 py-2"><RowTick r={r} on={selected.has(r.key)} onTick={tick} /></td>}
                     <td className="px-3 py-2">
                       <div className="font-medium text-ink truncate" title={r.customerName}><CustomerName r={r} canOpen={canOpen} /></div>
                       <div className="flex items-center gap-1.5 min-w-0 mt-0.5">
@@ -295,24 +340,46 @@ export default function CollectionsPage() {
           stillOwes={dlgRow.amountDue > 0}
           payments={dlgRow.payments}
           amountDue={dlgRow.amountDue}
-          onRemind={() => setDialog({ kind: "remind", key: dlgRow.key })}
+          onRemind={() => setDialog({ kind: "send", key: dlgRow.key })}
         />
       )}
-      {dialog?.kind === "remind" && dlgRow?.customerId && (
-        <ReminderDialog
+      {/* R-2413: the ⋯ menu's ONE "Send reminder" — This invoice or Full statement (R-2412). */}
+      {dialog?.kind === "send" && dlgRow?.customerId && (
+        <SendReminderDialog
           open
           onOpenChange={closeIf}
           customerId={dlgRow.customerId}
           customerName={dlgRow.customerName}
         />
       )}
-      {dialog?.kind === "dues" && dlgRow?.customerId && (
-        <PendingDuesDialog
-          open
-          onOpenChange={closeIf}
-          customerId={dlgRow.customerId}
-          customerName={dlgRow.customerName}
-        />
+
+      {canBulk && (
+        <>
+          {bulk?.kind === "assign" && (
+            <BulkAssignDialog
+              open
+              onOpenChange={(o) => { if (!o) setBulk(null); }}
+              rows={bulk.rows}
+              team={team}
+              inactiveIds={inactiveIds}
+              onDone={(failedKeys) => setSelected(new Set(failedKeys))}
+            />
+          )}
+          {(bulk?.kind === "reminder" || bulk?.kind === "statement") && (
+            <BulkSendDialog
+              open
+              onOpenChange={(o) => { if (!o) setBulk(null); }}
+              mode={bulk.kind}
+              rows={bulk.rows}
+              onDone={(failedKeys) => setSelected(new Set(failedKeys))}
+            />
+          )}
+          <BulkActionBar count={selectedRows.length} noun="customer" onClear={() => setSelected(new Set())}>
+            <BulkBarButton icon="user" onClick={() => openBulk("assign")}>Assign owner</BulkBarButton>
+            <BulkBarButton icon="send" onClick={() => openBulk("reminder")}>Send reminder</BulkBarButton>
+            <BulkBarButton icon="file" onClick={() => openBulk("statement")}>Send statement</BulkBarButton>
+          </BulkActionBar>
+        </>
       )}
       {canPay && dialog?.kind === "pay" && dlgRow?.customerId && (
         <MultiInvoicePaymentDialog
@@ -323,6 +390,19 @@ export default function CollectionsPage() {
         />
       )}
     </div>
+  );
+}
+
+/** R-2413: one row's tick box (desktop cell and phone card). */
+function RowTick({ r, on, onTick, className }: { r: CollectionRow; on: boolean; onTick: (keys: readonly string[], on: boolean) => void; className?: string }) {
+  return (
+    <input
+      type="checkbox"
+      aria-label={`Select ${r.customerName}`}
+      className={`cursor-pointer accent-amber shrink-0 ${className ?? ""}`}
+      checked={on}
+      onChange={(e) => onTick([r.key], e.target.checked)}
+    />
   );
 }
 

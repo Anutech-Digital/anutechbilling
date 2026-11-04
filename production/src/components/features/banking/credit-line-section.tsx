@@ -31,6 +31,9 @@ import {
 } from "@/lib/accounting/credit-line";
 import { lenderInNarration } from "@/lib/banking/loan-disbursal-lines";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
+import { useLoanInterestTds, useRefreshLoanInterestTds } from "@/lib/queries/loan-interest-tds";
+import { useComplianceProfile } from "@/lib/compliance/profile";
+import { paymentTdsAdvice, sectionLabel, fyStartOf } from "@/lib/accounting/loan-interest-tds";
 
 type Txn = { id: string; credit: number | null; debit: number | null; txn_date: string; description: string | null };
 
@@ -59,7 +62,25 @@ export function CreditLineSection({ transaction, onDone, onFooterSave }: {
 
   /* Money out: interest-only by default (the monthly ACH); type the interest → the rest is principal. */
   const [interest, setInterest] = React.useState(String(line));
+  /* R-2376: TDS on interest to a non-bank lender (s.393(1) T5(iii), old 194A). The box stays 0
+     unless the owner fills it: the split says what is due on this interest and offers "Keep ₹X
+     back" (one click, the owner confirms by reconciling); an unmarked lender or an unanswered
+     tax-audit question is said here too, not only on Business Loans. Read only for money out. */
   const [tds, setTds] = React.useState("0");
+  const refreshTds = useRefreshLoanInterestTds();
+  const tdsQ = useLoanInterestTds(!isIn);
+  const profileQ = useComplianceProfile();
+  const loanRows = loansQ.data;
+  const businessType = profileQ.data?.businessType ?? null;
+  const tdsAdvice = React.useMemo(() => {
+    const d = tdsQ.data;
+    if (isIn || !loan || !d?.ready) return { status: "none" as const, amount: 0 };
+    const raw = (loanRows ?? []).find((l) => l.id === loan.id);
+    return paymentTdsAdvice({
+      events: d.events, settings: d.settings, businessType,
+      lender: loan.lender, lenderType: raw?.director_id ? "non_bank" : null, on: transaction.txn_date, interest: num(interest),
+    });
+  }, [tdsQ.data, businessType, isIn, loan, loanRows, transaction.txn_date, interest]);
   const [principalTxt, setPrincipalTxt] = React.useState<string | null>(null);
   const principal = principalTxt !== null ? num(principalTxt) : principalFromLine(line, num(interest), num(tds));
   const errors = !isIn && loan
@@ -72,6 +93,8 @@ export function CreditLineSection({ transaction, onDone, onFooterSave }: {
     else {
       if (errors.length > 0) return;
       await repay.mutateAsync({ txnId: transaction.id, loanId: loan.id, principal, interest: num(interest), tds: num(tds) });
+      /* R-2376: the next repayment's TDS figure must count this one. */
+      refreshTds();
     }
     onDone();
   }
@@ -145,6 +168,21 @@ export function CreditLineSection({ transaction, onDone, onFooterSave }: {
                 {num(tds) > 0 && <> · {rupee(num(tds))} TDS kept back (payable to the government)</>}.
                 TDS stays 0 unless you deducted it from the interest.
               </p>
+              {tdsAdvice.status !== "none" && tdsAdvice.amount > 0 && (
+                <div className="rounded-md border border-amber/40 bg-amber-soft/25 px-2.5 py-2 text-xs text-ink-2 flex flex-wrap items-center gap-2" data-testid="credit-line-tds-advice">
+                  <span>
+                    {tdsAdvice.status === "due" && <>TDS 10% is due to {loan.lender} on this interest: <b>{rupee(tdsAdvice.amount)}</b></>}
+                    {tdsAdvice.status === "ask_type" && <>TDS 10% ({rupee(tdsAdvice.amount)}) may be due — mark whether {loan.lender} is a bank on Accounting → Business Loans</>}
+                    {tdsAdvice.status === "ask_audit" && <>TDS 10% ({rupee(tdsAdvice.amount)}) may be due — answer the tax-audit question on Accounting → Business Loans</>}
+                    {" "}({sectionLabel(fyStartOf(transaction.txn_date))}).
+                  </span>
+                  {tdsAdvice.status === "due" && num(tds) !== tdsAdvice.amount && (
+                    <Button size="sm" variant="default" onClick={() => { setTds(String(tdsAdvice.amount)); setPrincipalTxt(null); }}>
+                      Keep {rupee(tdsAdvice.amount)} back
+                    </Button>
+                  )}
+                </div>
+              )}
               {errors.length > 0 && <ul className="text-xs text-rose-ink space-y-0.5">{errors.map((e) => <li key={e}>{e}</li>)}</ul>}
             </div>
           )}

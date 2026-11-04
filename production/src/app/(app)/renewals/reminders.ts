@@ -10,7 +10,7 @@
 import { decideCadence, effectiveGraceDays, renewalIsSettled, renewalStateLabel, type RenewalState } from "@/lib/renewals/cadence";
 import { describeError } from "@/lib/errors/toast-error";
 import { cleanDisplayName } from "@/lib/utils";
-import { isFlexNextPart } from "@/lib/renewals/buckets";
+import { isFlexNextPart, FLEX_PART_SKIP_REASON } from "@/lib/renewals/buckets";
 
 export interface RenewalSubLike {
   id: string;
@@ -56,19 +56,51 @@ export function isTerminalRenewal(
  * so those are not mailed from here. Never suspended / settled-renewed.
  */
 export function bulkReminderTargets<T extends RenewalRowLike>(rows: T[], today: Date = new Date(), tenantGraceDays = 0): T[] {
-  return rows.filter((r) => {
-    if (r.sub.auto_renew === false) return false;   // R-2225: they said Won't renew — no reminder
-    if (r.daysUntil > 30) return false;
-    if (isFlexNextPart(r.sub, r.daysUntil)) return false;   // R-2232: a billing part, not a renewal
-    if (isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today)) return false;
-    if (r.daysUntil >= 0) return true;
-    if (!r.sub.renewal_date) return false;
-    const grace = effectiveGraceDays({ tenantGraceDays, renewalDate: r.sub.renewal_date, graceUntil: r.sub.grace_until ?? null });
-    return -r.daysUntil <= grace;
-  });
+  return bulkReminderPlan(rows, today, tenantGraceDays).send;
 }
 
-export function bulkReminderConfirm(targets: RenewalRowLike[]): { title: string; body: string } {
+/** R-2431: a row Bulk reminder leaves out on purpose — named in the confirm. */
+export interface BulkReminderSkip<T extends RenewalRowLike = RenewalRowLike> {
+  row: T;
+  reason: string;
+}
+
+/**
+ * R-2431: who Bulk reminder emails (`send`, the rules above) and the rows it skips ON PURPOSE
+ * (`skipped`): a flex (monthly-commitment) part in the window — a renewal since R-2422, but its
+ * payment request goes out by itself on its billing date, so no reminder; it used to vanish from
+ * the count without a word. Won't renew / paid / stopped rows are not "skipped" — they are not
+ * due a reminder at all.
+ */
+export function bulkReminderPlan<T extends RenewalRowLike>(
+  rows: T[], today: Date = new Date(), tenantGraceDays = 0,
+): { send: T[]; skipped: BulkReminderSkip<T>[] } {
+  const send: T[] = [];
+  const skipped: BulkReminderSkip<T>[] = [];
+  for (const r of rows) {
+    if (r.sub.auto_renew === false) continue;   // R-2225: they said Won't renew — no reminder
+    if (r.daysUntil > 30) continue;
+    if (isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today)) continue;
+    if (isFlexNextPart(r.sub, r.daysUntil)) { skipped.push({ row: r, reason: FLEX_PART_SKIP_REASON }); continue; }
+    if (r.daysUntil >= 0) { send.push(r); continue; }
+    if (!r.sub.renewal_date) continue;
+    const grace = effectiveGraceDays({ tenantGraceDays, renewalDate: r.sub.renewal_date, graceUntil: r.sub.grace_until ?? null });
+    if (-r.daysUntil <= grace) send.push(r);
+  }
+  return { send, skipped };
+}
+
+/** R-2431: "Not emailed (2) — monthly (flex) — …: A, B." — empty when nothing was skipped. */
+export function bulkReminderSkipLine(skipped: readonly BulkReminderSkip[]): string {
+  if (skipped.length === 0) return "";
+  const byReason = new Map<string, string[]>();
+  for (const s of skipped) byReason.set(s.reason, [...(byReason.get(s.reason) ?? []), s.row.sub.customer_name]);
+  const parts = [...byReason].map(([reason, names]) =>
+    `${reason}: ${names.slice(0, 5).join(", ")}${names.length > 5 ? `, and ${names.length - 5} more` : ""}`);
+  return `Not emailed (${skipped.length}) — ${parts.join("; ")}.`;
+}
+
+export function bulkReminderConfirm(targets: RenewalRowLike[], skipped: readonly BulkReminderSkip[] = []): { title: string; body: string } {
   const n = targets.length;
   const names = targets.slice(0, 5).map((r) => r.sub.customer_name).join(", ");
   const more = n > 5 ? `, and ${n - 5} more` : "";
@@ -80,7 +112,7 @@ export function bulkReminderConfirm(targets: RenewalRowLike[]): { title: string;
     : "";
   return {
     title: `Email ${n} customer${n === 1 ? "" : "s"}?`,
-    body: `Each gets its renewal reminder for the step it is due (renewing in the next 30 days, or lapsed and still in grace).\n${names}${more}.${lapsedLine}`,
+    body: `Each gets its renewal reminder for the step it is due (renewing in the next 30 days, or lapsed and still in grace).\n${names}${more}.${lapsedLine}${skipped.length > 0 ? `\n${bulkReminderSkipLine(skipped)}` : ""}`,
   };
 }
 

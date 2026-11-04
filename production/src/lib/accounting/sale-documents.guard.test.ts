@@ -30,6 +30,10 @@ const SQL_SALE = new Set([
   "get_partner_metrics",   // invoiced this month (reseller children)
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  tg_tenants_lut_to_fy: "R-2444: checks only whether 0% export Tax Invoices of one FY exist, so an old writer of tenants.lut_number never drops the LUT they rely on; no amounts or totals",
+  delete_tenant_lut: "R-2444: counts the company's 0% export Tax Invoices of one FY (document_kind 'tax_invoice' — never an opening invoice) only to refuse deleting the LUT they rely on; no amounts or totals",
+  bank_line_kept_receipt_ref: "R-2430: reads only the quote_id of the ONE invoice a bank line is being matched to (by id), to find a kept receipt on that quote (R-2466: or on that opening invoice) — no amounts, lists or totals",
+  settle_invoice_payment_link: "R-2415: the invoices one paid Razorpay pay link was frozen for (by id) — checks each is open and its due, then record_payment books it; no list or total",
   personal_my_invoices: "R-2132: a personal login's own document list (like a customer portal) — shows each of its linked customer's invoices with its own amount and balance; it totals nothing and no report or GST figure reads it",
   quote_one_time_lines: "R-2095: only checks whether a live invoice already carries a quote's one-time lines (tag one_time_of) — no amounts",
   marketing_metrics_query: "R-2165: Neo's ad report — a received payment's own invoice by id for its taxable share (ex GST), same as R-1980 marketing-sales.ts; the revenue is the PAYMENT, not an invoice total",
@@ -38,10 +42,11 @@ const SQL_NOT_SALE: Record<string, string> = {
   zoho_books_import_apply: "R-1753: open Zoho invoices go in through import_opening_invoices (opening, never a sale)",
   zoho_books_import_undo: "R-1753: refuses while a created customer has other invoices; removes its own opening invoices",
   accept_project_quote: "creates a project invoice of ours",
-  bank_credit_open_items: "R-1838: lists a customer's unpaid invoices to take a bank receipt (opening invoices excluded: no quote / instalment link)",
+  bank_credit_open_items: "R-1838: lists a customer's unpaid invoices to take a bank receipt (R-2466: Zoho opening invoices too, kind opening — paid via _record_opening_invoice_payment); no totals",
   bank_old_one_off_bookings: "R-1863: lists bank lines booked as a one-off bank sale with their own invoice (only those reached through the line's payment → quote), to relink them",
-  reconcile_bank_credit_to_item: "R-1838: records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment",
-  bank_credit_pay_item: "R-2098: the body of reconcile_bank_credit_to_item (shared with reconcile_bank_credit_split) — records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment",
+  reconcile_bank_credit_to_item: "R-1838: records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment (R-2466: an opening invoice via _record_opening_invoice_payment)",
+  reconcile_bank_credit_fx_invoice: "R-2427: an export receipt on the ONE picked invoice (by id, locked) — its currency, rate and due decide the receipt, Bank Charges and forex lines; no list or total",
+  bank_credit_pay_item: "R-2098: the body of reconcile_bank_credit_to_item (shared with reconcile_bank_credit_split) — records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment (R-2466: an opening invoice via _record_opening_invoice_payment)",
   activate_quote_on_credit: "quote → our invoice",
   allocate_project_receipt: "payments on projects; sets paid_amount on the project invoice it raises (R-1995)",
   allocate_project_receipt_with_tds: "payments on projects + the customer's TDS; sets paid_amount on the project invoice it raises (R-1996; allocate_project_receipt calls it)",
@@ -99,6 +104,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   remove_opening_invoice_import: "removes opening invoices",
   tg_note_not_on_opening_invoice: "refuses notes on an opening invoice",
   tg_payments_opening_invoice: "payment ↔ opening invoice",
+  tg_partner_credit_note_to_child_bill: "R-2432: only checks the credit note's invoice belongs to the same company before reducing the reseller's mirrored bill",
 };
 
 function latestSqlFunctions(): Map<string, { file: string; body: string }> {
@@ -159,6 +165,8 @@ const TS_SALE = new Set([
   "src/components/features/collections/owner-report.tsx",        // R-2414: invoiced in the last 30 days, for DSO / CEI
 ]);
 const TS_NOT_SALE: Record<string, string> = {
+  "src/lib/payments/payment-link.server.ts": "R-2415: the open invoices (by id) a Send-reminder pay link may carry, and their due for the stale-link sweep — not a list or a total",
+  "src/app/(app)/renewals/last-paid-data.ts": "R-2422: the invoice numbers raised from one subscription's own quotes (by quote_id), to name what a payment paid on the Renewals row's Last paid — not a list or a total",
   "src/lib/payments/online-fee.server.ts": "R-2416: one invoice's online-fee waiver flag (by id) for the fee policy on capture — not a list or a total",
   "src/app/(app)/collections/leftover-tds-dialog.tsx": "R-2410: one invoice by id, to open its Record payment sheet in TDS mode — not a list or a total",
   "src/app/(public)/buy/workspace/thanks/fetch-order.ts": "R-1971: the number of this order's own GST invoice (by quote_id) for the buyer's thanks page — not a list or a total",

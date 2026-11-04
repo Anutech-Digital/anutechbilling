@@ -7,6 +7,12 @@
  * raises the payment request — R-808 / R-2044), not a renewal to chase. And a row whose renewal
  * quote was already generated still offered Send now next to "Open quote"; a Renewed row still
  * showed (disabled) Generate / Send now.
+ *
+ * R-2422 (Pardeep, 3 Nov — "monthly commitment to renewal hi hoga"): the first half is REVERSED.
+ * A flex (monthly-commitment) subscription IS a renewal: it is listed in the tabs and tiles like
+ * any renewal, its renewal date = the next monthly billing date, its amount = the monthly amount,
+ * and its row button is Bill next part (renewal-actions-rules, R-2095). Bulk reminder, the
+ * forecast and the sidebar badge (nav_badges SQL) are unchanged here.
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
@@ -31,7 +37,7 @@ const row = (id: string, daysUntil: number, over: Partial<Sub> = {}): ClassifyRo
   },
 });
 
-describe("R-2232: a flex sub's next month is a billing part, not a renewal row", () => {
+describe("R-2422: a flex (monthly-commitment) sub is a renewal row (R-2232's exclusion reversed)", () => {
   const flex = row("flex-gamma", 3, { term_months: 1, billing_cycle: "monthly", renewal_date: "2026-11-04" });
   const flexLater = row("flex-later", 20, { term_months: 1, billing_cycle: "monthly", renewal_date: "2026-11-21" });
   const annualPaidMonthly = row("annual-monthly", 3, { term_months: 12, billing_cycle: "monthly" });
@@ -40,23 +46,18 @@ describe("R-2232: a flex sub's next month is a billing part, not a renewal row",
 
   const g = classifyRenewals([flex, flexLater, annualPaidMonthly, annual, flexBehind], () => true, TODAY);
 
-  it("not in Urgent / Next 7 days / Upcoming / At risk", () => {
-    expect(g.due7.map((r) => r.sub.id)).toEqual(["annual-monthly", "annual"]);
-    expect(g.upcoming).toEqual([]);
-    expect(g.urgentTab.map((r) => r.sub.id)).not.toContain("flex-gamma");
-    expect(g.atRisk.map((r) => r.sub.id)).not.toContain("flex-gamma");
-    expect(g.atRisk.map((r) => r.sub.id)).not.toContain("flex-later");
-  });
-
-  it("counted apart as billing parts (so the page can say where they went)", () => {
-    expect(g.flexParts.map((r) => r.sub.id)).toEqual(["flex-gamma", "flex-later"]);
+  it("listed by its next monthly billing date, like any renewal (Next 7 days / Upcoming)", () => {
+    expect(g.due7.map((r) => r.sub.id)).toEqual(["flex-gamma", "annual-monthly", "annual"]);
+    expect(g.upcoming.map((r) => r.sub.id)).toEqual(["flex-later"]);
+    expect(g.urgentTab.map((r) => r.sub.id)).toContain("flex-gamma");
+    expect("flexParts" in g).toBe(false);
   });
 
   it("a flex sub whose part date has PASSED unbilled stays visible (Generate bills it — R-2095)", () => {
     expect(g.expired.map((r) => r.sub.id)).toEqual(["flex-behind"]);
   });
 
-  it("end of commitment still listed: annual term (paid monthly or yearly)", () => {
+  it("isFlexNextPart still tells a flex part apart (Bulk reminder / badge / Payment Follow-up use it)", () => {
     expect(isFlexNextPart(annualPaidMonthly.sub, 3)).toBe(false);
     expect(isFlexNextPart(annual.sub, 3)).toBe(false);
     expect(isFlexNextPart(flex.sub, 3)).toBe(true);
@@ -64,15 +65,15 @@ describe("R-2232: a flex sub's next month is a billing part, not a renewal row",
     expect(isFlexNextPart({ term_months: 1, billing_cycle: null }, 3)).toBe(false);
   });
 
-  it("Bulk reminder does not email a flex part", () => {
+  it("Bulk reminder still does not email a flex part (its payment request goes on its date)", () => {
     const targets = bulkReminderTargets([flex, annual], TODAY);
     expect(targets.map((r) => r.sub.id)).toEqual(["annual"]);
   });
 
-  it("forecast: flex is run-rate, never a renewal count", () => {
+  it("forecast (R-2431): flex is IN the total — one part in each month of the horizon, the annual one once", () => {
     const subs = [flex.sub, annual.sub].map((s) => ({ ...s, renewal_date: "2026-11-04" })) as unknown as Subscription[];
     const f = renewalForecast(subs, "2026-11-01");
-    expect(f.totalCount).toBe(1);
+    expect(f.totalCount).toBe(7);
     expect(f.flexCount).toBe(1);
   });
 });
@@ -121,12 +122,13 @@ describe("R-2232: the page wires the one rule", () => {
     expect(src.match(/renewalRowAction\(/g)?.length ?? 0).toBeGreaterThanOrEqual(2);
     expect(src).not.toMatch(/disabled=\{isNonRenewing\(sub\) \|\| isTerminalRenewal/);
   });
-  it("the sidebar badge leaves out a flex part (nav_badges SQL)", () => {
+  it("R-2431: the sidebar badge counts a flex part like any renewal (nav_badges SQL — R-2232's exclusion gone)", () => {
     const dir = join(process.cwd(), "supabase", "migrations");
     const files = readdirSync(dir).filter((f: string) => f.endsWith(".sql")).sort();
     const hit = files.filter((f: string) => /function\s+public\.nav_badges\s*\(/i.test(readFileSync(join(dir, f), "utf8"))).pop()!;
     const sql = readFileSync(join(dir, hit), "utf8");
     const line = sql.match(/^\s*'renewals',\s*(.*)$/m)?.[1] ?? "";
-    expect(line).toMatch(/not \(coalesce\(s\.term_months, 12\) <= 1 and s\.billing_cycle in \('monthly', 'quarterly', 'half_yearly'\) and s\.renewal_date >= v_today\)/);
+    expect(line).toContain("s.renewal_date <= v_today + 7");
+    expect(line).not.toMatch(/billing_cycle/);
   });
 });

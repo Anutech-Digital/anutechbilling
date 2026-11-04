@@ -47,8 +47,8 @@ const target = positional[0];
 
 if (!target && !flags.has("--self-test")) {
   console.log("Scenarios (node scripts/dev/scenario.mjs <name> [--reset | --clear]):\n");
-  for (const s of SCENARIOS) console.log(`  ${s.name.padEnd(16)} ${s.cards.join(", ").padEnd(40)} ${s.about}\n`);
-  console.log("  all              every scenario above\n  --self-test      load each twice + clear in a rolled-back transaction");
+  for (const s of SCENARIOS) console.log(`  ${s.name.padEnd(20)} ${s.cards.join(", ").padEnd(40)} ${s.about}\n`);
+  console.log("  all                  every scenario above\n  --self-test          load each twice + clear in a rolled-back transaction");
   process.exit(0);
 }
 const hostWhy = appHostLocalReason(host);
@@ -112,10 +112,22 @@ const scopeArgs = (s) =>
     sqlTextArray(s.scope.docs),
     s.scope.names.length ? sqlTextArray(s.scope.names) : "'{}'::text[]",
     s.scope.upis.length ? sqlTextArray(s.scope.upis) : "'{}'::text[]",
+    s.scope.extra?.length ? sqlTextArray(s.scope.extra) : "'{}'::text[]", // R-2458
   ].join(", ");
 const clearSql = (s, tag) => `select 'SCN|${tag}|${s.name}|' || pg_temp.scn_clear(${scopeArgs(s)})::text;`;
 const countSql = (s, tag) => `select 'SCN|${tag}|${s.name}|' || pg_temp.scn_count(${scopeArgs(s)})::text;`;
 const loadSql = (s) => readFileSync(join(scenarioDir, `${s.name}.sql`), "utf8") + "\n";
+
+/**
+ * R-2458: a scenario whose tables come from a migration this local DB may not have yet (`needs`, a SQL
+ * boolean) is skipped with the reason instead of failing the whole run — `npm run localhost:update` adds it.
+ */
+const needing = picked.filter((s) => s.needs);
+const needLines = needing.length
+  ? psql(needing.map((s) => `select 'NEED|${s.name}|' || (${s.needs.sql})::text;`).join("\n"))
+  : [];
+const missing = new Set(needLines.filter((l) => l.startsWith("NEED|") && l.endsWith("|false")).map((l) => l.split("|")[1]));
+const skipNote = (s) => `skipped — this local DB has no ${s.needs.what} yet: npm run localhost:update, then run it again`;
 
 /** The tester's app steps, as the E2E owner (the money RPCs check the caller's role). */
 const asOwner = (sql) => [
@@ -138,24 +150,29 @@ function results(lines) {
     });
 }
 
+/** R-2458: only the counts that are not 0 (35 keys per scenario now; all 0 prints {}). */
+const nz = (o) => JSON.stringify(o && Object.fromEntries(Object.entries(o).filter(([, v]) => v !== 0)));
+
 /* ── --self-test: every scenario loaded twice and cleared, in one rolled-back transaction ── */
 if (flags.has("--self-test")) {
   const parts = [header];
-  for (const s of SCENARIOS) {
+  const testable = SCENARIOS.filter((s) => !missing.has(s.name));
+  for (const s of testable) {
     parts.push(clearSql(s, "pre"), loadSql(s), countSql(s, "load1"), asOwner(s.selfTestUse ?? ""), countSql(s, "used"),
       clearSql(s, "reset"), loadSql(s), countSql(s, "load2"));
   }
-  for (const s of SCENARIOS) parts.push(clearSql(s, "clear"), countSql(s, "after-clear"));
+  for (const s of testable) parts.push(clearSql(s, "clear"), countSql(s, "after-clear"));
   parts.push("rollback;");
   const rs = results(psql(parts.join("\n")));
   let bad = 0;
   for (const s of SCENARIOS) {
+    if (missing.has(s.name)) { console.log(`- ${s.name}: ${skipNote(s)}`); continue; }
     const get = (tag) => rs.find((r) => r.name === s.name && r.tag === tag)?.data;
     const l1 = get("load1"), used = get("used"), l2 = get("load2"), gone = get("after-clear");
     const same = sameCounts(l1, s.expect) && sameCounts(l2, s.expect);
     const empty = gone && Object.entries(gone).every(([, v]) => v === 0);
-    console.log(`${same && empty ? "✓" : "✗"} ${s.name}: load ${JSON.stringify(l1)} · after app steps ${JSON.stringify(used)} · reset+reload ${JSON.stringify(l2)} · after clear ${JSON.stringify(gone)}`);
-    if (!same) console.log(`    expected ${JSON.stringify(s.expect)}`);
+    console.log(`${same && empty ? "✓" : "✗"} ${s.name}: load ${nz(l1)} · after app steps ${nz(used)} · reset+reload ${nz(l2)} · after clear ${nz(gone)}`);
+    if (!same) console.log(`    expected ${nz(s.expect)}`);
     if (!same || !empty) bad++;
   }
   console.log(bad ? `\n${bad} scenario(s) wrong — nothing kept (rolled back).` : "\nAll scenarios load, reload without duplicates and clear to zero (rolled back — nothing kept).");
@@ -164,8 +181,12 @@ if (flags.has("--self-test")) {
 
 /* ── load / reset / clear ── */
 const clearOnly = flags.has("--clear");
+const runnable = picked.filter((s) => !missing.has(s.name));
+for (const s of picked.filter((x) => missing.has(x.name))) console.log(`■ ${s.name} — ${skipNote(s)}
+`);
+if (!runnable.length) die("nothing to load on this DB");
 const parts = [header];
-for (const s of picked) {
+for (const s of runnable) {
   parts.push(clearSql(s, "cleared"));
   if (!clearOnly) parts.push(loadSql(s), countSql(s, "loaded"));
 }
@@ -173,15 +194,15 @@ parts.push("commit;");
 const rs = results(psql(parts.join("\n")));
 
 console.log(`${E2E_TENANT_NAME} (${tenantId}) · local DB ${container}\n`);
-for (const s of picked) {
+for (const s of runnable) {
   const cleared = rs.find((r) => r.name === s.name && r.tag === "cleared")?.data ?? {};
   const removed = Object.values(cleared).reduce((a, b) => a + b, 0);
   console.log(`■ ${s.name} — for ${s.cards.join(", ")}`);
-  console.log(`  ${removed ? `removed the earlier rows (${JSON.stringify(cleared)})` : "no earlier rows"}`);
+  console.log(`  ${removed ? `removed the earlier rows (${nz(cleared)})` : "no earlier rows"}`);
   if (clearOnly) { console.log(""); continue; }
   const loaded = rs.find((r) => r.name === s.name && r.tag === "loaded")?.data;
   const ok = sameCounts(loaded, s.expect);
-  console.log(`  ${ok ? "✓" : "✗"} loaded ${JSON.stringify(loaded)}`);
+  console.log(`  ${ok ? "✓" : "✗"} loaded ${nz(loaded)}`);
   console.log(`  ${s.about}`);
   console.log("  Open (signed in as the E2E owner):");
   for (const p of s.pages) console.log(`    ${pageUrl(host, p.path)}\n      → ${p.for}`);

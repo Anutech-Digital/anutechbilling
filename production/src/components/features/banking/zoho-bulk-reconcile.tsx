@@ -15,6 +15,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useQueryClient } from "@tanstack/react-query";
 
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription,
@@ -27,17 +28,20 @@ import { useCustomers, useCreateCustomer } from "@/lib/queries/customers";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useItems } from "@/lib/queries/items";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
+import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
+import type { PayForResult } from "@/lib/banking/credit-pay-for";
 import { useNewSaleFromBankCredit, usePayItemFromBankCredit } from "@/lib/queries/bank-credit-pay-for";
 import { istToday } from "@/lib/dates/ist";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
+import { useTenantLuts } from "@/lib/queries/tenant-luts";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 import {
   BULK_PAGE, planAll, type BulkMatchRow, type PlanContext, type PlanRow,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 import { expectedPageCost, paceWaitMs, ZOHO_BUSY_WAIT_MS, type PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
-import { bookRows, payOpeningInvoice, type BookDeps, type BookedRow, type BookRun, type NewCustomerPayload, type SubForFix } from "./zoho-bulk-book";
+import { bookRows, newSaleFxArgs, payOpeningInvoice, type BookDeps, type BookedRow, type BookRun, type NewCustomerPayload, type SubForFix } from "./zoho-bulk-book";
 import { ZohoBulkTable } from "./zoho-bulk-table";
 
 export const ZOHO_BULK_URL = "/api/integrations/zoho-books/bulk-match";
@@ -85,10 +89,17 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const { data: catalog } = useItems();
   const memory = usePayerMemory();
   const gst = useGstRegistration();
+  /* R-2440 / R-2444: the company's LUTs per FY (Settings → Company → LUT) — an export receipt is booked
+     at 0% only under the LUT of its own FY. Not loaded yet → no plan (never "covered by default");
+     loaded with none for that FY → the export row is unticked with the step. */
+  const luts = useTenantLuts(open);
+  const lutRows = luts.data;
+  const lutError = luts.isError;
   const createCustomer = useCreateCustomer();
   const setLinePayer = useSetBankLinePayer();
   const newSale = useNewSaleFromBankCredit();
   const payItem = usePayItemFromBankCredit();
+  const qc = useQueryClient();
 
   const [ids, setIds] = React.useState<string[] | null>(null);
   const [cursor, setCursor] = React.useState(0);
@@ -115,13 +126,16 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   }, [open, accountId]);
 
   const ctx: PlanContext | null = React.useMemo(() => {
-    if (!customers || !subscriptions || !catalog) return null;
+    /* A failed LUT read → planned as "no LUT" (fail closed: export rows unticked, never "covered by
+       default"); reopening the sheet reads again. */
+    if (!customers || !subscriptions || !catalog || (!lutRows && !lutError)) return null;
     return {
       customers, subscriptions, catalog: catalog.filter((i) => i.is_active),
       payers: memory.payers, ownNames: memory.ownNames, noGst: Boolean(billOfSupplyStatus(gst.data?.saved ?? null)),
       today: istToday(),
+      lut: lutRows ?? [],
     };
-  }, [customers, subscriptions, catalog, memory.payers, memory.ownNames, gst.data]);
+  }, [customers, subscriptions, catalog, memory.payers, memory.ownNames, gst.data, lutRows, lutError]);
 
   const plan: PlanRow[] = React.useMemo(() => {
     if (!ctx) return [];
@@ -212,6 +226,29 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
     setPayer: (a) => setLinePayer.mutateAsync(a),
     newSale: (i) => newSale.mutateAsync(i),
     payItem: (i) => payItem.mutateAsync(i),
+    /* R-2425: an export receipt — one atomic call books the sale and stamps its currency + rate. */
+    newSaleFx: async (i, fx) => {
+      const { data, error } = await (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> })
+        .rpc("reconcile_bank_credit_new_sale_fx", newSaleFxArgs(i, fx));
+      if (error) throw error;   // the PostgREST error itself — describeError maps its code
+      if (!data) throw new Error("The sale was not confirmed — refresh the page to see whether it was saved.");
+      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+      qc.invalidateQueries({ queryKey: ["bank_credit_open_items"] });
+      invalidateReceivables(qc);
+      return data as PayForResult;
+    },
+    /* R-2427: an export receipt paying an invoice in its currency — receipt + Bank Charges / forex lines in one call. */
+    payFxInvoice: async (args) => {
+      const { data, error } = await (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> })
+        .rpc("reconcile_bank_credit_fx_invoice", args);
+      if (error) throw error;
+      if (!data) throw new Error("The payment was not confirmed — refresh the page to see whether it was saved.");
+      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+      qc.invalidateQueries({ queryKey: ["bank_credit_open_items"] });
+      qc.invalidateQueries({ queryKey: ["expenses"] });
+      invalidateReceivables(qc);
+      return data as PayForResult;
+    },
     payOpening: (i) => payOpeningInvoice(i, accountId, (fn, args) => (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> }).rpc(fn, args)),
     saleSubscriptions: async (quoteId) => {
       const { data, error } = await createClient().from("subscriptions")
@@ -223,7 +260,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       const { error } = await createClient().from("subscriptions").update({ start_date: start, renewal_date: renewal }).eq("id", subId);
       if (error) throw new Error(error.message);
     },
-  }), [createCustomer, setLinePayer, newSale, payItem, accountId]);
+  }), [createCustomer, setLinePayer, newSale, payItem, accountId, qc]);
 
   const book = async () => {
     setPhase("booking"); setFailure(null); setLastRun(null);

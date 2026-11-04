@@ -14,6 +14,12 @@
  *     the picker, else the most overdue one. Its amount and its UPI pay link only; `lines` lists
  *     every open bill for the picker, `payLinkNotice` says why there is no link and the fix (§24).
  *     A bill that is no longer open → 409 (never another bill's money).
+ *   • R-2413 bulk "Send reminder": `standard: true` drafts the plain template (no AI call), so
+ *     ticking 20 customers does not make 20 AI calls; every amount still comes from the books.
+ *   • R-2415: the bill's ONE Razorpay pay link (card / UPI / net banking) goes into the message
+ *     next to the UPI link — made on the first Send reminder, the same link on every later one,
+ *     replaced when the amount changes (lib/payments/payment-link.server). `cardLink` says what it
+ *     asks for; `cardLinkNotice` says why there is none and the fix (§24). Razorpay sends nothing.
  */
 import { z } from "zod";
 import { withRoute, RouteError } from "@/lib/api/with-route";
@@ -21,9 +27,11 @@ import { resolveGeminiConfig } from "@/lib/ai/gemini";
 import { trustedOrigin } from "@/lib/app-url";
 import { istToday } from "@/lib/dates/ist";
 import {
-  buildReminderContext, emailTarget, payLinkNotice, reminderLineChoices, whatsappTarget,
+  buildReminderContext, buildReminderTemplate, emailTarget, payLinkNotice, reminderLineChoices, whatsappTarget,
 } from "@/lib/collections/reminder-draft";
 import { draftReminder, loadReminderRaw } from "@/lib/collections/reminder-draft.server";
+import { withCardPayLink } from "@/lib/payments/payment-link";
+import { getOrCreateInvoicePayLink } from "@/lib/payments/payment-link.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -35,6 +43,8 @@ const bodySchema = z.object({
     kind: z.enum(["invoice", "subscription"]),
     id: z.string().trim().min(1).max(200),
   }).strict().optional(),
+  /** R-2413 bulk Send reminder: the plain template (no AI call) — one standard wording for many customers. */
+  standard: z.boolean().optional(),
 }).strict("Only the customer may be sent — reload the page and try again.");
 
 export const POST = withRoute(
@@ -67,15 +77,30 @@ export const POST = withRoute(
       throw new RouteError(409, "That bill is paid or closed now — pick another bill in the list, or choose Full statement.");
     }
 
-    const gemini = await resolveGeminiConfig(supabase, tenantId);
-    const draft = await draftReminder(ctx, gemini);
+    /* R-2413: a bulk send uses the standard wording — no AI call per customer. */
+    const draft = input.standard
+      ? { ...buildReminderTemplate(ctx), mode: "template" as const, note: null }
+      : await draftReminder(ctx, await resolveGeminiConfig(supabase, tenantId));
     const wa = whatsappTarget(loaded.customer.phone);
     const em = emailTarget(loaded.customer.email);
+    /* R-2415: the Razorpay link for exactly this bill — reused while its amount is unchanged.
+       Contact as the statement sends it: the checked number / address, never raw text. */
+    const card = await getOrCreateInvoicePayLink({
+      tenantId,
+      customerId: input.customerId,
+      scope: "invoice",
+      lines: ctx.lines.map((l) => ({ kind: l.kind, id: l.id, amountDue: l.amountDue })),
+      sellerName: ctx.sellerName,
+      customerName: loaded.customer.customerName,
+      customerEmail: em.ok ? em.to : null,
+      customerPhone: wa.ok ? `+${wa.to}` : null,
+    });
+    const message = card.link ? withCardPayLink(draft.message, card.link.url) : draft.message;
     const oldest = ctx.lines[0];
 
     return {
       subject: draft.subject,
-      message: draft.message,
+      message,
       mode: draft.mode,
       note: draft.note,
       amountDue: ctx.amountDue,
@@ -83,6 +108,8 @@ export const POST = withRoute(
       lines: reminderLineChoices(all),
       payLink: ctx.payLink,
       payLinkNotice: payLinkNotice(ctx),
+      cardLink: card.link,
+      cardLinkNotice: card.notice,
       whatsapp: wa.ok ? wa.to : null,
       whatsappBlocked: wa.ok ? null : wa.reason,
       email: em.ok ? em.to : null,

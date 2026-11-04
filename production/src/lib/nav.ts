@@ -33,6 +33,8 @@
  *   • allowedRoutesForRole() — which middleware uses as the route guard — returns the SAME
  *     set for every gated role. owner/manager gain only /today, /activity,
  *     /purchases/inbox and /scorecard, and middleware does not gate those two roles anyway.
+ *     (That was the S30 regroup; later cards add routes on purpose and nav-s30.test.ts lists
+ *     each one — e.g. R-2461 gave the accountant /purchases/inbox, 4 Nov 2026.)
  *   • Hrefs, ids, labels, icons and hints of every entry — with three exceptions: the
  *     duplicate rows' ids are gone (acc-pnl, acc-bs, acc-cf, acc-gst, acc-tds, acc-esi,
  *     acc-aging, acc-ledger, my-expenses-sales), "Reports Hub" is now "Reports" (it is
@@ -512,6 +514,7 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/mobile": "Install-as-app guide; linked from the account menu",
   "/attendance/kiosk": "Runs on the office kiosk device, not in a person's menu",
   "/platform": "Founder-only cross-tenant view; any other owner would be refused by the server",
+  /* R-2445 */ "/platform/gstin-claims": "Founder-only GSTIN-ownership queue; linked from Platform → Signups, the server refuses anyone else",
   "/aa/simulate-approval": "Mock consent screen for the bank-statement (Account Aggregator) test flow",
   /* R-1849: admitted by the Balance Sheet row (prefix); billing denied with it. */
   "/accounting/balance-sheet/profit-split": "Year-end profit split of a partnership; opened from Balance Sheet → partners' capital accounts",
@@ -666,9 +669,11 @@ export const APP_NAV: NavSection[] = [
     icon: "cart",
     items: [
       /* Was reachable only by URL. It is a queue — order mails waiting to be booked — so
-         it leads the group. owner/manager only, so no gated role's routes change; whether
-         billing should have it is a product call. */
-      { id: "purchase-inbox",  href: "/purchases/inbox",           label: "Purchase Inbox",       icon: "inbox", roles: OM, hint: "Order emails from Amazon & co. — review, then book as expense" },
+         it leads the group. R-2461 (4 Nov 2026, Pardeep): the accountant too — the
+         "From network" tab (canActOnNetwork = MONEY_WRITE_ROLES, the roles network_inbox
+         answers) admits them, so the row uses that same list and menu, guard and tab stay in
+         step. Whether billing should have it is still a product call. */
+      { id: "purchase-inbox",  href: "/purchases/inbox",           label: "Purchase Inbox",       icon: "inbox", roles: MONEY_WRITE_ROLES, hint: "Order emails from Amazon & co. — review, then book as expense" },
       /* "Vendor Portal & Bids" (/vendor-portal) was a child here until S35 (28 Sep 2026).
          It showed hardcoded demo bids saved to localStorage; the route now says "not built
          yet" and points back to Vendors / Purchase Orders. Not in the nav, on purpose. */

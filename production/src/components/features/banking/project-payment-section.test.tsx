@@ -25,6 +25,8 @@ vi.mock("@/lib/queries/project-receipts", () => ({
   useBookBankCreditAsProjectPayment: () => ({ mutateAsync: state.book, isPending: false }),
   receiptMilestones: () => [],
 }));
+/* R-2371: the guess reads the payer memory (known payers + our own names). */
+vi.mock("@/lib/queries/customer-payers", () => ({ usePayerMemory: () => ({ payers: [], ownNames: [] }) }));
 
 import { ProjectPaymentSection } from "./project-payment-section";
 import { ReconcileFooter, type FooterSave } from "./reconcile-who-tiles";

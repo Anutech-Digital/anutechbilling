@@ -20,6 +20,7 @@
 import { renewalRowAction, isSettledRenewed, type RowAction, type RowActionSub } from "@/app/(app)/renewals/row-action";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { effectiveGraceDays } from "@/lib/renewals/cadence";
+import { isFlexNextPart } from "@/lib/renewals/buckets";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 
 export const SEND_RENEWAL_QUOTE = "Send renewal quote";
@@ -69,7 +70,12 @@ export function renewalActionSet(
 
   let primary: RenewalActionSet["primary"] = null;
   let secondary: RenewalActionSet["secondary"] = null;
-  if (row.kind === "generate") {
+  /* R-2422: a monthly flex part not yet due is raised by the billing job on its date (R-2044) —
+     "Bill next part" before then would re-bill the current term, so nothing to bill yet. */
+  const flexNotDue = isFlexNextPart(sub, opts.daysUntil);
+  if (row.kind === "generate" && flexNotDue) {
+    /* no button here — renewalNextStep makes it Follow-up */
+  } else if (row.kind === "generate") {
     if (split) primary = { kind: "generate", label: BILL_NEXT_PART };
     else {
       primary = { kind: "send-now", label: SEND_RENEWAL_QUOTE };
@@ -92,4 +98,35 @@ export function renewalActionSet(
   }
 
   return { row, primary, secondary, notRenewing, graceOver };
+}
+
+// ─── R-2422: one next-step button + a ⋯ menu ─────────────────────────────────
+
+export const FOLLOW_UP = "Follow-up";
+
+/** What the ⋯ menu may hold, in the order it shows (the ending action last). */
+export type RenewalMenuItem = "create-quote" | "followup" | "nudge" | "voice" | "not-renewing";
+
+export interface RenewalNextStep {
+  /** The ONE visible button: the R-2401 rule's primary, else Follow-up; null = nothing to do here. */
+  button: { kind: RenewalButtonKind | "followup"; label: string } | null;
+  menu: RenewalMenuItem[];
+}
+
+/**
+ * R-2422 (Pardeep, 3 Nov — staging Renewals: six stacked buttons, ~4 rows a screen): the row
+ * shows ONE next-step button and a ⋯ menu for the rest — Payment Follow-up's pattern (R-2408).
+ * `followup` / `messaging` = the screen offers a Follow-up dialog / Nudge + Voice (Renewals does;
+ * Payment Follow-up's renewal rows have their own Follow-up, so they pass neither).
+ * Grace over keeps Renew anyway + Cancel side by side (R-2401), so Cancel is not in the menu.
+ */
+export function renewalNextStep(set: RenewalActionSet, offers: { followup: boolean; messaging: boolean }): RenewalNextStep {
+  const button: RenewalNextStep["button"] = set.primary
+    ?? (offers.followup ? { kind: "followup", label: FOLLOW_UP } : null);
+  const menu: RenewalMenuItem[] = [];
+  if (set.secondary) menu.push("create-quote");
+  if (offers.followup && button?.kind !== "followup") menu.push("followup");
+  if (offers.messaging) menu.push("nudge", "voice");
+  if (set.notRenewing && !set.graceOver) menu.push("not-renewing");
+  return { button, menu };
 }

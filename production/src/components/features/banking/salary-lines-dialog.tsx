@@ -32,8 +32,9 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, toTitleCase } from "@/lib/utils";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useEmployees, useSalaryPayments } from "@/lib/queries/payroll";
-import { useBookSalaryLines, type SalaryGroupInput, type SalaryGroupResult } from "@/lib/queries/salary-from-bank";
-import { parseSalaryNarration, matchEmployee, titleCaseName, compactName, payeeKey, bestNameVariant, alreadyInPayroll, type AlreadyInPayroll, type SalaryNarration } from "@/lib/banking/salary-lines";
+import { useBookSalaryLines, fnfPromptsFrom, type SalaryGroupInput, type SalaryGroupResult } from "@/lib/queries/salary-from-bank";
+import { parseSalaryNarration, matchEmployee, titleCaseName, compactName, payeeKey, bestNameVariant, alreadyInPayroll, salaryLineRisks, isFullAndFinalText, type AlreadyInPayroll, type SalaryLineRisk, type SalaryNarration } from "@/lib/banking/salary-lines";
+import { FnfExitPrompt, type FnfExitPromptInput } from "@/components/features/payroll/fnf-exit-prompt";
 
 interface Props {
   open: boolean;
@@ -76,6 +77,8 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
   const [period, setPeriod]   = React.useState<Record<string, string>>({});
   const [include, setInclude] = React.useState<Record<string, boolean>>({});
   const [results, setResults] = React.useState<SalaryGroupResult[] | null>(null);
+  /* R-2428: a full & final just booked → "Start exit for <name>?" (one at a time). */
+  const [fnfQueue, setFnfQueue] = React.useState<FnfExitPromptInput[]>([]);
 
   /* Defaults, once employees have loaded — recomputed when the dialog reopens. */
   React.useEffect(() => {
@@ -167,6 +170,53 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
     return `Already in payroll — ${who}'s ${month} salary is ${rupee(d.net)}. Skipped: pick ${who} as the employee to link this line to it.`;
   };
 
+  /* R-2428: the payee accounts each employee's salaries already went to (this account's
+     reconciled salary lines) — a NEW record to a different account is warned. */
+  const linkedByEmployee = React.useMemo(() => {
+    const byId = new Map(salaries.map((sp) => [sp.id, sp]));
+    const m = new Map<string, { keys: string[]; fnfPeriods: string[]; salaries: typeof salaries }>();
+    const slot = (emp: string) => {
+      let v = m.get(emp);
+      if (!v) { v = { keys: [], fnfPeriods: [], salaries: [] }; m.set(emp, v); }
+      return v;
+    };
+    for (const sp of salaries) slot(sp.employee_id).salaries.push(sp);
+    for (const t of transactions) {
+      if (t.matched_to_type !== "salary" || !t.matched_to_id) continue;
+      const sp = byId.get(t.matched_to_id);
+      if (!sp) continue;
+      const v = slot(sp.employee_id);
+      const k = payeeKey(t.description ?? "");
+      if (k && !v.keys.includes(k)) v.keys.push(k);
+      /* A Payroll-made record has no narration in its notes — its linked line tells the F&F. */
+      if (isFullAndFinalText(t.description ?? "")) v.fnfPeriods.push(sp.period);
+    }
+    return m;
+  }, [transactions, salaries]);
+
+  /** R-2428: before a NEW record for an existing employee — left already? before joining? … */
+  const NO_RISK: SalaryLineRisk = { block: null, warnings: [] };
+  const riskByTxn = React.useMemo(() => {
+    const m = new Map<string, SalaryLineRisk>();
+    for (const l of lines) {
+      const c = choice[l.txn.id] ?? "";
+      const emp = employees.find((e) => e.id === c);
+      const per = period[l.txn.id] ?? l.parsed.period;
+      if (!emp || salaries.some((sp) => sp.employee_id === c && sp.period === per)) continue;
+      const linked = linkedByEmployee.get(emp.id);
+      m.set(l.txn.id, salaryLineRisks({
+        employee: emp,
+        period: per,
+        lineKey: payeeKey(l.txn.description ?? ""),
+        knownKeys: linked?.keys ?? [],
+        salaries: linked?.salaries ?? [],
+        fnfPeriods: linked?.fnfPeriods ?? [],
+      }));
+    }
+    return m;
+  }, [lines, choice, period, employees, salaries, linkedByEmployee]);
+  const risksFor = (l: Line): SalaryLineRisk => riskByTxn.get(l.txn.id) ?? NO_RISK;
+
   /** What booking this line would do — or why it cannot. */
   const planFor = (l: Line): { ok: boolean; text: string } => {
     const inc = createsRecord(l) ? incentiveOf(l) : 0;
@@ -189,6 +239,8 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
       return { ok: true, text: `${emp} + new ${monthLabel(per)} salary record${split}` };
     }
     const rec = salaries.find((s) => s.employee_id === c && s.period === per);
+    const block = risksFor(l).block;
+    if (!rec && block) return { ok: false, text: block };
     if (!rec) return { ok: true, text: `New ${monthLabel(per)} salary record for ${nameOf(c)}${split}` };
     const remaining = rec.net - rec.paid_amount; // a paid record was caught by alreadyInPayroll above
     if (l.txn.debit > remaining) return { ok: false, text: `${monthLabel(per)} record has only ${rupee(remaining)} left to pay.` };
@@ -196,7 +248,9 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
   };
 
   /* A director's salary starts unticked: it is usually remuneration, not payroll. */
-  const isOn = (l: Line) => (include[l.txn.id] ?? !l.parsed.director) && planFor(l).ok;
+  /* R-2428: a line with a warning (before joining, after a full & final, another account…)
+     starts unticked too — the operator reads it and ticks it if it is right. */
+  const isOn = (l: Line) => (include[l.txn.id] ?? (!l.parsed.director && risksFor(l).warnings.length === 0)) && planFor(l).ok;
   const selected = lines.filter(isOn);
   const skipped = lines.flatMap((l) => {
     const dup = alreadyInPayrollFor(l);
@@ -227,7 +281,9 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
     }
 
     try {
-      setResults(await book.mutateAsync({ accountId, groups: [...groups.values()] }));
+      const res = await book.mutateAsync({ accountId, groups: [...groups.values()] });
+      setResults(res);
+      setFnfQueue(fnfPromptsFrom(res));
     } catch {
       /* hook shows the error */
     }
@@ -377,6 +433,11 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
                             )}
                           </div>
                           <p className={`mt-1 text-xs ${plan.ok ? "text-ink-3" : "text-rose-ink"}`}>{plan.text}</p>
+                          {plan.ok && risksFor(l).warnings.map((w) => (
+                            <p key={w} className="mt-1 text-xs text-amber-ink leading-snug">
+                              {w} {on ? "" : "Not ticked — tick it only if this salary is right."}
+                            </p>
+                          ))}
                           {/* Said in words, not only in a badge that read "director — unticked" even
                               after the operator had ticked it. Ticked, it warns what booking here does. */}
                           {l.parsed.director && (
@@ -427,6 +488,7 @@ export function SalaryLinesDialog({ open, onOpenChange, accountId, transactions 
           )}
         </SheetFooter>
       </SheetContent>
+      <FnfExitPrompt prompt={fnfQueue[0] ?? null} onClose={() => setFnfQueue((q) => q.slice(1))} />
     </Sheet>
   );
 }

@@ -38,6 +38,7 @@ import {
 import { TDS_SECTIONS, tdsSplitFromNet } from "@/lib/accounting/tds-split";
 import { amountInIndianWords } from "@/lib/accounting/amount-words";
 import { guessCustomer } from "@/lib/banking/credit-pay-for";
+import { usePayerMemory } from "@/lib/queries/customer-payers";
 import {
   fifoAllocate, receiptCheck, pickProjectForReceipt, projectReceiptPayload, hintLink, projectsForPicker, type KistRow,
 } from "@/lib/banking/project-receipt-allocation";
@@ -108,7 +109,9 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
   /* R-2004 — the customer chosen in "Who paid?" wins; the bank-line guess is used only when no
      customer is chosen. The picker lists only the chosen customer's projects (none chosen → all,
      the guessed customer's first). */
-  const guessed = React.useMemo(() => guessCustomer(txn, customers), [txn, customers]);
+  /* R-2371: with the payer memory — our own name in the narration is never the customer. */
+  const payerMemory = usePayerMemory();
+  const guessed = React.useMemo(() => guessCustomer(txn, customers, [], payerMemory), [txn, customers, payerMemory]);
   const chosen = customerId || null;
   const ordered = React.useMemo(
     () => projectsForPicker(projects ?? [], chosen, guessed?.customerId ?? null),

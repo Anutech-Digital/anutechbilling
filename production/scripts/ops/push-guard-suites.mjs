@@ -10,9 +10,22 @@
  * retry/breaker timers — its two repo scans now live in gemini-one-door.test.ts. Keep each listed
  * file a pure scan; a suite that sleeps or renders belongs in CI, not here.
  *
- * Adding one: a test that walks src/ (readdirSync/glob) or is a *ratchet* belongs here.
+ * Adding one: a *ratchet*, a migration/deploy/security scan, or a cross-area src/ walker belongs
+ * here; a slow scan that pins ONE feature's own wiring goes in CI_ONLY_GUARD_SUITES (R-2443).
  * tests/push-guard-suites.test.ts fails if a listed file is gone or a *ratchet* test is missing.
  * Paths are relative to production/.
+ *
+ * R-2443 (3 Nov 2026): 89 files took 105–137 s on the busy laptop and every push holds the
+ * shared lock that long. Measured (same window, 3 rounds each): all 89 files 70/88/81 s; fewer
+ * forks is SLOWER (8 forks 61–119 s, 5 forks 71–120 s vs the default 45–49 s), and --no-isolate
+ * breaks pdf-text.test.ts — so the list got shorter instead. One worker, no contention: the test
+ * bodies are only ~42 s in total; the rest is each file's fork + imports, and under the full fork
+ * pool a whole-src walker swells ~13x (quote-sent-stage-wiring 3 s alone, 40 s in the pool). The
+ * ten slow feature-wiring files moved to CI_ONLY_GUARD_SUITES below: CI's `npm run test` (vitest
+ * run, every file in src/ + tests/, 2 shards) still runs them on every push, and the worker's FAST
+ * GATE (docs/WORKER-STEPS.md) runs that list by name before push (most of the names do not match
+ * the wiring or scan name globs). A file that turned CI red after skipping push (R-1592, R-1973) stays here.
+ * Run it: `node scripts/ops/push-guard-suites.mjs --ci-only` prints the paths, one per line.
  */
 export const PUSH_GUARD_SUITES = [
   // ── ratchets ──
@@ -55,12 +68,9 @@ export const PUSH_GUARD_SUITES = [
   "src/app/(app)/marketing/marketing-copy-english.test.ts",
   "src/app/api/public/_lib/db-error.test.ts",
   "src/app/api/v1/scope-gate.test.ts",
-  "src/components/providers/no-native-confirm.test.ts",
-  "src/components/ui/button-hover.test.tsx",
   "src/lib/ai/autonomy-chokepoint.test.ts",
   "src/lib/ai/gemini-one-door.test.ts", // R-1817: only the scans; gemini.test.ts (~35 s of real retry timers) runs in CI
   "src/lib/automation/cron-tenant-gate-scan.test.ts", // R-1818: every company-scoped cron asks cronTenantAllowed()
-  "src/lib/app-url-fallback.test.ts",
   // R-1592 (18 Oct): repo-wide scans only CI ran — dd34789d (R-1598) broke the R-723 raw-host scan
   // past the push gate and CI stayed red ~2 h.
   "src/lib/app-url.test.ts",
@@ -74,11 +84,8 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/feedback/internal-links.test.ts",
   "src/lib/feedback/route-map.test.ts",
   "src/lib/inbound/api-auth.wiring.test.ts",
-  "src/lib/inbound/round-trip.test.tsx",
-  "src/lib/keyboard/shortcuts.test.ts",
-  "src/lib/leads/quote-sent-stage-wiring.test.ts",
-  "src/lib/leads/unbounded-reads.wiring.test.ts",
   "src/lib/nav-links-resolve.test.ts",
+  "src/lib/nav-coverage.test.ts", // R-2443: 3 Nov 6bdaeb0e (R-2445) went red in CI on it — a new page not in the menu; ~20 ms
   "src/lib/nav-s30.test.ts",
   "src/lib/nav.test.ts",
   "src/lib/ops/cron-report.wiring.test.ts",
@@ -86,14 +93,11 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/pdf/pdf-money.test.ts",
   "src/lib/pdf/pdf-text.test.ts",
   "src/lib/queries/no-seed-tenant.test.ts",
-  "src/lib/quotes/auto-quote-wiring.test.ts",
   "src/lib/ui/grid-flow-col-reset.test.ts",
   "src/site/busy-feedback.test.ts",
-  "src/site/cart-lines-priceable.test.ts",
   "src/site/lib/data/quote-catalog.test.ts",
   "src/site/lib/site-invariants.test.ts",
   "src/site/lib/sla.test.ts",
-  "src/site/lib/whatsapp-one-source.test.ts",
   "src/site/plus-price-hidden.test.ts",
   "src/site/silent-disabled-buttons.test.ts",
   "src/site/support-page.test.ts",
@@ -114,14 +118,60 @@ export const PUSH_GUARD_SUITES = [
   "tests/ops/dev-local-resend.test.ts", // R-2106: dev:local never lets a send key (Resend/SMTP/…) through; cron:local secret = dev-local's
 ];
 
-/** Soft budget: the push prints a warning above this so the list gets trimmed, not ignored. */
-export const PUSH_GUARD_BUDGET_MS = 90_000;
+/**
+ * R-2443: guard files that run ONLY in CI (still on every push — ci.yml `npm run test`), not
+ * inside `worker-lock push`. Each is one feature's wiring or a unit test, slow under the push's
+ * fork pool, and none was the cause of a red CI the push should have caught (all came in with the
+ * first bulk list, R-385). Move a file back to PUSH_GUARD_SUITES if it ever turns CI red after a
+ * push. tests/push-guard-suites.test.ts pins: these exist, are not in the push list, and CI runs them.
+ */
+export const CI_ONLY_GUARD_SUITES = [
+  "src/lib/inbound/round-trip.test.tsx", // not a scan — imports QuotePDF (@react-pdf), ~28 s of imports; `vitest related` finds it
+  "src/lib/leads/quote-sent-stage-wiring.test.ts", // 40 s in the pool (3 s alone) — two whole-src walks
+  "src/lib/quotes/auto-quote-wiring.test.ts", // 25 s in the pool
+  "src/lib/leads/unbounded-reads.wiring.test.ts", // 15 s in the pool
+  "src/site/cart-lines-priceable.test.ts", // 19 s in the pool
+  "src/site/lib/whatsapp-one-source.test.ts", // 13 s in the pool
+  "src/lib/app-url-fallback.test.ts", // 13 s in the pool (the R-1592 raw-host scan app-url.test.ts stays on push)
+  "src/components/providers/no-native-confirm.test.ts", // 14 s in the pool
+  "src/lib/keyboard/shortcuts.test.ts", // 8 s in the pool
+  "src/components/ui/button-hover.test.tsx", // jsdom render, 8 s in the pool
+];
+
+/** Soft budget: the push prints a warning above this so the list gets trimmed, not ignored. R-2443: 90 → 60 s. */
+export const PUSH_GUARD_BUDGET_MS = 60_000;
+
+/** A vitest json `name` (absolute path) relative to production/ (`root`), forward slashes. */
+function relToRoot(name, root) {
+  const norm = (p) => String(p).replace(/\\/g, "/");
+  const r = norm(root).replace(/\/+$/, "") + "/";
+  const n = norm(name);
+  return n.toLowerCase().startsWith(r.toLowerCase()) ? n.slice(r.length) : n;
+}
+
+/**
+ * R-2443: the files with the longest TEST time in a vitest --reporter=json result (endTime −
+ * startTime: the tests themselves — a file's fork, imports and top-level code are not in the
+ * report), so an over-budget push names where to look first. [{ file, ms }], slowest first.
+ */
+export function slowestSuites(json, root, n = 5) {
+  return (json?.testResults ?? [])
+    .map((t) => {
+      const ms = Number(t.endTime) - Number(t.startTime);
+      return { file: relToRoot(t.name, root), ms: Number.isFinite(ms) && ms > 0 ? ms : 0 };
+    })
+    .sort((a, b) => b.ms - a.ms)
+    .slice(0, n);
+}
 
 /** Failed test files from a vitest --reporter=json result (paths relative to production/). */
 export function failedSuites(json, root) {
-  const norm = (p) => String(p).replace(/\\/g, "/");
-  const r = norm(root).replace(/\/+$/, "") + "/";
   return (json?.testResults ?? [])
     .filter((t) => t.status !== "passed")
-    .map((t) => { const n = norm(t.name); return n.toLowerCase().startsWith(r.toLowerCase()) ? n.slice(r.length) : n; });
+    .map((t) => relToRoot(t.name, root));
+}
+
+/* R-2443: `node scripts/ops/push-guard-suites.mjs --ci-only` prints the CI-only list for the fast gate. */
+if (process.argv[1] && /push-guard-suites\.mjs$/.test(process.argv[1].replace(/\\/g, "/")) && process.argv.includes("--ci-only")) {
+  console.log(CI_ONLY_GUARD_SUITES.join("\n"));
 }

@@ -4,7 +4,7 @@
  * Owner's example: SUPREME MEDIA & STUDIOS PRIVATE LIMITED, INV/26-27/0613, gptalents.in.
  */
 import { describe, it, expect } from "vitest";
-import { mapZohoCustomer, matchCatalogItem, normCompanyName, zohoKeptLine, zohoPrefill, zohoSaleNumber } from "./payment-prefill";
+import { mapZohoCustomer, matchCatalogItem, normCompanyName, zohoKeptLine, zohoPrefill, zohoSaleNumber, zohoUnconvertedProblem } from "./payment-prefill";
 import type { ZohoPaymentMatch } from "./payment-match";
 
 const customers = [
@@ -107,5 +107,53 @@ describe("R-2360 which Zoho number the sale keeps", () => {
     expect(zohoKeptLine({ external_number: "Z1", external_number_saved: true, invoice_issued: "INV-1" })).toEqual({ text: "Zoho invoice Z1 is kept on INV-1.", tone: "ok" });
     expect(zohoKeptLine({ external_number: "Z1", external_number_saved: false })?.tone).toBe("warn");
     expect(zohoKeptLine({ external_number: "Z1", external_number_error: "no" })?.text).toContain("was not kept");
+  });
+});
+
+/* R-2440 (independent review 2, R-2425 should-fix 3): when the money received does not fit Zoho's
+   USD rate, Find in Zoho leaves the prices in USD — the sheet showed a ₹1,024 sale against a ₹95,846
+   credit and a rushed Save booked ₹1,024 of sale + ₹94,822 of advance. Save stays blocked until
+   every price left in USD is typed in ₹. */
+describe("R-2440 Find in Zoho: no USD prices saved as rupees", () => {
+  const usdMatch = (): ZohoPaymentMatch => {
+    const m = match();
+    const l0 = { ...m.invoices[0].lines[0], name: "Website design", sku: null, qty: 1, rate: 1024, itemTotal: 1024, start: null, end: null, months: 0, domain: null };
+    return {
+      ...m,
+      payment: { ...m.payment, amount: 1024, currency: "USD", exchangeRate: 93.6 },
+      invoices: [{ ...m.invoices[0], amountApplied: 1024, total: 1024, lines: [l0] }],
+    };
+  };
+  it("money short of Zoho's rate (₹93,550 for $1,024 @ 93.6) → prices left in USD and Save is blocked with the reason", () => {
+    const p = zohoPrefill(usdMatch(), { customers, catalog, txnDate: "2026-08-05", credit: 93550 });
+    expect(p.lines[0].rate).toBe(1024);
+    expect(p.unconverted?.currency).toBe("USD");
+    const why = zohoUnconvertedProblem(p, p.lines);
+    expect(why).toContain("USD");
+    expect(why).toContain("₹");
+    expect(why).toContain("Website design");
+  });
+  it("once the owner types the price in ₹, Save is free", () => {
+    const p = zohoPrefill(usdMatch(), { customers, catalog, txnDate: "2026-08-05", credit: 93550 });
+    expect(zohoUnconvertedProblem(p, p.lines.map((l) => ({ ...l, rate: 93550 })))).toBeNull();
+  });
+  it("two lines: one typed in ₹, one still in USD → still blocked, naming the USD one", () => {
+    const m = usdMatch();
+    m.invoices[0].lines.push({ ...m.invoices[0].lines[0], name: "Hosting", rate: 100, itemTotal: 100 });
+    const p = zohoPrefill(m, { customers, catalog, txnDate: "2026-08-05", credit: 93550 });
+    const half = p.lines.map((l, i) => (i === 0 ? { ...l, rate: 85000 } : l));
+    const why = zohoUnconvertedProblem(p, half);
+    expect(why).toContain("Hosting");
+    expect(why).not.toContain("Website design");
+  });
+  it("converted at the bank's rate (money fits Zoho's rate) → nothing blocked", () => {
+    const p = zohoPrefill(usdMatch(), { customers, catalog, txnDate: "2026-08-07", credit: 95846 });
+    expect(p.unconverted).toBeNull();
+    expect(zohoUnconvertedProblem(p, p.lines)).toBeNull();
+  });
+  it("an INR payment, or no Zoho fill at all → nothing blocked", () => {
+    const p = zohoPrefill(match(), { customers, catalog, txnDate: "2026-07-21", credit: 27081 });
+    expect(p.unconverted).toBeNull();
+    expect(zohoUnconvertedProblem(null, [])).toBeNull();
   });
 });

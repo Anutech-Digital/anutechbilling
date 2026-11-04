@@ -37,6 +37,15 @@ insert into public.tenants (id, name, email, state_code, doc_code)
          ('dddddddd-0000-0000-0000-000000037202','R372 NoState','r372b@example.in',null,'Q372B');
 update public.tenants set gstin = '27AAAAA0000A1Z5' where id = 'dddddddd-0000-0000-0000-000000037202';
 
+
+-- R-2444: a 0% export invoice needs the company's LUT for its FY (trg_invoices_zz_export_lut) — this
+-- fixture's exports are made under one, for every FY from 2024-25 up to today's.
+insert into public.tenant_luts (tenant_id, fy_start, arn, valid_from, valid_upto)
+select t.id, g.fy::date, 'AD07TESTLUT' || to_char(g.fy, 'YY'), g.fy::date, (g.fy + interval '1 year' - interval '1 day')::date
+  from (values ('dddddddd-0000-0000-0000-000000037201'::uuid), ('dddddddd-0000-0000-0000-000000037202'::uuid)) as t(id),
+       generate_series('2024-04-01'::date, public.lut_fy_start(public.ist_today()), interval '1 year') as g(fy)
+on conflict (tenant_id, fy_start) do nothing;
+
 insert into public.customers (id, tenant_id, name, state_code, gstin, country) values
   ('cccccccc-0000-0000-0000-000000037201','dddddddd-0000-0000-0000-000000037201','NoState 372', null, null, 'India'),
   ('cccccccc-0000-0000-0000-000000037202','dddddddd-0000-0000-0000-000000037201','Karnataka 372', null, '29ABCDE1234F1Z5', 'India'),

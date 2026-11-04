@@ -19,6 +19,15 @@ begin;
 insert into public.tenants (id, name, email, state_code, doc_code)
   values ('ffffffff-0000-0000-0000-000000045f01', 'R045 Reseller', 'r045@example.in', '07', 'R45F');
 
+
+-- R-2444: a 0% export invoice needs the company's LUT for its FY (trg_invoices_zz_export_lut) — this
+-- fixture's exports are made under one, for every FY from 2024-25 up to today's.
+insert into public.tenant_luts (tenant_id, fy_start, arn, valid_from, valid_upto)
+select t.id, g.fy::date, 'AD07TESTLUT' || to_char(g.fy, 'YY'), g.fy::date, (g.fy + interval '1 year' - interval '1 day')::date
+  from (values ('ffffffff-0000-0000-0000-000000045f01'::uuid)) as t(id),
+       generate_series('2024-04-01'::date, public.lut_fy_start(public.ist_today()), interval '1 year') as g(fy)
+on conflict (tenant_id, fy_start) do nothing;
+
 insert into public.customers (id, tenant_id, name, country)
   values ('cccccccc-0000-0000-0000-000000045c01', 'ffffffff-0000-0000-0000-000000045f01', 'US Client', 'United States');
 

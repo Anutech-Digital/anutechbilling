@@ -29,6 +29,7 @@ import {
 import { daysElapsedInPeriod, prorateSalary } from "@/lib/payroll/proration";
 import { exitPayDays, onPayrollFor, employmentStatus } from "@/lib/payroll/exit";
 import { StartExitDialog } from "@/components/features/payroll/start-exit-dialog";
+import { AdjustSalaryLopDialog } from "@/components/features/payroll/adjust-salary-lop-dialog";
 import { MergeEmployeeDialog } from "@/components/features/payroll/merge-employee-dialog";
 import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysForYear } from "@/lib/payroll/holidays-india";
 import { computeEsi, isEsiEligible, esiStickyCovered, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
@@ -1017,6 +1018,8 @@ export function PayrollTab() {
   const [attendanceEmp, setAttendanceEmp] = React.useState<Employee | null>(null);
   /* Click a Net → how it was reached (salary, LOP, incentive, deductions, paid so far). */
   const [breakdownFor, setBreakdownFor] = React.useState<{ name: string; p: SalaryPayment } | null>(null);
+  /* R-2428: part-paid salary → set LOP so the net is what was really paid. */
+  const [lopFor, setLopFor] = React.useState<{ name: string; p: SalaryPayment } | null>(null);
   const undoSalary = useDeleteSalaryPayment();
   const confirm = useConfirm();
 
@@ -1229,7 +1232,7 @@ export function PayrollTab() {
                               <PayrollRowMenu
                                 e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                                 paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
-                                onYear={() => setCalendarFor(e)} onEdit={() => editSalary(e, p)} onUndo={() => undoSalaryFor(e, p)}
+                                onYear={() => setCalendarFor(e)} onEdit={() => editSalary(e, p)} onUndo={() => undoSalaryFor(e, p)} onAdjustLop={() => setLopFor({ name: e.name, p })}
                                 onReconcile={() => reconcileSalary(p)}
                               />
                             </>
@@ -1297,7 +1300,7 @@ export function PayrollTab() {
                           <PayrollRowMenu
                             e={e} p={p} canWrite={canWrite} me={meQ.data ?? null}
                             paidVia={p.bank_account_id ? acctName.get(p.bank_account_id) ?? null : null}
-                            onYear={() => setCalendarFor(e)} onEdit={() => editSalary(e, p)} onUndo={() => undoSalaryFor(e, p)}
+                            onYear={() => setCalendarFor(e)} onEdit={() => editSalary(e, p)} onUndo={() => undoSalaryFor(e, p)} onAdjustLop={() => setLopFor({ name: e.name, p })}
                             onReconcile={() => reconcileSalary(p)}
                           />
                         </>
@@ -1325,6 +1328,7 @@ export function PayrollTab() {
         </>
       )}
       {payFor && canWrite && <PaySalaryDialog employee={payFor} period={period} onClose={() => setPayFor(null)} />}
+      {lopFor && canWrite && <AdjustSalaryLopDialog name={toTitleCase(lopFor.name)} salary={lopFor.p} onClose={() => setLopFor(null)} />}
       <SalaryBreakdownDialog name={breakdownFor?.name ?? ""} record={breakdownFor?.p ?? null} onClose={() => setBreakdownFor(null)} />
       {editFor && canWrite && <EmployeeDialog employee={editFor} onClose={() => setEditFor(null)} />}
       {attendanceEmp && <AttendanceRegisterDialog employee={attendanceEmp} initialPeriod={period} onClose={() => setAttendanceEmp(null)} />}
@@ -1493,9 +1497,11 @@ async function generatePayslip(employee: Employee, payment: SalaryPayment, me: C
 
 /** One "…" menu per payroll row — full-year payroll, payslip, edit/undo (or a
  *  reconciled lock). `p` undefined → row not yet run. */
-function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onEdit, onUndo, onReconcile }: {
+function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onEdit, onUndo, onReconcile, onAdjustLop }: {
   e: Employee; p?: SalaryPayment; canWrite: boolean; me: CurrentUserInfo | null; paidVia: string | null;
   onYear: () => void; onEdit: () => void; onUndo: () => void; onReconcile?: () => void;
+  /** R-2428: part-paid → set loss of pay so the net is the amount actually paid. */
+  onAdjustLop?: () => void;
 }) {
   return (
     <DropdownMenu modal={false}>
@@ -1535,8 +1541,15 @@ function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onEdit, onUndo, o
         {p && p.paid_amount > 0 && (
           <>
             <DropdownMenuSeparator />
+            {/* R-2428: part-paid (e.g. a full & final smaller than the month) — the net can be
+                brought down to what was paid, as loss of pay, without un-reconciling. */}
+            {canWrite && onAdjustLop && p.paid_status !== "paid" && (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onAdjustLop}>
+                <Icon name="edit" size={15} /> Edit salary — set LOP
+              </DropdownMenuItem>
+            )}
             <DropdownMenuItem disabled className="gap-2.5 py-2 text-ink-3">
-              <Icon name="lock" size={15} /> Reconciled — un-reconcile to edit
+              <Icon name="lock" size={15} /> {p.paid_status === "paid" ? "Reconciled — un-reconcile to edit" : "Other changes — un-reconcile first"}
             </DropdownMenuItem>
           </>
         )}

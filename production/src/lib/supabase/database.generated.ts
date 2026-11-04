@@ -15833,6 +15833,7 @@ export type Database = {
         }
         Returns: Json
       }
+      import_inbound_purchase: { Args: { p_id: number }; Returns: Json }
       import_indiamart_lead: {
         Args: {
           p_company: string
@@ -16751,6 +16752,10 @@ export type Database = {
         Args: { p_employee_id: string; p_pin: string }
         Returns: undefined
       }
+      set_inbound_purchase_status: {
+        Args: { p_id: number; p_status: string }
+        Returns: string
+      }
       set_late_fee_mode: {
         Args: { p_entity_id: string; p_entity_type: string; p_mode: string }
         Returns: string
@@ -16824,6 +16829,15 @@ export type Database = {
       split_project_milestone: {
         Args: { p_amount: number; p_label: string; p_milestone_id: string }
         Returns: string
+      }
+      adjust_salary_lop: {
+        Args: {
+          p_lop_amount: number
+          p_lop_days: number
+          p_reason: string
+          p_salary_id: string
+        }
+        Returns: Json
       }
       start_employee_exit: {
         Args: {

@@ -36,7 +36,8 @@ import { linesBelowCost, NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-appro
 
 /* ─── Open items (rows of bank_credit_open_items) ──────────────────────────────────────── */
 
-export type OpenItemKind = "renewal" | "add_seats" | "new" | "one_off" | "invoice" | "instalment";
+/** R-2466: "opening" — an unpaid invoice imported from Zoho (R-1739, no quote). */
+export type OpenItemKind = "renewal" | "add_seats" | "new" | "one_off" | "invoice" | "instalment" | "opening";
 
 export interface OpenItem {
   kind: OpenItemKind;
@@ -57,6 +58,10 @@ export interface OpenItem {
   /** R-2213: the DB would refuse money on this item's quote (below cost, not approved) — the
    *  refusal text (lib/quotes/payment-approval.ts). null/absent = it can be paid. */
   approval_block?: string | null;
+  /** R-2466: the document's currency (INR when absent) and, when foreign, its ₹ rate (the invoice's,
+   *  else its quote's) — an export receipt pays it through reconcile_bank_credit_fx_invoice. */
+  currency?: string | null;
+  fx_rate?: number | null;
 }
 
 /** The key of an open item — an invoice when it has one, else its quote. */
@@ -71,7 +76,8 @@ export function kindLabel(kind: OpenItemKind): string {
     case "new":        return "New product";
     case "one_off":    return "One-time sale";
     case "instalment": return "Instalment invoice";
-    default:           return "Invoice";
+    case "opening":    return "Opening invoice (from Zoho)";
+    default:          return "Invoice";
   }
 }
 
@@ -111,6 +117,60 @@ export interface PayerMemory { payers: readonly KnownPayer[]; ownNames: readonly
  *  credit-match's NAME_NOISE: pvt, ltd, co, technologies, …). */
 const GENERIC_NAME_WORDS = new Set(["india", "indian", "group", "global", "international", "industries"]);
 
+/** R-2371 (3 Nov staging): trade words. "UPI-NOVA PRINTERS…" guessed "R K S PRINTERS" because
+ *  "printers" was the only word that customer's name had. A trade word may join a match ("acme
+ *  traders"), but on its own it never picks a customer — a guess needs a DISTINCTIVE word. */
+const TRADE_WORDS = new Set([
+  "printers", "printer", "printing", "traders", "trader", "trading", "associates", "consultants", "consultant",
+  "consultancy", "consulting", "agency", "agencies", "exports", "export", "imports", "impex", "overseas",
+  "ventures", "infotech", "infosystems", "software", "softwares", "communications", "communication",
+  "networks", "network", "electronics", "electricals", "electrical", "engineering", "engineers",
+  "constructions", "construction", "builders", "motors", "marketing", "media", "logistics", "travels",
+  "tours", "stores", "store", "mart", "academy", "institute", "foundation", "trust", "education",
+  "educational", "healthcare", "hospital", "pharma", "foods", "textiles", "fashions", "works", "labs",
+  "studio", "studios", "centre", "center", "tech", "info", "web", "online", "partners",
+]);
+
+/** R-2371: a name as its words in order — lower-case letters, short ones kept ("r k s printers"),
+ *  company noise (pvt, ltd, technologies, …) dropped. */
+function nameWords(s: string | null | undefined): string[] {
+  return (s ?? "").toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 0 && (w.length < 3 || customerNameTokens(w).length > 0));
+}
+
+/** R-2371: the narration without our OWN company name — the bank writes it on a credit ("…-ZENOVA
+ *  TECHNOLOGIES-…"), so it never says who paid. Only the whole name, in order, is taken out: our
+ *  UPI payee name "RAVI SHARMA" does not hide customer "Sharma Traders". */
+function withoutOwnNames(description: string | null | undefined, ownNames: readonly string[] | undefined): string[] {
+  let seq = nameWords(description);
+  for (const own of ownNames ?? []) {
+    const run = nameWords(own);
+    if (run.length === 0) continue;
+    const kept: string[] = [];
+    for (let i = 0; i < seq.length; i++) {
+      if (run.every((w, j) => seq[i + j] === w)) { i += run.length - 1; continue; }
+      kept.push(seq[i]);
+    }
+    seq = kept;
+  }
+  return seq;
+}
+
+/** R-2371: a customer named only by trade words ("Global Associates") still counts when the line
+ *  says its WHOLE name (two words or more), in order. "NOVA PRINTERS" is not "R K S PRINTERS". */
+function wholeNameSaid(name: string, said: string): boolean {
+  const ws = nameWords(name);
+  return ws.length >= 2 && said.includes(` ${ws.join(" ")} `);
+}
+
+/** R-2371: the name word a "certain" invoice match rests on, when its only identity is a name
+ *  (no invoice number in the narration) — from invoice-credit-match's reason text. */
+function nameOnlyHit(m: { reasons?: readonly string[] }): string | null {
+  const rs = m.reasons ?? [];
+  if (rs.some((r) => r.startsWith("Narration carries"))) return null;
+  for (const r of rs) { const hit = /^Narration says “(.+)”$/.exec(r)?.[1]; if (hit) return hit; }
+  return null;
+}
+
 /**
  * Who paid. Only a single, unambiguous answer:
  *   1. R-2007: the ONE customer whose name shares a DISTINCTIVE word with the narration — a word
@@ -122,6 +182,11 @@ const GENERIC_NAME_WORDS = new Set(["india", "indian", "group", "global", "inter
  * Anything else → no guess; the operator picks. A wrong guess posts a receipt to the wrong
  * customer, which is worse than no guess.
  *
+ * R-2371: our own company names (memory.ownNames) are taken out of the narration first; trade
+ * words (printers, traders, associates, …) never count as distinctive on their own (unless the
+ * line says the customer's whole name); and a certain invoice match resting only on such a word
+ * is no guess either.
+ *
  * R-2025 (4), before both: the payer the narration names (payerFromNarration) is a KNOWN payer
  * (customer_payers) of exactly one customer → that customer, "known payer for <customer>". Known
  * for two customers → no guess at all, even if a name word fits.
@@ -129,7 +194,7 @@ const GENERIC_NAME_WORDS = new Set(["india", "indian", "group", "global", "inter
 export function guessCustomer(
   credit: { description: string | null },
   customers: readonly CustomerLite[],
-  invoiceMatches: ReadonlyArray<{ customerName: string | null; confidence: string }> = [],
+  invoiceMatches: ReadonlyArray<{ customerName: string | null; confidence: string; reasons?: readonly string[] }> = [],
   memory?: PayerMemory,
 ): CustomerGuess | null {
   if (memory && memory.payers.length > 0) {
@@ -141,16 +206,24 @@ export function guessCustomer(
       if (c) return { customerId: c.id, reason: `known payer for ${c.name}`, payer: hit.payer };
     }
   }
-  const words = new Set(narrationNames(credit.description));
+  /* R-2371: our own name is bank boilerplate on a credit, never the payer. */
+  const seq = withoutOwnNames(credit.description, memory?.ownNames);
+  const words = new Set(narrationNames(seq.join(" ")));
+  const said = ` ${seq.join(" ")} `;
   const named = customers.map((c) => ({ c, toks: [...new Set(customerNameTokens(c.name))].filter((t) => !GENERIC_NAME_WORDS.has(t)) }));
   const howMany = new Map<string, number>();
   for (const n of named) for (const t of n.toks) howMany.set(t, (howMany.get(t) ?? 0) + 1);
   const own = named
     .map((n) => ({ c: n.c, words: n.toks.filter((t) => words.has(t) && howMany.get(t) === 1) }))
-    .filter((h) => h.words.length > 0);
+    .filter((h) => h.words.some((t) => !TRADE_WORDS.has(t)) || (h.words.length > 0 && wholeNameSaid(h.c.name, said)));
   if (own.length === 1) return { customerId: own[0].c.id, reason: `the bank line says “${own[0].words.join(" ")}”` };
 
-  const certain = invoiceMatches.filter((m) => m.confidence === "certain");
+  /* R-2371: a "certain" invoice match that rests only on our own name or a trade word is no guess. */
+  const certain = invoiceMatches.filter((m) => {
+    if (m.confidence !== "certain") return false;
+    const hit = nameOnlyHit(m);
+    return hit === null || (words.has(hit) && !TRADE_WORDS.has(hit));
+  });
   if (certain.length === 1 && certain[0].customerName) {
     const name = certain[0].customerName.trim().toLowerCase();
     const same = customers.filter((c) => c.name.trim().toLowerCase() === name);

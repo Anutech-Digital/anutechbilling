@@ -43,8 +43,10 @@ import type { OldOneOffBooking } from "@/lib/banking/credit-pay-for";
 import { useBankAdvancePaymentIds, useBankSplitLinePayments, useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
 import { bankRowStatusLabel, splitPaymentsTitle, type SplitLinePayment } from "@/lib/banking/bank-row-label";
 import { useCustomers } from "@/lib/queries/customers";
+import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { RelinkOneOffDialog } from "@/components/features/banking/old-one-off-bookings";
 import { InvoiceMatchChip } from "@/components/features/banking/invoice-match-chip";
+import { RemittanceText } from "@/components/features/banking/remittance-text";
 import { rupee, formatDate } from "@/lib/utils";
 import { ImportStatementDialog } from "@/components/features/banking/import-statement-dialog";
 import { SalaryLinesDialog, salaryLinesOf } from "@/components/features/banking/salary-lines-dialog";
@@ -190,14 +192,13 @@ export default function BankAccountDetailPage() {
   );
 
   /* R-1863: "Money in · no customer yet" — unmatched credits the Reconcile sheet cannot guess a
-     customer for (no name in the narration, no certain invoice match). */
+     customer for (no name in the narration, no certain invoice match). R-2371: same payer memory
+     as the sheet, so our own name in a narration is never a customer. */
   const { data: customers } = useCustomers({ enabled: canWrite && hasUnmatchedCredit });
-  const noCustomerIds = React.useMemo(() => new Set(
-    noCustomerYet(transactions ?? [], customers ?? [], (t) => matchCreditToInvoices(
-      { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference },
-      openInvoices ?? [],
-    )).map((t) => t.id),
-  ), [transactions, customers, openInvoices]);
+  const payerMemory = usePayerMemory();
+  const noCustomerIds = React.useMemo(() => new Set(noCustomerYet(transactions ?? [], customers ?? [], (t) => matchCreditToInvoices(
+    { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference }, openInvoices ?? [],
+  ), payerMemory).map((t) => t.id)), [transactions, customers, openInvoices, payerMemory]);
   /* R-1863: lines booked before R-1838 as a one-off "bank sale" — each can be relinked. */
   const { data: oldBookings } = useOldOneOffBookings(accountId, canWrite);
   const oldById = React.useMemo(() => new Map((oldBookings ?? []).map((b) => [b.txn_id, b])), [oldBookings]);
@@ -808,7 +809,7 @@ function TransactionRow({
       <td className="px-4 py-3 align-top">
         {/* Wrap (not truncate) so the full narration is readable at the default
             width — no need to widen the column and push other columns off. */}
-        <div className="font-medium text-ink break-words leading-snug">{txn.description}</div>
+        <div className="font-medium text-ink break-words leading-snug">{txn.description}<RemittanceText description={txn.description} /></div>
         {txn.reference && (
           <div className="text-xs text-ink-3 font-mono mt-0.5 break-all">{txn.reference}</div>
         )}
@@ -882,7 +883,7 @@ function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onRe
       <Card className={`p-3 transition-colors duration-700 ${highlighted ? HIGHLIGHT : ""}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-medium leading-snug text-ink break-words">{txn.description}</div>
+            <div className="text-sm font-medium leading-snug text-ink break-words">{txn.description}<RemittanceText description={txn.description} /></div>
             <div className="mt-0.5 text-xs text-ink-3">
               {formatDate(txn.txn_date)}
               {txn.reference ? <span className="font-mono"> · {txn.reference}</span> : ""}

@@ -63,7 +63,8 @@ export function windowTab(daysUntil: number): QueueTab | null {
 /**
  * Every listed row in exactly ONE tab, built from classify.ts's groups (each row is in at most
  * one of them): Overdue = expired + service stopped; the windows = Next 7 days / upcoming /
- * future + the Won't-renew rows still running, split by date. Flex parts stay out (R-2232).
+ * future + the Won't-renew rows still running, split by date. R-2422: a flex (monthly-commitment)
+ * subscription is a renewal like any other (R-2232's exclusion reversed by the owner, 3 Nov).
  */
 export function queueTabs<T extends { daysUntil: number }>(g: RenewalGroups<T>): Record<QueueTab, T[]> {
   const out: Record<QueueTab, T[]> = { overdue: [], due7: [], d30: [], d60: [], d90: [] };
@@ -219,8 +220,6 @@ export function termSuffix(termMonths: number | null | undefined): string {
   return `/${m} mo`;
 }
 
-const CYCLE_WORD: Record<string, string> = { monthly: "monthly", quarterly: "quarterly", half_yearly: "half-yearly" };
-
 export interface RenewalAmount {
   /** Rupees, for sorting and the bulk total. */
   value: number;
@@ -228,8 +227,6 @@ export interface RenewalAmount {
   text: string;
   /** "+ GST" (term amount, ex-GST) or "incl. GST · Q-x" (the renewal quote's total). */
   gst: string;
-  /** "billed monthly" for a subscription billed in parts. */
-  billing: string | null;
   fromQuote: boolean;
 }
 
@@ -239,16 +236,15 @@ export interface RenewalAmount {
  * Payment Follow-up makes for its renewal rows (lib/queries/collections.ts, R-2401).
  */
 export function renewalAmount(sub: AmountSub & { renewal_quote_id?: string | null }, quote: RenewalQuoteInfo | null | undefined): RenewalAmount {
-  const split = isSplitBilled((sub.billing_cycle ?? null) as BillingCycle | null);
-  const billing = split ? `billed ${CYCLE_WORD[sub.billing_cycle!] ?? sub.billing_cycle}` : null;
+  /* R-2422: how it is paid ("Annual · paid quarterly · ₹19,500 each") is frequency.ts — one wording. */
   const q = quote && sub.renewal_quote_id === quote.id && !CLOSED_QUOTE.has(quote.status ?? "") && (quote.amount ?? 0) > 0
     ? quote : null;
   if (q) {
     const v = Math.round(q.amount ?? 0);
-    return { value: v, text: rupee(v), gst: `incl. GST · ${q.id}`, billing, fromQuote: true };
+    return { value: v, text: rupee(v), gst: `incl. GST · ${q.id}`, fromQuote: true };
   }
   const v = termAmountOf({ mrr: sub.mrr, term_months: sub.term_months ?? 12, term_amount: sub.term_amount ?? null });
-  return { value: v, text: `${rupee(v)}${termSuffix(sub.term_months)}`, gst: "+ GST", billing, fromQuote: false };
+  return { value: v, text: `${rupee(v)}${termSuffix(sub.term_months)}`, gst: "+ GST", fromQuote: false };
 }
 
 /** A renewal quote that is paid — the row is renewed even if its date has not moved yet. */
@@ -272,6 +268,8 @@ export interface QueueRow {
   statusKey: RowStatusKey;
   atRisk: boolean;
   customer: string;
+  /** R-2422: Annual / Monthly (flex) commitment (frequency.ts renewalCommitment); null = unknown. */
+  commitment?: "annual" | "monthly" | null;
 }
 
 /** Date = soonest (most overdue) first; amount = largest first. Ties by customer name. */
@@ -287,16 +285,19 @@ export interface QueueFilters {
   status: RowStatusKey | "";
   vendor: string;    // "" = all
   atRisk: boolean;
+  /** R-2422: All · Annual · Monthly. */
+  commitment: "all" | "annual" | "monthly";
 }
 
-export const NO_FILTERS: QueueFilters = { product: "", status: "", vendor: "", atRisk: false };
+export const NO_FILTERS: QueueFilters = { product: "", status: "", vendor: "", atRisk: false, commitment: "all" };
 
 export function filterQueue<T extends QueueRow>(rows: readonly T[], f: QueueFilters): T[] {
   return rows.filter((r) =>
     (!f.product || (r.plan ?? "") === f.product)
     && (!f.status || r.statusKey === f.status)
     && (!f.vendor || (r.vendor ?? "") === f.vendor)
-    && (!f.atRisk || r.atRisk));
+    && (!f.atRisk || r.atRisk)
+    && (f.commitment === "all" || r.commitment === f.commitment));
 }
 
 /** The distinct, sorted values for a filter's options. */
@@ -355,6 +356,8 @@ export function bulkQuoteConfirm(
  * (measured for /subscriptions, R-2263), so: fixed columns + a readable minimum for the two
  * flexible ones (Customer with its contact line, Product with seats + vendor) stay inside it,
  * and the Actions column is always on screen. `table-fixed` keeps these widths.
+ * R-2422: Actions is ONE next-step button + ⋯ now (was up to six stacked buttons), so it gives
+ * 24px back to Customer, which also carries the "Last paid" line.
  */
 export const QUEUE_TABLE_BUDGET_PX = 944;
 export const QUEUE_FLEX_MIN_PX = 140;
@@ -365,5 +368,5 @@ export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: "select" | "customer" | "pro
   { key: "date", width: 104 },
   { key: "amount", width: 128 },
   { key: "status", width: 140 },
-  { key: "actions", width: 248 },
+  { key: "actions", width: 224 },
 ];

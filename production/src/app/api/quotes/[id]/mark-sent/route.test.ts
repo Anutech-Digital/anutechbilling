@@ -13,6 +13,7 @@ import { newFakeDb, fakeServerModule, signInAs, TENANT_A, TENANT_B, type FakeDb 
 const h = vi.hoisted(() => ({ db: null as unknown as FakeDb }));
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => fakeServerModule(h.db).createClient(),
+  createAdminClientFor: () => fakeServerModule(h.db).createAdminClientFor(),
 }));
 
 import { POST } from "./route";
@@ -29,6 +30,8 @@ const discountedLines = [{ qty: 1, rate: 800, list_rate: 1000, cost: 500, discou
 function quoteRow(over: Record<string, unknown> = {}) {
   return {
     id: "Q-1", tenant_id: TENANT_A, status: "draft", public_token: LINK_T, lead_id: null,
+    /* R-2448: a typed prospect with a state — the place of supply is known, so the gate lets it go. */
+    customer_id: null, prospect_state_code: "07", prospect_country: null, invoice_id: null,
     line_items: okLines, approval_status: null, approval_tier: null, approval_requested_by: null,
     approved_by: null, approved_discount_bps: null, approved_margin_bps: null, approval_rejection_reason: null,
     ...over,
@@ -37,6 +40,8 @@ function quoteRow(over: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   h.db = newFakeDb();
+  /* R-2448: the company's own state is set (the place-of-supply half of the gate). */
+  h.db.tables.tenants = [{ id: TENANT_A, state_code: "07", gstin: null }];
 });
 
 describe("R-1956: refused send → Copy link instead → the link opens", () => {
@@ -71,7 +76,7 @@ describe("R-1956: refused send → Copy link instead → the link opens", () => 
   it("moves the linked lead forward to Quote Sent and logs it, like every other sender", async () => {
     signInAs(h.db, "sales");
     h.db.tables.quotes = [quoteRow({ lead_id: "L-1" })];
-    h.db.tables.leads = [{ id: "L-1", tenant_id: TENANT_A, stage: "contact" }];
+    h.db.tables.leads = [{ id: "L-1", tenant_id: TENANT_A, stage: "contact", state_code: "07" }];
     const res = await call();
     expect(res.status).toBe(200);
     expect((await res.json()).leadMoved).toBe(true);

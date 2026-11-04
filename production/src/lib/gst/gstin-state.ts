@@ -168,13 +168,27 @@ export const GST_STATE_OPTIONS: { code: string; name: string }[] = Object.entrie
   .sort((a, b) => a.name.localeCompare(b.name));
 
 /**
+ * R-2363 (3 Nov 2026): the customer form's "Not known yet" state answer. A form-only value — the
+ * customer is SAVED with no state and no state code (never a guess), so missingInvoiceState() stays
+ * true: generate_invoice still refuses its GST invoice and a quote cannot be sent until the state
+ * is set. Receipts and advances need no place of supply. Staging, 2 Nov: Pathak Fabrication (advance
+ * only, no GSTIN) could not be saved without a state, so a guessed Delhi was saved.
+ */
+export const STATE_NOT_KNOWN = "__state_not_known__";
+export const STATE_NOT_KNOWN_LABEL = "Not known yet (advance / receipts only)";
+/** §24: what "Not known yet" means and the next step. */
+export const STATE_NOT_KNOWN_NOTE =
+  "Receipts and advances can be recorded. Set the state on this customer before you send a quote or make a GST invoice — it decides CGST + SGST or IGST.";
+
+/**
  * Why this customer cannot be saved yet, or null (R-173, 6 Oct 2026).
  *
  * Every Indian customer needs a place of supply: a tax invoice is refused without it
  * (generate_invoice — "no state on record"), GSTIN or not. Live had 17 customers in that state.
  * It is satisfied by a state code already on the row, a valid GSTIN, or a state NAME that maps to
  * a GST state — the same order withStateCode() uses to fill state_code on save. Foreign customers
- * have no Indian place of supply and are never asked.
+ * have no Indian place of supply and are never asked. R-2363: "Not known yet" (STATE_NOT_KNOWN),
+ * picked on purpose, is also an answer — the invoice still waits for the state.
  */
 export function stateRequiredMessage(row: {
   state?: string | null; state_code?: string | null; gstin?: string | null; country?: string | null;
@@ -182,6 +196,7 @@ export function stateRequiredMessage(row: {
   const country = (row.country ?? "").trim().toLowerCase();
   if (country && !["in", "ind", "india"].includes(country)) return null;
   if ((row.state_code ?? "").trim() || stateCodeFromGstin(row.gstin) || stateCodeFromName(row.state)) return null;
+  if (row.state === STATE_NOT_KNOWN) return null;
   return (row.state ?? "").trim()
     ? `"${String(row.state).trim()}" is not a GST state name — pick the state from the list. The GST invoice needs it.`
     : "Choose the state — the GST invoice cannot be made without it (it decides CGST + SGST or IGST).";
