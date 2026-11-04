@@ -44,7 +44,7 @@ import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { isEmailConfigured } from "@/lib/email/send";
 import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { decideAutoSend } from "@/lib/quotes/auto-send-quote";
-import { sendAutoQuote } from "@/lib/quotes/send-auto-quote";
+import { sendAutoQuote, autoQuoteNotSentReason, isAutoQuoteHeld } from "@/lib/quotes/send-auto-quote";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import {
@@ -354,6 +354,7 @@ export async function POST(request: NextRequest) {
        buildWorkspaceLines is the follow-up that removes this hold. */
     let autoSent = false;
     let holdReason: string | null = null;
+    let holdNotedBySender = false;
 
     if (draftQuoteId) {
       const ourAddresses = [owner.ok ? owner.to : null, ownerTenant?.email ?? null]
@@ -394,13 +395,19 @@ export async function POST(request: NextRequest) {
             fromEmail: FROM_EMAIL,
           });
           autoSent = sent === "sent";
-          if (!autoSent) holdReason = "the quotation email failed to send — the draft is saved";
+          /* R-2460: a gate hold reads "Quote held — <reason> <next step>" (the owner alert
+             below quotes it), never "failed to send". sendAutoQuote already wrote the hold on
+             the lead's timeline, so this route does not write a second line for it. */
+          if (sent !== "sent") {
+            holdReason = autoQuoteNotSentReason(sent);
+            holdNotedBySender = isAutoQuoteHeld(sent);
+          }
         } else {
           holdReason = decision.reason;
         }
       }
 
-      if (!autoSent && holdReason) {
+      if (!autoSent && holdReason && !holdNotedBySender) {
         /* The same sentence shape the inbound path writes, so the operator reads ONE kind
            of hold note wherever the enquiry came from. */
         await admin.from("lead_activities").insert({

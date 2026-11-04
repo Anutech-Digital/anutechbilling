@@ -740,6 +740,10 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
         isSelfTest: selfTest,
         fromEmail: FROM_EMAIL,
         sellerName: (await sellerIdentity()).sellerName,
+        /* R-2460: the gate HELD the draft (no place of supply / needs approval). The agent
+           still answers — asks for the missing state, or says the quotation will follow —
+           but none of the held draft's figures may appear in that reply. */
+        heldQuote: quote.held ?? null,
       }).catch((err) =>
         console.error("[inbound-email] sales agent crashed:", err),
       );

@@ -39,9 +39,11 @@ import {
   type SalesCatalogEntry,
   type SalesChannel,
   type SalesTurnRole,
+  type HeldQuoteBrief,
   isBelowCost,
   perSeatPerYear,
   authorisedTotalsFor,
+  heldTotalsNamed,
 } from "./sales-agent";
 import {
   QUALIFIER_SYSTEM_PROMPT,
@@ -435,6 +437,13 @@ export async function runSalesAgent(args: {
    * costs the agent a fact, not the customer their reply.
    */
   domain?: string | null;
+  /**
+   * R-2460: the lead's draft is HELD by the customer-copy gate (no place of supply / needs
+   * approval). The agent is told to ask for what is missing / say the quotation will follow,
+   * no total is authorised, and the held figures are struck from the money guard's list — so a
+   * reply that states one is handed to a person instead of sent. See BuildPromptArgs.heldQuote.
+   */
+  heldQuote?: HeldQuoteBrief | null;
 }): Promise<SalesAgentRun> {
   const cfg = await resolveGeminiConfig(args.admin, args.tenantId);
   if (!cfg.apiKey) {
@@ -533,6 +542,7 @@ export async function runSalesAgent(args: {
     tradeInFacts: observed?.tradeIn,
     qualifierBrief: merged ? qualifierBriefing(merged) : undefined,
     recallFacts: recall,
+    heldQuote: args.heldQuote ?? null,
   });
 
   let failure = "";
@@ -580,14 +590,31 @@ export async function runSalesAgent(args: {
     quoteRef: args.lead.deliveredQuoteId,
   });
 
+  /* ── R-2460: a held figure written WITHOUT a ₹ sign ───────────────────────
+     The money guard reads currency-marked figures only, so "the total is 38,232 including
+     GST" would pass it. While the draft is held, a held figure in any form hands over. */
+  const heldNamed =
+    args.heldQuote && ruled.decision.action_required !== "HANDOVER_TO_HUMAN"
+      ? heldTotalsNamed(
+          `${ruled.decision.generated_response.body_text}\n${ruled.decision.generated_response.whatsapp_summary}`,
+          args.heldQuote.totals,
+        )
+      : [];
+  const heldReason = heldNamed.length > 0
+    ? `The draft names the held quotation's amount (${heldNamed.map((n) => `Rs ${n.toLocaleString("en-IN")}`).join(", ")}) — that quotation is on hold and has not been sent.`
+    : "";
+  const decision = heldReason
+    ? { ...ruled.decision, action_required: "HANDOVER_TO_HUMAN" as const, next_followup_loop: null }
+    : ruled.decision;
+
   return {
     ok: true,
-    decision: ruled.decision,
+    decision,
     /* Either stage may have overruled the model. The reasons are joined rather than one
        winning, because they are different facts about the same message and an operator
        reading only the second one would not know the qualifier had also objected. */
-    overruled: ruled.overruled || narrowed.narrowed,
-    overruleReason: [narrowed.reason, ruled.reason].filter(Boolean).join(" "),
+    overruled: ruled.overruled || narrowed.narrowed || Boolean(heldReason),
+    overruleReason: [[narrowed.reason, ruled.reason].filter(Boolean).join(" "), heldReason].filter(Boolean).join(" "),
     allowedMoney: prompt.allowedMoney,
   };
 }
