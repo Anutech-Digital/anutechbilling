@@ -7,6 +7,7 @@ import { describe, it, expect } from "vitest";
 import {
   parseNetstatListeners, parseProcessList, isOurDevServerCmd, pickKillTarget, classifyServer,
   localGuardReason, updateNeedsRestart, parseReadyArgs, runReady, EXIT_READY, DEFAULT_WARM,
+  pidFileTarget, parseTasklistImage,
   // @ts-expect-error — plain .mjs ops script, no types
 } from "../../scripts/ops/localhost-ready-lib.mjs";
 
@@ -98,6 +99,24 @@ describe("pickKillTarget", () => {
     expect(t.ok).toBe(true);
     expect(t.pid).toBe(400);
     expect(pickKillTarget({ listenerPid: 9001, procs, selfPid: 9001 }).ok).toBe(false);
+  });
+});
+
+describe("pidFileTarget + parseTasklistImage (process list unreadable — 4 Nov PowerShell/WMI hang)", () => {
+  const rec = { pid: 500, port: 3001, dir: "C:\\Users\\x\\reselleros-deploy\\production" };
+  it("reads tasklist CSV", () => {
+    expect(parseTasklistImage('"node.exe","500","Console","1","120,000 K"')).toBe("node.exe");
+    expect(parseTasklistImage("INFO: No tasks are running which match the specified criteria.")).toBeNull();
+  });
+  it("trusts only our own pid file: same port, same checkout, still node", () => {
+    expect(pidFileTarget({ record: rec, port: 3001, image: "node.exe", productionDir: "c:/users/x/reselleros-deploy/production" }))
+      .toEqual({ ok: true, pid: 500, chain: [500], via: "pidfile" });
+    expect(pidFileTarget({ record: null, port: 3001, image: null }).ok).toBe(false);
+    expect(pidFileTarget({ record: rec, port: 3005, image: "node.exe" }).ok).toBe(false);
+    expect(pidFileTarget({ record: rec, port: 3001, image: "node.exe", productionDir: "C:/other/production" }).ok).toBe(false);
+    expect(pidFileTarget({ record: rec, port: 3001, image: "chrome.exe" }).ok).toBe(false);
+    expect(pidFileTarget({ record: rec, port: 3001, image: null }).ok).toBe(false);
+    expect(pidFileTarget({ record: { ...rec, pid: 4 }, port: 3001, image: "node.exe" }).ok).toBe(false);
   });
 });
 
@@ -229,6 +248,31 @@ describe("runReady", () => {
     expect(d.calls.some((c) => c.startsWith("kill"))).toBe(false);
     expect(r.code).toBe(EXIT_READY.notReady);
     expect(r.lines.join("\n")).toMatch(/not our/i);
+  });
+
+  it("hung + process list unreadable: kills the pid-file server only", async () => {
+    let n = 0;
+    const d = fakeDeps({
+      probe: async () => (++n <= 3 ? { ok: false, error: "timeout" } : { ok: true, status: 200, ms: 900 }),
+      processes: () => new Map(),
+      pidFileTarget: () => ({ ok: true, pid: 4321, chain: [4321], via: "pidfile" }),
+      listeners: () => (d.calls.includes("kill 4321") && !d.calls.includes("start") ? [] : [9001]),
+    });
+    const r = await runReady({ ...d, args: parseReadyArgs([]) });
+    expect(d.calls.slice(0, 3)).toEqual(["update", "kill 4321", "start"]);
+    expect(r.code).toBe(EXIT_READY.ready);
+  });
+
+  it("hung + process list unreadable + no pid file: refuses, kills nothing", async () => {
+    const d = fakeDeps({
+      probe: async () => ({ ok: false, error: "timeout" }),
+      processes: () => new Map(),
+      pidFileTarget: () => ({ ok: false, reason: "process list unreadable and no localhost:ready pid file — not killing" }),
+    });
+    const r = await runReady({ ...d, args: parseReadyArgs([]) });
+    expect(d.calls.some((c) => c.startsWith("kill"))).toBe(false);
+    expect(r.code).toBe(EXIT_READY.notReady);
+    expect(r.readyLine).toMatch(/by hand|not killing/);
   });
 
   it("hung with --no-restart: reports, does not kill", async () => {
