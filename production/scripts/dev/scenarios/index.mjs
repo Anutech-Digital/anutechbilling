@@ -182,11 +182,12 @@ export const SCENARIOS = [
   {
     name: "usd-inw-lines",
     about: "Three USD inward remittances on SCN HDFC Current ··7788: $1,024 @ ₹93.60 = ₹95,846 (SCN Design Box LLC, new export sale); $2,000 @ ₹88.50 = ₹1,77,000 (SCN Timbergloss Inc) paying INV-SCN-USD-1 raised at $2,000 @ ₹84.00 (₹9,000 forex gain); $1,000 @ ₹93.60 = ₹93,600 (Design Box, short: billed $1,024). LUTs: scenario lut-per-fy.",
-    cards: ["R-2425", "R-2427", "R-2440"],
-    scope: { vendors: [], txns: [x(21), x(22), x(23)], docs: [], names: [], upis: [], extra: [x(11), x(12), "INV-SCN-USD-1"] },
-    expect: { ...NO_OLD, txns: 3, ...NO_EXTRA, xCustomers: 2, xInvoices: 1 },
+    cards: ["R-2425", "R-2427", "R-2440", "R-2466"],
+    /* R-2466: INV-SCN-USD-1 comes from its USD quote Q-SCN-USD-1 (as every export sale in the app). */
+    scope: { vendors: [], txns: [x(21), x(22), x(23)], docs: [], names: [], upis: [], extra: [x(11), x(12), "Q-SCN-USD-1", "INV-SCN-USD-1"] },
+    expect: { ...NO_OLD, txns: 3, ...NO_EXTRA, xCustomers: 2, xQuotes: 1, xInvoices: 1 },
     pages: [
-      { path: "banking", for: "R-2425 'INW … USD1024.0@93.6' line shows $1,024 @ ₹93.60 · R-2427 the ₹1,77,000 line pays INV-SCN-USD-1 (forex gain) and the ₹93,600 line is the short one · Reconcile from Zoho needs a Zoho connection (not local)" },
+      { path: "banking", for: "R-2425 'INW … USD1024.0@93.6' line shows $1,024 @ ₹93.60 · R-2427 / R-2466 the ₹1,77,000 line → Reconcile → SCN Timbergloss Inc → An open quote / invoice → INV-SCN-USD-1 ('₹9,000 forex gain') and the ₹93,600 line is the short one · Reconcile from Zoho needs a Zoho connection (not local)" },
       { path: "invoices", for: "R-2427 INV-SCN-USD-1 in USD ($2,000 @ ₹84.00)" },
     ],
   },
@@ -203,12 +204,13 @@ export const SCENARIOS = [
   },
   {
     name: "zero-ref-credits",
-    about: "SCN Zero Ref Traders: INV-SCN-ZR-1 ₹11,800 + two ₹5,000 money-in lines, both reference 000000000000000; INV-SCN-ZR-3 ₹2,360. SCN Placeholder Labs: INV-SCN-ZR-2 ₹5,900.",
-    cards: ["R-2430", "R-2424", "R-2441"],
-    scope: { vendors: [], txns: [x(43), x(44)], docs: [], names: [], upis: [], extra: [x(41), x(42), "INV-SCN-ZR-1", "INV-SCN-ZR-2", "INV-SCN-ZR-3"] },
-    expect: { ...NO_OLD, txns: 2, ...NO_EXTRA, xCustomers: 2, xInvoices: 3 },
+    about: "SCN Zero Ref Traders: INV-SCN-ZR-1 ₹11,800 + two ₹5,000 money-in lines, both reference 000000000000000; INV-SCN-ZR-3 ₹2,360; SCN-ZB-0042 ₹11,800 last year's invoice imported from Zoho (opening, no quote). SCN Placeholder Labs: INV-SCN-ZR-2 ₹5,900.",
+    cards: ["R-2430", "R-2424", "R-2441", "R-2466"],
+    /* R-2466: ZR-1..3 come from their quotes; SCN-ZB-0042 through import_opening_invoices (found by its customer). */
+    scope: { vendors: [], txns: [x(43), x(44)], docs: [], names: [], upis: [], extra: [x(41), x(42), "Q-SCN-ZR-1", "Q-SCN-ZR-2", "Q-SCN-ZR-3", "INV-SCN-ZR-1", "INV-SCN-ZR-2", "INV-SCN-ZR-3"] },
+    expect: { ...NO_OLD, txns: 2, ...NO_EXTRA, xCustomers: 2, xQuotes: 3, xInvoices: 4 },
     pages: [
-      { path: "banking", for: "R-2430 the two ₹5,000 SCN Zero Ref Traders lines → both on INV-SCN-ZR-1 → two receipts, ₹10,000 received" },
+      { path: "banking", for: "R-2430 the two ₹5,000 SCN Zero Ref Traders lines → both on INV-SCN-ZR-1 → two receipts, ₹10,000 received · R-2466 'An open quote / invoice' also lists SCN-ZB-0042 'Opening invoice (from Zoho)' — both lines on it → two receipts" },
       { path: "invoices", for: "R-2424 / R-2441 Record payment with reference 000000000000000 (or NEFT-000000000000) on ZR-1 and ZR-2 — both save; a real UTR twice is refused" },
     ],
   },

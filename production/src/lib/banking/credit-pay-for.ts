@@ -36,7 +36,8 @@ import { linesBelowCost, NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-appro
 
 /* ─── Open items (rows of bank_credit_open_items) ──────────────────────────────────────── */
 
-export type OpenItemKind = "renewal" | "add_seats" | "new" | "one_off" | "invoice" | "instalment";
+/** R-2466: "opening" — an unpaid invoice imported from Zoho (R-1739, no quote). */
+export type OpenItemKind = "renewal" | "add_seats" | "new" | "one_off" | "invoice" | "instalment" | "opening";
 
 export interface OpenItem {
   kind: OpenItemKind;
@@ -57,6 +58,10 @@ export interface OpenItem {
   /** R-2213: the DB would refuse money on this item's quote (below cost, not approved) — the
    *  refusal text (lib/quotes/payment-approval.ts). null/absent = it can be paid. */
   approval_block?: string | null;
+  /** R-2466: the document's currency (INR when absent) and, when foreign, its ₹ rate (the invoice's,
+   *  else its quote's) — an export receipt pays it through reconcile_bank_credit_fx_invoice. */
+  currency?: string | null;
+  fx_rate?: number | null;
 }
 
 /** The key of an open item — an invoice when it has one, else its quote. */
@@ -71,7 +76,8 @@ export function kindLabel(kind: OpenItemKind): string {
     case "new":        return "New product";
     case "one_off":    return "One-time sale";
     case "instalment": return "Instalment invoice";
-    default:           return "Invoice";
+    case "opening":    return "Opening invoice (from Zoho)";
+    default:          return "Invoice";
   }
 }
 

@@ -60,6 +60,7 @@ import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 import { prefillSaleFx, zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
+import { itemFxText, itemPayPlan } from "@/lib/banking/item-fx-pay";
 
 const NEW_CUSTOMER = "__new_customer__";
 
@@ -243,7 +244,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* An advance has nothing due — the whole credit is kept as the customer's credit. */
   const due = mode === "item" ? (picked?.amount_due ?? null) : mode === "sale" && preview.total > 0 ? schedule.dueNow : null;
   const taxable = mode === "item" ? (picked?.taxable_value ?? 0) : schedule.dueTaxable;
-  const check: AmountCheck | null = due === null ? null : amountCheck(credit, due, taxable);
+  /* R-2466: a foreign invoice paid by its inward remittance books the R-2427 way (forex / Bank Charges,
+     no TDS, no "kept as credit"); a Zoho opening invoice takes no more than its due. Either way the
+     ₹ over / short check does not apply. */
+  const itemPlan = mode === "item" && picked
+    ? itemPayPlan(picked, { description: transaction.description, credit }, { relink: Boolean(relink) }) : null;
+  const itemFx = itemPlan?.fx ?? null;
+  const check: AmountCheck | null = due === null || itemFx || itemPlan?.problem ? null : amountCheck(credit, due, taxable);
   /* R-2052: annual commitment billed in parts — Renews on stays the end of the year; this says
      how far the money pays, and takes over the "Next N bills" line (the next bill said once). */
   const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0
@@ -302,7 +309,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* R-2427 (3): a Find-in-Zoho USD bill (₹ at the bank's rate) saves IN USD with the narration's figures; not on a relink. */
   const saleFx = mode === "sale" && !relink ? prefillSaleFx(zohoFill, transaction.description, credit) : null;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
-    && !approvalBlocked && !fxUnconverted
+    && !approvalBlocked && !fxUnconverted && !itemPlan?.problem
     && !(relink && saleBelowCost)   // R-2397: the server refuses a relink to a below-cost sale
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
@@ -361,7 +368,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     const target: RelinkTarget = mode === "item" && picked
       ? {
           path: "item", transactionId: transaction.id, quoteId: picked.quote_id, invoiceId: picked.invoice_id,
-          tdsAmount, tdsRatePct: tdsRate, tdsSection, ...subArgs,
+          tdsAmount: itemFx ? 0 : tdsAmount, tdsRatePct: itemFx ? null : tdsRate, tdsSection, ...subArgs, fx: itemFx,
         }
       : mode === "sale"
         ? {
@@ -404,7 +411,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   useFooterSaveReport(onFooterSave, credit > 0 && !result && customerId
     ? {
         label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: busy,
-        disabledReason: fxUnconverted ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
+        disabledReason: fxUnconverted ?? itemPlan?.problem ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
       }
     : null);
 
@@ -631,6 +638,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           {/* 3. Amount check */}
           {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice}
             section={tdsSection} sectionReason={tdsSectionPick ? null : tdsGuess.reason} onSection={setTdsSectionPick} noRoundOff={Boolean(relink)} />}
+          {/* R-2466: an export receipt on a foreign invoice / an opening invoice paid over its due. */}
+          {itemFx && picked?.invoice_id && (
+            <p className="text-xs text-ink-2 bg-paper rounded-md border border-hairline px-2.5 py-2 break-words">
+              {itemFxText(picked.invoice_id, itemFx, picked.amount_due)}
+            </p>
+          )}
+          {itemPlan?.problem && <p role="alert" className="text-xs text-amber-ink break-words">{itemPlan.problem}</p>}
 
           {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
               server's reason is shown here too, not only as a toast. */}
