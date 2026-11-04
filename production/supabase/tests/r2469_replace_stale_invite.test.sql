@@ -137,10 +137,16 @@ begin
     insert into r2469_fail(label, detail) values ('audit', 'expected 3 stale_invite_released rows in A, got '
       || (select count(*) from public.activity_log where tenant_id = ta and action = 'stale_invite_released')); end if;
   if exists (select 1 from public.activity_log where tenant_id = ta and action = 'stale_invite_released'
-              and (label ilike '%Secret Real%' or label ilike '%Blank%' or label ilike '%e2469000-0000-0000%')) then
-    insert into r2469_fail(label, detail) values ('audit', 'audit row names the other workspace'); end if;
-  if exists (select 1 from public.activity_log where tenant_id <> ta and action = 'stale_invite_released') then
-    insert into r2469_fail(label, detail) values ('audit', 'wrote into another workspace''s log'); end if;
+              and (label ilike '%Secret Real%' or label ilike '%Blank%' or label ilike '%e2469000-0000-0000%'
+                   or label ~ '[(](expired|already used|empty workspace)[)]')) then
+    insert into r2469_fail(label, detail) values ('audit', 'A''s audit row names the other workspace or its state'); end if;
+  -- the workspace that lost the invite sees why, without being told who
+  if (select count(*) from public.activity_log
+       where tenant_id = 'e2469000-0000-0000-0000-0000000000d0' and action = 'stale_invite_released') <> 2 then
+    insert into r2469_fail(label, detail) values ('audit', 'workspace D did not get its 2 lines'); end if;
+  if exists (select 1 from public.activity_log where tenant_id <> ta and action = 'stale_invite_released'
+              and label ilike '%Excel%') then
+    insert into r2469_fail(label, detail) values ('audit', 'the other workspace''s line names the caller'); end if;
 
   -- ── end to end: invite → sign in → claim ────────────────────────────────
   update auth.users set last_sign_in_at = now() where id = 'e2469000-0000-4000-8000-0000000000b1';

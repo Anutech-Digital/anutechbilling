@@ -31,6 +31,7 @@ import { initials } from "@/lib/utils";
 import { can, roleLabel } from "@/lib/auth/roles";
 import { inviteExpiresAt, isInviteExpired } from "@/lib/auth/invite-accept";
 import {
+  INVITE_CHECK_RATE,
   inviteInUseMessage,
   loginElsewhereMessage,
   memberElsewhereMessage,
@@ -124,7 +125,16 @@ export async function POST(request: NextRequest) {
      when it holds nobody back — expired, already used by someone who left, or sitting in a
      blank workspace — and answers 'member_elsewhere' for a member of another REAL company, who
      is never moved. It never names the other company (R-721). If the check itself fails (e.g.
-     the migration is not deployed yet) the invite goes on exactly as before. */
+     the migration is not deployed yet) the invite goes on exactly as before.
+     Its answer says whether an address belongs to some company, so it is capped per owner —
+     a real team is never invited 30 times an hour; a scraper probing addresses is. */
+  const checkRl = await rateLimitShared(`team-invite-check:${authData.user.id}`, INVITE_CHECK_RATE);
+  if (!checkRl.ok) {
+    return NextResponse.json(
+      { error: "Too many invites in the last hour. Try again later." },
+      { status: 429, headers: { "Retry-After": String(checkRl.retryAfterSec) } },
+    );
+  }
   const { data: heldElsewhere } = await supabase.rpc("release_stale_team_invite", { p_email: email });
   if (parseStaleInviteOutcome(heldElsewhere) === "member_elsewhere") {
     return NextResponse.json({ error: memberElsewhereMessage(email) }, { status: 409, headers: NO_STORE });

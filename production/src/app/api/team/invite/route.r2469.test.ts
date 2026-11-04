@@ -21,10 +21,12 @@ const st = vi.hoisted(() => ({
   inserts: [] as Array<Record<string, unknown>>,
   emails: [] as Array<{ to: string; text: string }>,
   loginTenant: null as string | null,
+  rateOk: true,
+  rateKeys: [] as string[],
 }));
 
 vi.mock("@/lib/security/rate-limit", () => ({
-  rateLimitShared: async () => ({ ok: true, retryAfterSec: 60, remaining: 1 }),
+  rateLimitShared: async (key: string) => { st.rateKeys.push(key); return { ok: st.rateOk, retryAfterSec: 60, remaining: 1 }; },
 }));
 
 vi.mock("@/lib/email/send", () => ({
@@ -92,7 +94,7 @@ const call = (body: unknown) =>
 
 beforeEach(() => {
   st.rpcCalls = []; st.rpcResult = { data: "none", error: null }; st.otherInvite = false;
-  st.inserts = []; st.emails = []; st.loginTenant = null;
+  st.inserts = []; st.emails = []; st.loginTenant = null; st.rateOk = true; st.rateKeys = [];
 });
 
 const EMAIL = "pratik@excel.test";
@@ -150,6 +152,17 @@ describe("R-2469: invite an address held by another workspace", () => {
     expect(r.status).toBe(409);
     const { error } = await r.json() as { error: string };
     expect(error).toMatch(/Invite them without a temporary password/);
+    expect(st.inserts).toHaveLength(0);
+  });
+});
+
+describe("R-2469: the address check is capped per owner (not an unlimited existence probe)", () => {
+  it("over the hourly cap → 429, nothing asked, nothing written", async () => {
+    st.rateOk = false;
+    const r = await call({ email: EMAIL, role: "sales" });
+    expect(r.status).toBe(429);
+    expect(st.rateKeys).toEqual([`team-invite-check:${OWNER}`]);
+    expect(st.rpcCalls).toHaveLength(0);
     expect(st.inserts).toHaveLength(0);
   });
 });
