@@ -169,6 +169,9 @@ const ADDED_2NOV_SECURITY_LOG = ["/settings/security-log"];
 const ADDED_3NOV_PRIVATE_LOANS = ["/vault/personal/loans"];
 /** R-2392 (G-PERSONAL, 3 Nov 2026): Private Vault → People (personal contacts) — owner only, next to Loans. */
 const ADDED_3NOV_PRIVATE_PEOPLE = ["/vault/personal/people"];
+/** R-2461 (4 Nov 2026, Pardeep: "purchase accountant ko bhi dikhe"): the Purchase Inbox for the
+ *  accountant too — inbound_purchases RLS is tenant-wide and network_inbox admits the accountant. */
+const ADDED_4NOV_ACCOUNTANT_PURCHASE_INBOX = ["/purchases/inbox"];
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_3OCT_OM : []),
@@ -198,6 +201,7 @@ const addedFor = (role: string) => [
   ...(role === "owner" ? ADDED_2NOV_SECURITY_LOG : []),
   ...(role === "owner" ? ADDED_3NOV_PRIVATE_LOANS : []),
   ...(role === "owner" ? ADDED_3NOV_PRIVATE_PEOPLE : []),
+  ...(role === "accountant" ? ADDED_4NOV_ACCOUNTANT_PURCHASE_INBOX : []),
   ...(role === "personal" ? ADDED_30OCT_PERSONAL_HOME : ADDED_FOR_EVERY_ROLE),
 ];
 
@@ -564,6 +568,20 @@ describe("R-061: payroll — the menu and the guard give the same answer", () =>
         expect(menu.has(h), `${r}: menu says ${menu.has(h)}, guard says ${isRouteAllowed(r, h)} for ${h}`).toBe(isRouteAllowed(r, h));
       }
     }
+  });
+});
+
+describe("R-2461: the Purchase Inbox for the accountant", () => {
+  it("the accountant sees Purchase Inbox under Buy and the guard lets it through", () => {
+    const buy = filterNavForRole(APP_NAV, "accountant").find((s) => s.section === "Buy")?.items ?? [];
+    expect(buy.map((i) => i.href)).toContain("/purchases/inbox");
+    expect(isRouteAllowed("accountant", "/purchases/inbox")).toBe(true);
+  });
+  it("menu and guard agree for every role; billing, sales and support still have no Purchase Inbox", () => {
+    for (const r of USER_ROLES) {
+      expect(clickable(r).has("/purchases/inbox"), r).toBe(isRouteAllowed(r, "/purchases/inbox"));
+    }
+    for (const r of ["billing", "sales", "support"] as UserRole[]) expect(isRouteAllowed(r, "/purchases/inbox"), r).toBe(false);
   });
 });
 

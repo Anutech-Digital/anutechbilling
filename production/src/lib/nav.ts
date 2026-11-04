@@ -33,6 +33,8 @@
  *   • allowedRoutesForRole() — which middleware uses as the route guard — returns the SAME
  *     set for every gated role. owner/manager gain only /today, /activity,
  *     /purchases/inbox and /scorecard, and middleware does not gate those two roles anyway.
+ *     (That was the S30 regroup; later cards add routes on purpose and nav-s30.test.ts lists
+ *     each one — e.g. R-2461 gave the accountant /purchases/inbox, 4 Nov 2026.)
  *   • Hrefs, ids, labels, icons and hints of every entry — with three exceptions: the
  *     duplicate rows' ids are gone (acc-pnl, acc-bs, acc-cf, acc-gst, acc-tds, acc-esi,
  *     acc-aging, acc-ledger, my-expenses-sales), "Reports Hub" is now "Reports" (it is
@@ -667,9 +669,11 @@ export const APP_NAV: NavSection[] = [
     icon: "cart",
     items: [
       /* Was reachable only by URL. It is a queue — order mails waiting to be booked — so
-         it leads the group. owner/manager only, so no gated role's routes change; whether
-         billing should have it is a product call. */
-      { id: "purchase-inbox",  href: "/purchases/inbox",           label: "Purchase Inbox",       icon: "inbox", roles: OM, hint: "Order emails from Amazon & co. — review, then book as expense" },
+         it leads the group. R-2461 (4 Nov 2026, Pardeep): the accountant too — the
+         "From network" tab (canActOnNetwork = MONEY_WRITE_ROLES, the roles network_inbox
+         answers) admits them, so the row uses that same list and menu, guard and tab stay in
+         step. Whether billing should have it is still a product call. */
+      { id: "purchase-inbox",  href: "/purchases/inbox",           label: "Purchase Inbox",       icon: "inbox", roles: MONEY_WRITE_ROLES, hint: "Order emails from Amazon & co. — review, then book as expense" },
       /* "Vendor Portal & Bids" (/vendor-portal) was a child here until S35 (28 Sep 2026).
          It showed hardcoded demo bids saved to localStorage; the route now says "not built
          yet" and points back to Vendors / Purchase Orders. Not in the nav, on purpose. */
