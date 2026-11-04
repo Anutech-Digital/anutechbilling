@@ -1,7 +1,7 @@
 # Localhost check of built cards (Chrome) — playbook
 
 For: the "`<card id>` jaanch karo" run (CLAUDE.md) and any checker that follows a card's `howToCheck`
-on http://localhost:3001 in Chrome. Built by R-2457 (4 Nov 2026); fixtures follow in R-2458.
+on http://localhost:3001 in Chrome. Built by R-2457 (4 Nov 2026); fixtures: R-2458.
 
 ## Hinglish summary (Pardeep ke liye)
 
@@ -48,6 +48,22 @@ on http://localhost:3001 in Chrome. Built by R-2457 (4 Nov 2026); fixtures follo
 - Test scenarios (R-1957, `node scripts/dev/scenario.mjs <name>`) — fixed-id, idempotent data for named
   money/reconcile cards in E2E Test Co, with a hard local guard (`scenarioTargetReason`). New fixtures go
   here, not into a new seed system (R-2458).
+- R-2458 scenarios (4 Nov 2026) — `node scripts/dev/scenario.mjs` lists them; `all` loads every one; loading twice
+  gives the same rows; `--clear` takes one away (E2E Test Co only, plus the second company it makes):
+  | Scenario | Data | Cards |
+  |---|---|---|
+  | customer-no-state | SCN Pathak Fabrication (State "Not known yet") + draft quote Q-SCN-NS-1 | R-2363, R-2442, R-2448 |
+  | usd-inw-lines | 3 "INW … USD…@rate" lines on SCN HDFC Current ··7788 (new sale, one paying USD invoice INV-SCN-USD-1 at another rate, one short) | R-2425, R-2427, R-2440 |
+  | lut-per-fy | LUT ARN for last FY + this FY (needs migration R-2444; skipped before it) | R-2444, R-2440 |
+  | zero-ref-credits | two ₹5,000 credits with reference 000000000000000 + invoices ZR-1..3 for two customers | R-2430, R-2424, R-2441 |
+  | small-leftover | ₹354 unpaid bill, ₹5,900 bill with ₹55 left, two late customers (Payment Follow-up) | R-2421, R-2413 |
+  | salary-part-paid | SCN Ravi Kumar salary partly paid (₹25,000 of ₹30,000) + SCN Sunita Rao FULL N FINAL line and a later salary line | R-2428 |
+  | nbfc-interest | SCN Bajaj Finance (NBFC) ₹13,000 interest this FY, SCN HDFC Bank ₹8,000, an EMI money-out line | R-2376 |
+  | approved-quote | Q-SCN-AP-1 approved by the manager (10% off, ₹1,000 cost) + two accepted quotes for Combine | R-2447, R-2441 |
+  | connected-companies | second company SCN Network Partner Pvt Ltd, accepted connection, both GSTINs proved, 2 Pending invoices in Purchase Inbox → From network | R-2433, R-2445, R-2449, R-2434, R-2450 |
+  Flex subscriptions (R-2422, R-2431): `ads-month` (Gamma monthly flex). Not in fixtures (card:check says
+  "No ready-made data"): a Razorpay test key, a Zoho connection, a login for the second company, a one-owner
+  company, renewal part quotes — R-2464.
 - Local guard helpers: `production/scripts/dev/local-guard.mjs` (`dbUrlLocalReason`,
   `scenarioTargetReason`, `appHostLocalReason`) — `localhost:ready` and `card:check` reuse them.
 
@@ -87,9 +103,15 @@ on http://localhost:3001 in Chrome. Built by R-2457 (4 Nov 2026); fixtures follo
 - [x] (a) `npm run localhost:ready` — R-2457
 - [x] (c) `npm run card:check -- R-xxxx` + board patches — R-2457
 - [x] (d) howToCheck rule in `docs/WORKER-STEPS.md` — R-2457
-- [ ] (b) fixtures for the 4 Nov data gaps as R-1957 scenarios — R-2458
+- [x] (b) fixtures for the 4 Nov data gaps as R-1957 scenarios — R-2458 (9 scenarios; card:check names them)
+- [ ] (e) second-company login, one-owner company, renewal part quotes — R-2464
 
 ## Lessons log
+
+- 4 Nov 2026 (R-2458): the old `project-receipts` reset stopped (FK) once a tester had quoted / taken a payment
+  on SCN Acme — a scenario customer must take everything hanging off it with it (`scn_drop_customer_docs` in
+  `_common.sql`). Run `node scripts/dev/scenario.mjs --self-test` after adding a scenario: it proves load →
+  app steps → reset → reload → clear on the real local DB, rolled back.
 
 - 4 Nov 2026 (R-2457): on the loaded laptop PowerShell itself (even `powershell -Command 1`, so also
   `Get-CimInstance Win32_Process`) gave no answer in 60–90 s from a worker shell. So: the process list is read

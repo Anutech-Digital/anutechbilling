@@ -14,7 +14,7 @@ import { appHostLocalReason } from "../dev/local-guard.mjs";
 
 export const LOCAL_COMPANY = "E2E Test Co";
 export const ROLE_LABEL = { owner: "Owner", manager: "Manager", accountant: "Accountant", sales: "Sales", owner2: "Owner 2" };
-/** The card that adds the missing fixtures (split from R-2457). */
+/** The card that added the R-1957 scenarios for the 4 Nov checks (split from R-2457). */
 export const FIXTURES_CARD = "R-2458";
 
 export function normaliseCardId(input) {
@@ -110,23 +110,56 @@ export function pickLoginRole(steps) {
   return m ? m[1].toLowerCase() : "owner";
 }
 
-/** Data a step assumes that the local test company may not have (4 Nov 2026 list). */
+/** The fixtures that need more than rows (a login, a one-owner company, a billing run) — split from R-2458. */
+export const NEXT_FIXTURES_CARD = "R-2464";
+
+/**
+ * Data a step assumes that the local test company may not have (4 Nov 2026 list).
+ * R-2458: each need names the R-1957 scenario that loads it into E2E Test Co (scripts/dev/scenarios/index.mjs),
+ * or — when no fixture can hold it — `noFixture`, the plain reason and what to do instead.
+ */
 const NEED_RULES = [
-  { re: /not known yet|no state|bina state|state (?:nahi|missing|khaali)/i, need: "customer with no state" },
-  { re: /\bUSD\b|\bINW\b|inward remittance|foreign currency/i, need: "USD inward (INW) bank lines" },
-  { re: /connected compan|\bnetwork\b|two companies|do compan/i, need: "two connected local companies (network)" },
-  { re: /salary[^.\n]*(partial|partly|part[- ]paid|aadh|baaki)|(partial|partly|part[- ]paid|aadh)[^.\n]*salary/i, need: "partly paid salary" },
-  { re: /razorpay/i, need: "Razorpay test key" },
-  { re: /\bflex/i, need: "flex subscription" },
-  { re: /approved quote|quote[^.\n]*approve/i, need: "approved quote" },
-  { re: /\b(HDFC|ICICI|SBI|Axis|Kotak|IDFC|Yes Bank)\b\s*(?:a\/c\s*)?[·x.]*\d{3,}|\ba\/c\s*\d{3,}/i, need: "a named real bank account / company (not in E2E Test Co)" },
+  { re: /not known yet|no state|bina state|state (?:nahi|missing|khaali)/i, need: "customer with no state", scenario: "customer-no-state" },
+  { re: /\bUSD\b|\bINW\b|inward remittance|foreign currency/i, need: "USD inward (INW) bank lines", scenario: "usd-inw-lines" },
+  { re: /connected (?:compan|business|customer)|\bnetwork\b|two companies|do compan|distributor[^.\n]*reseller|\bverified GSTIN|prove you own/i,
+    need: "two connected local companies (network)", scenario: "connected-companies" },
+  { re: /salary[^.\n]*(partial|partly|part[- ]paid|aadh|baaki)|(partial|partly|part[- ]paid|aadh)[^.\n]*salary/i, need: "partly paid salary", scenario: "salary-part-paid" },
+  { re: /full\s*(?:n|and|&)\s*final|\bF&F\b|\bFNF\b/i, need: "FULL N FINAL salary line", scenario: "salary-part-paid" },
+  { re: /\b0{12,}\b|placeholder ref|zero[- ]ref/i, need: "placeholder-reference (000…) bank lines and invoices", scenario: "zero-ref-credits" },
+  { re: /small leftover|chhota bill|₹\s?(?:55|354)\b|write off/i, need: "part-paid invoice with a small leftover", scenario: "small-leftover" },
+  { re: /\bNBFC\b|non-bank|not a bank|Bajaj|Tata Capital|\b194A\b|loan interest/i, need: "non-bank lender with interest over ₹10,000", scenario: "nbfc-interest" },
+  { re: /\bLUT\b/, need: "LUT for each financial year", scenario: "lut-per-fy" },
+  { re: /approved quote|quote[^.\n]*approve|approve[^.\n]*quote|below[- ]cost/i, need: "approved quote", scenario: "approved-quote" },
+  { re: /\bflex/i, need: "flex subscription", scenario: "ads-month" },
+  { re: /razorpay/i, need: "Razorpay test key",
+    noFixture: "keys are never in a fixture — the owner saves a rzp_test_… key in Settings → Integrations first" },
+  { re: /\bzoho\b/i, need: "a Zoho Books connection",
+    noFixture: "Reconcile / Find in Zoho needs a connected Zoho Books org — not in local fixtures; check the non-Zoho steps and write ⚠ for these" },
+  { re: /sirf (?:EK|ek) owner|only (?:one|ONE) owner|sole owner|single owner/i, need: "a company with one owner",
+    noFixture: `E2E Test Co has Owner + Owner 2 — a one-owner company is ${NEXT_FIXTURES_CARD}` },
+  { re: /\b(HDFC|ICICI|SBI|Axis|Kotak|IDFC|Yes Bank)\b\s*(?:a\/c\s*)?[·x.]*\d{3,}|\ba\/c\s*\d{3,}/i, need: "a named real bank account / company (not in E2E Test Co)",
+    noFixture: "use the scenarios' own account SCN HDFC Current ··7788 instead of a real company's account" },
 ];
+
+/**
+ * Cards whose steps need data no scenario holds yet (4 Nov 2026 review list) — the reason is printed
+ * as "No ready-made data" so the checker does not hunt for it.
+ */
+export const CARD_NO_FIXTURE = {
+  "R-2415": "a Razorpay TEST key (Settings → Integrations, saved by the owner) and a Razorpay test payment",
+  "R-2439": "a Razorpay TEST key (Settings → Integrations, saved by the owner) and a Razorpay test payment",
+  "R-2426": `a company with ONE owner — E2E Test Co has Owner + Owner 2 (${NEXT_FIXTURES_CARD})`,
+  "R-2371": `a money-in line carrying our own company name — use any money-in line on SCN HDFC Current ··7788 and type the name, or ${NEXT_FIXTURES_CARD}`,
+  "R-2423": `renewal part quotes (Part 1 of 12) come from the subscription billing run (${NEXT_FIXTURES_CARD})`,
+  "R-2456": "none needed — the steps make the new lead themselves",
+};
 
 export function dataNeeds(steps) {
   const out = [];
   for (const s of steps ?? []) {
     for (const r of NEED_RULES) {
-      if (r.re.test(String(s)) && !out.some((o) => o.need === r.need)) out.push({ need: r.need });
+      if (!r.re.test(String(s)) || out.some((o) => o.need === r.need)) continue;
+      out.push(r.scenario ? { need: r.need, scenario: r.scenario } : { need: r.need, noFixture: r.noFixture });
     }
   }
   return out;
@@ -162,8 +195,12 @@ export function renderChecklist({ card, host, links, scenarios }) {
   lines.push(`${card.id} — ${card.title ?? "(no title)"}${card.status ? `   (status: ${card.status})` : ""}`);
   lines.push(`Pehle: npm run localhost:ready  (server answers, migrations in, Local test login works)`);
   lines.push(`Login: ${base}/login → Local test login → ${ROLE_LABEL[role]}  → company "${LOCAL_COMPANY}"`);
-  const scn = scenariosFor(card.id, scenarios);
-  if (scn.length) lines.push(`Test data: ${scn.map((n) => `node scripts/dev/scenario.mjs ${n}`).join("  ·  ")}`);
+  const known = new Set((scenarios ?? []).map((s) => s.name));
+  // R-2458: the scenarios that list the card, then the ones its steps' data needs point at
+  const scn = [...new Set([...scenariosFor(card.id, scenarios),
+    ...dataNeeds(steps).map((n) => n.scenario).filter((n) => n && known.has(n))])];
+  if (scn.length) lines.push(`Test data: ${scn.map((n) => `node scripts/dev/scenario.mjs ${n}`).join("  ·  ")}   (E2E Test Co, local DB; load twice = same rows)`);
+  if (CARD_NO_FIXTURE[card.id]) lines.push(`No ready-made data for: ${CARD_NO_FIXTURE[card.id]}`);
   if (!steps.length) {
     lines.push("⚠ This card has no howToCheck — ask the builder for 2–3 owner steps before checking.");
     return lines;
@@ -174,7 +211,9 @@ export function renderChecklist({ card, host, links, scenarios }) {
     const pages = findPages(s, links);
     if (pages.length) lines.push(`    open: ${pages.map((p) => `${p.label} ${base}${p.href}`).join("  ·  ")}`);
     for (const n of dataNeeds([s])) {
-      lines.push(`    data: ${n.need} — may not exist in "${LOCAL_COMPANY}"${scn.length ? ` (try the scenario above)` : ` (fixtures card ${FIXTURES_CARD}); make it by hand first, or write ⚠ with what was missing`}`);
+      if (n.scenario && known.has(n.scenario)) lines.push(`    data: ${n.need} → node scripts/dev/scenario.mjs ${n.scenario}`);
+      else if (n.noFixture) lines.push(`    data: ${n.need} — No ready-made data: ${n.noFixture}`);
+      else lines.push(`    data: ${n.need} — may not exist in "${LOCAL_COMPANY}"; make it by hand first, or write ⚠ with what was missing`);
     }
   });
   lines.push(`Board: npm run card:check -- ${card.id} --start   ·   --result "✓ …" | "⚠ …"   (writes a patch file for ArtifactData)`);
