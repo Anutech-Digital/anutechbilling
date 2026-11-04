@@ -39,6 +39,7 @@ import {
   type SalesCatalogEntry,
   type SalesChannel,
   type SalesTurnRole,
+  type HeldQuoteBrief,
   isBelowCost,
   perSeatPerYear,
   authorisedTotalsFor,
@@ -435,6 +436,13 @@ export async function runSalesAgent(args: {
    * costs the agent a fact, not the customer their reply.
    */
   domain?: string | null;
+  /**
+   * R-2460: the lead's draft is HELD by the customer-copy gate (no place of supply / needs
+   * approval). The agent is told to ask for what is missing / say the quotation will follow,
+   * no total is authorised, and the held figures are struck from the money guard's list — so a
+   * reply that states one is handed to a person instead of sent. See BuildPromptArgs.heldQuote.
+   */
+  heldQuote?: HeldQuoteBrief | null;
 }): Promise<SalesAgentRun> {
   const cfg = await resolveGeminiConfig(args.admin, args.tenantId);
   if (!cfg.apiKey) {
@@ -533,6 +541,7 @@ export async function runSalesAgent(args: {
     tradeInFacts: observed?.tradeIn,
     qualifierBrief: merged ? qualifierBriefing(merged) : undefined,
     recallFacts: recall,
+    heldQuote: args.heldQuote ?? null,
   });
 
   let failure = "";

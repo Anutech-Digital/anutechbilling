@@ -140,7 +140,112 @@ interface TenantRow {
  * write to this customer — see `lib/inbound/ingest.ts`. A boolean that nobody returned is
  * how one enquiry came to get two answers.
  */
-export type SendAutoQuoteResult = "sent" | "failed";
+export type SendAutoQuoteResult = "sent" | "failed" | SendAutoQuoteHeld;
+
+/**
+ * R-2460: the gate HELD the quote (no place of supply / needs approval) — not a failed send.
+ *
+ * Until R-2460 a hold came back as "failed", and that word did two wrong things: the callers
+ * told the owner "the quotation email failed to send" (it never tried), and lib/inbound/ingest.ts
+ * then ran the AI sales agent with the held draft's totals still authorised — so the agent could
+ * state the very price the gate had just refused to send. `totals` are those figures, rounded
+ * rupees (subtotal, after-discount taxable, GST, gross), so every later step can keep them out of
+ * anything the customer reads.
+ */
+export interface SendAutoQuoteHeld {
+  status: "held";
+  quoteId: string;
+  kind: CustomerCopyBlock["kind"];
+  /** Why it is held — the gate's own words. */
+  reason: string;
+  /** What the owner does next — the gate's own words. */
+  nextStep: string;
+  /** The page that fixes it. */
+  href: string;
+  /** The held draft's figures, never to be stated to the customer while it is held. */
+  totals: number[];
+}
+
+/** R-2460: true when sendAutoQuote held the quote rather than failing to send it. */
+export function isAutoQuoteHeld(r: SendAutoQuoteResult): r is SendAutoQuoteHeld {
+  return typeof r === "object" && r !== null && r.status === "held";
+}
+
+/**
+ * R-2460: the one sentence a caller writes for an auto-quote that did not go out — "Quote held —
+ * <reason> <next step>" for a hold, the send failure otherwise. One helper, so the website
+ * enquiry route and the inbound path cannot drift back to calling a hold "failed".
+ */
+export function autoQuoteNotSentReason(r: Exclude<SendAutoQuoteResult, "sent">): string {
+  if (isAutoQuoteHeld(r)) return `Quote held — ${r.reason} ${r.nextStep}`.trim();
+  return "the quotation email failed to send — the draft is saved";
+}
+
+/** R-2460: the held draft's money, rounded rupees, zeros dropped — see SendAutoQuoteHeld.totals. */
+export function heldQuoteTotals(q: {
+  subtotal?: number | null; discount_pct?: number | null; tax_rate?: number | null; amount?: number | null;
+}): number[] {
+  const subtotal = q.subtotal ?? 0;
+  const taxable = subtotal - Math.round(subtotal * ((q.discount_pct ?? 0) / 100));
+  const amount = q.amount ?? 0;
+  const tax = amount > 0 ? amount - taxable : Math.round(taxable * ((q.tax_rate ?? 0) / 100));
+  return [...new Set([subtotal, taxable, tax, amount].map((n) => Math.round(n)).filter((n) => n > 0))];
+}
+
+/**
+ * R-2460: would the customer-copy gate hold this draft right now? The same check sendAutoQuote
+ * runs before it mails, asked by the AI sales agent: a held draft's figures must not be stated
+ * in a reply either — also on a LATER message, when no send is attempted at all. Read-only (no
+ * timeline line, no bell). A failed read counts as held — the strict direction: the agent then
+ * states no total.
+ */
+export async function autoQuoteHoldFor(
+  admin: Admin,
+  args: { tenantId: string; leadId: string; quoteId: string },
+): Promise<SendAutoQuoteHeld | null> {
+  try {
+    const { data: q, error } = await admin
+      .from("quotes")
+      .select(`id, subtotal, discount_pct, tax_rate, amount, customer_id, lead_id, invoice_id, prospect_state_code, prospect_country, ${CUSTOMER_COPY_COLUMNS}`)
+      .eq("id", args.quoteId)
+      .eq("tenant_id", args.tenantId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    const quote = q as QuoteRow | null;
+    if (!quote || quote.status !== "draft") return null;
+    const gateQuote = { ...quote, lead_id: quote.lead_id ?? args.leadId } as unknown as CustomerCopyQuote;
+    const parties = await loadCustomerCopyParties(
+      admin,
+      { tenant_id: args.tenantId, customer_id: quote.customer_id, lead_id: gateQuote.lead_id },
+      "owner",
+    );
+    const block = customerCopyBlock(gateQuote, parties);
+    return block ? heldResult(quote, block) : null;
+  } catch (e) {
+    return {
+      status: "held", quoteId: args.quoteId, kind: "approval",
+      reason: `the quote could not be checked (${(e as Error).message}).`,
+      nextStep: "Open the quote and send it by hand.",
+      href: `/quotes/${encodeURIComponent(args.quoteId)}`,
+      totals: [],
+    };
+  }
+}
+
+function heldResult(
+  quote: Pick<QuoteRow, "id" | "subtotal" | "discount_pct" | "tax_rate" | "amount">,
+  block: CustomerCopyBlock,
+): SendAutoQuoteHeld {
+  return {
+    status: "held",
+    quoteId: quote.id,
+    kind: block.kind,
+    reason: block.reason,
+    nextStep: block.nextStep,
+    href: block.action?.href ?? `/quotes/${encodeURIComponent(quote.id)}`,
+    totals: heldQuoteTotals(quote),
+  };
+}
 
 export async function sendAutoQuote(
   admin: Admin,
@@ -196,7 +301,8 @@ export async function sendAutoQuote(
   }
   if (block) {
     await holdAutoQuote(admin, args, quote.id, block, note);
-    return "failed";
+    /* R-2460: "held", not "failed" — see SendAutoQuoteHeld. */
+    return heldResult(quote, block);
   }
   /* The place of supply the gate just decided — the PDF and the letter print THIS head, as
      the send route does (pos.interState), never a blanket "intra-state". */

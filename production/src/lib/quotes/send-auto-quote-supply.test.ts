@@ -28,7 +28,7 @@ vi.mock("@/lib/compliance/gst-registration-server", () => ({
   readTenantGstRegistration: async () => ({ registered: true }),
 }));
 
-import { sendAutoQuote } from "./send-auto-quote";
+import { sendAutoQuote, autoQuoteHoldFor } from "./send-auto-quote";
 
 type Row = Record<string, unknown>;
 interface Write { table: string; op: "insert" | "update"; values: unknown }
@@ -113,7 +113,7 @@ describe("R-2456 — a lead with no state: the auto-quote is NOT emailed", () =>
 
     const out = await sendAutoQuote(admin, ARGS);
 
-    expect(out).toBe("failed");
+    expect(out).toMatchObject({ status: "held", kind: "customer_state", quoteId: "Q-TEST-2026-27-0001", href: "/leads?lead=lead-1", totals: [10000, 1800, 11800] });
     expect(sendCustomerEmail).not.toHaveBeenCalled();
     // The quote stays a draft — no status update, no send-log row.
     expect(writes.filter((w) => w.table === "quotes")).toEqual([]);
@@ -140,7 +140,7 @@ describe("R-2456 — a lead with no state: the auto-quote is NOT emailed", () =>
       notifications: [{ id: "n-1" }], // an unread quote.not_sent for this quote already exists
     });
 
-    expect(await sendAutoQuote(admin, ARGS)).toBe("failed");
+    expect(await sendAutoQuote(admin, ARGS)).toMatchObject({ status: "held" });
     expect(sendCustomerEmail).not.toHaveBeenCalled();
     expect(notifyPeople).not.toHaveBeenCalled();
     // The timeline still records this attempt.
@@ -156,7 +156,7 @@ describe("R-2456 — a lead with no state: the auto-quote is NOT emailed", () =>
 
     const out = await sendAutoQuote(admin, ARGS);
 
-    expect(out).toBe("failed");
+    expect(out).toMatchObject({ status: "held", kind: "company_state" });
     expect(sendCustomerEmail).not.toHaveBeenCalled();
     const n = notifyPeople.mock.calls[0][0] as Row;
     expect(n.title).toMatch(/^Auto-quote not sent — set the company state/);
@@ -177,7 +177,7 @@ describe("R-2456 — the approval half of the same gate", () => {
 
     const out = await sendAutoQuote(admin, ARGS);
 
-    expect(out).toBe("failed");
+    expect(out).toMatchObject({ status: "held", kind: "approval", href: "/quotes/Q-TEST-2026-27-0001" });
     expect(sendCustomerEmail).not.toHaveBeenCalled();
     const n = notifyPeople.mock.calls[0][0] as Row;
     expect(n.title).toMatch(/^Auto-quote not sent — needs approval/);
@@ -217,5 +217,35 @@ describe("R-2456 — a lead WITH a state: the auto-quote is sent as before", () 
     const pdf = renderQuotePDF.mock.calls[0][0] as Row;
     expect(pdf.interState).toBe(false);
     expect(pdf.placeOfSupply).toBe("Delhi (07) · CGST + SGST");
+  });
+});
+
+describe("R-2460 — autoQuoteHoldFor: the same gate, asked by the AI sales agent", () => {
+  it("a no-state lead's draft is held, with its figures", async () => {
+    const { admin, writes } = fakeAdmin({
+      quotes: QUOTE, tenants: TENANT,
+      leads: { state_code: null, gstin: null, country: "India" }, customers: null,
+    });
+    const h = await autoQuoteHoldFor(admin, { tenantId: "t-1", leadId: "lead-1", quoteId: "Q-TEST-2026-27-0001" });
+    expect(h).toMatchObject({ status: "held", kind: "customer_state", totals: [10000, 1800, 11800] });
+    // Only a question — it writes nothing and rings no bell.
+    expect(writes).toEqual([]);
+    expect(notifyPeople).not.toHaveBeenCalled();
+  });
+
+  it("a lead with a state → not held", async () => {
+    const { admin } = fakeAdmin({
+      quotes: QUOTE, tenants: TENANT,
+      leads: { state_code: "06", gstin: null, country: "India" }, customers: null,
+    });
+    expect(await autoQuoteHoldFor(admin, { tenantId: "t-1", leadId: "lead-1", quoteId: "Q-TEST-2026-27-0001" })).toBeNull();
+  });
+
+  it("a sent quote is not a held one", async () => {
+    const { admin } = fakeAdmin({
+      quotes: { ...QUOTE, status: "sent" }, tenants: TENANT,
+      leads: { state_code: null, gstin: null, country: "India" }, customers: null,
+    });
+    expect(await autoQuoteHoldFor(admin, { tenantId: "t-1", leadId: "lead-1", quoteId: "Q-TEST-2026-27-0001" })).toBeNull();
   });
 });

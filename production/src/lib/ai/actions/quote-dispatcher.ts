@@ -31,7 +31,7 @@ import type { CatalogueItemPrice } from "@/lib/quotes/quote-from-enquiry";
 import { resolveAutonomy, type AiAction } from "../autonomy";
 import { loadAutonomyPolicy, logAiAction } from "../autonomy.server";
 import { recordSalesTurn, flagLeadForHumanAttention } from "../sales-agent.server";
-import { quoteIsWarranted, type SalesAgentDecision, type SalesChannel } from "../sales-agent";
+import { quoteIsWarranted, heldTotalsNamed, type SalesAgentDecision, type SalesChannel } from "../sales-agent";
 
 /* Typed as the RETURN of createAdminClient — hand-rolling this shape is what produced the
    TS2589 "excessively deep" failure in lib/email/owner-alert.ts. */
@@ -479,6 +479,26 @@ export async function dispatchSalesDecision(args: DispatchArgs): Promise<Dispatc
             `${item?.name ?? "an unmatched product"} — one mail, in the customer's thread.`,
           followUp: null,
         };
+      }
+
+      /* ── R-2460: HELD by the gate → the reply may not carry the held price ───────
+         The agent wrote this reply BEFORE the draft existed, with seats × list and the net
+         cost authorised. The customer-copy gate then held the draft (no place of supply /
+         needs approval) — so a reply stating one of its figures would hand the customer the
+         price the gate just refused to send. Such a reply goes to a person (draft on the
+         timeline); one that names no held figure (asks for the state) still goes out. */
+      if (quoted.held) {
+        const named = heldTotalsNamed(
+          `${decision.generated_response.body_text}\n${decision.generated_response.whatsapp_summary}`,
+          quoted.held.totals,
+        );
+        if (named.length > 0) {
+          return await handOver(
+            args,
+            `${quoted.reason} The agent's reply named the held quote's amount ` +
+              `(${named.map((n) => `Rs ${n.toLocaleString("en-IN")}`).join(", ")}), so it was not sent.`,
+          );
+        }
       }
 
       /* No quotation reached them — it was refused, held for review, or the send failed, and
