@@ -400,6 +400,7 @@ MIGS=(
   "r2430placeholderrefbankline|20261103200938_r2430_placeholder_ref_bank_line.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2430%')"
   "r2447quoteapprovalinsertmoneychange|20261103211958_r2447_quote_approval_insert_and_money_change.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_quote_approval_not_by_maker()') and prosrc like '%R-2447%') and exists(select 1 from pg_trigger where tgname = 'trg_quote_insert_approval_guard' and tgrelid = to_regclass('public.quotes'))"
   "r2445gstinownerverified|20261103215416_r2445_gstin_owner_verified.sql|resellersos_migration|to_regclass('public.gstin_ownership_claims') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.network_has_scope(uuid,uuid,text)') and prosrc like '%R-2445%')"
+  "r2427exportreceiptfx|20261104001617_r2427_export_receipt_fx.sql|resellersos_migration|to_regprocedure('public.reconcile_bank_credit_fx_invoice(uuid,text,text,numeric,numeric,boolean,date)') is not null and to_regprocedure('public.reconcile_bank_credit_new_sale_fx(uuid,uuid,jsonb,boolean,date,date,text,text,text,numeric,numeric,numeric)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
