@@ -1324,7 +1324,9 @@ export function useSuggestMatches(transactionId: string | null | undefined) {
       if (error) throw error;
       return (data ?? []) as MatchSuggestion[];
     },
-    staleTime: 60_000,
+    /* R-2364: read fresh each time the line is opened — another line booked meanwhile may have
+       used a suggested receipt (the server leaves those out, so a cached list would be wrong). */
+    staleTime: 0,
   });
 }
 
