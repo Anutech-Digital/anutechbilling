@@ -352,4 +352,62 @@ begin
   raise notice 'PASS 9: a server move keeps one-company behaviour (new membership, old ended)';
 end $$;
 
+-- ── 12. Removed from the SELECTED company: turning users.is_active back on is refused ─
+-- (the member has B selected since case 8)
+update public.tenant_memberships set ended_at = now(), end_reason = 'removed'
+ where user_id = 'c2471000-0000-0000-0000-0000000000a3' and tenant_id = 'c2471000-0000-0000-0000-0000000000f2';
+
+do $$
+declare v_refused boolean := false; v_active boolean;
+begin
+  select is_active into v_active from public.users where id = 'c2471000-0000-0000-0000-0000000000a3';
+  if v_active then raise exception 'FAIL 12: ended selected membership left users.is_active on'; end if;
+  begin
+    update public.users set is_active = true where id = 'c2471000-0000-0000-0000-0000000000a3';
+  exception when insufficient_privilege then
+    if sqlerrm not like '%removed from this company%Invite them again%' then
+      raise exception 'FAIL 12: wrong refusal: %', sqlerrm;
+    end if;
+    v_refused := true;
+  end;
+  if not v_refused then raise exception 'FAIL 12: re-activating a removed member was silently accepted'; end if;
+  raise notice 'PASS 12: removed member cannot be switched back on by users.is_active (next step given)';
+end $$;
+
+-- ── 13. MFA owner on aal1 is not an owner; aal2 is ─────────────────────────────────
+insert into auth.mfa_factors (id, user_id, friendly_name, factor_type, status, secret, created_at, updated_at)
+  values ('c2471000-0000-0000-0000-0000000000d2', 'c2471000-0000-0000-0000-0000000000a1', 'test', 'totp', 'verified', 'JBSWY3DPEHPK3PXP', now(), now());
+set local role authenticated;
+
+do $$
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', 'c2471000-0000-0000-0000-0000000000a1', 'role', 'authenticated', 'aal', 'aal1')::text, true);
+  if public.current_user_is_owner() then raise exception 'FAIL 13: MFA owner on aal1 counted as owner'; end if;
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', 'c2471000-0000-0000-0000-0000000000a1', 'role', 'authenticated', 'aal', 'aal2')::text, true);
+  if not public.current_user_is_owner() then raise exception 'FAIL 13: MFA owner on aal2 not an owner'; end if;
+  raise notice 'PASS 13: current_user_is_owner() needs MFA like current_user_has_role()';
+end $$;
+
+-- ── 14. users.role mirror drifts from the membership → no role (fail closed) ────────
+reset role;
+select set_config('request.jwt.claims', '', true);
+set local session_replication_role = replica;
+update public.tenant_memberships set role = 'sales'
+ where user_id = 'c2471000-0000-0000-0000-0000000000a1' and tenant_id = 'c2471000-0000-0000-0000-0000000000f1';
+set local session_replication_role = origin;
+set local role authenticated;
+
+do $$
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', 'c2471000-0000-0000-0000-0000000000a1', 'role', 'authenticated', 'aal', 'aal2')::text, true);
+  if public.current_user_has_role('owner') or public.current_user_has_role('sales')
+     or public.current_user_is_owner() then
+    raise exception 'FAIL 14: users.role (owner) and membership role (sales) disagree — a role was still granted';
+  end if;
+  raise notice 'PASS 14: role drift between users and membership → no role';
+end $$;
+
 rollback;

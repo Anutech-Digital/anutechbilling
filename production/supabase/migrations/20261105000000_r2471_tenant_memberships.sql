@@ -55,6 +55,11 @@ create table if not exists public.tenant_memberships (
 );
 
 create index if not exists tenant_memberships_tenant_idx on public.tenant_memberships (tenant_id);
+/* FK lookups for ON DELETE SET NULL when a login / employee row goes. */
+create index if not exists tenant_memberships_employee_idx on public.tenant_memberships (employee_id) where employee_id is not null;
+create index if not exists tenant_memberships_manager_idx on public.tenant_memberships (manager_id) where manager_id is not null;
+create index if not exists tenant_memberships_created_by_idx on public.tenant_memberships (created_by) where created_by is not null;
+create index if not exists tenant_memberships_ended_by_idx on public.tenant_memberships (ended_by) where ended_by is not null;
 
 comment on table public.tenant_memberships is
   'R-2471: which companies a login may work in, and as what. users.tenant_id is the SELECTED one; '
@@ -78,9 +83,12 @@ drop policy if exists tenant_memberships_service_role on public.tenant_membershi
 create policy tenant_memberships_service_role on public.tenant_memberships
   for all to service_role using (true) with check (true);
 
+/* Insert/update only: a membership row is deleted only by CASCADE (its login or its company
+   going — the users row's own audit covers that), and logging during a company delete would
+   write an activity_log row for a tenant that is being removed (FK error, merge_stranded). */
 drop trigger if exists tenant_memberships_activity on public.tenant_memberships;
 create trigger tenant_memberships_activity
-  after insert or update or delete on public.tenant_memberships
+  after insert or update on public.tenant_memberships
   for each row execute function public.log_row_change();
 
 -- ── 2. Backfill (before the helpers start requiring it) ────────────────────────────
@@ -110,6 +118,7 @@ begin
       select 1 from public.tenant_memberships m
        where m.user_id = new.id and m.tenant_id = new.tenant_id
          and m.is_active and m.ended_at is null
+         and (m.access_ends_on is null or m.access_ends_on >= public.ist_today())
          and new.is_active
          and m.role = new.role
          and m.access_ends_on is not distinct from new.access_ends_on
@@ -124,6 +133,13 @@ begin
        set ended_at = now(), end_reason = 'moved', ended_by = public.current_user_id(),
            updated_at = now()
      where user_id = old.id and tenant_id = old.tenant_id and ended_at is null;
+  elsif tg_op = 'UPDATE' and new.is_active and not old.is_active and exists (
+          select 1 from public.tenant_memberships m
+           where m.user_id = new.id and m.tenant_id = new.tenant_id and m.ended_at is not null) then
+    /* Turning a login back on in a company it was REMOVED from would be silently undone by the
+       mirror (ended → inactive). Say what to do instead. */
+    raise exception 'This person was removed from this company. Invite them again from the Team page to give them access.'
+      using errcode = '42501';
   end if;
 
   insert into public.tenant_memberships as m
@@ -263,16 +279,22 @@ as $function$
      R-1556: and the session must have passed two-step sign-in if the user enrolled
      (session_mfa_ok(), R-731) — a password-only session holds no role.
      R-1896: a login past its access_ends_on holds no role either.
-     R-2471: the role is the one in the SELECTED company's active membership. */
+     R-2471: the role is the one in the membership of the company current_tenant_id() returns
+     (the SELECTED company; for a job, its app.tenant_id) — so the role and the tenant always
+     come from the same membership. current_tenant_id() already requires that membership active,
+     not ended and not expired. For the selected company the users mirror must agree too (role,
+     active, end date): if they ever drift, no role (fail closed). */
   select exists (
-    select 1 from public.users u
-      join public.tenant_memberships m on m.user_id = u.id and m.tenant_id = u.tenant_id
-    where u.id = public.current_user_id()
-      and u.is_active
-      and (u.access_ends_on is null or u.access_ends_on >= public.ist_today())
+    select 1 from public.tenant_memberships m
+      join public.users u on u.id = m.user_id
+    where m.user_id = public.current_user_id()
+      and m.tenant_id = public.current_tenant_id()
       and m.is_active and m.ended_at is null
       and (m.access_ends_on is null or m.access_ends_on >= public.ist_today())
       and m.role::text = any (p_roles)
+      and (u.tenant_id is distinct from m.tenant_id
+           or (u.role = m.role and u.is_active
+               and (u.access_ends_on is null or u.access_ends_on >= public.ist_today())))
   ) and public.session_mfa_ok();
 $function$;
 
@@ -285,14 +307,10 @@ returns boolean
 language sql stable security definer
 set search_path = ''
 as $$
-  /* R-2471: owner of the SELECTED company, by its active membership (and the users mirror). */
-  select exists (
-    select 1 from public.users u
-      join public.tenant_memberships m on m.user_id = u.id and m.tenant_id = u.tenant_id
-    where u.id = public.current_user_id() and u.role = 'owner' and u.is_active
-      and m.role = 'owner' and m.is_active and m.ended_at is null
-      and (m.access_ends_on is null or m.access_ends_on >= public.ist_today())
-  );
+  /* R-2471: owner of the current company by its active membership — one definition with
+     current_user_has_role('owner'), so it now also needs MFA (R-731) and the end date (R-1896)
+     like every other role check. */
+  select public.current_user_has_role('owner');
 $$;
 
 revoke all on function public.current_user_is_owner() from public;
@@ -442,9 +460,11 @@ begin
   select * into v_m from public.tenant_memberships m
    where m.user_id = v_uid and m.tenant_id = p_tenant_id
      and m.is_active and m.ended_at is null
-     and (m.access_ends_on is null or m.access_ends_on >= public.ist_today());
+     and (m.access_ends_on is null or m.access_ends_on >= public.ist_today())
+     for share;   -- a concurrent change to this membership waits for the switch (and v.v.)
   if v_m.id is null then
-    raise exception 'You are not a member of that company.' using errcode = '42501';
+    raise exception 'You are not a member of that company, or your access there has ended. Ask that company''s owner to invite you again.'
+      using errcode = '42501';
   end if;
   update public.users
      set tenant_id = v_m.tenant_id, role = v_m.role, is_active = true,
@@ -458,5 +478,273 @@ $$;
 
 revoke all on function public.switch_company(uuid) from public, anon;
 grant execute on function public.switch_company(uuid) to authenticated, service_role;
+
+-- ── 7. "Empty workspace" scans: a membership is not business data ─────────────────
+-- merge_stranded_user_into_tenant (Team → Claim a colleague) and tenant_holds_business_records
+-- (R-2469) count every public table with a tenant_id, minus bookkeeping tables. The new
+-- tenant_memberships row every login now has would make every stranded workspace look "full".
+-- Bodies copied from their LATEST versions (20261025160239_r1922 / 20261104090100_r2469); the
+-- only change is 'tenant_memberships' in the carve-out list. create or replace keeps grants.
+
+create or replace function public.merge_stranded_user_into_tenant(
+  p_email text, p_tenant_id uuid, p_role user_role default 'support'::user_role)
+returns jsonb
+language plpgsql
+security definer
+set search_path to 'public', 'auth'
+as $function$
+declare
+  v_email        text := lower(btrim(p_email));
+  v_trusted      boolean;
+  v_dest_name    text;
+  v_auth_id      uuid;
+  v_auth_name    text;
+  v_old_tid      uuid;
+  v_old_name     text;
+  v_old_users    int;
+  v_sql          text;
+  v_holdings     jsonb;
+  v_rows         bigint;
+  v_action       text;
+  v_deleted      boolean := false;
+  v_member_id    uuid;
+  v_generic      text;
+  v_last_sign_in timestamptz;
+begin
+  v_generic := format(
+    'Cannot claim %s. Only someone with a pending invite or join request to your workspace, who has signed in at least once, can be claimed. Invite them from Team → Invite teammate using this exact address, ask them to sign in once, then claim them.',
+    v_email);
+
+  /* R-721: trusted server paths (R-454 rule) act as platform admin. */
+  v_trusted := coalesce(auth.role(), '') = 'service_role'
+               or (auth.role() is null and auth.uid() is null
+                   and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
+
+  -- ── 1. The caller must be an ACTIVE owner of the destination workspace ──
+  --    R-1615: current_tenant_id() + current_user_has_role() (active AND MFA step done).
+  if not v_trusted then
+    if public.current_tenant_id() is null then
+      raise exception
+        'Claiming a colleague needs an active owner who has finished sign-in (including the authenticator code). Sign in again and retry.'
+        using errcode = '28000';
+    end if;
+    if p_tenant_id is distinct from public.current_tenant_id()
+       or not public.current_user_has_role('owner') then
+      raise exception
+        'Only the owner of a workspace can claim someone into it. Ask your workspace owner to open Team → Claim a colleague.'
+        using errcode = '42501';
+    end if;
+  end if;
+
+  select t.name into v_dest_name from public.tenants t where t.id = p_tenant_id;
+  if v_dest_name is null then
+    raise exception 'That workspace does not exist.' using errcode = 'P0002';
+  end if;
+
+  -- ── 2. Already in this workspace? Only the role may need correcting. ────
+  select u.id into v_member_id
+    from public.users u
+   where u.tenant_id = p_tenant_id and lower(u.email) = v_email
+   limit 1;
+
+  if v_member_id is not null then
+    update public.users set role = p_role where id = v_member_id and role <> p_role;
+    v_action  := case when found then 'role_updated' else 'already_member' end;
+    v_auth_id := v_member_id;
+    select coalesce(nullif(btrim(u.full_name), ''), split_part(v_email, '@', 1))
+      into v_auth_name from public.users u where u.id = v_member_id;
+  else
+    select au.id,
+           coalesce(
+             nullif(btrim(au.raw_user_meta_data ->> 'full_name'), ''),
+             nullif(btrim(au.raw_user_meta_data ->> 'name'), ''),
+             split_part(au.email, '@', 1)
+           ),
+           au.last_sign_in_at
+      into v_auth_id, v_auth_name, v_last_sign_in
+      from auth.users au
+     where lower(au.email) = v_email
+     limit 1;
+
+    -- ── 3. R-721: they must have asked, or been asked, to join THIS workspace.
+    --    A join request is their own act. An invite is the owner's act, so it counts only
+    --    once they have signed in AFTER it was sent (their half of the handshake) — an owner
+    --    cannot invite someone else's address and pull them in the same minute.
+    --    "No account" and "no request" give the SAME words: no existence oracle.
+    if v_auth_id is null
+       or (not v_trusted and not (
+            exists (select 1 from public.join_requests jr
+                     where jr.tenant_id = p_tenant_id and jr.status = 'pending_approval'
+                       and (jr.auth_user_id = v_auth_id or lower(jr.email) = v_email))
+         or exists (select 1 from public.team_invites i
+                     where i.tenant_id = p_tenant_id and i.accepted_at is null
+                       and lower(i.email) = v_email
+                       and v_last_sign_in >= i.created_at))) then
+      raise exception '%', v_generic using errcode = '42501';
+    end if;
+
+    select u.tenant_id into v_old_tid from public.users u where u.id = v_auth_id;
+
+    if v_old_tid = p_tenant_id then
+      -- Row email differs from the login email but the person is here already.
+      update public.users set role = p_role where id = v_auth_id and role <> p_role;
+      v_action := case when found then 'role_updated' else 'already_member' end;
+
+    -- 3b. Truly stranded: an auth account with no profile anywhere.
+    elsif v_old_tid is null then
+      insert into public.users (id, tenant_id, email, full_name, initials, role, color)
+      values (
+        v_auth_id, p_tenant_id, v_email, v_auth_name,
+        upper(left(regexp_replace(coalesce(v_auth_name, v_email), '[^A-Za-z]', '', 'g'), 2)),
+        p_role, 'indigo'
+      );
+      v_action := 'attached';
+
+    -- 3c. They are sitting in another (accidental) workspace.
+    else
+      select t.name, (select count(*) from public.users u2 where u2.tenant_id = t.id)
+        into v_old_name, v_old_users
+        from public.tenants t where t.id = v_old_tid;
+
+      if v_old_users > 1 then
+        raise exception
+          'Cannot claim %: they are in another company that has other people in it. That is a separate company, not an accidental workspace — moving them is a platform-admin job.%',
+          v_email,
+          case when v_trusted then format(' ("%s", %s people)', v_old_name, v_old_users) else '' end
+          using errcode = '23505';
+      end if;
+
+      -- Count everything that is not bookkeeping. Fail-safe: unlisted table = data.
+      select string_agg(
+               format('select %L::text as tbl, count(*)::bigint as n from public.%I where tenant_id = %L%s',
+                      c.table_name, c.table_name, v_old_tid,
+                      /* R-1834: the empty Petty Cash every company is born with is not data. Its
+                         bank lines (if any) still count, through bank_transactions. */
+                      case when c.table_name = 'bank_accounts'
+                           then ' and not (is_default_petty_cash and opening_balance = 0)'
+                           /* R-1922: the Customer messages switch every company is born with is a
+                              setting, not data. Any other switch row still counts. */
+                           when c.table_name = 'automation_jobs'
+                           then ' and job <> ''customer_messages'''
+                           else '' end),
+               ' union all ')
+        into v_sql
+        from information_schema.columns c
+        join information_schema.tables t
+          on t.table_schema = c.table_schema
+         and t.table_name   = c.table_name
+         and t.table_type   = 'BASE TABLE'
+       where c.table_schema = 'public'
+         and c.column_name  = 'tenant_id'
+         and c.table_name not in (
+               'users', 'activity_log', 'team_invites', 'tenant_secrets',
+               'document_series', 'customer_number_seq', 'user_google_tokens',
+               'tenant_domains', 'join_requests', 'email_log', 'api_keys', 'tenant_memberships'
+             );
+
+      execute format(
+        'select coalesce(jsonb_object_agg(tbl, n) filter (where n > 0), ''{}''::jsonb),
+                coalesce(sum(n), 0) from (%s) s', v_sql)
+        into v_holdings, v_rows;
+
+      if v_rows > 0 then
+        raise exception
+          'Cannot claim %: their current workspace still holds records. Moving them out would leave that data with no one who can sign in and see it. They should move or export it first — this tool only clears empty workspaces.%',
+          v_email,
+          case when v_trusted then format(' ("%s": %s records, %s)', v_old_name, v_rows, v_holdings::text) else '' end
+          using errcode = '23503';
+      end if;
+
+      update public.users
+         set tenant_id = p_tenant_id,
+             role      = p_role,
+             email     = v_email
+       where id = v_auth_id;
+
+      delete from public.tenants where id = v_old_tid;
+      v_deleted := true;
+      v_action  := 'moved';
+    end if;
+  end if;
+
+  -- ── 4. Any open request / invite from this person is now settled ────────
+  update public.join_requests
+     set status = 'approved', decided_at = now(), decided_by = auth.uid()
+   where tenant_id = p_tenant_id
+     and lower(email) = v_email
+     and status = 'pending_approval';
+
+  update public.team_invites
+     set accepted_at = now()
+   where tenant_id = p_tenant_id
+     and lower(email) = v_email
+     and accepted_at is null;
+
+  -- ── 5. Visible in the destination workspace, not just in a server log ───
+  insert into public.activity_log (tenant_id, user_id, action, entity, entity_id, label)
+  values (
+    p_tenant_id, auth.uid(), v_action, 'user', v_auth_id::text,
+    format('Claimed %s into %s as %s%s',
+           v_email, coalesce(v_dest_name, 'this workspace'), p_role,
+           case when v_deleted then format(' (removed empty workspace "%s")', v_old_name) else '' end)
+  );
+
+  return jsonb_build_object(
+    'action',             v_action,
+    'email',              v_email,
+    'full_name',          v_auth_name,
+    'auth_user_id',       v_auth_id,
+    'role',               p_role,
+    'tenant_id',          p_tenant_id,
+    'tenant_name',        v_dest_name,
+    'old_tenant_name',    v_old_name,
+    'old_tenant_deleted', v_deleted
+  );
+end;
+$function$;
+
+create or replace function public.tenant_holds_business_records(p_tenant uuid)
+returns boolean
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_tbl text;
+  v_hit boolean;
+begin
+  /* R-2469: same tables and carve-outs as merge_stranded_user_into_tenant (R-721/R-1834/
+     R-1922) — but a yes/no, so one EXISTS per table and stop at the first hit (no full counts). */
+  for v_tbl in
+    select c.table_name
+      from information_schema.columns c
+    join information_schema.tables t
+      on t.table_schema = c.table_schema
+     and t.table_name   = c.table_name
+     and t.table_type   = 'BASE TABLE'
+   where c.table_schema = 'public'
+     and c.column_name  = 'tenant_id'
+     and c.table_name not in (
+           'users', 'activity_log', 'team_invites', 'tenant_secrets',
+           'document_series', 'customer_number_seq', 'user_google_tokens',
+           'tenant_domains', 'join_requests', 'email_log', 'api_keys', 'tenant_memberships'
+         )
+  loop
+    execute format('select exists (select 1 from public.%I where tenant_id = $1%s)',
+                   v_tbl,
+                   case when v_tbl = 'bank_accounts'
+                        then ' and not (is_default_petty_cash and opening_balance = 0)'
+                        when v_tbl = 'automation_jobs'
+                        then ' and job <> ''customer_messages'''
+                        else '' end)
+      into v_hit using p_tenant;
+    if v_hit then
+      return true;
+    end if;
+  end loop;
+  return false;
+end;
+$$;
 
 commit;
