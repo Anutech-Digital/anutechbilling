@@ -414,8 +414,48 @@ end $$;
 -- ── 15. Restoring a company backup does not bring a removed member back ────────────
 -- (superuser connection with owner B's identity: the local DB lacks some backup grants, which
 --  r1556_backup_mfa_secrets covers; this case is about WHAT is restored.)
+-- The `backup` schema exists only on Cloud SQL (cloudsql/06+07) and some local DBs; where it is
+-- missing (CI) the same snapshots table + _take are built inside this transaction, exactly as
+-- r1556_backup_mfa_secrets does.
 reset role;
 select set_config('request.jwt.claims', '', true);
+
+do $do$
+begin
+  if to_regnamespace('backup') is null then
+    execute 'create schema backup';
+  end if;
+  if to_regclass('backup.snapshots') is null then
+    execute $t$create table backup.snapshots (
+      id uuid primary key default gen_random_uuid(), created_at timestamptz not null default now(),
+      label text, table_count int, payload jsonb not null, tenant_id uuid, kind text)$t$;
+  end if;
+  if to_regprocedure('backup._take(uuid,text,text)') is null then
+    execute $fn$
+create function backup._take(p_tenant uuid, p_label text, p_kind text) returns jsonb
+ language plpgsql security definer set search_path to 'public' as $f$
+declare r record; result jsonb := '{}'::jsonb; tbl_json jsonb; n int := 0; v_id uuid;
+begin
+  select coalesce(jsonb_agg(to_jsonb(t)), '[]'::jsonb) into tbl_json from public.tenants t where t.id = p_tenant;
+  result := jsonb_build_object('tenants', tbl_json); n := 1;
+  for r in
+    select c.table_name from information_schema.columns c
+    join pg_tables pt on pt.schemaname='public' and pt.tablename=c.table_name
+    where c.table_schema='public' and c.column_name='tenant_id' and c.table_name not in ('tenant_secrets')
+    group by c.table_name order by c.table_name
+  loop
+    execute format('select coalesce(jsonb_agg(to_jsonb(t)), ''[]''::jsonb) from public.%I t where t.tenant_id = $1', r.table_name)
+      into tbl_json using p_tenant;
+    result := result || jsonb_build_object(r.table_name, tbl_json);
+    n := n + 1;
+  end loop;
+  insert into backup.snapshots(tenant_id, label, kind, table_count, payload)
+  values (p_tenant, coalesce(nullif(btrim(p_label), ''), 'Backup'), p_kind, n, result) returning id into v_id;
+  return jsonb_build_object('id', v_id, 'table_count', n, 'bytes', length(result::text), 'created_at', now());
+end $f$$fn$;
+  end if;
+end $do$;
+
 insert into auth.users (id, email) values ('c2471000-0000-0000-0000-0000000000a5', 'r2471-temp@example.test');
 insert into public.users (id, tenant_id, email, full_name, role, is_active) values
   ('c2471000-0000-0000-0000-0000000000a5', 'c2471000-0000-0000-0000-0000000000f3', 'r2471-temp@example.test', 'R2471 Temp', 'sales', true);
@@ -427,7 +467,7 @@ declare v_snap uuid; v_m public.tenant_memberships;
 begin
   perform set_config('request.jwt.claims',
     json_build_object('sub', 'c2471000-0000-0000-0000-0000000000a2', 'role', 'authenticated', 'aal', 'aal2')::text, true);
-  perform public.create_tenant_backup('R2471 before removal');
+  perform backup._take('c2471000-0000-0000-0000-0000000000f2', 'R2471 before removal', 'manual');
   select s.id into v_snap from backup.snapshots s
    where s.tenant_id = 'c2471000-0000-0000-0000-0000000000f2' order by s.created_at desc limit 1;
   if v_snap is null then raise exception 'FAIL 15 setup: no snapshot taken'; end if;
