@@ -31,6 +31,7 @@ import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { NetworkInboxTab } from "@/components/features/purchases/network-inbox-tab";
 import { useNetworkInbox } from "@/components/features/purchases/network-inbox-queries";
 import { canActOnNetwork } from "@/components/features/purchases/network-inbox-model";
+import { isRouteAllowed } from "@/lib/nav";
 
 const INBOX_TABS = ["email", "network"] as const;
 
@@ -46,6 +47,8 @@ export default function PurchaseInboxPage() {
   const networkPending = (network.data ?? []).filter((d) => d.status === "pending").length;
   const [tabChoice, setTab] = useUrlChoice("tab", INBOX_TABS, "email");
   const tab = showNetwork ? tabChoice : "email";
+  /* R-2461: the accountant opens this page but not /settings — no button that would bounce. */
+  const canSetUpForwarding = !!me?.role && isRouteAllowed(me.role, "/settings");
 
   const doImport = async (row: InboundPurchase) => {
     setBusyId(row.id);
@@ -101,8 +104,12 @@ export default function PurchaseInboxPage() {
         <EmptyState
           icon="cart"
           title="Inbox is empty"
-          body="Forward your Amazon order emails here (one-time Gmail filter setup) and each purchase will land here for a quick review."
-          action={<Button icon="book" onClick={() => router.push("/settings?tab=integrations" as never)}>Set up email forwarding</Button>}
+          body={canSetUpForwarding
+            ? "Forward your Amazon order emails here (one-time Gmail filter setup) and each purchase will land here for a quick review."
+            : "Forwarded Amazon order emails land here for a quick review. Your owner or manager sets up email forwarding in Settings."}
+          action={canSetUpForwarding
+            ? <Button icon="book" onClick={() => router.push("/settings?tab=integrations" as never)}>Set up email forwarding</Button>
+            : undefined}
         />
       )}
 

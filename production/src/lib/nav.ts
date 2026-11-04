@@ -667,9 +667,10 @@ export const APP_NAV: NavSection[] = [
     icon: "cart",
     items: [
       /* Was reachable only by URL. It is a queue — order mails waiting to be booked — so
-         it leads the group. owner/manager only, so no gated role's routes change; whether
-         billing should have it is a product call. */
-      { id: "purchase-inbox",  href: "/purchases/inbox",           label: "Purchase Inbox",       icon: "inbox", roles: OM, hint: "Order emails from Amazon & co. — review, then book as expense" },
+         it leads the group. R-2461 (4 Nov 2026, Pardeep): the accountant too — the
+         "From network" tab's accept/reject admits them, and inbound_purchases/expenses RLS is
+         tenant-wide. Whether billing should have it is still a product call. */
+      { id: "purchase-inbox",  href: "/purchases/inbox",           label: "Purchase Inbox",       icon: "inbox", roles: ["owner", "manager", "accountant"], hint: "Order emails from Amazon & co. — review, then book as expense" },
       /* "Vendor Portal & Bids" (/vendor-portal) was a child here until S35 (28 Sep 2026).
          It showed hardcoded demo bids saved to localStorage; the route now says "not built
          yet" and points back to Vendors / Purchase Orders. Not in the nav, on purpose. */
