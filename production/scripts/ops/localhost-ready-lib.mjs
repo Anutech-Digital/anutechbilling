@@ -325,6 +325,7 @@ export async function runReady({ args, ...d }) {
     return result(EXIT_READY.notReady, `NOT READY — server up, but Local test login (${args.role}) does not work.`);
   }
   say(`Local test login ${args.role}: ok → company "E2E Test Co" (what Chrome lands in after clicking the ${args.role} button).`);
+  say("  Another local company (Google sign-in is off on localhost — no real accounts here): node scripts/dev/local-login-link.mjs <its owner>@example.test --next /dashboard, then open the printed link.");
 
   /* 5. warm pages */
   const warmed = [];

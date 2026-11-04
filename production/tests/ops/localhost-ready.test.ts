@@ -227,6 +227,8 @@ describe("runReady", () => {
     expect(r.state).toBe("up");
     expect(d.calls).toEqual(["update", "login", "warm /dashboard", "warm /quotes"]);
     expect(r.readyLine).toMatch(/^READY http:\/\/localhost:3001/);
+    // 4 Nov: Google sign-in is off on localhost — the other-company path is printed
+    expect(r.lines.join("\n")).toMatch(/local-login-link\.mjs <its owner>@example\.test/);
   });
 
   it("healthy server, --dry-run: no update writes, no login (a sign-in writes a session), no warm", async () => {
