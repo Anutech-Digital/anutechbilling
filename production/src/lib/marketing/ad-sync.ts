@@ -20,7 +20,7 @@ export interface AdSyncWindow { platform: AdPlatform; from: string; to: string; 
 
 function addDays(iso: string, n: number): string { return addDaysISO(iso, n); }
 
-export async function syncTenantAds(admin: Admin, tenantId: string, trigger: "manual" | "cron" | "connect", window?: AdSyncWindow, accountId?: string): Promise<AdSyncResult> {
+export async function syncTenantAds(admin: Admin, tenantId: string, trigger: "manual" | "cron" | "connect", window?: AdSyncWindow, accountId?: string, accountIds?: string[]): Promise<AdSyncResult> {
   const { data: run } = await admin.from("ad_sync_runs").insert({ tenant_id: tenantId, trigger }).select("id").single();
   const result: AdSyncResult = { accounts: 0, rowsWritten: 0, errors: [] };
   const today = istToday();
@@ -29,8 +29,10 @@ export async function syncTenantAds(admin: Admin, tenantId: string, trigger: "ma
     if (window) accountQuery = accountQuery.eq("platform", window.platform);
     const targetAccountId = window?.accountId ?? accountId;
     if (targetAccountId) accountQuery = accountQuery.eq("id", targetAccountId);
+    else if (accountIds?.length) accountQuery = accountQuery.in("id", accountIds);
     const { data: accounts, error } = await accountQuery;
     if (error) throw new Error(error.message);
+    if (accountIds && accounts?.length !== accountIds.length) throw new Error("Selected ad accounts are unavailable or paused. Refresh and try again.");
 
     for (const acc of accounts ?? []) {
       try {

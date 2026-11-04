@@ -123,7 +123,7 @@ export function useAdSyncRuns() {
   });
 }
 
-export async function syncAdsWindow(window?: { from?: string; to?: string; accountId?: string }): Promise<{ accounts: number; rowsWritten: number; errors: string[] }> {
+export async function syncAdsWindow(window?: { from?: string; to?: string; accountId?: string; accountIds?: string[] }): Promise<{ accounts: number; rowsWritten: number; errors: string[] }> {
   const res = await fetch("/api/marketing/ads/sync", {
     method: "POST",
     headers: window ? { "content-type": "application/json" } : undefined,
@@ -137,11 +137,11 @@ export async function syncAdsWindow(window?: { from?: string; to?: string; accou
 export function useAdsSync() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (accountId?: string) => syncAdsWindow(accountId ? { accountId } : undefined),
+    mutationFn: (accountIds?: string[]) => syncAdsWindow(accountIds ? { accountIds } : undefined),
     onSuccess: (r) => {
       qc.invalidateQueries({ queryKey: ADS_KEY });
       if (r.errors?.length) toast.warning(`Synced, but: ${r.errors[0]}`);
-      else toast.success(`Synced — ${r.accounts} account, ${r.rowsWritten} rows`);
+      else toast.success(`Synced — ${r.accounts} ${r.accounts === 1 ? "account" : "accounts"}, ${r.rowsWritten} rows`);
     },
     onError: (e) => { qc.invalidateQueries({ queryKey: ADS_KEY }); toastError(e); },
   });

@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { TabBar } from "@/components/ui/tabs";
 import { LoadError } from "@/components/shared/load-error";
 import { PLATFORM_LABEL, type AdPlatform } from "@/lib/marketing/ad-platforms";
-import { useAdsStatus, useRemoveAdAccount, useToggleAdAccount, type AdsStatus } from "@/lib/queries/ads";
+import { useAdsStatus, useAdsSync, useRemoveAdAccount, useToggleAdAccount, type AdsStatus } from "@/lib/queries/ads";
 import { formatDate } from "@/lib/utils";
 
 type PlatformFilter = "all" | AdPlatform;
@@ -41,6 +41,7 @@ const RESULT: Record<string, string> = {
 export default function ManageAdAccountsPage() {
   const status = useAdsStatus();
   const toggle = useToggleAdAccount();
+  const sync = useAdsSync();
   const remove = useRemoveAdAccount();
   const [platform, setPlatform] = React.useState<PlatformFilter>("all");
   const [search, setSearch] = React.useState("");
@@ -130,6 +131,7 @@ export default function ManageAdAccountsPage() {
                 </div>
                 <div className="flex shrink-0 flex-wrap items-center gap-3">
                   <Button asChild size="sm" variant="outline"><Link href={`/marketing/ads?platform=${account.platform}&account=${account.id}#ad-results` as Route}>View results</Link></Button>
+                  <Button size="sm" variant="outline" disabled={!account.enabled || sync.isPending} loading={sync.isPending && sync.variables?.includes(account.id)} onClick={() => sync.mutate([account.id])}>Sync now</Button>
                   <label className="flex items-center gap-2 text-xs text-ink-3"><Switch checked={account.enabled} disabled={toggle.isPending || remove.isPending} onCheckedChange={(enabled) => toggle.mutate({ accountId: account.id, enabled })} aria-label={`Sync ${account.name}`} /> Sync</label>
                   <Button size="sm" variant="ghost" className="text-rose-ink" onClick={() => setRemoveTarget(account)}>Remove</Button>
                 </div>

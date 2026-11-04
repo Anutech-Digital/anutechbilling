@@ -17,6 +17,7 @@ import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Toolti
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -64,6 +65,8 @@ export default function AdPlatformsPage() {
   const [range, setRange] = React.useState<Range>("90");
   const [pf, setPf] = React.useState<PlatformFilter>("all");
   const [selectedAccountId, setSelectedAccountId] = React.useState("all");
+  const [syncPickerOpen, setSyncPickerOpen] = React.useState(false);
+  const [syncSelection, setSyncSelection] = React.useState<string[]>([]);
   const [budgetPlatform, setBudgetPlatform] = React.useState<AdPlatform | null>(null);
   const [why, setWhy] = React.useState<string | null>(null);
   const [showHistorySync, setShowHistorySync] = React.useState(false);
@@ -106,6 +109,11 @@ export default function AdPlatformsPage() {
   const linkedinAccounts = accounts.filter((a) => a.platform === "linkedin-ads");
   const selectableAccounts = accounts.filter((a) => pf === "all" || a.platform === pf);
   const selectedAccount = accounts.find((a) => a.id === selectedAccountId);
+  const enabledAccounts = accounts.filter((a) => a.enabled);
+  function openSyncPicker() {
+    setSyncSelection(selectedAccount?.enabled ? [selectedAccount.id] : []);
+    setSyncPickerOpen(true);
+  }
   React.useEffect(() => {
     if (status.data && selectedAccountId !== "all" && !status.data.accounts.some((a) => a.id === selectedAccountId)) setSelectedAccountId("all");
   }, [status.data, selectedAccountId]);
@@ -183,7 +191,7 @@ export default function AdPlatformsPage() {
               <Button variant="default" icon="download" onClick={exportCsv} disabled={inRange.length === 0}>Export CSV</Button>
               {accounts.length > 0 && <>
                 {status.data?.linkedin.connected && (pf === "all" || pf === "linkedin-ads") && <Button variant="outline" onClick={() => setShowHistorySync((v) => !v)} disabled={historySyncing}>{showHistorySync ? "Hide LinkedIn history" : "Sync LinkedIn history"}</Button>}
-                <Button variant="primary" icon="refresh" onClick={() => sync.mutate(selectedAccountId === "all" ? undefined : selectedAccountId)} loading={sync.isPending} disabled={historySyncing || (selectedAccount ? !selectedAccount.enabled : false)}>{sync.isPending ? "Syncing…" : selectedAccount ? "Sync this account" : "Sync all accounts"}</Button>
+                <Button variant="primary" icon="refresh" onClick={openSyncPicker} disabled={historySyncing || sync.isPending || enabledAccounts.length === 0}>Choose accounts to sync</Button>
               </>}
             </>
           )}
@@ -424,6 +432,29 @@ export default function AdPlatformsPage() {
         </>
       )}
       {budgetPlatform && <AskBudgetDialog open onClose={() => setBudgetPlatform(null)} initialChannel={budgetPlatform} />}
+      <Dialog open={syncPickerOpen} onOpenChange={(open) => { if (!sync.isPending) setSyncPickerOpen(open); }}>
+        <DialogContent className="sm:!max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Sync ad accounts</DialogTitle>
+            <DialogDescription>Choose exactly which accounts to sync now. This does not change their nightly sync settings.</DialogDescription>
+          </DialogHeader>
+          <div className="flex items-center gap-3 text-sm">
+            <button type="button" className="text-amber-ink hover:underline" onClick={() => setSyncSelection(enabledAccounts.map((account) => account.id))}>Select all</button>
+            <button type="button" className="text-ink-3 hover:underline" onClick={() => setSyncSelection([])}>Clear</button>
+            <span className="ml-auto text-ink-3">{syncSelection.length} selected</span>
+          </div>
+          <div className="max-h-72 space-y-1 overflow-y-auto rounded-md border border-hairline p-2">
+            {enabledAccounts.map((account) => <label key={account.id} className="flex cursor-pointer items-start gap-3 rounded-md p-2 hover:bg-paper-2">
+              <input type="checkbox" className="mt-1 accent-orange-700" checked={syncSelection.includes(account.id)} onChange={(event) => setSyncSelection((current) => event.target.checked ? [...current, account.id] : current.filter((id) => id !== account.id))} disabled={sync.isPending} />
+              <span className="min-w-0"><span className="block text-sm font-medium text-ink">{account.name}</span><span className="block text-xs text-ink-3">{PLATFORM_LABEL[account.platform]} · {account.account_id}</span></span>
+            </label>)}
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setSyncPickerOpen(false)} disabled={sync.isPending}>Cancel</Button>
+            <Button variant="primary" icon="refresh" loading={sync.isPending} disabled={syncSelection.length === 0} onClick={() => sync.mutate(syncSelection, { onSuccess: () => setSyncPickerOpen(false) })}>Sync {syncSelection.length || "selected"} {syncSelection.length === 1 ? "account" : "accounts"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
