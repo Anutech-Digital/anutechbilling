@@ -305,7 +305,9 @@ export function fxInvoiceSettlement(
   due: number, invoiceRate: number, remittance: InwardRemittance, credit: number,
 ): { foreignDue: number; short: number; bankCharges: number; forex: number; problem: string | null } {
   const foreignDue = Math.round((due / invoiceRate) * 100) / 100;
-  const short = Math.round((foreignDue - remittance.amount) * 100) / 100;
+  const raw = Math.round((foreignDue - remittance.amount) * 100) / 100;
+  /* The ₹ due is whole rupees: a cent or two of difference is rounding, never "charges kept abroad". */
+  const short = Math.abs(raw) <= 0.02 ? 0 : raw;
   const bankCharges = Math.max(0, Math.round(Math.max(short, 0) * remittance.rate));
   const forex = Math.round(due - bankCharges - credit);
   const f = (n: number) => formatForeign(n, remittance.currency, Number.isInteger(n) ? 0 : 2);
@@ -795,6 +797,8 @@ export function planRow(
         noBook = true;
       } else {
         fxPaid = true;
+        /* The settlement says what is booked — drop the plan-time "Short by …" guess. */
+        for (let n = notes.length - 1; n >= 0; n--) if (notes[n].startsWith("Short by ")) notes.splice(n, 1);
         fxPay = { currency: fx.currency, rate: fx.rate, foreignAmount: fx.foreignAmount, invoiceRate: it.fxRate, foreignDue: s.foreignDue, bankCharges: s.bankCharges, forex: s.forex };
         const parts = [
           s.bankCharges > 0 ? `${rupees(s.bankCharges)} Bank Charges (remitting bank)` : null,
@@ -810,7 +814,7 @@ export function planRow(
   /* R-2427: an invoice in the remittance's currency is matched by its FOREIGN due (Zoho's amount, or what the bank got). */
   const fxHit = (o: OpenItemFact) => !!fx && !!o.invoiceId && o.currency === fx.currency && !!o.fxRate && o.fxRate > 0
     && [fx.billed ?? fx.foreignAmount, fx.foreignAmount].some((a) => Math.abs(o.due / o.fxRate! - a) <= 0.05);
-  const itemHits = facts ? facts.openItems.filter((o) => (o.currency ? fxHit(o) : sameMoney(o.due))) : [];
+  const itemHits = facts ? facts.openItems.filter((o) => (o.currency && fx ? fxHit(o) : sameMoney(o.due))) : [];
   const severalItems = () => {
     pathProblems.push(`${itemHits.length} open quotes / invoices of ${customer.name} are for ${rupees(money)} (${itemHits.map((o) => o.invoiceId ?? o.quoteId).join(", ")}) — pick the right one in the line's Reconcile.`);
     noBook = true;

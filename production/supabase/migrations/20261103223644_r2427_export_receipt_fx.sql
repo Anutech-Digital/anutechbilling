@@ -1,4 +1,4 @@
--- deploy-peek: to_regprocedure('public.reconcile_bank_credit_fx_invoice(uuid,text,text,numeric,numeric)') is not null and to_regprocedure('public.reconcile_bank_credit_new_sale_fx(uuid,uuid,jsonb,boolean,date,date,text,text,text,numeric,numeric,numeric)') is not null
+-- deploy-peek: to_regprocedure('public.reconcile_bank_credit_fx_invoice(uuid,text,text,numeric,numeric,boolean,date)') is not null and to_regprocedure('public.reconcile_bank_credit_new_sale_fx(uuid,uuid,jsonb,boolean,date,date,text,text,text,numeric,numeric,numeric)') is not null
 -- deploy-key: r2427exportreceiptfx
 --
 -- R-2427 (3 Nov 2026, p1 money; split from R-2425) — export receipts that R-2425 left for a person:
@@ -44,7 +44,7 @@
 --                                        BILLED amount, paid in full, invoice stamped in the
 --                                        currency at the bank's rate, the short part → Bank Charges.
 --                                        Same guards as R-2440 (narration, outside India, LUT).
---   tg_bank_fx_line_unmatched            the line un-reconciled → its two expense rows go.
+--   tg_bank_fx_line_unmatched            the line un-reconciled (or deleted) → its two expense rows go.
 --   Not changed: reconcile_bank_credit_new_sale_fx (11 args, R-2440), report_pnl,
 --   report_settlement_shortfalls, report_balance_sheet. The invoice's ₹ value stays at the rate it
 --   was issued at (point 4 — FBIL reference rate vs bank rate — waits on the CA; R-2427
@@ -125,7 +125,9 @@ create or replace function public.reconcile_bank_credit_fx_invoice(
   p_invoice_id     text,
   p_currency       text,
   p_fx_rate        numeric,
-  p_foreign_amount numeric
+  p_foreign_amount numeric,
+  p_create_subscription boolean default null,   -- the plan's choice for a new-subscription quote (false = no subscription)
+  p_sub_start      date    default null
 )
 returns jsonb
 language plpgsql
@@ -239,6 +241,9 @@ begin
   end if;
   v_fdue := round(v_due / v_inv_rate, 2);
   v_short := v_fdue - p_foreign_amount;
+  /* Rounding noise: the ₹ due is whole rupees, so its foreign value can be off by a cent or two —
+     never "charges kept abroad". */
+  if abs(v_short) <= 0.02 then v_short := 0; end if;
   if v_short < -0.01 then
     raise exception 'The bank got % % but invoice % has only % % due — reconcile this line by hand (the extra is an advance).',
       v_cur, trim_scale(p_foreign_amount), p_invoice_id, v_cur, v_fdue using errcode = 'check_violation';
@@ -253,7 +258,7 @@ begin
   /* The receipt: the whole ₹ due settles the invoice (R-2430 reference rule). */
   v_ref := public.bank_line_payment_reference(v_txn.reference, v_txn.id);
   v_core := public.bank_credit_pay_item(
-    p_txn_id, v_due, v_ref, null, p_invoice_id, 0, null, null, null, null, null);
+    p_txn_id, v_due, v_ref, null, p_invoice_id, 0, null, null, p_create_subscription, p_sub_start, null);
   v_pay_id := (v_core->>'payment_id')::uuid;
   if coalesce((v_core->>'replay')::boolean, false) then
     raise exception 'A receipt with reference % is already recorded on invoice %. Nothing was changed — match the line to it by hand.', v_ref, p_invoice_id
@@ -272,9 +277,9 @@ begin
                                'bank_charges', v_charges, 'forex_difference', v_forex);
 end;
 $$;
-revoke all on function public.reconcile_bank_credit_fx_invoice(uuid, text, text, numeric, numeric) from public, anon;
-grant execute on function public.reconcile_bank_credit_fx_invoice(uuid, text, text, numeric, numeric) to authenticated, service_role;
-comment on function public.reconcile_bank_credit_fx_invoice(uuid, text, text, numeric, numeric) is
+revoke all on function public.reconcile_bank_credit_fx_invoice(uuid, text, text, numeric, numeric, boolean, date) from public, anon;
+grant execute on function public.reconcile_bank_credit_fx_invoice(uuid, text, text, numeric, numeric, boolean, date) to authenticated, service_role;
+comment on function public.reconcile_bank_credit_fx_invoice(uuid, text, text, numeric, numeric, boolean, date) is
   'R-2427: a foreign inward remittance paying an existing invoice in that currency — the invoice''s whole ₹ due as the receipt (paid in full), the line matched to it, the short part × the bank''s rate → Bank Charges and the rest of the ₹ gap → Foreign Exchange Gain / Loss (paid expense rows tied to the line). One transaction; tenant fail-closed; money roles; line + invoice locked; books lock; the narration''s own figures only.';
 
 -- ── 4. (2) on a new sale: Zoho billed more than the bank got ─────────────────────────────────
@@ -465,14 +470,17 @@ set search_path = public
 as $$
 begin
   /* R-2427: the line no longer carries its export receipt — its exchange difference and the
-     remitting bank's charges are no longer this line's. */
-  if old.matched_to_type is not distinct from new.matched_to_type
+     remitting bank's charges are no longer this line's. The line deleted (expenses.reconciled_txn_id
+     would only be set null) → the same: they must not stay behind as paid, unbanked expenses. */
+  if tg_op = 'UPDATE'
+     and old.matched_to_type is not distinct from new.matched_to_type
      and old.matched_to_id is not distinct from new.matched_to_id then
     return new;
   end if;
   delete from public.expenses
    where tenant_id = old.tenant_id
      and id in ('EXP-FXC-' || old.id::text, 'EXP-FXD-' || old.id::text);
+  if tg_op = 'DELETE' then return old; end if;
   return new;
 end;
 $$;
@@ -481,6 +489,10 @@ revoke all on function public.tg_bank_fx_line_unmatched() from public, anon, aut
 drop trigger if exists trg_bank_fx_line_unmatched on public.bank_transactions;
 create trigger trg_bank_fx_line_unmatched
   after update of matched_to_type, matched_to_id on public.bank_transactions
+  for each row execute function public.tg_bank_fx_line_unmatched();
+drop trigger if exists trg_bank_fx_line_deleted on public.bank_transactions;
+create trigger trg_bank_fx_line_deleted
+  before delete on public.bank_transactions
   for each row execute function public.tg_bank_fx_line_unmatched();
 
 commit;

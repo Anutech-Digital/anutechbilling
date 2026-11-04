@@ -93,9 +93,16 @@ export async function attachCustomerFacts(
   }
   const quoteIds = [...new Set([...items.values()].flat().map((r) => r.quote_id).filter((x): x is string => !!x))];
   const blocks = new Map<string, string>();
+  /* R-2427: the quote's currency / rate — an invoice with none of its own falls back to it (as reconcile_bank_credit_fx_invoice does). */
+  const quoteFx = new Map<string, { currency: string; fxRate: number }>();
   if (quoteIds.length > 0) {
-    const q = await admin.from("quotes").select("id, below_cost, approval_status").eq("tenant_id", tenantId).in("id", quoteIds);
+    const q = await admin.from("quotes").select("id, below_cost, approval_status, currency, exchange_rate").eq("tenant_id", tenantId).in("id", quoteIds);
     if (q.error) throw new FactsReadError("the quotes' approvals");
+    for (const row of (q.data ?? []) as Array<{ id: string; currency?: string | null; exchange_rate?: number | string | null }>) {
+      const cur = (row.currency ?? "").trim().toUpperCase();
+      const rate = Number(row.exchange_rate ?? 0);
+      if (cur && cur !== "INR" && rate > 0) quoteFx.set(row.id, { currency: cur, fxRate: rate });
+    }
     for (const row of q.data ?? []) {
       const b = paymentApprovalBlock(row as { id: string; below_cost: boolean | null; approval_status: string | null });
       if (b) blocks.set((row as { id: string }).id, b.reason);
@@ -106,11 +113,12 @@ export async function attachCustomerFacts(
   const invoiceIds = [...new Set([...items.values()].flat().map((r) => r.invoice_id).filter((x): x is string => !!x))];
   const invFx = new Map<string, { currency: string; fxRate: number }>();
   if (invoiceIds.length > 0) {
-    const iv = await admin.from("invoices").select("id, currency, fx_rate").eq("tenant_id", tenantId).in("id", invoiceIds);
+    const iv = await admin.from("invoices").select("id, currency, fx_rate, quote_id").eq("tenant_id", tenantId).in("id", invoiceIds);
     if (iv.error) throw new FactsReadError("the open invoices' currency");
-    for (const row of (iv.data ?? []) as Array<{ id: string; currency: string | null; fx_rate: number | string | null }>) {
-      const cur = (row.currency ?? "").trim().toUpperCase();
-      const rate = Number(row.fx_rate ?? 0);
+    for (const row of (iv.data ?? []) as Array<{ id: string; currency: string | null; fx_rate: number | string | null; quote_id: string | null }>) {
+      const q = row.quote_id ? quoteFx.get(row.quote_id) ?? null : null;
+      const cur = ((row.currency ?? "").trim() || q?.currency || "").toUpperCase();
+      const rate = Number(row.fx_rate ?? 0) || (q && q.currency === cur ? q.fxRate : 0);
       if (cur && cur !== "INR" && rate > 0) invFx.set(row.id, { currency: cur, fxRate: rate });
     }
   }

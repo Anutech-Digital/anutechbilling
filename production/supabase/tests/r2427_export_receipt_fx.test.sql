@@ -62,6 +62,7 @@ select v.id, v.tenant, v.cust, v.cname, v.amt, v.amt, 0, 0, 'accepted', 'awaitin
     ('Q-R2427-A',     'dddddddd-0000-0000-0000-000000242701'::uuid, 'cccccccc-0000-0000-0000-000000242701'::uuid, 'Design Box LLC',  83000, 'USD', 83::numeric),
     ('Q-R2427-B',     'dddddddd-0000-0000-0000-000000242701'::uuid, 'cccccccc-0000-0000-0000-000000242701'::uuid, 'Design Box LLC',  95846, 'USD', 93.6::numeric),
     ('Q-R2427-C',     'dddddddd-0000-0000-0000-000000242701'::uuid, 'cccccccc-0000-0000-0000-000000242701'::uuid, 'Design Box LLC',  90000, 'USD', 90::numeric),
+    ('Q-R2427-G',     'dddddddd-0000-0000-0000-000000242701'::uuid, 'cccccccc-0000-0000-0000-000000242701'::uuid, 'Design Box LLC',  84993, 'USD', 83::numeric),
     ('Q-R2427-INR',   'dddddddd-0000-0000-0000-000000242701'::uuid, 'cccccccc-0000-0000-0000-000000242702'::uuid, 'Acme India 2427', 10000, 'INR', 1::numeric),
     ('Q-R2427-OTHER', 'dddddddd-0000-0000-0000-000000242702'::uuid, 'cccccccc-0000-0000-0000-000000242703'::uuid, 'Other LLC',       83000, 'USD', 83::numeric)
   ) as v(id, tenant, cust, cname, amt, cur, rate);
@@ -71,10 +72,11 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('11111111-0000-0000-0000-000000242702','dddddddd-0000-0000-0000-000000242701','bbbbbbbb-0000-0000-0000-000000242701','2026-08-08','INW 080826I049900002 USD1000.0@93.6',0,93600,'000000000000000','manual'),
   ('11111111-0000-0000-0000-000000242703','dddddddd-0000-0000-0000-000000242701','bbbbbbbb-0000-0000-0000-000000242701','2026-08-09','INW 090826I049900003 USD880.0@90',0,79200,null,'manual'),
   ('11111111-0000-0000-0000-000000242704','dddddddd-0000-0000-0000-000000242701','bbbbbbbb-0000-0000-0000-000000242701','2026-08-10','INW 100826I049900004 USD1000.0@93.6',0,93600,'INW100826I049900004','manual'),
-  ('11111111-0000-0000-0000-000000242705','dddddddd-0000-0000-0000-000000242702','bbbbbbbb-0000-0000-0000-000000242702','2026-08-11','INW 110826I049900005 USD1000.0@84.5',0,84500,null,'manual');
+  ('11111111-0000-0000-0000-000000242705','dddddddd-0000-0000-0000-000000242702','bbbbbbbb-0000-0000-0000-000000242702','2026-08-11','INW 110826I049900005 USD1000.0@84.5',0,84500,null,'manual'),
+  ('11111111-0000-0000-0000-000000242706','dddddddd-0000-0000-0000-000000242701','bbbbbbbb-0000-0000-0000-000000242701','2026-08-12','INW 120826I049900006 USD1024.0@84.5',0,86528,null,'manual');
 
 select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000242701","role":"authenticated"}', true);
-select public.generate_invoice(q) from unnest(array['Q-R2427-A','Q-R2427-B','Q-R2427-C','Q-R2427-INR']) q;
+select public.generate_invoice(q) from unnest(array['Q-R2427-A','Q-R2427-B','Q-R2427-C','Q-R2427-INR','Q-R2427-G']) q;
 
 create function pg_temp.inv(p_quote text) returns text language sql as $f$ select invoice_id from public.quotes where id = p_quote $f$;
 
@@ -212,6 +214,27 @@ begin
   end;
   if not ok then raise exception 'FAIL F: another company''s invoice was paid'; end if;
   raise notice 'F PASS: another company''s invoice refused';
+end $$;
+
+-- ── G. rounding noise is not "charges"; H. a deleted line takes its rows with it ─────────────
+do $$
+declare r jsonb; n int;
+begin
+  -- ₹84,993 due at ₹83 = $1,024.01 (whole-rupee rounding); the bank got exactly $1,024 @ 84.5.
+  r := public.reconcile_bank_credit_fx_invoice('11111111-0000-0000-0000-000000242706',
+         (select invoice_id from public.quotes where id = 'Q-R2427-G'), 'USD', 84.5, 1024);
+  if (r->>'bank_charges')::int <> 0 then raise exception 'FAIL G: ₹% bank charges from rounding noise', r->>'bank_charges'; end if;
+  if (r->>'forex_difference')::int <> -1535 then raise exception 'FAIL G: forex %', r->>'forex_difference'; end if;
+  select count(*) into n from public.expenses where id = 'EXP-FXC-11111111-0000-0000-0000-000000242706';
+  if n <> 0 then raise exception 'FAIL G: a bank charges line from rounding noise'; end if;
+  raise notice 'G PASS: $1,024.01 due vs $1,024 received → no bank charges, forex gain ₹1,535';
+
+  perform set_config('request.jwt.claims', '', true);
+  delete from public.bank_transactions where id = '11111111-0000-0000-0000-000000242702';
+  select count(*) into n from public.expenses where id like 'EXP-FX_-11111111-0000-0000-0000-000000242702';
+  if n <> 0 then raise exception 'FAIL H: % forex / charges rows left after the bank line was deleted', n; end if;
+  perform set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000242701","role":"authenticated"}', true);
+  raise notice 'H PASS: deleting the bank line removes its Bank Charges line';
 end $$;
 
 select 'R-2427 export receipts (forex gain / loss + bank charges): ALL PASS' as result;

@@ -90,6 +90,23 @@ describe("R-2427 (2): the remitting bank kept charges abroad → Bank Charges, b
     expect(row.notes.join(" ")).toContain("₹2,246 is booked as Bank Charges");
   });
 
+  it("rounding noise is not charges: ₹84,993 due at ₹83 ($1,024.01), the bank got exactly $1,024 → no Bank Charges", () => {
+    expect(fxInvoiceSettlement(84993, 83, { currency: "USD", amount: 1024, rate: 84.5 }, 86528)).toMatchObject({ bankCharges: 0, forex: -1535, problem: null });
+  });
+
+  it("Zoho billed $1,024 but the app invoice is $1,000 (bank got $1,000): no '₹2,246 Bank Charges' note left behind", () => {
+    const row = plan(line(93600, "INW 080826I049900002 USD1000.0@93.6"), usd([zl()], 1024), [usdInvoice({ due: 93600, taxable: 93600, fxRate: 93.6 })]);
+    expect(row.book?.item?.fx).toMatchObject({ bankCharges: 0, forex: 0 });
+    expect(row.notes.join(" ")).not.toContain("Bank Charges");
+  });
+
+  it("no remittance (Zoho in ₹): a USD invoice is still matched by its ₹ due, as before", () => {
+    const inr: ZohoPaymentMatch = { ...usd([zl({ rate: 83000 })], 83000), payment: { ...usd([], 83000).payment, currency: "INR", exchangeRate: undefined } };
+    const row = plan(line(83000, "NEFT CR-CITI-DESIGN BOX"), inr, [usdInvoice()]);
+    expect(row.book?.kind).toBe("pay_item");
+    expect(row.book?.item).toMatchObject({ invoiceId: "INV-A", fx: null });
+  });
+
   it("the settlement sums match the RPC: part payment (> 5% short) and an over-receipt are refused", () => {
     const r = { currency: "USD", amount: 1000, rate: 93.6 };
     expect(fxInvoiceSettlement(95846, 93.6, r, 93600)).toMatchObject({ bankCharges: 2246, forex: 0, problem: null });
