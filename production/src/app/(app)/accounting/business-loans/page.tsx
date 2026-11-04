@@ -129,8 +129,9 @@ export default function BusinessLoansPage() {
         </div>
       )}
 
-      {/* R-2376: "TDS 10% due" on interest to a non-bank lender above ₹10,000 in the FY. */}
-      {anyLoan && <LoanInterestTdsCard />}
+      {/* R-2376: "TDS 10% due" on interest to a non-bank lender above ₹10,000 in the FY. Not tied to
+          anyLoan: an asset bought on EMI pays interest too. The card hides itself when nothing is due. */}
+      <LoanInterestTdsCard />
 
       <EmiLoansTaken loans={emiLoans} />
 

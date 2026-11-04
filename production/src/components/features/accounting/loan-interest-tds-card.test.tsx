@@ -16,7 +16,7 @@ vi.mock("@/lib/queries/loan-interest-tds", () => ({
 }));
 vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: { businessType } }) }));
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role } }) }));
-vi.mock("@/lib/dates/ist", () => ({ istToday: () => "2026-11-04" }));
+vi.mock("@/lib/dates/ist", async (orig) => ({ ...(await orig<typeof import("@/lib/dates/ist")>()), istToday: () => "2026-11-04" }));
 
 import { LoanInterestTdsCard } from "./loan-interest-tds-card";
 import { lenderKey } from "@/lib/accounting/loan-interest-tds";
@@ -102,6 +102,29 @@ describe("R-2376 TDS on loan interest card", () => {
 
   it("before the migration → nothing", () => {
     data = { ready: false, settings: marked, events: tata };
+    const { container } = render(<LoanInterestTdsCard />);
+    expect(container.textContent).toBe("");
+  });
+});
+
+describe("R-2376 review fixes on the card", () => {
+  it("proprietor not answered → 'may be due' and no entry until answered", () => {
+    businessType = "proprietor";
+    data = { ready: true, settings: marked, events: tata };
+    render(<LoanInterestTdsCard />);
+    const t = screen.getByTestId("loan-interest-tds").textContent ?? "";
+    expect(t).toContain("TDS 10% may be due");
+    expect(t).not.toContain("Entry when you deduct");
+  });
+  it("a lender booked only as EMIs → says the EMI line has no TDS box yet (no false 'TDS box' advice)", () => {
+    data = { ready: true, settings: marked, events: tata.map((e) => ({ ...e, viaEmi: true })) };
+    render(<LoanInterestTdsCard />);
+    const t = screen.getByTestId("loan-interest-tds").textContent ?? "";
+    expect(t).toContain("an EMI line has no TDS box in the app yet");
+    expect(t).not.toContain("Keep it back from the next payment");
+  });
+  it("last FY's interest is not shown as this FY's due", () => {
+    data = { ready: true, settings: marked, events: tata.map((e) => ({ ...e, on: e.on.replace("2026", "2025") })) };
     const { container } = render(<LoanInterestTdsCard />);
     expect(container.textContent).toBe("");
   });
