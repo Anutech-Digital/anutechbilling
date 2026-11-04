@@ -66,6 +66,12 @@ import { rupee, formatDate, cleanDisplayName } from "@/lib/utils";
 import type { Invoice, Payment } from "@/lib/supabase/database.types";
 import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
 import { InvoiceSubscriptionCard } from "./invoice-subscription-card";
+import {
+  NetworkRowsContext,
+  NetworkNoteStatusFromPage,
+  NetworkStatusLine,
+  useNetworkSentStatus,
+} from "@/components/features/invoices/network-status";
 
 export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const router = useRouter();
@@ -99,6 +105,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
     ? noteTotalsByInvoice(creditNotesForBadge, debitNotesForBadge).get(invoice.id) ?? null
     : undefined;
   const statusBadge = invoiceStatusBadge(invoice, undefined, invoiceNotes);
+  /* R-2450: what the customer answered on the network copy (R-2434) — this invoice and its notes. */
+  const network = useNetworkSentStatus(invoice.status === "draft" ? [] : [invoice.id]);
   const [payOpen, setPayOpen] = React.useState(false);
   /* R-1682: Credit note from the invoice itself, at every width. It lived only in the
      invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way
@@ -245,6 +253,16 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
               <p className="text-xs font-medium text-ink-2 mt-0.5">
                 {cleanDisplayName(invoice.customer_name)}
               </p>
+              {/* R-2450: "Sent to <buyer> on network — Pending / Accepted by customer / Rejected by
+                  customer: <reason> / Cancelled" + the next step. Nothing for a customer not on
+                  the network. */}
+              <NetworkStatusLine
+                className="mt-1.5"
+                invoiceId={invoice.id}
+                rows={network.data}
+                error={network.error}
+                onRetry={() => void network.refetch()}
+              />
             </div>
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0" data-invoice-actions>
               {canPay && moneyDue && (
@@ -487,7 +505,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
             {/* 🔽 Collapsible Panel 4: Internal Notes */}
             <Card className="p-4">
               <p className="text-xs font-semibold text-ink mb-2">Internal Notes & History</p>
-              <InvoiceNotesList invoiceId={invoice.id} invoiceDate={invoice.invoice_date} />
+              <NetworkRowsContext.Provider value={network.data}>
+                <InvoiceNotesList invoiceId={invoice.id} invoiceDate={invoice.invoice_date} />
+              </NetworkRowsContext.Provider>
             </Card>
           </div>
         </div>
@@ -628,7 +648,8 @@ export function InvoiceNotesList({ invoiceId, invoiceDate }: { invoiceId: string
       </div>
       <ul className="space-y-1.5">
         {notes.map((n) => (
-          <li key={n.id} className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-paper px-3 py-2">
+          <li key={n.id} className="rounded-md border border-hairline bg-paper px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
             <span className="flex items-center gap-2 min-w-0">
               <span className={`text-3xs font-semibold uppercase px-1.5 py-0.5 rounded ${n.kind === "credit" ? "bg-rose/10 text-rose" : "bg-indigo-soft text-indigo-ink"}`}>
                 {n.kind === "credit" ? "Credit" : "Debit"} note
@@ -650,6 +671,9 @@ export function InvoiceNotesList({ invoiceId, invoiceDate }: { invoiceId: string
               </span>
               <span className="text-2xs text-ink-3">{formatDate(n.date)}</span>
             </span>
+            </div>
+            {/* R-2450: the customer's answer on this note's network copy (invoice page only). */}
+            <NetworkNoteStatusFromPage noteId={n.id} />
           </li>
         ))}
       </ul>
