@@ -33,9 +33,9 @@ import {
   liveGstin, checkGstin, livePhone, commitPhone, checkPhone,
   liveEmail, checkEmail, liveDomain, checkDomain,
 } from "@/lib/forms/poka-yoke";
-import { COUNTRIES } from "@/lib/gst/countries";
-import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
-import { useCustomerForm } from "./use-customer-form";
+import { CountryCombobox } from "./country-combobox";
+import { GST_STATE_OPTIONS, STATE_NOT_KNOWN, STATE_NOT_KNOWN_LABEL, STATE_NOT_KNOWN_NOTE } from "@/lib/gst/gstin-state";
+import { useCustomerForm, type CustomerSeed } from "./use-customer-form";
 import { ScanCardPanel } from "./scan-card-panel";
 import type { Customer } from "@/lib/supabase/database.types";
 
@@ -46,15 +46,19 @@ interface AddCustomerFormProps {
   customer?: Customer | null;
   /** Called with the new customer's id after a successful CREATE (lets a caller auto-select it). */
   onCreated?: (id: string) => void;
+  /** R-2360 / R-2363: a NEW customer starts with these (Find in Zoho: Zoho's company name, GSTIN,
+   *  country, GST treatment, state). Ignored on an edit. */
+  initial?: CustomerSeed | null;
 }
 
-export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: AddCustomerFormProps) {
+export function AddCustomerForm({ open, onOpenChange, customer, onCreated, initial }: AddCustomerFormProps) {
   const {
     register, setValue, watch, errors, isSubmitting, isPending, isEdit,
     contactPersonFields, appendContactPerson, removeContactPerson,
     verification, setVerification, watchedGstin,
-    isForeign, foreignStates, countryReg, onCountryChange, submit,
+    isForeign, foreignStates, country, onCountryPick, submit,
     gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
+    contactMissing, saveWithoutContact, applySeed,
   } = useCustomerForm({
     customer,
     open,
@@ -63,6 +67,20 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
       onOpenChange(false);
     },
   });
+  /* R-2360: after the hook's own open-reset (declared above, so it runs first), fill the seed. */
+  const seedName = initial?.name?.trim() ?? "";
+  const seedGstin = initial?.gstin?.trim() ?? "";
+  const seedCountry = initial?.country?.trim() ?? "";
+  const seedTreatment = initial?.gst_treatment ?? null;
+  const seedState = initial?.state?.trim() ?? "";
+  React.useEffect(() => {
+    if (!open || isEdit) return;
+    /* R-2363: country, GST treatment and state too — the hook's applySeed. */
+    applySeed({
+      name: seedName, gstin: seedGstin ? liveGstin(seedGstin) : null,
+      country: seedCountry, gst_treatment: seedTreatment, state: seedState,
+    });
+  }, [open, isEdit, seedName, seedGstin, seedCountry, seedTreatment, seedState, applySeed]);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -110,14 +128,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
           {/* Country FIRST — it decides the whole form: India = GST flow (GSTIN,
               state code, 6-digit PIN); anything else = export flow (no GST). */}
           <FormField label="Country" htmlFor="country">
-            <select
-              id="country"
-              className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
-              {...countryReg}
-              onChange={onCountryChange}
-            >
-              {COUNTRIES.map((ctry) => <option key={ctry} value={ctry}>{ctry}</option>)}
-            </select>
+            <CountryCombobox id="country" value={country} onChange={onCountryPick} />
             {isForeign && (
               <p className="mt-1 flex items-start gap-1 text-2xs leading-snug text-indigo-ink">
                 <span>🌍</span>
@@ -226,12 +237,16 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
                   {...register("state")}
                 >
                   <option value="">Select state…</option>
-                  {watch("state") && !GST_STATE_OPTIONS.some((o) => o.name.toLowerCase() === watch("state")!.toLowerCase()) && (
+                  {/* R-2363: an advance-only customer whose state nobody knows yet — saved with no
+                      state, never a guess; its quote / GST invoice still waits for the state. */}
+                  <option value={STATE_NOT_KNOWN}>{STATE_NOT_KNOWN_LABEL}</option>
+                  {watch("state") && watch("state") !== STATE_NOT_KNOWN && !GST_STATE_OPTIONS.some((o) => o.name.toLowerCase() === watch("state")!.toLowerCase()) && (
                     <option value={watch("state")!}>{watch("state")} (not a GST state — pick one)</option>
                   )}
                   {GST_STATE_OPTIONS.map((o) => <option key={o.code} value={o.name}>{o.name}</option>)}
                 </select>
               )}
+              {!isForeign && watch("state") === STATE_NOT_KNOWN && <p className="mt-1 text-xs text-amber-ink">{STATE_NOT_KNOWN_NOTE}</p>}
               {errors.state?.message && <p className="mt-1 text-xs text-rose">{String(errors.state.message)}</p>}
             </FormField>
             <FormField label={isForeign ? "Postal / ZIP code" : "PIN code"} htmlFor="pin_code">
@@ -435,6 +450,14 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated }: Add
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancel
             </Button>
+            {/* R-2095: same choice as the toast, inside the form — opened from the bank reconcile
+                drawer this sheet sits over a modal sheet and the toast cannot be clicked. */}
+            {contactMissing && !isEdit && (
+              <Button type="button" variant="default" loading={isSubmitting || isPending} onClick={() => void saveWithoutContact()}
+                title="Save this customer with no email or phone — it reads 'No email or phone yet' until one is added">
+                Save without contact
+              </Button>
+            )}
             <Button type="submit" variant="primary" loading={isSubmitting || isPending}>
               {isEdit ? "Save changes" : "Add customer"}
             </Button>

@@ -126,7 +126,7 @@ export default function AccountingOverviewPage() {
   const owedToYou = a ? a.receivables + a.projectReceivable + a.tdsReceivable + a.employeeLoans : 0;
   const youOwe = a
     ? a.payables + a.salaryPayable + a.salaryDuesPayable + a.reimbursementsPayable +
-      a.creditCardPayable + a.emiLoansPayable + a.businessLoansPayable
+      a.creditCardPayable + (a.bankOverdraft ?? 0) + a.emiLoansPayable + a.businessLoansPayable
     : 0;
   /* R-257: every tile opens something whose headline is the tile's number.
      • GST tile + GST folder (R-394 / R-399, above): both show the GST page headline for
@@ -150,6 +150,7 @@ export default function AccountingOverviewPage() {
     { label: "Statutory dues (TDS, PF, ESI)", amount: a.salaryDuesPayable, href: "/accounting/payroll" },
     { label: "Reimbursements payable", amount: a.reimbursementsPayable, href: "/accounting/reimbursements" },
     { label: "Credit cards", amount: a.creditCardPayable, href: "/accounting/banking" },
+    { label: "Bank overdraft", amount: a.bankOverdraft ?? 0, href: "/accounting/banking" },
     { label: "EMI / asset loans", amount: a.emiLoansPayable, href: "/accounting/assets" },
     { label: "Bank / business loans", amount: a.businessLoansPayable, href: "/accounting/business-loans" },
   ]) : [];

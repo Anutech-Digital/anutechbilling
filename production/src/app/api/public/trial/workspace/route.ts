@@ -25,9 +25,13 @@ import { sendCustomerEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { IST_TZ } from "@/lib/dates/ist";
+import { buyIntentNote } from "@/app/api/public/checkout/workspace/buy-intent";
+import { buyIntentFields } from "@/app/api/public/checkout/workspace/buy-intent-schema";
 
 /* The owner recipient was hardcoded here to an address on a retired domain
    (CLAUDE.md §1). Resolved from the storefront tenant's row now — see
@@ -47,6 +51,8 @@ const trialSchema = z.object({
   domain:      z.string().min(3).max(120),               // e.g. acme.in
   tierId:      z.enum(["starter", "standard", "plus", "enterprise"]).optional(),
   message:     z.string().max(2000).optional(),
+  /** R-2021: the phone flow's intent / domainMode / migrationSource — optional, notes only. */
+  ...buyIntentFields,
 });
 
 export async function POST(request: NextRequest) {
@@ -93,6 +99,7 @@ export async function POST(request: NextRequest) {
       `Plan to trial: Google Workspace ${tierName}`,
       `Seats: ${seats}`,
       `Submitted via /buy/workspace`,
+      buyIntentNote(parsed.data),
       message ? `Message: ${message}` : null,
       ``,
       `NEXT STEPS:`,
@@ -138,6 +145,9 @@ export async function POST(request: NextRequest) {
         { status: 500 },
       );
     }
+
+    /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead. */
+    await recordFormConsent(admin, { tenantId: BUY_PAGE_TENANT_ID, leadId, consent: readFormConsent(body), headers: request.headers, page: (body as { pageUrl?: string }).pageUrl });
 
     // Auto-create follow-up tasks via tasks system —
     //   T-7  (Day 7):  "Mid-trial check-in"

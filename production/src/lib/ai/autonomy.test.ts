@@ -9,6 +9,7 @@ import { autonomyChangeReason,
   AI_ACTIONS,
   visibleAiActions,
   type AiAction,
+  type AiActionSpec,
   type AutonomyPolicy,
 } from "./autonomy";
 
@@ -275,7 +276,14 @@ describe("R-1608 — a dial whose code nobody calls is not shown", () => {
     expect(Object.keys(AI_ACTIONS)).toContain("payment.link.send");
     expect(visibleAiActions()).not.toContain("payment.link.send");
     expect(visibleAiActions()).toContain("dunning.send");
-    expect(visibleAiActions().length).toBe(Object.keys(AI_ACTIONS).length - 1);
+    /* R-2158: the five ad-agent dials are also declared-but-hidden until the graph calls them,
+       so the count is "everything minus the notWired ones" — and the hidden set is pinned. */
+    const hidden = (Object.keys(AI_ACTIONS) as AiAction[])
+      .filter((a) => (AI_ACTIONS[a] as AiActionSpec).notWired);
+    expect(hidden.sort()).toEqual(
+      ["ads.budget_down", "ads.budget_up", "ads.new_creative", "ads.pause", "ads.publish", "payment.link.send"],
+    );
+    expect(visibleAiActions().length).toBe(Object.keys(AI_ACTIONS).length - hidden.length);
   });
 
   it("the API lists only visible dials and refuses to switch a not-wired one", () => {

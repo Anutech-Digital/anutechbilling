@@ -18,6 +18,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { useFixedAssets, useCreateFixedAsset, useDisposeFixedAsset, useDeleteFixedAsset, useCapitalisableExpenses, type FixedAsset } from "@/lib/queries/fixed-assets";
 import { useEmiPurchases } from "@/lib/queries/emi";
+import { isLoanOnly } from "@/lib/accounting/loan-setup";
 import { useEmployeeAssets } from "@/lib/queries/employee-assets";
 import { BLOCKS, depreciationSchedule, depreciationInFy, bookValueAt, registerSummary, fyStartOf, fyLabel, type AssetBlock } from "@/lib/accounting/depreciation";
 import { istToday } from "@/lib/dates/ist";
@@ -179,7 +180,7 @@ function AddAssetDialog({ onClose }: { onClose: () => void }) {
           <FormField label="Source" htmlFor="fa_src">
             <select id="fa_src" value={source} onChange={(e) => pickSource(e.target.value)} className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink">
               <option value="">New — enter manually</option>
-              {(emis ?? []).filter((p) => !usedEmi.has(p.id)).map((p) => <option key={p.id} value={`emi:${p.id}`}>EMI purchase · {p.name} · {rupee(p.total_cost)} · {formatDate(p.purchased_on)}</option>)}
+              {(emis ?? []).filter((p) => !isLoanOnly(p) && !usedEmi.has(p.id)).map((p) => <option key={p.id} value={`emi:${p.id}`}>EMI purchase · {p.name} · {rupee(p.total_cost)} · {formatDate(p.purchased_on)}</option>)}
               {(candidates ?? []).filter((c) => !usedExp.has(c.id)).map((c) => <option key={c.id} value={`exp:${c.id}`}>Equipment expense · {c.vendor_name ?? c.description ?? c.id} · {rupee((c.amount ?? 0) - (c.gst_paid ?? 0))} · {formatDate(c.expense_date)}</option>)}
             </select>
           </FormField>

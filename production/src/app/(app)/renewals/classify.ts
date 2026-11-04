@@ -18,8 +18,21 @@
  * At risk = every expired row (unpaid past its renewal date) + any row up to 90 days out the
  * risk score marks high — minus renewals already paid. The header's "at risk" and the High
  * risk card/tab are this one set, so they cannot disagree again.
+ *
+ * R-2225: a subscription marked Won't renew (auto_renew off) is not a renewal to chase. It is in
+ * none of the urgency groups (nor the sidebar badge — nav_badges() reads the same rule); while it
+ * still runs it is listed as `nonRenewing` and counted At risk (that revenue is leaving).
+ *
+ * Flex (monthly-commitment) subscriptions — R-2422 (Pardeep, 3 Nov: "monthly commitment to
+ * renewal hi hoga"), replacing R-2232's "end of commitment only": a flex subscription IS a
+ * renewal. It is bucketed by its next monthly billing date like any row (tabs, tiles, At risk).
+ * Before that date its part is raised by the billing job (R-2044), so its row button is
+ * Follow-up; once the date has PASSED unbilled it is Expired and Bill next part bills it (R-2095).
+ * R-2431: the sidebar badge counts flex rows too (nav_badges SQL = buckets.ts inRenewalsBadge).
+ * isFlexNextPart (lib/renewals/buckets.ts) — a part still ahead — is skipped by Bulk reminder (and
+ * named in its confirm) and not chased on Payment Follow-up until its date has passed unbilled.
  */
-import { renewalBucket } from "@/lib/renewals/buckets";
+import { renewalBucket, isFlexNextPart } from "@/lib/renewals/buckets";
 import { effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";
 import { formatIstDate } from "@/lib/dates/ist";
 import { isTerminalRenewal } from "./reminders";
@@ -28,7 +41,10 @@ export interface ClassifySub {
   renewal_state?: string | null;
   renewal_date: string | null;
   term_months?: number | null;
+  billing_cycle?: string | null;
   status?: string | null;
+  /** R-2225: false = Won't renew. */
+  auto_renew?: boolean | null;
   mrr: number;
   grace_until?: string | null;
 }
@@ -44,12 +60,24 @@ export interface RenewalGroups<T> {
   upcoming: T[];
   future:   T[];
   stopped:  T[];
+  /** R-2225: Won't renew, still running (renewal date today or later). */
+  nonRenewing: T[];
+  /** R-2403: past the date but the renewal is paid (its renewal quote is paid) — not overdue. */
+  renewedPaid: T[];
   /** expired + due7 + stopped — the Urgent tab and the sidebar badge (R-1541). */
   urgentTab: T[];
   atRisk:   T[];
   /** Yearly value (MRR × 12) of `atRisk` — the header figure AND the High risk card. */
   atRiskArr: number;
 }
+
+/** R-2225: is this a renewal anybody should chase? Not when the customer said Won't renew. */
+export function chasedRenewal(sub: { auto_renew?: boolean | null }): boolean {
+  return sub.auto_renew !== false;
+}
+
+/** R-2232: the rule lives in lib/renewals/buckets.ts, shared with Bulk reminder (R-2422: no longer used to hide rows here). */
+export { isFlexNextPart };
 
 export function isStopped(sub: ClassifySub): boolean {
   return sub.renewal_state === "suspended" || sub.status === "suspended";
@@ -59,11 +87,21 @@ export function classifyRenewals<T extends ClassifyRow>(
   rows: readonly T[],
   isHighRisk: (row: T) => boolean,
   today: Date = new Date(),
+  /** R-2403: the renewal is paid (e.g. its renewal quote is paid) — such a row leaves Overdue. */
+  isPaid: (row: T) => boolean = () => false,
 ): RenewalGroups<T> {
   const g: RenewalGroups<T> = {
-    expired: [], due7: [], upcoming: [], future: [], stopped: [], urgentTab: [], atRisk: [], atRiskArr: 0,
+    expired: [], due7: [], upcoming: [], future: [], stopped: [], nonRenewing: [], renewedPaid: [], urgentTab: [], atRisk: [], atRiskArr: 0,
   };
   for (const r of rows) {
+    if (!chasedRenewal(r.sub)) {
+      if (r.daysUntil >= 0 && r.sub.status !== "expired") g.nonRenewing.push(r);
+      continue;
+    }
+    if (r.daysUntil < 0 && !isStopped(r.sub) && isPaid(r)) {
+      g.renewedPaid.push(r);
+      continue;
+    }
     if (r.daysUntil < 0) {
       (isStopped(r.sub) ? g.stopped : g.expired).push(r);
     } else {
@@ -76,6 +114,7 @@ export function classifyRenewals<T extends ClassifyRow>(
   g.urgentTab = [...g.expired, ...g.due7, ...g.stopped];
   const paid = (r: T) => isTerminalRenewal(r.sub.renewal_state, r.sub.renewal_date, r.sub.term_months, today);
   g.atRisk = [
+    ...g.nonRenewing,
     ...g.expired.filter((r) => !paid(r)),
     ...[...g.due7, ...g.upcoming, ...g.future].filter((r) => !paid(r) && isHighRisk(r)),
   ];

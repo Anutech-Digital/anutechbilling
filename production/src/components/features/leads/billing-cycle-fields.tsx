@@ -22,7 +22,7 @@ export function BillingCycleField({ lead }: { lead: Pick<Lead, "id" | "billing_c
   return (
     <div>
       <label htmlFor={`cycle-${lead.id}`} className="block text-2xs uppercase tracking-wider text-ink-3 mb-0.5">
-        Billing cycle
+        Payment frequency
       </label>
       <select
         id={`cycle-${lead.id}`}

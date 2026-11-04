@@ -44,7 +44,7 @@ import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { isEmailConfigured } from "@/lib/email/send";
 import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { decideAutoSend } from "@/lib/quotes/auto-send-quote";
-import { sendAutoQuote } from "@/lib/quotes/send-auto-quote";
+import { sendAutoQuote, autoQuoteNotSentReason, isAutoQuoteHeld } from "@/lib/quotes/send-auto-quote";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { storefrontVoice } from "@/lib/email/storefront-voice";
 import {
@@ -55,7 +55,12 @@ import {
 } from "@/lib/pricing/workspace";
 import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
+import { buyIntentNote } from "@/app/api/public/checkout/workspace/buy-intent";
+import { buyIntentFields } from "@/app/api/public/checkout/workspace/buy-intent-schema";
+import { draftLeadRow, isDraftRequest, parseDraft } from "./draft-lead";
 
 /* The owner inbox used to be hardcoded here, with the comment "Hardcoded for v1
    (single tenant); resolve per-tenant once we go multi-tenant." That TODO came due
@@ -93,6 +98,8 @@ const enquirySchema = z.object({
   trial:       z.boolean().optional(),
   /** R-157: the visitor took the "30+ users, ₹1,650 first year" Starter offer (ad page). */
   offer:       z.enum(["starter-30"]).optional(),
+  /** R-2021: the phone flow's intent / domainMode / migrationSource — optional, notes only. */
+  ...buyIntentFields,
 });
 
 /** The page the form was sent from, for the lead note ("/lp/google-workspace-1"), else null. */
@@ -111,6 +118,21 @@ export async function POST(request: NextRequest) {
        R-1549: the website chat's own lead call (marked in-process, never from the network) passes. */
     const botRefusal = await turnstileRefusalFor(request, body);
     if (botRefusal) return botRefusal;
+    /* R-2021: the phone flow's draft lead — ONLY with the "WhatsApp me a link" tick (draft-lead.ts). */
+    if (isDraftRequest(body)) {
+      const d = parseDraft(body);
+      if (!d.ok) return NextResponse.json({ error: d.error }, { status: 400 });
+      const draftId = "L-" + Date.now().toString(36).toUpperCase();
+      const { error: draftErr } = await createAdminClient().from("leads").insert({
+        ...draftLeadRow(d.data, BUY_PAGE_TENANT_ID, draftId),
+        ...captureFromRequest(request, body as Record<string, unknown>),
+      });
+      if (draftErr) {
+        console.error("[/api/public/enquiry/workspace] draft lead insert failed:", draftErr);
+        return NextResponse.json({ error: "Could not save your draft. Your details are still on this phone." }, { status: 500 });
+      }
+      return NextResponse.json({ success: true, leadId: draftId });
+    }
     const parsed = enquirySchema.safeParse(body);
 
     if (!parsed.success) {
@@ -162,6 +184,7 @@ export async function POST(request: NextRequest) {
       trial ? `Asked for the free ${WORKSPACE_TRIAL_DAYS}-day trial — set the trial up, do not send a price first.` : null,
       offer === "starter-30" ? "Asked for the 30+ users first-year offer (₹1,650/user, new account) — needs Google's approval before it is quoted." : null,
       `Billing preference: ${billing}`,
+      buyIntentNote(parsed.data),
       message ? `Message: ${message}` : null,
     ].filter(Boolean).join("\n");
 
@@ -194,6 +217,9 @@ export async function POST(request: NextRequest) {
         { status: 500 },
       );
     }
+
+    /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead. */
+    await recordFormConsent(admin, { tenantId, leadId, consent: readFormConsent(body), headers: request.headers, page: (body as { pageUrl?: string }).pageUrl });
 
     /* In-app khabar (audit B4) — lead COMMIT ke baad, best-effort. */
     await notifyTenantOwners({
@@ -328,6 +354,7 @@ export async function POST(request: NextRequest) {
        buildWorkspaceLines is the follow-up that removes this hold. */
     let autoSent = false;
     let holdReason: string | null = null;
+    let holdNotedBySender = false;
 
     if (draftQuoteId) {
       const ourAddresses = [owner.ok ? owner.to : null, ownerTenant?.email ?? null]
@@ -368,13 +395,19 @@ export async function POST(request: NextRequest) {
             fromEmail: FROM_EMAIL,
           });
           autoSent = sent === "sent";
-          if (!autoSent) holdReason = "the quotation email failed to send — the draft is saved";
+          /* R-2460: a gate hold reads "Quote held — <reason> <next step>" (the owner alert
+             below quotes it), never "failed to send". sendAutoQuote already wrote the hold on
+             the lead's timeline, so this route does not write a second line for it. */
+          if (sent !== "sent") {
+            holdReason = autoQuoteNotSentReason(sent);
+            holdNotedBySender = isAutoQuoteHeld(sent);
+          }
         } else {
           holdReason = decision.reason;
         }
       }
 
-      if (!autoSent && holdReason) {
+      if (!autoSent && holdReason && !holdNotedBySender) {
         /* The same sentence shape the inbound path writes, so the operator reads ONE kind
            of hold note wherever the enquiry came from. */
         await admin.from("lead_activities").insert({

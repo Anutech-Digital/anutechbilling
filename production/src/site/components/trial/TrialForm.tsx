@@ -28,6 +28,8 @@ import { useTurnstile } from "@/components/shared/turnstile";
 import type { MergedEdition } from "@/site/lib/live-catalog";
 import { enquiryReference, referenceNote } from "@/site/lib/enquiry-reference";
 import { landingForForm } from "@/site/lib/ad-attribution";
+import { formConsent } from "@/lib/consent/data-notice";
+import { DataNotice } from "@/site/components/legal/DataNotice";
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const P = "var(--primary)";
@@ -88,6 +90,8 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
   /** Did our system email the customer a copy? Only then do we say "check your inbox". */
   const [ackSent, setAckSent] = useState(false);
   const [reqNo, setReqNo] = useState("");
+  /* R-2011: the separate "Send me offers" box — unticked, never needed for the trial. */
+  const [optIn, setOptIn] = useState(false);
   const [reqAt, setReqAt] = useState<Date | null>(null);
   const [delivered, setDelivered] = useState<"email" | "wa" | "">("");
 
@@ -210,7 +214,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
         headers: { "Content-Type": "application/json", ...ts.headers },
         body: JSON.stringify({ fullName: contactName.trim(), companyName: company, email, phone, product: `Trial — ${labelOf(ed)}`, seats, requirement, edition: ed, term: "annual", trial: true,
           /* R-1598: landing page with gclid/utm + where the visitor came from. */
-          ...landingForForm() }),
+          ...landingForForm(), ...formConsent("trial", optIn) }),
       });
       const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; ackSent?: boolean; reference?: string | null };
       if (!res.ok || !json.ok) {
@@ -396,6 +400,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
               {formErr && !filled && <div role="alert" style={{ background: "#FFF7ED", border: "1px solid #FED7AA", color: "#9A3412", borderRadius: 8, padding: "11px 14px", fontSize: 14, margin: "12px 0" }}>{formErr}</div>}
               {submitErr && <div role="alert" style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B", borderRadius: 8, padding: "11px 14px", fontSize: 14, margin: "12px 0" }}>{submitErr} If it keeps failing, email <a href={`mailto:${COMPANY.supportEmail}`} style={{ color: "#991B1B", fontWeight: 600 }}>{COMPANY.supportEmail}</a>.</div>}
               <BusyPanel active={sending} title="Sending your trial request" steps={["Sending your details to our team", "Preparing your request reference"]} />
+              <DataNotice purpose="trial" optIn={optIn} onOptIn={setOptIn} idPrefix="trial" style={{ color: "var(--text-secondary)" }} />
               {ts.widget}
               <button onClick={submit} disabled={sending} className="btn btn-primary" style={{ width: "100%", marginTop: 16, opacity: sending ? 0.7 : 1 }}>
                 {sending ? "Requesting…" : "Request the free trial"}
@@ -452,6 +457,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
         {formErr && !filled && <div role="alert" style={{ background: "#FFF7ED", border: "1px solid #FED7AA", color: "#9A3412", borderRadius: 8, padding: "11px 14px", fontSize: 14, margin: "12px 0" }}>{formErr}</div>}
               {submitErr && <div role="alert" style={{ background: "#FEF2F2", border: "1px solid #FECACA", color: "#991B1B", borderRadius: 8, padding: "11px 14px", fontSize: 14, margin: "12px 0" }}>{submitErr} If it keeps failing, email <a href={`mailto:${COMPANY.supportEmail}`} style={{ color: "#991B1B", fontWeight: 600 }}>{COMPANY.supportEmail}</a>.</div>}
         <BusyPanel active={sending} title="Sending your trial request" steps={["Sending your details to our team", "Preparing your request reference"]} />
+        <DataNotice purpose="trial" compact optIn={optIn} onOptIn={setOptIn} idPrefix="trial-side" style={{ color: "var(--text-secondary)" }} />
         <button onClick={submit} disabled={sending} className="btn btn-primary" style={{ width: "100%", marginTop: 14, opacity: sending ? 0.7 : 1 }}>
           {sending ? "Requesting…" : "Request the free trial"}
         </button>

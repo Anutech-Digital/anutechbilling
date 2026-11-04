@@ -25,9 +25,19 @@ const INVOICE = {
 };
 let failNext = 0;
 let reads = 0;
+/* R-2095: credit notes on the invoice (null = the notes tables answer nothing — not read). */
+let creditNotes: Array<{ invoice_id: string; amount: number }> | null = null;
 vi.mock("@/lib/supabase/client", () => ({
   createClient: () => ({
-    from: () => {
+    from: (table: string) => {
+      if ((table === "credit_notes" || table === "debit_notes") && creditNotes) {
+        const rows = table === "credit_notes" ? creditNotes : [];
+        const notes: Record<string, unknown> = {
+          select: () => notes,
+          eq: () => Promise.resolve({ data: rows, error: null }),
+        };
+        return notes;
+      }
       const chain: Record<string, unknown> = {
         select: () => chain,
         eq: () => chain,
@@ -51,7 +61,7 @@ function renderChip() {
   );
 }
 
-beforeEach(() => { role = "owner"; failNext = 0; reads = 0; });
+beforeEach(() => { role = "owner"; failNext = 0; reads = 0; creditNotes = null; });
 afterEach(cleanup);
 
 describe("Billing schedule invoice chip (R-1620)", () => {
@@ -70,6 +80,15 @@ describe("Billing schedule invoice chip (R-1620)", () => {
     expect(screen.getByRole("button", { name: /Download PDF/ })).toBeTruthy();
     const full = screen.getByRole("link", { name: /Open full invoice/ });
     expect(full.getAttribute("href")).toBe("/invoices/INV-5F40-27-0062");
+  });
+
+  it("R-2095: an invoice that credit notes cancelled in full says Credited, not Paid", async () => {
+    creditNotes = [{ invoice_id: INVOICE.id, amount: 5000 }, { invoice_id: INVOICE.id, amount: 6800 }];
+    renderChip();
+    fireEvent.click(screen.getByRole("button", { name: /Invoiced ·/ }));
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(dialog.textContent).toContain("Credited"));
+    expect(dialog.textContent).not.toMatch(/Paid/);
   });
 
   it("closes on Esc", async () => {

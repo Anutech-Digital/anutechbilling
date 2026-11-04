@@ -38,7 +38,7 @@ import { useVendorTdsThisFy } from "@/lib/queries/expenses";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { itcEligibility } from "@/lib/gst/itc";
 import { tdsDecision, panFromGstin } from "@/lib/accounting/tds-deductor";
-import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
+import { TDS_PICK_SECTIONS, tdsSectionOption, vendorTdsPrefill } from "@/lib/accounting/tds-rates";
 import { istToday } from "@/lib/dates/ist";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 
@@ -536,8 +536,8 @@ function BookInvoiceDialog({ advances, onClose }: { advances: PrepaidAdvance[]; 
 
   /* ── Tax facts on the invoice (migration 20260927210000) ─────────────────────
      Vendor master → GSTIN → ITC yes/no and the GST head (IGST when the vendor's state
-     differs from ours); TDS section with the year-to-date threshold check — an
-     advertising bill is 194C even though the money went out as an advance. */
+     differs from ours); TDS section with the year-to-date threshold check — deductible
+     even though the money went out as an advance (section: the vendor's default, else none). */
   const { data: me } = useCurrentUser();
   const { data: vendorMaster } = useVendors();
   const vendorRow = React.useMemo(() => {
@@ -548,8 +548,15 @@ function BookInvoiceDialog({ advances, onClose }: { advances: PrepaidAdvance[]; 
   const interState = isInterStateSupply(null, me?.tenantStateCode ?? null, { customerGstin: vendorRow?.gstin ?? null, sellerGstin: me?.tenantGstin ?? null });
   const heads = gstAmt > 0 ? splitTaxHeads(gstAmt, interState) : null;
   const itc = itcEligibility({ gst_paid: gstAmt, bill_type: gstAmt > 0 ? "gst" : "none", category: advances.find((a) => a.vendor_name === vendor)?.category ?? "Advertising", vendorGstin: vendorRow?.gstin ?? null });
-  const [tdsSection, setTdsSection] = React.useState<string>("194C");
+  /* R-2343 (owner + CA, R-2338): no section is pre-picked unless the vendor has a saved Default
+     TDS section (Vendors page) — then that one, until the operator picks a section here. */
+  const [tdsSection, setTdsSection] = React.useState<string>("");
+  const [tdsPicked, setTdsPicked] = React.useState(false);
   const [tdsEdited, setTdsEdited] = React.useState(false);
+  const vendorTdsDefault = (vendorRow as { default_tds_section?: string | null } | null)?.default_tds_section ?? null;
+  React.useEffect(() => {
+    if (!tdsPicked) setTdsSection(vendorTdsPrefill(vendorTdsDefault));
+  }, [tdsPicked, vendorTdsDefault]);
   const [tds, setTds] = React.useState("0");
   const { data: tdsSoFar } = useVendorTdsThisFy(vendorRow?.id ?? null, vendor, tdsSection, date);
   const tdsView = tdsSection && tdsSoFar && amt > 0
@@ -633,10 +640,11 @@ function BookInvoiceDialog({ advances, onClose }: { advances: PrepaidAdvance[]; 
           {/* TDS on the invoice — deductible even though it was paid as an advance. */}
           <div className="grid grid-cols-12 gap-3">
             <FormField label="TDS section" htmlFor="inv_tds_sec" className="col-span-6">
-              <select id="inv_tds_sec" value={tdsSection} onChange={(e) => { setTdsSection(e.target.value); setTdsEdited(false); }}
+              <select id="inv_tds_sec" value={tdsSection} onChange={(e) => { setTdsSection(e.target.value); setTdsPicked(true); setTdsEdited(false); }}
                 className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
                 <option value="">No TDS</option>
-                {Object.keys(TDS_SECTION_RATES).map((s) => <option key={s} value={s}>{s}{s === "194C" ? " · Contractor / advertising" : s === "194J" ? " · Professional / technical" : ""}</option>)}
+                {/* R-2338: 194J(a) technical 2% / 194J(b) professional 10% / royalty 10%. */}
+                {TDS_PICK_SECTIONS.map((s) => <option key={s} value={s}>{s === "194C" ? "194C Contractor / advertising · 2% — s.393(1) Sl. 6(i)" : tdsSectionOption(s)}</option>)}
               </select>
             </FormField>
             {tdsSection && (

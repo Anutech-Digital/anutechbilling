@@ -41,7 +41,8 @@ describe("the dropdown offers Quarterly — annual commitment", () => {
 
   it("keeps the existing three choices, in order, with Yearly still first (the default)", () => {
     expect(BILLING_CHOICES.map((c) => c.value)).toEqual(
-      ["annual_yearly", "annual_monthly", "annual_quarterly", "monthly_flex"]);
+      /* R-2095: + Half-yearly (half-yearly-choice-r2095.test.ts), just before Quarterly. */
+      ["annual_yearly", "annual_monthly", "annual_half_yearly", "annual_quarterly", "monthly_flex"]);
     expect(new Set(BILLING_CHOICES.map((c) => c.value)).size).toBe(BILLING_CHOICES.length);
   });
 });
@@ -143,7 +144,7 @@ describe("the money a 10-seat quarterly sale books", () => {
 });
 
 describe("existing choices are unchanged by R-826", () => {
-  const expected: Record<Exclude<BillingChoice, "annual_quarterly">, object> = {
+  const expected: Record<Exclude<BillingChoice, "annual_quarterly" | "annual_half_yearly">, object> = {
     annual_yearly: {
       unit: "per_seat_year", unitLabel: "₹/yr", suggestedSellPerSeat: 10_368, costPerSeat: 7_440,
       flexPriceMissing: false, periods: 1, invoicesPerTerm: 1,

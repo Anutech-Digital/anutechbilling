@@ -25,6 +25,7 @@ import { createClient } from "@/lib/supabase/client";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import { toast } from "sonner";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { businessTenantId } from "@/lib/workspace/kind";
 import { useSubmitFeedback } from "@/lib/queries/feedback";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
@@ -79,7 +80,7 @@ export function AiHelpButton() {
       <IconButton
         icon={alert ? "alert" : "message"}
         aria-label={alert ? "Help — an error was caught, open to report it" : "Help — ask AI or report a problem"}
-        title={alert ? `Error caught: ${alert}` : "Help — ask AI or report a problem (Ctrl+Shift+B to report)"}
+        title={alert ? `Error caught: ${alert}` : "Help & AI — ask AI or report a problem (Ctrl+Shift+B to report)"}
         aria-pressed={showing}
         data-topbar="help"
         onClick={() => setHelpUi(showing ? { open: false, minimized: false } : { open: true, minimized: false, tab: alert ? "report" : helpUi.tab })}
@@ -512,7 +513,9 @@ export function AiHelp() {
   /* R-352: this page's last browser test run. Read with the person's login (owner/manager by
      RLS); no table yet, no run or no access → nothing is shown. */
   const [lastRun, setLastRun] = React.useState<PageTestRun | null>(null);
-  const tenantId = currentUser?.tenantId ?? null;
+  /* R-2175: page_test_runs is a business table — a personal session (businessTenantId → null)
+     does not read it; the data gateway would refuse it (R-2125). */
+  const tenantId = businessTenantId(currentUser);
   React.useEffect(() => {
     if (!open || !tenantId) return;
     let live = true;

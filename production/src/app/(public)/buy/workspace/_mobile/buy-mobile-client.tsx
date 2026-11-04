@@ -7,7 +7,8 @@
  * Prices: the desktop's plans (_parts/tiers.ts → _parts/plans.ts planSum), Starter + Standard
  * only; the site promo is the desktop's too. Consent banner, Meta Pixel and the first-touch ad
  * landing (R-2010 / R-1979 / R-1978) are mounted exactly as on the desktop page.
- * Until the phone checkout (R-2021) ships, Continue opens the v2 checkout with the same choices.
+ * R-2021: Continue opens the phone checkout (checkout-flow.tsx — Domain, Details, Review & pay);
+ * "Talk to us" opens the Help sheet, Plus / Enterprise and 300+ licences the quote callback sheet.
  */
 import * as React from "react";
 import Link from "next/link";
@@ -26,8 +27,13 @@ import { buildTiers, type CatalogItem } from "../_parts/tiers";
 import { useBuyCatalog } from "../_parts/use-buy-catalog";
 import { useActiveSitePromo, computeSitePromoDiscount, SitePromoBanner } from "../_parts/site-promo";
 import { orderTotals } from "../_parts/checkout-form";
-import { TestModeBar } from "../_parts/info-sections";
-import { readMobileState, writeMobileState, continueHref, MOBILE_MAX_ONLINE, type MobileState, type Intent } from "./url-state";
+import { TestModeBar, SiteFooter } from "../_parts/info-sections";
+import { TenantLogo } from "../_parts/tenant-logo";
+import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
+import { readMobileState, writeMobileState, MOBILE_MAX_ONLINE, CHECKOUT_STEPS, type MobileState, type Intent, type CheckoutStep } from "./url-state";
+import { MobileCheckout } from "./checkout-flow";
+import { HelpSheet, LeadSheet, type SheetKind } from "./sheets";
+import { EMPTY_FORM, fitMode, orderDomain, type MobileForm } from "./form-state";
 import { mobilePlans } from "./prices";
 import { PlansStep, licences } from "./plans-step";
 import { CompareStep } from "./compare-step";
@@ -59,29 +65,33 @@ export function talkHref(contact: BuyContact, message: string): string {
   return "/buy/workspace?view=desktop#talk-to-us";
 }
 
-function TopBar({ brand, pending, href }: { brand: BuyBrand | null; pending: boolean; href: string }) {
+function TopBar({ brand, pending, href, onTalk }: { brand: BuyBrand | null; pending: boolean; href: string; onTalk?: () => void }) {
   const name = brand?.name ?? "Google Workspace";
   return (
     <header className="sticky top-0 z-30 bg-paper/95 backdrop-blur-sm border-b border-hairline">
       <div className="max-w-[480px] mx-auto flex justify-between items-center gap-3 px-4 py-2">
         {!brand && pending ? <BrandSkeleton size="sm" /> : (
         <Link href="/" className="flex items-center gap-2.5 min-w-0 no-underline text-ink">
-          {brand?.logoUrl ? (
-            /* eslint-disable-next-line @next/next/no-img-element -- tenant logo, any host */
-            <img src={brand.logoUrl} alt="" className="h-8 w-8 shrink-0 rounded-lg object-contain bg-white" />
-          ) : (
-            <span aria-hidden className="h-8 w-8 shrink-0 rounded-lg bg-ink text-paper grid place-items-center font-serif text-[17px]">{name.charAt(0).toUpperCase()}</span>
-          )}
+          {/* R-1969: the real logo, or none (the name says who sells) — never a letter tile */}
+          <TenantLogo brand={brand} className="h-8 w-8 shrink-0 rounded-lg object-contain bg-white" />
           <span className="flex flex-col min-w-0">
             <span className="font-serif text-[15px] leading-tight truncate">{name}</span>
             <span className="text-xs text-ink-3 truncate">{PARTNER_BADGE}</span>
           </span>
         </Link>
         )}
-        <a href={href} target="_blank" rel="noopener noreferrer"
-          className="h-11 px-3.5 border border-hairline rounded-full bg-white whitespace-nowrap shrink-0 text-sm font-semibold text-ink grid place-items-center no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
-          Talk to us
-        </a>
+        {onTalk ? (
+          /* R-2021: the Help sheet — founder, WhatsApp / call, four answers — without leaving the page */
+          <button type="button" onClick={onTalk}
+            className="h-11 px-3.5 border border-hairline rounded-full bg-white whitespace-nowrap shrink-0 text-sm font-semibold text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+            Talk to us
+          </button>
+        ) : (
+          <a href={href} target="_blank" rel="noopener noreferrer"
+            className="h-11 px-3.5 border border-hairline rounded-full bg-white whitespace-nowrap shrink-0 text-sm font-semibold text-ink grid place-items-center no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+            Talk to us
+          </a>
+        )}
       </div>
     </header>
   );
@@ -119,7 +129,7 @@ export function BuyMobileClient({ catalogItems = null, ...props }: MobileProps) 
       <ConsentBanner />
       {(props.paymentMode ?? "simulation") === "simulation" && <TestModeBar />}
       <TopBar brand={brand} pending={brandPending} href={helpHref} />
-      <main className="max-w-[480px] mx-auto pb-[160px]">
+      <main className="max-w-[480px] mx-auto pb-6">
         <div className="px-4 pt-6 flex flex-col gap-3">
           <h1 className="font-serif font-normal text-[30px] leading-tight m-0">Buy Google Workspace</h1>
           {loading ? (
@@ -150,6 +160,8 @@ export function BuyMobileClient({ catalogItems = null, ...props }: MobileProps) 
           )}
         </div>
       </main>
+      {/* R-1969: the buy page footer — legal links, registered name, address, GSTIN; the room below keeps it clear of the sticky bar */}
+      <div className="pb-[160px]"><SiteFooter brand={brand} /></div>
       {loading && (
         <div data-m-bar className="fixed inset-x-0 bottom-0 z-30 bg-white border-t border-hairline shadow-[0_-12px_24px_-16px_rgba(26,24,21,0.3)]">
           <div className="max-w-[480px] mx-auto px-4 pt-3 pb-[max(16px,env(safe-area-inset-bottom))] flex flex-col gap-1.5">
@@ -186,6 +198,9 @@ function BuyMobileBody({
     return { ...s, billing: monthlyOk ? s.billing : "annual", tier: plans.some((p) => p.id === s.tier) ? s.tier : (plans[0]?.id as MobileState["tier"]) ?? "standard" };
   });
   const [intentErr, setIntentErr] = React.useState(false);
+  const [sheet, setSheet] = React.useState<SheetKind | null>(null);
+  /* R-2021: what the buyer typed in the checkout — the quote / trial sheets start from it. */
+  const [typed, setTyped] = React.useState<MobileForm>(EMPTY_FORM);
 
   /** Every change is written to the address bar: a new step is a history entry (Back works), a choice replaces it. */
   const update = (patch: Partial<MobileState>) => {
@@ -237,15 +252,21 @@ function BuyMobileBody({
   }, []);
 
   const bill = state.billing === "annual" ? "Yearly" : "Monthly";
-  const quoteHref = talkHref(contact, `Hi, I'd like a Google Workspace quote for ${licences(state.seats)}.`);
   const plusHref = talkHref(contact, "Hi, I'd like to know about Google Workspace Business Plus or Enterprise.");
   const helpHref = talkHref(contact, "Hi, I'm looking at Google Workspace on your website.");
 
   const onContinue = () => {
     if (!state.intent) { setIntentErr(true); goToIntent(); return; }
     trackFunnel("checkout_started", { tier: state.tier, seats: state.seats, billing: state.billing });
-    window.location.assign(continueHref(window.location.search, state));
+    update({ step: "domain" });
   };
+  const inCheckout = (CHECKOUT_STEPS as readonly string[]).includes(state.step);
+  /* 300+ licences are a quote, never a checkout — a link or a Back into a checkout step returns to Plans. */
+  React.useEffect(() => {
+    if (inCheckout && (over || !plan || !sum)) update({ step: "plans" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on the step / licences only
+  }, [inCheckout, over]);
+  const typedMode = fitMode(typed, state.intent);
 
   return (
     <div ref={rootRef} className="m-buy min-h-screen bg-paper text-ink">
@@ -254,10 +275,15 @@ function BuyMobileBody({
       {/* R-2010: the same consent banner as the desktop page and the site. */}
       <ConsentBanner />
       {paymentMode === "simulation" && <TestModeBar />}
-      <TopBar brand={brand} pending={brandPending} href={helpHref} />
-      {sitePromo && <SitePromoBanner promo={sitePromo} />}
-      <main className="max-w-[480px] mx-auto pb-[160px]">
-        {state.step === "compare" ? (
+      {!inCheckout && <TopBar brand={brand} pending={brandPending} href={helpHref} onTalk={() => setSheet("help")} />}
+      {sitePromo && !inCheckout && <SitePromoBanner promo={sitePromo} />}
+      <main className="max-w-[480px] mx-auto pb-6">
+        {inCheckout && plan && sum && !over ? (
+          <MobileCheckout state={state as MobileState & { step: CheckoutStep }} update={update} plan={plan} sum={sum}
+            promo={sitePromo && promoOff > 0 ? { label: sitePromo.headline, off: promoOff } : null}
+            brand={brand} contact={contact} paymentMode={paymentMode}
+            onTalk={() => setSheet("help")} onQuote={() => setSheet("quote")} onForm={setTyped} />
+        ) : state.step === "compare" ? (
           <CompareStep plans={plans} onBack={() => update({ step: "plans" })} onChoose={(t) => { update({ step: "plans", tier: t }); trackFunnel("plan_selected", { tier: t, seats: state.seats, billing: state.billing }); }} />
         ) : plan ? (
           <>
@@ -271,6 +297,9 @@ function BuyMobileBody({
               onBilling={(b: Billing) => update({ billing: b })}
               onTier={(t) => { update({ tier: t }); trackFunnel("plan_selected", { tier: t, seats: state.seats, billing: state.billing }); }}
               onCompare={() => update({ step: "compare" })}
+              onTalk={() => setSheet("quote")}
+              onTrial={() => setSheet(state.intent === "transfer" ? "help" : "trial")}
+              trialDays={WORKSPACE_TRIAL_DAYS}
             />
           </div>
           </>
@@ -282,6 +311,8 @@ function BuyMobileBody({
           </div>
         )}
       </main>
+      {/* R-1969: the buy page footer — legal links, registered name, address, GSTIN; the room below keeps it clear of the sticky bar */}
+      <div className="pb-[160px]"><SiteFooter brand={brand} /></div>
 
       {state.step === "plans" && plan && (
         <div data-m-bar data-testid="mobile-continue-bar" className="fixed inset-x-0 bottom-0 z-30 bg-white border-t border-hairline shadow-[0_-12px_24px_-16px_rgba(26,24,21,0.3)]">
@@ -294,10 +325,10 @@ function BuyMobileBody({
               <span className="text-sm text-emerald-ink -mt-1.5">{sitePromo.headline} · online sale applied</span>
             )}
             {over ? (
-              <a href={quoteHref} target="_blank" rel="noopener noreferrer"
-                className="h-[54px] rounded-xl bg-amber text-white text-[17px] font-bold grid place-items-center no-underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2">
+              <button type="button" onClick={() => setSheet("quote")}
+                className="h-[54px] rounded-xl bg-amber text-white text-[17px] font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2">
                 Get a call back with a quote
-              </a>
+              </button>
             ) : (
               <button type="button" onClick={onContinue}
                 className="h-[54px] rounded-xl bg-amber text-white text-[17px] font-bold focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2">
@@ -306,6 +337,14 @@ function BuyMobileBody({
             )}
           </div>
         </div>
+      )}
+      {sheet === "help" && <HelpSheet brand={brand} contact={contact} onClose={() => setSheet(null)} onQuote={() => setSheet("quote")} />}
+      {(sheet === "quote" || sheet === "trial") && plan && (
+        <LeadSheet kind={sheet} tier={state.tier} planName={plan.name} seats={state.seats} billing={state.billing}
+          prefill={{ name: typed.name, phone: typed.phone, email: typed.email, company: typed.company, domain: orderDomain(typed, state.intent) }}
+          intent={state.intent} domainMode={state.intent ? typedMode : null}
+          migrationSource={state.intent && (typedMode === "have" || typedMode === "later") ? typed.migrationSource : null}
+          onClose={() => setSheet(null)} />
       )}
     </div>
   );

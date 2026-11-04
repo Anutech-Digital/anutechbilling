@@ -18,6 +18,8 @@
  * Whole rupees throughout (AGENTS.md rule 1).
  */
 
+import { isRecurringSub, recurringMrr } from "@/lib/subscriptions/mrr-of";
+
 export type Vendor = "google" | "microsoft" | "zoho" | "hosting" | "domain" | "support" | "other";
 
 export interface SubscriptionRow {
@@ -29,6 +31,9 @@ export interface SubscriptionRow {
   mrr: number | null;
   /** From the vendor sync; null = not known. */
   vendor_cost_per_seat_month: number | null;
+  /** R-2229: read by mrrOf — a one-time or no-term row is not MRR. */
+  plan?: string | null;
+  term_months?: number | null;
 }
 
 export interface LineAnalytics {
@@ -76,10 +81,11 @@ export function computeMrrAnalytics(rows: readonly SubscriptionRow[]): MrrAnalyt
 
   let active = 0, mrr = 0, cost = 0, costedRevenue = 0, unknown = 0;
   for (const r of rows) {
-    if (r.status !== "active") continue;
+    /* R-2229: the one MRR rule (lib/subscriptions/mrr-of) — active AND recurring. */
+    if (r.status !== "active" || !isRecurringSub(r)) continue;
     const v: Vendor = r.vendor && r.vendor in LABEL ? (r.vendor as Vendor) : "other";
     const line = by_line[v];
-    const m = Math.max(0, Math.round(r.mrr ?? 0));
+    const m = recurringMrr(r);
     const seats = Math.max(0, r.seats ?? 0);
     active++; mrr += m;
     line.active_subscriptions++; line.seats += seats; line.mrr_rupees += m;

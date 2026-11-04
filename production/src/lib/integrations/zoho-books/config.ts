@@ -25,6 +25,8 @@ export const ZOHO_REVOKE_URL = `${ZOHO_ACCOUNTS_BASE}/oauth/v2/token/revoke`;
 export const ZOHO_BOOKS_SCOPES = [
   "ZohoBooks.contacts.READ",
   "ZohoBooks.invoices.READ",
+  /* R-2359: "Find in Zoho" on a bank credit reads the customer payment whose reference is the UTR. */
+  "ZohoBooks.customerpayments.READ",
   "ZohoBooks.settings.READ",
 ] as const;
 
@@ -41,6 +43,9 @@ export const STATE_TTL_MS = 10 * 60 * 1000;
 
 /** Who may connect, choose the organization, preview and disconnect. */
 export const ZOHO_BOOKS_MANAGE_ROLES = ["owner", "manager", "accountant"] as const;
+
+/** R-2359: who may press "Find in Zoho" on a bank line (it shows the company's sales records). */
+export const ZOHO_FIND_ROLES = ["owner", "accountant"] as const;
 
 export function canManageZohoBooks(role: string | null | undefined): boolean {
   return !!role && (ZOHO_BOOKS_MANAGE_ROLES as readonly string[]).includes(role);

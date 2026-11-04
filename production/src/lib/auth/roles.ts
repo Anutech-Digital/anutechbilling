@@ -53,6 +53,10 @@ export const USER_ROLES = [
   /* R-1791 (Abhishek, 23 Oct 2026): asks the owner for a marketing budget and asks billing to
      pay against it; works in the Marketing Hub. */
   "marketing",
+  /* R-2110 (GP-01, goal G-PERSONAL): the one person in a PERSONAL workspace
+     (tenants.workspace_kind = 'personal') — their own money and digital assets, no business
+     power. Set only by the server at personal signup; never invitable (INVITABLE_ROLES). */
+  "personal",
 ] as const;
 
 export type UserRole = (typeof USER_ROLES)[number];
@@ -78,8 +82,12 @@ export function isUserRole(value: unknown): value is UserRole {
  * the person would land on /login?error=provision_failed with no clue why.
  * Narrow it here and the compiler says so instead.
  */
-export const INVITABLE_ROLES = USER_ROLES.filter((r) => r !== "partner_agent") as readonly Exclude<UserRole, "partner_agent">[];
-export type InvitableRole = Exclude<UserRole, "partner_agent">;
+export type InvitableRole = Exclude<UserRole, "partner_agent" | "personal">;
+/* R-2110: 'personal' is not a seat in a business. It is the only member of a personal
+   workspace and is set by the server at personal signup, so the Team pickers, /api/team/claim
+   and join-requests/[id] (all of which read this list) can never hand it out. */
+const NOT_INVITABLE: readonly UserRole[] = ["partner_agent", "personal"];
+export const INVITABLE_ROLES = USER_ROLES.filter((r) => !NOT_INVITABLE.includes(r)) as readonly InvitableRole[];
 
 /**
  * What each role is CALLED on screen.
@@ -103,6 +111,7 @@ export const ROLE_LABEL: Record<UserRole, string> = {
   support:       "Support",
   partner_agent: "Partner Agent",
   marketing:     "Marketing",
+  personal:      "Personal",
 };
 
 /** Label for a role that may not be a known one (a stale row, a new enum value). */
@@ -228,6 +237,10 @@ export const PERMISSIONS: Record<UserRole, Permissions> = {
   // R-1791: runs the Marketing Hub and its own budget requests. No customer data, no export,
   // no books — what it spends is visible on its own budget page.
   marketing: { ...NONE },
+  // R-2110: a personal workspace holds no business records — every business permission is off.
+  // What the person may do with their OWN money and assets is decided by the personal pages
+  // (GP-07a onward), never by these flags.
+  personal: { ...NONE },
 };
 
 /**
@@ -321,6 +334,8 @@ export const GATEWAY_LIMITED_BY_ROLE: Record<UserRole, boolean> = {
   delivery:      true,
   partner_agent: true,
   marketing:     true,
+  /* R-2110: free personal accounts are the many-user case — limited like every non-money role. */
+  personal:      true,
 };
 
 export function isGatewayLimitedRole(role: string | null | undefined): boolean {

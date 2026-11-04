@@ -80,6 +80,7 @@ import { domainConflictMessage } from "@/lib/quotes/payment-domain";
 import { deskPaymentTagArgs, isReplayResult, replayToast } from "@/lib/payments/record-payment-replay";
 import { instalmentPaymentLines, type InstalmentPaymentResult } from "@/lib/payments/instalment-payment";
 import { splitExpectation, splitPaymentToast, splitOutcomeSentence, type SplitExpectation, type InstalmentRaiseResult } from "@/lib/payments/split-expected";
+import { tdsWithRounding, tdsOnlyReceipt } from "@/lib/payments/tds-rounding";
 import { advanceToUse } from "@/lib/quotes/customer-advance";
 
 const schema = z.object({
@@ -121,7 +122,9 @@ const schema = z.object({
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["reference"], message: formatProblem });
     return;
   }
-  if (digital && (ref.length < 4 || !/\d/.test(ref))) {
+  /* R-2095: a Razorpay id (pay_ + 14) passed its own format above — it may have no digit. */
+  const razorpayId = d.method === "razorpay" && /^pay_/i.test(ref);
+  if (digital && !razorpayId && (ref.length < 4 || !/\d/.test(ref))) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["reference"],
@@ -256,6 +259,22 @@ export function TdsShortfallHint({ match, onApply }: { match: TdsShortfallMatch 
   );
 }
 
+/** R-2095: TDS ticked and ₹0 in bank — the receipt saves as method other with no bank account
+ *  (lib/payments/tds-rounding tdsOnlyReceipt), so the sheet must not ask for either. */
+export function isTdsOnlyEntry(tdsDeducted: boolean, bank: number): boolean {
+  return tdsOnlyReceipt({ method: "other", bankAccountId: null, bank, tdsActive: tdsDeducted, notes: null }).tdsOnly;
+}
+
+/** Shown in place of Payment method + Received in on a TDS-only receipt. */
+export function TdsOnlyNoBankNote() {
+  return (
+    <p data-testid="tds-only-no-bank" className="rounded-md border border-hairline bg-paper-2 px-3 py-2 text-xs text-ink-2">
+      TDS only — no money reached your bank, so there is no payment method or account. Saved as
+      &ldquo;TDS deducted by customer&rdquo;.
+    </p>
+  );
+}
+
 /** Compute TDS amount = pre-GST gross × rate%. R-1119: GST is stripped at the quote's own
  *  rate (5% / 12% / 0% export), not a fixed 18%. */
 function computeTds(quoteAmountInclGst: number, ratePct: number, taxRatePct: number | null): { preGST: number; tds: number } {
@@ -323,6 +342,10 @@ interface RecordPaymentDialogProps {
     isFullyPaid: boolean;
     subscriptionCreated: boolean;
     isFirstPayment: boolean;
+    /** R-2099: the GST invoice this sheet issued with the payment ("Issue GST invoice now"), else null. */
+    invoiceId?: string | null;
+    /** R-2099: the sheet already called generate_invoice (issued, or refused and toasted). */
+    invoiceAttempted?: boolean;
   }) => void;
 }
 
@@ -495,6 +518,7 @@ export function RecordPaymentDialog({
 
   const watchedAmount = watch("amount") || 0;
   const tdsDeducted   = watch("tdsDeducted") || false;
+  const tdsOnlyEntry  = isTdsOnlyEntry(tdsDeducted, Number(watchedAmount));
   const tdsRatePct    = Number(watch("tdsRatePct") || 0);
   // Has the user hand-edited the bank amount? Until they do, we keep it locked
   // to (remaining − TDS) so net + TDS always settles the quote exactly.
@@ -511,8 +535,6 @@ export function RecordPaymentDialog({
      A rate change, unticking TDS or closing the sheet goes back to rate × taxable. */
   const [typedPartTds, setTypedPartTds] = React.useState<number | null>(null);
   React.useEffect(() => { setTypedPartTds(null); }, [open, tdsDeducted, tdsRatePct]);
-  const tdsAmount = tdsDeducted && typedPartTds !== null ? typedPartTds : tdsAtRate;
-
   // Advance credit applied to this payment — capped at the remaining balance
   // (can't apply more credit than is owed). Reduces the cash the customer needs.
   /* R-2023: "Use advance" — the whole advance that fits by default, or the part the person
@@ -522,6 +544,10 @@ export function RecordPaymentDialog({
   const appliedCreditAmount  = applyCredit
     ? advanceToUse({ available: availableCredit, owed: remaining, typed: typedCredit })
     : 0;
+  /* R-2095: the customer's TDS may be ₹1 off rate × pre-GST (paise rounding) — a typed bank amount
+     ₹1 short / over the balance takes the ₹1 into the TDS (lib/payments/tds-rounding). */
+  const tdsAmount = tdsDeducted && typedPartTds !== null ? typedPartTds
+    : tdsWithRounding({ tdsAtRate, remaining, bank: Number(watchedAmount) || 0, credit: appliedCreditAmount, bankTyped: amountEdited });
   React.useEffect(() => {
     setValue("creditApplied", appliedCreditAmount);
     if (isSubmitted) void trigger("amount");
@@ -716,6 +742,8 @@ export function RecordPaymentDialog({
         .catch(() => { /* useGenerateInvoice already shows the reason */ });
     } else if (kind === "view-invoice" && action.href) {
       router.push(action.href as never);
+    } else if (kind === "record-another") {
+      onOpenChange(true);   // R-2184: the same sheet, fresh (reset on open), for the next part
     } else if (kind === "send-receipt" && paymentId) {
       router.push(`/quotes/${encodeURIComponent(quoteId)}?receipt=${encodeURIComponent(paymentId)}` as never);
     }
@@ -754,13 +782,16 @@ export function RecordPaymentDialog({
             : `TDS ${data.tdsSection} withheld ${rupee(tdsAmount)} (${tdsRatePct}% of pre-GST ${rupee(quotePreGST)} = ${rupee(tdsAtRate)})`
           : null,
       ].filter(Boolean).join(" · ") || null;
-      const tagArgs = deskPaymentTagArgs({ receivedDate: data.receivedDate, bankAccountId });
+      /* R-2095: ₹0 in bank + TDS = the customer's TDS, not bank money (no bank account, method other). */
+      const tdsOnlyR = tdsOnlyReceipt({ method, bankAccountId: bankAccountId || null, bank: data.amount, tdsActive, notes });
+      const tagArgsAll = deskPaymentTagArgs({ receivedDate: data.receivedDate, bankAccountId });
+      const tagArgs = tdsOnlyR.tdsOnly ? { ...tagArgsAll, p_bank_account_id: null } : tagArgsAll;
 
       const deskArgs = {
         p_amount:             settledAmount,
-        p_method:             method,
+        p_method:             tdsOnlyR.method,
         p_reference:          data.reference,
-        p_notes:              notes,
+        p_notes:              tdsOnlyR.notes,
         p_credit_customer_id: appliedCreditAmount > 0 && customerId ? customerId : null,
         p_credit_amount:      appliedCreditAmount > 0 && customerId ? appliedCreditAmount : 0,
         p_received_on:        tagArgs.p_received_on,
@@ -943,11 +974,20 @@ export function RecordPaymentDialog({
         return;
       }
 
-      /* R-407: the payment IS saved. Clear its reference at once, and close the sheet in
-         `finally` — Abhishek (7 Oct) saw the sheet stay open as "Record additional payment"
-         with the same UTR still filled, one click from being submitted again. Whatever the
-         invoice / toast steps below do, a saved payment always ends with the sheet closed. */
+      /* R-407: the payment IS saved. Clear its reference at once — Abhishek (7 Oct) saw the
+         sheet stay open as "Record additional payment" with the same UTR still filled, one
+         click from being submitted again.
+         R-2184 (Zoho audit 31 Oct): close the sheet HERE, once, not after the invoice /
+         raise-instalments steps below (6–12 s): the payments refetch above flipped the still-open
+         sheet to "Record additional payment", so the save looked failed. The toast that follows
+         names the receipt and offers "Record another". */
       setValue("reference", "");
+      onOpenChange(false);
+      /* R-2099 (30 Oct): whether THIS sheet already tried the GST invoice — handed to onRecorded
+         so a caller (Subscriptions onboarding) does not call generate_invoice a second time and
+         show "INV-… already exists" next to "Paid in full · GST invoice INV-… issued". */
+      let issuedInvoiceId: string | null = null;
+      let invoiceAttempted = false;
       try {
 
       /* ── ONE result toast (R-248) ──────────────────────────────────────────
@@ -998,7 +1038,6 @@ export function RecordPaymentDialog({
          page's button uses (consistency pre-flight + generate_invoice). Only when the payment
          really completed the quote. A refusal is shown by the hook with generate_invoice's own
          reason, and the quote keeps its Generate GST Invoice button — nothing is lost. */
-      let issuedInvoiceId: string | null = null;
       if (shouldIssueAfterPayment({
         ticked: issueInvoice,
         offered: invoiceOffer.offer,
@@ -1006,6 +1045,7 @@ export function RecordPaymentDialog({
         hasExistingInvoice: Boolean(res.hasExistingInvoice),
         isReplay: false,
       })) {
+        invoiceAttempted = true;
         try {
           /* R-447: generate_invoice reads the CUSTOMER's state. A customer made from a lead
              with no state gets the quote's Place of supply first (blank state only). */
@@ -1088,12 +1128,16 @@ export function RecordPaymentDialog({
           })
         : tAll;
       const run = (action: PaymentToastAction) => () => runToastAction(action, res.newPaymentId ?? null);
+      /* R-2184: the receipt named first; "Record another" in the free button slot. */
+      const descLines = [...(t.receipt ? [t.receipt] : []), ...t.lines];
+      const primaryBtn = t.primary ?? t.another ?? null;
+      const secondaryBtn = t.secondary ?? (t.primary ? t.another ?? null : null);
       (t.tone === "warning" ? toast.warning : toast.success)(t.title, {
-        description: t.lines.length ? t.lines.join("\n") : undefined,
-        duration: t.tone === "warning" || t.primary ? 12000 : 6000,
-        action: t.primary ? { label: t.primary.label, onClick: run(t.primary) } : undefined,
-        cancel: t.secondary ? { label: t.secondary.label, onClick: run(t.secondary) } : undefined,
-        classNames: t.lines.length ? { description: "whitespace-pre-line" } : undefined,
+        description: descLines.length ? descLines.join("\n") : undefined,
+        duration: t.tone === "warning" || primaryBtn ? 12000 : 6000,
+        action: primaryBtn ? { label: primaryBtn.label, onClick: run(primaryBtn) } : undefined,
+        cancel: secondaryBtn ? { label: secondaryBtn.label, onClick: run(secondaryBtn) } : undefined,
+        classNames: descLines.length ? { description: "whitespace-pre-line" } : undefined,
       });
       } catch (e) {
         /* The payment is saved — never let a toast / invoice step leave the sheet open. */
@@ -1106,8 +1150,9 @@ export function RecordPaymentDialog({
           isFullyPaid: res.isFullyPaid,
           subscriptionCreated: res.subscriptionCreated,
           isFirstPayment: res.isFirstPayment,
+          invoiceId: issuedInvoiceId,
+          invoiceAttempted,
         });
-        onOpenChange(false);
       }
     },
     onError: (err) => toast.error((err as Error).message),
@@ -1372,7 +1417,11 @@ export function RecordPaymentDialog({
           {/* ── How it was paid, and which of YOUR accounts received it (R-404) ──
               Was one list of hard-coded rows with our own company name shown to every company,
               tagging payments with made-up ids the uuid column refused. Now: a plain method
-              list, and this company's own bank / cash accounts. */}
+              list, and this company's own bank / cash accounts.
+              R-2095: a TDS-only receipt (TDS ticked, ₹0 in bank) has neither — it saves as method
+              other with no account, so both fields give way to one line saying so. */}
+          <input type="hidden" {...register("method")} value={method} />
+          {tdsOnlyEntry ? <TdsOnlyNoBankNote /> : (<>
           <FormField label={PAYMENT_FIELD_LABELS.method} required htmlFor="paymentMethod">
             <Select
               value={method}
@@ -1392,7 +1441,6 @@ export function RecordPaymentDialog({
                 ))}
               </SelectContent>
             </Select>
-            <input type="hidden" {...register("method")} value={method} />
           </FormField>
 
           <FormField label={PAYMENT_FIELD_LABELS.receivedIn} htmlFor="depositAccount">
@@ -1404,6 +1452,7 @@ export function RecordPaymentDialog({
               onChange={(id) => { setAccountTouched(true); setBankAccountId(id); }}
             />
           </FormField>
+          </>)}
 
           {/* Received on */}
           <FormField label={PAYMENT_FIELD_LABELS.receivedOn} required htmlFor="receivedDate">
@@ -1725,6 +1774,9 @@ export function RecordPaymentDialog({
                     amount: Number(watchedAmount) || 0,
                     quoteAmount: expectedAmount,
                     priorReceived: alreadyReceived,
+                    /* R-2184: TDS + advance settle the quote too — "settled in full", not "₹54 outstanding". */
+                    tds: tdsDeducted ? tdsAmount : 0,
+                    creditApplied: appliedCreditAmount,
                     createsCustomer: isProspect,
                     /* Faithful to what record_payment actually keys off: a subscription is
                        created only when a line carries a billing commitment. Without

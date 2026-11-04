@@ -33,18 +33,21 @@ import { addDaysISO, istToday } from "@/lib/dates/ist";
 import { createAdminClient } from "@/lib/supabase/server";
 import { resolveStateCode, stateCodeFromName } from "@/lib/gst/gstin-state";
 import { GST_STATE_BY_CODE, isValidGstin, rupee } from "@/lib/utils";
-import { buyPageTenantId, BuyPageTenantMissingError, simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
+import { buyPageTenantId, BuyPageTenantMissingError, liveKeyCheckoutRefusal, simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
 import { loadCheckoutRazorpayKeys } from "@/lib/checkout/razorpay-keys.server";
 import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.server";
 import { getPriceBook } from "@/lib/catalog/catalog-prices.server";
 import { bookSupportPrice, supportBookSku } from "@/lib/catalog/catalog-prices";
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { captureFromRequest } from "@/lib/marketing/utm";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 import { publicDbError } from "@/app/api/public/_lib/db-error";
 import {
-  buildSupportOrder, isUuid, sameEmail, supportCheckoutSchema, type SupportBuyPlan, type SupportBuyTerm, type SupportItemRow,
+  buildSupportOrder, supportCheckoutSchema, type SupportBuyPlan, type SupportBuyTerm, type SupportItemRow,
 } from "@/lib/support/public-checkout";
 import { findSupportSku } from "@/lib/support/tiers";
+import { attachableCustomer } from "@/lib/support/support-customer.server";
 
 export const dynamic = "force-dynamic";
 
@@ -77,23 +80,6 @@ async function supportItem(admin: Admin, tenantId: string, plan: SupportBuyPlan,
   const rows = (data ?? []) as { id: string; name: string | null; sku: string | null }[];
   const row = rows.find((r) => r.sku === sku) ?? findSupportSku(rows, plan, term);
   return row ? { id: row.id, name: row.name ?? "" } : null;
-}
-
-/** DSP's customer, only when it is this company's, active, and the same email. Else null. */
-async function attachableCustomer(admin: Admin, tenantId: string, billingCustomerId: string, email: string) {
-  if (!billingCustomerId) return null;
-  const q = admin.from("customers").select("id, name, contact_email, is_active").eq("tenant_id", tenantId);
-  /* The id is [A-Za-z0-9-] only (schema), so it is safe inside the or() filter. */
-  const { data, error } = await (isUuid(billingCustomerId)
-    ? q.or(`id.eq.${billingCustomerId},customer_number.eq.${billingCustomerId}`)
-    : q.eq("customer_number", billingCustomerId)
-  ).limit(2);
-  if (error) {
-    console.error("[checkout/support] customer lookup failed:", error.message);
-    return null;
-  }
-  const rows = (data ?? []) as { id: string; name: string | null; contact_email: string | null; is_active: boolean }[];
-  return rows.find((c) => c.is_active && sameEmail(c.contact_email, email)) ?? null;
 }
 
 export async function POST(request: NextRequest) {
@@ -143,6 +129,9 @@ export async function POST(request: NextRequest) {
     if (!isSimulation && !keys) {
       return fail(503, `Online payment isn't set up yet. ${NOTHING_CHARGED} Please contact us and we'll send you a GST quote.`);
     }
+    /* R-2155: a live key on staging may read settlements, never take a payment. */
+    const stagingLive = isSimulation ? null : liveKeyCheckoutRefusal(keys?.keyId);
+    if (stagingLive) return fail(403, stagingLive, { stagingLiveKey: true });
 
     /* ── The price: the server's book, never the browser ─────────────────────── */
     const book = await getPriceBook(tenantId);
@@ -208,6 +197,8 @@ export async function POST(request: NextRequest) {
       console.error("[checkout/support] lead insert failed:", leadErr.message);
       return fail(500, `Could not start checkout. ${NOTHING_CHARGED} Please try again.`);
     }
+    /* R-2011: the checkout's data notice + the marketing opt-in (yes/no) for this lead. */
+    await recordFormConsent(admin, { tenantId, leadId, consent: readFormConsent(body), headers: request.headers, page: "/buy/support" });
 
     /* ── Quote ────────────────────────────────────────────────────────────────── */
     const { data: qid, error: numErr } = await admin.rpc("next_document_number", { p_doc_type: "quote", p_tenant_id: tenantId });

@@ -23,8 +23,10 @@
 --   4. Owner B cannot INSERT into Owner A's vault.                     ← with_check
 --   5. Owner B cannot UPDATE Owner A's holding.                        ← silent no-op
 --   6. Owner B cannot DELETE Owner A's account.                        ← silent no-op
---   7. The PIN row is isolated the same way.                           ← lock is private
+--   7. The PIN row is isolated the same way (filtered or no grant).    ← lock is private
 --   8. Owner A can still write their own rows.                         ← feature works
+--   9. personal_account_balances (R-2127) is private the same way.     ← computed view
+--  10. Import batches, categories and category rules (R-2128) too.     ← import tables
 --
 -- ON ASSERTING "0 ROWS" — usually a weak assertion, correct here.
 --   RLS does not raise on a filtered SELECT/UPDATE/DELETE; it silently narrows. So for
@@ -67,6 +69,15 @@ insert into public.personal_transactions (id, tenant_id, owner_user_id, kind, am
 
 insert into public.personal_vault_pin (user_id, tenant_id, pin_hash, pin_salt) values
   ('c2c2c2c2-0000-0000-0000-0000000000a1', 'c2c2c2c2-0000-0000-0000-0000000000f0', 'deadbeef', 'cafe');
+
+-- R-2128: one import batch, one own category, one private rule for owner A.
+insert into public.personal_import_batches (id, tenant_id, owner_user_id, account_id, file_name, inserted_count) values
+  ('c2c2c2c2-0000-0000-0000-0000000000b4', 'c2c2c2c2-0000-0000-0000-0000000000f0',
+   'c2c2c2c2-0000-0000-0000-0000000000a1', 'c2c2c2c2-0000-0000-0000-0000000000b1', 'a-hdfc.csv', 0);
+insert into public.personal_categories (tenant_id, owner_user_id, name, direction) values
+  ('c2c2c2c2-0000-0000-0000-0000000000f0', 'c2c2c2c2-0000-0000-0000-0000000000a1', 'A Pets', 'expense');
+insert into public.personal_category_rules (tenant_id, owner_user_id, match_text, category) values
+  ('c2c2c2c2-0000-0000-0000-0000000000f0', 'c2c2c2c2-0000-0000-0000-0000000000a1', 'clinic', 'Health');
 
 -- `authenticated` is the role a real browser token arrives as, so RLS is genuinely
 -- enforced from here on. A superuser connection bypasses RLS and would prove nothing.
@@ -178,7 +189,14 @@ begin
   ------------------------------------------- 7. owner B cannot overwrite A's PIN
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_b::text, 'role', 'authenticated')::text, true);
-  update public.personal_vault_pin set pin_hash = 'hijacked' where user_id = v_a;
+  -- Two correct outcomes: RLS silently filters the row (old grants), or the request role
+  -- has no UPDATE on the table at all (GP-02b / R-2112 moves PIN writes server-side and
+  -- revokes it). Either way the assertion below — A's hash untouched — is what counts.
+  begin
+    update public.personal_vault_pin set pin_hash = 'hijacked' where user_id = v_a;
+  exception when insufficient_privilege then
+    null;
+  end;
 
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_a::text, 'role', 'authenticated')::text, true);
@@ -201,7 +219,47 @@ begin
   select balance into v_bal from public.personal_accounts where label = 'A ICICI Card';
   if v_bal <> 80000 then raise exception 'FAIL 8: card balance stored as % — expected 80000 whole rupees', v_bal; end if;
 
-  raise notice 'PASS — all 8 cases';
+  ------------------------------------------- 9. the computed balances view (R-2127) is private too
+  select count(*) into n from public.personal_account_balances;
+  if n <> 2 then raise exception 'FAIL 9: owner A should see their 2 balance rows, sees %', n; end if;
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_b::text, 'role', 'authenticated')::text, true);
+  select count(*) into n from public.personal_account_balances;
+  if n <> 0 then
+    raise exception 'FAIL 9: a second owner reads % row(s) of personal_account_balances — the view must be security_invoker so the owner_user_id = auth.uid() policy applies', n;
+  end if;
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_support::text, 'role', 'authenticated')::text, true);
+  select count(*) into n from public.personal_account_balances;
+  if n <> 0 then raise exception 'FAIL 9: a support user reads % balance row(s)', n; end if;
+
+  ------------------------------------------- 10. import tables (R-2128) are private the same way
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_a::text, 'role', 'authenticated')::text, true);
+  select count(*) into n from public.personal_import_batches;
+  if n <> 1 then raise exception 'FAIL 10: owner A should see their 1 import batch, sees %', n; end if;
+  select count(*) into n from public.personal_category_rules;
+  if n <> 1 then raise exception 'FAIL 10: owner A should see their 1 category rule, sees %', n; end if;
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_b::text, 'role', 'authenticated')::text, true);
+  select count(*) into n from public.personal_import_batches;
+  if n <> 0 then raise exception 'FAIL 10: a second owner reads % import batch(es)', n; end if;
+  select count(*) into n from public.personal_categories;
+  if n <> 0 then raise exception 'FAIL 10: a second owner reads % personal categor(ies)', n; end if;
+  select count(*) into n from public.personal_category_rules;
+  if n <> 0 then raise exception 'FAIL 10: a second owner reads % private category rule(s)', n; end if;
+
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_support::text, 'role', 'authenticated')::text, true);
+  select count(*) into n from public.personal_category_rules;
+  if n <> 0 then raise exception 'FAIL 10: a support user reads % private category rule(s)', n; end if;
+  select count(*) into n from public.personal_categories;
+  if n <> 0 then raise exception 'FAIL 10: a support user reads % personal categor(ies)', n; end if;
+
+  raise notice 'PASS — all 10 cases';
 end $$;
 
 -- Single visible result, so a green run is unmistakable.

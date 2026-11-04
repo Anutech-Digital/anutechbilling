@@ -15,7 +15,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { googleOAuthCreds, refreshAccessToken } from "@/lib/google/oauth";
-import { resealIfPlain } from "@/lib/google/token-vault";
+import { accessTokenCachePatch, usableCachedAccessToken } from "@/lib/google/token-vault";
 import { hasGbpScope } from "@/lib/google/scope-union";
 import {
   GBP_METRICS, GBP_METRIC_LAG_DAYS, GBP_METRIC_REFRESH_DAYS, GBP_METRIC_BACKFILL_DAYS,
@@ -52,15 +52,17 @@ export async function getFreshGbpAccessToken(admin: Admin, userId: string): Prom
     .from("user_google_tokens").select("access_token, refresh_token, token_expiry, scopes").eq("user_id", userId).maybeSingle();
   if (!tok || (!tok.access_token && !tok.refresh_token)) throw new Error("Google Business Profile not connected");
   if (!hasGbpScope(tok.scopes)) throw new Error(GBP_SCOPE_MISSING_MESSAGE);
-  const exp = tok.token_expiry ? Date.parse(tok.token_expiry) : 0;
-  if (tok.access_token && exp > Date.now() + 60_000) return tok.access_token;
+  // R-2351: the cached access token is stored sealed; opened here (legacy plaintext passes through).
+  const cached = usableCachedAccessToken(tok);
+  if (cached) return cached;
   if (!tok.refresh_token) throw new Error("No refresh token — please reconnect Google Business Profile");
   const creds = googleOAuthCreds();
   if (!creds) throw new Error("Google OAuth not configured");
   const r = await refreshAccessToken(tok.refresh_token, creds);
-  const expiry = new Date(Date.now() + (r.expires_in ?? 3600) * 1000).toISOString();
-  // A legacy plaintext refresh token is sealed on this write (R-051).
-  await admin.from("user_google_tokens").update({ access_token: r.access_token, token_expiry: expiry, ...resealIfPlain(tok.refresh_token) }).eq("user_id", userId);
+  // R-2351: cached SEALED (plus the R-051 reseal of a legacy plaintext refresh token); with no
+  // master key nothing is written — the fresh token is still returned, just not cached.
+  const patch = accessTokenCachePatch(r.access_token, Date.now() + (r.expires_in ?? 3600) * 1000, tok.refresh_token, "gbp");
+  if (patch) await admin.from("user_google_tokens").update(patch).eq("user_id", userId);
   return r.access_token;
 }
 

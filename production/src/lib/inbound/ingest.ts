@@ -49,17 +49,14 @@ import { inboundTenantId, inboundTenantMissingMessage } from "@/lib/inbound/tena
 import { senderDomainVerified, headersFromBody } from "@/lib/inbound/sender-auth";
 import { istToday } from "@/lib/dates/ist";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { loadSellerIdentity } from "@/lib/ai/seller-identity";
 
-/* The trading name the AI sales agent signs as. Env-overridable because this route already
-   supports pointing a second reseller's forwarded mail at their own tenant via
-   INBOUND_EMAIL_TENANT_ID — a hardcoded name would have that reseller's customers receiving
-   mail signed by somebody else's company. */
-const SELLER_NAME = process.env.SELLER_LEGAL_NAME?.trim() || "ANUTECH DIGITAL PVT LTD";
+/* R-1929: the trading name and support desk the AI agents sign as come from the tenant row the
+   mail belongs to (lib/ai/seller-identity.ts). This route can point a second reseller's
+   forwarded mail at their own tenant via INBOUND_EMAIL_TENANT_ID — a fixed name would have that
+   reseller's customers receiving mail signed by, and replying to, somebody else's company. The
+   env values apply only to the platform tenant. */
 const FROM_EMAIL     = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
-/* The address the AI support agent signs as. Env-overridable for the same reason SELLER_NAME
-   is: this route can point a second reseller's mail at their own tenant, and a hardcoded
-   support@anutech.in would have that reseller's customers replying to somebody else's desk. */
-const SUPPORT_EMAIL  = process.env.SUPPORT_EMAIL?.trim() || "support@anutech.in";
 const APP_URL        = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
 // Which tenant inbound enquiry-emails belong to. Defaults to the buy-page
 // tenant, but set INBOUND_EMAIL_TENANT_ID to route a specific reseller's
@@ -278,6 +275,9 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
   }
 
   const admin    = createAdminClient();
+  /* R-1929: read only when an agent actually answers, once per mail. */
+  let sellerRead: ReturnType<typeof loadSellerIdentity> | null = null;
+  const sellerIdentity = () => (sellerRead ??= loadSellerIdentity(admin, tenantId));
 
   // ── 2b. Route on WHO IT WAS SENT TO, before anything is created ─────────
   // The address the sender chose is a fact and it is their own statement of
@@ -375,8 +375,7 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
       /* R-726: a From line is not proof — only a DKIM/DMARC verdict for its domain is. */
       senderVerified: senderDomainVerified(body, headersFromBody(body), fromEmail),
       fromEmail: FROM_EMAIL,
-      sellerName: SELLER_NAME,
-      supportEmail: SUPPORT_EMAIL,
+      ...(await sellerIdentity()),
       appUrl: APP_URL,
     });
 
@@ -740,7 +739,11 @@ export async function ingestInboundEmail(body: Record<string, unknown>): Promise
         senderIsOurs,
         isSelfTest: selfTest,
         fromEmail: FROM_EMAIL,
-        sellerName: SELLER_NAME,
+        sellerName: (await sellerIdentity()).sellerName,
+        /* R-2460: the gate HELD the draft (no place of supply / needs approval). The agent
+           still answers — asks for the missing state, or says the quotation will follow —
+           but none of the held draft's figures may appear in that reply. */
+        heldQuote: quote.held ?? null,
       }).catch((err) =>
         console.error("[inbound-email] sales agent crashed:", err),
       );

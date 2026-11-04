@@ -43,8 +43,10 @@ import type { OldOneOffBooking } from "@/lib/banking/credit-pay-for";
 import { useBankAdvancePaymentIds, useBankSplitLinePayments, useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
 import { bankRowStatusLabel, splitPaymentsTitle, type SplitLinePayment } from "@/lib/banking/bank-row-label";
 import { useCustomers } from "@/lib/queries/customers";
+import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { RelinkOneOffDialog } from "@/components/features/banking/old-one-off-bookings";
 import { InvoiceMatchChip } from "@/components/features/banking/invoice-match-chip";
+import { RemittanceText } from "@/components/features/banking/remittance-text";
 import { rupee, formatDate } from "@/lib/utils";
 import { ImportStatementDialog } from "@/components/features/banking/import-statement-dialog";
 import { SalaryLinesDialog, salaryLinesOf } from "@/components/features/banking/salary-lines-dialog";
@@ -78,14 +80,19 @@ import {
   type StatusFilter,
 } from "@/lib/banking/bank-filters";
 import { reconcileCoverage } from "@/lib/banking/reconcile-coverage";
+import { balanceText, bankBalanceOf, runningBalances, type RunningBalance } from "@/lib/banking/running-balance";
+import { RunningBalanceText } from "./running-balance-text";
 import { revealTxn } from "@/lib/banking/txn-deep-link";
 import { guessVendor, type VendorLite } from "@/lib/banking/debit-pay-for";
 import { useVendors } from "@/lib/queries/vendors";
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import { useVendorNarrationAliases } from "@/lib/queries/bank-debit-pay-for";
 import { BankFilterBar, type ImportOption } from "@/components/features/banking/bank-filter-bar";
+import { useZohoMatchSet } from "@/components/features/banking/use-zoho-match-count";
 import { ReconcileCoverageTile } from "@/components/features/banking/reconcile-coverage-tile";
+import { lineNoteLines, useOwnerBookingNotes, type LineNoteLines } from "@/lib/banking/manual-reconcile";
 import { downloadCSV } from "@/lib/csv";
+import { ZohoBulkReconcileButton } from "@/components/features/banking/zoho-bulk-reconcile";
 import { istToday } from "@/lib/dates/ist";
 
 /* R-1869: one filter system — status tabs, Money in / out, a Filters panel (date, amount, matched
@@ -93,17 +100,19 @@ import { istToday } from "@/lib/dates/ist";
    sort, search, totals and Export CSV. State lives in the URL query (lib/banking/bank-filters). */
 const ALL_NEEDS: readonly NeedKey[] = ["no_customer", "no_vendor", "old_one_off", "duplicates", "large"];
 const READ_ONLY_NEEDS: readonly NeedKey[] = ["duplicates", "large"];
+/* R-2360: + "Money in · Zoho has a match" when the Zoho batch answered (owner / accountant, connected). */
+const ALL_NEEDS_ZOHO: readonly NeedKey[] = [...ALL_NEEDS, "zoho_match"];
 
 // Column order (left→right) + default widths (px) for the resizable table.
 // Status is folded into the last column: an unmatched row just shows the
 // "Reconcile" button (so "Unmatched" is implied — no separate column needed);
 // a reconciled row shows WHAT it matched (green pill) + "Un-reconcile". That
 // frees a whole column for the description + amounts.
-const BANK_COL_ORDER = ["date", "description", "nikasi", "jama", "reconcile"];
+const BANK_COL_ORDER = ["date", "description", "nikasi", "jama", "balance", "reconcile"];
 // Widths tuned to fit a laptop content area WITHOUT a horizontal scrollbar
-// (≈830px total). Description flexes widest; users can still drag any column.
+// (≈930px total, R-2400 Balance included). Description flexes widest; users can still drag any column.
 const BANK_COL_DEFAULTS: Record<string, number> = {
-  date: 118, description: 340, nikasi: 116, jama: 116, reconcile: 140,
+  date: 118, description: 320, nikasi: 116, jama: 116, balance: 124, reconcile: 140,
 };
 
 export default function BankAccountDetailPage() {
@@ -153,6 +162,11 @@ export default function BankAccountDetailPage() {
     const unmatched = all - matched;
     return { all, unmatched, matched };
   }, [transactions]);
+  /* R-2400: the balance after each line — over ALL the account's lines (a filtered or paged
+     view looks its rows up here), same formula as "Balance in bank" (lib/banking/running-balance). */
+  const openingForRunning = account?.opening_balance ?? 0;
+  const running = React.useMemo(() => runningBalances(transactions ?? [], openingForRunning), [transactions, openingForRunning]);
+  const ledgerSeq = React.useMemo(() => new Map([...running].map(([id, r]) => [id, r.seq])), [running]);
   const salaryLines = React.useMemo(() => salaryLinesOf(transactions ?? []), [transactions]);
   const salaryLineCount = salaryLines.length;
 
@@ -164,20 +178,27 @@ export default function BankAccountDetailPage() {
     [transactions],
   );
   const { data: openInvoices } = useOpenInvoicesForCreditMatch(canWrite && hasUnmatchedCredit);
+  /* R-2360: which unmatched money-in lines have a Zoho Books payment — one cached batch read per
+     account (never one Zoho call per line); only the lines STILL unmatched count. */
+  const zohoQ = useZohoMatchSet(accountId, canWrite && hasUnmatchedCredit);
+  const zohoIds = React.useMemo<ReadonlySet<string> | null>(() => {
+    const z = zohoQ.data;
+    if (!z?.available) return null;
+    return new Set((transactions ?? []).filter((t) => t.matched_to_type === null && t.credit > 0 && z.ids.has(t.id)).map((t) => t.id));
+  }, [zohoQ.data, transactions]);
   const invoiceChips = React.useMemo(
     () => certainInvoiceMatches(transactions ?? [], openInvoices ?? []),
     [transactions, openInvoices],
   );
 
   /* R-1863: "Money in · no customer yet" — unmatched credits the Reconcile sheet cannot guess a
-     customer for (no name in the narration, no certain invoice match). */
+     customer for (no name in the narration, no certain invoice match). R-2371: same payer memory
+     as the sheet, so our own name in a narration is never a customer. */
   const { data: customers } = useCustomers({ enabled: canWrite && hasUnmatchedCredit });
-  const noCustomerIds = React.useMemo(() => new Set(
-    noCustomerYet(transactions ?? [], customers ?? [], (t) => matchCreditToInvoices(
-      { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference },
-      openInvoices ?? [],
-    )).map((t) => t.id),
-  ), [transactions, customers, openInvoices]);
+  const payerMemory = usePayerMemory();
+  const noCustomerIds = React.useMemo(() => new Set(noCustomerYet(transactions ?? [], customers ?? [], (t) => matchCreditToInvoices(
+    { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference }, openInvoices ?? [],
+  ), payerMemory).map((t) => t.id)), [transactions, customers, openInvoices, payerMemory]);
   /* R-1863: lines booked before R-1838 as a one-off "bank sale" — each can be relinked. */
   const { data: oldBookings } = useOldOneOffBookings(accountId, canWrite);
   const oldById = React.useMemo(() => new Map((oldBookings ?? []).map((b) => [b.txn_id, b])), [oldBookings]);
@@ -194,6 +215,11 @@ export default function BankAccountDetailPage() {
     [transactions],
   );
   const { data: splitPays } = useBankSplitLinePayments(paymentLineIds);
+  /* R-2361: a reconciled line shows its manual reason / owner booking note and, for a reversal
+     pair, the line it reverses — under the Reconciled badge. */
+  const { data: ownerNotes } = useOwnerBookingNotes(accountId);
+  const txnById = React.useMemo(() => new Map((transactions ?? []).map((t) => [t.id, t])), [transactions]);
+  const notesFor = (t: BankTransactionRow) => lineNoteLines(t, txnById, ownerNotes);
 
   /* R-1869 "Money out · no vendor yet": unmatched money out where R-1866's guessVendor (the
      same guess the Reconcile sheet pre-fills) finds nobody — and not a salary line (Salary lines
@@ -228,9 +254,10 @@ export default function BankAccountDetailPage() {
   }, [importRows, transactions]);
 
   const filterCtx = React.useMemo<FilterContext>(() => ({
-    sets: { no_customer: noCustomerIds, no_vendor: noVendorIds, old_one_off: new Set(oldById.keys()) },
+    sets: { no_customer: noCustomerIds, no_vendor: noVendorIds, old_one_off: new Set(oldById.keys()), ...(zohoIds ? { zoho_match: zohoIds } : {}) },
     importLines,
-  }), [noCustomerIds, noVendorIds, oldById, importLines]);
+    order: ledgerSeq,
+  }), [noCustomerIds, noVendorIds, oldById, importLines, zohoIds, ledgerSeq]);
 
   const facets = React.useMemo(() => facetCounts(transactions ?? [], filters, filterCtx), [transactions, filters, filterCtx]);
   const visibleTxns = React.useMemo(
@@ -380,8 +407,9 @@ export default function BankAccountDetailPage() {
   //    anything and showed ₹-19,17,804 on a healthy account. Coverage, never cash: always ≥ 0.
   const openingBal = account.opening_balance ?? 0;
   const allTxns    = transactions ?? [];
-  const sumDelta   = (list: typeof allTxns) => list.reduce((s, t) => s + (t.credit ?? 0) - (t.debit ?? 0), 0);
-  const bankBalance = openingBal + sumDelta(allTxns);
+  /* R-2400: one formula — the newest row's running Balance is this same figure. */
+  const bankBalance = bankBalanceOf(allTxns, openingBal);
+  const dateSorted  = filters.sort === "newest" || filters.sort === "oldest";
   const coverage    = reconcileCoverage(allTxns);
   const filtersOn   = hasAnyFilter(filters);
   /* Plain call, not a hook — this runs after the early returns above. Cheap: one pass. */
@@ -459,7 +487,7 @@ export default function BankAccountDetailPage() {
           <div>
             <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Balance in bank</p>
             <p className={`font-serif text-2xl mt-1 ${bankBalance >= 0 ? "text-ink" : "text-rose"}`}>
-              {rupee(bankBalance)}
+              {balanceText(bankBalance)}
             </p>
             <p className="text-xs text-ink-3 mt-0.5">
               {/* R-1829: red only for a real gap — a few rupees of paise rounding is not one. */}
@@ -519,6 +547,8 @@ export default function BankAccountDetailPage() {
                 {`Salary lines (${salaryLineCount})`}
               </Button>
             )}
+            {/* R-2402: bulk "Reconcile from Zoho" — owner / accountant, when Zoho has payments for these lines. */}
+            {zohoIds && zohoIds.size > 0 && (role === "owner" || role === "accountant") && <ZohoBulkReconcileButton accountId={account.id} accountName={account.name} count={zohoIds.size} />}
             <Button
               icon="sparkles"
               variant="default"
@@ -554,7 +584,7 @@ export default function BankAccountDetailPage() {
         onChange={setFilters}
         counts={facets}
         totals={totals}
-        needs={canWrite ? ALL_NEEDS : READ_ONLY_NEEDS}
+        needs={canWrite ? (zohoIds ? ALL_NEEDS_ZOHO : ALL_NEEDS) : READ_ONLY_NEEDS}
         imports={importOptions}
         todayIso={istToday()}
         onExport={exportCsv}
@@ -619,6 +649,14 @@ export default function BankAccountDetailPage() {
                     <th className="px-4 py-2 font-semibold whitespace-nowrap">Description</th>
                     <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Nikasi (Dr.)</th>
                     <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Jama (Cr.)</th>
+                    <th
+                      className="px-4 py-2 font-semibold text-right whitespace-nowrap"
+                      title={dateSorted
+                        ? "Balance after this line: opening balance + every line up to it, in date order"
+                        : "Balance after this line, in date order (the list is sorted by amount)"}
+                    >
+                      Balance
+                    </th>
                     <th className="px-4 py-2 font-semibold text-right whitespace-nowrap">Reconcile</th>
                   </tr>
                 </thead>
@@ -627,6 +665,7 @@ export default function BankAccountDetailPage() {
                     <TransactionRow
                       key={txn.id}
                       txn={txn}
+                      running={running.get(txn.id)}
                       highlighted={txn.id === highlightId}
                       invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined}
                       onReconcile={canWrite ? () => openReconcile(txn) : undefined}
@@ -634,6 +673,7 @@ export default function BankAccountDetailPage() {
                       onRelink={canWrite && oldById.has(txn.id) ? () => openRelink(txn) : undefined}
                       isAdvance={isAdvanceTxn(txn)}
                       splitPays={splitPays?.get(txn.id)}
+                      notes={notesFor(txn)}
                     />
                   ))}
                 </tbody>
@@ -650,6 +690,7 @@ export default function BankAccountDetailPage() {
               <TransactionCard
                 key={txn.id}
                 txn={txn}
+                running={running.get(txn.id)}
                 highlighted={txn.id === highlightId}
                 invoiceMatch={canWrite ? invoiceChips.get(txn.id) : undefined}
                 onReconcile={canWrite ? () => openReconcile(txn) : undefined}
@@ -657,6 +698,7 @@ export default function BankAccountDetailPage() {
                 onRelink={canWrite && oldById.has(txn.id) ? () => openRelink(txn) : undefined}
                 isAdvance={isAdvanceTxn(txn)}
                 splitPays={splitPays?.get(txn.id)}
+                notes={notesFor(txn)}
               />
             ))}
           </ul>
@@ -735,9 +777,15 @@ function TransactionRow({
   onRelink,
   isAdvance = false,
   splitPays,
+  notes = null,
+  running,
 }: {
   txn: BankTransactionRow;
+  /** R-2400: the balance after this line, from ALL the account's lines. */
+  running?: RunningBalance;
   highlighted?: boolean;
+  /** R-2361: manual reason / owner note + reversal pair, shown under the badge. */
+  notes?: LineNoteLines | null;
   /** R-2025 (0): booked as the customer's advance — the badge reads "Advance". */
   isAdvance?: boolean;
   /** R-2098: the receipts of a line that paid several items. */
@@ -761,7 +809,7 @@ function TransactionRow({
       <td className="px-4 py-3 align-top">
         {/* Wrap (not truncate) so the full narration is readable at the default
             width — no need to widen the column and push other columns off. */}
-        <div className="font-medium text-ink break-words leading-snug">{txn.description}</div>
+        <div className="font-medium text-ink break-words leading-snug">{txn.description}<RemittanceText description={txn.description} /></div>
         {txn.reference && (
           <div className="text-xs text-ink-3 font-mono mt-0.5 break-all">{txn.reference}</div>
         )}
@@ -774,6 +822,9 @@ function TransactionRow({
       </td>
       <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-medium text-emerald">
         {txn.credit > 0 ? rupee(txn.credit) : <span className="text-ink-3">—</span>}
+      </td>
+      <td className="px-4 py-3 text-right tabular-nums whitespace-nowrap font-medium">
+        <RunningBalanceText running={running} />
       </td>
       <td className="px-4 py-3 text-right">
         {txn.matched_to_type === "transfer" ? (
@@ -788,6 +839,7 @@ function TransactionRow({
           // plus a quiet way to undo it.
           <div className="flex flex-col items-end gap-0.5">
             <MatchedBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} />
+            <LineNotes notes={notes} align="right" />
             {onRelink && (
               <Button size="sm" variant="default" onClick={onRelink} title="Move this one-off sale onto the renewal, extra seats or quote it paid">
                 Relink
@@ -820,9 +872,10 @@ function TransactionRow({
 // ============================================================
 // Card (mobile)
 // ============================================================
-function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, onUnreconcile, onRelink, isAdvance = false, splitPays }: {
-  txn: BankTransactionRow; highlighted?: boolean; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void; onRelink?: () => void; isAdvance?: boolean;
+function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onReconcile, onUnreconcile, onRelink, isAdvance = false, splitPays, notes = null }: {
+  txn: BankTransactionRow; running?: RunningBalance; highlighted?: boolean; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void; onRelink?: () => void; isAdvance?: boolean;
   splitPays?: readonly SplitLinePayment[];
+  notes?: LineNoteLines | null;
 }) {
   const reconcile = useReconcileTransaction();
   return (
@@ -830,7 +883,7 @@ function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, 
       <Card className={`p-3 transition-colors duration-700 ${highlighted ? HIGHLIGHT : ""}`}>
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-sm font-medium leading-snug text-ink break-words">{txn.description}</div>
+            <div className="text-sm font-medium leading-snug text-ink break-words">{txn.description}<RemittanceText description={txn.description} /></div>
             <div className="mt-0.5 text-xs text-ink-3">
               {formatDate(txn.txn_date)}
               {txn.reference ? <span className="font-mono"> · {txn.reference}</span> : ""}
@@ -838,9 +891,15 @@ function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, 
             {invoiceMatch && onReconcile && (
               <div className="mt-1"><InvoiceMatchChip match={invoiceMatch} onOpen={onReconcile} /></div>
             )}
+            <LineNotes notes={notes} align="left" />
           </div>
           <div className="shrink-0 text-right font-serif text-base tabular-nums">
             <TxnAmount txn={txn} />
+            {running && (
+              <div className="mt-0.5 font-sans text-xs text-ink-3">
+                Balance <RunningBalanceText running={running} />
+              </div>
+            )}
           </div>
         </div>
         <div className="mt-2 flex items-center justify-between gap-2">
@@ -869,6 +928,17 @@ function TransactionCard({ txn, highlighted = false, invoiceMatch, onReconcile, 
         </div>
       </Card>
     </li>
+  );
+}
+
+/** R-2361: the reversal pair + the reason / owner note under a reconciled line's badge (full text on hover). */
+function LineNotes({ notes, align }: { notes: LineNoteLines | null; align: "left" | "right" }) {
+  if (!notes) return null;
+  return (
+    <div className={`mt-0.5 min-w-0 max-w-full text-xs leading-snug text-ink-3 ${align === "right" ? "w-full text-right" : ""}`} data-testid="line-notes">
+      {notes.reversal && <div className="text-ink-2">{notes.reversal}</div>}
+      {notes.note && <div className="line-clamp-2 break-words" title={notes.note}>{notes.note}</div>}
+    </div>
   );
 }
 

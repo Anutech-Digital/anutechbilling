@@ -11,7 +11,7 @@ import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { rupee } from "@/lib/utils";
 import { SLA, WHATSAPP_READY } from "@/site/lib/config";
 import { normalizeGstinInput } from "@/site/lib/checkout-details";
-import { buyNowSchema, BUY_ANNUAL_NOTE, BUY_TERMS_ERROR } from "../buy-now-schema";
+import { buyNowSchema, BUY_ANNUAL_NOTE, BUY_MONTHLY_NOTE, BUY_TERMS_ERROR } from "../buy-now-schema";
 import { stateName, whatsappHref, type BuyBrand, type BuyContact } from "./brand";
 import {
   STATE_OPTIONS, buyerErrors, checkoutBody, domainValue, orderCompany, stateFromGstin,
@@ -21,9 +21,8 @@ import { NewDomainSearch } from "./new-domain";
 import { BUSINESS_MAX_USERS, type Billing, type BuyPlan, type PlanSum } from "./plans";
 import { payOrder, requestQuote, startTrial, type SubmitContext } from "./submit-order";
 import { OrderSummary } from "./order-summary";
+import { DataNotice } from "@/site/components/legal/DataNotice";
 import type { CheckoutState, Step } from "./use-checkout";
-
-export const BUY_MONTHLY_NOTE = "Monthly plan — billed each month for your users.";
 
 const METHODS: ReadonlyArray<{ id: PayMethod; label: string; sub: string }> = [
   { id: "upi", label: "UPI", sub: "GPay, PhonePe, Paytm, BHIM" },
@@ -98,6 +97,8 @@ export function Checkout(p: CheckoutProps) {
   const { co, plan } = p;
   const ts = useTurnstile();
   const [rzpOpen, setRzpOpen] = React.useState(false);
+  /* R-2011: the separate "Send me offers" box — unticked, never needed to order. */
+  const [optIn, setOptIn] = React.useState(false);
   const payable = canPayOnline(plan, p.seats, p.sum, p.onlinePay);
   /* The mode the last step runs: pay / trial as the buyer picks; a quote when paying is not on. */
   const mode = co.mode === "trial" ? "trial" : payable ? "pay" : "quote";
@@ -110,6 +111,7 @@ export function Checkout(p: CheckoutProps) {
   const ctx = (): SubmitContext => ({
     plan, seats: p.seats, billing: p.billing, domain: co.domain, buyer: co.buyer,
     ts: { headers: ts.headers, reset: ts.reset }, sellerName: p.brand?.name ?? "Google Workspace",
+    marketingOptIn: optIn,
   });
 
   async function place() {
@@ -284,6 +286,8 @@ export function Checkout(p: CheckoutProps) {
                     <span>I agree to the <a href="/terms-and-conditions" target="_blank" rel="noopener noreferrer" className="text-amber-ink underline underline-offset-[3px]">Terms</a>, the <a href="/refund" target="_blank" rel="noopener noreferrer" className="text-amber-ink underline underline-offset-[3px]">Refund policy</a> and the <a href="https://workspace.google.com/terms/" target="_blank" rel="noopener noreferrer" className="text-amber-ink underline underline-offset-[3px]">Google Workspace terms</a>.</span>
                   </label>
                   <Err id="buy-agree-err" msg={co.errors.agree} />
+                  <DataNotice purpose={mode === "trial" ? "trial" : mode === "quote" ? "quote" : "order"} adultLine={mode === "pay"}
+                    optIn={optIn} onOptIn={setOptIn} idPrefix="buy" className="text-ink-2" style={{ margin: "0 0 14px" }} />
                   {ts.widget}
                   <button type="button" onClick={() => void place()} disabled={busy}
                     className="w-full h-14 rounded-xl bg-amber text-white text-[17px] font-bold hover:bg-amber-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber focus-visible:ring-offset-2 disabled:opacity-60">

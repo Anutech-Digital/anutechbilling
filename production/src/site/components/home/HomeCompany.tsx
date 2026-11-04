@@ -28,6 +28,8 @@ import { C, MONO, CATALOGUE_V2, CatScene } from "@/site/components/home/HomeV2";
 import { COMPANY_FAQS } from "@/site/lib/data/company-faqs";
 import { teaserCardPrice, type DomainTeaser } from "@/site/lib/data/domain-teaser";
 import { ProductPeek } from "@/site/components/home/ProductPeek";
+import { formConsent } from "@/lib/consent/data-notice";
+import { DataNotice } from "@/site/components/legal/DataNotice";
 
 const WA = (text: string) => `${WHATSAPP_URL}?text=${encodeURIComponent(text)}`;
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
@@ -274,6 +276,7 @@ function StartForm() {
   const [state, setState] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [err, setErr] = useState("");
   const [name, setName] = useState("");
+  const [optIn, setOptIn] = useState(false); // R-2011: unticked, never needed
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -287,7 +290,7 @@ function StartForm() {
       const res = await fetch("/api/public/callback", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...ts.headers },
-        body: JSON.stringify({ fullName, phone, product: "custom-software", need: need || undefined, pageUrl: window.location.href, pageReferrer: document.referrer || undefined }),
+        body: JSON.stringify({ fullName, phone, product: "custom-software", need: need || undefined, pageUrl: window.location.href, pageReferrer: document.referrer || undefined, ...formConsent("callback", optIn) }),
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
@@ -319,6 +322,7 @@ function StartForm() {
       <input id="hc-phone" name="phone" type="tel" required minLength={10} inputMode="tel" autoComplete="tel" />
       <label htmlFor="hc-need">What takes your team the most time? <small>(optional)</small></label>
       <textarea id="hc-need" name="need" rows={3} maxLength={600} placeholder="e.g. We make quotes in Excel and chase payments on WhatsApp" />
+      <DataNotice purpose="callback" optIn={optIn} onOptIn={setOptIn} idPrefix="hc" />
       {ts.widget}
       <button type="submit" className="hc-btn hc-btn-primary" disabled={state === "sending"}>{state === "sending" ? "Sending…" : "Request a call →"}</button>
       {state === "error" && <p className="hc-err" role="alert">{err}</p>}

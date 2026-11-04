@@ -20,6 +20,9 @@ import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate } from "@/lib/utils";
 import type { SettlementPlan } from "@/lib/razorpay/settlement-match";
 import { useRazorpaySettlement, useReconcileRazorpaySettlement } from "@/lib/queries/razorpay-settlement";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
+import { settlementFeeSplit } from "@/lib/razorpay/fee-report";
+import { useSettlementFeeCharged } from "@/lib/queries/online-fee-report";
 
 export interface RazorpaySettlementLine {
   id: string;
@@ -37,7 +40,14 @@ export function remainingBlockers(plan: SettlementPlan, picks: Record<string, st
   return left;
 }
 
-export function RazorpaySettlementSection({ line, onDone }: { line: RazorpaySettlementLine; onDone: () => void }) {
+export function RazorpaySettlementSection({ line, onDone, onFooterSave }: {
+  line: RazorpaySettlementLine;
+  onDone: () => void;
+  /** R-2354: the Reconcile sheet draws "Reconcile settlement" in its sticky footer once the
+   *  settlement is fetched. Given → no inline button; the footer gets the same label and reconcile,
+   *  off while something still stops it (the list in the box says what). */
+  onFooterSave?: (save: FooterSave | null) => void;
+}) {
   const [open, setOpen] = React.useState(false);
   const [settlementId, setSettlementId] = React.useState<string | null>(null);
   const [picks, setPicks] = React.useState<Record<string, string>>({});
@@ -46,21 +56,13 @@ export function RazorpaySettlementSection({ line, onDone }: { line: RazorpaySett
   const q = useRazorpaySettlement(line.id, settlementId, open);
   const rec = useReconcileRazorpaySettlement();
 
-  if (!open) {
-    return (
-      <div className="rounded-md border border-indigo/40 bg-indigo/5 p-3 flex items-center justify-between gap-3">
-        <p className="text-xs text-ink-2 leading-relaxed min-w-0">
-          <b className="text-ink">Razorpay settlement?</b> One credit for many customer payments, less Razorpay&apos;s fee and GST.
-          Fetch it from Razorpay to match every payment and book the fee in one step.
-        </p>
-        <Button size="sm" variant="primary" icon="download" onClick={() => setOpen(true)}>Fetch settlement</Button>
-      </div>
-    );
-  }
-
-  const r = q.data;
+  const r = open ? q.data : undefined;
   const plan = r?.state === "plan" ? r.plan : null;
   const blockers = plan ? remainingBlockers(plan, picks) : [];
+  /* R-2418: of Razorpay's fee on this payout, how much its matched payments recovered from customers. */
+  const matchedIds = plan ? [...plan.payments.flatMap((p) => p.paymentIds), ...Object.values(picks).filter(Boolean)] : [];
+  const charged = useSettlementFeeCharged(matchedIds, !!plan);
+  const feeSplit = plan ? settlementFeeSplit(plan.totals.fee, charged.data ?? []) : null;
 
   async function reconcile() {
     try {
@@ -77,6 +79,23 @@ export function RazorpaySettlementSection({ line, onDone }: { line: RazorpaySett
         action: { label: "Fetch again", onClick: () => { void q.refetch(); } },
       });
     }
+  }
+
+  /* R-2354: same label, same rule (nothing left in the blockers list), same reconcile(). */
+  useFooterSaveReport(onFooterSave, plan
+    ? { label: "Reconcile settlement", onSave: () => { void reconcile(); }, disabled: blockers.length > 0, loading: rec.isPending }
+    : null);
+
+  if (!open) {
+    return (
+      <div className="rounded-md border border-indigo/40 bg-indigo/5 p-3 flex items-center justify-between gap-3">
+        <p className="text-xs text-ink-2 leading-relaxed min-w-0">
+          <b className="text-ink">Razorpay settlement?</b> One credit for many customer payments, less Razorpay&apos;s fee and GST.
+          Fetch it from Razorpay to match every payment and book the fee in one step.
+        </p>
+        <Button size="sm" variant="primary" icon="download" onClick={() => setOpen(true)}>Fetch settlement</Button>
+      </div>
+    );
   }
 
   return (
@@ -188,6 +207,12 @@ export function RazorpaySettlementSection({ line, onDone }: { line: RazorpaySett
             <dt className="text-ink-3">{plan.payments.length} payment{plan.payments.length === 1 ? "" : "s"}</dt><dd className="text-right">{rupee(plan.totals.gross)}</dd>
             {plan.totals.refunds > 0 && <><dt className="text-ink-3">Refunds</dt><dd className="text-right">−{rupee(plan.totals.refunds)}</dd></>}
             <dt className="text-ink-3">Razorpay fee (incl. GST {rupee(plan.totals.feeGst)})</dt><dd className="text-right">−{rupee(plan.totals.fee)}</dd>
+            {feeSplit && feeSplit.fee > 0 && (
+              <>
+                <dt className="text-ink-3 pl-3">Fee recovered from customers</dt><dd className="text-right text-ink-3">{rupee(feeSplit.recovered)}</dd>
+                <dt className="text-ink-3 pl-3">Fee absorbed by us</dt><dd className="text-right text-ink-3">{rupee(feeSplit.absorbed)}</dd>
+              </>
+            )}
             {plan.totals.other !== 0 && <><dt className="text-ink-3">Adjustments</dt><dd className="text-right">{rupee(plan.totals.other)}</dd></>}
             <dt className="text-ink font-medium border-t border-hairline pt-0.5">Settlement</dt><dd className="text-right font-medium border-t border-hairline pt-0.5">{rupee(plan.totals.net)}</dd>
             <dt className="text-ink-3">This bank line</dt><dd className={`text-right ${plan.totals.net === Math.round(plan.totals.bank) ? "text-emerald" : "text-rose-ink"}`}>{rupee(plan.totals.bank)}</dd>
@@ -201,9 +226,11 @@ export function RazorpaySettlementSection({ line, onDone }: { line: RazorpaySett
 
           <div className="flex items-center gap-2 flex-wrap">
             {blockers.length === 0 ? (
-              <Button size="sm" variant="primary" icon="check" loading={rec.isPending} onClick={() => { void reconcile(); }}>
-                Reconcile settlement
-              </Button>
+              !onFooterSave && (
+                <Button size="sm" variant="primary" icon="check" loading={rec.isPending} onClick={() => { void reconcile(); }}>
+                  Reconcile settlement
+                </Button>
+              )
             ) : (
               <Button size="sm" variant="default" onClick={() => { void q.refetch(); }}>Fetch again</Button>
             )}

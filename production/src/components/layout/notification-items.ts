@@ -28,8 +28,10 @@ export interface NotificationItem {
   when: number; // ms, for sorting
   /** When set, the item shows a 1-tap WhatsApp "Wish" button (birthdays). */
   wishHref?: string;
-  /** Tasks due today or overdue — listed before everything else so the cap never drops them. */
+  /** Tasks due today or overdue — the cap never drops them. */
   actionable?: boolean;
+  /** R-2327: a team chat item (mention / DM) — listed first while unread. */
+  chat?: boolean;
 }
 
 export interface RecentLead {
@@ -47,6 +49,9 @@ const KIND_META: Record<string, { icon: string; tone: NotifTone }> = {
   "quote.accepted":   { icon: "check",  tone: "emerald" },
   "lead.created":     { icon: "target", tone: "amber"   },
   "ticket.created":   { icon: "help",   tone: "indigo"  },
+  // R-2303: team chat — the href (/team-chat?c=<channel>&m=<message>) opens that exact message.
+  "chat.mention":     { icon: "chat",   tone: "amber"   },
+  "chat.dm":          { icon: "chat",   tone: "indigo"  },
 };
 
 /** End-of-today and start-of-today as UTC ms, computed in IST (matches the
@@ -89,6 +94,7 @@ export function buildNotifications(input: {
       unread: !n.read_at,
       link: n.href ?? "/dashboard",
       when: new Date(n.created_at).getTime(),
+      ...(n.kind.startsWith("chat.") ? { chat: true } : {}),
     });
   }
 
@@ -162,10 +168,19 @@ export function buildNotifications(input: {
     });
   }
 
-  // Tasks first (so the cap can't drop an old overdue one), newest first within each group.
-  return out
-    .sort((a, b) => Number(!!b.actionable) - Number(!!a.actionable) || b.when - a.when)
-    .slice(0, NOTIFICATION_LIMIT);
+  // R-2327: unread team chat items (a new @mention / DM) first, then due tasks, then the rest —
+  // newest first within each group. A new mention used to sit under every older task.
+  const sorted = out.sort((a, b) => notifGroup(a) - notifGroup(b) || b.when - a.when);
+  // R-247: the cap never drops a due task (not even under many unread chat items).
+  const tasks = sorted.filter((n) => n.actionable).length;
+  let room = Math.max(0, NOTIFICATION_LIMIT - tasks);
+  return sorted.filter((n) => n.actionable || room-- > 0).slice(0, NOTIFICATION_LIMIT);
+}
+
+/** R-2327: 0 = unread team chat (mention / DM), 1 = task due today or overdue, 2 = everything else. */
+function notifGroup(n: NotificationItem): number {
+  if (n.chat && n.unread) return 0;
+  return n.actionable ? 1 : 2;
 }
 
 /**

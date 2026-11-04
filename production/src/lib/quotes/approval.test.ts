@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   requiredApproval, discountBps, marginBps, isStale, canSend, canApprove, approvalBadge,
+  isSoleOwner, SOLE_APPROVER_STEP, SELF_APPROVAL_MIN_REASON,
   AUTO_APPROVE_DISCOUNT_BPS, MANAGER_MAX_DISCOUNT_BPS, OWNER_MARGIN_FLOOR_BPS,
   type QuoteEconomics, type ApprovalRecord,
 } from "./approval";
@@ -116,7 +117,7 @@ describe("nobody approves their own quote", () => {
   it("refuses the author even when the author is the OWNER", () => {
     /* The hole that makes every other rule decorative. */
     const r = canApprove({ id: "u1", role: "owner" }, rec({ requestedBy: "u1", status: "pending" }), need);
-    expect(r).toEqual({ allowed: false, reason: "You cannot approve your own quote." });
+    expect(r).toEqual({ allowed: false, ownQuote: true, reason: "You cannot approve your own quote." });
   });
 
   it("lets a different manager approve", () => {
@@ -136,8 +137,99 @@ describe("nobody approves their own quote", () => {
     expect(r.reason).toMatch(/Only the owner/);
   });
 
+  it("R-2367: refuses whoever made or revised the family on a revision with no approval record", () => {
+    /* Staging 2 Nov: Q-…-0565-R2 starts with requestedBy null — the maker saw Approve. */
+    const r = canApprove({ id: "u1", role: "manager" }, rec({ makers: ["u1", "u3"] }), need);
+    expect(r.allowed).toBe(false);
+    expect(r.reason).toMatch(/made or revised this quote/);
+    expect(canApprove({ id: "u3", role: "owner" }, rec({ makers: ["u1", "u3"] }), need).allowed).toBe(false);
+  });
+
+  it("R-2367: another approver outside the family still approves", () => {
+    expect(canApprove({ id: "u2", role: "owner" }, rec({ makers: ["u1", "u3"] }), need).allowed).toBe(true);
+  });
+
   it("refuses everyone on a quote that needs no approval", () => {
     expect(canApprove({ id: "u2", role: "owner" }, rec(), requiredApproval(healthy)).allowed).toBe(false);
+  });
+});
+
+describe("R-2383: the company's sole owner may approve their own quote (with a reason)", () => {
+  /* Below cost → owner tier (a one-owner company: quotes made under that login). */
+  const belowCost = requiredApproval({ subtotal: 1_500, listTotal: 1_500, totalCost: 1_800 });
+  const managerTier = requiredApproval({ subtotal: 85_000, listTotal: 100_000, totalCost: 20_000 });
+  const owner = { id: "o1", role: "owner" };
+
+  it("sole owner (only a sales rep besides) → allowed, flagged as self-approval", () => {
+    const team = [owner, { id: "s1", role: "sales" }];
+    expect(canApprove(owner, rec({ makers: ["o1"] }), belowCost, team)).toEqual({ allowed: true, selfApproval: true });
+    expect(canApprove(owner, rec({ requestedBy: "o1", status: "pending", tier: "owner" }), belowCost, team))
+      .toEqual({ allowed: true, selfApproval: true });
+  });
+
+  it("a manager who made the quote stays refused, even alone", () => {
+    const mgr = { id: "m1", role: "manager" };
+    expect(canApprove(mgr, rec({ makers: ["m1"] }), managerTier, [mgr]).allowed).toBe(false);
+  });
+
+  it("a second owner exists → the owner maker is refused again", () => {
+    const team = [owner, { id: "o2", role: "owner" }];
+    const r = canApprove(owner, rec({ makers: ["o1"] }), belowCost, team);
+    expect(r.allowed).toBe(false);
+    expect(r.selfApproval).toBeUndefined();
+  });
+
+  it("R-2426: a manager does NOT count — the only owner may clear any tier with a reason", () => {
+    /* Staging 3 Nov: one owner + a manager login → the owner's own quote said "You cannot
+       approve your own quote". Only a second owner blocks now (same as the server trigger). */
+    const team = [owner, { id: "m1", role: "manager" }, { id: "s1", role: "sales" }];
+    const sole = { allowed: true, selfApproval: true };
+    expect(canApprove(owner, rec({ makers: ["o1"] }), managerTier, team)).toEqual(sole);
+    expect(canApprove(owner, rec({ makers: ["o1"] }), belowCost, team)).toEqual(sole);
+    expect(canApprove(owner, rec({ makers: ["o1"], tier: "manager" }), belowCost, team)).toEqual(sole);
+    expect(canApprove(owner, rec({ requestedBy: "o1", status: "pending", tier: "manager" }), managerTier, team)).toEqual(sole);
+  });
+
+  it("R-2426: two owners → the maker is refused at every tier, flagged as their own quote", () => {
+    const team = [owner, { id: "o2", role: "owner" }];
+    for (const need of [managerTier, belowCost]) {
+      const r = canApprove(owner, rec({ requestedBy: "o1", status: "pending" }), need, team);
+      expect(r).toEqual({ allowed: false, ownQuote: true, reason: "You cannot approve your own quote." });
+    }
+    /* …and the other owner clears it as before */
+    expect(canApprove({ id: "o2", role: "owner" }, rec({ requestedBy: "o1", status: "pending" }), belowCost, team).allowed).toBe(true);
+  });
+
+  it("team not loaded yet → refused (no guess)", () => {
+    expect(canApprove(owner, rec({ makers: ["o1"] }), belowCost).allowed).toBe(false);
+  });
+
+  it("isSoleOwner ignores the viewer themself", () => {
+    expect(isSoleOwner(owner, [owner])).toBe(true);
+    expect(isSoleOwner(owner, [owner, { id: "m1", role: "manager" }])).toBe(true);
+    expect(isSoleOwner(owner, [owner, { id: "o2", role: "owner" }])).toBe(false);
+    expect(isSoleOwner(owner, undefined)).toBe(false);
+    expect(isSoleOwner({ id: "o1", role: "manager" }, [])).toBe(false);
+  });
+
+  it("R-2441: an owner whose access has ended is not a second owner (same as the server)", () => {
+    const today = "2026-11-04";
+    const exited = { id: "o2", role: "owner", access_ends_on: "2026-11-03" };
+    const lastDay = { id: "o3", role: "owner", access_ends_on: "2026-11-04" };
+    expect(isSoleOwner(owner, [owner, exited], today)).toBe(true);
+    expect(isSoleOwner(owner, [owner, lastDay], today)).toBe(false);
+    expect(isSoleOwner(owner, [owner, { id: "o4", role: "owner", access_ends_on: null }], today)).toBe(false);
+    expect(canApprove(owner, rec({ requestedBy: "o1", status: "pending" }), belowCost, [owner, exited]))
+      .toMatchObject({ allowed: true, selfApproval: true });
+  });
+
+  it("canSend tells the sole owner the way on instead of 'nobody can approve'", () => {
+    const g = canSend(rec({ status: "pending", tier: "owner", requestedBy: "o1" }), belowCost, null, { selfApproval: true });
+    expect(g.allowed).toBe(false);
+    if (!g.allowed) expect(g.nextStep).toBe(SOLE_APPROVER_STEP);
+    const g2 = canSend(rec(), belowCost, null, { selfApproval: true });
+    if (!g2.allowed) expect(g2.nextStep).toBe(SOLE_APPROVER_STEP);
+    expect(SELF_APPROVAL_MIN_REASON).toBe(10);
   });
 });
 
@@ -164,6 +256,23 @@ describe("an approval is for specific numbers", () => {
        sign-off. */
     const now = requiredApproval({ subtotal: 88_000, listTotal: 100_000, totalCost: 40_000 });
     expect(isStale(approvedAt15, now)).toBe(false);
+  });
+
+  it("R-2447 (review F1): goes stale when the signed numbers are missing but the quote's are known", () => {
+    /* A direct update could null the signed numbers and reprice the lines; a null "was" used to
+       skip the check, so a 45%-off quote went out under the old approval. */
+    const deep = requiredApproval({ subtotal: 55_000, listTotal: 100_000, totalCost: 60_000 });
+    expect(isStale(rec({ status: "approved", tier: "manager", approvedDiscountBps: null, approvedMarginBps: null }), deep)).toBe(true);
+    expect(isStale(rec({ status: "approved", tier: "manager", approvedDiscountBps: 1500, approvedMarginBps: null }), deep)).toBe(true);
+    const thin = requiredApproval({ subtotal: 100_000, listTotal: 100_000, totalCost: 92_000 });
+    expect(isStale(rec({ status: "approved", tier: "owner", approvedDiscountBps: 0, approvedMarginBps: null }), thin)).toBe(true);
+  });
+
+  it("R-2447: signed as unknown and still unknown — or now known and healthy — is not stale", () => {
+    const unknown = requiredApproval({ subtotal: 50_000, listTotal: 0, totalCost: 0, costUnknown: true });
+    expect(isStale(rec({ status: "approved", tier: "owner", approvedDiscountBps: null, approvedMarginBps: null }), unknown)).toBe(false);
+    /* cost filled in after an "unknown" sign-off, 40% margin, no discount → the approval stands */
+    expect(isStale(rec({ status: "approved", tier: "owner", approvedDiscountBps: null, approvedMarginBps: null }), requiredApproval(healthy))).toBe(false);
   });
 
   it("only applies to approved records", () => {

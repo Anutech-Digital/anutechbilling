@@ -10,6 +10,16 @@
  *                                                   migrations, test-merge in a temp worktree
  *   node scripts/ops/staging-train.mjs --db-done    staging DB step already done for the new migrations
  *   node scripts/ops/staging-train.mjs --push       also run `git push anutech HEAD:staging`
+ *   node scripts/ops/staging-train.mjs --sha <sha> [--dry-run | --db-done --push]
+ *                                                   R-2106: pin the train to THAT commit (must be on
+ *                                                   manager-pardeep and CI-green, else refused). The dry run,
+ *                                                   the DB step (that commit's deploy-db script, run from a temp
+ *                                                   worktree of it) and the merge all use the same commit.
+ *   --dry-run                                       explicit: never push (refused together with --push)
+ *
+ * R-2106 (31 Oct 2026): twice on 29–30 Oct the newest-green rule picked a NEWER commit between the dry
+ * run and the DB step (its migrations not on the staging DB yet, its cards not localhost-checked); on
+ * 30 Oct the coordinator had to merge dd02c3e1 into staging by hand. Use --sha for every real train.
  *
  * Steps: fetch anutech → newest commit on anutech/manager-pardeep whose GitHub "CI" run finished
  * green (same rule as staging-gate.mjs) → new migration files vs anutech/staging (stop unless
@@ -27,9 +37,15 @@
  * `SMOKE_EMAIL=… SMOKE_PASSWORD=… npm run smoke -- <staging URL>` (scripts/ops/smoke-check.mjs,
  * docs/ARCHITECTURE.md §8): 17 real pages, logged in, exit 1 on any red page.
  *
+ * R-2035 (1 Nov 2026): after a real push (--push, only then) it also runs the READ-ONLY staging
+ * smoke (scripts/ops/staging-smoke.mjs — build sha = the merge commit, migrations, buy page brand +
+ * prices, /login, consent route via OPTIONS) and prints one line per check + "SMOKE GREEN" or
+ * "SMOKE RED: <checks>". It writes nothing; the merge/push above is unchanged.
+ *
  * Exit 0 = ok (dry run done / pushed / nothing new). 1 = error or refused. 2 = merge conflict.
  * 3 = DB step needed. 4 = pushed, but the migration check could not run. 5 = pushed, and the
- * staging DB is missing migrations. Run from production/.
+ * staging DB is missing migrations. 6 = pushed, migrations fine, but the smoke is red.
+ * Run from production/.
  */
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
@@ -38,21 +54,65 @@ import os from "node:os";
 import path from "node:path";
 import { REPO, REMOTE, BRANCH, WORKFLOW, ciDecision } from "./staging-gate.mjs";
 import { runCheck, colour, STAGING_URL } from "./migrations-health-check.mjs";
+import { runSmoke } from "./staging-smoke.mjs";
 
 export const STAGING = "staging";
 export const MIGRATIONS_DIR = "production/supabase/migrations";
 export const PUSH_ARGS = ["push", REMOTE, "HEAD:staging"];
 
-/** argv (without node + script) → { dbDone, push, help }. */
+/** argv (without node + script) → { dbDone, push, help, sha, dryRun }. */
 export function parseArgs(argv) {
-  const out = { dbDone: false, push: false, help: false };
-  for (const a of argv) {
+  const out = { dbDone: false, push: false, help: false, sha: null, dryRun: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
     if (a === "--db-done") out.dbDone = true;
     else if (a === "--push") out.push = true;
+    else if (a === "--dry-run") out.dryRun = true;
     else if (a === "--help" || a === "-h") out.help = true;
-    else throw new Error(`Unknown argument ${a} (sirf --db-done / --push / --help)`);
+    else if (a === "--sha" || a.startsWith("--sha=")) {
+      const v = a === "--sha" ? argv[++i] : a.slice("--sha=".length);
+      if (!v || !/^[0-9a-f]{7,40}$/i.test(v)) throw new Error("--sha <commit> chahiye (7–40 hex)");
+      out.sha = v.toLowerCase();
+    } else throw new Error(`Unknown argument ${a} (sirf --sha <commit> / --dry-run / --db-done / --push / --help)`);
   }
+  if (out.dryRun && out.push) throw new Error("--dry-run aur --push saath nahi — dry-run kabhi push nahi karta");
   return out;
+}
+
+/**
+ * R-2106: the commit a pinned train uses. git(args) → stdout (throws on a non-zero exit);
+ * runsFor(fullSha) → that commit's own CI runs, newest first ({status, conclusion}).
+ * → { ok, pick, alreadyInStaging, message }. Refused unless the commit exists, is on manager-pardeep
+ * and its own CI run is completed+success (staging-gate's ciDecision).
+ */
+export function resolvePinned(sha, { git, runsFor }) {
+  let full;
+  try { full = git(["rev-parse", "--verify", `${sha}^{commit}`]).trim(); }
+  catch { return { ok: false, pick: null, message: `✗ --sha ${sha}: commit nahi mila (git fetch ${REMOTE}?).` }; }
+  const isAncestor = (ref) => { try { git(["merge-base", "--is-ancestor", full, ref]); return true; } catch { return false; } };
+  if (!isAncestor(`${REMOTE}/${BRANCH}`)) return { ok: false, pick: null, message: `✗ ${full.slice(0, 8)} ${REMOTE}/${BRANCH} par nahi hai — sirf manager-pardeep ka commit staging jaata hai.` };
+  if (isAncestor(`${REMOTE}/${STAGING}`)) return { ok: true, pick: full, alreadyInStaging: true, message: `✓ ${full.slice(0, 8)} pehle se staging me hai.` };
+  const ci = ciDecision(runsFor(full), full);
+  if (!ci.ok) return { ok: false, pick: null, message: ci.message };
+  return { ok: true, pick: full, alreadyInStaging: false, message: `📌 Pinned: ${full.slice(0, 8)} (CI hara)` };
+}
+
+/**
+ * R-2106: the DB step for a pinned commit — that commit's newest staging deploy-db script, run from a
+ * temporary worktree of that commit (the script reads ../../migrations next to itself), then removed.
+ * `names` = `git ls-tree --name-only <sha> production/supabase/cloudsql/staging/` basenames.
+ */
+export function pinnedDbStepLines(sha, names, tmpDir) {
+  const name = newestDeployDb(names.map((n) => String(n).split("/").pop()));
+  if (!name) return [`✗ ${sha.slice(0, 8)} me ${STAGING_SCRIPTS_DIR}/deploy-db-<date>.sh nahi mila.`];
+  const dir = String(tmpDir).replace(/\\/g, "/");
+  return [
+    `DB step — sirf commit ${sha.slice(0, 8)} ki ${name} (Git Bash, repo ke andar se):`,
+    `  git worktree add --detach "${dir}" ${sha}`,
+    `  bash "${dir}/${STAGING_SCRIPTS_DIR}/${name}"`,
+    `  git worktree remove "${dir}"`,
+    `Phir: node scripts/ops/staging-train.mjs --sha ${sha.slice(0, 12)} --db-done --push`,
+  ];
 }
 
 const CARD_RE = /\bR-\d{2,4}[a-z]?\b/g;
@@ -237,6 +297,16 @@ function fetchRunsBySha() {
   return groupRunsBySha(out);
 }
 
+/** R-2106: the pinned commit's own "CI" runs (newest first) — not limited to the last 100 runs of the branch. */
+function fetchRunsForCommit(sha) {
+  const out = execFileSync(
+    "gh",
+    ["run", "list", "--repo", REPO, "--commit", sha, "--workflow", WORKFLOW, "--limit", "20", "--json", "headSha,status,conclusion"],
+    { encoding: "utf8" },
+  );
+  return groupRunsBySha(out).get(sha) ?? [];
+}
+
 function removeWorktree(root, dir) {
   try {
     git(["worktree", "remove", "--force", dir], { cwd: root });
@@ -250,11 +320,9 @@ function removeWorktree(root, dir) {
       return;
     }
     rmSync(dir, { recursive: true, force: true });
-    try {
-      git(["worktree", "prune"], { cwd: root });
-    } catch {
-      /* ignore */
-    }
+    /* R-2106: never `git worktree prune` (it can drop other sessions' worktrees whose folder is briefly
+       unreachable). The stale entry for this temp folder is harmless; `git worktree list` shows it. */
+    console.error(`! ${dir} haath se hataya; git ki worktree entry rehne di (prune kabhi nahi).`);
   }
 }
 
@@ -267,24 +335,38 @@ async function main() {
     process.exit(1);
   }
   if (args.help) {
-    console.log("node scripts/ops/staging-train.mjs [--db-done] [--push]   (bina --push = dry run)");
+    console.log("node scripts/ops/staging-train.mjs [--sha <commit>] [--dry-run | --db-done --push]   (bina --push = dry run)");
     return;
   }
 
   const root = repoRoot();
-  let pick, newer, ahead;
+  let pick, newer, ahead, alreadyInStaging;
   try {
     git(["fetch", "-q", REMOTE], { cwd: root });
-    ahead = commitsAhead();
-    ({ pick, newer } = pickGreen(ahead, fetchRunsBySha()));
+    if (args.sha) {
+      /* R-2106: pinned — exactly this commit, or nothing. */
+      const p = resolvePinned(args.sha, { git: (a) => git(a, { cwd: root }), runsFor: fetchRunsForCommit });
+      console.log(p.message);
+      if (!p.ok) process.exit(1);
+      pick = p.pick;
+      alreadyInStaging = p.alreadyInStaging;
+      ahead = alreadyInStaging ? [] : [pick];
+      newer = { running: 0, red: 0, noRun: 0 };
+    } else {
+      ahead = commitsAhead();
+      ({ pick, newer } = pickGreen(ahead, fetchRunsBySha()));
+      alreadyInStaging = ahead.length === 0;
+    }
   } catch (e) {
     console.error(`✗ git/gh error — train nahi chalegi.\n${e.message}`);
     process.exit(1);
   }
 
-  const alreadyInStaging = ahead.length === 0;
   const newerTotal = newer.running + newer.red + newer.noRun;
-  if (pick) {
+  if (args.sha) {
+    const tip = git(["rev-parse", `${REMOTE}/${BRANCH}`], { cwd: root }).trim();
+    if (pick && tip !== pick) console.log(`  (pinned: manager-pardeep ka tip ${tip.slice(0, 8)} hai — uske naye commit is train me NAHI jaayenge)`);
+  } else if (pick) {
     console.log(`✓ CI-hara commit: ${pick.slice(0, 8)} (${git(["log", "-1", "--format=%s", pick], { cwd: root }).trim()})`);
     console.log(
       `  Isse naye ${newerTotal} commit abhi nahi jaayenge: ${newer.running} CI chal raha, ${newer.red} CI laal, ${newer.noRun} bina apne CI run ke.`,
@@ -323,7 +405,10 @@ async function main() {
     for (const m of migrations) console.log(`  ${m}`);
   }
   if (decision.action === "db-step") {
-    console.log(`\n${decision.message}\n${dbStepLines(root).join("\n")}`);
+    const db = args.sha
+      ? pinnedDbStepLines(pick, git(["ls-tree", "--name-only", pick, `${STAGING_SCRIPTS_DIR}/`], { cwd: root }).split(/\r?\n/).filter(Boolean), path.join(os.tmpdir(), `staging-db-${pick.slice(0, 8)}`))
+      : dbStepLines(root);
+    console.log(`\n${decision.message}\n${db.join("\n")}`);
     for (const l of summaryLines({ pick, cards, migrations, decision })) console.log(l);
     process.exit(decision.exitCode);
   }
@@ -378,6 +463,10 @@ async function main() {
     console.log(`
 ${colour(v)}`);
     if (v.exitCode && !exitCode) exitCode = v.exitCode;
+    /* R-2035: read-only smoke of the new build (the sha wait above has usually finished already). */
+    console.log("");
+    const smoke = await runSmoke({ base: process.env.STAGING_URL || STAGING_URL, expectSha: pushedSha });
+    if (smoke.exitCode && !exitCode) exitCode = 6;
   }
   for (const l of summaryLines({ pick, cards, migrations, decision, merged, pushed })) console.log(l);
   process.exit(exitCode);

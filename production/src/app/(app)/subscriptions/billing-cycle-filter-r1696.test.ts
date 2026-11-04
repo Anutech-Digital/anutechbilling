@@ -26,7 +26,9 @@ describe("R-1696 — /subscriptions filters by billing cycle", () => {
     const filterBlock = src.slice(start, src.indexOf("const ordered"));
     expect(filterBlock).toMatch(/vendor !== "all"/);
     expect(filterBlock).toMatch(/search\.trim\(\)/);
-    expect(filterBlock).toMatch(/const filtered = beforeCycle\.filter\(\(s\) => matchesCycle\(s, cycle\)\)/);
+    /* R-2382: the cycle step now feeds the Payment chips (beforePay) before `filtered`. */
+    expect(filterBlock).toMatch(/const beforePay = beforeCycle\.filter\(\(s\) => matchesCycle\(s, cycle\)\)/);
+    expect(filterBlock).toMatch(/const filtered = payFilter \? beforePay\.filter/);
   });
 
   it("counts the cycles over the rows every OTHER filter leaves, so a chip's count is what clicking it shows", () => {

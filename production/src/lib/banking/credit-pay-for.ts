@@ -27,14 +27,17 @@ import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { BILLING_CYCLE_OPTIONS, cycleScheduleLabel } from "@/lib/quotes/billing";
 import { COMMIT_CHOICES, type CommitChoice } from "@/lib/quotes/line-commit-choice";
 import { isSplitBilled, quoteInstalmentPlan } from "@/lib/billing/instalments";
+import { ROUND_OFF_LIMIT } from "@/lib/banking/credit-pay-for-multi";
 import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { rupee, formatDate } from "@/lib/utils";
 import { knownPayerCustomer, payerFromNarration, type KnownPayer } from "@/lib/banking/customer-payer";
-import type { BillingCycle, Item } from "@/lib/supabase/database.types";
+import type { BillingCycle, Item, QuoteLineItem } from "@/lib/supabase/database.types";
+import { linesBelowCost, NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 
 /* ─── Open items (rows of bank_credit_open_items) ──────────────────────────────────────── */
 
-export type OpenItemKind = "renewal" | "add_seats" | "new" | "one_off" | "invoice" | "instalment";
+/** R-2466: "opening" — an unpaid invoice imported from Zoho (R-1739, no quote). */
+export type OpenItemKind = "renewal" | "add_seats" | "new" | "one_off" | "invoice" | "instalment" | "opening";
 
 export interface OpenItem {
   kind: OpenItemKind;
@@ -52,6 +55,13 @@ export interface OpenItem {
   seats: number | null;
   renewal_date: string | null;
   lines: ReadonlyArray<{ name?: string | null; qty?: number | null; commitment?: string | null }> | null;
+  /** R-2213: the DB would refuse money on this item's quote (below cost, not approved) — the
+   *  refusal text (lib/quotes/payment-approval.ts). null/absent = it can be paid. */
+  approval_block?: string | null;
+  /** R-2466: the document's currency (INR when absent) and, when foreign, its ₹ rate (the invoice's,
+   *  else its quote's) — an export receipt pays it through reconcile_bank_credit_fx_invoice. */
+  currency?: string | null;
+  fx_rate?: number | null;
 }
 
 /** The key of an open item — an invoice when it has one, else its quote. */
@@ -66,7 +76,8 @@ export function kindLabel(kind: OpenItemKind): string {
     case "new":        return "New product";
     case "one_off":    return "One-time sale";
     case "instalment": return "Instalment invoice";
-    default:           return "Invoice";
+    case "opening":    return "Opening invoice (from Zoho)";
+    default:          return "Invoice";
   }
 }
 
@@ -106,6 +117,60 @@ export interface PayerMemory { payers: readonly KnownPayer[]; ownNames: readonly
  *  credit-match's NAME_NOISE: pvt, ltd, co, technologies, …). */
 const GENERIC_NAME_WORDS = new Set(["india", "indian", "group", "global", "international", "industries"]);
 
+/** R-2371 (3 Nov staging): trade words. "UPI-NOVA PRINTERS…" guessed "R K S PRINTERS" because
+ *  "printers" was the only word that customer's name had. A trade word may join a match ("acme
+ *  traders"), but on its own it never picks a customer — a guess needs a DISTINCTIVE word. */
+const TRADE_WORDS = new Set([
+  "printers", "printer", "printing", "traders", "trader", "trading", "associates", "consultants", "consultant",
+  "consultancy", "consulting", "agency", "agencies", "exports", "export", "imports", "impex", "overseas",
+  "ventures", "infotech", "infosystems", "software", "softwares", "communications", "communication",
+  "networks", "network", "electronics", "electricals", "electrical", "engineering", "engineers",
+  "constructions", "construction", "builders", "motors", "marketing", "media", "logistics", "travels",
+  "tours", "stores", "store", "mart", "academy", "institute", "foundation", "trust", "education",
+  "educational", "healthcare", "hospital", "pharma", "foods", "textiles", "fashions", "works", "labs",
+  "studio", "studios", "centre", "center", "tech", "info", "web", "online", "partners",
+]);
+
+/** R-2371: a name as its words in order — lower-case letters, short ones kept ("r k s printers"),
+ *  company noise (pvt, ltd, technologies, …) dropped. */
+function nameWords(s: string | null | undefined): string[] {
+  return (s ?? "").toLowerCase().split(/[^a-z]+/).filter((w) => w.length > 0 && (w.length < 3 || customerNameTokens(w).length > 0));
+}
+
+/** R-2371: the narration without our OWN company name — the bank writes it on a credit ("…-ZENOVA
+ *  TECHNOLOGIES-…"), so it never says who paid. Only the whole name, in order, is taken out: our
+ *  UPI payee name "RAVI SHARMA" does not hide customer "Sharma Traders". */
+function withoutOwnNames(description: string | null | undefined, ownNames: readonly string[] | undefined): string[] {
+  let seq = nameWords(description);
+  for (const own of ownNames ?? []) {
+    const run = nameWords(own);
+    if (run.length === 0) continue;
+    const kept: string[] = [];
+    for (let i = 0; i < seq.length; i++) {
+      if (run.every((w, j) => seq[i + j] === w)) { i += run.length - 1; continue; }
+      kept.push(seq[i]);
+    }
+    seq = kept;
+  }
+  return seq;
+}
+
+/** R-2371: a customer named only by trade words ("Global Associates") still counts when the line
+ *  says its WHOLE name (two words or more), in order. "NOVA PRINTERS" is not "R K S PRINTERS". */
+function wholeNameSaid(name: string, said: string): boolean {
+  const ws = nameWords(name);
+  return ws.length >= 2 && said.includes(` ${ws.join(" ")} `);
+}
+
+/** R-2371: the name word a "certain" invoice match rests on, when its only identity is a name
+ *  (no invoice number in the narration) — from invoice-credit-match's reason text. */
+function nameOnlyHit(m: { reasons?: readonly string[] }): string | null {
+  const rs = m.reasons ?? [];
+  if (rs.some((r) => r.startsWith("Narration carries"))) return null;
+  for (const r of rs) { const hit = /^Narration says “(.+)”$/.exec(r)?.[1]; if (hit) return hit; }
+  return null;
+}
+
 /**
  * Who paid. Only a single, unambiguous answer:
  *   1. R-2007: the ONE customer whose name shares a DISTINCTIVE word with the narration — a word
@@ -117,6 +182,11 @@ const GENERIC_NAME_WORDS = new Set(["india", "indian", "group", "global", "inter
  * Anything else → no guess; the operator picks. A wrong guess posts a receipt to the wrong
  * customer, which is worse than no guess.
  *
+ * R-2371: our own company names (memory.ownNames) are taken out of the narration first; trade
+ * words (printers, traders, associates, …) never count as distinctive on their own (unless the
+ * line says the customer's whole name); and a certain invoice match resting only on such a word
+ * is no guess either.
+ *
  * R-2025 (4), before both: the payer the narration names (payerFromNarration) is a KNOWN payer
  * (customer_payers) of exactly one customer → that customer, "known payer for <customer>". Known
  * for two customers → no guess at all, even if a name word fits.
@@ -124,7 +194,7 @@ const GENERIC_NAME_WORDS = new Set(["india", "indian", "group", "global", "inter
 export function guessCustomer(
   credit: { description: string | null },
   customers: readonly CustomerLite[],
-  invoiceMatches: ReadonlyArray<{ customerName: string | null; confidence: string }> = [],
+  invoiceMatches: ReadonlyArray<{ customerName: string | null; confidence: string; reasons?: readonly string[] }> = [],
   memory?: PayerMemory,
 ): CustomerGuess | null {
   if (memory && memory.payers.length > 0) {
@@ -136,16 +206,24 @@ export function guessCustomer(
       if (c) return { customerId: c.id, reason: `known payer for ${c.name}`, payer: hit.payer };
     }
   }
-  const words = new Set(narrationNames(credit.description));
+  /* R-2371: our own name is bank boilerplate on a credit, never the payer. */
+  const seq = withoutOwnNames(credit.description, memory?.ownNames);
+  const words = new Set(narrationNames(seq.join(" ")));
+  const said = ` ${seq.join(" ")} `;
   const named = customers.map((c) => ({ c, toks: [...new Set(customerNameTokens(c.name))].filter((t) => !GENERIC_NAME_WORDS.has(t)) }));
   const howMany = new Map<string, number>();
   for (const n of named) for (const t of n.toks) howMany.set(t, (howMany.get(t) ?? 0) + 1);
   const own = named
     .map((n) => ({ c: n.c, words: n.toks.filter((t) => words.has(t) && howMany.get(t) === 1) }))
-    .filter((h) => h.words.length > 0);
+    .filter((h) => h.words.some((t) => !TRADE_WORDS.has(t)) || (h.words.length > 0 && wholeNameSaid(h.c.name, said)));
   if (own.length === 1) return { customerId: own[0].c.id, reason: `the bank line says “${own[0].words.join(" ")}”` };
 
-  const certain = invoiceMatches.filter((m) => m.confidence === "certain");
+  /* R-2371: a "certain" invoice match that rests only on our own name or a trade word is no guess. */
+  const certain = invoiceMatches.filter((m) => {
+    if (m.confidence !== "certain") return false;
+    const hit = nameOnlyHit(m);
+    return hit === null || (words.has(hit) && !TRADE_WORDS.has(hit));
+  });
   if (certain.length === 1 && certain[0].customerName) {
     const name = certain[0].customerName.trim().toLowerCase();
     const same = customers.filter((c) => c.name.trim().toLowerCase() === name);
@@ -181,8 +259,27 @@ export function amountCheck(credit: number, due: number, taxable: number | null)
   return { kind: "short", shortBy: due - credit, tdsRatePct: tdsRateFor(credit, due, taxable && taxable > 0 ? taxable : null) };
 }
 
-/** What the operator decided about a short payment. */
-export type ShortChoice = "tds" | "part";
+/** What the operator decided about a short payment. R-2095: or a round-off (≤ ROUND_OFF_LIMIT). */
+export type ShortChoice = "tds" | "part" | "round_off";
+
+/** R-2095 (Sept reconcile): the answers to "why less came in" — round-off only up to ₹50 (R-2098). */
+export function shortChoices(check: AmountCheck): Array<{ value: ShortChoice; label: string }> {
+  if (check.kind !== "short") return [];
+  const out: Array<{ value: ShortChoice; label: string }> = [
+    { value: "tds", label: `TDS deducted (${rupee(check.shortBy)})` },
+    { value: "part", label: `Part payment — ${rupee(check.shortBy)} stays due` },
+  ];
+  if (check.shortBy <= ROUND_OFF_LIMIT) out.push({ value: "round_off", label: `Round off ${rupee(check.shortBy)} — settled in full` });
+  return out;
+}
+
+/** R-2095: a round-off on ONE sale / item is saved through the split (R-2098: it settles in full). */
+export function roundOffSplit(a: { mode: "sale"; saleTotal: number } | { mode: "item"; item: Pick<OpenItem, "quote_id" | "invoice_id" | "amount_due"> }):
+  { items: Array<{ quote_id: string | null; invoice_id: string | null; amount: number }>; saleAmount: number | null; rest: "round_off" } {
+  return a.mode === "sale"
+    ? { items: [], saleAmount: a.saleTotal, rest: "round_off" }
+    : { items: [{ quote_id: a.item.quote_id, invoice_id: a.item.invoice_id, amount: a.item.amount_due }], saleAmount: null, rest: "round_off" };
+}
 
 /** The TDS amount to send: the whole shortfall when the operator says it was TDS, else 0. */
 export function tdsToRecord(check: AmountCheck, choice: ShortChoice): number {
@@ -201,6 +298,9 @@ export function tdsRateToRecord(check: AmountCheck, taxable: number): number | n
 export type SaleCycle = "annual_yearly" | "monthly" | "one_time";
 
 export interface SaleLine {
+  /** R-2216: this line's own stable key — its row (and End-domain box) is keyed by it, never by
+   *  position, so a removed or re-ordered line never hands its domain to a neighbour. */
+  key?: string;
   itemId: string | null;
   name: string;
   /** Seats for a per-seat product, else quantity. */
@@ -216,9 +316,35 @@ export interface SaleLine {
    *  commitment changes. False for a row priced per year or once (domain, migration, a
    *  yearly-total plan). Absent = true. */
   monthPriced?: boolean;
-  /** R-2053: the owner typed this line's price (a deal). A commitment change then converts it
-   *  instead of taking the catalogue price. A new product line starts without it. */
+  /** R-2053: the owner typed this line's price (a deal). A commitment change then keeps it
+   *  (R-2178: never converted silently) instead of taking the catalogue price. A new product
+   *  line starts without it. */
   priceTyped?: boolean;
+  /** R-2095 (Sept): the subscription's END-domain (Zoho bills per end-domain); empty = the customer's. */
+  domain?: string | null;
+  /** R-2178: the commitment the typed price was entered for (its unit: ₹/year, ₹/month, once). A
+   *  Commitment change never rewrites a typed price; when this differs from `cycle` the line asks
+   *  (typedPriceCheck) until the operator converts or keeps the number. */
+  typedFor?: SaleCycle;
+  /** R-2178: the price before an explicit ÷12 / ×12 conversion — Undo puts it back. */
+  convertedFrom?: { rate: number; cost: number; cycle: SaleCycle };
+  /** R-2178 (owner rule 31 Oct): the catalogue rate for the line's CURRENT commitment, set when a
+   *  Commitment switch kept a typed price — proposed on screen, applied only on a click. */
+  proposedRate?: number | null;
+}
+
+/** R-2095: a line's end-domain, as the server will store it (lower-case, trimmed), or null. */
+export function saleLineDomain(l: Pick<SaleLine, "domain" | "cycle">): string | null {
+  if (l.cycle === "one_time") return null;
+  const d = (l.domain ?? "").trim().toLowerCase();
+  return d || null;
+}
+
+/** R-2095: null when the typed end-domain is fine (or empty); the same rule the server checks. */
+export function saleLineDomainProblem(domain: string | null | undefined): string | null {
+  const d = (domain ?? "").trim().toLowerCase();
+  if (!d) return null;
+  return /^[a-z0-9]([a-z0-9-]*[a-z0-9])?([.][a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/.test(d) ? null : "Domain must look like example.com.";
 }
 
 type CatalogRow = Pick<Item, "id" | "name" | "vendor" | "msrp" | "wholesale" | "prices"> & { item_type?: string | null };
@@ -235,10 +361,12 @@ function listRateFor(it: CatalogRow, cycle: SaleCycle): { rate: number; cost: nu
 }
 
 /** A catalogue product → a sale line priced the way the quote builder prices it. */
+let saleLineSeq = 0;
 export function saleLineFromItem(it: CatalogRow, cycle: SaleCycle = defaultCycle(it), seats?: number | null): SaleLine {
   const unit = billingUnitOf(it);
   const p = listRateFor(it, cycle);
   return {
+    key: `sale-line-${++saleLineSeq}`,   // R-2216
     itemId: it.id,
     name: it.name,
     qty: defaultQtyForUnit(unit, seats ?? null),
@@ -255,22 +383,103 @@ export function isMonthPriced(it: CatalogRow): boolean {
   return headlinePrice(it).unit !== "yr" && unitYearMultiplier(billingUnitOf(it)) === 12;
 }
 
-/** Change the cycle of a catalogue line: re-price it from the catalogue for that term. R-2050: a
- *  line with no catalogue row converts its own price — a year ÷ 12 = a month, a month × 12 = a
- *  year (whole rupees) — so the shown figure keeps its meaning in the new unit. */
+/** Change the cycle of a catalogue line: re-price it from the catalogue for that term.
+ *  R-2178 (staging 31 Oct, LOOK BOOK FLY: ₹1,800/user/year became ₹21,600 after One-time → Monthly
+ *  flex → Annual; quote ₹1,78,416 instead of ₹14,868): a TYPED price — and the price of a line with
+ *  no catalogue row, which is the operator's own — is never changed by a Commitment switch. The line
+ *  remembers the unit it was typed in (typedFor) and typedPriceCheck asks; ÷12 / ×12 is an explicit,
+ *  undoable button (convertTypedPrice / undoTypedConversion). This replaces R-2050 / R-2053's silent
+ *  conversion, which chained through One-time (factor 1) into a × 12. An untouched catalogue line
+ *  still takes the floored catalogue price (R-2050); cost always follows the catalogue tier. */
 export function repriceLine(line: SaleLine, it: CatalogRow | undefined, cycle: SaleCycle): SaleLine {
-  /* R-2053: a year ÷ 12 = a month, a month × 12 = a year; to or from one-time the number is kept. */
-  const factor = line.monthPriced === false ? 1
-    : line.cycle === "annual_yearly" && cycle === "monthly" ? 1 / 12
-    : line.cycle === "monthly" && cycle === "annual_yearly" ? 12 : 1;
-  if (!it) {
-    return { ...line, cycle, rate: Math.round(line.rate * factor), cost: Math.round(line.cost * factor) };
+  if (!it || line.priceTyped) {
+    const p = it ? listRateFor(it, cycle) : null;
+    return { ...line, cycle, typedFor: line.typedFor ?? line.cycle, cost: p ? Math.round(p.cost) : line.cost,
+             proposedRate: p && p.rate > 0 ? Math.round(p.rate) : null };
   }
   const p = listRateFor(it, cycle);
-  /* R-2053 (Pardeep delegated, 28 Oct): a TYPED price (a deal) is kept and converted; only an
-     untouched line takes the floored catalogue price. Cost always follows the catalogue tier. */
-  const rate = line.priceTyped ? Math.round(line.rate * factor) : Math.round(p.rate);
-  return { ...line, cycle, rate, cost: Math.round(p.cost) };
+  return { ...line, cycle, rate: Math.round(p.rate), cost: Math.round(p.cost), typedFor: undefined, convertedFrom: undefined, proposedRate: null };
+}
+
+const UNIT_WORD: Readonly<Record<SaleCycle, string>> = { annual_yearly: "/year", monthly: "/month", one_time: " once" };
+/** "₹/user/year", "₹/month", "₹/user once" — the unit a price is in. */
+function unitOf(perSeat: boolean, cycle: SaleCycle): string {
+  return `₹${perSeat ? "/user" : ""}${UNIT_WORD[cycle]}`;
+}
+const inr = (n: number) => rupee(n, { decimals: Number.isInteger(n) ? 0 : 2 });
+/** "₹250/user/month" */
+const priceIn = (n: number, perSeat: boolean, cycle: SaleCycle) => `${inr(n)}${unitOf(perSeat, cycle).slice(1)}`;
+
+/** What a typed price may be changed to after a Commitment switch — only ever on a click.
+ *  R-2178 owner rule (Pardeep 31 Oct): rates differ by COMMITMENT (Flexible has its own rate,
+ *  Annual another — GW Starter cost ₹318 vs ₹264/seat/month), so a catalogue line proposes the
+ *  catalogue rate for the NEW commitment, never the old rate ÷12 / ×12. Only a line with no
+ *  catalogue row (the operator's own price) is offered the unit conversion ÷12 / ×12 (Annual ↔
+ *  Monthly; never for a row priced per year or once). Null = nothing honest to offer — Keep only. */
+function typedConversion(line: Pick<SaleLine, "rate" | "cycle" | "typedFor" | "monthPriced" | "itemId" | "proposedRate">): number | null {
+  if (!line.typedFor) return null;
+  if (line.itemId) return line.proposedRate != null && line.proposedRate !== line.rate ? line.proposedRate : null;
+  if (line.monthPriced === false) return null;
+  if (line.typedFor === "annual_yearly" && line.cycle === "monthly") return Math.round(line.rate / 12);
+  if (line.typedFor === "monthly" && line.cycle === "annual_yearly") return Math.round(line.rate * 12);
+  return null;
+}
+
+export type TypedPriceCheck =
+  | { kind: "unit_changed"; text: string; convertRate: number | null; convertLabel: string | null; keepLabel: string; blocksSave: true }
+  | { kind: "converted"; text: string; undoLabel: string; blocksSave: false };
+
+/** R-2178: what the line must say about its typed price after a Commitment change, or null. */
+export function typedPriceCheck(line: SaleLine): TypedPriceCheck | null {
+  if (line.typedFor && line.typedFor !== line.cycle) {
+    const convertRate = typedConversion(line);
+    return {
+      kind: "unit_changed",
+      text: `${inr(line.rate)} was typed as ${unitOf(line.perSeat, line.typedFor)}. The line is now ${unitOf(line.perSeat, line.cycle)} — the number was kept.`,
+      convertRate,
+      convertLabel: convertRate === null ? null
+        : line.itemId
+          ? `Use catalogue ${priceIn(convertRate, line.perSeat, line.cycle)}`
+          : `Use ${priceIn(convertRate, line.perSeat, line.cycle)} (${inr(line.rate)} ${line.cycle === "monthly" ? "÷" : "×"} 12)`,
+      keepLabel: `Keep ${priceIn(line.rate, line.perSeat, line.cycle)}`,
+      blocksSave: true,
+    };
+  }
+  if (line.convertedFrom && line.convertedFrom.cycle !== line.cycle) {
+    return {
+      kind: "converted",
+      text: `${line.itemId ? "Catalogue rate used — was" : "Converted from"} ${priceIn(line.convertedFrom.rate, line.perSeat, line.convertedFrom.cycle)}.`,
+      undoLabel: `Undo — back to ${inr(line.convertedFrom.rate)}`,
+      blocksSave: false,
+    };
+  }
+  return null;
+}
+
+/** R-2178: apply the offer — the catalogue rate (catalogue line) or ÷12 / ×12 (a line with no
+ *  catalogue row, whose cost converts the same way). Undoable. */
+export function convertTypedPrice(line: SaleLine): Partial<SaleLine> {
+  const rate = typedConversion(line);
+  if (rate === null) return {};
+  const factor = line.cycle === "monthly" ? 1 / 12 : 12;
+  return {
+    rate,
+    priceTyped: true,
+    cost: line.itemId ? line.cost : Math.round(line.cost * factor),
+    typedFor: line.cycle,
+    convertedFrom: { rate: line.rate, cost: line.cost, cycle: line.typedFor ?? line.cycle },
+  };
+}
+
+/** R-2178: keep the typed number in the new unit — the question is answered. */
+export function keepTypedPrice(line: SaleLine): Partial<SaleLine> {
+  return { typedFor: line.cycle, convertedFrom: undefined };
+}
+
+/** R-2178: put back the price from before the conversion (the line then asks again). */
+export function undoTypedConversion(line: SaleLine): Partial<SaleLine> {
+  if (!line.convertedFrom) return {};
+  return { rate: line.convertedFrom.rate, cost: line.convertedFrom.cost, typedFor: line.convertedFrom.cycle, convertedFrom: undefined };
 }
 
 /**
@@ -278,8 +487,16 @@ export function repriceLine(line: SaleLine, it: CatalogRow | undefined, cycle: S
  * (18, or 0 for an export customer / a Bill of Supply). Display only — the server computes the
  * quote with create_direct_invoice's rule and the result shows ITS total.
  */
+/** R-2095: a unit price keeps its paise (Zoho bills ₹103.5, ₹1,347.5) — two decimals at most. */
+export function paiseRate(rate: number): number {
+  return Number.isFinite(rate) ? Math.round(Math.max(0, rate) * 100) / 100 : 0;
+}
+
 export function salePreview(lines: readonly SaleLine[], gstRatePct: number): { taxable: number; gst: number; total: number } {
-  const taxable = lines.reduce((s, l) => s + Math.max(0, Math.round(l.qty)) * Math.max(0, Math.round(l.rate)), 0);
+  /* R-2095: qty × paise rate, summed in paise, rounded to the rupee ONCE (the invoice is in rupees) —
+     the server (bank_credit_new_sale_quote) adds the same way. */
+  const paise = lines.reduce((s, l) => s + Math.max(0, Math.round(l.qty)) * Math.round(paiseRate(l.rate) * 100), 0);
+  const taxable = Math.round(paise / 100);
   const gst = Math.round((taxable * gstRatePct) / 100);
   return { taxable, gst, total: taxable + gst };
 }
@@ -324,9 +541,9 @@ export function shownUnitPrice(line: Pick<SaleLine, "rate">): number {
   return line.rate;
 }
 
-/** The stored rate for a typed unit price — as typed, whole rupees (a deal price is not locked). */
+/** The stored rate for a typed unit price — as typed, paise kept (R-2095; a deal price is not locked). */
 export function rateFromShownPrice(_line: Pick<SaleLine, "cycle" | "monthPriced">, shown: number): number {
-  return Math.round(Math.max(0, Number.isFinite(shown) ? shown : 0));
+  return paiseRate(shown);
 }
 
 /** "₹/user/year" (annual), "₹/user/month" (Monthly flex), "₹/user, once" — the unit of the shown price. */
@@ -349,7 +566,7 @@ export function paymentChoice(lines: ReadonlyArray<Pick<SaleLine, "cycle">>): Pa
   if (lines.some((l) => l.cycle === "monthly")) {
     return {
       options: BILLING_CYCLE_OPTIONS.filter((o) => o.id === "monthly"),
-      why: "Monthly flex has no commitment, so it is paid monthly only. Choose Annual (1-yr) for yearly, half-yearly or quarterly payment.",
+      why: "Flexible (monthly) has no commitment, so it is paid monthly only. Choose Annual commitment for yearly, half-yearly or quarterly payment.",
     };
   }
   if (!lines.some((l) => l.cycle === "annual_yearly")) return { options: [], why: null };
@@ -374,6 +591,8 @@ export interface SaleSchedule {
   later: SaleBill[];
   /** Monthly flex: the same bill again every month. */
   everyMonth: boolean;
+  /** R-2095: ₹ incl GST of that monthly bill — the monthly lines only (one-time lines are billed once). */
+  monthlyGross?: number;
 }
 
 /**
@@ -386,24 +605,30 @@ export function saleSchedule(lines: readonly SaleLine[], gstRatePct: number, cyc
   const effective = saleBillingCycle(lines, cycle);
   const flex = lines.some((l) => l.cycle === "monthly");
   if (!flex && isSplitBilled(effective) && p.taxable > 0) {
-    const plan = quoteInstalmentPlan({
-      cycle: effective, termTaxable: p.taxable, termGross: p.total, taxRate: gstRatePct, termStart: startISO,
-    });
+    /* R-2095 (Sept reconcile): only the subscription lines are split; a one-time line (setup) is
+       billed once, in the first part — before, it was spread across the parts. */
+    const recurring = salePreview(lines.filter((l) => l.cycle !== "one_time"), gstRatePct);
+    const once = salePreview(lines.filter((l) => l.cycle === "one_time"), gstRatePct);
+    const plan = recurring.taxable > 0 ? quoteInstalmentPlan({
+      cycle: effective, termTaxable: recurring.taxable, termGross: recurring.total, taxRate: gstRatePct, termStart: startISO,
+    }) : null;
     if (plan && plan.lines.length > 1) {
       return {
-        dueNow: plan.lines[0].gross,
-        dueTaxable: plan.lines[0].taxable,
+        dueNow: plan.lines[0].gross + once.total,
+        dueTaxable: plan.lines[0].taxable + once.taxable,
         later: plan.lines.slice(1).map((l) => ({ billOn: l.billOn, gross: l.gross })),
         everyMonth: false,
       };
     }
   }
-  return { dueNow: p.total, dueTaxable: p.taxable, later: [], everyMonth: flex && p.total > 0 };
+  /* R-2095: "then every month" is the monthly lines alone — a one-time line (setup) is billed once. */
+  const monthlyGross = flex ? salePreview(lines.filter((l) => l.cycle === "monthly"), gstRatePct).total : 0;
+  return { dueNow: p.total, dueTaxable: p.taxable, later: [], everyMonth: flex && monthlyGross > 0, ...(flex ? { monthlyGross } : {}) };
 }
 
 /** "Next 3 bills ₹4,814 each, on 21 Jan 2027, 21 Apr 2027 and 21 Jul 2027." */
 export function laterBillsText(s: SaleSchedule, cycle: BillingCycle): string | null {
-  if (s.everyMonth) return `Then ${rupee(s.dueNow)} every month while the plan runs (Monthly flex).`;
+  if (s.everyMonth) return `Then ${rupee(s.monthlyGross ?? s.dueNow)} every month while the Flexible (monthly) plan runs.`;
   const n = s.later.length;
   if (n === 0) return null;
   const same = s.later.every((b) => b.gross === s.later[0].gross);
@@ -520,15 +745,19 @@ export function saleLinesPayload(lines: readonly SaleLine[]) {
     item_id: l.itemId,
     name: l.name.trim(),
     qty: Math.round(l.qty),
-    rate: Math.round(l.rate),
+    rate: paiseRate(l.rate),   // R-2095: paise kept
     cost: Math.round(l.cost),
     commitment: l.cycle,
+    ...(saleLineDomain(l) ? { domain: saleLineDomain(l) } : {}),   // R-2095: end-domain per line
   }));
 }
 
-/** Mixed monthly + annual on one sale is refused by the server (one quote = one billing term). */
+/** Monthly flex beside ANY other line (annual or one-time) is refused by the server — R-381's
+ *  trigger (quote_line_terms_mixed) counts a line without a monthly commitment as annual. R-2095
+ *  (staging, 30 Oct): Monthly flex + one-time passed this check, the save got a 400 and the
+ *  drawer said nothing. One quote = one billing term. */
 export function saleTermsMixed(lines: readonly SaleLine[]): boolean {
-  return lines.some((l) => l.cycle === "monthly") && lines.some((l) => l.cycle === "annual_yearly");
+  return lines.some((l) => l.cycle === "monthly") && lines.some((l) => l.cycle !== "monthly");
 }
 
 /* ─── Subscription dates ─────────────────────────────────────────────────────────────── */
@@ -536,6 +765,19 @@ export function saleTermsMixed(lines: readonly SaleLine[]): boolean {
 /** The renewal date record_payment would file: start + 1 month (monthly) or + 1 year. */
 export function defaultRenewal(startISO: string, monthly: boolean): string {
   return addMonthsClamped(startISO, monthly ? 1 : 12);
+}
+
+/**
+ * R-2095 (Sept reconcile): a 1-year commitment billed in parts renews at the END of the year — never on
+ * the next part's date. Staging: renewal 19 Dec on a half-yearly sale from 19 Jun made the schedule
+ * count the year back from 19 Dec and bill the paid half again. The database refuses it too
+ * (bank_credit_pay_item). Null when fine; a Monthly flex plan (no commitment) is not checked.
+ */
+export function splitRenewalProblem(startISO: string, renewalISO: string, cycle: BillingCycle | null | undefined, monthlyFlex: boolean): string | null {
+  if (monthlyFlex || !startISO || !renewalISO || !isSplitBilled(cycle)) return null;
+  const yearEnd = addMonthsClamped(startISO, 12);
+  if (renewalISO >= addDaysISO(yearEnd, -1)) return null;
+  return `Billed ${String(cycle).replace("_", "-")} on a 1-year commitment, so it renews on ${formatDate(yearEnd)} — the next part is billed on its own date. Leave Renews on at the end of the year.`;
 }
 
 /** Is a quote's subscription monthly? (its lines say so) */
@@ -582,6 +824,11 @@ export interface PayForResult {
   allocated?: number;
   round_off?: number;
   advance_receipt_voucher_no?: string | null;
+  /* R-2397: a new sale priced below cost — NOT booked. Its quote waits in Needs approval and the
+     bank line stays unmatched (bank_sale_park_for_approval). */
+  needs_approval?: boolean;
+  reconciled?: boolean;
+  reason?: string | null;
 }
 
 export interface ResultLine { text: string; href?: string; tone?: "ok" | "warn" }
@@ -596,8 +843,35 @@ export function advanceMessage(amount: number, customerName: string): string {
   return `${rupee(amount)} kept as advance for ${customerName} — it will be offered when you record their next payment`;
 }
 
+/* ─── R-2397: a below-cost new sale waits for the owner's approval (one rule everywhere) ─── */
+
+/** The server's sentence before a quote exists (public.bank_sale_below_cost_text(null)). */
+export const BANK_SALE_BELOW_COST_TEXT =
+  "This price is below cost, so the sale needs the owner's approval first. The bank line stays unmatched.";
+
+/** The drawer's sale lines as the server stores them, judged by R-2213's rule (linesBelowCost) —
+ *  the answer public.bank_sale_lines_below_cost gives, so the drawer says it before Save. */
+export function saleLinesBelowCost(lines: readonly SaleLine[]): boolean {
+  const asQuoteLines: QuoteLineItem[] = saleLinesPayload(lines).map((l) => ({
+    id: l.id, item_id: l.item_id ?? undefined, name: l.name, qty: l.qty, rate: l.rate, cost: l.cost,
+  }));
+  return linesBelowCost(asQuoteLines);
+}
+
+/** What the drawer says after a below-cost sale was sent for approval (nothing reconciled). */
+export function approvalWaitLines(r: PayForResult & { external_number?: string | null }): ResultLine[] {
+  const q = r.quote_id;
+  return [
+    { text: r.reason || BANK_SALE_BELOW_COST_TEXT, tone: "warn" },
+    ...(q ? [{ text: `Open quote ${q} (${NEEDS_APPROVAL_LABEL})`, href: `/quotes/${encodeURIComponent(q)}` }] : []),
+    /* R-2360's Zoho number has no invoice to sit on yet — the server noted it on the quote. */
+    ...(r.external_number ? [{ text: `Zoho invoice ${r.external_number} is noted on the quote — add it when this line is booked after approval.` }] : []),
+  ];
+}
+
 /** "Renewal of Google Workspace (15 seats) paid → subscription renewed to 24 Oct 2027", etc. */
 export function resultLines(r: PayForResult): ResultLine[] {
+  if (r.needs_approval) return approvalWaitLines(r);
   const out: ResultLine[] = [];
   /* R-2098: several items on one line — each part says what it did, then the rest. A split
      result has no subscriptions of its own (they are on its parts), so this comes first. */

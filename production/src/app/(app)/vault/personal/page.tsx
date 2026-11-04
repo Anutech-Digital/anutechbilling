@@ -10,6 +10,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 
 import { Card } from "@/components/ui/card";
 import { Money } from "@/components/ui/money";
@@ -18,24 +19,43 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/shared/empty-state";
 import { usePersonalAccounts, usePersonalHoldings, usePersonalTransactions } from "@/lib/queries/personal-vault";
-import { computeNetWorth, summariseCashFlow, STALE_AFTER_DAYS } from "@/lib/vault/personal/net-worth";
+import { usePersonalOweHold } from "@/lib/queries/personal-owe-hold";
+import { usePersonalLoans, usePersonalLoanPayments } from "@/lib/queries/personal-loans";
+import { loanTotals } from "@/lib/vault/personal/loans";
+import { usePersonalPropertySales } from "@/lib/queries/personal-property-sales";
+import { openSaleAdvances } from "@/lib/vault/personal/property-sale";
+import { computeNetWorth, STALE_AFTER_DAYS } from "@/lib/vault/personal/net-worth";
+import { summariseIncomeExpense } from "@/lib/vault/personal/income-expense";
 import { VaultPinSettings } from "@/components/features/vault/vault-pin-settings";
 import { VaultLoadError } from "@/components/features/vault/vault-load-error";
-import { rupee } from "@/lib/utils";
+import { formatDate, rupee } from "@/lib/utils";
 import { fyStartISO } from "@/lib/dates/ist";
 
 export default function PersonalVaultOverview() {
   const accountsQ = usePersonalAccounts();
   const holdingsQ = usePersonalHoldings();
   const txQ = usePersonalTransactions(500);
+  // R-2386: advances received / money held for someone — open entries come off Net worth.
+  const oweHoldQ = usePersonalOweHold();
+  // R-2388: loans given (asset) and taken (owed) + the next EMI reminder.
+  const loansQ = usePersonalLoans();
+  const loanPaymentsQ = usePersonalLoanPayments();
+  // R-2393: money received on a property sale not yet registered is owed to the buyer.
+  const salesQ = usePersonalPropertySales();
 
-  const loading = accountsQ.isLoading || holdingsQ.isLoading || txQ.isLoading;
-  const error = accountsQ.error || holdingsQ.error || txQ.error;
+  const loading = accountsQ.isLoading || holdingsQ.isLoading || txQ.isLoading || oweHoldQ.isLoading
+    || loansQ.isLoading || loanPaymentsQ.isLoading || salesQ.isLoading;
+  const error = accountsQ.error || holdingsQ.error || txQ.error || oweHoldQ.error || loansQ.error || loanPaymentsQ.error || salesQ.error;
 
   const now = React.useMemo(() => new Date(), []);
+  const loans = React.useMemo(
+    () => loanTotals(loansQ.data ?? [], loanPaymentsQ.data ?? []),
+    [loansQ.data, loanPaymentsQ.data],
+  );
   const nw = React.useMemo(
-    () => computeNetWorth(accountsQ.data ?? [], holdingsQ.data ?? [], now),
-    [accountsQ.data, holdingsQ.data, now],
+    () => computeNetWorth(accountsQ.data ?? [], holdingsQ.data ?? [], now,
+      [...(oweHoldQ.data ?? []), ...openSaleAdvances(salesQ.data?.sales ?? [], salesQ.data?.receipts ?? [])], loans),
+    [accountsQ.data, holdingsQ.data, oweHoldQ.data, salesQ.data, loans, now],
   );
 
   // This financial year so far — the window an Indian owner thinks in.
@@ -44,12 +64,21 @@ export default function PersonalVaultOverview() {
   const fyStart = React.useMemo(() => fyStartISO(now), [now]);
 
   const flow = React.useMemo(
-    () => summariseCashFlow((txQ.data ?? []).filter((t) => t.occurred_on >= fyStart)),
+    () => {
+      // R-2386: the same income / spent rules as Income & Expenses (R-2387): income = drawing,
+      // salary, interest, dividend, other income, refund; spent = expenses only. Transfers,
+      // card payments and ATM cash move money between your own pockets — they are neither.
+      const s = summariseIncomeExpense((txQ.data ?? []).filter((t) => t.occurred_on >= fyStart));
+      const fromCompany = s.bySource
+        .filter((b) => b.source === "drawing" || b.source === "dividend")
+        .reduce((sum, b) => sum + b.total, 0);
+      return { drawnFromCompany: fromCompany, moneyIn: s.income, moneyOut: s.spent, net: s.saved };
+    },
     [txQ.data, fyStart],
   );
 
   if (error) {
-    return <VaultLoadError error={error} onRetry={() => { void accountsQ.refetch(); void holdingsQ.refetch(); void txQ.refetch(); }} />;
+    return <VaultLoadError error={error} onRetry={() => { void accountsQ.refetch(); void holdingsQ.refetch(); void txQ.refetch(); void oweHoldQ.refetch(); void loansQ.refetch(); void loanPaymentsQ.refetch(); void salesQ.refetch(); }} />;
   }
 
   if (loading) {
@@ -63,7 +92,13 @@ export default function PersonalVaultOverview() {
     );
   }
 
-  const empty = (accountsQ.data?.length ?? 0) === 0 && (holdingsQ.data?.length ?? 0) === 0;
+  // R-2111: an owner who has only recorded expenses/drawings is not "empty" — their FY card
+  // must show. Transactions count too.
+  const empty = (accountsQ.data?.length ?? 0) === 0
+    && (holdingsQ.data?.length ?? 0) === 0
+    && (txQ.data?.length ?? 0) === 0
+    && (oweHoldQ.data?.length ?? 0) === 0
+    && (loansQ.data?.length ?? 0) === 0;
 
   return (
     <div className="space-y-5">
@@ -74,7 +109,7 @@ export default function PersonalVaultOverview() {
           <Money amount={nw.net} size="display" />
         </div>
 
-        <div className="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-4 pt-5 border-t border-hairline">
+        <div className="mt-5 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-5 border-t border-hairline">
           <div>
             <p className="text-2xs uppercase tracking-wide text-ink-3">Bank, cash & deposits</p>
             <div className="mt-0.5"><Money amount={nw.liquidAssets} size="display" /></div>
@@ -83,13 +118,52 @@ export default function PersonalVaultOverview() {
             <p className="text-2xs uppercase tracking-wide text-ink-3">Investments</p>
             <div className="mt-0.5"><Money amount={nw.investments} size="display" /></div>
           </div>
+          {/* R-2388: money you lent — owed TO you, an asset. */}
+          <div>
+            <p className="text-2xs uppercase tracking-wide text-ink-3">Loans given</p>
+            <div className="mt-0.5"><Money amount={nw.loansGiven} size="display" /></div>
+            <Link href="/vault/personal/loans?tab=given" className="text-3xs text-primary hover:underline">
+              {nw.loansGiven > 0 ? "See loans given" : "Add money you lent"}
+            </Link>
+          </div>
           <div>
             <p className="text-2xs uppercase tracking-wide text-ink-3">Owed (cards)</p>
             <div className="mt-0.5">
               <Money amount={nw.liabilities} size="display" tone={nw.liabilities > 0 ? "negative" : "default"} autoNegative={false} />
             </div>
           </div>
+          {/* R-2388: home / car / personal loans still to repay. */}
+          <div>
+            <p className="text-2xs uppercase tracking-wide text-ink-3">Loans taken</p>
+            <div className="mt-0.5">
+              <Money amount={nw.loansTaken} size="display" tone={nw.loansTaken > 0 ? "negative" : "default"} autoNegative={false} />
+            </div>
+            <Link href="/vault/personal/loans" className="text-3xs text-primary hover:underline">
+              {nw.loansTaken > 0 ? "See loans and EMIs" : "Add a loan"}
+            </Link>
+          </div>
+          {/* R-2386: one line for money that is with you but not yours (byana, held for a child). */}
+          <div>
+            <p className="text-2xs uppercase tracking-wide text-ink-3">I owe / hold for others</p>
+            <div className="mt-0.5">
+              <Money amount={nw.oweHoldOpen} size="display" tone={nw.oweHoldOpen > 0 ? "negative" : "default"} autoNegative={false} />
+            </div>
+            <Link href="/vault/personal/banking#owe-hold-title" className="text-3xs text-primary hover:underline">
+              {nw.oweHoldOpen > 0 ? "See entries" : "Add an advance or held money"}
+            </Link>
+          </div>
         </div>
+        <p className="mt-3 text-2xs text-ink-3">
+          Net worth = bank, cash &amp; deposits + investments + loans given − owed on cards − loans taken − money you owe / hold for others.
+        </p>
+        {/* R-2388: the reminder — the soonest EMI / interest due on a loan you took. */}
+        {loans.nextEmi && (
+          <p className="mt-2 text-xs text-ink flex items-center gap-1.5">
+            <Icon name="calendar" size={13} className="text-ink-3" />
+            Next EMI due: <b>{formatDate(loans.nextEmi.dueOn)}</b> · {rupee(loans.nextEmi.amount)} · {loans.nextEmi.party}
+            <Link href={`/vault/personal/loans?pay=${loans.nextEmi.loanId}`} className="ml-1 text-primary hover:underline">Mark paid</Link>
+          </p>
+        )}
 
         {/* Said next to the number it qualifies, never on another tab. */}
         {(nw.neverValuedCount > 0 || nw.staleCount > 0) && nw.investments > 0 && (

@@ -15,6 +15,13 @@ const id = (n) => `c1957000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 const NO_SALES = { leads: 0, quotes: 0, invoices: 0, payments: 0, subscriptions: 0, campaigns: 0, adDays: 0 };
 /** R-1998: the project-side counts (_common.sql scn_project_count) — 0 for every other scenario. */
 const NO_PROJECTS = { customers: 0, projects: 0, milestones: 0, projectPayments: 0, projectInvoices: 0, tdsRows: 0 };
+/** R-2458: the localhost-check counts (_common.sql scn_extra_count) — 0 for every older scenario. */
+const NO_EXTRA = { xCustomers: 0, xQuotes: 0, xInvoices: 0, xPayments: 0, employees: 0, salaries: 0, loans: 0, loanPayments: 0,
+                   luts: 0, companies: 0, connections: 0, networkDocs: 0, gstinClaims: 0 };
+/** R-2458 ids: c2458000-0000-4000-8000-0000000000NN. */
+const x = (n) => `c2458000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+/** A scenario that touches no vendor / sales / project rows. */
+const NO_OLD = { vendors: 0, expenses: 0, bills: 0, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES, ...NO_PROJECTS };
 
 export const SCENARIOS = [
   {
@@ -42,7 +49,7 @@ export const SCENARIOS = [
       select public.reconcile_bank_debit_to_vendor('${id(115)}', null,
         '{"name":"Bansal Print House","upi_id":"bansalprint@okicici"}'::jsonb, '[]'::jsonb, null, 7080, 'Printing & Stationery');
     `,
-    expect: { vendors: 2, expenses: 2, bills: 1, txns: 6, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES, ...NO_PROJECTS },
+    expect: { vendors: 2, expenses: 2, bills: 1, txns: 6, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES, ...NO_PROJECTS, ...NO_EXTRA },
     pages: [
       { path: "banking", for: "R-1915 ₹25,000 + ₹34,000 Sharma lines · R-1917 ₹11,800 Sharma line · R-1912 ₹5,000 Google line · R-1918/R-1919 the two Bansal Print House UPI lines" },
       { path: "expenses", for: "R-1915 / R-1917 bills SCN-PS-1 and SCN-PS-2 (Partly paid / due)" },
@@ -65,7 +72,7 @@ export const SCENARIOS = [
       select public.reconcile_bank_debit_to_vendor('${id(211)}', '${id(201)}', null, '[]'::jsonb, null, 30000, 'Repairs & Maintenance');
       select public.apply_vendor_advance('expense', 'EXP-SCN-VT-1', null, current_date);
     `,
-    expect: { vendors: 1, expenses: 2, bills: 0, txns: 2, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES, ...NO_PROJECTS },
+    expect: { vendors: 1, expenses: 2, bills: 0, txns: 2, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES, ...NO_PROJECTS, ...NO_EXTRA },
     pages: [
       { path: "banking", for: "R-1913 ₹30,000 Verma line · R-1952 ₹3,000 Verma line → Record payment as an advance" },
       { path: "expenses", for: "R-1913 SCN-VT-1 Apply advance · R-1952 SCN-VT-2 Apply advance, then Mark paid shows ₹2,000" },
@@ -90,7 +97,7 @@ export const SCENARIOS = [
           (select t.id from public.bank_transactions t where t.source = 'manual' and t.matched_to_id = 'BILL-SCN-M-10'))));
     `,
     // txns 3 = the two real lines + the manual line the Bills page wrote
-    expect: { vendors: 1, expenses: 1, bills: 1, txns: 3, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES, ...NO_PROJECTS },
+    expect: { vendors: 1, expenses: 1, bills: 1, txns: 3, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES, ...NO_PROJECTS, ...NO_EXTRA },
     pages: [
       { path: "banking", for: "R-1911 the ₹5,000 Mehta line → 'Already paid … from the Bills page — match' · the ₹4,720 line → match the Mark-paid" },
       { path: "bills", for: "R-1911 SCN-M-10 stays Paid ₹5,000 (not ₹10,000)" },
@@ -120,7 +127,7 @@ export const SCENARIOS = [
     //   Google Search  spend 4,000 ·  80 clicks · 2 leads · 1 paid · ₹20,000 · ROAS 5.00 · CAC 4,000
     //   No campaign    1 lead · 1 paid · ₹2,000          Total spend 10,000 · revenue 33,000 · 4 paid orders
     expect: { vendors: 0, expenses: 2, bills: 0, txns: 0, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0,
-              leads: 6, quotes: 5, invoices: 2, payments: 6, subscriptions: 1, campaigns: 2, adDays: 3, ...NO_PROJECTS },
+              leads: 6, quotes: 5, invoices: 2, payments: 6, subscriptions: 1, campaigns: 2, adDays: 3, ...NO_PROJECTS, ...NO_EXTRA },
     pages: [
       { path: "marketing-reports", for: "R-1980 ROAS & CAC → This month → Sales by campaign: Workspace Oct ₹6,000 / ₹11,000 / 1.83× / CAC ₹3,000 · Google Search ₹4,000 / ₹20,000 / 5.00× · Total ROAS 3.10× (campaigns only) · funnel Ad clicks 330 · 'Not from an ad campaign' also holds the E2E company's other orders (Epsilon adds ₹2,000 to it)" },
       { path: "online-orders", for: "R-1980 Ad source column: SCN Workspace Oct · Facebook / Instagram Ads on Alpha, Beta, Gamma; SCN Google Search · Google Ads on Delta and Zeta; a dash on Epsilon" },
@@ -154,10 +161,117 @@ export const SCENARIOS = [
       end $scn$;
     `,
     expect: { vendors: 0, expenses: 0, bills: 0, txns: 3, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES,
-              customers: 2, projects: 2, milestones: 5, projectPayments: 0, projectInvoices: 0, tdsRows: 0 },
+              customers: 2, projects: 2, milestones: 5, projectPayments: 0, projectInvoices: 0, tdsRows: 0, ...NO_EXTRA },
     pages: [
       { path: "banking", for: "R-1998 ₹2,36,000 Acme line → Reconcile → Project payment → SCN Website opens with kist 1 + 2 ticked → Save & reconcile · ₹2,12,400 Bharat line → tick TDS deducted?, TDS ₹23,600 → matches → Save · ₹4,00,000 Acme line → ₹46,000 more than due, no Save" },
       { path: "projects", for: "R-1998 SCN Website: kist 1 + 2 Paid, kist 3 ₹1,18,000 due · SCN Mobile app: both kists Paid (bank + TDS)" },
+    ],
+  },
+  /* ── R-2458: the data the localhost checks of 4 Nov 2026 needed (one scenario per data need) ── */
+  {
+    name: "customer-no-state",
+    about: "SCN Pathak Fabrication — State 'Not known yet' (saved as no state) — with draft quote Q-SCN-NS-1 (5 × Business Starter, ₹7,080).",
+    cards: ["R-2363", "R-2442", "R-2448"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: [x(1), "Q-SCN-NS-1"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1, xQuotes: 1 },
+    pages: [
+      { path: "customers", for: "R-2363 SCN Pathak Fabrication has the 'State missing' badge" },
+      { path: "quote:Q-SCN-NS-1", for: "R-2442 / R-2448 Send, PDF, WhatsApp, customer link, Mark as sent wait for the state; set it (e.g. Delhi) → all work" },
+    ],
+  },
+  {
+    name: "usd-inw-lines",
+    about: "Three USD inward remittances on SCN HDFC Current ··7788: $1,024 @ ₹93.60 = ₹95,846 (SCN Design Box LLC, new export sale); $2,000 @ ₹88.50 = ₹1,77,000 (SCN Timbergloss Inc) paying INV-SCN-USD-1 raised at $2,000 @ ₹84.00 (₹9,000 forex gain); $1,000 @ ₹93.60 = ₹93,600 (Design Box, short: billed $1,024). LUTs: scenario lut-per-fy.",
+    cards: ["R-2425", "R-2427", "R-2440", "R-2466"],
+    /* R-2466: INV-SCN-USD-1 comes from its USD quote Q-SCN-USD-1 (as every export sale in the app). */
+    scope: { vendors: [], txns: [x(21), x(22), x(23)], docs: [], names: [], upis: [], extra: [x(11), x(12), "Q-SCN-USD-1", "INV-SCN-USD-1"] },
+    expect: { ...NO_OLD, txns: 3, ...NO_EXTRA, xCustomers: 2, xQuotes: 1, xInvoices: 1 },
+    pages: [
+      { path: "banking", for: "R-2425 'INW … USD1024.0@93.6' line shows $1,024 @ ₹93.60 · R-2427 / R-2466 the ₹1,77,000 line → Reconcile → SCN Timbergloss Inc → An open quote / invoice → INV-SCN-USD-1 ('₹9,000 forex gain') and the ₹93,600 line is the short one · Reconcile from Zoho needs a Zoho connection (not local)" },
+      { path: "invoices", for: "R-2427 INV-SCN-USD-1 in USD ($2,000 @ ₹84.00)" },
+    ],
+  },
+  {
+    name: "lut-per-fy",
+    about: "E2E Test Co's LUT (export without IGST) for last FY and this FY — ARNs AD2703250024581 and AD2704260024582. Delete this FY's row in Settings → Company to see the 'No LUT for FY …' refusal.",
+    cards: ["R-2444", "R-2440"],
+    needs: { sql: "to_regclass('public.tenant_luts') is not null", what: "LUT table (migration R-2444)" },
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: [x(31), x(32)] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, luts: 2 },
+    pages: [
+      { path: "settings-company", for: "R-2444 'LUT for exports (one per financial year)' lists both FYs · R-2440 USD lines are zero-rated under this FY's LUT" },
+    ],
+  },
+  {
+    name: "zero-ref-credits",
+    about: "SCN Zero Ref Traders: INV-SCN-ZR-1 ₹11,800 + two ₹5,000 money-in lines, both reference 000000000000000; INV-SCN-ZR-3 ₹2,360; SCN-ZB-0042 ₹11,800 last year's invoice imported from Zoho (opening, no quote). SCN Placeholder Labs: INV-SCN-ZR-2 ₹5,900.",
+    cards: ["R-2430", "R-2424", "R-2441", "R-2466"],
+    /* R-2466: ZR-1..3 come from their quotes; SCN-ZB-0042 through import_opening_invoices (found by its customer). */
+    scope: { vendors: [], txns: [x(43), x(44)], docs: [], names: [], upis: [], extra: [x(41), x(42), "Q-SCN-ZR-1", "Q-SCN-ZR-2", "Q-SCN-ZR-3", "INV-SCN-ZR-1", "INV-SCN-ZR-2", "INV-SCN-ZR-3"] },
+    expect: { ...NO_OLD, txns: 2, ...NO_EXTRA, xCustomers: 2, xQuotes: 3, xInvoices: 4 },
+    pages: [
+      { path: "banking", for: "R-2430 the two ₹5,000 SCN Zero Ref Traders lines → both on INV-SCN-ZR-1 → two receipts, ₹10,000 received · R-2466 'An open quote / invoice' also lists SCN-ZB-0042 'Opening invoice (from Zoho)' — both lines on it → two receipts" },
+      { path: "invoices", for: "R-2424 / R-2441 Record payment with reference 000000000000000 (or NEFT-000000000000) on ZR-1 and ZR-2 — both save; a real UTR twice is refused" },
+    ],
+  },
+  {
+    name: "small-leftover",
+    about: "Payment Follow-up: SCN Leftover Hosting INV-SCN-LO-1 ₹354 (nothing paid) + INV-SCN-LO-2 ₹5,900 with ₹5,845 received (₹55 left); SCN Late Payer Co INV-SCN-LO-3 ₹23,600 (40 days late); SCN Slow Pay Studio INV-SCN-LO-4 ₹11,800 (20 days late).",
+    cards: ["R-2421", "R-2413"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: [x(51), x(52), x(53), "INV-SCN-LO-1", "INV-SCN-LO-2", "INV-SCN-LO-3", "INV-SCN-LO-4"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 3, xQuotes: 1, xInvoices: 4, xPayments: 1 },
+    pages: [
+      { path: "collections", for: "R-2421 ₹354 bill in the main list, ₹55 leftover in 'Small leftovers' (Write off) · R-2413 tick the three SCN customers → Assign owner / Send reminder" },
+    ],
+  },
+  {
+    name: "salary-part-paid",
+    about: "SCN Ravi Kumar: last month's ₹30,000 salary (made with pay_salary) with a ₹25,000 bank line linked → Partially paid. SCN Sunita Rao: '… FULL N FINAL SALARY-SCN SUNITA RAO' ₹52,000 line (last month) + a salary line this month.",
+    cards: ["R-2428"],
+    scope: { vendors: [], txns: [x(63), x(64), x(65)], docs: [], names: [], upis: [], extra: [x(61), x(62)] },
+    expect: { ...NO_OLD, txns: 3, ...NO_EXTRA, employees: 2, salaries: 1 },
+    pages: [
+      { path: "banking", for: "R-2428 the FULL N FINAL line → Reconcile → Full & final settlement ticked → Book as salary → Start exit; then this month's Sunita line says she left" },
+      { path: "payroll", for: "R-2428 SCN Ravi Kumar Partially paid → ⋯ → Edit salary — set LOP (net = ₹25,000)" },
+    ],
+  },
+  {
+    name: "nbfc-interest",
+    about: "Business Loans: SCN Bajaj Finance Ltd (NBFC) ₹13,000 interest this FY (2 EMIs × ₹6,500) and SCN HDFC Bank ₹8,000; a ₹15,000 'ACH DR-SCN BAJAJ FINANCE LTD-EMI' money-out line.",
+    cards: ["R-2376"],
+    scope: { vendors: [], txns: [x(76)], docs: [], names: [], upis: [], extra: [x(71), x(72)] },
+    expect: { ...NO_OLD, txns: 1, ...NO_EXTRA, loans: 2, loanPayments: 3 },
+    pages: [
+      { path: "business-loans", for: "R-2376 'TDS on loan interest' box: SCN Bajaj Finance → Not a bank → TDS 10% due ₹1,300; nothing for SCN HDFC Bank" },
+      { path: "banking", for: "R-2376 the ₹15,000 Bajaj line → Reconcile → Loan / EMI → 'Keep ₹… back'" },
+    ],
+  },
+  {
+    name: "approved-quote",
+    about: "SCN Approved Buyer: Q-SCN-AP-1 (sent) approved by the E2E manager — 10 × ₹1,080 (10% off ₹1,200) against ₹1,000 cost; Q-SCN-AP-2 (accepted, approved) + Q-SCN-AP-3 (accepted, no approval needed) for Combine. Made by the E2E sales user.",
+    cards: ["R-2447", "R-2441"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: [x(91), "Q-SCN-AP-1", "Q-SCN-AP-2", "Q-SCN-AP-3"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1, xQuotes: 3 },
+    pages: [
+      { path: "quote:Q-SCN-AP-1", for: "R-2447 as Sales: rate below ₹1,000 (or > 20% off) → Needs approval (Owner); a higher rate stays Approved · R-2441 approve as owner with a reason" },
+      { path: "quotes", for: "R-2447 Combine Q-SCN-AP-2 + Q-SCN-AP-3 → the new quote shows Approved" },
+    ],
+  },
+  {
+    name: "connected-companies",
+    about: "A second local company, SCN Network Partner Pvt Ltd (Delhi, GSTIN 07AAECS2458K1Z4), connected to E2E Test Co (accepted; both GSTINs registered + ownership proved; partner shares invoices + partner metrics, E2E shares invoices + payments) with two of its invoices Pending in E2E's Purchase Inbox: SNP/26-27/0101 ₹11,800 and SNP/26-27/0102 ₹5,900. No login for the second company yet.",
+    cards: ["R-2433", "R-2445", "R-2449", "R-2434", "R-2450", "R-2432"],
+    needs: { sql: "to_regclass('public.network_documents') is not null and to_regclass('public.gstin_ownership_claims') is not null", what: "network tables (migrations R-2433 / R-2445 / R-2434)" },
+    scope: { vendors: [], txns: [], docs: [], names: ["scn network partner pvt ltd"], upis: [], extra: [x(81), x(82)] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, companies: 1, connections: 1, networkDocs: 2 },
+    // --self-test: accept one (a vendor + bill VB-NET-… appear in E2E Test Co) and reject the other — the reset must take both away
+    selfTestUse: `
+      select * from public.network_accept_document('${x(83)}', null);
+      select * from public.network_reject_document('${x(84)}', 'SCN self-test: wrong rate');
+    `,
+    pages: [
+      { path: "settings-network", for: "R-2433 / R-2445 'Connected businesses' shows SCN Network Partner Pvt Ltd; Your GSTIN 'Ownership proved'" },
+      { path: "purchase-inbox", for: "R-2449 From network → two Pending invoices → Accept SNP/26-27/0101 (bill VB-NET-…), Reject SNP/26-27/0102 with a reason" },
     ],
   },
 ];
@@ -187,7 +301,18 @@ export function pageUrl(host, key, today = new Date()) {
     case "marketing-reports": return `${base}/marketing/reports`;
     case "projects": return `${base}/projects`;
     case "online-orders": return `${base}/online-orders?q=SCN%20Ads`;
-    default: return `${base}/accounting/${key}`;
+    /* R-2458 */
+    case "customers": return `${base}/customers?q=SCN`;
+    case "quotes": return `${base}/quotes?q=SCN`;
+    case "invoices": return `${base}/invoices?q=SCN`;
+    case "collections": return `${base}/collections`;
+    case "payroll": return `${base}/accounting/payroll`;
+    case "settings-company": return `${base}/settings?tab=company`;
+    case "settings-network": return `${base}/settings?tab=network`;
+    case "purchase-inbox": return `${base}/purchases/inbox`;
+    default:
+      if (key.startsWith("quote:")) return `${base}/quotes/${encodeURIComponent(key.slice(6))}`;
+      return `${base}/accounting/${key}`;
   }
 }
 

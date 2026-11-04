@@ -234,3 +234,17 @@ describe("extensionBlockedReason (R-807)", () => {
     expect(extensionBlockedReason(cycle)).toBeNull();
   });
 });
+
+/* R-2369: an extension prices a year from the exact sold term amount when the row has it. */
+describe("extensionCharge — R-2369 exact term amount", () => {
+  it("5 × ₹850/yr (mrr ₹355): +1 year = ₹4,250 + GST, not ₹4,260", () => {
+    expect(extensionCharge({ seats: 5, mrr: 355, len: { unit: "years", count: 1 } }).subtotal).toBe(4_260);
+    const c = extensionCharge({ seats: 5, mrr: 355, len: { unit: "years", count: 1 }, termAmount: 4_250, termMonths: 12 });
+    expect(c.annualPerSeat).toBe(850);
+    expect(c.subtotal).toBe(4_250);
+    expect(c.total).toBe(grossAmount(4_250, 18));
+  });
+  it("₹1,300/yr domain (mrr ₹108): +2 years = ₹2,600", () => {
+    expect(extensionCharge({ seats: 1, mrr: 108, len: { unit: "years", count: 2 }, termAmount: 1_300, termMonths: 12 }).subtotal).toBe(2_600);
+  });
+});

@@ -21,6 +21,8 @@ import { Icon } from "@/components/ui/icon";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { cn } from "@/lib/utils";
 import { ENQUIRY_STATES, enquiryThanksText } from "./enquiry-outcome";
+import { formConsent } from "@/lib/consent/data-notice";
+import { DataNotice } from "@/site/components/legal/DataNotice";
 
 const schema = z.object({
   fullName:    z.string().min(2, "Please enter your name"),
@@ -61,6 +63,8 @@ export function EnquiryClient({
   /* R-456: true only when the server says the customer's copy was really emailed. */
   const [ackSent, setAckSent] = React.useState(false);
   const [serverError, setErr] = React.useState<string | null>(null);
+  /* R-2011: the separate "Send me offers" box — unticked, never needed to enquire. */
+  const [optIn, setOptIn] = React.useState(false);
   const ts = useTurnstile(); // R-020
 
   React.useEffect(() => {
@@ -79,7 +83,7 @@ export function EnquiryClient({
       const res = await fetch("/api/public/enquiry/general", {
         method:  "POST",
         headers: { "Content-Type": "application/json", ...ts.headers },
-        body:    JSON.stringify(data),
+        body:    JSON.stringify({ ...data, ...formConsent("enquiry", optIn) }), // R-2011
       });
       const json = await res.json();
       if (!res.ok) {
@@ -237,14 +241,12 @@ export function EnquiryClient({
                 )}
 
                 <BusyPanel active={isSubmitting} title="Sending your enquiry" steps={["Sending your details to our team", "Emailing you a copy"]} />
+                {/* R-2011: replaces "We'll only use your details to respond" — the notice says it, itemised. */}
+                <DataNotice purpose="enquiry" optIn={optIn} onOptIn={setOptIn} idPrefix="enq" className="text-ink-2" />
                 {ts.widget}
                 <Button type="submit" variant="primary" className="w-full" loading={isSubmitting}>
                   Send enquiry
                 </Button>
-
-                <p className="text-center text-2xs text-ink-3">
-                  We&apos;ll only use your details to respond to this enquiry.
-                </p>
               </form>
             </>
           )}

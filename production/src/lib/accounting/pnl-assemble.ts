@@ -40,6 +40,10 @@ export interface PnLNumbers {
    *  (report_pnl leaves it out) — this line is how its cost reaches the P&L. */
   depreciation:   number;
   netProfit:      number;
+  /** R-2095: income that is not a sale (interest received on FD / savings, other) — after operating
+   *  expenses, inside net profit. 0 when none / an older database. */
+  otherIncome: number;
+  otherIncomeLines: { head: string; label: string; amount: number; count: number }[];
 
   // GST snapshot
   outputGST: number;        // 18% of invoice subtotal proxy (using net_payable for simplicity)
@@ -104,6 +108,9 @@ export interface PnlRpcRow {
   /** R-1835: NOT a report_pnl column — usePnL adds the companion RPC
    *  `report_pnl_revenue_by_product` here; absent / null on an older database. */
   revenue_by_product?: RevenueByProductRow[] | null;
+  /** R-2095: NOT a report_pnl column — usePnL adds the companion RPC `report_pnl_other_income`
+   *  (interest received / other income booked from bank lines); absent on an older database. */
+  other_income?: { head: string; amount: number; n: number }[] | null;
   unassigned_by_category: { category: string | null; amount: number }[];
   project_expenses: {
     project_id: string; amount: number; category: string | null; expense_date: string | null;
@@ -224,7 +231,12 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
      the part that falls inside the range (lib/accounting/depreciation.ts). */
   const depreciation = registerDepreciationForRange(m.assets ?? [], range.from, range.to);
 
-  const model = buildPnl({
+  /* R-2095: other income (interest received …) — not revenue, added below operating expenses. */
+  const otherIncomeLines = (r.other_income ?? [])
+    .filter((x) => Number(x.amount) !== 0)
+    .map((x) => ({ head: x.head, label: x.head === "interest" ? "Interest received" : "Other income", amount: Number(x.amount) || 0, count: Number(x.n) || 0 }));
+  const otherIncome = otherIncomeLines.reduce((s, x) => s + x.amount, 0);
+  const model0 = buildPnl({
     revenue,
     expenses: expensesTotal + commissions + depreciation,
     billedCogs: cogs > 0 ? cogs : null,
@@ -236,8 +248,9 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
     projectRevenue,
   });
 
+  const model = otherIncome !== 0 && model0.netProfit !== null ? { ...model0, netProfit: model0.netProfit + otherIncome } : model0;
   const grossMargin = revenue - cogs;
-  const netProfit   = grossMargin - expensesTotal - commissions - depreciation;
+  const netProfit   = grossMargin - expensesTotal - commissions - depreciation + otherIncome;
   const inputGST    = billsGst + expensesGst;
   const netGST      = outputGST - inputGST;
   const marginPct = revenue > 0 ? (grossMargin / revenue) * 100 : 0;
@@ -251,6 +264,7 @@ export function assemblePnl(range: { from: string; to: string }, r: PnlRpcRow, m
     commissions, commissionsCount,
     depreciation,
     netProfit,
+    otherIncome, otherIncomeLines,
     outputGST, inputGST, netGST, itcBlocked: itc.blocked + billsGstBlocked,
     marginPct, profitPct,
     model,

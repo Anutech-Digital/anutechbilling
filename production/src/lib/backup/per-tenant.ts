@@ -26,18 +26,25 @@ import {
   offsiteWindowStart,
   type OffsiteSnapshot,
 } from "./offsite";
+import { backupPlanFor, type BackupPlan, type PersonalBackupPolicy, type TieredPlan } from "./tiering";
 
 export interface TenantRow {
   id: string;
   name: string | null;
+  /** R-2140: tenants.workspace_kind — missing/unknown reads 'business' (full backup). */
+  workspace_kind?: string | null;
 }
 
-/** `backup_tenant()` ka jawab (jsonb). */
+/** `backup_tenant()` / `backup_tenant_tiered()` ka jawab (jsonb). */
 export interface TenantBackupInfo {
   id?: string;
   bytes?: number;
   table_count?: number;
   label?: string;
+  /** R-2140: personal tenant unchanged since its newest snapshot — nothing was written. */
+  skipped?: "unchanged";
+  snapshot_id?: string;
+  tenant_id?: string;
 }
 
 type Result<T> = { ok: true; data: T } | { ok: false; message: string };
@@ -46,13 +53,16 @@ export interface PerTenantDeps {
   now: Date;
   projectRef: string;
   listTenants(): Promise<Result<TenantRow[]>>;
-  backupTenant(tenantId: string): Promise<SweepAttempt<TenantBackupInfo>>;
+  /** No plan = full `backup_tenant()`; a plan = `backup_tenant_tiered()` (R-2140, personal). */
+  backupTenant(tenantId: string, plan?: TieredPlan): Promise<SweepAttempt<TenantBackupInfo>>;
   exportTenant(tenantId: string, since: Date): Promise<Result<OffsiteSnapshot | null>>;
   /** `null` = upload ho gaya; string = kyun nahi hua. */
   upload(name: string, body: string): Promise<string | null>;
   sleep?: (ms: number) => Promise<void>;
   /** Ek saath kitne tenant. RAM me itne hi payload ek waqt par. */
   concurrency?: number;
+  /** R-2140: overrides PERSONAL_BACKUP_POLICY (tests). */
+  personalPolicy?: PersonalBackupPolicy;
 }
 
 export interface TenantOutcome {
@@ -66,6 +76,10 @@ export interface TenantOutcome {
   offsite_error?: string;
   /** Kitni baar dobara koshish hui (retry ki wajah log ke liye). */
   retried: string[];
+  /** R-2140: personal tenant not snapshotted tonight — 'unchanged' (same data as its newest
+      snapshot, `snapshot_id`) or 'policy' (PERSONAL_BACKUP_POLICY = 'skip'). ok stays true. */
+  skipped?: "unchanged" | "policy";
+  snapshot_id?: string;
 }
 
 export interface PerTenantReport {
@@ -74,6 +88,8 @@ export interface PerTenantReport {
   label: string | null;
   backed_up: number;
   failed: number;
+  /** R-2140: personal tenants not snapshotted tonight (unchanged, or policy 'skip'). */
+  skipped_unchanged: number;
   total_bytes: number;
   offsite_ok: number;
   results: TenantOutcome[];
@@ -102,6 +118,19 @@ async function pool<T>(items: T[], n: number, fn: (t: T) => Promise<void>): Prom
   await Promise.all(workers);
 }
 
+/* R-2140: business → backup_tenant(); personal → backup_tenant_tiered(). If the tiered function
+   is not deployed yet, that tenant gets the normal full backup — "function missing" for the
+   NEW function must never send the whole night to the legacy sweep. */
+async function takeBackup(t: TenantRow, plan: BackupPlan, deps: PerTenantDeps) {
+  const opts = { sleep: deps.sleep };
+  if (plan.mode !== "tiered") return runSweepWithRetry(() => deps.backupTenant(t.id), opts);
+  const tiered: TieredPlan = { onlyIfChanged: plan.onlyIfChanged, keep: plan.keep };
+  const r = await runSweepWithRetry(() => deps.backupTenant(t.id, tiered), opts);
+  if (r.result.ok || !isMissingFunction(r.result.message)) return r;
+  const full = await runSweepWithRetry(() => deps.backupTenant(t.id), opts);
+  return { ...full, retriedBecause: [...r.retriedBecause, ...full.retriedBecause] };
+}
+
 async function oneTenant(
   t: TenantRow,
   deps: PerTenantDeps,
@@ -109,17 +138,50 @@ async function oneTenant(
 ): Promise<TenantOutcome & { label?: string }> {
   const name = t.name ?? t.id;
   const retried: string[] = [];
+  const plan = backupPlanFor(t.workspace_kind, deps.personalPolicy);
+  /* R-2140: owner chose "no nightly snapshot" for personal tenants — nothing called, not a failure. */
+  if (plan.mode === "none") {
+    return { tenant_id: t.id, tenant: name, ok: true, skipped: "policy", offsite: "skipped", retried };
+  }
   let run: SweepAttempt<TenantBackupInfo>;
   if (first) {
     run = first;
   } else {
-    const r = await runSweepWithRetry(() => deps.backupTenant(t.id), { sleep: deps.sleep });
+    const r = await takeBackup(t, plan, deps);
     run = r.result;
     retried.push(...r.retriedBecause);
   }
 
   if (!run.ok) {
     return { tenant_id: t.id, tenant: name, ok: false, error: run.message, offsite: "skipped", retried };
+  }
+
+  /* R-2140: personal tenant, same data as its newest snapshot — nothing new to copy off-site.
+     That newest snapshot's daily object is already in the bucket (daily/ lives 400 days); on
+     the 1st (IST) it still gets this month's long-lived copy, so an idle tenant never ages
+     out of the bucket. */
+  if (run.data.skipped === "unchanged") {
+    const out: TenantOutcome & { label?: string } = {
+      tenant_id: t.id, tenant: name, ok: true, skipped: "unchanged",
+      snapshot_id: run.data.snapshot_id, offsite: "skipped", retried,
+    };
+    const monthly = offsiteTenantMonthlyName(deps.now, t.id);
+    if (monthly) {
+      const exp = await deps.exportTenant(t.id, new Date(0));
+      if (!exp.ok) {
+        out.offsite_error = `monthly: could not read the snapshot: ${exp.message}`;
+        return out;
+      }
+      const env = offsiteEnvelope(deps.now, deps.projectRef, exp.data ? [exp.data] : []);
+      const refusal = offsiteRefusal(env, 1);
+      if (refusal) {
+        out.offsite_error = `monthly: ${refusal}`;
+        return out;
+      }
+      const mErr = await deps.upload(monthly, JSON.stringify(env));
+      if (mErr) out.offsite_error = `monthly: ${mErr}`;
+    }
+    return out;
   }
 
   const out: TenantOutcome & { label?: string } = {
@@ -171,6 +233,7 @@ export async function runPerTenantBackup(deps: PerTenantDeps): Promise<PerTenant
     label: null,
     backed_up: 0,
     failed: 0,
+    skipped_unchanged: 0,
     total_bytes: 0,
     offsite_ok: 0,
     results: [],
@@ -183,9 +246,14 @@ export async function runPerTenantBackup(deps: PerTenantDeps): Promise<PerTenant
   if (tenants.length === 0) return report;
 
   /* Pehla tenant akela: agar function hi nahi bana (migration nahi chali) to baaki 49 par
-     wahi galti dohrane ke bajaye seedha purane raaste par. */
-  const probe = await runSweepWithRetry(() => deps.backupTenant(tenants[0].id), { sleep: deps.sleep });
-  if (!probe.result.ok && isMissingFunction(probe.result.message)) {
+     wahi galti dohrane ke bajaye seedha purane raaste par. R-2140: the probe is the first
+     tenant that is backed up at all (policy 'skip' calls nothing, so it proves nothing). */
+  const probeIdx = tenants.findIndex((t) => backupPlanFor(t.workspace_kind, deps.personalPolicy).mode !== "none");
+  const probeTenant = probeIdx >= 0 ? tenants[probeIdx] : null;
+  const probe = probeTenant
+    ? await takeBackup(probeTenant, backupPlanFor(probeTenant.workspace_kind, deps.personalPolicy), deps)
+    : null;
+  if (probe && !probe.result.ok && isMissingFunction(probe.result.message)) {
     return { ...report, missingFunction: true };
   }
 
@@ -203,11 +271,13 @@ export async function runPerTenantBackup(deps: PerTenantDeps): Promise<PerTenant
   };
 
   const outcomes = new Map<string, TenantOutcome & { label?: string }>();
-  const firstOutcome = await safeOne(tenants[0], probe.result);
-  firstOutcome.retried.unshift(...probe.retriedBecause);
-  outcomes.set(tenants[0].id, firstOutcome);
+  if (probeTenant && probe) {
+    const firstOutcome = await safeOne(probeTenant, probe.result);
+    firstOutcome.retried.unshift(...probe.retriedBecause);
+    outcomes.set(probeTenant.id, firstOutcome);
+  }
 
-  await pool(tenants.slice(1), deps.concurrency ?? DEFAULT_CONCURRENCY, async (t) => {
+  await pool(tenants.filter((t) => t !== probeTenant), deps.concurrency ?? DEFAULT_CONCURRENCY, async (t) => {
     outcomes.set(t.id, await safeOne(t, null));
   });
 
@@ -215,7 +285,9 @@ export async function runPerTenantBackup(deps: PerTenantDeps): Promise<PerTenant
   for (const t of tenants) {
     const o = outcomes.get(t.id)!;
     const { label, ...rest } = o;
-    if (o.ok) {
+    if (o.ok && o.skipped) {
+      report.skipped_unchanged++;
+    } else if (o.ok) {
       report.backed_up++;
       report.total_bytes += o.bytes ?? 0;
       report.label ??= label ?? null;
@@ -237,8 +309,12 @@ export async function runPerTenantBackup(deps: PerTenantDeps): Promise<PerTenant
     tenant_count: tenants.length,
     uploaded: report.results.filter((r) => r.offsite === "ok").map((r) => r.tenant_id),
     missing: report.results
-      .filter((r) => r.offsite !== "ok")
+      .filter((r) => r.offsite !== "ok" && !r.skipped)
       .map((r) => ({ tenant_id: r.tenant_id, tenant: r.tenant, why: r.error ?? r.offsite_error ?? "unknown" })),
+    /* R-2140: personal tenants not snapshotted tonight — their newest copy is an earlier day's. */
+    unchanged: report.results
+      .filter((r) => r.skipped)
+      .map((r) => ({ tenant_id: r.tenant_id, tenant: r.tenant, why: r.skipped, snapshot_id: r.snapshot_id ?? null })),
   };
   const mErr = await deps.upload(offsiteManifestName(deps.now), JSON.stringify(manifest));
   if (mErr) report.offsite_errors.push(`manifest: ${mErr}`);

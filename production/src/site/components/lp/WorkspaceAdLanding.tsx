@@ -35,6 +35,8 @@ import { LP_PLANS, type LpPlan } from "@/site/lib/lp-plans";
 import { CONTACT_FOR_PRICING } from "@/lib/catalog/public-price-policy";
 import { LP_TEXT, type LpDict, type Rich, type WorkspaceAdCopy } from "./lp-copy";
 import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
+import { formConsent } from "@/lib/consent/data-notice";
+import { DataNotice } from "@/site/components/legal/DataNotice";
 
 export type { WorkspaceAdCopy } from "./lp-copy";
 
@@ -427,6 +429,7 @@ function CallbackForm({ t, landing, plan, compact = false }: { t: LpDict; landin
   const [state, setState] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [err, setErr] = useState("");
   const [name, setName] = useState("");
+  const [optIn, setOptIn] = useState(false); // R-2011: unticked, never needed
   const c = t.callback;
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
@@ -440,7 +443,7 @@ function CallbackForm({ t, landing, plan, compact = false }: { t: LpDict; landin
       const res = await fetch("/api/public/callback", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...ts.headers },
-        body: JSON.stringify({ fullName, phone, plan: plan.category ? "any" : plan.key, pageUrl: landing || window.location.href, pageReferrer: document.referrer || undefined }),
+        body: JSON.stringify({ fullName, phone, plan: plan.category ? "any" : plan.key, pageUrl: landing || window.location.href, pageReferrer: document.referrer || undefined, ...formConsent("ad_callback", optIn) }),
       });
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
@@ -472,6 +475,7 @@ function CallbackForm({ t, landing, plan, compact = false }: { t: LpDict; landin
         <input id={compact ? "cb-phone-x" : "cb-phone"} name="phone" type="tel" required minLength={10} inputMode="tel" placeholder={c.mobile} autoComplete="tel" />
         <button type="submit" className="gw-btn gw-trial" disabled={state === "sending"}>{state === "sending" ? "…" : c.send}</button>
       </div>
+      <DataNotice purpose="callback" compact optIn={optIn} onOptIn={setOptIn} idPrefix={compact ? "cb-x" : "cb"} style={{ color: "var(--muted)", margin: "8px 0 0" }} />
       {ts.widget}
       {state === "error" && <p className="gw-err" role="alert">{err}</p>}
     </form>
@@ -483,6 +487,7 @@ function EnquiryModal({ t, kind, landing, plan, defaultUsers, onClose }: { t: Lp
   const [state, setState] = useState<"idle" | "sending" | "done" | "error">("idle");
   const [err, setErr] = useState("");
   const [sent, setSent] = useState<{ name: string; users: number } | null>(null);
+  const [optIn, setOptIn] = useState(false); // R-2011: unticked, never needed
   const first = useRef<HTMLInputElement>(null);
   const card = useRef<HTMLDivElement>(null);
   const q = t.enquiry;
@@ -524,6 +529,7 @@ function EnquiryModal({ t, kind, landing, plan, defaultUsers, onClose }: { t: Lp
       ...(kind === "buy" && plan.offer && users >= OFFER_MIN_USERS ? { offer: "starter-30" } : {}),
       pageUrl: landing || window.location.href,
       pageReferrer: document.referrer || undefined,
+      ...formConsent("workspace_enquiry", optIn), // R-2011
     };
     setState("sending"); setErr("");
     try {
@@ -568,6 +574,7 @@ function EnquiryModal({ t, kind, landing, plan, defaultUsers, onClose }: { t: Lp
               <label>{q.email}<input name="email" type="email" required autoComplete="email" /></label>
               <label>{q.mobile}<input name="phone" type="tel" required minLength={10} inputMode="tel" autoComplete="tel" /></label>
               <label>{q.users}<input name="users" type="number" min={1} max={300} defaultValue={defaultUsers} /></label>
+              <DataNotice purpose={kind === "buy" ? "quote" : "trial"} optIn={optIn} onOptIn={setOptIn} idPrefix="gw-enq" style={{ color: "var(--muted)" }} />
               {ts.widget}
               {state === "error" && <p className="gw-err" role="alert">{err}{q.tryAgain}</p>}
               <button type="submit" className="gw-btn gw-trial gw-full" disabled={state === "sending"}>

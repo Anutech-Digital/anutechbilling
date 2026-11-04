@@ -63,6 +63,7 @@ const INTERNAL_SENDERS: Record<string, string> = {
   "lib/ai/actions/support-dispatcher.ts": "escalation alert to the company (customer reply gated)",
   "lib/auth/email-verification.ts": "sign-up email verification",
   "lib/auth/tenant-match.ts": "join request to the company owner (email + WhatsApp)",
+  "lib/privacy/otp.server.ts": "R-2013 one-time code the person just asked for (DPDP rights) — like email verification, must not wait on Customer messages",
   "lib/collections/overdue-suspension.server.ts": "pause notice to the company (customer notice gated)",
   "lib/inbound/ingest.ts": "new-enquiry alert to the owner",
   "lib/quotes/quote-views.server.ts": "hot-lead alert to the company",

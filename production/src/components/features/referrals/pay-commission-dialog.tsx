@@ -41,7 +41,7 @@ export function PayCommissionDialog({ open, onOpenChange, commission }: Props) {
   const [method, setMethod] = React.useState("");
 
   // Cards can't pay out (they're a liability); offer real bank/cash accounts.
-  const payable = (accounts ?? []).filter((a) => a.account_type !== "credit_card");
+  const payable = (accounts ?? []).filter((a) => a.account_type !== "credit_card" && a.is_active !== false);
 
   React.useEffect(() => {
     if (open) {

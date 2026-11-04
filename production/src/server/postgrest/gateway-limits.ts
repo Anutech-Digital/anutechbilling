@@ -52,9 +52,10 @@ export function gatewayLimits() {
 export const STAR_BLOCKED_TABLES: ReadonlySet<string> = new Set(["customers", "contacts", "payments"]);
 
 export interface GatewayRefusal {
-  status: 400 | 429;
+  status: 400 | 403 | 429;
   code: string;
-  reason: "rate" | "rows" | "offset" | "limit" | "star";
+  /** "personal": R-2125 — not on the personal allowlist (personal-allowlist.ts). */
+  reason: "rate" | "rows" | "offset" | "limit" | "star" | "personal";
   message: string;
   retryAfterSec?: number;
 }
@@ -62,26 +63,50 @@ export interface GatewayRefusal {
 // ─── who is limited ─────────────────────────────────────────────────────────────────────────
 
 const ROLE_TTL_MS = 60_000;
-const roleCache = new Map<string, { role: string | null; at: number }>();
 
-/** users.role for this user, read as that user (RLS: own row). Cached a minute. */
-export async function gatewayRole(userId: string): Promise<string | null> {
+/** R-2125: who the caller is for the gateway — users.role and their workspace's kind (R-2110). */
+export interface GatewayCaller {
+  role: string | null;
+  /** tenants.workspace_kind ('personal' | 'business'); null when unknown. */
+  workspaceKind: string | null;
+}
+
+const roleCache = new Map<string, GatewayCaller & { at: number }>();
+
+/**
+ * users.role and tenants.workspace_kind for this user, read as that user (RLS: own row, own
+ * tenant). Cached a minute; the cached entry carries the kind, so whoever changes either one
+ * (the personal → business upgrade) calls invalidateGatewayRole for it to apply at once.
+ */
+export async function gatewayRole(userId: string): Promise<GatewayCaller> {
   const hit = roleCache.get(userId);
-  if (hit && Date.now() - hit.at < ROLE_TTL_MS) return hit.role;
-  let role: string | null = null;
+  if (hit && Date.now() - hit.at < ROLE_TTL_MS) return { role: hit.role, workspaceKind: hit.workspaceKind };
+  let caller: GatewayCaller;
   try {
-    role = await withIdentity({ mode: "user", userId }, async (tx) => {
-      const rows = await tx.$queryRawUnsafe<{ role: string | null }[]>(
-        "select role::text as role from public.users where id = $1::uuid", userId);
-      return rows[0]?.role ?? null;
+    caller = await withIdentity({ mode: "user", userId }, async (tx) => {
+      const rows = await tx.$queryRawUnsafe<{ role: string | null; workspace_kind?: string | null }[]>(
+        `select u.role::text as role, t.workspace_kind::text as workspace_kind
+           from public.users u left join public.tenants t on t.id = u.tenant_id
+          where u.id = $1::uuid`, userId);
+      return { role: rows[0]?.role ?? null, workspaceKind: rows[0]?.workspace_kind ?? null };
     });
   } catch {
-    role = null; // unknown → limited (fail closed); not cached, so the next call retries
-    return role;
+    // unknown → limited (fail closed); not cached, so the next call retries
+    return { role: null, workspaceKind: null };
   }
   if (roleCache.size > 10_000) roleCache.clear();
-  roleCache.set(userId, { role, at: Date.now() });
-  return role;
+  roleCache.set(userId, { ...caller, at: Date.now() });
+  return caller;
+}
+
+/** R-2125: drop the cached role/kind so the next gateway call reads it fresh. */
+export function invalidateGatewayRole(userId: string): void {
+  roleCache.delete(userId);
+}
+
+/** R-2125: a personal caller — personal role OR personal workspace (the stricter answer wins). */
+export function isPersonalCaller(c: GatewayCaller): boolean {
+  return c.role === "personal" || c.workspaceKind === "personal";
 }
 
 export { isGatewayLimitedRole };
@@ -323,8 +348,11 @@ export function refusalResponse(r: GatewayRefusal): Response {
   return new Response(JSON.stringify({ code: r.code, details: null, hint: null, message: r.message }), { status: r.status, headers });
 }
 
-export function logRefusal(r: GatewayRefusal, ctx: { userId: string; role: string | null; method: string; path: string }): void {
-  console.warn(JSON.stringify({ event: "gateway_refused", card: "R-1005", reason: r.reason, code: r.code, ...ctx }));
+export function logRefusal(
+  r: GatewayRefusal, ctx: { userId: string; role: string | null; workspaceKind?: string | null; method: string; path: string },
+): void {
+  const card = r.reason === "personal" ? "R-2125" : "R-1005";
+  console.warn(JSON.stringify({ event: "gateway_refused", card, reason: r.reason, code: r.code, ...ctx }));
 }
 
 /** Test only. */

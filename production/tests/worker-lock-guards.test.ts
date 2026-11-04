@@ -234,6 +234,8 @@ describe("R-1958 scope guard — a change must not undo other cards' work", () =
   it("claimed areas = the lock's claim + the card's files (never the lock's growing `files`)", () => {
     expect(claimedAreas({ areas: ["src/lib/deals"], files: ["src/lib/billing/x.ts"] }, { files: ["production/tests"] })).toEqual(["src/lib/deals", "production/tests"]);
     expect(claimedAreas(null, null)).toEqual([]);
+    /* R-2106: a lock/card written as one comma-joined string (29 Oct: R-2102/R-2104/R-2098) still counts per path */
+    expect(claimedAreas({ areas: ["src/lib/deals,src/lib/quotes"] }, { files: ["production/src/a.ts, src/b.ts"] })).toEqual(["src/lib/deals", "src/lib/quotes", "production/src/a.ts", "src/b.ts"]);
     expect(scopePath("../docs/WORKER-STEPS.md")).toBe("docs/WORKER-STEPS.md");
     expect(testNextToClaim("tests/worker-lock-guards.test.ts", ["scripts/ops/worker-lock.mjs"])).toBe(true);
     expect(testNextToClaim("tests/invoice.test.ts", ["scripts/ops/worker-lock.mjs"])).toBe(false);
@@ -263,8 +265,8 @@ describe("R-1958 scope guard — a change must not undo other cards' work", () =
     const src = readFileSync(path.join(__dirname, "..", "scripts", "ops", "worker-lock.mjs"), "utf8");
     const push = src.slice(src.indexOf("async function pushWithTurn"), src.indexOf("R-1898 (25 Oct 2026)"));
     expect(push.indexOf("scope();")).toBeGreaterThan(-1);
-    expect(push.indexOf("scope();")).toBeLessThan(push.indexOf("git rebase -q"));
-    expect(push.lastIndexOf("scope((c)")).toBeGreaterThan(push.indexOf("git rebase -q"));
+    expect(push.indexOf("scope();")).toBeLessThan(push.indexOf("rebaseResolvingDerived(") /* R-2105: the rebase runs there */);
+    expect(push.lastIndexOf("scope((c)")).toBeGreaterThan(push.indexOf("rebaseResolvingDerived(") /* R-2105: the rebase runs there */);
     expect(src).toMatch(/enforceScope\(card, "worktree"/);
   });
 });

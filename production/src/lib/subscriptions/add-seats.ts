@@ -17,8 +17,8 @@
  * subscription handling for it (migration 0052). Without that flag record_payment
  * step 8a would treat the annual pro-rata quote as a new sale and create a
  * DUPLICATE subscription (audit bug #3/#4). The existing sub is already updated
- * above; the pro-rata payment just records into the ledger. This flow creates
- * its own draft PO below.
+ * above; the pro-rata payment just records into the ledger. This flow drafts a
+ * PO below only when the operator asked for one (R-2372).
  *
  * Server-only (service-role client).
  */
@@ -31,6 +31,9 @@ import { buildPlanIndex, matchPlan, type PlanIndex, type CatalogRow } from "./pl
 import { istToday } from "@/lib/dates/ist";
 import { addSeatsQuoteExpiry } from "@/lib/quotes/quote-validity";
 import { addSeatsCustomerNote, composeQuoteNotes } from "@/lib/quotes/customer-notes";
+import { serverApprovalColumns } from "@/lib/quotes/payment-approval";
+import { MAX_TYPED_SEAT_RATE } from "./seat-rate-check";
+import { rupee } from "@/lib/utils";
 
 type SupabaseAdmin = SupabaseClient<Database>;
 
@@ -192,6 +195,9 @@ export interface AddSeatsInput {
   effectiveDate?:     string;
   /** R-800: who chose a backdated effective date — written into the quote note. */
   effectiveDateSetBy?: string | null;
+  /** R-2213: who added the seats — the quote goes into the approvals queue under them when it
+   *  needs sign-off (nobody approves their own quote). Absent = null (not in anyone's queue). */
+  requestedBy?:       string | null;
   /**
    * R-543: the effective date is in the PREVIOUS term (seatChargePlan().previous). The quote
    * then has two lines: this part (effective date → `to`, over the previous term's length) and
@@ -203,6 +209,20 @@ export interface AddSeatsInput {
   currentTermStart?:  string | null;
   /** Today (IST, YYYY-MM-DD). Injected for tests; defaults to istToday(). */
   todayISO?:          string;
+  /**
+   * R-2292: ₹/seat/year typed in Manage seats for THIS quote only — whole rupees, > 0. Prices the
+   * added seats (same pro-rata maths); the subscription's stored rate (mrr) is NOT changed. The
+   * stored rate becomes the line's list_rate, so a lower typed rate is a discount the R-2213
+   * approval rule (serverApprovalColumns) sees, and a below-cost one still waits for the owner.
+   * Absent / null = the subscription's rate, exactly as before.
+   */
+  annualPerSeatOverride?: number | null;
+  /**
+   * R-2372: draft a purchase order for the added seats — only when the operator ticked
+   * "Also draft a purchase order" in Manage seats. Absent / false = no PO. Staging, 2 Nov:
+   * a seat change silently drafted a PO nobody asked for.
+   */
+  draftPurchaseOrder?: boolean;
 }
 
 export interface AddSeatsResult {
@@ -214,13 +234,13 @@ export interface AddSeatsResult {
   effectiveDate: string;
   newSeats:     number;
   newMrr:       number;
-  /** Newly created draft Purchase Order for the additional seats (null if catalog/vendor info missing) */
+  /** Draft Purchase Order for the additional seats — null when not asked for (R-2372) or it could not be written */
   poId:         string | null;
 }
 
 export interface AddSeatsError {
   ok:       false;
-  code:     "invalid_seats" | "invalid_effective_date" | "no_renewal_date" | "term_ended" | "no_doc_number" | "insert_failed" | "sub_update_failed";
+  code:     "invalid_seats" | "invalid_rate" | "invalid_effective_date" | "no_renewal_date" | "term_ended" | "no_doc_number" | "insert_failed" | "sub_update_failed";
   message:  string;
 }
 
@@ -228,6 +248,11 @@ export interface AddSeatsError {
 export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | AddSeatsError> {
   if (!Number.isFinite(input.additionalSeats) || input.additionalSeats < 1 || input.additionalSeats > 5000) {
     return { ok: false, code: "invalid_seats", message: "Additional seats must be between 1 and 5000" };
+  }
+  /* R-2292: a typed rate is whole rupees above 0 — refused before anything is written. */
+  const typedRate = input.annualPerSeatOverride ?? null;
+  if (typedRate !== null && !(Number.isInteger(typedRate) && typedRate >= 1 && typedRate <= MAX_TYPED_SEAT_RATE)) {
+    return { ok: false, code: "invalid_rate", message: "The rate for this quote must be whole rupees per seat per year, above ₹0." };
   }
   if (!input.renewalDate) {
     return { ok: false, code: "no_renewal_date", message: "Subscription has no renewal_date — extend or renew first" };
@@ -273,6 +298,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     currentMrr:      input.currentMrr,
     additionalSeats: input.additionalSeats,
     taxRatePct:      input.taxRatePct,
+    annualPerSeatOverride: typedRate,
     previous:        prev ? { remainingDays: prev.remainingDays, termDays: prev.termDays } : null,
     current:         { remainingDays: chargeDays, termDays: input.termDays },
   });
@@ -284,6 +310,17 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
   /* R-837 (R-834 rule): the whole-rupee per-seat rate IS the price — subtotal = line rate ×
      seats added (summed over R-543's two lines), so rate × qty on the quote equals it. */
   const proRataPerSeat = priced.perSeat;
+  /* R-2292: with a typed rate, each line's list price is what the subscription's own rate would
+     have charged for the same days — the difference is a discount the approval rule judges. */
+  const storedQuote = typedRate !== null ? seatIncreaseQuote({
+    currentSeats:    input.currentSeats,
+    currentMrr:      input.currentMrr,
+    additionalSeats: input.additionalSeats,
+    taxRatePct:      input.taxRatePct,
+    previous:        prev ? { remainingDays: prev.remainingDays, termDays: prev.termDays } : null,
+    current:         { remainingDays: chargeDays, termDays: input.termDays },
+  }) : null;
+  const listRate = (perSeat: number | undefined) => (storedQuote && perSeat !== undefined ? { list_rate: perSeat } : {});
 
   /* The real vendor cost, resolved ONCE and used by both the quote line and the draft
      PO below. Those two used to disagree: the quote line was always `× 0.83` while the
@@ -329,6 +366,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
       name:       `${input.plan} · +${input.additionalSeats} seats (previous term, pro-rata from ${effective} to ${prev.to})`,
       qty:        input.additionalSeats,
       rate:       quoted.previous.perSeat,
+      ...listRate(storedQuote?.previous?.perSeat),
       cost:       prevWholesalePerSeat,
       commitment: "annual_yearly",
     },
@@ -337,6 +375,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
       name:       `${input.plan} · +${input.additionalSeats} seats (current term ${currentFrom} to ${chargeTo})`,
       qty:        input.additionalSeats,
       rate:       proRataPerSeat,
+      ...listRate(storedQuote?.current.perSeat),
       cost:       wholesalePerSeat,
       commitment: "annual_yearly",
     },
@@ -347,6 +386,7 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     name:       `${input.plan} · +${input.additionalSeats} seats (pro-rata from ${effective} to ${chargeTo})`,
     qty:        input.additionalSeats,
     rate:       proRataPerSeat,
+    ...listRate(storedQuote?.current.perSeat),
     cost:       wholesalePerSeat,
     commitment: "annual_yearly",
   }];
@@ -379,6 +419,9 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     tax_rate:         input.taxRatePct,
     is_renewal:       false,
     is_add_seats:     true,   // 0052: record_payment skips sub handling → no duplicate sub
+    /* R-2213: the approval state the quote page shows, written by the same rule (payment-approval.ts).
+       Below cost → the DB refuses money on it until the owner approves (tg_payments_quote_approval). */
+    ...serverApprovalColumns(lineItems, input.requestedBy ?? null),
     /* R-1705: which subscription these seats went on, and the MRR they added — rejecting the
        quote takes exactly that back (trigger trg_quotes_add_seats_take_back). */
     add_seats_subscription_id: input.subscriptionId,
@@ -395,7 +438,9 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
       prev && quoted.previous
         ? `. Crosses a term: ${quoted.previous.proration.chargedDays} of ${prev.termDays} days of the previous term (to ${prev.to}) + current term from ${currentFrom}`
         : ""
-    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days ${prev ? "of the current term" : "remaining"} (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.`),
+    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days ${prev ? "of the current term" : "remaining"} (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.${
+      typedRate !== null ? ` Rate ${rupee(typedRate)}/seat/yr typed for this quote (subscription rate ${rupee(quoted.storedAnnualPerSeat)}/seat/yr unchanged).` : ""
+    }`),
   });
   if (insertErr) {
     return { ok: false, code: "insert_failed", message: insertErr.message };
@@ -414,10 +459,10 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     return { ok: false, code: "sub_update_failed", message: subErr.message };
   }
 
-  // ── Auto-create draft Purchase Order for the additional seats ─────
+  // ── Draft Purchase Order for the additional seats — ONLY when asked (R-2372) ─────
   // term_months ≈ days remaining / 30 — gives pro-rata months for Google.
   let poId: string | null = null;
-  try {
+  if (input.draftPurchaseOrder === true) try {
     /* Uses the SAME resolved cost as the quote line above. It used to run its own
        lookup — `.ilike("name", plan).limit(1)` with no vendor filter, so a plan named
        just "Standard" could take the hosting row's ₹0 and write a ₹0 PO for a Google

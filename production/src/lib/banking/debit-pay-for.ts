@@ -22,7 +22,8 @@
  *   resultLines        — what happened, in the owner's words, after the save
  */
 import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-match";
-import { tdsDecision, panFromGstin } from "@/lib/accounting/tds-deductor";
+import { tdsDecision, tdsRatePct, panFromGstin } from "@/lib/accounting/tds-deductor";
+import { tds26qSection } from "@/lib/accounting/tds-rates";
 import { rupee, formatDate } from "@/lib/utils";
 import { cleanAccountNo, cleanIfsc } from "@/lib/banking/bank-details";
 import { categoriseByRules, type CategoryRule } from "@/lib/banking/categorise";
@@ -194,15 +195,41 @@ export function itemLabel(i: VendorOpenItem): string {
 
 /* ─── TDS ───────────────────────────────────────────────────────────────────────────── */
 
-export interface TdsLine { key: string; tds: number; section: string | null; reason: string | null; fixed: boolean }
+export interface TdsLine {
+  key: string; tds: number; section: string | null; reason: string | null; fixed: boolean;
+  /** R-2320: the app found this TDS below the section's threshold (tdsDecision "not required") —
+   *  the owner may still take it, with a reason. */
+  belowThreshold?: boolean;
+  /** R-2320: the owner's reason when the TDS is taken below the threshold (sent to the server, logged). */
+  override?: string | null;
+}
+
+/** R-2320: the shortest owner reason the server takes for TDS below the threshold. */
+export const TDS_OVERRIDE_MIN = 5;
+const overrideReason = (r: string | null | undefined) => {
+  const t = (r ?? "").trim();
+  return t.length >= TDS_OVERRIDE_MIN ? t : null;
+};
+
+/** R-2320: TDS at the section's rate (tdsRatePct — the rate tdsDecision uses) when the owner
+ *  takes it below the threshold. null = the app does not know the section's rate. */
+export function overrideTds(base: number, section: string, pan: string | null): number | null {
+  const rate = tdsRatePct(section, pan);
+  return rate === null ? null : Math.round((Math.max(0, Math.round(base || 0)) * rate) / 100);
+}
 
 /**
- * TDS on each selected EXPENSE bill (a COGS bill takes none here — R-1868). A bill that already
- * carries TDS keeps it (fixed). The rest are ONE payment: with a section picked, tdsDecision
- * decides on their combined value before GST — the section's rate (tds-rates.ts) and its yearly /
- * single-payment thresholds (tds-deductor.ts), counting this vendor's other payments this year
- * (`fyOthers`, plus the fixed bills) — and the TDS is shared over the bills by their base (the
- * last bill takes the rounding). `off` = the operator said "no TDS".
+ * TDS on each selected bill. A bill that already carries TDS keeps it (fixed). The rest are ONE
+ * payment: with a section picked, tdsDecision decides on their combined value before GST — the
+ * section's rate (tds-rates.ts) and its yearly / single-payment thresholds (tds-deductor.ts),
+ * counting this vendor's other payments this year (`fyOthers`, plus the fixed bills) — and the
+ * TDS is shared over the bills by their base (the last bill takes the rounding). `off` = the
+ * operator said "no TDS".
+ * R-2320: a COGS bill joins that payment for any section but 194Q (194C / 194J — Zoho deducts
+ * 2% on Google and Sidhshree), only while nothing is paid on it yet (its whole TDS goes with the
+ * first payment, as an expense bill's). 194Q stays the database's own figure (R-1891).
+ * `override` = the owner's reason to take the TDS anyway when tdsDecision says it is below the
+ * threshold — at the section's rate, logged by the server.
  */
 /**
  * R-1891: 194Q on one open COGS bill, as the database works it out (vendor_194q_open_bills →
@@ -238,6 +265,8 @@ export function planTds(
     section: string | null; pan: string | null; fyOthers: { base: number; baseWithoutTds: number } | null; off: boolean;
     /** R-1891: 194Q figures per open COGS bill (doc_id → row). */
     q194?: ReadonlyMap<string, Bill194q> | null;
+    /** R-2320: the owner's reason to take TDS the app finds below the threshold. */
+    override?: string | null;
   },
 ): TdsLine[] {
   const sec = (opts.section ?? "").trim().toUpperCase();
@@ -246,37 +275,59 @@ export function planTds(
     if (opts.off || sec !== "194Q" || !q || q.buyer !== true || !(q.tds_due > 0)) return null;
     return { key: itemKey(i), tds: q.tds_due, section: "194Q", reason: reason194q(q), fixed: true };
   };
+  /* R-2320: a COGS bill takes a services section (not 194Q) like an expense bill — while nothing
+     is paid on it yet (its whole TDS goes with the first payment). */
+  const servicesCogs = (i: VendorOpenItem) =>
+    i.source === "vendor_bill" && sec !== "194Q" && i.tds_base > 0 && i.amount_due === i.total;
   /* R-1915: a part-paid expense bill (tds_base 0) takes no TDS — it went with its first part. */
-  const free = items.filter((i) => i.source === "expense" && !(i.tds_amount > 0) && i.tds_base > 0);
+  const free = items.filter((i) => (i.source === "expense" && !(i.tds_amount > 0) && i.tds_base > 0) || servicesCogs(i));
   const fixedBase = items.filter((i) => i.source === "expense" && i.tds_amount > 0).reduce((s, i) => s + i.tds_base, 0);
   const base = free.reduce((s, i) => s + i.tds_base, 0);
   const d = !opts.off && sec && base > 0
     ? tdsDecision({ section: sec, base, fyBaseSoFar: Math.max(0, opts.fyOthers?.base ?? 0) + fixedBase, fyBaseWithoutTds: Math.max(0, opts.fyOthers?.baseWithoutTds ?? 0), pan: opts.pan })
     : null;
-  const total = d?.applies ? d.tds : 0;
+  /* R-2320: below the threshold → the owner may take it anyway (section's rate, with a reason). */
+  const below = !!d && !d.applies && overrideTds(base, sec, opts.pan) !== null;
+  const ovr = below ? overrideReason(opts.override) : null;
+  const total = d?.applies ? d.tds : ovr ? overrideTds(base, sec, opts.pan) ?? 0 : 0;
+  const reason = d ? (ovr ? `${d.reason} Owner override: TDS taken anyway — ${ovr}` : d.reason) : null;
   let given = 0;
+  const freeKeys = new Set(free.map(itemKey));
   const lastFree = free.length ? itemKey(free[free.length - 1]) : "";
   return items.map((i) => {
     const key = itemKey(i);
-    if (i.source !== "expense") return goods(i) ?? { key, tds: 0, section: null, reason: null, fixed: false };
-    if (i.tds_amount > 0) return { key, tds: i.tds_amount, section: i.tds_section, reason: "TDS already on this bill", fixed: true };
-    if (!(i.tds_base > 0)) return { key, tds: 0, section: null, reason: null, fixed: false };
+    if (i.source === "expense" && i.tds_amount > 0) return { key, tds: i.tds_amount, section: i.tds_section, reason: "TDS already on this bill", fixed: true };
+    if (!freeKeys.has(key)) return (i.source === "vendor_bill" ? goods(i) : null) ?? { key, tds: 0, section: null, reason: null, fixed: false };
     if (!d) return { key, tds: 0, section: null, reason: null, fixed: false };
     const share = key === lastFree ? total - given : Math.round((total * i.tds_base) / base);
     given += share;
-    return { key, tds: share, section: d.applies ? sec : null, reason: d.reason, fixed: false };
+    return { key, tds: share, section: total > 0 ? sec : null, reason, fixed: false, belowThreshold: below, override: ovr };
   });
 }
 
-/** TDS on a new bill typed on the spot (same rule, its value before GST). */
+/** TDS on a new bill typed on the spot (same rule, its value before GST). R-2320: a new COGS bill
+ *  takes it too, for any section but 194Q (194Q is worked out on a saved bill, R-1891); the
+ *  owner's `override` reason takes it below the threshold at the section's rate. */
 export function newBillTds(
   base: number,
-  opts: { section: string | null; pan: string | null; fyOthers: { base: number; baseWithoutTds: number } | null; off: boolean },
-): { tds: number; section: string | null; reason: string | null } {
+  opts: {
+    section: string | null; pan: string | null; fyOthers: { base: number; baseWithoutTds: number } | null; off: boolean;
+    override?: string | null;
+  },
+  kind: "cogs" | "expense" = "expense",
+): { tds: number; section: string | null; reason: string | null; belowThreshold: boolean; override: string | null } {
   const sec = (opts.section ?? "").trim().toUpperCase();
-  if (opts.off || !sec || !(base > 0)) return { tds: 0, section: null, reason: null };
+  const none = { tds: 0, section: null, reason: null, belowThreshold: false, override: null };
+  if (opts.off || !sec || !(base > 0)) return none;
+  if (kind === "cogs" && sec === "194Q") {
+    return { ...none, reason: "194Q on a goods bill is worked out on a saved bill — record it on the Bills page first, then pay it here." };
+  }
   const d = tdsDecision({ section: sec, base, fyBaseSoFar: opts.fyOthers?.base ?? 0, fyBaseWithoutTds: opts.fyOthers?.baseWithoutTds ?? 0, pan: opts.pan });
-  return { tds: d.applies ? d.tds : 0, section: d.applies ? sec : null, reason: d.reason };
+  if (d.applies) return { tds: d.tds, section: sec, reason: d.reason, belowThreshold: false, override: null };
+  const at = overrideTds(base, sec, opts.pan);
+  const ovr = at !== null ? overrideReason(opts.override) : null;
+  if (ovr && at) return { tds: at, section: sec, reason: `${d.reason} Owner override: TDS taken anyway — ${ovr}`, belowThreshold: true, override: ovr };
+  return { ...none, reason: d.reason, belowThreshold: at !== null };
 }
 
 /* ─── Allocation ─────────────────────────────────────────────────────────────────────── */
@@ -353,6 +404,34 @@ export function preselect(
   return { keys: [], noTds: false };
 }
 
+/**
+ * R-2324 — "Select bills oldest first, up to the bank amount": one distributor payment can pay
+ * 40–54 bills (R-2319), and preselect ticks nothing unless the amount is exactly one bill or all
+ * of them. The vendor's open bills (not in a payment run, not a payment already recorded) are
+ * taken oldest first until, after the TDS planned on them, they cover the debit — the last one is
+ * then part-paid by allocateOldestFirst. A bill that cannot be part-paid and does not fit in what
+ * is left is passed over (it would get nothing and block the save).
+ */
+export function pickOldestUpTo(
+  items: readonly VendorOpenItem[],
+  debit: number,
+  tdsFor: (bills: readonly VendorOpenItem[]) => ReadonlyMap<string, number>,
+): string[] {
+  const open = items.filter((i) => !isRecorded(i) && !i.in_run)
+    .sort((a, b) => a.doc_date.localeCompare(b.doc_date) || a.doc_id.localeCompare(b.doc_id));
+  const cash = (bills: readonly VendorOpenItem[]) => {
+    const t = tdsFor(bills);
+    return bills.reduce((s, i) => s + cashDue(i, t.get(itemKey(i)) ?? 0), 0);
+  };
+  const chosen: VendorOpenItem[] = [];
+  for (const i of open) {
+    if (cash(chosen) >= debit) break;
+    if (!i.can_part && cash([...chosen, i]) > debit) continue;
+    chosen.push(i);
+  }
+  return chosen.map(itemKey);
+}
+
 /** planTds as a key → TDS map. */
 export function tdsMap(lines: readonly TdsLine[]): Map<string, number> {
   return new Map(lines.map((t) => [t.key, t.tds]));
@@ -387,11 +466,35 @@ export interface NewBillDraft {
   taxable: number;
   gst: number;
   itc: boolean;
-  /** Gross settled now (COGS may be part; an expense bill is paid in full). */
+  /** Gross settled now (cash + TDS); 0 = not typed (see newBillPay). R-2321: an expense bill may be part too. */
   pay: number;
 }
 
 export const newBillTotal = (b: Pick<NewBillDraft, "taxable" | "gst">) => Math.max(0, Math.round(b.taxable || 0)) + Math.max(0, Math.round(b.gst || 0));
+
+/**
+ * R-2325: a bill's figures may carry paise (Zoho's GST ₹23.58), but the books keep whole rupees
+ * (expenses / vendor_bills money columns are integers; payArgs and the RPC round). The form keeps
+ * what was typed and says, once, how it is booked. null = nothing has paise.
+ */
+export function wholeRupeeNote(b: Pick<NewBillDraft, "taxable" | "gst">): string | null {
+  const parts = ([["Value before GST", b.taxable], ["GST", b.gst]] as const)
+    .filter(([, v]) => v > 0 && Math.round(v * 100) % 100 !== 0)
+    .map(([label, v]) => `${label} ${rupee(v, { decimals: 2 })} is booked as ${rupee(Math.round(v))}`);
+  return parts.length ? `${parts.join("; ")} — the books keep whole rupees.` : null;
+}
+
+/**
+ * R-2321: what a new bill typed on the spot settles now ("Paying now", cash + TDS), never more than
+ * the bill. Typed → that. Not typed → a COGS bill: the whole bill (as before); an expense bill: the
+ * bank line (its cash) plus the bill's TDS, which goes with this first part (R-1915). Below the
+ * bill → the rest stays due on it; more than the line → the maths shows the gap (no save).
+ */
+export function newBillPay(bill: Pick<NewBillDraft, "kind" | "pay">, total: number, tds: number, debit: number): number {
+  const typed = Math.round(bill.pay || 0);
+  const want = typed > 0 ? typed : bill.kind === "expense" ? Math.max(0, Math.round(debit)) + Math.max(0, tds) : total;
+  return Math.max(0, Math.min(total, want));
+}
 
 /* ─── RPC arguments ─────────────────────────────────────────────────────────────────── */
 
@@ -405,12 +508,16 @@ export interface PayInput {
     accountNo?: string | null; ifsc?: string | null; upi?: string | null;
   } | null;
   /** Bills: gross settled (cash + TDS) and the TDS on it. */
-  items: ReadonlyArray<{ item: VendorOpenItem; cash: number; tds: number; section: string | null }>;
-  newBill: (NewBillDraft & { tds: number; tdsSection: string | null }) | null;
+  /** R-2320: `override` = the owner's reason for TDS below the threshold (logged by the server). */
+  items: ReadonlyArray<{ item: VendorOpenItem; cash: number; tds: number; section: string | null; override?: string | null }>;
+  newBill: (NewBillDraft & { tds: number; tdsSection: string | null; tdsOverride?: string | null }) | null;
   advance: number;
   advanceCategory: string | null;
   bankCharge: number;
   note: string | null;
+  /** R-2338: the owner ticked "Remember for this vendor" — the server saves the section used as the
+   *  vendor's default TDS section. Never set by itself. */
+  rememberSection?: boolean;
 }
 
 /** R-1918: the new vendor's bank details for the server. The IFSC goes only with an account
@@ -443,6 +550,8 @@ export function payArgs(i: PayInput) {
       amount: n(x.cash) + n(x.tds),
       tds_amount: n(x.tds),
       tds_section: x.tds > 0 ? x.section : null,
+      ...(x.tds > 0 && overrideReason(x.override) ? { tds_override_reason: overrideReason(x.override) } : {}),
+      ...(x.tds > 0 && i.rememberSection ? { remember_tds_section: true } : {}),
     })),
     p_new_bill: i.newBill && {
       kind: i.newBill.kind,
@@ -454,6 +563,8 @@ export function payArgs(i: PayInput) {
       itc: i.newBill.itc,
       tds_amount: n(i.newBill.tds),
       tds_section: i.newBill.tds > 0 ? i.newBill.tdsSection : null,
+      ...(i.newBill.tds > 0 && overrideReason(i.newBill.tdsOverride) ? { tds_override_reason: overrideReason(i.newBill.tdsOverride) } : {}),
+      ...(i.newBill.tds > 0 && i.rememberSection ? { remember_tds_section: true } : {}),
       pay: n(i.newBill.pay),
     },
     p_advance: n(i.advance),
@@ -503,7 +614,7 @@ function docLine(d: PaidDoc, vendor: string, isNew: boolean): ResultLine {
     };
   }
   const name = d.bill_no ? `Bill #${d.bill_no}` : d.source === "expense" ? "Expense bill" : "COGS bill";
-  const tds = d.tds > 0 ? ` · TDS ${rupee(d.tds)} deducted (${d.tds_section})` : "";
+  const tds = d.tds > 0 ? ` · TDS ${rupee(d.tds)} deducted (${tds26qSection(d.tds_section)})` : "";
   return {
     text: `${isNew ? "Recorded and paid" : "Paid"} ${name} (${rupee(d.settled)}) to ${vendor}${tds} · ${isNew && d.status === "paid" ? "Paid" : `Bill now ${statusWord(d)}`}`,
     href: docHref(d),
@@ -517,7 +628,7 @@ export function resultLines(r: VendorPayResult): ResultLine[] {
   if (r.new_bill) out.push(docLine(r.new_bill, r.vendor_name, true));
   if (r.advance) out.push({ text: `${rupee(r.advance.amount)} kept as an advance to ${r.vendor_name} (${r.advance.category}) — adjust a later bill on Prepaid`, href: "/accounting/prepaid" });
   if (r.bank_charge) out.push({ text: `Bank charge ${rupee(r.bank_charge.amount)} booked as an expense`, href: `/accounting/expenses?edit=${encodeURIComponent(r.bank_charge.expense_id)}` });
-  if (r.tds_total > 0) out.push({ text: `TDS ${rupee(r.tds_total)} (${r.tds_section}) withheld — now in TDS payable and the 26Q list`, href: "/accounting/balance-sheet" });
+  if (r.tds_total > 0) out.push({ text: `TDS ${rupee(r.tds_total)} (${tds26qSection(r.tds_section)}) withheld — now in TDS payable and the 26Q list`, href: "/accounting/balance-sheet" });
   out.push({ text: `${r.vendor_name}: see bills and payments`, href: "/accounting/vendors" });
   return out;
 }

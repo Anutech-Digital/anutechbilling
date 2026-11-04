@@ -29,9 +29,11 @@ export type MyAttendanceToday =
       face_enrolled: boolean;
     };
 
-export function useMyAttendanceToday() {
+/** `enabled` (R-2175): the app shell passes false for a personal session — no employee row there. */
+export function useMyAttendanceToday(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["my-attendance-today"],
+    enabled: opts.enabled ?? true,
     queryFn: async (): Promise<MyAttendanceToday> => {
       const supabase = createClient();
       const { data, error } = await supabase.rpc("my_attendance_today");
@@ -346,9 +348,11 @@ export function useSetMyReminderPrefs() {
  * Saturday is a working day at ANUTECH (operator-confirmed), hence the six-day constant.
  * When this becomes a tenant setting, this is the one place to read it from.
  */
-export function useTodayWorkingDay() {
+/** `enabled` (R-2175): the shell passes false for a personal session (no holidays table there). */
+export function useTodayWorkingDay(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["working-day-today"],
+    enabled: opts.enabled ?? true,
     queryFn: async (): Promise<{ working: boolean; reason: string | null }> => {
       const supabase = createClient();
       const date = localDateISO(new Date());

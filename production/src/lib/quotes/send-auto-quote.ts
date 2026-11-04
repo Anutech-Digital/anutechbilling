@@ -16,10 +16,10 @@
  *   - no cc, no custom message — nobody is present to write one
  *   - no UPI QR. `buildQuoteUpiQr` is worth having and is the first thing to add here, but
  *     a missing QR costs a scan-to-pay convenience, while a wrong one costs a payment
- *   - GST head is the tenant's default, because there is no customer state to compare
- *     against. Identical to what the operator route computes for a lead-quote, where
- *     `customer?.state_code` is likewise undefined — so this is the same answer, not a
- *     different one
+ *   - (R-2456) the GST head is no longer a blanket intra-state default: the customer-copy
+ *     gate (customerCopyBlock, as on Send) holds a quote whose lead has no state, and a sent
+ *     one prints the head quotePlaceOfSupply decides from the lead's state, as the operator
+ *     route does
  *
  * The DECISION to send at all is not here — see lib/quotes/auto-send-quote.ts. This runs
  * only after that said yes.
@@ -42,8 +42,16 @@ import { stageAfterQuoteSent } from "@/lib/leads/stage-after-quote-sent";
 import type { createAdminClient } from "@/lib/supabase/server";
 import type { QuoteLineItem, BillingCycle } from "@/lib/supabase/database.types";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { taxableAfterDiscount } from "./amounts";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "./bill-of-supply";
+import {
+  customerCopyBlock, CUSTOMER_COPY_COLUMNS,
+  type CustomerCopyBlock, type CustomerCopyParties, type CustomerCopyQuote,
+} from "./customer-copy-gate";
+import { loadCustomerCopyParties } from "./customer-copy-supply";
+import { quotePlaceOfSupply } from "./quote-place-of-supply";
+import { notifyPeople } from "@/lib/notifications/notify.server";
 
 export interface SendAutoQuoteArgs {
   tenantId: string;
@@ -102,6 +110,19 @@ interface QuoteRow {
   extension_months: number | null;
   status: string | null;
   billing_cycle: string | null;
+  /* R-2456: what customerCopyBlock reads — who the quote is for, and its approval state. */
+  customer_id: string | null;
+  lead_id: string | null;
+  invoice_id: string | null;
+  prospect_state_code: string | null;
+  prospect_country: string | null;
+  approval_status: string | null;
+  approval_tier: string | null;
+  approval_requested_by: string | null;
+  approved_by: string | null;
+  approved_discount_bps: number | null;
+  approved_margin_bps: number | null;
+  approval_rejection_reason: string | null;
 }
 
 interface TenantRow {
@@ -120,7 +141,114 @@ interface TenantRow {
  * write to this customer — see `lib/inbound/ingest.ts`. A boolean that nobody returned is
  * how one enquiry came to get two answers.
  */
-export type SendAutoQuoteResult = "sent" | "failed";
+export type SendAutoQuoteResult = "sent" | "failed" | SendAutoQuoteHeld;
+
+/**
+ * R-2460: the gate HELD the quote (no place of supply / needs approval) — not a failed send.
+ *
+ * Until R-2460 a hold came back as "failed", and that word did two wrong things: the callers
+ * told the owner "the quotation email failed to send" (it never tried), and lib/inbound/ingest.ts
+ * then ran the AI sales agent with the held draft's totals still authorised — so the agent could
+ * state the very price the gate had just refused to send. `totals` are those figures, rounded
+ * rupees (subtotal, after-discount taxable, GST, gross), so every later step can keep them out of
+ * anything the customer reads.
+ */
+export interface SendAutoQuoteHeld {
+  status: "held";
+  quoteId: string;
+  kind: CustomerCopyBlock["kind"];
+  /** Why it is held — the gate's own words. */
+  reason: string;
+  /** What the owner does next — the gate's own words. */
+  nextStep: string;
+  /** The page that fixes it. */
+  href: string;
+  /** The held draft's figures, never to be stated to the customer while it is held. */
+  totals: number[];
+}
+
+/** R-2460: true when sendAutoQuote held the quote rather than failing to send it. */
+export function isAutoQuoteHeld(r: SendAutoQuoteResult): r is SendAutoQuoteHeld {
+  return typeof r === "object" && r !== null && r.status === "held";
+}
+
+/**
+ * R-2460: the one sentence a caller writes for an auto-quote that did not go out — "Quote held —
+ * <reason> <next step>" for a hold, the send failure otherwise. One helper, so the website
+ * enquiry route and the inbound path cannot drift back to calling a hold "failed".
+ */
+export function autoQuoteNotSentReason(r: Exclude<SendAutoQuoteResult, "sent">): string {
+  if (isAutoQuoteHeld(r)) return `Quote held — ${r.reason} ${r.nextStep}`.trim();
+  return "the quotation email failed to send — the draft is saved";
+}
+
+/** R-2460: the held draft's money, rounded rupees, zeros dropped — see SendAutoQuoteHeld.totals. */
+export function heldQuoteTotals(q: {
+  subtotal?: number | null; discount_pct?: number | null; tax_rate?: number | null; amount?: number | null;
+}): number[] {
+  /* The SAME arithmetic sendAutoQuote prints (18% when unset, R-804 display tax, the stored
+     total when there is one) — so a figure the customer would have read is a figure held here. */
+  const subtotal = q.subtotal ?? 0;
+  const taxable = taxableAfterDiscount(subtotal, q.discount_pct ?? 0);
+  const tax = quoteDisplayTax(taxable, q.tax_rate ?? 18, q.amount);
+  const total = q.amount ?? taxable + tax;
+  return [...new Set([subtotal, taxable, tax, total].map((n) => Math.round(n)).filter((n) => n > 0))];
+}
+
+/**
+ * R-2460: would the customer-copy gate hold this draft right now? The same check sendAutoQuote
+ * runs before it mails, asked by the AI sales agent: a held draft's figures must not be stated
+ * in a reply either — also on a LATER message, when no send is attempted at all. Read-only (no
+ * timeline line, no bell). A failed read counts as held — the strict direction: the agent then
+ * states no total.
+ */
+export async function autoQuoteHoldFor(
+  admin: Admin,
+  args: { tenantId: string; leadId: string; quoteId: string },
+): Promise<SendAutoQuoteHeld | null> {
+  try {
+    const { data: q, error } = await admin
+      .from("quotes")
+      .select(`id, subtotal, discount_pct, tax_rate, amount, customer_id, lead_id, invoice_id, prospect_state_code, prospect_country, ${CUSTOMER_COPY_COLUMNS}`)
+      .eq("id", args.quoteId)
+      .eq("tenant_id", args.tenantId)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    const quote = q as QuoteRow | null;
+    if (!quote || quote.status !== "draft") return null;
+    const gateQuote = { ...quote, lead_id: quote.lead_id ?? args.leadId } as unknown as CustomerCopyQuote;
+    const parties = await loadCustomerCopyParties(
+      admin,
+      { tenant_id: args.tenantId, customer_id: quote.customer_id, lead_id: gateQuote.lead_id },
+      "owner",
+    );
+    const block = customerCopyBlock(gateQuote, parties);
+    return block ? heldResult(quote, block) : null;
+  } catch (e) {
+    return {
+      status: "held", quoteId: args.quoteId, kind: "approval",
+      reason: `the quote could not be checked (${(e as Error).message}).`,
+      nextStep: "Open the quote and send it by hand.",
+      href: `/quotes/${encodeURIComponent(args.quoteId)}`,
+      totals: [],
+    };
+  }
+}
+
+function heldResult(
+  quote: Pick<QuoteRow, "id" | "subtotal" | "discount_pct" | "tax_rate" | "amount">,
+  block: CustomerCopyBlock,
+): SendAutoQuoteHeld {
+  return {
+    status: "held",
+    quoteId: quote.id,
+    kind: block.kind,
+    reason: block.reason,
+    nextStep: block.nextStep,
+    href: block.action?.href ?? `/quotes/${encodeURIComponent(quote.id)}`,
+    totals: heldQuoteTotals(quote),
+  };
+}
 
 export async function sendAutoQuote(
   admin: Admin,
@@ -134,7 +262,7 @@ export async function sendAutoQuote(
 
   const { data: q } = await admin
     .from("quotes")
-    .select("id, customer_name, line_items, subtotal, discount_pct, tax_rate, amount, created_date, expires_date, notes, is_renewal, is_extension, extension_months, status, billing_cycle")
+    .select(`id, customer_name, subtotal, discount_pct, tax_rate, amount, created_date, expires_date, notes, is_renewal, is_extension, extension_months, billing_cycle, customer_id, lead_id, invoice_id, prospect_state_code, prospect_country, ${CUSTOMER_COPY_COLUMNS}`)
     .eq("id", args.quoteId)
     .eq("tenant_id", args.tenantId)
     .maybeSingle();
@@ -151,6 +279,42 @@ export async function sendAutoQuote(
     await note(`Quote ${args.quoteId} was already ${quote.status} — not sent again.`);
     return "failed";
   }
+
+  /* ── R-2456: THE SAME CUSTOMER-COPY GATE AS "Send" ─────────────────────────
+     R-2448 put the place-of-supply rule into customerCopyBlock for every manual path (Send,
+     Mark as sent, the PDF link, the quote page's buttons). This sender still mailed a GST
+     quote whose lead had no state — CGST + SGST vs IGST undecided, and generate_invoice
+     refuses the invoice after the customer has paid. Same gate here (approval half too), with
+     the same buyer and seller rows the send route reads, scoped to this workspace. Role
+     "owner": the company-state fix is the owner's (holdAutoQuote tells only the owner then).
+     A failed read is not "no state" — it stops the send too, and says so. */
+  const gateQuote = { ...quote, lead_id: quote.lead_id ?? args.leadId } as unknown as CustomerCopyQuote;
+  let block: CustomerCopyBlock | null;
+  let parties: CustomerCopyParties;
+  try {
+    parties = await loadCustomerCopyParties(
+      admin,
+      { tenant_id: args.tenantId, customer_id: quote.customer_id, lead_id: gateQuote.lead_id },
+      "owner",
+    );
+    block = customerCopyBlock(gateQuote, parties);
+  } catch (e) {
+    await note(`Quote ${quote.id} was not emailed automatically — ${(e as Error).message}. The draft is saved; send it by hand.`);
+    return "failed";
+  }
+  if (block) {
+    await holdAutoQuote(admin, args, quote.id, block, note);
+    /* R-2460: "held", not "failed" — see SendAutoQuoteHeld. */
+    return heldResult(quote, block);
+  }
+  /* The place of supply the gate just decided — the PDF and the letter print THIS head, as
+     the send route does (pos.interState), never a blanket "intra-state". */
+  const pos = quotePlaceOfSupply({
+    customer: parties.customer ?? null,
+    lead: quote.customer_id ? null : (parties.lead ?? null),
+    quote: gateQuote,
+    seller: parties.seller,
+  });
 
   const { data: t } = await admin
     .from("tenants").select("name, email, phone, gstin, address, state, logo_url")
@@ -207,10 +371,11 @@ export async function sendAutoQuote(
       billOfSupply,
       tax,
       total,
-      /* No customer record on a lead-quote, so there is no buyer state to compare — the
-         tenant's own default applies, exactly as it does on the operator route when
-         `customer?.state_code` is undefined. */
-      interState:    false,
+      /* R-2456: the head the gate decided from the lead's state ("Haryana (06) · IGST"), as
+         the operator route prints it. An export lead keeps the old wording — this sender
+         does not zero the tax for export (the stored total includes it). */
+      interState:    pos.interState,
+      placeOfSupply: pos.isExport ? null : pos.label,
       validityDays:  30,
       notes:         quote.notes ?? undefined,
       /* R-2093: quote / renewal / upgrade from ONE helper — never the raw flag. */
@@ -283,9 +448,8 @@ quoteEmailBody({
       lineItems,
       billingCycle: quote.billing_cycle,
       subtotal, discountPct, discount, taxRate, tax, total,
-      /* Lead-quote par customer ka record nahi hota, to place of supply tenant ka apna hai —
-         wahi jawab jo PDF me jata hai. */
-      interState:   false,
+      /* R-2456: wahi head jo PDF me jata hai — lead ke state se (gate ne tay kiya). */
+      interState:   pos.interState,
       billOfSupply,
       createdDate:  quote.created_date,
       expiresDate:  quote.expires_date,
@@ -423,4 +587,57 @@ quoteEmailBody({
      "customer ko kuch nahi mila" nahi banati — isliye "sent". Ye nateeja hi tay karta hai ki
      sales agent chup rahega ya nahi. */
   return "sent";
+}
+
+/** R-2456: the bell's and the timeline line's opening words — the one thing the owner must do. */
+export function autoQuoteHoldTitle(block: Pick<CustomerCopyBlock, "kind">): string {
+  if (block.kind === "company_state") return "Auto-quote not sent — set the company state";
+  if (block.kind === "customer_state") return "Auto-quote not sent — set the state";
+  return "Auto-quote not sent — needs approval";
+}
+
+/**
+ * R-2456: a refused auto-quote stays a draft (nothing is written to it), and the owner hears
+ * about it twice — on the lead's timeline and in the bell — with the link that fixes it. The
+ * bell is best-effort (notifyPeople never throws); the timeline line is the record.
+ *
+ * - Only the owner when the COMPANY state is missing (only the owner can set it — the block
+ *   was built for role "owner"); owner + manager otherwise, as notifyTenantOwners does.
+ * - One unread bell per quote: a customer's follow-ups re-price the same draft and come back
+ *   here — a second identical bell row per person is noise, the timeline keeps each attempt.
+ */
+async function holdAutoQuote(
+  admin: Admin,
+  args: SendAutoQuoteArgs,
+  quoteId: string,
+  block: CustomerCopyBlock,
+  note: (detail: string) => Promise<void>,
+): Promise<void> {
+  const title = autoQuoteHoldTitle(block);
+  const href = block.action?.href ?? `/quotes/${encodeURIComponent(quoteId)}`;
+  await note(
+    `${title}: quote ${quoteId} was NOT emailed to ${args.recipient} — ${block.message}. ` +
+    `The draft is saved; send it from the quote once that is done.`,
+  );
+  const { data: unread, error: unreadErr } = await admin
+    .from("notifications")
+    .select("id")
+    .eq("tenant_id", args.tenantId)
+    .eq("kind", "quote.not_sent")
+    .eq("entity_id", quoteId)
+    .is("read_at", null)
+    .limit(1);
+  /* A failed read is not "already told" — tell again rather than stay silent. */
+  if (!unreadErr && (unread ?? []).length > 0) return;
+  await notifyPeople(
+    {
+      tenantId: args.tenantId,
+      kind:     "quote.not_sent",
+      title:    `${title} (${quoteId})`,
+      body:     block.message,
+      href,
+      entityId: quoteId,
+    },
+    { roles: block.kind === "company_state" ? ["owner"] : ["owner", "manager"] },
+  );
 }

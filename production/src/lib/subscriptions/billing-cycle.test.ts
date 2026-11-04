@@ -71,11 +71,11 @@ describe("subscriptionCycle — one rule for the label and the filter", () => {
 
 describe("cycleInvoiceTitle — the row tooltip", () => {
   it("names the term the way its chip does (R-1774)", () => {
-    expect(cycleInvoiceTitle(subscriptionCycle(annual), "₹1,39,500")).toBe("Annual · billed yearly — ₹1,39,500 per invoice");
+    expect(cycleInvoiceTitle(subscriptionCycle(annual), "₹1,39,500")).toBe("Annual · paid yearly — ₹1,39,500 per invoice");
   });
   it("says an annual term is billed in parts", () => {
     expect(cycleInvoiceTitle(subscriptionCycle(splitQtr), "₹7,646")).toBe(
-      "Annual · billed quarterly — ₹7,646 per invoice",
+      "Annual · paid quarterly — ₹7,646 per invoice",
     );
   });
 });

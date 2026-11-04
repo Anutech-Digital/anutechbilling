@@ -268,6 +268,69 @@ export interface BuildPromptArgs {
    * decided what to say. Empty when there has been no call, which is the ordinary case.
    */
   recallFacts?: readonly string[];
+  /**
+   * R-2460: the lead's draft quotation is HELD by the customer-copy gate — no place of supply
+   * (lead / company state missing) or it needs approval. Its figures are a price nobody has
+   * approved to send, so: no total is authorised (`authorisedTotals` and the net-cost block are
+   * dropped), every held figure is struck from `allowedMoney` (a reply stating one is handed to
+   * a person by applyHandoverRules), and the model is told what to say instead — ask for the
+   * state, or say the quotation will follow. Per-seat catalogue prices stay allowed.
+   */
+  heldQuote?: HeldQuoteBrief | null;
+}
+
+/** R-2460: what the prompt needs to know about a held draft — structurally a SendAutoQuoteHeld. */
+export interface HeldQuoteBrief {
+  kind: "approval" | "company_state" | "customer_state";
+  /** The held draft's figures (rounded rupees) — never to be stated while it is held. */
+  totals: readonly number[];
+}
+
+/**
+ * R-2460: the binding lines for a held draft, rendered at the very top of the prompt (an
+ * instruction, read before any price). Only the customer's own state is something the customer
+ * can supply; the company's state and an approval are ours to sort out, so then the reply only
+ * says the quotation will follow — no internal reason.
+ */
+export function heldQuoteLines(h: HeldQuoteBrief): string[] {
+  /* "will follow", never "has been prepared" — the lead-facts block below forbids saying a
+     drafted quotation is prepared (unbackedQuoteClaim hands such a reply to a person). */
+  return [
+    "QUOTATION ON HOLD — READ THIS FIRST",
+    "- Our quotation for this lead is on hold and has NOT been sent.",
+    "- Do NOT state any total, subtotal, GST amount, discount amount, instalment or payable",
+    "  amount for this deal — not one from earlier in the conversation, and not one you work out.",
+    "  Per-seat list prices from the catalogue are still allowed. Do not give a quotation number.",
+    h.kind === "customer_state"
+      ? "- Ask the customer which state their business is registered in (or their GST billing " +
+        "address), because the GST on the quotation depends on it, and say the quotation will " +
+        "follow as soon as we have it."
+      : "- Say their quotation will follow shortly. Do not give an internal reason.",
+  ];
+}
+
+/** R-2460: the question added to a reply when a quote is held for the customer's own state. */
+export const HELD_STATE_QUESTION =
+  "One thing we need before we send your quotation: which state is your business registered in " +
+  "(or your GST billing address)? The GST on the quotation depends on it — we will send it as " +
+  "soon as we have this.";
+
+/**
+ * R-2460: the held figures a text names — empty when it names none. Bare numbers of 1,000 and up
+ * count too ("the total is 38,232 including GST" carries no ₹ sign and is still the price): a
+ * bare number only matters here when it EQUALS a held figure, so a year or a seat count cannot
+ * trip it by accident.
+ */
+export function heldTotalsNamed(text: string, totals: readonly number[]): number[] {
+  if (totals.length === 0) return [];
+  const held = new Set(totals.map((t) => Math.round(t)));
+  return verifyDraftMoney(text, [], { bareNumberFloor: 1000 }).found
+    .map((n) => Math.round(n)).filter((n) => held.has(n));
+}
+
+/** R-2460: every currency-marked figure a text names (₹ / Rs / INR / "/-"). */
+export function moneyFiguresNamed(text: string): number[] {
+  return verifyDraftMoney(text, []).found.map((n) => Math.round(n));
 }
 
 export interface BuiltPrompt {
@@ -519,7 +582,11 @@ export function buildSalesAgentPrompt(args: BuildPromptArgs): BuiltPrompt {
   /* Computed once and used twice — the sentences go in the prompt, the figures go in
      allowedMoney. Null when there is nothing to price yet (no product or no seat count), in
      which case the block is omitted entirely rather than rendered empty. */
-  const netCost = netCostFactsFor(catalog, lead, sellerName);
+  /* R-2460: a HELD draft — no net cost (it is the held price, worked out again) and no totals.
+     See BuildPromptArgs.heldQuote. */
+  const held = args.heldQuote ?? null;
+  const heldFigures = new Set((held?.totals ?? []).map((t) => Math.round(t)));
+  const netCost = held ? null : netCostFactsFor(catalog, lead, sellerName);
   const netCostBlock = netCost?.lines ?? null;
 
   /* Objection handling, and ONLY when the incoming message actually raised one. Loading every
@@ -621,7 +688,7 @@ export function buildSalesAgentPrompt(args: BuildPromptArgs): BuiltPrompt {
         : "No quotation has been sent yet.",
   ].join("\n");
 
-  const totals = args.authorisedTotals ?? [];
+  const totals = held ? [] : (args.authorisedTotals ?? []);
   const totalLines =
     totals.length === 0
       ? "(none — you may not state a total or a multiplied figure, only the per-seat prices above)"
@@ -640,6 +707,9 @@ export function buildSalesAgentPrompt(args: BuildPromptArgs): BuiltPrompt {
     "",
     /* Stage 1's verdict, ahead of everything else. See BuildPromptArgs.qualifierBrief. */
     ...(brief.length > 0 ? [...brief, ""] : []),
+    /* R-2460: a held draft — what to say instead of its price. First, with the qualifier's
+       brief, because it is an instruction and has to be read before any price is. */
+    ...(held ? [...heldQuoteLines(held), ""] : []),
     /* HOW to answer, before WHAT is available to answer with. A register instruction read after
        the catalogue is an instruction the model applies to prose it has already planned. */
     ...(tone.length > 0 ? [...tone, ""] : []),
@@ -788,7 +858,10 @@ export function buildSalesAgentPrompt(args: BuildPromptArgs): BuiltPrompt {
       ...catalog.flatMap((c) =>
         c.monthlyFlexPerSeatPerMonth !== null ? [c.monthlyFlexPerSeatPerMonth] : [],
       ),
-    ],
+    /* R-2460: a held draft's figures are struck out whatever produced them (a cross-sell or a
+       1-seat rate that happens to equal one) — the strict direction: such a reply goes to a
+       person rather than out with an unapproved price. */
+    ].filter((n) => !heldFigures.has(Math.round(n))),
     authorisedTotals: [...totals],
   };
 }

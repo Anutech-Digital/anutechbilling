@@ -59,13 +59,17 @@ function token(name: string, theme: "light" | "dark"): [number, number, number] 
 }
 
 describe("R-1135 — text tokens meet WCAG AA", () => {
-  it.each(["light", "dark"] as const)("%s: ink-3 is >= 4.5:1 on paper and paper-2; ink-4 is not text-grade", (theme) => {
+  it.each(["light", "dark"] as const)("%s: ink-3 is >= 4.5:1 on paper and paper-2; ink-4 stays lighter than ink-3", (theme) => {
     for (const bg of ["paper", "paper-2"]) {
       const r3 = ratio(token("ink-3", theme), token(bg, theme));
       expect(r3, `ink-3 on ${bg} (${theme}) = ${r3.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
     }
+    /* R-2261 (31 Oct): ink-4 was darkened to pass AA on paper (hint text must be readable),
+       so "ink-4 fails AA" retired as planned. What stays true: it is still the lighter step,
+       and real text still uses ink-3 (the ratchet below). */
     const r4 = ratio(token("ink-4", theme), token("paper", theme));
-    expect(r4, `ink-4 on paper (${theme}) = ${r4.toFixed(2)}:1 — if this passes AA, retire this guard`).toBeLessThan(4.5);
+    const r3p = ratio(token("ink-3", theme), token("paper", theme));
+    expect(r4, `ink-4 on paper (${theme}) = ${r4.toFixed(2)}:1 must stay below ink-3 (${r3p.toFixed(2)})`).toBeLessThan(r3p);
   });
 });
 

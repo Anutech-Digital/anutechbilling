@@ -89,7 +89,7 @@ export interface VendorBillPrefill {
   category_guess?: string | null;
   /** R-1510 reader: "tax_invoice" | "proforma" | "other". R-1576 saves it on the bill. */
   document_type?: string | null;
-  line_items?:   Array<{ description?: string; qty?: number | null; unit_price?: number | null; amount?: number | null }>;
+  line_items?:   Array<{ description?: string; qty?: number | null; unit_price?: number | null; amount?: number | null; hsn?: string | null }>;
   /** R-1767: the extract-bill route's answer — the bill is addressed to another company. */
   buyer_mismatch?: BuyerMismatch | null;
   /** R-1767 addition: the bill already uploaded in Add expense — attached on save, never re-read. */
@@ -149,6 +149,22 @@ export function AddVendorBillDialog({
   const { data: vendors } = useVendors();
   const [vendorId, setVendorId] = React.useState<string | null>(null);
   const [vendorOpen, setVendorOpen] = React.useState(false);
+  // R-2342: the suggestion list is drawn OVER the fields below it, so it closes the moment the
+  // owner presses anywhere outside it (or focus leaves the vendor box) — never on a blur timer,
+  // which left it on screen to swallow the first click on Category.
+  const vendorBoxRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!vendorOpen) return;
+    const closeIfOutside = (e: Event) => {
+      if (!vendorBoxRef.current?.contains(e.target as Node)) setVendorOpen(false);
+    };
+    document.addEventListener("pointerdown", closeIfOutside, true);
+    document.addEventListener("mousedown", closeIfOutside, true);
+    return () => {
+      document.removeEventListener("pointerdown", closeIfOutside, true);
+      document.removeEventListener("mousedown", closeIfOutside, true);
+    };
+  }, [vendorOpen]);
 
   // ── AI bill reader ────────────────────────────────────────────────────────
   // Upload a photo/PDF → Gemini extracts the fields → we PRE-FILL the form. The
@@ -179,9 +195,10 @@ export function AddVendorBillDialog({
 
   // Line items (products/services on the bill) — amounts stay in the bill's own
   // currency, faithful to the document; the ₹ books use the converted totals.
-  type Line = { description: string; qty: string; unit_price: string; amount: string };
+  /* R-2095: hsn = the line's HSN/SAC (GSTR-2B / ITC matching). */
+  type Line = { description: string; qty: string; unit_price: string; amount: string; hsn: string };
   const [lines, setLines] = React.useState<Line[]>([]);
-  const addLine    = () => setLines((ls) => [...ls, { description: "", qty: "", unit_price: "", amount: "" }]);
+  const addLine    = () => setLines((ls) => [...ls, { description: "", qty: "", unit_price: "", amount: "", hsn: "" }]);
   const removeLine = (i: number) => setLines((ls) => ls.filter((_, idx) => idx !== i));
   const setLine    = (i: number, patch: Partial<Line>) =>
     setLines((ls) => ls.map((l, idx) => (idx === i ? { ...l, ...patch } : l)));
@@ -224,6 +241,7 @@ export function AddVendorBillDialog({
         qty:         it.qty        != null ? String(it.qty)        : "",
         unit_price:  it.unit_price != null ? String(it.unit_price) : "",
         amount:      it.amount     != null ? String(it.amount)     : "",
+        hsn:         it.hsn != null ? String(it.hsn).replace(/D/g, "") : "",
       })));
       /* R-1576: the reader's document type is saved on the bill (R-1510 only warned). */
       const readType = (f as Record<string, unknown>).document_type;
@@ -311,6 +329,7 @@ export function AddVendorBillDialog({
         qty:         it.qty        != null ? String(it.qty)        : "",
         unit_price:  it.unit_price != null ? String(it.unit_price) : "",
         amount:      it.amount     != null ? String(it.amount)     : "",
+        hsn:         it.hsn != null ? String(it.hsn).replace(/D/g, "") : "",
       })));
     }
   }, [prefill, setValue, resetFx]);
@@ -387,6 +406,7 @@ export function AddVendorBillDialog({
         qty:    l.qty ? Number(l.qty) : undefined,
         rate:   l.unit_price ? Number(l.unit_price) : undefined,
         amount: Number(l.amount || 0),
+        ...(l.hsn.trim() ? { hsn: l.hsn.trim() } : {}),   // R-2095
       }))
       .filter((l) => l.name || l.amount > 0);
 
@@ -523,7 +543,7 @@ export function AddVendorBillDialog({
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <FormField label="Vendor name" required htmlFor="vendor_name">
-              <div className="relative">
+              <div className="relative" ref={vendorBoxRef}>
                 <Input
                   id="vendor_name"
                   placeholder="e.g. Google Cloud"
@@ -531,7 +551,9 @@ export function AddVendorBillDialog({
                   error={errors.vendor_name?.message}
                   {...register("vendor_name", { onChange: () => { setVendorId(null); setVendorOpen(true); } })}
                   onFocus={() => setVendorOpen(true)}
-                  onBlur={() => setTimeout(() => setVendorOpen(false), 130)}
+                  onBlur={(e) => {
+                    if (!vendorBoxRef.current?.contains(e.relatedTarget as Node | null)) setVendorOpen(false);
+                  }}
                 />
                 {vendorOpen && (vendors ?? []).length > 0 && (() => {
                   const q = (watch("vendor_name") || "").trim().toLowerCase();
@@ -649,7 +671,12 @@ export function AddVendorBillDialog({
                         <Icon name="x" size={14} />
                       </button>
                     </div>
-                    <div className="grid grid-cols-3 gap-2 pr-6">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pr-6">
+                      <label className="block">
+                        <span className="text-3xs uppercase tracking-wider text-ink-3">HSN/SAC</span>
+                        <Input aria-label="HSN/SAC" inputMode="numeric" maxLength={8} placeholder="998313"
+                          value={l.hsn} onChange={(e) => setLine(i, { hsn: e.target.value.replace(/D/g, "") })} />
+                      </label>
                       <label className="block">
                         <span className="text-3xs uppercase tracking-wider text-ink-3">Qty</span>
                         <Input aria-label="Qty" className="text-right" type="number" min={0} step="any" placeholder="1"

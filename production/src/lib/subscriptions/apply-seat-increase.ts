@@ -101,6 +101,12 @@ export async function applySeatIncrease(args: {
   effectiveDate?: string | null;
   /** R-800: name of the person who chose the date — recorded on the quote note. */
   effectiveDateSetBy?: string | null;
+  /** R-2213: the signed-in user adding the seats — the approval request is under them. */
+  requestedBy?: string | null;
+  /** R-2292: ₹/seat/year typed in Manage seats for this quote only (addSeats annualPerSeatOverride). */
+  annualPerSeatOverride?: number | null;
+  /** R-2372: draft a PO for the added seats — only when the operator ticked it. Absent = no PO. */
+  draftPurchaseOrder?: boolean;
 }): Promise<AddSeatsResult | AddSeatsError> {
   const { supabase, sub, additionalSeats, graceDays } = args;
 
@@ -159,6 +165,9 @@ export async function applySeatIncrease(args: {
     chargeWindow:   window?.instalmentPeriod ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo } : null,
     effectiveDate:  eff.date,
     effectiveDateSetBy: args.effectiveDateSetBy ?? null,
+    requestedBy:    args.requestedBy ?? null,
+    annualPerSeatOverride: args.annualPerSeatOverride ?? null,
+    draftPurchaseOrder: args.draftPurchaseOrder === true,
     previousTerm:   plan?.previous
       ? { to: plan.previous.to, remainingDays: plan.previous.remainingDays, termDays: plan.previous.termDays }
       : null,

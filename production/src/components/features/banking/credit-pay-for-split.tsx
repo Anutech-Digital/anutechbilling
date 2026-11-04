@@ -1,7 +1,8 @@
 /**
  * R-2098 — "Several quotes / invoices" on a money-in bank line: tick what the money pays (each
  * gets its full due, editable), optionally a new sale, and watch one bar — allocated / bank /
- * left. The rest is the customer's advance, or (≤ ₹50) a round-off. Rules in
+ * left. The rest is the customer's advance, or (≤ ₹50, only when every item ends settled in full) a
+ * round-off. Rules in
  * lib/banking/credit-pay-for-multi.ts; CreditPayForSection owns the state and the save.
  */
 "use client";
@@ -109,7 +110,7 @@ export function CreditPaySplit({
         <div className="h-1.5 rounded-full bg-hairline overflow-hidden" aria-hidden>
           <div className={`h-full ${barCls}`} style={{ width: `${pct}%` }} />
         </div>
-        <p className={`text-xs ${summary.state.kind === "over" ? "text-rose-ink" : "text-ink-3"}`}>{splitStateText(summary.state, rest)}</p>
+        <p className={`text-xs ${summary.state.kind === "over" || summary.state.kind === "partShort" ? "text-rose-ink" : "text-ink-3"}`}>{splitStateText(summary.state, rest)}</p>
         {summary.state.kind === "left" && summary.state.canRoundOff && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5" role="group" aria-label="What the money left over is">
             {([["advance", `Keep ${rupee(summary.state.left)} as advance`], ["round_off", `Write off ${rupee(summary.state.left)} as round-off`]] as const).map(([k, label]) => (

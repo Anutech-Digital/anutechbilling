@@ -102,6 +102,8 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "public/checkout/workspace": "website checkout",
   "public/checkout/support": "website checkout (R-2083)",
   "public/consent": "website cookie banner — insert-only consent record, per-IP rate limit (R-2010)",
+  "public/privacy-request": "website data-rights form — Turnstile + per-IP/per-email limits, unconfirmed until the emailed code (R-2013)",
+  "public/privacy-request/verify": "website data-rights code check — hashed code, 5 tries + expiry in the RPC, per-IP limit (R-2013)",
   "public/checkout/verify": "website checkout's return from Razorpay — bounded by the Razorpay signature (R-1596)",
   "public/coupons/validate": "website cart",
   "public/demo-session": "anonymous demo (R-524)",
@@ -125,6 +127,7 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "settings/mobile/send": "R-1903: a code to verify the caller's OWN mobile — request_phone_otp acts only on the caller's users row",
   "settings/mobile/verify": "R-1903: checks the caller's OWN code — verify_phone_otp reads and writes only the caller's rows",
   "vault/personal/pin": "the caller's own personal-vault PIN",
+  "personal/support-ticket": "R-2176: the caller's OWN Help report; the role gate (personal role or workspace_kind) is inside personal_file_support_ticket (SECURITY DEFINER, auth.uid()), called with the caller's own session",
   "aa/setu/callback": "Setu redirects the bank's browser here; it only flips the consent row the state token names",
   // R-1470
   "agent": "website chat bridge — forwards the visitor's messages to public/agent/chat; no session, no tenant data",

@@ -38,6 +38,8 @@ vi.mock("@/lib/queries/bank-debit-pay-for", () => ({
 vi.mock("@/lib/queries/txn-category-rules", () => ({ useTxnCategoryRules: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/vendor-advance", () => ({ useApplyVendorAdvance: () => ({ mutate: vi.fn(), isPending: false }) }));
+/* R-2320: the sheet asks who is signed in (only the owner may take TDS below the threshold). */
+vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role: "owner" } }) }));
 
 import { DebitPayForSection } from "./debit-pay-for-section";
 

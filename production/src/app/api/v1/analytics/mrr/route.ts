@@ -18,7 +18,7 @@ export async function GET() {
 
   const { data, error } = await supabase
     .from("subscriptions")
-    .select("id, status, vendor, seats, mrr, vendor_cost_per_seat_month")
+    .select("id, status, vendor, seats, mrr, plan, term_months, vendor_cost_per_seat_month")
     .eq("status", "active");
 
   if (error) {

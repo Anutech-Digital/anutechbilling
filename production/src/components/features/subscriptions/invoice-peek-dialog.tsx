@@ -42,6 +42,7 @@ import { invoiceBalance } from "@/lib/invoices/kpis";
 import { documentTitle } from "@/lib/invoices/document-kind";
 import { invoiceStatusBadge } from "@/app/(app)/invoices/invoice-status";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { noteTotalsByInvoice, type NoteAmountRow, type NoteTotals } from "@/lib/invoices/note-totals";
 import type { Invoice, Quote } from "@/lib/supabase/database.types";
 
 const INVOICE_COLS =
@@ -60,7 +61,7 @@ export function useInvoicePeek(invoiceId: string | null) {
   return useQuery({
     queryKey: ["invoices", "peek", invoiceId],
     enabled: !!invoiceId,
-    queryFn: async (): Promise<{ invoice: PeekInvoice; quote: PeekQuote | null } | null> => {
+    queryFn: async (): Promise<{ invoice: PeekInvoice; quote: PeekQuote | null; notes?: NoteTotals } | null> => {
       const supabase = createClient();
       const { data, error } = await supabase.from("invoices").select(INVOICE_COLS).eq("id", invoiceId!).maybeSingle();
       if (error) throw new Error(error.message);
@@ -72,7 +73,16 @@ export function useInvoicePeek(invoiceId: string | null) {
         if (qErr) throw new Error(qErr.message);
         quote = (q as unknown as PeekQuote | null) ?? null;
       }
-      return { invoice, quote };
+      /* R-2095: the badge reads the notes too — a fully credited invoice says "Credited", not "Paid".
+         A failed read leaves the notes unread (the badge then trusts the status, as before). */
+      const [cn, dn] = await Promise.all([
+        supabase.from("credit_notes").select("invoice_id, amount").eq("invoice_id", invoice.id),
+        supabase.from("debit_notes").select("invoice_id, amount").eq("invoice_id", invoice.id),
+      ]);
+      const notes = !cn.error && !dn.error && Array.isArray(cn.data) && Array.isArray(dn.data)
+        ? noteTotalsByInvoice(cn.data as NoteAmountRow[], dn.data as NoteAmountRow[]).get(invoice.id) ?? { credit: 0, debit: 0 }
+        : undefined;
+      return { invoice, quote, notes };
     },
   });
 }
@@ -137,7 +147,7 @@ export function InvoicePeekDialog({ invoiceId, open, onOpenChange }: {
             </Button>
           </div>
         ) : (
-          <PeekBody invoice={data.invoice} quote={data.quote} />
+          <PeekBody invoice={data.invoice} quote={data.quote} notes={data.notes} />
         )}
         <div className="mt-2 flex flex-wrap justify-end gap-2">
           {data && (
@@ -154,8 +164,8 @@ export function InvoicePeekDialog({ invoiceId, open, onOpenChange }: {
   );
 }
 
-function PeekBody({ invoice, quote }: { invoice: PeekInvoice; quote: PeekQuote | null }) {
-  const badge = invoiceStatusBadge(invoice);
+function PeekBody({ invoice, quote, notes }: { invoice: PeekInvoice; quote: PeekQuote | null; notes?: NoteTotals }) {
+  const badge = invoiceStatusBadge(invoice, undefined, notes);
   const { subtotal, discount, taxable, taxRate, tax } = invoiceDisplayAmounts(invoice, quote);
   const total = quote?.amount ?? invoice.amount;
   const heads = invoice.inter_state == null ? null : splitTaxHeads(tax, invoice.inter_state);

@@ -31,16 +31,24 @@
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { queryKeys } from "@/lib/queries/keys";
-import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
+import { fetchAllRows, fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-all";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { invoiceReceivable, subscriptionReceivable } from "@/lib/payments/receivables";
 import { matchTdsShortfall, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { istDayStartUtc, istToday, toIstDate } from "@/lib/dates/ist";
 import {
-  promiseLoggedOn, promiseReceipts, promiseStatus, type PromisePayment, type PromiseStatus,
+  collectionHold, promiseLoggedOn, promiseReceipts, promiseStatus,
+  type CollectionHold, type PromisePayment, type PromiseStatus,
 } from "@/lib/collections/followup-rules";
+import {
+  comparePriority, isTodayWork, priorityScore, rowStage, wasReminded, type CollectionStage,
+} from "@/lib/collections/priority";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionHref } from "@/app/(app)/subscriptions/palette-links";
+import { addDaysISO } from "@/lib/dates/ist";
+import { isFlexNextPart, RENEWAL_URGENT_DAYS } from "@/lib/renewals/buckets";
+import { isTerminalRenewal } from "@/app/(app)/renewals/reminders";
+import { termAmountOf } from "@/lib/billing/subscription-schedule";
 
 // ─── Row shapes (only the columns this page reads) ───────────────────────────
 
@@ -74,6 +82,40 @@ export interface CollectionSubscription {
   created_at: string | null;
 }
 
+/**
+ * R-2401: a subscription whose renewal is due in ≤7 days or already past (expired / in grace) —
+ * the fields the Renewal line and the shared renewal actions need.
+ */
+export interface CollectionRenewalSub {
+  id: string;
+  customer_id: string | null;
+  customer_name: string | null;
+  plan: string | null;
+  domain: string | null;
+  quote_id: string | null;
+  renewal_quote_id: string | null;
+  renewal_date: string | null;
+  renewal_state: string | null;
+  status: string;
+  auto_renew: boolean | null;
+  billing_cycle: string | null;
+  term_months: number | null;
+  mrr: number;
+  term_amount: number | null;
+  grace_until: string | null;
+  outstanding_amount: number | null;
+  start_date: string | null;
+  /** R-1796: "Renew anyway" was pressed for this renewal date (newer than the generated types). */
+  vendor_hold_override_for?: string | null;
+}
+
+/** R-2401: the renewal quote of such a subscription (its amount is the renewal amount). */
+export interface CollectionRenewalQuote {
+  id: string;
+  amount: number | null;
+  status: string | null;
+}
+
 export interface CollectionCustomer {
   id: string;
   name: string;
@@ -91,6 +133,13 @@ export interface CollectionFollowup {
   next_follow_up_on: string | null;
   assigned_to: string | null;
   created_at: string;
+  /** R-2411 / R-2409: "disputed" / "dispute_resolved" / "renewal_confirmed" — the hold and the stage read it. */
+  outcome?: string | null;
+}
+
+/** R-2409: an automatic reminder the dunning cron delivered (invoice_dunning_log, status "sent"). */
+export interface CollectionDunningSent {
+  invoice_id: string | null;
 }
 
 export interface CollectionsInput {
@@ -108,6 +157,12 @@ export interface CollectionsInput {
    * keeps a promise (promiseStatus). Absent → only "owes nothing" keeps one.
    */
   payments?: readonly PromisePayment[];
+  /** R-2401: renewals due in ≤7 days or past their date (filtered again by isFollowUpRenewal). */
+  renewals?: readonly CollectionRenewalSub[];
+  /** R-2401: those renewals' renewal quotes. */
+  renewalQuotes?: readonly CollectionRenewalQuote[];
+  /** R-2409: delivered automatic reminders for the open invoices ("Reminded" stage). */
+  dunningSent?: readonly CollectionDunningSent[];
 }
 
 // ─── What the page shows ─────────────────────────────────────────────────────
@@ -125,6 +180,32 @@ export interface OwedItem {
   daysOverdue: number;
   /** "Shayad TDS hai" — the balance equals a common TDS of the invoice's pre-GST value (R-1520 helper). */
   tdsHint: TdsShortfallMatch | null;
+  /** R-2409: some money already came in on this open invoice (paid_amount of at least 1 rupee). */
+  partPaid?: boolean;
+}
+
+/**
+ * R-2401: a renewal to chase (no invoice yet). Kept apart from `items` — it is not money owed
+ * yet, so it never enters amountDue, Payments' "Owed to you" or the customer's follow-up card.
+ */
+export interface RenewalItem {
+  kind: "renewal";
+  /** The subscription id. */
+  id: string;
+  /** The subscription's plan / domain. */
+  label: string;
+  href: string;
+  /** The renewal quote, when one exists. */
+  quoteId: string | null;
+  quoteHref: string | null;
+  /** The renewal quote's amount, else the term amount before GST (estimate). */
+  amount: number;
+  estimate: boolean;
+  /** Days past the renewal date; negative = days still to go. */
+  daysOverdue: number;
+  renewalDate: string;
+  /** For the shared renewal actions. */
+  sub: CollectionRenewalSub;
 }
 
 export interface CollectionRow {
@@ -138,6 +219,10 @@ export interface CollectionRow {
   assignedTo: string | null;
   items: OwedItem[];
   amountDue: number;
+  /** R-2401: renewals to chase on this customer (not in items / amountDue). */
+  renewals: RenewalItem[];
+  /** R-2401: what those renewals ask for (renewal quote amount, or est. term amount). */
+  renewalAmount: number;
   /** Of the oldest line. 0 or less = not yet due. */
   daysOverdue: number;
   promisedOn: string | null;
@@ -153,9 +238,16 @@ export interface CollectionRow {
   followUpDue: boolean;
   lastNote: string | null;
   lastNoteOn: string | null;
+  /** R-2411: reminders paused for a promise / an open dispute (collectionHold), or null. */
+  hold: CollectionHold | null;
+  /** R-2409: the ONE stage chip (priority.ts rowStage). */
+  stage: CollectionStage;
+  /** R-2409: sum of (rupees due x days late) over the late lines — the "Today's work first" order. */
+  priorityScore: number;
 }
 
-export const COLLECTION_VIEWS = ["mine", "all", "broken"] as const;
+/** R-2409: "today" = follow-ups due + promises due today + broken promises (priority.ts isTodayWork). */
+export const COLLECTION_VIEWS = ["today", "mine", "all", "broken"] as const;
 export type CollectionView = (typeof COLLECTION_VIEWS)[number];
 
 // ─── Pure rules ──────────────────────────────────────────────────────────────
@@ -212,17 +304,37 @@ export function needsActionToday(r: Pick<CollectionRow, "followUpDue" | "promise
 }
 
 /**
- * Order: (1) follow-up due today or earlier, or promise broken; (2) the rest. Inside each,
- * the most overdue first, then the biggest amount, then name (stable for equal rows).
+ * Order ("Today's work first", R-2409 priority.ts comparePriority): (1) broken promises;
+ * (2) follow-up due today or earlier, or a promise due today; (3) the rest. Inside each, the
+ * biggest score (rupees due x days late) first, then most days late, biggest amount (renewals
+ * included), name — stable for equal rows.
  */
 export function compareCollectionRows(a: CollectionRow, b: CollectionRow): number {
-  const ta = needsActionToday(a) ? 0 : 1;
-  const tb = needsActionToday(b) ? 0 : 1;
-  if (ta !== tb) return ta - tb;
-  if (a.daysOverdue !== b.daysOverdue) return b.daysOverdue - a.daysOverdue;
-  if (a.amountDue !== b.amountDue) return b.amountDue - a.amountDue;
-  return a.customerName.localeCompare(b.customerName);
+  return comparePriority(
+    { ...a, amountDue: a.amountDue + (a.renewalAmount ?? 0) },
+    { ...b, amountDue: b.amountDue + (b.renewalAmount ?? 0) },
+  );
 }
+
+/**
+ * R-2401: is this renewal one to chase on Payment Follow-up? Due in ≤7 days or past its date, not
+ * paid (renewed), not Won't renew, not cancelled, service not stopped — the Renewals page's
+ * Urgent-tab rules (classify.ts) minus "stopped". R-2431: a flex (monthly-commitment) row is a
+ * renewal (R-2422) — chased once its part date has PASSED unbilled; a part still ahead is not
+ * (isFlexNextPart: the billing job raises its payment request on that date, R-2044).
+ */
+export function isFollowUpRenewal(s: CollectionRenewalSub, today: string): boolean {
+  if (!s.renewal_date) return false;
+  if (s.status === "cancelled" || s.status === "suspended" || s.renewal_state === "suspended") return false;
+  if (s.auto_renew === false) return false;
+  const daysUntil = -daysSince(s.renewal_date, today);
+  if (daysUntil > RENEWAL_URGENT_DAYS) return false;
+  if (isFlexNextPart(s, daysUntil)) return false;
+  return !isTerminalRenewal(s.renewal_state, s.renewal_date, s.term_months, new Date(`${today}T12:00:00+05:30`));
+}
+
+/** A renewal quote in one of these no longer asks for the money — the term amount is shown instead. */
+const CLOSED_QUOTE = new Set(["rejected", "expired", "cancelled", "void"]);
 
 /** One row per customer with everything they still owe, sorted for the follow-up person. */
 export function buildCollectionRows(input: CollectionsInput, today: string): CollectionRow[] {
@@ -247,6 +359,8 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
         assignedTo: null,
         items: [],
         amountDue: 0,
+        renewals: [],
+        renewalAmount: 0,
         daysOverdue: 0,
         promisedOn: null,
         promisedAmount: null,
@@ -257,6 +371,9 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
         followUpDue: false,
         lastNote: null,
         lastNoteOn: null,
+        hold: null,
+        stage: "notContacted",
+        priorityScore: 0,
       };
       rows.set(key, row);
     }
@@ -279,6 +396,7 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
       amountDue: due,
       daysOverdue: daysSince(inv.due_date ?? inv.invoice_date, today),
       tdsHint: tdsHint(inv),
+      partPaid: Math.round(inv.paid_amount ?? 0) >= 1,
     });
   }
 
@@ -301,11 +419,41 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
     });
   }
 
+  /* R-2401: renewals to chase. A renewal whose quote already has an invoice is that invoice's
+     line only (no duplicate); the amount is the renewal quote's, else the term amount "est.". */
+  const invoicedQuote = new Set(input.invoices.map((i) => i.quote_id).filter((x): x is string => !!x));
+  const renewalQuotes = new Map((input.renewalQuotes ?? []).map((q) => [q.id, q]));
+  for (const s of input.renewals ?? []) {
+    if (!s.renewal_date || !isFollowUpRenewal(s, today)) continue;
+    if (s.renewal_quote_id && invoicedQuote.has(s.renewal_quote_id)) continue;
+    const q = s.renewal_quote_id ? renewalQuotes.get(s.renewal_quote_id) : undefined;
+    const quoteAmount = q && !CLOSED_QUOTE.has(q.status ?? "") && (q.amount ?? 0) > 0 ? Math.round(q.amount ?? 0) : null;
+    rowFor(s.customer_id, s.customer_name).renewals.push({
+      kind: "renewal",
+      id: s.id,
+      label: [s.plan, s.domain].filter((x) => x && x.trim()).join(" · ") || "Subscription",
+      href: subscriptionHref(s),
+      quoteId: s.renewal_quote_id,
+      quoteHref: s.renewal_quote_id ? quoteHref(s.renewal_quote_id) : null,
+      amount: quoteAmount ?? termAmountOf({ mrr: s.mrr, term_months: s.term_months ?? 12, term_amount: s.term_amount }),
+      estimate: quoteAmount === null,
+      daysOverdue: daysSince(s.renewal_date, today),
+      renewalDate: s.renewal_date,
+      sub: s,
+    });
+  }
+
   const followupsByCustomer = new Map<string, CollectionFollowup[]>();
   for (const f of input.followups) {
     const list = followupsByCustomer.get(f.customer_id);
     if (list) list.push(f);
     else followupsByCustomer.set(f.customer_id, [f]);
+  }
+
+  /* R-2409: delivered automatic reminders per open invoice. */
+  const dunningByInvoice = new Map<string, number>();
+  for (const d of input.dunningSent ?? []) {
+    if (d.invoice_id) dunningByInvoice.set(d.invoice_id, (dunningByInvoice.get(d.invoice_id) ?? 0) + 1);
   }
 
   const paymentsByCustomer = new Map<string, PromisePayment[]>();
@@ -319,7 +467,10 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
   for (const row of rows.values()) {
     row.items.sort((a, b) => b.daysOverdue - a.daysOverdue || b.amountDue - a.amountDue);
     row.amountDue = row.items.reduce((s, i) => s + i.amountDue, 0);
-    row.daysOverdue = row.items.reduce((m, i) => Math.max(m, i.daysOverdue), Number.NEGATIVE_INFINITY);
+    row.renewals.sort((a, b) => b.daysOverdue - a.daysOverdue || b.amount - a.amount);
+    row.renewalAmount = row.renewals.reduce((s, i) => s + i.amount, 0);
+    /* R-2401: a renewal past its date is as urgent as an overdue invoice of the same age. */
+    row.daysOverdue = [...row.items, ...row.renewals].reduce((m, i) => Math.max(m, i.daysOverdue), Number.NEGATIVE_INFINITY);
     if (!Number.isFinite(row.daysOverdue)) row.daysOverdue = 0;
 
     const fus = row.customerId ? [...(followupsByCustomer.get(row.customerId) ?? [])].sort(newestFirst) : [];
@@ -349,9 +500,26 @@ export function buildCollectionRows(input: CollectionsInput, today: string): Col
       }).status;
       row.promiseBroken = row.promiseStatus === "broken";
     }
+    /* R-2409: the one stage chip and the priority score. */
+    row.hold = collectionHold(fus, today);
+    /* A renewal past its date ranks like an overdue invoice of the same age (R-2401). */
+    row.priorityScore = priorityScore([...row.items, ...row.renewals.map((i) => ({ amountDue: i.amount, daysOverdue: i.daysOverdue }))]);
+    row.stage = rowStage({
+      hold: row.hold,
+      promiseBroken: row.promiseBroken,
+      partPaid: row.items.some((i) => i.partPaid === true),
+      reminded: wasReminded({
+        today,
+        daysOverdue: row.daysOverdue,
+        followups: fus,
+        autoReminders: row.items.reduce((n, i) => n + (i.kind === "invoice" ? dunningByInvoice.get(i.id) ?? 0 : 0), 0),
+      }),
+    });
   }
 
-  return [...rows.values()].filter((r) => r.amountDue > 0).sort(compareCollectionRows);
+  return [...rows.values()]
+    .filter((r) => r.amountDue > 0 || r.renewals.length > 0)
+    .sort(compareCollectionRows);
 }
 
 /** R-1708: one owed line — what Payments' "Owed to you" adds up (per customer, for ?customer=). */
@@ -385,6 +553,7 @@ export function isMine(r: Pick<CollectionRow, "ownerId" | "assignedTo">, meId: s
 }
 
 export function filterCollectionRows(rows: readonly CollectionRow[], view: CollectionView, meId: string | null | undefined): CollectionRow[] {
+  if (view === "today") return rows.filter(isTodayWork);
   if (view === "mine") return rows.filter((r) => isMine(r, meId));
   if (view === "broken") return rows.filter((r) => r.promiseBroken);
   return [...rows];
@@ -402,17 +571,58 @@ type Client = ReturnType<typeof createClient>;
 const INVOICE_COLS =
   "id, customer_id, customer_name, amount, net_payable, paid_amount, status, invoice_date, due_date, quote_id, taxable_value, tax_amount, tax_rate";
 const SUB_COLS = "id, customer_id, customer_name, plan, domain, quote_id, outstanding_amount, payment_due_date, created_at";
+const RENEWAL_COLS =
+  "id, customer_id, customer_name, plan, domain, quote_id, renewal_quote_id, renewal_date, renewal_state, status, auto_renew, billing_cycle, term_months, mrr, term_amount, grace_until, outstanding_amount, start_date, vendor_hold_override_for";
+
+/* grace_until (R-1621) is newer than the generated types (database.types.ts is shared) — the
+   R-2401 renewals read goes through this narrow shape, as grace-over-card.tsx does. */
+type LooseRenewalQuery = {
+  eq: (c: string, v: string) => LooseRenewalQuery;
+  order: (c: string, o: { ascending: boolean }) => { range: (a: number, b: number) => PageQuery<CollectionRenewalSub> };
+};
+type LooseRenewalRead = {
+  from: (t: "subscriptions") => {
+    select: (c: string) => { lte: (c: string, v: string) => { neq: (c: string, v: string) => LooseRenewalQuery } };
+  };
+};
+
+/** R-2401: renewals due in ≤7 days or already past their date (isFollowUpRenewal filters the rest). */
+async function fetchRenewalRows(supabase: Client, customerId?: string): Promise<{
+  renewals: CollectionRenewalSub[]; renewalQuotes: CollectionRenewalQuote[];
+}> {
+  const db = supabase as unknown as LooseRenewalRead;
+  const horizon = addDaysISO(istToday(), RENEWAL_URGENT_DAYS);
+  const renewals = await fetchAllRows<CollectionRenewalSub>((from, to) => {
+    let q = db.from("subscriptions").select(RENEWAL_COLS).lte("renewal_date", horizon).neq("status", "cancelled");
+    if (customerId) q = q.eq("customer_id", customerId);
+    return q.order("id", { ascending: true }).range(from, to);
+  });
+  const renewalQuotes = await fetchAllRowsIn<CollectionRenewalQuote, string>(
+    renewals.map((s) => s.renewal_quote_id),
+    (ids, from, to) => supabase
+      .from("quotes")
+      .select("id, amount, status")
+      .in("id", ids)
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+  return { renewals, renewalQuotes };
+}
 
 /**
  * Every row this page needs — each read paged past PostgREST's 1000-row cap. RLS scopes all of it.
  * R-1517: `customerId` narrows it to one customer (the customer page's follow-up card).
  */
 export async function fetchCollectionsInput(supabase: Client, customerId?: string): Promise<CollectionsInput> {
-  const owed = await fetchOwedRows(supabase, customerId);
+  const [owed, due] = await Promise.all([fetchOwedRows(supabase, customerId), fetchRenewalRows(supabase, customerId)]);
   const { invoices, subscriptions } = owed;
 
   const invoiceQuoteIds = invoices.map((i) => i.quote_id);
-  const customerIds = [...invoices.map((i) => i.customer_id), ...subscriptions.map((s) => s.customer_id)];
+  const customerIds = [
+    ...invoices.map((i) => i.customer_id),
+    ...subscriptions.map((s) => s.customer_id),
+    ...due.renewals.map((s) => s.customer_id),   // R-2401
+  ];
 
   const [quoteSubscriptions, customers, followups] = await Promise.all([
     fetchAllRowsIn<CollectionSubscription, string>(invoiceQuoteIds, (ids, from, to) => supabase
@@ -429,7 +639,8 @@ export async function fetchCollectionsInput(supabase: Client, customerId?: strin
       .range(from, to)),
     fetchAllRowsIn<CollectionFollowup, string>(customerIds, (ids, from, to) => supabase
       .from("payment_followups")
-      .select("id, customer_id, kind, note, promised_amount, promised_on, next_follow_up_on, assigned_to, created_at")
+      /* R-2411 / R-2409: outcome — the dispute hold and the stage chip read it. */
+      .select("id, customer_id, kind, note, promised_amount, promised_on, next_follow_up_on, assigned_to, created_at, outcome")
       .in("customer_id", ids)
       .order("created_at", { ascending: false })
       .order("id", { ascending: true })
@@ -455,7 +666,20 @@ export async function fetchCollectionsInput(supabase: Client, customerId?: strin
       .range(from, to),
   );
 
-  return { ...owed, payments, quoteSubscriptions, customers, followups };
+  /* R-2409: automatic reminders delivered for the open invoices — the "Reminded" stage. RLS
+     (invoice_dunning_log_select) keeps it to the caller's company. */
+  const dunningSent = await fetchAllRowsIn<CollectionDunningSent & { id: string }, string>(
+    invoices.map((i) => i.id),
+    (ids, from, to) => supabase
+      .from("invoice_dunning_log")
+      .select("id, invoice_id")
+      .in("invoice_id", ids)
+      .eq("status", "sent")
+      .order("id", { ascending: true })
+      .range(from, to),
+  );
+
+  return { ...owed, ...due, payments, quoteSubscriptions, customers, followups, dunningSent };
 }
 
 type OwedRows = Pick<CollectionsInput, "invoices" | "subscriptions" | "invoicedQuoteIds">;
@@ -525,7 +749,8 @@ export function useCustomerCollection(customerId: string | null | undefined) {
     enabled: !!customerId,
     queryFn: async (): Promise<CollectionRow | null> =>
       buildCollectionRows(await fetchCollectionsInput(createClient(), customerId ?? undefined), istToday())
-        .find((r) => r.customerId === customerId) ?? null,
+        /* R-2401: a row with only renewals owes nothing yet — the card says "Nothing owed". */
+        .find((r) => r.customerId === customerId && r.amountDue > 0) ?? null,
     staleTime: 30_000,
   });
 }

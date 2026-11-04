@@ -78,7 +78,13 @@ afterEach(() => {
 });
 
 describe("R-1009 lead list per role", () => {
-  for (const role of USER_ROLES) {
+  /* R-2125 (GP-10): a personal session never reaches leads at all — 403 before any masking. */
+  test("personal: leads refused outright (R-2125 personal allowlist)", async () => {
+    const r = await call("personal", "leads", "select=id,name,contact_phone,contact_email");
+    expect(r.status).toBe(403);
+    expect(handled).not.toHaveBeenCalled();
+  });
+  for (const role of USER_ROLES.filter((r) => r !== "personal")) {
     const sees = can(role, "can_view_contact_details");
     test(`${role}: ${sees ? "real" : "masked"} phone and email`, async () => {
       const r = await call(role, "leads", "select=id,name,contact_phone,contact_email");

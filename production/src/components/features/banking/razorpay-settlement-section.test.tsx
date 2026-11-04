@@ -16,6 +16,11 @@ vi.mock("@/lib/queries/razorpay-settlement", () => ({
   useReconcileRazorpaySettlement: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+/* R-2418: fee_charged of the matched app payments. */
+const charged = vi.hoisted(() => ({ ids: [] as string[][], data: [] as (number | null)[] }));
+vi.mock("@/lib/queries/online-fee-report", () => ({
+  useSettlementFeeCharged: (ids: string[]) => { charged.ids.push(ids); return { data: charged.data }; },
+}));
 
 import { RazorpaySettlementSection, remainingBlockers } from "./razorpay-settlement-section";
 
@@ -68,5 +73,16 @@ describe("RazorpaySettlementSection", () => {
     fireEvent.change(screen.getByLabelText("App payment for pay_2"), { target: { value: "p9" } });
     expect(screen.getByRole("button", { name: /Reconcile settlement/ })).toBeTruthy();
     expect(screen.getByText(/Razorpay fee \(incl\. GST ₹11\)/)).toBeTruthy();
+  });
+
+  it("R-2418: fee recovered from customers vs absorbed by us, from the matched payments", () => {
+    state.data = { state: "plan", plan };
+    charged.data = [30, null];
+    render(<RazorpaySettlementSection line={{ id: "L1", credit: 3469 }} onDone={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: /Fetch settlement/ }));
+    fireEvent.change(screen.getByLabelText("App payment for pay_2"), { target: { value: "p9" } });
+    expect(charged.ids.at(-1)).toEqual(["a1", "p9"]);
+    expect(screen.getByText("Fee recovered from customers").nextElementSibling?.textContent).toBe("₹30");
+    expect(screen.getByText("Fee absorbed by us").nextElementSibling?.textContent).toBe("₹41");
   });
 });

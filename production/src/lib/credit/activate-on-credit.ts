@@ -208,15 +208,19 @@ export interface CreditExposure {
 
 /**
  * Already owed + this invoice vs the limit. An invoice already raised on this quote is inside
- * `owed`, so it is not added twice.
+ * `owed`, so it is not added twice. R-2230: `owed` also counts what the customer's open part
+ * payment requests still owe (lib/billing/part-request-dues partRequestsOwed) — the same sum
+ * activate_quote_on_credit adds in the database.
  */
 export function creditExposure(input: {
   openInvoices: readonly OpenInvoice[];
   quoteAmount: number;
   quoteInvoiceId: string | null | undefined;
   creditLimit: number | null | undefined;
+  /** R-2230: ₹ still owed on the customer's open part payment requests. */
+  partRequestsOwed?: number | null;
 }): CreditExposure {
-  const owed = owedOnInvoices(input.openInvoices);
+  const owed = owedOnInvoices(input.openInvoices) + Math.max(0, Math.round(input.partRequestsOwed ?? 0));
   const thisInvoice = input.quoteInvoiceId ? 0 : Math.max(0, Math.round(input.quoteAmount));
   const total = owed + thisInvoice;
   const limit = effectiveCreditLimit(input.creditLimit);

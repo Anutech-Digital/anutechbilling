@@ -69,7 +69,8 @@ select v.id, 'dddddddd-0000-0000-0000-000000209801', coalesce(v.cust, 'cccccccc-
                ('Q-D1', 1000, null), ('Q-O1', 1000, 'cccccccc-0000-0000-0000-000000209802')) as v(id, sub, cust);
 
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
-  ('11111111-0000-0000-0000-000000209801','dddddddd-0000-0000-0000-000000209801','bbbbbbbb-0000-0000-0000-000000209801','2026-10-20','NEFT ACME 2098 THREE',0,11800,'UTR2098A','manual'),
+-- R-2430: line A's UTR is UTR2098A01 — R-2441 reads "UTR2098A" as a placeholder (UTR prefix + 5 characters), and R-2430 books a placeholder line's receipts as BANK-<line id>; A checks one shared REAL UTR.
+  ('11111111-0000-0000-0000-000000209801','dddddddd-0000-0000-0000-000000209801','bbbbbbbb-0000-0000-0000-000000209801','2026-10-20','NEFT ACME 2098 THREE',0,11800,'UTR2098A01','manual'),
   ('11111111-0000-0000-0000-000000209802','dddddddd-0000-0000-0000-000000209801','bbbbbbbb-0000-0000-0000-000000209801','2026-10-21','NEFT ACME 2098 EIGHT',0,9786,'UTR2098B','manual'),
   ('11111111-0000-0000-0000-000000209803','dddddddd-0000-0000-0000-000000209801','bbbbbbbb-0000-0000-0000-000000209801','2026-10-22','NEFT ACME 2098 SHORT',0,11752,'UTR2098C','manual'),
   ('11111111-0000-0000-0000-000000209804','dddddddd-0000-0000-0000-000000209801','bbbbbbbb-0000-0000-0000-000000209801','2026-10-22','NEFT ACME 2098 EXTRA2',0,5902,'UTR2098C2','manual'),
@@ -104,7 +105,7 @@ begin
      and status = 'paid' and paid_date = '2026-10-20' and paid_amount = coalesce(net_payable, amount);
   if n <> 3 then raise exception 'FAIL A: % of 3 invoices paid in full on the bank date', n; end if;
   select count(*) into n from public.payments
-   where bank_txn_id = '11111111-0000-0000-0000-000000209801' and status = 'received' and reference = 'UTR2098A'
+   where bank_txn_id = '11111111-0000-0000-0000-000000209801' and status = 'received' and reference = 'UTR2098A01'
      and bank_account_id = 'bbbbbbbb-0000-0000-0000-000000209801' and received_at::date = '2026-10-20'
      and credit_applied = 0;
   if n <> 3 then raise exception 'FAIL A: % of 3 receipts banked on the line', n; end if;

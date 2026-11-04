@@ -17,6 +17,7 @@ import { BOARD_COLUMN_CAP } from "@/lib/queries/leads";
 import { checkBoardMove } from "@/lib/leads/deal-rules";
 import { boardColumnSummary } from "@/lib/leads/forecast";
 import { leadTitle } from "@/lib/leads/display-name";
+import { useLeadAiStatuses } from "@/components/features/leads/lead-ai-status";
 
 export interface LeadsKanbanBoardProps {
   boardLeads: LeadListRow[];
@@ -38,6 +39,9 @@ export interface LeadsKanbanBoardProps {
 export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals, changeStage, setSelected, setAddOpen, stages = DEAL_STAGES, noun = "deal" }: LeadsKanbanBoardProps) {
   const [dragId, setDragId] = React.useState<string | null>(null);
   const [overStage, setOverStage] = React.useState<Lead["stage"] | null>(null);
+  /* R-2042: one read for the "AI: …" badges of the cards on the board. */
+  const boardIds = React.useMemo(() => boardLeads.map((l) => l.id), [boardLeads]);
+  const aiStatuses = useLeadAiStatuses(boardIds);
 
   // Drag handlers
   const handleDrop = async (toStage: Lead["stage"]) => {
@@ -173,6 +177,7 @@ export function LeadsKanbanBoard({ boardLeads, columnTotals, serverColumnTotals,
                       setOverStage(null);
                     }}
                     onClick={(l) => setSelected(l)}
+                    aiStatus={aiStatuses.get(lead.id)}
                   />
                 ))}
 

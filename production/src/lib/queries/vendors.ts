@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
+import { gstStateFromGstin } from "@/lib/utils";
 import { fetchAllRows, fetchAllRowsIn, type PageQuery } from "@/lib/ops/fetch-all";
 import type { VendorRow, ExpenseRow } from "@/lib/supabase/database.types";
 import type { VendorBill } from "@/lib/queries/vendor-bills";
@@ -289,8 +290,12 @@ export async function ensureVendor(input: { name: string; gstin?: string | null;
 
   const existing = await findExisting();
   if (existing) {
-    const patch: { gstin?: string; default_category?: string } = {};
-    if (!existing.gstin && gstin) patch.gstin = gstin;
+    const patch: { gstin?: string; default_category?: string; state?: string } = {};
+    if (!existing.gstin && gstin) {
+      patch.gstin = gstin;
+      const st = gstStateFromGstin(gstin).name;
+      if (st) patch.state = st;
+    }
     if (!existing.default_category && input.defaultCategory) patch.default_category = input.defaultCategory;
     if (Object.keys(patch).length) await supabase.from("vendors").update(patch).eq("id", existing.id);
     return existing.id;
@@ -298,7 +303,9 @@ export async function ensureVendor(input: { name: string; gstin?: string | null;
 
   const { data: created, error } = await supabase
     .from("vendors")
-    .insert({ tenant_id: me.tenant_id, name, gstin, default_category: input.defaultCategory || null })
+    /* R-2095: the state follows the GSTIN (its first two digits). */
+    .insert({ tenant_id: me.tenant_id, name, gstin, default_category: input.defaultCategory || null,
+              ...(gstin && gstStateFromGstin(gstin).name ? { state: gstStateFromGstin(gstin).name } : {}) })
     .select("id").single();
   if (error) {
     // Likely a concurrent insert hit the unique index — re-find and use it.
@@ -330,6 +337,8 @@ export function useUpsertVendor() {
       msmeCategory?: "micro" | "small" | "medium" | null;
       /** Bank details for payment runs (R-163). `undefined` = mat chhuo, same as MSME. */
       bank?: { accountName: string | null; accountNo: string | null; ifsc: string | null; upiId: string | null };
+      /** R-2338: the vendor's default TDS section ("" / null = none). `undefined` = mat chhuo. */
+      defaultTdsSection?: string | null;
     }) => {
       const supabase = createClient();
       const { data: authData } = await supabase.auth.getUser();
@@ -361,11 +370,15 @@ export function useUpsertVendor() {
           upi_id:            input.bank.upiId?.trim() || null,
         } : {}),
       };
+      /* R-2338: the vendor's default TDS section (the column predates the generated types). */
+      const withTds = (input.defaultTdsSection !== undefined
+        ? { ...row, default_tds_section: input.defaultTdsSection?.trim().toUpperCase() || null }
+        : row) as typeof row;
       if (input.id) {
-        const { error } = await supabase.from("vendors").update(row).eq("id", input.id);
+        const { error } = await supabase.from("vendors").update(withTds).eq("id", input.id);
         if (error) throw new Error(bankMessage(error.message));
       } else {
-        const { error } = await supabase.from("vendors").insert({ ...row, tenant_id: me.tenant_id });
+        const { error } = await supabase.from("vendors").insert({ ...withTds, tenant_id: me.tenant_id });
         if (error) throw new Error(error.message.includes("vendors_tenant_name_uniq") ? "A vendor with this name already exists." : bankMessage(error.message));
       }
     },

@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import type { GstinVerification } from "@/lib/supabase/database.types";
 import { mustChangePassword } from "@/lib/auth/must-change-password";
+import { isPersonalSession } from "@/lib/workspace/kind";
 
 /**
  * R-730: the platform-admin allowlist is server-only now (it used to ship to the browser as
@@ -157,7 +158,6 @@ export function useCurrentUser() {
 
       const { data: authData } = await supabase.auth.getUser();
       if (!authData?.user) return null;
-      const platformAdmin = fetchIsPlatformAdmin(); // in parallel with the profile read
 
       const { data: me, error } = await supabase
         .from("users")
@@ -185,12 +185,19 @@ export function useCurrentUser() {
       }
       if (!me) return null;   // authenticated, but no profile → stranded
 
+      /* R-2175: a personal session never asks whoami — the GP-07b middleware wall answers 403
+         there (whoami is not on PERSONAL_OPEN_API_PREFIXES, on purpose) and the 403 lit the
+         help "error was caught" badge on every personal page. A personal workspace never gets
+         the founder nav, so it is simply false. Asked after the profile read (it used to run
+         in parallel) because only the profile says which kind of session this is. */
+      const platformAdmin = isPersonalSession({ role: me.role }) ? false : await fetchIsPlatformAdmin();
+
       const tenant = Array.isArray(me.tenants) ? me.tenants[0] : me.tenants;
 
       return {
         userId:          me.id,
         authEmail:       authData.user.email ?? "",
-        isPlatformAdmin: await platformAdmin,
+        isPlatformAdmin: platformAdmin,
         mustChangePassword: mustChangePassword(authData.user),
         fullName:        me.full_name,
         initials:        me.initials,

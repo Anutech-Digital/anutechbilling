@@ -1,6 +1,8 @@
 import { describe, it, expect, vi } from "vitest";
 import { runPerTenantBackup, isMissingFunction, type PerTenantDeps, type TenantRow } from "./per-tenant";
 import type { OffsiteSnapshot } from "./offsite";
+import { backupPlanFor, PERSONAL_BACKUP_POLICY, PERSONAL_SNAPSHOT_RETENTION } from "./tiering";
+import { SNAPSHOT_RETENTION } from "@/lib/queries/backups";
 
 /* ─────────────────────────────────────────────────────────────────────────────
    S15 (28 Sep 2026). Raat ka backup ab ek-ek tenant karke. Ye tests wo cheezein pakadte hain
@@ -178,5 +180,126 @@ describe("migration abhi nahi lagi — purane raaste par", () => {
   it("tenants hi padh na paye → throw (route 500 deta hai, chup nahi)", async () => {
     const { d } = deps({ listTenants: async () => ({ ok: false, message: "permission denied" }) });
     await expect(runPerTenantBackup(d)).rejects.toThrow(/could not read tenants/);
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   R-2140 (GP-21b, goal G-PERSONAL). Free personal workspaces will be many and small. Every
+   night each one cost a full snapshot (~134 tables) + export + upload, and 7 copies in the
+   database — so the 600 s Cloud Run budget and backup.snapshots grew with FREE tenants. Now a
+   personal tenant is backed up only when its data changed since its last snapshot, and keeps
+   fewer snapshots. A business tenant is backed up exactly as before.
+   ───────────────────────────────────────────────────────────────────────────── */
+describe("R-2140: personal tenants — only if changed, fewer snapshots", () => {
+  const P = "eeeeeeee-0000-4000-8000-000000000005";
+  const WITH_PERSONAL: TenantRow[] = [
+    { id: A, name: "ANUTECH", workspace_kind: "business" },
+    { id: P, name: "Asha (personal)", workspace_kind: "personal" },
+    { id: B, name: "Beta" },
+  ];
+
+  it("an unchanged personal tenant is skipped: no new snapshot, no upload, not 'missing' in the manifest", async () => {
+    const calls: Array<{ id: string; plan: unknown }> = [];
+    const { d, uploads } = deps({
+      listTenants: async () => ({ ok: true, data: WITH_PERSONAL }),
+      backupTenant: async (id, plan) => {
+        calls.push({ id, plan: plan ?? null });
+        if (id === P) return { ok: true, data: { skipped: "unchanged", snapshot_id: "s-old", tenant_id: P } };
+        return { ok: true, data: { bytes: 100, table_count: 134, label: "Automated Daily Backup - 2026-08-29" } };
+      },
+    });
+    const r = await runPerTenantBackup(d);
+    expect(calls.find((c) => c.id === P)?.plan).toEqual({ onlyIfChanged: true, keep: PERSONAL_SNAPSHOT_RETENTION });
+    expect(r.failed).toBe(0);
+    expect(r.backed_up).toBe(2);
+    expect(r.skipped_unchanged).toBe(1);
+    expect(r.results.find((x) => x.tenant_id === P)).toMatchObject({ ok: true, skipped: "unchanged", offsite: "skipped" });
+    expect(uploads.has(`daily/2026-08-29/${P}.json`)).toBe(false);
+    const manifest = JSON.parse(uploads.get("daily/2026-08-29/_manifest.json")!);
+    expect(manifest.missing).toEqual([]);
+    expect(manifest.unchanged.map((u: { tenant_id: string }) => u.tenant_id)).toEqual([P]);
+    expect(r.offsite_errors).toEqual([]);
+  });
+
+  it("a changed personal tenant is backed up and copied off-site like any other", async () => {
+    const { d, uploads } = deps({
+      listTenants: async () => ({ ok: true, data: WITH_PERSONAL }),
+      backupTenant: async () => ({ ok: true, data: { bytes: 40, table_count: 134, label: "Automated Daily Backup - 2026-08-29" } }),
+    });
+    const r = await runPerTenantBackup(d);
+    expect(r.backed_up).toBe(3);
+    expect(r.skipped_unchanged).toBe(0);
+    expect(uploads.has(`daily/2026-08-29/${P}.json`)).toBe(true);
+  });
+
+  it("a business tenant (and one with no kind) is ALWAYS a full backup — never tiered (no regression)", async () => {
+    const plans = new Map<string, unknown>();
+    const { d } = deps({
+      listTenants: async () => ({ ok: true, data: WITH_PERSONAL }),
+      backupTenant: async (id, plan) => {
+        plans.set(id, plan ?? null);
+        return { ok: true, data: { bytes: 1, table_count: 134 } };
+      },
+    });
+    await runPerTenantBackup(d);
+    expect(plans.get(A)).toBeNull();
+    expect(plans.get(B)).toBeNull();
+    expect(backupPlanFor("business")).toEqual({ mode: "full" });
+    expect(backupPlanFor(null)).toEqual({ mode: "full" });
+    expect(backupPlanFor("weird")).toEqual({ mode: "full" });
+  });
+
+  it("personal retention is <= the in-app SNAPSHOT_RETENTION, and the code default is only-if-changed", () => {
+    expect(PERSONAL_SNAPSHOT_RETENTION).toBeGreaterThanOrEqual(1);
+    expect(PERSONAL_SNAPSHOT_RETENTION).toBeLessThanOrEqual(SNAPSHOT_RETENTION);
+    expect(PERSONAL_SNAPSHOT_RETENTION).toBeLessThan(SNAPSHOT_RETENTION); // "fewer kept snapshots"
+    expect(PERSONAL_BACKUP_POLICY).toBe("only-if-changed");
+    expect(backupPlanFor("personal")).toEqual({ mode: "tiered", onlyIfChanged: true, keep: PERSONAL_SNAPSHOT_RETENTION });
+    /* The other two options the owner can choose (needsDecision on R-2140). */
+    expect(backupPlanFor("personal", "keep-one")).toEqual({ mode: "tiered", onlyIfChanged: false, keep: 1 });
+    expect(backupPlanFor("personal", "skip")).toEqual({ mode: "none" });
+  });
+
+  it("policy 'skip': no RPC at all for the personal tenant, reported as skipped, not failed", async () => {
+    const seen: string[] = [];
+    const { d } = deps({
+      listTenants: async () => ({ ok: true, data: WITH_PERSONAL }),
+      backupTenant: async (id) => { seen.push(id); return { ok: true, data: { bytes: 1 } }; },
+      personalPolicy: "skip",
+    });
+    const r = await runPerTenantBackup(d);
+    expect(seen).not.toContain(P);
+    expect(r.failed).toBe(0);
+    expect(r.results.find((x) => x.tenant_id === P)).toMatchObject({ ok: true, skipped: "policy", offsite: "skipped" });
+  });
+
+  it("the tiered DB function not deployed yet → that personal tenant gets the normal full backup, the night is NOT sent to the legacy sweep", async () => {
+    const { d } = deps({
+      listTenants: async () => ({ ok: true, data: [WITH_PERSONAL[1], WITH_PERSONAL[0]] }),
+      backupTenant: async (_id, plan) => plan
+        ? { ok: false, message: "Could not find the function public.backup_tenant_tiered(p_keep, p_label, p_only_if_changed, p_tenant) in the schema cache" }
+        : { ok: true, data: { bytes: 5, table_count: 134 } },
+    });
+    const r = await runPerTenantBackup(d);
+    expect(r.missingFunction).toBe(false);
+    expect(r.failed).toBe(0);
+    expect(r.backed_up).toBe(2);
+  });
+
+  it("1st of the month: an unchanged personal tenant still gets its monthly off-site copy (from its newest snapshot)", async () => {
+    const since: Array<[string, Date]> = [];
+    const { d, uploads } = deps({
+      now: new Date("2026-09-30T18:30:00Z"),
+      listTenants: async () => ({ ok: true, data: WITH_PERSONAL }),
+      backupTenant: async (id) => id === P
+        ? { ok: true, data: { skipped: "unchanged", snapshot_id: "s-old" } }
+        : { ok: true, data: { bytes: 1, table_count: 134 } },
+      exportTenant: async (id, s) => { since.push([id, s]); return { ok: true, data: snap(id) }; },
+    });
+    await runPerTenantBackup(d);
+    expect(uploads.has(`monthly/2026-10/${P}.json`)).toBe(true);
+    expect(uploads.has(`daily/2026-10-01/${P}.json`)).toBe(false);
+    /* Newest snapshot of any age — the unchanged one is older than tonight's window. */
+    expect(since.find(([id]) => id === P)?.[1].getTime()).toBe(0);
   });
 });

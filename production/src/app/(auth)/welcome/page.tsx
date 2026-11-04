@@ -233,7 +233,7 @@ function WelcomeInner() {
           <FormField label="Company name" required htmlFor="companyName">
             <Input
               id="companyName"
-              placeholder="e.g. ANUTECH DIGITAL PVT LTD"
+              placeholder="e.g. Sharma Traders Pvt Ltd"
               value={companyName}
               onChange={(e) => setCompanyName(e.target.value)}
               helper="This creates a brand-new, empty company. Your teammates won't be in it."

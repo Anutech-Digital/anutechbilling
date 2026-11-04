@@ -94,6 +94,7 @@ import { paymentSortValues, PAY_ROW_ATTR } from "./payment-table";
 import { useRowOrder } from "./use-row-order";
 import { scopeToCustomer, paymentTotals, paymentsSummaryLine } from "./customer-scope";
 import { BookGatewayFeesButton, FeeNetLine } from "./gateway-fee";
+import { OnlineFeeReportButton } from "./online-fee-report";
 import { paymentFeeView } from "@/lib/razorpay/fee-expense";
 import { SuspendSubscriptionDialog } from "@/components/features/subscriptions/suspend-subscription-dialog";
 
@@ -384,6 +385,8 @@ function PaymentsPageInner() {
           </p>
         </div>
         <div className="flex gap-2 flex-wrap">
+          {/* R-2418: Razorpay fee recovered vs absorbed, per month and customer. */}
+          <OnlineFeeReportButton hasFees={(payments ?? []).some((p) => p.gateway_fee != null)} role={me?.role} />
           <BookGatewayFeesButton payments={payments} role={me?.role} />
           {canRecordMoney(me?.role) && (
             <Button icon="rupee" onClick={() => setMultiPayOpen(true)}>

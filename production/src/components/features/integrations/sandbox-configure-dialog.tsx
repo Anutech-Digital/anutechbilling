@@ -23,6 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { formatDate, isValidGstin } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { sandboxKeyKind, SANDBOX_DEFAULT_BASE, SANDBOX_TEST_BASE } from "@/lib/net/sandbox-base";
 
 interface Props {
   open: boolean;
@@ -58,7 +59,7 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
 
   const [apiKey,    setApiKey]    = React.useState("");
   const [apiSecret, setApiSecret] = React.useState("");
-  const [apiBase,   setApiBase]   = React.useState("https://api.sandbox.co.in");
+  const [apiBase,   setApiBase]   = React.useState(SANDBOX_DEFAULT_BASE);
   const [showKey,    setShowKey]    = React.useState(false);
   const [showSecret, setShowSecret] = React.useState(false);
   const [testing,   setTesting]   = React.useState(false);
@@ -140,9 +141,12 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
           description: "No Sandbox keys are saved yet. Enter the API key and secret above, click Save, then Test.",
         });
       } else {
+        /* R-2168: json.error carries Sandbox's own reason (e.g. "Use test API key for test environment") — never the secret. */
         toastError(json.error, {
           fallback: "Sandbox test failed.",
-          description: "Check the API key and secret match your Sandbox dashboard, save again, then Test.",
+          description: json.error
+            ? "Fix it above, Save, then Test again."
+            : "Check the API key and secret match your Sandbox dashboard, save again, then Test.",
         });
       }
     } catch (e) {
@@ -197,7 +201,12 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
                   className="font-mono"
                   placeholder="key_test_..."
                   value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
+                  onChange={(e) => {
+                    setApiKey(e.target.value);
+                    /* R-2168: the base URL follows the key — key_test_ → test address, key_live_ → live. */
+                    const kind = sandboxKeyKind(e.target.value);
+                    if (kind) setApiBase(kind === "test" ? SANDBOX_TEST_BASE : SANDBOX_DEFAULT_BASE);
+                  }}
                   autoComplete="off"
                 />
                 <Button type="button" variant="ghost" size="sm" onClick={() => setShowKey((v) => !v)} aria-label={showKey ? "Hide API key" : "Show API key"} aria-pressed={showKey}>
@@ -236,10 +245,10 @@ export default function SandboxConfigureDialog({ open, onOpenChange }: Props) {
                 className="font-mono"
                 value={apiBase}
                 onChange={(e) => setApiBase(e.target.value)}
-                placeholder="https://api.sandbox.co.in"
+                placeholder={SANDBOX_DEFAULT_BASE}
               />
               <p className="text-3xs text-ink-3 mt-1">
-                Default is fine. Override only for staging / on-prem deployments.
+                Set from your key: test keys (key_test_…) use {SANDBOX_TEST_BASE}, live keys (key_live_…) use {SANDBOX_DEFAULT_BASE}.
               </p>
             </div>
 

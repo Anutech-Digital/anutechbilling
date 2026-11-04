@@ -29,7 +29,8 @@ describe("quote page wiring (R-379 h, i, j)", () => {
     expect(src).not.toMatch(/customer record created/);
   });
   it("(i) 'Activate now, pay later' button sits in the unpaid action row behind the same showCredit gate", () => {
-    const i = src.indexOf("{showCredit && money.stage === \"unpaid\" && (");
+    /* R-2344: also hidden while the owner has not approved a below-cost quote (creditBlock). */
+    const i = src.indexOf("{showCredit && money.stage === \"unpaid\" && !creditBlock && (");
     expect(i).toBeGreaterThan(0);
     const block = src.slice(i, i + 400);
     expect(block).toMatch(/onClick=\{openActivateOnCredit\}/);

@@ -88,3 +88,54 @@ describe("scenario registry", () => {
     expect(() => sqlTextArray(["x'); drop table vendors; --"])).toThrow(/unsafe/);
   });
 });
+
+/* R-2458 — the scenarios the 4 Nov localhost checks needed (scripts/dev/scenarios/<name>.sql). */
+describe("R-2458 localhost-check scenarios", () => {
+  const NEW = ["customer-no-state", "usd-inw-lines", "lut-per-fy", "zero-ref-credits", "small-leftover",
+    "salary-part-paid", "nbfc-interest", "approved-quote", "connected-companies"];
+  const byName = new Map(SCENARIOS.map((s: { name: string }) => [s.name, s]));
+
+  it("all nine exist, each owning fixed ids its SQL really inserts", () => {
+    for (const n of NEW) {
+      const s = byName.get(n) as { scope: { extra: string[] } } | undefined;
+      expect(s, n).toBeTruthy();
+      const sql = readFileSync(join(PROD, "scripts/dev/scenarios", `${n}.sql`), "utf8");
+      expect(s!.scope.extra.length, n).toBeGreaterThan(0);
+      for (const id of s!.scope.extra) expect(sql, `${n}: ${id}`).toContain(`'${id}'`);
+    }
+  });
+
+  it("no two scenarios own the same id, and every expect has the same count keys (a fresh load is compared key by key)", () => {
+    const seen = new Map<string, string>();
+    for (const s of SCENARIOS as Array<{ name: string; scope: Record<string, string[]> }>) {
+      for (const id of [...s.scope.txns, ...(s.scope.extra ?? [])]) {
+        expect(seen.get(id), `${id} in ${s.name} and ${seen.get(id)}`).toBeUndefined();
+        seen.set(id, s.name);
+      }
+    }
+    const keys = (s: { expect: Record<string, number> }) => Object.keys(s.expect).sort().join(",");
+    for (const s of SCENARIOS) expect(keys(s), s.name).toBe(keys(SCENARIOS[0]));
+  });
+
+  it("a scenario needing a newer migration says which (skipped, not failed, on an older local DB)", () => {
+    const lut = byName.get("lut-per-fy") as { needs?: { sql: string; what: string } };
+    expect(lut.needs?.sql).toContain("to_regclass('public.tenant_luts')");
+    expect(lut.needs?.what).toMatch(/R-2444/);
+  });
+
+  it("writes only E2E Test Co rows and the second company it creates — never another tenant by name", () => {
+    for (const n of NEW) {
+      const sql = readFileSync(join(PROD, "scripts/dev/scenarios", `${n}.sql`), "utf8");
+      expect(sql, n).not.toMatch(/\b(drop|truncate)\b/i);
+      const updates = [...sql.matchAll(/update public\.(\w+)[\s\S]*?;/g)];
+      for (const m of updates) expect(m[0], n).toMatch(/:'tenant'/);
+    }
+  });
+
+  it("prints local URLs for the new pages", () => {
+    expect(pageUrl("localhost:3001", "quote:Q-SCN-NS-1")).toBe("http://localhost:3001/quotes/Q-SCN-NS-1");
+    expect(pageUrl("localhost:3001", "collections")).toBe("http://localhost:3001/collections");
+    expect(pageUrl("localhost:3001", "purchase-inbox")).toBe("http://localhost:3001/purchases/inbox");
+    expect(pageUrl("localhost:3001", "settings-network")).toBe("http://localhost:3001/settings?tab=network");
+  });
+});

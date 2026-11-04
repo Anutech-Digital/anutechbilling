@@ -42,6 +42,7 @@
  * approved".
  */
 import type { UserRole } from "@/lib/auth/roles";
+import { istToday } from "@/lib/dates/ist";
 
 export type ApprovalTier = "none" | "manager" | "owner";
 export type ApprovalStatus = "not_required" | "pending" | "approved" | "rejected";
@@ -99,6 +100,10 @@ export function marginBps(e: QuoteEconomics): number | null {
   return Math.round(((e.subtotal - e.totalCost) / e.subtotal) * 10_000);
 }
 
+/** The reason given when a line's cost is unknown. R-2028: screens name the line(s) in its
+ *  place (lib/quotes/missing-cost-reason.ts) — the rule itself is unchanged. */
+export const COST_UNKNOWN_REASON = "At least one line has no vendor cost, so the margin on this quote is unknown.";
+
 const fmtPct = (bps: number) => `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 2)}%`;
 
 /**
@@ -131,7 +136,7 @@ export function requiredApproval(e: QuoteEconomics): ApprovalRequirement {
   }
 
   if (e.costUnknown) {
-    reasons.push("At least one line has no vendor cost, so the margin on this quote is unknown.");
+    reasons.push(COST_UNKNOWN_REASON);
     raise("owner");
   } else if (mBps !== null && mBps < OWNER_MARGIN_FLOOR_BPS) {
     reasons.push(`Gross margin is ${fmtPct(mBps)} — below the ${fmtPct(OWNER_MARGIN_FLOOR_BPS)} floor.`);
@@ -158,6 +163,37 @@ export interface ApprovalRecord {
   approvedDiscountBps: number | null;
   approvedMarginBps: number | null;
   rejectionReason: string | null;
+  /** R-2367: everyone who made, revised, owns or asked approval for ANY quote of this
+   *  revision family (DB quote_chain_makers). None of them may approve it. Undefined = not
+   *  loaded yet; the server refuses them anyway (trg_quote_approval_not_by_maker). */
+  makers?: readonly string[];
+  /** R-2383: the sole owner's written reason when they approved their own quote
+   *  (quotes.approval_note). Null otherwise. */
+  note?: string | null;
+}
+
+/** R-2383: a sole owner's self-approval needs a written reason of at least this many characters
+ *  (the server trigger trg_quote_approval_not_by_maker enforces the same number). */
+export const SELF_APPROVAL_MIN_REASON = 10;
+
+/**
+ * R-2426 (Pardeep 3 Nov 2026 — replaces R-2383's "nobody else may approve this tier"): may this
+ * viewer clear a quote THEY made? Only when they are an owner AND no other active login of the
+ * company is an owner. Managers and other roles do not count, so the company's only owner
+ * decides at any tier. `team` = the company's ACTIVE logins; undefined = not loaded yet → no.
+ * The server trigger trg_quote_approval_not_by_maker applies the same rule.
+ */
+export function isSoleOwner(
+  viewer: { id: string; role: string | null | undefined },
+  team: readonly { id: string; role: string | null | undefined; access_ends_on?: string | null }[] | undefined,
+  /** IST today, YYYY-MM-DD (tests pass a fixed day). */
+  today: string = istToday(),
+): boolean {
+  if (viewer.role !== "owner" || !team) return false;
+  /* R-2441: an owner whose access has ended (users.access_ends_on before today, R-1896) is not a
+     second owner — the server (trg_quote_approval_not_by_maker) does not count them either. */
+  return !team.some((u) => u.id !== viewer.id && u.role === "owner"
+    && (u.access_ends_on == null || u.access_ends_on >= today));
 }
 
 /**
@@ -181,6 +217,14 @@ export function isStale(record: ApprovalRecord, now: ApprovalRequirement): boole
   /* Margin was known at approval and is not any more — the quote now contains
      something the approver could not have seen. */
   if (wasM !== null && nowM === null) return true;
+
+  /* R-2447 (review F1): no signed number while the quote's own number needs sign-off by itself
+     (discount over the auto-approve limit, margin under the owner floor) — nobody signed that (a
+     direct update could null the signed numbers and then reprice). A healthy number that became
+     known after an "unknown" sign-off (cost filled in later) does not void it. Same rule in the
+     DB: tg_quote_approval_not_by_maker sends such a line edit back to pending. */
+  if (wasD === null && nowD !== null && nowD > AUTO_APPROVE_DISCOUNT_BPS) return true;
+  if (wasM === null && nowM !== null && nowM < OWNER_MARGIN_FLOOR_BPS) return true;
 
   return false;
 }
@@ -206,10 +250,15 @@ export type SendGate =
  * Build it with eligibleApprovers() + approverSentence() in ./awaiting-approval, so the
  * banner and the approvals queue can never name different people.
  */
+/** R-2383/R-2426: the next step the company's only owner sees on their own quote. */
+export const SOLE_APPROVER_STEP = "As the only owner you may approve it yourself — open Review & decide and write why this price is OK.";
+
 export function canSend(
   record: ApprovalRecord,
   now: ApprovalRequirement,
   approvers?: string | null,
+  /** R-2383: the viewer is the company's only approver and may clear it with a reason. */
+  opts?: { selfApproval?: boolean },
 ): SendGate {
   if (now.tier === "none") return { allowed: true };
 
@@ -249,7 +298,9 @@ export function canSend(
          The queue exists now (Quotes → Awaiting my approval, and the sidebar count), so
          the sentence is true, and when the team is loaded it names the actual people
          instead of "the owner", of which this workspace has three. */
-      nextStep: approvers === null
+      nextStep: opts?.selfApproval
+        ? SOLE_APPROVER_STEP
+        : approvers === null
         ? "Nobody else in this workspace can approve it — you cannot approve your own quote. Add another owner, or ask an owner to raise it."
         : "It is in their approvals queue on the Quotes page. Nudge them if it is urgent.",
     };
@@ -259,7 +310,7 @@ export function canSend(
     allowed: false,
     tier: now.tier,
     reason: now.reasons[0] ?? `This quote needs ${who} to approve it.`,
-    nextStep: `Request approval — it goes to ${who}.`,
+    nextStep: opts?.selfApproval ? SOLE_APPROVER_STEP : `Request approval — it goes to ${who}.`,
   };
 }
 
@@ -268,16 +319,32 @@ export function canSend(
  *
  * The self-approval check comes FIRST and applies to every role including owner.
  * A rep who can approve their own quote has a checkbox, not an approval step.
+ * One exception (R-2383, widened by R-2426): the company's ONLY active owner may clear their
+ * own quote with a written reason (`selfApproval: true`), at any tier — managers do not count.
  */
 export function canApprove(
   viewer: { id: string; role: string | null | undefined },
   record: ApprovalRecord,
   now: ApprovalRequirement,
-): { allowed: boolean; reason?: string } {
+  /** R-2383: the company's ACTIVE logins (id + role). Undefined = not loaded → a maker is refused. */
+  team?: readonly { id: string; role: string | null | undefined }[],
+): { allowed: boolean; reason?: string; selfApproval?: boolean; ownQuote?: boolean } {
   if (now.tier === "none") return { allowed: false, reason: "This quote does not need approval." };
-  if (record.requestedBy && record.requestedBy === viewer.id) {
-    return { allowed: false, reason: "You cannot approve your own quote." };
+  const ownRequest = !!record.requestedBy && record.requestedBy === viewer.id;
+  /* R-2367: a revision (-R2) starts with no approval record, so requestedBy alone let the
+     person who made or revised the family approve the new copy. */
+  const madeIt = !!record.makers?.includes(viewer.id);
+  if (ownRequest || madeIt) {
+    /* R-2426: the company's only owner may clear it — with a written reason,
+       which the drawer asks for and the server insists on. Anyone else stays refused. */
+    if (isSoleOwner(viewer, team)) return { allowed: true, selfApproval: true };
+    /* R-2426: `ownQuote` lets the drawer say "ask ANOTHER owner", not "ask the owner". */
+    return ownRequest
+      ? { allowed: false, ownQuote: true, reason: "You cannot approve your own quote." }
+      : { allowed: false, ownQuote: true, reason: "You made or revised this quote (or an earlier version of it) — another approver must clear it." };
   }
+  /* R-2441: the server applies the same role-per-tier rule (trg_quote_approval_not_by_maker) —
+     an owner-tier or below-cost quote needs an owner, anything else an owner or manager. */
   if (!now.approvers.includes((viewer.role ?? "") as UserRole)) {
     return {
       allowed: false,

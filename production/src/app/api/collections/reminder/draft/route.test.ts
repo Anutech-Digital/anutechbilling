@@ -14,6 +14,8 @@ const st = vi.hoisted(() => ({
   email: "accounts@sharma.in" as string | null,
   apiKey: null as string | null,
   found: true,
+  twoBills: false,
+  upi: null as string | null,
   ai: vi.fn(),
 }));
 
@@ -34,15 +36,18 @@ vi.mock("@/lib/ai/gemini", () => ({
 }));
 vi.mock("@/lib/collections/reminder-draft.server", async (orig) => {
   const real = await orig<typeof import("@/lib/collections/reminder-draft.server")>();
-  const raw: ReminderRaw = {
+  const raw = (): ReminderRaw => ({
     customerName: "Sharma Traders", contactName: "Rahul", sellerName: "Anutech",
-    invoices: [{ id: "INV-101", amount: 68000, net_payable: 68000, paid_amount: 0, status: "overdue", invoice_date: "2026-09-20", due_date: "2026-10-05", quote_id: "Q-1" }],
+    invoices: [
+      { id: "INV-101", amount: 68000, net_payable: 68000, paid_amount: 0, status: "overdue", invoice_date: "2026-09-20", due_date: "2026-10-05", quote_id: "Q-1" },
+      ...(st.twoBills ? [{ id: "INV-105", amount: 5900, net_payable: 5900, paid_amount: 0, status: "pending", invoice_date: "2026-10-10", due_date: "2026-10-25", quote_id: null }] : []),
+    ],
     subscriptions: [], invoicedQuoteIds: new Set(), quoteTokens: new Map(), lastPromise: null,
-    upiVpa: null, upiPayeeName: null, origin: null,
-  };
+    upiVpa: st.upi, upiPayeeName: null, origin: null,
+  });
   return {
     ...real,
-    loadReminderRaw: async () => (st.found ? { raw, customer: { customerName: "Sharma Traders", phone: st.phone, email: st.email } } : null),
+    loadReminderRaw: async () => (st.found ? { raw: raw(), customer: { customerName: "Sharma Traders", phone: st.phone, email: st.email } } : null),
   };
 });
 vi.mock("@/lib/sentry", () => ({ Sentry: { captureException: vi.fn() } }));
@@ -57,7 +62,7 @@ const call = (body: unknown) =>
   }));
 
 beforeEach(() => {
-  st.role = "sales"; st.phone = null; st.email = "accounts@sharma.in"; st.apiKey = null; st.found = true; st.ai.mockReset();
+  st.role = "sales"; st.phone = null; st.email = "accounts@sharma.in"; st.apiKey = null; st.found = true; st.twoBills = false; st.upi = null; st.ai.mockReset();
 });
 
 describe("reminder draft route", () => {
@@ -105,5 +110,48 @@ describe("reminder draft route", () => {
   it("sales_senior can draft a reminder (200)", async () => {
     st.role = "sales_senior";
     expect((await call({ customerId: CUST })).status).toBe(200);
+  });
+
+  /* R-2412 — Send reminder → This invoice: ONE bill, its amount, its pay link. */
+  it("no line → the most overdue bill only; the picker lists every open bill", async () => {
+    st.twoBills = true; st.upi = "anutech@hdfcbank";
+    const j = await (await call({ customerId: CUST })).json();
+    expect(j.line).toEqual({ kind: "invoice", id: "INV-101" });
+    expect(j.amountDue).toBe(68000);
+    expect(j.payLink).toContain("am=68000");
+    expect(j.payLinkNotice).toBeNull();
+    expect(j.message).toContain(j.payLink);
+    expect(j.message).not.toContain("₹5,900");
+    expect(j.lines.map((l: { id: string }) => l.id)).toEqual(["INV-101", "INV-105"]);
+  });
+
+  it("line picked → that bill's amount and pay link; the follow-up is about it", async () => {
+    st.twoBills = true; st.upi = "anutech@hdfcbank";
+    const j = await (await call({ customerId: CUST, line: { kind: "invoice", id: "INV-105" } })).json();
+    expect(j.amountDue).toBe(5900);
+    expect(j.payLink).toContain("am=5900");
+    expect(j.about.invoiceId).toBe("INV-105");
+    expect(j.message.split("\n")[0]).toContain("₹5,900");
+  });
+
+  it("a bill that is no longer open → 409 with the next step, nothing drafted", async () => {
+    const res = await call({ customerId: CUST, line: { kind: "invoice", id: "INV-999" } });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/pick another bill/);
+  });
+
+  it("no UPI ID → no pay link, and the notice says what to do (§24)", async () => {
+    const j = await (await call({ customerId: CUST })).json();
+    expect(j.payLink).toBeNull();
+    expect(j.payLinkNotice.text).toMatch(/UPI ID in Settings/);
+  });
+
+  it("R-2413 bulk: standard: true → the plain template even with an AI key, no AI call, no 'no key' note", async () => {
+    st.apiKey = "k";
+    const j = await (await call({ customerId: CUST, standard: true })).json();
+    expect(j.mode).toBe("template");
+    expect(j.note).toBeNull();
+    expect(j.message.split("\n")[0]).toMatch(/₹68,000 is pending/);
+    expect(st.ai).not.toHaveBeenCalled();
   });
 });

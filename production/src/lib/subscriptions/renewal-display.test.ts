@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { term, rowTerm, renewalDistance, termValue, renewalClock } from "./renewal-display";
+import { term, rowTerm, renewalDistance, termValue, renewalClock, storedAnnual } from "./renewal-display";
 
 /* R-1774 (Pardeep, 23 Oct 2026): a CANCELLED subscription on staging read
    "Renewal 19 Oct 2026 · 4d overdue" in red. A closed subscription does not renew. */
@@ -147,5 +147,19 @@ describe("rowTerm — R-876", () => {
   });
   it("yearly (the column default) still defers to the span for old rows", () => {
     expect(rowTerm("yearly", "2026-10-01", "2026-10-31")!.label).toBe("Monthly");
+  });
+});
+
+/* R-2369: the row's own exact term amount is the yearly figure — no "about". */
+describe("termValue — R-2369 stored term amount", () => {
+  it("5 × ₹850/yr filed as mrr ₹355 shows ₹4,250 exact (the quote line round trip refused it)", () => {
+    expect(termValue(355, 12, 4_250)).toEqual({ amount: 4_260, exact: false });
+    const annual = storedAnnual({ term_amount: 4_250, term_months: 12 });
+    expect(termValue(355, 12, 4_250, annual)).toEqual({ amount: 4_250, exact: true });
+    expect(termValue(355, 3, null, annual)).toEqual({ amount: 1_063, exact: true });
+  });
+  it("no term amount → as before", () => {
+    expect(storedAnnual({ term_amount: null, term_months: 12 })).toBeNull();
+    expect(termValue(108, 12, null, storedAnnual({ term_amount: null }))).toEqual({ amount: 1_296, exact: false });
   });
 });

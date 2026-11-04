@@ -22,26 +22,53 @@ const st = vi.hoisted(() => ({
   tenantRow: null as Record<string, unknown> | null,
   sessionOk: true,
   sessionCalls: [] as Array<{ userId: string; email: string }>,
+  /* R-2119: the personal door */
+  appMeta: {} as Record<string, unknown>,
+  routeCalls: 0,
+  inserts: [] as Array<{ table: string; row: Record<string, unknown> }>,
+  updates: [] as Array<{ table: string; row: Record<string, unknown>; where: Record<string, unknown> }>,
+  linkCalls: [] as Array<[string, string]>,
 }));
 
 vi.mock("@/lib/app-url", () => ({ trustedOrigin: () => "http://localhost:3001" }));
 vi.mock("@/lib/auth/email-verification", () => ({ confirmEmailToken: async () => st.confirm }));
-vi.mock("@/lib/auth/tenant-match", () => ({ routeVerifiedSignupToCompany: async () => st.routed }));
+vi.mock("@/lib/auth/tenant-match", () => ({ routeVerifiedSignupToCompany: async () => { st.routeCalls++; return st.routed; } }));
 vi.mock("@/server/auth/email-link", () => ({
   startSessionAfterVerify: async (a: { userId: string; email: string }) => { st.sessionCalls.push(a); return st.sessionOk; },
+}));
+vi.mock("@/lib/personal/identity-link.server", () => ({
+  linkPersonalIdentity: async (u: string, t: string) => {
+    st.linkCalls.push([u, t]);
+    return { ok: true, status: "linked", customerId: "c1", customerCreated: true, panelQueued: true, supportQueued: true };
+  },
 }));
 vi.mock("@/lib/supabase/server", () => {
   const chain = (table: string) => {
     const self: Record<string, unknown> = {};
+    const where: Record<string, unknown> = {};
+    let pendingUpdate: Record<string, unknown> | null = null;
     self.select = () => self;
-    self.eq = () => self;
+    self.eq = (c: string, v: unknown) => { where[c] = v; return self; };
+    self.is = (c: string, v: unknown) => { where[c] = v; return self; };
     self.maybeSingle = async () => ({ data: table === "users" ? st.userRow : table === "tenants" ? st.tenantRow : null, error: null });
+    self.insert = (row: Record<string, unknown>) => {
+      st.inserts.push({ table, row });
+      if (table === "users") st.userRow = { id: row.id, tenant_id: row.tenant_id, role: row.role };
+      if (table === "tenants") st.tenantRow = { id: row.id, setup_completed_at: null };
+      return Promise.resolve({ error: null });
+    };
+    self.update = (row: Record<string, unknown>) => { pendingUpdate = row; return self; };
+    self.delete = () => self;
+    self.then = (res: (v: unknown) => unknown) => {
+      if (pendingUpdate) st.updates.push({ table, row: pendingUpdate, where: { ...where } });
+      return Promise.resolve({ data: null, error: null }).then(res);
+    };
     return self;
   };
   return {
     createAdminClient: () => ({
       from: (t: string) => chain(t),
-      auth: { admin: { getUserById: async () => ({ data: { user: { user_metadata: { full_name: "Asha Rao" } } } }) } },
+      auth: { admin: { getUserById: async () => ({ data: { user: { user_metadata: { full_name: "Asha Rao" }, app_metadata: st.appMeta } } }) } },
     }),
   };
 });
@@ -63,6 +90,78 @@ beforeEach(() => {
   st.tenantRow = { id: TENANT, setup_completed_at: null };
   st.sessionOk = true;
   st.sessionCalls = [];
+  st.appMeta = {};
+  st.routeCalls = 0;
+  st.inserts = [];
+  st.updates = [];
+  st.linkCalls = [];
+  vi.unstubAllEnvs();
+});
+
+/* R-2119 (GP-05, G-PERSONAL): the confirm link is where a password personal signup gets its
+   workspace — never before (signup made only the login + consent). Before this card verify-email
+   only routed by domain and signed in someone who ALREADY had a users row, so a personal signup
+   would have stayed with no workspace (or been parked on a company's join request). */
+describe("R-2119: verify creates the personal workspace", () => {
+  const personalSignup = () => {
+    vi.stubEnv("PERSONAL_SIGNUP_ENABLED", "1");
+    st.appMeta = { signup_kind: "personal" };
+    st.userRow = null;
+    st.tenantRow = null;
+    st.confirm = { ok: true, email: "meera@gmail.com", userId: UID };
+  };
+
+  it("1 personal tenant (name = full name, no GSTIN/state/business type), role personal, consent attached, link made, lands on /money", async () => {
+    personalSignup();
+    const j = await (await post()).json();
+    const tenants = st.inserts.filter((i) => i.table === "tenants").map((i) => i.row);
+    const users = st.inserts.filter((i) => i.table === "users").map((i) => i.row);
+    expect(tenants).toHaveLength(1);
+    expect(tenants[0]).toMatchObject({ name: "Asha Rao", workspace_kind: "personal", gstin: null, business_type: null, email: "meera@gmail.com" });
+    expect(tenants[0]).not.toHaveProperty("state");
+    expect(users).toHaveLength(1);
+    expect(users[0]).toMatchObject({ id: UID, tenant_id: tenants[0].id, role: "personal" });
+    expect(st.inserts.some((i) => i.table === "tenant_domains")).toBe(false);
+    const consent = st.updates.find((u) => u.table === "consent_events");
+    expect(consent).toMatchObject({ row: { tenant_id: tenants[0].id }, where: { user_id: UID, tenant_id: null } });
+    expect(st.linkCalls).toEqual([[UID, tenants[0].id]]);
+    expect(j).toMatchObject({ ok: true, signedIn: true, next: "/money", joinRequestedTo: null });
+  });
+
+  it("a work-email personal signup is NEVER routed to that company's join request", async () => {
+    personalSignup();
+    st.routed = { tenantName: "Rao Traders" };
+    const j = await (await post()).json();
+    expect(st.routeCalls).toBe(0);
+    expect(j.joinRequestedTo).toBeNull();
+    expect(j.next).toBe("/money");
+  });
+
+  it("a person who already has a users row gets no second workspace", async () => {
+    personalSignup();
+    st.userRow = { id: UID, tenant_id: TENANT, role: "personal" };
+    st.tenantRow = { id: TENANT, setup_completed_at: null };
+    const j = await (await post()).json();
+    expect(st.inserts).toEqual([]);
+    expect(j.next).toBe("/money");
+  });
+
+  it("with the flag off, nothing is created for a personal signup", async () => {
+    personalSignup();
+    vi.stubEnv("PERSONAL_SIGNUP_ENABLED", "");
+    const j = await (await post()).json();
+    expect(st.inserts).toEqual([]);
+    expect(st.linkCalls).toEqual([]);
+    expect(j.signedIn).toBe(false);
+  });
+
+  it("a business signup is untouched: routed by domain as before, no personal workspace", async () => {
+    vi.stubEnv("PERSONAL_SIGNUP_ENABLED", "1");
+    await post();
+    expect(st.routeCalls).toBe(1);
+    expect(st.inserts).toEqual([]);
+    expect(st.linkCalls).toEqual([]);
+  });
 });
 
 describe("R-1926 confirm link → signed in → setup", () => {

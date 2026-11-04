@@ -9,8 +9,10 @@
  *   2. subscription.seats incremented immediately + mrr recomputed
  *   3. Quote created for the pro-rata billing (sent, awaiting payment)
  *
- * Body: { additional_seats: 1..5000, idempotency_key: string, effective_date?: "YYYY-MM-DD" }
- * Returns: { quoteId, amount, proRataDays, effectiveDate, newSeats, newMrr }
+ * Body: { additional_seats: 1..5000, idempotency_key: string, effective_date?: "YYYY-MM-DD",
+ *         draft_purchase_order?: boolean }
+ * Returns: { quoteId, amount, proRataDays, effectiveDate, newSeats, newMrr, poId }
+ * R-2372: a draft PO is written only when draft_purchase_order is true.
  *
  * R-800: effective_date is when the seats were actually provisioned — default today, may be
  * backdated to the current term's start, never in the future. The pro-rata charge runs from
@@ -42,6 +44,7 @@ import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 import { applySeatIncrease, SEAT_INCREASE_SELECT } from "@/lib/subscriptions/apply-seat-increase";
 import { checkSeatEffectiveDate } from "@/lib/subscriptions/seat-effective-date";
 import { istToday } from "@/lib/dates/ist";
+import { MAX_TYPED_SEAT_RATE } from "@/lib/subscriptions/seat-rate-check";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -53,6 +56,12 @@ const bodySchema = z.object({
   idempotency_key: z.string().trim().min(8, "idempotency_key must be at least 8 characters").max(128),
   /* R-800: optional — absent means today. Range is checked against the subscription below. */
   effective_date: z.string().trim().max(10).optional().nullable(),
+  /* R-2292: ₹/seat/year typed for THIS quote only — whole rupees above 0. Absent = the
+     subscription's rate. The subscription's stored rate is never changed by it. */
+  annual_rate_per_seat: z.number().int("The rate must be whole rupees").min(1, "The rate must be above ₹0").max(MAX_TYPED_SEAT_RATE).optional().nullable(),
+  /* R-2372: "Also draft a purchase order" ticked in Manage seats. Absent / false = no PO —
+     a seat change used to draft one silently (staging, 2 Nov). */
+  draft_purchase_order: z.boolean().optional(),
 });
 
 /**
@@ -70,7 +79,7 @@ const UNIQUE_VIOLATION = "23505";
  * so the claim is kept as `failed` and a replay reports the half-done state instead of
  * raising a second quote on top of the first.
  */
-const WROTE_NOTHING = new Set(["invalid_seats", "invalid_effective_date", "no_renewal_date", "term_ended", "no_doc_number", "insert_failed"]);
+const WROTE_NOTHING = new Set(["invalid_seats", "invalid_rate", "invalid_effective_date", "no_renewal_date", "term_ended", "no_doc_number", "insert_failed"]);
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -213,6 +222,9 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     graceDays: tenant?.grace_period_days ?? 7,
     effectiveDate: effective.date,
     effectiveDateSetBy: me.full_name?.trim() || me.email || null,
+    requestedBy: authData.user.id,
+    annualPerSeatOverride: parsed.data.annual_rate_per_seat ?? null,
+    draftPurchaseOrder: parsed.data.draft_purchase_order === true,
   });
 
   if (!result.ok) {

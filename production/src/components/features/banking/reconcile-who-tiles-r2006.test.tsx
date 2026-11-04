@@ -26,6 +26,18 @@ vi.mock("@/lib/queries/customer-payers", () => ({
   useSetBankLinePayer: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+/* R-2325: no suggested expense is reconciled elsewhere here (that read is tested in reconcile-suggestions-reconciled-r2325). */
+vi.mock("@/lib/banking/reconciled-suggestions", async (orig) => ({
+  ...(await orig<typeof import("@/lib/banking/reconciled-suggestions")>()),
+  useReconciledExpenseIds: () => ({ data: new Set<string>(), isLoading: false }),
+}));
+/* R-2361: "Mark reconciled manually" opens a confirm that needs a reason (manual-reconcile-dialog.test.tsx). */
+const r2361 = vi.hoisted(() => ({ save: vi.fn() }));
+vi.mock("@/lib/banking/manual-reconcile", async (orig) => ({
+  ...(await orig<typeof import("@/lib/banking/manual-reconcile")>()),
+  useReconcileManually: () => ({ mutateAsync: r2361.save, isPending: false }),
+  useReversalCandidates: () => ({ data: [], isLoading: false }),
+}));
 vi.mock("@/lib/queries/bank", () => ({
   useSuggestMatches: () => ({ data: state.suggestions, isLoading: false }),
   useReconcileTransaction: () => ({ mutateAsync: state.reconcile, isPending: false }),
@@ -52,6 +64,7 @@ vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ 
 vi.mock("@/lib/queries/referral-commissions", () => ({ useReferralCommissions: () => ({ data: [] }) }));
 vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: { businessType: "pvt_ltd" } }) }));
 vi.mock("@/components/features/customers/add-customer-form", () => ({ AddCustomerForm: () => null }));
+vi.mock("@/components/features/banking/credit-line-section", () => ({ CreditLineSection: () => null }));   // R-2374
 vi.mock("@/components/features/banking/project-payment-section", () => ({ ProjectPaymentSection: () => null }));
 /* R-2007's Suggestion card has its own test (reconcile-suggestion-r2007.test.tsx); none here. */
 vi.mock("@/components/features/banking/reconcile-suggestion-card", () => ({
@@ -63,12 +76,16 @@ vi.mock("@/components/features/banking/credit-pay-for-section", () => ({
   CreditPayForSection: () => <section aria-label="Customer payment form">Who paid?</section>,
 }));
 vi.mock("@/components/features/banking/owner-equity-section", () => ({ OwnerEquitySection: () => null }));
+/* R-2095: the transfer / other-income sections have their own tests (own-transfer-section-r2095). */
+vi.mock("@/components/features/banking/other-income-section", () => ({ OtherIncomeSection: () => null }));
+vi.mock("@/components/features/banking/own-transfer-section", () => ({ OwnTransferSection: () => null }));
 vi.mock("@/components/features/banking/incentive-from-bank-section", () => ({ IncentiveFromBankSection: () => null }));
 /* Money in with no advance to return → the real section renders nothing. */
 vi.mock("@/components/features/banking/employee-advance-bank-section", () => ({ EmployeeAdvanceBankSection: () => null }));
 vi.mock("@/components/features/banking/emi-repayment-section", () => ({
   EmiRepaymentSection: () => <section aria-label="EMI form">EMI</section>,
 }));
+vi.mock("@/components/features/banking/loan-given-receipt-section", () => ({ LoanGivenReceiptSection: () => null }));   // R-2340
 vi.mock("@/components/features/banking/debit-pay-for-section", async () => {
   const R = await import("react");
   return {
@@ -112,7 +129,7 @@ describe("R-2006 Reconcile sheet — 'Who is this money for?' tiles", () => {
     cleanup();
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={moneyOut} />);
     expect(tiles().map((t) => within(t).getByText(/./, { selector: "span.truncate" }).textContent)).toEqual([
-      "Vendor", "Employee / salary", "Owner", "Loan / EMI", "Tax / GST / TDS", "Own transfer", "Bank charge / other",
+      "Vendor", "Employee / salary", "Owner", "Loan / EMI", "Tax / GST / TDS", "Customer refund", "Own transfer", "Bank charge / other",
     ]);
     expect(tiles().every((t) => t.getAttribute("aria-checked") === "false")).toBe(true);
   });
@@ -130,7 +147,7 @@ describe("R-2006 Reconcile sheet — 'Who is this money for?' tiles", () => {
     expect(screen.queryByRole("region", { name: "Paying a vendor" })).toBeNull(); // mounted but hidden
     expect(screen.queryByRole("radiogroup")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Change who this money is for" }));
-    expect(tiles()).toHaveLength(7);
+    expect(tiles()).toHaveLength(8);
     expect(screen.queryByRole("region", { name: "EMI form" })).toBeNull();
   });
 
@@ -147,11 +164,17 @@ describe("R-2006 Reconcile sheet — 'Who is this money for?' tiles", () => {
     expect(state.bookExpense).toHaveBeenCalledWith(expect.objectContaining({ transactionId: "d1", category: "Bank Charges" }));
   });
 
-  it("Own transfer: the footer's Save marks the line reconciled manually", () => {
+  it("Own transfer: the footer's Save asks for a reason first, then marks the line reconciled manually (R-2361)", async () => {
+    r2361.save.mockReset(); r2361.save.mockResolvedValue({});
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={moneyIn} />);
     fireEvent.click(screen.getByRole("radio", { name: /Own transfer/ }));
     fireEvent.click(within(footer()).getByRole("button", { name: "Mark reconciled manually" }));
-    expect(state.reconcile).toHaveBeenCalledWith(expect.objectContaining({ transactionId: "c1", matchedToType: "manual" }));
+    expect(state.reconcile).not.toHaveBeenCalled();
+    expect(r2361.save).not.toHaveBeenCalled();
+    fireEvent.change(screen.getByLabelText("Reason (required)"), { target: { value: "Own transfer from savings" } });
+    fireEvent.click(screen.getByRole("button", { name: "Mark reconciled" }));
+    await vi.waitFor(() => expect(r2361.save).toHaveBeenCalledWith({ transactionId: "c1", reason: "Own transfer from savings", reversalId: null }));
+    expect(state.reconcile).not.toHaveBeenCalled();
   });
 
   it("no match → one small line, no 'Suggested matches' box; a match → the list shows", () => {
@@ -174,8 +197,8 @@ describe("R-2006 Reconcile sheet — 'Who is this money for?' tiles", () => {
     expect(document.activeElement).toBe(t[1]);
     fireEvent.keyDown(t[1], { key: "ArrowLeft" });
     fireEvent.keyDown(t[0], { key: "ArrowLeft" });
-    expect(document.activeElement).toBe(t[6]);
-    fireEvent.click(t[6]);
+    expect(document.activeElement).toBe(t[7]);
+    fireEvent.click(t[7]);
     expect(screen.getByLabelText("Expense category")).toBeTruthy();
   });
 

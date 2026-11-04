@@ -7,7 +7,8 @@ import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import fs from "node:fs";
 import path from "node:path";
-import { SubsInsightsStrip, INSIGHTS_OPEN_KEY } from "./subs-insights-strip";
+import { SubsInsightsStrip, INSIGHTS_STRIP_ID } from "./subs-insights-strip";
+import { kpiStripKey } from "@/components/shared/collapsible-kpi-strip";
 
 /* jsdom here has no working localStorage — an in-memory stand-in (same as attendance-reminder.test). */
 const mem = new Map<string, string>();
@@ -25,6 +26,7 @@ afterEach(cleanup);
 beforeEach(() => mem.clear());
 
 const counts = {
+  userId: "u-1",
   mrr: 8640, arr: 103680, seats: "10 seats licensed",
   marginAtRisk: 2, marginUnchecked: 1,
   leakingMonthly: 1200, leakingCount: 1, neverReconciled: 3,
@@ -46,7 +48,7 @@ describe("R-1727 SubsInsightsStrip", () => {
     render(<SubsInsightsStrip {...counts}><p>BOXES</p></SubsInsightsStrip>);
     fireEvent.click(screen.getByRole("button", { name: /Insights/ }));
     expect(screen.getByText("BOXES")).toBeDefined();
-    expect(window.localStorage.getItem(INSIGHTS_OPEN_KEY)).toBe("open");
+    expect(window.localStorage.getItem(kpiStripKey(INSIGHTS_STRIP_ID, "u-1")!)).toBe("open");
     cleanup();
     render(<SubsInsightsStrip {...counts}><p>BOXES</p></SubsInsightsStrip>);
     expect(screen.getByText("BOXES")).toBeDefined();

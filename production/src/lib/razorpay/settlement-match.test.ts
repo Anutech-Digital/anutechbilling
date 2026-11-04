@@ -147,3 +147,52 @@ describe("buildSettlementPlan", () => {
     expect(plan.payments[1].paymentIds).toEqual(["a2a", "a2b"]);
   });
 });
+
+/* R-2099 staging bug (30 Oct 2026): every real line said "The settlement is ₹2,535 but this bank
+   line is ₹2,535. This is not the right settlement". Razorpay's fee is 2% + 18% GST, so a real
+   settlement carries paise (₹2,534.73 here), while the bank import stores whole rupees
+   (statement-parse parseAmount rounds) — the line was ₹2,535 and the paise compare never met. */
+describe("real-shaped settlement with paise vs a whole-rupee bank line", () => {
+  // Razorpay JSON shapes: every amount in paise; fee includes its GST.
+  const settlementJson = { id: "setl_RealP4ise", entity: "settlement", amount: 253473, status: "processed", fees: 6127, tax: 935, utr: "AXISCN0099887", created_at: 1792474200 };
+  const reconJson = [
+    { entity_id: "pay_Real1", type: "payment", amount: 118000, fee: 2785, tax: 425, debit: 0, credit: 115215, settlement_id: "setl_RealP4ise", order_id: "order_R1", method: "upi", created_at: 1792300000 },
+    { entity_id: "pay_Real2", type: "payment", amount: 141600, fee: 3342, tax: 510, debit: 0, credit: 138258, settlement_id: "setl_RealP4ise", order_id: "order_R2", method: "card", created_at: 1792300500 },
+  ];
+  const s: RzpSettlement = { id: settlementJson.id, amount: settlementJson.amount, fees: settlementJson.fees, tax: settlementJson.tax, utr: settlementJson.utr, status: settlementJson.status, created_at: settlementJson.created_at };
+  const its = reconJson.map((r) => ({ ...r, payment_id: null, description: null })) as RzpReconItem[];
+  const bank: BankLine = {
+    id: "L9", credit: 2535, txn_date: "2026-10-20", reference: null,
+    description: "NEFT CR-UTIB0001506-RAZORPAY PAYMENTS PVT LTD PAYMENT AGGREGATOR ESCR-AXISCN0099887",
+  };
+  const apps = [app("r1", "pay_Real1", 1180), app("r2", "pay_Real2", 1416)];
+
+  it("the whole-rupee bank line is the right settlement — ready, no blocker", () => {
+    const plan = buildSettlementPlan({ line: bank, settlement: s, items: its, byReference: apps, byOrder: {}, pool: [] });
+    expect(plan.blockers).toEqual([]);
+    expect(plan.ready).toBe(true);
+    expect(plan.totals).toMatchObject({ gross: 2596, fee: 61, feeGst: 9, net: 2535, bank: 2535 });
+  });
+
+  it("fee + GST go to the database in Razorpay's paise, untouched", () => {
+    const plan = buildSettlementPlan({ line: bank, settlement: s, items: its, byReference: apps, byOrder: {}, pool: [] });
+    expect(plan.rpcArg).toMatchObject({ fee_paise: 6127, tax_paise: 935 });
+    expect(plan.rpcArg?.payments.map((p) => p.amount_paise)).toEqual([118000, 141600]);
+    // what reconcile_razorpay_settlement derives: cash − bank = the fee, within its tolerance
+    expect(plan.totals.gross - plan.totals.bank).toBe(Math.round(6127 / 100));
+  });
+
+  it("found by amount too when the line carries no UTR, and with the statement's paise", () => {
+    expect(pickSettlement({ ...bank, description: "RAZORPAY PAYMENTS PVT LTD" }, [s])).toMatchObject({ kind: "found", by: "amount" });
+    expect(pickSettlement({ ...bank, credit: 2534.73, description: "RAZORPAY" }, [s])).toMatchObject({ kind: "found", by: "amount" });
+    const exact = buildSettlementPlan({ line: { ...bank, credit: 2534.73 }, settlement: s, items: its, byReference: apps, byOrder: {}, pool: [] });
+    expect(exact.ready).toBe(true);
+  });
+
+  it("a rupee off is still the wrong settlement", () => {
+    const off = buildSettlementPlan({ line: { ...bank, credit: 2534 }, settlement: s, items: its, byReference: apps, byOrder: {}, pool: [] });
+    expect(off.ready).toBe(false);
+    expect(off.blockers.join(" ")).toMatch(/not the right settlement/);
+    expect(pickSettlement({ ...bank, credit: 2534, description: "RAZORPAY" }, [s])).toEqual({ kind: "none" });
+  });
+});

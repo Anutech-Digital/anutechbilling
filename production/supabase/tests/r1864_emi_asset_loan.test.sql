@@ -51,9 +51,10 @@ insert into auth.users (id, email) values
 insert into public.users (id, tenant_id, email, full_name, role, created_at) values
   ('aaaaaaaa-0000-0000-0000-000000186401','dddddddd-0000-0000-0000-000000186401','owner1864@example.in','Owner 1864','owner', now() - interval '1 day'),
   ('aaaaaaaa-0000-0000-0000-000000186402','dddddddd-0000-0000-0000-000000186401','sales1864@example.in','Sales 1864','sales', now() - interval '1 day');
-insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance) values
-  ('bbbbbbbb-0000-0000-0000-000000186401','dddddddd-0000-0000-0000-000000186401','HDFC Current','HDFC', 500000),
-  ('bbbbbbbb-0000-0000-0000-000000186402','dddddddd-0000-0000-0000-000000186402','Other bank','SBI', 0);
+-- R-2395: a down payment cannot come from an account opened after it — open them on 1 Apr 2026.
+insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance, opening_balance_date) values
+  ('bbbbbbbb-0000-0000-0000-000000186401','dddddddd-0000-0000-0000-000000186401','HDFC Current','HDFC', 500000, '2026-04-01'),
+  ('bbbbbbbb-0000-0000-0000-000000186402','dddddddd-0000-0000-0000-000000186402','Other bank','SBI', 0, '2026-04-01');
 
 create temp table r1864_sched as select '[
  {"seq":1,"due_on":"2026-11-05","emi":8979,"principal":7812,"interest":1167,"balance_after":92188},

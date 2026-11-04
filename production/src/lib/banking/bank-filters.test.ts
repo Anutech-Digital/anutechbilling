@@ -290,3 +290,19 @@ describe("active chips, remove one, clear all", () => {
     expect(chip({ from: "2026-09-01" })).toBe(`From ${formatDate("2026-09-01")}`);
   });
 });
+
+describe("R-2322 customer refund line", () => {
+  it("is in the Customer group, not Other", () => {
+    expect(matchGroupOf("customer_refund")).toBe("customer");
+  });
+});
+
+describe("R-2360 Money in · Zoho has a match", () => {
+  it("the page's Zoho set filters and counts like the other needs-attention lists; no set → nothing", () => {
+    const ctx = { sets: { zoho_match: new Set(["in-sep-open", "in-oct-open"]) } };
+    expect(ids(applyBankFilters(L, f({ need: "zoho_match" }), ctx))).toEqual(["in-oct-open", "in-sep-open"]);
+    expect(ids(applyBankFilters(L, f({ need: "zoho_match", from: "2026-10-01" }), ctx))).toEqual(["in-oct-open"]);
+    expect(facetCounts(L, f({}), ctx).need.zoho_match).toBe(2);
+    expect(applyBankFilters(L, f({ need: "zoho_match" }))).toHaveLength(0);
+  });
+});

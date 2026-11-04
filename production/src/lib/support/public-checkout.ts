@@ -17,7 +17,8 @@
  * the quote is billing_cycle 'monthly' like the Workspace monthly (flex) order (R-1974).
  */
 import { z } from "zod";
-import { annualSaving, supportTier, type SupportTier } from "./tiers";
+import { annualSaving, supportTier, tierFromPlanName, type SupportTier, type SupportTierId } from "./tiers";
+import { parseSupportTierSku } from "./pro-rata-upgrade";
 
 export const SUPPORT_BUY_PLANS = ["standard", "enterprise"] as const;
 export type SupportBuyPlan = (typeof SUPPORT_BUY_PLANS)[number];
@@ -190,3 +191,40 @@ export const SUPPORT_OWNER_ACTION =
   "  The plan reaches the support desk on its own (the support-sync job runs every 5 minutes).\n" +
   "  If the customer still shows Free there after 15 minutes, check that job's automation switch\n" +
   "  and DSP_SUPPORT_URL / DSP_WEBHOOK_SECRET.";
+
+/* ── R-2102: an existing customer opens /buy/support from the support desk ─────────────── */
+
+export interface SupportSubRow {
+  item_id: string | null;
+  plan: string | null;
+  status: string;
+  renewal_date: string | null;
+}
+
+const TIER_RANK: Record<SupportTierId, number> = { free: 0, standard: 1, enterprise: 2 };
+
+/**
+ * The customer's live support plan: the best tier among their support subscriptions that are
+ * not cancelled (the same rule as the desk sync, migration r2102). The catalogue SKU decides
+ * the tier; the plan name (which carries the seller's company name) only when there is no SKU.
+ */
+export function currentSupportPlan(subs: readonly SupportSubRow[]): { tier: SupportTierId; paidUntil: string | null } {
+  let best: { tier: SupportTierId; paidUntil: string | null } = { tier: "free", paidUntil: null };
+  for (const s of subs) {
+    if (s.status === "cancelled") continue;
+    const tier = parseSupportTierSku(s.item_id)?.tier ?? tierFromPlanName(s.plan);
+    if (TIER_RANK[tier] > TIER_RANK[best.tier]) best = { tier, paidUntil: s.renewal_date };
+  }
+  return best;
+}
+
+/** The plans this page offers someone on `current`: only the higher ones, cheapest first. */
+export function plansOnOffer(current: SupportTierId): SupportBuyPlan[] {
+  return SUPPORT_BUY_PLANS.filter((p) => TIER_RANK[p] > TIER_RANK[current]);
+}
+
+/** The thanks page heading — "Enterprise Support plan", never the seller-prefixed line name. */
+export function supportPlanHeading(quotePlan: string | null | undefined): string {
+  const m = /^support-(standard|enterprise)$/.exec(quotePlan ?? "");
+  return m ? `${supportTier(m[1] as SupportBuyPlan).label} Support plan` : "Support plan";
+}

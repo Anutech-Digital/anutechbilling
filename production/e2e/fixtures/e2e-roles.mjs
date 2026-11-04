@@ -25,6 +25,23 @@ export const E2E_VENDOR_GSTIN = "27AAACV2053E1Z1"; // format-valid, synthetic
 /** @type {readonly ["owner", "manager", "sales", "accountant"]} */
 export const E2E_ROLES = /** @type {const} */ (["owner", "manager", "sales", "accountant"]);
 
+/**
+ * R-2318: extra LOCAL-only test logins, seeded when their password is set and skipped when it
+ * is not — so CI (preflight, suite-health, the specs) never needs a new secret for them.
+ * "owner2" is a SECOND owner of the same company: R-2213's below-cost approval must come from
+ * an owner who did not raise the quote, and a check on localhost needs two owners for that.
+ * @type {readonly ["owner2"]}
+ */
+export const E2E_LOCAL_EXTRA_ROLES = /** @type {const} */ (["owner2"]);
+
+/**
+ * The users.role a test login is seeded with ("owner2" is an owner).
+ * @param {string} role
+ */
+export function roleDbRole(role) {
+  return role === "owner2" ? "owner" : role;
+}
+
 /** @param {string} role */
 export function roleEnvNames(role) {
   const R = role.toUpperCase();

@@ -19,13 +19,17 @@ import { entityProfile } from "@/lib/compliance/entity";
 
 export type OwnerEquityKind = "drawings" | "capital_introduced";
 
+/** R-2395: what an entry with no account shows — an asset's down payment the owner paid himself. */
+export const PAID_DIRECTLY = "Paid directly by the owner (asset down payment)";
+
 export interface OwnerEquityMovement {
   id: string;
   kind: OwnerEquityKind;
   movement_date: string;      // YYYY-MM-DD
   amount: number;             // whole rupees, > 0
-  bank_account_id: string;
-  bank_txn_id: string;
+  /** R-2395: null only for an EMI down payment the owner paid directly (capital, no bank line). */
+  bank_account_id: string | null;
+  bank_txn_id: string | null;
   /** true = the app added the cash line (recorded by hand); false = a statement line booked from Banking. */
   own_line: boolean;
   partner_name: string | null;
@@ -184,7 +188,7 @@ export function drawingsRegisterCsv(
     m.movement_date,
     m.kind === "drawings" ? words.drawings : words.capital,
     ...(words.needsPartner ? [m.partner_name ?? ""] : []),
-    accountName(m.bank_account_id),
+    m.bank_account_id ? accountName(m.bank_account_id) : PAID_DIRECTLY,
     m.kind === "capital_introduced" ? m.amount : "",
     m.kind === "drawings" ? m.amount : "",
     m.note ?? "",

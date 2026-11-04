@@ -19,14 +19,15 @@ describe("renewalForecast", () => {
     expect(f.totalAmount).toBe(108552);
   });
 
-  it("FLEX (term 1 mahina) jod me NAHI — alag run-rate me (aaj hi ka 12× sabak)", () => {
+  it("R-2431: FLEX (term 1 mahina, billed monthly) jod me HAI — har mahine ek part, 12× nahi", () => {
     const f = renewalForecast(
-      [sub({ term_months: 1, mrr: 4875 }), sub({ mrr: 1000, renewal_date: "2026-09-20" })],
+      [sub({ term_months: 1, billing_cycle: "monthly", mrr: 4875 }), sub({ mrr: 1000, renewal_date: "2026-09-20" })],
       "2026-09-01",
     );
-    expect(f.flexMonthlyRunRate).toBe(4875);
     expect(f.flexCount).toBe(1);
-    expect(f.totalAmount).toBe(12000); // sirf annual wala
+    // flex from 15 Oct: Oct 2026 .. Feb 2027 = 5 parts of ₹4,875; annual ₹12,000 in Sep
+    expect(f.totalAmount).toBe(12000 + 5 * 4875);
+    expect(f.months[1].amount).toBe(4875);
   });
 
   it("horizon ke bahar / cancelled / bina-tareekh ke bahar rehte hain", () => {

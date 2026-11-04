@@ -50,7 +50,7 @@ export interface BsRawRows {
   loans: { id: string; principal: N }[];
   loanReps: { amount: N }[];
   advs: { total_amount: N; consumed_amount: N }[];
-  emiP: { id: string; total_cost: N; financed: N }[];
+  emiP: { id: string; total_cost: N; financed: N; kind?: string | null }[];
   emiPay: { principal_part: N }[];
   fa: (AssetLike & { emi_purchase_id: string | null })[];
   bizLoans: { id: string; principal: N }[];
@@ -73,11 +73,15 @@ export interface BsRawRows {
 export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSheetAuto {
   let cashAndBank = 0;
   let creditCardPayable = 0;
+  let bankOverdraft = 0;   // R-2373 — jaan-boojh kar badlaav: OD below zero is a borrowing
   for (const a of r.accounts) {
     const bal = r.balanceOf[a.id];
     const balance = (bal as number | null) ?? a.opening_balance ?? 0;
     if (a.account_type === "credit_card") {
       if (balance < 0) creditCardPayable += -balance;
+      else             cashAndBank += balance;
+    } else if (a.account_type === "overdraft") {
+      if (balance < 0) bankOverdraft += -balance;
       else             cashAndBank += balance;
     } else {
       cashAndBank += balance;
@@ -118,7 +122,8 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
   const registeredEmi = new Set(r.fa.map((a) => a.emi_purchase_id).filter(Boolean));
   /* R-1578: net block (cost − depreciation charged to date), same as report-rpc.ts. */
   const block           = netBlockAt(r.fa as AssetLike[], todayIso);
-  const emiUnregistered = r.emiP.filter((x) => !registeredEmi.has(x.id)).reduce((s, x) => s + (x.total_cost ?? 0), 0);
+  // R-2323: a loan taken with no asset (kind 'loan') is a liability only, never an asset.
+  const emiUnregistered = r.emiP.filter((x) => x.kind !== "loan" && !registeredEmi.has(x.id)).reduce((s, x) => s + (x.total_cost ?? 0), 0);
   const fixedAssets     = block.net + emiUnregistered;
   const emiFinanced     = r.emiP.reduce((s, x) => s + (x.financed ?? 0), 0);
   const emiPrincipalPaid = r.emiPay.reduce((s, x) => s + (x.principal_part ?? 0), 0);
@@ -162,7 +167,7 @@ export function referenceBalanceSheet(r: BsRawRows, todayIso: string): BalanceSh
   const advanceTaxPaid = incomeTaxPaidForFy(r.taxRows, fyStartYear);
   const gstPayable = outputGST - billsGst - expGst - gstPaid;
 
-  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, fixedAssetsCost: block.cost + emiUnregistered, accumulatedDepreciation: block.accumulated, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid,
+  return { cashAndBank, undepositedFunds, receivables, advancesFromCustomers, projectReceivable, tdsReceivable, employeeLoans, prepaidAdvances, fixedAssets, fixedAssetsCost: block.cost + emiUnregistered, accumulatedDepreciation: block.accumulated, payables, salaryPayable, salaryDuesPayable, reimbursementsPayable, creditCardPayable, bankOverdraft, emiLoansPayable, businessLoansPayable, gstPayable, gstPaid, advanceTaxPaid,
     /* S45 slice 2 heads (migration 20261009170000) are SQL-only — the old per-row code never had them. */
     expensesPayable: 0, expensesPaidUnbanked: 0, salaryOtherDeductions: 0, fyLabel };
 }
@@ -287,6 +292,7 @@ export function referencePnl(range: { from: string; to: string }, r: PnlRawRows,
     revenue, revenueCount, cogs, cogsCount, grossMargin,
     expenses: expensesTotal, expensesCount, expensesByCategory, expenseReport,
     commissions, commissionsCount, depreciation, netProfit,
+    otherIncome: 0, otherIncomeLines: [],   // R-2095: other income comes from report_pnl_other_income only
     outputGST, inputGST, netGST, itcBlocked: itc.blocked,
     marginPct, profitPct, model, projectCost, employeeNames: m.employeeNames,
   };

@@ -154,8 +154,11 @@ export function checkoutBody(o: {
     simulate: o.simulate,
     commitment: o.billing,
     agreeTerms: true,
-    /* R-1977: the owner's address for the registry — never a price (the server prices it). */
-    ...(o.domain.mode === "new" && o.billing === "annual"
+    /* R-1977: the owner's address for the registry — never a price (the server prices it).
+       R-2355: on EVERY new-domain order — Monthly too (R-1985 buys the domain in the same
+       payment). Step 2 asks for it on both; Annual-only here made the route refuse a Monthly
+       order with "we need your address, city, PIN code" after the buyer had typed it. */
+    ...(o.domain.mode === "new"
       ? { addressLine1: o.buyer.addressLine1.trim(), city: o.buyer.city.trim(), pinCode: o.buyer.pinCode.replace(/\s+/g, "") }
       : {}),
   };

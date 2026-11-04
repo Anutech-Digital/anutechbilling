@@ -45,11 +45,19 @@ export interface SeatIncreaseChargeInput {
   termDays: number;
   /** 18 domestic, 0 for a zero-rated export. */
   taxRatePct: number;
+  /**
+   * R-2292: ₹/seat/year typed for THIS quote only (Manage seats). Prices the added seats; the
+   * subscription's stored rate (mrr) is untouched, so newMrr still grows at the stored rate.
+   * Absent / null = the rate from mrr, exactly as before.
+   */
+  annualPerSeatOverride?: number | null;
 }
 
 export interface SeatIncreaseCharge {
-  /** ₹/seat/year the added seats are priced at. */
+  /** ₹/seat/year the added seats are priced at (the typed rate when one is given — R-2292). */
   annualPerSeat: number;
+  /** R-2292: ₹/seat/year the subscription itself bills (from mrr) — what newMrr grows by. */
+  storedAnnualPerSeat: number;
   /** Ex-GST, whole rupees — the quote's `subtotal`. */
   subtotal: number;
   /** GST, whole rupees — always total − subtotal. */
@@ -65,10 +73,33 @@ export interface SeatIncreaseCharge {
   proration: ProrationResult;
 }
 
+/**
+ * R-2095 (staging, 30 Oct): the ₹/seat/year behind a whole-rupee mrr. mrr × 12 ÷ seats is not the
+ * price it came from: 7 seats × ₹3,150 ÷ 12 = ₹1,837.50 → mrr ₹1,838 → ₹3,150.86 → "₹3,151/seat".
+ * Both ₹3,150 and ₹3,151 give that mrr. When a price within ₹1 of the exact figure gives the SAME
+ * mrr back and is a multiple of ₹10 (prices are set that way), that price is the one; otherwise the
+ * rounded figure, as before.
+ */
+export function annualPerSeatFromMrr(mrr: number, seats: number): number {
+  if (!(seats > 0) || !(mrr > 0)) return 0;
+  const exact = (mrr * 12) / seats;
+  const rounded = Math.round(exact);
+  const score = (p: number) => (p % 100 === 0 ? 3 : p % 50 === 0 ? 2 : p % 10 === 0 ? 1 : 0);
+  let best = rounded;
+  for (let p = Math.ceil(exact - 1); p <= Math.floor(exact + 1); p++) {
+    if (p <= 0 || Math.abs(p - exact) >= 1 || Math.round((seats * p) / 12) !== mrr) continue;
+    if (score(p) > score(best) || (score(p) === score(best) && score(p) > 0 && Math.abs(p - exact) < Math.abs(best - exact))) best = p;
+  }
+  return score(best) > 0 ? best : rounded;
+}
+
 export function seatIncreaseCharge(input: SeatIncreaseChargeInput): SeatIncreaseCharge {
   const { currentSeats, currentMrr, additionalSeats, remainingDays, termDays, taxRatePct } = input;
 
-  const annualPerSeat = currentSeats > 0 ? Math.round((currentMrr * 12) / currentSeats) : 0;
+  const storedAnnualPerSeat = annualPerSeatFromMrr(currentMrr, currentSeats);   // R-2095
+  /* R-2292: a rate typed for this quote prices the added seats; the pro-rata maths is the same. */
+  const override = input.annualPerSeatOverride;
+  const annualPerSeat = override != null && Number.isFinite(override) && override > 0 ? Math.round(override) : storedAnnualPerSeat;
 
   const proration = prorate({
     annualPerSeatPaise: rupeesToPaise(annualPerSeat),
@@ -86,11 +117,13 @@ export function seatIncreaseCharge(input: SeatIncreaseChargeInput): SeatIncrease
 
   return {
     annualPerSeat,
+    storedAnnualPerSeat,
     subtotal,
     tax:     total - subtotal,
     total,
     perSeat: additionalSeats > 0 ? perSeat : 0,
-    newMrr:  Math.round((annualPerSeat * (currentSeats + additionalSeats)) / 12),
+    /* R-2292: the subscription keeps its stored rate — a typed quote rate never changes it. */
+    newMrr:  Math.round((storedAnnualPerSeat * (currentSeats + additionalSeats)) / 12),
     proration,
   };
 }
@@ -112,6 +145,8 @@ export interface SeatIncreaseQuoteInput extends Omit<SeatIncreaseChargeInput, "r
 
 export interface SeatIncreaseQuote {
   annualPerSeat: number;
+  /** R-2292: the subscription's own ₹/seat/year (from mrr). */
+  storedAnnualPerSeat: number;
   previous: SeatIncreaseCharge | null;
   current: SeatIncreaseCharge;
   /** Ex-GST, whole rupees — the quote's `subtotal`. */
@@ -128,7 +163,7 @@ export function seatIncreaseQuote(input: SeatIncreaseQuoteInput): SeatIncreaseQu
   const current = seatIncreaseCharge({ ...base, remainingDays: curDays.remainingDays, termDays: curDays.termDays });
   if (!prevDays) {
     return {
-      annualPerSeat: current.annualPerSeat, previous: null, current,
+      annualPerSeat: current.annualPerSeat, storedAnnualPerSeat: current.storedAnnualPerSeat, previous: null, current,
       subtotal: current.subtotal, tax: current.tax, total: current.total, newMrr: current.newMrr,
     };
   }
@@ -137,7 +172,7 @@ export function seatIncreaseQuote(input: SeatIncreaseQuoteInput): SeatIncreaseQu
   const subtotal = previous.subtotal + current.subtotal;
   const total    = grossAmount(subtotal, base.taxRatePct);
   return {
-    annualPerSeat: current.annualPerSeat, previous, current,
+    annualPerSeat: current.annualPerSeat, storedAnnualPerSeat: current.storedAnnualPerSeat, previous, current,
     subtotal, tax: total - subtotal, total, newMrr: current.newMrr,
   };
 }

@@ -20,6 +20,7 @@
 import { NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { razorpayReadiness } from "@/lib/payments/razorpay-readiness";
+import { liveKeyCheckoutRefusal } from "@/lib/checkout/live-guards";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -65,5 +66,8 @@ export async function GET() {
     webhookSecret: secrets?.razorpay_webhook_secret ?? null,
   });
 
-  return NextResponse.json({ razorpayConfigured: readiness.canCollect });
+  /* R-2155: staging with a live key cannot take a Razorpay payment — the PDF must not offer one. */
+  return NextResponse.json({
+    razorpayConfigured: readiness.canCollect && !liveKeyCheckoutRefusal(secrets?.razorpay_key_id),
+  });
 }

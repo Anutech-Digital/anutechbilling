@@ -27,7 +27,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { cn, rupee, formatForeignAmount, formatDate } from "@/lib/utils";
+import { cn, rupee, formatForeignAmount, formatDate, gstStateFromGstin } from "@/lib/utils";
 import {
   useCreateExpense,
   useUpdateExpense,
@@ -47,11 +47,13 @@ import { useCampaignOptions } from "@/lib/queries/marketing-campaigns";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { useEmployees } from "@/lib/queries/payroll";
 import { compactName } from "@/lib/banking/salary-lines";
-import { TDS_SECTION_RATES, tdsBase } from "@/lib/accounting/tds-rates";
+import { TDS_PICK_SECTIONS, TDS_SECTION_RATES, normalizeTdsSection, rememberTdsOffer, tdsBase, tdsSectionOption } from "@/lib/accounting/tds-rates";
 import { tdsDecision, panFromGstin } from "@/lib/accounting/tds-deductor";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { defaultCashAccountId } from "@/lib/payments/deposit-accounts";
+import { pickableAccounts } from "@/lib/banking/account-close";
 import { useVendors, ensureVendor } from "@/lib/queries/vendors";
+import { saveVendorTdsSection } from "@/lib/accounting/vendor-tds-section";
 import { useAddReimbursement } from "@/lib/queries/reimbursements";
 import { toast } from "sonner";
 import { uploadBillAttachment } from "@/lib/queries/vendor-bills";
@@ -134,7 +136,7 @@ export function AddExpenseDialog({
   const isEdit = Boolean(expense);
   const today  = istToday();
   const { data: bankAccounts } = useBankAccounts();
-  const cashAccounts = (bankAccounts ?? []).filter((a) => a.account_type === "cash");
+  const cashAccounts = (bankAccounts ?? []).filter((a) => a.account_type === "cash" && a.is_active !== false);
   const bankOnlyAccounts = (bankAccounts ?? []).filter((a) => a.account_type !== "cash");
   /* R-1834: Cash starts on the company's Petty Cash (the only cash account, or the auto one among
      several). null = not touched yet → that default; "" = "Don't deduct from petty cash". */
@@ -553,7 +555,7 @@ export function AddExpenseDialog({
   }
 
   const {
-    register, handleSubmit, watch, setValue,
+    register, handleSubmit, watch, setValue, getValues,
     formState: { errors, isSubmitting },
   } = useForm<FormData>({
     resolver: zodResolver(schema),
@@ -623,6 +625,18 @@ export function AddExpenseDialog({
   const tdsBaseNow = tdsBase(Number(watch("amount")) || 0, isGstBill ? Number(watch("gst_paid")) || 0 : 0);
   const tdsRate = TDS_SECTION_RATES[tdsSectionNow] ?? null;
   const tdsVendor = vendorId ? (vendors ?? []).find((v) => v.id === vendorId) ?? null : null;
+  /* R-2338: the vendor's default TDS section (set by the owner on the vendor) is pre-picked on a
+     new bill, once per vendor — still changeable; the app never picks one the owner did not set. */
+  const vendorTdsDefault = (tdsVendor as { default_tds_section?: string | null } | null)?.default_tds_section ?? null;
+  const prefilledFor = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (isEdit || !tdsVendor || prefilledFor.current === tdsVendor.id) return;
+    prefilledFor.current = tdsVendor.id;
+    if (vendorTdsDefault && !(getValues("tds_section") || "")) { setValue("tds_section", normalizeTdsSection(vendorTdsDefault)); setTdsEdited(false); }
+  }, [isEdit, tdsVendor, vendorTdsDefault, getValues, setValue]);
+  /* R-2338: "Remember for this vendor" — offered when the section is not the vendor's saved one, never pre-ticked. */
+  const [rememberTds, setRememberTds] = React.useState(false);
+  const offerRememberTds = !!tdsVendor && rememberTdsOffer(vendorTdsDefault, tdsSectionNow);
   const { data: vendorTdsSoFar } = useVendorTdsThisFy(vendorId, vendorNameWatch, tdsSectionNow, watch("expense_date") || localDateISO(new Date()), expense?.id ?? null);
   const tdsView = tdsSectionNow && vendorTdsSoFar
     ? tdsDecision({ section: tdsSectionNow, base: tdsBaseNow, fyBaseSoFar: vendorTdsSoFar.base, fyBaseWithoutTds: vendorTdsSoFar.baseWithoutTds, pan: tdsVendor?.pan ?? panFromGstin(tdsVendor?.gstin) })
@@ -775,6 +789,13 @@ export function AddExpenseDialog({
     const vId = payee
       ? (vendorId ?? (isGstBill ? await ensureVendor({ name: payee, gstin: aiGstin ?? undefined, defaultCategory: values.category }) : null))
       : null;
+    /* R-2338: the owner ticked "Remember for this vendor" — save the section on the vendor after the bill. */
+    const rememberNow = async () => {
+      const sec = (values.tds_section ?? "").trim();
+      if (!rememberTds || !offerRememberTds || !vendorId || !sec) return;
+      const err = await saveVendorTdsSection(vendorId, sec);
+      if (err) toast.error("The bill is saved, but the vendor's TDS section was not", { description: err });
+    };
 
     // Foreign bill must have an exchange rate before it hits the ₹ books.
     if (isForeign && rate <= 0) {
@@ -886,6 +907,7 @@ export function AddExpenseDialog({
           tds_amount:  gi === 0 ? shared.tds_amount : 0,
         });
       }
+      await rememberNow();
       onClose();
       return;
     }
@@ -925,6 +947,7 @@ export function AddExpenseDialog({
         id: expense.id,
         patch: { ...shared, category, channel: channelFor(category), campaign_id: campaignFor(category), line_items, amount: amountInr, gst_paid: gstAmt, description: derivedDescription },
       });
+      await rememberNow();
       onClose();
       return;
     }
@@ -934,6 +957,7 @@ export function AddExpenseDialog({
       description: derivedDescription,
       pettyCashAccountId: pettyCash,
     });
+    await rememberNow();
     onClose();
   }
 
@@ -1243,6 +1267,21 @@ export function AddExpenseDialog({
               ) : (
                 <p className="mt-1 text-xs text-ink-3">New payee — not added to the Vendors master (no GST invoice).</p>
               )
+            )}
+            {/* R-2095 (staging, 30 Oct): a NEW vendor made from a GST bill had no GSTIN until edited on
+                the Vendors page. Typed here, it goes on the vendor (and its state from the GSTIN). */}
+            {isGstBill && !vendorId && vendorNameWatch.trim().length >= 2 && (
+              <div className="mt-2">
+                <label htmlFor="new_vendor_gstin" className="text-xs text-ink-3">Vendor GSTIN (new vendor)</label>
+                <Input id="new_vendor_gstin" className="font-mono uppercase" maxLength={15} placeholder="e.g. 27AAACN1234F1Z5"
+                  value={aiGstin ?? ""} onChange={(e) => setAiGstin(e.target.value.replace(/s+/g, "").toUpperCase() || null)} />
+                {aiGstin && !/^[0-9]{2}[A-Z0-9]{13}$/.test(aiGstin) && (
+                  <p className="mt-1 text-xs text-rose-ink">15 characters, no spaces — e.g. 27AAACN1234F1Z5.</p>
+                )}
+                {aiGstin && /^[0-9]{2}[A-Z0-9]{13}$/.test(aiGstin) && gstStateFromGstin(aiGstin).name && (
+                  <p className="mt-1 text-xs text-ink-3">State: {gstStateFromGstin(aiGstin).name} — saved on the vendor.</p>
+                )}
+              </div>
             )}
             {/* The payee is one of OUR employees: their commission is salary (incentive, TDS 192),
                 not an agent's commission (194H) — a ₹5L "commission to abhishek" was booked here
@@ -1579,18 +1618,21 @@ export function AddExpenseDialog({
                   {/* TDS deducted (26Q) — optional; for rent / professional / contractor payments. */}
                   <div className="grid grid-cols-12 gap-3">
                     <FormField label="TDS deducted?" htmlFor="tds_section" className="col-span-5 sm:col-span-5">
-                      <Select value={watch("tds_section") || "none"} onValueChange={(v) => { setValue("tds_section", v === "none" ? "" : v); setTdsEdited(false); }}>
+                      {/* R-2338: 194J split into (a) technical 2% / (b) professional 10% / royalty 10%; an old
+                          row's plain "194J" shows as (b) and is saved back unchanged unless picked again. */}
+                      <Select value={normalizeTdsSection(watch("tds_section")) || "none"} onValueChange={(v) => { setValue("tds_section", v === "none" ? "" : v); setTdsEdited(false); setRememberTds(false); }}>
                         <SelectTrigger id="tds_section"><SelectValue placeholder="No TDS" /></SelectTrigger>
                         <SelectContent>
                           <SelectItem value="none">No TDS</SelectItem>
-                          <SelectItem value="194C">194C · Contractor</SelectItem>
-                          <SelectItem value="194J">194J · Professional / technical</SelectItem>
-                          <SelectItem value="194I">194I · Rent</SelectItem>
-                          <SelectItem value="194H">194H · Commission / brokerage</SelectItem>
-                          <SelectItem value="194A">194A · Interest</SelectItem>
-                          <SelectItem value="194Q">194Q · Purchase of goods</SelectItem>
+                          {TDS_PICK_SECTIONS.map((s) => <SelectItem key={s} value={s}>{tdsSectionOption(s)}</SelectItem>)}
                         </SelectContent>
                       </Select>
+                      {offerRememberTds && (
+                        <label className="mt-1 flex items-center gap-1.5 text-xs text-ink-2">
+                          <input type="checkbox" checked={rememberTds} onChange={(e) => setRememberTds(e.target.checked)} />
+                          Remember for this vendor
+                        </label>
+                      )}
                     </FormField>
                     {(watch("tds_section") || "") !== "" && (
                       <FormField label="TDS amount (₹)" htmlFor="tds_amount" className="col-span-7 sm:col-span-4">
@@ -1705,7 +1747,7 @@ export function AddExpenseDialog({
                 <SelectTrigger id="bank_account"><SelectValue placeholder="Select bank account" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="none">Not sure / pick later</SelectItem>
-                  {bankOnlyAccounts.map((a) => (
+                  {pickableAccounts(bankOnlyAccounts, bankAccountId).map((a) => (
                     <SelectItem key={a.id} value={a.id}>
                       {a.name}{a.bank_name ? ` · ${a.bank_name}` : ""}{a.account_number_last4 ? ` ••${a.account_number_last4}` : ""}
                     </SelectItem>

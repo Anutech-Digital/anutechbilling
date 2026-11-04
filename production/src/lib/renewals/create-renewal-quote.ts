@@ -21,6 +21,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { catalogPlanName } from "@/lib/subscriptions/plan-match";
 import { quoteDocumentKind, type QuoteDocumentKind } from "@/lib/pdf/quote-document-kind";
 import type { Database, Json, QuoteLineItem } from "@/lib/supabase/database.types";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
@@ -72,6 +73,8 @@ export interface CreateRenewalQuoteInput {
    * term-aware reminder ladder shipped on 22 Aug and never reached the pricing.
    */
   termMonths?:     number | null;
+  /** R-2369: `subscriptions.term_amount` — the exact sold amount for one term; null → from mrr. */
+  termAmount?:     number | null;
   renewalDate:     string;          // ISO date or YYYY-MM-DD
   graceDays:       number;          // tenant.grace_period_days
   /** Existing renewal_quote_id, if any. When present, we just load and return it. */
@@ -167,7 +170,7 @@ export async function createOrGetRenewalQuote(
       .from("items")
       .select("msrp, wholesale")
       .eq("tenant_id", input.tenantId)
-      .eq("name", input.plan)
+      .eq("name", catalogPlanName(input.plan))   // R-2095: an old "(N seats)" suffix
       .maybeSingle();
     return data;
   })();
@@ -175,6 +178,7 @@ export async function createOrGetRenewalQuote(
   const term = renewalTerm({
     mrr: input.mrr,
     termMonths: input.termMonths ?? null,
+    termAmount: input.termAmount ?? null,
     seats: input.seats,
     catalogPerSeatMonth: (catalogItem as { msrp?: number | null } | null)?.msrp ?? null,
   });
@@ -215,7 +219,7 @@ export async function createOrGetRenewalQuote(
 
   const lineItems: QuoteLineItem[] = [{
     id:         "renewal-1",
-    name:       input.plan,
+    name:       catalogPlanName(input.plan),   // R-2095
     qty:        input.seats,
     rate:       perSeatRate,
     cost:       perSeatCost,

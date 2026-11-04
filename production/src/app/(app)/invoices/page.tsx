@@ -23,6 +23,7 @@ import { useProjectPaymentsByInvoice, useProjectInvoiceIds, useMilestoneByInvoic
 import { RecordProjectPaymentDialog } from "@/components/features/projects/record-project-payment-dialog";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { useInvoiceNoteTotals } from "@/lib/queries/invoice-note-totals";
 import { netAfterNotes, type NoteTotals } from "@/lib/invoices/note-totals";
 /* R-060. `status = 'overdue'` has no writer anywhere in the product, so the Overdue tab
@@ -38,6 +39,7 @@ import {
 import { invoiceMarginMtd } from "@/lib/invoices/margin-mtd";
 import { FillCostsDialog } from "@/components/features/invoices/fill-costs-dialog";
 import { FocusBanner } from "@/components/shared/focus-banner";
+import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -70,6 +72,8 @@ import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { InvoiceNotesList, InvoicePaymentsAccordion } from "./invoice-detail";
+import { NetworkChip, useNetworkChips } from "@/components/features/invoices/network-status";
+import type { NetworkStatusView } from "@/components/features/invoices/network-status-model";
 import { invoiceHref, legacyOpenRedirect, NEW_INVOICE_HREF } from "./invoice-href";
 import type { PendingPartAction, PartGenerateResult } from "@/lib/invoices/split-sale-pending";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
@@ -134,6 +138,13 @@ function InvoicesPageInner() {
   const { data: projectInvoiceIds } = useProjectInvoiceIds();
   // R-009: credit / debit note totals for every invoice — one query for the whole list.
   const { data: noteTotals } = useInvoiceNoteTotals();
+  /* R-2450: the customer's answer on the network copy (R-2434) — a small chip under the status.
+     Only issued invoices can have a copy; a customer not on the network has none (no chip). */
+  const issuedIds = React.useMemo(
+    () => (invoices ?? []).filter((i) => i.status !== "draft").map((i) => i.id),
+    [invoices],
+  );
+  const networkChips = useNetworkChips(issuedIds);
   const { data: pending } = useQuotesAwaitingInvoice();
   const generateInvoice = useGenerateInvoice();
   /* R-2057: a sale billed in parts — Generate issues the due PART's invoice (the billing job's path),
@@ -477,7 +488,7 @@ function InvoicesPageInner() {
                 {pendingSelected.size > 0 && (
                   <Button
                     size="sm"
-                    variant="primary"
+                    variant="outline"
                     icon="receipt"
                     loading={generating}
                     onClick={(e) => {
@@ -667,9 +678,29 @@ function InvoicesPageInner() {
         );
       })()}
 
-      {/* Interactive KPI Stat Grid */}
+      {/* R-2266: the KPI tiles sit in ONE strip, closed by default (remembered per user); the
+          closed line carries Outstanding / Overdue / Paid this month, and "Fill missing costs"
+          stays one click away on the line. */}
       {!isLoading && invoices && (
-        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5 mb-5">
+        <CollapsibleKpiStrip
+          stripId="invoices"
+          userId={me?.userId}
+          title="Insights"
+          className="mb-4"
+          summary={
+            <>
+              <StripFact label="Outstanding" value={rupee(outstanding, { compact: true })} tone="rose" />
+              <StripFact label="Overdue" value={rupee(overdueTotal, { compact: true })} />
+              <StripFact label="Paid this month" value={rupee(collectedMTD, { compact: true })} tone="emerald" />
+            </>
+          }
+          extras={isOwner && marginMtd.missingLines > 0 ? (
+            <StripLink onClick={() => setFillCostsOpen(true)} title="Some invoice lines this month have no cost, so Margin MTD is partial">
+              Fill missing costs ({marginMtd.missingLines})
+            </StripLink>
+          ) : undefined}
+        >
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
           <button
             type="button"
             onClick={() => focusOn("unpaid")}
@@ -719,12 +750,11 @@ function InvoicesPageInner() {
               <button
                 type="button"
                 onClick={() => setFillCostsOpen(true)}
-                className="text-3xs font-semibold text-accent hover:underline mt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent rounded-sm"
+                className="text-3xs font-semibold text-amber-ink hover:underline mt-1 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm"
               >
                 Fill missing costs
               </button>
             )}
-            {isOwner && <FillCostsDialog open={fillCostsOpen} onOpenChange={setFillCostsOpen} />}
           </div>
           {/* Averaged over every paid invoice — the Paid tab is that set. */}
           <button
@@ -736,7 +766,10 @@ function InvoicesPageInner() {
             <p className="font-serif text-lg font-bold text-ink tabular-nums mt-0.5">{avgCollection}d</p>
           </button>
         </div>
+        </CollapsibleKpiStrip>
       )}
+      {/* Outside the strip so the line's "Fill missing costs" opens it while the strip is closed. */}
+      {isOwner && <FillCostsDialog open={fillCostsOpen} onOpenChange={setFillCostsOpen} />}
 
       {/* Tabs, Date Range Filter & Search */}
       {!isLoading && invoices && invoices.length > 0 && (
@@ -891,13 +924,14 @@ function InvoicesPageInner() {
             </>
           }
           mobileCard={(inv) => (
-            <MobileInvoiceCard inv={inv} notes={noteTotals?.get(inv.id)} />
+            <MobileInvoiceCard inv={inv} notes={noteTotals?.get(inv.id)} network={networkChips.get(inv.id)} />
           )}
           renderRow={(inv, ctx) => (
             <InvoiceRow
               inv={inv}
               ctx={ctx}
               notes={noteTotals?.get(inv.id)}
+              network={networkChips.get(inv.id)}
               isProject={projectInvoiceIds?.has(inv.id) ?? false}
             />
           )}
@@ -981,7 +1015,7 @@ function InvoiceNoteLines({ notes, net }: { notes?: NoteTotals; net: number }) {
 // ============================================================
 // Mobile Invoice Card — phones only
 // ============================================================
-function MobileInvoiceCard({ inv, notes }: { inv: Invoice; notes?: NoteTotals }) {
+function MobileInvoiceCard({ inv, notes, network }: { inv: Invoice; notes?: NoteTotals; network?: NetworkStatusView }) {
   const net = netAfterNotes(inv.amount, notes);
 
   /* R-086: a real link to the invoice's own page (was a sheet over the list). */
@@ -1026,6 +1060,7 @@ function MobileInvoiceCard({ inv, notes }: { inv: Invoice; notes?: NoteTotals })
                 </Badge>
               );
             })()}
+            {network && <NetworkChip view={network} />}
           </div>
         </div>
       </Link>
@@ -1039,6 +1074,7 @@ function InvoiceRow({
   inv,
   ctx,
   notes,
+  network,
   isProject = false,
 }: {
   inv: Invoice;
@@ -1046,6 +1082,8 @@ function InvoiceRow({
   ctx: RowCtx;
   /** R-009: credit / debit note totals for this invoice (absent = none). */
   notes?: NoteTotals;
+  /** R-2450: the customer's answer on the network copy (absent = not sent on the network). */
+  network?: NetworkStatusView;
   /** Invoice came from a project milestone (vs a subscription quote). */
   isProject?: boolean;
 }) {
@@ -1143,10 +1181,13 @@ function InvoiceRow({
              R-238: the label lives in ./invoice-status.ts so /invoices/<id> shows the same word. */
           const sb = invoiceStatusBadge(inv, undefined, notes);
           const badge = sb ? <Badge kind={sb.kind} dot={sb.kind !== "muted"}>{sb.label}</Badge> : null;
+          /* R-2450: the network chip sits under the payment badge (no new column — fits 1280). */
+          const chip = network ? <div className="mt-1"><NetworkChip view={network} /></div> : null;
           // Draft/void have no receipts — badge stays static. Others toggle the
           // payment-receipts accordion on click.
-          if (inv.status === "draft" || inv.status === "void") return badge;
+          if (inv.status === "draft" || inv.status === "void") return <>{badge}{chip}</>;
           return (
+            <>
             <button
               type="button"
               onClick={() => setExpanded((e) => !e)}
@@ -1157,6 +1198,8 @@ function InvoiceRow({
               {badge}
               <Icon name={expanded ? "chevron_up" : "chevron_down"} size={12} className="text-ink-3" />
             </button>
+            {chip}
+            </>
           );
         })()}
       </td>
@@ -1172,12 +1215,12 @@ function InvoiceRow({
           const payDue = moneyDue && canRecordMoney(me?.role);
           return (
         <div className="flex gap-1 items-center justify-end">
-          {/* One contextual primary action keeps the column tight (no h-scroll).
-              Money-due invoices lead with Record payment; everything else with View. */}
+          {/* One contextual action keeps the column tight (no h-scroll).
+              Money-due invoices lead with Record payment; everything else with View.
+              R-2265: not primary — the page's one amber button is "New invoice". */}
           {payDue ? (
             <Button
               size="sm"
-              variant="primary"
               icon="rupee"
               onClick={() => (isProject ? setPayOpen(true) : setSubPayOpen(true))}
             >
@@ -1298,7 +1341,7 @@ function InvoiceRow({
           onOpenChange={setCnOpen}
           invoiceId={inv.id}
           customerName={inv.customer_name}
-          netPayable={inv.net_payable ?? inv.amount}
+          amountDue={invoiceAmountDue(inv)}
           taxRate={inv.tax_rate}
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
@@ -1310,7 +1353,7 @@ function InvoiceRow({
           mode="debit"
           invoiceId={inv.id}
           customerName={inv.customer_name}
-          netPayable={inv.net_payable ?? inv.amount}
+          amountDue={invoiceAmountDue(inv)}
           taxRate={inv.tax_rate}
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
@@ -1495,7 +1538,7 @@ function PendingRowAction({ act, busy, onWhole, onPart }: {
   if (act?.kind === "part") {
     return (
       <div className="inline-flex flex-col items-end gap-0.5">
-        <Button size="sm" variant="primary" icon="receipt" loading={busy} onClick={onPart}>
+        <Button size="sm" icon="receipt" loading={busy} onClick={onPart}>
           {`Generate invoice for ${act.part}${act.amount != null ? ` ${rupee(act.amount)}` : ""}`}
         </Button>
         {act.period && <span className="text-3xs text-ink-3 whitespace-nowrap">{act.period}</span>}
@@ -1503,7 +1546,7 @@ function PendingRowAction({ act, busy, onWhole, onPart }: {
     );
   }
   return (
-    <Button size="sm" variant="primary" icon="receipt" loading={busy} onClick={onWhole}>
+    <Button size="sm" icon="receipt" loading={busy} onClick={onWhole}>
       Generate
     </Button>
   );

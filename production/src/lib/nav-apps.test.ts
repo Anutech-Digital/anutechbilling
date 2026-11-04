@@ -41,6 +41,17 @@ describe("structure", () => {
   });
 });
 
+describe("role not known yet (session loading)", () => {
+  /* R-2115 checker: buildSidebarApps(undefined) used to return the WHOLE nav, so while the
+     session loaded every login (a personal one too) saw the business menu plus the Personal
+     tile flash in. Unknown role = nothing yet, like nav-directory.tsx. */
+  it("shows no rows and nothing pinned", () => {
+    const m = buildSidebarApps(undefined);
+    expect(m.pinned).toEqual([]);
+    expect(m.apps).toEqual([]);
+  });
+});
+
 describe.each(USER_ROLES.map((r) => [r as UserRole]))("role %s", (role) => {
   const model = buildSidebarApps(role);
 
@@ -65,7 +76,7 @@ describe.each(USER_ROLES.map((r) => [r as UserRole]))("role %s", (role) => {
 describe("what each role sees", () => {
   it("owner: Today + Dashboard pinned, six apps behind a switcher", () => {
     const m = buildSidebarApps("owner");
-    expect(m.pinned.map((i) => i.id)).toEqual(["today", "dashboard", "ai-entry"]);
+    expect(m.pinned.map((i) => i.id)).toEqual(["today", "dashboard", "ai-entry", "team-chat"]);
     expect(m.flat).toBe(false);
     expect(m.apps).toHaveLength(6);
   });

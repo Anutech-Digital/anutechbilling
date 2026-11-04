@@ -35,7 +35,7 @@ import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { sendCustomerEmail, sendInternalEmail } from "@/lib/messaging";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { ownerPaymentAlertAllowed, storefrontVoice } from "@/lib/email/storefront-voice";
-import { buyPageTenantIdOrEmpty, simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
+import { buyPageTenantIdOrEmpty, liveKeyCheckoutRefusal, simulatedPaymentAllowed } from "@/lib/checkout/live-guards";
 import { issueInvoiceForOnlinePayment } from "@/lib/checkout/online-invoice.server";
 import { publicDbError } from "@/app/api/public/_lib/db-error";
 import { customerSetupSteps, leadOwnerNextSteps } from "@/lib/email/workspace-onboarding";
@@ -45,11 +45,15 @@ import { PLUS_NOT_SOLD_ONLINE, isPublicPriceHiddenTier } from "@/lib/catalog/pub
 import { turnstileRefusalFor } from "@/lib/security/turnstile-guard";
 import { reportPurchaseToMeta } from "@/lib/meta/capi.server";
 import { recordCheckoutConsent } from "@/app/api/public/consent/record.server";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 import { clientIp } from "@/lib/security/rate-limit";
 import { splitDomain } from "@/lib/domains/live-lookup";
 import { priceDomainLines } from "@/lib/checkout/cart-checkout";
 import { normalisePhone, splitName, type Registrant } from "@/lib/provisioning/domain-registration";
 import { insertDomainQuote, splitOrderNotes, withGst, type DomainQuote } from "./domain-quote.server";
+import { buyIntentNote } from "./buy-intent";
+import { buyIntentFields } from "./buy-intent-schema";
 
 /* R-079: the hard-coded dev tenant only off production; "" (fails closed) when unset there. */
 const BUY_PAGE_TENANT_ID = buyPageTenantIdOrEmpty();
@@ -73,7 +77,8 @@ const checkoutSchema = z.object({
   email:       z.string().email().max(200),
   phone:       z.string().min(10).max(20),
   seats:       z.coerce.number().int().min(1).max(10000),
-  domain:      z.string().min(3).max(120),
+  /* R-2021: min 3 checked below — empty only with domainMode "later". */
+  domain:      z.string().max(120),
   tierId:      z.enum(["starter", "standard", "plus", "enterprise"]),
   gstin:       z.string().optional(),
   /** R-173: GST place of supply ("07" or a state name). Required unless a valid GSTIN gives it. */
@@ -99,6 +104,17 @@ const checkoutSchema = z.object({
   addressLine1: z.string().max(200).optional(),
   city:         z.string().max(80).optional(),
   pinCode:      z.string().max(12).optional(),
+  /** R-2021: the phone flow's intent / domainMode / migrationSource — optional, notes only. */
+  ...buyIntentFields,
+}).superRefine((v, ctx) => {
+  /* R-2021: "Decide later" (phone flow) is the ONLY order that may come without a domain — the
+     team agrees it on the setup call. Every other order still needs one, as before. */
+  if (v.domainMode !== "later" && v.domain.trim().length < 3) {
+    ctx.addIssue({ code: z.ZodIssueCode.too_small, minimum: 3, type: "string", inclusive: true, path: ["domain"], message: "String must contain at least 3 character(s)" });
+  }
+  if (v.domainMode === "later" && v.domainNew) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["domainNew"], message: "A new domain needs its name — choose one, or decide later without it" });
+  }
 });
 
 // R-206: pricing (catalogue row → floored ₹/seat/month → lines → GST total) lives in ./pricing.
@@ -234,6 +250,12 @@ export async function POST(request: NextRequest) {
     // even if the UI button is already hidden. Server is the real gate.
     // R-079: a production deployment or a live key refuses it whatever ALLOW_SIMULATED_CHECKOUT says.
     const simulationAllowed = simulatedPaymentAllowed({ razorpayKeyId: rzKeyId });
+
+    /* R-2155: a live key on staging may read settlements, never take a payment. */
+    const stagingLive = liveKeyCheckoutRefusal(rzKeyId);
+    if (stagingLive) {
+      return NextResponse.json({ error: stagingLive, stagingLiveKey: true }, { status: 403 });
+    }
 
     if (!razorpayConfigured && !isSimulation) {
       return NextResponse.json(
@@ -400,7 +422,8 @@ export async function POST(request: NextRequest) {
       isSimulation ? `[SIMULATION] Test buy — no real payment` : `DIRECT BUY · proceeding to Razorpay`,
       domainLine
         ? `Domain: ${cleanDomain} — NEW: bought with this order${isMonthly ? ", on its own GST invoice" : ""} (${rupee(domainLine.rate)} + GST, 1 year); registered in the buyer's name after payment`
-        : domainNew ? `Domain: ${cleanDomain} — NEW: register it for the buyer and call them (not checked yet)` : `Domain: ${cleanDomain}`,
+        : domainNew ? `Domain: ${cleanDomain} — NEW: register it for the buyer and call them (not checked yet)` : cleanDomain ? `Domain: ${cleanDomain}` : `Domain: not chosen yet — agree it on the setup call`,
+      buyIntentNote(parsed.data), // R-2021: the phone flow's intent / domain mode / email today
       `Plan: Google Workspace ${tierName}`,
       `Seats: ${seats}`,
       isMonthly ? `Billing: monthly (flex) — this is one month` : `Billing: annual (1-year plan)`,
@@ -422,7 +445,7 @@ export async function POST(request: NextRequest) {
       source:        sourceTag,
       // Migration 0232 — inbound attribution. Nulls when nothing was captured. R-1978: + utm_content/utm_term.
       ...attribution,
-      domain:        cleanDomain,        // structured — flows lead→quote→subscription
+      domain:        cleanDomain || null, // structured — flows lead→quote→subscription (R-2021: null = decide later)
       notes:         leadNotes,
       // R-173: copied to the customer by record_payment; generate_invoice needs state_code.
       state_code:    buyerStateCode,
@@ -539,7 +562,7 @@ export async function POST(request: NextRequest) {
       status:         "sent",              // direct buy — auto-sent
       payment_status: "awaiting",          // webhook flips to 'received'
       owner_id:       null,
-      domain:         cleanDomain,         // structured — record_payment copies to subscription
+      domain:         cleanDomain || null, // structured — record_payment copies to subscription (R-2021: null = decide later)
       created_date:   createdDate,
       expires_date:   expiresDate,
       notes:          quoteNotes,
@@ -561,6 +584,8 @@ export async function POST(request: NextRequest) {
       metaConsent: (body as { metaConsent?: unknown }).metaConsent === true,
       ip: clientIp(request.headers), userAgent: request.headers.get("user-agent"),
     });
+    /* R-2011: the checkout's data notice + the marketing opt-in (yes/no) for this lead. */
+    await recordFormConsent(admin, { tenantId: BUY_PAGE_TENANT_ID, leadId, quoteId, consent: readFormConsent(body), headers: request.headers, page: "/buy/workspace" });
 
     /* R-1985: monthly + new domain → the domain's own quote, on the same lead. The order total is
        the two quotes' totals; the coupon and the site promo stayed on the Workspace (above). */
@@ -656,7 +681,7 @@ ORDER SUMMARY
   Order ID    ${quoteId}
   Plan        Google Workspace ${tierName}
   Seats       ${seats}
-  Domain      ${cleanDomain}
+  Domain      ${cleanDomain || "to be agreed on the setup call"}
   Total       ${amountFmt} (incl 18% GST)
 
 ${customerSetupSteps({ domain: cleanDomain, seats, tierName: `Google Workspace ${tierName}`, contactName: leadOwner?.name ?? sellerPerson })}
@@ -694,7 +719,7 @@ COMPANY     ${companyName}
 CONTACT     ${fullName} <${email}>
 PLAN        Google Workspace ${tierName}
 SEATS       ${seats}
-DOMAIN      ${cleanDomain}
+DOMAIN      ${cleanDomain || "not chosen yet — agree it on the setup call"}
 TOTAL       ${amountFmt}
 ORDER ID    ${quoteId}
 LEAD ID     ${leadId}

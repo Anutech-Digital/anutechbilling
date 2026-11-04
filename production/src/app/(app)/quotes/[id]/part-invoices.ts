@@ -28,6 +28,9 @@ export function useQuotePartInvoices(subscriptionIds: readonly string[]) {
   return useQuery({
     queryKey: ["quote-part-invoices", ids],
     enabled: ids.length > 0,
+    /* R-2104: the quote page waits for the FIRST read only; a new subscription id after a payment
+       keeps the last answer on screen while it refetches (no skeleton flash, no open sheet lost). */
+    placeholderData: (prev: string[] | undefined) => prev,
     queryFn: async (): Promise<string[]> => {
       const supabase = createClient();
       const { data: rows, error } = await supabase

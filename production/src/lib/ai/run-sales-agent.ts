@@ -49,6 +49,7 @@ import { logAiAction } from "./autonomy.server";
 import type { SalesChannel } from "./sales-agent";
 import type { CatalogueItemPrice } from "@/lib/quotes/quote-from-enquiry";
 import { quoteWasDelivered } from "@/lib/quotes/quote-delivered";
+import { autoQuoteHoldFor, type SendAutoQuoteHeld } from "@/lib/quotes/send-auto-quote";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -92,6 +93,13 @@ export interface RunSalesAgentArgs {
    * four calls away from here. See lib/voice/voice-note.ts.
    */
   heardNotWritten?: boolean;
+  /**
+   * R-2460: the auto-quote for this message was HELD by the customer-copy gate (no place of
+   * supply / needs approval) — from lib/inbound/ingest.ts. Absent → this function checks the
+   * lead's latest draft itself (autoQuoteHoldFor), so a LATER message on a still-held draft is
+   * covered too. Either way the agent states none of its figures.
+   */
+  heldQuote?: SendAutoQuoteHeld | null;
 }
 
 /**
@@ -190,6 +198,23 @@ async function runSalesAgentForLeadInner(args: RunSalesAgentArgs): Promise<void>
   /* ── 3. Understand it ── */
   const quote = await latestQuote(args.admin, args.tenantId, args.leadId);
 
+  /* ── R-2460: a HELD draft's figures are not authorised ─────────────────────
+     latestQuote authorises the newest quote's subtotal and amount — right for a quote the
+     customer has or may have, wrong for one the customer-copy gate is holding (no place of
+     supply / needs approval): stating it would hand the customer a price nobody approved. The
+     hold comes from ingest when it just tried to send; otherwise the draft is checked here,
+     because the customer's NEXT message re-runs the agent with no send attempt at all. A sent
+     quote is never re-checked — it already reached them.
+     R-2468: a FAILED quote read passes undefined, not null — "checked, not held" would be a lie,
+     so runSalesAgent runs its own check (heldQuoteForLead, which holds on a failed read). */
+  const held: SendAutoQuoteHeld | null | undefined =
+    args.heldQuote ??
+    (quote.readFailed
+      ? undefined
+      : quote.id && quote.status === "draft"
+        ? await autoQuoteHoldFor(args.admin, { tenantId: args.tenantId, leadId: args.leadId, quoteId: quote.id })
+        : null);
+
   const run = await runSalesAgent({
     admin: args.admin,
     tenantId: args.tenantId,
@@ -208,7 +233,8 @@ async function runSalesAgentForLeadInner(args: RunSalesAgentArgs): Promise<void>
     incoming: args.incoming,
     sellerName: args.sellerName,
     sellerEmail: args.fromEmail,
-    extraAuthorisedTotals: quote.totals,
+    extraAuthorisedTotals: held ? [] : quote.totals,
+    heldQuote: held,
     /* The customer's own domain, so the agent can observe what their mail runs on today. The
        lookup and its guard live in sales-agent.server.ts — see observeDomain there.
 
@@ -388,19 +414,29 @@ async function latestQuote(
   admin: Admin,
   tenantId: string,
   leadId: string,
-): Promise<{ id: string | null; deliveredId: string | null; totals: number[] }> {
-  const { data } = await admin
+): Promise<{
+  id: string | null; status: string | null; deliveredId: string | null; totals: number[];
+  /** R-2468: the read itself failed — "no quote" is then unknown, not a fact. */
+  readFailed?: boolean;
+}> {
+  const { data, error } = await admin
     .from("quotes")
     .select("id, status, subtotal, amount")
     .eq("tenant_id", tenantId)
     .eq("lead_id", leadId)
     .order("created_date", { ascending: false })
+    /* R-2460: created_date is a DATE — two quotes on one day tied, and the hold check below
+       could read the sent one and miss a held draft. R-2468: the row's own timestamp breaks
+       the tie (as heldQuoteForLead and the follow-up cron do) — not the text id, which sorts
+       wrong when the prefix changes or the number passes 9999. */
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   const row = data as
     { id?: string; status?: string | null; subtotal?: number | null; amount?: number | null } | null;
-  if (!row?.id) return { id: null, deliveredId: null, totals: [] };
+  if (error) return { id: null, status: null, deliveredId: null, totals: [], readFailed: true };
+  if (!row?.id) return { id: null, status: null, deliveredId: null, totals: [] };
 
   /* Both, because a covering email legitimately says either the pre-GST subtotal or the gross.
      Zero and null are dropped rather than authorised: "0" is already always allowed by the
@@ -414,6 +450,7 @@ async function latestQuote(
      of a document that had never been sent — see lib/quotes/quote-delivered.ts. */
   return {
     id: row.id,
+    status: row.status ?? null,
     deliveredId: quoteWasDelivered(row.status) ? row.id : null,
     totals,
   };

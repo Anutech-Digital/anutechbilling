@@ -31,7 +31,7 @@ import { fyOf } from "@/lib/accounting/ledger";
 import { useBankAccounts, type BankAccountRow } from "@/lib/queries/bank";
 import { depositAccounts } from "@/lib/payments/deposit-accounts";
 import {
-  DIRECTOR_CHOICES, drawingsRegister, drawingsRegisterCsv,
+  DIRECTOR_CHOICES, PAID_DIRECTLY, drawingsRegister, drawingsRegisterCsv,
   type OwnerEquityKind, type OwnerEquityMovement, type OwnerEquityWords,
 } from "@/lib/accounting/owner-equity";
 import { useRecordOwnerEquity, useDeleteOwnerEquity } from "@/lib/queries/owner-equity";
@@ -201,7 +201,7 @@ export function OwnerEquityCard({ words, movements, partners = [], loading, erro
   const [fy, setFy] = React.useState(thisFy);
   const reg = React.useMemo(() => drawingsRegister(movements, fy), [movements, fy]);
   const inFy = movements.filter((m) => fyOf(m.movement_date) === fy);
-  const accountById = (id: string) => (accounts ?? []).find((a) => a.id === id);
+  const accountById = (id: string | null) => (id ? (accounts ?? []).find((a) => a.id === id) : undefined);
 
   function exportCsv() {
     const { header, rows } = drawingsRegisterCsv(movements, fy, (id) => accountText(accountById(id)), words);
@@ -327,7 +327,7 @@ export function OwnerEquityCard({ words, movements, partners = [], loading, erro
                           })()}
                         </p>
                         <p className="text-xs text-ink-3">
-                          {formatDate(m.movement_date)} · {accountText(acc)}{m.note ? ` · ${m.note}` : ""}
+                          {formatDate(m.movement_date)} · {m.bank_account_id ? accountText(acc) : PAID_DIRECTLY}{m.note ? ` · ${m.note}` : ""}
                         </p>
                         {waiting && <p className="text-xs text-amber-ink mt-0.5">Waiting for the bank line — reconcile it to this entry when the statement comes in.</p>}
                       </div>
@@ -335,10 +335,11 @@ export function OwnerEquityCard({ words, movements, partners = [], loading, erro
                         <span className={`text-sm tabular-nums ${m.kind === "drawings" ? "text-rose" : "text-emerald"}`}>
                           {m.kind === "drawings" ? "−" : "+"}{rupee(m.amount)}
                         </span>
-                        <button type="button" onClick={() => remove(m)} aria-label={`Remove ${m.kind === "drawings" ? "drawings" : "capital"} entry of ${rupee(m.amount)} on ${formatDate(m.movement_date)}`}
+                        {/* R-2395: an asset's down payment paid by the owner changes on Assets & EMIs only. */}
+                        {m.bank_account_id && <button type="button" onClick={() => remove(m)} aria-label={`Remove ${m.kind === "drawings" ? "drawings" : "capital"} entry of ${rupee(m.amount)} on ${formatDate(m.movement_date)}`}
                           className="text-ink-3 hover:text-rose p-1">
                           <Icon name="trash" size={14} />
-                        </button>
+                        </button>}
                       </div>
                     </li>
                   );

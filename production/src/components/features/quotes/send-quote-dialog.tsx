@@ -159,7 +159,12 @@ export function SendQuoteDialog({
     },
     onError: (err) => {
       const out = quoteEmailErrorOutcome(err, { alreadySent });
-      toast.error(out.title, { description: out.description });
+      /* R-2448: a refusal that names its fix (no state → "Set the customer's state") shows it as
+         the button; anything else stays a plain toast (the sheet's own Send is the retry). */
+      showFailedSendToast({
+        out, res: null, role: currentUser?.role, quoteId, onQuotePage: true,
+        navigate: (href) => { onOpenChange(false); window.location.assign(href); },
+      });
     },
   });
 

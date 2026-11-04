@@ -39,7 +39,7 @@ const SelectTrigger = React.forwardRef<
       "disabled:cursor-not-allowed disabled:opacity-50",
       error
         ? "border-rose focus:ring-rose"
-        : "border-hairline focus:ring-amber focus:border-amber",
+        : "border-input focus:ring-amber focus:border-amber",
       "[&>span]:line-clamp-1",
       className
     )}

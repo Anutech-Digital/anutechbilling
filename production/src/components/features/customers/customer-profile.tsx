@@ -37,12 +37,14 @@ import { LateChargesPreview } from "@/components/features/late-charges/customer-
 import { CreditSettingsCard } from "@/components/features/customers/credit-settings-card";
 import { RenewalGraceCard } from "@/components/features/customers/renewal-grace-card";
 import { InvoiceOnDueDateCard } from "@/components/features/customers/invoice-on-due-date-card";
+import { OnlineFeeCustomerCard } from "@/components/features/customers/online-fee-customer-card";
 import { CustomerFollowupCard } from "@/components/features/collections/customer-followup-card";
 import { EntitlementCard } from "@/components/features/support/entitlement-card";
 import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
 import { useCustomerPayments, useDeletePayment } from "@/lib/queries/payments";
 import { useTdsReceivables } from "@/lib/queries/tds-receivable";
 import { receiptSplitLine, tdsByPayment } from "@/lib/accounting/tds-receipt";
+import { PaymentTdsLine, tdsInfoByPayment } from "./payment-tds-line";
 import { useCustomerProjects, useCustomerProjectPayments } from "@/lib/queries/projects";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { Card } from "@/components/ui/card";
@@ -69,6 +71,8 @@ import { InvoiceChooserDialog } from "@/components/features/invoices/invoice-cho
 import { DeleteBlockedDialog } from "@/components/shared/delete-blocked-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+/* R-2350 (G-DPDP): who opened this customer goes in Settings → Security log. */
+import { useRecordView } from "@/lib/security-log/record-view";
 import { canWriteSales } from "@/lib/nav";
 import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
@@ -83,6 +87,7 @@ import { recordPhoneOf } from "@/lib/customers/record-phone";
 import { buildCustomerStatement, statementBalanceText, statementPayments, useCustomerNotes } from "@/components/features/customers/customer-statement";
 import { RecordTable, RowLink } from "@/components/features/customers/customer-record-table";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
+import { subscriptionReceivable } from "@/lib/payments/receivables";
 import { advanceTxnView, isPaymentTxn } from "@/components/features/customers/advance-txn";
 
 export interface CustomerProfileProps {
@@ -110,6 +115,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const linkOpts = { canQuotes };
 
   const { data: customer, isLoading, error } = useCustomer(params.id);
+  /* R-2350: one access-log row per open, page and side pane alike (10-minute debounce). */
+  useRecordView("customer", customer ? params.id : null);
   const { data: allGroups } = useCustomerGroups();
   const subsQ = useCustomerSubscriptions(params.id);
   const invoicesQ = useCustomerInvoices(params.id);
@@ -239,10 +246,11 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const receivedPaymentsTotal = customerPayments
     .filter((p) => p.status === "received")
     .reduce((s, p) => s + (p.amount ?? 0), 0);
-  const insights = deriveCustomerInsights(c, allSubs, allInvoices, allProjects, allQuotes, receivedPaymentsTotal);
   // R-523: TDS inside Lifetime paid — on received quote/invoice payments (tds_receivable by
   // payment) plus project milestones, where the TDS is its own project payment (method 'tds').
   const tdsOnPayment = tdsByPayment(customerTds ?? []);
+  /* R-2365: the same TDS (+ its section) under a payment's amount on the Transactions tab. */
+  const tdsInfoOnPayment = tdsInfoByPayment(customerTds ?? []);
   const lifetimeTds =
     customerPayments.filter((p) => p.status === "received").reduce((s, p) => s + (tdsOnPayment[p.id] ?? 0), 0) +
     (projPay?.payments ?? []).filter((p) => p.method === "tds").reduce((s, p) => s + (p.amount ?? 0), 0);
@@ -327,6 +335,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   // Running-balance ledger (Zoho "Statement" tab). R-1682: built by buildCustomerStatement —
   // invoices + debit notes − payments − credit notes + refunds, the same entries as the books'
   // customer ledger (a refunded payment shows its receipt AND the refund).
+  const invoicedQuoteIds = new Set(allInvoices.map((i) => i.quote_id).filter((q): q is string => !!q));
   const statement = buildCustomerStatement({
     invoices: allInvoices,
     payments: customerPayments,
@@ -336,7 +345,15 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     paymentSplit: (id, amount) => receiptSplitLine(amount, tdsOnPayment[id]),
     /* R-2029: a customer advance (R-1863) reads "Advance (RV-…)" on the statement. */
     isAdvanceQuote: (id) => isCustomerAdvanceQuote((quotes ?? []).find((q) => q.id === id)),
+    /* R-2183: a subscription instalment owed before its invoice exists (the R-1708 rule —
+       subscriptionReceivable), so the closing is the same balance the Overview shows. */
+    uninvoicedDues: allSubs.flatMap((s) => {
+      const due = subscriptionReceivable(s, invoicedQuoteIds);
+      return due > 0 && s.quote_id ? [{ quoteId: s.quote_id, date: (s.start_date ?? s.created_at ?? "").slice(0, 10), due }] : [];
+    }),
   });
+  /* R-2183: Outstanding on the Overview = this statement's closing — one balance, one function. */
+  const insights = deriveCustomerInsights(c, allSubs, allInvoices, allProjects, allQuotes, receivedPaymentsTotal, statement);
   const ledger = statement.rows.map((e) => ({
     ...e,
     href: txnHref(e.link.kind === "payment" ? { kind: "payment", quoteId: e.link.quoteId, customerId: params.id } : e.link, linkOpts),
@@ -583,6 +600,12 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
           {/* R-2044: parts billed as payment requests first, unless this customer is invoiced on the due date. */}
           <InvoiceOnDueDateCard customerId={params.id} canEdit={me?.role === "owner" || me?.role === "manager"} />
 
+          {/* R-2416: who pays the online (Razorpay) fee for this customer — owner / manager / accountant. */}
+          <OnlineFeeCustomerCard
+            customerId={params.id}
+            canEdit={me?.role === "owner" || me?.role === "manager" || me?.role === "accountant"}
+          />
+
           {/* R-1517: payment follow-ups — log a call / promise, next date, full history. */}
           <CustomerFollowupCard customerId={params.id} customerName={c.name} />
 
@@ -731,6 +754,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                           {t.due != null && t.due > 0 && (
                             <span className="text-3xs text-amber-ink tabular-nums">{rupee(t.due)} due</span>
                           )}
+                          {t.type === "Payment" && payId ? <PaymentTdsLine amount={t.amount} tds={tdsInfoOnPayment[payId]} /> : null}
                         </span>,
                         <span key="s" className="text-ink-2 capitalize">{t.status}</span>,
                         // Delete — only on payments from the `payments` table.
@@ -772,6 +796,10 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
                     <div className={cn("font-serif text-xl tabular-nums", closingBalance > 0 ? "text-rose" : "text-emerald")}>
                       {closingBalance > 0 ? `${rupee(closingBalance)} owed` : closingBalance < 0 ? `${rupee(-closingBalance)} credit` : rupee(0)}
                     </div>
+                    {/* R-2183: the same advance line as the Overview's Outstanding tile. */}
+                    {statement.advanceNotes.length > 0 && (
+                      <div className="text-xs text-ink-3">{statement.advanceNotes.join(" · ")}</div>
+                    )}
                   </div>
                 </div>
                 {/* R-530: late charges accrued but not billed yet (they are not in the balance until billed). */}

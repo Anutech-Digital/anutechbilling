@@ -17,6 +17,7 @@ import { rupee } from "@/lib/utils";
 import type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 import { vendorLabel } from "@/lib/accounting/pnl";
 import { utcDateISO } from "@/lib/dates/ist";
+import { isFinanceCost } from "@/lib/accounting/credit-line";
 
 export interface DateRange { from: string; to: string }
 export type CompareMode = "none" | "prev" | "yoy";
@@ -192,6 +193,9 @@ export interface SubLine {
   category?: string;
   /** Estimated from the subscription book, not from a bill. */
   estimated?: boolean;
+  /** R-2181: the "Other (N …)" line — the keys of the lines rolled into it, so its drill-down
+   *  opens exactly those. */
+  members?: string[];
 }
 
 export interface SubLines { lines: SubLine[]; itemCount: number }
@@ -219,6 +223,7 @@ function rollUp(items: Item[], showAll: boolean, otherNoun: string): SubLine[] {
       now: r2(rest.reduce((s, c) => s + c.now, 0)),
       was: r2(rest.reduce((s, c) => s + c.was, 0)),
       estimated: rest.some((c) => c.estimated) || undefined,
+      members: rest.map((c) => c.key),
     },
   ];
 }
@@ -257,9 +262,33 @@ type Opts = { showAll?: boolean };
 
 export type OpexSource = Pick<PnLNumbers, "expenses" | "expenseReport" | "model">;
 
-const opexItems = (d: OpexSource): Item[] => d.expenseReport.byCategory.map((c) => ({
+/* R-2374: finance cost (interest on loans / OD) is its own line below operating expenses. */
+const opexItems = (d: OpexSource): Item[] => d.expenseReport.byCategory.filter((c) => !isFinanceCost(c.category)).map((c) => ({
   key: `cat:${c.category}`, label: c.category, category: c.category, now: c.total, was: 0, sense: "more-is-bad",
 }));
+const financeItems = (d: OpexSource): Item[] => d.expenseReport.byCategory.filter((c) => isFinanceCost(c.category)).map((c) => ({
+  key: `fin:${c.category}`, label: c.category, category: c.category, now: c.total, was: 0, sense: "more-is-bad",
+}));
+
+/**
+ * R-2374: the P&L "Finance cost" line — interest on loans, OD and flexi lines (the expense heads
+ * in FINANCE_COST_CATEGORIES). It is part of the expenses total; the statement shows it apart
+ * (Schedule III "Finance costs"), so Operating expenses = expenses − salary on projects − this.
+ * Interest carries no GST, so the heads' totals are what is in `expenses`.
+ */
+export function financeCost(d: OpexSource): number {
+  return r2(financeItems(d).reduce((s, i) => s + i.now, 0));
+}
+
+export function financeCostBreakdown(cur: OpexSource, prev?: OpexSource | null, opts: Opts = {}): SubLines {
+  const items = merge(financeItems(cur), prev ? financeItems(prev) : []);
+  return { lines: rollUp(items, !!opts.showAll, "heads"), itemCount: itemCount(items) };
+}
+
+/** Operating expenses on the statement: expenses − salary on projects − finance cost. */
+export function operatingExpenses(d: OpexSource): number {
+  return r2(d.expenses - d.model.projectCost - financeCost(d));
+}
 
 export function opexBreakdown(cur: OpexSource, prev?: OpexSource | null, opts: Opts = {}): SubLines {
   const items = merge(opexItems(cur), prev ? opexItems(prev) : []);
@@ -341,24 +370,34 @@ const licenceItems = (d: LicenceSource): Item[] => {
     const rest = r2(m.billedLicenceCogs - perVendor);
     if (rest !== 0) items.push({ key: "lic:other-bills", label: bills ? "Other vendor bills" : "Vendor bills", now: rest, was: 0, sense: "more-is-bad" });
   }
-  if (m.estimatedLicenceCogs > 0) {
-    /* The estimate is one ratio over the licence revenue (lib/accounting/pnl.ts); it is shared
-       out by each un-billed vendor's own book cost, so the vendor lines add up to it exactly. */
-    const unbilled = m.byVendor.filter((v) => !((bills?.[v.vendor] ?? 0) > 0) && v.cost > 0);
-    const split = splitByWeight(m.estimatedLicenceCogs, unbilled.map((v) => ({ key: v.vendor, w: v.cost })));
-    if (split.size === 0) {
-      items.push({ key: "lic:estimate", label: "Licences", now: m.estimatedLicenceCogs, was: 0, sense: "more-is-bad", estimated: true });
-    }
-    for (const v of unbilled) {
-      const amt = split.get(v.vendor) ?? 0;
-      if (amt === 0) continue;
-      const existing = items.find((i) => i.key === `lic:${v.vendor}`);
-      if (existing) existing.now = r2(existing.now + amt);
-      else items.push({ key: `lic:${v.vendor}`, label: v.label, now: amt, was: 0, sense: "more-is-bad", estimated: true });
-    }
+  for (const e of licenceEstimates(d)) {
+    const existing = items.find((i) => i.key === `lic:${e.vendor}`);
+    if (existing) existing.now = r2(existing.now + e.amount);
+    else items.push({ key: `lic:${e.vendor}`, label: e.label, now: e.amount, was: 0, sense: "more-is-bad", estimated: true });
   }
   return items;
 };
+
+/** One vendor's estimated licence cost (no bill yet). vendor "estimate" = no vendor split known. */
+export interface LicenceEstimate { vendor: string; label: string; amount: number }
+
+/**
+ * The estimated part of the licence cost, per un-billed vendor. The estimate is one ratio over
+ * the licence revenue (lib/accounting/pnl.ts); it is shared out by each un-billed vendor's own
+ * book cost, so the vendor parts add up to it exactly. R-2181: the COGS drill-down lists these
+ * same parts, so its total equals the line clicked.
+ */
+export function licenceEstimates(d: LicenceSource): LicenceEstimate[] {
+  const m = d.model;
+  if (m.cogsBasis === "unknown" || !(m.estimatedLicenceCogs > 0)) return [];
+  const bills = d.licenceBillsByVendor;
+  const unbilled = m.byVendor.filter((v) => !((bills?.[v.vendor] ?? 0) > 0) && v.cost > 0);
+  const split = splitByWeight(m.estimatedLicenceCogs, unbilled.map((v) => ({ key: v.vendor, w: v.cost })));
+  if (split.size === 0) return [{ vendor: "estimate", label: "Licences", amount: m.estimatedLicenceCogs }];
+  return unbilled
+    .map((v) => ({ vendor: v.vendor, label: v.label, amount: split.get(v.vendor) ?? 0 }))
+    .filter((e) => e.amount !== 0);
+}
 
 export function licenceBreakdown(cur: LicenceSource, prev?: LicenceSource | null, opts: Opts = {}): SubLines {
   const items = merge(licenceItems(cur), prev ? licenceItems(prev) : []);
@@ -398,8 +437,10 @@ function csvLines(data: PnLNumbers, prev: PnLNumbers | null): Line[] {
     { label: "Licence cost basis", value: (d) => d.model.cogsBasis },
     { label: "Gross margin",
       value: (d) => d.model.grossMargin ?? (d.model.projectCostHidden ? "hidden for your role (needs project salary)" : "unknown") },
-    { label: "Operating expenses", value: (d) => -(d.expenses - d.model.projectCost) },
+    { label: "Operating expenses", value: (d) => -operatingExpenses(d) },
     ...subRows(opexBreakdown, data, prev, -1),
+    { label: "Finance cost", value: (d) => -financeCost(d) },
+    ...subRows(financeCostBreakdown, data, prev, -1),
     { label: "Commissions", value: (d) => -d.commissions },
     { label: "Depreciation", value: (d) => -d.depreciation },
     { label: "Net profit", value: (d) => d.model.netProfit ?? "unknown (cost of goods not recorded)" },

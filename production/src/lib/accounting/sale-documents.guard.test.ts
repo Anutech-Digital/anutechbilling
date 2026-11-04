@@ -23,20 +23,30 @@ const ROOT = join(__dirname, "..", "..", "..");
 const SQL_SALE = new Set([
   "report_pnl",            // revenue + output GST
   "report_pnl_monthly",    // revenue trend
-  "report_pnl_revenue_by_product", // R-1835: revenue split by what was sold (same rows as report_pnl)
+  "report_pnl_revenue_lines", // R-2181: the documents behind Revenue per product family (R-1835 report_pnl_revenue_by_product is their sum)
   "report_balance_sheet",  // gst_output (receivables keep the open balance)
   "report_day_book",       // Sales vouchers
   "report_party_ledger",   // 'Opening balance' for opening_balance, not a Sales voucher
   "get_partner_metrics",   // invoiced this month (reseller children)
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  tg_tenants_lut_to_fy: "R-2444: checks only whether 0% export Tax Invoices of one FY exist, so an old writer of tenants.lut_number never drops the LUT they rely on; no amounts or totals",
+  delete_tenant_lut: "R-2444: counts the company's 0% export Tax Invoices of one FY (document_kind 'tax_invoice' — never an opening invoice) only to refuse deleting the LUT they rely on; no amounts or totals",
+  bank_line_kept_receipt_ref: "R-2430: reads only the quote_id of the ONE invoice a bank line is being matched to (by id), to find a kept receipt on that quote (R-2466: or on that opening invoice) — no amounts, lists or totals",
+  settle_invoice_payment_link: "R-2415: the invoices one paid Razorpay pay link was frozen for (by id) — checks each is open and its due, then record_payment books it; no list or total",
+  personal_my_invoices: "R-2132: a personal login's own document list (like a customer portal) — shows each of its linked customer's invoices with its own amount and balance; it totals nothing and no report or GST figure reads it",
+  quote_one_time_lines: "R-2095: only checks whether a live invoice already carries a quote's one-time lines (tag one_time_of) — no amounts",
+  marketing_metrics_query: "R-2165: Neo's ad report — a received payment's own invoice by id for its taxable share (ex GST), same as R-1980 marketing-sales.ts; the revenue is the PAYMENT, not an invoice total",
+  tg_queue_panel_account: "R-2103: reads only the customer of an opening-invoice payment, to queue their customer panel login — no amounts",
+  queue_panel_account_backfill: "R-2103: finds the customer of opening-invoice payments to queue panel logins — no amounts",
   zoho_books_import_apply: "R-1753: open Zoho invoices go in through import_opening_invoices (opening, never a sale)",
   zoho_books_import_undo: "R-1753: refuses while a created customer has other invoices; removes its own opening invoices",
   accept_project_quote: "creates a project invoice of ours",
-  bank_credit_open_items: "R-1838: lists a customer's unpaid invoices to take a bank receipt (opening invoices excluded: no quote / instalment link)",
+  bank_credit_open_items: "R-1838: lists a customer's unpaid invoices to take a bank receipt (R-2466: Zoho opening invoices too, kind opening — paid via _record_opening_invoice_payment); no totals",
   bank_old_one_off_bookings: "R-1863: lists bank lines booked as a one-off bank sale with their own invoice (only those reached through the line's payment → quote), to relink them",
-  reconcile_bank_credit_to_item: "R-1838: records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment",
-  bank_credit_pay_item: "R-2098: the body of reconcile_bank_credit_to_item (shared with reconcile_bank_credit_split) — records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment",
+  reconcile_bank_credit_to_item: "R-1838: records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment (R-2466: an opening invoice via _record_opening_invoice_payment)",
+  reconcile_bank_credit_fx_invoice: "R-2427: an export receipt on the ONE picked invoice (by id, locked) — its currency, rate and due decide the receipt, Bank Charges and forex lines; no list or total",
+  bank_credit_pay_item: "R-2098: the body of reconcile_bank_credit_to_item (shared with reconcile_bank_credit_split) — records a bank receipt on the picked invoice via record_desk_payment / record_instalment_payment (R-2466: an opening invoice via _record_opening_invoice_payment)",
   activate_quote_on_credit: "quote → our invoice",
   allocate_project_receipt: "payments on projects; sets paid_amount on the project invoice it raises (R-1995)",
   allocate_project_receipt_with_tds: "payments on projects + the customer's TDS; sets paid_amount on the project invoice it raises (R-1996; allocate_project_receipt calls it)",
@@ -57,6 +67,8 @@ const SQL_NOT_SALE: Record<string, string> = {
   raise_project_milestone_invoice: "issues our invoice",
   raise_subscription_billing: "issues our invoice",
   instalment_credit: "R-2044: one subscription's instalment invoices' paid_amount (credit already used) — not GST or revenue",
+  instalment_credit_parts: "R-2095: instalment_credit's pool, incl. part invoices credit notes cancelled — not GST or revenue",
+  invoice_fully_credited: "R-2095: do credit notes cover one invoice's value — frees its billing parts, not GST or revenue",
   split_sale_invoice_status: "R-2057: the amount of one part's instalment invoice, for the pending list — not GST or revenue",
   reconcile_bank_txn: "money in, not GST",
   record_desk_payment: "payments on quotes",
@@ -65,12 +77,18 @@ const SQL_NOT_SALE: Record<string, string> = {
   record_payment: "payments on quotes",
   record_project_payment: "payments on projects",
   refund_payment: "money out",
+  r2322_refund_scope: "R-2322: snapshot of the rows a customer refund touches (to undo it exactly) — not GST or revenue",
   set_late_fee_mode: "late fee settings",
+  set_invoice_external_number: "R-2360: stores the Zoho invoice number on one invoice (duplicate check) — not GST or revenue",
+  invoice_external_number_holder: "R-2360: which invoice already is a Zoho number (duplicate check) — not GST or revenue",
   split_outstanding_for: "per quote",
+  sync_invoice_subscription_outstanding: "R-2178: one invoice's quote / billing-part link, to re-sync the subscriptions' stored balance after a credit / debit note — not GST or revenue",
+  subscription_dues_drift: "R-2154: read-only report — only asks whether a quote has any invoice (then the invoice is the claim)",
   suggest_invoice_write_off: "open balances",
   suspend_subscription: "per subscription",
   cancel_subscription: "R-1711: what one subscription's open invoices still ask for, so a cancel never clears it (no money column changes on invoices)",
   write_off_subscription: "R-1635: stamps one subscription's open invoices written off (no money column changes)",
+  write_off_small_invoice_balance: "R-2410: stamps ONE invoice (balance ₹1–₹500) written off + an audit row (no money column changes) — not GST or revenue",
   sync_project_invoice_paid: "project receipts",
   tg_payment_followups_same_tenant: "tenant check",
   tg_quotes_add_seats_take_back: "per quote",
@@ -86,6 +104,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   remove_opening_invoice_import: "removes opening invoices",
   tg_note_not_on_opening_invoice: "refuses notes on an opening invoice",
   tg_payments_opening_invoice: "payment ↔ opening invoice",
+  tg_partner_credit_note_to_child_bill: "R-2432: only checks the credit note's invoice belongs to the same company before reducing the reseller's mirrored bill",
 };
 
 function latestSqlFunctions(): Map<string, { file: string; body: string }> {
@@ -139,16 +158,22 @@ const TS_SALE = new Set([
   "src/app/(app)/accounting/gst/report.ts",                       // GSTR-1 / 3B
   "src/app/(app)/accounting/gst/composition-report.ts",           // CMP-08 — bill_of_supply only
   "src/lib/compliance/revised-invoice-query.ts",                  // revised invoices — bill_of_supply only
-  "src/components/features/accounting/pnl-drilldown-dialog.tsx",  // P&L revenue rows
   "src/components/features/accounting/tally-daybook-button.tsx",  // Tally Sales vouchers
   "src/lib/queries/gst-health.ts",                                // GST checks of our invoices
   "src/lib/queries/month-close.ts",                               // month's output GST
   "src/app/api/v1/support/invoices/summary/route.ts",             // R-2079: support revenue for DSP
+  "src/components/features/collections/owner-report.tsx",        // R-2414: invoiced in the last 30 days, for DSO / CEI
 ]);
 const TS_NOT_SALE: Record<string, string> = {
+  "src/lib/payments/payment-link.server.ts": "R-2415: the open invoices (by id) a Send-reminder pay link may carry, and their due for the stale-link sweep — not a list or a total",
+  "src/app/(app)/renewals/last-paid-data.ts": "R-2422: the invoice numbers raised from one subscription's own quotes (by quote_id), to name what a payment paid on the Renewals row's Last paid — not a list or a total",
+  "src/lib/payments/online-fee.server.ts": "R-2416: one invoice's online-fee waiver flag (by id) for the fee policy on capture — not a list or a total",
+  "src/app/(app)/collections/leftover-tds-dialog.tsx": "R-2410: one invoice by id, to open its Record payment sheet in TDS mode — not a list or a total",
   "src/app/(public)/buy/workspace/thanks/fetch-order.ts": "R-1971: the number of this order's own GST invoice (by quote_id) for the buyer's thanks page — not a list or a total",
   "src/lib/exports/read-rows.server.ts": "R-1007: the invoice-register CSV lists every invoice the user ticked or can see (opening ones too, as the Invoices screen does) — not GST or revenue",
   "src/lib/integrations/zoho-books/import-store.ts": "R-1753: Zoho numbers already imported as opening invoices (so a second import skips them)",
+  "src/app/api/integrations/zoho-books/bulk-match/customer-facts.ts": "R-2419: a customer's OPEN opening invoices (document_kind opening_invoice) so Reconcile from Zoho settles last year's invoice on them — never a sale, not GST or revenue",
+  "src/lib/privacy/queries.ts": "R-2013: one person's own invoices for their DPDP data export (every kind, as the person sees them) — not GST or revenue",
   "src/app/(app)/accounting/aging/read.ts": "aging of open balances — includes opening invoices on purpose",
   "src/app/(app)/invoices/[id]/page.tsx": "one invoice; an opening invoice gets its own view",
   "src/app/(app)/quotes/[id]/invoice-created-at.ts": "R-1715: one invoice's created_at by id, for the quote's workflow history time — not a list or a total",
@@ -167,6 +192,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/components/features/collections/write-off-suggestions-card.tsx": "open balances",
   "src/components/features/invoices/issue-credit-note-dialog.tsx": "a trigger refuses notes on an opening invoice",
   "src/components/features/subscriptions/invoice-peek-dialog.tsx": "one subscription invoice",
+  "src/components/features/subscriptions/use-expected-seat-rate.ts": "the last invoiced seat rate of one item (R-2292; skips opening invoices itself)",
   "src/lib/ai/help-data-tools.ts": "overdue balances",
   "src/lib/ai/performance.server.ts": "lead → invoice status",
   "src/lib/billing/sync-instalments.server.ts": "our instalment invoices",

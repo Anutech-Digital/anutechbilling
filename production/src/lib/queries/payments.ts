@@ -21,6 +21,7 @@ import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import type { Payment, PaymentMethod } from "@/lib/supabase/database.types";
 import { oldestInstalmentPerSubscription } from "@/lib/payments/instalment-payment";
+import { oldestPartDueBySubscription, type OpenPartRequest } from "@/lib/billing/part-request-dues";
 
 // ============================================================
 // Read — all payments for a tenant (used by /payments dashboard)
@@ -345,6 +346,8 @@ export interface OutstandingRow {
    * else the agreed payment_due_date; null when neither exists.
    */
   pay_by?:            string | null;
+  /** R-2230: where pay_by came from — an unpaid invoice or an open part payment request. */
+  pay_by_kind?:       "invoice" | "request" | null;
 }
 
 /** R-1689: when the money is due — the oldest open invoice's due date first, else the agreed date. */
@@ -413,7 +416,10 @@ export function buildDuesRows(
   billings: DuesBillingRow[],
   today: string,
   openBalances?: ReadonlyMap<string, number>,
+  /** R-2230: open part payment requests (public.open_part_requests) — their due dates count too. */
+  partRequests: readonly OpenPartRequest[] = [],
 ): OutstandingRow[] {
+  const partDueBySub = oldestPartDueBySubscription(partRequests);
   const quoteById = new Map(quotes.map((q) => [q.id, q]));
   const paidByQuote = new Map<string, number>();
   for (const p of payments) paidByQuote.set(p.quote_id, (paidByQuote.get(p.quote_id) ?? 0) + (p.amount ?? 0));
@@ -475,7 +481,14 @@ export function buildDuesRows(
     const startedAt = s.start_date ?? s.created_at;
     /* R-1716: created_at is a timestamp — its IST day, not the UTC day (00:00–05:30 IST read as yesterday). */
     const startedDay = s.start_date ? ymd(s.start_date) : toIstDate(s.created_at);
-    const ageFrom = unpaidDue[0] ?? (s.payment_due_date ? ymd(s.payment_due_date) : startedDay);
+    /* R-2230: an open part payment request is money asked for too — its due date counts, the
+       oldest of the two wins (a part request has no invoice until it is paid). */
+    const invoiceDue = unpaidDue[0] ?? null;
+    const requestDue = partDueBySub.get(s.id) ?? null;
+    const oldestOwed = [invoiceDue, requestDue].filter((d): d is string => !!d).sort()[0] ?? null;
+    const payByKind: OutstandingRow["pay_by_kind"] = !oldestOwed ? null
+      : oldestOwed === invoiceDue ? "invoice" : "request";
+    const ageFrom = oldestOwed ?? (s.payment_due_date ? ymd(s.payment_due_date) : startedDay);
 
     return {
       subscription_id:    s.id,
@@ -492,7 +505,8 @@ export function buildDuesRows(
       days_outstanding:   daysSince(ageFrom, today),
       quote_id:           actionQuote?.id ?? null,
       payment_due_date:   s.payment_due_date ?? null,
-      pay_by:             subscriptionPayBy(s.payment_due_date, unpaidDue[0]),
+      pay_by:             subscriptionPayBy(s.payment_due_date, oldestOwed),
+      pay_by_kind:        payByKind,
     };
   }).sort((a, b) => b.days_outstanding - a.days_outstanding);
 }
@@ -552,7 +566,33 @@ export async function fetchOutstandingReceivables(supabase: DuesClient, today: s
     supabase.from("invoices").select(INVOICE_COLS).in("id", ids).in("status", ["pending", "overdue"]).is("written_off_at", null).order("id").range(from, to) as never,
   );
 
-  return buildDuesRows(subs, quotes, payments, [...byQuote, ...byId], billings, today, openBalances);
+  // 6. R-2230: open part payment requests of these subscriptions — their due dates.
+  const partRequests = await fetchOpenPartRequests(supabase, {}).catch((e) => {
+    console.warn("[dues] open_part_requests unavailable — part request due dates not shown:", e);
+    return [] as OpenPartRequest[];
+  });
+
+  return buildDuesRows(subs, quotes, payments, [...byQuote, ...byId], billings, today, openBalances, partRequests);
+}
+
+/**
+ * R-2230: the open part payment requests (public.open_part_requests — row security keeps them to
+ * the caller's company), optionally for one customer or one subscription. Paged (R-264).
+ */
+export async function fetchOpenPartRequests(
+  supabase: DuesClient,
+  filter: { customerId?: string | null; subscriptionId?: string | null },
+): Promise<OpenPartRequest[]> {
+  const rpc = supabase.rpc as unknown as (fn: "open_part_requests", args: { p_customer_id: string | null; p_subscription_id: string | null }) => {
+    order: (c: "quote_id", o: { ascending: boolean }) => {
+      order: (c: "billing_id", o: { ascending: boolean }) => { range: (from: number, to: number) => PageQuery<OpenPartRequest> };
+    };
+  };
+  const args = { p_customer_id: filter.customerId ?? null, p_subscription_id: filter.subscriptionId ?? null };
+  return fetchAllRows<OpenPartRequest>((from, to) =>
+    rpc.call(supabase, "open_part_requests", args)
+      .order("quote_id", { ascending: true }).order("billing_id", { ascending: true }).range(from, to),
+  );
 }
 
 export function useOutstandingReceivables() {

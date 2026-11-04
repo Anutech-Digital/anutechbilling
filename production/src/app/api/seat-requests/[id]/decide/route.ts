@@ -111,6 +111,7 @@ export const POST = withRoute(
     sub,
     additionalSeats: verdict.seatsToAdd,
     graceDays: tenant?.grace_period_days ?? 7,
+    requestedBy: user.id,
   });
 
   if (!result.ok) {

@@ -243,7 +243,10 @@ function lineText(l: DuesLine): string {
  * Email body (the PDF is attached). FIRST line says who, how much, how many bills — it becomes
  * the follow-up note (reminderNote).
  */
-export function pendingDuesEmailText(st: PendingDuesStatement, opts: { greetName: string | null; sellerName: string }): string {
+export function pendingDuesEmailText(
+  st: PendingDuesStatement,
+  opts: { greetName: string | null; sellerName: string; upiLink?: string | null },
+): string {
   const greet = opts.greetName?.trim() || st.customerName;
   const seller = opts.sellerName.trim() || "our";
   const n = st.lines.length;
@@ -255,6 +258,8 @@ export function pendingDuesEmailText(st: PendingDuesStatement, opts: { greetName
     `Total due: ${rupee(st.total)}`,
     "",
     "You can pay the total in one go — the bank details and a UPI QR for the full amount are on the attached statement (if your company has set them up).",
+    /* R-2412: a pay link in every message — the same upi://pay for the total as the QR. */
+    ...(opts.upiLink ? ["", `Pay the total by UPI (open on your phone): ${opts.upiLink}`, ""] : []),
     "Please ignore this if already paid, or reply here if anything is wrong.",
     "",
     `— ${seller} team`,

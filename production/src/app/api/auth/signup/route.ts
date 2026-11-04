@@ -44,6 +44,9 @@ import { checkNewPassword } from "@/lib/auth/password-rules";
 import { INVITE_EXPIRED_MESSAGE, inviteAcceptRefusal, isInviteExpired } from "@/lib/auth/invite-accept";
 import { CHECK_EMAIL_RESPONSE, SIGNUP_FAILED_MESSAGE, SIGNUP_SERVER_FAILED_MESSAGE, isEmailTaken } from "./signup-response";
 import { apiFailure } from "@/lib/errors/api-error";
+import { personalSignupEnabled, PERSONAL_SIGNUP_OFF } from "@/lib/personal/signup-flag";
+import { personalConsentChoices, PERSONAL_CONSENT_VERSION } from "@/lib/personal/personal-workspace.server";
+import { recordAccountConsent } from "@/lib/consent/account-consent.server";
 
 export async function POST(request: NextRequest) {
   try {
@@ -55,7 +58,19 @@ export async function POST(request: NextRequest) {
       gstin?: string;
       /** Invite-email ke link se aaya raaz — iske bina invite se join NAHI hota. */
       inviteToken?: string;
+      /** R-2119 (GP-05): 'personal' = free personal account (no company). Missing = business. */
+      kind?: string;
+      /** R-2119: the personal consent tick (Terms + Privacy + processing my financial records). */
+      consent?: unknown;
+      /** R-2119: optional marketing tick — recorded as granted or denied. */
+      marketing?: unknown;
     };
+
+    /* R-2119: behind PERSONAL_SIGNUP_ENABLED (default off) the personal door does not exist. */
+    const isPersonal = body.kind === "personal";
+    if (isPersonal && !personalSignupEnabled()) {
+      return NextResponse.json(PERSONAL_SIGNUP_OFF, { status: 404 });
+    }
 
     /* R-020: a bot is refused here; a no-op until TURNSTILE_SECRET_KEY is set. */
     const botRefusal = await turnstileRefusal(request.headers, body);
@@ -64,8 +79,14 @@ export async function POST(request: NextRequest) {
     const { password, fullName, companyName, gstin } = body;
     const email = normalizeEmail(body.email);
 
-    if (!email || !password || !fullName || !companyName) {
+    if (!email || !password || !fullName || (!isPersonal && !companyName)) {
       return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+    }
+    if (isPersonal && body.consent !== true) {
+      return NextResponse.json(
+        { error: "Tick the box to accept the Terms and Privacy Policy and let us process your money records.", field: "consent" },
+        { status: 400 },
+      );
     }
 
     /* R-736: the same password rules as reset / change password (lib/auth/password-rules.ts).
@@ -88,7 +109,9 @@ export async function POST(request: NextRequest) {
     // tenant me (owner tak ke role me) ghus sakta tha. Token sirf invite-
     // email me jata hai, isliye uska hona hi mailbox ka saboot hai. Google
     // wala raasta (callback) pehle jaisa — wahan saboot Google deta hai.
-    const inviteToken = typeof body.inviteToken === "string" ? body.inviteToken.trim() : "";
+    /* R-2119: a personal signup never joins through an invite token — an invited address keeps
+       the 409 below (the invite is the way in for that address). */
+    const inviteToken = !isPersonal && typeof body.inviteToken === "string" ? body.inviteToken.trim() : "";
     const { data: inviteRow } = inviteToken
       ? await admin
           .from("team_invites")
@@ -130,6 +153,13 @@ export async function POST(request: NextRequest) {
           { status: 409 },
         );
       }
+    }
+
+    /* R-2119 (GP-05): a personal signup stops here — the login (unconfirmed) and the consent
+       proof only. No tenant, no users row, no domain routing: verify-email makes the personal
+       workspace once the address is proven. */
+    if (isPersonal) {
+      return await personalSignup(admin, request, { email, password, fullName, marketing: body.marketing === true });
     }
 
     const domainMatch = await findVerifiedDomainTenant(email);
@@ -275,6 +305,52 @@ function originOf(request: NextRequest): string {
 }
 
 type AdminClient = ReturnType<typeof createAdminClient>;
+
+/**
+ * R-2119 (GP-05, G-PERSONAL): the password door of a free personal account. Creates the login
+ * UNCONFIRMED (app_metadata.signup_kind 'personal' — app_metadata only the server can set) and
+ * the consent proof with tenant null (GP-03). No tenant, no users row: verify-email creates the
+ * personal workspace once the link in the email is followed. No consent proof → no login.
+ */
+async function personalSignup(
+  admin: AdminClient,
+  request: NextRequest,
+  input: { email: string; password: string; fullName: string; marketing: boolean },
+) {
+  const { data: authData, error: authError } = await admin.auth.admin.createUser({
+    email: input.email,
+    password: input.password,
+    email_confirm: false,
+    user_metadata: { full_name: input.fullName },
+    app_metadata: { signup_kind: "personal" },
+  });
+  if (authError) {
+    if (isEmailTaken(authError)) return NextResponse.json(CHECK_EMAIL_RESPONSE);
+    console.warn("[signup] personal createUser failed:", authError.code ?? authError.status ?? "", authError.message);
+    return NextResponse.json({ error: SIGNUP_FAILED_MESSAGE }, { status: 400 });
+  }
+  const userId = authData.user.id;
+
+  const recorded = await recordAccountConsent(admin, {
+    userId,
+    tenantId: null,
+    purposes: personalConsentChoices(input.marketing),
+    version: PERSONAL_CONSENT_VERSION,
+    req: request,
+    source: "signup",
+    page: "/signup",
+  });
+  if (!recorded) {
+    await admin.auth.admin.deleteUser(userId);
+    return NextResponse.json(
+      apiFailure("signup_consent_failed", SIGNUP_SERVER_FAILED_MESSAGE, new Error("consent not recorded"), "signup"),
+      { status: 500 },
+    );
+  }
+
+  const verify = await startEmailVerification(admin, { userId, email: input.email, name: input.fullName, origin: originOf(request) });
+  return NextResponse.json({ ...CHECK_EMAIL_RESPONSE, verificationSent: verify.sent });
+}
 
 /** Best-effort domain claim. A failure here must never fail a signup that has
  *  already succeeded — the tenant exists and the user can work. */

@@ -32,22 +32,38 @@ export function submitSignOut(): void {
   form.submit();
 }
 
-export function AccountMenuItems() {
+/**
+ * GP-07a (R-2115): a personal login (role 'personal') cannot open /settings or /team — the
+ * route guard sends it to /money — so it gets Account (/account) in their place. Every other
+ * role keeps Settings and Team as before.
+ */
+export function AccountMenuItems({ role }: { role?: string | null } = {}) {
+  const personal = role === "personal";
   return (
     <>
       <DropdownMenuItem onSelect={submitSignOut}>
         <Icon name="user" size={14} /> Switch account (signs you out)
       </DropdownMenuItem>
-      <DropdownMenuItem asChild>
-        <Link href="/settings">
-          <Icon name="settings" size={14} /> Settings
-        </Link>
-      </DropdownMenuItem>
-      <DropdownMenuItem asChild>
-        <Link href="/team">
-          <Icon name="users" size={14} /> Team
-        </Link>
-      </DropdownMenuItem>
+      {personal ? (
+        <DropdownMenuItem asChild>
+          <Link href="/account">
+            <Icon name="user" size={14} /> Account
+          </Link>
+        </DropdownMenuItem>
+      ) : (
+        <>
+          <DropdownMenuItem asChild>
+            <Link href="/settings">
+              <Icon name="settings" size={14} /> Settings
+            </Link>
+          </DropdownMenuItem>
+          <DropdownMenuItem asChild>
+            <Link href="/team">
+              <Icon name="users" size={14} /> Team
+            </Link>
+          </DropdownMenuItem>
+        </>
+      )}
       <DropdownMenuItem asChild>
         <a href={WEBSITE_HREF} target="_blank" rel="noopener noreferrer">
           <Icon name="external" size={14} /> Website <span aria-hidden="true">↗</span>

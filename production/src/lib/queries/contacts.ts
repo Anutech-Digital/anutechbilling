@@ -184,9 +184,11 @@ export interface Celebration {
   phone:     string | null;
 }
 
-export function useCelebrations(daysAhead = 7) {
+/** `enabled` (R-2175): the TopBar bell passes false for a personal session (no contacts there). */
+export function useCelebrations(daysAhead = 7, opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: ["contacts", "celebrations", daysAhead],
+    enabled: opts.enabled ?? true,
     queryFn: async (): Promise<Celebration[]> => {
       const supabase = createClient();
       const data = await fetchAllRows((from, to) => supabase

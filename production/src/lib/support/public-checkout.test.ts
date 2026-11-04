@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   buildSupportOrder, isSupportCheckoutPlan, parseSupportBuyParams, supportCheckoutSchema, supportPriceView,
-  supportWhatNext, yearlySavingPct,
+  supportWhatNext, yearlySavingPct, currentSupportPlan, plansOnOffer, supportPlanHeading,
 } from "./public-checkout";
 
 const ITEM = { id: "SUP-STANDARD-YR-abc", name: "Support Standard (Yearly)" };
@@ -66,5 +66,46 @@ describe("the rest", () => {
   });
   it("the buyer's next step names the plan, not a setup", () => {
     expect(supportWhatNext("Standard Support (Yearly)")).toMatch(/Standard Support \(Yearly\) plan is switched on at our support desk/);
+  });
+});
+
+/* ── R-2102: an existing customer from the support desk ─────────────────────────────────── */
+
+describe("currentSupportPlan — the customer's live support plan (R-2102)", () => {
+  it("no subscriptions → Free", () => {
+    expect(currentSupportPlan([])).toEqual({ tier: "free", paidUntil: null });
+  });
+  it("the SKU wins over a seller name that says Standard", () => {
+    expect(currentSupportPlan([
+      { item_id: "SUP-ENTERPRISE-MO-abc", plan: "Standard Traders Enterprise Support", status: "active", renewal_date: "2026-11-29" },
+    ])).toEqual({ tier: "enterprise", paidUntil: "2026-11-29" });
+  });
+  it("cancelled plans do not count; the best live one wins", () => {
+    expect(currentSupportPlan([
+      { item_id: "SUP-ENTERPRISE-YR-abc", plan: "Enterprise Support", status: "cancelled", renewal_date: "2027-01-01" },
+      { item_id: "SUP-STANDARD-YR-abc", plan: "Standard Support", status: "active", renewal_date: "2027-03-01" },
+    ])).toEqual({ tier: "standard", paidUntil: "2027-03-01" });
+  });
+});
+
+describe("plansOnOffer — only plans above the current one (R-2102)", () => {
+  it("Free (or unknown visitor) → Standard and Enterprise", () => {
+    expect(plansOnOffer("free")).toEqual(["standard", "enterprise"]);
+  });
+  it("Standard → Enterprise only", () => {
+    expect(plansOnOffer("standard")).toEqual(["enterprise"]);
+  });
+  it("Enterprise → nothing to buy", () => {
+    expect(plansOnOffer("enterprise")).toEqual([]);
+  });
+});
+
+describe("supportPlanHeading — the thanks page heading (R-2102)", () => {
+  it("names the tier, not the seller", () => {
+    expect(supportPlanHeading("support-enterprise")).toBe("Enterprise Support plan");
+    expect(supportPlanHeading("support-standard")).toBe("Standard Support plan");
+  });
+  it("anything else → a plain fallback", () => {
+    expect(supportPlanHeading("workspace")).toBe("Support plan");
   });
 });

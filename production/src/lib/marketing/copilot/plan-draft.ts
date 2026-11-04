@@ -220,8 +220,16 @@ function nameFrom(prompt: string): string {
   return `${cut.slice(0, cut.lastIndexOf(" ") > 30 ? cut.lastIndexOf(" ") : 60).trim()}…`;
 }
 
+/**
+ * R-2159: the objective the words name, or null when they name none. guessFromPrompt then
+ * falls back to leads; the marketing agent (Xeno) asks the person instead.
+ */
+export function objectiveInPrompt(prompt: string): CopilotObjective | null {
+  return OBJECTIVE_WORDS.find(([, re]) => re.test(prompt))?.[0] ?? null;
+}
+
 export function guessFromPrompt(prompt: string, items: readonly ItemOption[]): PlanDraft {
-  const objective = OBJECTIVE_WORDS.find(([, re]) => re.test(prompt))?.[0] ?? "lead_gen";
+  const objective = objectiveInPrompt(prompt) ?? "lead_gen";
   const named = PLATFORMS.filter((p) => (p === "google-ads" ? GOOGLE_WORDS : META_WORDS).test(prompt));
   const allowed = availablePlatforms(objective);
   const picked = named.filter((p) => allowed.includes(p));

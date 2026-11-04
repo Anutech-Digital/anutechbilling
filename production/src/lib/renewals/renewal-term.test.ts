@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { renewalTerm, suspectAnnualMrr, type RenewalTermInput } from "./renewal-term";
+import { grossAmount } from "@/lib/quotes/amounts";
 
 /* The two real rows this was written from, measured 23 Aug 2026. */
 
@@ -148,5 +149,47 @@ describe("suspectAnnualMrr", () => {
     expect(suspectAnnualMrr({ mrr: 1, termMonths: 12, seats: 0, catalogPerSeatMonth: 270 })).toBe(false);
     expect(suspectAnnualMrr({ mrr: 0, termMonths: 12, seats: 10, catalogPerSeatMonth: 270 })).toBe(false);
     expect(suspectAnnualMrr({ mrr: 99_999, termMonths: 12, seats: 10, catalogPerSeatMonth: null })).toBe(false);
+  });
+});
+
+/* R-2369 (2 Nov 2026, staging): the renewal priced from the whole-rupee mrr drifted from the sold
+   price — 5 × ₹850/yr filed as mrr ₹355 renewed at ₹4,260; a ₹1,300/yr domain (mrr ₹108) at
+   ₹1,296. subscriptions.term_amount keeps the exact term amount and wins when present. */
+describe("renewalTerm — R-2369 exact term amount", () => {
+  it("5 seats × ₹850/yr renews at ₹4,250 + GST, not ₹4,260", () => {
+    const before = renewalTerm({ mrr: 355, termMonths: 12, seats: 5 });
+    expect(before.ok && before.subtotal).toBe(4_260);   // the staging drift, from mrr alone
+    const t = renewalTerm({ mrr: 355, termMonths: 12, seats: 5, termAmount: 4_250 });
+    expect(t.ok).toBe(true);
+    if (!t.ok) return;
+    expect(t.subtotal).toBe(4_250);
+    expect(t.perSeatRate).toBe(850);
+    expect(t.perSeatRate * 5).toBe(t.subtotal);
+    expect(grossAmount(t.subtotal, 18)).toBe(5_015);
+    expect(t.commitment).toBe("annual_yearly");
+  });
+
+  it("₹1,300/yr domain renews at ₹1,300, not ₹1,296", () => {
+    const before = renewalTerm({ mrr: 108, termMonths: 12, seats: 1 });
+    expect(before.ok && before.subtotal).toBe(1_296);
+    const t = renewalTerm({ mrr: 108, termMonths: 12, seats: 1, termAmount: 1_300 });
+    expect(t.ok && t.subtotal).toBe(1_300);
+  });
+
+  it("monthly flex is unchanged (10 × ₹270 a month)", () => {
+    const plain = renewalTerm({ mrr: 2_700, termMonths: 1, seats: 10 });
+    const exact = renewalTerm({ mrr: 2_700, termMonths: 1, seats: 10, termAmount: 2_700 });
+    expect(plain).toEqual(exact);
+    expect(exact.ok && exact.subtotal).toBe(2_700);
+    expect(exact.ok && exact.commitment).toBe("monthly");
+  });
+
+  it("null / 0 term amount → priced from mrr exactly as before", () => {
+    expect(renewalTerm({ ...BETACO, termAmount: null })).toEqual(renewalTerm(BETACO));
+    expect(renewalTerm({ ...BETACO, termAmount: 0 })).toEqual(renewalTerm(BETACO));
+  });
+
+  it("still refuses a yearly figure in the mrr field, term amount or not", () => {
+    expect(renewalTerm({ ...XYZ, termAmount: 32_400 }).ok).toBe(false);
   });
 });

@@ -5,14 +5,21 @@
  *   POST { action: "start", months? } → a new dry run (replaces an unfinished one).
  *   POST { action: "step" }           → reads the next part from Zoho (≤ ~40 requests, paced
  *                                       under Zoho's 100 a minute); call again until "ready".
- *   POST { action: "dry_run" }        → counts + problems (nothing written).
- *   POST { action: "import" }         → R-1760: ONE PART of the import, as the signed-in person
+ *   POST { action: "dry_run", parts?, customer_months? } → counts + problems (nothing written).
+ *                                       R-2406: parts = { customers, subscriptions, invoices }
+ *                                       ticks (default: open invoices OFF — their money is booked
+ *                                       here through bank reconcile); customer_months = only
+ *                                       customers with a Zoho invoice in the last N months.
+ *   POST { action: "import", parts?, customer_months? } → R-1760: ONE PART of the import, as the signed-in person
  *                                       (their tenant, their role). The first call freezes the
  *                                       plan (zoho_books_import_begin); every call applies the
  *                                       next ≤150 rows (zoho_books_import_step) in its own
  *                                       transaction. Call again until done — the same call is
  *                                       "Continue import" after an error. (One call for the
  *                                       whole plan met the role's 8 s statement timeout.)
+ *                                       R-2406: only the ticked parts reach the database — a
+ *                                       part not ticked is an empty list (no receivable at all
+ *                                       when Open invoices is off).
  *   POST { action: "undo", run_id, reason } → zoho_books_import_undo — removes what fits in one
  *                                       call; call again until result.done.
  *
@@ -25,6 +32,7 @@ import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken
 import { ZohoApiError } from "@/lib/integrations/zoho-books/api";
 import { scanStep } from "@/lib/integrations/zoho-books/import-scan";
 import { buildImportPlan, summarisePlan } from "@/lib/integrations/zoho-books/import-plan";
+import { choosePlan, parseChoice, summariseChoice } from "@/lib/integrations/zoho-books/import-choice";
 import {
   ALLOWED_MONTHS, DEFAULT_MONTHS, loadPlanInputs, readRuns, sinceFor, startRun, supabaseScanStore, type RunRow,
 } from "@/lib/integrations/zoho-books/import-store";
@@ -168,16 +176,22 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       /* R-1760: the plan is built once, when Import is first pressed; later parts use the plan
          frozen on the run (re-planning would count rows the earlier parts created). */
       if (action === "dry_run" || !open.import_stage) {
+        const choice = parseChoice(body);
         const inputs = await loadPlanInputs(caller.admin, caller.tenantId, open.id);
-        const plan = buildImportPlan({ ...inputs, today: istToday(), since: open.since });
+        const today = istToday();
+        const plan = buildImportPlan({ ...inputs, today, since: open.since });
+        const chosen = choosePlan(plan, { invoices: inputs.invoices, today }, choice);
         if (action === "dry_run") {
-          return NextResponse.json({ ok: true, open: progressOf(open), summary: summarisePlan(plan) });
+          return NextResponse.json({ ok: true, open: progressOf(open), summary: { ...summarisePlan(plan), ...summariseChoice(plan, chosen) } });
+        }
+        if (chosen.contactRows.length + chosen.subscriptions.length + chosen.invoices.length === 0) {
+          return fail("Tick at least one part to import (Customers, Subscriptions or Open invoices).", 400);
         }
         const begun = await rpc("zoho_books_import_begin", {
           p_run_id: open.id,
-          p_customers: plan.contactRows,
-          p_subscriptions: plan.subscriptions,
-          p_invoices: plan.invoices,
+          p_customers: chosen.contactRows,
+          p_subscriptions: chosen.subscriptions,
+          p_invoices: chosen.invoices,
         });
         if (begun.error) return fail(begun.error.message || "The import could not start. Nothing was imported.", 409);
       }

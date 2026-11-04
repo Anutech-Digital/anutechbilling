@@ -133,6 +133,8 @@ export interface PnlPeriod {
    */
   projectCostHidden?: boolean;
   byVendor: VendorLine[];
+  /** R-2095: how the estimated licence cost was worked out — null when nothing is estimated. */
+  estimateBasis?: CogsEstimateBasis | null;
 }
 
 const VENDOR_LABELS: Record<string, string> = {
@@ -190,6 +192,19 @@ export function vendorLine(v: VendorInput): VendorLine {
     seats: v.seats,
     subscriptions: v.subscriptions,
   };
+}
+
+/**
+ * R-2095 (staging P&L, 30 Oct 2026): the COGS drill-down said "No transactions" beside an
+ * estimated cost. The estimate's own working: the licence revenue × the subscription book's
+ * wholesale ÷ price ratio, from the vendors without a bill (their subscriptions and seats).
+ */
+export interface CogsEstimateBasis {
+  licenceRevenue: number;
+  /** Book cost ÷ book price, two decimals. Null when the book has no price (cost taken as is). */
+  ratioPct: number | null;
+  estimated: number;
+  vendors: Array<{ vendor: string; label: string; subscriptions: number; seats: number; bookRevenue: number; bookCost: number }>;
 }
 
 export interface PnlInput {
@@ -332,6 +347,16 @@ export function buildPnl(input: PnlInput): PnlPeriod {
     netProfit,
     projectCostHidden,
     byVendor,
+    /* R-2095 */
+    estimateBasis: estimatedPart > 0 ? {
+      licenceRevenue,
+      /* two decimals: a small unbilled share (₹25 of ₹6,526) read "× 0%" at one (localhost check). */
+      ratioPct: bookRevenue > 0 ? Math.round((bookCost / bookRevenue) * 10000) / 100 : null,
+      estimated: estimatedPart,
+      vendors: unbilled.filter((v) => v.cost > 0 || v.revenue > 0).map((v) => ({
+        vendor: v.vendor, label: v.label, subscriptions: v.subscriptions, seats: v.seats, bookRevenue: v.revenue, bookCost: v.cost,
+      })),
+    } : null,
   };
 }
 

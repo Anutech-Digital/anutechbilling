@@ -86,6 +86,15 @@ export interface BankLine {
 /* ── Helpers ───────────────────────────────────────────────────────────────────────────── */
 
 export const paiseToRupees = (p: number): number => Math.round((Number(p) || 0) / 100);
+/**
+ * R-2099 (30 Oct 2026, staging): a bank line and a settlement are the same money when they are the
+ * same WHOLE RUPEES. Razorpay's fee is 2% + 18% GST, so a settlement carries paise (₹2,534.73),
+ * while the statement import stores whole rupees (statement-parse.ts parseAmount rounds) — a
+ * paise compare (253473 vs 253500) refused every real line with "₹2,535 but ₹2,535".
+ * Both sides are rounded to rupees once; a line that does keep the statement's paise still matches.
+ */
+export const sameRupees = (settlementPaise: number, lineRupees: number): boolean =>
+  paiseToRupees(settlementPaise) === Math.round(Number(lineRupees) || 0);
 const cash = (p: AppPayment): number => (Number(p.amount) || 0) - (Number(p.credit_applied) || 0);
 
 /** A money-in line that Razorpay paid: the narration names Razorpay. */
@@ -101,8 +110,7 @@ export function pickSettlement(
   const hay = `${line.reference ?? ""} ${line.description ?? ""}`.toUpperCase().replace(/\s+/g, "");
   const byUtr = settlements.filter((s) => s.utr && s.utr.trim().length >= 6 && hay.includes(s.utr.trim().toUpperCase()));
   if (byUtr.length === 1) return { kind: "found", settlement: byUtr[0], by: "utr" };
-  const linePaise = Math.round((Number(line.credit) || 0) * 100);
-  const byAmount = (byUtr.length > 1 ? byUtr : settlements).filter((s) => s.amount === linePaise);
+  const byAmount = (byUtr.length > 1 ? byUtr : settlements).filter((s) => sameRupees(s.amount, line.credit));
   if (byAmount.length === 1) return { kind: "found", settlement: byAmount[0], by: "amount" };
   if (byAmount.length > 1) return { kind: "many", options: byAmount };
   return { kind: "none" };
@@ -275,14 +283,13 @@ export function buildSettlementPlan(input: PlanInput): SettlementPlan {
   const netPaise = items.reduce((s, i) => s + (Number(i.credit) || 0) - (Number(i.debit) || 0), 0);
   const feePaise = items.reduce((s, i) => s + (Number(i.fee) || 0), 0);
   const taxPaise = items.reduce((s, i) => s + (Number(i.tax) || 0), 0);
-  const bankPaise = Math.round((Number(line.credit) || 0) * 100);
 
   if (!items.length) {
     blockers.push(`Razorpay returned no payments for settlement ${settlement.id} yet. Its report can take a day to appear — try again tomorrow.`);
   } else if (netPaise !== settlement.amount) {
     blockers.push(`Razorpay's items add up to ${rs(paiseToRupees(netPaise))} but the settlement is ${rs(paiseToRupees(settlement.amount))} — the report is incomplete. Try again later.`);
   }
-  if (settlement.amount !== bankPaise) {
+  if (!sameRupees(settlement.amount, line.credit)) {
     blockers.push(`The settlement is ${rs(paiseToRupees(settlement.amount))} but this bank line is ${rs(Number(line.credit) || 0)}. This is not the right settlement for this line.`);
   }
   for (const p of payments) if (p.problem) blockers.push(p.problem);

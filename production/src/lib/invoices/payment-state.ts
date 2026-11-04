@@ -65,6 +65,12 @@ export function invoiceValueAfterNotes(inv: InvoicePaymentFacts): number {
   return Math.max(0, paise(num(inv.amount)) + paise(num(inv.debit_noted)) - paise(num(inv.credit_noted))) / 100;
 }
 
+/** R-2095: credit notes reach the invoice's value (amount + debit notes), ₹1 of rounding tolerated. */
+export function fullyCredited(inv: InvoicePaymentFacts): boolean {
+  const credit = num(inv.credit_noted);
+  return credit > 0 && num(inv.amount) > 0 && credit >= num(inv.amount) + num(inv.debit_noted) - 1;
+}
+
 export function invoicePaymentState(inv: InvoicePaymentFacts): InvoicePaymentState {
   const status = (inv.status ?? "").toLowerCase();
   if (status === "draft") return "draft";
@@ -74,6 +80,9 @@ export function invoicePaymentState(inv: InvoicePaymentFacts): InvoicePaymentSta
     const credit = num(inv.credit_noted);
     // ₹1 of rounding tolerated, as quoteIsPaid does.
     if (credit > 0 && got < num(inv.amount) + num(inv.debit_noted) - 1) return "credited";
+    /* R-2095: credit notes for the whole value cancel the invoice, however it was paid (that money
+       became customer credit, R-1566) — "Paid" beside a cancelled invoice misled (staging, 30 Oct). */
+    if (fullyCredited(inv)) return "credited";
     return "paid";
   }
   if (inv.written_off_at) return "written-off";
@@ -90,6 +99,8 @@ export function invoiceMoneyIn(inv: InvoicePaymentFacts): number {
   const state = invoicePaymentState(inv);
   if (state === "draft" || state === "void") return 0;
   const got = receivedRaw(inv);
+  /* R-2095: a fully credited invoice keeps only what is left of its value (₹0, or ₹1 of rounding). */
+  if (state === "credited" && fullyCredited(inv)) return Math.min(got, invoiceValueAfterNotes(inv));
   if (state === "paid") {
     const value = invoiceValueAfterNotes(inv);
     return got > 0 ? Math.min(got, value) : value;

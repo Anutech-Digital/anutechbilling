@@ -22,6 +22,12 @@ describe("canReviseQuote (R-448)", () => {
     const r = canReviseQuote({ ...sent, superseded_by: "Q-X-0005-R2" }, 0);
     expect(r).toEqual({ ok: false, reason: "Already replaced by Q-X-0005-R2." });
   });
+
+  it("R-2368: refuses a part payment request (one quote per part)", () => {
+    const r = canReviseQuote({ ...sent, subscription_billing_id: "b1" }, 0);
+    expect(r.ok).toBe(false);
+    expect(r.ok === false && r.reason).toMatch(/one part of a subscription billed in parts/);
+  });
 });
 
 describe("nextRevision", () => {
@@ -54,5 +60,19 @@ describe("revisionDraft", () => {
     expect(d).not.toHaveProperty("payment_status");
     expect(d).not.toHaveProperty("invoice_id");
     expect(d).not.toHaveProperty("public_token");
+  });
+
+  it("R-2368: an add-seats quote's revision keeps its subscription link (staging Q-A378-27-0565-R2)", () => {
+    const seats = { ...src, is_add_seats: true, add_seats_subscription_id: "sub-1", add_seats_mrr_added: 300 } as RevisionSource;
+    const d = revisionDraft(seats, nextRevision(seats), "2026-11-02");
+    expect(d).toMatchObject({ is_add_seats: true, add_seats_subscription_id: "sub-1", add_seats_mrr_added: 300 });
+  });
+
+  it("R-2368: never copies the one-quote-per-term renewal link (it moves when the revision is sent)", () => {
+    const ren = { ...src, is_renewal: true, renewal_subscription_id: "sub-2", renewal_term_date: "2026-11-20" } as unknown as RevisionSource;
+    const d = revisionDraft(ren, nextRevision(ren), "2026-11-02");
+    expect(d).not.toHaveProperty("renewal_subscription_id");
+    expect(d).not.toHaveProperty("renewal_term_date");
+    expect(d.add_seats_subscription_id).toBeNull();
   });
 });

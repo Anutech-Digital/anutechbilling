@@ -48,6 +48,12 @@ export interface ReportOwing {
   customerId: string;
   customerName: string;
   amountDue: number;
+  /**
+   * R-2408: has a line past its due date. "No follow-up for 7+ days" lists only these — a
+   * customer whose invoices are not due yet is not someone to chase (audit 3 Nov: 12 of 16 rows
+   * were "Not due yet" and the box called them "Never followed up"). Left out = counted.
+   */
+  overdue?: boolean;
 }
 
 export interface WeeklyReportInput {
@@ -163,7 +169,7 @@ export function buildWeeklyReport(input: WeeklyReportInput): WeeklyReport {
   }
   const quietSince = addDaysISO(today, -QUIET_DAYS);
   const quiet = input.owing
-    .filter((o) => o.amountDue > 0)
+    .filter((o) => o.amountDue > 0 && o.overdue !== false)
     .map((o) => {
       const lastOn = lastBy.get(o.customerId) ?? null;
       return { customerId: o.customerId, customerName: o.customerName, amountDue: rupees(o.amountDue), lastOn, days: lastOn ? daysBetweenISO(lastOn, today) : null };

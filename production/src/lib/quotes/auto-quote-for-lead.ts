@@ -25,7 +25,10 @@ import type { createAdminClient } from "@/lib/supabase/server";
 import { isEmailConfigured } from "@/lib/email/send";
 import { planQuoteFromEnquiry, type CatalogueItemPrice } from "./quote-from-enquiry";
 import { decideAutoSend } from "./auto-send-quote";
-import { sendAutoQuote } from "./send-auto-quote";
+import {
+  sendAutoQuote, isAutoQuoteHeld, autoQuoteNotSentReason,
+  type SendAutoQuoteResult, type SendAutoQuoteHeld,
+} from "./send-auto-quote";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { toIstDate } from "@/lib/dates/ist";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
@@ -109,8 +112,27 @@ export interface AutoQuoteArgs {
 /** The customer has the quotation, in their own thread, with the PDF. */
 export type AutoQuoteEmailed = { emailed: true; quoteId: string };
 /** Nothing reached the customer. `reason` is already on the lead's timeline. */
-export type AutoQuoteNotEmailed = { emailed: false; reason: string };
+export type AutoQuoteNotEmailed = {
+  emailed: false;
+  reason: string;
+  /**
+   * R-2460: set when the customer-copy gate HELD the draft (no place of supply / needs
+   * approval). The agent still answers, but must not state any of `held.totals` — the callers
+   * pass this on to runSalesAgentForLead / check the agent's reply against it.
+   */
+  held?: SendAutoQuoteHeld;
+};
 export type AutoQuoteOutcome = AutoQuoteEmailed | AutoQuoteNotEmailed;
+
+/**
+ * R-2460: sendAutoQuote's answer as this function's outcome — a hold says "Quote held — <reason>"
+ * and carries the hold; only a real send failure says "failed to send".
+ */
+export function autoQuoteOutcomeFromSend(sent: SendAutoQuoteResult, quoteId: string): AutoQuoteOutcome {
+  if (sent === "sent") return { emailed: true, quoteId };
+  if (isAutoQuoteHeld(sent)) return { emailed: false, reason: autoQuoteNotSentReason(sent), held: sent };
+  return { emailed: false, reason: autoQuoteNotSentReason(sent) };
+}
 
 /**
  * May anything ELSE mail this customer about this message?
@@ -397,7 +419,6 @@ export async function autoQuoteForLead(
     incomingSubject: args.incomingSubject,
   });
 
-  return sent === "sent"
-    ? { emailed: true, quoteId: draftQuoteId }
-    : { emailed: false, reason: "the quotation email failed to send" };
+  /* R-2460: a hold is not a failure — "Quote held — <reason>", with the hold attached. */
+  return autoQuoteOutcomeFromSend(sent, draftQuoteId);
 }

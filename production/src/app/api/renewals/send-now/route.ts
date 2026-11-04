@@ -19,6 +19,7 @@
  * error explaining why.
  */
 
+import { renewalRefusal } from "@/lib/subscriptions/non-renewing";
 import { NextResponse } from "next/server";
 import { replyToAddress } from "@/lib/email/reply-to";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
@@ -97,7 +98,7 @@ export async function POST(req: Request) {
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, item_id, vendor, seats, mrr,
-       renewal_date, status, renewal_state, reminder_count, renewal_quote_id, term_months, billing_cycle`
+       renewal_date, status, renewal_state, reminder_count, renewal_quote_id, term_months, term_amount, billing_cycle, auto_renew`
     )
     .eq("id", body.subscription_id)
     .single();
@@ -110,6 +111,11 @@ export async function POST(req: Request) {
   }
   if (!sub.renewal_date) {
     return NextResponse.json({ error: "subscription has no renewal_date" }, { status: 400 });
+  }
+  /* R-2225: the customer said Won't renew — no renewal quote, no next term, no reminder. */
+  const nonRenewing = renewalRefusal(sub);
+  if (nonRenewing) {
+    return NextResponse.json({ error: nonRenewing, code: "non_renewing" }, { status: 400 });
   }
   /* R-808: billed in parts → no whole-term renewal quote (it was proven to bill the renewed
      year twice). The renewals cron rolls the term and the instalments keep coming. */
@@ -205,6 +211,7 @@ export async function POST(req: Request) {
     seats:           sub.seats,
     mrr:             sub.mrr ?? 0,
     termMonths:      sub.term_months ?? null,
+    termAmount:      sub.term_amount ?? null,  // R-2369: the exact sold term amount
     renewalDate:     sub.renewal_date,
     graceDays,
     existingQuoteId: sub.renewal_quote_id,

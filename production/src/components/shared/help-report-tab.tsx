@@ -13,6 +13,13 @@
  * Submit goes through the SAME path as the old dialog: useSubmitFeedback (insert into
  * `feedback`, screenshots, then /api/feedback/triage, which auto-sends to the AI queue — R-357).
  * Same payload keys as FeedbackDialog; no new table, no new route.
+ *
+ * R-2176 (G-PERSONAL): a PERSONAL session does not write `feedback` (a business table the personal
+ * data gateway refuses, R-2125). Its report goes to the support desk as a ticket under its free
+ * support plan — POST /api/personal/support-ticket (lib/support/personal-report.ts) — and the
+ * person sees the ticket number. The business-only extras are not offered to it: "Write it up
+ * with AI" (/api/ai/* is closed to personal sessions) and screenshots (a ticket has no
+ * attachment store).
  */
 import * as React from "react";
 import Link from "next/link";
@@ -27,6 +34,7 @@ import { cleanSteps, type BugDraft } from "@/lib/ai/app-help";
 import type { FeedbackSeverity, FeedbackType } from "@/lib/feedback/triage";
 import { CropOverlay, captureViewport, toShot } from "@/components/shared/help-shot";
 import { HelpReportMatches } from "@/components/shared/help-report-matches";
+import { businessTenantId, isPersonalSession } from "@/lib/workspace/kind";
 
 /** Recorded steps attached to a report — the same window AI Help sends with a draft. */
 const RECORDED_STEPS = 15;
@@ -63,6 +71,8 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
 }) {
   const { data: currentUser } = useCurrentUser();
   const submit = useSubmitFeedback();
+  const personal = isPersonalSession(currentUser ? { role: currentUser.role } : null);
+  const [sending, setSending] = React.useState(false);
   const [text, setText] = React.useState("");
   const [type, setType] = React.useState<FeedbackType>("bug");
   const [severity, setSeverity] = React.useState<FeedbackSeverity>("medium");
@@ -100,6 +110,7 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
     return true;
   }
   async function onPaste(e: React.ClipboardEvent) {
+    if (personal) return;
     const file = Array.from(e.clipboardData.files).find((f) => f.type.startsWith("image/"));
     if (!file) return;
     e.preventDefault();
@@ -145,6 +156,10 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
       toast.error("Report box is empty", { description: "Write what happened and what you expected, then submit." });
       return;
     }
+    if (personal) {
+      await sendToSupportDesk(words);
+      return;
+    }
     try {
       /* Same keys as the old Report Bug dialog (FeedbackDialog) — the triage and the AI queue read them unchanged. */
       const result = await submit.mutateAsync({
@@ -178,6 +193,42 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
     }
   }
 
+  /** R-2176: a personal report → a support-desk ticket. Text is kept on any failure. */
+  async function sendToSupportDesk(words: string) {
+    if (sending) return;
+    setSending(true);
+    try {
+      const res = await fetch("/api/personal/support-ticket", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: reportTextWithContext(words, getTrail()), type, severity, pagePath: pathname }),
+      });
+      const j = (await res.json().catch(() => ({}))) as { ticketId?: string; error?: string };
+      if (!res.ok || !j.ticketId) {
+        toast.error(j.error || "Could not reach the support desk. Your report was NOT sent.", {
+          description: "The text is still here — try again in a minute, or write to support@anutech.in.",
+          duration: 10_000,
+        });
+        return;
+      }
+      toast.success(`Sent to our support team — ticket ${j.ticketId}.`, {
+        description: "Keep this number if you write to us about it.",
+        duration: 10_000,
+      });
+      setText(""); setType("bug"); setSeverity("medium");
+      if (caughtError) onCaughtErrorUsed();
+      onFiled();
+    } catch {
+      toast.error("Could not reach the support desk.", {
+        description: "Your report was NOT sent. The text is still here — check your connection and try again.",
+        duration: 10_000,
+      });
+    } finally {
+      setSending(false);
+    }
+  }
+
+  const busy = submit.isPending || sending;
   const canSeeAll = currentUser?.role === "owner" || currentUser?.role === "manager";
 
   return (
@@ -201,13 +252,15 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
             onPaste={(e) => void onPaste(e)}
             rows={6}
             maxLength={4000}
-            placeholder="What you did, what happened, what you expected. Paste a screenshot with Ctrl+V."
+            placeholder={personal ? "What you did, what happened, what you expected." : "What you did, what happened, what you expected. Paste a screenshot with Ctrl+V."}
             className="block w-full resize-y rounded-lg border border-hairline bg-paper px-3 py-2 text-sm text-ink leading-relaxed focus:outline-none focus:ring-2 focus:ring-amber"
           />
         </div>
 
         {/* R-1417: this company's open reports that look like the same problem; R-1466: +1 on them. */}
-        <HelpReportMatches text={text} tenantId={currentUser?.tenantId ?? null} userId={currentUser?.userId ?? null} />
+        {/* R-2175: businessTenantId → null for a personal session, so the matcher never reads
+            `feedback` (a business table the data gateway refuses for it). */}
+        <HelpReportMatches text={text} tenantId={businessTenantId(currentUser)} userId={currentUser?.userId ?? null} />
 
         {shots.length > 0 && (
           <ul className="flex flex-wrap gap-2" aria-label={`${shots.length} screenshot(s) attached`}>
@@ -225,32 +278,40 @@ export function HelpReportTab({ pathname, getTrail, caughtError, onCaughtErrorUs
         )}
 
         <div className="flex flex-wrap items-center gap-2">
+          {!personal && (<>
           <IconButton type="button" icon="camera" aria-label="Take a screenshot of this page" title="Screenshot this page — or paste one into the box"
             onClick={() => void capture()} disabled={capturing || shots.length >= MAX_SHOTS} />
           <IconButton type="button" icon="upload" aria-label="Attach an image" title="Attach an image"
             onClick={() => fileRef.current?.click()} disabled={shots.length >= MAX_SHOTS} />
           <input ref={fileRef} type="file" accept="image/*" name="help-report-image" aria-label="Attach an image file" className="hidden"
             onChange={(e) => { void addFile(e.target.files?.[0]); e.target.value = ""; }} />
+          </>)}
           <label htmlFor="help-report-kind" className="sr-only">Kind of report</label>
           <select id="help-report-kind" name="help-report-kind" value={type} onChange={(e) => setType(e.target.value as FeedbackType)}
             className="h-9 rounded-md border border-hairline bg-paper px-2 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber">
             {(Object.keys(KIND_LABEL) as FeedbackType[]).map((k) => <option key={k} value={k}>{KIND_LABEL[k]}</option>)}
           </select>
-          <Button type="button" size="sm" variant="outline" icon="sparkles" loading={drafting} disabled={drafting || submit.isPending}
+          {!personal && (
+          <Button type="button" size="sm" variant="outline" icon="sparkles" loading={drafting} disabled={drafting || busy}
             onClick={() => void draftWithAi()} title="Optional — AI writes a title and steps from your words and the recorded steps; you edit before sending">
             Write it up with AI
           </Button>
+          )}
         </div>
 
         <div className="text-2xs text-ink-3 space-y-0.5" data-testid="help-report-attached">
           <div>Attached on its own: page <span className="font-mono text-ink-2">{pathname}</span>, your last steps and any API/console errors the app recorded.</div>
-          <div>Goes to Admin → Feedback in your name ({currentUser?.fullName ?? "—"}); AI triage picks it up from there.</div>
+          {personal ? (
+            <div>Goes to our support team as a ticket (your free support plan); you get the ticket number.</div>
+          ) : (
+            <div>Goes to Admin → Feedback in your name ({currentUser?.fullName ?? "—"}); AI triage picks it up from there.</div>
+          )}
           {canSeeAll && <Link href="/admin/feedback" onClick={onFiled} className="font-semibold text-primary hover:underline">See all reports →</Link>}
         </div>
       </div>
 
       <div className="border-t border-hairline p-2 flex justify-end gap-2">
-        <Button type="submit" size="sm" variant="primary" loading={submit.isPending} disabled={submit.isPending}>Submit report</Button>
+        <Button type="submit" size="sm" variant="primary" loading={busy} disabled={busy}>Submit report</Button>
       </div>
     </form>
   );

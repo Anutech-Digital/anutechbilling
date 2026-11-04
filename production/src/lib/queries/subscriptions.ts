@@ -10,8 +10,10 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { guardErrorToast } from "@/lib/ui/guard-toast";
 import { createClient } from "@/lib/supabase/client";
-import type { Subscription } from "@/lib/supabase/database.types";
+import type { BillingCycle, Subscription } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchOpenPartRequests } from "@/lib/queries/payments";
+import type { OpenPartRequest } from "@/lib/billing/part-request-dues";
 import { rupee } from "@/lib/utils";
 
 export function useSubscriptions() {
@@ -140,7 +142,11 @@ export function useSetSubscriptionDomain() {
  * Correct a subscription's details (data-entry fix). Touches only the
  * subscription record's own fields — it does NOT re-bill or alter the linked
  * payment/quote/invoice (those are separate money artifacts). Use it to fix a
- * mis-typed plan / seats / price / dates / status on a manual or imported sub.
+ * mis-typed vendor / domain / dates on a manual or imported sub.
+ *
+ * R-2228: seats, MRR and status are NOT in this patch any more — seats through Manage seats (bills
+ * or credits), status through Suspend / Cancel / Won't renew, and a wrong seats/MRR record through
+ * the owner's Data correction (useCorrectSubscriptionData).
  */
 export function useUpdateSubscription() {
   const qc = useQueryClient();
@@ -148,16 +154,14 @@ export function useUpdateSubscription() {
     mutationFn: async (input: {
       id: string;
       patch: {
-        plan?: string;
         vendor?: Subscription["vendor"];
-        seats?: number;
-        mrr?: number;
         start_date?: string | null;
         renewal_date?: string | null;
         /** Postpaid credit clock (migration 20260910060000). Null clears it, which means
          *  "no agreed date" and shows no countdown — see the edit dialog. */
         payment_due_date?: string | null;
-        status?: Subscription["status"];
+        /** R-2095: correct a mistyped domain (Correct details). */
+        domain?: string | null;
       };
     }) => {
       const supabase = createClient();
@@ -188,6 +192,65 @@ export function useCorrectSubscriptionTerms() {
         p_item_id: input.itemId,
         p_seats: input.seats,
         p_mrr: input.mrr,
+        p_reason: input.reason,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+    },
+    onError: (err) => toastError(err),
+  });
+}
+
+/**
+ * R-2228: the owner's Data correction of seats / MRR (correct_subscription_data, migration
+ * 20261101145415) — owner only, reason of 10+ characters, one activity_log row old → new. A record
+ * fix: nothing is billed or credited. No toast here (the edit dialog toasts once).
+ */
+export function useCorrectSubscriptionData() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; seats: number; mrr: number; reason: string }) => {
+      const supabase = createClient();
+      const rpc = supabase.rpc as unknown as (
+        fn: "correct_subscription_data",
+        args: { p_subscription_id: string; p_seats: number; p_mrr: number; p_reason: string },
+      ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+      const { error } = await rpc.call(supabase, "correct_subscription_data", {
+        p_subscription_id: input.id,
+        p_seats: input.seats,
+        p_mrr: input.mrr,
+        p_reason: input.reason,
+      });
+      if (error) throw new Error(error.message);
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["subscriptions"] });
+    },
+    onError: (err) => toastError(err),
+  });
+}
+
+/**
+ * R-2095: change an existing subscription's COMMITMENT (term_months: 1 Flexible / 12 Annual / 36) and
+ * PAYMENT FREQUENCY (billing_cycle) through correct_subscription_commitment — reason, role, no annual
+ * reduction mid-term, licence cost from the catalogue tier, change history (migration 20261030164727).
+ */
+export function useCorrectSubscriptionCommitment() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; termMonths: number; billingCycle: BillingCycle; renewalDate: string | null; reason: string }) => {
+      const supabase = createClient();
+      const rpc = supabase.rpc as unknown as (
+        fn: "correct_subscription_commitment",
+        args: { p_subscription_id: string; p_term_months: number; p_billing_cycle: BillingCycle; p_renewal_date: string | null; p_reason: string },
+      ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+      const { error } = await rpc.call(supabase, "correct_subscription_commitment", {
+        p_subscription_id: input.id,
+        p_term_months: input.termMonths,
+        p_billing_cycle: input.billingCycle,
+        p_renewal_date: input.renewalDate,
         p_reason: input.reason,
       });
       if (error) throw new Error(error.message);
@@ -373,6 +436,9 @@ export function useScheduleInvoices(sub: Pick<Subscription, "id" | "quote_id"> |
         }
       }
       const inv = (id: string | null) => (id ? byId.get(id) : undefined);
+      /* R-2230: this subscription's open part payment requests — the schedule shows each one's
+         amount still due and its due date. Unavailable (DB not updated yet) → none shown. */
+      const requests: OpenPartRequest[] = await fetchOpenPartRequests(supabase, { subscriptionId: sub!.id }).catch(() => []);
 
       type Inv = { invoiceId: string; status: string; exGst: number };
       let sale: Inv | null = null;
@@ -403,6 +469,7 @@ export function useScheduleInvoices(sub: Pick<Subscription, "id" | "quote_id"> |
           part_ex_gst: r.taxable_amount ?? null,   // R-2101: this subscription's share of a combined invoice
         })),
         saleQuote,
+        requests,
       };
     },
   });
@@ -416,11 +483,12 @@ export function useScheduleInvoices(sub: Pick<Subscription, "id" | "quote_id"> |
 export function useOpenRenewalQuotes() {
   return useQuery({
     queryKey: ["quotes", "open-renewal"],
-    queryFn: async (): Promise<Array<{ id: string; notes: string | null }>> => {
+    /* R-2232: status too — a draft renewal quote reads "not sent yet", a sent one "Renewal sent". */
+    queryFn: async (): Promise<Array<{ id: string; notes: string | null; status: string | null }>> => {
       const supabase = createClient();
       return fetchAllRows((from, to) => supabase
         .from("quotes")
-        .select("id, notes")
+        .select("id, notes, status")
         .eq("is_renewal", true)
         .in("status", ["draft", "sent", "viewed", "accepted"])
         .in("payment_status", ["none", "awaiting", "partial"])

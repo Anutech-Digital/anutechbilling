@@ -308,3 +308,36 @@ export function invoiceFieldValue(inv: Record<string, unknown>, names: Set<strin
 export const CF_SUBS_PERIOD = SUBS_PERIOD;
 export const CF_SERVICE_EXPIRY = SERVICE_EXPIRY;
 export const CF_NEW_BUSINESS = new Set(["newbusiness"]);
+
+// ── R-2359: "Find in Zoho" on a bank credit (still read-only) ─────────────────────────────
+
+/**
+ * Customer payments, one page (200), filtered the way Zoho's list allows: `reference_number_contains`
+ * (the bank UTR) or `date_start` / `date_end` (the amount + date fallback). Needs the
+ * ZohoBooks.customerpayments.READ scope — a connection made before R-2359 answers 401.
+ */
+export function listCustomerPaymentsPage(
+  orgId: string, token: string, filter: { referenceContains?: string; dateStart?: string; dateEnd?: string; page?: number },
+  f: Fetch = fetch,
+): Promise<ZohoPage> {
+  const extra: Record<string, string> = { sort_column: "date", sort_order: "D" };
+  if (filter.referenceContains) extra.reference_number_contains = filter.referenceContains;
+  if (filter.dateStart) extra.date_start = filter.dateStart;
+  if (filter.dateEnd) extra.date_end = filter.dateEnd;
+  /* R-2360: page > 1 for the Banking "Zoho has a match" batch read. */
+  return listPage("/customerpayments", "customerpayments", orgId, token, Math.max(1, Math.floor(filter.page ?? 1)), f, extra);
+}
+
+/** One customer payment with the invoices it was applied to. */
+export async function getCustomerPayment(orgId: string, token: string, paymentId: string, f: Fetch = fetch): Promise<Record<string, unknown>> {
+  const q = new URLSearchParams({ organization_id: orgId });
+  const body = await booksGet(`/customerpayments/${encodeURIComponent(paymentId)}?${q}`, token, f);
+  return (body.payment as Record<string, unknown> | undefined) ?? {};
+}
+
+/** One contact (for its GSTIN when the invoice does not carry one). */
+export async function getContact(orgId: string, token: string, contactId: string, f: Fetch = fetch): Promise<Record<string, unknown>> {
+  const q = new URLSearchParams({ organization_id: orgId });
+  const body = await booksGet(`/contacts/${encodeURIComponent(contactId)}?${q}`, token, f);
+  return (body.contact as Record<string, unknown> | undefined) ?? {};
+}

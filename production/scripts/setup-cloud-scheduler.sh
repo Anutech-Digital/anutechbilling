@@ -87,6 +87,8 @@ JOBS=(
   # company saves a key: the route returns `disabled: true` without calling IndiaMART.
   "resellersos-indiamart-leads|*/15 8-21 * * *|/api/cron/indiamart-leads|IndiaMART Lead Manager pull → leads"
   "resellersos-attendance-retention|0 2 * * *|/api/cron/attendance-retention|Erase attendance face images past retention"
+  # R-2337: team chat files on no message (browser delete failed), older than 24 h — max 500 a night.
+  "resellersos-chat-files-cleanup|15 3 * * *|/api/cron/chat-files-cleanup|Delete team chat files that belong to no message"
   # Midnight IST, before the other jobs touch anything — a restore point of the
   # day that just ended, not of a day already half-modified by the 09:00 renewal
   # cron. Keeps the newest 30 per tenant (0244).
@@ -127,6 +129,10 @@ JOBS=(
   # desk (DSP) within minutes. Needs DSP_SUPPORT_URL + DSP_WEBHOOK_SECRET on the service
   # (unset = the route does nothing) and the "Support plan sync" switch ON on /automation.
   "resellersos-support-sync|*/5 * * * *|/api/cron/support-sync|Send queued support-plan changes to the support desk (DSP)"
+  # R-2103: every 5 minutes — a customer who has paid gets their customer panel (DMS) login.
+  # Needs PANEL_ACCOUNTS_LIVE=1 + DMS_ENGINE_COMMAND_KEY on the service (else the route does
+  # nothing) and the "Customer panel accounts" switch ON on /automation.
+  "resellersos-panel-accounts|*/5 * * * *|/api/cron/panel-accounts|Create customer panel (DMS) accounts for customers who have paid"
   # 10:30 IST, once a day, weekdays only — and every part of that is deliberate.
   #
   # ONCE: the job selects subscriptions renewing on an EXACT date five days out, so each one

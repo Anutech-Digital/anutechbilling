@@ -29,7 +29,7 @@ export const licences = (n: number) => `${n.toLocaleString("en-IN")} ${n === 1 ?
 
 export function PlansStep({
   state, plans, monthlyOk, brand, contact, intentErr, talkHref,
-  onIntent, onSeats, onBilling, onTier, onCompare,
+  onIntent, onSeats, onBilling, onTier, onCompare, onTalk, onTrial, trialDays,
 }: {
   state: MobileState;
   plans: BuyPlan[];
@@ -43,6 +43,11 @@ export function PlansStep({
   onBilling: (b: Billing) => void;
   onTier: (t: MobileState["tier"]) => void;
   onCompare: () => void;
+  /** R-2021: "Talk to us" opens the quote-callback sheet instead of leaving the page. */
+  onTalk?: () => void;
+  /** R-2021: the free-trial sheet (new) / the help sheet (switch) — one line under the plans. */
+  onTrial?: () => void;
+  trialDays?: number;
 }) {
   const { intent, seats, billing, tier } = state;
   const [open, setOpen] = React.useState<string | null>(null);
@@ -193,8 +198,17 @@ export function PlansStep({
             )}
             <p className="text-sm text-ink-2 m-0">
               Need Plus or Enterprise?{" "}
-              <a href={talkHref} target="_blank" rel="noopener noreferrer" className="font-bold text-amber-ink underline underline-offset-[3px]">Talk to us</a>
+              {onTalk ? (
+                <button type="button" onClick={onTalk} className="min-h-11 font-bold text-amber-ink underline underline-offset-[3px]">Talk to us</button>
+              ) : (
+                <a href={talkHref} target="_blank" rel="noopener noreferrer" className="font-bold text-amber-ink underline underline-offset-[3px]">Talk to us</a>
+              )}
             </p>
+            {onTrial && (
+              <button type="button" onClick={onTrial} className="self-start min-h-11 text-sm font-semibold text-amber-ink underline underline-offset-[3px]">
+                {intent === "transfer" ? "Questions about switching? Talk to us first" : `Not ready to pay? Try free for ${trialDays} days`}
+              </button>
+            )}
           </section>
 
           <FounderCard brand={brand} contact={contact} />

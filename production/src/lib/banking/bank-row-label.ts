@@ -17,6 +17,11 @@ export function bankRowStatusLabel(t: BankTransactionRow["matched_to_type"], isA
          t === "transfer"     ? "Inter-account" :
          t === "split"        ? "Salaries" :
          t === "owner_equity" ? "Owner drawings / capital" :
+         (t as string | null) === "customer_refund" ? "Customer refund" :   // R-2322 (newer than the BankTransactionRow union)
+         (t as string | null) === "loan_given" ? "Loan given" :   // R-2346: R-2340 receipt / disbursal, or Record repayment
+         (t as string | null) === "business_loan" ? "Loan received" :   // R-2377: Business Loans → Add loan linked this imported credit
+         (t as string | null) === "loan_drawdown" ? "Credit line drawdown" :   // R-2374: money drawn from an OD / flexi line
+         (t as string | null) === "loan_repayment" ? "Loan repayment" :   // R-2374: principal + interest to a lender
          t                    ? "Reconciled" : "Unmatched";
 }
 

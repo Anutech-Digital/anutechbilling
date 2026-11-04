@@ -34,8 +34,9 @@
 
 import { partPaidLine } from "./quote-payment-state";
 
-/** "trial" is only ever inserted by lib/trials/start-from-quote.ts withTrialStep (R-282). */
-export type LifecycleStage = "draft" | "sent" | "signed" | "trial" | "paid" | "provisioned" | "invoiced";
+/** "trial" is only ever inserted by lib/trials/start-from-quote.ts withTrialStep (R-282);
+ *  "approval" only by quotes/[id]/payment-approval-gate.ts withApprovalStep (R-2334). */
+export type LifecycleStage = "draft" | "sent" | "approval" | "signed" | "trial" | "paid" | "provisioned" | "invoiced";
 export type StageState = "done" | "current" | "todo" | "skipped";
 
 export interface LifecycleStep {
@@ -79,7 +80,7 @@ export interface LifecycleInput {
 }
 
 const LABELS: Record<LifecycleStage, string> = {
-  draft: "Draft", sent: "Sent", signed: "Signed", trial: "Trial",
+  draft: "Draft", sent: "Sent", approval: "Owner approval", signed: "Signed", trial: "Trial",
   paid: "Paid", provisioned: "Provisioned", invoiced: "Invoiced",
 };
 

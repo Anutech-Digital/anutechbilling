@@ -23,6 +23,8 @@ import { ADVANCE_PAYMENT_NOTE_PREFIX, advancePaymentIds, type SplitLinePayment }
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { splitArgs, type SplitInput } from "@/lib/banking/credit-pay-for-multi";
 import type { BillingCycle } from "@/lib/supabase/database.types";
+import { paymentApprovalBlock } from "@/lib/quotes/payment-approval";
+import type { ItemFx } from "@/lib/banking/item-fx-pay";
 
 /* The generated types do not know the R-1838 functions yet (migration not applied there). */
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }> };
@@ -38,10 +40,28 @@ export function useBankCreditOpenItems(customerId: string | null) {
     queryFn: async (): Promise<OpenItem[]> => {
       const { data, error } = await rpc("bank_credit_open_items", { p_customer_id: customerId });
       if (error) throw error;
-      return ((data ?? []) as OpenItem[]).map((r) => ({
+      const rows = (data ?? []) as OpenItem[];
+      /* R-2213: which quotes the DB would refuse money on (below cost, not approved) — read from the
+         quote rows, judged by the same rule as the trigger (lib/quotes/payment-approval.ts). */
+      const quoteIds = [...new Set(rows.map((r) => r.quote_id).filter((x): x is string => Boolean(x)))];
+      const blocks = new Map<string, string>();
+      if (quoteIds.length > 0) {
+        const { data: qs, error: qErr } = await createClient()
+          .from("quotes").select("id, below_cost, approval_status").in("id", quoteIds);
+        if (qErr) throw qErr;
+        for (const q of qs ?? []) {
+          const b = paymentApprovalBlock(q);
+          if (b) blocks.set(q.id, b.reason);
+        }
+      }
+      return rows.map((r) => ({
         ...r,
         amount_due: Number(r.amount_due) || 0,
         taxable_value: Number(r.taxable_value) || 0,
+        /* R-2466: numeric comes back as a string; absent on a DB before the migration → ₹. */
+        currency: r.currency ?? "INR",
+        fx_rate: r.fx_rate == null ? null : Number(r.fx_rate) || null,
+        approval_block: r.quote_id ? blocks.get(r.quote_id) ?? null : null,
       }));
     },
     staleTime: 15_000,
@@ -54,11 +74,16 @@ export interface PayItemInput {
   invoiceId: string | null;
   tdsAmount: number;
   tdsRatePct: number | null;
+  /** R-2095: the Income-tax section the customer deducted under (lib/banking/tds-section); default 194J. */
+  tdsSection?: string | null;
   /** null = not a new subscription sale (the server ignores it). */
   createSubscription: boolean | null;
   subStart: string | null;
   /** Sent only when the operator changed it; else the term decides. */
   subRenewal: string | null;
+  /** R-2466: an invoice in a foreign currency paid by its inward remittance (lib/banking/item-fx-pay)
+   *  → reconcile_bank_credit_fx_invoice (R-2427). null / absent = ₹, reconcile_bank_credit_to_item. */
+  fx?: ItemFx | null;
 }
 
 export interface NewSaleInput {
@@ -70,9 +95,16 @@ export interface NewSaleInput {
   subRenewal: string | null;
   tdsAmount: number;
   tdsRatePct: number | null;
+  /** R-2095: the Income-tax section the customer deducted under; default 194J. */
+  tdsSection?: string | null;
   /** R-2026: how often it is billed (the quote's billing_cycle). Null/absent = the server's
    *  default (yearly; Monthly flex is always monthly). */
   billingCycle?: BillingCycle | null;
+  /** R-2360: the Zoho invoice number from "Find in Zoho" — kept on the sale's invoice
+   *  (invoices.external_number); a number already in the app is refused. Absent = none. */
+  externalNumber?: string | null;
+  /** R-2427 (3): book it in this currency at the bank's rate (reconcile_bank_credit_new_sale_fx). Absent = ₹. */
+  fx?: SaleFxInput | null;
 }
 
 /** The RPC arguments — exported so the tests pin exactly what reaches the server. */
@@ -83,7 +115,7 @@ export function payItemArgs(i: PayItemInput) {
     p_invoice_id: i.invoiceId,
     p_tds_amount: Math.max(0, Math.round(i.tdsAmount)),
     p_tds_rate_pct: i.tdsAmount > 0 ? i.tdsRatePct : null,
-    p_tds_section: i.tdsAmount > 0 ? "194J" : null,
+    p_tds_section: i.tdsAmount > 0 ? (i.tdsSection || "194J") : null,
     p_create_subscription: i.createSubscription,
     p_sub_start: i.createSubscription ? i.subStart : null,
     p_sub_renewal: i.createSubscription ? i.subRenewal : null,
@@ -100,9 +132,29 @@ export function newSaleArgs(i: NewSaleInput) {
     p_sub_renewal: i.createSubscription ? i.subRenewal : null,
     p_tds_amount: Math.max(0, Math.round(i.tdsAmount)),
     p_tds_rate_pct: i.tdsAmount > 0 ? i.tdsRatePct : null,
-    p_tds_section: i.tdsAmount > 0 ? "194J" : null,
+    p_tds_section: i.tdsAmount > 0 ? (i.tdsSection || "194J") : null,
     p_billing_cycle: i.billingCycle ?? null,
+    /* R-2360: sent only when there is one — without it the call resolves to the old 10-argument function. */
+    ...(i.externalNumber?.trim() ? { p_external_number: i.externalNumber.trim() } : {}),
   };
+}
+
+/** R-2360: what the server said about the Zoho invoice number (migration 20261102061607). */
+export type ZohoKept = { external_number?: string | null; external_number_saved?: boolean; external_number_error?: string | null };
+
+/**
+ * R-2360: a sale billed in parts has no invoice when the RPC returns (external_number_saved =
+ * false); once raiseFirstInstalment has raised the first part's invoice, the Zoho number is kept
+ * on it (set_invoice_external_number — owner/manager/accountant/billing, own company, a number
+ * already in the app refused). The sale is already booked: a failure here only says so.
+ */
+export async function keepZohoNumberOnFirstPart<T extends PayForResult & ZohoKept>(
+  r: T, call: typeof rpc = rpc,
+): Promise<T> {
+  if (!r.external_number || r.external_number_saved !== false || !r.invoice_issued) return r;
+  const { error } = await call("set_invoice_external_number", { p_invoice_id: r.invoice_issued, p_external_number: r.external_number });
+  if (error) return { ...r, external_number_error: error.message };
+  return { ...r, external_number_saved: true };
 }
 
 /**
@@ -114,7 +166,10 @@ export function newSaleArgs(i: NewSaleInput) {
 export async function raiseFirstInstalment(r: PayForResult, cycle: BillingCycle | null | undefined, post: typeof fetch = fetch): Promise<PayForResult> {
   if (!isSplitBilled(cycle) || !r.quote_id || r.already_recorded || r.invoice_issued) return r;
   try {
-    const resp = await post(`/api/quotes/${encodeURIComponent(r.quote_id)}/raise-instalments`, { method: "POST" });
+    /* R-2095 (Sept): afterSale — the paid part's invoice only, no next-period request at sale time. */
+    const resp = await post(`/api/quotes/${encodeURIComponent(r.quote_id)}/raise-instalments`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ afterSale: true }),
+    });
     const body = (await resp.json().catch(() => null)) as
       { raised?: Array<{ invoice_id?: string | null }>; errors?: Array<{ message?: string }>; error?: string } | null;
     if (!resp.ok || !body) return { ...r, instalment_error: body?.error ?? `HTTP ${resp.status}` };
@@ -140,15 +195,39 @@ function useAfterPay() {
 /** A missing company GSTIN / address (R-1643) gets its one-click fix; anything else is said plainly. */
 const onPayError = (err: unknown) => toastInvoiceIssueError(err);
 
+/** R-2466: the RPC arguments of an export receipt on one invoice (reconcile_bank_credit_fx_invoice). */
+export function payItemFxArgs(i: PayItemInput, fx: ItemFx) {
+  return {
+    p_txn_id: i.transactionId,
+    p_invoice_id: i.invoiceId,
+    p_currency: fx.currency,
+    p_fx_rate: fx.rate,
+    p_foreign_amount: fx.foreignAmount,
+    p_create_subscription: i.createSubscription,
+    p_sub_start: i.createSubscription ? i.subStart : null,
+  };
+}
+
+/** One item paid from the line — ONE server call. R-2466: a foreign invoice goes the R-2427 way. */
+export async function payItemCall(input: PayItemInput, call: typeof rpc = rpc): Promise<PayForResult> {
+  if (input.fx) {
+    if (!input.invoiceId) throw new Error(`Only an invoice can take an export receipt in ${input.fx.currency}.`);
+    if (input.tdsAmount > 0) throw new Error(`A customer abroad deducts no Indian TDS — clear the TDS to book this receipt in ${input.fx.currency}.`);
+    /* reconcile_bank_credit_fx_invoice files the subscription on its term's own renewal date. */
+    if (input.createSubscription && input.subRenewal) throw new Error(`An export receipt in ${input.fx.currency} takes the term's own renewal date — clear the changed "Renews on" date, or change it on the subscription afterwards.`);
+  }
+  const { data, error } = input.fx
+    ? await call("reconcile_bank_credit_fx_invoice", payItemFxArgs(input, input.fx))
+    : await call("reconcile_bank_credit_to_item", payItemArgs(input));
+  if (error) throw error;
+  if (!data) throw new Error("The payment was not confirmed — refresh the page to see whether it was saved.");
+  return data as PayForResult;
+}
+
 export function usePayItemFromBankCredit() {
   const after = useAfterPay();
   return useMutation({
-    mutationFn: async (input: PayItemInput): Promise<PayForResult> => {
-      const { data, error } = await rpc("reconcile_bank_credit_to_item", payItemArgs(input));
-      if (error) throw error;
-      if (!data) throw new Error("The payment was not confirmed — refresh the page to see whether it was saved.");
-      return data as PayForResult;
-    },
+    mutationFn: (input: PayItemInput): Promise<PayForResult> => payItemCall(input),
     onSuccess: after,
     onError: onPayError,
   });
@@ -227,18 +306,47 @@ export function useRelinkOneOffSale() {
   });
 }
 
+/** R-2427 (3): a new sale in the remittance's currency at the bank's rate (one atomic call: sale,
+ *  receipt, reconcile, quote + invoice stamped with the currency and rate). Never billed in parts, no TDS. */
+export async function newSaleInCurrency(input: NewSaleInput, fx: SaleFxInput, call: typeof rpc = rpc): Promise<PayForResult> {
+  if (input.billingCycle && isSplitBilled(input.billingCycle)) {
+    throw new Error(`A sale in ${fx.currency} billed in parts cannot be booked here — choose a yearly term, or book it in ₹.`);
+  }
+  if (input.tdsAmount > 0) throw new Error(`A customer abroad deducts no Indian TDS — clear the TDS to book this sale in ${fx.currency}.`);
+  const { data, error } = await call("reconcile_bank_credit_new_sale_fx", newSaleFxRpcArgs(input, fx));
+  if (error) throw error;
+  if (!data) throw new Error("The sale was not confirmed — refresh the page to see whether it was saved.");
+  return data as PayForResult;
+}
+
 export function useNewSaleFromBankCredit() {
   const after = useAfterPay();
   return useMutation({
     mutationFn: async (input: NewSaleInput): Promise<PayForResult> => {
+      if (input.fx) return newSaleInCurrency(input, input.fx);
       const { data, error } = await rpc("reconcile_bank_credit_new_sale", newSaleArgs(input));
       if (error) throw error;
       if (!data) throw new Error("The sale was not confirmed — refresh the page to see whether it was saved.");
-      return raiseFirstInstalment(data as PayForResult, input.billingCycle);
+      /* R-2397: below cost — the quote waits for approval, nothing was booked (no instalment). */
+      if ((data as PayForResult).needs_approval) return data as PayForResult;
+      return keepZohoNumberOnFirstPart(await raiseFirstInstalment(data as PayForResult & ZohoKept, input.billingCycle));
     },
     onSuccess: after,
     onError: onPayError,
   });
+}
+
+/** R-2427 (3): the reconcile_bank_credit_new_sale_fx arguments for the sheet's Save of a Find-in-Zoho
+ *  prefill in a foreign currency — no TDS (a foreign customer deducts none); the Zoho number always sent. */
+export type SaleFxInput = { currency: string; rate: number; foreignAmount: number };
+export function newSaleFxRpcArgs(i: NewSaleInput, fx: SaleFxInput) {
+  const a = newSaleArgs(i);
+  return {
+    p_txn_id: a.p_txn_id, p_customer_id: a.p_customer_id, p_lines: a.p_lines,
+    p_create_subscription: a.p_create_subscription, p_sub_start: a.p_sub_start, p_sub_renewal: a.p_sub_renewal,
+    p_billing_cycle: a.p_billing_cycle, p_external_number: i.externalNumber?.trim() || null,
+    p_currency: fx.currency, p_fx_rate: fx.rate, p_foreign_amount: fx.foreignAmount,
+  };
 }
 
 /* ─── R-2025 (0): which reconciled bank lines are customer ADVANCES (row badge "Advance") ─── */
@@ -283,10 +391,20 @@ export function useSplitFromBankCredit() {
       const { data, error } = await rpc("reconcile_bank_credit_split", splitArgs(input));
       if (error) throw error;
       if (!data) throw new Error("The payments were not confirmed — refresh the page to see whether they were saved.");
-      const r = data as PayForResult;
+      const r = data as PayForResult & ZohoKept;
+      /* R-2397: the new sale is below cost — nothing on the line was paid; its quote waits. */
+      if (r.needs_approval) return { ...r, customer_id: input.customerId, customer_name: input.customerName ?? null };
       const parts = await Promise.all((r.parts ?? []).map((p) =>
         p.new_quote ? raiseFirstInstalment(p, (input.sale?.billingCycle ?? null) as BillingCycle | null) : Promise.resolve(p)));
-      return { ...r, parts, customer_id: input.customerId, customer_name: input.customerName ?? null };
+      /* R-2360: the new sale billed in parts — its first part's invoice gets the Zoho number now. */
+      const sale = parts.find((p) => p.new_quote);
+      const kept = sale && r.external_number
+        ? await keepZohoNumberOnFirstPart<PayForResult & ZohoKept>({ ...sale, external_number: r.external_number, external_number_saved: r.external_number_saved })
+        : null;
+      return {
+        ...r, parts, customer_id: input.customerId, customer_name: input.customerName ?? null,
+        ...(kept ? { external_number_saved: kept.external_number_saved, external_number_error: kept.external_number_error ?? null } : {}),
+      };
     },
     onSuccess: after,
     onError: onPayError,

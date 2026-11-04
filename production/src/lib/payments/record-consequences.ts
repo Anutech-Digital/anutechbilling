@@ -33,6 +33,10 @@ export interface PaymentToRecord {
   quoteAmount: number | null;
   /** Already received against this quote, in whole rupees. */
   priorReceived: number;
+  /** R-2184: TDS the customer withheld on THIS payment (settles the quote with the bank money). */
+  tds?: number;
+  /** R-2184: advance credit used on THIS payment ("Use advance"). */
+  creditApplied?: number;
   /** True when this quote has no customer yet — so a customer row gets created. */
   createsCustomer: boolean;
   /** True when this quote will produce a recurring subscription. */
@@ -106,7 +110,12 @@ export function recordPaymentConsequences(args: {
     });
   }
 
-  const total = p.priorReceived + p.amount;
+  /* R-2184: the TDS the customer withheld and any advance used settle the quote too — the
+     drawer's own outcome box counts them (paymentOutcome); this list said "₹54 still
+     outstanding" beside a TDS box calling the same ₹54 a TDS receivable. */
+  const tds = Math.max(0, Math.round(p.tds ?? 0));
+  const credit = Math.max(0, Math.round(p.creditApplied ?? 0));
+  const total = p.priorReceived + p.amount + tds + credit;
   const expected = p.quoteAmount ?? 0;
 
   out.push({
@@ -126,6 +135,11 @@ export function recordPaymentConsequences(args: {
     out.push({
       tone: "fact",
       text: `${rupee(expected - total)} of the quote's ${rupee(expected)} will still be outstanding, and the quote stays partly paid.`,
+    });
+  } else if (expected > 0 && total === expected && tds > 0) {
+    out.push({
+      tone: "fact",
+      text: `Settled in full (${rupee(p.amount)} bank + ${rupee(tds)} TDS receivable${credit > 0 ? ` + ${rupee(credit)} advance` : ""}).`,
     });
   }
 
@@ -159,6 +173,13 @@ export function recordPaymentConsequences(args: {
     out.push({
       tone: "fact",
       text: "No subscription and no renewal are created from this payment — nothing will be billed again automatically.",
+    });
+  } else if (p.priorReceived > 0) {
+    /* R-2095 (Sept reconcile): a sale's subscriptions are filed by its FIRST receipt (record_payment,
+       never twice) — a balance payment on Q-0224 said "Creates 2 recurring subscriptions". */
+    out.push({
+      tone: "fact",
+      text: "The subscriptions on this quote already exist (made by its first payment) — this payment only adds to what was received. No new subscription is created.",
     });
   } else {
     const plans = (p.planLabels ?? []).map((x) => x.trim()).filter(Boolean);

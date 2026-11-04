@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { subscriptionSchedule, nextTermSchedule, upcomingForSubscription, followingTermStart, isAnniversaryRenewal, billingTermStart } from "./subscription-schedule";
+import { subscriptionSchedule, nextTermSchedule, upcomingForSubscription, followingTermStart, isAnniversaryRenewal, billingTermStart, termAmountOf } from "./subscription-schedule";
 import { scheduleTotal } from "./schedule";
 import type { Subscription } from "@/lib/supabase/database.types";
 
@@ -161,5 +161,25 @@ describe("R-451: the billing cron keeps an already-filed term's key", () => {
   });
   it("prefers the corrected key when it exists", () => {
     expect(billingTermStart("2026-10-08", ["2026-10-08", "2026-10-09"])).toBe("2026-10-08");
+  });
+});
+
+/* R-2369: the exact term amount (subscriptions.term_amount) is what the schedule bills. */
+describe("R-2369 — the schedule bills the exact sold term amount", () => {
+  it("5 × ₹850/yr (mrr ₹355): one yearly bill of ₹4,250, next term too", () => {
+    const s = sub({ mrr: 355, seats: 5, term_amount: 4_250 } as Partial<Subscription>);
+    expect(scheduleTotal(subscriptionSchedule(s))).toBe(4_250);
+    expect(scheduleTotal(nextTermSchedule(s))).toBe(4_250);
+    expect(termAmountOf(s)).toBe(4_250);
+  });
+
+  it("quarterly ₹1,300/yr (mrr ₹108) adds up to ₹1,300, not ₹1,296", () => {
+    const s = sub({ mrr: 108, billing_cycle: "quarterly", term_amount: 1_300 } as Partial<Subscription>);
+    expect(scheduleTotal(subscriptionSchedule(s))).toBe(1_300);
+  });
+
+  it("no term amount → mrr × months, as before (monthly flex unchanged)", () => {
+    expect(termAmountOf(sub({ mrr: 355 }))).toBe(4_260);
+    expect(termAmountOf(sub({ mrr: 2_700, term_months: 1, billing_cycle: "monthly" } as Partial<Subscription>))).toBe(2_700);
   });
 });

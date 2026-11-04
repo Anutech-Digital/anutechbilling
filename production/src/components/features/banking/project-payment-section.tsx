@@ -8,8 +8,9 @@
  * edited; the check under the list says live whether bank + TDS = the instalments ticked. ONE Save
  * books it all in one transaction: allocate_project_receipt (R-1995), or
  * allocate_project_receipt_with_tds (R-1996) when TDS was deducted. Money beyond every open
- * instalment is NOT put anywhere (keeping it as the customer's advance is R-1997, decision D1):
- * Save stays off and the screen says so.
+ * instalment (each ticked in full) is kept as the customer's ADVANCE (R-1997, decision D1): the
+ * screen says "₹X kept as advance for <customer>" before Save, and the RPC books it as R-1863's
+ * receipt + open customer credit (used later through Record payment → Use advance).
  *
  * A project already paid in full (or extra money that is separate work) → "Add as a new
  * milestone": the receipt becomes a new milestone and the project value grows by it (shown before
@@ -37,10 +38,12 @@ import {
 import { TDS_SECTIONS, tdsSplitFromNet } from "@/lib/accounting/tds-split";
 import { amountInIndianWords } from "@/lib/accounting/amount-words";
 import { guessCustomer } from "@/lib/banking/credit-pay-for";
+import { usePayerMemory } from "@/lib/queries/customer-payers";
 import {
   fifoAllocate, receiptCheck, pickProjectForReceipt, projectReceiptPayload, hintLink, projectsForPicker, type KistRow,
 } from "@/lib/banking/project-receipt-allocation";
 import { describeError } from "@/lib/errors/toast-error";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 const NEW_CUSTOMER = "__new_customer__";
 const selectCls = "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
@@ -56,12 +59,15 @@ interface Props {
   onDone: () => void;
   /** R-2007: the Suggestion card's TDS — "Change" opens this section with it filled in. */
   initialTds?: { sectionKey: string; amount: number } | null;
+  /** R-2008: the Reconcile sheet draws this section's Save in its sticky footer. Given → no inline
+   *  Save; the footer gets the same label, disabled rule and submit(). */
+  onFooterSave?: (save: FooterSave | null) => void;
 }
 
 /** One instalment row as the owner sees and edits it. */
 interface RowState { on: boolean; amount: string; invoice: boolean }
 
-export function ProjectPaymentSection({ txn, amount, customers, customerId, onCustomerChange, onNewCustomer, onCancel, onDone, initialTds }: Props) {
+export function ProjectPaymentSection({ txn, amount, customers, customerId, onCustomerChange, onNewCustomer, onCancel, onDone, initialTds, onFooterSave }: Props) {
   const { data: projects, isLoading } = useOpenProjects(true);
   const book = useBookBankCreditAsProjectPayment();
   const allocate = useAllocateProjectReceipt();
@@ -103,7 +109,9 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
   /* R-2004 — the customer chosen in "Who paid?" wins; the bank-line guess is used only when no
      customer is chosen. The picker lists only the chosen customer's projects (none chosen → all,
      the guessed customer's first). */
-  const guessed = React.useMemo(() => guessCustomer(txn, customers), [txn, customers]);
+  /* R-2371: with the payer memory — our own name in the narration is never the customer. */
+  const payerMemory = usePayerMemory();
+  const guessed = React.useMemo(() => guessCustomer(txn, customers, [], payerMemory), [txn, customers, payerMemory]);
   const chosen = customerId || null;
   const ordered = React.useMemo(
     () => projectsForPicker(projects ?? [], chosen, guessed?.customerId ?? null),
@@ -142,8 +150,9 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
   const check = receiptCheck(net, tdsAmount, tickedTotal);
   const rowTooBig = ticked.some((r) => r.amount > r.m.remaining || r.amount <= 0);
   const dueTotal = (project?.milestones ?? []).reduce((s, m) => s + m.remaining, 0);
-  /* FIFO ran out of instalments: the extra has no home here yet (R-1997). */
-  const leftover = !manual && fifo ? fifo.leftover : 0;
+  /* R-1997 (D1): every open instalment ticked in full and money still left → the customer's advance. */
+  const allTickedFull = rows.length > 0 && rows.every((r) => r.on && r.amount === r.m.remaining);
+  const advance = check.state === "short" && allTickedFull ? check.diff : 0;
 
   function editRow(m: OpenMilestone, change: Partial<RowState>) {
     const snapshot: Record<string, RowState> = {};
@@ -176,7 +185,7 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
 
   const listMode = mode === "existing" && !!project && !addingMilestone;
   const canSubmit = listMode
-    ? ticked.length > 0 && check.state === "match" && !rowTooBig && leftover === 0 && (!tdsOn || tdsAmount > 0)
+    ? ticked.length > 0 && (check.state === "match" || advance > 0) && !rowTooBig && (!tdsOn || tdsAmount > 0)
     : mode === "existing"
       ? addingMilestone && newMsLabel.trim().length > 0
       : !!customerId && title.trim().length > 0 && totalNum >= settled;
@@ -217,6 +226,21 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
     });
     onDone();
   }
+
+  /* R-2008: in the Reconcile sheet the Save sits in the sticky footer — same label, same rule
+     (canSubmit, a project picked), same submit(). Amount check: the bank part of the instalments
+     ticked (ticked − TDS); a match or an advance books the whole line. */
+  const saveLabel = listMode ? "Save & reconcile" : "Record project payment & reconcile";
+  const saveDisabled = !canSubmit || (mode === "existing" && !project);
+  const bankBooked = listMode && check.state !== "match" && advance === 0 ? tickedTotal - tdsAmount : undefined;
+  useFooterSaveReport(onFooterSave, {
+    label: saveLabel,
+    onSave: () => { void submit(); },
+    disabled: saveDisabled,
+    loading: listMode ? allocate.isPending : book.isPending,
+    booked: bankBooked === undefined ? undefined : amount - net + bankBooked,
+  });
+  const footerHasSave = Boolean(onFooterSave);
 
   return (
     <div className="space-y-2">
@@ -438,15 +462,17 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
 
       {/* The live check: bank + TDS against the instalments ticked. */}
       {listMode && (
-        leftover > 0 ? (
-          <div className="rounded-md border border-amber/50 bg-amber-soft/30 p-2.5 text-xs text-ink-2 space-y-1.5" role="status">
-            <p>
-              This receipt settles {rupee(settled)}, which is {rupee(leftover)} more than everything due on this project ({rupee(dueTotal)}).
-              Keeping the extra as the customer&apos;s advance is not available here yet, so nothing is booked.
+        advance > 0 ? (
+          <div className="rounded-md border border-hairline bg-paper p-2.5 text-xs text-ink-2 space-y-1.5" role="status">
+            <p className="tabular-nums">
+              Bank {rupee(net)}{tdsAmount > 0 ? ` + TDS ${rupee(tdsAmount)}` : ""} = {rupee(settled)} · Instalments ticked {rupee(tickedTotal)} (everything due on this project: {rupee(dueTotal)})
             </p>
-            <p>
-              If the extra is for separate work, add the receipt as a new milestone. If it is an advance, close this and use
-              &quot;This money is for → Advance&quot;.
+            <p className="font-medium text-emerald">
+              {rupee(advance)} kept as advance for {project?.customerName || "the customer"}
+            </p>
+            <p className="text-ink-3">
+              It is kept as their advance credit, with a receipt voucher, and used on their next bill: open the quote or
+              invoice → Record payment → tick &quot;Use advance&quot;. If the extra is for separate work, add the receipt as a new milestone instead.
             </p>
             <Button size="sm" variant="default" onClick={() => setAddMilestone(true)}>Add as a new milestone instead</Button>
           </div>
@@ -482,16 +508,18 @@ export function ProjectPaymentSection({ txn, amount, customers, customerId, onCu
       )}
 
       <div className="flex gap-2 pt-1">
-        <Button
-          size="sm"
-          variant="primary"
-          icon="check"
-          loading={listMode ? allocate.isPending : book.isPending}
-          disabled={!canSubmit || (mode === "existing" && !project)}
-          onClick={submit}
-        >
-          {listMode ? "Save & reconcile" : "Record project payment & reconcile"}
-        </Button>
+        {!footerHasSave && (
+          <Button
+            size="sm"
+            variant="primary"
+            icon="check"
+            loading={listMode ? allocate.isPending : book.isPending}
+            disabled={saveDisabled}
+            onClick={submit}
+          >
+            {saveLabel}
+          </Button>
+        )}
         <Button size="sm" variant="default" onClick={onCancel}>Cancel</Button>
       </div>
     </div>

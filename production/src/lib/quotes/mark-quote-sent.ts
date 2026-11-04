@@ -4,6 +4,8 @@
  * Throws with the server's own words — for an approval block that is the gate's reason,
  * which the caller shows instead of copying a link the customer could not open.
  */
+import { refusedFrom } from "./send-quote-email";
+
 export interface MarkQuoteSentResult {
   quoteStatus: string;
   changed: boolean;
@@ -15,9 +17,10 @@ type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 export async function markQuoteSent(quoteId: string, fetchImpl: FetchLike = fetch): Promise<MarkQuoteSentResult> {
   const res = await fetchImpl(`/api/quotes/${encodeURIComponent(quoteId)}/mark-sent`, { method: "POST" });
-  let json: Partial<MarkQuoteSentResult> & { error?: string } = {};
+  let json: Partial<MarkQuoteSentResult> & { error?: string; nextStep?: unknown } = {};
   try { json = await res.json(); } catch { /* non-JSON body — handled below */ }
-  if (!res.ok) throw new Error(json.error ?? `Could not mark the quote as sent (${res.status})`);
+  /* R-2448: keep the route's next step ("Set the customer's state") for the refusal toast. */
+  if (!res.ok) throw refusedFrom(res, json, `Could not mark the quote as sent (${res.status})`);
   return json as MarkQuoteSentResult;
 }
 

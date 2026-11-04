@@ -34,12 +34,12 @@ import { transcribeVoiceNote } from "@/lib/voice/stt";
 import { decideVoiceNote, isTranscribable, voiceContextNote } from "@/lib/voice/voice-note";
 import { isStopMessage } from "@/lib/marketing/whatsapp-broadcast";
 import { maskContactValue } from "@/lib/security/redact-contact";
+import { loadSellerIdentity } from "@/lib/ai/seller-identity";
 
-/* Envelope sender + trading name for anything the AI sales agent sends off the back of a
-   WhatsApp message. Mirrors the inbound-email webhook so one reseller cannot end up sending
-   mail signed as another. */
+/* Envelope sender for anything the AI sales agent sends off the back of a WhatsApp message.
+   R-1929: the trading name comes from the tenant row (lib/ai/seller-identity.ts), so one
+   reseller cannot end up sending mail signed as another. */
 const FROM_EMAIL  = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
-const SELLER_NAME = process.env.SELLER_LEGAL_NAME?.trim()   || "ANUTECH DIGITAL PVT LTD";
 
 export const dynamic = "force-dynamic";
 export const runtime  = "nodejs";
@@ -429,6 +429,6 @@ async function handleWhatsAppEnquiry(
     senderIsOurs: false,
     isSelfTest:   false,
     fromEmail:    FROM_EMAIL,
-    sellerName:   SELLER_NAME,
+    sellerName:   (await loadSellerIdentity(admin, tenantId)).sellerName,
   });
 }

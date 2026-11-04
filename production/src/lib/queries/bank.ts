@@ -24,6 +24,7 @@ import { toastInvoiceIssueError } from "@/lib/queries/invoices";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
+import { bankLinePaymentReference } from "@/lib/payments/bank-line-reference";
 import type { OpenInvoice } from "@/lib/banking/invoice-credit-match";
 import { sortImports, type BankImportRow, type BankImportSource, type RemoveImportArgs } from "@/lib/banking/import-history";
 import type { Json } from "@/lib/supabase/database.types";
@@ -41,6 +42,11 @@ export type BankAccountRow = {
   opening_balance:      number;
   opening_balance_date: string;
   is_active:            boolean;
+  /** R-1834: the Petty Cash made with the company (cannot be closed). */
+  is_default_petty_cash?: boolean;
+  /** R-2384: when / why the account was closed (is_active = false); null while open. */
+  closed_on?:           string | null;
+  closed_note?:         string | null;
   notes:                string | null;
   created_at:           string;
   updated_at:           string;
@@ -71,6 +77,10 @@ export type BankTransactionRow = {
   updated_at:       string;
   /** R-1623: the Import click that brought this line in; null for lines from before batches. */
   import_batch_id?: string | null;
+  /** R-2361: why the line was reconciled manually (reconcile_bank_txn_manual). */
+  reconcile_note?: string | null;
+  /** R-2361: the opposite line this one cancels out (a reversal pair points both ways). */
+  reversal_of?: string | null;
 };
 
 export type BankAccountInsert = Omit<
@@ -282,6 +292,49 @@ export function useDeleteBankAccount() {
     },
     onError: (err) => {
       toastError(err, { fallback: "Could not delete account" });
+    },
+  });
+}
+
+/**
+ * R-2384: close (archive) an account at ₹0 / reopen it. The server refuses a close with any
+ * balance, the default Petty Cash, a future date or a date before the last line
+ * (close_bank_account + trg_bank_account_close_guard) — the toast shows its reason.
+ */
+export function useCloseBankAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { id: string; closedOn: string; note?: string | null }) => {
+      const { error } = await createClient().rpc("close_bank_account", {
+        p_account_id: input.id,
+        p_closed_on:  input.closedOn,
+        p_note:       input.note?.trim() || undefined,
+      });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bank_accounts"] });
+      toast.success("Account closed — it now sits under Closed accounts");
+    },
+    onError: (err) => {
+      toastError(err, { fallback: "Could not close the account" });
+    },
+  });
+}
+
+export function useReopenBankAccount() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const { error } = await createClient().rpc("reopen_bank_account", { p_account_id: id });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["bank_accounts"] });
+      toast.success("Account reopened");
+    },
+    onError: (err) => {
+      toastError(err, { fallback: "Could not reopen the account" });
     },
   });
 }
@@ -810,7 +863,7 @@ export function useBookCreditAsInvoice() {
       // 2. Record the payment (full) against that quote. record_payment needs a
       //    non-empty reference for bank methods — use the line's UTR, else derive
       //    one from the bank-txn id (also makes the call idempotent per line).
-      const ref = (input.reference ?? "").trim() || `BANK-${input.transactionId}`;
+      const ref = bankLinePaymentReference(input.reference, input.transactionId);   // R-2430: placeholder ref → BANK-<line id>
       const { data: payData, error: e2 } = await supabase.rpc("record_payment", {
         p_quote_id:  inv.quote_id,
         p_amount:    inv.net_payable,
@@ -1344,7 +1397,7 @@ export function useMatchCreditToInvoice() {
       const amount = Math.round(input.amount);
       if (!(amount > 0)) throw new Error("Amount must be more than ₹0.");
       const supabase = createClient();
-      const ref = (input.reference ?? "").trim() || `BANK-${input.transactionId}`;
+      const ref = bankLinePaymentReference(input.reference, input.transactionId);   // R-2430: placeholder ref → BANK-<line id>
       const { data: payData, error: e1 } = await supabase.rpc("record_payment", {
         p_quote_id:  input.quoteId,
         p_amount:    amount,

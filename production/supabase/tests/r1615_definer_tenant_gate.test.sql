@@ -64,6 +64,11 @@ insert into public.prepaid_advances (id, tenant_id, vendor_name, category, total
 insert into public.items (id, tenant_id, name, vendor, kind, msrp, wholesale, partner_price, is_partner_visible, is_active)
   values ('R1615-GWS-ab12', 'c1615000-0000-0000-0000-0000000000f0', 'R1615 Workspace', 'google', 'main', 700, 400, 500, true, true);
 
+-- R-2433: partner metrics need the child's consent (an accepted connection sharing partner_metrics).
+insert into public.tenant_connections (a_tenant_id, b_tenant_id, status, a_scopes, b_scopes, origin)
+  values ('c1615000-0000-0000-0000-0000000000f0', 'c1615000-0000-0000-0000-0000000000f1', 'accepted',
+          array['catalogue'], array['partner_metrics'], 'parent_link');
+
 set local role authenticated;
 
 -- ── 1. refusals: MFA owner on aal1, deactivated owner ───────────────────────────────

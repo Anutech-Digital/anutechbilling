@@ -15,7 +15,7 @@
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
-import { plannedInstalments, instalmentSkip, instalmentsDue, type InstalmentSkip } from "./instalments";
+import { plannedInstalments, instalmentSkip, instalmentsDue, quotePeriodTaxables, type InstalmentSkip, type SplitQuoteFields } from "./instalments";
 import { billingTermStart } from "./subscription-schedule";
 import { addDaysISO } from "@/lib/dates/ist";
 import { billedElsewhere, billedElsewhereLabel } from "@/lib/subscriptions/billed-elsewhere";
@@ -33,6 +33,8 @@ export interface InstalmentSub {
   mrr: number;
   billing_cycle: Database["public"]["Tables"]["subscriptions"]["Row"]["billing_cycle"];
   term_months: Database["public"]["Tables"]["subscriptions"]["Row"]["term_months"];
+  /** R-2369: the exact amount for one term — the instalments split it, not mrr × months. */
+  term_amount?: number | null;
   start_date: string | null;
   renewal_date: string | null;
   /** R-1763: imported from Zoho Books — periods starting on/before this day were billed there. */
@@ -42,7 +44,7 @@ export interface InstalmentSub {
 }
 
 export const INSTALMENT_SUB_SELECT =
-  "id, tenant_id, quote_id, mrr, billing_cycle, term_months, start_date, renewal_date, external_source, external_ref, billed_externally_until" as const;
+  "id, tenant_id, quote_id, mrr, billing_cycle, term_months, term_amount, start_date, renewal_date, external_source, external_ref, billed_externally_until" as const;
 
 export interface QuotePaymentFacts {
   amount: number | null;
@@ -67,6 +69,12 @@ export interface InstalmentSyncResult {
   wouldRequest: number;
   /** R-2092: parts held back until the quote's other subscriptions have their parts laid. */
   waiting?: { period_index: number; subscription_ids: string[] }[];
+  /** R-2095: due parts whose invoice credit notes cancelled in full — not re-billed by this run
+   *  (only the owner's own Generate re-bills them: rebillCredited). */
+  heldCredited?: { period_index: number; credited: string[] }[];
+  /** R-2095 (Sept): due parts that would have got a NEW payment request, left for the billing job
+   *  because this run follows a sale's payment (noNewRequests). */
+  requestsHeld?: number[];
 }
 
 export async function syncSubscriptionInstalments(args: {
@@ -79,6 +87,14 @@ export async function syncSubscriptionInstalments(args: {
       every subscription of a quote BEFORE billing any of them, so the quote's parts of one period
       are all there when the first is billed and go on ONE tax invoice (billing_part_group). */
   layOnly?: boolean;
+  /** R-2095 (coordinator, 30 Oct): a part freed by credit notes for its whole invoice is billed
+   *  again ONLY when the owner asks (Invoices → Generate invoice for Qn, Renewals → Generate). A
+   *  credit note often means "customer cancelled / we don't bill this" — the billing job and the
+   *  auto-raise after a payment leave it alone. */
+  rebillCredited?: boolean;
+  /** R-2095 (Sept reconcile): the run right after a sale's payment — invoice what the money covers,
+   *  never make a next-period payment request (that is the billing job's, on the part's own date). */
+  noNewRequests?: boolean;
 }): Promise<InstalmentSyncResult> {
   const { supabase, sub, quote, todayISO } = args;
   const dryRun = args.dryRun ?? false;
@@ -87,7 +103,12 @@ export async function syncSubscriptionInstalments(args: {
   /* R-1763: a period Zoho already billed is never laid or invoiced here (the database refuses
      it too — trigger subscription_billings_not_billed_elsewhere). The term key stays the
      whole term's first day, so the periods still to bill here keep their usual key. */
-  const wholeTerm = plannedInstalments(sub);
+  /* R-2104: the quote's only split-billed subscription is laid with the QUOTE's period amounts —
+     the figure the Record payment sheet asked (quotePeriodTaxables). */
+  const mrrTerm = plannedInstalments(sub);
+  const wholeTerm = mrrTerm.length > 0
+    ? quotePeriodTaxables(mrrTerm, { mrr: sub.mrr, cycle: sub.billing_cycle, ...(await quotePlanFacts(supabase, sub)) })
+    : mrrTerm;
   const planned = wholeTerm.filter((p) => !billedElsewhere(sub, p.periodStart));
   if (wholeTerm.length > 0 && planned.length === 0) {
     out.skip = { code: "billed_elsewhere", reason: `${billedElsewhereLabel(sub)} — this term is not invoiced again here; the next term is.` };
@@ -182,7 +203,33 @@ export async function syncSubscriptionInstalments(args: {
      is its request), a term paid up front, or its own payment request paid — otherwise it gets a payment
      request. bill_subscription_instalment decides, in one transaction, and invoices through
      raise_subscription_billing (the one instalment invoice path). */
+  /* R-2095: which due parts were freed by a full credit note (credited_invoice_ids, migration
+     20261030035007 — not in the generated types yet, so read untyped). */
+  const creditedOf = new Map<string, string[]>();
+  if (due.length > 0) {
+    const { data: cr, error: crErr } = await (supabase as unknown as SupabaseClient)
+      .from("subscription_billings").select("id, credited_invoice_ids").in("id", due.map((r) => r.id));
+    if (crErr) throw new Error(crErr.message);
+    for (const c of (cr ?? []) as Array<{ id: string; credited_invoice_ids: string[] | null }>) {
+      creditedOf.set(c.id, (c.credited_invoice_ids ?? []).filter(Boolean));
+    }
+  }
   for (const row of due) {
+    /* R-2095: a credited part waits for the owner's own Generate. */
+    const credited = creditedOf.get(row.id) ?? [];
+    if (credited.length > 0 && !args.rebillCredited) {
+      (out.heldCredited ??= []).push({ period_index: row.period_index, credited });
+      continue;
+    }
+    if (args.noNewRequests && !dryRun) {
+      /* R-2095: look first (dry run) — a part that would get a NEW request is left for its own run. */
+      const { data: peek, error: pErr } = await billSubscriptionInstalment(supabase, row.id, true);
+      if (pErr) throw new Error(pErr.message);
+      if ((peek as { action?: string } | null)?.action === "request") {
+        (out.requestsHeld ??= []).push(row.period_index);
+        continue;
+      }
+    }
     const { data, error } = await billSubscriptionInstalment(supabase, row.id, dryRun);
     if (error) throw new Error(error.message);
     applyBillOutcome(out, row.period_index, data, dryRun);
@@ -194,6 +241,34 @@ export async function syncSubscriptionInstalments(args: {
     if (error) throw new Error(error.message);
   }
   return out;
+}
+
+/**
+ * R-2104: what quotePeriodTaxables needs from the subscription's quote — its split fields and how
+ * many split-billed subscriptions it has (active ones + this one). No quote, or a failed read → { quote: null }:
+ * the MRR figures stand (as before R-2104).
+ */
+export async function quotePlanFacts(
+  supabase: Admin,
+  sub: Pick<InstalmentSub, "id" | "tenant_id" | "quote_id" | "billing_cycle">,
+): Promise<{ quote: SplitQuoteFields | null; splitSubsOfQuote: number }> {
+  const quoteId = sub.quote_id;
+  if (!quoteId || !sub.billing_cycle || sub.billing_cycle === "yearly") return { quote: null, splitSubsOfQuote: 0 };
+  const read = await (async () => Promise.all([
+    supabase.from("quotes")
+      .select("subtotal, discount_pct, tax_rate, amount, billing_cycle, line_items")
+      .eq("tenant_id", sub.tenant_id).eq("id", quoteId).maybeSingle(),
+    supabase.from("subscriptions")
+      .select("id, billing_cycle, status")
+      .eq("tenant_id", sub.tenant_id).eq("quote_id", quoteId),
+  ]))().catch(() => null);
+  if (!read) return { quote: null, splitSubsOfQuote: 0 };
+  const [{ data: q, error: qErr }, { data: subs, error: sErr }] = read;
+  if (qErr || sErr || !q) return { quote: null, splitSubsOfQuote: 0 };
+  return {
+    quote: q as SplitQuoteFields,
+    splitSubsOfQuote: (subs ?? []).filter((x) => (x.id === sub.id || x.status === "active") && x.billing_cycle != null && x.billing_cycle !== "yearly").length,
+  };
 }
 
 export function emptySyncResult(): InstalmentSyncResult {
@@ -340,6 +415,10 @@ export async function raiseDueInstalmentsForQuote(args: {
   quoteId: string;
   tenantId: string;
   todayISO: string;
+  /** R-2095: the owner's own Generate — re-bill parts freed by a full credit note. */
+  rebillCredited?: boolean;
+  /** R-2095 (Sept): right after a sale's payment — no next-period payment request. */
+  noNewRequests?: boolean;
 }): Promise<QuoteInstalmentOutcome> {
   const { supabase, quoteId, tenantId, todayISO } = args;
   const out: QuoteInstalmentOutcome = { raised: [], errors: [], splitBilled: false, invoices: [] };
@@ -394,7 +473,7 @@ export async function raiseDueInstalmentsForQuote(args: {
   }
   for (const sub of subs) {
     try {
-      const r = await syncSubscriptionInstalments({ supabase, sub, quote: facts, todayISO });
+      const r = await syncSubscriptionInstalments({ supabase, sub, quote: facts, todayISO, rebillCredited: args.rebillCredited, noNewRequests: args.noNewRequests });
       if (r.skip?.code === "not_split_billed") continue;
       out.splitBilled = true;
       for (const x of r.raised) { out.raised.push({ subscription_id: sub.id, ...x }); raisedNow.add(x.invoice_id); }

@@ -34,8 +34,8 @@ import {
   liveEmail, checkEmail, liveDomain, checkDomain, gstinState,
 } from "@/lib/forms/poka-yoke";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
-import { COUNTRIES } from "@/lib/gst/countries";
-import { GST_STATE_OPTIONS } from "@/lib/gst/gstin-state";
+import { CountryCombobox } from "./country-combobox";
+import { GST_STATE_OPTIONS, STATE_NOT_KNOWN, STATE_NOT_KNOWN_LABEL, STATE_NOT_KNOWN_NOTE } from "@/lib/gst/gstin-state";
 import { useCustomerForm } from "./use-customer-form";
 import { ScanCardPanel } from "./scan-card-panel";
 import { ContactPersonsTable } from "./contact-persons-table";
@@ -44,6 +44,14 @@ import { gstTreatmentOption } from "@/lib/gst/customer-gst-treatment";
 import { GroupFormDialog } from "./group-form-dialog";
 import { useCustomerGroups } from "@/lib/queries/customer-groups";
 import type { Customer } from "@/lib/supabase/database.types";
+import { returnPathFromSearch } from "./return-path";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canRecordMoney } from "@/lib/auth/roles";
+import { TDS_SECTIONS } from "@/lib/queries/tds-receivable";
+import { checkTdsRate } from "@/lib/accounting/tds-rates";
+import {
+  CUSTOMER_TDS_NONE, rateForPickedSection, customerTdsLabel,
+} from "@/lib/accounting/customer-tds-default";
 
 const selectClass =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
@@ -103,12 +111,19 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
     register, setValue, watch, errors, isSubmitting, isPending, isEdit,
     contactPersonFields, appendContactPerson, removeContactPerson,
     verification, setVerification, watchedGstin,
-    isForeign, foreignStates, countryReg, onCountryChange, submit,
+    isForeign, foreignStates, country, onCountryPick, submit,
     gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
   } = useCustomerForm({
     customer,
-    onSaved: (id) => router.push(`/customers/${id}` as never),
+    /* R-2108: "?return=" (e.g. Hosting & Domains → Add email) goes back there after Save. */
+    onSaved: (id) => router.push((returnPathFromSearch(window.location.search) ?? `/customers/${id}`) as never),
   });
+
+  /* R-2370: TDS section + rate — money roles only (same list as "record money"). */
+  const { data: me } = useCurrentUser();
+  const canSetTds = canRecordMoney(me?.role);
+  const tdsSection = watch("tds_section") ?? CUSTOMER_TDS_NONE;
+  const tdsRateCheck = checkTdsRate(tdsSection, Number(watch("tds_rate_pct") || 0));
 
   // Parent account / group picker — links this company to a common reseller.
   const { data: customerGroups } = useCustomerGroups();
@@ -185,7 +200,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
     setValue("display_name", val === "individual" ? person : company, { shouldDirty: true });
   };
 
-  const cancel = () => router.push((isEdit && customer ? `/customers/${customer.id}` : "/customers") as never);
+  const cancel = () => router.push((returnPathFromSearch(window.location.search) ?? (isEdit && customer ? `/customers/${customer.id}` : "/customers")) as never);
 
   // Company / GSTIN / email errors live in the always-visible essentials block,
   // so they need no tab dot. Only the tabbed secondary fields do.
@@ -290,9 +305,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
           <div className="grid grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)] gap-1.5 md:gap-5 md:items-center">
             <Label htmlFor="country" required>Customer region</Label>
             <div className="max-w-xl">
-              <select id="country" className={selectClass} {...countryReg} onChange={onCountryChange}>
-                {COUNTRIES.map((ctry) => <option key={ctry} value={ctry}>{ctry}</option>)}
-              </select>
+              <CountryCombobox id="country" value={country} onChange={onCountryPick} />
             </div>
           </div>
           <div className="mt-3 md:pl-[210px]">
@@ -537,6 +550,48 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               <option value="45">Net 45</option>
             </select>
           </Row>
+
+          {/* R-2370: the TDS this customer deducts — pre-fills "Customer deducted TDS" on its receipts. */}
+          <Row label="TDS the customer deducts" htmlFor="tds_section" hint="Pre-fills the TDS section and rate when you record this customer's payment.">
+            <div className="grid grid-cols-[minmax(0,1fr)_110px] gap-2">
+              <select
+                id="tds_section" className={selectClass} disabled={!canSetTds}
+                value={tdsSection}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setValue("tds_section", v, { shouldDirty: true });
+                  setValue("tds_rate_pct", rateForPickedSection(v), { shouldDirty: true, shouldValidate: true });
+                }}
+              >
+                <option value={CUSTOMER_TDS_NONE}>No TDS</option>
+                {TDS_SECTIONS.map((s) => (
+                  <option key={s.value} value={s.value}>{s.label}</option>
+                ))}
+                {tdsSection && !TDS_SECTIONS.some((s) => s.value === tdsSection) && (
+                  <option value={tdsSection}>{tdsSection}</option>
+                )}
+              </select>
+              <div className="relative">
+                <Input
+                  id="tds_rate_pct" aria-label="TDS rate (%)" inputMode="decimal"
+                  disabled={!canSetTds || !tdsSection}
+                  placeholder="Rate"
+                  {...register("tds_rate_pct")}
+                  className="pr-7"
+                />
+                <span className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-sm text-ink-3">%</span>
+              </div>
+            </div>
+            {errors.tds_rate_pct?.message && (
+              <p role="alert" className="mt-1 text-xs text-rose">{String(errors.tds_rate_pct.message)}</p>
+            )}
+            {!errors.tds_rate_pct && tdsSection && tdsRateCheck.message && (
+              <p className="mt-1 text-2xs text-ink-3">{tdsRateCheck.message}</p>
+            )}
+            {!canSetTds && (
+              <p className="mt-1 text-2xs text-ink-3">Only an owner, manager, accountant or billing user can change this.</p>
+            )}
+          </Row>
         </section>
 
         {/* ── Address ── */}
@@ -576,11 +631,15 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               <>
                 <select id="state" className={selectClass} aria-invalid={!!errors.state} {...register("state")}>
                   <option value="">Select state…</option>
-                  {watch("state") && !GST_STATE_OPTIONS.some((o) => o.name.toLowerCase() === watch("state")!.toLowerCase()) && (
+                  {/* R-2363: advance-only customer, state unknown — saved with no state (never a
+                      guess); its quote / GST invoice still waits for the state. */}
+                  <option value={STATE_NOT_KNOWN}>{STATE_NOT_KNOWN_LABEL}</option>
+                  {watch("state") && watch("state") !== STATE_NOT_KNOWN && !GST_STATE_OPTIONS.some((o) => o.name.toLowerCase() === watch("state")!.toLowerCase()) && (
                     <option value={watch("state")!}>{watch("state")} (not a GST state — pick one)</option>
                   )}
                   {GST_STATE_OPTIONS.map((o) => <option key={o.code} value={o.name}>{o.name}</option>)}
                 </select>
+                {watch("state") === STATE_NOT_KNOWN && <p className="mt-1 text-xs text-amber-ink">{STATE_NOT_KNOWN_NOTE}</p>}
                 {errors.state?.message && <p className="mt-1 text-xs text-rose">{String(errors.state.message)}</p>}
               </>
             )}
@@ -680,14 +739,16 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               />
               <ReviewLine
                 label="Place of supply"
-                value={watch("state")}
+                value={watch("state") === STATE_NOT_KNOWN ? "Not known yet" : watch("state")}
                 /* Spelled out because it decides IGST vs CGST+SGST, and because a
                    customer with a GSTIN but no state is the commonest shape in these
                    books — 36 of 41 of them. */
-                note={watch("state_code") ? `code ${watch("state_code")}` : "no state code — GST head cannot be fixed"}
+                note={watch("state") === STATE_NOT_KNOWN ? "no quote or GST invoice until the state is set"
+                  : watch("state_code") ? `code ${watch("state_code")}` : "no state code — GST head cannot be fixed"}
               />
               <ReviewLine label="GST treatment" value={gstTreatmentOption(gstTreatment)?.label} />
               <ReviewLine label="PAN" mono value={isForeign ? "" : watch("pan")} />
+              <ReviewLine label="TDS" value={customerTdsLabel({ section: tdsSection, ratePct: watch("tds_rate_pct") ?? "" })} />
               <ReviewLine label="Contact"  value={[watch("contact_first_name"), watch("contact_last_name")].filter(Boolean).join(" ") || (isIndividual ? "" : companyName?.trim())} />
               <ReviewLine label="Email"    value={watch("contact_email")} />
               <ReviewLine label="Phone"    value={watch("contact_phone")} />

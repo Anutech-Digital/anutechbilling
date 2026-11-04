@@ -17,6 +17,8 @@ import { notifyTenantOwners } from "@/lib/notifications/notify.server";
 import { loadOwnerAlert } from "@/lib/email/owner-alert.server";
 import { sendInternalEmail } from "@/lib/messaging";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
 
 /* R-1499: the website tenant is read per request (websiteTenantId) — outside production an unset
    BUY_PAGE_TENANT_ID refuses with a clear message, never the live tenant. */
@@ -80,6 +82,9 @@ export async function POST(request: NextRequest) {
     console.error("[api/public/callback] lead insert failed:", error.message);
     return NextResponse.json({ error: "Could not save your request. Please WhatsApp or call us." }, { status: 500 });
   }
+
+  /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead. */
+  await recordFormConsent(admin, { tenantId: BUY_PAGE_TENANT_ID, leadId, consent: readFormConsent(body), headers: request.headers, page: parsed.data.pageUrl });
 
   await notifyTenantOwners({
     tenantId: BUY_PAGE_TENANT_ID,

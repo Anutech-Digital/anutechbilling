@@ -42,11 +42,13 @@ interface ReqRow {
   id: string; tenant_id: string; customer_id: string | null; customer_name: string;
   amount: number | null; payment_amount: number | null; public_token: string | null;
   /** R-2092: a request for a quote's period names each subscription's part (billing_id). */
-  line_items: { name?: string; billing_id?: string }[] | null;
+  line_items: { name?: string; description?: string; billing_id?: string }[] | null;
   subscription_billing_id: string;
 }
 interface BillRow {
   id: string; subscription_id: string; bill_on: string; period_start: string; period_end: string;
+  /** R-2230: when the request is due (part start + payment terms); older rows fall back to bill_on. */
+  due_on?: string | null;
   period_index: number; request_reminder_step: string | null;
 }
 interface TenantRow { id: string; name: string; email: string | null; auto_suspend_on_overdue: boolean | null; grace_period_days: number | null }
@@ -75,7 +77,7 @@ export async function chasePartRequests(
   const [bills, tenants] = await Promise.all([
     fetchAllRowsIn(open.map((q) => q.subscription_billing_id), (ids, from, to) => db
       .from("subscription_billings")
-      .select("id, subscription_id, bill_on, period_start, period_end, period_index, request_reminder_step")
+      .select("id, subscription_id, bill_on, due_on, period_start, period_end, period_index, request_reminder_step")
       .in("id", ids).order("id", { ascending: true }).range(from, to)) as unknown as Promise<BillRow[]>,
     fetchAllRowsIn(open.map((q) => q.tenant_id), (ids, from, to) => db
       .from("tenants")
@@ -91,12 +93,17 @@ export async function chasePartRequests(
     const t = tenantById.get(q.tenant_id);
     if (!b || !t) continue;
     const amountDue = (q.amount ?? 0) - (q.payment_amount ?? 0);
-    /* The request's own wording, "Advance payment for Q2 · 28 Jan–27 Apr 2027" (its first line). */
-    const partLabel = q.line_items?.[0]?.name ?? `Advance payment for part ${b.period_index}`;
+    /* R-2230: the request's own due date — the reminders, the email and the pause count from it. */
+    const dueOn = b.due_on ?? b.bill_on;
+    /* The request's own wording (its first line). R-2423: a one-line request names the product,
+       "Workspace · acme.in · 10 seats · 1 Nov–30 Nov 2026 (part 1 of 12)"; a group request (R-2092) covers
+       several products, so its mail keeps the short label the lines carry as description,
+       "Advance payment for Q2 · 28 Jan–27 Apr 2027" (older requests: that is their name). */
+    const partLabel = requestMailPart(q.line_items) ?? `Advance payment for part ${b.period_index}`;
     try {
       const step: RequestReminderStep | "new" | null = !b.request_reminder_step
         ? "new"
-        : requestReminderStep({ dueOn: b.bill_on, todayISO: opts.todayISO, lastStep: b.request_reminder_step, open: true, amountDue, graceDays: t.grace_period_days ?? 0 });
+        : requestReminderStep({ dueOn, todayISO: opts.todayISO, lastStep: b.request_reminder_step, open: true, amountDue, graceDays: t.grace_period_days ?? 0 });
       if (step) {
         const stepName = step === "new" ? REQUEST_SENT_STEP : step;
         if (opts.dryRun) {
@@ -109,7 +116,7 @@ export async function chasePartRequests(
             const tpl = requestReminderText({
               step, customerName: q.customer_name, companyName: t.name, quoteId: q.id,
               part: partLabel,
-              amount: rupee(amountDue), dueOn: formatDate(b.bill_on),
+              amount: rupee(amountDue), dueOn: formatDate(dueOn),
               payUrl: q.public_token ? quoteAcceptUrl(appUrl, q.id, q.public_token) : null,
             });
             const r = await sendCustomerEmail({
@@ -137,7 +144,7 @@ export async function chasePartRequests(
       if (requestPauseDue({
         companyOn: t.auto_suspend_on_overdue === true,
         graceDays: t.grace_period_days ?? 0,
-        dueOn: b.bill_on, todayISO: opts.todayISO,
+        dueOn, todayISO: opts.todayISO,
         lastStep: b.request_reminder_step, open: true,
       })) {
         if (opts.dryRun) {
@@ -148,7 +155,7 @@ export async function chasePartRequests(
           const { data, error } = await db.from("subscriptions")
             .update({
               status: "paused", suspended_by: "automation", suspended_at: new Date().toISOString(),
-              suspend_reason: requestPauseReason(q.id, b.bill_on, opts.todayISO),
+              suspend_reason: requestPauseReason(q.id, dueOn, opts.todayISO),
             })
             .in("id", subIds).eq("tenant_id", q.tenant_id).eq("status", "active")
             .select("id");
@@ -175,4 +182,18 @@ export async function requestSubscriptionIds(
     .select("subscription_id").in("id", parts).eq("tenant_id", q.tenant_id);
   if (error) throw new Error(error.message);
   return Array.from(new Set([ownSubscriptionId, ...((data as { subscription_id: string }[] | null) ?? []).map((r) => r.subscription_id)]));
+}
+
+/**
+ * R-2423 — the part the request mail names. A one-line request: its line ("Workspace · acme.in ·
+ * 10 seats · 1 Nov–30 Nov 2026 (part 1 of 12)", or an older "Advance payment for …"). A group
+ * request (several products): the short label its lines carry as description since R-2423
+ * ("Advance payment for Q2 · …"); an older group's name already is that label. Pure — tested.
+ */
+export function requestMailPart(lines: { name?: string; description?: string }[] | null | undefined): string | null {
+  const first = lines?.[0];
+  if (!first) return null;
+  const desc = first.description?.trim();
+  if ((lines?.length ?? 0) > 1 && desc && desc.startsWith("Advance payment for")) return desc;
+  return first.name?.trim() || null;
 }

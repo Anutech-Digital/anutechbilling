@@ -25,17 +25,22 @@ import { useStartEmployeeExit } from "@/lib/queries/payroll";
 const selectCls = "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber";
 
 export function StartExitDialog({
-  employee, onClose,
+  employee, onClose, initialLastDay, reasonText,
 }: {
   employee: { id: string; name: string; joining_date?: string | null };
   onClose: () => void;
+  /** R-2428: a known last working day (e.g. the full & final payment date) — kept as given,
+   *  with no resignation date assumed (it would be after the last day). */
+  initialLastDay?: string;
+  /** R-2428: why the dialog opened by itself, e.g. "Full & final ₹19,056 paid on 16 Apr 2026." */
+  reasonText?: string;
 }) {
   const start = useStartEmployeeExit();
   const today = istToday();
-  const [resigned, setResigned] = React.useState(today);
+  const [resigned, setResigned] = React.useState(initialLastDay ? "" : today);
   const [notice, setNotice] = React.useState("30");
-  const [lastDay, setLastDay] = React.useState(defaultLastDay(today, 30));
-  const [lastDayTouched, setLastDayTouched] = React.useState(false);
+  const [lastDay, setLastDay] = React.useState(initialLastDay ?? defaultLastDay(today, 30));
+  const [lastDayTouched, setLastDayTouched] = React.useState(!!initialLastDay);
   const [reason, setReason] = React.useState<ExitReason>("resigned");
   const [note, setNote] = React.useState("");
 
@@ -66,6 +71,7 @@ export function StartExitDialog({
         <DialogHeader>
           <DialogTitle>Start exit — {employee.name}</DialogTitle>
           <DialogDescription>
+            {reasonText ? <>{reasonText} </> : null}
             Payroll pays them up to the last working day and stops after that month. Their history stays.
           </DialogDescription>
         </DialogHeader>

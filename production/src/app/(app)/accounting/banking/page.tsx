@@ -26,8 +26,10 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LoadError } from "@/components/shared/load-error";
-import { useBankAccounts, type BankAccountRow } from "@/lib/queries/bank";
-import { rupee } from "@/lib/utils";
+import { useBankAccounts, useReopenBankAccount, type BankAccountRow } from "@/lib/queries/bank";
+import { formatDate, rupee } from "@/lib/utils";
+import { splitByStatus } from "@/lib/banking/account-close";
+import { CloseBankAccountDialog } from "@/components/features/banking/close-bank-account-dialog";
 import { AddBankAccountForm } from "@/components/features/banking/add-bank-account-form";
 import { DeleteBankAccountDialog } from "@/components/features/banking/delete-bank-account-dialog";
 import { TransferDialog } from "@/components/features/banking/transfer-dialog";
@@ -48,14 +50,19 @@ export default function BankingPage() {
   const [editAccount, setEditAccount] = React.useState<BankAccountRow | null>(null);
   const [deleteAccount, setDeleteAccount] = React.useState<BankAccountRow | null>(null);
   const [transferOpen, setTransferOpen] = React.useState(false);
+  /* R-2384: closed (archived) accounts sit behind a "Closed (N)" toggle; totals use active ones. */
+  const [closeAccount, setCloseAccount] = React.useState<BankAccountRow | null>(null);
+  const [showClosed, setShowClosed] = React.useState(false);
+  const reopen = useReopenBankAccount();
+  const { active: activeAccounts, closed: closedAccounts } = React.useMemo(() => splitByStatus(accounts), [accounts]);
 
   // "Total balance" = cash/bank ASSETS only. A credit card is a liability, so
   // its (negative) balance is excluded here and surfaced separately as "owed" —
   // otherwise a big card bill would silently shrink the headline cash figure.
-  const totalBalance = (accounts ?? [])
+  const totalBalance = activeAccounts
     .filter((a) => a.account_type !== "credit_card")
     .reduce((sum, a) => sum + (a.current_balance ?? a.opening_balance), 0);
-  const cardOwed = (accounts ?? [])
+  const cardOwed = activeAccounts
     .filter((a) => a.account_type === "credit_card")
     .reduce((sum, a) => sum + Math.max(0, -(a.current_balance ?? a.opening_balance)), 0);
 
@@ -80,7 +87,7 @@ export default function BankingPage() {
           <Button icon="check" onClick={() => router.push("/accounting/banking/brs" as Route)}>
             Bank reconciliation
           </Button>
-          {canWrite && (accounts?.length ?? 0) >= 2 && (
+          {canWrite && activeAccounts.length >= 2 && (
             <Button icon="refresh" onClick={() => setTransferOpen(true)}>
               Move money / withdraw
             </Button>
@@ -96,7 +103,7 @@ export default function BankingPage() {
       {!canWrite && <ViewOnlyNote what="add bank accounts or move money" />}
 
       {/* Summary strip */}
-      {!isLoading && !isError && accounts && accounts.length > 0 && (
+      {!isLoading && !isError && activeAccounts.length > 0 && (
         <Card className="mb-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <div>
@@ -108,8 +115,8 @@ export default function BankingPage() {
             </div>
             <div>
               <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Accounts</p>
-              <p className="font-serif text-2xl text-ink mt-1">{accounts.length}</p>
-              <p className="text-xs text-ink-3 mt-0.5">Active</p>
+              <p className="font-serif text-2xl text-ink mt-1">{activeAccounts.length}</p>
+              <p className="text-xs text-ink-3 mt-0.5">Active{closedAccounts.length > 0 ? ` · ${closedAccounts.length} closed` : ""}</p>
             </div>
             <div className="md:col-span-2">
               <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-2">Tips</p>
@@ -146,7 +153,7 @@ export default function BankingPage() {
         <>
         {/* R-1834: every company starts with a Petty Cash, so the "no accounts" state above no
             longer shows — keep its next step for a company that has only cash so far. */}
-        {canWrite && accounts.every((a) => a.account_type === "cash") && (
+        {canWrite && activeAccounts.every((a) => a.account_type === "cash") && (
           <Card className="mb-4">
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <p className="text-sm text-ink-2">
@@ -159,16 +166,43 @@ export default function BankingPage() {
           </Card>
         )}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-          {accounts.map((acc) => (
+          {activeAccounts.map((acc) => (
             <BankAccountCard
               key={acc.id}
               account={acc}
               onOpen={() => router.push(`/accounting/banking/${acc.id}` as Route)}
               onEdit={canWrite ? () => setEditAccount(acc) : undefined}
+              onClose={canWrite ? () => setCloseAccount(acc) : undefined}
               onDelete={canDeleteAccount ? () => setDeleteAccount(acc) : undefined}
             />
           ))}
         </div>
+        {closedAccounts.length > 0 && (
+          <div className="mt-6">
+            <Button
+              variant="ghost"
+              icon={showClosed ? "chevron_up" : "chevron_down"}
+              aria-expanded={showClosed}
+              aria-controls="closed-bank-accounts"
+              onClick={() => setShowClosed((v) => !v)}
+            >
+              Closed ({closedAccounts.length})
+            </Button>
+            {showClosed && (
+              <div id="closed-bank-accounts" className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {closedAccounts.map((acc) => (
+                  <BankAccountCard
+                    key={acc.id}
+                    account={acc}
+                    onOpen={() => router.push(`/accounting/banking/${acc.id}` as Route)}
+                    onReopen={canWrite ? () => reopen.mutate(acc.id) : undefined}
+                    onDelete={canDeleteAccount ? () => setDeleteAccount(acc) : undefined}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
         </>
       )}
 
@@ -184,7 +218,13 @@ export default function BankingPage() {
         onOpenChange={(o) => { if (!o) setDeleteAccount(null); }}
         account={deleteAccount}
       />
-      <TransferDialog open={transferOpen} onOpenChange={setTransferOpen} accounts={accounts ?? []} />
+      <CloseBankAccountDialog
+        open={closeAccount !== null}
+        onOpenChange={(o) => { if (!o) setCloseAccount(null); }}
+        account={closeAccount}
+      />
+      {/* R-2384: a closed account is not a target for new money. */}
+      <TransferDialog open={transferOpen} onOpenChange={setTransferOpen} accounts={activeAccounts} />
     </div>
   );
 }
@@ -193,21 +233,25 @@ export default function BankingPage() {
 // Account card
 // ============================================================
 function BankAccountCard({
-  account, onOpen, onEdit, onDelete,
+  account, onOpen, onEdit, onClose, onReopen, onDelete,
 }: {
   account: BankAccountRow;
   onOpen: () => void;
   /** Left out for a read-only viewer (R-254). */
   onEdit?: () => void;
+  /** R-2384: "Close account" on an active account / "Reopen" on a closed one. */
+  onClose?: () => void;
+  onReopen?: () => void;
   onDelete?: () => void;
 }) {
+  const isClosed = account.is_active === false;
   const balance = account.current_balance ?? account.opening_balance;
   const isPositive = balance >= 0;
   // A credit card is a liability: its balance is ≤ 0 while money is owed. Show
   // that as "owed" (the magnitude), not a negative number.
   const isCard = account.account_type === "credit_card";
   return (
-    <div className="relative rounded-lg border border-hairline bg-paper hover:border-hairline-strong hover:shadow-md transition-all">
+    <div className={`relative rounded-lg border border-hairline hover:border-hairline-strong hover:shadow-md transition-all ${isClosed ? "bg-paper-2/60 opacity-75" : "bg-paper"}`}>
       {/* Actions menu — absolutely positioned so it doesn't nest in the open button */}
       <div className="absolute top-3 right-3 z-10">
         <DropdownMenu modal={false}>
@@ -227,6 +271,16 @@ function BankAccountCard({
             {onEdit && (
               <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onEdit}>
                 <Icon name="edit" size={16} /> Edit account
+              </DropdownMenuItem>
+            )}
+            {onClose && (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onClose}>
+                <Icon name="lock" size={16} /> Close account
+              </DropdownMenuItem>
+            )}
+            {onReopen && (
+              <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={onReopen}>
+                <Icon name="refresh" size={16} /> Reopen account
               </DropdownMenuItem>
             )}
             {onDelete && (
@@ -260,6 +314,11 @@ function BankAccountCard({
             )}
           </div>
           {/* leave room for the menu button */}
+          {isClosed ? (
+            <Badge kind="muted" size="sm" className="mr-9">
+              {account.closed_on ? `Closed ${formatDate(account.closed_on)}` : "Closed"}
+            </Badge>
+          ) : (
           <Badge kind={account.account_type === "cash" ? "success" : isCard ? "danger" : "muted"} size="sm" className="mr-9">
             {account.account_type === "current" ? "Current" :
              account.account_type === "savings" ? "Savings" :
@@ -268,6 +327,7 @@ function BankAccountCard({
              account.account_type === "cash" ? "Cash" :
              isCard ? "Card" : account.account_type}
           </Badge>
+          )}
         </div>
 
         <div className="border-t border-hairline pt-3">
@@ -287,6 +347,9 @@ function BankAccountCard({
             <p className={`font-serif text-2xl mt-1 ${isPositive ? "text-ink" : "text-rose"}`}>
               {rupee(balance)}
             </p>
+          )}
+          {isClosed && account.closed_note && (
+            <p className="text-xs text-ink-3 mt-1 break-words">{account.closed_note}</p>
           )}
           {/* Data-integrity guard: cash-in-hand can never be negative in reality. */}
           {account.account_type === "cash" && balance < 0 && (

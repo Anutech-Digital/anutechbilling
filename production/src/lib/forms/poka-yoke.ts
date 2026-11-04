@@ -316,5 +316,10 @@ export function paymentRefProblem(method: string, raw: string): string | null {
     if (/^[A-Za-z0-9]{12,22}$/.test(ref)) return null;
     return "A bank UTR is 12 to 22 letters and digits (IMPS 12, NEFT 16, RTGS 22).";
   }
+  /* R-2095: a Razorpay payment id is pay_ + 14 letters/digits — it may have no digit at all
+     (pay_TgEaESviwlEIRM, staging Sept reconcile). Anything not starting pay_ keeps the old rule. */
+  if (method === "razorpay" && /^pay_/i.test(raw.trim())) {
+    return /^pay_[A-Za-z0-9]{14}$/.test(raw.trim()) ? null : "A Razorpay payment ID is pay_ followed by 14 letters and digits (e.g. pay_TgEaESviwlEIRM).";
+  }
   return null;
 }

@@ -11,6 +11,7 @@ import { updateSession } from "@/lib/supabase/middleware";
 import { authjsMiddlewareSession } from "@/server/auth/middleware-session";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { GENERIC_HOME, homeForRole, isRouteAllowed, type UserRole } from "@/lib/nav";
+import { isPersonalApiAllowed, isPersonalOnlyPage, PERSONAL_API_REFUSAL } from "@/lib/workspace/personal-allowlist";
 import { rateLimitShared, clientIp, publicApiLimit } from "@/lib/security/rate-limit";
 import { CHANGE_PASSWORD_PATH, mustChangePassword, safeNextPath } from "@/lib/auth/must-change-password";
 import { apiNeedsMfaCode, MFA_API_REFUSAL } from "@/lib/auth/mfa-gate";
@@ -112,10 +113,25 @@ const PROTECTED_PREFIXES = [
      role guard further down is skipped for them too, because `role` is null
      until a users row exists. */
   "/welcome",
+  /* GP-07a (R-2115): the personal workspace's own pages (lib/workspace/personal-allowlist.ts).
+     /vault/personal and /support/my are already covered by "/vault" and "/support". */
+  "/money",
+  "/assets",
+  "/upgrade",
+  "/account",
 ];
 
 // Routes that should redirect to /dashboard if user is logged in
 const AUTH_PREFIXES = ["/login", "/signup"];
+
+/* R-2177 (GP-10c): the personal home is the Money row (/money, ROLE_HOME.personal), but /money is
+   a PAGE that only forwards to /vault/personal — its redirect() streams the whole app shell
+   first (HTML 200 + NEXT_REDIRECT), so a bounce through it mounted the shell twice. Every
+   server redirect here goes straight to the money screens instead; nav.ts keeps /money as the
+   row's link. */
+const PERSONAL_MONEY_ROW = "/money";
+const PERSONAL_MONEY_HOME = "/vault/personal";
+const serverHome = (home: string) => (home === PERSONAL_MONEY_ROW ? PERSONAL_MONEY_HOME : home);
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -388,13 +404,30 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
+  /* GP-07b (R-2116, G-PERSONAL measure 2): a personal session (one login = one personal
+     workspace) may call only its own API, the data gateway and the machine/public routes
+     (lib/workspace/personal-allowlist.ts) — every business route answers 403 JSON, so
+     /api/invoices or /api/team/invite cannot be reached by hand. Pages fall through to the
+     auth-page bounce and the route guard below (GP-07a), which send it to /money. */
+  if (isAuthed && role === "personal" && pathname.startsWith("/api/") && !isPersonalApiAllowed(pathname)) {
+    return NextResponse.json({ error: PERSONAL_API_REFUSAL }, { status: 403 });
+  }
+
   // Logged in → redirect away from auth pages, sending each role to its
   // own home page (sales lands on /leads, others on /dashboard). R-1837: homeForRole — the
   // first page the role may open (nav.ts isRouteAllowed), never a page that bounces it.
   if (isAuthed && isAuthPage) {
     const url = request.nextUrl.clone();
-    url.pathname = homeForRole(((role as UserRole) ?? "owner"), { canViewDeals });
+    url.pathname = serverHome(homeForRole(((role as UserRole) ?? "owner"), { canViewDeals }));
     url.searchParams.delete("next");
+    return NextResponse.redirect(url);
+  }
+
+  /* R-2177: a personal session on its Money row goes to the money screens in one 307, query
+     kept (?denied= for the "You don't have access" toast) — no app shell for the hop. */
+  if (isAuthed && role === "personal" && (pathname === PERSONAL_MONEY_ROW || pathname === PERSONAL_MONEY_ROW + "/")) {
+    const url = request.nextUrl.clone();
+    url.pathname = PERSONAL_MONEY_HOME;
     return NextResponse.redirect(url);
   }
 
@@ -402,12 +435,15 @@ export async function middleware(request: NextRequest) {
   // isRouteAllowed). R-1542 (18 Oct 2026): the manager is gated too — skipping it meant
   // ROUTE_DENY.manager (Loans given) and the owner-only Backup row never ran. Only the owner
   // skips it, and nav-route-guard.test.ts proves the owner may open every page anyway.
-  if (isAuthed && isProtected && role && role !== "owner") {
+  // GP-07a (R-2115): the owner IS gated on the personal workspace's own pages (/money,
+  // /assets, /support/my, /upgrade, /account) — they are not a business owner's, and the
+  // guard would otherwise never run for them. Everywhere else the owner still skips it.
+  if (isAuthed && isProtected && role && (role !== "owner" || isPersonalOnlyPage(pathname))) {
     const userRole = role as UserRole;
     const isAllowedPath = isRouteAllowed(userRole, pathname, { canViewDeals });
     if (!isAllowedPath) {
       const url = request.nextUrl.clone();
-      url.pathname = homeForRole(userRole, { canViewDeals });
+      url.pathname = serverHome(homeForRole(userRole, { canViewDeals }));
       // R-1810: say which page was refused — the app shell shows "You don't have access to …"
       // (components/layout/denied-route-toast.tsx). The refused page's own query is dropped.
       // R-1837: not for the generic landing (/dashboard): the login default, "/" and every

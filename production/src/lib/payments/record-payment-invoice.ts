@@ -154,6 +154,17 @@ export function shouldIssueAfterPayment(a: {
 }
 
 /**
+ * R-2099 (30 Oct 2026): the sheet's own "Issue GST invoice now" already ran generate_invoice
+ * (issued — its toast says "Paid in full · GST invoice INV-… issued" — or refused, and the hook
+ * toasted why). A caller that raises the invoice after onRecorded (Subscriptions onboarding) must
+ * not call it again: the second call is refused with "INV-… already exists" and showed a red toast
+ * next to the green one, on staging 30 Oct.
+ */
+export function sheetHandledInvoice(r: { invoiceId?: string | null; invoiceAttempted?: boolean }): boolean {
+  return Boolean(r.invoiceId) || Boolean(r.invoiceAttempted);
+}
+
+/**
  * The payment's one result toast, once the invoice WAS issued with it: the headline says so and
  * the button opens that invoice instead of offering "Generate invoice" for a quote that already
  * has one. Lines (TDS, credit, receipt) are kept as they are.

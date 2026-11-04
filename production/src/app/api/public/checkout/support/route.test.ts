@@ -356,3 +356,40 @@ describe("R-2083 after payment — verify (and the webhook) settle it once", () 
     expect(owner?.text).not.toMatch(/Google Reseller Console/);
   });
 });
+
+describe("R-2155 — staging with a LIVE Razorpay key takes no money", () => {
+  const goLive = () => {
+    vi.stubEnv("APP_ENV", "staging");
+    db.tables.tenant_secrets[0].razorpay_key_id = "rzp_live_aitest";
+    db.tables.tenant_secrets[0].razorpay_mode = "live";
+  };
+
+  it("/buy/support order: refused with the staging message — no Razorpay order, no lead, no quote", async () => {
+    goLive();
+    const res = await order(BODY);
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toMatch(/Staging cannot take real payments — use a Razorpay test key/);
+    expect(rzp.orders).toHaveLength(0);
+    expect(db.tables.leads).toHaveLength(0);
+    expect(db.tables.quotes).toHaveLength(0);
+  });
+
+  it("the same order with a TEST key on staging still opens Razorpay", async () => {
+    vi.stubEnv("APP_ENV", "staging");
+    const res = await order(BODY);
+    expect(res.status).toBe(200);
+    expect(rzp.orders).toHaveLength(1);
+  });
+
+  it("verify: refused before Razorpay is asked; nothing recorded", async () => {
+    await order(BODY); // made with the test key
+    goLive();
+    rzp.payment = { id: PAY, order_id: ORDER, amount: 1179500, currency: "INR", status: "captured" };
+    db.rpcCalls = [];
+    const r = await verify();
+    expect(r.status).toBe(403);
+    expect(r.body.message).toMatch(/Staging cannot take real payments/);
+    expect(rzp.fetched).toEqual([]);
+    expect(db.rpcCalls).toEqual([]);
+  });
+});

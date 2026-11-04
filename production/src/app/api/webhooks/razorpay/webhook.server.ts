@@ -9,6 +9,8 @@
  *   - `order.paid`        — Razorpay considers the order complete
  *   - `payment.failed`    — note on the lead + a retry link to the SAME quote (R-079);
  *                           never a new charge
+ *   - `payment_link.paid` — R-2415: a Send-reminder pay link (invoice / statement) was paid —
+ *                           booked once on its bills (payment-link-paid.server.ts)
  *   - `refund.processed`  — R-045: a note on the lead + an owner notification saying what to
  *                           book (credit note first if invoiced). Once per refund id. Never
  *                           refunds, credit-notes or changes a payment's status by itself.
@@ -42,6 +44,7 @@ import { decideProvisioning, testPaymentProvisioningAllowed } from "@/lib/provis
 import { queueProvisioning } from "@/lib/provisioning/provisioning.server";
 import { provisioningProducts, productAmountPaid } from "@/lib/provisioning/products";
 import { domainRegistrationEnabled, hostingProvisioningEnabled } from "@/lib/provisioning/domain-registration";
+import { ensurePanelAccount } from "@/lib/provisioning/panel-account.server";
 import {
   DOMAIN_RENEWAL_PLAN,
   domainRenewalEnabled,
@@ -56,7 +59,9 @@ import { isProductionDeployment } from "@/lib/checkout/live-guards";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { gatewayFeeFromPayment } from "@/lib/razorpay/gateway-money";
 import { handleRefundProcessed } from "./refund-event.server";
+import { handlePaymentLinkPaid, invoiceLinkRowForCapture, settleInvoiceLinkCapture } from "./payment-link-paid.server";
 import { bookGatewayFeeExpense } from "@/lib/razorpay/fee-expense.server";
+import { recordFeeBearer } from "@/lib/payments/online-fee.server";
 import {
   receivedOnQuote, settleLatePayment, settleOnReplacedQuote, settleStaleRenewal, STALE_RENEWAL_RE, type LateArgs,
 } from "./late-payment.server";
@@ -245,9 +250,22 @@ export async function POST(request: NextRequest) {
     return handleRefundProcessed(admin, body, tenantParam, mayActOn);
   }
 
+  /* R-2415: a reminder pay link (invoice / statement) was paid — booked once on its bills. */
+  const linkDeps = { mayActOn, eventId: request.headers.get("x-razorpay-event-id")?.trim() || null, recordGatewayFee };
+  if (event === "payment_link.paid") {
+    return handlePaymentLinkPaid(admin, body, linkDeps);
+  }
+
   // Only act on payment-success events — ignore authorized / etc.
   if (event !== "payment.captured" && event !== "order.paid") {
     return NextResponse.json({ received: true, ignored: event });
+  }
+
+  /* R-2415: the capture of a reminder pay link — settled on its bills (once, whichever of this
+     and payment_link.paid comes first), never looked up as a quote. */
+  const payLink = await invoiceLinkRowForCapture(admin, body.payload.payment?.entity, body.payload.order?.entity);
+  if (payLink) {
+    return settleInvoiceLinkCapture(admin, payLink, event, body.payload.payment?.entity, linkDeps);
   }
 
   return settleCapturedPayment(admin, {
@@ -706,6 +724,16 @@ export async function settleCapturedPayment(
     }
   }
 
+  /* R-2103: the customer panel (DMS) login at once. record_payment's insert already queued the
+     customer (trg_queue_panel_account); this sends that row now instead of on the next cron.
+     An order made inside the DMS panel names its buyer's DMS user, so the row is only marked
+     done with it. Best-effort, never throws — the payment is recorded either way. */
+  {
+    const panelUser = notes.channel === "dms-panel" && typeof notes.dmsUserId === "string" ? notes.dmsUserId : null;
+    const panel = await ensurePanelAccount(admin, { tenantId: quote.tenant_id, quoteId: quote.id, dmsUserId: panelUser });
+    if (panel.kind === "skipped") console.log(`[webhooks/razorpay] ${quote.id}: panel account not sent now — ${panel.reason}`);
+  }
+
   /* R-1985: the domain's share of a split payment — the Workspace share sends the one mail. */
   if (splitPart?.role === "secondary") {
     return NextResponse.json({
@@ -1114,6 +1142,9 @@ async function recordGatewayFee(
   reference: string,
   payment: RazorpayPayment,
 ): Promise<void> {
+  /* R-2416: who bore the online fee under the policy in force (fee_charged 0 until R-2417).
+     Before the fee check: a capture that carries no fee still has a bearer. Written once. */
+  await recordFeeBearer(admin, tenantId, quoteId, reference);
   const fee = gatewayFeeFromPayment(payment);
   if (!fee) return;
   const { data: rows, error } = await admin

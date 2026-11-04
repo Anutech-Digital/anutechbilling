@@ -33,14 +33,14 @@ import { answerHandshake } from "@/lib/whatsapp/handshake";
 import { verifyMetaSignature, signatureRefusalReason } from "@/lib/crypto/webhook-signature";
 import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { runSupportAgentForMessage } from "@/lib/ai/run-support-agent";
+import { loadSellerIdentity } from "@/lib/ai/seller-identity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const SELLER_NAME = process.env.SELLER_LEGAL_NAME?.trim() || "ANUTECH DIGITAL PVT LTD";
+/* R-1929: the seller name and support desk come from the tenant row (lib/ai/seller-identity.ts). */
 const FROM_EMAIL =
   process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
-const SUPPORT_EMAIL = process.env.SUPPORT_EMAIL?.trim() || "support@anutech.in";
 const APP_URL = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
 
 /** Bounded so one webhook delivery cannot become an unbounded fan-out of model calls. */
@@ -229,8 +229,7 @@ export async function POST(req: NextRequest) {
               /* R-726: the number is proven — this request passed verifyMetaSignature above. */
               senderVerified: true,
               fromEmail: FROM_EMAIL,
-              sellerName: SELLER_NAME,
-              supportEmail: SUPPORT_EMAIL,
+              ...(await loadSellerIdentity(admin, tenantId)),
               appUrl: APP_URL,
             });
             handled.push({ ticketId: result.ticketId, outcome: result.outcome });

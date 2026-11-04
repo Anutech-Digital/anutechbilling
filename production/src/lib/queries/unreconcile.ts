@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
 import { toastError } from "@/lib/errors/toast-error";
 import { rupee } from "@/lib/utils";
+import { tds26qSection } from "@/lib/accounting/tds-rates";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 
@@ -135,7 +136,7 @@ const STATUS_LABEL: Record<string, string> = { unpaid: "Unpaid", partial: "Part 
  */
 export function vendorUndoLegLine(leg: VendorUndoLeg): string {
   const doc = `${leg.doc_type === "vendor_bill" ? "Bill" : "Expense bill"} ${leg.doc_no ?? leg.doc_id}`;
-  const tds = leg.tds_amount > 0 ? `; TDS ${rupee(leg.tds_amount)}${leg.tds_section ? ` (${leg.tds_section})` : ""} taken off` : "";
+  const tds = leg.tds_amount > 0 ? `; TDS ${rupee(leg.tds_amount)}${leg.tds_section ? ` (${tds26qSection(leg.tds_section)})` : ""} taken off` : "";
   if (leg.kind === "advance") return `Advance of ${rupee(leg.cash)} to the vendor is removed`;
   if (leg.kind === "bank_charge") return `Bank charge of ${rupee(leg.cash)} is removed`;
   if (leg.kind === "recorded_payment") return `${doc}: the payment recorded earlier comes back, waiting for its bank line`;

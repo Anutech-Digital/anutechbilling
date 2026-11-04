@@ -18,10 +18,21 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { toastError } from "@/lib/errors/toast-error";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import type { Database } from "@/lib/supabase/database.types";
 
-export type PersonalAccount = Database["public"]["Tables"]["personal_accounts"]["Row"];
+/**
+ * R-2394: `balance` on a row from usePersonalAccounts is the COMPUTED balance
+ * (personal_account_balances: opening_balance + money in − money out; a card: amount owed).
+ * The old hand-typed column is no longer shown — the owner types `opening_balance` (+ the
+ * as-of date). `typed_balance` keeps the old column's value for reference only.
+ */
+export type PersonalAccount = Database["public"]["Tables"]["personal_accounts"]["Row"] & {
+  opening_as_of?: string | null;
+  typed_balance?: number;
+  txn_count?: number;
+};
 export type PersonalTransaction = Database["public"]["Tables"]["personal_transactions"]["Row"];
 export type PersonalHolding = Database["public"]["Tables"]["personal_holdings"]["Row"];
 
@@ -29,8 +40,14 @@ export type PersonalAccountInsert = Database["public"]["Tables"]["personal_accou
 export type PersonalTransactionInsert = Database["public"]["Tables"]["personal_transactions"]["Insert"];
 export type PersonalHoldingInsert = Database["public"]["Tables"]["personal_holdings"]["Insert"];
 
+export type PersonalImportBatch = Database["public"]["Tables"]["personal_import_batches"]["Row"];
+export type PersonalCategory = Database["public"]["Tables"]["personal_categories"]["Row"];
+export type PersonalCategoryInsert = Database["public"]["Tables"]["personal_categories"]["Insert"];
+export type PersonalCategoryRule = Database["public"]["Tables"]["personal_category_rules"]["Row"];
+export type PersonalCategoryRuleInsert = Database["public"]["Tables"]["personal_category_rules"]["Insert"];
+
 /** Who is writing. Resolved from the session on every mutation — never cached in a prop. */
-async function requireIdentity(): Promise<{ userId: string; tenantId: string }> {
+export async function requireIdentity(): Promise<{ userId: string; tenantId: string }> {
   const supabase = createClient();
   const { data: auth } = await supabase.auth.getUser();
   if (!auth.user) throw new Error("You are not signed in — please sign in again.");
@@ -46,11 +63,32 @@ async function requireIdentity(): Promise<{ userId: string; tenantId: string }> 
   return { userId: auth.user.id, tenantId: me.tenant_id };
 }
 
-function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
+export function invalidateAll(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["personal-vault"] });
 }
 
 // ─── Accounts ────────────────────────────────────────────────────────────────
+
+/**
+ * R-2394: put the computed balance (personal_account_balances) on each account — the Assets
+ * list, the Overview and Net worth all read it from here. An account the view does not
+ * return (should not happen — same table) falls back to its opening balance.
+ */
+export function withComputedBalances(
+  accounts: readonly PersonalAccount[],
+  balances: readonly { account_id: string | null; balance: number | null; txn_count?: number | null }[],
+): PersonalAccount[] {
+  const byId = new Map(balances.map((b) => [b.account_id, b] as const));
+  return accounts.map((a) => {
+    const b = byId.get(a.id);
+    return {
+      ...a,
+      typed_balance: a.balance,
+      balance: b?.balance ?? a.opening_balance ?? 0,
+      txn_count: b?.txn_count ?? 0,
+    };
+  });
+}
 
 export function usePersonalAccounts(includeInactive = false) {
   return useQuery({
@@ -59,9 +97,13 @@ export function usePersonalAccounts(includeInactive = false) {
       const supabase = createClient();
       let q = supabase.from("personal_accounts").select("*").order("kind").order("label");
       if (!includeInactive) q = q.eq("is_active", true);
-      const { data, error } = await q;
+      const [{ data, error }, bal] = await Promise.all([
+        q,
+        supabase.from("personal_account_balances").select("account_id, balance, txn_count"),
+      ]);
       if (error) throw error;
-      return (data ?? []) as PersonalAccount[];
+      if (bal.error) throw bal.error;
+      return withComputedBalances((data ?? []) as PersonalAccount[], bal.data ?? []);
     },
     staleTime: 30_000,
   });
@@ -70,8 +112,9 @@ export function usePersonalAccounts(includeInactive = false) {
 export function useSavePersonalAccount() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: Omit<PersonalAccountInsert, "tenant_id" | "owner_user_id"> & { id?: string }) => {
-      const supabase = createClient();
+    // R-2394: opening_as_of is newer than the generated DB types — the client is used untyped for this write.
+    mutationFn: async (input: Omit<PersonalAccountInsert, "tenant_id" | "owner_user_id"> & { id?: string; opening_as_of?: string | null }) => {
+      const supabase = createClient() as unknown as SupabaseClient;
       const { userId, tenantId } = await requireIdentity();
       const { id, ...fields } = input;
 
@@ -132,8 +175,10 @@ export function usePersonalTransactions(limit = 200) {
 export function useSavePersonalTransaction() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: Omit<PersonalTransactionInsert, "tenant_id" | "owner_user_id"> & { id?: string }) => {
-      const supabase = createClient();
+    // R-2392: contact_id (People) is newer than the generated DB types — the client is used
+    // untyped for this write (like personal-owe-hold.ts / personal-loans.ts).
+    mutationFn: async (input: Omit<PersonalTransactionInsert, "tenant_id" | "owner_user_id"> & { id?: string; contact_id?: string | null }) => {
+      const supabase = createClient() as unknown as SupabaseClient;
       const { userId, tenantId } = await requireIdentity();
       const { id, ...fields } = input;
 
@@ -224,6 +269,194 @@ export function useDeletePersonalHolding() {
     },
     onSuccess: () => invalidateAll(qc),
     onError: (e: unknown) => toastError(e, { fallback: "Could not delete the holding." }),
+  });
+}
+
+// ─── Statement import (R-2128, migration 20261030074413) ──────────────────────
+//
+// The commit goes through ONE RPC, personal_import_commit: the batch row and every line
+// land together or not at all, and a line already imported (same dedupe_hash in that
+// account) is skipped, so uploading an overlapping statement never doubles the money.
+// The RPC is SECURITY INVOKER and stamps owner/tenant from the session itself — nothing
+// here sends a user id.
+
+/** One statement line as the importer hands it over. Amount is whole rupees, always > 0. */
+export interface PersonalImportLine {
+  kind: PersonalTransaction["kind"];
+  amount: number;
+  /** YYYY-MM-DD */
+  occurred_on: string;
+  dedupe_hash: string;
+  category?: string | null;
+  note?: string | null;
+  reference?: string | null;
+  raw_description?: string | null;
+  balance_after?: number | null;
+}
+
+export interface PersonalImportBatchInput {
+  account_id: string;
+  file_name?: string | null;
+  file_kind?: "csv" | "xlsx" | "other" | null;
+  statement_from?: string | null;
+  statement_to?: string | null;
+  rows: PersonalImportLine[];
+}
+
+export interface PersonalImportResult {
+  /** null when every line was already imported (no empty upload is kept). */
+  batch_id: string | null;
+  inserted: number;
+  skipped: number;
+  rows: number;
+}
+
+export function usePersonalImportBatches(limit = 50) {
+  return useQuery({
+    queryKey: ["personal-vault", "import-batches", limit],
+    queryFn: async (): Promise<PersonalImportBatch[]> => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("personal_import_batches")
+        .select("*")
+        .order("created_at", { ascending: false })
+        .limit(limit);
+      if (error) throw error;
+      return (data ?? []) as PersonalImportBatch[];
+    },
+    staleTime: 30_000,
+  });
+}
+
+export function useCommitPersonalImport() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (batch: PersonalImportBatchInput): Promise<PersonalImportResult> => {
+      const supabase = createClient();
+      // Signed-in check only; the RPC takes owner and tenant from the session, not from us.
+      await requireIdentity();
+      const { data, error } = await supabase.rpc("personal_import_commit", {
+        batch: batch as unknown as Database["public"]["Functions"]["personal_import_commit"]["Args"]["batch"],
+      });
+      if (error) throw error;
+      return data as unknown as PersonalImportResult;
+    },
+    onSuccess: () => invalidateAll(qc),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not import the statement." }),
+  });
+}
+
+// ─── Own categories and private auto-category rules (R-2128) ─────────────────
+
+export function usePersonalCategories(includeInactive = false) {
+  return useQuery({
+    queryKey: ["personal-vault", "categories", includeInactive],
+    queryFn: async (): Promise<PersonalCategory[]> => {
+      const supabase = createClient();
+      let q = supabase.from("personal_categories").select("*").order("direction").order("name");
+      if (!includeInactive) q = q.eq("is_active", true);
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data ?? []) as PersonalCategory[];
+    },
+    staleTime: 60_000,
+  });
+}
+
+export function useSavePersonalCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: Omit<PersonalCategoryInsert, "tenant_id" | "owner_user_id"> & { id?: string }) => {
+      const supabase = createClient();
+      const { userId, tenantId } = await requireIdentity();
+      const { id, ...fields } = input;
+
+      if (id) {
+        const { error } = await supabase
+          .from("personal_categories")
+          .update({ ...fields, updated_at: new Date().toISOString() })
+          .eq("id", id);
+        if (error) throw error;
+        return;
+      }
+
+      const { error } = await supabase
+        .from("personal_categories")
+        .insert({ ...fields, tenant_id: tenantId, owner_user_id: userId });
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateAll(qc),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not save the category." }),
+  });
+}
+
+export function useDeletePersonalCategory() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const supabase = createClient();
+      const { error } = await supabase.from("personal_categories").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateAll(qc),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not delete the category." }),
+  });
+}
+
+export function usePersonalCategoryRules() {
+  return useQuery({
+    queryKey: ["personal-vault", "category-rules"],
+    queryFn: async (): Promise<PersonalCategoryRule[]> => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("personal_category_rules")
+        .select("*")
+        .order("match_text");
+      if (error) throw error;
+      return (data ?? []) as PersonalCategoryRule[];
+    },
+    staleTime: 60_000,
+  });
+}
+
+/** "Always put <match_text> under <category>". One rule per text per person (DB unique). */
+export function useSavePersonalCategoryRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: Omit<PersonalCategoryRuleInsert, "tenant_id" | "owner_user_id"> & { id?: string }) => {
+      const supabase = createClient();
+      const { userId, tenantId } = await requireIdentity();
+      const { id, ...fields } = input;
+
+      if (id) {
+        const { error } = await supabase
+          .from("personal_category_rules")
+          .update({ ...fields, updated_at: new Date().toISOString() })
+          .eq("id", id);
+        if (error) throw error;
+        return;
+      }
+
+      const { error } = await supabase
+        .from("personal_category_rules")
+        .insert({ ...fields, tenant_id: tenantId, owner_user_id: userId });
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateAll(qc),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not save the rule." }),
+  });
+}
+
+export function useDeletePersonalCategoryRule() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (id: string) => {
+      const supabase = createClient();
+      const { error } = await supabase.from("personal_category_rules").delete().eq("id", id);
+      if (error) throw error;
+    },
+    onSuccess: () => invalidateAll(qc),
+    onError: (e: unknown) => toastError(e, { fallback: "Could not delete the rule." }),
   });
 }
 

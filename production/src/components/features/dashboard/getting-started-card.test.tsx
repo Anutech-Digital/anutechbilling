@@ -1,8 +1,14 @@
 // @vitest-environment jsdom
+/**
+ * R-1931 (G-ONBOARD OB-10): the Dashboard shows ONE onboarding list — "Get to your first
+ * quote" — with a button on every open item, ticks from real data, gone when all done.
+ */
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup, within } from "@testing-library/react";
-import { GettingStartedCard } from "./getting-started-card";
-import type { SetupFacts } from "./setup-checklist";
+import * as fs from "node:fs";
+import * as path from "node:path";
+import { GettingStartedCard, FirstQuoteRows } from "./getting-started-card";
+import type { FirstQuoteFacts } from "./setup-checklist";
 
 /* R-253: the card reads the signed-in role to leave out steps on pages that role cannot open. */
 let mockRole: string | null = "owner";
@@ -12,190 +18,144 @@ vi.mock("@/lib/hooks/useCurrentUser", () => ({
 
 afterEach(() => { cleanup(); mockRole = "owner"; });
 
-/* A GSTIN that really passes the checksum — ANUTECH's own (CLAUDE.md §1).
-   NOT the wizard's placeholder 27AABCE9876D1Z3: that one is fabricated and FAILS the checksum,
-   which is exactly what this component refuses to tick. */
 const VALID_GSTIN = "07ABDCA0298H1ZP";
 
-/** A brand-new workspace: every fact loaded, nothing filled in. */
-const freshSetup: SetupFacts = {
-  address: null, stateCode: null, gstin: null,
+const fresh: FirstQuoteFacts = {
+  address: null, stateCode: null, gstin: null, gstRegistration: null,
+  productCount: 0, quoteCount: 0, sentQuoteCount: 0, draftQuoteId: null,
+  customerMessages: "off",
   upiVpa: null, remitAccountNumber: null, remitIfsc: null,
-  invoiceCode: { saved: null, locked: false },
-  email: { provider: "resend", fromAddress: null, hasResendKey: false, canSendNow: true },
   memberCount: 1, pendingInvites: 0,
 };
-/** Everything "before you bill" finished. */
-const doneSetup: SetupFacts = {
-  address: "Plot 1, Delhi", stateCode: "07", gstin: VALID_GSTIN,
-  upiVpa: "anutech@okhdfcbank", remitAccountNumber: null, remitIfsc: null,
-  invoiceCode: { saved: "AD", locked: false },
-  email: { provider: "gmail", canSendNow: true },
-  memberCount: 2, pendingInvites: 0,
+/** The E2E-like company: many customers, products, quotes sent, messages on, a team. */
+const trading: FirstQuoteFacts = {
+  address: "12 Nehru Place", stateCode: "07", gstin: VALID_GSTIN, gstRegistration: "registered",
+  productCount: 15, quoteCount: 42, sentQuoteCount: 30, draftQuoteId: "q-draft",
+  customerMessages: "on",
+  upiVpa: "shop@okhdfcbank", remitAccountNumber: null, remitIfsc: null,
+  memberCount: 4, pendingInvites: 0,
 };
 
-const props = {
-  setup: freshSetup,
-  hasCustomer: false,
-  hasCatalog: false,
-  hasQuote: false,
-  hasSale: false,
-  workspaceName: "ANUTECH DIGITAL PVT LTD",
-};
+const LABELS = [
+  "Set your state and GSTIN", "Load your price list", "Create your first quote",
+  "Send the quote link", "Turn on customer messages", "Add bank or UPI", "Invite your team",
+];
 
-/** The row for a step, found by its visible label. */
 const row = (label: string) => screen.getByText(label).closest("li") as HTMLElement;
-const isTicked = (label: string) => row(label).querySelector("svg") !== null;
+const isTicked = (label: string) => within(row(label)).queryByLabelText("Done") !== null;
 
-const SETUP_LABELS = [
-  "Add company address", "Add your GSTIN", "Set invoice numbering",
-  "Add bank or UPI", "Set up sending email", "Invite your team",
-];
-const SALE_LABELS = [
-  "Add your first customer", "Load your price list", "Create your first quote", "Record your first payment",
-];
-
-describe("the GST step is its own fact", () => {
-  it("stays OPEN when the address is saved but there is no GSTIN", () => {
-    /* GSTIN is optional in the setup wizard, so `setup_completed_at` gets stamped either way.
-       The GST row must not ride on anything but the GSTIN itself. */
-    render(<GettingStartedCard {...props} setup={{ ...freshSetup, address: "Plot 1", stateCode: "07" }} />);
-    expect(isTicked("Add company address")).toBe(true);
-    expect(isTicked("Add your GSTIN")).toBe(false);
+describe("one list, every item has a button", () => {
+  it("a new company sees the 7 items in order, under 'Get to your first quote'", () => {
+    render(<GettingStartedCard facts={fresh} />);
+    expect(screen.getByRole("heading", { name: /Get to your first quote/ })).toBeDefined();
+    const items = screen.getAllByRole("listitem").map((li) => li.textContent ?? "");
+    expect(items).toHaveLength(7);
+    LABELS.forEach((l, i) => expect(items[i]).toContain(l));
+    for (const l of LABELS) expect(isTicked(l), l).toBe(false);
   });
 
-  it("ticks only once the GSTIN passes format AND checksum", () => {
-    render(<GettingStartedCard {...props} setup={{ ...freshSetup, gstin: VALID_GSTIN }} />);
-    expect(isTicked("Add your GSTIN")).toBe(true);
-  });
-
-  it("does not tick a GSTIN that is the right LENGTH but fails the checksum", () => {
-    render(<GettingStartedCard {...props} setup={{ ...freshSetup, gstin: "07ABDCA0298H1ZQ" }} />);
-    expect(isTicked("Add your GSTIN")).toBe(false);
-  });
-
-  it("tells the reseller WHY the GSTIN matters", () => {
-    render(<GettingStartedCard {...props} />);
-    expect(within(row("Add your GSTIN")).getByText(/valid tax invoice/i)).toBeDefined();
-  });
-});
-
-describe("S31 — before you bill", () => {
-  it("a brand-new workspace sees every setup step open, in one card", () => {
-    render(<GettingStartedCard {...props} />);
-    for (const label of [...SETUP_LABELS, ...SALE_LABELS]) {
-      expect(isTicked(label), `${label} should start unticked`).toBe(false);
-    }
-    expect(screen.getByText("Before you bill")).toBeDefined();
-    expect(screen.getByText(/6 left before you can bill/)).toBeDefined();
-  });
-
-  it("each setup row links straight to its settings spot", () => {
-    render(<GettingStartedCard {...props} />);
+  it("every open item has its own button to the right place", () => {
+    render(<GettingStartedCard facts={fresh} />);
     const href = (label: string) => within(row(label)).getByRole("link").getAttribute("href");
-    expect(href("Set invoice numbering")).toBe("/settings?tab=company#invoice-numbering");
+    expect(href("Set your state and GSTIN")).toBe("/settings?tab=company#settings-registered-state");
+    expect(href("Load your price list")).toBe("/items");
+    expect(href("Create your first quote")).toBe("/quotes/new");
+    expect(href("Send the quote link")).toBe("/quotes");
+    expect(href("Turn on customer messages")).toBe("/automation#customer-messages");
     expect(href("Add bank or UPI")).toBe("/settings?tab=company#payment-details");
-    expect(href("Set up sending email")).toBe("/settings?tab=integrations#email-sending");
     expect(href("Invite your team")).toBe("/team");
   });
 
-  it("ticks from saved data and says 'Ready to bill'", () => {
-    render(<GettingStartedCard {...props} setup={doneSetup} />);
-    for (const label of SETUP_LABELS) expect(isTicked(label), label).toBe(true);
-    expect(screen.getByText(/Ready to bill/)).toBeDefined();
+  it("only the next step is the primary button (one primary per view)", () => {
+    render(<GettingStartedCard facts={{ ...fresh, stateCode: "07", address: "x", gstin: VALID_GSTIN }} />);
+    const primaries = screen.getAllByRole("link").filter((a) => a.className.includes("bg-amber "));
+    expect(primaries).toHaveLength(1);
+    expect(primaries[0].textContent).toBe("Load catalog");
   });
 
-  it("renders nothing while a setup fact is still loading", () => {
-    const { container } = render(<GettingStartedCard {...props} setup={{ ...freshSetup, email: undefined }} />);
+  it("the old lists are gone: no customer step, no 'Before you bill', no numbering/email rows", () => {
+    render(<GettingStartedCard facts={fresh} />);
+    expect(screen.queryByText("Add your first customer")).toBeNull();
+    expect(screen.queryByText("Before you bill")).toBeNull();
+    expect(screen.queryByText("Set invoice numbering")).toBeNull();
+    expect(screen.queryByText("Set up sending email")).toBeNull();
+    expect(screen.queryByText("Record your first payment")).toBeNull();
+  });
+});
+
+describe("ticks from real data", () => {
+  it("a company with products and quotes, none sent: first three ticked, Send link next", () => {
+    render(<GettingStartedCard facts={{ ...fresh, stateCode: "07", address: "x", gstin: VALID_GSTIN, productCount: 7, quoteCount: 2, draftQuoteId: "q1" }} />);
+    expect(isTicked("Set your state and GSTIN")).toBe(true);
+    expect(isTicked("Load your price list")).toBe(true);
+    expect(isTicked("Create your first quote")).toBe(true);
+    expect(isTicked("Send the quote link")).toBe(false);
+    expect(within(row("Send the quote link")).getByRole("link").getAttribute("href")).toBe("/quotes/q1");
+    expect(screen.getByText(/3 of 7 done/)).toBeDefined();
+  });
+
+  it("the trading (E2E-like) company: everything done → the card is gone", () => {
+    const { container } = render(<GettingStartedCard facts={trading} />);
     expect(container.innerHTML).toBe("");
   });
 
-  it("has an anchor the numbering error can link to", () => {
-    const { container } = render(<GettingStartedCard {...props} />);
+  it("stays while one item is open (messages off)", () => {
+    render(<GettingStartedCard facts={{ ...trading, customerMessages: "off" }} />);
+    expect(isTicked("Turn on customer messages")).toBe(false);
+    expect(screen.getByText(/6 of 7 done/)).toBeDefined();
+  });
+
+  it("renders nothing while a fact is still loading", () => {
+    const { container } = render(<GettingStartedCard facts={{ ...fresh, quoteCount: undefined }} />);
+    expect(container.innerHTML).toBe("");
+  });
+
+  it("keeps the #setup-checklist anchor other screens link to", () => {
+    const { container } = render(<GettingStartedCard facts={fresh} />);
     expect(container.querySelector("#setup-checklist")).not.toBeNull();
   });
 });
 
-describe("the checklist as a whole", () => {
-  it("retires itself once everything is done", () => {
-    const { container } = render(
-      <GettingStartedCard {...props} setup={doneSetup} hasCustomer hasCatalog hasQuote hasSale />,
-    );
-    expect(container.innerHTML).toBe("");
+describe("roles", () => {
+  it("manager: no owner-only rows, a note to ask the owner", () => {
+    mockRole = "manager";
+    render(<GettingStartedCard facts={fresh} />);
+    expect(screen.queryByText("Set your state and GSTIN")).toBeNull();
+    expect(screen.queryByText("Turn on customer messages")).toBeNull();
+    expect(screen.getByText("Create your first quote")).toBeDefined();
+    expect(screen.getByText(/Only the owner can finish/)).toBeDefined();
   });
 
-  it("does NOT retire while one setup step is open", () => {
-    const { container } = render(
-      <GettingStartedCard {...props} setup={{ ...doneSetup, invoiceCode: { saved: null, locked: false } }} hasCustomer hasCatalog hasQuote hasSale />,
-    );
-    expect(container.innerHTML).not.toBe("");
-    expect(isTicked("Set invoice numbering")).toBe(false);
-  });
-
-  it("counts progress out of the real number of steps", () => {
-    render(<GettingStartedCard {...props} setup={{ ...freshSetup, gstin: VALID_GSTIN, address: "x", stateCode: "07" }} />);
-    expect(screen.getByText(/2 of 10 done/)).toBeDefined();
-  });
-
-  it("gives every unfinished step somewhere to go", () => {
-    /* CLAUDE.md §24 — no dead ends. */
-    render(<GettingStartedCard {...props} />);
-    const links = screen.getAllByRole("link");
-    expect(links).toHaveLength(10);
-    for (const a of links) expect(a.getAttribute("href")).toMatch(/^\//);
-  });
-});
-
-describe("R-253 billing gets no button that bounces it to /invoices", () => {
-  it("billing sees no setup rows, no /quotes or /items link, and pays via Payments Received", () => {
+  it("billing (cannot open /quotes or /items): no button that bounces it away", () => {
     mockRole = "billing";
-    render(<GettingStartedCard {...props} />);
-    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href") ?? "");
-    expect(hrefs.some((h) => h.startsWith("/quotes"))).toBe(false);
-    expect(hrefs.some((h) => h.startsWith("/items"))).toBe(false);
-    expect(hrefs.some((h) => h.startsWith("/settings"))).toBe(false);
-    expect(within(row("Record your first payment")).getByRole("link").getAttribute("href")).toBe("/payments");
-    expect(within(row("Record your first payment")).getByText("Record payment")).toBeDefined();
+    const { container } = render(<GettingStartedCard facts={fresh} />);
+    const hrefs = Array.from(container.querySelectorAll("a")).map((a) => a.getAttribute("href") ?? "");
+    expect(hrefs.some((h) => h.startsWith("/quotes") || h.startsWith("/items") || h.startsWith("/settings"))).toBe(false);
   });
 
-  it("owner keeps all ten steps", () => {
-    mockRole = "owner";
-    render(<GettingStartedCard {...props} />);
-    expect(screen.getAllByRole("link")).toHaveLength(10);
+  it("a one-time business is sent to the One-time products tab (R-1862)", () => {
+    render(<GettingStartedCard facts={fresh} sellMode="one_time" />);
+    expect(within(row("Add your first one-time item")).getByRole("link").getAttribute("href")).toBe("/items/products");
   });
 });
 
-describe("R-1129 setup is the owner's job (company save is owner-only in the database)", () => {
-  it("manager gets no setup rows and no settings link — a note to ask the owner instead", () => {
-    mockRole = "manager";
-    render(<GettingStartedCard {...props} />);
-    for (const l of SETUP_LABELS) expect(screen.queryByText(l)).toBeNull();
-    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href") ?? "");
-    expect(hrefs.some((h) => h.startsWith("/settings") || h.startsWith("/setup"))).toBe(false);
-    expect(screen.getByText(/Only the owner can finish setup/)).toBeDefined();
-    expect(screen.queryByText(/left before you can bill/)).toBeNull();
-    expect(screen.queryByText(/Ready to bill/)).toBeNull(); // not ready: the owner still has setup to do
+describe("the /setup Done screen reuses the same list", () => {
+  it("FirstQuoteRows renders the same 7 items", () => {
+    render(<FirstQuoteRows facts={fresh} />);
+    expect(screen.getAllByRole("listitem")).toHaveLength(7);
   });
 
-  it("manager sees no owner note once setup is done", () => {
-    mockRole = "manager";
-    render(<GettingStartedCard {...props} setup={doneSetup} />);
-    expect(screen.queryByText(/Only the owner can finish setup/)).toBeNull();
-  });
-});
-
-describe("GettingStartedCard — first product by 'What do you sell?' (R-1862)", () => {
-  it("a one-time business is sent to the One-time products tab", () => {
-    mockRole = "owner";
-    render(<GettingStartedCard {...props} setup={doneSetup} sellMode="one_time" />);
-    const link = within(row("Add your first one-time item")).getByRole("link");
-    expect(link.getAttribute("href")).toBe("/items/products");
-    expect(screen.queryByText("Load your price list")).toBeNull();
+  it("done-screen.tsx uses FirstQuoteRows + useFirstQuoteFacts and no longer builds its own GSTIN / payout / customers rows", () => {
+    const done = fs.readFileSync(path.join(__dirname, "../../../app/(app)/setup/done-screen.tsx"), "utf8");
+    expect(done).toMatch(/<FirstQuoteRows\b/);
+    expect(done).toMatch(/useFirstQuoteFacts\(\)/);
+    expect(done).not.toMatch(/customerCount|catalogCount|useCustomers/);
   });
 
-  it("Both keeps the subscription price list step", () => {
-    mockRole = "owner";
-    render(<GettingStartedCard {...props} setup={doneSetup} sellMode="both" />);
-    expect(within(row("Load your price list")).getByRole("link").getAttribute("href")).toBe("/items");
+  it("the dashboard mounts the one card from the same facts hook", () => {
+    const page = fs.readFileSync(path.join(__dirname, "../../../app/(app)/dashboard/page.tsx"), "utf8");
+    expect(page).toMatch(/useFirstQuoteFacts\(\)/);
+    expect(page).toMatch(/<GettingStartedCard\b/);
+    expect(page).not.toMatch(/hasCustomer=|useSetupFacts/);
   });
 });

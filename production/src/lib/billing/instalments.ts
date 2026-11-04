@@ -384,3 +384,40 @@ export function instalmentsDue<T extends { billOn: string; invoiceId: string | n
 ): T[] {
   return rows.filter((r) => r.invoiceId == null && r.billOn <= todayISO);
 }
+
+/**
+ * R-2104 — a quote's ONLY split-billed subscription bills the QUOTE's period amounts.
+ *
+ * Q-R2101-CHK-B (3 seats × ₹1,002 a year, billed quarterly, ₹3,006 taxable): the Record payment
+ * sheet asked ₹886 for Q1 — planForQuote: ₹3,006 ÷ 4 = ₹751 taxable (the remainder on the last
+ * part) — but the part was laid from the subscription's whole-rupee MRR, ₹251 × 3 = ₹753 →
+ * ₹889. The customer paid exactly what was asked, the part looked short by ₹3, and no tax
+ * invoice was raised. R-2092 reconciled a quote with SEVERAL subscriptions at billing time
+ * (billing_part_group); a single subscription kept the MRR figure.
+ *
+ * So the parts are laid with planForQuote's taxables — the one figure the sheet, the customer
+ * page, the pay button and now the part share — but only when it is the same deal: the quote's
+ * only split-billed subscription, same cycle, same number of parts, and its MRR × 12 within the
+ * MRR's own rounding (₹6) of the quote's term taxable. A seat or price change since the sale
+ * moves the MRR and the subscription's own figures stand.
+ */
+export function quotePeriodTaxables(
+  planned: readonly PlannedInstalment[],
+  args: {
+    mrr: number;
+    cycle: BillingCycle | null | undefined;
+    quote: SplitQuoteFields | null | undefined;
+    /** Active split-billed subscriptions of the quote (this one included). */
+    splitSubsOfQuote: number;
+  },
+): PlannedInstalment[] {
+  const { quote } = args;
+  if (!quote || planned.length === 0 || args.splitSubsOfQuote !== 1) return [...planned];
+  if ((quote.billing_cycle ?? null) !== (args.cycle ?? null)) return [...planned];
+  const plan = planForQuote(quote, planned[0].periodStart);
+  if (!plan || plan.count !== planned.length) return [...planned];
+  const termTaxable = taxableAfterDiscount(Math.round(quote.subtotal ?? 0), quote.discount_pct ?? 0);
+  if (Math.abs(Math.round(args.mrr) * 12 - termTaxable) > 6) return [...planned];
+  const byIndex = new Map(plan.lines.map((l) => [l.index, l.taxable]));
+  return planned.map((p) => ({ ...p, taxableAmount: byIndex.get(p.periodIndex) ?? p.taxableAmount }));
+}

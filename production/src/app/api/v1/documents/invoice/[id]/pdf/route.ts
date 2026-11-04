@@ -19,6 +19,8 @@ import { readTenantUdyam } from "@/lib/compliance/udyam";
 import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import { loadRenewedSubscriptionDomain } from "@/lib/quotes/line-period-context";
 import { tdsByPayment } from "@/lib/accounting/tds-receipt";
+import { liveKeyCheckoutRefusal } from "@/lib/checkout/live-guards";
+import { readLutArnFor } from "@/lib/gst/export-lut";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -64,11 +66,21 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     .select("razorpay_key_id, razorpay_key_secret")
     .eq("tenant_id", inv.tenant_id)
     .maybeSingle();
-  const razorpayConfigured = Boolean(secrets?.razorpay_key_id && secrets?.razorpay_key_secret);
+  /* R-2155: staging with a live key cannot take a Razorpay payment, so its PDF does not offer one. */
+  const razorpayConfigured =
+    Boolean(secrets?.razorpay_key_id && secrets?.razorpay_key_secret) && !liveKeyCheckoutRefusal(secrets?.razorpay_key_id);
 
   /* Fetched here, not inside the renderer: logoDataUri carries a 4s deadline and swallows
      every failure, so a slow or missing logo costs the mark and never the document. */
   const logo = await logoDataUri((tenant as { logo_url?: string | null } | null)?.logo_url);
+
+  /* R-2444: the LUT ARN of the invoice's OWN financial year (tenant_luts), not the last one saved —
+     an FY 2025-26 export invoice prints the FY 2025-26 ARN (CGST rule 46). Only a no-GST invoice
+     (export / SEZ without payment) prints an ARN, so a taxed one skips the read. */
+  const lutArn = Number(inv.tax_amount ?? 0) === 0
+    ? await readLutArnFor(admin as unknown as Parameters<typeof readLutArnFor>[0], inv.tenant_id, inv.invoice_date,
+        (tenant as { lut_number?: string | null } | null)?.lut_number)
+    : null;
 
   const props = buildInvoicePdfProps({
     logoDataUri: logo,
@@ -78,7 +90,7 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
     invoice:  inv,
     quote:    (quote as Quote) ?? null,
     customer: (customer as Customer) ?? null,
-    tenant:   tenant ? { ...(tenant as TenantPdfInfo), udyam_number: udyamNumber } : {
+    tenant:   tenant ? { ...(tenant as TenantPdfInfo), lut_number: lutArn, udyam_number: udyamNumber } : {
       name: inv.customer_name, gstin: null, email: null, phone: null, address: null,
       state: null, state_code: null, logo_url: null, upi_vpa: null,
       remit_bank_name: null, remit_account_name: null, remit_account_number: null,

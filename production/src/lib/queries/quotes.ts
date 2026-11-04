@@ -11,6 +11,10 @@ import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { Quote, Database } from "@/lib/supabase/database.types";
 
+/** R-2383: quotes.approval_note (migration 20261102132142) — typed by hand until
+ *  database.generated.ts is regenerated (another card holds that file). */
+type QuoteUpdateWithNote = Database["public"]["Tables"]["quotes"]["Update"] & { approval_note?: string | null };
+
 type QuoteInsert = Database["public"]["Tables"]["quotes"]["Insert"];
 type QuoteStatus = Quote["status"];
 
@@ -226,15 +230,33 @@ export function useUpdateQuoteStatus() {
 // silently covering numbers nobody agreed to.
 // ============================================================
 
+/**
+ * R-2367: who made, revised, owns or asked approval for any quote of this revision family —
+ * none of them may approve it (the server trigger trg_quote_approval_not_by_maker refuses
+ * them too). A failed read throws (R-1655); the screen then keeps the old requester-only rule
+ * and the server still refuses.
+ */
+export function useQuoteChainMakers(quoteId: string | undefined) {
+  return useQuery({
+    queryKey: ["quotes", "chain-makers", quoteId],
+    enabled: !!quoteId,
+    queryFn: async (): Promise<string[]> => {
+      /* Typed by hand until database.generated.ts is regenerated (another card holds it). */
+      type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }> };
+      const { data, error } = await (createClient() as unknown as RpcClient).rpc("quote_chain_makers", { p_quote_id: quoteId! });
+      if (error) throw error;
+      return Array.isArray(data) ? data.filter((x): x is string => typeof x === "string") : [];
+    },
+  });
+}
+
 /** Push a quote into the approvals queue. */
 export function useRequestApproval() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async ({ id, tier, userId }: { id: string; tier: "manager" | "owner"; userId: string }) => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("quotes")
-        .update({
+      const patch: QuoteUpdateWithNote = {
           approval_status: "pending",
           approval_tier: tier,
           approval_requested_by: userId,
@@ -246,7 +268,11 @@ export function useRequestApproval() {
           approved_discount_bps: null,
           approved_margin_bps: null,
           approval_rejection_reason: null,
-        })
+          approval_note: null, // R-2383: a fresh ask starts with no self-approval reason
+      };
+      const { data, error } = await supabase
+        .from("quotes")
+        .update(patch as Database["public"]["Tables"]["quotes"]["Update"])
         .eq("id", id)
         .select()
         .single();
@@ -274,11 +300,15 @@ export function useDecideApproval() {
       discountBps: number | null;
       marginBps: number | null;
       rejectionReason?: string;
+      /** R-2383: the sole owner's reason for approving their own quote (min 10 chars — the
+       *  server trigger refuses a self-approval without it). */
+      approvalNote?: string;
+      /** R-2383: the tier being cleared, recorded when none was (a sole owner who never
+       *  "requested" approval). The server reads it to decide who else may approve. */
+      approvalTier?: "manager" | "owner";
     }) => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("quotes")
-        .update(
+      const patch: QuoteUpdateWithNote =
           input.decision === "approved"
             ? {
                 approval_status: "approved",
@@ -287,14 +317,19 @@ export function useDecideApproval() {
                 approved_discount_bps: input.discountBps,
                 approved_margin_bps: input.marginBps,
                 approval_rejection_reason: null,
+                approval_note: input.approvalNote?.trim() || null,
+                ...(input.approvalTier ? { approval_tier: input.approvalTier } : {}),
               }
             : {
                 approval_status: "rejected",
                 approved_by: input.userId,
                 approved_at: new Date().toISOString(),
                 approval_rejection_reason: input.rejectionReason ?? null,
-              },
-        )
+                approval_note: null,
+              };
+      const { data, error } = await supabase
+        .from("quotes")
+        .update(patch as Database["public"]["Tables"]["quotes"]["Update"])
         .eq("id", input.id)
         .select()
         .single();

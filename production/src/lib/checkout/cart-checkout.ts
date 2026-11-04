@@ -42,6 +42,9 @@
 import { addDaysISO, istToday } from "@/lib/dates/ist";
 import { NextResponse, type NextRequest } from "next/server";
 import { captureFromRequest } from "@/lib/marketing/utm";
+import { readFormConsent } from "@/lib/consent/data-notice";
+import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
+import { websiteTenantId } from "@/lib/website-tenant";
 import { z } from "zod";
 import Razorpay from "razorpay";
 import { createAdminClient } from "@/lib/supabase/server";
@@ -60,7 +63,7 @@ import { hostingLimitProblem } from "./hosting-limit";
 import { hostingDomain, planDomains, BUY_A_DOMAIN_HREF } from "./hosting-domain";
 import { hostingRateIn } from "./hosting-prices";
 import { bundleAllowance, FREE_DOMAIN_TLDS_LABEL } from "./hosting-bundle";
-import { buyPageTenantId, buyPageTenantIdOrEmpty, BuyPageTenantMissingError, simulatedPaymentAllowed } from "./live-guards";
+import { buyPageTenantId, buyPageTenantIdOrEmpty, BuyPageTenantMissingError, liveKeyCheckoutRefusal, simulatedPaymentAllowed } from "./live-guards";
 import { issueInvoiceForOnlinePayment } from "./online-invoice.server";
 import { resolveStateCode, stateCodeFromName } from "@/lib/gst/gstin-state";
 import { GST_STATE_BY_CODE, isValidGstin } from "@/lib/utils";
@@ -432,6 +435,8 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
         }
         return NextResponse.json({ error: started.error }, { status: 500 });
       }
+      /* R-2011: the checkout's data notice + the marketing opt-in (yes/no) for the trial's lead. */
+      await recordFormConsent(createAdminClient(), { tenantId: websiteTenantId(), leadId: started.leadId, consent: readFormConsent(body), headers: request.headers, page: "/checkout" });
       return NextResponse.json({ success: true, trial: true, leadId: started.leadId, trialEnds: started.trialEnds, confirmationSent: started.confirmationSent });
     }
 
@@ -612,6 +617,9 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
     /* R-079: never on a production deployment or with a live key — ALLOW_SIMULATED_CHECKOUT
        can no longer switch it on there (lib/checkout/live-guards.ts). */
     const simulationAllowed = simulatedPaymentAllowed({ razorpayKeyId: rzKeyId });
+    /* R-2155: a live key on staging may read settlements, never take a payment. */
+    const stagingLive = liveKeyCheckoutRefusal(rzKeyId);
+    if (stagingLive) return NextResponse.json({ error: stagingLive, stagingLiveKey: true }, { status: 403 });
     if (!razorpayConfigured && !isSimulation) {
       return NextResponse.json({ error: "Online payment isn't set up yet. Please use 'Get a quote'." }, { status: 503 });
     }
@@ -734,6 +742,9 @@ export async function runCartCheckout(request: NextRequest, body: unknown, chann
       console.error("[checkout/cart] lead insert failed:", leadErr);
       return NextResponse.json({ error: "Could not start checkout. Please retry." }, { status: 500 });
     }
+    /* R-2011: the site checkout's data notice + the marketing opt-in (yes/no). The DMS panel sends
+       no `consent`, so nothing is recorded for a panel order. */
+    if (!panel) await recordFormConsent(admin, { tenantId: BUY_PAGE_TENANT_ID, leadId, consent: readFormConsent(body), headers: request.headers, page: "/checkout" });
 
     // ── Quote number + draft quote (payment_status='awaiting') ─────────────
     const { data: qid, error: numErr } = await admin

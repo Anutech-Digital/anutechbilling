@@ -39,11 +39,11 @@ import { runSalesAgentForLead } from "@/lib/ai/run-sales-agent";
 import { stripQuoted } from "@/lib/inbound/strip-quoted";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
+import { sellerIdentityLookup } from "@/lib/ai/seller-identity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const SELLER_NAME = process.env.SELLER_LEGAL_NAME?.trim() || "ANUTECH DIGITAL PVT LTD";
 const FROM_EMAIL  = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 
 /**
@@ -199,6 +199,8 @@ async function handle(req: NextRequest) {
   const deferred = due.length - batch.length;
   let retried = 0, failed = 0;
   const errors: string[] = [];
+  /* R-1929: each lead's reply is signed with ITS tenant's name, not the platform's. */
+  const sellerFor = sellerIdentityLookup(admin);
 
   for (const d of batch) {
     try {
@@ -213,7 +215,7 @@ async function handle(req: NextRequest) {
         senderIsOurs: false,
         isSelfTest: false,
         fromEmail: FROM_EMAIL,
-        sellerName: SELLER_NAME,
+        sellerName: (await sellerFor(d.tenantId)).sellerName,
       });
       retried++;
     } catch (e) {

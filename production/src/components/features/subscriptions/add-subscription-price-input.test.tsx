@@ -181,6 +181,8 @@ describe("Add Subscription — the billing period drives the price field's unit"
    31 Mar 2027, not 1 Apr 2027 — which is also what the Google Admin console shows.
    The TERM LENGTHS asserted here are unchanged; only which day is named as the last
    one. See termEndInclusive in lib/billing/schedule.ts. */
+/* R-2178 (31 Oct 2026, one rule): the date is the NEXT term's start = start + term (the anniversary,
+   what the sale form and record_payment write); "Term ends" (the day before) is shown under it. */
 describe("Add Subscription — start and expiry dates", () => {
   const dates = () => {
     const start = document.querySelector<HTMLInputElement>("#startDate");
@@ -194,18 +196,19 @@ describe("Add Subscription — start and expiry dates", () => {
     const { start, renew } = dates();
     fireEvent.change(start, { target: { value: "2026-04-01" } });
     expect(start.value).toBe("2026-04-01");
-    /* Not "a year from today" — a year from the date actually entered, and the LAST
-       day of it. 1 Apr 2026 → 31 Mar 2027 is twelve months of service. */
-    expect(renew.value).toBe("2027-03-31");
+    /* Not "a year from today" — a year from the date actually entered: renews 1 Apr 2027,
+       term ends 31 Mar 2027 — twelve months of service. */
+    expect(renew.value).toBe("2027-04-01");
+    expect(document.body.textContent).toContain("Term ends 31 Mar 2027");
   });
 
   it("clamps to the end of a short month instead of rolling into the next", () => {
     renderDialog();
     const { start, renew } = dates();
     /* 31 Jan + 12 is unambiguous; the clamping matters on the flex path below, and
-       termEndInclusive is the shared helper both use. */
+       addMonthsClamped is the shared helper both use. */
     fireEvent.change(start, { target: { value: "2026-01-31" } });
-    expect(renew.value).toBe("2027-01-30");
+    expect(renew.value).toBe("2027-01-31");
   });
 
   it("expiry is still editable after being derived", () => {
@@ -219,7 +222,7 @@ describe("Add Subscription — start and expiry dates", () => {
   it("says which date it is, so a year on a monthly choice is not read as a bug", () => {
     renderDialog();
     /* Default is yearly; the hint names the term rather than leaving it unexplained. */
-    expect(document.body.textContent).toContain("12-month term");
+    expect(document.body.textContent).toContain("The next yearly invoice is due on this date.");
   });
 });
 
@@ -235,12 +238,22 @@ describe("Add Subscription — start and expiry dates", () => {
  * update exactly as they do in a browser.
  */
 describe("Add Subscription — the billing period drives the term", () => {
-  /** Pick a billing choice via Radix's hidden native select. */
-  const pick = (value: string) => {
+  /** Pick one value via Radix's hidden native select. */
+  const pickOne = (value: string) => {
     const sel = Array.from(document.querySelectorAll("select"))
       .find((s) => Array.from(s.options).some((o) => o.value === value));
     if (!sel) throw new Error(`no select offering ${value}`);
     fireEvent.change(sel, { target: { value } });
+  };
+  /** R-2095: a billing choice is now two picks — Commitment, then Payment frequency. */
+  const PARTS: Record<string, [string, string | null]> = {
+    monthly_flex: ["flex", null], annual_monthly: ["annual", "monthly"], annual_quarterly: ["annual", "quarterly"],
+    annual_half_yearly: ["annual", "half_yearly"], annual_yearly: ["annual", "yearly"],
+  };
+  const pick = (choice: string) => {
+    const [commitment, frequency] = PARTS[choice];
+    pickOne(commitment);
+    if (frequency) pickOne(frequency);
   };
   const renewal = () => document.querySelector<HTMLInputElement>("#renewalDate")!.value;
   const start   = () => document.querySelector<HTMLInputElement>("#startDate")!;
@@ -248,9 +261,9 @@ describe("Add Subscription — the billing period drives the term", () => {
   it("FLEX expires in ONE MONTH — the 'date still pointing to yearly' report", () => {
     renderDialog();
     fireEvent.change(start(), { target: { value: "2026-09-09" } });
-    expect(renewal()).toBe("2027-09-08");   // yearly default — the last covered day
+    expect(renewal()).toBe("2027-09-09");   // yearly default — the anniversary (R-2178)
     pick("monthly_flex");
-    expect(renewal()).toBe("2026-10-08");   // one month, not one year
+    expect(renewal()).toBe("2026-10-09");   // one month, not one year
     expect(priceLabel()).toContain("₹/mo");
   });
 
@@ -260,7 +273,7 @@ describe("Add Subscription — the billing period drives the term", () => {
     pick("annual_monthly");
     /* Still a YEAR out. This date marks the commitment ending, not the next invoice —
        shortening it to a month would be the actual defect. */
-    expect(renewal()).toBe("2027-09-08");
+    expect(renewal()).toBe("2027-09-09");
     expect(priceLabel()).toContain("₹/mo");
   });
 
@@ -268,7 +281,7 @@ describe("Add Subscription — the billing period drives the term", () => {
     renderDialog();
     fireEvent.change(start(), { target: { value: "2026-09-09" } });
     pick("annual_quarterly");
-    expect(renewal()).toBe("2027-09-08");
+    expect(renewal()).toBe("2027-09-09");
     expect(priceLabel()).toContain("₹/mo");
     expect(document.body.textContent).toContain("Invoices go out every 3 months.");
   });
@@ -277,9 +290,9 @@ describe("Add Subscription — the billing period drives the term", () => {
     renderDialog();
     fireEvent.change(start(), { target: { value: "2026-09-09" } });
     pick("monthly_flex");
-    expect(renewal()).toBe("2026-10-08");
+    expect(renewal()).toBe("2026-10-09");
     pick("annual_yearly");
-    expect(renewal()).toBe("2027-09-08");
+    expect(renewal()).toBe("2027-09-09");
     expect(priceLabel()).toContain("₹/yr");
   });
 
@@ -287,17 +300,17 @@ describe("Add Subscription — the billing period drives the term", () => {
     renderDialog();
     pick("monthly_flex");
     fireEvent.change(start(), { target: { value: "2026-04-01" } });
-    expect(renewal()).toBe("2026-04-30");
+    expect(renewal()).toBe("2026-05-01");
   });
 
-  it("flex from 31 Jan ends 27 Feb — clamped, not rolled into March", () => {
+  it("flex from 31 Jan renews 28 Feb (term ends 27 Feb) — clamped, not rolled into March", () => {
     renderDialog();
     pick("monthly_flex");
     fireEvent.change(start(), { target: { value: "2026-01-31" } });
     /* 2026 is not a leap year. Naive Date math would give 3 March and walk the
        anniversary later every month. Clamped it is 28 Feb, and the last covered day is
        the 27th — a 28-day month starting on its last day. */
-    expect(renewal()).toBe("2026-02-27");
+    expect(renewal()).toBe("2026-02-28");   // R-2178: the anniversary; the 27th is the last covered day
   });
 });
 
@@ -310,11 +323,20 @@ describe("Add Subscription — the billing period drives the term", () => {
  * is exactly the path that used to leave the number alone.
  */
 describe("Add Subscription — R-876 switching the period converts the price", () => {
-  const pick = (value: string) => {
+  /* R-2095: a billing choice is two picks — Commitment, then Payment frequency. */
+  const pickOne = (value: string) => {
     const sel = Array.from(document.querySelectorAll("select"))
       .find((s) => Array.from(s.options).some((o) => o.value === value));
     if (!sel) throw new Error(`no select offering ${value}`);
     fireEvent.change(sel, { target: { value } });
+  };
+  const PARTS: Record<string, [string, string | null]> = {
+    monthly_flex: ["flex", null], annual_quarterly: ["annual", "quarterly"], annual_yearly: ["annual", "yearly"],
+  };
+  const pick = (choice: string) => {
+    const [commitment, frequency] = PARTS[choice];
+    pickOne(commitment);
+    if (frequency) pickOne(frequency);
   };
   const arr = () => {
     const m = (document.body.textContent ?? "").match(/Total Annual Contract Value \(ARR\):\s*(₹[\d,]+)/);
@@ -373,5 +395,113 @@ describe("Add Subscription — Workspace is never offered below list price (R-17
     const { price } = renderDialog();
     expect(priceLabel()).toContain("₹/yr");
     expect(price.value).toBe("3240");
+  });
+});
+
+/**
+ * R-2095 (coordinator 30 Oct): Commitment and Payment frequency are two explicit choices —
+ * Annual commitment paid MONTHLY must be possible (Venus Infotech), and quarterly / half-yearly too.
+ */
+describe("Add Subscription — R-2095 commitment and payment frequency", () => {
+  beforeEach(() => {
+    catalogRows.length = 0;
+    catalogRows.push({
+      id: "GW-STD", name: "Google Workspace Standard", vendor: "google",
+      msrp: 864, wholesale: 620,
+      prices: { annual: { msrp: 864, wholesale: 620 }, monthly: { msrp: 1_000, wholesale: 700 } },
+      item_type: "subscription", is_active: true,
+    });
+  });
+  const nativeFor = (triggerId: string) =>
+    document.querySelector(`#${triggerId}`)!.parentElement!.querySelector("select")!;
+  const values = (sel: HTMLSelectElement) => Array.from(sel.options).map((o) => o.value).filter(Boolean);
+  const renewal = () => document.querySelector<HTMLInputElement>("#renewalDate")!.value;
+
+  it("shows Commitment and Payment frequency as two labelled fields, defaulting to Annual · Yearly", () => {
+    renderDialog();
+    expect(document.querySelector('label[for="commitmentChoice"]')?.textContent).toContain("Commitment");
+    expect(document.querySelector('label[for="billingChoice"]')?.textContent).toContain("Payment frequency");
+    expect(document.querySelector("#commitmentChoice")?.textContent).toContain("Annual commitment");
+    expect(document.querySelector("#billingChoice")?.textContent).toContain("Yearly");
+    expect(values(nativeFor("billingChoice"))).toEqual(["yearly", "half_yearly", "quarterly", "monthly"]);
+  });
+
+  it.each([["monthly"], ["quarterly"], ["half_yearly"]])("Annual commitment paid %s: annual rate per month, renewal stays start + 12m (R-2178)", (freq) => {
+    renderDialog();
+    fireEvent.change(document.querySelector<HTMLInputElement>("#startDate")!, { target: { value: "2026-06-15" } });
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: freq } });
+    expect(document.querySelector("#commitmentChoice")?.textContent).toContain("Annual commitment");
+    expect(priceLabel()).toContain("₹/mo");
+    expect(renewal()).toBe("2027-06-15");
+  });
+
+  it("Flexible: payment frequency is Monthly only, renewal one month", () => {
+    renderDialog();
+    fireEvent.change(document.querySelector<HTMLInputElement>("#startDate")!, { target: { value: "2026-06-15" } });
+    fireEvent.change(nativeFor("commitmentChoice"), { target: { value: "flex" } });
+    expect(values(nativeFor("billingChoice"))).toEqual(["monthly"]);
+    expect(renewal()).toBe("2026-07-15");
+  });
+});
+
+/**
+ * R-2178 OWNER RULE (Pardeep, 31 Oct) on Add subscription: rates differ by COMMITMENT; under Annual,
+ * PAYMENT FREQUENCY never changes the per-seat-per-month rate (only the amount per bill); a
+ * commitment switch PROPOSES the catalogue rate for the new commitment and applies it only on a
+ * click; the box says its unit and the line under it says the per-month rate and the bill.
+ */
+describe("Add Subscription — R-2178 owner rule: rate by commitment, bill by frequency", () => {
+  beforeEach(() => {
+    catalogRows.length = 0;
+    catalogRows.push({
+      id: "GW-ST", name: "Google Workspace Business Starter", vendor: "google",
+      msrp: 300, wholesale: 264,
+      prices: { annual: { msrp: 300, wholesale: 264 }, monthly: { msrp: 360, wholesale: 318 } },
+      item_type: "subscription", is_active: true,
+    });
+  });
+  const nativeFor = (triggerId: string) =>
+    document.querySelector(`#${triggerId}`)!.parentElement!.querySelector("select")!;
+  const priceBox = () => document.querySelector<HTMLInputElement>("#pricePerSeat")!;
+  const rateLine = () => document.querySelector('[data-testid="rate-per-bill"]')?.textContent ?? "";
+
+  it("Annual: typed ₹3,168/yr → each frequency keeps ₹264/seat/month; only the bill changes", () => {
+    renderDialog();
+    fireEvent.change(priceBox(), { target: { value: "3168" } });
+    expect(priceLabel()).toContain("₹/yr");
+    expect(rateLine()).toBe("Rate ₹264/seat/month · ₹3,168 a seat each yearly bill");
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: "quarterly" } });
+    expect(rateLine()).toBe("Rate ₹264/seat/month · ₹792 a seat each quarterly bill");
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: "half_yearly" } });
+    expect(rateLine()).toBe("Rate ₹264/seat/month · ₹1,584 a seat each half-yearly bill");
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: "monthly" } });
+    expect(rateLine()).toBe("Rate ₹264/seat/month · ₹264 a seat each monthly bill");
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: "yearly" } });
+    expect(priceBox().value).toBe("3168");
+  });
+
+  it("Commitment Annual → Flexible: a typed price is not replaced silently; the Flexible catalogue rate is a button", () => {
+    renderDialog();
+    fireEvent.change(priceBox(), { target: { value: "3168" } });
+    fireEvent.change(nativeFor("commitmentChoice"), { target: { value: "flex" } });
+    expect(priceBox().value).toBe("");                         // cleared and said why — never ₹3,168/mo
+    expect(document.querySelector('[data-testid="price-switch-hint"]')?.textContent).toMatch(/Flex has its own price/);
+    const use = Array.from(document.querySelectorAll("button")).find((b) => /^Use catalogue ₹360\/mo$/.test(b.textContent ?? ""));
+    expect(use, "the Flexible catalogue rate is offered").toBeTruthy();
+    fireEvent.click(use!);
+    expect(priceBox().value).toBe("360");
+    expect(priceLabel()).toContain("₹/mo");
+  });
+
+  it("…and switching straight back to Annual gives the typed rate back (₹264/seat/month, now billed monthly)", () => {
+    renderDialog();
+    fireEvent.change(priceBox(), { target: { value: "3168" } });
+    fireEvent.change(nativeFor("commitmentChoice"), { target: { value: "flex" } });
+    fireEvent.change(nativeFor("commitmentChoice"), { target: { value: "annual" } });
+    expect(priceBox().value).toBe("264");
+    expect(priceLabel()).toContain("₹/mo");
+    expect(rateLine()).toBe("Rate ₹264/seat/month · ₹264 a seat each monthly bill");
+    fireEvent.change(nativeFor("billingChoice"), { target: { value: "yearly" } });
+    expect(priceBox().value).toBe("3168");
   });
 });

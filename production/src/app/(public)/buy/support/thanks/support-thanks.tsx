@@ -57,7 +57,7 @@ export function SupportThanks({ order, simulated, deskUrl }: { order: SupportTha
             <p className="text-[15px] text-ink-2 m-0">Order {order.quoteId} · {rupee(order.amount)} incl. GST. Your GST tax invoice is on its way by email.</p>
             <p className="text-[15px] text-ink-2 mt-3 mb-5">The plan is switched on at our support desk within a few minutes, for the email you paid with.</p>
             {deskUrl ? (
-              <a href={deskUrl} className="flex items-center justify-center h-12 rounded-xl bg-amber text-white font-bold hover:bg-amber-ink">Go to the support desk</a>
+              <a href={deskUrl} className="flex items-center justify-center h-12 rounded-xl bg-amber text-white font-bold hover:bg-amber-ink">Go to support desk</a>
             ) : (
               <a href={mail} className="flex items-center justify-center h-12 rounded-xl bg-amber text-white font-bold hover:bg-amber-ink">Email support</a>
             )}

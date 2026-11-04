@@ -43,7 +43,7 @@ describe("R-1963 Custom item asks how it is billed", () => {
   it("the form shows the Billing choice with the builder's three terms", async () => {
     await openCustom();
     const opts = Array.from(billing().options).map((o) => o.textContent);
-    expect(opts).toEqual(["One-time", "Monthly flex", "Annual (1-yr)"]);
+    expect(opts).toEqual(["One-time", "Flexible (monthly)", "Annual commitment"]);
   });
 
   it("a licence name prefills Annual; saved it carries annual_yearly and no one_time", async () => {

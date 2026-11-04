@@ -18,6 +18,7 @@ import { quoteDueNow, type QuoteDueNow, type QuoteDueNowFields } from "@/lib/pay
 import { isQuoteAmountConsistent } from "@/lib/quotes/amounts";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { platformEnvRazorpayKeys } from "./platform-razorpay";
+import { liveKeyCheckoutRefusal } from "./live-guards";
 
 /** The quote columns this needs — the pay route's select. */
 export const QUOTE_ORDER_COLUMNS =
@@ -228,6 +229,10 @@ export async function startQuotePayment(
     }
   }
   const razorpayConfigured = Boolean(rzKeyId) && Boolean(rzKeySecret);
+
+  /* R-2155: a live key on staging may read settlements, never take a payment. */
+  const stagingLive = liveKeyCheckoutRefusal(rzKeyId);
+  if (stagingLive) return { status: 403, body: { error: stagingLive, stagingLiveKey: true } };
 
   // ── 3a. SIMULATION (no creds) — record_payment directly, gated by the caller ─
   // record_payment on a first-payment quote converts the lead → customer +

@@ -16,17 +16,17 @@ const sub = (over: Partial<CycleSub> = {}): CycleSub => ({
 describe("SubCycleBadge", () => {
   it("annual billed yearly, with the amount", () => {
     render(<SubCycleBadge cyc={subscriptionCycle(sub())} amount="₹1,39,500" />);
-    expect(screen.getByText("Annual · billed yearly · ₹1,39,500")).toBeTruthy();
+    expect(screen.getByText("Annual · paid yearly · ₹1,39,500")).toBeTruthy();
   });
 
   it("annual billed in parts names the part", () => {
     render(<SubCycleBadge cyc={subscriptionCycle(sub({ billing_cycle: "quarterly" }))} amount="₹7,646" />);
-    expect(screen.getByText("Annual · billed quarterly · ₹7,646")).toBeTruthy();
+    expect(screen.getByText("Annual · paid quarterly · ₹7,646")).toBeTruthy();
   });
 
   it("monthly flexible shows no amount (the MRR is already on the row)", () => {
     render(<SubCycleBadge cyc={subscriptionCycle(sub({ billing_cycle: "monthly", term_months: 1 }))} amount="₹1,350" />);
-    expect(screen.getByText("Monthly (Flexible)")).toBeTruthy();
+    expect(screen.getByText("Flexible (monthly)")).toBeTruthy();
   });
 
   it("the owner's quarterly-term row: Check term + Correct details opens the dialog", () => {

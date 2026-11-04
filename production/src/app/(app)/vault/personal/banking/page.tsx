@@ -15,6 +15,7 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 
 import { Card } from "@/components/ui/card";
@@ -29,6 +30,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { VaultLoadError } from "@/components/features/vault/vault-load-error";
+import { OweHoldSection } from "@/components/features/vault/owe-hold-section";
 import {
   usePersonalAccounts,
   useSavePersonalAccount,
@@ -41,7 +43,9 @@ import {
   isLiabilityAccount,
   type AccountKind,
 } from "@/lib/vault/personal/net-worth";
-import { formatDate } from "@/lib/utils";
+import { formatDate, rupee } from "@/lib/utils";
+import { istToday } from "@/lib/dates/ist";
+import { parseRupees, MAX_RUPEES } from "@/lib/vault/personal/parse-rupees";
 
 interface FormState {
   id?: string;
@@ -49,7 +53,9 @@ interface FormState {
   label: string;
   institution: string;
   account_last4: string;
+  /** R-2394: the OPENING balance (card: owed at the start). The balance shown is computed. */
   balance: string;
+  opening_as_of: string;
   credit_limit: string;
   interest_rate: string;
   maturity_date: string;
@@ -58,19 +64,21 @@ interface FormState {
 
 const EMPTY: FormState = {
   kind: "savings", label: "", institution: "", account_last4: "",
-  balance: "", credit_limit: "", interest_rate: "", maturity_date: "", notes: "",
+  balance: "", opening_as_of: "", credit_limit: "", interest_rate: "", maturity_date: "", notes: "",
 };
 
-/** "1,50,000" / "₹1.5L" is not accepted — this is a plain number field, so say so. */
-function parseRupees(value: string): number | null {
-  const cleaned = value.replace(/[,\s₹]/g, "");
-  if (cleaned === "") return 0;
-  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null;
-  const n = Number(cleaned);
-  if (!Number.isFinite(n)) return null;
-  // Whole rupees, everywhere. Paise never reach persistence.
-  return Math.round(n);
+/**
+ * R-2111: every vault amount goes through parse-rupees.ts (R-1419). The old local parser let
+ * "-5" through and sent a 25-digit balance to the bigint column as "1e+24" — a Postgres error
+ * instead of a plain message under the field.
+ */
+function rupeeProblem(reason: "not_a_number" | "too_big"): string {
+  return reason === "too_big"
+    ? `Too large — up to ${rupee(MAX_RUPEES)} (₹1 lakh crore). Check for extra zeros.`
+    : "Type a whole amount in digits, like 125000 or 1,25,000. No minus sign.";
 }
+
+type AmountField = "balance" | "credit_limit";
 
 export default function PersonalBankingPage() {
   const { data, isLoading, error } = usePersonalAccounts(true);
@@ -80,8 +88,10 @@ export default function PersonalBankingPage() {
 
   const [open, setOpen] = React.useState(false);
   const [form, setForm] = React.useState<FormState>(EMPTY);
+  // Shown under the amount field itself (R-2111), so the owner sees which box is wrong.
+  const [amountIssue, setAmountIssue] = React.useState<{ field: AmountField; text: string } | null>(null);
 
-  const openNew = () => { setForm(EMPTY); setOpen(true); };
+  const openNew = () => { setForm(EMPTY); setAmountIssue(null); setOpen(true); };
   const openEdit = (a: PersonalAccount) => {
     setForm({
       id: a.id,
@@ -89,12 +99,14 @@ export default function PersonalBankingPage() {
       label: a.label,
       institution: a.institution ?? "",
       account_last4: a.account_last4 ?? "",
-      balance: String(a.balance ?? 0),
+      balance: String(a.opening_balance ?? 0),
+      opening_as_of: a.opening_as_of ?? "",
       credit_limit: a.credit_limit === null ? "" : String(a.credit_limit),
       interest_rate: a.interest_rate === null ? "" : String(a.interest_rate),
       maturity_date: a.maturity_date ?? "",
       notes: a.notes ?? "",
     });
+    setAmountIssue(null);
     setOpen(true);
   };
 
@@ -104,22 +116,28 @@ export default function PersonalBankingPage() {
       return;
     }
 
-    const balance = parseRupees(form.balance);
-    if (balance === null) {
-      toast.error("Balance must be a number.", { description: "Type digits only, like 125000 or 1,25,000. Nothing was saved." });
+    const balanceP = parseRupees(form.balance);
+    if (!balanceP.ok) {
+      setAmountIssue({ field: "balance", text: rupeeProblem(balanceP.reason) });
       return;
     }
+    const balance = balanceP.value;
 
     if (form.account_last4 && !/^\d{4}$/.test(form.account_last4)) {
       toast.error("Enter only the last 4 digits.", { description: "Never the full account number — 4 digits are enough to tell accounts apart." });
       return;
     }
 
-    const creditLimit = form.credit_limit ? parseRupees(form.credit_limit) : null;
-    if (form.credit_limit && creditLimit === null) {
-      toast.error("Credit limit must be a number.", { description: "Type digits only, like 200000, or leave it empty. Nothing was saved." });
-      return;
+    let creditLimit: number | null = null;
+    if (form.credit_limit.trim()) {
+      const limitP = parseRupees(form.credit_limit);
+      if (!limitP.ok) {
+        setAmountIssue({ field: "credit_limit", text: rupeeProblem(limitP.reason) });
+        return;
+      }
+      creditLimit = limitP.value;
     }
+    setAmountIssue(null);
 
     const rate = form.interest_rate ? Number(form.interest_rate) : null;
     if (form.interest_rate && (rate === null || !Number.isFinite(rate) || rate < 0 || rate > 100)) {
@@ -134,7 +152,9 @@ export default function PersonalBankingPage() {
         label: form.label.trim(),
         institution: form.institution.trim() || null,
         account_last4: form.account_last4 || null,
-        balance,
+        // R-2394: what the owner types is the opening balance; the balance is computed from it.
+        opening_balance: balance,
+        opening_as_of: form.opening_as_of || (form.id ? null : istToday()),
         credit_limit: creditLimit,
         interest_rate: rate,
         maturity_date: form.maturity_date || null,
@@ -155,8 +175,12 @@ export default function PersonalBankingPage() {
       danger: true,
     });
     if (!ok) return;
-    await del.mutateAsync(a.id);
-    toast.success("Account removed.");
+    try {
+      await del.mutateAsync(a.id);
+      toast.success("Account removed.");
+    } catch {
+      /* R-2111: the hook already showed why (toastError); only keep the promise from going unhandled */
+    }
   };
 
   const rows = data ?? [];
@@ -226,7 +250,10 @@ export default function PersonalBankingPage() {
                   <li key={a.id} className="px-4 py-3 flex items-center gap-3">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="text-sm font-medium text-ink">{a.label}</span>
+                        {/* R-2394: each account opens its own page — statement, lines, reconcile. */}
+                        <Link href={`/vault/personal/banking/${a.id}`} className="text-sm font-medium text-ink hover:underline focus-visible:underline">
+                          {a.label}
+                        </Link>
                         <Badge kind="muted" size="sm">{ACCOUNT_KIND_LABEL[a.kind]}</Badge>
                         {!a.is_active && <Badge kind="muted" size="sm">closed</Badge>}
                       </div>
@@ -236,6 +263,8 @@ export default function PersonalBankingPage() {
                         {a.maturity_date && <> · maturity {formatDate(a.maturity_date)}</>}
                         {a.interest_rate !== null && <> · {a.interest_rate}%</>}
                       </p>
+                      {/* R-2386: the saved note, right under the name — it was saved but never shown. */}
+                      {a.notes && <p className="text-xs text-ink-2 mt-0.5 break-words">{a.notes}</p>}
                     </div>
                     <div className="text-right flex-shrink-0">
                       <Money
@@ -249,6 +278,9 @@ export default function PersonalBankingPage() {
                       )}
                     </div>
                     <div className="flex gap-1 flex-shrink-0">
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={`/vault/personal/banking/${a.id}`} aria-label={`Open ${a.label}`}>Open</Link>
+                      </Button>
                       <Button size="sm" variant="ghost" onClick={() => openEdit(a)} aria-label="Edit">
                         <Icon name="edit" size={14} />
                       </Button>
@@ -263,6 +295,9 @@ export default function PersonalBankingPage() {
           ))}
         </>
       )}
+
+      {/* R-2386: advances received / money held for someone — taken off Net worth while open. */}
+      {!isLoading && !error && <OweHoldSection accounts={rows} />}
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="sm:max-w-[520px]">
@@ -288,15 +323,35 @@ export default function PersonalBankingPage() {
               </div>
               <div>
                 <label htmlFor="vb-balance" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">
-                  {isCard ? "Owed (₹)" : "Balance (₹)"}
+                  {isCard ? "Owed at start (₹)" : "Opening balance (₹)"}
                 </label>
                 <Input id="vb-balance"
                   value={form.balance}
-                  onChange={(e) => setForm((f) => ({ ...f, balance: e.target.value }))}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, balance: e.target.value }));
+                    if (amountIssue?.field === "balance") setAmountIssue(null);
+                  }}
                   placeholder="0"
                   inputMode="numeric"
+                  aria-invalid={amountIssue?.field === "balance" || undefined}
+                  aria-describedby={amountIssue?.field === "balance" ? "vb-balance-error" : undefined}
                 />
+                {amountIssue?.field === "balance" && (
+                  <p id="vb-balance-error" role="alert" className="mt-1 text-xs text-rose">{amountIssue.text}</p>
+                )}
               </div>
+            </div>
+
+            <div>
+              <label htmlFor="vb-as-of" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Opening as of</label>
+              <Input id="vb-as-of"
+                type="date"
+                value={form.opening_as_of}
+                onChange={(e) => setForm((f) => ({ ...f, opening_as_of: e.target.value }))}
+              />
+              <p className="mt-1 text-3xs text-ink-3">
+                The balance shown is this opening plus every entry and statement line after it.
+              </p>
             </div>
 
             <div>
@@ -334,10 +389,18 @@ export default function PersonalBankingPage() {
                 <label htmlFor="vb-credit-limit" className="block text-2xs uppercase tracking-wide text-ink-3 mb-1">Credit limit (₹)</label>
                 <Input id="vb-credit-limit"
                   value={form.credit_limit}
-                  onChange={(e) => setForm((f) => ({ ...f, credit_limit: e.target.value }))}
+                  onChange={(e) => {
+                    setForm((f) => ({ ...f, credit_limit: e.target.value }));
+                    if (amountIssue?.field === "credit_limit") setAmountIssue(null);
+                  }}
                   placeholder="200000"
                   inputMode="numeric"
+                  aria-invalid={amountIssue?.field === "credit_limit" || undefined}
+                  aria-describedby={amountIssue?.field === "credit_limit" ? "vb-credit-limit-error" : undefined}
                 />
+                {amountIssue?.field === "credit_limit" && (
+                  <p id="vb-credit-limit-error" role="alert" className="mt-1 text-xs text-rose">{amountIssue.text}</p>
+                )}
               </div>
             )}
 

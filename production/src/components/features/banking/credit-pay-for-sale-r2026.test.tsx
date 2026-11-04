@@ -76,9 +76,9 @@ describe("R-2026 new sale: Commitment first, then Payment", () => {
     newSale(3835);
     fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "monthly" } });
     expect((screen.getByLabelText("Unit price ₹/user/month") as HTMLInputElement).value).toBe("325");
-    expect(optionValues("Payment")).toEqual(["monthly"]);
-    expect((screen.getByLabelText("Payment") as HTMLSelectElement).disabled).toBe(true);
-    expect(screen.getByText(/Monthly flex has no commitment, so it is paid monthly only/)).toBeTruthy();
+    expect(optionValues("Payment frequency")).toEqual(["monthly"]);
+    expect((screen.getByLabelText("Payment frequency") as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.getByText(/Flexible \(monthly\) has no commitment, so it is paid monthly only/)).toBeTruthy();
     expect(screen.getByText(/₹3,835 received = ₹3,835 due/)).toBeTruthy();
   });
 
@@ -90,8 +90,8 @@ describe("R-2026 new sale: Commitment first, then Payment", () => {
       subscriptions: [{ id: "s", plan: "Google Workspace Business Starter", seats: 10, start_date: "2026-10-21", renewal_date: "2027-10-21", billing_cycle: "quarterly" }],
     });
     newSale(9558);
-    expect(optionValues("Payment")).toEqual(["yearly", "half_yearly", "quarterly", "monthly"]);
-    fireEvent.change(screen.getByLabelText("Payment"), { target: { value: "quarterly" } });
+    expect(optionValues("Payment frequency")).toEqual(["yearly", "half_yearly", "quarterly", "monthly"]);
+    fireEvent.change(screen.getByLabelText("Payment frequency"), { target: { value: "quarterly" } });
     expect(screen.getByText(/Total ₹38,232/).closest("p")?.textContent).toContain("Due now ₹9,558 (first bill)");
     expect(screen.getByText(/₹9,558 received = ₹9,558 due/)).toBeTruthy();
     /* R-2052: with Create subscription ticked the next 3 bills are said once, in the paid-up line. */
@@ -108,7 +108,7 @@ describe("R-2026 new sale: Commitment first, then Payment", () => {
 
   it("Monthly flex is saved monthly even if Quarterly was picked before switching", () => {
     newSale(3835);
-    fireEvent.change(screen.getByLabelText("Payment"), { target: { value: "quarterly" } });
+    fireEvent.change(screen.getByLabelText("Payment frequency"), { target: { value: "quarterly" } });
     fireEvent.change(screen.getByLabelText("Commitment"), { target: { value: "monthly" } });
     expect((screen.getByLabelText("Subscription renewal date") as HTMLInputElement).value).toBe("2026-11-21");
     fireEvent.click(screen.getByRole("button", { name: "Record sale & reconcile ₹3,835" }));

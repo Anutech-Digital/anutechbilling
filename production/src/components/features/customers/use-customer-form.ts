@@ -22,16 +22,20 @@ import { toast } from "sonner";
 import { NEEDS_INPUT_CLASS } from "@/lib/ai/test-trail";
 
 import { useCreateCustomer, useUpdateCustomer } from "@/lib/queries/customers";
-import { validateGstin, gstStateFromGstin } from "@/lib/utils";
+import { validateGstin, gstStateFromGstin, GST_STATE_BY_CODE } from "@/lib/utils";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { getStatesForCountry } from "@/lib/gst/states-by-country";
-import { stateRequiredMessage } from "@/lib/gst/gstin-state";
+import { normalizeCountry } from "@/lib/gst/countries";
+import { stateRequiredMessage, stateCodeFromGstin, STATE_NOT_KNOWN } from "@/lib/gst/gstin-state";
 import {
   CUSTOMER_GST_TREATMENTS, suggestGstTreatment, nextGstTreatment, gstTreatmentProblem,
   gstTreatmentOption, panFromGstin, isValidPan, type CustomerGstTreatment,
 } from "@/lib/gst/customer-gst-treatment";
 import type { GstinVerification, Customer } from "@/lib/supabase/database.types";
 import { newCustomerReachProblem, defaultContactName, contactIsTheCompany } from "./new-customer-contact";
+import {
+  customerTdsPrefill, customerTdsRateProblem, customerTdsPayload,
+} from "@/lib/accounting/customer-tds-default";
 
 // Schema — GSTIN optional but checksum-validated when present. State code stays
 // in the schema (needed for GST math) but has no visible input; we auto-derive
@@ -80,6 +84,9 @@ export const customerSchema = z.object({
   contact_mobile:     z.string().optional(),
   // Default invoice due terms (net days). "" = unset → falls back to net-30.
   payment_terms_days: z.string().optional(),
+  /* R-2370: the TDS this customer deducts from our receipts — section ("" = none) + rate %. */
+  tds_section:  z.string().optional(),
+  tds_rate_pct: z.string().optional(),
   // Additional people at the customer.
   contact_persons: z.array(z.object({
     salutation:  z.string().optional(),
@@ -109,6 +116,9 @@ export const customerSchema = z.object({
   }
   /* R-173 (6 Oct 2026): an Indian customer with no place of supply cannot be invoiced at all
      (live had 17). GSTIN or not, the state is required; a valid GSTIN supplies it by itself. */
+  /* R-2370: a picked TDS section needs a rate (0–100). */
+  const tdsProblem = customerTdsRateProblem({ section: data.tds_section ?? "", ratePct: data.tds_rate_pct ?? "" });
+  if (tdsProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tds_rate_pct"], message: tdsProblem });
   const stateMsg = stateRequiredMessage(data);
   if (stateMsg) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["state"], message: stateMsg });
   /* R-1736: a treatment the facts contradict (Overseas in India, Regular with no GSTIN). */
@@ -130,6 +140,17 @@ export const customerSchema = z.object({
 });
 
 export type CustomerFormData = z.infer<typeof customerSchema>;
+
+/** R-2360 / R-2363: what a NEW customer can start with (Find in Zoho: Zoho's contact). */
+export interface CustomerSeed {
+  name?: string | null;
+  gstin?: string | null;
+  /** Any spelling normalizeCountry knows ("U.A.E" → United Arab Emirates); empty = leave India. */
+  country?: string | null;
+  gst_treatment?: CustomerGstTreatment | null;
+  /** Indian GST state name, or the foreign state / province. */
+  state?: string | null;
+}
 
 interface UseCustomerFormOptions {
   /** When provided, the form is in EDIT mode (prefilled + updates this customer). */
@@ -178,7 +199,7 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     if (customer) {
       // Normalize an existing free-text/legacy state to the canonical dropdown
       // option (case-insensitive) so e.g. "california" shows as "California".
-      const stateList = getStatesForCountry(customer.country);
+      const stateList = getStatesForCountry(normalizeCountry(customer.country));
       const normalizedState =
         stateList?.find((s) => s.toLowerCase() === (customer.state ?? "").toLowerCase())
         ?? customer.state ?? "";
@@ -203,9 +224,16 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
         group_id:      customer.group_id ?? "",
         domain:        customer.domain ?? "",
         gstin:         customer.gstin ?? "",
-        state:         normalizedState,
+        /* R-2363: an Indian customer saved with no state at all (no code, no valid GSTIN) opens as
+           "Not known yet" — what the record says — so editing its email never dead-ends on the
+           state; the invoice still waits for a real state. */
+        state:         !isExportSupply(normalizeCountry(customer.country) || "India")
+          && !normalizedState.trim() && !(customer.state_code ?? "").trim() && !stateCodeFromGstin(customer.gstin)
+          ? STATE_NOT_KNOWN : normalizedState,
         state_code:    customer.state_code ?? "",
-        country:       customer.country ?? "India",
+        /* R-2180: an old short form ("USA") opens as its list name ("United States") — the
+           picker shows it and the treatment rules read the same value. */
+        country:       normalizeCountry(customer.country) || "India",
         address:       customer.address ?? "",
         city:          customer.city ?? "",
         pin_code:      customer.pin_code ?? "",
@@ -218,6 +246,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
         contact_last_name:  lastName,
         contact_mobile:     customer.contact_mobile ?? "",
         payment_terms_days: customer.payment_terms_days != null ? String(customer.payment_terms_days) : "",
+        tds_section:  customerTdsPrefill(customer).section,
+        tds_rate_pct: customerTdsPrefill(customer).ratePct,
         contact_persons: (customer.contact_persons ?? []).map((p) => ({
           salutation: p.salutation ?? "", first_name: p.first_name ?? "", last_name: p.last_name ?? "",
           email: p.email ?? "", phone: p.phone ?? "", mobile: p.mobile ?? "", designation: p.designation ?? "",
@@ -281,10 +311,20 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     lastDerivedPan.current = panFromForm;
   }, [panFromForm, setValue, form]);
 
+  /* R-2095: the owner chose "Save without contact" once — the next submit of this form saves. */
+  const noContactOk = React.useRef(false);
+  const NO_CONTACT_TOAST = "new-customer-no-contact";
+  /* R-2095 (2nd gap): the form says "no contact" itself and offers the choice in its own footer — in
+     the bank reconcile drawer this form is a sheet over a modal sheet, and the toast below it cannot
+     be clicked (the modal blocks every click outside it). */
+  const [contactMissing, setContactMissing] = React.useState(false);
   const onSubmit = async (data: CustomerFormData) => {
     // Export (non-India) customers have no GSTIN / Indian state code — never
     // persist a stale one if the user typed then switched country.
     const foreign = isExportSupply(data.country);
+    /* R-2363: "Not known yet" is ignored when a valid GSTIN proves the state — then that state is saved. */
+    const gstinCode = data.state === STATE_NOT_KNOWN && !foreign ? stateCodeFromGstin(data.gstin) : null;
+    const stateNotKnown = data.state === STATE_NOT_KNOWN;
     // Combined display name from the split fields (falls back to the legacy
     // single "contact_name" input for anyone still using it).
     const combinedName = [data.contact_first_name?.trim(), data.contact_last_name?.trim()]
@@ -301,12 +341,18 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
 
        CREATE ONLY, on purpose — editing an old customer is never blocked. Reported
        through setError so it lands on the field like every other message here. */
-    if (!isEdit) {
+    /* R-2095 (staging, 30 Oct): a customer brought over from Zoho can have neither (Quantiva) — the
+       owner may save it anyway; the customer then reads "No email or phone yet" until one is added. */
+    if (!isEdit && !noContactOk.current) {
       const problem = newCustomerReachProblem(data);
       if (problem) {
         form.setError("contact_email", { type: "manual", message: problem });
+        setContactMissing(true);
         toast.error("Add an email or a phone number", {
-          description: "The invoice and the payment reminder need somewhere to go. One of the two is enough.",
+          id: NO_CONTACT_TOAST,
+          description: "The invoice and the payment reminder need somewhere to go. One of the two is enough. No contact at all? Save without one and add it later.",
+          duration: 15000,
+          action: { label: "Save without contact", onClick: () => { noContactOk.current = true; setContactMissing(false); form.clearErrors("contact_email"); void onSubmit(data); } },
         });
         return;
       }
@@ -348,8 +394,9 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       group_id:      data.group_id?.trim()      || null,
       domain:        data.domain?.trim()        || null,
       gstin:         foreign ? null : (data.gstin?.trim()      || null),
-      state:         data.state?.trim()         || null,
-      state_code:    foreign ? null : (data.state_code?.trim() || null),
+      /* R-2363: "Not known yet" is saved as NO state (never a guess) — the invoice still waits. */
+      state:         stateNotKnown ? (gstinCode ? GST_STATE_BY_CODE[gstinCode] ?? null : null) : (data.state?.trim() || null),
+      state_code:    foreign ? null : stateNotKnown ? gstinCode : (data.state_code?.trim() || null),
       /* R-1736: always sent, so an edit never leaves an old treatment behind. */
       gst_treatment: data.gst_treatment
         ?? suggestGstTreatment({ country: data.country, gstin: foreign ? "" : data.gstin, customerType: type }),
@@ -373,9 +420,18 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     };
     // Only stamp verification when newly verified this session — so editing an
     // already-verified customer without re-verifying doesn't wipe its status.
+    /* R-2370: TDS is sent on create when picked, and on edit only when it changed — an edit
+       of the address never rewrites the saved TDS (the receipt dialog also writes it). */
+    const tdsPatch = customerTdsPayload({ section: data.tds_section ?? "", ratePct: data.tds_rate_pct ?? "" });
+    const tdsSaved = customerTdsPayload(customerTdsPrefill(customer));
+    const tdsChanged = isEdit
+      ? (tdsPatch.tds_default_section !== tdsSaved.tds_default_section
+         || tdsPatch.tds_default_rate_pct !== tdsSaved.tds_default_rate_pct)
+      : !!tdsPatch.tds_default_section;
+    const withTds = tdsChanged ? { ...base, ...tdsPatch } : base;
     const payload = (verification && !foreign)
-      ? { ...base, gstin_verification: verification, gstin_verified_at: new Date().toISOString() }
-      : base;
+      ? { ...withTds, gstin_verification: verification, gstin_verified_at: new Date().toISOString() }
+      : withTds;
     if (isEdit && customer) {
       await updateCustomer.mutateAsync({ id: customer.id, patch: payload });
       onSaved?.(customer.id);
@@ -391,16 +447,42 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
   // For an export country we know the states/emirates of, offer a dropdown
   // instead of free text (stops "california" being saved for a Kuwait customer).
   const foreignStates = isForeign ? getStatesForCountry(watch("country")) : null;
-  // Compose register's onChange so switching country clears a now-wrong state.
-  const countryReg = register("country");
-  const onCountryChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    countryReg.onChange(e);
+  // R-2180: the Country picker is a searchable combobox (CountryCombobox), not a
+  // <select> — it writes the value with setValue. Picking a new country clears a
+  // now-wrong state.
+  register("country");
+  /* R-2370: the TDS section select is written with setValue (picking it also fills the rate). */
+  register("tds_section");
+  const country = watch("country") ?? "";
+  const onCountryPick = (next: string) => {
+    if (next === country) return;
+    setValue("country", next, { shouldDirty: true, shouldValidate: true });
     // Clear the state — it belongs to the OLD country. (India re-derives it from
     // the GSTIN; a foreign country re-picks from the dropdown.)
     setValue("state", "", { shouldDirty: true });
   };
 
+  /* R-2360 / R-2363: a NEW customer started from Zoho (Find in Zoho → Create customer) gets Zoho's
+     name, GSTIN AND where it is — country, GST treatment, state. Staging, 2 Nov: Ranz International
+     LLC (Dubai, Zoho "overseas") was created as India / unregistered because only the name and
+     GSTIN were carried. A treatment from Zoho counts as picked, so the auto-pick never replaces it. */
+  const applySeed = React.useCallback((seed: CustomerSeed) => {
+    const name = seed.name?.trim();
+    const seedCountry = normalizeCountry(seed.country);
+    const foreignSeed = !!seedCountry && isExportSupply(seedCountry);
+    const gstin = foreignSeed ? "" : (seed.gstin?.trim() ?? "");
+    if (name) setValue("name", name, { shouldDirty: true });
+    if (seedCountry) setValue("country", seedCountry, { shouldDirty: true });
+    if (gstin) setValue("gstin", gstin.toUpperCase(), { shouldDirty: true });
+    if (seed.state?.trim()) setValue("state", seed.state.trim(), { shouldDirty: true });
+    if (seed.gst_treatment) {
+      treatmentManual.current = true;
+      setValue("gst_treatment", seed.gst_treatment, { shouldDirty: true });
+    }
+  }, [setValue]);
+
   return {
+    applySeed,
     form,
     register,
     setValue,
@@ -418,8 +500,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     watchedGstin,
     isForeign,
     foreignStates,
-    countryReg,
-    onCountryChange,
+    country,
+    onCountryPick,
     /* R-1736 */
     gstTreatment: watchedTreatment ?? suggestedTreatment,
     gstTreatmentAuto: (watchedTreatment ?? suggestedTreatment) === suggestedTreatment,
@@ -427,6 +509,16 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     onTreatmentChange,
     panLocked: !!panFromForm,
     onSubmit,
+    /* R-2095: true after a save refused for no email / phone — the form shows "Save without contact". */
+    contactMissing,
+    saveWithoutContact: () => {
+      /* The "add an email" toast would still be up after the save — take it down. */
+      toast.dismiss(NO_CONTACT_TOAST);
+      noContactOk.current = true;
+      setContactMissing(false);
+      form.clearErrors("contact_email");
+      return handleSubmit(onSubmit)();
+    },
     /* The state field sits on the Address tab, which may be closed — say what is missing
        instead of a Save button that silently does nothing (R-173). */
     submit: handleSubmit(onSubmit, (errs) => {

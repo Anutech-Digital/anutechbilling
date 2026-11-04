@@ -63,6 +63,7 @@ import { unifiedStatus, cashNote } from "@/lib/quotes/status-badge";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { awaitsMyApproval } from "@/lib/quotes/awaiting-approval";
 import { ApprovalsStrip } from "@/components/features/quotes/approvals-strip";
+import { QUOTES_TABLE_COLS } from "@/components/features/quotes/quotes-table-cols";
 import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { isForeignCurrency, foreignEquivalent, formatForeign } from "@/lib/currency";
@@ -73,6 +74,7 @@ import { QUOTES_PAGE_SIZE, quotesPagingKey } from "./paging";
 /* R-2046: Commitment due — unpaid part payment requests, with the SAME dialogs as elsewhere. */
 import { COMMITMENT_CHOICES, commitmentDueRows, isCommitmentDue, type CommitmentQuote } from "./commitment-due";
 import { CommitmentDueSection, CommitmentDueStrip } from "./commitment-due-section";
+import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
 import { RecordQuotePaymentDialog } from "../payments/record-quote-payment";
 import { CustomerStoppedDialog } from "./[id]/customer-stopped-dialog";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
@@ -81,22 +83,32 @@ import { anyCostUnknown } from "@/lib/quotes/line-cost";
 import { quoteListTab, quoteTabCounts, isPipelineQuote } from "@/lib/quotes/list-tab";
 import { paidToDateOf } from "@/lib/quotes/paid-to-date";
 import { QUOTE_STATE_LABEL, QUOTE_WITH_CUSTOMER_LABEL } from "@/lib/quotes/state-labels";
-import { quoteTotalUnit, extensionBadgeLabel } from "@/lib/quotes/billing";
+import { extensionBadgeLabel } from "@/lib/quotes/billing";
+import { quoteRowTotalPeriods, quoteTotalPeriodsText } from "@/lib/quotes/per-period-figures";
 import { useQuoteOpenBalances, withOpenBalances } from "@/lib/quotes/open-balances";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
 import { isSupportUpgradeQuote } from "@/lib/support/upgrade-quote";
+import { quoteKindFor, type QuoteKindQuote } from "@/lib/quotes/quote-kind";
+import { usePartFacts } from "@/lib/quotes/quote-kind-facts";
+import { withPartCosts } from "@/lib/quotes/part-cost";
+import { QuoteKindChip } from "@/components/features/quotes/quote-kind-stamp";
 
-/** A quote's total in ITS billing currency (foreign quotes show $/€…; books stay ₹). */
-function quoteMoney(q: { amount: number | null; currency?: string | null; exchange_rate?: number | null }): string {
-  if (!q.amount) return "—";
-  if (isForeignCurrency(q.currency)) {
-    return formatForeign(foreignEquivalent(q.amount, q.exchange_rate && q.exchange_rate > 0 ? q.exchange_rate : 1), q.currency ?? "");
-  }
-  return rupee(q.amount);
+/**
+ * R-2222: a row's total with its period, in ITS billing currency (foreign quotes show $/€…;
+ * books stay ₹) — the same helper and words as the quote page's Totals card (R-2182):
+ * "₹3,186/month" + "₹38,232/year" for an Annual sale paid monthly. It used to be the
+ * stored YEAR with a billing-cycle-only "/mo" after it ("₹38,232/mo").
+ */
+function rowTotal(q: Parameters<typeof quoteRowTotalPeriods>[0] & { currency?: string | null; exchange_rate?: number | null }) {
+  const t = quoteRowTotalPeriods(q);
+  if (!t) return { perBill: "—", unit: "", year: null };
+  const fx = q.exchange_rate && q.exchange_rate > 0 ? q.exchange_rate : 1;
+  return quoteTotalPeriodsText(
+    t,
+    isForeignCurrency(q.currency) ? (v) => formatForeign(foreignEquivalent(v, fx), q.currency ?? "") : undefined,
+  );
 }
-
-/* R-1715: the total's unit ("/mo", "/yr", none on a one-time charge) is quoteTotalUnit in lib/quotes/billing.ts. */
 
 /**
  * A quote's margin, from its LINE ITEMS.
@@ -115,8 +127,9 @@ function quoteMoney(q: { amount: number | null; currency?: string | null; exchan
  * show that rather than a number. Returning 0 would be indistinguishable from a
  * break-even deal.
  */
-function estimateMarginForQuote(q: Quote): ReturnType<typeof computeMargin> & { known: boolean } {
-  const lines = Array.isArray(q.line_items) ? q.line_items : [];
+function estimateMarginForQuote(q: Quote, costedLines?: QuoteLineItem[]): ReturnType<typeof computeMargin> & { known: boolean } {
+  /* R-2423: a payment request's lines with the part's cost (part-cost.ts) when the row has them. */
+  const lines = costedLines ?? (Array.isArray(q.line_items) ? q.line_items : []);
   const taxable = q.subtotal
     ? q.subtotal - Math.round(q.subtotal * (q.discount_pct / 100))
     : (q.amount ?? 0);
@@ -187,7 +200,6 @@ export default function QuotesPage() {
   const [editProject, setEditProject] = React.useState<ProjectSaleWithTotals | null>(null);
   const deleteProject = useDeleteProjectSale();
   const [previewing, setPreviewing] = React.useState<Quote | null>(null);
-  const [kpiOpen, setKpiOpen] = React.useState(true);
   const [helpOpen, setHelpOpen] = React.useState(false);
   const confirm = useConfirm();
 
@@ -355,6 +367,21 @@ export default function QuotesPage() {
     QUOTES_PAGE_SIZE,
     quotesPagingKey({ tab, focus, search, teamMode, onlyMyApprovals }),
   );
+  /* R-2423: each row's type chip — the same word as the quote page's stamp (quote-kind.ts). A
+     payment request's word comes from its part (renewal term or the sale's first term). */
+  const billingIdOf = (q: Quote) => (q as Quote & { subscription_billing_id?: string | null }).subscription_billing_id ?? null;
+  const { data: rowPartFacts } = usePartFacts(paged.shown.map(billingIdOf));
+  const kindChipOf = (q: Quote) => {
+    const bid = billingIdOf(q);
+    const stamp = quoteKindFor(q as Quote & QuoteKindQuote, bid ? rowPartFacts?.get(bid)?.facts ?? null : null);
+    /* A plain new sale — most quotes — carries no chip, as before. */
+    return stamp && !(stamp.kind === "new_sale" && !bid) ? stamp : null;
+  };
+  const costedLinesOf = (q: Quote): QuoteLineItem[] | undefined => {
+    const bid = billingIdOf(q);
+    if (!bid || !Array.isArray(q.line_items)) return undefined;
+    return withPartCosts(q.line_items, bid, (id) => rowPartFacts?.get(id)?.cost ?? null);
+  };
 
   const keys = useListKeys({
     count: paged.shown.length,   // only the rows on screen (R-105)
@@ -384,8 +411,6 @@ export default function QuotesPage() {
   const marginablePipeline = pipelineQuotes.map((q) => estimateMarginForQuote(q));
   const pipelineMargin = marginablePipeline.filter((m) => m.known).reduce((s, m) => s + m.margin, 0);
   const pipelineMarginUnknownCount = marginablePipeline.filter((m) => !m.known).length;
-  /* Every accepted quote (invoiced ones too) — the same set as the Accepted tile's value. */
-  const acceptedCount = quotesByWorkspace.filter((q) => quoteInFocus(q, "accepted")).length;
   /* R-1713: the Accepted tile is the Accepted TAB now; the win rate still counts every won quote. */
   const wonCount = quotesByWorkspace.filter((q) => q.status === "accepted").length;
   const sentishCount = quotesByWorkspace.filter((q) => quoteInFocus(q, "review")).length;
@@ -566,32 +591,46 @@ export default function QuotesPage() {
 
       {view === "subscription" && (
         <>
-          {/* Collapsible KPI & Quote Intelligence Banner */}
+          {/* R-2266: ONE strip, closed by default (remembered per user). The closed line carries
+              Pipeline / With customer / Accepted; the Quote intelligence count and Commitment due
+              sit on the line as linked counts instead of two banners pushing the list down. */}
           {!isLoading && quotes && quotes.length > 0 && (
-            <div className="mb-4 bg-paper border border-hairline rounded-lg overflow-hidden transition-all shadow-xs">
-              <button
-                type="button"
-                onClick={() => setKpiOpen((o) => !o)}
-                className="w-full flex items-center justify-between px-3.5 py-2.5 bg-paper-2/70 hover:bg-paper-2 transition-colors text-left cursor-pointer"
-              >
-                <div className="flex items-center gap-2 flex-wrap text-xs">
-                  <Icon name="bar_chart" size={15} className="text-amber-ink" />
-                  <span className="font-semibold text-ink">Quote Analytics &amp; Intelligence</span>
-                  <span className="text-ink-3">·</span>
-                  <span className="text-ink-2 font-mono font-medium">Pipeline: <b className="text-amber-ink">{rupee(totalValue, { compact: true })}</b></span>
-                  <span className="text-ink-3 font-mono">·</span>
-                  <span className="text-ink-2 font-mono font-medium">{QUOTE_WITH_CUSTOMER_LABEL}: <b className="text-ink">{rupee(sentValue, { compact: true })}</b> ({sentishCount})</span>
-                  <span className="text-ink-3 font-mono">·</span>
-                  <span className="text-ink-2 font-mono font-medium">{QUOTE_STATE_LABEL.accepted}: <b className="text-emerald">{rupee(acceptedValue, { compact: true })}</b> ({acceptedCount})</span>
-                </div>
-                <div className="flex items-center gap-1 text-xs font-semibold text-amber-ink shrink-0 ml-2">
-                  <span>{kpiOpen ? "Collapse" : "Expand"}</span>
-                  <Icon name={kpiOpen ? "chevron_up" : "chevron_down"} size={14} />
-                </div>
-              </button>
-
-              {kpiOpen && (
-                <div className="p-3 border-t border-hairline space-y-3 bg-paper">
+            <CollapsibleKpiStrip
+              stripId="quotes"
+              userId={me?.userId}
+              title="Insights"
+              summary={
+                <>
+                  <StripFact label="Pipeline" value={rupee(totalValue, { compact: true })} tone="amber" />
+                  <StripFact label={QUOTE_WITH_CUSTOMER_LABEL} value={rupee(sentValue, { compact: true })} />
+                  <StripFact label={QUOTE_STATE_LABEL.accepted} value={rupee(acceptedValue, { compact: true })} tone="emerald" />
+                </>
+              }
+              extras={
+                (expiringCount > 0 || (!commitmentOn && commitment.rows.length > 0)) ? (
+                  <>
+                    {expiringCount > 0 && (
+                      <StripLink
+                        onClick={() => focusOn("review")}
+                        title="Quote intelligence — sent or viewed, waiting on the customer. Follow-ups run on day 2, 4 and 7."
+                      >
+                        {expiringCount} waiting on customer
+                      </StripLink>
+                    )}
+                    {/* R-2046 Commitment due — the same strip component, as a linked count. */}
+                    {!commitmentOn && (
+                      <CommitmentDueStrip
+                        compact
+                        count={commitment.rows.length}
+                        total={commitment.total}
+                        onShow={() => setCommitmentParam("due")}
+                      />
+                    )}
+                  </>
+                ) : undefined
+              }
+            >
+              <>
                   {/* Interactive KPI Stat Grid */}
                   <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
                     <button
@@ -656,7 +695,7 @@ export default function QuotesPage() {
                         /* Until 2 Oct 2026 this button toasted "Nudge sent for N expiring
                            quotes" and sent nothing — a success message for an action that
                            never happened. It now opens the quotes it is about. */
-                        <Button size="sm" variant="primary" icon="eye" onClick={() => focusOn("review")}>
+                        <Button size="sm" icon="eye" onClick={() => focusOn("review")}>
                           Show these quotes
                         </Button>
                       }
@@ -665,9 +704,8 @@ export default function QuotesPage() {
                       <b>{expiringCount} quote{expiringCount === 1 ? "" : "s"} sent or viewed, waiting on the customer.</b> Follow-ups run on their own on day 2, 4 and 7 after sending — drafted on the lead while the follow-up setting is on hold.
                     </GeminiCard>
                   )}
-                </div>
-              )}
-            </div>
+              </>
+            </CollapsibleKpiStrip>
           )}
 
           {/* ── Somebody is waiting on you ───────────────────────────
@@ -688,10 +726,10 @@ export default function QuotesPage() {
             }}
           />
 
-          {/* R-2046: Commitment due — a strip above the tabs (not a tab: these quotes already sit
-              in Sent / Awaiting payment, R-469); opening it shows its own section in place of the
-              tabbed list, with Record payment / Customer stopped on each row. */}
-          {!isLoading && !error && quotes && (commitmentOn ? (
+          {/* R-2046: Commitment due — not a tab (these quotes already sit in Sent / Awaiting
+              payment, R-469). R-2266: its count is a link on the Insights strip; opening it shows
+              this section in place of the tabbed list, with Record payment / Customer stopped. */}
+          {!isLoading && !error && quotes && commitmentOn && (
             <CommitmentDueSection
               rows={commitment.rows}
               total={commitment.total}
@@ -700,13 +738,7 @@ export default function QuotesPage() {
               onCustomerStopped={setStopQuoteId}
               onClose={() => setCommitmentParam("")}
             />
-          ) : (
-            <CommitmentDueStrip
-              count={commitment.rows.length}
-              total={commitment.total}
-              onShow={() => setCommitmentParam("due")}
-            />
-          ))}
+          )}
 
           {/* Sticky Horizontal TabBar + Date Range + Search */}
           {!commitmentOn && !isLoading && quotes && quotes.length > 0 && (
@@ -845,13 +877,7 @@ export default function QuotesPage() {
                             {/* R-811: from extension_months — "3-month extension", not "0yr". */}
                             {extensionTitle({ isExtension: q.is_extension, extensionMonths: q.extension_months }) ?? "Extension"}
                           </Badge>
-                        ) : q.is_renewal ? (
-                          <Badge kind="info" className="font-sans text-3xs">{isSupportUpgradeQuote(q) ? "Upgrade" : "Renewal"}</Badge>
-                        ) : q.is_add_seats ? (
-                          <Badge kind="info" className="font-sans text-3xs">Prorata</Badge>
-                        ) : q.is_one_off && !isCustomerAdvanceQuote(q) ? (
-                          <Badge kind="muted" className="font-sans text-3xs">Direct invoice</Badge>
-                        ) : null}
+                        ) : <QuoteKindChip stamp={kindChipOf(q)} />}
                       </div>
                       <p className="text-sm font-semibold text-ink mt-1 truncate">
                         {cleanDisplayName(partyOf(q))}
@@ -859,9 +885,12 @@ export default function QuotesPage() {
                     </div>
                     <div className="text-right shrink-0">
                       <p className="font-serif text-base font-bold tabular-nums text-ink">
-                        {quoteMoney(q)}
-                        <span className="text-2xs font-normal text-ink-3">{quoteTotalUnit(q)}</span>
+                        {rowTotal(q).perBill}
+                        <span className="text-2xs font-normal text-ink-3">{rowTotal(q).unit}</span>
                       </p>
+                      {rowTotal(q).year && (
+                        <p className="text-2xs text-ink-3 tabular-nums">{rowTotal(q).year}</p>
+                      )}
                       <p className="text-2xs text-ink-3 tabular-nums">
                         {q.seats ?? "—"} seats
                       </p>
@@ -912,7 +941,14 @@ export default function QuotesPage() {
       {!commitmentOn && !isLoading && !error && filtered.length > 0 && (
         <div className="hidden xl:block">
           <Card flush>
-            <table className="w-full">
+            {/* R-2264: fixed layout + a column budget so the table fits a 1280 laptop
+                with the sidebar open — Actions never goes behind a side-scroll. */}
+            <table className="w-full table-fixed">
+              <colgroup>
+                {QUOTES_TABLE_COLS.map((c) => (
+                  <col key={c.key} style={c.width != null ? { width: c.width } : undefined} />
+                ))}
+              </colgroup>
               <thead className="bg-paper-2 border-b border-hairline-strong">
                 <tr>
                   <th className="text-left px-3 py-2.5 text-2xs font-semibold text-ink-3 uppercase tracking-wider">Quote</th>
@@ -927,7 +963,7 @@ export default function QuotesPage() {
               </thead>
               <tbody>
                 {paged.shown.map((q, rowIndex) => {
-                  const margin = estimateMarginForQuote(q);
+                  const margin = estimateMarginForQuote(q, costedLinesOf(q));
                   const uStatus = unifiedStatus(q);
                   const dl = q.expires_date ? daysBetween(new Date(), q.expires_date) : null;
                   const expiringSoon = dl !== null && dl >= 0 && dl <= 7;
@@ -949,7 +985,7 @@ export default function QuotesPage() {
                     >
                       {/* Compact ID — the tail number as a chip; full ID on hover. */}
                       <td className="px-3 py-2.5 align-top" title={q.id}>
-                        <div className="flex items-center gap-1.5">
+                        <div className="flex flex-wrap items-center gap-1">
                           <span className="inline-flex items-center rounded-md bg-paper-2 px-1.5 py-0.5 font-mono text-2xs font-semibold text-ink">
                             #{q.id.split("-").pop()}
                           </span>
@@ -957,24 +993,20 @@ export default function QuotesPage() {
                             <Badge kind="warning" className="font-sans text-3xs">
                               {extensionBadgeLabel(q.extension_months)}
                             </Badge>
-                          ) : q.is_renewal ? (
-                            <Badge kind="info" className="font-sans text-3xs">{isSupportUpgradeQuote(q) ? "Upgrade" : "Renewal"}</Badge>
-                          ) : q.is_add_seats ? (
-                            <Badge kind="info" className="font-sans text-3xs">Prorata</Badge>
-                          ) : q.is_one_off && !isCustomerAdvanceQuote(q) ? (
-                            <Badge kind="muted" className="font-sans text-3xs">Direct invoice</Badge>
-                          ) : null}
+                          ) : <QuoteKindChip stamp={kindChipOf(q)} />}
                         </div>
                       </td>
-                      <td className="px-3 py-2.5 align-top">
-                        <div className="font-medium text-ink leading-snug break-words max-w-[220px]" title={cleanDisplayName(partyOf(q))}>{cleanDisplayName(partyOf(q))}</div>
+                      {/* R-2264: Customer and Plan are one line each — the full text is
+                          the hover title (and the quote page). Wrapping them onto 2–3
+                          lines made rows ~103px and pushed Actions off-screen. */}
+                      <td className="px-3 py-2.5 align-top min-w-0">
+                        <div className="font-medium text-ink leading-snug truncate" title={cleanDisplayName(partyOf(q))}>{cleanDisplayName(partyOf(q))}</div>
                         {phoneSuffixOf(partyOf(q)) && (
-                          <div className="text-3xs text-ink-3 tabular-nums mt-0.5">{phoneSuffixOf(partyOf(q))}</div>
+                          <div className="text-3xs text-ink-3 tabular-nums mt-0.5 truncate">{phoneSuffixOf(partyOf(q))}</div>
                         )}
                       </td>
-                      {/* Plan — wraps to a second line rather than truncating with "…". */}
-                      <td className="px-3 py-2.5 text-sm text-ink-2 align-top">
-                        <div className="leading-snug break-words max-w-[240px]">{q.plan ?? "—"}</div>
+                      <td className="px-3 py-2.5 text-sm text-ink-2 align-top min-w-0">
+                        <div className="leading-snug truncate" title={q.plan ?? undefined}>{q.plan ?? "—"}</div>
                         {q.seats != null && (
                           <div className="text-3xs text-ink-3 mt-0.5"><span className="font-semibold text-ink-2 tabular-nums">{q.seats}</span> seats</div>
                         )}
@@ -982,9 +1014,12 @@ export default function QuotesPage() {
                       <td className="px-3 py-2.5 text-right align-top">
                         <div className="flex flex-col items-end gap-0.5">
                           <span className="tabular-nums text-sm font-medium text-ink">
-                            {quoteMoney(q)}
-                            <span className="text-3xs font-normal text-ink-3">{quoteTotalUnit(q)}</span>
+                            {rowTotal(q).perBill}
+                            <span className="text-3xs font-normal text-ink-3">{rowTotal(q).unit}</span>
                           </span>
+                          {rowTotal(q).year && (
+                            <span className="text-3xs text-ink-3 tabular-nums whitespace-nowrap">{rowTotal(q).year}</span>
+                          )}
                           {/* Foreign quote: show the ₹ base underneath so the amount
                               reconciles with the (all-INR) pipeline totals. */}
                           {isForeignCurrency(q.currency) && q.amount ? (
@@ -1026,7 +1061,7 @@ export default function QuotesPage() {
                           const note = cashNote(q);
                           return (
                             <div className="flex flex-col items-start gap-0.5">
-                              <Badge kind={uStatus.kind} dot>{uStatus.label}</Badge>
+                              <Badge kind={uStatus.kind} dot className="whitespace-normal">{uStatus.label}</Badge>
                               {/* Did this quote actually become a service? "Accepted"
                                   alone never said.
 
@@ -1075,31 +1110,28 @@ export default function QuotesPage() {
                           <span className="text-xs text-ink-3 tabular-nums">{dl}d left</span>
                         )}
                       </td>
-                      <td className="px-2 py-2.5 text-right align-top" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex items-center justify-end gap-1.5">
+                      {/* R-2264: at most ONE action button per row (never primary — the
+                          page's one primary is "New quote") + the ⋯ menu with every
+                          other action. Opening the quote is the row click / ⋯ "Open / edit". */}
+                      <td data-col="actions" className="px-2 py-2.5 text-right align-top" onClick={(e) => e.stopPropagation()}>
+                        <div className="flex min-w-0 items-center justify-end gap-1 [&>a]:min-w-0 [&>a]:overflow-hidden [&>button]:min-w-0 [&>button]:overflow-hidden">
                           {q.status === "draft" && (
-                            <Button asChild size="sm" variant="primary" icon="send">
+                            <Button asChild size="sm" icon="send">
                               <Link href={`/quotes/${q.id}` as any}>Send</Link>
                             </Button>
                           )}
                           {(q.status === "sent" || q.status === "viewed") && (
-                            <div className="flex gap-1">
-                              <Button
-                                size="sm"
-                                variant="primary"
-                                icon="whatsapp"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
-                                  window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
-                                }}
-                              >
-                                WhatsApp
-                              </Button>
-                              <Button asChild size="sm" icon="external">
-                                <Link href={`/quotes/${q.id}` as any}>Open</Link>
-                              </Button>
-                            </div>
+                            <Button
+                              size="sm"
+                              icon="whatsapp"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const msg = encodeURIComponent(`Namaste ${partyOf(q)},\n\nQuick follow up regarding Quote #${q.id} (${q.plan || "Google Workspace"}) for ${rupee(q.amount ?? 0)}.\n\nPlease let us know if you need any clarification.\n\nDhanyavaad`);
+                                window.open(`https://web.whatsapp.com/send?text=${msg}`, "_blank");
+                              }}
+                            >
+                              WhatsApp
+                            </Button>
                           )}
                           {q.status === "accepted" && (() => {
                             // What happens NEXT on an accepted quote depends on
@@ -1125,7 +1157,7 @@ export default function QuotesPage() {
                             }
                             if (ps === "received") {
                               return (
-                                <Button asChild size="sm" variant="primary" icon="receipt">
+                                <Button asChild size="sm" icon="receipt">
                                   <Link href={`/quotes/${q.id}` as any}>Generate invoice</Link>
                                 </Button>
                               );
@@ -1147,7 +1179,7 @@ export default function QuotesPage() {
                             }
                             // 'none' or 'awaiting' — money hasn't started flowing yet
                             return (
-                              <Button asChild size="sm" variant="primary" icon={canRecordMoney(me?.role) ? "rupee" : "file"}>
+                              <Button asChild size="sm" icon={canRecordMoney(me?.role) ? "rupee" : "file"}>
                                 {/* R-718: sales / support cannot record money — same link, honest label. */}
                                 <Link href={`/quotes/${q.id}` as any}>{canRecordMoney(me?.role) ? "Record payment" : "Open quote"}</Link>
                               </Button>

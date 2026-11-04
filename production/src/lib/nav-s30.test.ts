@@ -45,6 +45,12 @@ const OLD_CRUMBS = snapshot.crumbs as Record<string, string[]>;
 /* R-1791 (23 Oct 2026): the Marketing role is newer than the snapshot — it had no pages before. */
 OLD_MENU.marketing ??= [];
 OLD_ALLOWED.marketing ??= [];
+/* R-2110 (GP-01, 30 Oct 2026): the personal role is newer still. GP-07a (R-2115) gave it its own
+   Personal section — exactly Money, My digital assets, Support, Upgrade — and nothing else, not
+   even /help. /vault/personal is reached through the Money row (covers), not a menu row. */
+OLD_MENU.personal ??= [];
+OLD_ALLOWED.personal ??= [];
+const ADDED_30OCT_PERSONAL_HOME = ["/money", "/assets", "/support/my", "/upgrade"];
 
 /** S28 (29 Sep 2026): the WhatsApp renewal / invoice reminders settings page, a Marketing Hub
  *  directory row for owner / manager — the same roles as every other row there. */
@@ -150,6 +156,22 @@ const ADDED_23OCT_MARKETING_ROLE = [
 ];
 /** R-1879 (25 Oct 2026): Campaign Co-pilot — owner, manager, marketing (RLS on ad_plans, R-1878). */
 const ADDED_25OCT_COPILOT = ["/marketing/copilot"];
+/** R-2300 (G-TEAMCHAT, 31 Oct 2026): Team chat gets its menu row (Team) — every staff role, the
+ *  same people as chat_is_staff() (R-2294); never partner_agent or personal. R-2299 had admitted
+ *  the page by URL (OFF_MENU_ROLES); now the row admits it. */
+const ADDED_31OCT_TEAM_CHAT = ["/team-chat"];
+const TEAM_CHAT_ROLES = ["owner", "manager", "sales", "sales_senior", "billing", "delivery", "accountant", "support", "marketing"];
+/** R-2013 (G-DPDP, 2 Nov 2026): Settings → Privacy Requests — owner / manager (RLS + RPC check the same). */
+const ADDED_2NOV_PRIVACY_REQUESTS = ["/settings/privacy-requests"];
+/** R-2350 (G-DPDP, 2 Nov 2026): Settings → Security Log — owner only (RLS on the view says the same). */
+const ADDED_2NOV_SECURITY_LOG = ["/settings/security-log"];
+/** R-2388 (G-PERSONAL, 3 Nov 2026): Private Vault → Loans — owner only, a menu row next to its siblings (RLS is per owner_user_id). */
+const ADDED_3NOV_PRIVATE_LOANS = ["/vault/personal/loans"];
+/** R-2392 (G-PERSONAL, 3 Nov 2026): Private Vault → People (personal contacts) — owner only, next to Loans. */
+const ADDED_3NOV_PRIVATE_PEOPLE = ["/vault/personal/people"];
+/** R-2461 (4 Nov 2026, Pardeep: "purchase accountant ko bhi dikhe"): the Purchase Inbox for the
+ *  accountant too — inbound_purchases RLS is tenant-wide and network_inbox admits the accountant. */
+const ADDED_4NOV_ACCOUNTANT_PURCHASE_INBOX = ["/purchases/inbox"];
 const removedFor = (role: string) => REMOVED_3OCT[role] ?? [];
 const addedFor = (role: string) => [
   ...(role === "owner" || role === "manager" ? ADDED_3OCT_OM : []),
@@ -174,7 +196,13 @@ const addedFor = (role: string) => [
   ...(role === "marketing" ? ADDED_23OCT_MARKETING_ROLE : []),
   ...(["owner", "marketing", "billing", "accountant"].includes(role) ? ADDED_23OCT_BUDGET : []),
   ...(["owner", "manager", "marketing"].includes(role) ? ADDED_25OCT_COPILOT : []),
-  ...ADDED_FOR_EVERY_ROLE,
+  ...(TEAM_CHAT_ROLES.includes(role) ? ADDED_31OCT_TEAM_CHAT : []),
+  ...(role === "owner" || role === "manager" ? ADDED_2NOV_PRIVACY_REQUESTS : []),
+  ...(role === "owner" ? ADDED_2NOV_SECURITY_LOG : []),
+  ...(role === "owner" ? ADDED_3NOV_PRIVATE_LOANS : []),
+  ...(role === "owner" ? ADDED_3NOV_PRIVATE_PEOPLE : []),
+  ...(role === "accountant" ? ADDED_4NOV_ACCOUNTANT_PURCHASE_INBOX : []),
+  ...(role === "personal" ? ADDED_30OCT_PERSONAL_HOME : ADDED_FOR_EVERY_ROLE),
 ];
 
 /** What a role can actually click: sidebar rows, their accordion children, and the
@@ -266,16 +294,21 @@ describe.each(USER_ROLES.map((r) => [r]))("role %s", (role) => {
 describe("2. structure", () => {
   const flat = flattenNav(APP_NAV);
 
-  it("is the seven groups, in order", () => {
-    expect(APP_NAV.map((s) => s.section)).toEqual(["Home", "Sell", "Bill", "Buy", "Books", "Team", "Settings"]);
+  it("is the seven groups, in order — plus the personal login's own Personal section (GP-07a)", () => {
+    expect(APP_NAV.map((s) => s.section)).toEqual(["Home", "Sell", "Bill", "Buy", "Books", "Team", "Settings", "Personal"]);
+    const personal = APP_NAV.find((s) => s.section === "Personal")!;
+    expect(personal.items.map((i) => i.href)).toEqual(["/money", "/assets", "/support/my", "/upgrade"]);
+    expect(personal.items.every((i) => i.roles?.join() === "personal")).toBe(true);
   });
 
   it("has ~40 sidebar rows, none of the groups over 8", () => {
-    const rows = APP_NAV.reduce((n, s) => n + s.items.length, 0);
+    /* The business menu. The Personal section (GP-07a) is a different login's whole menu. */
+    const rows = APP_NAV.filter((s) => s.section !== "Personal").reduce((n, s) => n + s.items.length, 0);
     expect(rows).toBeGreaterThanOrEqual(35);
     // 46 since R-204 (6 Oct 2026): Orders (website) left Payments Received's accordion for its own Sell row.
     // 47 since R-382 (7 Oct 2026): Contacts back in Sell — owner decision, one named row only.
-    expect(rows).toBeLessThanOrEqual(47);
+    // 48 since R-2300 (31 Oct 2026): Team chat in Team — G-TEAMCHAT, Pardeep accepted the plan (TC-07).
+    expect(rows).toBeLessThanOrEqual(48);
     // Sell may hold 9 since R-382 (Contacts); every other group stays at 8 or fewer.
     // R-497 (9 Oct): Contacts moved into the Customers accordion, so Sell is one row lighter.
     for (const s of APP_NAV) expect(s.items.length, s.section).toBeLessThanOrEqual(s.section === "Sell" ? 9 : 8);
@@ -535,6 +568,20 @@ describe("R-061: payroll — the menu and the guard give the same answer", () =>
         expect(menu.has(h), `${r}: menu says ${menu.has(h)}, guard says ${isRouteAllowed(r, h)} for ${h}`).toBe(isRouteAllowed(r, h));
       }
     }
+  });
+});
+
+describe("R-2461: the Purchase Inbox for the accountant", () => {
+  it("the accountant sees Purchase Inbox under Buy and the guard lets it through", () => {
+    const buy = filterNavForRole(APP_NAV, "accountant").find((s) => s.section === "Buy")?.items ?? [];
+    expect(buy.map((i) => i.href)).toContain("/purchases/inbox");
+    expect(isRouteAllowed("accountant", "/purchases/inbox")).toBe(true);
+  });
+  it("menu and guard agree for every role; billing, sales and support still have no Purchase Inbox", () => {
+    for (const r of USER_ROLES) {
+      expect(clickable(r).has("/purchases/inbox"), r).toBe(isRouteAllowed(r, "/purchases/inbox"));
+    }
+    for (const r of ["billing", "sales", "support"] as UserRole[]) expect(isRouteAllowed(r, "/purchases/inbox"), r).toBe(false);
   });
 });
 

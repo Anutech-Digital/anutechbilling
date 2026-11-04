@@ -2,18 +2,23 @@
 //
 // R-1684 (staging T-12): "Correct details" cut an annual plan 15 → 10 seats mid-term with no
 // warning, MRR stayed ₹16,200, and the plan was free text.
+// R-2228: seats / MRR now change only behind the owner's "Data correction (owner)" switch, through
+// correct_subscription_data — the seat-cut warning and the MRR-follows-seats rule still apply there.
 import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import { EditSubscriptionDialog } from "./edit-subscription-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
 
 const correct = vi.fn();
+const dataFix = vi.fn();
 const update = vi.fn();
 let role = "owner";
 
 vi.mock("@/lib/queries/subscriptions", () => ({
   useUpdateSubscription: () => ({ mutateAsync: update, isPending: false }),
   useCorrectSubscriptionTerms: () => ({ mutateAsync: correct, isPending: false }),
+  useCorrectSubscriptionData: () => ({ mutateAsync: dataFix, isPending: false }),
+  useCorrectSubscriptionCommitment: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useScheduleInvoices: () => ({ data: { sale: { invoiceId: "INV-0073", status: "paid" }, instalments: [], renewals: [], addSeats: [] } }),
 }));
 vi.mock("@/lib/queries/items", () => ({ useItems: () => ({ data: [] }) }));
@@ -27,7 +32,7 @@ vi.mock("@/lib/dates/ist", async (orig) => ({
   istToday: () => "2026-10-19",
 }));
 
-beforeEach(() => { correct.mockReset(); update.mockReset(); role = "owner"; });
+beforeEach(() => { correct.mockReset(); dataFix.mockReset(); update.mockReset(); role = "owner"; });
 afterEach(cleanup);
 
 const sub = {
@@ -39,6 +44,9 @@ const sub = {
 
 function openDialog() {
   render(<EditSubscriptionDialog sub={sub} open onOpenChange={() => {}} />);
+  /* R-2228: seats open only behind the owner's Data correction switch. */
+  const toggle = screen.queryByLabelText(/Data correction \(owner\)/);
+  if (toggle) fireEvent.click(toggle);
   return document.querySelector<HTMLInputElement>("#sub_seats")!;
 }
 
@@ -59,28 +67,29 @@ describe("R-1684: Correct details — seats / plan / price", () => {
     expect(screen.getByText(/open INV-0073 to issue a credit note/)).toBeTruthy();
   });
 
-  it("will not save the cut without a reason; with one it goes through correct_subscription_terms", async () => {
+  it("will not save the cut without a reason; with one it goes through the owner's correct_subscription_data (R-2228)", async () => {
     const seats = openDialog();
     fireEvent.change(seats, { target: { value: "10" } });
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
     await Promise.resolve();
-    expect(correct).not.toHaveBeenCalled();
+    expect(dataFix).not.toHaveBeenCalled();
     fireEvent.change(document.querySelector("#sub_correct_reason")!, { target: { value: "Customer removed 5 users" } });
     fireEvent.click(screen.getByRole("button", { name: /save changes/i }));
-    await vi.waitFor(() => expect(correct).toHaveBeenCalledWith({
-      id: "sub-1", itemId: null, seats: 10, mrr: 10_800, reason: "Customer removed 5 users",
+    await vi.waitFor(() => expect(dataFix).toHaveBeenCalledWith({
+      id: "sub-1", seats: 10, mrr: 10_800, reason: "Customer removed 5 users",
     }));
+    expect(correct).not.toHaveBeenCalled();
     /* the table write no longer carries seats / plan / price */
     await vi.waitFor(() => expect(update).toHaveBeenCalled());
     expect(update.mock.calls[0][0].patch).not.toHaveProperty("seats");
     expect(update.mock.calls[0][0].patch).not.toHaveProperty("plan");
   });
 
-  it("a billing user cannot cut seats — the button is disabled and says why", () => {
+  it("a billing user cannot cut seats — no seats box and no Data correction switch (R-2228)", () => {
     role = "billing";
     const seats = openDialog();
-    fireEvent.change(seats, { target: { value: "10" } });
-    expect(screen.getByText(/Only an owner or manager can cut seats/)).toBeTruthy();
-    expect(screen.getByRole("button", { name: /save changes/i }).hasAttribute("disabled")).toBe(true);
+    expect(seats).toBeNull();
+    expect(screen.queryByLabelText(/Data correction \(owner\)/)).toBeNull();
+    expect(screen.getByTestId("sub-seats-readonly").textContent).toBe("15");
   });
 });

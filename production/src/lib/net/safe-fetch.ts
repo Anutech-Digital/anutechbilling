@@ -16,10 +16,12 @@
  */
 import { lookup as dnsLookup } from "node:dns/promises";
 import { isIP } from "node:net";
+import { SANDBOX_DEFAULT_BASE } from "./sandbox-base";
 
 /** Sandbox.co.in: live and test API hosts (docs.sandbox.co.in). */
 export const SANDBOX_HOSTS = ["api.sandbox.co.in", "test-api.sandbox.co.in"] as const;
-export const SANDBOX_DEFAULT_BASE = "https://api.sandbox.co.in";
+/* R-2168: the key-prefix helpers live in ./sandbox-base (no node imports — the Settings dialog uses them too). */
+export { SANDBOX_DEFAULT_BASE, SANDBOX_TEST_BASE, sandboxKeyKind, sandboxBaseForKey, sandboxKeyBaseProblem } from "./sandbox-base";
 
 export interface UrlPolicy {
   /** Exact host names allowed (lower-case). Omitted = any public host. */

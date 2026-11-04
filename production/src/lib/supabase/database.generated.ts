@@ -2175,6 +2175,8 @@ export type Database = {
         Row: {
           account_number_last4: string | null
           account_type: string
+          closed_note: string | null
+          closed_on: string | null
           bank_name: string
           created_at: string
           id: string
@@ -2191,6 +2193,8 @@ export type Database = {
         Insert: {
           account_number_last4?: string | null
           account_type?: string
+          closed_note?: string | null
+          closed_on?: string | null
           bank_name: string
           created_at?: string
           id?: string
@@ -2207,6 +2211,8 @@ export type Database = {
         Update: {
           account_number_last4?: string | null
           account_type?: string
+          closed_note?: string | null
+          closed_on?: string | null
           bank_name?: string
           created_at?: string
           id?: string
@@ -2427,6 +2433,348 @@ export type Database = {
             referencedColumns: ["id"]
           },
         ]
+      }
+      chat_attachments: {
+        Row: {
+          channel_id: string
+          created_at: string
+          file_name: string
+          file_path: string
+          id: string
+          message_id: string
+          mime: string
+          size_bytes: number
+          tenant_id: string
+          uploaded_by: string | null
+        }
+        Insert: {
+          channel_id: string
+          created_at?: string
+          file_name: string
+          file_path: string
+          id?: string
+          message_id: string
+          mime: string
+          size_bytes: number
+          tenant_id: string
+          uploaded_by?: string | null
+        }
+        Update: {
+          channel_id?: string
+          created_at?: string
+          file_name?: string
+          file_path?: string
+          id?: string
+          message_id?: string
+          mime?: string
+          size_bytes?: number
+          tenant_id?: string
+          uploaded_by?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_attachments_message_fk"
+            columns: ["tenant_id", "channel_id", "message_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["tenant_id", "channel_id", "id"]
+          },
+          {
+            foreignKeyName: "chat_attachments_uploaded_by_fkey"
+            columns: ["uploaded_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_channels: {
+        Row: {
+          archived_at: string | null
+          created_at: string
+          created_by: string | null
+          dm_key: string | null
+          id: string
+          is_private: boolean
+          kind: string
+          name: string | null
+          slug: string | null
+          tenant_id: string
+          topic: string | null
+        }
+        Insert: {
+          archived_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          dm_key?: string | null
+          id?: string
+          is_private?: boolean
+          kind: string
+          name?: string | null
+          slug?: string | null
+          tenant_id: string
+          topic?: string | null
+        }
+        Update: {
+          archived_at?: string | null
+          created_at?: string
+          created_by?: string | null
+          dm_key?: string | null
+          id?: string
+          is_private?: boolean
+          kind?: string
+          name?: string | null
+          slug?: string | null
+          tenant_id?: string
+          topic?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_channels_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_channels_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_channels_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_members: {
+        Row: {
+          channel_id: string
+          joined_at: string
+          last_read_at: string | null
+          member_role: string
+          notify: string
+          tenant_id: string
+          user_id: string
+        }
+        Insert: {
+          channel_id: string
+          joined_at?: string
+          last_read_at?: string | null
+          member_role?: string
+          notify?: string
+          tenant_id: string
+          user_id: string
+        }
+        Update: {
+          channel_id?: string
+          joined_at?: string
+          last_read_at?: string | null
+          member_role?: string
+          notify?: string
+          tenant_id?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_members_channel_fk"
+            columns: ["tenant_id", "channel_id"]
+            isOneToOne: false
+            referencedRelation: "chat_channels"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "chat_members_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_message_edits: {
+        Row: {
+          channel_id: string
+          edited_at: string
+          edited_by: string | null
+          id: string
+          message_id: string
+          old_body: string
+          tenant_id: string
+        }
+        Insert: {
+          channel_id: string
+          edited_at?: string
+          edited_by?: string | null
+          id?: string
+          message_id: string
+          old_body: string
+          tenant_id: string
+        }
+        Update: {
+          channel_id?: string
+          edited_at?: string
+          edited_by?: string | null
+          id?: string
+          message_id?: string
+          old_body?: string
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_message_edits_edited_by_fkey"
+            columns: ["edited_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_message_edits_message_fk"
+            columns: ["tenant_id", "channel_id", "message_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["tenant_id", "channel_id", "id"]
+          },
+        ]
+      }
+      chat_messages: {
+        Row: {
+          author_id: string | null
+          body: string
+          channel_id: string
+          created_at: string
+          deleted_at: string | null
+          deleted_by: string | null
+          edited_at: string | null
+          feedback_id: string | null
+          id: string
+          kind: string
+          links: Json
+          mentions: string[]
+          parent_id: string | null
+          pinned_at: string | null
+          pinned_by: string | null
+          post_status: string | null
+          task_id: string | null
+          tenant_id: string
+        }
+        Insert: {
+          author_id?: string | null
+          body?: string
+          channel_id: string
+          created_at?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
+          edited_at?: string | null
+          feedback_id?: string | null
+          id?: string
+          kind?: string
+          links?: Json
+          mentions?: string[]
+          parent_id?: string | null
+          pinned_at?: string | null
+          pinned_by?: string | null
+          post_status?: string | null
+          task_id?: string | null
+          tenant_id: string
+        }
+        Update: {
+          author_id?: string | null
+          body?: string
+          channel_id?: string
+          created_at?: string
+          deleted_at?: string | null
+          deleted_by?: string | null
+          edited_at?: string | null
+          feedback_id?: string | null
+          id?: string
+          kind?: string
+          links?: Json
+          mentions?: string[]
+          parent_id?: string | null
+          pinned_at?: string | null
+          pinned_by?: string | null
+          post_status?: string | null
+          task_id?: string | null
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_messages_author_id_fkey"
+            columns: ["author_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_channel_fk"
+            columns: ["tenant_id", "channel_id"]
+            isOneToOne: false
+            referencedRelation: "chat_channels"
+            referencedColumns: ["tenant_id", "id"]
+          },
+          {
+            foreignKeyName: "chat_messages_deleted_by_fkey"
+            columns: ["deleted_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_feedback_id_fkey"
+            columns: ["feedback_id"]
+            isOneToOne: false
+            referencedRelation: "feedback"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_parent_fk"
+            columns: ["tenant_id", "channel_id", "parent_id"]
+            isOneToOne: false
+            referencedRelation: "chat_messages"
+            referencedColumns: ["tenant_id", "channel_id", "id"]
+          },
+          {
+            foreignKeyName: "chat_messages_pinned_by_fkey"
+            columns: ["pinned_by"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "chat_messages_task_id_fkey"
+            columns: ["task_id"]
+            isOneToOne: false
+            referencedRelation: "tasks"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      chat_upload_tickets: {
+        Row: {
+          created_at: string
+          path: string
+          tenant_id: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          path: string
+          tenant_id: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          path?: string
+          tenant_id?: string
+          user_id?: string
+        }
+        Relationships: []
       }
       loans_given: {
         Row: {
@@ -8699,6 +9047,7 @@ export type Database = {
           balance: number
           created_at: string
           credit_limit: number | null
+          due_day: number | null
           id: string
           institution: string | null
           interest_rate: number | null
@@ -8706,8 +9055,11 @@ export type Database = {
           kind: string
           label: string
           maturity_date: string | null
+          min_due: number | null
           notes: string | null
+          opening_balance: number
           owner_user_id: string
+          statement_day: number | null
           tenant_id: string
           updated_at: string
         }
@@ -8716,6 +9068,7 @@ export type Database = {
           balance?: number
           created_at?: string
           credit_limit?: number | null
+          due_day?: number | null
           id?: string
           institution?: string | null
           interest_rate?: number | null
@@ -8723,8 +9076,11 @@ export type Database = {
           kind: string
           label: string
           maturity_date?: string | null
+          min_due?: number | null
           notes?: string | null
+          opening_balance?: number
           owner_user_id: string
+          statement_day?: number | null
           tenant_id: string
           updated_at?: string
         }
@@ -8733,6 +9089,7 @@ export type Database = {
           balance?: number
           created_at?: string
           credit_limit?: number | null
+          due_day?: number | null
           id?: string
           institution?: string | null
           interest_rate?: number | null
@@ -8740,8 +9097,11 @@ export type Database = {
           kind?: string
           label?: string
           maturity_date?: string | null
+          min_due?: number | null
           notes?: string | null
+          opening_balance?: number
           owner_user_id?: string
+          statement_day?: number | null
           tenant_id?: string
           updated_at?: string
         }
@@ -8762,6 +9122,113 @@ export type Database = {
           },
           {
             foreignKeyName: "personal_accounts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      personal_categories: {
+        Row: {
+          created_at: string
+          direction: string
+          id: string
+          is_active: boolean
+          name: string
+          owner_user_id: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          direction?: string
+          id?: string
+          is_active?: boolean
+          name: string
+          owner_user_id: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          direction?: string
+          id?: string
+          is_active?: boolean
+          name?: string
+          owner_user_id?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_categories_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_categories_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_categories_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      personal_category_rules: {
+        Row: {
+          category: string
+          created_at: string
+          id: string
+          match_text: string
+          owner_user_id: string
+          tenant_id: string
+          updated_at: string
+        }
+        Insert: {
+          category: string
+          created_at?: string
+          id?: string
+          match_text: string
+          owner_user_id: string
+          tenant_id: string
+          updated_at?: string
+        }
+        Update: {
+          category?: string
+          created_at?: string
+          id?: string
+          match_text?: string
+          owner_user_id?: string
+          tenant_id?: string
+          updated_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_category_rules_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_category_rules_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_category_rules_tenant_id_fkey"
             columns: ["tenant_id"]
             isOneToOne: false
             referencedRelation: "v_tenant_with_parent"
@@ -8836,53 +9303,175 @@ export type Database = {
           },
         ]
       }
+      personal_import_batches: {
+        Row: {
+          account_id: string | null
+          created_at: string
+          file_kind: string | null
+          file_name: string | null
+          id: string
+          inserted_count: number
+          owner_user_id: string
+          row_count: number
+          skipped_count: number
+          statement_from: string | null
+          statement_to: string | null
+          tenant_id: string
+        }
+        Insert: {
+          account_id?: string | null
+          created_at?: string
+          file_kind?: string | null
+          file_name?: string | null
+          id?: string
+          inserted_count?: number
+          owner_user_id: string
+          row_count?: number
+          skipped_count?: number
+          statement_from?: string | null
+          statement_to?: string | null
+          tenant_id: string
+        }
+        Update: {
+          account_id?: string | null
+          created_at?: string
+          file_kind?: string | null
+          file_name?: string | null
+          id?: string
+          inserted_count?: number
+          owner_user_id?: string
+          row_count?: number
+          skipped_count?: number
+          statement_from?: string | null
+          statement_to?: string | null
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_import_batches_account_owner_fkey"
+            columns: ["account_id", "owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "personal_account_balances"
+            referencedColumns: ["account_id", "owner_user_id"]
+          },
+          {
+            foreignKeyName: "personal_import_batches_account_owner_fkey"
+            columns: ["account_id", "owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "personal_accounts"
+            referencedColumns: ["id", "owner_user_id"]
+          },
+          {
+            foreignKeyName: "personal_import_batches_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_import_batches_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_import_batches_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       personal_transactions: {
         Row: {
           account_id: string | null
           amount: number
+          balance_after: number | null
           category: string | null
           created_at: string
+          dedupe_hash: string | null
           id: string
+          import_batch_id: string | null
+          income_source: string | null
           kind: string
           note: string | null
           occurred_on: string
           owner_user_id: string
+          party: string | null
+          raw_description: string | null
+          reference: string | null
+          repeat_monthly: boolean
+          source: string
           tenant_id: string
           updated_at: string
         }
         Insert: {
           account_id?: string | null
           amount: number
+          balance_after?: number | null
           category?: string | null
           created_at?: string
+          dedupe_hash?: string | null
           id?: string
+          import_batch_id?: string | null
+          income_source?: string | null
           kind: string
           note?: string | null
           occurred_on: string
           owner_user_id: string
+          party?: string | null
+          raw_description?: string | null
+          reference?: string | null
+          repeat_monthly?: boolean
+          source?: string
           tenant_id: string
           updated_at?: string
         }
         Update: {
           account_id?: string | null
           amount?: number
+          balance_after?: number | null
           category?: string | null
           created_at?: string
+          dedupe_hash?: string | null
           id?: string
+          import_batch_id?: string | null
+          income_source?: string | null
           kind?: string
           note?: string | null
           occurred_on?: string
           owner_user_id?: string
+          party?: string | null
+          raw_description?: string | null
+          reference?: string | null
+          repeat_monthly?: boolean
+          source?: string
           tenant_id?: string
           updated_at?: string
         }
         Relationships: [
           {
-            foreignKeyName: "personal_transactions_account_id_fkey"
-            columns: ["account_id"]
+            foreignKeyName: "personal_transactions_account_owner_fkey"
+            columns: ["account_id", "owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "personal_account_balances"
+            referencedColumns: ["account_id", "owner_user_id"]
+          },
+          {
+            foreignKeyName: "personal_transactions_account_owner_fkey"
+            columns: ["account_id", "owner_user_id"]
             isOneToOne: false
             referencedRelation: "personal_accounts"
-            referencedColumns: ["id"]
+            referencedColumns: ["id", "owner_user_id"]
+          },
+          {
+            foreignKeyName: "personal_transactions_import_batch_fkey"
+            columns: ["import_batch_id", "owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "personal_import_batches"
+            referencedColumns: ["id", "owner_user_id"]
           },
           {
             foreignKeyName: "personal_transactions_owner_user_id_fkey"
@@ -10053,6 +10642,7 @@ export type Database = {
           approved_by: string | null
           approved_discount_bps: number | null
           approved_margin_bps: number | null
+          below_cost: boolean
           billing_cycle: string
           created_at: string
           created_date: string
@@ -10139,6 +10729,7 @@ export type Database = {
           approved_by?: string | null
           approved_discount_bps?: number | null
           approved_margin_bps?: number | null
+          below_cost?: boolean
           billing_cycle?: string
           created_at?: string
           created_date?: string
@@ -10225,6 +10816,7 @@ export type Database = {
           approved_by?: string | null
           approved_discount_bps?: number | null
           approved_margin_bps?: number | null
+          below_cost?: boolean
           billing_cycle?: string
           created_at?: string
           created_date?: string
@@ -11442,6 +12034,10 @@ export type Database = {
           last_reminder_at: string | null
           last_reminder_sent_at_v2: string | null
           mrr: number
+          non_renew_reason: string | null
+          non_renew_said_on: string | null
+          non_renew_set_at: string | null
+          non_renew_set_by: string | null
           outstanding_amount: number
           parent_subscription_id: string | null
           payment_due_date: string | null
@@ -11460,6 +12056,7 @@ export type Database = {
           suspended_invoice_id: string | null
           tenant_id: string
           term_months: number
+          term_amount: number | null
           updated_at: string
           used: number | null
           used_synced_at: string | null
@@ -11490,6 +12087,10 @@ export type Database = {
           last_reminder_at?: string | null
           last_reminder_sent_at_v2?: string | null
           mrr: number
+          non_renew_reason?: string | null
+          non_renew_said_on?: string | null
+          non_renew_set_at?: string | null
+          non_renew_set_by?: string | null
           outstanding_amount?: number
           parent_subscription_id?: string | null
           payment_due_date?: string | null
@@ -11508,6 +12109,7 @@ export type Database = {
           suspended_invoice_id?: string | null
           tenant_id: string
           term_months?: number
+          term_amount?: number | null
           updated_at?: string
           used?: number | null
           used_synced_at?: string | null
@@ -11538,6 +12140,10 @@ export type Database = {
           last_reminder_at?: string | null
           last_reminder_sent_at_v2?: string | null
           mrr?: number
+          non_renew_reason?: string | null
+          non_renew_said_on?: string | null
+          non_renew_set_at?: string | null
+          non_renew_set_by?: string | null
           outstanding_amount?: number
           parent_subscription_id?: string | null
           payment_due_date?: string | null
@@ -11556,6 +12162,7 @@ export type Database = {
           suspended_invoice_id?: string | null
           tenant_id?: string
           term_months?: number
+          term_amount?: number | null
           updated_at?: string
           used?: number | null
           used_synced_at?: string | null
@@ -14418,6 +15025,44 @@ export type Database = {
       }
     }
     Views: {
+      personal_account_balances: {
+        Row: {
+          account_id: string | null
+          account_kind: string | null
+          balance: number | null
+          credits: number | null
+          debits: number | null
+          label: string | null
+          opening_balance: number | null
+          owner_user_id: string | null
+          spend: number | null
+          tenant_id: string | null
+          txn_count: number | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "personal_accounts_owner_user_id_fkey"
+            columns: ["owner_user_id"]
+            isOneToOne: false
+            referencedRelation: "users"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_accounts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "personal_accounts_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       purchase_order_summary: {
         Row: {
           allocated_total: number | null
@@ -14600,6 +15245,15 @@ export type Database = {
         Args: { p_label?: string; p_tenant: string }
         Returns: Json
       }
+      backup_tenant_tiered: {
+        Args: {
+          p_keep: number
+          p_label?: string
+          p_only_if_changed?: boolean
+          p_tenant: string
+        }
+        Returns: Json
+      }
       bank_account_current_balance: {
         Args: { p_account_id: string }
         Returns: number
@@ -14719,7 +15373,74 @@ export type Database = {
         }
         Returns: Json
       }
+      chat_can_read: { Args: { p_channel_id: string }; Returns: boolean }
+      chat_can_read_edits: { Args: { p_channel_id: string }; Returns: boolean }
+      chat_create_channel: {
+        Args: {
+          p_is_private?: boolean
+          p_member_ids?: string[]
+          p_name: string
+          p_topic?: string
+        }
+        Returns: string
+      }
+      chat_delete_message: { Args: { p_message_id: string }; Returns: Json }
+      chat_edit_message: {
+        Args: { p_body: string; p_message_id: string }
+        Returns: undefined
+      }
+      chat_is_staff: { Args: never; Returns: boolean }
+      chat_links_ok: { Args: { p_links: Json }; Returns: boolean }
+      chat_mark_read: {
+        Args: { p_at?: string; p_channel_id: string }
+        Returns: string
+      }
+      chat_message_report: { Args: { p_message_id: string }; Returns: string }
+      chat_message_to_task: {
+        Args: { p_due_at?: string; p_message_id: string; p_owner_id?: string }
+        Returns: string
+      }
+      chat_open_dm: { Args: { p_user_id: string }; Returns: string }
+      chat_post_message: {
+        Args: {
+          p_attachments?: Json
+          p_body: string
+          p_channel_id: string
+          p_kind?: string
+          p_links?: Json
+          p_mentions?: string[]
+          p_parent_id?: string
+        }
+        Returns: string
+      }
+      chat_stored_file: {
+        Args: { p_path: string }
+        Returns: {
+          mime: string
+          size_bytes: number
+        }[]
+      }
+      chat_unread_counts: {
+        Args: never
+        Returns: {
+          channel_id: string
+          mentions: number
+          unread: number
+        }[]
+      }
+      chat_upload_ticket_close: {
+        Args: { p_path: string }
+        Returns: undefined
+      }
+      chat_upload_ticket_open: {
+        Args: { p_path: string; p_user_id: string }
+        Returns: undefined
+      }
       claim_customer: { Args: { p_customer_id: string }; Returns: undefined }
+      close_bank_account: {
+        Args: { p_account_id: string; p_closed_on: string; p_note?: string }
+        Returns: undefined
+      }
       combine_quotes: { Args: { p_quote_ids: string[] }; Returns: Json }
       compute_advance_adjustment: {
         Args: { p_quote_id: string }
@@ -15136,6 +15857,7 @@ export type Database = {
         }
         Returns: Json
       }
+      import_inbound_purchase: { Args: { p_id: number }; Returns: Json }
       import_indiamart_lead: {
         Args: {
           p_company: string
@@ -15204,6 +15926,7 @@ export type Database = {
           seller_state_code: string
         }[]
       }
+      is_chat_member: { Args: { p_channel_id: string }; Returns: boolean }
       is_demo_visitor: { Args: never; Returns: boolean }
       issue_credit_note: {
         Args: {
@@ -15342,6 +16065,15 @@ export type Database = {
         }
         Returns: string
       }
+      merge_employees: {
+        Args: {
+          p_dry_run?: boolean
+          p_dup_id: string
+          p_keep_both?: boolean
+          p_keep_id: string
+        }
+        Returns: Json
+      }
       merge_leads: {
         Args: { p_duplicate_id: string; p_primary_id: string }
         Returns: undefined
@@ -15449,6 +16181,7 @@ export type Database = {
         Returns: number
       }
       payment_run_role: { Args: never; Returns: string }
+      personal_import_commit: { Args: { batch: Json }; Returns: Json }
       plan_key: { Args: { p_name: string }; Returns: string }
       portal_customer_exists: { Args: { p_email: string }; Returns: boolean }
       portal_ensure_customer_link: { Args: never; Returns: string }
@@ -15902,6 +16635,7 @@ export type Database = {
         }
         Returns: Json
       }
+      reopen_bank_account: { Args: { p_account_id: string }; Returns: undefined }
       reopen_quote: { Args: { p_quote_id: string }; Returns: undefined }
       remove_opening_invoice_import: {
         Args: {
@@ -15916,6 +16650,7 @@ export type Database = {
           advances_from_customers: number
           as_of: string
           bill_itc_groups: Json
+          bank_overdraft: number
           bills_gst: number
           business_loans_payable: number
           cash_and_bank: number
@@ -16041,6 +16776,10 @@ export type Database = {
         Args: { p_employee_id: string; p_pin: string }
         Returns: undefined
       }
+      set_inbound_purchase_status: {
+        Args: { p_id: number; p_status: string }
+        Returns: string
+      }
       set_late_fee_mode: {
         Args: { p_entity_id: string; p_entity_type: string; p_mode: string }
         Returns: string
@@ -16074,6 +16813,15 @@ export type Database = {
         }
         Returns: undefined
       }
+      set_subscription_non_renewing: {
+        Args: {
+          p_on: boolean
+          p_reason?: string
+          p_said_on?: string
+          p_subscription_id: string
+        }
+        Returns: Json
+      }
       set_subscription_auto_renew: {
         Args: { p_sub_id: string; p_value: boolean }
         Returns: boolean
@@ -16105,6 +16853,15 @@ export type Database = {
       split_project_milestone: {
         Args: { p_amount: number; p_label: string; p_milestone_id: string }
         Returns: string
+      }
+      adjust_salary_lop: {
+        Args: {
+          p_lop_amount: number
+          p_lop_days: number
+          p_reason: string
+          p_salary_id: string
+        }
+        Returns: Json
       }
       start_employee_exit: {
         Args: {
@@ -16304,6 +17061,7 @@ export type Database = {
         | "delivery"
         | "partner_agent"
         | "marketing"
+        | "personal"
       vault_category:
         | "google_admin"
         | "m365_admin"
@@ -16501,6 +17259,7 @@ export const Constants = {
         "delivery",
         "partner_agent",
         "marketing",
+        "personal",
       ],
       vault_category: [
         "google_admin",

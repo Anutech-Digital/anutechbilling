@@ -290,3 +290,62 @@ describe("summariseCashFlow", () => {
     expect(summariseCashFlow([])).toMatchObject({ moneyIn: 0, moneyOut: 0, net: 0, drawnFromCompany: 0, count: 0 });
   });
 });
+
+// R-2386 — Pardeep's case: ₹5 lakh byana for his daughter's property sale, kept as cash with
+// his brother. The cash is an asset, the advance is owed — net worth must not grow by ₹5 lakh.
+describe("computeNetWorth — money I owe / hold for others (R-2386)", () => {
+  it("subtracts an open advance: cash ₹5 L held + ₹5 L advance = no gain", () => {
+    const r = computeNetWorth(
+      [{ kind: "cash", balance: 5_00_000 }, { kind: "savings", balance: 2_00_000 }, { kind: "credit_card", balance: 50_000 }],
+      [],
+      NOW,
+      [{ amount: 5_00_000, status: "open" }],
+    );
+    expect(r.liquidAssets).toBe(7_00_000);
+    expect(r.liabilities).toBe(50_000);
+    expect(r.oweHoldOpen).toBe(5_00_000);
+    expect(r.owedTotal).toBe(5_50_000);
+    expect(r.net).toBe(1_50_000);
+  });
+
+  it("a settled entry no longer counts", () => {
+    const r = computeNetWorth([{ kind: "cash", balance: 1_00_000 }], [], NOW, [
+      { amount: 60_000, status: "settled" },
+      { amount: 10_000, status: "open" },
+    ]);
+    expect(r.oweHoldOpen).toBe(10_000);
+    expect(r.net).toBe(90_000);
+  });
+
+  it("no entries = the old figure (cards only)", () => {
+    const r = computeNetWorth([{ kind: "savings", balance: 1_000 }, { kind: "credit_card", balance: 300 }], [], NOW);
+    expect(r.oweHoldOpen).toBe(0);
+    expect(r.net).toBe(700);
+  });
+});
+
+// R-2388 — Pardeep: "Given → bhai ko ₹1 L diya → Net worth me asset ki tarah dikhe"; a home
+// loan taken is a liability next to the card dues and owe/hold.
+describe("computeNetWorth — loans given and taken (R-2388)", () => {
+  it("loan given is an asset, loan taken is owed", () => {
+    const r = computeNetWorth(
+      [{ kind: "savings", balance: 5_00_000 }, { kind: "credit_card", balance: 50_000 }],
+      [],
+      NOW,
+      [{ amount: 1_00_000, status: "open" }],
+      { givenOutstanding: 1_00_000, takenOutstanding: 18_93_599 },
+    );
+    expect(r.loansGiven).toBe(1_00_000);
+    expect(r.loansTaken).toBe(18_93_599);
+    expect(r.owedTotal).toBe(50_000 + 1_00_000 + 18_93_599);
+    expect(r.net).toBe(5_00_000 + 1_00_000 - (50_000 + 1_00_000 + 18_93_599));
+  });
+
+  it("no loans = the R-2386 figure", () => {
+    const r = computeNetWorth([{ kind: "savings", balance: 1_000 }], [], NOW);
+    expect(r.loansGiven).toBe(0);
+    expect(r.loansTaken).toBe(0);
+    expect(r.net).toBe(1_000);
+  });
+});
+

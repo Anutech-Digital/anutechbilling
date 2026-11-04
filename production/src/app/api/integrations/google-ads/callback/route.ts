@@ -6,7 +6,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { googleOAuthCreds, originFromRequest, googleAdsRedirectUri, exchangeCode, fetchGoogleEmail } from "@/lib/google/oauth";
-import { refuseConnectWithoutVault, sealRefreshToken } from "@/lib/google/token-vault";
+import { refuseConnectWithoutVault, sealGoogleToken, sealRefreshToken } from "@/lib/google/token-vault";
 import { scopesLost, scopeLossMessage, hasGoogleAdsScope } from "@/lib/google/scope-union";
 import { getFreshGoogleAdsAccessToken, listAdAccounts } from "@/lib/google/google-ads-api";
 import { syncTenantAds } from "@/lib/marketing/ad-sync";
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
     const { data: before } = await admin.from("user_google_tokens").select("scopes").eq("user_id", user.id).maybeSingle();
     const lossNote = scopeLossMessage(scopesLost((before as { scopes?: string | null } | null)?.scopes, tokens.scope));
     const { error } = await admin.from("user_google_tokens").upsert({
-      user_id: user.id, tenant_id: me.tenant_id, google_email: email, access_token: tokens.access_token,
+      user_id: user.id, tenant_id: me.tenant_id, google_email: email, access_token: sealGoogleToken(tokens.access_token), // R-2351: sealed, never plaintext
       token_expiry: new Date(Date.now() + (tokens.expires_in ?? 3600) * 1000).toISOString(),
       scopes: tokens.scope ?? null, last_error: lossNote,
       // Encrypted at rest (R-051); opened only by refreshAccessToken, server-side.

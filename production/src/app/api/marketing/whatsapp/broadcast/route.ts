@@ -3,7 +3,10 @@
  *   { templateId, audience: { stages?: string[]; sources?: string[] }, dryRun?: boolean }
  *
  * Sends one approved WhatsApp template to every lead in the audience that has a mobile
- * number and has not opted out. Each send goes through sendWhatsApp, which logs it in
+ * number, has not opted out, AND said yes to offers (R-2011, DPDP: the latest marketing row in
+ * consent_events is 'granted'). A lead with no such row — every lead from before R-2011 — is
+ * skipped and counted as "skipped — no consent"; there is no override (card R-2011).
+ * Each send goes through sendWhatsApp, which logs it in
  * whatsapp_messages; this route records the batch in whatsapp_broadcasts.
  *
  * dryRun returns the count that WOULD be sent and a sample, and sends nothing — the page
@@ -23,6 +26,7 @@ import { sendCustomerWhatsApp } from "@/lib/messaging";
 import {
   slotValues, bodyComponents, renderBody, normalizeWaPhone, firstName, templateProblem,
 } from "@/lib/marketing/whatsapp-broadcast";
+import { marketingConsentLeadIds } from "@/lib/consent/marketing-consent.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -72,13 +76,24 @@ export const POST = withRoute({
   const { data: outs } = await admin.from("whatsapp_opt_outs").select("phone").eq("tenant_id", tenantId);
   const optedOut = new Set(((outs ?? []) as { phone: string }[]).map((o) => o.phone));
 
+  type LeadRow = { id: string; contact_name: string | null; company: string | null; contact_phone: string | null };
+  const audienceLeads = (leads ?? []) as LeadRow[];
+  /* R-2011: only leads who said yes to offers. Unknown is never "yes" — a failed read stops. */
+  let consented: Set<string>;
+  try {
+    consented = await marketingConsentLeadIds(admin, tenantId, audienceLeads.map((l) => l.id));
+  } catch {
+    throw new RouteError(500, "Could not check who agreed to offers — nothing was sent. Try again.");
+  }
+
   const seen = new Set<string>();
-  let noPhone = 0, skippedOptOut = 0;
+  let noPhone = 0, skippedOptOut = 0, skippedNoConsent = 0;
   const recipients: { leadId: string; phone: string; first: string; company: string | null }[] = [];
-  for (const l of (leads ?? []) as { id: string; contact_name: string | null; company: string | null; contact_phone: string | null }[]) {
+  for (const l of audienceLeads) {
     const phone = normalizeWaPhone(l.contact_phone);
     if (!phone) { noPhone++; continue; }
     if (optedOut.has(phone)) { skippedOptOut++; continue; }
+    if (!consented.has(l.id)) { skippedNoConsent++; continue; }
     if (seen.has(phone)) continue;
     seen.add(phone);
     recipients.push({ leadId: l.id, phone, first: firstName(l.contact_name), company: l.company });
@@ -92,13 +107,17 @@ export const POST = withRoute({
     const sample = capped[0];
     return {
       recipients: capped.length, overCap: Math.max(0, recipients.length - MAX_PER_RUN),
-      skippedOptOut, noPhone,
+      skippedOptOut, skippedNoConsent, noPhone,
       sample: sample ? renderBody(tpl.body, slotValues(paramMap, { first_name: sample.first, company: sample.company, sender })) : null,
       connected: (await resolveWhatsAppCreds(tenantId)) !== null,
     };
   }
 
-  if (capped.length === 0) throw new RouteError(400, "No lead in this audience has a WhatsApp number.");
+  if (capped.length === 0) {
+    throw new RouteError(400, skippedNoConsent > 0
+      ? `No lead in this audience agreed to offers — ${skippedNoConsent} skipped (no consent). Nothing was sent.`
+      : "No lead in this audience has a WhatsApp number.");
+  }
   if (!(await resolveWhatsAppCreds(tenantId))) {
     return NextResponse.json({ ok: false, error: "WhatsApp is not connected yet — connect the WhatsApp Business API in Settings.", code: "not_configured" }, { status: 409 });
   }
@@ -129,5 +148,5 @@ export const POST = withRoute({
     sent_count: sent, failed_count: failed, status: sent === 0 ? "failed" : "sent",
   }).eq("id", bc.id);
 
-  return { broadcastId: bc.id, recipients: capped.length, sent, failed, skippedOptOut, overCap: Math.max(0, recipients.length - MAX_PER_RUN) };
+  return { broadcastId: bc.id, recipients: capped.length, sent, failed, skippedOptOut, skippedNoConsent, overCap: Math.max(0, recipients.length - MAX_PER_RUN) };
 });

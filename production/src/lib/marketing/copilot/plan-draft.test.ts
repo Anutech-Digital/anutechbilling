@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 import {
   INDIA_REGIONS, OBJECTIVE_GROUPS, OBJECTIVE_INFO, audienceFromGroups, buildPrefillPrompt, groupOf,
-  guessFromPrompt, lookalikeInfo, mergeAiPrefill, normalizePlan, planDraftSchema, platformInfo,
+  guessFromPrompt, lookalikeInfo, mergeAiPrefill, objectiveInPrompt, normalizePlan, planDraftSchema, platformInfo,
   targetGroupRows, type PlanDraft,
 } from "./plan-draft";
 import { COPILOT_OBJECTIVES, PLATFORMS } from "./channel-specs";
@@ -189,5 +189,14 @@ describe("target groups ↔ audience", () => {
     const a = { ageMin: 25, ageMax: 55, genders: ["female" as const], regions: ["Delhi"], lookalike: true };
     expect(audienceFromGroups(targetGroupRows(base({ audience: a })))).toEqual(a);
     expect(audienceFromGroups([])).toEqual({ ageMin: 18, ageMax: 65, genders: [], regions: [], lookalike: false });
+  });
+});
+
+describe("objectiveInPrompt (R-2159) — the goal only when the words name one", () => {
+  it("names the objective the words say, or null when they say none (guessFromPrompt then defaults to leads)", () => {
+    expect(objectiveInPrompt("Launch a campaign to increase sales of Google Workspace in Delhi, ₹500/day")).toBe("sales");
+    expect(objectiveInPrompt("More enquiries for Tally in Pune")).toBe("lead_gen");
+    expect(objectiveInPrompt("Google Workspace in Delhi")).toBeNull();
+    expect(guessFromPrompt("Google Workspace in Delhi", ITEMS).objective).toBe("lead_gen");
   });
 });

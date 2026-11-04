@@ -1,9 +1,30 @@
 /**
  * R-1516 — Payment Follow-up (/collections): everyone who still owes money, whom to chase
- * first, what they promised and who owns the follow-up. Each row opens the Follow-up dialog
- * (R-1517: log a call / promise, next date, history) and "Remind" (R-1518: the AI drafts a
- * reminder, a person edits it and sends it on WhatsApp or email — nothing is sent on its own).
- * Owner / manager / accountant also see "This week" (R-1518 owner report) on top.
+ * first, what they promised and who owns the follow-up.
+ *
+ * R-2408 — a worklist first: age tiles (Overdue · 1–30 · 31–60 · 61–90 · 90+ · Not due yet,
+ * click = filter), search / owner / age / sort, then compact one-line rows with ONE next-step
+ * button + a ⋯ menu (Follow-up R-1517, Remind R-1518, Send pending dues and Record payment
+ * R-1526 — the same dialogs as before). Not due yet is hidden by default (its own tile). The
+ * owner's "This week" report (R-1518) folds open under the list. Logic: ./worklist.ts; cells:
+ * ./owed-cells.tsx; buttons: ./row-actions.tsx.
+ *
+ * R-2409 — a "Today" view (follow-ups due + promises due today + broken promises, every age),
+ * "Today's work first" = broken promises, then today's work, each by ₹ due × days late, and ONE
+ * stage chip per row (Not contacted · Reminded · Promised · Broken · Disputed · Part-paid) under
+ * the customer's name. Rules: lib/collections/priority.ts.
+ *
+ * R-2410 — customers owing up to ₹500, or exactly the TDS they withheld, are not chased: they
+ * sit in a folded "Small leftovers (N · ₹X)" group under the list (./small-leftovers.tsx) where
+ * the owner / accountant books the TDS or writes the balance off. Rules:
+ * lib/collections/small-leftovers.ts.
+ *
+ * R-2413 — owner / manager / accountant tick rows (a tick-box column, select-all in the header)
+ * → the bulk bar: Assign owner (./bulk-assign-dialog.tsx — suggests each customer's account
+ * manager), Send reminder and Send statement (components/features/collections/bulk-send-dialog.tsx
+ * — lists who is skipped and why, one Email button). The ⋯ menu's "Remind" + "Send pending dues"
+ * are one "Send reminder" (R-2412's dialog). Only rows on screen act — a ticked row hidden by a
+ * filter is left alone. Rules: lib/collections/bulk-actions.ts.
  *
  * Rules and reads live in lib/queries/collections.ts (tested in ./collections.test.ts):
  * the balance is the same invoiceAmountDue as Customer Aging, every read pages past 1000.
@@ -12,7 +33,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import type { Route } from "next";
 
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -20,26 +40,39 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LoadError } from "@/components/shared/load-error";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useUserNames } from "@/lib/hooks/useUserNames";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
 import { canOpenRoute } from "@/lib/nav";
-import { tdsShortfallLine } from "@/lib/accounting/tds-match";
-import { Button } from "@/components/ui/button";
 import { FollowupDialog } from "@/components/features/collections/followup-dialog";
-import { ReminderDialog } from "@/components/features/collections/reminder-dialog";
-import { PendingDuesDialog } from "@/components/features/collections/pending-dues-dialog";
+import { SendReminderDialog } from "@/components/features/collections/send-reminder-dialog";
+import { BulkSendDialog } from "@/components/features/collections/bulk-send-dialog";
+import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
+import { mayBulkCollect, type BulkSendMode } from "@/lib/collections/bulk-actions";
+import { BulkAssignDialog } from "./bulk-assign-dialog";
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 import { canRecordMoney } from "@/lib/auth/roles";
 import { CollectionsOwnerReport } from "@/components/features/collections/owner-report";
 import { maySeeCollectionsReport } from "@/lib/collections/weekly-report";
 import {
   COLLECTION_VIEWS, defaultCollectionView, filterCollectionRows, useCollections,
-  type CollectionRow, type CollectionView, type OwedItem,
+  type CollectionRow, type CollectionView,
 } from "@/lib/queries/collections";
+import {
+  AGE_LABEL, AGE_VIEWS, DEFAULT_AGE, SORT_KEYS, UNASSIGNED, worklistCols,
+  buildWorklist, hasOverdueLine, matchesSearch, ownerKey, ownerKeys, type AgeKey, type AgeView,
+} from "./worklist";
+import { AgeTileRow } from "./age-tiles";
+import { WorklistToolbar } from "./worklist-toolbar";
+import { RowActions, type RowDialog } from "./row-actions";
+import { AmountCell, CustomerName, NextText, OverdueBadge, OwedCell, PromiseText, StageChip, type CanOpen } from "./owed-cells";
+import { isTodayWork, todayCounts } from "@/lib/collections/priority";
+import { splitLeftovers } from "@/lib/collections/small-leftovers";
+import { SmallLeftovers } from "./small-leftovers";
 
 const VIEW_LABEL: Record<CollectionView, string> = {
+  today: "Today",
   mine: "Mere",
   all: "All",
   broken: "Broken promises",
@@ -52,53 +85,89 @@ export default function CollectionsPage() {
   const { data: names } = useUserNames();
   const [picked, setPicked] = useUrlChoice<(typeof URL_VIEWS)[number]>("view", URL_VIEWS, "");
   const view: CollectionView = picked || defaultCollectionView(me?.role);
+  /* R-2409: Today's work is any age (a promise due today can be on a bill not late yet). */
+  const ageDefault: AgeView = view === "today" ? "all" : DEFAULT_AGE;
+  const [age, setAge] = useUrlChoice<AgeView>("age", AGE_VIEWS, ageDefault);
+  const [sort, setSort] = useUrlChoice("sort", SORT_KEYS, "priority");
+  const [q, setQ] = React.useState("");
+  const [owner, setOwner] = React.useState("");
+  const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(new Set());
+  const [reportOpen, setReportOpen] = React.useState(false);
   const role = me?.role ?? null;
   const canOpen = React.useCallback((href: string) => canOpenRoute(role, href), [role]);
 
   const all = rows ?? [];
-  const shown = filterCollectionRows(all, view, me?.userId);
-  const ownerName = (r: CollectionRow): string => {
-    const id = r.assignedTo ?? r.ownerId;
-    if (!id) return "Unassigned";
-    return names?.get(id)?.label ?? "a colleague";
-  };
+  const viewAll = filterCollectionRows(all, view, me?.userId);
+  /* R-2410: balances up to ₹500 (or exactly the TDS) leave the tiles and the list for "Small
+     leftovers" — search and owner still narrow them. */
+  const { main: viewRows, leftovers: viewLeftovers } = splitLeftovers(viewAll);
+  const list = buildWorklist(viewRows, { q, owner, age, sort });
+  const leftovers = viewLeftovers.filter((r) => matchesSearch(r, q) && (!owner || ownerKey(r) === owner));
+  const leftoverTotal = leftovers.reduce((s, r) => s + Math.round(r.amountDue), 0);
+  const shown = list.shown;
+  const ownerLabel = (key: string): string => (key === UNASSIGNED ? "Unassigned" : names?.get(key)?.label ?? "a colleague");
+  const ownerName = (r: CollectionRow): string => ownerLabel(ownerKey(r));
+  /* Pressing the pressed tile goes back to the default list (Overdue). */
+  const pickTile = (key: AgeKey) => setAge(age === key ? ageDefault : key);
+  const toggle = (key: string) => setExpanded((s) => {
+    const n = new Set(s);
+    if (n.has(key)) n.delete(key); else n.add(key);
+    return n;
+  });
 
-  /* R-1517: the row whose Follow-up dialog is open. Kept by key so the dialog follows the
-     refreshed row after a save (the list is re-read at once). */
-  const [fuKey, setFuKey] = React.useState<string | null>(null);
-  const fuRow = fuKey ? all.find((r) => r.key === fuKey) ?? null : null;
-  /* R-1518: the row whose Remind dialog is open. */
-  const [remKey, setRemKey] = React.useState<string | null>(null);
-  const remRow = remKey ? all.find((r) => r.key === remKey) ?? null : null;
-  /* R-1526: the row whose "Send pending dues" dialog is open, and the one whose R-1525
-     "Record payment — multiple invoices" dialog is open (money roles only). */
-  const [duesKey, setDuesKey] = React.useState<string | null>(null);
-  const duesRow = duesKey ? all.find((r) => r.key === duesKey) ?? null : null;
-  const [payKey, setPayKey] = React.useState<string | null>(null);
-  const payRow = payKey ? all.find((r) => r.key === payKey) ?? null : null;
+  /* The row whose dialog is open. Kept by key so the dialog follows the refreshed row after a
+     save (the list is re-read at once). */
+  const [dialog, setDialog] = React.useState<{ kind: RowDialog; key: string } | null>(null);
+  const openDialog = React.useCallback((kind: RowDialog, key: string) => setDialog({ kind, key }), []);
+  const dlgRow = dialog ? all.find((r) => r.key === dialog.key) ?? null : null;
+  const closeIf = (o: boolean) => { if (!o) setDialog(null); };
   const canPay = canRecordMoney(role);
   const showReport = maySeeCollectionsReport(role);
+
+  /* R-2413: tick rows → bulk bar. Only rows on screen act (a filter hides the rest). */
+  const canBulk = mayBulkCollect(role);
+  const cols = worklistCols(canBulk);
+  const [selected, setSelected] = React.useState<ReadonlySet<string>>(new Set());
+  /* The rows are frozen when a bulk dialog opens: the list re-reads after each save, and a row
+     leaving the view must not change (or re-read) the run in progress. */
+  const [bulk, setBulk] = React.useState<{ kind: "assign" | BulkSendMode; rows: CollectionRow[] } | null>(null);
+  const selectedRows = canBulk ? shown.filter((r) => selected.has(r.key)) : [];
+  const allOn = shown.length > 0 && shown.every((r) => selected.has(r.key));
+  const someOn = selectedRows.length > 0;
+  const tick = (keys: readonly string[], on: boolean) => setSelected((s) => {
+    const n = new Set(s);
+    for (const k of keys) { if (on) n.add(k); else n.delete(k); }
+    return n;
+  });
+  const team = React.useMemo(
+    () => [...(names?.values() ?? [])].filter((u) => !u.inactive).sort((a, b) => a.label.localeCompare(b.label)),
+    [names],
+  );
+  const inactiveIds = React.useMemo(() => new Set([...(names?.values() ?? [])].filter((u) => u.inactive).map((u) => u.id)), [names]);
+  const openBulk = (kind: "assign" | BulkSendMode) => setBulk({ kind, rows: selectedRows });
   const owing = React.useMemo(
-    () => (rows ?? []).filter((r) => !!r.customerId).map((r) => ({ customerId: r.customerId!, customerName: r.customerName, amountDue: r.amountDue })),
+    /* R-2401: a renewal-only row owes nothing yet — the weekly report stays real dues.
+       R-2408: "No follow-up for 7+ days" counts only customers with a late line. */
+    () => (rows ?? []).filter((r) => !!r.customerId && r.amountDue > 0)
+      .map((r) => ({ customerId: r.customerId!, customerName: r.customerName, amountDue: r.amountDue, overdue: hasOverdueLine(r) })),
     [rows],
   );
-
-  const total = shown.reduce((s, r) => s + r.amountDue, 0);
-  const todayCount = shown.filter((r) => r.followUpDue || r.promiseBroken).length;
+  const todayCount = shown.filter(isTodayWork).length;
+  const today = todayCounts(splitLeftovers(all).main);
+  const filtered = q.trim() !== "" || owner !== "" || age !== ageDefault;
+  const resetFilters = () => { setQ(""); setOwner(""); setAge("all"); };
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
-      <div className="mb-5">
+      <div className="mb-4">
         <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Billing</p>
-        <h1 className="font-serif text-3xl md:text-4xl tracking-tight">Payment Follow-up</h1>
-        <p className="text-sm text-ink-3 mt-1">
-          Who still owes money, and whom to call first — today&apos;s follow-ups and broken promises on top.
-        </p>
+        <h1 className="font-serif text-3xl tracking-tight">Payment Follow-up</h1>
+        <p className="text-sm text-ink-3 mt-1">Who is late with money, and whom to call first — one button per customer.</p>
       </div>
 
-      {showReport && !isLoading && !isError && <CollectionsOwnerReport owing={owing} />}
+      {!isLoading && !isError && viewRows.length > 0 && <AgeTileRow tiles={list.tiles} active={age} onPick={pickTile} />}
 
-      <div className="flex flex-wrap items-center gap-2 mb-4" role="group" aria-label="Show">
+      <div className="flex flex-wrap items-center gap-2 mb-3" role="group" aria-label="Show">
         {COLLECTION_VIEWS.map((v) => (
           <button
             key={v}
@@ -110,111 +179,123 @@ export default function CollectionsPage() {
             }`}
           >
             {VIEW_LABEL[v]}
+            {v === "today" && today.total > 0 && <span className="ml-1 tabular-nums text-rose-600 font-semibold">{today.total}</span>}
           </button>
         ))}
         {!isLoading && !isError && shown.length > 0 && (
           <span className="text-sm text-ink-3 ml-auto tabular-nums">
-            {shown.length} {shown.length === 1 ? "customer" : "customers"} · <b className="text-ink">{rupee(total)}</b> due
-            {todayCount > 0 && <> · <span className="text-rose">{todayCount} to chase today</span></>}
+            {AGE_LABEL[age]}: {shown.length} {shown.length === 1 ? "customer" : "customers"} · <b className="text-ink">{rupee(list.total)}</b> due
+            {list.renewalTotal > 0 && <> · + {rupee(list.renewalTotal)} renewals</>}
+            {view === "today"
+              ? <> · {today.followUps} follow-ups due · {today.promisesToday} promised today · <span className={today.broken > 0 ? "text-rose" : undefined}>{today.broken} broken</span></>
+              : todayCount > 0 && <> · <span className="text-rose">{todayCount} to chase today</span></>}
           </span>
         )}
       </div>
 
+      {!isLoading && !isError && viewAll.length > 0 && (
+        <WorklistToolbar
+          q={q} onQ={setQ}
+          owner={owner} onOwner={setOwner} owners={ownerKeys(viewAll)} ownerLabel={ownerLabel}
+          age={age} onAge={setAge}
+          sort={sort} onSort={setSort}
+        />
+      )}
+
       {isLoading ? (
-        <div className="space-y-3">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-16 w-full" />)}</div>
+        <div className="space-y-3">{[1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-12 w-full" />)}</div>
       ) : isError && !rows ? (
         <LoadError what="Payment follow-up list" onRetry={() => { void refetch(); }} />
-      ) : shown.length === 0 ? (
+      ) : viewAll.length === 0 ? (
         <Card className="py-2">
           <Empty view={view} anyRows={all.length > 0} onAll={() => setPicked("all")} canOpen={canOpen} />
+        </Card>
+      ) : shown.length === 0 ? (
+        <Card className="py-2">
+          <EmptyState
+            icon="check_circle"
+            title={filtered ? `No customers in "${AGE_LABEL[age]}"${q.trim() ? ` matching "${q.trim()}"` : ""}` : "Nothing to show"}
+            body={age === "overdue" && !q.trim() && !owner
+              ? "Nobody is late with money right now — customers whose invoices are not due yet are under the Not due yet tile."
+              : "Change the search, owner or age to see more customers."}
+            action={(
+              <button type="button" onClick={resetFilters} className="min-h-[44px] px-4 rounded-full border border-hairline text-sm text-ink hover:border-amber/60">
+                Show every customer
+              </button>
+            )}
+          />
         </Card>
       ) : (
         <>
           {/* Phone: card list (§20) */}
-          <ul className="md:hidden space-y-2.5">
+          <ul className="md:hidden space-y-2">
             {shown.map((r) => (
               <li key={r.key}>
-                <Card className="p-4">
+                <Card className="p-3">
                   <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0 break-words font-medium text-ink leading-tight">
-                      <CustomerName r={r} canOpen={canOpen} />
-                    </div>
-                    <div className="shrink-0 font-serif text-lg text-ink leading-none tabular-nums whitespace-nowrap">{rupee(r.amountDue)}</div>
+                    {canBulk && <RowTick r={r} on={selected.has(r.key)} onTick={tick} className="mt-0.5" />}
+                    <div className="min-w-0 flex-1 break-words font-medium text-ink leading-tight"><CustomerName r={r} canOpen={canOpen} /></div>
+                    <div className="shrink-0 text-right"><AmountCell r={r} className="font-serif text-lg leading-none" /></div>
                   </div>
-                  <div className="flex flex-wrap gap-1.5 mt-2">
+                  <div className="flex flex-wrap gap-1.5 mt-1.5">
                     <OverdueBadge days={r.daysOverdue} />
-                    {r.promiseBroken && <Badge kind="danger" dot>Promise broken</Badge>}
+                    <StageChip stage={r.stage} />
                     {r.followUpDue && <Badge kind="warning" dot>Follow up today</Badge>}
                   </div>
-                  <ul className="mt-3 space-y-1.5">
-                    {r.items.map((i) => <li key={`${i.kind}:${i.id}`}><OwedLine item={i} canOpen={canOpen} /></li>)}
-                  </ul>
-                  <dl className="grid grid-cols-2 gap-x-3 gap-y-1.5 mt-3 text-sm">
-                    <dt className="text-ink-3">Promise</dt>
-                    <dd className="min-w-0"><PromiseText r={r} /></dd>
-                    <dt className="text-ink-3">Next follow-up</dt>
-                    <dd className="min-w-0"><NextText r={r} /></dd>
-                    <dt className="text-ink-3">Owner</dt>
-                    <dd className="min-w-0 break-words">{ownerName(r)}</dd>
+                  <div className="mt-2 text-sm"><OwedCell r={r} canOpen={canOpen} open={expanded.has(r.key)} onToggle={() => toggle(r.key)} /></div>
+                  <dl className="grid grid-cols-3 gap-x-2 mt-2 text-xs">
+                    <div className="min-w-0"><dt className="text-ink-3">Promise</dt><dd><PromiseText r={r} /></dd></div>
+                    <div className="min-w-0"><dt className="text-ink-3">Next follow-up</dt><dd><NextText r={r} /></dd></div>
+                    <div className="min-w-0"><dt className="text-ink-3">Owner</dt><dd className="break-words">{ownerName(r)}</dd></div>
                   </dl>
-                  {r.lastNote && <p className="mt-2 text-sm text-ink-2 break-words">“{r.lastNote}”</p>}
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <FollowupButton r={r} onOpen={setFuKey} className="w-full justify-center" />
-                    <RemindButton r={r} onOpen={setRemKey} className="w-full justify-center" />
-                    <DuesButton r={r} onOpen={setDuesKey} className="w-full justify-center" />
-                    {canPay && <PayButton r={r} onOpen={setPayKey} className="w-full justify-center" />}
-                  </div>
+                  <RowActions r={r} canPay={canPay} onOpen={openDialog} className="mt-2" />
                 </Card>
               </li>
             ))}
           </ul>
 
-          {/* Tablet / desktop: table */}
+          {/* Tablet / desktop: one line per customer, fixed column budget (worklist.ts WORKLIST_COLS) */}
           <Card className="hidden md:block overflow-hidden">
-            <table className="w-full text-sm table-fixed">
+            <table className="w-full table-fixed text-sm">
               <colgroup>
-                <col className="w-[20%]" />
-                <col className="w-[28%]" />
-                <col className="w-[11%]" />
-                <col className="w-[9%]" />
-                <col className="w-[12%]" />
-                <col className="w-[10%]" />
-                <col className="w-[10%]" />
+                {cols.map((c) => <col key={c.key} style={c.width ? { width: c.width } : undefined} />)}
               </colgroup>
               <thead className="bg-paper-2/50 text-3xs uppercase tracking-wider text-ink-3 font-semibold">
                 <tr>
-                  <th scope="col" className="text-left px-3 py-3">Customer</th>
-                  <th scope="col" className="text-left px-3 py-3">What&apos;s owed</th>
-                  <th scope="col" className="text-right px-3 py-3">Amount due</th>
-                  <th scope="col" className="text-left px-3 py-3">Overdue</th>
-                  <th scope="col" className="text-left px-3 py-3">Promise to pay</th>
-                  <th scope="col" className="text-left px-3 py-3">Next follow-up</th>
-                  <th scope="col" className="text-left px-3 py-3">Owner</th>
+                  {cols.map((c) => (c.key === "select" ? (
+                    <th key={c.key} scope="col" className="pl-3 pr-1 py-2 text-left">
+                      <input
+                        type="checkbox"
+                        aria-label={allOn ? "Untick every customer on screen" : "Tick every customer on screen"}
+                        className="cursor-pointer accent-amber align-middle"
+                        checked={allOn}
+                        ref={(el) => { if (el) el.indeterminate = someOn && !allOn; }}
+                        onChange={(e) => tick(shown.map((r) => r.key), e.target.checked)}
+                      />
+                    </th>
+                  ) : (
+                    <th key={c.key} scope="col" className={`px-3 py-2 ${c.align === "right" ? "text-right" : "text-left"}`}>{c.label}</th>
+                  )))}
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
                 {shown.map((r) => (
-                  <tr key={r.key} className="align-top hover:bg-paper-2/40">
-                    <td className="px-3 py-3 break-words">
-                      <div className="font-medium text-ink"><CustomerName r={r} canOpen={canOpen} /></div>
-                      {r.lastNote && <div className="text-xs text-ink-3 mt-0.5 line-clamp-2" title={r.lastNote}>“{r.lastNote}”</div>}
-                      <div className="mt-1.5 flex flex-wrap gap-1.5">
-                        <FollowupButton r={r} onOpen={setFuKey} />
-                        <RemindButton r={r} onOpen={setRemKey} />
-                        <DuesButton r={r} onOpen={setDuesKey} />
-                        {canPay && <PayButton r={r} onOpen={setPayKey} />}
+                  <tr key={r.key} className={`align-top hover:bg-paper-2/40 ${selected.has(r.key) && canBulk ? "bg-amber-soft/40" : ""}`}>
+                    {canBulk && <td className="pl-3 pr-1 py-2"><RowTick r={r} on={selected.has(r.key)} onTick={tick} /></td>}
+                    <td className="px-3 py-2">
+                      <div className="font-medium text-ink truncate" title={r.customerName}><CustomerName r={r} canOpen={canOpen} /></div>
+                      <div className="flex items-center gap-1.5 min-w-0 mt-0.5">
+                        <StageChip stage={r.stage} />
+                        {r.lastNote && <span className="text-2xs text-ink-3 truncate" title={r.lastNote}>“{r.lastNote}”</span>}
                       </div>
                     </td>
-                    <td className="px-3 py-3">
-                      <ul className="space-y-1">
-                        {r.items.map((i) => <li key={`${i.kind}:${i.id}`}><OwedLine item={i} canOpen={canOpen} /></li>)}
-                      </ul>
-                    </td>
-                    <td className="px-3 py-3 text-right font-mono font-semibold text-ink tabular-nums">{rupee(r.amountDue)}</td>
-                    <td className="px-3 py-3"><OverdueBadge days={r.daysOverdue} /></td>
-                    <td className="px-3 py-3"><PromiseText r={r} /></td>
-                    <td className="px-3 py-3"><NextText r={r} /></td>
-                    <td className="px-3 py-3 break-words text-ink-2">{ownerName(r)}</td>
+                    <td className="px-3 py-2"><OwedCell r={r} canOpen={canOpen} open={expanded.has(r.key)} onToggle={() => toggle(r.key)} /></td>
+                    <td className="px-3 py-2 text-right"><AmountCell r={r} className="font-mono font-semibold" /></td>
+                    <td className="px-3 py-2"><OverdueBadge days={r.daysOverdue} /></td>
+                    <td className="px-3 py-2 text-xs"><PromiseText r={r} /></td>
+                    <td className="px-3 py-2 text-xs"><NextText r={r} /></td>
+                    <td className="px-3 py-2 text-xs text-ink-2 truncate" title={ownerName(r)}>{ownerName(r)}</td>
+                    <td className="px-3 py-2"><RowActions r={r} canPay={canPay} onOpen={openDialog} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -223,181 +304,106 @@ export default function CollectionsPage() {
         </>
       )}
 
-      {fuRow?.customerId && (
+      {!isLoading && !isError && leftovers.length > 0 && (
+        <SmallLeftovers rows={leftovers} total={leftoverTotal} role={role} canOpen={canOpen} />
+      )}
+
+      {showReport && !isLoading && !isError && (
+        <section className="mt-5" aria-label="This week report">
+          <button
+            type="button"
+            aria-expanded={reportOpen}
+            onClick={() => setReportOpen((o) => !o)}
+            className="mb-2 inline-flex items-center gap-1.5 text-sm font-medium text-ink-2 hover:text-ink"
+          >
+            <Icon name={reportOpen ? "chevron_down" : "chevron_right"} size={14} />
+            This week — received, promises, follow-ups by person
+          </button>
+          {reportOpen && <CollectionsOwnerReport owing={owing} />}
+        </section>
+      )}
+
+      {dialog?.kind === "followup" && dlgRow?.customerId && (
         <FollowupDialog
           open
-          onOpenChange={(o) => { if (!o) setFuKey(null); }}
-          customerId={fuRow.customerId}
-          customerName={fuRow.customerName}
-          ownerId={fuRow.ownerId}
-          items={fuRow.items}
-          stillOwes={fuRow.amountDue > 0}
-          payments={fuRow.payments}
-          amountDue={fuRow.amountDue}
-          onRemind={() => { setFuKey(null); setRemKey(fuRow.key); }}
+          onOpenChange={closeIf}
+          customerId={dlgRow.customerId}
+          customerName={dlgRow.customerName}
+          ownerId={dlgRow.ownerId}
+          /* R-2401: a renewal can be the follow-up's subject too — linked as its subscription. */
+          items={[
+            ...dlgRow.items,
+            ...dlgRow.renewals
+              .filter((i) => !dlgRow.items.some((o) => o.kind === "subscription" && o.id === i.id))
+              .map((i) => ({ kind: "subscription" as const, id: i.id, label: `${i.label} (renewal)`, quoteId: i.quoteId })),
+          ]}
+          stillOwes={dlgRow.amountDue > 0}
+          payments={dlgRow.payments}
+          amountDue={dlgRow.amountDue}
+          onRemind={() => setDialog({ kind: "send", key: dlgRow.key })}
         />
       )}
-      {remRow?.customerId && (
-        <ReminderDialog
+      {/* R-2413: the ⋯ menu's ONE "Send reminder" — This invoice or Full statement (R-2412). */}
+      {dialog?.kind === "send" && dlgRow?.customerId && (
+        <SendReminderDialog
           open
-          onOpenChange={(o) => { if (!o) setRemKey(null); }}
-          customerId={remRow.customerId}
-          customerName={remRow.customerName}
+          onOpenChange={closeIf}
+          customerId={dlgRow.customerId}
+          customerName={dlgRow.customerName}
         />
       )}
-      {duesRow?.customerId && (
-        <PendingDuesDialog
-          open
-          onOpenChange={(o) => { if (!o) setDuesKey(null); }}
-          customerId={duesRow.customerId}
-          customerName={duesRow.customerName}
-        />
+
+      {canBulk && (
+        <>
+          {bulk?.kind === "assign" && (
+            <BulkAssignDialog
+              open
+              onOpenChange={(o) => { if (!o) setBulk(null); }}
+              rows={bulk.rows}
+              team={team}
+              inactiveIds={inactiveIds}
+              onDone={(failedKeys) => setSelected(new Set(failedKeys))}
+            />
+          )}
+          {(bulk?.kind === "reminder" || bulk?.kind === "statement") && (
+            <BulkSendDialog
+              open
+              onOpenChange={(o) => { if (!o) setBulk(null); }}
+              mode={bulk.kind}
+              rows={bulk.rows}
+              onDone={(failedKeys) => setSelected(new Set(failedKeys))}
+            />
+          )}
+          <BulkActionBar count={selectedRows.length} noun="customer" onClear={() => setSelected(new Set())}>
+            <BulkBarButton icon="user" onClick={() => openBulk("assign")}>Assign owner</BulkBarButton>
+            <BulkBarButton icon="send" onClick={() => openBulk("reminder")}>Send reminder</BulkBarButton>
+            <BulkBarButton icon="file" onClick={() => openBulk("statement")}>Send statement</BulkBarButton>
+          </BulkActionBar>
+        </>
       )}
-      {canPay && payRow?.customerId && (
+      {canPay && dialog?.kind === "pay" && dlgRow?.customerId && (
         <MultiInvoicePaymentDialog
           open
-          onOpenChange={(o) => { if (!o) setPayKey(null); }}
-          customerId={payRow.customerId}
-          customerName={payRow.customerName}
+          onOpenChange={closeIf}
+          customerId={dlgRow.customerId}
+          customerName={dlgRow.customerName}
         />
       )}
     </div>
   );
 }
 
-/** R-1517: opens the Follow-up dialog. A line with no customer record cannot carry follow-ups. */
-function FollowupButton({ r, onOpen, className }: { r: CollectionRow; onOpen: (key: string) => void; className?: string }) {
-  if (!r.customerId) {
-    return <p className={`text-xs text-ink-3 ${className ?? ""}`}>Link this invoice to a customer to log follow-ups.</p>;
-  }
+/** R-2413: one row's tick box (desktop cell and phone card). */
+function RowTick({ r, on, onTick, className }: { r: CollectionRow; on: boolean; onTick: (keys: readonly string[], on: boolean) => void; className?: string }) {
   return (
-    <Button
-      type="button"
-      size="sm"
-      variant="default"
-      icon="phone"
-      className={className}
-      aria-label={`Log a follow-up for ${r.customerName}`}
-      onClick={() => onOpen(r.key)}
-    >
-      Follow-up
-    </Button>
+    <input
+      type="checkbox"
+      aria-label={`Select ${r.customerName}`}
+      className={`cursor-pointer accent-amber shrink-0 ${className ?? ""}`}
+      checked={on}
+      onChange={(e) => onTick([r.key], e.target.checked)}
+    />
   );
-}
-
-/** R-1518: the AI drafts a reminder; a person edits and sends it. Needs a customer record. */
-function RemindButton({ r, onOpen, className }: { r: CollectionRow; onOpen: (key: string) => void; className?: string }) {
-  if (!r.customerId) return null;
-  return (
-    <Button
-      type="button"
-      size="sm"
-      variant="default"
-      icon="send"
-      className={className}
-      aria-label={`Draft a payment reminder for ${r.customerName}`}
-      onClick={() => onOpen(r.key)}
-    >
-      Remind
-    </Button>
-  );
-}
-
-/** R-1526: preview the statement of pending dues and send it (a person sends — R-1514). */
-function DuesButton({ r, onOpen, className }: { r: CollectionRow; onOpen: (key: string) => void; className?: string }) {
-  if (!r.customerId) return null;
-  return (
-    <Button
-      type="button"
-      size="sm"
-      variant="default"
-      icon="file"
-      className={className}
-      aria-label={`Send pending dues statement to ${r.customerName}`}
-      onClick={() => onOpen(r.key)}
-    >
-      Send pending dues
-    </Button>
-  );
-}
-
-/** R-1526: when the customer pays the total — R-1525's one-payment-many-invoices dialog. */
-function PayButton({ r, onOpen, className }: { r: CollectionRow; onOpen: (key: string) => void; className?: string }) {
-  if (!r.customerId) return null;
-  return (
-    <Button
-      type="button"
-      size="sm"
-      variant="default"
-      icon="rupee"
-      className={className}
-      aria-label={`Record a payment from ${r.customerName} across their invoices`}
-      onClick={() => onOpen(r.key)}
-    >
-      Record payment
-    </Button>
-  );
-}
-
-// ─── Pieces ──────────────────────────────────────────────────────────────────
-
-type CanOpen = (href: string) => boolean;
-
-function MaybeLink({ href, canOpen, children, className }: { href: string | null; canOpen: CanOpen; children: React.ReactNode; className?: string }) {
-  if (!href || !canOpen(href)) return <span className={className}>{children}</span>;
-  // Typed routes (Next build, not tsc): a computed href is cast, as in kpi.tsx / academy.
-  return <Link href={href as Route} className={`${className ?? ""} text-ink hover:underline underline-offset-2`}>{children}</Link>;
-}
-
-function CustomerName({ r, canOpen }: { r: CollectionRow; canOpen: CanOpen }) {
-  return <MaybeLink href={r.customerHref} canOpen={canOpen}>{r.customerName}</MaybeLink>;
-}
-
-function OwedLine({ item, canOpen }: { item: OwedItem; canOpen: CanOpen }) {
-  return (
-    <div className="min-w-0">
-      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-        <span className="text-3xs uppercase tracking-wider text-ink-3">{item.kind === "invoice" ? "Invoice" : "Subscription"}</span>
-        <MaybeLink href={item.href} canOpen={canOpen} className="font-mono text-xs break-all">{item.label}</MaybeLink>
-        <span className="font-mono text-xs text-ink-2 tabular-nums">{rupee(item.amountDue)}</span>
-        {item.quoteHref && item.quoteId && (
-          <MaybeLink href={item.quoteHref} canOpen={canOpen} className="text-xs text-ink-3">Quote {item.quoteId}</MaybeLink>
-        )}
-        {item.kind === "invoice" && item.subscriptionHref && (
-          <MaybeLink href={item.subscriptionHref} canOpen={canOpen} className="text-xs text-ink-3">Subscription</MaybeLink>
-        )}
-      </div>
-      {item.tdsHint && (
-        <p className="text-xs text-amber-ink mt-0.5">
-          <Icon name="info" size={12} className="inline mr-1 align-text-bottom" />
-          {tdsShortfallLine(item.tdsHint)} —{" "}
-          <MaybeLink href={item.href} canOpen={canOpen} className="underline">record it as TDS in Record payment</MaybeLink>
-        </p>
-      )}
-    </div>
-  );
-}
-
-function OverdueBadge({ days }: { days: number }) {
-  if (days <= 0) return <Badge kind="muted">Not due yet</Badge>;
-  return <Badge kind={days > 60 ? "danger" : days > 30 ? "warning" : "muted"}>{days} {days === 1 ? "day" : "days"}</Badge>;
-}
-
-function PromiseText({ r }: { r: CollectionRow }) {
-  if (!r.promisedOn) return <span className="text-ink-3">—</span>;
-  return (
-    <span className={r.promiseBroken ? "text-rose font-medium" : "text-ink-2"}>
-      {formatDate(r.promisedOn)}
-      {r.promisedAmount != null && r.promisedAmount > 0 && <span className="tabular-nums"> · {rupee(r.promisedAmount)}</span>}
-      {r.promiseBroken && <span className="block text-xs">Date passed, promised amount not paid</span>}
-      {r.promiseStatus === "kept" && <span className="block text-xs text-ink-3">Kept — paid</span>}
-    </span>
-  );
-}
-
-function NextText({ r }: { r: CollectionRow }) {
-  if (!r.nextFollowUpOn) return <span className="text-ink-3">Not set</span>;
-  return <span className={r.followUpDue ? "text-rose font-medium" : "text-ink-2"}>{formatDate(r.nextFollowUpOn)}</span>;
 }
 
 function Empty({ view, anyRows, onAll, canOpen }: { view: CollectionView; anyRows: boolean; onAll: () => void; canOpen: CanOpen }) {
@@ -408,6 +414,9 @@ function Empty({ view, anyRows, onAll, canOpen }: { view: CollectionView; anyRow
   );
   if (view === "mine" && anyRows) {
     return <EmptyState icon="users" title="None of your customers owe money" body="Customers you own (or whose follow-up was handed to you) show here." action={showAll} />;
+  }
+  if (view === "today" && anyRows) {
+    return <EmptyState icon="check_circle" title="Nothing to chase today" body="No follow-up is due, no promise falls today and no promise is broken." action={showAll} />;
   }
   if (view === "broken" && anyRows) {
     return <EmptyState icon="check_circle" title="No broken promises" body="Every promise-to-pay date is still ahead, or the money came in." action={showAll} />;

@@ -19,12 +19,12 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function renderMenu() {
+function renderMenu(role?: string) {
   return render(
     <DropdownMenu defaultOpen modal={false}>
       <DropdownMenuTrigger>Account</DropdownMenuTrigger>
       <DropdownMenuContent>
-        <AccountMenuItems />
+        <AccountMenuItems role={role} />
       </DropdownMenuContent>
     </DropdownMenu>,
   );
@@ -86,5 +86,23 @@ describe("AccountMenuItems (R-1439)", () => {
     renderMenu();
     expect(screen.getByRole("menuitem", { name: /settings/i }).closest("a")?.getAttribute("href")).toBe("/settings");
     expect(screen.getByRole("menuitem", { name: /team/i }).closest("a")?.getAttribute("href")).toBe("/team");
+  });
+});
+
+/* GP-07a (R-2115): a personal login cannot open /settings or /team (the route guard sends it to
+   /money), so its avatar menu shows Account instead — never a link that bounces. */
+describe("AccountMenuItems for a personal login (GP-07a)", () => {
+  it("shows Account (/account), and no Settings or Team", () => {
+    renderMenu("personal");
+    expect(screen.getByRole("menuitem", { name: /^account$/i }).closest("a")?.getAttribute("href")).toBe("/account");
+    expect(screen.queryByRole("menuitem", { name: /settings/i })).toBeNull();
+    expect(screen.queryByRole("menuitem", { name: /team/i })).toBeNull();
+    expect(screen.getByRole("menuitem", { name: /^sign out$/i })).toBeTruthy();
+  });
+
+  it("a business role keeps Settings and Team, and gets no Account row", () => {
+    renderMenu("owner");
+    expect(screen.getByRole("menuitem", { name: /settings/i })).toBeTruthy();
+    expect(screen.queryByRole("menuitem", { name: /^account$/i })).toBeNull();
   });
 });

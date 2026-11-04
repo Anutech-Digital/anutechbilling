@@ -10,6 +10,8 @@ import { createHmac } from "node:crypto";
 import type { createAdminClient } from "@/lib/supabase/server";
 
 export const CONSENT_PURPOSE_META = "meta_ads";
+/** consent_events.source CHECK (R-2010 banner/checkout; GP-03 signup/upgrade for account consent). */
+export type ConsentSource = "banner" | "checkout" | "signup" | "upgrade";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export interface ConsentRow {
@@ -20,7 +22,7 @@ export interface ConsentRow {
   purpose: string;
   choice: "granted" | "denied";
   notice_version: string;
-  source: "banner" | "checkout";
+  source: Extract<ConsentSource, "banner" | "checkout">;
   page: string | null;
   ip_hash: string | null;
   user_agent: string | null;

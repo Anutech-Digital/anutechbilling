@@ -56,6 +56,7 @@ import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { invoiceEinvoiceNotice } from "@/lib/compliance/einvoice";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { InvoiceLateCharges } from "@/components/features/late-charges/invoice-late-charges";
+import { OnlineFeeBillCard } from "@/components/features/payments/online-fee-bill-card";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -65,6 +66,12 @@ import { rupee, formatDate, cleanDisplayName } from "@/lib/utils";
 import type { Invoice, Payment } from "@/lib/supabase/database.types";
 import { IssueCreditNoteDialog } from "@/components/features/invoices/issue-credit-note-dialog";
 import { InvoiceSubscriptionCard } from "./invoice-subscription-card";
+import {
+  NetworkRowsContext,
+  NetworkNoteStatusFromPage,
+  NetworkStatusLine,
+  useNetworkSentStatus,
+} from "@/components/features/invoices/network-status";
 
 export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const router = useRouter();
@@ -98,6 +105,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
     ? noteTotalsByInvoice(creditNotesForBadge, debitNotesForBadge).get(invoice.id) ?? null
     : undefined;
   const statusBadge = invoiceStatusBadge(invoice, undefined, invoiceNotes);
+  /* R-2450: what the customer answered on the network copy (R-2434) — this invoice and its notes. */
+  const networkIds = React.useMemo(() => (invoice.status === "draft" ? [] : [invoice.id]), [invoice.status, invoice.id]);
+  const network = useNetworkSentStatus(networkIds);
   const [payOpen, setPayOpen] = React.useState(false);
   /* R-1682: Credit note from the invoice itself, at every width. It lived only in the
      invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way
@@ -244,6 +254,17 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
               <p className="text-xs font-medium text-ink-2 mt-0.5">
                 {cleanDisplayName(invoice.customer_name)}
               </p>
+              {/* R-2450: "Sent to <buyer> on network — Pending / Accepted by customer / Rejected by
+                  customer: <reason> / Cancelled" + the next step. Nothing for a customer not on
+                  the network. */}
+              <NetworkStatusLine
+                className="mt-1.5"
+                invoiceId={invoice.id}
+                rows={network.data}
+                error={network.error}
+                onRetry={() => void network.refetch()}
+                creditedInFull={(invoiceNotes?.credit ?? 0) >= invoice.amount}
+              />
             </div>
             <div className="flex flex-wrap sm:flex-nowrap items-center gap-1.5 sm:shrink-0" data-invoice-actions>
               {canPay && moneyDue && (
@@ -362,6 +383,10 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   <div className="grid grid-cols-2 gap-2 text-ink-2">
                     <div><span className="text-ink-3">Invoice Date:</span> {formatDate(invoice.invoice_date)}</div>
                     <div><span className="text-ink-3">Due Date:</span> {invoice.due_date ? formatDate(invoice.due_date) : "—"}</div>
+                    {/* R-2360: the Zoho Books invoice number this sale was booked from (Find in Zoho). */}
+                    {invoice.external_number ? (
+                      <div className="col-span-2 break-words"><span className="text-ink-3">Zoho no.:</span> {invoice.external_number}</div>
+                    ) : null}
                     {/* R-043: the place of supply and tax head FROZEN on the invoice (Rule 46 name + code), not today's customer. */}
                     <div><span className="text-ink-3">Place of Supply:</span> {placeOfSupplyLabel({ posCode: invoice.pos_state_code, interState: invoice.inter_state ?? !!interState, isExport: invoice.pos_state_code === "96", country: invoice.customer_country })}</div>
                     <div><span className="text-ink-3">Tax Total:</span> {rupee(tax)} ({taxRate}%)</div>
@@ -469,10 +494,22 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
             {/* R-530: late fee + interest — switch, accrued, bill (debit note) / waive. */}
             <InvoiceLateCharges invoiceId={invoice.id} />
 
+            {/* R-2416: who pays the online (Razorpay) fee on this bill — read-only; owner/manager can waive. */}
+            <OnlineFeeBillCard
+              kind="invoice"
+              id={invoice.id}
+              billTotal={total ?? 0}
+              customerId={invoice.customer_id}
+              linked={{ kind: "quote", id: invoice.quote_id }}
+              role={me?.role}
+            />
+
             {/* 🔽 Collapsible Panel 4: Internal Notes */}
             <Card className="p-4">
               <p className="text-xs font-semibold text-ink mb-2">Internal Notes & History</p>
-              <InvoiceNotesList invoiceId={invoice.id} invoiceDate={invoice.invoice_date} />
+              <NetworkRowsContext.Provider value={network.data}>
+                <InvoiceNotesList invoiceId={invoice.id} invoiceDate={invoice.invoice_date} />
+              </NetworkRowsContext.Provider>
             </Card>
           </div>
         </div>
@@ -520,7 +557,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           onOpenChange={setCnOpen}
           invoiceId={invoice.id}
           customerName={invoice.customer_name}
-          netPayable={invoice.net_payable ?? invoice.amount}
+          amountDue={invoiceAmountDue(invoice)}
           taxRate={invoice.tax_rate}
           interState={invoice.inter_state}
           isExport={(invoice.tax_rate ?? 18) === 0}
@@ -613,7 +650,8 @@ export function InvoiceNotesList({ invoiceId, invoiceDate }: { invoiceId: string
       </div>
       <ul className="space-y-1.5">
         {notes.map((n) => (
-          <li key={n.id} className="flex items-center justify-between gap-3 rounded-md border border-hairline bg-paper px-3 py-2">
+          <li key={n.id} className="rounded-md border border-hairline bg-paper px-3 py-2">
+            <div className="flex items-center justify-between gap-3">
             <span className="flex items-center gap-2 min-w-0">
               <span className={`text-3xs font-semibold uppercase px-1.5 py-0.5 rounded ${n.kind === "credit" ? "bg-rose/10 text-rose" : "bg-indigo-soft text-indigo-ink"}`}>
                 {n.kind === "credit" ? "Credit" : "Debit"} note
@@ -635,6 +673,9 @@ export function InvoiceNotesList({ invoiceId, invoiceDate }: { invoiceId: string
               </span>
               <span className="text-2xs text-ink-3">{formatDate(n.date)}</span>
             </span>
+            </div>
+            {/* R-2450: the customer's answer on this note's network copy (invoice page only). */}
+            <NetworkNoteStatusFromPage noteId={n.id} />
           </li>
         ))}
       </ul>

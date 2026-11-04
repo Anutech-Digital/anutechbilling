@@ -40,6 +40,8 @@ import { seatChargeWindow, seatChargePlan } from "@/lib/subscriptions/seat-charg
 import { seatIncreaseQuote } from "@/lib/subscriptions/seat-increase-charge";
 import { istToday } from "@/lib/dates/ist";
 import { seatEffectiveBounds, checkSeatEffectiveDate } from "@/lib/subscriptions/seat-effective-date";
+import { parseTypedSeatRate, seatRateWarning, seatRateSourceText } from "@/lib/subscriptions/seat-rate-check";
+import { useExpectedSeatRate } from "./use-expected-seat-rate";
 
 interface Props {
   sub:          Subscription;
@@ -63,6 +65,11 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
      the start of the current term, never in the future (lib/subscriptions/seat-effective-date). */
   const today = istToday();
   const [effectiveDate, setEffectiveDate] = React.useState(today);
+  /* R-2292: ₹/seat/year typed for THIS quote only. Blank = the subscription's rate. */
+  const [rateStr, setRateStr] = React.useState("");
+  /* R-2372: a draft purchase order for the added seats is the operator's choice — unticked by
+     default. A seat change used to draft one silently (staging, 2 Nov: PO-A378-27-0775). */
+  const [draftPo, setDraftPo] = React.useState(false);
   /* Re-seed when the dialog is REOPENED for a different subscription. Without this the
      box keeps whatever was typed the last time it was open, which on a prefilled dialog
      means the second customer silently inherits the first one's gap. */
@@ -70,6 +77,8 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
     if (open) {
       setSeatsStr(String(initialSeats ?? 1));
       setEffectiveDate(istToday());
+      setRateStr("");
+      setDraftPo(false);
     }
   }, [open, initialSeats, sub.id]);
   const [submitting, setSubmitting] = React.useState(false);
@@ -77,9 +86,12 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
      ("nothing happens"). The reason now also stays in the dialog, next to the button,
      until the operator changes something or tries again. */
   const [submitError, setSubmitError] = React.useState<string | null>(null);
-  React.useEffect(() => { setSubmitError(null); }, [open, sub.id, seatsStr, effectiveDate]);
+  React.useEffect(() => { setSubmitError(null); }, [open, sub.id, seatsStr, effectiveDate, rateStr]);
 
   const additionalSeats = Math.max(0, Math.min(5000, Math.round(Number(seatsStr) || 0)));
+  const rateParsed = parseTypedSeatRate(rateStr);
+  const typedRate = rateParsed.ok ? rateParsed.rate : null;
+  const rateError = rateParsed.ok ? null : rateParsed.message;
 
   /* ── R-060: one key per submit INTENT ──────────────────────────────────────
      `disabled={submitting}` below is still there and still useful, but it is a UI
@@ -93,7 +105,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
      attempt wrote nothing, so pressing the button again after fixing the cause is a
      retry of the same intent, not a new one. */
   const keyRef = React.useRef<string | null>(null);
-  React.useEffect(() => { keyRef.current = null; }, [open, sub.id, additionalSeats, effectiveDate]);
+  React.useEffect(() => { keyRef.current = null; }, [open, sub.id, additionalSeats, effectiveDate, typedRate, draftPo]);
 
   /* Pro-rata preview — the server is the source of truth, and this now uses its rules:
      R-527 seatChargeWindow (a split-billed subscription is charged to the end of the CURRENT
@@ -123,12 +135,18 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
     seller: { state_code: me?.tenantStateCode, gstin: me?.tenantGstin },
   });
   const taxRatePct       = pos.isExport ? 0 : 18;
-  const taxLabel         = gstHeadLabel({ ratePct: taxRatePct, interState: pos.interState, isExport: pos.isExport });
+  /* R-2095 (staging, 30 Oct): while the customer / company is still loading, or either state is
+     unknown, the head is not known — "CGST 9% + SGST 9%" was printed as a guess for a Maharashtra
+     customer whose invoice then charged IGST. Say "GST 18%" until the head is known (R-431). */
+  const taxLabel         = seatTaxLabel({
+    loaded: Boolean(me) && (customer !== undefined || !sub.customer_id), pos, ratePct: taxRatePct,
+  });
   /* R-803: the server's own calculation (addSeats calls seatIncreaseCharge too), so these
      lines equal the quote it creates. Adding the separately rounded subtotal and GST here
      showed ₹1,007 for a ₹1,006 quote (₹852.95 + ₹153.53 = ₹1,006.48). */
   const quoted           = seatIncreaseQuote({
     currentSeats: sub.seats, currentMrr: sub.mrr, additionalSeats, taxRatePct,
+    annualPerSeatOverride: typedRate,
     previous: prevPart ? { remainingDays: prevPart.remainingDays, termDays: prevPart.termDays } : null,
     current: { remainingDays: daysRemaining, termDays: termDaysForPreview },
   });
@@ -140,6 +158,10 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   const proRataPerSeat   = charge.perSeat;
   const newSeats         = sub.seats + additionalSeats;
   const newMrr           = quoted.newMrr;
+  /* R-2292: compare the rate this quote uses with the last GST invoice line for the item. */
+  const { data: expectedRate } = useExpectedSeatRate(sub, open);
+  const rateWarning      = seatRateWarning(annualPerSeat, expectedRate ?? null);
+  const rateSource       = seatRateSourceText({ typed: typedRate, storedAnnualPerSeat: quoted.storedAnnualPerSeat, currentMrr: sub.mrr, currentSeats: sub.seats });
 
   /* Term has ended = TODAY is past renewal; a backdated date does not reopen it. */
   const isTermEnded = (seatChargeWindow(sub, today)?.remainingDays ?? 0) <= 0;
@@ -153,6 +175,10 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       setSubmitError(effectiveError);
       return;
     }
+    if (rateError) {
+      setSubmitError(rateError);
+      return;
+    }
     if (!keyRef.current) keyRef.current = newIdempotencyKey();
     setSubmitting(true);
     setSubmitError(null);
@@ -160,7 +186,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       const res  = await fetch(`/api/subscriptions/${sub.id}/add-seats`, {
         method:  "POST",
         headers: { "content-type": "application/json" },
-        body:    JSON.stringify({ additional_seats: additionalSeats, idempotency_key: keyRef.current, effective_date: chargeFrom }),
+        body:    JSON.stringify({ additional_seats: additionalSeats, idempotency_key: keyRef.current, effective_date: chargeFrom, draft_purchase_order: draftPo, ...(typedRate !== null ? { annual_rate_per_seat: typedRate } : {}) }),
       });
       const json: unknown = await res.json().catch(() => null);
       if (!res.ok) {
@@ -179,6 +205,10 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
           : `+${additionalSeats} seats added · Quote ${ok.quoteId} (${rupee(ok.amount)})${
               ok.poId ? ` · PO ${ok.poId} drafted` : ""
             }`,
+        /* R-2372 §24: asked for a PO and none came back — say so and where to make it. */
+        draftPo && !ok.poId && !ok.replayed
+          ? { description: "The seats and quote are saved, but the purchase order could not be drafted. Order the seats with your distributor directly, or use Report a problem." }
+          : undefined,
       );
       onOpenChange(false);
       router.push(`/quotes/${ok.quoteId}`);
@@ -192,7 +222,9 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-w-lg flex flex-col gap-0 overflow-hidden p-0 pt-3 md:p-0">
+        {/* R-2268: the body scrolls; the footer (Cancel + primary) stays on screen below it. */}
+        <div className="flex-1 min-h-0 overflow-y-auto grid gap-4 [&>*]:min-w-0 px-5 pt-2 pb-5 md:p-6" data-testid="dialog-scroll-body">
         <header className="border-b border-hairline pb-3 mb-4">
           <p className="text-3xs uppercase tracking-wider font-semibold text-amber-ink mb-1">
             Subscription · Add seats
@@ -262,6 +294,24 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
               {effectiveError ?? `Date the seats were added. Today or earlier, not before ${bounds ? formatDate(bounds.min) : "the term start"}.`}
             </p>
 
+            {/* R-2292: the rate for THIS quote only — blank keeps the subscription's rate. */}
+            <label htmlFor="add-seats-rate" className="block text-xs uppercase tracking-wider text-ink-3 font-semibold mb-2">
+              Rate for this quote (₹/seat/year)
+            </label>
+            <Input
+              id="add-seats-rate"
+              inputMode="numeric"
+              value={rateStr}
+              placeholder={String(quoted.storedAnnualPerSeat)}
+              onChange={(e) => setRateStr(e.target.value)}
+              aria-invalid={rateError ? true : undefined}
+              aria-describedby="add-seats-rate-help"
+              className="font-mono mb-1"
+            />
+            <p id="add-seats-rate-help" className={rateError ? "text-2xs text-rose mb-4" : "text-2xs text-ink-3 mb-4"}>
+              {rateError ?? "Leave blank to use this subscription's rate. A typed rate changes this quote only — the subscription keeps its rate."}
+            </p>
+
             {/* Pro-rata math */}
             <div className="bg-paper-2 rounded-md p-3 mb-4 text-sm">
               <div className="flex justify-between mb-1">
@@ -269,7 +319,10 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
                 <span className="tabular-nums text-ink-2">{formatDate(chargeFrom)}{chargeFrom < today ? " (backdated)" : ""}</span>
               </div>
               <div className="flex justify-between mb-1">
-                <span className="text-ink-3">Annual rate per seat</span>
+                <span className="text-ink-3">
+                  Annual rate per seat
+                  <span className="block text-2xs" data-testid="add-seats-rate-source">{rateSource}</span>
+                </span>
                 <span className="tabular-nums text-ink-2">{rupee(annualPerSeat)}</span>
               </div>
               {prevPart && quoted.previous && window ? (
@@ -325,6 +378,16 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
               </div>
             </div>
 
+            {rateWarning && expectedRate && (
+              /* R-2292: the rate differs from the last invoice by more than ₹5/seat/year. */
+              <div role="status" data-testid="add-seats-rate-warning" className="bg-amber/10 border border-amber/30 rounded-md p-3 mb-4 text-xs text-amber-ink">
+                <p>{rateWarning.message}</p>
+                <Button variant="ghost" size="sm" className="mt-2" onClick={() => setRateStr(String(expectedRate.annualPerSeat))}>
+                  {`Use ${rupee(expectedRate.annualPerSeat)}`}
+                </Button>
+              </div>
+            )}
+
             {/* Seat preview */}
             <div className="bg-emerald/5 border border-emerald/20 rounded-md p-3 mb-4 text-sm flex justify-between items-center">
               <div>
@@ -336,6 +399,23 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
                 <p className="font-medium text-ink tabular-nums">{rupee(newMrr)}/mo</p>
               </div>
             </div>
+
+            {/* R-2372: opt-in — no purchase order unless ticked. */}
+            <label className="flex items-start gap-2 rounded-md border border-hairline bg-paper-2/40 px-3 py-2 mb-4 cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5 accent-amber"
+                checked={draftPo}
+                onChange={(e) => setDraftPo(e.target.checked)}
+                aria-describedby="add-seats-po-help"
+              />
+              <span className="text-xs text-ink-2">
+                Also draft a purchase order for the {additionalSeats} new seat{additionalSeats === 1 ? "" : "s"}
+                <span id="add-seats-po-help" className="block text-2xs text-ink-3">
+                  For the distributor. Leave off if you already ordered them or buy them another way.
+                </span>
+              </span>
+            </label>
 
             <p className="text-2xs text-ink-3 leading-relaxed mb-1">
               Seats are added <b className="text-ink-2">immediately</b> — provision them with the
@@ -352,13 +432,14 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
             {submitError}
           </p>
         )}
+        </div>
 
-        <DialogFooter>
+        <DialogFooter className="shrink-0 border-t border-hairline bg-paper px-5 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6 md:pb-4" data-testid="dialog-sticky-footer">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={submitting}>
             Cancel
           </Button>
           {!isTermEnded && (
-            <Button variant="primary" icon="plus" onClick={onSubmit} disabled={submitting || additionalSeats < 1 || !!effectiveError}>
+            <Button variant="primary" icon="plus" onClick={onSubmit} disabled={submitting || additionalSeats < 1 || !!effectiveError || !!rateError}>
               {submitting ? "Adding…" : `Add ${additionalSeats} seat${additionalSeats === 1 ? "" : "s"}`}
             </Button>
           )}
@@ -366,4 +447,12 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       </DialogContent>
     </Dialog>
   );
+}
+
+/** R-2095: the GST head the Add seats preview names — only once it is known (R-431), never a guess. */
+export function seatTaxLabel(a: { loaded: boolean; pos: { interState: boolean; isExport: boolean; head: { known: boolean } }; ratePct: number }): string {
+  if (a.pos.isExport || (a.loaded && a.pos.head.known)) {
+    return gstHeadLabel({ ratePct: a.ratePct, interState: a.pos.interState, isExport: a.pos.isExport });
+  }
+  return `GST ${a.ratePct}%`;
 }

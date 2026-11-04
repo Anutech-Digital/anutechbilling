@@ -28,6 +28,7 @@
 import type { NotificationClass } from "@/lib/mastery/quiet-hours";
 import { resolveEmailProvider } from "./provider";
 import { sendViaGmail } from "./gmail-transport";
+import { openGoogleToken } from "@/lib/google/token-vault";
 import { sendViaSmtp, smtpConfigFromEnv } from "./smtp-transport";
 import { createAdminClient } from "@/lib/supabase/server";
 
@@ -546,7 +547,8 @@ async function routeForTenant(
     return {
       ...decision,
       gmail: {
-        accessToken: tok?.access_token ?? null,
+        // R-2351: the cached access token is stored sealed (legacy plaintext passes through).
+        accessToken: openGoogleToken(tok?.access_token),
         refreshToken: tok?.refresh_token ?? null,
         senderEmail: tok?.google_email ?? null,
       },

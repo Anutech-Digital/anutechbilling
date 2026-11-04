@@ -11,13 +11,14 @@
 --
 -- Proves:
 --   1. a billing user cannot cut seats (42501) — the row stays 15 seats;
---   2. the owner without a reason is refused (22023);
+--   2. the owner without a reason is refused (22023) — a plan change since R-2228;
 --   3. a plan that is not an active catalog row of this company is refused (22023) — another
 --      company's item, and free text has no way in at all (the RPC takes an item id);
---   4. the owner cuts 15 → 10 seats with MRR 16,200 → 10,800 and a reason: row updated, ONE
+--   4. the owner cuts 15 → 10 seats with MRR 16,200 → 10,800 and a reason — since R-2228 through the
+--      owner's correct_subscription_data (Data correction): row updated, ONE
 --      amendment row with seats 15→10, mrr 16200→10800 and note = the reason;
 --   5. the owner picks the Plus catalog row: plan = the row's name, item_id = its id;
---   6. a billing user may correct the price only (with a reason); nothing changed = no write;
+--   6. R-2228: a price-only correction is refused here (42501); nothing changed = no write;
 --   7. a plain table update afterwards gets note null (the setting is transaction-local and
 --      cleared) — the ledger never carries a stale reason.
 
@@ -64,7 +65,7 @@ begin
     get stacked diagnostics v_state = returned_sqlstate, v_msg = message_text;
     insert into r1684_out values ('1', v_state, v_msg);
   end;
-  -- 6. price only, with a reason → allowed for billing
+  -- 6. price only, with a reason → R-2228: refused (Correct details no longer changes the price)
   begin
     perform public.correct_subscription_terms('e1684000-0000-4000-8000-0000000000c1', null, null, 16000, 'Typo in price');
     insert into r1684_out values ('6a', null, 'accepted');
@@ -73,7 +74,7 @@ begin
     insert into r1684_out values ('6a', v_state, v_msg);
   end;
   -- 6b. nothing changed → no write, no reason needed
-  perform public.correct_subscription_terms('e1684000-0000-4000-8000-0000000000c1', 'R1684-STD', 15, 16000, null);
+  perform public.correct_subscription_terms('e1684000-0000-4000-8000-0000000000c1', 'R1684-STD', 15, 16200, null);
   insert into r1684_out values ('6b', null, 'accepted');
 end $$;
 
@@ -84,7 +85,7 @@ do $$
 declare v_state text; v_msg text;
 begin
   begin
-    perform public.correct_subscription_terms('e1684000-0000-4000-8000-0000000000c1', null, 10, 10800, '  ');
+    perform public.correct_subscription_terms('e1684000-0000-4000-8000-0000000000c1', 'R1684-PLUS', null, null, '  ');
     insert into r1684_out values ('2', null, 'accepted');
   exception when others then
     get stacked diagnostics v_state = returned_sqlstate, v_msg = message_text;
@@ -97,7 +98,7 @@ begin
     get stacked diagnostics v_state = returned_sqlstate, v_msg = message_text;
     insert into r1684_out values ('3', v_state, v_msg);
   end;
-  perform public.correct_subscription_terms('e1684000-0000-4000-8000-0000000000c1', null, 10, 10800, 'Customer dropped 5 users; credit note CN-1 issued');
+  perform public.correct_subscription_data('e1684000-0000-4000-8000-0000000000c1', 10, 10800, 'Customer dropped 5 users; credit note CN-1 issued');  -- R-2228: the owner's data correction
   insert into r1684_out values ('4', null, 'accepted');
   perform public.correct_subscription_terms('e1684000-0000-4000-8000-0000000000c1', 'R1684-PLUS', null, null, 'Sold Plus, typed Standard');
   insert into r1684_out values ('5', null, 'accepted');
@@ -115,7 +116,7 @@ begin
   select * into r from r1684_out where step = '1';
   if r.state is distinct from '42501' then raise exception 'FAIL r1684 step 1: billing user cut seats (%: %)', r.state, r.msg; end if;
   select * into r from r1684_out where step = '6a';
-  if r.state is not null then raise exception 'FAIL r1684 step 6a: price-only correction refused (%: %)', r.state, r.msg; end if;
+  if r.state is distinct from '42501' then raise exception 'FAIL r1684 step 6a (R-2228): price-only correction accepted (%: %)', r.state, r.msg; end if;
   select * into r from r1684_out where step = '2';
   if r.state is distinct from '22023' then raise exception 'FAIL r1684 step 2: no reason accepted (%: %)', r.state, r.msg; end if;
   select * into r from r1684_out where step = '3';
@@ -127,15 +128,13 @@ begin
   end if;
 
   select count(*) into n from public.contract_amendments where subscription_id = s.id;
-  if n <> 4 then raise exception 'FAIL r1684: expected 4 amendment rows (price, seats, plan, table), got %', n; end if;
+  if n <> 3 then raise exception 'FAIL r1684: expected 3 amendment rows (seats, plan, table), got %', n; end if;
 
   select * into a from public.contract_amendments where subscription_id = s.id and seats_to = 10;
-  if a.seats_from <> 15 or a.mrr_from <> 16000 or a.mrr_to <> 10800
-     or a.note is distinct from 'Customer dropped 5 users; credit note CN-1 issued' then
+  if a.seats_from <> 15 or a.mrr_from <> 16200 or a.mrr_to <> 10800
+     or a.note is distinct from 'Data correction: Customer dropped 5 users; credit note CN-1 issued' then
     raise exception 'FAIL r1684 step 4: amendment % → % / % → % note %', a.seats_from, a.seats_to, a.mrr_from, a.mrr_to, a.note;
   end if;
-  select * into a from public.contract_amendments where subscription_id = s.id and mrr_to = 16000;
-  if a.note is distinct from 'Typo in price' then raise exception 'FAIL r1684 step 6a: note %', a.note; end if;
   select * into a from public.contract_amendments where subscription_id = s.id and seats_to = 11;
   if a.note is not null then raise exception 'FAIL r1684 step 7: table write carried note %', a.note; end if;
 

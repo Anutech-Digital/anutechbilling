@@ -220,10 +220,15 @@ export function isPartRequest(q: { subscription_billing_id?: string | null } | n
 /** The badge next to the status on a part request's page. */
 export const PART_REQUEST_BADGE = "Payment request";
 
-/** "Advance payment for Q2 · 28 Jan–27 Apr 2027" → "Q2" (the part's short name), else null. */
+/** "Advance payment for Q2 · 28 Jan–27 Apr 2027" → "Q2" (the part's short name), else null.
+ *  R-2423: a newer request's line, "<product> · <domain> · 10 seats · 1 Nov–30 Nov 2026 (part 1 of 12)",
+ *  → "part 1 of 12". */
 export function partLabelOf(lineName: string | null | undefined): string | null {
-  const m = /^Advance payment for (.+?)(?: · .*)?$/.exec((lineName ?? "").trim());
-  return m ? m[1].trim() : null;
+  const name = (lineName ?? "").trim();
+  const m = /^Advance payment for (.+?)(?: · .*)?$/.exec(name);
+  if (m) return m[1].trim();
+  const n = /\((part \d+(?: of \d+)?)\)$/.exec(name);
+  return n ? n[1] : null;
 }
 
 interface StepLike { stage: string; label: string; state: "done" | "current" | "todo" | "skipped"; detail: string }

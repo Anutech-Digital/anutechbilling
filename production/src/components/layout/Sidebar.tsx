@@ -545,7 +545,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
             <DropdownMenuLabel>
               {me?.authEmail ?? "Account"}
             </DropdownMenuLabel>
-            <AccountMenuItems />
+            <AccountMenuItems role={me?.role} />
           </DropdownMenuContent>
         </DropdownMenu>
       </div>

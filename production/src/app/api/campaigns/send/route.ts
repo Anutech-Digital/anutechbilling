@@ -34,6 +34,7 @@ import { fillName, greetingName, NO_NAME } from "@/lib/marketing/greeting-name";
 import { cleanPitch } from "@/lib/leads/lead-finder";
 import { campaignHtmlVars, campaignHtmlName } from "@/lib/marketing/campaign-html";
 import { IST_TZ } from "@/lib/dates/ist";
+import { marketingConsentEmails, marketingConsentLeadIds } from "@/lib/consent/marketing-consent.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -137,9 +138,29 @@ export const POST = withRoute(
   recipients = recipients.filter((r) => !optedOut.has(normaliseEmail(r.contact_email)));
   const skippedOptOut = beforeOptOut - recipients.length;
 
+  /* R-2011 (DPDP): only people who said yes to offers — the latest marketing row in
+     consent_events for their lead is 'granted'. Unknown (every lead from before R-2011, and a
+     hand-picked address that is no lead of ours) is skipped and counted; there is no override.
+     A failed consent read sends nothing rather than everything. */
+  const beforeConsent = recipients.length;
+  try {
+    if (explicitRecipients && explicitRecipients.length > 0) {
+      const okEmails = await marketingConsentEmails(admin, me.tenant_id, recipients.map((r) => r.contact_email));
+      recipients = recipients.filter((r) => okEmails.has(normaliseEmail(r.contact_email)));
+    } else {
+      const okLeads = await marketingConsentLeadIds(admin, me.tenant_id, recipients.map((r) => r.lead_id).filter((x): x is string => !!x));
+      recipients = recipients.filter((r) => !!r.lead_id && okLeads.has(r.lead_id));
+    }
+  } catch {
+    return NextResponse.json({ error: "Could not check who agreed to offers — no email was sent. Try again." }, { status: 500 });
+  }
+  const skippedNoConsent = beforeConsent - recipients.length;
+
   if (recipients.length === 0) {
     return NextResponse.json(
-      { error: skippedOptOut > 0
+      { error: skippedNoConsent > 0
+          ? `No recipient agreed to offers — ${skippedNoConsent} skipped (no consent)${skippedOptOut > 0 ? `, ${skippedOptOut} unsubscribed` : ""}. No email was sent.`
+          : skippedOptOut > 0
           ? `All ${skippedOptOut} recipients have unsubscribed — no email was sent.`
           : "No recipients with a valid email — adjust the selection or filter" },
       { status: 400 }
@@ -299,6 +320,7 @@ export const POST = withRoute(
     campaignId,
     recipientsCount: recipients.length,
     skippedOptOut,
+    skippedNoConsent,
     sentCount:       sent,
     failedCount:     failed,
     mode:            emailMode,

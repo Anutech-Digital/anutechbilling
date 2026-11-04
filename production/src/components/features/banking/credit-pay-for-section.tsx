@@ -27,11 +27,10 @@ import * as React from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee } from "@/lib/utils";
 import { useItems } from "@/lib/queries/items";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
@@ -43,28 +42,36 @@ import {
   useRelinkOneOffSale, useSplitFromBankCredit, type RelinkTarget,
 } from "@/lib/queries/bank-credit-pay-for";
 import {
-  amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
+  amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemKey,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
-  paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice,
-  tdsRateToRecord, tdsToRecord,
+  paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
+  tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem, saleLinesBelowCost, BANK_SALE_BELOW_COST_TEXT,
+  typedPriceCheck, convertTypedPrice, keepTypedPrice, undoTypedConversion,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
+import { tdsSectionGuess, TDS_SECTION_CHOICES } from "@/lib/banking/tds-section";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRelation } from "@/lib/banking/customer-payer";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
-import { cleanAmount, pickDefault, pickProblem, splitRest, splitSummary, type SplitRest } from "@/lib/banking/credit-pay-for-multi";
+import { cleanAmount, pickDefault, pickProblem, splitBlocked, splitPartPaid, splitRest, splitSummary, type SplitRest } from "@/lib/banking/credit-pay-for-multi";
 import { CreditPaySplit } from "./credit-pay-for-split";
+import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
+import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
+import { prefillSaleFx, zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
+import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
+import { itemPayPlan, splitFxProblem } from "@/lib/banking/item-fx-pay";
+import { ItemPlanNote, OpenItemRow } from "./credit-pay-for-item";
 
 const NEW_CUSTOMER = "__new_customer__";
 
-export interface PayForCustomer { id: string; name: string; country?: string | null }
+export interface PayForCustomer { id: string; name: string; country?: string | null; gstin?: string | null; domain?: string | null }
 
 interface Props {
   transaction: BankTransactionRow;
   customers: readonly PayForCustomer[];
   /** Opens the shared Add-customer form; the parent passes back the new id via `pickedCustomerId`.
-   *  Left out (relink) → no "New customer" choice. */
-  onNewCustomer?: () => void;
+   *  Left out (relink) → no "New customer" choice. R-2360: Find in Zoho passes Zoho's name + GSTIN. */
+  onNewCustomer?: (seed?: NewCustomerSeed) => void;
   /** A customer the parent just created — picked here. */
   pickedCustomerId?: string | null;
   /** Left out (relink) → no "Project payment" button. Gets the customer chosen in "Who paid?"
@@ -79,6 +86,9 @@ interface Props {
   /** R-2007: the Suggestion card's open item (and whether the gap is TDS) — "Change" opens this
    *  section with it ticked. */
   suggested?: { itemKey: string; tds: boolean } | null;
+  /** R-2348: the Reconcile sheet draws this section's Save in its sticky footer. Given → no inline
+   *  button; the footer gets the same label, disabled rule and save. */
+  onFooterSave?: (save: FooterSave | null) => void;
 }
 
 type Mode = "item" | "sale" | "advance" | "split";
@@ -98,7 +108,7 @@ const MODES: ReadonlyArray<readonly [Mode, string, string]> = [
 const selectCls =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
 
-export function CreditPayForSection({ transaction, customers, onNewCustomer, pickedCustomerId, onProjectPayment, onSaved, onDone, relink, suggested }: Props) {
+export function CreditPayForSection({ transaction, customers, onNewCustomer, pickedCustomerId, onProjectPayment, onSaved, onDone, relink, suggested, onFooterSave }: Props) {
   const credit = transaction.credit;
 
   /* ── 1. Customer ─────────────────────────────────────────────────────────────── */
@@ -189,6 +199,9 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
   /* Subscription choice (new subscription sale only). */
   const saleShown = mode === "sale" || (mode === "split" && splitSale);
+  /* R-2397: a sale priced below cost is not booked — the server makes its quote "Needs approval"
+     and leaves the bank line unmatched (same rule as R-2213). Said before Save, not after. */
+  const saleBelowCost = Boolean(saleShown) && saleLinesBelowCost(lines);
   const makesSub = mode === "item" ? Boolean(picked?.makes_subscription) : saleShown && saleMakesSubscription(lines);
   const monthly = mode === "item" ? linesAreMonthly(picked?.lines ?? null) : lines.some((l) => l.cycle === "monthly");
   const [createSub, setCreateSub] = React.useState(true);
@@ -196,8 +209,32 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const [subRenewal, setSubRenewal] = React.useState<string | null>(null);   // null = follows the term
   React.useEffect(() => { setCreateSub(true); setSubStart(transaction.txn_date); setSubRenewal(null); }, [transaction.id, transaction.txn_date, pickKey, mode]);
   const renewalShown = subRenewal ?? defaultRenewal(subStart || transaction.txn_date, monthly);
-  const datesBad = makesSub && createSub && (!subStart || renewalShown <= subStart);
+  /* R-2095: a 1-year commitment billed in parts renews at the end of the year, not on the next part. */
+  const renewalProblem = makesSub && createSub && saleShown ? splitRenewalProblem(subStart, renewalShown, saleCycle, monthly) : null;
+  const datesBad = makesSub && createSub && (!subStart || renewalShown <= subStart || Boolean(renewalProblem));
   const termText = mode === "sale" ? saleTermText(subStart, renewalShown) : null;
+
+  /* R-2359: "Find in Zoho" fills THIS form — customer, "A new sale", products, seats, rate and the
+     Zoho dates. Declared after the reset effects above so, in the same commit, the Zoho values win
+     over their resets. Nothing is saved: Save stays the owner's press. */
+  const [zohoFill, setZohoFill] = React.useState<ZohoPrefill | null>(null);
+  const [zohoModeFor, setZohoModeFor] = React.useState<string | null>(null);
+  React.useEffect(() => { setZohoFill(null); setZohoModeFor(null); }, [transaction.id]);
+  const applyZoho = (p: ZohoPrefill) => {
+    setZohoFill(p); setZohoModeFor(null);
+    setLines(p.lines);
+    if (p.customer) { setCustomerId(p.customer.id); setTouchedCustomer(true); }
+  };
+  React.useEffect(() => {
+    if (!zohoFill || !customerId || zohoModeFor === customerId || zohoFill.lines.length === 0) return;
+    setMode("sale"); setZohoModeFor(customerId);
+  }, [zohoFill, customerId, zohoModeFor]);
+  React.useEffect(() => {
+    if (!zohoFill?.subStart || mode !== "sale") return;
+    setSubStart(zohoFill.subStart); setSubRenewal(zohoFill.subRenewal);
+  }, [zohoFill, mode, pickKey, transaction.id, transaction.txn_date]);
+  /* R-2360: the one Zoho invoice number this sale keeps on its app invoice (none on a relink). */
+  const zohoNumber = relink ? null : zohoSaleNumber(zohoFill);
 
   /* ── 3. Amount check ─────────────────────────────────────────────────────────── */
   /* R-2026: a new sale paid in parts is due its FIRST bill now (Annual + Quarterly = one
@@ -207,7 +244,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* An advance has nothing due — the whole credit is kept as the customer's credit. */
   const due = mode === "item" ? (picked?.amount_due ?? null) : mode === "sale" && preview.total > 0 ? schedule.dueNow : null;
   const taxable = mode === "item" ? (picked?.taxable_value ?? 0) : schedule.dueTaxable;
-  const check: AmountCheck | null = due === null ? null : amountCheck(credit, due, taxable);
+  /* R-2466: a foreign invoice paid by its inward remittance books the R-2427 way (forex / Bank Charges,
+     no TDS, no "kept as credit"); a Zoho opening invoice takes no more than its due. Either way the
+     ₹ over / short check does not apply. */
+  const itemPlan = mode === "item" && picked
+    ? itemPayPlan(picked, { description: transaction.description, credit }, { relink: Boolean(relink) }) : null;
+  const itemFx = itemPlan?.fx ?? null;
+  const check: AmountCheck | null = due === null || itemFx || itemPlan?.problem ? null : amountCheck(credit, due, taxable);
   /* R-2052: annual commitment billed in parts — Renews on stays the end of the year; this says
      how far the money pays, and takes over the "Next N bills" line (the next bill said once). */
   const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0
@@ -216,12 +259,24 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   /* R-2098: the split's bar. */
   const splitPicked = (items ?? []).filter((i) => itemKey(i) in picks);
   const saleAmt = splitSale ? cleanAmount(splitSaleAmount ?? schedule.dueNow) : 0;
-  const split = splitSummary(credit, [...splitPicked.map((i) => picks[itemKey(i)]), saleAmt]);
+  /* R-2098: a round-off only when every item (and the new sale) ends settled in full. */
+  const splitPart = splitPartPaid([
+    ...splitPicked.map((i) => ({ amount: picks[itemKey(i)], due: i.amount_due })),
+    ...(splitSale ? [{ amount: saleAmt, due: preview.total }] : []),
+  ]);
+  const split = splitSummary(credit, [...splitPicked.map((i) => picks[itemKey(i)]), saleAmt], { partPaid: splitPart });
   const rest = splitRest(split.state, restChoice);
-  const splitInvalid = (splitPicked.length === 0 && !splitSale)
+  const splitFx = mode === "split" ? splitFxProblem(splitPicked) : null;   // R-2466: the split books ₹ only
+  const splitInvalid = Boolean(splitFx) || (splitPicked.length === 0 && !splitSale)
     || splitPicked.some((i) => pickProblem(i, picks[itemKey(i)]) !== null)
     || (splitSale && (saleInvalidOf(lines, preview.taxable) || saleAmt <= 0 || saleAmt > preview.total))
-    || split.state.kind === "over" || split.state.kind === "empty";
+    || splitBlocked(split.state)
+    || splitPicked.some((i) => Boolean(i.approval_block));
+  /* R-2213: the picked quote (or a ticked one in a split) is below cost and waits for approval. */
+  const blockedItem = mode === "item" ? (picked?.approval_block ? picked : null)
+    : mode === "split" ? splitPicked.find((i) => Boolean(i.approval_block)) ?? null : null;
+  const approvalBlocked = blockedItem?.approval_block && blockedItem.quote_id
+    ? { reason: blockedItem.approval_block, quoteId: blockedItem.quote_id } : null;
   const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
   /* TDS pre-chosen when the gap IS a common TDS rate; else part payment. Re-decided per item. */
   const tdsLikely = check?.kind === "short" && check.tdsRatePct !== null;
@@ -238,12 +293,25 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   React.useEffect(() => { setResult(null); }, [transaction.id]);
   const splitCount = splitPicked.length + (splitSale ? 1 : 0);
   const busy = payItem.isPending || newSale.isPending || advance.isPending || relinkSale.isPending || splitPay.isPending || setLinePayer.isPending;
+  const saveErrorObj = splitPay.error ?? newSale.error ?? payItem.error ?? advance.error ?? relinkSale.error ?? setLinePayer.error;
+  const saveError = saveErrorObj ? (saveErrorObj as { message?: string }).message ?? String(saveErrorObj) : null;
 
   const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
   const tdsRate = check ? tdsRateToRecord(check, taxable) : null;
+  /* R-2095: the section follows the rate and the customer's PAN type (lib/banking/tds-section); changeable. */
+  const tdsGuess = tdsSectionGuess(check?.kind === "short" ? check.tdsRatePct : null, customer?.gstin ?? null);
+  const [tdsSectionPick, setTdsSectionPick] = React.useState<string | null>(null);
+  React.useEffect(() => { setTdsSectionPick(null); }, [pickKey, mode, customerId]);
+  const tdsSection = tdsSectionPick ?? tdsGuess.section;
   const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
+  /* R-2440: Find in Zoho left prices in USD (no bank rate fitting Zoho's) — no Save until they are in ₹. */
+  const fxUnconverted = saleShown ? zohoUnconvertedProblem(zohoFill, lines) : null;
+  /* R-2427 (3): a Find-in-Zoho USD bill (₹ at the bank's rate) saves IN USD with the narration's figures; not on a relink. */
+  const saleFx = mode === "sale" && !relink ? prefillSaleFx(zohoFill, transaction.description, credit) : null;
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
+    && !approvalBlocked && !fxUnconverted && !itemPlan?.problem
+    && !(relink && saleBelowCost)   // R-2397: the server refuses a relink to a below-cost sale
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
   const save = async () => {
@@ -253,6 +321,31 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       subStart: makesSub && createSub ? subStart : null,
       subRenewal: makesSub && createSub ? subRenewal : null,
     };
+    /* R-2095: a round-off (≤ ₹50) on one sale / item settles it in full — saved through the split
+       RPC, which books the difference (R-2098's rule) in the same transaction. */
+    const roundOff = !relink && shortChoice === "round_off" && check?.kind === "short" && (mode === "sale" || (mode === "item" && picked))
+      ? roundOffSplit(mode === "sale" ? { mode: "sale", saleTotal: preview.total } : { mode: "item", item: picked! })
+      : null;
+    if (roundOff) {
+      try {
+        if (payer && payerToRecord) {
+          await setLinePayer.mutateAsync({ transactionId: transaction.id, customerId, payer, relation: payerToRecord.relation, note: payerToRecord.note });
+        }
+        const r = await splitPay.mutateAsync({
+          transactionId: transaction.id, customerId, customerName: customer?.name ?? null,
+          items: roundOff.items,
+          sale: roundOff.saleAmount !== null
+            ? { lines: saleLinesPayload(lines), billingCycle: saleCycle, createSubscription: makesSub ? createSub : false,
+                subStart: subArgs.subStart, subRenewal: subArgs.subRenewal, amount: roundOff.saleAmount }
+            : null,
+          rest: roundOff.rest,
+          externalNumber: zohoNumber,
+        });
+        setResult(r);
+        if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
+      } catch { /* the hook toasts */ }
+      return;
+    }
     if (mode === "split") {
       try {
         if (payer && payerToRecord) {
@@ -266,22 +359,23 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                 subStart: subArgs.subStart, subRenewal: subArgs.subRenewal, amount: saleAmt }
             : null,
           rest,
+          externalNumber: zohoNumber,
         });
         setResult(r);
-        onSaved?.();
+        if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
       } catch { /* the hook toasts */ }
       return;
     }
     const target: RelinkTarget = mode === "item" && picked
       ? {
           path: "item", transactionId: transaction.id, quoteId: picked.quote_id, invoiceId: picked.invoice_id,
-          tdsAmount, tdsRatePct: tdsRate, ...subArgs,
+          tdsAmount: itemFx ? 0 : tdsAmount, tdsRatePct: itemFx ? null : tdsRate, tdsSection, ...subArgs, fx: itemFx,
         }
       : mode === "sale"
         ? {
             path: "new_sale", transactionId: transaction.id, customerId, lines, billingCycle: saleCycle,
             createSubscription: subArgs.createSubscription ?? false, subStart: subArgs.subStart, subRenewal: subArgs.subRenewal,
-            tdsAmount, tdsRatePct: tdsRate,
+            tdsAmount, tdsRatePct: tdsRate, tdsSection, externalNumber: zohoNumber,
           }
         : { path: "advance", transactionId: transaction.id, customerId };
     try {
@@ -295,23 +389,45 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         : target.path === "item"
           ? await payItem.mutateAsync(target)
           : target.path === "new_sale"
-            ? await newSale.mutateAsync(target)
+            ? await newSale.mutateAsync(saleFx ? { ...target, fx: saleFx } : target)
             : await advance.mutateAsync(target);
       setResult(r);
-      onSaved?.();
+      if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
     } catch { /* the hook toasts */ }
   };
+
+  /* R-2348: in the Reconcile sheet the Save sits in the sticky footer — same label, same canSave,
+     same save(). Shown once a customer is picked, as the inline button was. */
+  const saveLabel = `${relink ? "Relink: " : ""}${mode === null
+    ? "Choose what this money is for"
+    : mode === "item"
+    ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
+    : saleBelowCost && !relink
+      ? "Send sale for approval (line stays unmatched)"   // R-2397
+    : mode === "split"
+      ? `Record on ${splitCount} item${splitCount === 1 ? "" : "s"} & reconcile ${rupee(credit)}`
+    : mode === "sale"
+      ? `Record sale & reconcile ${rupee(credit)}`
+      : `Keep ${rupee(credit)} as advance & reconcile`}`;
+  useFooterSaveReport(onFooterSave, credit > 0 && !result && customerId
+    ? {
+        label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: busy,
+        disabledReason: fxUnconverted ?? itemPlan?.problem ?? splitFx ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
+      }
+    : null);
 
   if (credit <= 0) return null;
 
   if (result) {
+    /* R-2397: a below-cost sale was NOT booked — its quote waits for the owner, the line stays unmatched. */
+    const wait = Boolean(result.needs_approval);
     return (
-      <section aria-labelledby="payfor-done-h" className="rounded-md border border-emerald/40 bg-emerald-soft/25 p-3 space-y-2">
-        <p id="payfor-done-h" className="text-xs font-semibold text-ink-2 inline-flex items-center gap-1">
-          <Icon name="check" size={14} className="text-emerald" /> Done — this bank line is reconciled
+      <section aria-labelledby="payfor-done-h" className={`rounded-md border p-3 space-y-2 ${wait ? "border-amber/60 bg-amber-soft/40" : "border-emerald/40 bg-emerald-soft/25"}`}>
+        <p id="payfor-done-h" className={`text-xs font-semibold inline-flex items-center gap-1 ${wait ? "text-amber-ink" : "text-ink-2"}`}>
+          {wait ? <>{NEEDS_APPROVAL_LABEL} — this bank line is not reconciled</> : <><Icon name="check" size={14} className="text-emerald" /> Done — this bank line is reconciled</>}
         </p>
         <ul className="space-y-1">
-          {resultLines(result).map((l, i) => (
+          {[...resultLines(result), ...(wait ? [] : zohoKeptLines(result))].map((l, i) => (
             <li key={i} className={`text-sm break-words ${l.tone === "warn" ? "text-amber-ink" : "text-ink"}`}>
               {l.href ? <Link href={l.href as never} className="underline hover:no-underline">{l.text}</Link> : l.text}
             </li>
@@ -331,6 +447,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
   const saleEditorNode = (
     <SaleEditor
+      customerDomain={customer?.domain ?? null}
       lines={lines}
       catalog={activeCatalog}
       gstRate={gstRate}
@@ -352,6 +469,19 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         <p id="payfor-h" className="text-xs font-semibold text-ink-2">{relink ? "This money was really for:" : "Money from a customer? This money is for:"}</p>
         <p className="text-xs text-ink-3 mt-0.5">Pick the customer and what they paid — the renewal, extra seats or new subscription is updated with the payment.</p>
       </div>
+
+      {/* R-2359: look the payment up in Zoho Books and fill the form below (not on a relink). */}
+      {!relink && (
+        <ZohoFindPanel
+          transactionId={transaction.id}
+          txnDate={transaction.txn_date}
+          credit={credit}
+          customers={customers}
+          catalog={activeCatalog}
+          onPrefill={applyZoho}
+          onNewCustomer={onNewCustomer}
+        />
+      )}
 
       {/* 1. Customer */}
       <div className="space-y-1">
@@ -444,6 +574,33 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             )
           ) : saleEditorNode}
 
+          {/* R-2213: a below-cost quote waiting for the owner takes no money — the DB refuses it, so
+              Save is locked here with the same reason and the way forward. */}
+          {approvalBlocked && (
+            <div role="alert" className="rounded-md border border-amber/60 bg-amber-soft p-2.5 space-y-1.5">
+              <p className="text-xs text-amber-ink break-words">
+                <b>{NEEDS_APPROVAL_LABEL}.</b> {approvalBlocked.reason}
+              </p>
+              <Button size="sm" variant="default" asChild>
+                <Link href={`/quotes/${approvalBlocked.quoteId}` as never}>Open approval</Link>
+              </Button>
+            </div>
+          )}
+
+          {/* R-2397: below cost → the sale's quote waits for the owner; nothing is reconciled. */}
+          {saleBelowCost && !approvalBlocked && (
+            <div role="alert" className="rounded-md border border-amber/60 bg-amber-soft p-2.5">
+              <p className="text-xs text-amber-ink break-words">
+                <b>{NEEDS_APPROVAL_LABEL}.</b> {BANK_SALE_BELOW_COST_TEXT}{" "}
+                {relink
+                  ? "A relink cannot wait for approval — book this line at cost or above, or approve a quote first."
+                  : mode === "split"
+                    ? "Saving creates the quote for approval only — no item on this line is paid until then."
+                    : "Saving creates the quote for approval — pick it on this line once it is approved."}
+              </p>
+            </div>
+          )}
+
           {/* Subscription choice — a new subscription sale only */}
           {makesSub && (saleShown || (mode === "item" && picked)) && (
             <div className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
@@ -464,7 +621,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
                     <span className="block">Renews on</span>
                     <Input type="date" value={renewalShown} onChange={(e) => setSubRenewal(e.target.value || null)} aria-label="Subscription renewal date" />
                   </label>
-                  {datesBad && <p className="text-xs text-rose-ink sm:col-span-2">The renewal date must be after the start date.</p>}
+                  {datesBad && <p className="text-xs text-rose-ink sm:col-span-2">{renewalProblem ?? "The renewal date must be after the start date."}</p>}
                   {/* R-2053: the term once, then (R-2052) how far the money pays — no date twice. */}
                   {(termText || paidUp) && (
                     <div className="text-xs sm:col-span-2 space-y-0.5 tabular-nums">
@@ -480,63 +637,40 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           )}
 
           {/* 3. Amount check */}
-          {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice} />}
+          {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice}
+            section={tdsSection} sectionReason={tdsSectionPick ? null : tdsGuess.reason} onSection={setTdsSectionPick} noRoundOff={Boolean(relink)} />}
+          {/* R-2466: an export receipt on a foreign invoice / an opening invoice paid over its due. */}
+          <ItemPlanNote plan={splitFx ? { fx: null, problem: splitFx } : itemPlan} item={picked} />
+
+          {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
+              server's reason is shown here too, not only as a toast. */}
+          {saveError && !busy && (
+            <p role="alert" className="text-xs text-rose-ink break-words">Not saved: {saveError}</p>
+          )}
 
           <div className="flex flex-wrap gap-2">
             {/* Wraps on a phone: the quote number makes the label longer than 375px allows. */}
-            <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={busy} onClick={save}
-              className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
-
-              {relink ? "Relink: " : ""}
-              {mode === null
-                ? "Choose what this money is for"
-                : mode === "item"
-                ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
-                : mode === "split"
-                  ? `Record on ${splitCount} item${splitCount === 1 ? "" : "s"} & reconcile ${rupee(credit)}`
-                : mode === "sale"
-                  ? `Record sale & reconcile ${rupee(credit)}`
-                  : `Keep ${rupee(credit)} as advance & reconcile`}
-            </Button>
+            {!onFooterSave && (
+              <Button size="sm" variant="primary" icon="check" disabled={!canSave} loading={busy} onClick={save}
+                className="whitespace-normal h-auto min-h-8 py-1.5 text-left max-w-full">
+                {saveLabel}
+              </Button>
+            )}
             {onProjectPayment && <Button size="sm" variant="default" icon="briefcase" onClick={() => onProjectPayment(customerId)}>Project payment</Button>}
           </div>
-          {payerUnanswered && mode !== null && <p className="text-xs text-amber-ink">Say who paid (above) before saving.</p>}
+          {fxUnconverted && !onFooterSave ? <p className="text-xs text-amber-ink break-words">{fxUnconverted}</p> : saleFx ? <p className="text-xs text-muted-foreground break-words">Saved in {saleFx.currency} at the bank&apos;s rate (₹{saleFx.rate}) — the invoice shows {saleFx.currency}; 0% GST, export of services under LUT.</p> : null}
+          {payerUnanswered && mode !== null && !onFooterSave && <p className="text-xs text-amber-ink">Say who paid (above) before saving.</p>}
         </>
       )}
     </section>
   );
 }
 
-function OpenItemRow({ item, credit, selected, onPick }: { item: OpenItem; credit: number; selected: boolean; onPick: () => void }) {
-  const exact = item.amount_due === credit;
-  return (
-    <li>
-      <button
-        type="button"
-        role="radio"
-        aria-checked={selected}
-        onClick={onPick}
-        className={`w-full text-left rounded-md border p-2.5 flex items-start gap-2 ${selected ? "border-amber bg-amber/10" : "border-hairline bg-paper hover:border-hairline-strong"}`}
-      >
-        <span aria-hidden className={`mt-1 h-3 w-3 shrink-0 rounded-full border ${selected ? "border-amber bg-amber" : "border-hairline-strong"}`} />
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1.5">
-            <Badge kind={item.kind === "renewal" ? "info" : item.kind === "add_seats" ? "warning" : item.kind === "new" ? "success" : "muted"} size="sm">
-              {kindLabel(item.kind)}
-            </Badge>
-            {exact && <Badge kind="success" size="sm">Exact amount</Badge>}
-          </span>
-          <span className="block text-sm text-ink break-words mt-0.5">{itemDetail(item)}</span>
-          <span className="block text-xs text-ink-3">Due {rupee(item.amount_due)} · {formatDate(item.doc_date)}</span>
-        </span>
-      </button>
-    </li>
-  );
-}
-
-function AmountCheckBox({ check, credit, due, choice, onChoice }: {
+function AmountCheckBox({ check, credit, due, choice, onChoice, section, sectionReason, onSection, noRoundOff }: {
   check: AmountCheck; credit: number; due: number; choice: ShortChoice; onChoice: (c: ShortChoice) => void;
+  section: string; sectionReason: string | null; onSection: (s: string) => void; noRoundOff?: boolean;
 }) {
+  const choices = shortChoices(check).filter((c) => !(noRoundOff && c.value === "round_off"));
   if (check.kind === "exact") {
     return <p className="text-xs text-emerald inline-flex items-center gap-1"><Icon name="check" size={12} /> {rupee(credit)} received = {rupee(due)} due.</p>;
   }
@@ -553,8 +687,8 @@ function AmountCheckBox({ check, credit, due, choice, onChoice }: {
         {rupee(credit)} received is <b>{rupee(check.shortBy)} less</b> than {rupee(due)} due.
         {check.tdsRatePct !== null && <> That is {check.tdsRatePct}% TDS on the taxable value.</>}
       </p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5" role="group" aria-label="Why less was received">
-        {([["tds", `TDS deducted (${rupee(check.shortBy)})`], ["part", `Part payment — ${rupee(check.shortBy)} stays due`]] as const).map(([k, label]) => (
+      <div className={`grid grid-cols-1 gap-1.5 ${choices.length > 2 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`} role="group" aria-label="Why less was received">
+        {choices.map(({ value: k, label }) => (
           <button
             key={k}
             type="button"
@@ -566,7 +700,19 @@ function AmountCheckBox({ check, credit, due, choice, onChoice }: {
           </button>
         ))}
       </div>
-      {choice === "tds" && <p className="text-xs text-ink-3">Booked as TDS receivable (section 194J) — collect the customer&apos;s Form 16A.</p>}
+      {choice === "tds" && (
+        <div className="space-y-1">
+          <label className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
+            <span>TDS section</span>
+            <select value={section} onChange={(e) => onSection(e.target.value)} aria-label="TDS section"
+              className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
+              {TDS_SECTION_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+            </select>
+          </label>
+          {sectionReason && <p className="text-xs text-ink-3">{sectionReason}</p>}
+          <p className="text-xs text-ink-3">Booked as TDS receivable (section {section}) — collect the customer&apos;s Form 16A.</p>
+        </div>
+      )}
     </div>
   );
 }
@@ -578,7 +724,9 @@ type CatalogRow = NonNullable<ReturnType<typeof useItems>["data"]>[number];
    the same commitment), then seats and the unit price — R-2050: ₹/user/YEAR on Annual, ₹/user/month
    on Monthly flex (the line's own rate, never below the Workspace list floor). Under the lines, Payment — how
    often an annual commitment is billed (BILLING_CYCLE_OPTIONS); Monthly flex is monthly only. */
-function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPayCycle, dueNow, laterText, onAdd, onChange, onRemove }: {
+function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment, payCycle, onPayCycle, dueNow, laterText, onAdd, onChange, onRemove }: {
+  /** R-2095: shown as each subscription line's default end-domain. */
+  customerDomain: string | null;
   lines: SaleLine[];
   catalog: CatalogRow[];
   gstRate: number;
@@ -601,7 +749,7 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
         const unit = shownPriceUnit(l);
         const termWord = l.cycle === "annual_yearly" ? " a year" : l.cycle === "monthly" ? " a month" : "";
         return (
-          <div key={idx} className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
+          <div key={l.key ?? idx} className="rounded-md border border-hairline bg-paper p-2.5 space-y-2">
             <div className="flex items-start justify-between gap-2">
               <p className="text-sm font-medium text-ink break-words min-w-0">{l.name}</p>
               <button type="button" onClick={() => onRemove(idx)} aria-label={`Remove ${l.name}`} className="text-ink-3 hover:text-rose shrink-0">
@@ -628,11 +776,26 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
               <label className="text-xs text-ink-3 space-y-0.5">
                 <span className="block">Unit price {unit}</span>
                 <Input type="number" min={0} step="any" value={String(shownUnitPrice(l))}
-                  onChange={(e) => onChange(idx, { rate: rateFromShownPrice(l, Number(e.target.value)), priceTyped: true })}
+                  onChange={(e) => onChange(idx, { rate: rateFromShownPrice(l, Number(e.target.value)), priceTyped: true, typedFor: l.cycle, convertedFrom: undefined })}
                   aria-label={`Unit price ${unit}`} />
               </label>
             </div>
-            <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l))}{unit.replace(/^₹/, "")} = {rupee(l.qty * l.rate)}{termWord}</p>
+            <TypedPriceNote line={l} onChange={(patch) => onChange(idx, patch)} />
+            {/* R-2095 (Sept): Zoho bills per end-domain — a subscription line names its own; empty = the customer's.
+                R-2216 (July): EVERY line has the box (optional on a one-time line), so the boxes follow Zoho's
+                line order one-to-one and a domain is never typed onto the next subscription line. */}
+            <div className="text-xs text-ink-3 space-y-0.5">
+              <label className="block space-y-0.5">
+                <span className="block">End domain</span>
+                <Input value={l.domain ?? ""} onChange={(e) => onChange(idx, { domain: e.target.value })}
+                  placeholder={l.cycle === "one_time" ? "Optional — example.com" : customerDomain ? `${customerDomain} (customer's domain)` : "example.com"} aria-label="End domain" />
+              </label>
+              {saleLineDomainProblem(l.domain) && <p className="text-rose-ink">{saleLineDomainProblem(l.domain)}</p>}
+              {l.cycle === "one_time" && (l.domain ?? "").trim() !== "" && (
+                <p>One-time: no subscription is filed, so this domain is not saved.</p>
+              )}
+            </div>
+            <p className="text-xs text-ink-3 tabular-nums">{l.qty} × {rupee(shownUnitPrice(l), { decimals: Number.isInteger(shownUnitPrice(l)) ? 0 : 2 })}{unit.replace(/^₹/, "")} = {rupee(l.qty * l.rate)}{termWord}</p>
           </div>
         );
       })}
@@ -640,15 +803,15 @@ function SaleEditor({ lines, catalog, gstRate, preview, payment, payCycle, onPay
         <option value="" disabled>{lines.length ? "＋ Add another product…" : "What was sold? Select a product…"}</option>
         {catalog.map((i) => <option key={i.id} value={i.id}>{i.name}{i.vendor ? ` · ${i.vendor}` : ""}</option>)}
       </select>
-      {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Monthly and yearly products cannot be on one sale — record them separately.</p>}
+      {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Flexible (monthly) cannot be on one sale with yearly or one-time products — record them as separate sales (or make them all one commitment).</p>}
       {payment.options.length > 0 && (
         <label className="block text-xs text-ink-3 space-y-0.5">
-          <span className="block">Payment</span>
+          <span className="block">Payment frequency</span>
           <select
             value={payCycle}
             disabled={payment.options.length === 1}
             onChange={(e) => onPayCycle(e.target.value as BillingCycle)}
-            aria-label="Payment"
+            aria-label="Payment frequency"
             className={selectCls}
           >
             {payment.options.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
@@ -719,7 +882,38 @@ function PayerWarning({ payerName, customerName, answer, onAnswer, onWrongCustom
   );
 }
 
-/** A new sale that cannot be saved: no line, a line without product / seats / price, ₹0, or mixed terms. */
+/** A new sale that cannot be saved: no line, a line without product / seats / price, ₹0, mixed terms,
+ *  or (R-2178) a typed price whose unit changed with the Commitment and is not yet converted or kept. */
 function saleInvalidOf(lines: readonly SaleLine[], taxable: number): boolean {
-  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0)) || taxable <= 0 || saleTermsMixed(lines);
+  return lines.length === 0 || lines.some((l) => !l.name.trim() || !(l.qty > 0) || !(l.rate >= 0) || saleLineDomainProblem(l.domain) !== null
+    || typedPriceCheck(l)?.blocksSave === true)
+    || taxable <= 0 || saleTermsMixed(lines);
+}
+
+/* R-2178: a typed price is never changed by a Commitment switch. When its unit changed (₹/year ↔
+   ₹/month, or to/from once) the line says so and the operator picks: convert (÷12 / ×12, undoable)
+   or keep the number. Save waits for the answer. */
+function TypedPriceNote({ line, onChange }: { line: SaleLine; onChange: (patch: Partial<SaleLine>) => void }) {
+  const check = typedPriceCheck(line);
+  if (!check) return null;
+  const btn = "rounded-md border border-hairline bg-paper px-2 py-1 text-xs font-medium text-ink-2 hover:border-amber focus:outline-none focus:ring-2 focus:ring-amber/40";
+  if (check.kind === "converted") {
+    return (
+      <p className="flex flex-wrap items-center gap-2 text-xs text-ink-3">
+        <span>{check.text}</span>
+        <button type="button" className={btn} onClick={() => onChange(undoTypedConversion(line))}>{check.undoLabel}</button>
+      </p>
+    );
+  }
+  return (
+    <div role="group" aria-label="Typed price check" className="rounded-md border border-amber bg-amber-soft/40 px-2.5 py-2 space-y-1.5">
+      <p className="text-xs text-amber-ink">{check.text}</p>
+      <div className="flex flex-wrap gap-2">
+        {check.convertLabel && (
+          <button type="button" className={btn} onClick={() => onChange(convertTypedPrice(line))}>{check.convertLabel}</button>
+        )}
+        <button type="button" className={btn} onClick={() => onChange(keepTypedPrice(line))}>{check.keepLabel}</button>
+      </div>
+    </div>
+  );
 }

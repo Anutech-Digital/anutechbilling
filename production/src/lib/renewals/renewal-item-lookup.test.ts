@@ -34,7 +34,7 @@ describe("the renewal quote resolves its catalogue row by id", () => {
 
   it("filters items on the id, and does it BEFORE the name", () => {
     const byId = code.indexOf('.eq("id", input.itemId)');
-    const byName = code.indexOf('.eq("name", input.plan)');
+    const byName = code.indexOf('.eq("name", catalogPlanName(input.plan))')   /* R-2095: read without an old "(N seats)" */;
     expect(byId, "the id lookup is missing entirely").toBeGreaterThan(0);
     expect(byName, "the name fallback is missing — pre-item_id rows need it").toBeGreaterThan(0);
     expect(byId, "the name lookup must be the FALLBACK, not the first try").toBeLessThan(byName);

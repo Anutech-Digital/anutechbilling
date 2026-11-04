@@ -42,8 +42,8 @@ export function expenseGuard(
     .find((i) => settlesExactly(i, debit));
   if (exact) {
     const message = isRecorded(exact)
-      ? `${focus.vendorName} bill ${billName(exact)} — ${rupee(exact.amount_due)} is already recorded as paid${exact.paid_on ? ` on ${formatDate(exact.paid_on)}` : ""}. Match this line to it with Record payment above instead of booking a new expense, or the cost is counted twice.`
-      : `${focus.vendorName} has an open bill ${billName(exact)} for ${rupee(exact.amount_due)} — pay it with Record payment above instead of booking a new expense, or the cost is counted twice.`;
+      ? `${focus.vendorName} bill ${billName(exact)} — ${rupee(exact.amount_due)} is already recorded as paid${exact.paid_on ? ` on ${formatDate(exact.paid_on)}` : ""}. Match this line to it with Record payment on the Vendor tile instead of booking a new expense, or the cost is counted twice.`
+      : `${focus.vendorName} has an open bill ${billName(exact)} for ${rupee(exact.amount_due)} — pay it with Record payment on the Vendor tile instead of booking a new expense, or the cost is counted twice.`;
     return { blocked: true, message, item: exact };
   }
   const bills = focus.openItems.filter((i) => !isRecorded(i));
@@ -51,7 +51,7 @@ export function expenseGuard(
   const list = bills.slice(0, 3).map((i) => `${billName(i)} ${rupee(i.amount_due)}`).join(", ");
   return {
     blocked: false,
-    message: `${focus.vendorName} has ${bills.length === 1 ? "an open bill" : `${bills.length} open bills`} (${list}${bills.length > 3 ? ", …" : ""}). If this line pays ${bills.length === 1 ? "it" : "any of them"}, use Record payment above.`,
+    message: `${focus.vendorName} has ${bills.length === 1 ? "an open bill" : `${bills.length} open bills`} (${list}${bills.length > 3 ? ", …" : ""}). If this line pays ${bills.length === 1 ? "it" : "any of them"}, use Record payment on the Vendor tile.`,
     item: bills[0],
   };
 }
