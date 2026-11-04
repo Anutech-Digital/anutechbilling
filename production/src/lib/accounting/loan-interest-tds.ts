@@ -19,11 +19,15 @@
  * (dues_vendor_tds), the one TDS list.
  */
 import type { BusinessType } from "@/lib/compliance/obligations";
+import { TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
+import { TDS_THRESHOLDS } from "@/lib/accounting/tds-deductor";
+import { fyStartYear } from "@/lib/dates/ist";
 
 export const LOAN_TDS = {
-  ratePct: 10,
+  /** The 194A row of the one TDS rate / limit table (tds-rates.ts, tds-deductor.ts). */
+  ratePct: TDS_SECTION_RATES["194A"].ratePct,
   /** Above this (per lender per FY) TDS applies. Finance Act 2025: ₹10,000 from 1 Apr 2025. */
-  threshold: 10_000,
+  threshold: TDS_THRESHOLDS["194A"].aggregate,
   oldThreshold: 5_000,
   /** The FY (start year) the ₹10,000 limit starts. */
   thresholdFromFy: 2025,
@@ -76,11 +80,9 @@ export function lenderKey(name: string): string {
     .join(" ");
 }
 
-/** FY start year of an ISO date (April–March). */
+/** FY start year of an ISO date (April–March) — lib/dates/ist fyStartYear, the one FY rule. */
 export function fyStartOf(dateISO: string): number {
-  const y = Number(dateISO.slice(0, 4));
-  const m = Number(dateISO.slice(5, 7));
-  return m >= 4 ? y : y - 1;
+  return fyStartYear(dateISO);
 }
 
 export function thresholdFor(fyStart: number): number {
@@ -119,6 +121,8 @@ export interface InterestEvent {
   tdsKept: number;
   /** Known without asking (a director's loan = non_bank). */
   lenderType?: LenderType | null;
+  /** Booked as an EMI (emi_payments / emi_purchases): the EMI reconcile has no TDS box yet. */
+  viaEmi?: boolean;
 }
 
 /** not_required = above the limit, but this business need not deduct (setting off / proprietor not audited). */
@@ -140,6 +144,8 @@ export interface LenderTdsLine {
   section: string;
   /** The entry to post when the owner confirms. */
   entry: { dr: string; cr: string; amount: number } | null;
+  /** Every booking to this lender is an EMI — the TDS cannot be kept back in the app yet. */
+  onlyEmi: boolean;
 }
 
 function typeOf(key: string, evs: readonly InterestEvent[], s: LoanTdsSettings): LenderType | null {
@@ -187,6 +193,7 @@ export function loanInterestTds(i: {
     lines.push({
       lender: sorted[0].lender, key, fyStart: i.fyStart, type, total, tdsKept, tdsDue, crossedOn, status, section,
       entry: status === "due" ? { dr: sorted[0].lender, cr: `TDS payable — ${section}`, amount: tdsDue } : null,
+      onlyEmi: sorted.every((e) => e.viaEmi === true),
     });
   }
   const order: Record<LenderTdsStatus, number> = { due: 0, ask_type: 1, settled: 2, not_required: 3, below_limit: 4, bank_exempt: 5 };
@@ -194,12 +201,7 @@ export function loanInterestTds(i: {
   return { gate, lines };
 }
 
-/**
- * The TDS to keep back on a repayment being booked now (the TDS box of the Loan / EMI split):
- * what is due for this lender's FY once this interest is added, never more than this interest.
- * 0 when the business need not deduct, the lender is a bank or not marked yet.
- */
-export function suggestTdsForPayment(i: {
+export interface PaymentTdsInput {
   events: readonly InterestEvent[];
   settings: LoanTdsSettings;
   businessType: BusinessType | null | undefined;
@@ -207,9 +209,19 @@ export function suggestTdsForPayment(i: {
   lenderType?: LenderType | null;
   on: string;
   interest: number;
-}): number {
+}
+
+/**
+ * What to tell the owner on a repayment being booked now (the TDS box of the Loan / EMI split),
+ * once this interest is added to the lender's FY:
+ *   due        — TDS `amount` (never more than this interest) to keep back;
+ *   ask_type   — above the limit but the lender is not marked bank / non-bank yet;
+ *   ask_audit  — above the limit, a proprietorship that has not answered the tax-audit question;
+ *   none       — nothing (bank, below the limit, setting off, not required).
+ */
+export function paymentTdsAdvice(i: PaymentTdsInput): { status: "due" | "ask_type" | "ask_audit" | "none"; amount: number } {
   const interest = Math.max(0, Math.round(i.interest));
-  if (interest <= 0) return 0;
+  if (interest <= 0) return { status: "none", amount: 0 };
   const fyStart = fyStartOf(i.on);
   const key = lenderKey(i.lender);
   const mine = i.events.filter((e) => lenderKey(e.lender) === key);
@@ -217,7 +229,16 @@ export function suggestTdsForPayment(i: {
     events: [...mine, { lender: i.lender, on: i.on, amount: interest, kind: "interest", tdsKept: 0, lenderType: i.lenderType ?? null }],
     settings: i.settings, businessType: i.businessType, fyStart,
   });
-  if (r.gate.kind !== "on") return 0;
   const line = r.lines.find((l) => l.key === key);
-  return line && line.status === "due" ? Math.min(line.tdsDue, interest) : 0;
+  if (!line || r.gate.kind === "off" || r.gate.kind === "not_required") return { status: "none", amount: 0 };
+  const amount = Math.min(line.tdsDue, interest);
+  if (line.status === "ask_type") return { status: "ask_type", amount };
+  if (line.status !== "due") return { status: "none", amount: 0 };
+  return r.gate.kind === "ask_audit" ? { status: "ask_audit", amount } : { status: "due", amount };
+}
+
+/** The TDS to keep back on this repayment — 0 unless paymentTdsAdvice says "due". */
+export function suggestTdsForPayment(i: PaymentTdsInput): number {
+  const a = paymentTdsAdvice(i);
+  return a.status === "due" ? a.amount : 0;
 }

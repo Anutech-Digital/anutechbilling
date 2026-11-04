@@ -65,6 +65,7 @@ describe("R-2376 fetchLoanInterestEvents", () => {
     const ev = await fetchLoanInterestEvents(fakeClient(tables), "2026-04-01");
     const by = (l: string) => ev.filter((e) => lenderKey(e.lender) === lenderKey(l));
     expect(by("Bajaj Finance")).toEqual([{ lender: "Bajaj Finance", on: "2026-09-05", amount: 46_000, kind: "interest", tdsKept: 4_600, lenderType: null }]);
+    expect(by("Tata Capital").every((e) => e.viaEmi)).toBe(true);
     expect(by("Tata Capital").map((e) => [e.kind, e.amount, e.on])).toEqual([
       ["fee", 4_000, "2026-04-10"], ["interest", 3_000, "2026-05-05"], ["interest", 3_000, "2026-06-05"],
     ]);

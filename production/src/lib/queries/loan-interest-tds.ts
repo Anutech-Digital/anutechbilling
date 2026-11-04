@@ -63,13 +63,13 @@ export async function fetchLoanInterestEvents(supabase: Client, fromISO: string)
     const lender = e.lender?.trim();
     const fee = Math.max(0, Math.round(Number(e.processing_fee) || 0));
     if (!lender || fee <= 0 || e.purchased_on < fromISO) continue;
-    out.push({ lender, on: e.purchased_on, amount: fee, kind: "fee", tdsKept: 0, lenderType: null });
+    out.push({ lender, on: e.purchased_on, amount: fee, kind: "fee", tdsKept: 0, lenderType: null, viaEmi: true });
   }
   for (const p of emiPays) {
     const lender = emiById.get(p.purchase_id)?.lender?.trim();
     const amount = Math.max(0, Math.round(Number(p.interest_part) || 0));
     if (!lender || amount <= 0) continue;
-    out.push({ lender, on: p.paid_on, amount, kind: "interest", tdsKept: 0, lenderType: null });
+    out.push({ lender, on: p.paid_on, amount, kind: "interest", tdsKept: 0, lenderType: null, viaEmi: true });
   }
   return out.sort((a, b) => a.on.localeCompare(b.on));
 }
@@ -87,17 +87,17 @@ export async function fetchLoanTdsSettings(supabase: Client, tenantId: string): 
   return { ready: true, settings: readLoanTdsSettings((data as { loan_interest_tds?: unknown } | null)?.loan_interest_tds) };
 }
 
-/** From 1 April of the PREVIOUS FY — last year's dues still show until settled. */
+/** From 1 April of the PREVIOUS FY — a March line reconciled in April still sees its own FY. */
 export function loanTdsWindowStart(todayISO: string = istToday()): string {
   return `${fyStartOf(todayISO) - 1}-04-01`;
 }
 
-export function useLoanInterestTds() {
+export function useLoanInterestTds(enabled = true) {
   const me = useCurrentUser();
   const tenantId = me.data?.tenantId ?? null;
   return useQuery({
     queryKey: ["loan-interest-tds", tenantId],
-    enabled: Boolean(tenantId),
+    enabled: enabled && Boolean(tenantId),
     queryFn: async () => {
       const supabase = createClient();
       const [s, events] = await Promise.all([
@@ -106,7 +106,8 @@ export function useLoanInterestTds() {
       ]);
       return { ...s, events };
     },
-    staleTime: 30_000,
+    /* Always fresh: a repayment booked a minute ago changes the next TDS figure. */
+    staleTime: 0,
   });
 }
 
@@ -123,4 +124,10 @@ export function useSetLoanInterestTds() {
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["loan-interest-tds"] }); toast.success("Saved"); },
     onError: (err) => toastError(err),
   });
+}
+
+/** R-2376: after a repayment is booked, the next TDS figure must count it. */
+export function useRefreshLoanInterestTds(): () => void {
+  const qc = useQueryClient();
+  return () => { void qc.invalidateQueries({ queryKey: ["loan-interest-tds"] }); };
 }

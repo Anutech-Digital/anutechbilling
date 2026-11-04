@@ -19,7 +19,7 @@ vi.mock("@/lib/queries/business-loans", async (orig) => ({
   useRecordCreditLine: () => ({ mutateAsync: setUp, isPending: false }),
 }));
 /* R-2376: the TDS box reads the loan-interest TDS answers — none here, so TDS stays 0. */
-vi.mock("@/lib/queries/loan-interest-tds", () => ({ useLoanInterestTds: () => ({ data: undefined }) }));
+vi.mock("@/lib/queries/loan-interest-tds", () => ({ useLoanInterestTds: () => ({ data: undefined }), useRefreshLoanInterestTds: () => () => undefined }));
 vi.mock("@/lib/compliance/profile", () => ({ useComplianceProfile: () => ({ data: undefined }) }));
 
 import { CreditLineSection } from "./credit-line-section";

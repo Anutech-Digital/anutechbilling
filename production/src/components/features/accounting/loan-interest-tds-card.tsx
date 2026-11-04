@@ -39,18 +39,13 @@ export function LoanInterestTdsCard() {
     if (!q.data?.ready) return null;
     const thisFy = fyStartOf(istToday());
     const businessType = profile.data?.businessType ?? null;
-    let gate: DeductorGate | null = null;
-    const lines: LenderTdsLine[] = [];
-    let crossedButOff = false;
-    for (const fy of [thisFy - 1, thisFy]) {
-      const r = loanInterestTds({ events: q.data.events, settings: q.data.settings, businessType, fyStart: fy });
-      if (fy === thisFy) gate = r.gate;
-      for (const l of r.lines) {
-        if (l.status === "due" || l.status === "ask_type") lines.push(l);
-        if (l.status === "not_required" && r.gate.kind === "off") crossedButOff = true;
-      }
-    }
-    return { gate: gate as DeductorGate, lines, crossedButOff, thisFy };
+    /* This FY only: TDS kept back on a payment counts in that payment's FY, so a past year's due
+       cannot be cleared from this year's payments — that one is for the CA (review, R-2376). */
+    const r = loanInterestTds({ events: q.data.events, settings: q.data.settings, businessType, fyStart: thisFy });
+    const gate: DeductorGate = r.gate;
+    const lines: LenderTdsLine[] = r.lines.filter((l) => l.status === "due" || l.status === "ask_type");
+    const crossedButOff = r.gate.kind === "off" && r.lines.some((l) => l.status === "not_required");
+    return { gate, lines, crossedButOff, thisFy };
   }, [q.data, profile.data?.businessType]);
 
   if (!view) return null;
@@ -104,7 +99,7 @@ export function LoanInterestTdsCard() {
               <div className="flex flex-wrap items-baseline justify-between gap-2">
                 <span className="font-medium text-ink">{l.lender}</span>
                 <span className="text-ink">
-                  {l.status === "due" ? "TDS 10% due" : "TDS 10% may be due"} <b className="font-mono">{rupee(l.tdsDue)}</b>
+                  {l.status === "due" && gate.kind === "on" ? "TDS 10% due" : "TDS 10% may be due"} <b className="font-mono">{rupee(l.tdsDue)}</b>
                 </span>
               </div>
               <p className="text-xs text-ink-3 mt-0.5">
@@ -121,10 +116,12 @@ export function LoanInterestTdsCard() {
                       onClick={() => save.mutate({ what: "lender", key: l.key, value: "bank" })}>Bank — no TDS</Button>
                   </div>
                 ) : <p className="mt-1 text-xs text-ink-3">The owner or accountant marks whether {l.lender} is a bank.</p>
-              ) : l.entry && (
+              ) : gate.kind !== "on" ? null : l.entry && (
                 <p className="mt-1 text-xs text-ink-2">
-                  Entry when you deduct: <b>Dr {l.entry.dr}</b> {rupee(l.entry.amount)} / <b>Cr {l.entry.cr}</b>.
-                  Keep it back from the next payment to this lender (Banking → Reconcile → Loan / EMI, TDS box), then deposit it with your other TDS.
+                  Entry when you deduct: <b>Dr {l.entry.dr}</b> {rupee(l.entry.amount)} / <b>Cr {l.entry.cr}</b>.{" "}
+                  {l.onlyEmi
+                    ? <>These are EMIs, and an EMI line has no TDS box in the app yet — agree with {l.lender} how the TDS is recovered and post it with your CA.</>
+                    : <>Keep it back from the next payment to this lender (Banking → Reconcile → Loan / EMI, TDS box), then deposit it with your other TDS.</>}
                 </p>
               )}
             </li>

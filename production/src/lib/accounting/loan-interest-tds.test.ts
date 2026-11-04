@@ -9,7 +9,7 @@
 import { describe, expect, it } from "vitest";
 import {
   LOAN_TDS, loanInterestTds, deductorGate, lenderKey, fyStartOf, sectionLabel, thresholdFor,
-  suggestTdsForPayment, emptyLoanTdsSettings, readLoanTdsSettings, type InterestEvent, type LoanTdsSettings,
+  suggestTdsForPayment, paymentTdsAdvice, emptyLoanTdsSettings, readLoanTdsSettings, type InterestEvent, type LoanTdsSettings,
 } from "./loan-interest-tds";
 
 const ev = (o: Partial<InterestEvent>): InterestEvent => ({
@@ -150,5 +150,24 @@ describe("R-2376 TDS to keep back on a repayment (OD / loan repayment split)", (
     expect(suggestTdsForPayment({ ...base, lender: "HDFC Bank", events: [], on: "2026-07-05", interest: 20_000 })).toBe(0);
     expect(suggestTdsForPayment({ ...base, lender: "New NBFC", events: [], on: "2026-07-05", interest: 20_000 })).toBe(0);
     expect(suggestTdsForPayment({ ...base, settings: settings({ off: true }), events: [], on: "2026-07-05", interest: 20_000 })).toBe(0);
+  });
+});
+
+describe("R-2376 review fixes — advice on a payment, EMI-only lenders", () => {
+  const base = { settings: settings(), businessType: "pvt_ltd" as const, lender: "Tata Capital", on: "2026-07-05" };
+  it("an unmarked lender above the limit → ask_type with the would-be amount (not silently 0)", () => {
+    expect(paymentTdsAdvice({ ...base, lender: "New NBFC", events: [], interest: 20_000 })).toEqual({ status: "ask_type", amount: 2000 });
+  });
+  it("proprietor not answered → ask_audit; answered not audited → none", () => {
+    expect(paymentTdsAdvice({ ...base, businessType: "proprietor", events: [], interest: 20_000 })).toEqual({ status: "ask_audit", amount: 2000 });
+    expect(paymentTdsAdvice({ ...base, businessType: "proprietor", settings: settings({ audited: { "2025": false } }), events: [], interest: 20_000 }).status).toBe("none");
+  });
+  it("due → the amount; bank → none", () => {
+    expect(paymentTdsAdvice({ ...base, events: [], interest: 20_000 })).toEqual({ status: "due", amount: 2000 });
+    expect(paymentTdsAdvice({ ...base, lender: "HDFC Bank", events: [], interest: 20_000 }).status).toBe("none");
+  });
+  it("a lender booked only through EMIs is flagged (the EMI reconcile has no TDS box)", () => {
+    expect(run([ev({ amount: 20_000, viaEmi: true })]).lines[0].onlyEmi).toBe(true);
+    expect(run([ev({ amount: 20_000, viaEmi: true }), ev({ amount: 1000 })]).lines[0].onlyEmi).toBe(false);
   });
 });
