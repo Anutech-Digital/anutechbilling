@@ -747,4 +747,61 @@ begin
 end;
 $$;
 
+-- ── 8. Restoring a company backup never restores memberships ───────────────────────
+-- restore_tenant_backup puts every tenant_id table back from the snapshot in replica mode (no
+-- triggers, no FKs) — except users, because who may sign in is not part of the books. The same
+-- holds for tenant_memberships: restoring them would give a REMOVED member their access back,
+-- drop members added since the snapshot and bypass the users mirror. Body copied from its
+-- LATEST version (20261018173040_r1556); the only change is 'tenant_memberships' in the list.
+
+create or replace function public.restore_tenant_backup(p_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  v_tenant uuid := public.current_tenant_id();
+  v_payload jsonb; r record; col_list text; has_identity bool; n int := 0;
+begin
+  -- R-1556: was role = 'owner' from users by auth.uid() — no is_active, no MFA step.
+  if v_tenant is null then
+    raise exception 'Restoring a backup needs an active owner who has finished sign-in (including the authenticator code). Sign in again and retry.'
+      using errcode = '28000';
+  end if;
+  if not public.current_user_has_role('owner') then
+    raise exception 'Only the owner can restore'
+      using errcode = 'insufficient_privilege';
+  end if;
+  select s.payload into v_payload from backup.snapshots s where s.id = p_id and s.tenant_id = v_tenant;
+  if v_payload is null then raise exception 'Restore point not found'; end if;
+
+  perform backup._take(v_tenant, 'Before restore ' || to_char(now(), 'DD Mon HH24:MI'), 'auto');
+
+  set local session_replication_role = replica;
+
+  for r in
+    select c.table_name from information_schema.columns c
+    join pg_tables pt on pt.schemaname='public' and pt.tablename=c.table_name
+    where c.table_schema='public' and c.column_name='tenant_id' and c.table_name not in ('tenant_secrets','users','tenant_memberships')
+    group by c.table_name order by c.table_name
+  loop
+    if not (v_payload ? r.table_name) then continue; end if;
+    select string_agg(quote_ident(column_name), ', ' order by ordinal_position), bool_or(is_identity = 'YES')
+      into col_list, has_identity
+    from information_schema.columns
+    where table_schema='public' and table_name = r.table_name and is_generated <> 'ALWAYS';
+    execute format('delete from public.%I where tenant_id = $1', r.table_name) using v_tenant;
+    execute format(
+      'insert into public.%I (%s) %s select %s from jsonb_populate_recordset(null::public.%I, $1)',
+      r.table_name, col_list, case when has_identity then 'overriding system value' else '' end, col_list, r.table_name
+    ) using (v_payload -> r.table_name);
+    n := n + 1;
+  end loop;
+
+  set local session_replication_role = origin;
+  return jsonb_build_object('restored_tables', n, 'restored_at', now());
+end $function$;
+
+
 commit;

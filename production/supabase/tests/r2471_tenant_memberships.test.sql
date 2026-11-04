@@ -410,4 +410,39 @@ begin
   raise notice 'PASS 14: role drift between users and membership → no role';
 end $$;
 
+
+-- ── 15. Restoring a company backup does not bring a removed member back ────────────
+-- (superuser connection with owner B's identity: the local DB lacks some backup grants, which
+--  r1556_backup_mfa_secrets covers; this case is about WHAT is restored.)
+reset role;
+select set_config('request.jwt.claims', '', true);
+insert into auth.users (id, email) values ('c2471000-0000-0000-0000-0000000000a5', 'r2471-temp@example.test');
+insert into public.users (id, tenant_id, email, full_name, role, is_active) values
+  ('c2471000-0000-0000-0000-0000000000a5', 'c2471000-0000-0000-0000-0000000000f3', 'r2471-temp@example.test', 'R2471 Temp', 'sales', true);
+insert into public.tenant_memberships (user_id, tenant_id, role, is_active)
+  values ('c2471000-0000-0000-0000-0000000000a5', 'c2471000-0000-0000-0000-0000000000f2', 'accountant', true);
+
+do $$
+declare v_snap uuid; v_m public.tenant_memberships;
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', 'c2471000-0000-0000-0000-0000000000a2', 'role', 'authenticated', 'aal', 'aal2')::text, true);
+  perform public.create_tenant_backup('R2471 before removal');
+  select s.id into v_snap from backup.snapshots s
+   where s.tenant_id = 'c2471000-0000-0000-0000-0000000000f2' order by s.created_at desc limit 1;
+  if v_snap is null then raise exception 'FAIL 15 setup: no snapshot taken'; end if;
+
+  update public.tenant_memberships set ended_at = now(), end_reason = 'removed'
+   where user_id = 'c2471000-0000-0000-0000-0000000000a5' and tenant_id = 'c2471000-0000-0000-0000-0000000000f2';
+
+  perform public.restore_tenant_backup(v_snap);
+
+  select * into v_m from public.tenant_memberships
+   where user_id = 'c2471000-0000-0000-0000-0000000000a5' and tenant_id = 'c2471000-0000-0000-0000-0000000000f2';
+  if v_m.id is null or v_m.ended_at is null then
+    raise exception 'FAIL 15: restoring a backup brought a removed member''s membership back (ended_at %)', v_m.ended_at;
+  end if;
+  raise notice 'PASS 15: restore leaves memberships as they are now';
+end $$;
+
 rollback;
