@@ -48,6 +48,47 @@
 
 begin;
 
+-- generate_invoice's taxable from the quote header (20261030054246_r2095 :146-151 — keep in step):
+-- subtotal − round(subtotal × discount_pct / 100), or, with no subtotal, round(amount × 100 / (100 + rate)).
+create or replace function public.quote_header_taxable(p_amount numeric, p_subtotal numeric,
+                                                       p_discount_pct numeric, p_tax_rate numeric)
+returns numeric
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select case when p_subtotal is not null then p_subtotal - round(p_subtotal * coalesce(p_discount_pct, 0) / 100.0)
+              when p_amount is not null then round(p_amount * 100.0 / (100 + coalesce(p_tax_rate, 18))) end
+$$;
+
+revoke all on function public.quote_header_taxable(numeric, numeric, numeric, numeric) from public, anon;
+grant execute on function public.quote_header_taxable(numeric, numeric, numeric, numeric) to authenticated, service_role;   -- pure maths
+
+-- R-2470: the quote is below cost by its HEADER — the taxable generate_invoice would bill is under the
+-- lines' known vendor cost (Σ qty × cost, as lineEconomics totalCost). Only ₹ quotes: a foreign quote's
+-- header and costs are not in one currency here. Unknown → false (as linesBelowCost).
+create or replace function public.quote_header_below_cost(p_amount numeric, p_subtotal numeric, p_discount_pct numeric,
+                                                          p_tax_rate numeric, p_currency text, p_lines jsonb)
+returns boolean
+language sql
+immutable
+parallel safe
+set search_path = ''
+as $$
+  select coalesce(upper(coalesce(p_currency, 'INR')) = 'INR'
+                  and t.taxable is not null
+                  and c.cost > 0
+                  and t.taxable < c.cost, false)
+    from (select public.quote_header_taxable(p_amount, p_subtotal, p_discount_pct, p_tax_rate) as taxable) t,
+         (select coalesce(sum(coalesce(public.quote_line_num(li->'qty'), 0) * coalesce(public.quote_line_num(li->'cost'), 0)), 0) as cost
+            from jsonb_array_elements(case when jsonb_typeof(p_lines) = 'array' then p_lines else '[]'::jsonb end) li
+           where jsonb_typeof(li) = 'object') c
+$$;
+
+revoke all on function public.quote_header_below_cost(numeric, numeric, numeric, numeric, text, jsonb) from public, anon;
+grant execute on function public.quote_header_below_cost(numeric, numeric, numeric, numeric, text, jsonb) to authenticated, service_role;   -- pure maths
+
 create or replace function public.tg_quote_approval_not_by_maker()
 returns trigger
 language plpgsql
@@ -63,22 +104,46 @@ declare
   v_old_d integer; v_old_m integer;
   v_new_d integer; v_new_m integer;
   v_stale boolean := false;
+  v_lines_changed boolean := new.line_items is distinct from old.line_items;
   v_lines_moved boolean := false;
+  v_header_changed boolean := new.amount is distinct from old.amount or new.subtotal is distinct from old.subtotal
+                              or new.discount_pct is distinct from old.discount_pct or new.tax_rate is distinct from old.tax_rate;
   v_header_cut boolean := false;
+  v_old_taxable numeric; v_new_taxable numeric;
 begin
   if v_uid is null then return new; end if;
 
   /* R-2447 / R-2470: the lines' numbers before and after (quote_lines_approval_bps = lineEconomics). */
-  if new.line_items is distinct from old.line_items then
+  if v_lines_changed then
     select b.discount_bps, b.margin_bps into v_old_d, v_old_m from public.quote_lines_approval_bps(old.line_items) b;
     select b.discount_bps, b.margin_bps into v_new_d, v_new_m from public.quote_lines_approval_bps(new.line_items) b;
     v_lines_moved := v_new_d is distinct from v_old_d or v_new_m is distinct from v_old_m;
   end if;
 
-  /* R-2470 (F2): a login's line edit that moves the numbers sets the below-cost mark when the new lines
-     are below cost (linesBelowCost = marginBps < 0) — the R-2213 payment guard reads only this mark.
-     Only ever set here, never cleared; a date-only line write does not move the numbers. */
-  if v_lines_moved and v_new_m is not null and v_new_m < 0 then
+  /* R-2470 (F1): a header change that favours the customer, by the figures generate_invoice takes from
+     the header (gross = amount, taxable = subtotal − subtotal × discount_pct, tax = gross − taxable):
+     gross or taxable lower, gross newly set or blanked, subtotal lower or blanked, header discount
+     deeper, the tax in the invoice lower, or any tax-rate change. Raising the price keeps it. */
+  if v_header_changed then
+    v_old_taxable := public.quote_header_taxable(old.amount, old.subtotal, old.discount_pct, old.tax_rate);
+    v_new_taxable := public.quote_header_taxable(new.amount, new.subtotal, new.discount_pct, new.tax_rate);
+    v_header_cut := coalesce(new.discount_pct, 0) > coalesce(old.discount_pct, 0)
+                 or new.tax_rate is distinct from old.tax_rate
+                 or (new.amount is null) <> (old.amount is null)
+                 or new.amount < old.amount
+                 or (old.subtotal is not null and (new.subtotal is null or new.subtotal < old.subtotal))
+                 or v_new_taxable < v_old_taxable
+                 or (new.amount - v_new_taxable) < (old.amount - v_old_taxable);
+    v_header_cut := coalesce(v_header_cut, false);
+  end if;
+
+  /* R-2470 (F2): a login's write that moves the price sets the below-cost mark when the quote is below
+     cost — by its lines (linesBelowCost = marginBps < 0) or by the header the invoice is made from
+     (quote_header_below_cost). The R-2213 payment guard reads only this mark, whatever the approval
+     status. Only ever set here, never cleared; a date-only line write moves nothing. */
+  if (v_lines_moved and v_new_m is not null and v_new_m < 0)
+     or ((v_lines_moved or v_header_cut)
+         and public.quote_header_below_cost(new.amount, new.subtotal, new.discount_pct, new.tax_rate, new.currency, new.line_items)) then
     new.below_cost := true;
   end if;
 
@@ -87,7 +152,8 @@ begin
      the owner approves the quote, or the price is raised first. */
   if coalesce(old.below_cost, false) and not coalesce(new.below_cost, false)
      and (public.bank_sale_lines_below_cost(new.line_items)
-          or coalesce((select b.margin_bps < 0 from public.quote_lines_approval_bps(new.line_items) b), false)) then
+          or coalesce(case when v_lines_changed then v_new_m < 0
+                           else (select b.margin_bps < 0 from public.quote_lines_approval_bps(new.line_items) b) end, false)) then
     raise exception 'Quote % is below cost — that mark cannot be removed while the price is under cost. The owner approves it, or raise the price first.', new.id
       using errcode = '42501';
   end if;
@@ -108,13 +174,7 @@ begin
                 or (old.approved_discount_bps is null and v_new_d is not null and v_new_d > 1000)   -- AUTO_APPROVE_DISCOUNT_BPS
                 or (old.approved_margin_bps is null and v_new_m is not null and v_new_m < 1200);    -- OWNER_MARGIN_FLOOR_BPS
       end if;
-      /* R-2470 (F1): generate_invoice invoices from the header — a header change that favours the
-         customer is a stale edit too: deeper header discount, lower / blanked amount or subtotal, any
-         tax-rate change. Raising the price keeps the approval. */
-      v_header_cut := coalesce(new.discount_pct, 0) > coalesce(old.discount_pct, 0)
-                   or (old.amount is not null and (new.amount is null or new.amount < old.amount))
-                   or (old.subtotal is not null and (new.subtotal is null or new.subtotal < old.subtotal))
-                   or new.tax_rate is distinct from old.tax_rate;
+      /* R-2470 (F1): a header cut (v_header_cut, above) is a stale edit too. */
       if v_stale or v_header_cut or (coalesce(new.below_cost, false) and not coalesce(old.below_cost, false)) then
         new.approval_status := 'pending';
         /* the tier the NEW numbers need (requiredApproval): owner when below cost, already owner, margin
@@ -270,7 +330,9 @@ begin
      (linesBelowCost = marginBps(lineEconomics) < 0 = quote_lines_approval_bps); a mark the app already
      set is kept. */
   new.below_cost := coalesce(new.below_cost, false)
-                    or coalesce((select b.margin_bps < 0 from public.quote_lines_approval_bps(new.line_items) b), false);
+                    or coalesce((select b.margin_bps < 0 from public.quote_lines_approval_bps(new.line_items) b), false)
+                    or public.quote_header_below_cost(new.amount, new.subtotal, new.discount_pct, new.tax_rate,
+                                                      new.currency, new.line_items);
   return new;
 end
 $$;

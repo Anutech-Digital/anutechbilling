@@ -128,6 +128,51 @@ begin
   raise notice 'PASS A2: a header cut with a re-signing is a signing (rep refused)';
 end $$;
 
+-- A3. the review's scenario end to end: discount_pct 45 → the invoice's taxable (825) is under the
+--     lines' cost (1050) → below cost, owner tier, and money on it waits (R-2213 payment guard).
+-- A4. subtotal raised with the amount kept → the invoice's GST would drop → stale too.
+-- A5. the same cut written together with approval_status = 'not_required' → still marked below cost,
+--     so leaving 'approved' in the same write does not let the money through.
+-- A6. an approved quote with no amount gets one → stale (it was not invoiceable when signed).
+select pg_temp.r2470_approved_quote('Q-R2470-H9');
+select pg_temp.r2470_approved_quote('Q-R2470-H10');
+select pg_temp.r2470_approved_quote('Q-R2470-H11');
+select pg_temp.r2470_approved_quote('Q-R2470-H12');
+alter table public.quotes disable trigger trg_quote_approval_not_by_maker;
+update public.quotes set amount = null where id = 'Q-R2470-H12';
+alter table public.quotes enable trigger trg_quote_approval_not_by_maker;
+update public.quotes set discount_pct = 45 where id = 'Q-R2470-H9';
+update public.quotes set subtotal = 1770 where id = 'Q-R2470-H10';
+update public.quotes set discount_pct = 45, approval_status = 'not_required' where id = 'Q-R2470-H11';
+update public.quotes set amount = 10 where id = 'Q-R2470-H12';
+do $$
+declare v_id text; v_msg text;
+begin
+  if (select approval_tier::text <> 'owner' or not below_cost from public.quotes where id = 'Q-R2470-H9') then
+    raise exception 'FAIL A3: a header cut under cost was not marked below cost / owner tier';
+  end if;
+  foreach v_id in array array['Q-R2470-H9', 'Q-R2470-H11'] loop
+    if not (select below_cost from public.quotes where id = v_id) then
+      raise exception 'FAIL A3/A5: % not marked below cost', v_id;
+    end if;
+    begin
+      insert into public.payments (tenant_id, quote_id, customer_id, amount, method, reference)
+      values ('dddddddd-0000-0000-0000-000000247001', v_id, 'cccccccc-0000-0000-0000-000000247001', 1000, 'cash', 'C' || v_id);
+      v_msg := 'ACCEPTED';
+    exception when others then v_msg := sqlerrm;
+    end;
+    if v_msg not like 'This quote is below cost and waits for the owner''s approval.%' then
+      raise exception 'FAIL A3/A5: payment on % after a header cut: %', v_id, v_msg;
+    end if;
+  end loop;
+  foreach v_id in array array['Q-R2470-H10', 'Q-R2470-H12'] loop
+    if (select approval_status::text from public.quotes where id = v_id) <> 'pending' then
+      raise exception 'FAIL A4/A6: % kept its approval', v_id;
+    end if;
+  end loop;
+  raise notice 'PASS A3-A6: a header cut under cost blocks the money; GST-lowering and newly-set amounts reset too';
+end $$;
+
 -- ── B. F2: a login's insert with below-cost lines is marked below cost → payment waits ──────
 set local role authenticated;
 insert into public.quotes (id, tenant_id, customer_id, customer_name, plan, seats, amount, subtotal, total_cost,
@@ -138,6 +183,9 @@ values ('Q-R2470-I1', 'dddddddd-0000-0000-0000-000000247001', 'cccccccc-0000-000
         pg_temp.r2470_lines(300, 350), false, '2026-11-04', 'not_required', null, false),
        ('Q-R2470-I2', 'dddddddd-0000-0000-0000-000000247001', 'cccccccc-0000-0000-0000-000000247001', 'Cust 2470',
         'Google Workspace Business Standard', 3, 1770, 1500, 1050, 0, 18, 'sent', 'yearly',
+        pg_temp.r2470_lines(500, 350), false, '2026-11-04', 'not_required', null, false),
+       ('Q-R2470-I3', 'dddddddd-0000-0000-0000-000000247001', 'cccccccc-0000-0000-0000-000000247001', 'Cust 2470',
+        'Google Workspace Business Standard', 3, 708, 1500, 1050, 60, 18, 'sent', 'yearly',
         pg_temp.r2470_lines(500, 350), false, '2026-11-04', 'not_required', null, false);
 reset role;
 do $$
@@ -148,6 +196,9 @@ begin
   end if;
   if (select below_cost from public.quotes where id = 'Q-R2470-I2') then
     raise exception 'FAIL B: a healthy insert was marked below cost';
+  end if;
+  if not (select below_cost from public.quotes where id = 'Q-R2470-I3') then
+    raise exception 'FAIL B: healthy lines with a 60%% header discount (taxable under cost) were not marked';
   end if;
   begin
     insert into public.payments (tenant_id, quote_id, customer_id, amount, method, reference)

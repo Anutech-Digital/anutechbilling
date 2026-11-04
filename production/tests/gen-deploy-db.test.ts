@@ -272,6 +272,6 @@ describe("R-2473 a peek on a function a later migration redefines", () => {
     expect(r2383).toContain("column_name = 'approval_note'");
     /* the newest redefiner of tg_quote_approval_not_by_maker (R-2447, R-2470 …): the misses check above
        proves it is the right one — R-2470: pinning one card id here broke on every redefinition. */
-    expect(r2383).toMatch(/\(prosrc like '%R-2383%' or prosrc like '%R-24[4-9]\d%'\)/);
+    expect(r2383).toMatch(/\(prosrc like '%R-2383%' or prosrc like '%R-\d{3,5}%'\)/);
   });
 });
