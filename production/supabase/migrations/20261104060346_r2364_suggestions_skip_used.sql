@@ -14,16 +14,18 @@
 --   suggest_bank_transaction_matches(uuid) ← 20261018044814_r1565_credit_applied_not_cash (latest):
 --     payments — never one that ANOTHER bank line already carries: matched to it (matched_to_type
 --       'payment'), or a reconciled split line holding it (payments.bank_txn_id, R-2098), or one
---       created from another existing line (reference BANK-<that line id>);
+--       created from another line (reference BANK-<that line id>) while that line is reconciled;
 --       a KNOWN PAYER's customer ranks first — the line's own payer answer (bank_transactions.payer
---       customer_id, R-2025) or exactly one customer whose customer_payers key is in the narration —
+--       customer_id, R-2025) or exactly one customer whose customer_payers key EQUALS a dash/slash part of
+--       the narration (the rail's name slot; knownPayerCustomer's equality, never a loose word hit) —
 --       and then other customers' receipts are 'low' (their name stays in the label);
 --     expenses — never one already reconciled to another line (expenses.reconciled_txn_id, or a line
 --       matched to it) — the server twin of R-2325's browser filter;
 --     project / salary unchanged (project already skips pp.bank_txn_id; salary only 'unpaid').
 --   reconcile_bank_txn(uuid,text,text,text) ← 20261011120000_r718_money_roles (latest; checked: no later
 --     redefinition): matching a line to a payment another line already carries (matched to it, or a
---     reconciled split line holding it) is refused with unique_violation — R-2098's replay rule. The
+--     reconciled split line holding it) is refused with unique_violation naming that line (date, amount)
+--     — R-2098's replay rule; the receipt row is locked first so two matches at once cannot both pass. The
 --     BANK- reference rule is not used here: a receipt created from a line is matched to that line in
 --     the same transaction. The rest is the R-718 body unchanged.
 -- Test: supabase/tests/r2364_suggestions_skip_used.test.sql (begin … rollback; red without this file).
@@ -36,7 +38,7 @@ CREATE OR REPLACE FUNCTION public.suggest_bank_transaction_matches(p_bank_txn_id
  SET search_path TO 'public'
 AS $function$
 declare v_txn record; v_tenant uuid; v_search_amount integer; v_is_credit boolean;
-  v_caller uuid; v_trusted boolean; v_known uuid; v_key text; v_payer_customers uuid[];
+  v_caller uuid; v_trusted boolean; v_known uuid; v_payer_customers uuid[];
 begin
   /* R-715: a signed-in caller sees suggestions only for their own company's bank line.
      No company (null-caller) → refused; another company's line → nothing (as "not found"). */
@@ -52,21 +54,21 @@ begin
   if not v_trusted and v_txn.tenant_id is distinct from v_caller then return; end if;
   v_tenant := v_txn.tenant_id; v_search_amount := greatest(v_txn.debit, v_txn.credit); v_is_credit := v_txn.credit > 0;
   if v_is_credit then
-    /* R-2364: who paid — the line's own payer answer (R-2025), else exactly one customer whose
-       known payer is named in the narration. Two customers → no guess. */
+    /* R-2364: who paid — the line's own payer answer (R-2025), else exactly one customer with a
+       known payer whose key EQUALS one dash/slash part of the narration (the rails' name slots —
+       "NEFT CR-<IFSC>-GIBI PAUL-<us>-<UTR>"; customer-payer.ts knownPayerCustomer's equality,
+       never a loose word hit). Two customers → no guess. */
     if coalesce(v_txn.payer->>'customer_id', '') ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then
       select c.id into v_known from public.customers c
        where c.id = (v_txn.payer->>'customer_id')::uuid and c.tenant_id = v_tenant;
     end if;
     if v_known is null then
-      v_key := public.payer_name_key(coalesce(v_txn.description, '') || ' ' || coalesce(v_txn.reference, ''));
-      if v_key is not null then
-        select array_agg(distinct cp.customer_id) into v_payer_customers
-          from public.customer_payers cp
-         where cp.tenant_id = v_tenant
-           and position(' ' || cp.payer_name_key || ' ' in ' ' || v_key || ' ') > 0;
-        if cardinality(v_payer_customers) = 1 then v_known := v_payer_customers[1]; end if;
-      end if;
+      select array_agg(distinct cp.customer_id) into v_payer_customers
+        from public.customer_payers cp
+       where cp.tenant_id = v_tenant
+         and cp.payer_name_key in (select public.payer_name_key(part)
+                                     from regexp_split_to_table(coalesce(v_txn.description, ''), '[-/]') part);
+      if cardinality(v_payer_customers) = 1 then v_known := v_payer_customers[1]; end if;
     end if;
 
     return query
@@ -88,12 +90,14 @@ begin
       and not (p.bank_txn_id is not null and p.bank_txn_id <> v_txn.id
                and exists (select 1 from public.bank_transactions t2
                             where t2.id = p.bank_txn_id and t2.tenant_id = v_tenant and t2.matched_to_type is not null))
-      -- … nor one created from another existing line (BANK-<line id>).
+      -- … nor one created from another line (BANK-<line id>) while that line is reconciled (un-reconciled
+      -- → the receipt is free again, e.g. a duplicate import kept as undeposited).
       and not (coalesce(p.reference, '') ~* '^BANK-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
                and lower(substr(p.reference, 6)) <> v_txn.id::text
                and exists (select 1 from public.bank_transactions t3
-                            where t3.id = lower(substr(p.reference, 6))::uuid and t3.tenant_id = v_tenant))
-    order by (v_known is not null and p.customer_id = v_known) desc,
+                            where t3.id = lower(substr(p.reference, 6))::uuid and t3.tenant_id = v_tenant
+                              and t3.matched_to_type is not null))
+    order by coalesce(p.customer_id = v_known, false) desc,
              abs((p.amount - p.credit_applied) - v_search_amount), abs(p.received_at::date - v_txn.txn_date) limit 5;
 
     return query
@@ -145,6 +149,8 @@ declare
   v_row    public.bank_transactions;
   v_tax_expenses text[];
   v_used   integer;
+  v_other_date date;
+  v_other_amt  bigint;
 begin
   /* R-718: role gate (Pardeep's role table, 11 Oct 2026). Trusted = service_role or a direct
      DB session with no request role (R-454 / R-714 / R-717); everyone else needs the role. */
@@ -164,16 +170,24 @@ begin
 
   /* R-2364: one receipt, one bank line. Another line already matched to this payment, or a
      reconciled split line holding it (payments.bank_txn_id, R-2098) → refused, nothing changed. */
-  if p_matched_to_type = 'payment' and p_matched_to_id is not null
-     and (exists (select 1 from public.bank_transactions t
-                   where t.tenant_id = v_txn.tenant_id and t.id <> p_txn_id
-                     and t.matched_to_type = 'payment' and t.matched_to_id = p_matched_to_id)
-          or exists (select 1 from public.payments p
-                       join public.bank_transactions t2 on t2.id = p.bank_txn_id and t2.tenant_id = p.tenant_id
-                      where p.tenant_id = v_txn.tenant_id and p.id::text = p_matched_to_id
-                        and p.bank_txn_id <> p_txn_id and t2.matched_to_type is not null)) then
-    raise exception 'This receipt is already reconciled to another bank line. Open that line and un-reconcile it first, or match this line to a different receipt. Nothing was changed.'
-      using errcode = 'unique_violation';
+  if p_matched_to_type = 'payment' and p_matched_to_id is not null then
+    /* Lock the receipt first: two lines matched to it at the same moment (auto-reconcile + a click)
+       wait for each other, and the second one's check below sees the first one's match. */
+    perform 1 from public.payments p
+     where p.tenant_id = v_txn.tenant_id and p.id::text = p_matched_to_id for update;
+    select t.txn_date, greatest(t.credit, t.debit) into v_other_date, v_other_amt
+      from public.bank_transactions t
+     where t.tenant_id = v_txn.tenant_id and t.id <> p_txn_id
+       and ((t.matched_to_type = 'payment' and t.matched_to_id = p_matched_to_id)
+            or (t.matched_to_type is not null
+                and t.id = (select p.bank_txn_id from public.payments p
+                             where p.tenant_id = v_txn.tenant_id and p.id::text = p_matched_to_id)))
+     limit 1;
+    if found then
+      raise exception 'This receipt is already reconciled to another bank line (% · ₹%). Un-reconcile that line first, or match this line to a different receipt. Nothing was changed.',
+        to_char(v_other_date, 'DD Mon YYYY'), v_other_amt
+        using errcode = 'unique_violation';
+    end if;
   end if;
 
   -- A prepaid line that stops being one: refuse if its advance was already used.

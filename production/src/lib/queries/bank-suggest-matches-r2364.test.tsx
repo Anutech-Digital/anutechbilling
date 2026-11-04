@@ -31,10 +31,13 @@ describe("R-2364 — suggestions are never served from a stale cache", () => {
     const first = renderHook(() => useSuggestMatches("line-2"), { wrapper });
     await waitFor(() => expect(first.result.current.data).toEqual([P1]));
     first.unmount();
+    await new Promise((r) => setTimeout(r, 20)); // the sheet is closed, then line 2 opened again
 
     // Line 1 is booked to P1 meanwhile; the server no longer offers P1 for line 2.
     h.rpc.mockResolvedValueOnce({ data: [], error: null });
     const again = renderHook(() => useSuggestMatches("line-2"), { wrapper });
+    // The old list (with P1's Match button) is never shown while the new answer loads.
+    expect(again.result.current.data).toBeUndefined();
     await waitFor(() => expect(h.rpc).toHaveBeenCalledTimes(2));
     expect(h.rpc).toHaveBeenLastCalledWith("suggest_bank_transaction_matches", { p_bank_txn_id: "line-2" });
     await waitFor(() => expect(again.result.current.data).toEqual([]));

@@ -1324,9 +1324,11 @@ export function useSuggestMatches(transactionId: string | null | undefined) {
       if (error) throw error;
       return (data ?? []) as MatchSuggestion[];
     },
-    /* R-2364: read fresh each time the line is opened — another line booked meanwhile may have
-       used a suggested receipt (the server leaves those out, so a cached list would be wrong). */
+    /* R-2364: read fresh each time the line is opened, never shown from cache first — another line
+       booked meanwhile may have used a suggested receipt (the server leaves those out, so an old
+       list would offer a Match the server refuses). Kept only while the sheet has the line open. */
     staleTime: 0,
+    gcTime: 0,
   });
 }
 
