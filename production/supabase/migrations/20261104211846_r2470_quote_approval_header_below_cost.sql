@@ -35,6 +35,15 @@
 --     here, never cleared (the app's own value is kept when it already says true). The R-2447 refusal
 --     to clear the mark now also uses this measure (OR the R-2397 bank_sale_lines_below_cost one).
 --     A below_cost turning true on an approved quote then goes back to the owner, as since R-2447.
+--     Code review (R-2420) on the first draft: 'pending' alone stops no money (R-2213 item 4: only
+--     below_cost does), so a header cut is ALSO measured as below cost: quote_header_below_cost = the
+--     taxable generate_invoice would bill from the header (quote_header_taxable) is under the lines'
+--     known cost (Σ qty × cost), ₹ quotes only (a ₹ quote switched to another currency in the same
+--     write is still checked in ₹). It is checked on a login's insert, and on a login's update whose
+--     lines moved or whose header was cut — whatever the approval status, so moving the status off
+--     'approved' in the same write does not let the money through. "Header cut" also covers a change
+--     that lowers the GST on the invoice (tax = amount − taxable) and an amount set on a quote that had
+--     none.
 --
 -- Everything earlier is kept: R-2367 (signer = login; makers of the quote family refused), R-2383 /
 -- R-2426 (the sole active owner may self-approve at any tier with a 10+ char reason), R-2441 (role per
@@ -143,7 +152,10 @@ begin
      status. Only ever set here, never cleared; a date-only line write moves nothing. */
   if (v_lines_moved and v_new_m is not null and v_new_m < 0)
      or ((v_lines_moved or v_header_cut)
-         and public.quote_header_below_cost(new.amount, new.subtotal, new.discount_pct, new.tax_rate, new.currency, new.line_items)) then
+         and public.quote_header_below_cost(new.amount, new.subtotal, new.discount_pct, new.tax_rate,
+                                            /* a ₹ quote switched to another currency in the same write is still checked in ₹ */
+                                            case when upper(coalesce(old.currency, 'INR')) = 'INR' then 'INR' else new.currency end,
+                                            new.line_items)) then
     new.below_cost := true;
   end if;
 

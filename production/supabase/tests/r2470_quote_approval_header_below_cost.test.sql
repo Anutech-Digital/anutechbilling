@@ -134,10 +134,12 @@ end $$;
 -- A5. the same cut written together with approval_status = 'not_required' → still marked below cost,
 --     so leaving 'approved' in the same write does not let the money through.
 -- A6. an approved quote with no amount gets one → stale (it was not invoiceable when signed).
+-- A7. the cut written together with currency = 'USD' is still checked in ₹.
 select pg_temp.r2470_approved_quote('Q-R2470-H9');
 select pg_temp.r2470_approved_quote('Q-R2470-H10');
 select pg_temp.r2470_approved_quote('Q-R2470-H11');
 select pg_temp.r2470_approved_quote('Q-R2470-H12');
+select pg_temp.r2470_approved_quote('Q-R2470-H13');   -- A7: cut + switched to USD in one write
 alter table public.quotes disable trigger trg_quote_approval_not_by_maker;
 update public.quotes set amount = null where id = 'Q-R2470-H12';
 alter table public.quotes enable trigger trg_quote_approval_not_by_maker;
@@ -145,13 +147,14 @@ update public.quotes set discount_pct = 45 where id = 'Q-R2470-H9';
 update public.quotes set subtotal = 1770 where id = 'Q-R2470-H10';
 update public.quotes set discount_pct = 45, approval_status = 'not_required' where id = 'Q-R2470-H11';
 update public.quotes set amount = 10 where id = 'Q-R2470-H12';
+update public.quotes set discount_pct = 45, currency = 'USD' where id = 'Q-R2470-H13';
 do $$
 declare v_id text; v_msg text;
 begin
   if (select approval_tier::text <> 'owner' or not below_cost from public.quotes where id = 'Q-R2470-H9') then
     raise exception 'FAIL A3: a header cut under cost was not marked below cost / owner tier';
   end if;
-  foreach v_id in array array['Q-R2470-H9', 'Q-R2470-H11'] loop
+  foreach v_id in array array['Q-R2470-H9', 'Q-R2470-H11', 'Q-R2470-H13'] loop
     if not (select below_cost from public.quotes where id = v_id) then
       raise exception 'FAIL A3/A5: % not marked below cost', v_id;
     end if;
