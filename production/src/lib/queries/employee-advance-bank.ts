@@ -8,7 +8,7 @@
  *     R-2407: 'owed_back' (money-in, p_name = any employee) — money they paid in by mistake, owed
  *     back to them: a pending reimbursement with no expense (Balance Sheet: Reimbursements payable).
  *   reconcile_salary_with_owed_back(p_txn_id, p_salary_id, p_reimbursement_id) — R-2407: one
- *     salary payout line = salary part + that payable of the same employee. Migration 20261104225349.
+ *     salary payout line = salary part + that payable of the same employee. Migration 20261105000500.
  *   add_employee_advance_bills(p_advance_id, p_bills, p_reimburse_extra)
  *     several bills as expenses against the advance; the part over the balance → add_reimbursement.
  */
