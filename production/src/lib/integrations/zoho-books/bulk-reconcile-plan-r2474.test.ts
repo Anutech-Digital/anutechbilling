@@ -190,3 +190,30 @@ describe("R-2474 the plan: last year's invoice with no opening invoice in the ap
     expect(row.problems[0]).toMatch(/^No opening balance: Acme Tools has no open opening invoice INV\/25-26\/0412 in the app/);
   });
 });
+
+describe("R-2474 review fixes", () => {
+  it("this line's own Zoho payment dated before 1 Apr (entered 31 Mar, money in the bank 2 Apr) is not 'paid before'", () => {
+    const h = hist({ payments: [{ paymentId: "zp-1", date: "2026-03-31", amount: 40000, tds: 0 }, { paymentId: "zp-2", date: "2026-04-15", amount: 60000, tds: 0 }] });
+    const out = openingFromZoho(inv("INV/25-26/0412", "2025-12-01", 100000, 40000, h), "2026-04-01", "zp-1");
+    expect(out.ok && out.create.balance).toBe(100000);
+  });
+
+  it("an invoice dated on / after the books' start is a sale of this period — never an opening invoice", () => {
+    const out = openingFromZoho(inv("INV/25-26/0412", "2025-10-05", 59000, 59000, hist({ payments: [{ paymentId: "zp-1", date: "2026-06-10", amount: 59000, tds: 0 }] })), "2025-04-01");
+    expect(out).toMatchObject({ ok: false, problem: expect.stringMatching(/on or after the books' start/) });
+  });
+
+  it("a credit note applied after 1 Apr → refused (the app takes no credit note on an opening invoice)", () => {
+    const h = hist({ payments: [{ paymentId: "zp-1", date: "2026-04-20", amount: 45000, tds: 0 }], credits: [{ date: "2026-04-10", amount: 5000 }] });
+    expect(openingFromZoho(inv("INV/25-26/0412", "2025-12-01", 50000, 45000, h), "2026-04-01")).toMatchObject({ ok: false, problem: expect.stringMatching(/credit note/) });
+  });
+
+  it("an open this-year quote of the same amount does not take last year's money — it is only named", () => {
+    const m = match("Acme Tools", [inv("INV/25-26/0412", "2025-12-01", 59000, 59000, hist({ payments: [{ paymentId: "zp-1", date: "2026-05-12", amount: 59000, tds: 0 }] }))], 59000);
+    const item = { kind: "new", quoteId: "Q-77", invoiceId: null, docDate: "2026-05-01", due: 59000, taxable: 50000, makesSubscription: false, approvalBlock: null };
+    const [row] = planAll([rowOf(bank("t-11", 59000), m, facts({ openItems: [item] }))], ctx);
+    expect(row.book?.kind).toBe("opening");
+    expect(row.book?.item).toBeNull();
+    expect(row.notes.join(" ")).toMatch(/Open Q-77 of Acme Tools is for the same ₹59,000 and stays open/);
+  });
+});

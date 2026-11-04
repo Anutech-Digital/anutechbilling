@@ -872,17 +872,19 @@ export function planRow(
           invoiceId: op.id, number: op.number, received: Math.round(line.credit), reference,
           parts: [{ invoiceId: op.id, number: op.number ?? inv.number, amount: Math.round(line.credit), tds, create: null }],
         };
-      } else if (single && isExisting && itemHits.length === 1) {
+      } else if (single && isExisting && !fromZoho && itemHits.length === 1) {
         payItem(itemHits[0]);
-      } else if (single && isExisting && itemHits.length > 1) {
+      } else if (single && isExisting && !fromZoho && itemHits.length > 1) {
         severalItems();
       } else if (fromZoho) {
         /* R-2474: the opening invoice(s) from Zoho's own invoice — as it stood on the books' start
-           (1 Apr) — then one receipt across them with this line. */
+           (1 Apr) — then one receipt across them with this line. Zoho's invoice number is stronger
+           evidence than an open quote of the same amount (review), so that quote is only named. */
         const cutoff = opts.booksStart ?? `${fyOf(line.txnDate)}-04-01`;
         const several = match.invoices.length > 1;
-        const { parts, problems: probs, notes: made1, dueSum } = openingParts(match.invoices, line.credit, tds, openings, cutoff);
+        const { parts, problems: probs, notes: made1, dueSum } = openingParts(match.invoices, line.credit, tds, openings, cutoff, match.payment.zohoId);
         notes.push(...made1);
+        if (itemHits.length) notes.push(`Open ${itemHits.map((o) => o.invoiceId ?? o.quoteId).join(", ")} of ${customer.name} is for the same ${rupees(money)} and stays open — check it is not this sale entered again.`);
         if (!several && tds > 0 && tdsPctWithin(tds, preview.taxable) === null) probs.push(shortByText(tds, preview.taxable));
         if (probs.length) {
           pathProblems.push(...probs);

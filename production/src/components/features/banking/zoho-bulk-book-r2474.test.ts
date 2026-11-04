@@ -106,6 +106,15 @@ describe("R-2474 Book selected: last year's invoice made from Zoho, then paid", 
     expect(run.error?.reason).toMatch(/Reload the page/);
     expect(d.payItem).not.toHaveBeenCalled();
   });
+
+  it("an opening row naming no invoice (stale plan) is refused — never booked as a new sale", async () => {
+    const [p] = planAll([row("t-5", match([inv("INV/25-26/0412", 59000, hist(59000))], 59000), 59000)], ctx);
+    const stale = { ...p, book: { ...p.book!, opening: { ...p.book!.opening!, parts: [] } } };
+    const d = deps();
+    const run = await bookRows([stale], new Set(["t-5"]), new Set(), d);
+    expect(run.error?.reason).toMatch(/names no opening invoice/);
+    expect(d.newSale).not.toHaveBeenCalled();
+  });
 });
 
 describe("R-2474 ensureOpeningInvoices: import_opening_invoices, keyed by the Zoho number", () => {
@@ -120,18 +129,20 @@ describe("R-2474 ensureOpeningInvoices: import_opening_invoices, keyed by the Zo
       total: 59000, balance: 59000, currency: "INR", gstin: "07AAACT1234A1Z3", pos_state_code: "07",
     }]);
     const rpc = vi.fn(async () => ({ data: { imported: 1, skipped: [] }, error: null }));
-    const read = vi.fn(async () => [{ id: "INV/25-26/0412", external_number: "INV/25-26/0412", customer_id: "c-acme", document_kind: "opening_invoice" }]);
+    const row1 = { id: "INV/25-26/0412", external_number: "INV/25-26/0412", customer_id: "c-acme", document_kind: "opening_invoice" };
+    const read = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([row1]);
     const ids = await ensureOpeningInvoices("c-acme", [create], rpc, read);
     expect(rpc).toHaveBeenCalledWith("import_opening_invoices", { p_rows: openingImportRows("c-acme", [create]), p_file_name: "Reconcile from Zoho (bank line)" });
     expect(read).toHaveBeenCalledWith(["INV/25-26/0412"]);
     expect(ids.get("INV/25-26/0412")).toBe("INV/25-26/0412");
   });
 
-  it("a re-run: the import skips the number, the SAME invoice is used — never a second one", async () => {
+  it("a re-run: the number is already in the app (any letter case) → the SAME invoice, no import at all", async () => {
     const rpc = vi.fn(async () => ({ data: { imported: 0, skipped: ["INV/25-26/0412"] }, error: null }));
     const read = vi.fn(async () => [{ id: "INV/25-26/0412-AB12", external_number: "inv/25-26/0412", customer_id: "c-acme", document_kind: "opening_invoice" }]);
     const ids = await ensureOpeningInvoices("c-acme", [create], rpc, read);
     expect(ids.get("INV/25-26/0412")).toBe("INV/25-26/0412-AB12");
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("the number is a sale invoice in the app, or another customer's → refused, nothing paid", async () => {

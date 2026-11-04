@@ -42,21 +42,30 @@ export const whole = (n: number) => Math.abs(n - Math.round(n)) < 0.005;
  * a write-off / paise / a foreign currency is involved, or when nothing was due on the cutoff.
  */
 export function openingFromZoho(
-  inv: ZohoMatchInvoice, cutoff: string,
+  inv: ZohoMatchInvoice, cutoff: string, thisPaymentId: string | null = null,
 ): { ok: true; create: OpeningCreate } | { ok: false; problem: string } {
   const h = inv.history;
-  const no = inv.number;
+  const no = inv.number.trim();
   if (!h) return { ok: false, problem: `Zoho's invoice ${no} was not read with its payments — press Start again.` };
   if (h.currency && h.currency !== "INR") return { ok: false, problem: `Zoho's invoice ${no} is in ${h.currency} — only a rupee invoice becomes an opening invoice. Reconcile this line by hand.` };
   const total = inv.total;
   if (total === null || !(total > 0) || !inv.date) return { ok: false, problem: `Zoho's invoice ${no} has no total or date. Reconcile this line by hand.` };
+  /* Review: an invoice dated on / after the books' start is a sale of the app's own period, never
+     an opening balance (its GST and revenue belong in the app's books). */
+  if (inv.date.slice(0, 10) >= cutoff) return { ok: false, problem: `Zoho's invoice ${no} is dated ${fmtDay(inv.date)}, on or after the books' start (${fmtDay(cutoff)}) — it is a sale of this period, not an opening balance. Reconcile this line by hand.` };
   if (h.writeOff > 0) return { ok: false, problem: `Zoho's invoice ${no} has ${rupees(h.writeOff)} written off — Zoho does not say when, so its 1 Apr balance is not certain. Reconcile this line by hand.` };
+  /* Review: a credit note applied after the cutoff would stay due for ever — the app takes no credit
+     note on an opening invoice (trg_credit_note_not_on_opening_invoice). */
+  const lateCredit = h.credits.find((c) => c.amount > 0 && (!c.date || c.date >= cutoff));
+  if (lateCredit) return { ok: false, problem: `Zoho applied a ${rupees(lateCredit.amount)} credit note to ${no} on or after ${fmtDay(cutoff)} — an opening invoice takes no credit note in the app. Reconcile this line by hand.` };
   const paidAll = h.payments.reduce((s, p) => s + p.amount + p.tds, 0) + h.credits.reduce((s, c) => s + c.amount, 0);
   if (h.balance === null || Math.abs(total - paidAll - h.balance) > 0.5) {
     return { ok: false, problem: `Zoho's invoice ${no} does not add up: total ${rupees(total)}, receipts and credits ${rupees(paidAll)}, balance ${rupees(h.balance ?? 0)}. Check it in Zoho, or reconcile this line by hand.` };
   }
   if ([...h.payments, ...h.credits].some((x) => !x.date)) return { ok: false, problem: `A receipt on Zoho's invoice ${no} has no date. Reconcile this line by hand.` };
-  const before = h.payments.filter((p) => p.date! < cutoff).reduce((s, p) => s + p.amount + p.tds, 0)
+  /* Review: THIS bank line's own Zoho payment is never "paid before" — even when Zoho dated it before
+     the cutoff (entered 31 Mar, money in the bank 2 Apr), it is the receipt being booked now. */
+  const before = h.payments.filter((p) => p.date! < cutoff && !(thisPaymentId && p.paymentId === thisPaymentId)).reduce((s, p) => s + p.amount + p.tds, 0)
     + h.credits.filter((c) => c.date! < cutoff).reduce((s, c) => s + c.amount, 0);
   const balance = total - before;
   if (!whole(total) || !whole(balance)) return { ok: false, problem: `Zoho's invoice ${no} has paise (total ${total}, due on ${fmtDay(cutoff)} ${Math.round(balance * 100) / 100}) — an opening invoice is in whole rupees. Reconcile this line by hand.` };
@@ -80,7 +89,7 @@ const normNo = (s: string | null | undefined) => (s ?? "").trim().toUpperCase().
  */
 export function openingParts(
   invoices: readonly ZohoMatchInvoice[], credit: number, tds: number,
-  openings: ReadonlyArray<{ id: string; number: string | null; due: number }>, cutoff: string,
+  openings: ReadonlyArray<{ id: string; number: string | null; due: number }>, cutoff: string, thisPaymentId: string | null = null,
 ): { parts: OpeningPart[]; problems: string[]; notes: string[]; dueSum: number } {
   const several = invoices.length > 1;
   const nos = invoices.map((i) => i.number).join(", ");
@@ -105,7 +114,7 @@ export function openingParts(
     if (have) {
       due = have.due;
     } else {
-      const made = openingFromZoho(zi, cutoff);
+      const made = openingFromZoho(zi, cutoff, thisPaymentId);
       if (!made.ok) { problems.push(made.problem); continue; }
       create = made.create;
       due = made.create.balance;
@@ -115,7 +124,7 @@ export function openingParts(
     if (Math.round(amount) + partTds > due) {
       problems.push(`${zi.number} ${have ? "has" : "had"} only ${rupees(due)} due${have ? "" : ` on ${fmtDay(cutoff)}`}, but the bank line${partTds ? " + TDS" : ""}${several ? " puts" : " is"} ${rupees(Math.round(amount) + partTds)}${several ? " on it" : ""}. Reconcile this line by hand.`);
     }
-    parts.push({ invoiceId: have?.id ?? null, number: zi.number, amount: Math.round(amount), tds: partTds, create });
+    parts.push({ invoiceId: have?.id ?? null, number: zi.number.trim(), amount: Math.round(amount), tds: partTds, create });
   }
   if (several && problems.length === 0) {
     const applied = parts.reduce((s, p) => s + p.amount, 0);

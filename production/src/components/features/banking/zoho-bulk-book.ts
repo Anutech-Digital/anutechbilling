@@ -99,7 +99,7 @@ export interface BookDeps {
 /** R-2474: import_opening_invoices' rows (R-1739's shape — the CSV import's toImportRpcRows). */
 export function openingImportRows(customerId: string, creates: readonly OpeningCreate[]) {
   return creates.map((c) => ({
-    number: c.number, invoice_date: c.invoiceDate, due_date: c.dueDate, customer_id: customerId,
+    number: c.number.trim(), invoice_date: c.invoiceDate, due_date: c.dueDate, customer_id: customerId,
     total: c.total, balance: c.balance, currency: "INR", gstin: c.gstin, pos_state_code: c.posStateCode,
   }));
 }
@@ -119,12 +119,20 @@ export async function ensureOpeningInvoices(
 ): Promise<Map<string, string>> {
   const out = new Map<string, string>();
   if (creates.length === 0) return out;
-  const { error } = await rpc("import_opening_invoices", { p_rows: openingImportRows(customerId, creates), p_file_name: "Reconcile from Zoho (bank line)" });
-  if (error) throw new Error(error.message);
-  const rows = await read(creates.map((c) => c.number));
+  const numbers = creates.map((c) => c.number.trim());
+  const has = (rows: OpeningInvoiceRow[], no: string) => rows.some((r) => (r.external_number ?? "").trim().toUpperCase() === no.toUpperCase());
+  /* Review: read first — import only the numbers the app does not have (no empty import batches). */
+  const before = await read(numbers);
+  const missing = creates.filter((c) => !has(before, c.number.trim()));
+  let rows = before;
+  if (missing.length) {
+    const { error } = await rpc("import_opening_invoices", { p_rows: openingImportRows(customerId, missing), p_file_name: "Reconcile from Zoho (bank line)" });
+    if (error) throw new Error(error.message);
+    rows = await read(numbers);
+  }
   for (const c of creates) {
-    const key = c.number.toUpperCase();
-    const hit = rows.find((r) => (r.external_number ?? "").toUpperCase() === key) ?? null;
+    const key = c.number.trim().toUpperCase();
+    const hit = rows.find((r) => (r.external_number ?? "").trim().toUpperCase() === key) ?? null;
     if (!hit) throw new Error(`The opening invoice for Zoho's ${c.number} was not made — nothing was recorded on this line. Press Book selected again.`);
     if (hit.document_kind !== "opening_invoice") throw new Error(`Zoho's ${c.number} is already in the app as a sale invoice (${hit.id}) — reconcile this line by hand.`);
     if (hit.customer_id !== customerId) throw new Error(`Zoho's ${c.number} is already in the app as an opening invoice of another customer — reconcile this line by hand.`);
@@ -270,6 +278,10 @@ export async function bookRows(
       /* R-2474: last year's invoice made from Zoho needs this screen's opening-invoice steps — said
          BEFORE any customer or payer is saved. */
       const opParts = book.kind === "opening" && !book.opening?.invoiceId ? book.opening?.parts ?? [] : [];
+      /* Review: an opening row with neither an invoice nor parts is never booked as a new sale. */
+      if (book.kind === "opening" && !book.opening?.invoiceId && opParts.length === 0) {
+        throw new Error("This line settles last year's invoice, but its plan names no opening invoice. Press Start again to plan it afresh.");
+      }
       if ((opParts.some((p) => p.create) && !deps.ensureOpenings) || (opParts.length > 1 && !deps.paySplit)) {
         throw new Error("This line settles last year's invoice from Zoho, and this screen cannot make its opening invoice. Reload the page and try again.");
       }

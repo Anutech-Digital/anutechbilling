@@ -268,7 +268,10 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       const ids = await ensureOpeningInvoices(customerId, creates,
         (fn, args) => (sb as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> }).rpc(fn, args),
         async (numbers) => {
-          const { data, error } = await sb.from("invoices").select("id, external_number, customer_id, document_kind").in("external_number", numbers);
+          /* Case-insensitive, as the import's own skip (upper(external_number)); exact match is checked after. */
+          const { data, error } = await sb.from("invoices").select("id, external_number, customer_id, document_kind")
+            /* a quote / backslash becomes the one-character wildcard — wider, never narrower; exact match below */
+            .or(numbers.map((n) => `external_number.ilike."${n.replace(/["\\]/g, "_")}"`).join(","));
           if (error) throw new Error(`Could not read the opening invoices back: ${error.message}`);
           return (data ?? []) as OpeningInvoiceRow[];
         });
