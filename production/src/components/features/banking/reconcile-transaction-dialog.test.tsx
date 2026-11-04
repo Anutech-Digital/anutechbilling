@@ -40,6 +40,9 @@ const state = vi.hoisted(() => ({
   projectPay: vi.fn(),
   commissionPay: vi.fn(),
   commissions: [] as unknown[],
+  /* R-2407 */
+  owedBack: false,
+  owedBackPay: vi.fn(),
 }));
 const { mutation } = vi.hoisted(() => ({ mutation: () => ({ mutateAsync: vi.fn(), mutate: vi.fn(), isPending: false }) }));
 
@@ -154,6 +157,17 @@ vi.mock("@/components/features/banking/employee-advance-bank-section", async () 
       const [open, setOpen] = R.useState(false);
       useFooterSaveReport(onFooterSave, open ? { label: "Book ₹11,800 as advance to Asha", onSave: state.advancePay } : null);
       return <section aria-label="Employee advance"><button type="button" onClick={() => setOpen(true)}>Book advance</button></section>;
+    },
+  };
+});
+/* R-2407: the salary + owed-back section (tested in salary-owed-back-r2407.test.tsx) — a stub that
+   offers its save only when a test sets state.owedBack. */
+vi.mock("@/components/features/banking/salary-owed-back-r2407", async () => {
+  const { useFooterSaveReport } = await import("./reconcile-who-tiles");
+  return {
+    SalaryOwedBackSection: ({ onFooterSave }: { onFooterSave?: Parameters<typeof useFooterSaveReport>[0] }) => {
+      useFooterSaveReport(onFooterSave, state.owedBack ? { label: "Pay salary + ₹1,800 owed back · Ravi", onSave: state.owedBackPay } : null);
+      return state.owedBack ? <section aria-label="Salary and owed back">Also pays back ₹1,800 owed to Ravi</section> : null;
     },
   };
 });
@@ -387,6 +401,27 @@ describe("R-2348 Reconcile sheet — every tile saves from the sticky footer", (
     expect(within(body).queryByRole("button", { name: /Pay salary \+ book/ })).toBeNull();
     fireEvent.click(primary);
     await vi.waitFor(() => expect(state.salarySplit).toHaveBeenCalledWith({ transactionId: "t1", salaryId: "S2", advanceAmount: 6800, employeeName: "Ravi" }));
+  });
+
+  /* R-2407: a salary payout that also pays back what is owed — its save leads the Employee footer
+     (before the "Overpaid salary → advance" split, which would book the extra as a new advance). */
+  it("R-2407 salary + owed back: its save is the Employee footer's primary; picking a salary still wins", async () => {
+    state.focus = null;
+    state.owedBack = true;
+    state.salaries = [{ id: "S2", employee_name: "Ravi", period: "2026-09", paid_status: "unpaid", paid_amount: 0, net: 10000, remaining: 10000 }];
+    try {
+      render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={plainOut} />);
+      fireEvent.click(screen.getByRole("radio", { name: /^Employee \/ salary/ }));
+      expect(screen.getByText("Also pays back ₹1,800 owed to Ravi")).toBeTruthy();
+      const { primary } = parts();
+      expect(primary.textContent).toBe("Pay salary + ₹1,800 owed back · Ravi");
+      fireEvent.click(primary);
+      await vi.waitFor(() => expect(state.owedBackPay).toHaveBeenCalled());
+      fireEvent.change(screen.getByLabelText("Salary to settle"), { target: { value: "S2" } });
+      expect(parts().primary.textContent).toBe("Pay salary + book ₹1,800 advance");
+    } finally {
+      state.owedBack = false;
+    }
   });
 
   it("Combine multiple expenses: Reconcile N expenses in the footer, disabled until the ticks add up", async () => {

@@ -8,6 +8,9 @@
  *               went over the advance) — shown only when one of exactly this amount is pending.
  *   money-in  → "Advance returned by employee": the whole balance settles the advance; part of
  *               it leaves the rest with them (carried forward).
+ *             → R-2407 "Paid to us by mistake — owe it back": ANY active employee (not only one
+ *               with an open advance). Booked as owed back to them (a payable, not income); the
+ *               salary payout that later carries it back shows "also pays back ₹X".
  * The employee is suggested from the bank text and the employee list. One atomic RPC per choice
  * (book_bank_txn_as_employee_advance), and un-reconciling the line reverses it.
  */
@@ -61,6 +64,8 @@ export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }
   const [advanceId, setAdvanceId] = React.useState("");
   const [note, setNote] = React.useState("");
   const [reimbId, setReimbId] = React.useState("");
+  /* R-2407: money-in — an advance coming back, or money paid to us by mistake (owed back). */
+  const [inKind, setInKind] = React.useState<"return" | "owed_back">("return");
 
   const activeEmployees = React.useMemo(() => (employees ?? []).filter((e) => e.is_active), [employees]);
   const openAdvances = React.useMemo(() => (advances ?? []).filter((a) => a.status === "active"), [advances]);
@@ -78,6 +83,17 @@ export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }
   const matchingReimb = React.useMemo(() => (pending.data ?? []).filter((r) => r.amount === amount), [pending.data, amount]);
 
   React.useEffect(() => { setOpen(""); setPerson(""); setAdvanceId(""); setNote(""); setReimbId(""); }, [transaction.id]);
+  /* R-2407: what money-in is, on opening — an advance coming back when there is one to return and
+     the bank text names nobody, a holder, or one with exactly this balance; else owed back. */
+  const owedPeople = React.useMemo(() => activeEmployees.map((e) => e.name).sort((a, b) => a.localeCompare(b)), [activeEmployees]);
+  const owedPerson = owedPeople.find((n) => samePerson(n, person)) ?? "";
+  React.useEffect(() => {
+    if (!isCredit || open !== "advance") return;
+    const holds = suggested ? returnable.some((a) => samePerson(a.employee_name, suggested)) : false;
+    const exact = returnable.some((a) => a.remaining_balance === amount);
+    setInKind(returnable.length > 0 && (!suggested || holds || exact) ? "return" : "owed_back");
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- decided once per opening; the owner's switch is kept
+  }, [isCredit, open, transaction.id]);
   // Opening: pre-pick the person from the bank text; for a return, their advance that fits.
   React.useEffect(() => {
     if (open !== "advance" || person) return;
@@ -105,20 +121,25 @@ export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }
   }, [open, reimbId, matchingReimb]);
 
   const picked = openAdvances.find((a) => a.id === advanceId) ?? null;
-  const tooMuch = isCredit && picked != null && amount > picked.remaining_balance;
-  const canBook = isCredit
+  const owedBack = isCredit && inKind === "owed_back";
+  const tooMuch = isCredit && !owedBack && picked != null && amount > picked.remaining_balance;
+  const canBook = owedBack ? Boolean(owedPerson)
+    : isCredit
     ? Boolean(picked) && !tooMuch
     : Boolean(person.trim()) && (mode === "give" || Boolean(picked));
 
   /* R-2008: the open form's Save — same label, same rule, same submit() — in the footer. Nothing
      open (or nothing to show) → nothing in the footer. It books the whole line. */
-  const advanceLabel = isCredit
+  const advanceLabel = owedBack
+    ? `Book ${rupee(amount)} as owed back to ${owedPerson || "the employee"}`
+    : isCredit
     ? `Book ${rupee(amount)} as advance returned`
     : mode === "top_up" && theirs.length > 0
       ? `Book ${rupee(amount)} as top-up`
       : `Book ${rupee(amount)} as advance${person ? ` to ${person}` : ""}`;
   const reimburseLabel = `Book ${rupee(amount)} as reimbursement paid`;
-  const shown = amount > 0 && !(isCredit && returnable.length === 0);
+  /* R-2407: money-in shows whenever there is an advance to return OR any active employee. */
+  const shown = amount > 0 && !(isCredit && returnable.length === 0 && owedPeople.length === 0);
   useFooterSaveReport(onFooterSave, !shown ? null
     : open === "advance" ? { label: advanceLabel, onSave: () => { void submit(); }, disabled: !canBook, loading: book.isPending }
     : open === "reimburse" && !isCredit && matchingReimb.length > 0
@@ -132,6 +153,8 @@ export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }
     try {
       if (open === "reimburse") {
         await book.mutateAsync({ transactionId: transaction.id, kind: "reimburse", reimbursementId: reimbId });
+      } else if (owedBack) {
+        await book.mutateAsync({ transactionId: transaction.id, kind: "owed_back", name: owedPerson });
       } else if (isCredit) {
         await book.mutateAsync({ transactionId: transaction.id, kind: "return", advanceId });
       } else if (mode === "top_up") {
@@ -143,9 +166,9 @@ export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }
     } catch { /* the hook shows the error */ }
   }
 
-  const title = isCredit ? "Advance returned by employee?" : "Advance to employee (office expenses)?";
+  const title = isCredit ? "Money in from an employee?" : "Advance to employee (office expenses)?";
   const blurb = isCredit
-    ? "Unused office-expense money an employee paid back. It reduces their advance — not income."
+    ? "Unused office-expense advance paid back, or money they paid us by mistake (owed back to them — pay it with their salary). Not income."
     : "Money given to an employee to spend on office expenses. Held as company money with them (an asset) — the expenses are booked when their bills come in.";
 
   return (
@@ -162,7 +185,25 @@ export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }
 
       {open === "advance" && (
         <div className="mt-3 space-y-2">
-          {isCredit ? (
+          {isCredit && returnable.length > 0 && (
+            <div className="space-y-1.5" role="radiogroup" aria-label="What is this money">
+              <label className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer text-xs ${inKind === "return" ? "border-indigo bg-indigo/10" : "border-hairline"}`}>
+                <input type="radio" name="emp-in-kind" checked={inKind === "return"} onChange={() => setInKind("return")} className="mt-0.5" />
+                <span>Their office-expense advance coming back</span>
+              </label>
+              <label className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer text-xs ${inKind === "owed_back" ? "border-indigo bg-indigo/10" : "border-hairline"}`}>
+                <input type="radio" name="emp-in-kind" checked={inKind === "owed_back"} onChange={() => setInKind("owed_back")} className="mt-0.5" />
+                <span>Paid to us by mistake — we owe it back</span>
+              </label>
+            </div>
+          )}
+          {owedBack ? (
+            /* R-2407: every active employee — not only those holding an advance. */
+            <select value={owedPerson} onChange={(e) => setPerson(e.target.value)} aria-label="Employee" className={selectCls}>
+              <option value="" disabled>Pick employee…</option>
+              {owedPeople.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          ) : isCredit ? (
             <select value={advanceId} onChange={(e) => setAdvanceId(e.target.value)} aria-label="Employee advance" className={selectCls}>
               <option value="" disabled>Pick whose advance…</option>
               {returnable.map((a) => (
@@ -198,7 +239,12 @@ export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }
             </>
           )}
 
-          {isCredit && picked && (
+          {owedBack && owedPerson && (
+            <p className="text-xs text-ink-2 bg-paper rounded px-2 py-1.5 border border-hairline">
+              {rupee(amount)} will be owed back to {owedPerson} (a payable, not income). When it goes back with their salary, reconcile that salary line — it shows &ldquo;also pays back {rupee(amount)}&rdquo;.
+            </p>
+          )}
+          {isCredit && !owedBack && picked && (
             <p className="text-xs text-ink-2 bg-paper rounded px-2 py-1.5 border border-hairline">
               {tooMuch
                 ? <span className="text-rose">Only {rupee(picked.remaining_balance)} is with {picked.employee_name} — this line is {rupee(amount)}.</span>

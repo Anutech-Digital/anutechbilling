@@ -79,6 +79,7 @@ import { OtherIncomeSection } from "@/components/features/banking/other-income-s
 import { OwnTransferSection } from "@/components/features/banking/own-transfer-section";
 import { IncentiveFromBankSection } from "@/components/features/banking/incentive-from-bank-section";
 import { EmployeeAdvanceBankSection } from "@/components/features/banking/employee-advance-bank-section";
+import { SalaryOwedBackSection } from "@/components/features/banking/salary-owed-back-r2407";
 import { useComplianceProfile } from "@/lib/compliance/profile";
 import { ownerEquityWords } from "@/lib/accounting/owner-equity";
 import { expenseGuard, sameVendor, type VendorFocus } from "@/lib/banking/vendor-line-guard";
@@ -139,6 +140,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const [emiSave, setEmiSave] = React.useState<FooterSave | null>(null);
   const [equitySave, setEquitySave] = React.useState<FooterSave | null>(null);
   const [empAdvanceSave, setEmpAdvanceSave] = React.useState<FooterSave | null>(null);
+  /* R-2407: a salary payout that also pays back money owed to the employee. */
+  const [owedBackSave, setOwedBackSave] = React.useState<FooterSave | null>(null);
   const [incentiveSave, setIncentiveSave] = React.useState<FooterSave | null>(null);
   /* R-2354: and for Own transfer, Other income, a receipt on a loan given and a Razorpay settlement. */
   const [transferSave, setTransferSave] = React.useState<FooterSave | null>(null);
@@ -705,6 +708,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     : tile === "vendor" ? (isCredit ? null : pickFooterSave([["vendor", vendorSave], ["commission", commissionSave]], footerPick))
     : tile === "customer" ? (isCredit && showProject ? projectSave : customerSave)
     : tile === "employee" ? pickFooterSave([
+        /* R-2407: salary + money owed back to the same employee comes first when the line fits it. */
+        ["owed_back", isCredit ? null : owedBackSave],
         ["salary", isCredit ? null : salaryPaySave ?? salarySplitSave ?? (salaryHint ? salarySave : null)],
         ["advance", empAdvanceSave],
         ["incentive", isCredit ? null : incentiveSave],
@@ -1098,6 +1103,15 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
                     })}
                   </ul>
                 )}
+              </div>
+            )}
+
+            {/* R-2407: the line = a salary + money owed back to that employee → split it: salary
+                paid + the payable settled (no extra salary expense). Shown only when it fits. */}
+            {!isCredit && (
+              <div {...pickOn("owed_back")}>
+                <SalaryOwedBackSection transaction={transaction} salaries={payableSalaries ?? []}
+                  onDone={() => onOpenChange(false)} onFooterSave={setOwedBackSave} />
               </div>
             )}
 

@@ -16,6 +16,8 @@ const mutateAsync = vi.fn();
 const employees = [
   { id: "e1", name: "Ramesh Kumar", is_active: true },
   { id: "e2", name: "Suresh Pal", is_active: true },
+  { id: "e3", name: "Neelam Sharma", is_active: true },
+  { id: "e4", name: "Old Staff", is_active: false },
 ];
 let advances: Array<{ id: string; employee_name: string; status: string; remaining_balance: number; disbursed_date: string }> = [];
 let pending: Array<{ id: string; person_name: string; amount: number; incurred_on: string; purpose: string; employee_id: string | null }> = [];
@@ -69,7 +71,7 @@ describe("R-1871 employee advance from a bank line", () => {
       { id: "a2", employee_name: "Suresh Pal", status: "active", remaining_balance: 900, disbursed_date: "2026-10-02" },
     ];
     render(<EmployeeAdvanceBankSection transaction={txn({ debit: 0, credit: 3500, description: "NEFT CR 99 RETURN" })} onDone={vi.fn()} />);
-    expect(screen.getByText("Advance returned by employee?")).toBeTruthy();
+    expect(screen.getByText("Money in from an employee?")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Book return" }));
     expect((screen.getByLabelText("Employee advance") as HTMLSelectElement).value).toBe("a1");
     expect(screen.getByText(/advance is settled — ₹0 left with them/)).toBeTruthy();
@@ -87,9 +89,43 @@ describe("R-1871 employee advance from a bank line", () => {
     expect((screen.getByRole("button", { name: /as advance returned/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
-  it("money-in with no open advance: nothing shown", () => {
-    const { container } = render(<EmployeeAdvanceBankSection transaction={txn({ debit: 0, credit: 3500 })} onDone={vi.fn()} />);
-    expect(container.innerHTML).toBe("");
+  /* R-2407 (staging 4523, 26 Oct): UPI Neelam ₹16,000 in — she paid us by mistake and has no open
+     advance. Before: nothing shown. Now: every active employee is listed and the line is booked as
+     owed back to her. */
+  it("R-2407 money-in, no open advance: all active employees listed, owed back to the named one", async () => {
+    const done = vi.fn();
+    render(<EmployeeAdvanceBankSection transaction={txn({ debit: 0, credit: 16000, description: "UPI/NEELAM SHARMA/EXCEL TECHNOLOGIES" })} onDone={done} />);
+    expect(screen.getByText("Money in from an employee?")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Book return" }));
+    expect(screen.queryByRole("radiogroup")).toBeNull();     // no advance to return → only "owed back"
+    const sel = screen.getByLabelText("Employee") as HTMLSelectElement;
+    expect([...sel.options].filter((o) => o.value).map((o) => o.value)).toEqual(["Neelam Sharma", "Ramesh Kumar", "Suresh Pal"]);
+    expect(sel.value).toBe("Neelam Sharma");
+    expect(screen.getByText(/₹16,000 will be owed back to Neelam Sharma/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Book ₹16,000 as owed back to Neelam Sharma" }));
+    await vi.waitFor(() => expect(done).toHaveBeenCalled());
+    expect(mutateAsync).toHaveBeenCalledWith({ transactionId: "t1", kind: "owed_back", name: "Neelam Sharma" });
+  });
+
+  it("R-2407 money-in from someone with no advance while others hold one: owed back is pre-picked, return still offered", async () => {
+    advances = [{ id: "a2", employee_name: "Suresh Pal", status: "active", remaining_balance: 900, disbursed_date: "2026-10-02" }];
+    render(<EmployeeAdvanceBankSection transaction={txn({ debit: 0, credit: 16000, description: "UPI/NEELAM SHARMA/EXCEL TECHNOLOGIES" })} onDone={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Book return" }));
+    expect((screen.getByRole("radio", { name: /Paid to us by mistake/ }) as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("Employee") as HTMLSelectElement).value).toBe("Neelam Sharma");
+    fireEvent.click(screen.getByRole("radio", { name: /advance coming back/ }));
+    expect(screen.getByLabelText("Employee advance")).toBeTruthy();
+    fireEvent.click(screen.getByRole("radio", { name: /Paid to us by mistake/ }));
+    fireEvent.change(screen.getByLabelText("Employee"), { target: { value: "Ramesh Kumar" } });
+    fireEvent.click(screen.getByRole("button", { name: "Book ₹16,000 as owed back to Ramesh Kumar" }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ transactionId: "t1", kind: "owed_back", name: "Ramesh Kumar" }));
+  });
+
+  it("R-2407 owed back with no employee picked: Save stays off", () => {
+    render(<EmployeeAdvanceBankSection transaction={txn({ debit: 0, credit: 500, description: "NEFT CR 77" })} onDone={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Book return" }));
+    expect((screen.getByLabelText("Employee") as HTMLSelectElement).value).toBe("");
+    expect((screen.getByRole("button", { name: /as owed back/ }) as HTMLButtonElement).disabled).toBe(true);
   });
 
   it("money-out matching a pending reimbursement: pays it", async () => {
