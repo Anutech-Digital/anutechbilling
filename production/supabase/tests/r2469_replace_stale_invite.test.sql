@@ -7,24 +7,24 @@
 --
 -- Expect "PASS r2469_replace_stale_invite". Failures are collected and listed together.
 --
---   Owner of A (Excel) MAY clear ('released', invite gone):
+--   Owner of A (Acme) MAY clear ('released', invite gone):
 --     an EXPIRED pending invite in a real company R; an invite in a blank workspace B whose only
 --     member is the invitee (accidental blank workspace); an ACCEPTED invite in R for someone who is
 --     no longer a member there.
 --   Owner of A may NOT clear ('in_use' / 'member_elsewhere' / 'none', invite stays) — 'member_elsewhere'
---   for anyone in a real company (the 4 Nov staging case: Pratik is a member of another company):
+--   for anyone in a real company (the 4 Nov staging case: Ravi is a member of another company):
 --     a pending unexpired invite in R; an invite in an empty workspace whose member is someone
 --     ELSE; an accepted invite in R for someone still in R; an invite in a solo workspace that
 --     holds records; A's own invite.
 --   Not an active owner → refused. The audit row in A never names the other workspace.
---   End to end: after the clear, A invites Pratik, Pratik signs in, A claims him → he is in A
+--   End to end: after the clear, A invites Ravi, Ravi signs in, A claims him → he is in A
 --   and his blank workspace is gone.
 
 begin;
 select set_config('request.jwt.claims', '', true);
 
 insert into public.tenants (id, name, email, state_code, doc_code) values
-  ('e2469000-0000-0000-0000-0000000000a0', 'R2469 Excel',      'r2469a@example.in', '07', 'R24A'),
+  ('e2469000-0000-0000-0000-0000000000a0', 'R2469 Acme',      'r2469a@example.in', '07', 'R24A'),
   ('e2469000-0000-0000-0000-0000000000b0', 'R2469 Blank',      'r2469b@example.in', '07', 'R24B'),
   ('e2469000-0000-0000-0000-0000000000c0', 'R2469 Fresh Co',   'r2469c@example.in', '07', 'R24C'),
   ('e2469000-0000-0000-0000-0000000000d0', 'R2469 Secret Real','r2469d@example.in', '07', 'R24D'),
@@ -34,7 +34,7 @@ insert into auth.users (id, email, last_sign_in_at) values
   ('e2469000-0000-4000-8000-0000000000a1', 'r2469-owner-a@example.test',   now()),
   ('e2469000-0000-4000-8000-0000000000a2', 'r2469-sales-a@example.test',   now()),
   ('e2469000-0000-4000-8000-0000000000a3', 'r2469-inactive-a@example.test',now()),
-  ('e2469000-0000-4000-8000-0000000000b1', 'r2469-pratik@example.test',    now() - interval '1 day'),
+  ('e2469000-0000-4000-8000-0000000000b1', 'r2469-ravi@example.test',    now() - interval '1 day'),
   ('e2469000-0000-4000-8000-0000000000c1', 'r2469-owner-c@example.test',   now()),
   ('e2469000-0000-4000-8000-0000000000d1', 'r2469-owner-d@example.test',   now()),
   ('e2469000-0000-4000-8000-0000000000d2', 'r2469-staff-d@example.test',   now()),
@@ -44,7 +44,7 @@ insert into public.users (id, tenant_id, email, full_name, role, is_active) valu
   ('e2469000-0000-4000-8000-0000000000a1', 'e2469000-0000-0000-0000-0000000000a0', 'r2469-owner-a@example.test',    'Owner A',    'owner', true),
   ('e2469000-0000-4000-8000-0000000000a2', 'e2469000-0000-0000-0000-0000000000a0', 'r2469-sales-a@example.test',    'Sales A',    'sales', true),
   ('e2469000-0000-4000-8000-0000000000a3', 'e2469000-0000-0000-0000-0000000000a0', 'r2469-inactive-a@example.test', 'Inactive A', 'owner', false),
-  ('e2469000-0000-4000-8000-0000000000b1', 'e2469000-0000-0000-0000-0000000000b0', 'r2469-pratik@example.test',     'Pratik',     'owner', true),
+  ('e2469000-0000-4000-8000-0000000000b1', 'e2469000-0000-0000-0000-0000000000b0', 'r2469-ravi@example.test',     'Ravi',     'owner', true),
   ('e2469000-0000-4000-8000-0000000000c1', 'e2469000-0000-0000-0000-0000000000c0', 'r2469-owner-c@example.test',    'Owner C',    'owner', true),
   ('e2469000-0000-4000-8000-0000000000d1', 'e2469000-0000-0000-0000-0000000000d0', 'r2469-owner-d@example.test',    'Owner D',    'owner', true),
   ('e2469000-0000-4000-8000-0000000000d2', 'e2469000-0000-0000-0000-0000000000d0', 'r2469-staff-d@example.test',    'Staff D',    'sales', true),
@@ -56,7 +56,7 @@ insert into public.customers (id, tenant_id, name, contact_email) values
 insert into public.team_invites (tenant_id, email, role, created_at, expires_at, accepted_at) values
   -- may be cleared
   ('e2469000-0000-0000-0000-0000000000d0', 'r2469-expired@example.test',  'support', now() - interval '9 days', now() - interval '2 days', null),
-  ('e2469000-0000-0000-0000-0000000000b0', 'r2469-pratik@example.test',   'support', now() - interval '2 days', now() + interval '5 days', null),
+  ('e2469000-0000-0000-0000-0000000000b0', 'r2469-ravi@example.test',   'support', now() - interval '2 days', now() + interval '5 days', null),
   ('e2469000-0000-0000-0000-0000000000d0', 'r2469-left-d@example.test',   'support', now() - interval '30 days', now() - interval '23 days', now() - interval '29 days'),
   -- must stay
   ('e2469000-0000-0000-0000-0000000000d0', 'r2469-pending-d@example.test','support', now() - interval '1 day',  now() + interval '6 days', null),
@@ -127,9 +127,9 @@ begin
   -- ── may be cleared ──────────────────────────────────────────────────────
   perform pg_temp.r2469_expect('EXPIRED pending invite in a real company', a, 'r2469-expired@example.test', 'released');
   perform pg_temp.r2469_expect('accepted invite, person has left R',       a, 'r2469-left-d@example.test',  'released');
-  perform pg_temp.r2469_expect('blank workspace whose only member is the invitee (Pratik)', a, '  R2469-Pratik@Example.test ', 'released');
+  perform pg_temp.r2469_expect('blank workspace whose only member is the invitee (Ravi)', a, '  R2469-Ravi@Example.test ', 'released');
   if exists (select 1 from public.team_invites where email in (
-        'r2469-expired@example.test', 'r2469-left-d@example.test', 'r2469-pratik@example.test')) then
+        'r2469-expired@example.test', 'r2469-left-d@example.test', 'r2469-ravi@example.test')) then
     insert into r2469_fail(label, detail) values ('may be cleared', 'invite still there after released'); end if;
 
   -- ── audit: in A, never names the other workspace ────────────────────────
@@ -137,18 +137,24 @@ begin
     insert into r2469_fail(label, detail) values ('audit', 'expected 3 stale_invite_released rows in A, got '
       || (select count(*) from public.activity_log where tenant_id = ta and action = 'stale_invite_released')); end if;
   if exists (select 1 from public.activity_log where tenant_id = ta and action = 'stale_invite_released'
-              and (label ilike '%Secret Real%' or label ilike '%Blank%' or label ilike '%e2469000-0000-0000%')) then
-    insert into r2469_fail(label, detail) values ('audit', 'audit row names the other workspace'); end if;
-  if exists (select 1 from public.activity_log where tenant_id <> ta and action = 'stale_invite_released') then
-    insert into r2469_fail(label, detail) values ('audit', 'wrote into another workspace''s log'); end if;
+              and (label ilike '%Secret Real%' or label ilike '%Blank%' or label ilike '%e2469000-0000-0000%'
+                   or label ~ '[(](expired|already used|empty workspace)[)]')) then
+    insert into r2469_fail(label, detail) values ('audit', 'A''s audit row names the other workspace or its state'); end if;
+  -- the workspace that lost the invite sees why, without being told who
+  if (select count(*) from public.activity_log
+       where tenant_id = 'e2469000-0000-0000-0000-0000000000d0' and action = 'stale_invite_released') <> 2 then
+    insert into r2469_fail(label, detail) values ('audit', 'workspace D did not get its 2 lines'); end if;
+  if exists (select 1 from public.activity_log where tenant_id <> ta and action = 'stale_invite_released'
+              and label ilike '%Acme%') then
+    insert into r2469_fail(label, detail) values ('audit', 'the other workspace''s line names the caller'); end if;
 
   -- ── end to end: invite → sign in → claim ────────────────────────────────
   update auth.users set last_sign_in_at = now() where id = 'e2469000-0000-4000-8000-0000000000b1';
   begin
     insert into public.team_invites (tenant_id, email, role, invited_by, created_at)
-    values (ta, 'r2469-pratik@example.test', 'sales', a::uuid, now() - interval '1 minute');
+    values (ta, 'r2469-ravi@example.test', 'sales', a::uuid, now() - interval '1 minute');
     perform set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', a), true);
-    v := public.merge_stranded_user_into_tenant('r2469-pratik@example.test', ta, 'sales');
+    v := public.merge_stranded_user_into_tenant('r2469-ravi@example.test', ta, 'sales');
   exception when others then
     msg := sqlerrm;
   end;
@@ -157,7 +163,7 @@ begin
     insert into r2469_fail(label, detail) values ('end to end claim', 'claim refused: ' || msg);
   else
     if (select tenant_id from public.users where id = 'e2469000-0000-4000-8000-0000000000b1') is distinct from ta then
-      insert into r2469_fail(label, detail) values ('end to end claim', 'Pratik is not in A'); end if;
+      insert into r2469_fail(label, detail) values ('end to end claim', 'Ravi is not in A'); end if;
     if exists (select 1 from public.tenants where id = 'e2469000-0000-0000-0000-0000000000b0') then
       insert into r2469_fail(label, detail) values ('end to end claim', 'blank workspace was not removed'); end if;
   end if;

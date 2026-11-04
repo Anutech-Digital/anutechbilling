@@ -1,8 +1,8 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.release_stale_team_invite(text)') and prosrc like '%R-2469%') and to_regprocedure('public.tenant_holds_business_records(uuid)') is not null
 -- deploy-key: r2469staleinvite
--- 20261104063105_r2469_release_stale_team_invite.sql
+-- 20261104090100_r2469_release_stale_team_invite.sql
 --
--- R-2469 (4 Nov 2026, staging): the Excel owner could not invite an employee — Team → Invite
+-- R-2469 (4 Nov 2026, staging): the Acme owner could not invite an employee — Team → Invite
 -- refused with "That email is already invited to a different workspace" (team_invites_email_unique
 -- is ONE row per address across every workspace, and RLS hides the other row), and Claim a
 -- colleague needs an invite or join request to THIS workspace. A dead end with no next step.
@@ -44,21 +44,14 @@ security definer
 set search_path = public
 as $$
 declare
-  v_sql  text;
-  v_rows bigint;
+  v_tbl text;
+  v_hit boolean;
 begin
-  /* R-2469: kept in step with merge_stranded_user_into_tenant (R-721/R-1834/R-1922). */
-  select string_agg(
-           format('select count(*)::bigint as n from public.%I where tenant_id = %L%s',
-                  c.table_name, p_tenant,
-                  case when c.table_name = 'bank_accounts'
-                       then ' and not (is_default_petty_cash and opening_balance = 0)'
-                       when c.table_name = 'automation_jobs'
-                       then ' and job <> ''customer_messages'''
-                       else '' end),
-           ' union all ')
-    into v_sql
-    from information_schema.columns c
+  /* R-2469: same tables and carve-outs as merge_stranded_user_into_tenant (R-721/R-1834/
+     R-1922) — but a yes/no, so one EXISTS per table and stop at the first hit (no full counts). */
+  for v_tbl in
+    select c.table_name
+      from information_schema.columns c
     join information_schema.tables t
       on t.table_schema = c.table_schema
      and t.table_name   = c.table_name
@@ -69,9 +62,21 @@ begin
            'users', 'activity_log', 'team_invites', 'tenant_secrets',
            'document_series', 'customer_number_seq', 'user_google_tokens',
            'tenant_domains', 'join_requests', 'email_log', 'api_keys'
-         );
-  execute format('select coalesce(sum(n), 0) from (%s) s', v_sql) into v_rows;
-  return v_rows > 0;
+         )
+  loop
+    execute format('select exists (select 1 from public.%I where tenant_id = $1%s)',
+                   v_tbl,
+                   case when v_tbl = 'bank_accounts'
+                        then ' and not (is_default_petty_cash and opening_balance = 0)'
+                        when v_tbl = 'automation_jobs'
+                        then ' and job <> ''customer_messages'''
+                        else '' end)
+      into v_hit using p_tenant;
+    if v_hit then
+      return true;
+    end if;
+  end loop;
+  return false;
 end;
 $$;
 
@@ -140,9 +145,13 @@ begin
 
   delete from public.team_invites where id = v_inv.id;
 
+  /* Both workspaces get a line; neither names the other, and the caller's line does not say
+     what state the other workspace was in (R-721). The owner who lost the invite sees why. */
   insert into public.activity_log (tenant_id, user_id, action, entity, label)
   values (v_tid, auth.uid(), 'stale_invite_released', 'team_invite',
-          format('Cleared an old invite for %s held elsewhere (%s) so it could be invited here', v_email, v_why));
+          format('Cleared an old invite for %s from another workspace so it could be invited here', v_email)),
+         (v_inv.tenant_id, null, 'stale_invite_released', 'team_invite',
+          format('Your invite for %s (%s) was removed because another company invited them', v_email, v_why));
 
   return 'released';
 end;

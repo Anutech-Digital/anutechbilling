@@ -409,6 +409,7 @@ MIGS=(
   "r2462inboundimport|20261104034650_r2462_inbound_purchase_import.sql|resellersos_migration|to_regprocedure('public.import_inbound_purchase(bigint)') is not null and to_regprocedure('public.set_inbound_purchase_status(bigint,text)') is not null and exists (select 1 from pg_trigger where tgname = 'trg_inbound_purchases_r2462_guard')"
   "r2466quotelessinvoicebankcredit|20261104045700_r2466_quoteless_invoice_bank_credit.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_open_items(uuid)') and prosrc like '%R-2466%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_pay_item(uuid,integer,text,text,text,integer,numeric,text,boolean,date,date)') and prosrc like '%R-2466%')"
   "r2364suggestionsskipused|20261104060346_r2364_suggestions_skip_used.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.suggest_bank_transaction_matches(uuid)') and prosrc like '%R-2364%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_txn(uuid,text,text,text)') and prosrc like '%R-2364%')"
+  "r2469staleinvite|20261104090100_r2469_release_stale_team_invite.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.release_stale_team_invite(text)') and prosrc like '%R-2469%') and to_regprocedure('public.tenant_holds_business_records(uuid)') is not null"
 )
 field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 

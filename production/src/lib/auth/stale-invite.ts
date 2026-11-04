@@ -1,7 +1,7 @@
 /**
  * R-2469 (4 Nov 2026) — what Team → Invite says when an address is held elsewhere.
  *
- * `release_stale_team_invite(email)` (migration 20261104063105) runs before the invite is written:
+ * `release_stale_team_invite(email)` (migration 20261104090100) runs before the invite is written:
  *   member_elsewhere — the address belongs to a member of another REAL company: refused, never moved;
  *   released         — another workspace's expired / used / blank-workspace invite was cleared;
  *   in_use           — another workspace holds a live invite;
@@ -20,8 +20,8 @@ export function parseStaleInviteOutcome(v: unknown): StaleInviteOutcome | null {
 export function memberElsewhereMessage(email: string): string {
   return (
     `${email} is already a member of another company on ResellerOS, so they can't join yours with this address. ` +
-    "Next step: invite them with a different email address — or, if they have left that company, " +
-    "ask that company's owner to contact ResellerOS support to move them out, then invite them again."
+    "Next step: ask them — they know which company it is — to have that company's owner contact " +
+    "ResellerOS support to release them, then invite them again. Or invite them with a different email address."
   );
 }
 
@@ -29,10 +29,13 @@ export function memberElsewhereMessage(email: string): string {
 export function inviteInUseMessage(email: string): string {
   return (
     `${email} has an open invite from another company on ResellerOS. ` +
-    "Next step: ask ResellerOS support to cancel it, or invite them with a different email address. " +
-    "Invites expire after 7 days — after that you can invite them here directly."
+    "Next step: invites expire after 7 days — invite them again after that and it will go through. " +
+    "If it can't wait, ask them to have that company remove the invite (they know which one), or use a different email address."
   );
 }
+
+/** R-2469: the address check (an existence probe if unlimited) is capped per owner. */
+export const INVITE_CHECK_RATE = { limit: 30, windowMs: 60 * 60_000 } as const;
 
 /** R-534 temp-password path: the address already has a login that is not in this workspace. */
 export function loginElsewhereMessage(email: string): string {
