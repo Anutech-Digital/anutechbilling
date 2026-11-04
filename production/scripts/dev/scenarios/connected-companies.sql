@@ -13,14 +13,15 @@ values ('c2458000-0000-4000-8000-000000000081', 'SCN Network Partner Pvt Ltd', '
         '07AAECS2458K1Z4', 'Delhi', 'business', now() - interval '10 days',
         now() - interval '9 days', '07AAECS2458K1Z4', 'platform_admin', 'R-2458 scenario');
 
--- E2E Test Co: its GSTIN registered + proved (the stamp says it was this scenario; --clear takes the proof away again).
+-- E2E Test Co: its GSTIN registered + proved. Only when not proved yet (a real R-2445 proof is kept); the stamp
+-- says it was this scenario, and --clear takes back only that stamp.
 update public.tenants
    set gstin_verified_at = coalesce(gstin_verified_at, now() - interval '10 days'),
        gstin_owner_verified_at = now() - interval '9 days',
        gstin_owner_verified_gstin = upper(btrim(gstin)),
        gstin_owner_verified_how = 'platform_admin',
        gstin_owner_verified_by = 'R-2458 scenario'
- where id = :'tenant' and nullif(btrim(coalesce(gstin, '')), '') is not null;
+ where id = :'tenant' and nullif(btrim(coalesce(gstin, '')), '') is not null and gstin_owner_verified_at is null;
 
 insert into public.tenant_connections (id, a_tenant_id, b_tenant_id, a_gstin, b_gstin, status, a_scopes, b_scopes,
                                        related_party, origin, requested_at, responded_at)

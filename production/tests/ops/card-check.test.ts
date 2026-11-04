@@ -113,6 +113,16 @@ describe("dataNeeds", () => {
     expect(one("Ek company kholo jisme sirf EK owner ho").noFixture).toMatch(/Owner 2/);
     expect(one("Banking → HDFC 4523 kholo").noFixture).toMatch(/SCN HDFC Current/);
   });
+
+  it("does not point a lead's missing state, or ₹55,000, at a scenario (review R-2458)", () => {
+    expect(dataNeeds(["Ek nayi lead banao jiska State khaali ho"])).toEqual([]);
+    expect(dataNeeds(["Invoice ₹55,000 ka banao"])).toEqual([]);
+    expect(dataNeeds(["₹55 bacha hai"])[0]).toMatchObject({ scenario: "small-leftover" });
+    const out = renderChecklist({ card: { id: "R-2456", title: "t", howToCheck: ["Ek nayi lead banao jiska State khaali ho"] },
+      host: "localhost:3001", links: LINKS, scenarios: SCENARIOS }).join("\n");
+    expect(out).not.toMatch(/Test data:/);
+    expect(out).toMatch(/No ready-made data for: none needed/);
+  });
 });
 
 /* R-2458: the 29 cards waiting for a localhost check on 4 Nov — each one's checklist names the data to load

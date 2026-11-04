@@ -166,17 +166,30 @@ language sql stable as $f$
   )
 $f$;
 
+/* R-2458 — the E2E user a scenario acts as / names (approver, maker, owner): the seeded e2e-<role>@ login
+   when it exists, else the company's oldest active user with that role ("owner2" is the second owner). */
+create function pg_temp.scn_user(p_tenant uuid, p_role text)
+returns uuid
+language sql stable as $f$
+  select coalesce(
+    (select u.id from public.users u where u.tenant_id = p_tenant and lower(u.email) = 'e2e-' || p_role || '@example.test'),
+    (select u.id from public.users u where u.tenant_id = p_tenant and u.role::text = p_role order by u.created_at limit 1))
+$f$;
+
 /* R-2458 — everything that hangs off scenario customers (and listed quotes / invoices), so a customer can
    go even after a tester quoted, invoiced, took a payment or started a subscription on it (4 Nov: the
-   project-receipts reset stopped on SCN Acme's later quotes and payments). The customers themselves stay —
-   the caller removes them. Used by scn_project_clear and scn_extra_clear. */
+   project-receipts reset stopped on SCN Acme's later quotes and payments). A NON-scenario bank line a
+   tester matched to one of these documents stays, only unmatched (as scn_clear does for bills). The
+   customers themselves stay — the caller removes them. Used by scn_project_clear and scn_extra_clear.
+   It switches user triggers off and on for ITS tables only; a caller that deletes from these tables after
+   calling it must switch them off again. */
 create function pg_temp.scn_drop_customer_docs(p_tenant uuid, p_customers uuid[], p_quotes text[], p_invoices text[])
 returns void
 language plpgsql as $f$
 declare
-  q text[]; i text[]; s uuid[];
-  doc_tables text[] := array['payments', 'credit_notes', 'debit_notes', 'tds_receivable', 'subscription_billings',
-    'subscriptions', 'invoices', 'quotes'];
+  q text[]; i text[]; s uuid[]; p uuid[];
+  doc_tables text[] := array['bank_transactions', 'payments', 'credit_notes', 'debit_notes', 'tds_receivable',
+    'subscription_billings', 'subscriptions', 'invoices', 'quotes'];
 begin
   select coalesce(array_agg(x.id), '{}') into q from public.quotes x
    where x.tenant_id = p_tenant and (x.id = any(p_quotes) or x.customer_id = any(p_customers));
@@ -186,9 +199,18 @@ begin
    where x.tenant_id = p_tenant
      and (x.id = any(p_invoices) or x.customer_id = any(p_customers) or x.quote_id = any(q)
           or x.id in (select b.invoice_id from public.subscription_billings b where b.subscription_id = any(s)));
+  select coalesce(array_agg(x.id), '{}') into p from public.payments x
+   where x.tenant_id = p_tenant and (x.customer_id = any(p_customers) or x.invoice_id = any(i) or x.quote_id = any(q));
+  if cardinality(q) + cardinality(i) + cardinality(s) + cardinality(p) = 0 then
+    return;
+  end if;
   execute (select string_agg(format('alter table public.%I disable trigger user', tbl), '; ') from unnest(doc_tables) tbl);
-  delete from public.payments
-   where tenant_id = p_tenant and (customer_id = any(p_customers) or invoice_id = any(i) or quote_id = any(q));
+  update public.bank_transactions
+     set matched_to_type = null, matched_to_id = null, matched_at = null, matched_by = null, match_confidence = null
+   where tenant_id = p_tenant
+     and (matched_to_id = any(i) or matched_to_id = any(q)
+          or matched_to_id = any(select x::text from unnest(p) x));
+  delete from public.payments where id = any(p);
   delete from public.credit_notes where tenant_id = p_tenant and (invoice_id = any(i) or customer_id = any(p_customers));
   delete from public.debit_notes where tenant_id = p_tenant and (invoice_id = any(i) or customer_id = any(p_customers));
   delete from public.tds_receivable where tenant_id = p_tenant and (invoice_id = any(i) or customer_id = any(p_customers));
@@ -243,11 +265,18 @@ $f$;
    subscriptions — so what a tester makes on a scenario customer goes too), quotes / invoices listed by
    id, employees (+ salary records and the Salaries bills pay_salary booked), business loans (+ their
    payments), LUT rows, and a second company (+ its connections, network documents and GSTIN claims).
-   E2E Test Co's own "GSTIN ownership proved" stamp counts only when a scenario wrote it (by = R-2458).
-   plpgsql, so a table a local DB does not have yet (tenant_luts before R-2444) is only read when present. */
+   Tables a local DB may not have yet (tenant_luts before R-2444; tenant_connections, network_documents,
+   gstin_ownership_claims before R-2433 / R-2434 / R-2445) are only read through dynamic SQL when present,
+   so every OTHER scenario still loads on such a DB (the scenario that needs them is skipped by `needs`). */
+create function pg_temp.scn_has(p_table text)
+returns boolean
+language sql stable as $f$ select to_regclass('public.' || p_table) is not null $f$;
+
 create function pg_temp.scn_extra_scope(p_tenant uuid, p_txns uuid[], p_extra text[])
 returns table(kind text, id text)
 language plpgsql stable as $f$
+declare
+  co uuid[];
 begin
   if coalesce(cardinality(p_extra), 0) = 0 then
     return;
@@ -275,16 +304,6 @@ begin
     select x.id from public.business_loans x where x.tenant_id = p_tenant and x.id::text = any(p_extra)
   ), lp as (
     select x.id from public.business_loan_payments x where x.tenant_id = p_tenant and x.loan_id in (select l.id from l)
-  ), co as (
-    select x.id from public.tenants x where x.id::text = any(p_extra) and x.id <> p_tenant
-  ), cn as (
-    select x.id from public.tenant_connections x
-     where x.id::text = any(p_extra) or x.a_tenant_id in (select co.id from co) or x.b_tenant_id in (select co.id from co)
-  ), nd as (
-    select x.id from public.network_documents x
-     where x.seller_tenant_id in (select co.id from co) or x.buyer_tenant_id in (select co.id from co)
-  ), gc as (
-    select x.id from public.gstin_ownership_claims x where x.tenant_id in (select co.id from co)
   )
   select 'customer'::text, x.id::text from c x
   union all select 'quote', x.id from q x
@@ -294,13 +313,24 @@ begin
   union all select 'salary', x.id::text from sal x
   union all select 'loan', x.id::text from l x
   union all select 'loanPayment', x.id::text from lp x
-  union all select 'company', x.id::text from co x
-  union all select 'connection', x.id::text from cn x
-  union all select 'networkDoc', x.id::text from nd x
-  union all select 'gstinClaim', x.id::text from gc x
-  union all select 'ownerVerified', x.id::text from public.tenants x
-             where x.id = p_tenant and x.gstin_owner_verified_by = 'R-2458 scenario';
-  if to_regclass('public.tenant_luts') is not null then
+  union all select 'company', x.id::text from public.tenants x where x.id::text = any(p_extra) and x.id <> p_tenant;
+
+  select coalesce(array_agg(x.id), '{}') into co from public.tenants x where x.id::text = any(p_extra) and x.id <> p_tenant;
+  if cardinality(co) > 0 and pg_temp.scn_has('tenant_connections') then
+    return query execute
+      'select ''connection''::text, x.id::text from public.tenant_connections x
+        where x.id::text = any($1) or x.a_tenant_id = any($2) or x.b_tenant_id = any($2)' using p_extra, co;
+  end if;
+  if cardinality(co) > 0 and pg_temp.scn_has('network_documents') then
+    return query execute
+      'select ''networkDoc''::text, x.id::text from public.network_documents x
+        where x.seller_tenant_id = any($1) or x.buyer_tenant_id = any($1)' using co;
+  end if;
+  if cardinality(co) > 0 and pg_temp.scn_has('gstin_ownership_claims') then
+    return query execute
+      'select ''gstinClaim''::text, x.id::text from public.gstin_ownership_claims x where x.tenant_id = any($1)' using co;
+  end if;
+  if pg_temp.scn_has('tenant_luts') then
     return query execute 'select ''lut''::text, x.id::text from public.tenant_luts x where x.tenant_id = $1 and x.id::text = any($2)'
       using p_tenant, p_extra;
   end if;
@@ -324,8 +354,7 @@ language sql stable as $f$
     'companies',     (select count(*) from s where kind = 'company'),
     'connections',   (select count(*) from s where kind = 'connection'),
     'networkDocs',   (select count(*) from s where kind = 'networkDoc'),
-    'gstinClaims',   (select count(*) from s where kind = 'gstinClaim'),
-    'ownerVerified', (select count(*) from s where kind = 'ownerVerified')
+    'gstinClaims',   (select count(*) from s where kind = 'gstinClaim')
   )
 $f$;
 
@@ -335,8 +364,9 @@ language plpgsql as $f$
 declare
   got jsonb := pg_temp.scn_extra_count(p_tenant, p_txns, p_extra);
   ids record;
-  x_tables text[] := array['payments', 'customers', 'salary_payments', 'expenses', 'employees', 'business_loan_payments', 'business_loans',
-    'network_documents', 'tenant_connections', 'gstin_ownership_claims', 'tenants'];
+  x_tables text[] := array['bank_transactions', 'payments', 'customers', 'salary_payments', 'expenses', 'employees',
+    'business_loan_payments', 'business_loans', 'tenants'];
+  opt_tables text[] := array['network_documents', 'tenant_connections', 'gstin_ownership_claims'];
 begin
   if (select sum(v::int) from jsonb_each_text(got) as t(k, v)) = 0 then
     return got;
@@ -355,24 +385,45 @@ begin
     into ids
     from pg_temp.scn_extra_scope(p_tenant, p_txns, p_extra) s;
 
-  -- Same reason as scn_clear below: test data being taken away, not a user's action.
-  execute (select string_agg(format('alter table public.%I disable trigger user', tbl), '; ') from unnest(x_tables) tbl);
-  delete from public.payments where id = any(ids.p);  -- incl. a receipt booked from a scenario bank line
+  -- the customers' documents first (it toggles its own tables' triggers)
   perform pg_temp.scn_drop_customer_docs(p_tenant, ids.c, ids.q, ids.i);
+
+  -- Same reason as scn_clear below: test data being taken away, not a user's action.
+  x_tables := x_tables || array(select t from unnest(opt_tables) t where pg_temp.scn_has(t));
+  execute (select string_agg(format('alter table public.%I disable trigger user', tbl), '; ') from unnest(x_tables) tbl);
+  delete from public.payments where id = any(ids.p);  -- a receipt booked from a scenario bank line on another customer
   delete from public.customers where id = any(ids.c);
+  -- a NON-scenario bank line a tester linked to a scenario salary stays, only unmatched
+  update public.bank_transactions
+     set matched_to_type = null, matched_to_id = null, matched_at = null, matched_by = null, match_confidence = null
+   where tenant_id = p_tenant and not (id = any(p_txns)) and matched_to_type = 'salary'
+     and matched_to_id = any(select x::text from unnest(ids.sal) x);
   -- the Salaries bills pay_salary booked for the scenario's people
   with gone as (delete from public.salary_payments where id = any(ids.sal) returning expense_id)
   delete from public.expenses x using gone g where x.tenant_id = p_tenant and x.id = g.expense_id;
   delete from public.employees where id = any(ids.e);
   delete from public.business_loan_payments where tenant_id = p_tenant and loan_id = any(ids.l);
   delete from public.business_loans where id = any(ids.l);
-  delete from public.network_documents where id = any(ids.nd);
-  delete from public.tenant_connections where id = any(ids.cn);
-  delete from public.gstin_ownership_claims where tenant_id = any(ids.co);
-  update public.tenants
-     set gstin_owner_verified_at = null, gstin_owner_verified_gstin = null, gstin_owner_verified_how = null, gstin_owner_verified_by = null
-   where id = p_tenant and gstin_owner_verified_by = 'R-2458 scenario';
-  delete from public.tenants where id = any(ids.co);
+  if cardinality(ids.co) > 0 then
+    if pg_temp.scn_has('network_documents') then
+      execute 'delete from public.network_documents where id = any($1)' using ids.nd;
+    end if;
+    if pg_temp.scn_has('tenant_connections') then
+      execute 'delete from public.tenant_connections where id = any($1)' using ids.cn;
+    end if;
+    if pg_temp.scn_has('gstin_ownership_claims') then
+      execute 'delete from public.gstin_ownership_claims where tenant_id = any($1)' using ids.co;
+    end if;
+    -- E2E Test Co's "GSTIN ownership proved" — only the stamp a scenario wrote (a real proof stays)
+    if exists (select 1 from information_schema.columns
+                where table_schema = 'public' and table_name = 'tenants' and column_name = 'gstin_owner_verified_by') then
+      execute 'update public.tenants
+                  set gstin_owner_verified_at = null, gstin_owner_verified_gstin = null,
+                      gstin_owner_verified_how = null, gstin_owner_verified_by = null
+                where id = $1 and gstin_owner_verified_by = ''R-2458 scenario''' using p_tenant;
+    end if;
+    delete from public.tenants where id = any(ids.co);
+  end if;
   if cardinality(ids.lut) > 0 then
     execute 'delete from public.tenant_luts where id = any($1)' using ids.lut;
   end if;

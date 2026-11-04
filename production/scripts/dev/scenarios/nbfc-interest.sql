@@ -12,14 +12,14 @@ insert into public.business_loans (id, tenant_id, lender, purpose, principal, in
   ('c2458000-0000-4000-8000-000000000072', :'tenant', 'SCN HDFC Bank', 'Vehicle loan', 800000, 9.5, 60, 17000,
    current_date - 240, :'acct', 'active', 'term', 'SCN scenario nbfc-interest (R-2458)');
 
--- EMIs on or after this FY's 1 April (the box sums interest booked in the FY)
+-- EMIs in this FY, never after today (the box sums interest booked from this FY's 1 April)
 insert into public.business_loan_payments (id, tenant_id, loan_id, amount, principal_part, interest_part, paid_on, bank_account_id, notes) values
   ('c2458000-0000-4000-8000-000000000073', :'tenant', 'c2458000-0000-4000-8000-000000000071', 15000, 8500, 6500,
-   make_date(extract(year from current_date - interval '3 months')::int, 4, 1) + 9, :'acct', 'SCN scenario nbfc-interest (R-2458)'),
+   greatest(make_date(extract(year from current_date - interval '3 months')::int, 4, 1), current_date - 45), :'acct', 'SCN scenario nbfc-interest (R-2458)'),
   ('c2458000-0000-4000-8000-000000000074', :'tenant', 'c2458000-0000-4000-8000-000000000071', 15000, 8500, 6500,
-   make_date(extract(year from current_date - interval '3 months')::int, 4, 1) + 39, :'acct', 'SCN scenario nbfc-interest (R-2458)'),
+   greatest(make_date(extract(year from current_date - interval '3 months')::int, 4, 1), current_date - 15), :'acct', 'SCN scenario nbfc-interest (R-2458)'),
   ('c2458000-0000-4000-8000-000000000075', :'tenant', 'c2458000-0000-4000-8000-000000000072', 17000, 9000, 8000,
-   make_date(extract(year from current_date - interval '3 months')::int, 4, 1) + 9, :'acct', 'SCN scenario nbfc-interest (R-2458)');
+   greatest(make_date(extract(year from current_date - interval '3 months')::int, 4, 1), current_date - 45), :'acct', 'SCN scenario nbfc-interest (R-2458)');
 
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
   ('c2458000-0000-4000-8000-000000000076', :'tenant', :'acct', current_date - 3,

@@ -14,7 +14,7 @@ insert into public.employees (id, tenant_id, name, monthly_gross, joining_date, 
 
 -- Last month's salary for Ravi, made the way Payroll makes it (the RPC checks the caller's role).
 select set_config('request.jwt.claims', json_build_object('sub',
-  (select u.id from public.users u where u.tenant_id = :'tenant' and u.email = 'e2e-owner@example.test'),
+  pg_temp.scn_user(:'tenant', 'owner'),
   'role', 'authenticated')::text, true);
 select public.pay_salary('c2458000-0000-4000-8000-000000000061', to_char(date_trunc('month', current_date) - interval '1 month', 'YYYY-MM'),
   (date_trunc('month', current_date) - interval '1 day')::date, 30000, 0, 0, 0, null, 0, 0, 0, 0, :'acct',
@@ -24,7 +24,7 @@ select set_config('request.jwt.claims', '', true);
 -- ₹25,000 of it paid from the bank (linking the line marks the record partially paid — sync_salary_paid_status).
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source,
                                       matched_to_type, matched_to_id, matched_at, match_confidence) values
-  ('c2458000-0000-4000-8000-000000000063', :'tenant', :'acct', (date_trunc('month', current_date) + interval '1 day')::date,
+  ('c2458000-0000-4000-8000-000000000063', :'tenant', :'acct', current_date,
    'NEFT DR-SCN0000063-SALARY-SCN RAVI KUMAR', 25000, 0, 'SCN-SAL-2458-063', 'csv_upload',
    'salary', (select s.id::text from public.salary_payments s where s.employee_id = 'c2458000-0000-4000-8000-000000000061'), now(), 'manual');
 
@@ -32,5 +32,5 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
   ('c2458000-0000-4000-8000-000000000064', :'tenant', :'acct', (date_trunc('month', current_date) - interval '6 days')::date,
    '50100508724580-TPT-FULL N FINAL SALARY-SCN SUNITA RAO', 52000, 0, 'SCN-SAL-2458-064', 'csv_upload'),
-  ('c2458000-0000-4000-8000-000000000065', :'tenant', :'acct', current_date - 1,
+  ('c2458000-0000-4000-8000-000000000065', :'tenant', :'acct', current_date,
    '50100508724580-TPT-SALARY-SCN SUNITA RAO', 52000, 0, 'SCN-SAL-2458-065', 'csv_upload');

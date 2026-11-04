@@ -17,7 +17,7 @@ const NO_SALES = { leads: 0, quotes: 0, invoices: 0, payments: 0, subscriptions:
 const NO_PROJECTS = { customers: 0, projects: 0, milestones: 0, projectPayments: 0, projectInvoices: 0, tdsRows: 0 };
 /** R-2458: the localhost-check counts (_common.sql scn_extra_count) — 0 for every older scenario. */
 const NO_EXTRA = { xCustomers: 0, xQuotes: 0, xInvoices: 0, xPayments: 0, employees: 0, salaries: 0, loans: 0, loanPayments: 0,
-                   luts: 0, companies: 0, connections: 0, networkDocs: 0, gstinClaims: 0, ownerVerified: 0 };
+                   luts: 0, companies: 0, connections: 0, networkDocs: 0, gstinClaims: 0 };
 /** R-2458 ids: c2458000-0000-4000-8000-0000000000NN. */
 const x = (n) => `c2458000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 /** A scenario that touches no vendor / sales / project rows. */
@@ -261,7 +261,7 @@ export const SCENARIOS = [
     cards: ["R-2433", "R-2445", "R-2449", "R-2434", "R-2450", "R-2432"],
     needs: { sql: "to_regclass('public.network_documents') is not null and to_regclass('public.gstin_ownership_claims') is not null", what: "network tables (migrations R-2433 / R-2445 / R-2434)" },
     scope: { vendors: [], txns: [], docs: [], names: ["scn network partner pvt ltd"], upis: [], extra: [x(81), x(82)] },
-    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, companies: 1, connections: 1, networkDocs: 2, ownerVerified: 1 },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, companies: 1, connections: 1, networkDocs: 2 },
     // --self-test: accept one (a vendor + bill VB-NET-… appear in E2E Test Co) and reject the other — the reset must take both away
     selfTestUse: `
       select * from public.network_accept_document('${x(83)}', null);

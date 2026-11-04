@@ -28,5 +28,5 @@ select v.id, :'tenant', 'c2458000-0000-4000-8000-000000000091', 'SCN Approved Bu
     ('Q-SCN-AP-3', 'accepted', 'not_required',  0, 14160, 12000, 1667,
      '[{"id": "line-1", "qty": 10, "cost": 1000, "name": "SCN Google Workspace Business Starter", "rate": 1200, "commitment": "annual_yearly"}]')
   ) as v(id, status, appr, disc, amount, subtotal, margin_bps, lines)
-  cross join (select u.id from public.users u where u.tenant_id = :'tenant' and u.email = 'e2e-sales@example.test') sales
-  cross join (select u.id from public.users u where u.tenant_id = :'tenant' and u.email = 'e2e-manager@example.test') mgr;
+  cross join (select pg_temp.scn_user(:'tenant', 'sales') as id) sales
+  cross join (select pg_temp.scn_user(:'tenant', 'manager') as id) mgr;

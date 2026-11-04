@@ -122,7 +122,10 @@ const loadSql = (s) => readFileSync(join(scenarioDir, `${s.name}.sql`), "utf8") 
  * R-2458: a scenario whose tables come from a migration this local DB may not have yet (`needs`, a SQL
  * boolean) is skipped with the reason instead of failing the whole run — `npm run localhost:update` adds it.
  */
-const needLines = psql(SCENARIOS.filter((s) => s.needs).map((s) => `select 'NEED|${s.name}|' || (${s.needs.sql})::text;`).join("\n") || "select 1;");
+const needing = picked.filter((s) => s.needs);
+const needLines = needing.length
+  ? psql(needing.map((s) => `select 'NEED|${s.name}|' || (${s.needs.sql})::text;`).join("\n"))
+  : [];
 const missing = new Set(needLines.filter((l) => l.startsWith("NEED|") && l.endsWith("|false")).map((l) => l.split("|")[1]));
 const skipNote = (s) => `skipped — this local DB has no ${s.needs.what} yet: npm run localhost:update, then run it again`;
 
