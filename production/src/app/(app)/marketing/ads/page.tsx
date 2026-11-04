@@ -248,21 +248,27 @@ export default function AdPlatformsPage() {
 
           {/* Range KPIs + chart */}
           <Card id="ad-results" className="p-4 scroll-mt-24">
-            <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
-              <div>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div className="min-w-0">
                 <p className="text-sm font-semibold text-ink">Spend &amp; results</p>
                 <p className="text-xs text-ink-3">{formatDate(from)} – {formatDate(to)}{isPreset ? ` vs previous ${range} days` : ""}</p>
               </div>
-              <div className="flex flex-1 gap-2 flex-wrap items-center">
+              <Button variant="primary" icon="refresh" className="shrink-0" onClick={openSyncPicker} disabled={syncing || enabledAccounts.length === 0}>Sync selected dates</Button>
+            </div>
+            <div className="mb-4 grid gap-4 rounded-lg border border-hairline bg-paper-2/40 p-3 sm:grid-cols-2 xl:grid-cols-[minmax(220px,1fr)_minmax(200px,0.8fr)_minmax(340px,1.2fr)]">
+              <div className="min-w-0">
+                <p className="mb-1 text-xs font-medium text-ink-3">Platform</p>
                 <TabBar value={pf} onChange={(v) => { setPf(v as PlatformFilter); setSelectedAccountId("all"); }} items={[{ id: "all", label: "All" }, { id: "google-ads", label: "Google" }, { id: "meta-ads", label: "Meta" }, { id: "linkedin-ads", label: "LinkedIn" }]} />
-                {accounts.length > 0 && <label className="flex items-center gap-2 text-xs text-ink-3">Ad account
-                  <select aria-label="Ad account" className="rounded-md border border-hairline bg-paper px-2 py-1.5 text-sm text-ink max-w-56" value={selectedAccountId} onChange={(e) => { const id = e.target.value; setSelectedAccountId(id); const account = accounts.find((a) => a.id === id); if (account) setPf(account.platform); }}>
+              </div>
+              {accounts.length > 0 && <label className="flex min-w-0 flex-col gap-1 text-xs font-medium text-ink-3">Ad account
+                  <select aria-label="Ad account" className="w-full min-w-0 rounded-md border border-hairline bg-paper px-2.5 py-2 text-sm font-normal text-ink" value={selectedAccountId} onChange={(e) => { const id = e.target.value; setSelectedAccountId(id); const account = accounts.find((a) => a.id === id); if (account) setPf(account.platform); }}>
                     <option value="all">{pf === "all" ? "All ad accounts" : `All ${PLATFORM_LABEL[pf]} accounts`}</option>
                     {selectableAccounts.map((a) => <option key={a.id} value={a.id}>{pf === "all" ? `${PLATFORM_LABEL[a.platform]} · ` : ""}{a.name} ({a.account_id})</option>)}
                   </select>
-                </label>}
+              </label>}
+              <div className="min-w-0 sm:col-span-2 xl:col-span-1">
+                <p className="mb-1 text-xs font-medium text-ink-3">Date range</p>
                 <TabBar value={range} onChange={(v) => setRange(v as Range)} items={[{ id: "7", label: "7 days" }, { id: "30", label: "30 days" }, { id: "90", label: "90 days" }, { id: "all", label: "All time" }, { id: "custom", label: "Custom" }]} />
-                <Button variant="primary" icon="refresh" className="ml-auto" onClick={openSyncPicker} disabled={syncing || enabledAccounts.length === 0}>Sync selected dates</Button>
               </div>
             </div>
             {range === "custom" && <div className="flex flex-wrap items-end gap-3 mb-4"><FormField label="From" htmlFor="report-from"><Input id="report-from" type="date" min={historyStart} max={to} value={customFrom || addDays(today, -89)} onChange={(e) => setCustomFrom(e.target.value)} /></FormField><FormField label="To" htmlFor="report-to"><Input id="report-to" type="date" min={from} max={today} value={customTo || today} onChange={(e) => setCustomTo(e.target.value)} /></FormField></div>}
