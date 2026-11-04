@@ -48,14 +48,15 @@ export function useUndoNetworkAccept() {
   return useMutation({ mutationFn: (id: string) => undoNetworkAccept(id), onSuccess: after });
 }
 
-/** The default category of my vendor with this GSTIN (the one Accept would use), or null. */
+/** The default category of my vendor with this GSTIN (the one Accept would use), or null.
+ *  Case-insensitive like ensureVendor's findByGstin (the database matches upper(btrim(gstin))). */
 export function useVendorDefaultCategory(gstin: string | null) {
   return useQuery({
     queryKey: ["vendors", "default-category", gstin],
     enabled: !!gstin,
     queryFn: async (): Promise<string | null> => {
       const { data, error } = await createClient()
-        .from("vendors").select("default_category").eq("gstin", gstin!).order("created_at").limit(1);
+        .from("vendors").select("default_category").ilike("gstin", gstin!.trim()).order("created_at").limit(1);
       if (error) throw error;
       return (data?.[0]?.default_category as string | null | undefined) ?? null;
     },

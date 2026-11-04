@@ -33,22 +33,19 @@ import { loadErrorBody } from "@/components/shared/load-error";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { toast } from "@/components/ui/toaster";
 import { toastError, describeError } from "@/lib/errors/toast-error";
-import { formatDate, rupee, cn } from "@/lib/utils";
+import { formatDate, cn } from "@/lib/utils";
 import { VENDOR_BILL_CATEGORIES, useOwnStateCode } from "@/lib/queries/vendor-bills";
 import {
   canAccept, canReject, canUndoAccept, cleanRejectReason, type NetworkInboxDoc,
 } from "@/lib/network/documents";
 import {
   groupInbox, filterGroups, statusCounts, rowStatusText, acceptBlockedReason, defaultAcceptCategory,
-  acceptItcLine, billsHref, kindLabel, type InboxFilter,
+  acceptItcLine, billsHref, kindLabel, undoBlockedReason, money, type InboxFilter,
 } from "./network-inbox-model";
 import {
   useNetworkInbox, useAcceptNetworkDocument, useRejectNetworkDocument, useUndoNetworkAccept,
   useVendorDefaultCategory,
 } from "./network-inbox-queries";
-
-const money = (n: number, currency: string) =>
-  currency === "INR" ? rupee(n) : `${currency} ${n.toLocaleString("en-IN")}`;
 
 const STATUS_DOT: Readonly<Record<NetworkInboxDoc["status"], string>> = {
   pending: "bg-amber",
@@ -118,20 +115,24 @@ export function NetworkInboxTab() {
     { id: "all", label: "All" },
   ];
 
+  /* One DOM for every width: a table from md up (columns fit 1100px with Actions visible), and
+     below md each row stacks as a card (CLAUDE.md §20) — same cells, CSS only. */
+  const notesOf = (id: string) => docs.filter((n) => n.kind !== "invoice" && n.parentDocumentId === id);
   const renderRow = (d: NetworkInboxDoc, isNote: boolean) => {
     const parent = d.parentDocumentId ? byId.get(d.parentDocumentId) : null;
     const blocked = canAccept(d) ? acceptBlockedReason(d, parent) : null;
+    const undoBlocked = canUndoAccept(d) ? undoBlockedReason(d, notesOf(d.id)) : null;
     const gst = d.cgst + d.sgst + d.igst;
     const greyed = d.status === "cancelled";
     const linesOpen = open.has(d.id);
     return (
       <React.Fragment key={d.id}>
-        <tr className={cn("border-t border-hairline align-top", greyed && "opacity-60")}>
-          <td className="py-2.5 pr-3">
+        <tr className={cn("grid grid-cols-3 gap-x-3 gap-y-1 border-t border-hairline py-2.5 align-top md:table-row md:py-0", greyed && "opacity-60")}>
+          <td className="col-span-3 block md:table-cell md:py-2.5 md:pr-3">
             <div className={cn("text-sm font-medium text-ink truncate", isNote && "pl-5")} title={d.sellerName}>{d.sellerName}</div>
             <div className={cn("font-mono text-xs text-ink-3", isNote && "pl-5")}>{d.sellerGstin}</div>
           </td>
-          <td className="py-2.5 pr-3">
+          <td className="col-span-3 block md:table-cell md:py-2.5 md:pr-3">
             <div className={cn("text-xs text-ink-3", isNote && "pl-5")}>
               {isNote && <span aria-hidden>↳ </span>}{kindLabel(d.kind)} · {formatDate(d.docDate)}
             </div>
@@ -147,19 +148,26 @@ export function NetworkInboxTab() {
               </button>
             )}
           </td>
-          <td className="py-2.5 pr-3 text-right tabular-nums text-sm">{money(d.taxableValue, d.currency)}</td>
-          <td className="py-2.5 pr-3 text-right tabular-nums text-sm">{money(gst, d.currency)}</td>
-          <td className="py-2.5 pr-3 text-right tabular-nums text-sm font-semibold">{money(d.total, d.currency)}</td>
-          <td className="py-2.5 pr-3">
+          <td className="block tabular-nums text-sm md:table-cell md:py-2.5 md:pr-3 md:text-right">
+            <span className="block text-xs text-ink-3 md:hidden">Taxable</span>{money(d.taxableValue, d.currency)}
+          </td>
+          <td className="block tabular-nums text-sm md:table-cell md:py-2.5 md:pr-3 md:text-right">
+            <span className="block text-xs text-ink-3 md:hidden">GST</span>{money(gst, d.currency)}
+          </td>
+          <td className="block tabular-nums text-sm font-semibold md:table-cell md:py-2.5 md:pr-3 md:text-right">
+            <span className="block text-xs font-normal text-ink-3 md:hidden">Total</span>{money(d.total, d.currency)}
+          </td>
+          <td className="col-span-3 block md:table-cell md:py-2.5 md:pr-3">
             <div className="flex items-start gap-1.5 text-sm text-ink">
               <span aria-hidden className={cn("mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full", STATUS_DOT[d.status])} />
               <span className="line-clamp-2 break-words" title={rowStatusText(d)}>{rowStatusText(d)}</span>
             </div>
             {d.status === "accepted" && d.applyNote && <p className="mt-1 text-xs text-ink-3">{d.applyNote}</p>}
             {blocked && <p className="mt-1 text-xs text-amber-ink">{blocked}</p>}
+            {undoBlocked && <p className="mt-1 text-xs text-ink-3">{undoBlocked}</p>}
           </td>
-          <td className="py-2.5 text-right">
-            <div className="flex flex-wrap items-center justify-end gap-1.5">
+          <td className="col-span-3 block md:table-cell md:py-2.5 md:text-right">
+            <div className="flex flex-wrap items-center justify-start gap-1.5 md:justify-end">
               {canAccept(d) && (
                 <Button size="sm" variant="primary" icon="check" disabled={!!blocked} onClick={() => setAcceptDoc(d)}>Accept</Button>
               )}
@@ -167,9 +175,9 @@ export function NetworkInboxTab() {
                 <Button size="sm" variant="ghost" onClick={() => setRejectDoc(d)}>Reject</Button>
               )}
               {d.status === "accepted" && d.vendorBillId && (
-                <Link href={billsHref(d) as Route}><Button size="sm" variant="default" icon="file">Open bill</Button></Link>
+                <Link href={billsHref(d, parent) as Route}><Button size="sm" variant="default" icon="file">Open bill</Button></Link>
               )}
-              {canUndoAccept(d) && (
+              {canUndoAccept(d) && !undoBlocked && (
                 <Button size="sm" variant="ghost" loading={undo.isPending && undo.variables === d.id} onClick={() => void doUndo(d)}>
                   Undo accept
                 </Button>
@@ -178,8 +186,8 @@ export function NetworkInboxTab() {
           </td>
         </tr>
         {linesOpen && (
-          <tr className={cn(greyed && "opacity-60")}>
-            <td colSpan={7} className="pb-3 pl-5 pr-3">
+          <tr className={cn("block md:table-row", greyed && "opacity-60")}>
+            <td colSpan={7} className="block pb-3 md:table-cell md:pl-5 md:pr-3">
               <ul className="space-y-0.5 rounded-md bg-paper-2 px-3 py-2 text-xs text-ink-2">
                 {d.lines.map((l, i) => (
                   <li key={i} className="flex justify-between gap-3">
@@ -218,13 +226,13 @@ export function NetworkInboxTab() {
         <p className="py-8 text-center text-sm text-ink-3">Nothing {filter === "all" ? "" : filter} here.</p>
       ) : (
         <div className="rounded-lg border border-hairline bg-paper px-3">
-          <table className="w-full table-fixed text-left">
+          <table className="block w-full text-left md:table md:table-fixed">
             <caption className="sr-only">Documents from connected businesses</caption>
-            <colgroup>
+            <colgroup className="hidden md:table-column-group">
               <col className="w-[22%]" /><col className="w-[18%]" /><col className="w-[10%]" /><col className="w-[9%]" />
               <col className="w-[10%]" /><col className="w-[15%]" /><col className="w-[16%]" />
             </colgroup>
-            <thead>
+            <thead className="hidden md:table-header-group">
               <tr className="text-xs uppercase tracking-wider text-ink-3">
                 <th scope="col" className="py-2 pr-3 font-semibold">Seller</th>
                 <th scope="col" className="py-2 pr-3 font-semibold">Document</th>
@@ -235,7 +243,7 @@ export function NetworkInboxTab() {
                 <th scope="col" className="py-2 text-right font-semibold"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
-            <tbody>
+            <tbody className="block md:table-row-group">
               {groups.map((g) => (
                 <React.Fragment key={g.doc.id}>
                   {renderRow(g.doc, false)}
@@ -266,7 +274,7 @@ function DialogError({ text }: { text: string | null }) {
 function AcceptDialog({ doc, onClose }: { doc: NetworkInboxDoc; onClose: () => void }) {
   const isCredit = doc.kind === "credit_note";
   const kind = kindLabel(doc.kind).toLowerCase();
-  const { data: vendorDefault } = useVendorDefaultCategory(isCredit ? null : doc.sellerGstin);
+  const { data: vendorDefault, isLoading: vendorLoading } = useVendorDefaultCategory(isCredit ? null : doc.sellerGstin);
   const { data: ownStateCode } = useOwnStateCode();
   const [picked, setPicked] = React.useState<string | null>(null);
   const category = picked ?? defaultAcceptCategory(vendorDefault);
@@ -299,7 +307,7 @@ function AcceptDialog({ doc, onClose }: { doc: NetworkInboxDoc; onClose: () => v
             From {doc.sellerName} (GSTIN {doc.sellerGstin}) · total {money(doc.total, doc.currency)}.{" "}
             {isCredit
               ? `This lowers your bill for invoice ${doc.sellerInvoiceId}.`
-              : "Accepting adds one bill to your books (or links your own bill with the same number). Nothing is filed on the GST portal."}
+              : "Accepting adds one bill to your books with the category below. If you already typed a bill with this number, that bill is linked instead and keeps its own category. Nothing is filed on the GST portal."}
           </DialogDescription>
         </DialogHeader>
 
@@ -324,8 +332,8 @@ function AcceptDialog({ doc, onClose }: { doc: NetworkInboxDoc; onClose: () => v
 
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button variant="primary" icon="check" loading={accept.isPending} onClick={() => void submit()}>
-            {isCredit ? "Accept credit note" : "Accept and create bill"}
+          <Button variant="primary" icon="check" loading={accept.isPending} disabled={vendorLoading} onClick={() => void submit()}>
+            Accept {kind}
           </Button>
         </DialogFooter>
       </DialogContent>

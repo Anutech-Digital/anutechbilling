@@ -46,9 +46,18 @@ export function groupInbox(docs: readonly NetworkInboxDoc[]): InboxGroup[] {
   return out;
 }
 
+/** "All" keeps notes under their invoice. A status filter shows exactly the documents its count
+ *  counts: an invoice that matches (with only its matching notes), and a matching note on its own
+ *  when its invoice does not match — never a row of another status with that status's buttons. */
 export function filterGroups(groups: readonly InboxGroup[], f: InboxFilter): InboxGroup[] {
   if (f === "all") return [...groups];
-  return groups.filter((g) => g.doc.status === f || g.notes.some((n) => n.status === f));
+  const out: InboxGroup[] = [];
+  for (const g of groups) {
+    const notes = g.notes.filter((n) => n.status === f);
+    if (g.doc.status === f) out.push({ doc: g.doc, notes });
+    else for (const n of notes) out.push({ doc: n, notes: [] });
+  }
+  return out;
 }
 
 export function statusCounts(docs: readonly NetworkInboxDoc[]): Record<InboxFilter, number> {
@@ -81,11 +90,26 @@ export function rowStatusText(d: NetworkInboxDoc): string {
   }
 }
 
-/** A note waits for its invoice (the database refuses otherwise — say it before the click). */
+/** A note waits for its invoice (the database refuses otherwise — say it before the click). When
+ *  that invoice can never be accepted (rejected — final — or voided), say the way that IS open. */
 export function acceptBlockedReason(d: NetworkInboxDoc, parent: NetworkInboxDoc | null | undefined): string | null {
   if (d.kind === "invoice" || !parent) return null;
-  return parent.status === "accepted" ? null : `Accept invoice ${d.sellerInvoiceId} first.`;
+  switch (parent.status) {
+    case "accepted": return null;
+    case "rejected": return `You rejected invoice ${d.sellerInvoiceId} — reject this note too, or ask the seller for a fresh invoice.`;
+    case "cancelled": return `The seller cancelled invoice ${d.sellerInvoiceId} — reject this note, or ask the seller.`;
+    default: return `Accept invoice ${d.sellerInvoiceId} first.`;
+  }
 }
+
+/** network_undo_accept refuses an invoice once a note on it is accepted — hide Undo and say why. */
+export function undoBlockedReason(d: NetworkInboxDoc, notes: readonly NetworkInboxDoc[]): string | null {
+  return d.kind === "invoice" && notes.some((n) => n.status === "accepted") ? "A note on it is accepted, so it stays accepted." : null;
+}
+
+/** Amounts in the document's own currency — never a foreign amount shown as rupees. */
+export const money = (n: number, currency: string): string =>
+  currency === "INR" ? rupee(n) : `${currency} ${n.toLocaleString("en-IN")}`;
 
 /** The vendor's own default category when it is one the Bills screen knows, else COGS-Other. */
 export function defaultAcceptCategory(vendorDefault: string | null | undefined): string {
@@ -94,7 +118,7 @@ export function defaultAcceptCategory(vendorDefault: string | null | undefined):
 
 /** Before Accept: will this document's GST be input credit for ME — and if not, why. */
 export function acceptItcLine(
-  d: Pick<NetworkInboxDoc, "documentType" | "sellerGstin" | "cgst" | "sgst" | "igst">,
+  d: Pick<NetworkInboxDoc, "documentType" | "sellerGstin" | "cgst" | "sgst" | "igst" | "currency">,
   category: string,
   ownStateCode: string | null | undefined,
 ): { credit: boolean; text: string } {
@@ -105,12 +129,17 @@ export function acceptItcLine(
     cgst: d.cgst, sgst: d.sgst, igst: d.igst, ownStateCode: ownStateCode ?? null,
   });
   return v.eligible
-    ? { credit: true, text: `GST ${rupee(gst)} will be your input credit (ITC).` }
-    : { credit: false, text: `GST ${rupee(gst)} stays a cost — ${v.reason ?? "not creditable"}.` };
+    ? { credit: true, text: `GST ${money(gst, d.currency)} will be your input credit (ITC).` }
+    : { credit: false, text: `GST ${money(gst, d.currency)} stays a cost — ${v.reason ?? "not creditable"}.` };
 }
 
 /** "Open bill": the Bills list searched by the document number (= the bill's number), from the
- *  start of its financial year (the bill can be dated later when the books were locked). */
-export function billsHref(d: Pick<NetworkInboxDoc, "docNumber" | "docDate">): string {
-  return `/accounting/bills?q=${encodeURIComponent(d.docNumber)}&from=${fyStartISO(d.docDate)}`;
+ *  start of its financial year (the bill can be dated later when the books were locked). A credit
+ *  note lowered its INVOICE's bill, so it points at that invoice's number and year. */
+export function billsHref(
+  d: Pick<NetworkInboxDoc, "kind" | "docNumber" | "docDate">,
+  parent?: Pick<NetworkInboxDoc, "docNumber" | "docDate"> | null,
+): string {
+  const b = d.kind === "credit_note" && parent ? parent : d;
+  return `/accounting/bills?q=${encodeURIComponent(b.docNumber)}&from=${fyStartISO(b.docDate)}`;
 }

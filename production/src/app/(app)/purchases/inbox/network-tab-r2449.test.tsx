@@ -42,7 +42,7 @@ vi.mock("@/lib/supabase/client", () => ({
   /* the vendor's default category lookup (vendors by GSTIN) */
   createClient: () => ({
     from: () => {
-      const q = { select: () => q, eq: () => q, order: () => q, limit: async () => ({ data: [{ default_category: "COGS-M365" }], error: null }) };
+      const q = { select: () => q, eq: () => q, ilike: () => q, order: () => q, limit: async () => ({ data: [{ default_category: "COGS-M365" }], error: null }) };
       return q;
     },
   }),
@@ -155,7 +155,7 @@ describe("R-2449 Accept → one bill", () => {
     const dlg = await screen.findByRole("dialog");
     await waitFor(() => expect(within(dlg).getByRole("combobox").textContent).toContain("COGS-M365"));
     expect(within(dlg).getByText("GST ₹1,800 will be your input credit (ITC).")).toBeTruthy();
-    fireEvent.click(within(dlg).getByRole("button", { name: "Accept and create bill" }));
+    fireEvent.click(within(dlg).getByRole("button", { name: "Accept invoice" }));
     await waitFor(() => expect(net.accept).toHaveBeenCalledTimes(1));
     expect(net.accept).toHaveBeenCalledWith("d1", "COGS-M365");
     fireEvent.click(await screen.findByRole("tab", { name: /^All/ }));
@@ -169,8 +169,13 @@ describe("R-2449 Accept → one bill", () => {
     await openNetwork();
     fireEvent.click(await screen.findByRole("button", { name: "Accept" }));
     const dlg = await screen.findByRole("dialog");
-    fireEvent.click(within(dlg).getByRole("button", { name: "Accept and create bill" }));
+    const go = within(dlg).getByRole("button", { name: "Accept invoice" }) as HTMLButtonElement;
+    // no Accept before the vendor default is known (else the bill would take COGS-Other)
+    expect(go.disabled).toBe(true);
+    await waitFor(() => expect(go.disabled).toBe(false));
+    fireEvent.click(go);
     expect(await within(dlg).findByText(/record this document by hand from the copy/)).toBeTruthy();
+    expect(screen.getByRole("dialog")).toBeTruthy();
   });
 });
 
@@ -189,5 +194,27 @@ describe("R-2449 Reject needs a reason", () => {
     await waitFor(() => expect(net.reject).toHaveBeenCalledWith("d1", "Wrong rate"));
     fireEvent.click(await screen.findByRole("tab", { name: /^All/ }));
     expect(await screen.findByText("Rejected: Wrong rate")).toBeTruthy();
+  });
+});
+
+describe("R-2449 Undo accept (a wrong click)", () => {
+  it("offers Undo on an accepted invoice and calls network_undo_accept; hides it once a note on it is accepted", async () => {
+    state.docs = [row({ status: "accepted", vendor_bill_id: "VB-NET-1" })];
+    net.undo.mockResolvedValue(undefined);
+    mount();
+    await openNetwork();
+    fireEvent.click(await screen.findByRole("button", { name: "Undo accept" }));
+    await waitFor(() => expect(net.undo).toHaveBeenCalledWith("d1"));
+    cleanup();
+
+    state.docs = [
+      row({ status: "accepted", vendor_bill_id: "VB-NET-1" }),
+      row({ id: "c1", kind: "credit_note", doc_number: "CN-1", parent_document_id: "d1", status: "accepted", vendor_bill_id: "VB-NET-1" }),
+    ];
+    mount();
+    await openNetwork();
+    await screen.findByText("Accepted — bill VB-NET-1");
+    expect(screen.queryByRole("button", { name: "Undo accept" })).toBeNull();
+    expect(screen.getByText("A note on it is accepted, so it stays accepted.")).toBeTruthy();
   });
 });
