@@ -83,17 +83,27 @@ export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }
   const matchingReimb = React.useMemo(() => (pending.data ?? []).filter((r) => r.amount === amount), [pending.data, amount]);
 
   React.useEffect(() => { setOpen(""); setPerson(""); setAdvanceId(""); setNote(""); setReimbId(""); }, [transaction.id]);
-  /* R-2407: what money-in is, on opening — an advance coming back when there is one to return and
-     the bank text names nobody, a holder, or one with exactly this balance; else owed back. */
-  const owedPeople = React.useMemo(() => activeEmployees.map((e) => e.name).sort((a, b) => a.localeCompare(b)), [activeEmployees]);
-  const owedPerson = owedPeople.find((n) => samePerson(n, person)) ?? "";
+  /* R-2407: money-in "owed back" — every active employee, by id (two people can share a name). */
+  const owedPeople = React.useMemo(() => [...activeEmployees].sort((a, b) => a.name.localeCompare(b.name)), [activeEmployees]);
+  const [owedEmpId, setOwedEmpId] = React.useState("");
+  const owedEmp = owedPeople.find((e) => e.id === owedEmpId) ?? null;
+  const owedPerson = owedEmp?.name ?? "";
+  const suggestedEmpId = React.useMemo(() => suggestEmployee(transaction.description, activeEmployees), [transaction.description, activeEmployees]);
+  /* What money-in is — an advance coming back when there is one to return and the bank text names
+     nobody, a holder, or one with exactly this balance; else owed back. Re-decided while the data
+     loads, until the owner switches it themselves. */
+  const inKindTouched = React.useRef(false);
+  React.useEffect(() => { inKindTouched.current = false; setOwedEmpId(""); }, [transaction.id]);
   React.useEffect(() => {
-    if (!isCredit || open !== "advance") return;
+    if (!isCredit || open !== "advance" || inKindTouched.current) return;
     const holds = suggested ? returnable.some((a) => samePerson(a.employee_name, suggested)) : false;
     const exact = returnable.some((a) => a.remaining_balance === amount);
     setInKind(returnable.length > 0 && (!suggested || holds || exact) ? "return" : "owed_back");
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- decided once per opening; the owner's switch is kept
-  }, [isCredit, open, transaction.id]);
+  }, [isCredit, open, suggested, returnable, amount]);
+  React.useEffect(() => {
+    if (isCredit && open === "advance" && !owedEmpId && suggestedEmpId) setOwedEmpId(suggestedEmpId);
+  }, [isCredit, open, owedEmpId, suggestedEmpId]);
+  const pickInKind = (k: "return" | "owed_back") => { inKindTouched.current = true; setInKind(k); };
   // Opening: pre-pick the person from the bank text; for a return, their advance that fits.
   React.useEffect(() => {
     if (open !== "advance" || person) return;
@@ -154,7 +164,7 @@ export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }
       if (open === "reimburse") {
         await book.mutateAsync({ transactionId: transaction.id, kind: "reimburse", reimbursementId: reimbId });
       } else if (owedBack) {
-        await book.mutateAsync({ transactionId: transaction.id, kind: "owed_back", name: owedPerson });
+        await book.mutateAsync({ transactionId: transaction.id, kind: "owed_back", employeeId: owedEmpId });
       } else if (isCredit) {
         await book.mutateAsync({ transactionId: transaction.id, kind: "return", advanceId });
       } else if (mode === "top_up") {
@@ -188,20 +198,20 @@ export function EmployeeAdvanceBankSection({ transaction, onDone, onFooterSave }
           {isCredit && returnable.length > 0 && (
             <div className="space-y-1.5" role="radiogroup" aria-label="What is this money">
               <label className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer text-xs ${inKind === "return" ? "border-indigo bg-indigo/10" : "border-hairline"}`}>
-                <input type="radio" name="emp-in-kind" checked={inKind === "return"} onChange={() => setInKind("return")} className="mt-0.5" />
+                <input type="radio" name="emp-in-kind" checked={inKind === "return"} onChange={() => pickInKind("return")} className="mt-0.5" />
                 <span>Their office-expense advance coming back</span>
               </label>
               <label className={`flex items-start gap-2 rounded-md border px-3 py-2 cursor-pointer text-xs ${inKind === "owed_back" ? "border-indigo bg-indigo/10" : "border-hairline"}`}>
-                <input type="radio" name="emp-in-kind" checked={inKind === "owed_back"} onChange={() => setInKind("owed_back")} className="mt-0.5" />
+                <input type="radio" name="emp-in-kind" checked={inKind === "owed_back"} onChange={() => pickInKind("owed_back")} className="mt-0.5" />
                 <span>Paid to us by mistake — we owe it back</span>
               </label>
             </div>
           )}
           {owedBack ? (
             /* R-2407: every active employee — not only those holding an advance. */
-            <select value={owedPerson} onChange={(e) => setPerson(e.target.value)} aria-label="Employee" className={selectCls}>
+            <select value={owedEmpId} onChange={(e) => setOwedEmpId(e.target.value)} aria-label="Employee" className={selectCls}>
               <option value="" disabled>Pick employee…</option>
-              {owedPeople.map((n) => <option key={n} value={n}>{n}</option>)}
+              {owedPeople.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}
             </select>
           ) : isCredit ? (
             <select value={advanceId} onChange={(e) => setAdvanceId(e.target.value)} aria-label="Employee advance" className={selectCls}>

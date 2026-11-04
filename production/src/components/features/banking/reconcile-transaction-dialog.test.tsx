@@ -424,6 +424,23 @@ describe("R-2348 Reconcile sheet — every tile saves from the sticky footer", (
     }
   });
 
+  /* Review finding: the line is ALSO exactly another salary still due → the owed-back split is not
+     the default primary (it would pay the wrong employee); it saves only once its box is clicked. */
+  it("R-2407 line = some salary's full due too: owed back is not the default, clicking its box makes it the save", () => {
+    state.focus = null;
+    state.owedBack = true;
+    state.salaries = [{ id: "S3", employee_name: "Asha", period: "2026-09", paid_status: "unpaid", paid_amount: 0, net: 11800, remaining: 11800 }];
+    try {
+      render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={plainOut} />);
+      fireEvent.click(screen.getByRole("radio", { name: /^Employee \/ salary/ }));
+      expect(screen.getByTestId("reconcile-footer").textContent).not.toContain("owed back");
+      fireEvent.click(screen.getByText("Also pays back ₹1,800 owed to Ravi"));
+      expect(parts().primary.textContent).toBe("Pay salary + ₹1,800 owed back · Ravi");
+    } finally {
+      state.owedBack = false;
+    }
+  });
+
   it("Combine multiple expenses: Reconcile N expenses in the footer, disabled until the ticks add up", async () => {
     state.focus = null;
     render(<ReconcileTransactionDialog open onOpenChange={() => {}} transaction={plainOut} />);

@@ -20,7 +20,8 @@
 --
 -- ══ WHAT THIS CHANGES (no stored data is changed) ═══════════════════════════════════════
 --   1. employee_advance_bank_links: a new kind 'owed_back' (money-in → payable). Like
---      'reimburse' it carries the reimbursement, never an advance.
+--      'reimburse' it carries the reimbursement, never an advance. New nullable columns
+--      salary_payment_id + salary_amount: the salary part a salary + owed-back line paid.
 --   2. book_bank_txn_as_employee_advance ← 20261024202000_r1871_employee_advance_bank (latest;
 --      checked all anutech/* branches: no later redefinition). Body unchanged, plus kind
 --      'owed_back': money-in line, p_name = an employee of the company (any, not only one with an
@@ -30,11 +31,16 @@
 --      money-out line = salary part + a payable owed to the SAME employee. Salary paid_amount +
 --      salary part (never more than still due), the payable settled, line matched 'split' (no id —
 --      'salary' would make trg_sync_salary_paid add the WHOLE debit to the salary), and an R-1871
---      link kind 'reimburse' so un-reconciling the line makes the payable pending again;
---      sync_salary_paid_status's 'split' branch (R-2472, unchanged here) sets the salary unpaid.
+--      link kind 'reimburse' carrying the salary part.
 --   4. tg_employee_advance_line_unmatched ← 20261024202000_r1871 (latest). Body unchanged, plus
 --      'owed_back': un-reconciling / deleting the money-in line removes its payable — refused while
---      the payable is already paid back (un-reconcile that payout first).
+--      the payable is already paid back (un-reconcile that payout first); and 'reimburse' with a
+--      salary part: the payable is pending again AND exactly that part comes off the salary (it runs
+--      before trg_sync_salary_paid and clears reconciled_txn_id, so R-2472's 'split' branch — which
+--      zeroes paid_amount — finds nothing; earlier payments on the salary stay). Also on DELETE.
+--   5. trg_reimbursement_owed_back_guard (new, BEFORE DELETE on reimbursements): an owed-back
+--      payable made by a bank line is removed only by un-reconciling that line (else the line stays
+--      reconciled to nothing and the Balance Sheet loses the liability).
 --
 -- R-2472 (20261104090200) is respected, not redefined: reconcile_bank_txn, sync_salary_paid_status
 -- and trg_bank_match_target_company are untouched. The lines here are matched 'manual' / 'split',
@@ -54,6 +60,12 @@ alter table public.employee_advance_bank_links add constraint employee_advance_b
 alter table public.employee_advance_bank_links drop constraint if exists employee_advance_bank_links_check;
 alter table public.employee_advance_bank_links add constraint employee_advance_bank_links_check
   check ((kind in ('reimburse', 'owed_back')) = (reimbursement_id is not null and advance_id is null));
+
+-- The salary part a salary + owed-back line paid, so un-reconciling / deleting that line takes back
+-- exactly that part — not the whole salary (R-2472's 'split' branch would set paid_amount to 0).
+alter table public.employee_advance_bank_links
+  add column if not exists salary_payment_id uuid references public.salary_payments(id) on delete set null,
+  add column if not exists salary_amount     integer check (salary_amount is null or salary_amount > 0);
 
 comment on table public.employee_advance_bank_links is
   'R-1871: bank line ↔ employee office-expense advance movement (give / top-up / return) or reimbursement paid. R-2407: owed_back = money an employee paid in by mistake (a payable). Un-reconcile reverses it.';
@@ -78,6 +90,7 @@ declare
   v_adv      public.prepaid_advances;
   v_reimb    public.reimbursements;
   v_emp      public.employees;
+  v_emp_id   uuid;
   v_id       uuid;
   v_amount   integer;
   v_left     integer;
@@ -124,12 +137,15 @@ begin
   elsif p_kind = 'owed_back' then
     /* R-2407: any employee of THIS company (an active one first when two share a name). */
     if nullif(trim(coalesce(p_name, '')), '') is null then raise exception 'Pick the employee who paid this money in.'; end if;
+    -- p_name: the employee's id (the Reconcile sheet sends it — two people can share a name) or name.
+    v_emp_id := case when trim(p_name) ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then trim(p_name)::uuid end;
     select * into v_emp from public.employees
-     where tenant_id = v_tenant and lower(trim(name)) = lower(trim(p_name))
+     where tenant_id = v_tenant
+       and (id = v_emp_id or (v_emp_id is null and lower(trim(name)) = lower(trim(p_name))))
      order by is_active desc nulls last, created_at
      limit 1;
     if not found then
-      raise exception '% is not an employee of your company. Add them on Payroll → Employees first.', trim(p_name);
+      raise exception 'That person is not an employee of your company. Add them on Payroll → Employees first.';
     end if;
     insert into public.reimbursements
       (tenant_id, person_name, purpose, category, amount, gst_paid, incurred_on, paid_via, status, employee_id, created_by)
@@ -295,9 +311,11 @@ begin
          matched_at = now(), matched_by = auth.uid(), updated_at = now()
    where id = p_txn_id;
 
-  -- 4. Un-reconcile → the payable is pending again (R-1871 trigger, kind 'reimburse').
-  insert into public.employee_advance_bank_links (tenant_id, bank_txn_id, kind, advance_id, reimbursement_id, amount, created_by)
-  values (v_tenant, p_txn_id, 'reimburse', null, v_reimb.id, v_reimb.amount, auth.uid());
+  -- 4. Un-reconcile / delete → the payable is pending again and exactly the salary part is taken
+  --    back from the salary (R-1871 trigger, kind 'reimburse' + salary_payment_id).
+  insert into public.employee_advance_bank_links
+    (tenant_id, bank_txn_id, kind, advance_id, reimbursement_id, amount, salary_payment_id, salary_amount, created_by)
+  values (v_tenant, p_txn_id, 'reimburse', null, v_reimb.id, v_reimb.amount, v_sal.id, v_part, auth.uid());
 
   return jsonb_build_object('salary_id', v_sal.id, 'salary_part', v_part, 'reimbursement_id', v_reimb.id,
                             'owed_back', v_reimb.amount, 'employee', coalesce(v_emp.name, v_reimb.person_name),
@@ -351,6 +369,19 @@ begin
     update public.reimbursements set status = 'pending', settled_on = null, settled_notes = null
      where id = v_link.reimbursement_id;
     update public.expenses set reconciled_txn_id = null where reconciled_txn_id = old.id;
+    /* R-2407: a salary + owed-back line also takes back exactly its salary part. This trigger runs
+       before trg_sync_salary_paid (name order), whose 'split' branch then finds no salary pointing
+       at the line (reconciled_txn_id cleared here) — so earlier payments on the salary stay. */
+    if v_link.salary_payment_id is not null and coalesce(v_link.salary_amount, 0) > 0 then
+      update public.salary_payments
+         set paid_amount = greatest(0, coalesce(paid_amount, 0) - v_link.salary_amount),
+             paid_status = case
+               when greatest(0, coalesce(paid_amount, 0) - v_link.salary_amount) <= 0   then 'unpaid'
+               when greatest(0, coalesce(paid_amount, 0) - v_link.salary_amount) >= net then 'paid'
+               else 'partial' end,
+             reconciled_txn_id = case when reconciled_txn_id = old.id then null else reconciled_txn_id end
+       where id = v_link.salary_payment_id and tenant_id = old.tenant_id;
+    end if;
   elsif v_link.kind = 'owed_back' then
     /* R-2407: the money-in line is no longer "owed back" → its payable goes, unless it was
        already paid back (then the payout that settled it must be un-reconciled first). */
@@ -358,7 +389,7 @@ begin
      where id = v_link.reimbursement_id and tenant_id = old.tenant_id for update;
     if found then
       if v_reimb.status <> 'pending' then
-        raise exception 'The ₹% owed back to % was already paid back (%). Un-reconcile that payout line first.',
+        raise exception 'The ₹% owed back to % was already paid back (%). Undo that payment first (un-reconcile the salary or payout line that paid it).',
           v_reimb.amount, v_reimb.person_name, coalesce(to_char(v_reimb.settled_on, 'DD Mon YYYY'), 'settled');
       end if;
       delete from public.employee_advance_bank_links where id = v_link.id;
@@ -373,5 +404,41 @@ end;
 $$;
 
 revoke all on function public.tg_employee_advance_line_unmatched() from public, anon;
+
+-- ── 5. An owed-back payable that a bank line made is removed only through that line ─────────
+-- (Reimbursements page Delete would cascade the link away and leave the money-in line reconciled
+--  to nothing — the Balance Sheet would lose the liability while the bank keeps the cash.)
+create or replace function public.tg_reimbursement_owed_back_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  v_txn public.bank_transactions;
+begin
+  /* R-2407: the un-reconcile trigger above deletes the link first, so it passes here. A whole
+     company being removed (cascade from tenants) is not stopped. */
+  if not exists (select 1 from public.tenants where id = old.tenant_id) then return old; end if;
+  select t.* into v_txn
+    from public.employee_advance_bank_links l
+    join public.bank_transactions t on t.id = l.bank_txn_id
+   where l.reimbursement_id = old.id and l.kind = 'owed_back' and l.tenant_id = old.tenant_id
+   limit 1;
+  if found then
+    raise exception 'This ₹% owed back to % came from the bank line of % (₹%). Un-reconcile that bank line instead — it removes this too.',
+      old.amount, old.person_name, to_char(v_txn.txn_date, 'DD Mon YYYY'), v_txn.credit
+      using errcode = 'check_violation';
+  end if;
+  return old;
+end;
+$$;
+
+revoke all on function public.tg_reimbursement_owed_back_guard() from public, anon, authenticated;
+
+drop trigger if exists trg_reimbursement_owed_back_guard on public.reimbursements;
+create trigger trg_reimbursement_owed_back_guard
+  before delete on public.reimbursements
+  for each row execute function public.tg_reimbursement_owed_back_guard();
 
 commit;

@@ -267,5 +267,67 @@ begin
   if v not like '%Pick what this line is%' then raise exception 'FAIL 5c bad kind: %', v; end if;
 end $$;
 
+-- 6. review fixes
+-- 6a. booked by the employee's id (two people can share a name); its payable cannot be deleted on
+--     the Reimbursements page — only by un-reconciling the bank line.
+select public.book_bank_txn_as_employee_advance('e2407000-0000-4000-8000-0000000000d4', 'owed_back', 'e2407000-0000-4000-8000-0000000000e2');
+do $$
+declare v text; v_rid uuid;
+begin
+  select id into v_rid from public.reimbursements where tenant_id = 'e2407000-0000-0000-0000-0000000000f1' and employee_id = 'e2407000-0000-4000-8000-0000000000e2';
+  if v_rid is null or (select person_name from public.reimbursements where id = v_rid) <> 'Ravi Verma' then raise exception 'FAIL 6a1 booked by id'; end if;
+  v := pg_temp.r2407_err(format('delete from public.reimbursements where id = %L', v_rid));
+  if v not like '%Un-reconcile that bank line instead%' then raise exception 'FAIL 6a2 delete guard: %', v; end if;
+  v := pg_temp.r2407_err($q$select public.book_bank_txn_as_employee_advance('e2407000-0000-4000-8000-0000000000d4', 'owed_back', 'e2407000-0000-4000-8000-0000000000e9')$q$);
+  if v not like '%already reconciled%' then raise exception 'FAIL 6a3: %', v; end if;
+end $$;
+select public.reconcile_bank_txn('e2407000-0000-4000-8000-0000000000d4', null, null, null);
+do $$
+begin
+  if exists (select 1 from public.reimbursements where employee_id = 'e2407000-0000-4000-8000-0000000000e2') then
+    raise exception 'FAIL 6a4 un-reconcile did not remove the payable'; end if;
+end $$;
+-- another company's employee id is not found
+do $$
+declare v text;
+begin
+  v := pg_temp.r2407_err($q$select public.book_bank_txn_as_employee_advance('e2407000-0000-4000-8000-0000000000d4', 'owed_back', 'e2407000-0000-4000-8000-0000000000e9')$q$);
+  if v not like '%not an employee%' then raise exception 'FAIL 6a5 other company id: %', v; end if;
+end $$;
+
+-- 6b. a salary already part-paid by another line keeps that part when the salary + owed-back line
+--     is un-reconciled or deleted.
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, source) values
+  ('e2407000-0000-4000-8000-0000000000d6', 'e2407000-0000-0000-0000-0000000000f1', 'e2407000-0000-4000-8000-0000000000a1', '2026-10-31', 'NEFT SAL PART NEELAM', 10000, 0, 'csv_upload');
+select public.reconcile_bank_txn('e2407000-0000-4000-8000-0000000000d6', 'salary', 'e2407000-0000-4000-8000-0000000000c1', 'manual');
+update public.bank_transactions set debit = 36000 where id = 'e2407000-0000-4000-8000-0000000000d2';
+select public.reconcile_salary_with_owed_back('e2407000-0000-4000-8000-0000000000d2', 'e2407000-0000-4000-8000-0000000000c1',
+                                              (select v::uuid from r2407_res where k = 'rid'));
+do $$
+begin
+  if (select paid_amount from public.salary_payments where id = 'e2407000-0000-4000-8000-0000000000c1') <> 30000
+     or (select paid_status from public.salary_payments where id = 'e2407000-0000-4000-8000-0000000000c1') <> 'paid' then
+    raise exception 'FAIL 6b1 salary not paid in full'; end if;
+end $$;
+select public.reconcile_bank_txn('e2407000-0000-4000-8000-0000000000d2', null, null, null);
+do $$
+begin
+  if (select paid_amount from public.salary_payments where id = 'e2407000-0000-4000-8000-0000000000c1') <> 10000
+     or (select paid_status from public.salary_payments where id = 'e2407000-0000-4000-8000-0000000000c1') <> 'partial' then
+    raise exception 'FAIL 6b2 earlier part payment lost: %', (select row_to_json(s) from public.salary_payments s where id = 'e2407000-0000-4000-8000-0000000000c1'); end if;
+  if (select status from public.reimbursements where id = (select v::uuid from r2407_res where k = 'rid')) <> 'pending' then
+    raise exception 'FAIL 6b3 payable not owed again'; end if;
+end $$;
+select public.reconcile_salary_with_owed_back('e2407000-0000-4000-8000-0000000000d2', 'e2407000-0000-4000-8000-0000000000c1',
+                                              (select v::uuid from r2407_res where k = 'rid'));
+delete from public.bank_transactions where id = 'e2407000-0000-4000-8000-0000000000d2';
+do $$
+begin
+  if (select paid_amount from public.salary_payments where id = 'e2407000-0000-4000-8000-0000000000c1') <> 10000 then
+    raise exception 'FAIL 6b4 deleting the line left its salary part paid: %', (select paid_amount from public.salary_payments where id = 'e2407000-0000-4000-8000-0000000000c1'); end if;
+  if (select status from public.reimbursements where id = (select v::uuid from r2407_res where k = 'rid')) <> 'pending' then
+    raise exception 'FAIL 6b5 payable not owed again after delete'; end if;
+end $$;
+
 select 'PASS r2407';
 rollback;
