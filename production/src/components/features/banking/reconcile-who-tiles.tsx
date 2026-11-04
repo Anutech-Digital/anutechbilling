@@ -23,7 +23,7 @@ export const MONEY_IN_TILES: readonly TileDef[] = [
   { id: "customer",   label: "Customer",        hint: "Payment for a sale, invoice or project", icon: "users" },
   { id: "owner",      label: "Owner",           hint: "Capital or a loan from the owner",      icon: "user" },
   { id: "loan",       label: "Loan / EMI",      hint: "A loan received or given back",         icon: "wallet" },
-  { id: "employee",   label: "Employee return", hint: "Unused advance coming back",            icon: "briefcase" },
+  { id: "employee",   label: "Employee return", hint: "Advance back, or paid by mistake",      icon: "briefcase" },
   { id: "transfer",   label: "Own transfer",    hint: "From your other bank account",          icon: "refresh" },
   { id: "tax_refund", label: "Tax refund",      hint: "Income tax / GST refund",               icon: "receipt" },
   { id: "other",      label: "Other / manual",  hint: "Interest, reversal, anything else",     icon: "more_horizontal" },
