@@ -157,3 +157,15 @@ export async function readLutArnFor(
     .map((r) => ({ fyStart: r.fy_start, arn: r.arn, validFrom: r.valid_from, validUpto: r.valid_upto }));
   return lutFor(rows, date)?.arn.trim() ?? null;
 }
+
+/** R-2444: Settings → Company, scrolled to the LUT card. */
+export const LUT_SETTINGS_HREF = "/settings?tab=company#lut";
+
+/** R-2444: a refusal from export_lut_refusal (any path: issue, bank sale, Zoho) → the button that opens
+ *  the LUT card. Null for any other error. */
+export function exportLutFix(err: unknown): { label: string; href: string } | null {
+  const msg = err instanceof Error ? err.message
+    : typeof err === "object" && err !== null && typeof (err as { message?: unknown }).message === "string"
+      ? (err as { message: string }).message : String(err ?? "");
+  return /No LUT for FY \d{4}-\d{2} (on file|covers)/.test(msg) ? { label: "Add LUT", href: LUT_SETTINGS_HREF } : null;
+}

@@ -18,6 +18,7 @@ import { formatDate } from "@/lib/utils";
 import { istToday } from "@/lib/dates/ist";
 import { lutFyEnd, lutFyLabel, lutFyStart, type TenantLut } from "@/lib/gst/export-lut";
 import { useDeleteTenantLut, useSaveTenantLut, useTenantLuts } from "@/lib/queries/tenant-luts";
+import { useConfirm } from "@/components/providers/confirm-provider";
 
 /** The FYs offered when adding: this one and the three before it (the Zoho backlog), newest first. */
 export function lutFyChoices(today: string): string[] {
@@ -40,6 +41,7 @@ export function LutListCard({ canEdit }: { canEdit: boolean }) {
   const luts = useTenantLuts();
   const save = useSaveTenantLut();
   const remove = useDeleteTenantLut();
+  const confirm = useConfirm();
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const rows = luts.data ?? [];
   const today = istToday();
@@ -93,8 +95,14 @@ export function LutListCard({ canEdit }: { canEdit: boolean }) {
                     <>
                       <Button type="button" size="sm" variant="ghost" onClick={() => setDraft(draftFor(r.fyStart.slice(0, 10), r))}>Edit</Button>
                       <Button type="button" size="sm" variant="ghost" loading={remove.isPending && remove.variables === r.fyStart}
-                        onClick={() => {
-                          if (window.confirm(`Remove the LUT for FY ${lutFyLabel(r.fyStart)}?`)) remove.mutate(r.fyStart.slice(0, 10));
+                        onClick={async () => {
+                          const ok = await confirm({
+                            title: `Remove the LUT for FY ${lutFyLabel(r.fyStart)}?`,
+                            body: "Exports of that year can be billed at 0% GST again only after you add it back.",
+                            danger: true,
+                            confirmLabel: "Remove LUT",
+                          });
+                          if (ok) remove.mutate(r.fyStart.slice(0, 10));
                         }}>Remove</Button>
                     </>
                   )}

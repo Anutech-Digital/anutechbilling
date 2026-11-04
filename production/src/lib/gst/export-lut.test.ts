@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import {
   EXPORT_LUT_ENDORSEMENT, exportEndorsement, lutMissingWarning, isZeroRatedExport,
-  exportLutRefusal, legacyLutRows, lutFor, lutFyLabel, lutFyStart, readLutArnFor, type TenantLut,
+  exportLutFix, exportLutRefusal, legacyLutRows, lutFor, lutFyLabel, lutFyStart, readLutArnFor, type TenantLut,
 } from "./export-lut";
 
 describe("R-334 export endorsement (CGST Rule 46)", () => {
@@ -130,5 +130,20 @@ describe("R-2444 LUT per financial year", () => {
     expect(await readLutArnFor(reader(null, { message: 'relation "public.tenant_luts" does not exist' }), "t1", "2026-03-20", "OLD1")).toBe("OLD1");
     expect(await readLutArnFor(reader(null, { message: "timeout" }), "t1", "2026-03-20", "OLD1")).toBeNull();
     expect(await readLutArnFor(reader(rows, null), "t1", null, "OLD1")).toBeNull();
+  });
+});
+
+describe("R-2444 the refusal opens the LUT card", () => {
+  it("any LUT refusal → 'Add LUT' to Settings → Company → LUT; other errors → none", () => {
+    expect(exportLutFix(new Error(exportLutRefusal([], "2026-08-07")!))).toEqual({ label: "Add LUT", href: "/settings?tab=company#lut" });
+    expect(exportLutFix({ message: "No LUT for FY 2026-27 covers 01 Jun 2026: …" })?.href).toBe("/settings?tab=company#lut");
+    expect(exportLutFix(new Error("Invoice not found"))).toBeNull();
+  });
+  it("issuing an invoice shows that button", () => {
+    expect(readFileSync("src/lib/queries/invoices.ts", "utf8")).toMatch(/invoiceIssueFix\(err\) \?\? exportLutFix\(err\)/);
+  });
+  it("Settings → Company has the LUT card with the #lut anchor", () => {
+    expect(readFileSync("src/components/features/settings/lut-list.tsx", "utf8")).toMatch(/id="lut"/);
+    expect(readFileSync("src/app/(app)/settings/page.tsx", "utf8")).toMatch(/<LutListCard /);
   });
 });
