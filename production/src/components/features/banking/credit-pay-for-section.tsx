@@ -27,11 +27,10 @@ import * as React from "react";
 import Link from "next/link";
 
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
-import { rupee, formatDate } from "@/lib/utils";
+import { rupee } from "@/lib/utils";
 import { useItems } from "@/lib/queries/items";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
@@ -43,7 +42,7 @@ import {
   useRelinkOneOffSale, useSplitFromBankCredit, type RelinkTarget,
 } from "@/lib/queries/bank-credit-pay-for";
 import {
-  amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemDetail, itemKey, kindLabel,
+  amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemKey,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
   paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
   tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem, saleLinesBelowCost, BANK_SALE_BELOW_COST_TEXT,
@@ -60,7 +59,8 @@ import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 import { prefillSaleFx, zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
-import { itemFxText, itemPayPlan } from "@/lib/banking/item-fx-pay";
+import { itemPayPlan } from "@/lib/banking/item-fx-pay";
+import { ItemPlanNote, OpenItemRow } from "./credit-pay-for-item";
 
 const NEW_CUSTOMER = "__new_customer__";
 
@@ -639,12 +639,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice}
             section={tdsSection} sectionReason={tdsSectionPick ? null : tdsGuess.reason} onSection={setTdsSectionPick} noRoundOff={Boolean(relink)} />}
           {/* R-2466: an export receipt on a foreign invoice / an opening invoice paid over its due. */}
-          {itemFx && picked?.invoice_id && (
-            <p className="text-xs text-ink-2 bg-paper rounded-md border border-hairline px-2.5 py-2 break-words">
-              {itemFxText(picked.invoice_id, itemFx, picked.amount_due)}
-            </p>
-          )}
-          {itemPlan?.problem && <p role="alert" className="text-xs text-amber-ink break-words">{itemPlan.problem}</p>}
+          <ItemPlanNote plan={itemPlan} item={picked} />
 
           {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
               server's reason is shown here too, not only as a toast. */}
@@ -667,34 +662,6 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         </>
       )}
     </section>
-  );
-}
-
-function OpenItemRow({ item, credit, selected, onPick }: { item: OpenItem; credit: number; selected: boolean; onPick: () => void }) {
-  const exact = item.amount_due === credit;
-  return (
-    <li>
-      <button
-        type="button"
-        role="radio"
-        aria-checked={selected}
-        onClick={onPick}
-        className={`w-full text-left rounded-md border p-2.5 flex items-start gap-2 ${selected ? "border-amber bg-amber/10" : "border-hairline bg-paper hover:border-hairline-strong"}`}
-      >
-        <span aria-hidden className={`mt-1 h-3 w-3 shrink-0 rounded-full border ${selected ? "border-amber bg-amber" : "border-hairline-strong"}`} />
-        <span className="min-w-0 flex-1">
-          <span className="flex flex-wrap items-center gap-1.5">
-            <Badge kind={item.kind === "renewal" ? "info" : item.kind === "add_seats" ? "warning" : item.kind === "new" ? "success" : "muted"} size="sm">
-              {kindLabel(item.kind)}
-            </Badge>
-            {exact && <Badge kind="success" size="sm">Exact amount</Badge>}
-            {item.approval_block && <Badge kind="warning" size="sm">{NEEDS_APPROVAL_LABEL}</Badge>}
-          </span>
-          <span className="block text-sm text-ink break-words mt-0.5">{itemDetail(item)}</span>
-          <span className="block text-xs text-ink-3">Due {rupee(item.amount_due)} · {formatDate(item.doc_date)}</span>
-        </span>
-      </button>
-    </li>
   );
 }
 
