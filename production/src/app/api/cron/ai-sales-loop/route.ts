@@ -47,6 +47,7 @@ import { consentWithdrawnLeadIds, suppressedEmailKeys } from "@/lib/privacy/supp
 import type { CatalogueItemPrice } from "@/lib/quotes/quote-from-enquiry";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { sellerIdentityLookup } from "@/lib/ai/seller-identity";
+import { autoQuoteHoldFor, type SendAutoQuoteHeld } from "@/lib/quotes/send-auto-quote";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -102,22 +103,32 @@ async function latestQuoteFor(
   admin: Admin,
   tenantId: string,
   leadId: string,
-): Promise<{ createdAt: Date | null; expiresOn: string | null; settled: boolean }> {
+): Promise<{
+  id: string | null; status: string | null;
+  createdAt: Date | null; expiresOn: string | null; settled: boolean;
+}> {
   const { data } = await admin
     .from("quotes")
-    .select("created_date, expires_date, status, payment_status")
+    .select("id, created_date, expires_date, status, payment_status")
     .eq("tenant_id", tenantId)
     .eq("lead_id", leadId)
     .order("created_date", { ascending: false })
+    /* R-2467: created_date is a DATE, so two quotes on one day tie — the row's own timestamp
+       breaks it (not the text id: a prefix change or 10000 sorts wrong), or the hold check below
+       could read the older sent quote and miss a held draft. */
+    .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
 
   const row = data as {
+    id?: string | null;
     created_date?: string | null; expires_date?: string | null;
     status?: string | null; payment_status?: string | null;
   } | null;
   const created = row?.created_date ? new Date(`${row.created_date}T00:00:00Z`) : null;
   return {
+    id: row?.id ?? null,
+    status: row?.status ?? null,
     createdAt: created && !Number.isNaN(created.getTime()) ? created : null,
     expiresOn: row?.expires_date ?? null,
     /* R-115: yes, no or paid ends the chase — see shouldNudge. */
@@ -362,6 +373,16 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
       }
       const catalogue = catalogueByTenant.get(loop.tenantId) ?? [];
 
+      /* ── R-2467: a HELD draft's figures are not authorised (R-2460) ─────────
+         The customer-copy gate may be holding the lead's newest draft (no place of supply /
+         needs approval). Same check as runSalesAgentForLead: the agent is told the quotation is
+         on hold, and a reply naming one of its figures is handed to a person, not sent. A sent
+         quote is never re-checked — it already reached the customer. */
+      const heldQuote: SendAutoQuoteHeld | null =
+        quoteRow.id && quoteRow.status === "draft"
+          ? await autoQuoteHoldFor(admin, { tenantId: loop.tenantId, leadId: loop.leadId, quoteId: quoteRow.id })
+          : null;
+
       /* The trigger condition IS the brief. Passed as the incoming message so the follow-up
          can refer to what it is following up on — the difference between "checking in" and
          "you mentioned you needed the 20-seat figure before Thursday". */
@@ -388,14 +409,21 @@ async function handle(req: Request): Promise<NextResponse<CronResult | { error: 
           `[INTERNAL FOLLOW-UP BRIEF — the customer has not written since. Write a short, ` +
             `useful follow-up. Do not pretend they replied.]`,
           `Step ${outcome.step.step} of ${CADENCE.length}, going out on ${channel}.`,
-          outcome.step.intent,
+          /* R-2467: while the draft is held the customer has NO quotation — the step's "did you
+             look at the quote" / "the quote expires on …" would be about a document they never
+             got, so those briefs and the expiry date are left out. */
+          heldQuote && outcome.step.kind !== "value"
+            ? "Our quotation is on hold and has NOT been sent to them. Do not refer to a quotation " +
+              "they have, its date or its expiry."
+            : outcome.step.intent,
           outcome.channelNote ? `Channel note: ${outcome.channelNote}` : "",
           outcome.step.kind === "value" && valueDrop ? `Our own write-up, use it as given:\n${valueDrop}` : "",
-          outcome.step.kind === "expiry" ? expiryFact(quoteExpiresOn, now) ?? "" : "",
+          outcome.step.kind === "expiry" && !heldQuote ? expiryFact(quoteExpiresOn, now) ?? "" : "",
           loop.triggerCondition,
         ].filter(Boolean).join("\n"),
         sellerName: (await sellerFor(loop.tenantId)).sellerName,
         sellerEmail: FROM_EMAIL,
+        heldQuote,
       });
 
       if (!run.ok) {
