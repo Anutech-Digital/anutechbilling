@@ -25,7 +25,9 @@ import { rupee, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { useBalanceSheetAuto, useBalanceSheetItems, useCreateBalanceSheetItem, useDeleteBalanceSheetItem, useOpeningBalances, type BalanceSheetItem, type OpeningBalances } from "@/lib/queries/balance-sheet";
 import type { BalanceSheetSection } from "@/lib/supabase/database.types";
-import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
+import { usePnL } from "@/lib/queries/pnl";
+import { openingDateMismatch, reportStart } from "@/lib/accounting/books-start";
+import { useBooksStart } from "@/components/features/accounting/books-start-card";
 import { balanceSheetTotals, retainedProfitRange, licenceProvisionOf } from "@/lib/accounting/balance-sheet-totals";
 import { reportProfit } from "@/lib/accounting/pnl-assemble";
 import { istToday } from "@/lib/dates/ist";
@@ -128,9 +130,11 @@ export default function BalanceSheetPage() {
   const loansTaken = splitLoansTaken(auto?.businessLoansPayable ?? 0, bizLoans);
   const undeclared = undeclaredDirectorLoans(bizLoans);
 
+  /* R-2496: the company's books start (Accounting → Overview) — read before the profit range below. */
+  const booksQ = useBooksStart();
   const loading = autoLoading || itemsLoading || (movementsQ.isLoading && !movementsMissing) || shareQ.isLoading || (companyLoans && bizLoansQ.isLoading) || splitsQ.isLoading;
   /* R-270: a failed fetch must not print a ₹0 balance sheet that reads as "you own nothing". */
-  const failed = autoFailed || itemsFailed || (movementsQ.isError && !movementsMissing) || shareQ.isError || (companyLoans && bizLoansQ.isError) || splitsQ.isError;
+  const failed = autoFailed || itemsFailed || (movementsQ.isError && !movementsMissing) || shareQ.isError || (companyLoans && bizLoansQ.isError) || splitsQ.isError || booksQ.isError;
 
   const manual = (section: BalanceSheetSection) => (items ?? []).filter((i) => i.section === section);
   const manualAssetRows = manual("asset");
@@ -149,8 +153,12 @@ export default function BalanceSheetPage() {
      P&L nahi chalta (ek bekaar all-periods aggregation bachti hai). */
   const openingQ = useOpeningBalances();
   const opening: OpeningBalances | null = openingQ.data ?? null;
-  const profitRange = retainedProfitRange(opening?.asOf ?? null, today, BOOKS_START);
-  const cumulative = usePnL({ from: profitRange.from, to: profitRange.to }, openingQ.data !== undefined && profitRange.open);
+  /* R-2496: no opening balances → profit from the company's books start (Accounting → Overview),
+     not from the year 2000; waits for it so the P&L is not read twice. */
+  const books = booksQ.data;
+  const openingWarn = books ? openingDateMismatch(books) : null;
+  const profitRange = retainedProfitRange(opening?.asOf ?? null, today, reportStart(books));
+  const cumulative = usePnL({ from: profitRange.from, to: profitRange.to }, openingQ.data !== undefined && books !== undefined && profitRange.open);
   /* R-1646: one profit with the P&L and Trial Balance (reportProfit), and the licence cost it
      estimates (no vendor bill yet) carried as a provision — not left in the unexplained gap. */
   const cumulativeProfit = openingQ.data === undefined ? null
@@ -248,6 +256,7 @@ export default function BalanceSheetPage() {
           <h1 className="font-serif text-3xl md:text-4xl leading-tight">Balance Sheet</h1>
           <p className="text-sm text-ink-3 mt-1">
             What you own vs what you owe · as of {formatDate(today)}
+            {books?.setting && <> · Books start {formatDate(books.setting)}</>}
           </p>
         </div>
         <div className="flex gap-2">
@@ -259,6 +268,15 @@ export default function BalanceSheetPage() {
           </Button>
         </div>
       </div>
+
+      {/* R-2496: opening balances must be as at the day before the books start. */}
+      {openingWarn && books?.setting && (
+        <div role="status" className="mb-4 rounded-lg border border-amber/40 bg-amber-soft/20 px-4 py-3 text-sm text-ink">
+          {openingWarn.actual
+            ? <>Your opening balances are dated <b>{formatDate(openingWarn.actual)}</b>, but your books start on <b>{formatDate(books.setting)}</b>. Opening balances should be as at <b>{formatDate(openingWarn.expected)}</b> — edit them below, or change the books start on Accounting → Overview.</>
+            : <>Your books start on <b>{formatDate(books.setting)}</b>. Enter your opening balances as at <b>{formatDate(openingWarn.expected)}</b> below.</>}
+        </div>
+      )}
 
       {/* Headline summary — Net worth reads FIRST (was buried at the very bottom
           after ~15 detail lines). Assets · Liabilities · Net worth up top. */}
@@ -330,7 +348,7 @@ export default function BalanceSheetPage() {
           {[1, 2].map((i) => <Skeleton key={i} className="h-96 rounded-lg" />)}
         </div>
       ) : failed ? (
-        <LoadError what="Balance sheet" onRetry={() => { void refetchAuto(); void refetchItems(); }} />
+        <LoadError what="Balance sheet" onRetry={() => { void refetchAuto(); void refetchItems(); booksQ.refetch(); }} />
       ) : (
         <>
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -568,7 +586,7 @@ export default function BalanceSheetPage() {
             </Card>
           </div>
 
-          <OpeningBalancesCard capitalLabel={profile.capitalLabel} opening={opening} loading={openingQ.isLoading} failed={openingQ.isError} fyStart={`${fyOf(today)}-04-01`} today={today} />
+          <OpeningBalancesCard capitalLabel={profile.capitalLabel} opening={opening} loading={openingQ.isLoading} failed={openingQ.isError} fyStart={books?.setting ?? `${fyOf(today)}-04-01`} today={today} />
 
           {!movementsMissing && (
             <OwnerEquityCard words={words} movements={movements} partners={partners} loading={movementsQ.isLoading} error={movementsQ.error}

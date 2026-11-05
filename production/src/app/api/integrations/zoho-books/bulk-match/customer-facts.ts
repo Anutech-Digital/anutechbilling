@@ -9,7 +9,8 @@
  *   openings  — opening invoices imported from Zoho that still have money due;
  *   receipts  — receipts booked for the customer within 35 days of the page's lines;
  *   billed    — billed periods (with an invoice) of the customer's subscriptions;
- *   booksStart — the day after the company's opening balances date.
+ *   booksStart — the company's books start (R-2496 lib/accounting/books-start.ts: the owner's
+ *               setting, else the day after the opening balances date).
  *
  * Every table read is filtered by the caller's own tenant (the admin client bypasses RLS — §17c).
  * READ-ONLY. A failed read throws FactsReadError: the page is refused rather than planned blind.
@@ -18,8 +19,9 @@ import type { ZohoCaller } from "@/lib/integrations/zoho-books/store";
 import { mapZohoCustomer } from "@/lib/integrations/zoho-books/payment-prefill";
 import { paymentApprovalBlock } from "@/lib/quotes/payment-approval";
 import {
-  DOUBLE_DAYS, nextDay, type BulkMatchRow, type CustomerFacts, type OpenItemFact,
+  DOUBLE_DAYS, type BulkMatchRow, type CustomerFacts, type OpenItemFact,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
+import { BooksStartReadError, readBooksStart, type BooksStartDb } from "@/lib/accounting/books-start";
 
 export class FactsReadError extends Error {}
 
@@ -49,10 +51,14 @@ export async function attachCustomerFacts(
   const { admin, tenantId } = caller;
   const custOf = (r: BulkMatchRow) => (r.result.kind === "match" ? mapZohoCustomer(r.result.match.customer, appCustomers)?.id ?? null : null);
 
-  const ob = await admin.from("opening_balances").select("as_of").eq("tenant_id", tenantId).order("as_of", { ascending: false }).limit(1);
-  if (ob.error) throw new FactsReadError("the opening balances date");
-  const asOf = ((ob.data ?? [])[0] as { as_of?: string | null } | undefined)?.as_of ?? null;
-  const booksStart = asOf ? nextDay(String(asOf).slice(0, 10)) : null;
+  /* R-2496: the company's ONE books start (owner's setting, else opening balances date + 1). */
+  let booksStart: string | null;
+  try {
+    booksStart = (await readBooksStart(admin as unknown as BooksStartDb, tenantId)).start;
+  } catch (e) {
+    if (e instanceof BooksStartReadError) throw new FactsReadError(e.message);
+    throw e;
+  }
 
   const ids = [...new Set(rows.map(custOf).filter((x): x is string => !!x))];
   if (ids.length === 0) return rows.map((r) => ({ ...r, facts: null, booksStart }));

@@ -22,7 +22,9 @@ import { downloadCSV } from "@/lib/csv";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { fyOf } from "@/lib/accounting/ledger";
 import { useBalanceSheetAuto, useBalanceSheetItems, useOpeningBalances } from "@/lib/queries/balance-sheet";
-import { usePnL, BOOKS_START } from "@/lib/queries/pnl";
+import { usePnL } from "@/lib/queries/pnl";
+import { reportStart } from "@/lib/accounting/books-start";
+import { useBooksStart } from "@/components/features/accounting/books-start-card";
 import { buildTrialBalance, trialBalanceCsvRows, LICENCE_ESTIMATE_HEAD, type TbGroup } from "@/lib/accounting/trial-balance";
 import { retainedProfitRange, licenceProvisionOf } from "@/lib/accounting/balance-sheet-totals";
 import { movementTotals } from "@/lib/accounting/owner-equity";
@@ -40,9 +42,11 @@ export default function TrialBalancePage() {
   const openingQ = useOpeningBalances();
   /* R-1646: the licence-cost provision is the Balance Sheet's — read from the same P&L range it
      uses (same query, so a visit to one page serves the other). */
-  const profitRange = retainedProfitRange(openingQ.data?.asOf ?? null, today, BOOKS_START);
-  const retainedQ = usePnL({ from: profitRange.from, to: profitRange.to }, openingQ.data !== undefined && profitRange.open);
-  const licenceProvision = openingQ.data === undefined ? null : !profitRange.open ? 0 : licenceProvisionOf(retainedQ.data);
+  /* R-2496: the company's books start (Accounting → Overview), same range as the Balance Sheet. */
+  const booksQ = useBooksStart();
+  const profitRange = retainedProfitRange(openingQ.data?.asOf ?? null, today, reportStart(booksQ.data));
+  const retainedQ = usePnL({ from: profitRange.from, to: profitRange.to }, openingQ.data !== undefined && booksQ.data !== undefined && profitRange.open);
+  const licenceProvision = openingQ.data === undefined || booksQ.data === undefined ? null : !profitRange.open ? 0 : licenceProvisionOf(retainedQ.data);
 
   /* R-1839: owner drawings / capital introduced — same range as the Balance Sheet (after the
      CA's opening date, up to today). A table not there yet (before the migration) = none. */
@@ -60,9 +64,10 @@ export default function TrialBalancePage() {
   }, [bsQ.data, pnlQ.data, itemsQ.data, openingQ.data, licenceProvision, ownerEquity, ownerMissing]);
   const estimatedLicence = tb?.rows.find((r) => r.head === LICENCE_ESTIMATE_HEAD)?.debit ?? 0;
 
-  const error = bsQ.error ?? pnlQ.error ?? itemsQ.error ?? openingQ.error ?? retainedQ.error ?? (ownerMissing ? null : ownerQ.error);
+  const error = bsQ.error ?? pnlQ.error ?? itemsQ.error ?? openingQ.error ?? retainedQ.error ?? (booksQ.isError ? booksQ.error : null) ?? (ownerMissing ? null : ownerQ.error);
   const retryFailed = () => {
     for (const q of [bsQ, pnlQ, itemsQ, openingQ, retainedQ]) if (q.error) void q.refetch();
+    if (booksQ.isError) booksQ.refetch();
   };
 
   const exportCsv = () => {
