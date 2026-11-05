@@ -23,7 +23,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatDate, rupee } from "@/lib/utils";
 import { FY_CALLS_PER_REQUEST } from "@/lib/integrations/zoho-books/config";
 import { ZOHO_CALLS_PER_MIN } from "@/lib/integrations/zoho-books/zoho-pace";
-import type { DepositAccount } from "@/lib/integrations/zoho-books/receipts-import/plan";
+import type { ZohoDeposit } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
 
 const API = "/api/integrations/zoho-books/receipts-import";
@@ -34,7 +34,7 @@ interface Preview {
   counts: { scanned: number; import: number; already: number; alreadyNotBanked: number; skip: number };
   totals: { cash: number; tds: number; excess: number };
   parts: number;
-  deposits: DepositAccount[];
+  deposits: ZohoDeposit[];
   accounts: { id: string; name: string }[];
   skipReasons: { reason: string; count: number }[];
   skipped: { number: string; date: string; customer: string; amount: number; reason: string | null }[];

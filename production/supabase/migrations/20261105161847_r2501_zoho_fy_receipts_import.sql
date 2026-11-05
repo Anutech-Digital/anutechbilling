@@ -323,8 +323,9 @@ declare
   v_want       integer;
 begin
   /* R-718 role gate — same as record_payment / record_desk_payment. */
-  v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+  /* R-2501: public.current_request_role() in place of the raw auth.role() (R-2487 rule) — the same answer. */
+  v_trusted := coalesce(public.current_request_role(), '') = 'service_role'
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   if not v_trusted
      and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing') then
@@ -704,6 +705,7 @@ declare
   v_hits  uuid[];
   v_all   uuid[];
   v_same  uuid[];
+  v_taken record;
 begin
   select coalesce(array_agg(t.id order by t.txn_date, t.id), '{}'),
          coalesce(array_agg(t.id order by t.id) filter (where t.txn_date = p_received_on), '{}'),
@@ -724,6 +726,27 @@ begin
   end if;
   if cardinality(v_hits) = 0 and cardinality(v_all) = 1 and cardinality(v_same) = 1 then
     return jsonb_build_object('txn_id', v_same[1], 'confidence', 'high');
+  end if;
+  /* Review: no free line, but THE line (same money, Zoho's reference in it, or the same day) is
+     already reconciled to something else (an advance / new sale booked on the Reconcile sheet) —
+     the money is in the books already: the caller refuses, never a second receipt. */
+  if cardinality(v_all) = 0 then
+    select t.id, coalesce(t.matched_to_type, 'split receipt') as matched_to_type, t.txn_date into v_taken
+      from public.bank_transactions t
+     where t.tenant_id = p_tenant
+       and t.bank_account_id = p_bank_account_id
+       and coalesce(t.credit, 0) > 0
+       and round(t.credit * 100)::bigint = p_received_paise
+       and t.txn_date between p_received_on - 3 and p_received_on + 3
+       and (t.matched_to_type is not null
+            or exists (select 1 from public.payments p where p.tenant_id = p_tenant and p.bank_txn_id = t.id))
+       and ((char_length(v_ref) >= 6 and strpos(upper(coalesce(t.reference, '') || ' ' || coalesce(t.description, '')), v_ref) > 0)
+            or t.txn_date = p_received_on)
+     order by t.txn_date, t.id
+     limit 1;
+    if found then
+      return jsonb_build_object('txn_id', null, 'taken_txn', v_taken.id, 'taken_as', v_taken.matched_to_type, 'taken_on', v_taken.txn_date);
+    end if;
   end if;
   return jsonb_build_object('txn_id', null, 'candidates', cardinality(v_all));
 end;
@@ -830,24 +853,30 @@ begin
     v_seen := v_seen || v_zid;
 
     /* Already booked (a rerun) — first, so a later lock or Zoho change never calls it "refused".
-       Its bank line may have come in since: match it now (bank match later). */
-    select * into v_done_row from public.zoho_fy_receipts r where r.tenant_id = v_tenant and r.zoho_payment_id = v_zid;
+       Review: bank_txn_id follows the books — the line its receipts are on NOW (matched by hand, or
+       un-reconciled since) — and a receipt on no line is matched if its line has come in since. */
+    select * into v_done_row from public.zoho_fy_receipts r where r.tenant_id = v_tenant and r.zoho_payment_id = v_zid for update;
     if found then
       v_already := v_already + 1;
-      if v_done_row.bank_txn_id is null
-         and not exists (select 1 from public.payments p
-                          where p.tenant_id = v_tenant and p.id = any (v_done_row.payment_ids)
-                            and (p.bank_txn_id is not null
-                                 or exists (select 1 from public.bank_transactions t
-                                             where t.tenant_id = v_tenant and t.matched_to_type = 'payment'
-                                               and t.matched_to_id = p.id::text))) then
+      select coalesce(
+               (select p.bank_txn_id from public.payments p
+                 where p.tenant_id = v_tenant and p.id = any (v_done_row.payment_ids) and p.bank_txn_id is not null limit 1),
+               (select t.id from public.bank_transactions t
+                 where t.tenant_id = v_tenant and t.matched_to_type = 'payment'
+                   and t.matched_to_id = any (v_done_row.payment_ids::text[]) limit 1))
+        into v_txn;
+      if v_txn is distinct from v_done_row.bank_txn_id then
+        update public.zoho_fy_receipts set bank_txn_id = v_txn, banked_at = case when v_txn is not null then now() end
+         where tenant_id = v_tenant and zoho_payment_id = v_zid;
+      end if;
+      if v_txn is null then
         v_bank := public._zoho_fy_receipt_bank_line(v_tenant, v_done_row.bank_account_id, v_done_row.received_paise,
                                                     v_done_row.received_on, v_done_row.reference);
         v_txn := nullif(v_bank->>'txn_id', '')::uuid;
         if v_txn is not null and not (v_txn = any (v_used)) then
           begin
             perform 1 from public.bank_transactions t where t.id = v_txn and t.tenant_id = v_tenant and t.matched_to_type is null for update;
-            if found then
+            if found and not exists (select 1 from public.payments p where p.tenant_id = v_tenant and p.bank_txn_id = v_txn) then
               perform public.reconcile_bank_txn(v_txn, 'payment', v_done_row.payment_ids[1]::text, v_bank->>'confidence');
               if cardinality(v_done_row.payment_ids) > 1 then
                 update public.payments set bank_txn_id = v_txn where tenant_id = v_tenant and id = any (v_done_row.payment_ids);
@@ -946,8 +975,10 @@ begin
         end;
         v_due := case when v_inv.status::text = 'paid' then 0
                       else greatest(0, coalesce(v_inv.net_payable, v_inv.amount) - coalesce(v_inv.paid_amount, 0)) end;
-        /* ₹1 over is the two roundings (invoice total, this payment): capped at the due. */
-        if v_settle > v_due and v_settle - v_due <= 1 then
+        /* ₹1 over is the two roundings (invoice total, this payment): capped at the due; that rupee is
+           money received too, so it joins the advance — the receipts still equal what came in. */
+        if v_settle > v_due and v_settle - v_due <= 1 and v_due > 0 then
+          v_excess := v_excess + (v_settle - v_due);
           v_settle := v_due;
         end if;
         if v_settle is null or v_settle <= 0 or v_tds < 0 or v_tds > v_settle then
@@ -965,6 +996,16 @@ begin
       end loop;
       if v_reason is null and v_sum_cash <= 0 then
         v_reason := 'Zoho booked only TDS on this payment, no money — record it by hand.';
+      end if;
+    end if;
+
+    /* Its bank line, looked up BEFORE booking: already reconciled to something else → the money is in
+       the books already (an advance / sale on the Reconcile sheet) — refused, never a second receipt. */
+    if v_reason is null then
+      v_bank := public._zoho_fy_receipt_bank_line(v_tenant, v_acct, v_paise, v_date, v_p->>'reference');
+      if nullif(v_bank->>'taken_txn', '') is not null then
+        v_reason := format('Its bank line (%s, ₹%s) is already reconciled as %s — check that line before importing this payment.',
+                           to_char((v_bank->>'taken_on')::date, 'DD Mon YYYY'), round(v_paise / 100.0, 2), replace(v_bank->>'taken_as', '_', ' '));
       end if;
     end if;
 
@@ -993,15 +1034,21 @@ begin
       end if;
 
       v_txn := null;
-      v_bank := public._zoho_fy_receipt_bank_line(v_tenant, v_acct, v_paise, v_date, v_p->>'reference');
       if nullif(v_bank->>'txn_id', '') is not null and not ((v_bank->>'txn_id')::uuid = any (v_used)) then
         v_txn := (v_bank->>'txn_id')::uuid;
-        perform 1 from public.bank_transactions t where t.id = v_txn and t.tenant_id = v_tenant for update;
-        perform public.reconcile_bank_txn(v_txn, 'payment', v_pays[1]::text, v_bank->>'confidence');
-        if cardinality(v_pays) > 1 then
-          update public.payments set bank_txn_id = v_txn where tenant_id = v_tenant and id = any (v_pays);
+        /* Review: locked, then checked again — matched meanwhile (by hand / auto) → left for a later run,
+           never moved off the other receipt. */
+        perform 1 from public.bank_transactions t
+         where t.id = v_txn and t.tenant_id = v_tenant and t.matched_to_type is null for update;
+        if not found or exists (select 1 from public.payments p where p.tenant_id = v_tenant and p.bank_txn_id = v_txn) then
+          v_txn := null;
+        else
+          perform public.reconcile_bank_txn(v_txn, 'payment', v_pays[1]::text, v_bank->>'confidence');
+          if cardinality(v_pays) > 1 then
+            update public.payments set bank_txn_id = v_txn where tenant_id = v_tenant and id = any (v_pays);
+          end if;
+          v_used := v_used || v_txn;
         end if;
-        v_used := v_used || v_txn;
       end if;
 
       insert into public.zoho_fy_receipts (tenant_id, zoho_payment_id, fy, batch_id, customer_id, received_on, bank_account_id,

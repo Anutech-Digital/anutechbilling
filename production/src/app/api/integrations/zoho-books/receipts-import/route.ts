@@ -30,6 +30,7 @@ import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb
 import { zohoReceiptFacts, type ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
 import { RECEIPTS_IMPORT_ROLES, buildReceiptsPlan, toReceiptPick } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import { parseAccountMap, readReceiptsContext } from "@/lib/integrations/zoho-books/receipts-import/store";
+import { depositAccountLabel, depositAccounts } from "@/lib/payments/deposit-accounts";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -107,9 +108,10 @@ export async function POST(req: NextRequest) {
     } catch {
       return fail(500, "Could not build the preview. Refresh and try again.");
     }
-    /* To book + already booked with no bank line yet (matched now if it came in), in the scan's
-       stable order: part N is the same payments on every call. */
-    const picks = plan.rows.filter((r) => r.verdict === "import" || (r.verdict === "already" && r.reason)).map(toReceiptPick);
+    /* To book + already booked (the SQL counts those as already, and matches a bank line that came in
+       since / syncs one matched by hand), in the scan's stable order: part N is the same payments on
+       every call even after part 0 was booked (review). */
+    const picks = plan.rows.filter((r) => r.verdict !== "skip").map(toReceiptPick);
     const parts = partCount(picks.length);
 
     if (action === "preview") {
@@ -122,7 +124,7 @@ export async function POST(req: NextRequest) {
         ok: true, fy, scanned: counts.listed, counts: plan.counts, totals: plan.totals, parts,
         deposits: plan.deposits, skipReasons: plan.skipReasons, skipped, batches,
         /* For the "Zoho account → app account" choice: this company's open accounts. */
-        accounts: ctx.bankAccounts.filter((a) => a.active).map((a) => ({ id: a.id, name: `${a.bankName} ${a.name}${a.last4 ? ` ··${a.last4}` : ""}`.trim() })),
+        accounts: depositAccounts(ctx.bankAccounts).map((a) => ({ id: a.id, name: depositAccountLabel(a) })),
       });
     }
 

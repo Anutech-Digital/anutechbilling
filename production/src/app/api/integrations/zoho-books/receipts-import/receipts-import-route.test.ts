@@ -42,7 +42,7 @@ vi.mock("@/lib/integrations/zoho-books/receipts-import/store", async (orig) => (
     return {
       fyStart: range.dateStart, fyEnd: range.dateEnd, booksStart: "2025-04-01", lockedUntil: null,
       invoices: [{ id: "INV/25-26/0001", zohoInvoiceId: "zi1", externalNumber: "INV/25-26/0001", documentKind: "tax_invoice", customerId: "c1", due: 5000 }],
-      bankAccounts: [{ id: "11111111-1111-4111-8111-111111111111", name: "Current", bankName: "HDFC", last4: "4523", accountType: "current", active: true }],
+      bankAccounts: [{ id: "11111111-1111-4111-8111-111111111111", name: "Current", bank_name: "HDFC", account_number_last4: "4523", account_type: "current", is_active: true }],
       booked: st.booked, accountMap,
     };
   },
@@ -102,11 +102,16 @@ describe("R-2501 receipts-import route", () => {
     expect(JSON.stringify(st.rpc[0].args)).not.toMatch(/1180|999999/);
   });
 
-  it("booked payments: banked ones are not sent again, unbanked ones are (bank match later)", async () => {
+  it("booked payments are sent again (SQL: already + bank match later), so part N stays the same payments", async () => {
     st.facts = [fact({}), fact({ zohoId: "p2", number: "102" })];
     st.booked = new Map([["p1", { banked: true }], ["p2", { banked: false }]]);
     await POST(req({ action: "import", fy: "2025-26", part: 0, dryRun: false }));
-    expect(st.rpc[0].args).toMatchObject({ p_dry_run: false, p_picks: [{ zoho_payment_id: "p2" }] });
+    expect(st.rpc[0].args).toMatchObject({ p_dry_run: false, p_picks: [{ zoho_payment_id: "p1" }, { zoho_payment_id: "p2" }] });
+  });
+
+  it("preview offers Record payment's deposit accounts with its label", async () => {
+    const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.accounts).toEqual([{ id: "11111111-1111-4111-8111-111111111111", name: expect.stringContaining("Current") }]);
   });
 
   it("the account map is shape-checked (bad ids dropped); a part out of range is refused", async () => {

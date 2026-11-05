@@ -8,7 +8,7 @@
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { readBooksStart, type BooksStartDb } from "@/lib/accounting/books-start";
 import { must, type FyImportDb } from "../fy-import/store";
-import type { ReceiptsPlanContext } from "./plan";
+import type { AppBankAccount, ReceiptsPlanContext } from "./plan";
 
 type Res<T = unknown> = PromiseLike<{ data: T | null; error: { message?: string; code?: string } | null }>;
 
@@ -28,8 +28,8 @@ export async function readReceiptsContext(
       .select("id, zoho_invoice_id, external_number, document_kind, customer_id, amount, net_payable, paid_amount, status")
       .eq("tenant_id", tenantId).or("zoho_invoice_id.not.is.null,document_kind.eq.opening_invoice")
       .order("id", { ascending: true }).range(from, to)),
-    db.from("bank_accounts").select("id, name, bank_name, account_number_last4, account_type, is_active")
-      .eq("tenant_id", tenantId).order("name", { ascending: true }).limit(500) as Res<Array<{ id: string; name: string; bank_name: string; account_number_last4: string | null; account_type: string; is_active: boolean }>>,
+    db.from("bank_accounts").select("id, name, bank_name, account_number_last4, account_type, is_active, is_default_petty_cash")
+      .eq("tenant_id", tenantId).order("name", { ascending: true }).limit(500) as Res<AppBankAccount[]>,
     fetchAllRows<{ zoho_payment_id: string; bank_txn_id: string | null }>((from, to) => db.from("zoho_fy_receipts")
       .select("zoho_payment_id, bank_txn_id").eq("tenant_id", tenantId).order("zoho_payment_id", { ascending: true }).range(from, to)),
   ]);
@@ -43,9 +43,7 @@ export async function readReceiptsContext(
       id: i.id, zohoInvoiceId: i.zoho_invoice_id, externalNumber: i.external_number, documentKind: i.document_kind, customerId: i.customer_id,
       due: i.status === "paid" || i.status === "void" ? 0 : Math.max(0, Number(i.net_payable ?? i.amount) - Number(i.paid_amount ?? 0)),
     })),
-    bankAccounts: must(accounts, "the bank accounts").map((a) => ({
-      id: a.id, name: a.name, bankName: a.bank_name, last4: a.account_number_last4, accountType: a.account_type, active: a.is_active,
-    })),
+    bankAccounts: must(accounts, "the bank accounts"),
     booked: new Map(booked.map((b) => [b.zoho_payment_id, { banked: b.bank_txn_id !== null }])),
     accountMap,
   };

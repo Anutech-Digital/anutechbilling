@@ -82,6 +82,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   set_books_start_date: "R-2496: only the earliest dated invoice (not opening invoices) — refuses a books start after a money row; not GST or revenue",
   import_zoho_fy_sales: "R-2499: writes Zoho's FY sales as tax invoices; reads invoices only to skip a Zoho id / number already in the books — not GST or revenue",
   remove_zoho_fy_sales_import: "R-2499: the invoices of one import batch (to check they are untouched, then delete) — not GST or revenue",
+  import_zoho_fy_receipts: "R-2501: finds the imported Zoho sale (or opening invoice) a Zoho payment was applied to and what is still due on it, to record the receipt — not GST or revenue",
   set_invoice_external_number: "R-2360: stores the Zoho invoice number on one invoice (duplicate check) — not GST or revenue",
   invoice_external_number_holder: "R-2360: which invoice already is a Zoho number (duplicate check) — not GST or revenue",
   split_outstanding_for: "per quote",
@@ -168,6 +169,7 @@ const TS_SALE = new Set([
   "src/components/features/collections/owner-report.tsx",        // R-2414: invoiced in the last 30 days, for DSO / CEI
 ]);
 const TS_NOT_SALE: Record<string, string> = {
+  "src/lib/integrations/zoho-books/receipts-import/store.ts": "R-2501: invoices that came from Zoho (Zoho id / number, customer, what is still due) to place FY receipts on them — not a revenue or GST report",
   "src/lib/integrations/zoho-books/sales-import/store.ts": "R-2499: every invoice's number / Zoho number / Zoho id (skip what is already in the books) and the per-month recount of what came in from Zoho — not a revenue or GST report",
   "src/lib/payments/payment-link.server.ts": "R-2415: the open invoices (by id) a Send-reminder pay link may carry, and their due for the stale-link sweep — not a list or a total",
   "src/app/(app)/renewals/last-paid-data.ts": "R-2422: the invoice numbers raised from one subscription's own quotes (by quote_id), to name what a payment paid on the Renewals row's Last paid — not a list or a total",

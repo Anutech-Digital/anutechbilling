@@ -14,6 +14,9 @@
  * Pure: no I/O.
  */
 import type { ZohoReceiptFacts } from "./normalise";
+import { defaultCashAccountId, depositAccounts, type DepositAccount as AppBankAccount } from "@/lib/payments/deposit-accounts";
+
+export type { AppBankAccount };
 
 export const RECEIPTS_IMPORT_ROLES = ["owner", "accountant"] as const;
 
@@ -26,7 +29,6 @@ export interface AppZohoInvoice {
   /** What is still due on it (net payable − paid). */
   due: number;
 }
-export interface AppBankAccount { id: string; name: string; bankName: string; last4: string | null; accountType: string; active: boolean }
 
 export interface ReceiptsPlanContext {
   fyStart: string;
@@ -53,35 +55,37 @@ export interface PlannedReceipt {
   invoiceIds: (string | null)[];
 }
 
-export interface DepositAccount { zohoAccountId: string; zohoName: string; count: number; amount: number; appAccountId: string | null; suggested: boolean }
+export interface ZohoDeposit { zohoAccountId: string; zohoName: string; count: number; amount: number; appAccountId: string | null; suggested: boolean }
 
 export interface ReceiptsPlan {
   rows: PlannedReceipt[];
   counts: { scanned: number; import: number; already: number; alreadyNotBanked: number; skip: number };
   totals: { cash: number; tds: number; excess: number };
-  deposits: DepositAccount[];
+  deposits: ZohoDeposit[];
   skipReasons: { reason: string; count: number }[];
 }
 
 const reasonKey = (r: string) => r.replace(/₹[\d,.]+|INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}/g, "…");
 const digits = (s: string) => s.replace(/\D+/g, "");
 
-/** The app account Zoho's deposit account most likely is: same last 4 digits, else the same name. */
+/**
+ * The app account Zoho's deposit account most likely is — among the accounts Record payment offers
+ * (depositAccounts: active, no credit card): same last 4 digits, else the same name, else (a cash
+ * account in Zoho) the company's cash account (defaultCashAccountId). Otherwise none: a guess is
+ * worse than asking.
+ */
 export function suggestAccount(zohoName: string, accounts: readonly AppBankAccount[]): string | null {
-  const live = accounts.filter((a) => a.active);
+  const live = depositAccounts(accounts);
   const d = digits(zohoName);
   if (d.length >= 4) {
-    const hit = live.filter((a) => a.last4 && d.endsWith(a.last4));
+    const hit = live.filter((a) => a.account_number_last4 && d.endsWith(a.account_number_last4));
     if (hit.length === 1) return hit[0].id;
   }
   const n = zohoName.trim().toLowerCase();
   if (!n) return null;
-  const byName = live.filter((a) => a.name.trim().toLowerCase() === n || `${a.bankName} ${a.name}`.trim().toLowerCase() === n);
+  const byName = live.filter((a) => a.name.trim().toLowerCase() === n || `${a.bank_name ?? ""} ${a.name}`.trim().toLowerCase() === n);
   if (byName.length === 1) return byName[0].id;
-  if (/petty|cash/.test(n)) {
-    const cash = live.filter((a) => a.accountType === "cash");
-    if (cash.length === 1) return cash[0].id;
-  }
+  if (/petty|cash/.test(n)) return defaultCashAccountId(accounts) || null;
   return null;
 }
 
@@ -92,10 +96,11 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     if (i.zohoInvoiceId) byZoho.set(i.zohoInvoiceId, i);
     if (i.externalNumber) byNumber.set(i.externalNumber.trim().toUpperCase(), i);
   }
-  const ownAccounts = new Set(ctx.bankAccounts.map((a) => a.id));
+  const ownAccounts = new Set(depositAccounts(ctx.bankAccounts).map((a) => a.id));
+  const customerOf = new Map(ctx.invoices.map((i) => [i.id, i.customerId ?? ""]));
 
   /* Deposit accounts: the owner's choice, else a suggestion. */
-  const deposits = new Map<string, DepositAccount>();
+  const deposits = new Map<string, ZohoDeposit>();
   for (const f of facts) {
     const key = f.depositAccountId || "";
     const d = deposits.get(key) ?? { zohoAccountId: key, zohoName: f.depositAccountName || "(no account in Zoho)", count: 0, amount: 0, appAccountId: null, suggested: false };
@@ -135,7 +140,7 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
       }
       return row("skip", `${l.invoiceNumber} is not an FY sale imported from Zoho here — import FY sales first (Invoices → FY 2025-26 sales from Zoho).`);
     }
-    const custs = new Set(invoiceIds.map((id) => ctx.invoices.find((i) => i.id === id)?.customerId ?? ""));
+    const custs = new Set(invoiceIds.map((id) => customerOf.get(id!) ?? ""));
     if (custs.size !== 1 || custs.has("")) return row("skip", "Its invoices belong to different customers here.");
     const customerId = [...custs][0];
     for (let k = 0; k < f.lines.length; k++) {

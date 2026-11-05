@@ -4,7 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import type { ZohoFyDocDetail } from "../fy-fetch";
-import { zohoReceiptFacts, appMethod, type ZohoReceiptFacts } from "./normalise";
+import { zohoReceiptFacts, appMethod, apportion, type ZohoReceiptFacts } from "./normalise";
 import { buildReceiptsPlan, suggestAccount, toReceiptPick, type ReceiptsPlanContext, type AppBankAccount } from "./plan";
 
 function detail(raw: Record<string, unknown>): ZohoFyDocDetail {
@@ -33,6 +33,14 @@ describe("R-2501 normalise — paise → rupees once; Zoho's own TDS only", () =
     expect(f).toMatchObject({ amount: 10900, receivedPaise: 1090010, excess: 1000, tds: 247, method: "bank_transfer", reference: "UTR123", depositAccountId: "za4523" });
   });
 
+  it("rounding: the lines' rupees add up to the money received (500.50 + 500.50 = ₹1,001, not ₹1,002)", () => {
+    const f = zohoReceiptFacts(detail({ ...base, amount: 1001, unused_amount: 0, invoices: [
+      { invoice_id: "zi1", invoice_number: "A", amount_applied: 500.5 }, { invoice_id: "zi2", invoice_number: "B", amount_applied: 500.5 }] }));
+    expect(f.lines.map((l) => l.settle)).toEqual([501, 500]);
+    expect(f.lines.reduce((s, l) => s + l.settle, 0) + f.excess).toBe(f.amount);
+    expect(apportion([33333, 33333, 33334])).toEqual([333, 333, 334]);
+  });
+
   it("no TDS in Zoho → none booked (never inferred from a short payment)", () => {
     const f = zohoReceiptFacts(detail({ ...base, amount: 900, unused_amount: 0, invoices: [{ invoice_id: "zi1", invoice_number: "A", amount_applied: 900 }] }));
     expect(f.tds).toBe(0);
@@ -59,7 +67,8 @@ describe("R-2501 normalise — paise → rupees once; Zoho's own TDS only", () =
   });
 });
 
-const acct = (id: string, name: string, last4: string | null, accountType = "current"): AppBankAccount => ({ id, name, bankName: "HDFC", last4, accountType, active: true });
+const acct = (id: string, name: string, last4: string | null, accountType = "current", extra: Partial<AppBankAccount> = {}): AppBankAccount =>
+  ({ id, name, bank_name: "HDFC", account_number_last4: last4, account_type: accountType, is_active: true, ...extra });
 
 function facts(id: string, extra: Partial<ZohoReceiptFacts> = {}): ZohoReceiptFacts {
   return {
@@ -131,11 +140,17 @@ describe("R-2501 plan — receipts only onto imported Zoho sales", () => {
     expect(buildReceiptsPlan([facts("p1")], ctx({ accountMap: { za4523: "not-ours" } })).rows[0].bankAccountId).toBe("b4523");
   });
 
-  it("suggests by last 4 digits, exact name, or the one cash account", () => {
-    const list = [acct("b1", "Current", "4523"), acct("b2", "Savings", "9876"), acct("c", "Cash in hand", null, "cash")];
-    expect(suggestAccount("HDFC Bank - 50200012344523", list)).toBe("b1");
-    expect(suggestAccount("Petty Cash", list)).toBe("c");
+  it("suggests by last 4 digits, exact name, or the company's cash account (Record payment's rules)", () => {
+    const list = [acct("b1", "Current", "4523"), acct("b2", "Savings", "9876"), acct("c", "Cash in hand", null, "cash"),
+      acct("pc", "Petty Cash", null, "cash", { is_default_petty_cash: true }), acct("cc", "Card", "4523", "credit_card")];
+    expect(suggestAccount("HDFC Bank - 50200012344523", list)).toBe("b1");   // the credit card ending 4523 is never a deposit account
+    expect(suggestAccount("Petty Cash", list)).toBe("pc");                    // several cash accounts → the company's Petty Cash
     expect(suggestAccount("Undeposited Funds", list)).toBeNull();
+  });
+
+  it("a credit card is never a deposit account, even when the owner picks it", () => {
+    const p = buildReceiptsPlan([facts("p1")], ctx({ bankAccounts: [acct("cc", "Card", "4523", "credit_card")], accountMap: { za4523: "cc" } }));
+    expect(p.rows[0]).toMatchObject({ verdict: "skip", bankAccountId: null });
   });
 });
 

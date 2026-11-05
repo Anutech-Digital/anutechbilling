@@ -42,7 +42,12 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
    'NEFT CR-R2501UTRAAAA01-KA BUYER', 0, 10800, 'R2501UTRAAAA01', 'manual'),
   -- same money, same account, no UTR, a week away: never picked
   ('b2501000-0000-0000-0000-0000000000e2', 'b2501000-0000-0000-0000-0000000000f0', 'b2501000-0000-0000-0000-0000000000d1', '2025-06-20',
-   'NEFT CR-SOMEONE ELSE', 0, 10800, '000000000000000', 'manual');
+   'NEFT CR-SOMEONE ELSE', 0, 10800, '000000000000000', 'manual'),
+  -- pH's money, already reconciled by hand (as a manual match)
+  ('b2501000-0000-0000-0000-0000000000e4', 'b2501000-0000-0000-0000-0000000000f0', 'b2501000-0000-0000-0000-0000000000d1', '2025-06-16',
+   'NEFT CR-R2501UTRHHHH08-DL BUYER', 0, 1180, 'R2501UTRHHHH08', 'manual');
+update public.bank_transactions set matched_to_type = 'manual', matched_at = now(), match_confidence = 'manual'
+ where id = 'b2501000-0000-0000-0000-0000000000e4';
 
 -- An opening invoice (R-1739) of last year — its receipts wait for R-2504.
 insert into public.invoice_import_batches (id, tenant_id) values ('b2501000-0000-0000-0000-0000000000b1', 'b2501000-0000-0000-0000-0000000000f0');
@@ -102,6 +107,12 @@ insert into public.zoho_fy_scan (tenant_id, kind, fy, zoho_id, number, doc_date,
   -- pG: before the books start
   ('b2501000-0000-0000-0000-0000000000f0', 'customerpayments', '2025-26', 'pG', 'pG', '2025-04-02', '',
      pg_temp.pay('pG', '2025-04-02', 'R2501UTRGGGG07', 118000, 0, jsonb_build_array(pg_temp.l('zi2', 'INV/25-26/R2501-02', 1180))), now()),
+  -- pH: its bank line is already reconciled (booked by hand on the Reconcile sheet) → refused, never twice
+  ('b2501000-0000-0000-0000-0000000000f0', 'customerpayments', '2025-26', 'pH', 'pH', '2025-06-16', '',
+     pg_temp.pay('pH', '2025-06-16', 'R2501UTRHHHH08', 118000, 0, jsonb_build_array(pg_temp.l('zi2', 'INV/25-26/R2501-02', 1180))), now()),
+  -- pI: ₹1 more than INV-02's due (two roundings) → INV-02 paid, the rupee kept as advance (receipts = money in)
+  ('b2501000-0000-0000-0000-0000000000f0', 'customerpayments', '2025-26', 'pI', 'pI', '2025-06-25', '',
+     pg_temp.pay('pI', '2025-06-25', 'R2501UTRIIII09', 118100, 0, jsonb_build_array(pg_temp.l('zi2', 'INV/25-26/R2501-02', 1181))), now()),
   -- the other company's scan row: never readable from T
   ('b2501000-0000-0000-0000-0000000000f1', 'customerpayments', '2025-26', 'pO', 'pO', '2025-06-11', '',
      pg_temp.pay('pO', '2025-06-11', 'R2501UTROOOO09', 118000, 0, jsonb_build_array(pg_temp.l('zi2', 'INV/25-26/R2501-02', 1180))), now());
@@ -135,6 +146,8 @@ create function pg_temp.picks() returns jsonb language sql as $f$
     jsonb_build_object('zoho_payment_id', 'pE', 'bank_account_id', 'b2501000-0000-0000-0000-0000000000d1'),
     jsonb_build_object('zoho_payment_id', 'pF', 'bank_account_id', 'b2501000-0000-0000-0000-0000000000d1'),
     jsonb_build_object('zoho_payment_id', 'pG', 'bank_account_id', 'b2501000-0000-0000-0000-0000000000d1'),
+    jsonb_build_object('zoho_payment_id', 'pH', 'bank_account_id', 'b2501000-0000-0000-0000-0000000000d1'),
+    jsonb_build_object('zoho_payment_id', 'pI', 'bank_account_id', 'b2501000-0000-0000-0000-0000000000d1'),
     jsonb_build_object('zoho_payment_id', 'pO', 'bank_account_id', 'b2501000-0000-0000-0000-0000000000d1'));
 $f$;
 
@@ -178,25 +191,25 @@ begin
   if not pg_temp.refused('b2501000-0000-0000-0000-0000000000a3', '42501', '%owner or an accountant%') then raise exception 'FAIL 1: manager imported'; end if;
   if not pg_temp.refused('b2501000-0000-0000-0000-0000000000a4', '28000', '%sign-in%') then raise exception 'FAIL 1b: no-company login imported'; end if;
 
-  -- 2. dry run (accountant): pA + pB would come in; NOTHING written
+  -- 2. dry run (accountant): pA + pB + pI would come in; NOTHING written
   perform pg_temp.as_user('b2501000-0000-0000-0000-0000000000a2');
   r := public.import_zoho_fy_receipts('2025-26', pg_temp.picks(), true);
-  if (r->>'dry_run')::boolean is not true or (r->>'imported')::int <> 2 or r->>'batch_id' is not null
-     or (r->>'banked')::int <> 1 or (r->>'bank_later')::int <> 1 then
+  if (r->>'dry_run')::boolean is not true or (r->>'imported')::int <> 3 or r->>'batch_id' is not null
+     or (r->>'banked')::int <> 1 or (r->>'bank_later')::int <> 2 then
     raise exception 'FAIL 2: dry run result %', r;
   end if;
   if exists (select 1 from public.payments where tenant_id = t)
      or exists (select 1 from public.zoho_fy_receipts where tenant_id = t)
      or exists (select 1 from public.zoho_fy_import_batches where tenant_id = t and kind = 'customerpayments')
-     or exists (select 1 from public.bank_transactions where tenant_id = t and matched_to_type is not null)
+     or exists (select 1 from public.bank_transactions where tenant_id = t and matched_to_type is not null and id <> 'b2501000-0000-0000-0000-0000000000e4')
      or exists (select 1 from public.activity_log where tenant_id = t and action = 'zoho_fy_receipts.imported') then
     raise exception 'FAIL 2b: the dry run wrote something';
   end if;
 
   -- 3. real import
   r := public.import_zoho_fy_receipts('2025-26', pg_temp.picks(), false);
-  if (r->>'dry_run')::boolean or (r->>'imported')::int <> 2 or (r->>'received')::int <> 10800 + 7400
-     or (r->>'tds')::int <> 1000 or (r->>'advance')::int <> 500 then
+  if (r->>'dry_run')::boolean or (r->>'imported')::int <> 3 or (r->>'received')::int <> 10800 + 7400 + 1181
+     or (r->>'tds')::int <> 1000 or (r->>'advance')::int <> 500 + 1 then
     raise exception 'FAIL 3: import result %', r;
   end if;
   select string_agg((s->>'zoho_payment_id') || ': ' || (s->>'reason'), E'\n' order by s->>'zoho_payment_id') into reasons
@@ -206,6 +219,7 @@ begin
      or reasons not like '%pE: Zoho took bank charges%'
      or reasons not like '%pF: INV/25-26/R2501-02 has only ₹1180 due%'
      or reasons not like '%pG: Dated 02 Apr 2025, before the books start (05 Apr 2025)%'
+     or reasons not like '%pH: Its bank line (16 Jun 2025, ₹1180.00) is already reconciled as manual%'
      or reasons not like '%pO: Not read from Zoho yet%' then
     raise exception 'FAIL 3b: skip reasons:%', E'\n' || coalesce(reasons, '(none)');
   end if;
@@ -244,9 +258,16 @@ begin
     raise exception 'FAIL 5d: pB has a bank line it should not have';
   end if;
 
+  -- 5e. pI: INV-02 paid at its ₹1,180; the extra rupee is the customer's advance (receipts ₹1,181 = money in)
+  if (select status::text from public.invoices where tenant_id = t and zoho_invoice_id = 'zi2') <> 'paid'
+     or (select sum(amount) from public.payments where tenant_id = t and reference = 'R2501UTRIIII09') <> 1181
+     or not exists (select 1 from public.customer_credits c where c.tenant_id = t and c.customer_id = 'b2501000-0000-0000-0000-0000000000c2' and c.amount = 1) then
+    raise exception 'FAIL 5e: pI rounding rupee';
+  end if;
+
   -- 6. one batch + one activity_log row (the log is read as the owner — RLS)
   perform pg_temp.as_user('b2501000-0000-0000-0000-0000000000a1');
-  if (select count(*) from public.zoho_fy_import_batches where tenant_id = t and kind = 'customerpayments' and imported_count = 2) <> 1
+  if (select count(*) from public.zoho_fy_import_batches where tenant_id = t and kind = 'customerpayments' and imported_count = 3) <> 1
      or (select count(*) from public.activity_log where tenant_id = t and action = 'zoho_fy_receipts.imported') <> 1 then
     raise exception 'FAIL 6: batch / log rows';
   end if;
@@ -275,16 +296,26 @@ declare
 begin
   perform pg_temp.as_user('b2501000-0000-0000-0000-0000000000a1');
   r := public.import_zoho_fy_receipts('2025-26', pg_temp.picks(), false);
-  if (r->>'imported')::int <> 0 or (r->>'already')::int <> 2 or (r->>'banked')::int <> 1 then
+  if (r->>'imported')::int <> 0 or (r->>'already')::int <> 3 or (r->>'banked')::int <> 1 then
     raise exception 'FAIL 8: rerun result %', r;
   end if;
-  if (select count(*) from public.payments where tenant_id = t and status = 'received') <> 4 then
+  if (select count(*) from public.payments where tenant_id = t and status = 'received') <> 6 then
     raise exception 'FAIL 8b: the rerun made another receipt';
   end if;
   if (select bank_txn_id from public.zoho_fy_receipts where tenant_id = t and zoho_payment_id = 'pB') <> 'b2501000-0000-0000-0000-0000000000e3'
      or (select count(*) from public.payments where tenant_id = t and bank_txn_id = 'b2501000-0000-0000-0000-0000000000e3') <> 3
      or (select matched_to_type from public.bank_transactions where id = 'b2501000-0000-0000-0000-0000000000e3') <> 'payment' then
     raise exception 'FAIL 8c: pB not matched to its later bank line';
+  end if;
+
+  -- 8d. the owner un-reconciles pA's line: the record follows the books (cleared), and the next run
+  --     matches it again (its line is free and carries the UTR) — never stale
+  perform public.reconcile_bank_txn('b2501000-0000-0000-0000-0000000000e1', null, null, null);
+  r := public.import_zoho_fy_receipts('2025-26', pg_temp.picks(), false);
+  if (r->>'banked')::int <> 1
+     or (select bank_txn_id from public.zoho_fy_receipts where tenant_id = t and zoho_payment_id = 'pA') <> 'b2501000-0000-0000-0000-0000000000e1'
+     or (select matched_to_type from public.bank_transactions where id = 'b2501000-0000-0000-0000-0000000000e1') <> 'payment' then
+    raise exception 'FAIL 8d: pA after un-reconcile %', r;
   end if;
 
   -- 9. Record payment by hand now works on an imported Zoho sale (rest of INV-04: ₹1,360)

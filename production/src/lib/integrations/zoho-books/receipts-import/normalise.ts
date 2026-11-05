@@ -8,12 +8,14 @@
  * `unused_amount` = money not applied (the customer's excess → an advance here, as the app does).
  * What one invoice line settles = applied + TDS.
  *
- *   settle    = round(applied + TDS)  — per invoice, the two summed in paise then rounded once
- *   tds       = round(TDS)            — ONLY Zoho's own tax_amount_withheld; never worked out from a
+ *   cash      = applied, in rupees    — the money on that invoice
+ *   tds       = TDS, in rupees        — ONLY Zoho's own tax_amount_withheld; never worked out from a
  *                                       rate or a short payment (card: exact Zoho TDS only)
- *   cash      = settle − tds          — the money on that invoice
- *   excess    = round(amount − Σ applied) — must equal Zoho's unused_amount (else refused)
+ *   settle    = cash + tds            — what it takes off the invoice
+ *   excess    = round(amount) − Σ cash — must match Zoho's unused_amount (else refused)
  *   received  = amount in paise       — ONLY to find the bank line (credit to the paisa); never booked
+ * Rounding (review): the lines' cash is rounded so it ADDS UP to round(Σ applied) (largest remainder),
+ * the same for TDS — so Σ cash + excess = round(amount): the receipts equal the money received.
  *
  * `problems` are reasons the payment must NOT be booked, whatever the app holds (not INR, bank
  * charges, the totals not adding up, TDS not split by invoice, …). Pure: no I/O.
@@ -61,6 +63,20 @@ export interface ZohoReceiptFacts {
 
 const str = (v: unknown): string => (v === null || v === undefined ? "" : String(v).trim());
 
+/**
+ * Paise amounts → whole rupees that ADD UP to the rounded total (largest remainder): rounding
+ * each line alone could book ₹1,002 for ₹1,001 received (500.50 + 500.50).
+ */
+export function apportion(paise: readonly number[]): number[] {
+  const total = paiseToRupees(paise.reduce((s, x) => s + x, 0));
+  const floor = paise.map((p) => Math.floor(p / 100));
+  let left = total - floor.reduce((s, x) => s + x, 0);
+  const order = paise.map((p, k) => ({ k, rem: p - floor[k] * 100 })).sort((a, b) => b.rem - a.rem || a.k - b.k);
+  const out = [...floor];
+  for (const o of order) { if (left <= 0) break; out[o.k] += 1; left -= 1; }
+  return out;
+}
+
 /** Zoho's payment mode → the app's method word. */
 export function appMethod(mode: string): ZohoReceiptFacts["method"] {
   const m = mode.toLowerCase();
@@ -76,23 +92,15 @@ export function zohoReceiptFacts(d: ZohoFyDocDetail): ZohoReceiptFacts {
   const r = d.raw;
   const problems: string[] = [];
   const rawLines = Array.isArray(r.invoices) ? (r.invoices as Array<Record<string, unknown>>) : [];
-  let appliedPaise = 0;
-  let tdsPaise = 0;
-  const lines: ReceiptLine[] = [];
-  for (const l of rawLines) {
-    const ap = toPaise(l.amount_applied);
-    const tp = toPaise(l.tax_amount_withheld);
-    if (ap === 0 && tp === 0) continue;
-    if (ap < 0 || tp < 0) problems.push("A negative amount is applied to an invoice in Zoho — book it by hand.");
-    appliedPaise += ap;
-    tdsPaise += tp;
-    lines.push({
-      zohoInvoiceId: str(l.invoice_id),
-      invoiceNumber: str(l.invoice_number),
-      settle: paiseToRupees(ap + tp),
-      tds: paiseToRupees(tp),
-    });
-  }
+  const kept = rawLines
+    .map((l) => ({ id: str(l.invoice_id), no: str(l.invoice_number), ap: toPaise(l.amount_applied), tp: toPaise(l.tax_amount_withheld) }))
+    .filter((l) => l.ap !== 0 || l.tp !== 0);
+  if (kept.some((l) => l.ap < 0 || l.tp < 0)) problems.push("A negative amount is applied to an invoice in Zoho — book it by hand.");
+  const appliedPaise = kept.reduce((s, l) => s + l.ap, 0);
+  const tdsPaise = kept.reduce((s, l) => s + l.tp, 0);
+  const cash = apportion(kept.map((l) => l.ap));
+  const tdsR = apportion(kept.map((l) => l.tp));
+  const lines: ReceiptLine[] = kept.map((l, k) => ({ zohoInvoiceId: l.id, invoiceNumber: l.no, settle: cash[k] + tdsR[k], tds: tdsR[k] }));
   const amountPaise = toPaise(r.amount);
   const excessPaise = amountPaise - appliedPaise;
   const currency = str(r.currency_code).toUpperCase();
@@ -127,7 +135,7 @@ export function zohoReceiptFacts(d: ZohoFyDocDetail): ZohoReceiptFacts {
     amount: paiseToRupees(amountPaise),
     receivedPaise: amountPaise,
     lines,
-    excess: Math.max(0, paiseToRupees(excessPaise)),
+    excess: Math.max(0, paiseToRupees(amountPaise) - cash.reduce((s, x) => s + x, 0)),
     tds: paiseToRupees(tdsPaise),
     problems: [...new Set(problems)],
   };
