@@ -453,8 +453,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
          asks about first. */
       let batchId: string | null = null;
       if (freshCount > 0) {
-        const res = await importMut.mutateAsync({
+        await importMut.mutateAsync({
           accountId,
+          onBatch: (id) => { batchId = id; },
           fileName: origin?.name ?? null,
           source: origin?.source ?? "paste",
           importSkipped,
@@ -471,7 +472,6 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             }];
           }),
         });
-        batchId = res?.batchId ?? null;
       }
       /* After the lines, not before: if the import fails the account keeps its old
          opening balance rather than one that assumes lines which never arrived. */

@@ -768,12 +768,15 @@ export type BankImportInput = {
    * They go in with the rest; nothing is skipped.
    */
   importSkipped?: boolean;
+  /** R-2497: told the new batch id — the opening move leaves this import's own lines out of
+      "money the account already carries". The return value stays {inserted, duplicates}. */
+  onBatch?: (batchId: string) => void;
 };
 
 export async function importBankTransactions(
   supabase: BankClient,
   input: BankImportInput,
-): Promise<{ inserted: number; duplicates: number; batchId?: string | null }> {
+): Promise<{ inserted: number; duplicates: number }> {
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) throw new Error("Not authenticated");
 
@@ -813,7 +816,8 @@ export async function importBankTransactions(
   });
   if (error) throw error;
   const out = data as { batch_id?: string; inserted?: number } | null;
-  return { inserted: Number(out?.inserted ?? 0), duplicates, batchId: out?.batch_id ?? null };
+  if (out?.batch_id) input.onBatch?.(out.batch_id);
+  return { inserted: Number(out?.inserted ?? 0), duplicates };
 }
 
 export function useImportBankTransactions() {

@@ -62,7 +62,10 @@ const importButton = () => screen.getByRole("button", { name: /Import \d+ row|Se
 
 beforeEach(() => {
   state.role = "owner";
-  state.importSpy.mockReset().mockResolvedValue({ inserted: 2, duplicates: 0, batchId: "batch-1" });
+  state.importSpy.mockReset().mockImplementation(async (input: { onBatch?: (id: string) => void }) => {
+    input.onBatch?.("batch-1");   // the import tells the dialog its batch
+    return { inserted: 2, duplicates: 0 };
+  });
   state.setOpeningSpy.mockReset().mockResolvedValue({});
   state.updateSpy.mockReset().mockResolvedValue({});
 });
