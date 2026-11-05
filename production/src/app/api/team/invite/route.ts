@@ -135,7 +135,16 @@ export async function POST(request: NextRequest) {
       { status: 429, headers: { "Retry-After": String(checkRl.retryAfterSec) } },
     );
   }
-  const { data: heldElsewhere } = await supabase.rpc("release_stale_team_invite", { p_email: email });
+  const { data: heldElsewhere, error: heldErr } = await supabase.rpc("release_stale_team_invite", { p_email: email });
+  /* R-2483: the check also caps itself in SQL (30 an hour per login, 54000) — a cap reached by direct
+     calls must not let this invite go out WITHOUT the member-of-another-company check. Any other
+     error keeps the old behaviour (e.g. the migration is not deployed yet). */
+  if (heldErr?.code === "54000") {
+    return NextResponse.json(
+      { error: "Too many invites in the last hour. Try again later." },
+      { status: 429, headers: { "Retry-After": "3600" } },
+    );
+  }
   if (parseStaleInviteOutcome(heldElsewhere) === "member_elsewhere") {
     return NextResponse.json({ error: memberElsewhereMessage(email) }, { status: 409, headers: NO_STORE });
   }
