@@ -105,14 +105,14 @@ begin
        changes), so a later change to log_row_change cannot turn this into a silent no-op:
        rewrite the newest to the new company's facts only, drop any other. */
     select max(a.id) into v_log from public.activity_log a
-     where a.id > v_mark and a.entity = 'users' and a.entity_id = v_uid::text;
+     where a.id > v_mark and a.tenant_id = v_m.tenant_id and a.action = 'update'
+       and a.entity = 'users' and a.entity_id = v_uid::text;
     if v_log is not null then
       delete from public.activity_log a
-       where a.id > v_mark and a.id <> v_log and a.entity = 'users' and a.entity_id = v_uid::text;
+       where a.id > v_mark and a.id <> v_log and a.tenant_id = v_m.tenant_id and a.action = 'update'
+         and a.entity = 'users' and a.entity_id = v_uid::text;
       update public.activity_log a
-         set tenant_id = v_m.tenant_id,
-             action = 'update',
-             label = left(coalesce(v_name, '') || ' switched into this company', 120),
+         set label = left(coalesce(v_name, '') || ' switched into this company', 120),
              changes = jsonb_build_object(
                'company', jsonb_build_object('old', null, 'new', v_new_co),
                'role',    jsonb_build_object('old', null, 'new', v_m.role::text))
