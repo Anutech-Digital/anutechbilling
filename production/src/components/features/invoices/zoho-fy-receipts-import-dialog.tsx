@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
 import { formatDate, rupee } from "@/lib/utils";
 import { FY_CALLS_PER_REQUEST } from "@/lib/integrations/zoho-books/config";
 import { ZOHO_CALLS_PER_MIN } from "@/lib/integrations/zoho-books/zoho-pace";
@@ -198,10 +199,8 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
               {preview.batches.length > 0 && (
                 <div>
                   <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Imports</p>
-                  <ul className="space-y-1 text-xs text-ink-2">
-                    {preview.batches.map((b) => (
-                      <li key={b.id}>{formatDate(b.createdAt)} · {b.importedCount} payments · {rupee(b.amountTotal)} · TDS {rupee(b.taxTotal)}{b.skippedCount ? ` · ${b.skippedCount} refused` : ""}</li>
-                    ))}
+                  <ul className="space-y-1.5">
+                    {preview.batches.map((b) => <BatchRow key={b.id} b={b} onChanged={() => loadPreview(accounts)} />)}
                   </ul>
                 </div>
               )}
@@ -239,5 +238,36 @@ function PartSummary({ title, r }: { title: string; r: PartResult }) {
         </ul>
       )}
     </div>
+  );
+}
+
+/** R-2501 follow-up: one import batch, with "Remove import" (owner only — the SQL checks; refused once
+ *  anything in it was used: a refund, a TDS certificate, the advance spent, a line matched by hand). */
+function BatchRow({ b, onChanged }: { b: ImportBatch; onChanged: () => Promise<void> }) {
+  const [asking, setAsking] = React.useState(false);
+  const [reason, setReason] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const [err, setErr] = React.useState<string | null>(null);
+  return (
+    <li className="rounded-md border border-hairline px-3 py-2 text-xs">
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <span className="text-ink-2">{formatDate(b.createdAt)} · {b.importedCount} payments · {rupee(b.amountTotal)} · TDS {rupee(b.taxTotal)}{b.skippedCount ? ` · ${b.skippedCount} refused` : ""}</span>
+        {b.removedAt ? <Badge kind="muted" size="sm">Removed {formatDate(b.removedAt)}</Badge>
+          : b.importedCount > 0 && !asking ? <Button type="button" size="sm" variant="ghost" icon="trash" onClick={() => setAsking(true)}>Remove import</Button> : null}
+      </div>
+      {asking && !b.removedAt && (
+        <form className="mt-2 flex items-center gap-2 flex-wrap" onSubmit={async (e) => {
+          e.preventDefault(); setBusy(true); setErr(null);
+          try { await call({ action: "undo", batchId: b.id, reason }); setAsking(false); await onChanged(); }
+          catch (x) { setErr((x as Error).message); } finally { setBusy(false); }
+        }}>
+          <label htmlFor={`rm-${b.id}`} className="sr-only">Why are you removing this import?</label>
+          <Input id={`rm-${b.id}`} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Why? e.g. wrong account" className="h-8 w-56" />
+          <Button type="submit" size="sm" variant="danger" loading={busy} disabled={reason.trim().length < 3}>Remove {b.importedCount} receipts</Button>
+          <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(false)}>Keep</Button>
+          {err && <p role="alert" className="w-full text-rose-ink">{err}</p>}
+        </form>
+      )}
+    </li>
   );
 }

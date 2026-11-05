@@ -16,6 +16,8 @@
  *              writes nothing. The request names only Zoho ids + the app account — every amount
  *              comes from the scan in the database. Already-booked payments with no bank line yet are
  *              sent again: the SQL matches their bank line if it has come in since.
+ *   undo     → { batchId, reason } — remove_zoho_fy_receipts_import (OWNER only, while nothing in the
+ *              batch was touched since; R-2501 follow-up).
  * Zoho is never written to.
  */
 import { NextResponse, type NextRequest } from "next/server";
@@ -140,6 +142,16 @@ export async function POST(req: NextRequest) {
     });
     if (error) return fail(400, (error as { message?: string }).message ?? "The import was refused.");
     return NextResponse.json({ ok: true, fy, part, parts, result: data });
+  }
+
+  if (action === "undo") {
+    const batchId = typeof body.batchId === "string" ? body.batchId : "";
+    if (!/^[0-9a-f-]{36}$/i.test(batchId)) return fail(400, "Choose an import to remove.");
+    const supabase = createClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { data, error } = await (supabase as any).rpc("remove_zoho_fy_receipts_import", { p_batch_id: batchId, p_reason: String(body.reason ?? "") });
+    if (error) return fail(400, (error as { message?: string }).message ?? "The import could not be removed.");
+    return NextResponse.json({ ok: true, result: data });
   }
 
   return fail(400, "Unknown action.");

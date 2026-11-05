@@ -120,6 +120,12 @@ describe("R-2501 receipts-import route", () => {
     expect((await POST(req({ action: "import", fy: "2025-26", part: 5 }))).status).toBe(400);
   });
 
+  it("undo calls remove_zoho_fy_receipts_import with the reason; a bad batch id is refused", async () => {
+    await POST(req({ action: "undo", fy: "2025-26", batchId: "c2501000-0000-0000-0000-0000000000b1", reason: "wrong account" }));
+    expect(st.rpc[0]).toEqual({ fn: "remove_zoho_fy_receipts_import", args: { p_batch_id: "c2501000-0000-0000-0000-0000000000b1", p_reason: "wrong account" } });
+    expect((await POST(req({ action: "undo", fy: "2025-26", batchId: "x' or 1=1" }))).status).toBe(400);
+  });
+
   it("the database's refusal comes back as the message; restart clears the scan", async () => {
     st.rpcResult = { data: null, error: { message: "Only the owner or an accountant can import FY receipts from Zoho. Ask one of them." } };
     const res = await POST(req({ action: "import", fy: "2025-26", part: 0 }));

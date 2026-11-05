@@ -124,7 +124,7 @@ begin
   end if;
   if has_function_privilege('anon', 'public.import_zoho_fy_receipts(text,jsonb,boolean)', 'execute')
      or has_function_privilege('authenticated', 'public._zoho_fy_receipt_advance(uuid,uuid,integer,date,text,text,uuid,text)', 'execute')
-     or has_function_privilege('authenticated', 'public._zoho_fy_receipt_bank_line(uuid,uuid,bigint,date,text)', 'execute') then
+     or has_function_privilege('authenticated', 'public._zoho_fy_receipt_bank_line(uuid,uuid,bigint,date,text,uuid)', 'execute') then
     raise exception 'FAIL 0: anon can import, or a login can call the internal helpers';
   end if;
   if has_table_privilege('authenticated', 'public.zoho_fy_receipts', 'insert')
@@ -208,8 +208,8 @@ begin
 
   -- 3. real import
   r := public.import_zoho_fy_receipts('2025-26', pg_temp.picks(), false);
-  if (r->>'dry_run')::boolean or (r->>'imported')::int <> 3 or (r->>'received')::int <> 10800 + 7400 + 1181
-     or (r->>'tds')::int <> 1000 or (r->>'advance')::int <> 500 + 1 then
+  if (r->>'dry_run')::boolean or (r->>'imported')::int <> 3 or (r->>'received')::int <> 10800 + 7400 + 1180
+     or (r->>'tds')::int <> 1000 or (r->>'advance')::int <> 500 then
     raise exception 'FAIL 3: import result %', r;
   end if;
   select string_agg((s->>'zoho_payment_id') || ': ' || (s->>'reason'), E'\n' order by s->>'zoho_payment_id') into reasons
@@ -258,10 +258,10 @@ begin
     raise exception 'FAIL 5d: pB has a bank line it should not have';
   end if;
 
-  -- 5e. pI: INV-02 paid at its ₹1,180; the extra rupee is the customer's advance (receipts ₹1,181 = money in)
+  -- 5e. pI: INV-02 paid at its ₹1,180; the rounding rupee is NOT a ₹1 advance (follow-up: a round-off on its bank line)
   if (select status::text from public.invoices where tenant_id = t and zoho_invoice_id = 'zi2') <> 'paid'
-     or (select sum(amount) from public.payments where tenant_id = t and reference = 'R2501UTRIIII09') <> 1181
-     or not exists (select 1 from public.customer_credits c where c.tenant_id = t and c.customer_id = 'b2501000-0000-0000-0000-0000000000c2' and c.amount = 1) then
+     or (select sum(amount) from public.payments where tenant_id = t and reference = 'R2501UTRIIII09') <> 1180
+     or exists (select 1 from public.customer_credits c where c.tenant_id = t and c.customer_id = 'b2501000-0000-0000-0000-0000000000c2') then
     raise exception 'FAIL 5e: pI rounding rupee';
   end if;
 
@@ -299,7 +299,7 @@ begin
   if (r->>'imported')::int <> 0 or (r->>'already')::int <> 3 or (r->>'banked')::int <> 1 then
     raise exception 'FAIL 8: rerun result %', r;
   end if;
-  if (select count(*) from public.payments where tenant_id = t and status = 'received') <> 6 then
+  if (select count(*) from public.payments where tenant_id = t and status = 'received') <> 5 then
     raise exception 'FAIL 8b: the rerun made another receipt';
   end if;
   if (select bank_txn_id from public.zoho_fy_receipts where tenant_id = t and zoho_payment_id = 'pB') <> 'b2501000-0000-0000-0000-0000000000e3'
