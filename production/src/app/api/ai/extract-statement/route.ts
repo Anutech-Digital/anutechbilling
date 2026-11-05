@@ -99,7 +99,6 @@ function toDate(input: unknown): string | null {
 /** Whole rupees, sign kept (R-2495: a negative debit is a reversal, not junk). */
 const toSignedInt = (v: unknown): number =>
   typeof v === "number" ? (Number.isFinite(v) ? Math.round(v) : 0) : parseAmount(String(v ?? ""));
-const toInt = (v: unknown): number => Math.max(0, toSignedInt(v));
 
 /** Turn the AI rows into the ParsedRow shape the import expects; drop junk. */
 function sanitizeRows(rows: AiRow[]) {
@@ -123,7 +122,8 @@ function sanitizeRows(rows: AiRow[]) {
       description: reversal ? description + REVERSAL_MARK : description,
       ...(reversal ? { reversal: true as const } : {}),
       debit, credit,
-      balance_after: balRaw == null ? null : (toInt(balRaw) || null),
+      /* Sign kept, as in the CSV / Excel parser: an overdraft / CC account balance is below 0. */
+      balance_after: balRaw == null ? null : (toSignedInt(balRaw) || null),
       reference: null,
     });
   }

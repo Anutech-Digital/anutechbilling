@@ -253,3 +253,11 @@ describe("R-2495 review — the model writing every withdrawal as -N", () => {
     expect(r.json.rows.every((x: { description: string }) => !x.description.includes("(reversal)"))).toBe(true);
   });
 });
+
+describe("R-2495 review — an overdraft balance keeps its minus", () => {
+  it("balance -5000 stays -5000 (was clamped to 0 → no balance), same as the CSV / Excel parser", async () => {
+    ai.json.mockResolvedValue({ rows: [{ date: "2025-09-10", description: "DEMO-OD", debit: 1000, credit: 0, balance: -5000 }] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows[0].balance_after).toBe(-5000);
+  });
+});
