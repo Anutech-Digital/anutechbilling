@@ -11,7 +11,14 @@
 --      sales; deactivated / past access_ends_on / ended membership → NULL + no role; users mirror
 --      drifted from the membership (triggers bypassed) → no role (fail closed); MFA-enrolled login
 --      on an aal1 session → NULL + no role, aal2 → back; no signed-in user → NULL.
---   3. Speed: current_user_has_role() ≤ 0.5 ms per call (R-2471's body was 1.1–2.0 ms locally).
+--   3. Speed, RELATIVE (R-2486): current_user_has_role() ≤ 5x a baseline measured in the same run —
+--      a plpgsql primary-key read of the signed-in users row (the least any role check must do).
+--      Measured 5 Nov 2026 on a busy laptop (guard tests + parallel runs): this body 0.9–1.2x the
+--      baseline; R-2471's SQL body 18–25x → FAIL 3. No fixed µs limit: 500 µs failed once at 670 µs
+--      on a loaded laptop. To re-prove the FAIL side: paste R-2471's two helper bodies
+--      (20261105000000, section 4) into a copy of this file just before case 3 and run it — never
+--      \i a migration file here (it has its own begin/commit). Postgres ≤17 assumed (it re-plans a
+--      SECURITY DEFINER SQL function on every call); re-check the FAIL side after a major upgrade.
 --   4. Repair (F3): a users row with NO membership (made with triggers off, as in the deploy race)
 --      gets exactly the backfill membership; a second run adds 0; an ENDED membership is left
 --      alone; afterwards no users row lacks a membership row for its selected company; request
@@ -151,23 +158,49 @@ begin
   raise notice 'PASS 2: same answers (owner/sales, deactivated, end date, ended membership, drift, MFA, anonymous)';
 end $$;
 
--- ── 3. speed: ≤ 0.5 ms per role check (R-2471's SQL body: 1.1–2.0 ms) ───────────────
+-- ── 3. speed, relative to a same-run baseline (R-2486) ──────────────────────────────
+-- R-2471's SQL body: 18–25x the baseline; this body: 0.9–1.2x. Limit 5x — generous both ways.
+-- Baseline is SECURITY DEFINER + SET search_path like the helpers, so call overhead is on both sides.
+create or replace function pg_temp.r2486_baseline() returns uuid
+  language plpgsql stable security definer set search_path = '' as $f$
+declare v uuid;
+begin
+  select u.tenant_id into v from public.users u where u.id = public.current_user_id();
+  return v;
+end $f$;
+
 do $$
-declare t0 timestamptz; i int; r int; b boolean; v_us numeric;
+declare t0 timestamptz; i int; r int; b boolean; x uuid;
+  v_role numeric; v_base numeric; v_ratio numeric; b_role numeric; b_base numeric;
 begin
   perform pg_temp.r2481_as('c2481000-0000-0000-0000-0000000000a1', 'aal2');
-  b := public.current_user_has_role('owner', 'manager');   -- warm the plan cache
-  -- best of 3 rounds of 1,000 calls: a loaded machine slows a round, not all three (R-2471's
-  -- body measured ≥ 1,100 µs even at its best; this body ~80 µs — about 6x headroom)
+  b := public.current_user_has_role('owner', 'manager');   -- warm both plan caches
+  x := pg_temp.r2486_baseline();
+  -- 3 rounds of 1,000 calls each, baseline and role check side by side in every round; the
+  -- round with the LOWEST ratio counts (each ratio from one round, so load slows both of its
+  -- sides) — the ratio holds where a fixed µs limit did not
   for r in 1..3 loop
     t0 := clock_timestamp();
+    for i in 1..1000 loop x := pg_temp.r2486_baseline(); end loop;
+    v_base := extract(epoch from clock_timestamp() - t0) * 1e6 / 1000;
+    t0 := clock_timestamp();
     for i in 1..1000 loop b := public.current_user_has_role('owner', 'manager'); end loop;
-    v_us := least(coalesce(v_us, 1e9), extract(epoch from clock_timestamp() - t0) * 1e6 / 1000);
+    v_role := extract(epoch from clock_timestamp() - t0) * 1e6 / 1000;
+    if v_ratio is null or v_role / v_base < v_ratio then
+      v_ratio := v_role / v_base; b_role := v_role; b_base := v_base;
+    end if;
   end loop;
   perform pg_temp.r2481_as(null, null);
   if not b then raise exception 'FAIL 3: owner lost the role in the loop'; end if;
-  if v_us > 500 then raise exception 'FAIL 3: current_user_has_role() % µs per call (want ≤ 500)', round(v_us); end if;
-  raise notice 'PASS 3: current_user_has_role() % µs per call', round(v_us);
+  if x is distinct from 'c2481000-0000-0000-0000-0000000000f1'::uuid then
+    raise exception 'FAIL 3: baseline read the wrong row (%)', x;
+  end if;
+  if v_ratio > 5 then
+    raise exception 'FAIL 3: current_user_has_role() % µs per call = %x the baseline (% µs; want ≤ 5x)',
+      round(b_role), round(v_ratio, 1), round(b_base);
+  end if;
+  raise notice 'PASS 3: current_user_has_role() % µs per call = %x the baseline (% µs)',
+    round(b_role), round(v_ratio, 1), round(b_base);
 end $$;
 
 -- ── 4. repair (F3) ──────────────────────────────────────────────────────────────────
