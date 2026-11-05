@@ -3,7 +3,7 @@
    ₹84.00 (₹1,68,000 due); the bank line "INW … USD2000.0@88.5" credits ₹1,77,000 → the invoice is
    settled in full through R-2427's reconcile_bank_credit_fx_invoice, ₹9,000 forex gain. */
 import { describe, expect, it } from "vitest";
-import { itemPayPlan, itemFxText, splitFxProblem } from "./item-fx-pay";
+import { itemPayPlan, itemFxText, splitFxPlan } from "./item-fx-pay";
 
 const usd = { kind: "invoice" as const, invoice_id: "INV-SCN-USD-1", quote_id: "Q-SCN-USD-1", amount_due: 168000, currency: "USD", fx_rate: 84 };
 const inw = (d: string, credit: number) => ({ description: d, credit });
@@ -23,10 +23,11 @@ describe("R-2466 itemPayPlan", () => {
     expect(itemFxText("INV-1", p.fx!)).toContain("₹2,246 Bank Charges (remitting bank)");
   });
 
-  it("a USD invoice with no USD amount + rate in the narration is not booked in ₹", () => {
+  it("R-1678: a USD invoice paid in ₹ (no USD amount + rate in the narration) is settled in full, the gap an exchange difference", () => {
     const p = itemPayPlan(usd, inw("NEFT CR TIMBERGLOSS", 177000));
     expect(p.fx).toBeNull();
-    expect(p.problem).toMatch(/INV-SCN-USD-1 is in USD, but this bank line's narration has no USD amount and rate/);
+    expect(p.problem).toBeNull();
+    expect(p.splitFx).toMatchObject({ currency: "USD", due: 168000, forex: -9000, bankCharges: 0, remittance: null });
   });
 
   it("another currency, or more than 5% short, is refused with the reason", () => {
@@ -38,14 +39,22 @@ describe("R-2466 itemPayPlan", () => {
     expect(itemPayPlan(usd, inw("INW X USD2000.0@88.5", 177000), { relink: true }).problem).toMatch(/relink/i);
   });
 
-  it("review: a USD QUOTE with no invoice yet is not booked in ₹ either", () => {
+  it("R-1678: a USD QUOTE with no invoice yet settles in full through the split (never booked in ₹ with the gain as credit)", () => {
     const q = { ...usd, invoice_id: null, quote_id: "Q-USD-9" };
-    expect(itemPayPlan(q, inw("INW X USD2000.0@88.5", 177000)).problem).toMatch(/Q-USD-9 is a quote in USD with no invoice yet/);
+    const p = itemPayPlan(q, inw("INW X USD2000.0@88.5", 177000));
+    expect(p.problem).toBeNull();
+    expect(p.fx).toBeNull();
+    expect(p.splitFx).toMatchObject({ forex: -9000, parts: [{ id: "Q-USD-9" }] });
   });
 
-  it("review: 'Several quotes / invoices' refuses a foreign item (the split books ₹ only)", () => {
-    expect(splitFxProblem([{ ...usd, currency: "INR" }])).toBeNull();
-    expect(splitFxProblem([{ ...usd, currency: "INR" }, usd])).toMatch(/INV-SCN-USD-1 is in USD — pay it on its own with "An open quote \/ invoice"/);
+  it("R-1678: 'Several quotes / invoices' takes foreign items of one currency (settled in full), never mixed with ₹", () => {
+    const rupees = { ...usd, currency: "INR", fx_rate: null };
+    expect(splitFxPlan([{ item: rupees, amount: 168000 }], inw("NEFT", 168000))).toEqual({ fx: null, problem: null });
+    expect(splitFxPlan([{ item: rupees, amount: 168000 }, { item: usd, amount: 168000 }], inw("INW X USD3800.0@88.5", 336300)).problem)
+      .toMatch(/INV-SCN-USD-1 is in USD and INV-SCN-USD-1 is in ₹ — pay them separately/);
+    // a ₹ credit with a ₹ item mixed in is a plain ₹ split (no exchange settlement)
+    expect(splitFxPlan([{ item: rupees, amount: 168000 }, { item: usd, amount: 168000 }], inw("NEFT", 336000))).toEqual({ fx: null, problem: null });
+    expect(splitFxPlan([{ item: usd, amount: 168000 }], inw("INW 041126I0SCN0000022 USD2000.0@88.5", 177000)).fx).toMatchObject({ forex: -9000 });
   });
 
   it("a ₹ item: nothing special", () => {

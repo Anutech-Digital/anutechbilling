@@ -59,7 +59,8 @@ import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 import { prefillSaleFx, zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
-import { itemPayPlan, splitFxProblem } from "@/lib/banking/item-fx-pay";
+import { itemPayPlan, splitFxPlan } from "@/lib/banking/item-fx-pay";
+import { FxSettleNote, type FxChoice } from "./credit-pay-for-fx-note";
 import { ItemPlanNote, OpenItemRow } from "./credit-pay-for-item";
 
 const NEW_CUSTOMER = "__new_customer__";
@@ -175,6 +176,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const [splitSale, setSplitSale] = React.useState(false);
   const [splitSaleAmount, setSplitSaleAmount] = React.useState<number | null>(null);   // null = its first bill
   const [restChoice, setRestChoice] = React.useState<SplitRest>("advance");
+  const [fxChoice, setFxChoice] = React.useState<FxChoice>("fx");   // R-1678
   React.useEffect(() => { setPicks({}); setSplitSale(false); setSplitSaleAmount(null); setRestChoice("advance"); }, [customerId, transaction.id]);
   const togglePick = (i: OpenItem) => setPicks((p) => {
     const k = itemKey(i);
@@ -250,7 +252,10 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const itemPlan = mode === "item" && picked
     ? itemPayPlan(picked, { description: transaction.description, credit }, { relink: Boolean(relink) }) : null;
   const itemFx = itemPlan?.fx ?? null;
-  const check: AmountCheck | null = due === null || itemFx || itemPlan?.problem ? null : amountCheck(credit, due, taxable);
+  /* R-1678: a foreign invoice paid in ₹ — settled in full, the gap an exchange difference (no TDS / part choice). */
+  const itemFxPlanned = itemPlan?.splitFx ?? null;
+  const itemInrFx = fxChoice === "fx" || itemFxPlanned?.remittance ? itemFxPlanned : null;
+  const check: AmountCheck | null = due === null || itemFx || itemInrFx || itemPlan?.problem ? null : amountCheck(credit, due, taxable);
   /* R-2052: annual commitment billed in parts — Renews on stays the end of the year; this says
      how far the money pays, and takes over the "Next N bills" line (the next bill said once). */
   const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0
@@ -265,12 +270,19 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     ...(splitSale ? [{ amount: saleAmt, due: preview.total }] : []),
   ]);
   const split = splitSummary(credit, [...splitPicked.map((i) => picks[itemKey(i)]), saleAmt], { partPaid: splitPart });
-  const rest = splitRest(split.state, restChoice);
-  const splitFx = mode === "split" ? splitFxProblem(splitPicked) : null;   // R-2466: the split books ₹ only
+  /* R-1678: foreign-currency items are settled in full; the difference is an exchange gain / loss. */
+  const splitFxRes = mode === "split"
+    ? splitFxPlan(splitPicked.map((i) => ({ item: i, amount: picks[itemKey(i)] })), { description: transaction.description, credit }, { sale: splitSale })
+    : null;
+  const splitFx = splitFxRes?.problem ?? null;
+  const splitFxPlanned = splitFxRes?.fx ?? null;
+  const splitFxBooked = fxChoice === "fx" || splitFxPlanned?.remittance ? splitFxPlanned : null;
+  React.useEffect(() => { setFxChoice("fx"); }, [pickKey, mode, transaction.id]);
+  const rest = splitFxBooked ? "fx" as const : splitRest(split.state, restChoice);
   const splitInvalid = Boolean(splitFx) || (splitPicked.length === 0 && !splitSale)
     || splitPicked.some((i) => pickProblem(i, picks[itemKey(i)]) !== null)
     || (splitSale && (saleInvalidOf(lines, preview.taxable) || saleAmt <= 0 || saleAmt > preview.total))
-    || splitBlocked(split.state)
+    || (!splitFxBooked && splitBlocked(split.state))
     || splitPicked.some((i) => Boolean(i.approval_block));
   /* R-2213: the picked quote (or a ticked one in a split) is below cost and waits for approval. */
   const blockedItem = mode === "item" ? (picked?.approval_block ? picked : null)
@@ -323,7 +335,10 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     };
     /* R-2095: a round-off (≤ ₹50) on one sale / item settles it in full — saved through the split
        RPC, which books the difference (R-2098's rule) in the same transaction. */
-    const roundOff = !relink && shortChoice === "round_off" && check?.kind === "short" && (mode === "sale" || (mode === "item" && picked))
+    /* R-1678: a foreign invoice paid in ₹ — the same split call, settled in full + the exchange difference. */
+    const roundOff = !relink && mode === "item" && picked && itemInrFx
+      ? { ...roundOffSplit({ mode: "item", item: picked }), rest: "fx" as const }
+      : !relink && shortChoice === "round_off" && check?.kind === "short" && (mode === "sale" || (mode === "item" && picked))
       ? roundOffSplit(mode === "sale" ? { mode: "sale", saleTotal: preview.total } : { mode: "item", item: picked! })
       : null;
     if (roundOff) {
@@ -401,7 +416,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const saveLabel = `${relink ? "Relink: " : ""}${mode === null
     ? "Choose what this money is for"
     : mode === "item"
-    ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
+    ? picked ? (itemInrFx ? `Settle ${picked.invoice_id ?? picked.quote_id} in full & reconcile ${rupee(credit)}` : `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile`) : "Pick what it pays"
     : saleBelowCost && !relink
       ? "Send sale for approval (line stays unmatched)"   // R-2397
     : mode === "split"
@@ -641,6 +656,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             section={tdsSection} sectionReason={tdsSectionPick ? null : tdsGuess.reason} onSection={setTdsSectionPick} noRoundOff={Boolean(relink)} />}
           {/* R-2466: an export receipt on a foreign invoice / an opening invoice paid over its due. */}
           <ItemPlanNote plan={splitFx ? { fx: null, problem: splitFx } : itemPlan} item={picked} />
+          {/* R-1678: what the exchange difference books (one foreign invoice paid in ₹, or several on one credit). */}
+          {(itemFxPlanned ?? splitFxPlanned) && <FxSettleNote fx={(itemFxPlanned ?? splitFxPlanned)!} choice={fxChoice} onChoice={setFxChoice} />}
 
           {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
               server's reason is shown here too, not only as a toast. */}

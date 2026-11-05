@@ -41,7 +41,7 @@ export function CreditPaySplit({
   items, picks, onToggle, onAmount, saleOn, onSaleOn, saleAmount, saleTotal, onSaleAmount, saleEditor,
   summary, rest, restChoice, onRestChoice,
 }: Props) {
-  const bar = splitBarText(summary);
+  const bar = splitBarText(summary, rest);
   const pct = summary.credit > 0 ? Math.min(100, Math.round((summary.allocated / summary.credit) * 100)) : 0;
   const barCls = bar.tone === "ok" ? "bg-emerald" : bar.tone === "bad" ? "bg-rose" : "bg-amber";
   const saleProblem = saleOn && saleTotal > 0
@@ -110,8 +110,8 @@ export function CreditPaySplit({
         <div className="h-1.5 rounded-full bg-hairline overflow-hidden" aria-hidden>
           <div className={`h-full ${barCls}`} style={{ width: `${pct}%` }} />
         </div>
-        <p className={`text-xs ${summary.state.kind === "over" || summary.state.kind === "partShort" ? "text-rose-ink" : "text-ink-3"}`}>{splitStateText(summary.state, rest)}</p>
-        {summary.state.kind === "left" && summary.state.canRoundOff && (
+        <p className={`text-xs ${rest !== "fx" && (summary.state.kind === "over" || summary.state.kind === "partShort") ? "text-rose-ink" : "text-ink-3"}`}>{splitStateText(summary.state, rest)}</p>
+        {rest !== "fx" && summary.state.kind === "left" && summary.state.canRoundOff && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5" role="group" aria-label="What the money left over is">
             {([["advance", `Keep ${rupee(summary.state.left)} as advance`], ["round_off", `Write off ${rupee(summary.state.left)} as round-off`]] as const).map(([k, label]) => (
               <button key={k} type="button" aria-pressed={restChoice === k} onClick={() => onRestChoice(k)}
@@ -121,7 +121,7 @@ export function CreditPaySplit({
             ))}
           </div>
         )}
-        {summary.state.kind === "short" && (
+        {rest !== "fx" && summary.state.kind === "short" && (
           <p className="text-xs text-ink-3">Up to {rupee(ROUND_OFF_LIMIT)} is written off; more than that — lower an amount so it stays due.</p>
         )}
       </div>

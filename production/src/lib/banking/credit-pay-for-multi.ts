@@ -20,7 +20,9 @@ export const ROUND_OFF_LIMIT = 50;
 /** A ticked item and the part of the bank credit put on it. */
 export interface SplitPick { key: string; amount: number }
 
-export type SplitRest = "advance" | "round_off";
+/** R-1678: "fx" = foreign-currency items settled in full, the difference an exchange gain / loss
+ *  (lib/banking/item-fx-pay splitFxPlan decides it, never the operator's round-off choice). */
+export type SplitRest = "advance" | "round_off" | "fx";
 
 export type SplitState =
   | { kind: "empty" }
@@ -99,15 +101,19 @@ export function pickDefault(item: OpenItem): SplitPick {
   return { key: itemKey(item), amount: item.amount_due };
 }
 
-/** The bar's three numbers and its tone. */
-export function splitBarText(s: SplitSummary): { allocated: string; bank: string; left: string; tone: "ok" | "warn" | "bad" } {
-  const tone = s.state.kind === "exact" ? "ok" : s.state.kind === "over" || s.state.kind === "partShort" ? "bad" : "warn";
+/** The bar's three numbers and its tone. R-1678: with an exchange difference nothing is "over" — the gap is booked. */
+export function splitBarText(s: SplitSummary, rest: SplitRest | null = null): { allocated: string; bank: string; left: string; tone: "ok" | "warn" | "bad" } {
+  const tone = s.state.kind === "exact" ? "ok" : rest === "fx" ? "warn" : s.state.kind === "over" || s.state.kind === "partShort" ? "bad" : "warn";
   const left = s.left >= 0 ? rupee(s.left) : `−${rupee(-s.left)}`;
   return { allocated: rupee(s.allocated), bank: rupee(s.credit), left, tone };
 }
 
 /** The sentence under the bar. */
 export function splitStateText(state: SplitState, rest: SplitRest | null): string {
+  /* R-1678: foreign-currency items — each settled in full; the sheet says what the difference books. */
+  if (rest === "fx" && state.kind !== "empty") {
+    return state.kind === "exact" ? "Allocated exactly — nothing left over." : "Each invoice is settled in full — the difference is an exchange gain / loss (below), not a due and not TDS.";
+  }
   switch (state.kind) {
     case "empty": return "Tick what this money pays — each item gets its full due; change an amount if it was paid in part.";
     case "exact": return "Allocated exactly — nothing left over.";
