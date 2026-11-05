@@ -59,7 +59,7 @@ import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 import { prefillSaleFx, zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
-import { itemPayPlan, splitFxPlan } from "@/lib/banking/item-fx-pay";
+import { fxDefaultChoice, itemPayPlan, splitFxPlan } from "@/lib/banking/item-fx-pay";
 import { FxSettleNote, type FxChoice } from "./credit-pay-for-fx-note";
 import { ItemPlanNote, OpenItemRow } from "./credit-pay-for-item";
 
@@ -176,7 +176,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const [splitSale, setSplitSale] = React.useState(false);
   const [splitSaleAmount, setSplitSaleAmount] = React.useState<number | null>(null);   // null = its first bill
   const [restChoice, setRestChoice] = React.useState<SplitRest>("advance");
-  const [fxChoice, setFxChoice] = React.useState<FxChoice>("fx");   // R-1678
+  /* R-1678: the operator's answer; null = the default (R-1678b: "rupee" when the gap looks like TDS or a gateway fee). */
+  const [fxChoicePick, setFxChoice] = React.useState<FxChoice | null>(null);
   React.useEffect(() => { setPicks({}); setSplitSale(false); setSplitSaleAmount(null); setRestChoice("advance"); }, [customerId, transaction.id]);
   const togglePick = (i: OpenItem) => setPicks((p) => {
     const k = itemKey(i);
@@ -250,17 +251,10 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
      no TDS, no "kept as credit"); a Zoho opening invoice takes no more than its due. Either way the
      ₹ over / short check does not apply. */
   const itemPlan = mode === "item" && picked
-    ? itemPayPlan(picked, { description: transaction.description, credit }, { relink: Boolean(relink) }) : null;
+    ? itemPayPlan(picked, { description: transaction.description, credit }, { relink: Boolean(relink), customerCountry: customer?.country ?? null }) : null;
   const itemFx = itemPlan?.fx ?? null;
   /* R-1678: a foreign invoice paid in ₹ — settled in full, the gap an exchange difference (no TDS / part choice). */
   const itemFxPlanned = itemPlan?.splitFx ?? null;
-  const itemInrFx = fxChoice === "fx" || itemFxPlanned?.remittance ? itemFxPlanned : null;
-  const check: AmountCheck | null = due === null || itemFx || itemInrFx || itemPlan?.problem ? null : amountCheck(credit, due, taxable);
-  /* R-2052: annual commitment billed in parts — Renews on stays the end of the year; this says
-     how far the money pays, and takes over the "Next N bills" line (the next bill said once). */
-  const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0
-    ? salePaidUp(schedule, check?.kind === "over" ? check.overBy : 0, renewalShown, saleCycle)
-    : null;
   /* R-2098: the split's bar. */
   const splitPicked = (items ?? []).filter((i) => itemKey(i) in picks);
   const saleAmt = splitSale ? cleanAmount(splitSaleAmount ?? schedule.dueNow) : 0;
@@ -272,12 +266,22 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const split = splitSummary(credit, [...splitPicked.map((i) => picks[itemKey(i)]), saleAmt], { partPaid: splitPart });
   /* R-1678: foreign-currency items are settled in full; the difference is an exchange gain / loss. */
   const splitFxRes = mode === "split"
-    ? splitFxPlan(splitPicked.map((i) => ({ item: i, amount: picks[itemKey(i)] })), { description: transaction.description, credit }, { sale: splitSale })
+    ? splitFxPlan(splitPicked.map((i) => ({ item: i, amount: picks[itemKey(i)] })), { description: transaction.description, credit }, { sale: splitSale, customerCountry: customer?.country ?? null })
     : null;
   const splitFx = splitFxRes?.problem ?? null;
   const splitFxPlanned = splitFxRes?.fx ?? null;
+  const fxPlanned = itemFxPlanned ?? splitFxPlanned;
+  const fxTaxable = mode === "item" ? (picked?.taxable_value ?? 0) : splitPicked.reduce((a, i) => a + (i.taxable_value ?? 0), 0);
+  const fxChoice: FxChoice = fxChoicePick ?? (fxPlanned ? fxDefaultChoice(fxPlanned, { description: transaction.description, credit }, fxTaxable) : "fx");
+  React.useEffect(() => { setFxChoice(null); }, [pickKey, mode, transaction.id]);
+  const itemInrFx = fxChoice === "fx" || itemFxPlanned?.remittance ? itemFxPlanned : null;
   const splitFxBooked = fxChoice === "fx" || splitFxPlanned?.remittance ? splitFxPlanned : null;
-  React.useEffect(() => { setFxChoice("fx"); }, [pickKey, mode, transaction.id]);
+  const check: AmountCheck | null = due === null || itemFx || itemInrFx || itemPlan?.problem ? null : amountCheck(credit, due, taxable);
+  /* R-2052: annual commitment billed in parts — Renews on stays the end of the year; this says
+     how far the money pays, and takes over the "Next N bills" line (the next bill said once). */
+  const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0
+    ? salePaidUp(schedule, check?.kind === "over" ? check.overBy : 0, renewalShown, saleCycle)
+    : null;
   const rest = splitFxBooked ? "fx" as const : splitRest(split.state, restChoice);
   const splitInvalid = Boolean(splitFx) || (splitPicked.length === 0 && !splitSale)
     || splitPicked.some((i) => pickProblem(i, picks[itemKey(i)]) !== null)
@@ -657,7 +661,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           {/* R-2466: an export receipt on a foreign invoice / an opening invoice paid over its due. */}
           <ItemPlanNote plan={splitFx ? { fx: null, problem: splitFx } : itemPlan} item={picked} />
           {/* R-1678: what the exchange difference books (one foreign invoice paid in ₹, or several on one credit). */}
-          {(itemFxPlanned ?? splitFxPlanned) && <FxSettleNote fx={(itemFxPlanned ?? splitFxPlanned)!} choice={fxChoice} onChoice={setFxChoice} />}
+          {fxPlanned && <FxSettleNote fx={fxPlanned} choice={fxChoice} onChoice={setFxChoice} />}
 
           {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
               server's reason is shown here too, not only as a toast. */}

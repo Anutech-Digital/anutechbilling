@@ -235,7 +235,7 @@ begin
               jsonb_build_array(jsonb_build_object('invoice_id', pg_temp.inv('Q-R1678-BOT3'), 'amount', 47000)), null, 'fx');
   exception when check_violation then
     get stacked diagnostics v_msg = message_text;
-    ok := v_msg like '%more than 10%%';
+    ok := v_msg like '%more than 5%%';   -- R-1678b: 5%, was 10%
     if not ok then raise exception 'FAIL D4: wrong message "%"', v_msg; end if;
   end;
   if not ok then raise exception 'FAIL D4: a 15%% gap was booked as an exchange difference'; end if;
