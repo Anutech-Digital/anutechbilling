@@ -66,7 +66,7 @@ beforeEach(() => {
   answer = { ok: true, result: { kind: "match", match: MATCH } };
   vi.stubGlobal("fetch", fetchMock);
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers(); });
 
 const findInZoho = () => fireEvent.click(screen.getByRole("button", { name: "Find in Zoho" }));
 

@@ -28,7 +28,7 @@ import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { fixStatementDates } from "@/lib/banking/statement-dates";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { classifyStatementFailure } from "@/lib/banking/statement-chunks";
-import { signedAmounts, columnIsSigned, parseAmount, REVERSAL_MARK, type ParsedRow } from "@/lib/banking/statement-parse";
+import { signedAmounts, columnIsSigned, parseAmount, signedRound, settleReversals, REVERSAL_MARK, type ParsedRow } from "@/lib/banking/statement-parse";
 
 /* Worst case for ONE request: 60 s + retry 60 s on the main model, then the same on the
    lighter one ≈ 4 min. Cloud Run's request timeout is 600 s (cloudbuild.yaml --timeout=600);
@@ -96,9 +96,10 @@ function toDate(input: unknown): string | null {
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
-/** Whole rupees, sign kept (R-2495: a negative debit is a reversal, not junk). */
+/** Whole rupees, sign kept (R-2495: a negative debit is a reversal, not junk). R-2508: the sign
+    goes on after rounding the size, so -20000.5 and a printed (20000.50) are the same ₹. */
 const toSignedInt = (v: unknown): number =>
-  typeof v === "number" ? (Number.isFinite(v) ? Math.round(v) : 0) : parseAmount(String(v ?? ""));
+  typeof v === "number" ? signedRound(v) : parseAmount(String(v ?? ""));
 
 /** Turn the AI rows into the ParsedRow shape the import expects; drop junk. */
 function sanitizeRows(rows: AiRow[]) {
@@ -127,7 +128,11 @@ function sanitizeRows(rows: AiRow[]) {
       reference: null,
     });
   }
-  return { rows: out, skipped };
+  /* R-2508: with 1–2 negatives (below the signed-column rule) a minus is a reversal only when the
+     running balance agrees; otherwise the line is marked checkSign and the dialog waits for the
+     owner. The dialog settles once more over the merged chunks (a chunk's first line has no
+     neighbour here). */
+  return { rows: settleReversals(out), skipped };
 }
 
 /* When the configured model is busy (503) or does not answer in time, one attempt on a

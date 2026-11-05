@@ -261,3 +261,34 @@ describe("R-2495 review — an overdraft balance keeps its minus", () => {
     expect(r.json.rows[0].balance_after).toBe(-5000);
   });
 });
+
+describe("R-2508 — review follow-ups on the PDF path", () => {
+  it("the sign goes on after rounding: a 20000.50 withdrawal and its -20000.50 reversal net to zero", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2025-09-10", description: "ATW-DEMO", debit: 20000.5, credit: 0, balance: 85000 },
+      { date: "2025-09-10", description: "ATW-DEMO", debit: -20000.5, credit: 0, balance: 105001 },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows.map((x: { debit: number; credit: number }) => [x.debit, x.credit])).toEqual([[20001, 0], [0, 20001]]);
+  });
+
+  it("one negative debit with no balance → marked 'check sign', never silently booked as money in", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2025-09-09", description: "NEFT CR-DEMO", debit: 0, credit: 5000, balance: null },
+      { date: "2025-09-10", description: "DEMO RENT", debit: -20000, credit: 0, balance: null },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows[1]).toMatchObject({ checkSign: true });
+    expect(r.json.rows[0].checkSign).toBeUndefined();
+  });
+
+  it("one negative debit where the balance went DOWN → money out", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2025-09-09", description: "NEFT CR-DEMO", debit: 0, credit: 5000, balance: 105000 },
+      { date: "2025-09-10", description: "DEMO RENT", debit: -20000, credit: 0, balance: 85000 },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows[1]).toMatchObject({ debit: 20000, credit: 0, description: "DEMO RENT" });
+    expect(r.json.rows[1].checkSign).toBeUndefined();
+  });
+});
