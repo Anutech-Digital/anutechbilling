@@ -34,7 +34,7 @@ import { rupee } from "@/lib/utils";
 import { useItems } from "@/lib/queries/items";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
-import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { useOpenInvoicesForCreditMatch, type BankTransactionRow } from "@/lib/queries/bank";
 import { matchCreditToInvoices } from "@/lib/banking/invoice-credit-match";
 import {
@@ -64,7 +64,7 @@ import { ItemPlanNote, OpenItemRow } from "./credit-pay-for-item";
 
 const NEW_CUSTOMER = "__new_customer__";
 
-export interface PayForCustomer { id: string; name: string; country?: string | null; gstin?: string | null; domain?: string | null }
+export interface PayForCustomer { id: string; name: string; country?: string | null; gstin?: string | null; domain?: string | null; gst_treatment?: string | null }
 
 interface Props {
   transaction: BankTransactionRow;
@@ -189,7 +189,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const [lines, setLines] = React.useState<SaleLine[]>([]);
   React.useEffect(() => { setLines([]); }, [transaction.id]);
   const gst = useGstRegistration();
-  const gstRate = billOfSupplyStatus(gst.data?.saved ?? null) || isExportSupply(customer?.country ?? null) ? 0 : 18;
+  /* R-2515: an export or an SEZ unit supplied without payment of tax is 0% (the server applies the same rule). */
+  const gstRate = billOfSupplyStatus(gst.data?.saved ?? null) || isZeroRatedSupply({ country: customer?.country, treatment: customer?.gst_treatment }) ? 0 : 18;
   const preview = salePreview(lines, gstRate);
   /* R-2026: Payment — how often an annual commitment is billed (the quote's billing_cycle). */
   const [payCycle, setPayCycle] = React.useState<BillingCycle>("yearly");

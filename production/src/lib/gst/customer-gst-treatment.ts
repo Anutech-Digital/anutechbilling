@@ -13,11 +13,10 @@
  * The TAX rule (SEZ → IGST) lives in ONE place: place-of-supply.ts
  * (treatmentIsAlwaysInterState). This file is the words, the auto-pick and the PAN.
  *
- * LUT (needsDecision, Hitesh): SEZ without payment and exports are zero-rated only under a
- * valid LUT. Until Hitesh confirms the rule, sez_without_payment is taxed like
- * sez_with_payment (IGST at the normal rate) and overseas keeps today's export behaviour
- * (0% with the "no LUT number saved" warning, lib/gst/export-lut.ts). See
- * LUT_ZERO_RATING_PENDING.
+ * LUT (R-2444, R-2515): exports and SEZ without payment of tax are zero-rated (0% GST) under
+ * the LUT of the invoice date's FY — the rule is isZeroRatedSupply in place-of-supply.ts, and
+ * the database refuses a 0% invoice of either kind with no LUT for that FY
+ * (tg_invoice_export_needs_lut). SEZ with payment is IGST at the normal rate.
  */
 import { isValidGstin } from "@/lib/utils";
 
@@ -33,9 +32,6 @@ export const CUSTOMER_GST_TREATMENTS = [
 ] as const;
 
 export type CustomerGstTreatment = (typeof CUSTOMER_GST_TREATMENTS)[number];
-
-/** TODO(R-1736, Hitesh): zero-rate sez_without_payment / overseas only under a valid LUT. */
-export const LUT_ZERO_RATING_PENDING = true;
 
 export function isCustomerGstTreatment(v: unknown): v is CustomerGstTreatment {
   return typeof v === "string" && (CUSTOMER_GST_TREATMENTS as readonly string[]).includes(v);
@@ -56,7 +52,7 @@ export const GST_TREATMENT_OPTIONS: readonly GstTreatmentOption[] = [
   { value: "consumer",               label: "Consumer",                          meaning: "A person buying for their own use, with no GSTIN. GST is charged by state." },
   { value: "overseas",               label: "Overseas",                          meaning: "Outside India — the supply is an export (no Indian GST when your LUT is on file)." },
   { value: "sez_with_payment",       label: "SEZ (with payment)",                meaning: "An SEZ unit or developer. Always IGST, even in your own state." },
-  { value: "sez_without_payment",    label: "SEZ (without payment)",             meaning: "An SEZ unit or developer supplied under LUT. Charged IGST for now — zero-rating under LUT is not set up yet." },
+  { value: "sez_without_payment",    label: "SEZ (without payment)",             meaning: "An SEZ unit or developer supplied under your LUT — 0% GST, no IGST charged. Needs the LUT for the invoice's financial year in Settings → Company." },
   { value: "deemed_export",          label: "Deemed Export",                     meaning: "Supply to an EOU or against an Advance Authorisation. GST is charged by state; the buyer claims the refund." },
 ] as const;
 

@@ -24,7 +24,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json, QuoteLineItem } from "@/lib/supabase/database.types";
 import { grossAmount } from "@/lib/quotes/amounts";
-import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { rcConfigured, rcTldPricing } from "@/lib/resellerclub";
 import { splitDomain } from "@/lib/domains/live-lookup";
 import { domainLineYears, isDomainPurchaseLine } from "@/lib/provisioning/products";
@@ -210,8 +210,8 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
   /* R-1532: a business that issues a Bill of Supply renews at 0% (R-1529 refuses GST on it). */
   let taxRate = quoteStartTaxRate(await readTenantGstRegistration(supabase, input.tenantId));
   if (input.customerId) {
-    const { data: cust } = await supabase.from("customers").select("country").eq("id", input.customerId).maybeSingle();
-    if (isExportSupply(cust?.country)) taxRate = 0;
+    const { data: cust } = await supabase.from("customers").select("country, gst_treatment").eq("id", input.customerId).maybeSingle();
+    if (isZeroRatedSupply({ country: cust?.country, treatment: cust?.gst_treatment })) taxRate = 0;   // R-2515: export or SEZ without payment
   }
 
   const subtotal = price.rupees;
