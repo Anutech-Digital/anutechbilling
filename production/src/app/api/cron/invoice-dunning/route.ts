@@ -199,6 +199,9 @@ async function handle(req: Request): Promise<NextResponse<DunningResult | { erro
       .from("invoices")
       .select("id, tenant_id, customer_id, customer_name, amount, net_payable, paid_amount, status, due_date, quote_id")
       .in("status", ["pending", "overdue"]).is("written_off_at", null)
+      /* R-2499: a past year's sale imported as Zoho's own invoice is never chased by email — its
+         receipts come in from the bank / Zoho (R-2501), not from a reminder. */
+      .is("zoho_invoice_id", null)
       .not("due_date", "is", null)
       .order("id", { ascending: true })
       .range(from, to));

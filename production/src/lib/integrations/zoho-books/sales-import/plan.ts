@@ -181,3 +181,11 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
 export function toPick(p: PlannedSale) {
   return { zoho_invoice_id: p.facts.zohoId, customer_id: p.customerId, item_ids: p.itemIds };
 }
+
+/** Who may import FY sales (import_zoho_fy_sales checks the same roles). */
+export const SALES_IMPORT_ROLES = ["owner", "accountant"] as const;
+export function canImportFySales(role: string | null | undefined): boolean {
+  return (SALES_IMPORT_ROLES as readonly string[]).includes(role ?? "");
+}
+/** Invoices per import part (the SQL takes at most 500). */
+export const IMPORT_PART = 250;
