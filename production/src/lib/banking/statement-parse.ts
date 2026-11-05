@@ -23,7 +23,10 @@ export type ParseResult = { rows: ParsedRow[]; skipped: number; warnings: string
 
 // Common header aliases across Indian banks. Each canonical key maps to
 // possible header names we'll match (lowercase, trimmed).
-const HEADER_ALIASES: Record<keyof ParsedRow, string[]> = {
+/** The columns read from a statement (`reversal` is worked out, not a column). */
+type ColumnField = Exclude<keyof ParsedRow, "reversal">;
+
+const HEADER_ALIASES: Record<ColumnField, string[]> = {
   txn_date:      ["date", "txn date", "transaction date", "value date", "post date", "tran date"],
   description:   ["description", "narration", "particulars", "details", "remarks", "transaction details"],
   debit:         ["debit", "withdrawal", "withdrawal amt", "withdrawal (dr)", "amount (debit)", "debit (rs.)", "debit amount"],
@@ -157,11 +160,11 @@ function normaliseHeader(s: string): string {
  * holds which field. Returns null when the basic Date/Debit/Credit columns
  * can't be detected.
  */
-function detectColumns(headerRow: string[]): Record<keyof ParsedRow, number> | null {
+function detectColumns(headerRow: string[]): Record<ColumnField, number> | null {
   const normalised = headerRow.map(normaliseHeader);
-  const map: Partial<Record<keyof ParsedRow, number>> = {};
+  const map: Partial<Record<ColumnField, number>> = {};
 
-  for (const [field, aliases] of Object.entries(HEADER_ALIASES) as Array<[keyof ParsedRow, string[]]>) {
+  for (const [field, aliases] of Object.entries(HEADER_ALIASES) as Array<[ColumnField, string[]]>) {
     const normAliases = aliases.map(normaliseHeader);
     for (let i = 0; i < normalised.length; i++) {
       // Match either exact or prefix (covers "withdrawal amt" ↔ "withdrawal amt rs")
