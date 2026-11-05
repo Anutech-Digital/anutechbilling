@@ -45,7 +45,6 @@ const FIX: Record<string, string> = {
   "20261105000000_e.sql": "-- deploy-peek: to_regclass('public.x') is not null\n-- deploy-key: e\ncreate table public.x (id int);\n",
 };
 const FILES = Object.keys(FIX).sort();
-const KEY: Record<string, string> = { "20261101000000_a.sql": "r1", "20261102000000_b.sql": "r2", "20261103000000_c.sql": "r3", "20261104000000_d.sql": "r4", "20261105000000_e.sql": "e" };
 
 /* ── fake local DB: tables + function bodies; peeks are evaluated, migrations are "run" ── */
 type Db = { tables: Set<string>; fns: Map<string, string> };
