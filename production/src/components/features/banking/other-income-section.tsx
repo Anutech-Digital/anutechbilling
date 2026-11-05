@@ -35,22 +35,28 @@ function defaultPrincipal(fd: FdLite | null | undefined, amount: number): string
   return bal > 0 && bal < amount ? String(bal) : "";
 }
 
-type PrePick = { head: OtherIncomeHead | null; source: InterestSource; fdId: string; closure: boolean; principalText: string };
+type PrePick = {
+  head: OtherIncomeHead | null; source: InterestSource; fdId: string; closure: boolean; principalText: string;
+  /** The narration says an FD came back (fdRedeemGuess) — interest without "FD closed" is refused. */
+  redeem: boolean;
+};
 
 /** R-2390: what the narration lets us pre-pick — never "Other income" on its own. */
 function pickFor(description: string | null | undefined, fds: readonly FdLite[], amount: number): PrePick {
   const g = fdRedeemGuess(description, fds);
   const fd = g.fdId ? fds.find((a) => a.id === g.fdId) ?? null : null;
   if (g.redeem) {
-    return { head: "interest", source: "fd", fdId: fd?.id ?? "", closure: !!fd, principalText: fd ? defaultPrincipal(fd, amount) : "" };
+    return { head: "interest", source: "fd", fdId: fd?.id ?? "", closure: !!fd, principalText: fd ? defaultPrincipal(fd, amount) : "", redeem: true };
   }
   const interest = looksLikeInterest(description);
   const source = guessInterestSource(description);
   return {
     head: interest ? "interest" : null, source,
-    fdId: interest && source === "fd" && fd ? fd.id : "", closure: false, principalText: "",
+    fdId: interest && source === "fd" && fd ? fd.id : "", closure: false, principalText: "", redeem: false,
   };
 }
+
+const REDEEM_NEEDS_CLOSURE = "This line looks like an FD coming back — pick the FD and tick “FD closed”, so the principal is not booked as income.";
 
 const PICK_HEAD = "Pick Interest received or Other income";
 
@@ -75,22 +81,28 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
   const amount = transaction.credit ?? 0;
   const fds = ((accountsQ.data ?? []) as FdLite[])
     .filter((a) => a.account_type === "fixed_deposit" && a.id !== transaction.bank_account_id && a.is_active !== false);
-  /* R-2390: the pre-pick (pickFor) is redone when the line changes or the FD list arrives — not on a
-     balance refetch, so it never undoes what the owner picked. */
+  /* R-2390: the pre-pick (pickFor) is redone when the line changes; when the FD list arrives later it
+     is applied only if the owner has not touched the form yet — it never undoes their choice. */
   const fdsKey = fds.map((a) => a.id).join(",");
+  const lineKey = `${transaction.id}|${transaction.description ?? ""}|${amount}`;
   const first = React.useMemo(() => pickFor(transaction.description, fds, amount),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [transaction.id, transaction.description, fdsKey, amount]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- fds is new each render; fdsKey stands for it
+    [lineKey, fdsKey]);
   const [head, setHead] = React.useState<OtherIncomeHead | null>(first.head);
   const [source, setSource] = React.useState<InterestSource>(first.source);
   const [fdId, setFdId] = React.useState(first.fdId);
   const [closure, setClosure] = React.useState(first.closure);
   const [principalText, setPrincipalText] = React.useState(first.principalText);
   const [tdsText, setTdsText] = React.useState("");
+  const touched = React.useRef(false);
+  const lastLine = React.useRef(lineKey);
   React.useEffect(() => {
+    if (lastLine.current !== lineKey) { lastLine.current = lineKey; touched.current = false; setTdsText(""); }
+    if (touched.current) return;
     setHead(first.head); setSource(first.source); setFdId(first.fdId);
-    setClosure(first.closure); setPrincipalText(first.principalText); setTdsText("");
-  }, [first]);
+    setClosure(first.closure); setPrincipalText(first.principalText);
+  }, [first, lineKey]);
+  const touch = () => { touched.current = true; };
 
   const fd = fds.find((a) => a.id === fdId) ?? null;
   const isClosure = head === "interest" && source === "fd" && !!fd && closure;
@@ -99,15 +111,20 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
   const split = interestSplit({ credit: amount, principal: principal || 0, tds: tds || 0, fdBalance: isClosure ? fd?.current_balance ?? null : null });
   const badNumber = Number.isNaN(principal) || Number.isNaN(tds);
   const interestError = head !== "interest" ? null
+    : first.redeem && !isClosure ? REDEEM_NEEDS_CLOSURE
     : badNumber ? "Enter amounts in rupees."
     : isClosure && principal <= 0 ? "Enter the principal coming back from the FD."
     : split.error;
 
   function pickFd(id: string) {
+    touch();
     setFdId(id);
     if (!id) setClosure(false);
+    /* R-2390: another FD → its own balance, never the previous FD's. */
+    else if (closure) setPrincipalText(defaultPrincipal(fds.find((a) => a.id === id), amount));
   }
   function toggleClosure(on: boolean) {
+    touch();
     setClosure(on);
     if (on && !principalText) setPrincipalText(defaultPrincipal(fd, amount));
   }
@@ -129,7 +146,7 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
   }
 
   /* R-2354: same label, same rule, same submit() — in the footer when the sheet asks. */
-  const saveLabel = head === null ? (onFooterSave ? `Book ${rupee(amount)}` : PICK_HEAD)
+  const saveLabel = head === null ? `Book ${rupee(amount)} as income`
     : head !== "interest" ? `Book ${rupee(amount)} as other income`
     : isClosure && principal > 0 ? `Book FD closure: ${rupee(principal)} principal + ${rupee(split.gross)} interest`
     : `Book ${rupee(split.gross)} as interest received`;
@@ -148,19 +165,20 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
       </p>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5" role="group" aria-label="What this income is">
         {([["interest", "Interest received"], ["other", "Other income"]] as const).map(([k, label]) => (
-          <button key={k} type="button" aria-pressed={head === k} onClick={() => setHead(k)}
+          <button key={k} type="button" aria-pressed={head === k} onClick={() => { touch(); setHead(k); }}
             className={`rounded-md border px-2 py-1.5 text-xs font-medium text-left ${head === k ? "border-emerald bg-emerald/10 text-ink" : "border-hairline text-ink-2"}`}>
             {label}
           </button>
         ))}
       </div>
+      {head === null && !onFooterSave && <p className="text-xs text-ink-3">{PICK_HEAD}.</p>}
 
       {head === "interest" && (
         <div className="space-y-2 border-t border-hairline pt-2">
           <div className="flex flex-wrap items-center gap-1.5" role="group" aria-label="Interest from">
             <span className="text-xs text-ink-3 mr-1">Interest from</span>
             {SOURCES.map(([k, label]) => (
-              <button key={k} type="button" aria-pressed={source === k} onClick={() => setSource(k)}
+              <button key={k} type="button" aria-pressed={source === k} onClick={() => { touch(); setSource(k); }}
                 className={`rounded-md border px-2 py-1 text-xs font-medium ${source === k ? "border-emerald bg-emerald/10 text-ink" : "border-hairline text-ink-2"}`}>
                 {label}
               </button>
@@ -189,13 +207,13 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
             {isClosure && (
               <label className="text-xs text-ink-3 space-y-1">
                 <span>Principal back from the FD (₹)</span>
-                <Input value={principalText} onChange={(e) => setPrincipalText(e.target.value)} inputMode="numeric"
+                <Input value={principalText} onChange={(e) => { touch(); setPrincipalText(e.target.value); }} inputMode="numeric"
                   aria-label="Principal back from the FD" placeholder={fd?.current_balance ? String(fd.current_balance) : "0"} />
               </label>
             )}
             <label className="text-xs text-ink-3 space-y-1">
               <span>TDS deducted by the bank (₹, optional)</span>
-              <Input value={tdsText} onChange={(e) => setTdsText(e.target.value)} inputMode="numeric"
+              <Input value={tdsText} onChange={(e) => { touch(); setTdsText(e.target.value); }} inputMode="numeric"
                 aria-label="TDS deducted by the bank" placeholder="0" />
             </label>
           </div>

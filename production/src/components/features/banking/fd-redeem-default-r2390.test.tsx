@@ -10,13 +10,13 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 
 import type { BankTransactionRow } from "@/lib/queries/bank";
 
-const s = vi.hoisted(() => ({ book: vi.fn(), bookInterest: vi.fn() }));
+const s = vi.hoisted(() => ({ book: vi.fn(), bookInterest: vi.fn(), loading: false }));
 vi.mock("@/lib/queries/bank-other-income", () => ({
   useBookOtherIncome: () => ({ mutateAsync: s.book, isPending: false }),
   useBookInterestIncome: () => ({ mutateAsync: s.bookInterest, isPending: false }),
 }));
 vi.mock("@/lib/queries/bank", () => ({
-  useBankAccounts: () => ({ data: [
+  useBankAccounts: () => ({ data: s.loading ? undefined : [
     { id: "ca", name: "HDFC Current", account_type: "current", account_number_last4: "4411", is_active: true, current_balance: 500000 },
     { id: "fd1", name: "HDFC FD 50300112233", account_type: "fixed_deposit", account_number_last4: "2233", is_active: true, current_balance: 4000000 },
     { id: "fd2", name: "HDFC FD sweep", account_type: "fixed_deposit", account_number_last4: "7788", is_active: true, current_balance: 250000 },
@@ -32,14 +32,15 @@ const line = (p: Partial<BankTransactionRow>) => ({
 }) as unknown as BankTransactionRow;
 const pressed = (name: string) => screen.getByRole("button", { name }).getAttribute("aria-pressed");
 
-afterEach(() => { cleanup(); s.book.mockReset(); s.bookInterest.mockReset(); });
+afterEach(() => { cleanup(); s.book.mockReset(); s.bookInterest.mockReset(); s.loading = false; });
 
 describe("R-2390 Other / manual — no silent default", () => {
   it("a plain credit pre-picks nothing and cannot be booked until the owner picks", () => {
     render(<OtherIncomeSection transaction={line({ credit: 5000 })} onDone={() => {}} />);
     expect(pressed("Interest received")).toBe("false");
     expect(pressed("Other income")).toBe("false");
-    const save = screen.getByRole("button", { name: /Pick Interest received or Other income/ }) as HTMLButtonElement;
+    expect(screen.getByText("Pick Interest received or Other income.")).toBeTruthy();
+    const save = screen.getByRole("button", { name: "Book ₹5,000 as income" }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
     fireEvent.click(save);
     expect(s.book).not.toHaveBeenCalled();
@@ -78,12 +79,36 @@ describe("R-2390 FD redeem line → Interest received · Fixed deposit · that F
     expect(s.book).not.toHaveBeenCalled();
   });
 
-  it("PREMAT / REDEEM / SWEEP without a known FD number: Interest · Fixed deposit, FD left to pick", () => {
+  it("PREMAT / REDEEM / SWEEP without a known FD number: Interest · Fixed deposit, FD left to pick — and no one-click booking of the whole line as interest", () => {
     for (const d of ["FD PREMAT CLOSURE 99887766", "REDEEM OF DEPOSIT", "AUTO-SWEEP IN"]) {
       render(<OtherIncomeSection transaction={line({ description: d })} onDone={() => {}} />);
       expect(pressed("Interest received")).toBe("true");
       expect(pressed("Fixed deposit")).toBe("true");
       expect((screen.getByLabelText("FD account") as HTMLSelectElement).value).toBe("");
+      expect(screen.getByText(/looks like an FD coming back/)).toBeTruthy();
+      expect((screen.getByRole("button", { name: /as interest received/ }) as HTMLButtonElement).disabled).toBe(true);
+      cleanup();
+    }
+  });
+
+  it("after picking the FD and ticking FD closed the redeem line books the closure", async () => {
+    render(<OtherIncomeSection transaction={line({ description: "FD PREMAT CLOSURE 99887766" })} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("FD account"), { target: { value: "fd1" } });
+    fireEvent.click(screen.getByRole("checkbox", { name: /FD closed/ }));
+    fireEvent.click(screen.getByRole("button", { name: "Book FD closure: ₹40,00,000 principal + ₹2,110 interest" }));
+    await waitFor(() => expect(s.bookInterest).toHaveBeenCalledWith(expect.objectContaining({ fdAccountId: "fd1", principal: 4000000, interest: 2110 })));
+  });
+
+  it("switching to another FD refills the principal from THAT FD", () => {
+    render(<OtherIncomeSection transaction={line({ description: "TO FD 50300112233 AUTO_REDEEM" })} onDone={() => {}} />);
+    fireEvent.change(screen.getByLabelText("FD account"), { target: { value: "fd2" } });
+    expect((screen.getByLabelText("Principal back from the FD") as HTMLInputElement).value).toBe("250000");
+  });
+
+  it("a mutual-fund redemption or reward points are not an FD", () => {
+    for (const d of ["ICICI PRU MF REDEMPTION 1234567", "REWARD POINTS REDEEMED"]) {
+      render(<OtherIncomeSection transaction={line({ description: d, credit: 5000 })} onDone={() => {}} />);
+      expect(pressed("Interest received")).toBe("false");
       cleanup();
     }
   });
@@ -91,6 +116,27 @@ describe("R-2390 FD redeem line → Interest received · Fixed deposit · that F
   it("the FD is matched by its last 4 digits too", () => {
     render(<OtherIncomeSection transaction={line({ description: "SWEEP REDEMPTION 000000447788", credit: 260000 })} onDone={() => {}} />);
     expect((screen.getByLabelText("FD account") as HTMLSelectElement).value).toBe("fd2");
+    expect((screen.getByRole("checkbox", { name: /FD closed/ }) as HTMLInputElement).checked).toBe(true);
+  });
+});
+
+describe("R-2390 the FD list arriving late never undoes the owner's pick", () => {
+  it("owner picked Other income while accounts loaded → still Other income", () => {
+    s.loading = true;
+    const t = line({ description: "TO FD 50300112233 AUTO_REDEEM" });
+    const { rerender } = render(<OtherIncomeSection transaction={t} onDone={() => {}} />);
+    fireEvent.click(screen.getByRole("button", { name: "Other income" }));
+    s.loading = false;
+    rerender(<OtherIncomeSection transaction={t} onDone={() => {}} />);
+    expect(pressed("Other income")).toBe("true");
+  });
+  it("untouched → the FD is picked once the list arrives", () => {
+    s.loading = true;
+    const t = line({ description: "TO FD 50300112233 AUTO_REDEEM" });
+    const { rerender } = render(<OtherIncomeSection transaction={t} onDone={() => {}} />);
+    s.loading = false;
+    rerender(<OtherIncomeSection transaction={t} onDone={() => {}} />);
+    expect((screen.getByLabelText("FD account") as HTMLSelectElement).value).toBe("fd1");
     expect((screen.getByRole("checkbox", { name: /FD closed/ }) as HTMLInputElement).checked).toBe(true);
   });
 });
@@ -119,5 +165,15 @@ describe("R-2390 fdRedeemGuess", () => {
   });
   it("a short number (UTR bits, dates) never names an FD", () => {
     expect(fdRedeemGuess("NEFT 2233 ACME", fds)).toEqual({ redeem: false, fdId: null });
+  });
+  it("last 4 digits on a customer receipt (no FD word) never pick an FD", () => {
+    expect(fdRedeemGuess("NEFT CR-HDFC0001-ACME-N12345672233", fds)).toEqual({ redeem: false, fdId: null });
+  });
+  it("sweep FD interest is interest, not a closure", () => {
+    expect(fdRedeemGuess("SWEEP FD INT 50300112233", fds)).toEqual({ redeem: false, fdId: "fd1" });
+  });
+  it("MF redemption / reward points redeemed are not an FD", () => {
+    expect(fdRedeemGuess("ICICI PRU MF REDEMPTION 1234567", fds).redeem).toBe(false);
+    expect(fdRedeemGuess("REWARD POINTS REDEEMED", fds).redeem).toBe(false);
   });
 });

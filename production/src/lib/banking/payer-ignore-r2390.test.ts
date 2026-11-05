@@ -24,7 +24,7 @@ describe("R-2390 payer guess ignores AUTO_REDEEM / AUTO-SWEEP", () => {
   });
 
   it("'AUTO-SWEEP' / 'AUTO SWEEP' / 'AUTOSWEEP' guess nobody", () => {
-    for (const d of ["AUTO-SWEEP IN 1234", "AUTO SWEEP CREDIT", "AUTOSWEEP REVERSAL"]) {
+    for (const d of ["AUTO-SWEEP IN 1234", "AUTO SWEEP CREDIT", "AUTOSWEEP REVERSAL", "FD AUTO REDEMPTION 50300", "FD AUTO RENEWAL", "FD AUTO CLOSURE", "SWEEP IN 1234"]) {
       expect(guessCustomer({ description: d }, customers, [], OWN)).toBeNull();
     }
   });

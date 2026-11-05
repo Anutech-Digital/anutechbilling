@@ -61,20 +61,29 @@ export type FdForGuess = { id: string; name: string; account_number_last4?: stri
  * R-2390 (staging 2 Nov): the ₹40,02,110 "…AUTO_REDEEM" line pre-picked "Other income" — one click
  * would have booked ₹40 L of FD principal as income. Does the narration say an FD came back
  * (REDEEM / PREMAT / SWEEP, or names one of our FDs by number), and which FD?
- *   fdId   — the ONE FD whose number (6+ digits in its name) or last 4 digits ends a 6+ digit run in
- *            the narration; two FDs fit → null (the owner picks).
- *   redeem — a redeem word, or an FD named on a line that does not say interest ("INT ON FD 5012"
- *            is interest on the FD, not its closure).
+ *   fdId   — the ONE FD whose number (6+ digits in its name) is in the narration, or whose last 4
+ *            digits end a 6+ digit run on a line that talks about an FD / deposit / sweep (a UTR
+ *            or cheque number on a customer receipt must not pick an FD); two FDs fit → null.
+ *   redeem — a redeem word (REDEEM / PREMAT / SWEEP) on a line about an FD (an MF redemption or
+ *            "REWARD POINTS REDEEMED" is not), or one of our FDs named — unless the line only says
+ *            interest ("INT ON FD 5012", "SWEEP FD INT …" is interest on the FD, not its closure).
  */
+const FD_CONTEXT = /\b(fdr?|f\.d\.?|fixed\s*dep\w*|term\s*dep\w*|tdr?|deposit\w*|sweep\w*|swp|auto\s?sweep\w*|auto\s?redeem\w*)\b/i;
+const REDEEM_WORD = /\b(redeem\w*|redemption|premat\w*|pre\s?mat\w*|auto\s?redeem\w*|auto\s?sweep\w*|sweep\w*|swp)\b/i;
+const CLOSURE_WORD = /\b(redeem\w*|redemption|premat\w*|pre\s?mat\w*|closure|closed)\b/i;
+
 export function fdRedeemGuess(description: string | null | undefined, fds: readonly FdForGuess[]): { redeem: boolean; fdId: string | null } {
   const d = (description ?? "").replace(/[_-]+/g, " ");
-  const word = /\b(redeem\w*|redemption|premat\w*|pre\s?mat\w*|auto\s?redeem\w*|auto\s?sweep\w*|sweep\w*)\b/i.test(d);
+  const fdContext = FD_CONTEXT.test(d);
   const runs = d.match(/\d{6,}/g) ?? [];
-  const hits = fds.filter((fd) => {
-    const own = (fd.name.match(/\d{6,}/g) ?? []);
+  const byNumber = (fd: FdForGuess) => (fd.name.match(/\d{6,}/g) ?? []).some((n) => runs.some((r) => r === n || r.endsWith(n) || n.endsWith(r)));
+  const byLast4 = (fd: FdForGuess) => {
     const last4 = (fd.account_number_last4 ?? "").replace(/\D/g, "");
-    return runs.some((r) => own.some((n) => r === n || r.endsWith(n) || n.endsWith(r)) || (last4.length === 4 && r.endsWith(last4)));
-  });
+    return fdContext && last4.length === 4 && runs.some((r) => r.endsWith(last4));
+  };
+  const hits = fds.filter((fd) => byNumber(fd) || byLast4(fd));
   const fdId = hits.length === 1 ? hits[0].id : null;
-  return { redeem: word || (fdId !== null && !looksLikeInterest(description)), fdId };
+  const interestOnly = looksLikeInterest(description) && !CLOSURE_WORD.test(d);
+  const word = REDEEM_WORD.test(d) && (fdContext || fdId !== null);
+  return { redeem: !interestOnly && (word || fdId !== null), fdId };
 }
