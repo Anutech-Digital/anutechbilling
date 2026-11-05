@@ -45,7 +45,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { parseDeployHeaders } from "./gen-deploy-db.mjs";
+import { parseDeployHeaders, redefinedObjects } from "./gen-deploy-db.mjs";
 import { LOCAL_CRON_SECRET } from "../cron-local.mjs";
 
 export const REMOTE = "anutech";
@@ -96,15 +96,8 @@ export function stashRefFor(listText, tag) {
   return null;
 }
 
-/** Functions and views a migration (re)defines — objects a later `create or replace` overwrites. Lower case, no schema. */
-export function redefinedObjects(sql) {
-  const src = String(sql ?? "").replace(/--[^\n]*/g, "");
-  const id = String.raw`(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?`;
-  const out = new Set();
-  for (const m of src.matchAll(new RegExp(String.raw`create\s+(?:or\s+replace\s+)?function\s+${id}`, "gi"))) out.add(`function ${m[1].toLowerCase()}`);
-  for (const m of src.matchAll(new RegExp(String.raw`create\s+(?:or\s+replace\s+)?(?:materialized\s+)?view\s+(?:if\s+not\s+exists\s+)?${id}`, "gi"))) out.add(`view ${m[1].toLowerCase()}`);
-  return [...out];
-}
+/* Functions and views a migration (re)defines: ONE parser, shared with the deploy-db generator (R-2480). */
+export { redefinedObjects };
 
 /** One read-only select per migration: `file|true|false|null`. A peek that errors prints no line (→ unknown). */
 export function peekScript(migs) {

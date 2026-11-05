@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
-import { parseDeployHeaders, supersedePeeks, pgProcPeekChecks, functionsDefined, defaultKey, selectFiles, filesInScript, replaceMigs, splitScript, generate, buildMigsBody, ENVS, peeksFromScript, renderPeeksModule, PEEKS_FILE } from "../scripts/ops/gen-deploy-db.mjs";
+import { parseDeployHeaders, supersedePeeks, pgProcPeekChecks, functionsDefined, defaultKey, selectFiles, filesInScript, replaceMigs, splitScript, generate, buildMigsBody, ENVS, peeksFromScript, renderPeeksModule, PEEKS_FILE, healthPeeks, supsFromScript } from "../scripts/ops/gen-deploy-db.mjs";
 
 // R-385 (7 Oct 2026): the MIGS array of the day's staging + live deploy-db scripts is generated
 // from `-- deploy-peek:` headers in the migrations instead of hand-edited (6 hand edits on 7 Oct).
@@ -163,7 +163,8 @@ describe("R-1721 peeks.generated.ts (what /api/health/migrations checks)", () =>
     const dir = path.join(supabaseDir, "cloudsql", "staging");
     const newest = fs.readdirSync(dir).filter((n) => /^deploy-db-\d{4}-\d{2}-\d{2}\.sh$/.test(n)).sort().pop()!;
     const script = fs.readFileSync(path.join(dir, newest), "utf8");
-    const want = renderPeeksModule(peeksFromScript(script, newest), `supabase/cloudsql/staging/${newest}`);
+    /* R-2480: a superseded migration's entry also accepts its "other parts" check (SUPS block). */
+    const want = renderPeeksModule(healthPeeks(peeksFromScript(script, newest), supsFromScript(script, newest)), `supabase/cloudsql/staging/${newest}`);
     const have = fs.readFileSync(path.join(appDir, PEEKS_FILE), "utf8").replace(/\r\n/g, "\n");
     expect(have, "run: node scripts/ops/gen-deploy-db.mjs --date " + newest.slice(10, 20)).toBe(want);
   });
