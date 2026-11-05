@@ -124,7 +124,7 @@ describe("R-2484 one source: the deploy generator's data", () => {
 });
 
 /* ── the deploy script's own plan(), run in bash, against this planner ── */
-function bashPlan(keys: string[], sups: Array<{ key: string; later: string[]; rest: string | null }>, vals: Record<string, string>) {
+function bashPlan(keys: string[], sups: Array<{ key: string; later: string[]; rest: string | null }>, vals: Record<string, string>, accept: string[] = []) {
   const t = fs.readFileSync(path.join(SUPA, "cloudsql", "staging", "deploy-db-2026-10-07.sh"), "utf8").replace(/\r\n/g, "\n");
   const a = t.indexOf("declare -A LATER=()");
   const b = t.indexOf("\n}\n", a) + 3;
@@ -136,12 +136,12 @@ function bashPlan(keys: string[], sups: Array<{ key: string; later: string[]; re
     `plan "${Object.entries(vals).map(([k, v]) => `${k}=${v}`).join(" ")}"`,
     'for m in "${MIGS[@]}"; do k="${m%%|*}"; echo "$k=${ST[$k]}:${BY[$k]:-}"; done',
   ].join("\n");
-  const r = spawnSync(BASH!, ["-s"], { input: script, encoding: "utf8", timeout: 60_000 });
+  const r = spawnSync(BASH!, ["-s"], { input: script, encoding: "utf8", timeout: 60_000, env: { ...process.env, ACCEPT_SUPERSEDED: accept.join(" ") } });
   expect(r.status, `${r.stdout}${r.stderr}`).toBe(0);
   return Object.fromEntries(r.stdout.trim().split(/\r?\n/).map((l) => { const [k, v] = l.split("="); return [k, v]; }));
 }
-function jsPlan(entries: Array<{ file: string; key: string; later: string[]; rest: string | null; defines: string[] }>, vals: Record<string, string>) {
-  const p = planMigrations(entries.map((e) => ({ ...e, status: vals[e.key] === "true" ? "applied" : "pending", rest: e.rest ? vals[`${e.key}_rest`] : undefined })));
+function jsPlan(entries: Array<{ file: string; key: string; later: string[]; rest: string | null; defines: string[] }>, vals: Record<string, string>, accept: string[] = []) {
+  const p = planMigrations(entries.map((e) => ({ ...e, status: vals[e.key] === "true" ? "applied" : "pending", restAnswer: e.rest ? vals[`${e.key}_rest`] : undefined })), { accept });
   return Object.fromEntries(entries.map((e) => { const s = p.state.get(e.key); return [e.key, `${s.st === "in" ? "in" : s.st}:${s.by}`]; }));
 }
 
@@ -162,6 +162,13 @@ describe.skipIf(!BASH)("R-2484 same rule as the deploy script's plan() (bash, fr
       expect(jsPlan(entries, vals)).toEqual(bashPlan(keys, sups, vals));
     });
   }
+  it("ACCEPT_SUPERSEDED=r1 on the blocked state: both say superseded (ACCEPT_SUPERSEDED)", () => {
+    const sups = entries.filter((e: { later: string[] }) => e.later.length).map((e: { key: string; later: string[]; rest: string | null }) => ({ key: e.key, later: e.later, rest: e.rest }));
+    const vals = scenarios["newer body in, older's table missing (blocked)"];
+    const js = jsPlan(entries, vals, ["r1"]);
+    expect(js.r1).toBe("superseded:r2 (ACCEPT_SUPERSEDED)");
+    expect(js).toEqual(bashPlan(keys, sups, vals, ["r1"]));
+  });
 });
 
 describe("R-2484 runUpdate with the deploy rule (fake DB)", () => {
@@ -223,11 +230,43 @@ describe("R-2484 runUpdate with the deploy rule (fake DB)", () => {
     };
     const r = runUpdate({ git: fakeGit(files), psql, noFetch: true, repair: true });
     expect(ran).toEqual([]);
+    expect(r.code).toBe(EXIT.blocked);
     expect(r.lines.join("\n")).toMatch(/\? 20261104000000_d\.sql/);
+    expect(r.lines.join("\n")).toMatch(/repair nahi ho sakta/);
+  });
+});
+
+describe("R-2484 runUpdate --accept-superseded (the deploy script's checked way on)", () => {
+  it("a blocked file named in accept is reported superseded and the run goes on", () => {
+    const d = db(["trg_t", "x"], { tg_f: "R-4" });
+    const r = run(d, { accept: ["r1"] });
+    expect(r.code, r.out).toBe(EXIT.ok);
+    expect(r.ran).toEqual([]);
+    expect(r.out).toMatch(/skip 20261101000000_a\.sql — superseded by [^\n]*ACCEPT_SUPERSEDED/);
+    expect(parseArgs(["--accept-superseded", "r1,r2"]).accept).toEqual(["r1", "r2"]);
   });
 });
 
 describe("R-2484 the real files: R-1556 is no longer silently skipped", () => {
+  /* Coordinator, 5 Nov: the old rule printed "skip 20261104090100_r2469_release_stale_team_invite.sql —
+     superseded by 20261105000000_r2471_tenant_memberships.sql (function tenant_holds_business_records)"
+     — but R-2469 also creates release_stale_team_invite (+ grants), which R-2471 does not. */
+  it("R-2469 pending + R-2471 applied → BLOCKED (never skipped); --repair applies R-2469 then re-runs R-2471", () => {
+    const R2469 = "20261104090100_r2469_release_stale_team_invite.sql";
+    const R2471 = "20261105000000_r2471_tenant_memberships.sql";
+    const two = deployEntries([R2469, R2471].map((file) => ({ file, sql: fs.readFileSync(path.join(MIG, file), "utf8") })));
+    const e2469 = two.find((e: { file: string }) => e.file === R2469);
+    expect(e2469.defines).toEqual(expect.arrayContaining(["function release_stale_team_invite", "function tenant_holds_business_records"]));
+    expect(e2469.later).toEqual([two.find((e: { file: string }) => e.file === R2471).key]);
+    const migs = two.map((e: { file: string; rest: string | null }) => ({ ...e, status: e.file === R2469 ? "pending" : "applied", restAnswer: e.rest ? "false" : undefined }));
+    const plain = planMigrations(migs);
+    expect(plain.skip).toEqual([]);
+    expect(plain.blocked.map((b: { file: string }) => b.file)).toEqual([R2469]);
+    const rep = planMigrations(migs, { repair: true });
+    expect(rep.apply).toEqual([R2469, R2471]);
+    expect(rep.rerun).toEqual([R2471]);
+  });
+
   const names = fs.readdirSync(MIG).filter((f) => /^\d{14}_.+\.sql$/.test(f)).sort();
   const entries = deployEntries(names.map((file) => ({ file, sql: fs.readFileSync(path.join(MIG, file), "utf8") })));
   const R1556 = "20261018173040_r1556_backup_mfa_tenant.sql";
@@ -235,7 +274,7 @@ describe("R-2484 the real files: R-1556 is no longer silently skipped", () => {
 
   it("this laptop's state (all in except R-1556 + list_tenant_backups fix): blocked, and --repair re-runs only the newest definers", () => {
     const status = (f: string) => (f === R1556 || f === LIST ? "pending" : "applied");
-    const migs = entries.map((e: { file: string; key: string; rest: string | null }) => ({ ...e, status: status(e.file), rest: e.rest ? "true" : undefined }));
+    const migs = entries.map((e: { file: string; key: string; rest: string | null }) => ({ ...e, status: status(e.file), restAnswer: e.rest ? "true" : undefined }));
     const plain = planMigrations(migs);
     expect(plain.blocked.map((b: { file: string }) => b.file)).toEqual([R1556]);
     expect(plain.skip.map((s: { file: string }) => s.file)).not.toContain(R1556);

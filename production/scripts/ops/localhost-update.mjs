@@ -24,19 +24,18 @@
  *   4. Migrations: every supabase/migrations file with a `-- deploy-peek:` header (no deploy-skip) has its
  *      peek read on the LOCAL DB (docker supabase_db_*). Peek false → applied in version order (psql
  *      ON_ERROR_STOP), then its peek must read true; the first failure stops (exit 3).
- *      SUPERSEDED (R-2125 check, 30 Oct): a peek-false migration whose function/view is redefined by a
- *      LATER migration that is applied (or unknown, or itself skipped) is NOT applied — running it would
- *      bring back the old function body. Printed as "superseded by <later> (<object>)". On 31 Oct this is
- *      exactly 20261018173040 (current_user_has_role, redefined by applied 20261025141647) and
- *      20261010223000 (list_tenant_backups, redefined by the skipped 20261018173040).
- *      R-2484 (5 Nov): that rule had no "other parts" check — 20261018173040 is the ONLY definer of
+ *      SUPERSEDED (R-2125 check, 30 Oct — REPLACED by R-2484): a peek-false migration whose function/view
+ *      a LATER applied migration redefines was skipped. R-2484 (5 Nov): that rule had no "other parts" check — 20261018173040 is the ONLY definer of
  *      get_tenant_backup's R-1557 body, so skipping it left the local DB on the old, unsafe body. Now
  *      it is R-2480's deploy rule (plan() in the deploy-db scripts), on the generator's own data
  *      (deployEntries: supersedePeeks / supersededEntries from gen-deploy-db — no second copy):
  *      superseded = a later redefiner is in AND its rest peek is true → not applied; blocked = a later
  *      redefiner is in but rest is not true → stop before any migration (exit 5) with the next step:
  *      `--repair` (local only) applies it in file order and then re-runs the newest (applied) definer
- *      of every function/view it overwrote, so the local DB ends where a fresh DB would.
+ *      of every function/view it overwrote (see planMigrations for what it does NOT restore);
+ *      `--accept-superseded <keys>` (or env ACCEPT_SUPERSEDED) = the deploy script's checked way on.
+ *      5 Nov example: R-2469 (release_stale_team_invite) was skipped because R-2471 redefines
+ *      tenant_holds_business_records — the local DB lost release_stale_team_invite. Now: blocked.
  *      tests/ops/localhost-update-superseded.test.ts runs the deploy script's bash plan() against
  *      planMigrations on the same answers.
  *   5. Prints: from → to, the cards in between, the kept edit, migrations applied / skipped / unknown,
@@ -127,7 +126,14 @@ export function deployEntries(files) {
     let h; try { h = parseDeployHeaders(sql, file); } catch { continue; }
     entries.push({ ...h, sql });
   }
-  entries.sort((x, y) => x.file.localeCompare(y.file));
+  entries.sort((x, y) => byName(x.file, y.file));
+  /* Same refusal as the deploy generator: a key names ONE migration (plan() works by key). */
+  const seen = new Map();
+  for (const e of entries) {
+    if (e.skip) continue;
+    if (seen.has(e.key)) throw new Error(`deploy-key "${e.key}" is used by ${seen.get(e.key)} and ${e.file} — give one a -- deploy-key: line.`);
+    seen.set(e.key, e.file);
+  }
   const widened = supersedePeeks(entries);
   const sups = new Map(supersededEntries(entries).map((s) => [s.key, s]));
   return widened.filter((e) => !e.skip).map((e) => ({
@@ -148,6 +154,8 @@ export function peekScript(migs) {
   }
   return lines.join("\n") + "\n";
 }
+/** One order everywhere (file names, code-unit order — what `ls`/sort() and the deploy MIGS order use). */
+const byName = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const sqlString = (s) => `'${String(s).replace(/'/g, "''")}'`;
 
 /** psql -tA output → Map "file" / "file#rest" → "true" | "false" | "null". */
@@ -165,29 +173,36 @@ export function parsePeekOutput(text) {
  * tests/ops/localhost-update-superseded.test.ts runs that bash plan() and this one on the same answers
  * and requires the same state for every key, so the two cannot drift.
  *
- * migs: [{ file, key, status: "applied" | "pending" | "unknown", later: [keys], rest: "true" | "false" |
+ * migs: [{ file, key, status: "applied" | "pending" | "unknown", later: [keys], restAnswer: "true" | "false" |
  *          "null" | undefined (the rest peek's answer; undefined = no rest check / no answer), defines }].
+ * accept: keys (or file names) that count as superseded when blocked — the deploy script's
+ *          ACCEPT_SUPERSEDED, for a later migration that on purpose removed what an older peek checks.
  * Newest first, per migration:
  *   in         — peek true (status applied);
  *   superseded — peek false, a LATER redefiner is in (or itself superseded) and rest is true: not re-run;
  *   blocked    — a later redefiner is in but rest is not true: re-running brings the old body back,
  *                skipping loses its other parts. The deploy script stops here; locally see `repair`;
  *   apply      — anything else (no later redefiner in): applied in file order.
- * Local only (no bash counterpart: the deploy script stops on any key without an answer): status
- * "unknown" (peek null/error) is never applied, and an older migration whose only later redefiner(s)
+ * Local only (no bash counterpart: the deploy script stops on a key with NO answer, and reads a null
+ * answer as "not in" → apply): status "unknown" (peek null/error) is never applied here, and an older migration whose only later redefiner(s)
  * are unknown is held (skip) rather than applied over a body that may be newer.
  *
  * repair (local only, `--repair`): a blocked migration IS applied in file order, and then the newest
- * migration (already in) defining each function/view it overwrote is re-run, so every object ends on its
- * newest body — what a fresh DB gets. A re-run file's own objects are followed the same way. If that
- * newest definer is not in (unknown/held/blocked-and-stopped), the repair is refused for that file.
+ * migration (already in) defining each function/view it overwrote is re-run — the WHOLE file (its
+ * backfills and grants too; deploy migrations are written re-runnable), so every function/view ends on its
+ * newest body. A re-run file's own objects are followed the same way. Only functions/views are followed:
+ * a grant/policy/trigger the old file sets and a later file changed WITHOUT redefining one of its
+ * functions is not restored. If a newest definer is not in (unknown/held), the whole repair is refused.
+ * Not one transaction (migrations carry their own begin/commit): a failing re-run stops with exit 3 and
+ * names the file — run --dry-run --repair first.
  *
  * → { state: Map key → { st, by }, apply: [file] (ascending; with repair also the blocked + re-run files),
- *     skip: [{ file, reason }], blocked: [{ file, key, by }], rerun: [file], repairStops: [{ file, reason }],
+ *     skip: [{ file, reason }], blocked: [{ file, key, by, byFile }], rerun: [file], repairStops: [{ file, reason }],
  *     unknown: [file], applied: n }
  */
-export function planMigrations(migs, { repair = false } = {}) {
-  const sorted = [...migs].sort((a, b) => a.file.localeCompare(b.file));
+export function planMigrations(migs, { repair = false, accept = [] } = {}) {
+  const sorted = [...migs].sort((a, b) => byName(a.file, b.file));
+  const accepted = new Set(accept);
   const byKey = new Map(sorted.map((m) => [m.key, m]));
   const fileOf = (k) => byKey.get(k)?.file ?? k;
   const state = new Map();
@@ -207,12 +222,15 @@ export function planMigrations(migs, { repair = false } = {}) {
       state.set(m.key, { st: "held", by: held });
       skip.push({ file: m.file, reason: `later ${fileOf(held)} ka peek unknown (ya woh khud ruka) — chalane se uski shayad nayi body mit jaati; NAHI lagaya` });
     } else if (!by) state.set(m.key, { st: "apply", by: "" });
-    else if (m.rest === "true") {
+    else if (m.restAnswer === "true") {
       state.set(m.key, { st: "superseded", by });
       skip.push({ file: m.file, reason: `superseded by ${fileOf(by)} (woh lagi hui hai, aur is file ke baaki hisse bhi) — chalane se purani body wapas aa jaati` });
+    } else if (accepted.has(m.key) || accepted.has(m.file)) {
+      state.set(m.key, { st: "superseded", by: `${by} (ACCEPT_SUPERSEDED)` });
+      skip.push({ file: m.file, reason: `superseded by ${fileOf(by)} (ACCEPT_SUPERSEDED — aapne jaanch ke maana) — baaki hisse nahi hain, jaan-boojh kar` });
     } else state.set(m.key, { st: "blocked", by });
   }
-  const blocked = sorted.filter((m) => state.get(m.key).st === "blocked").map((m) => ({ file: m.file, key: m.key, by: state.get(m.key).by }));
+  const blocked = sorted.filter((m) => state.get(m.key).st === "blocked").map((m) => ({ file: m.file, key: m.key, by: state.get(m.key).by, byFile: fileOf(state.get(m.key).by) }));
   const apply = new Set(sorted.filter((m) => state.get(m.key).st === "apply").map((m) => m.file));
   const rerun = new Set();
   const repairStops = [];
@@ -233,7 +251,7 @@ export function planMigrations(migs, { repair = false } = {}) {
           queue.push(n);
         }
       }
-      if (stop) { repairStops.push({ file: b.file, reason: stop }); continue; }
+      if (stop) { repairStops.push({ file: b.file, reason: stop }); continue; } /* runUpdate then runs nothing */
       apply.add(b.file);
       for (const f of add) rerun.add(f);
     }
@@ -241,10 +259,10 @@ export function planMigrations(migs, { repair = false } = {}) {
   }
   return {
     state,
-    apply: [...apply].sort(),
-    skip: skip.sort((a, b) => a.file.localeCompare(b.file)),
+    apply: [...apply].sort(byName),
+    skip: skip.sort((a, b) => byName(a.file, b.file)),
     blocked,
-    rerun: [...rerun].sort(),
+    rerun: [...rerun].sort(byName),
     repairStops,
     unknown: sorted.filter((m) => m.status === "unknown").map((m) => m.file),
     applied: sorted.filter((m) => m.status === "applied").length,
@@ -296,7 +314,7 @@ export function cardsIn(subjects) {
 }
 
 export function parseArgs(argv) {
-  const out = { dryRun: false, repair: false, dir: null, to: TARGET, noFetch: false, port: 3001, help: false };
+  const out = { dryRun: false, repair: false, accept: [], dir: null, to: TARGET, noFetch: false, port: 3001, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry-run" || a === "--dry") out.dryRun = true;
@@ -304,9 +322,10 @@ export function parseArgs(argv) {
     else if (a === "--to") out.to = argv[++i];
     else if (a === "--no-fetch") out.noFetch = true;
     else if (a === "--repair") out.repair = true;
+    else if (a === "--accept-superseded") out.accept.push(...String(argv[++i] ?? "").split(/[\s,]+/).filter(Boolean));
     else if (a === "--port") out.port = Number(argv[++i]) || 3001;
     else if (a === "--help" || a === "-h") out.help = true;
-    else throw new Error(`Unknown argument ${a} (--dry-run / --repair / --dir <checkout> / --to <ref> / --no-fetch / --port <n>)`);
+    else throw new Error(`Unknown argument ${a} (--dry-run / --repair / --accept-superseded <keys> / --dir <checkout> / --to <ref> / --no-fetch / --port <n>)`);
   }
   return out;
 }
@@ -317,7 +336,7 @@ export function parseArgs(argv) {
  * git(args) → stdout (throws on a non-zero exit); psql(sql, { stopOnError }) → { status, out } or null when no
  * local DB; writeFile(path, text) for the backup patch. Returns { code, lines }.
  */
-export function runUpdate({ git, psql, print = () => {}, dryRun = false, repair = false, to = TARGET, noFetch = false, port = 3001, tmpDir = os.tmpdir(), writeFile = (p, t) => fs.writeFileSync(p, t), readFile = null, now = () => new Date() }) {
+export function runUpdate({ git, psql, print = () => {}, dryRun = false, repair = false, accept = [], to = TARGET, noFetch = false, port = 3001, tmpDir = os.tmpdir(), writeFile = (p, t) => fs.writeFileSync(p, t), readFile = null, now = () => new Date() }) {
   const lines = [];
   const say = (l) => { lines.push(l); print(l); };
   const done = (code) => ({ code, lines });
@@ -403,20 +422,20 @@ export function runUpdate({ git, psql, print = () => {}, dryRun = false, repair 
   for (const m of migs) {
     const v = peeks.get(m.file);
     m.status = v === "true" ? "applied" : v === "false" ? "pending" : "unknown";
-    if (m.rest) m.rest = peeks.get(`${m.file}#rest`) ?? "null"; else m.rest = undefined;
+    m.restAnswer = m.rest ? peeks.get(`${m.file}#rest`) ?? "null" : undefined;
   }
-  const plan = planMigrations(migs, { repair });
+  const plan = planMigrations(migs, { repair, accept });
   say(`Migrations (deploy-peek wale ${migs.length}): ${plan.applied} lage hue, ${plan.apply.length} lagane, ${plan.skip.length} superseded/ruke, ${plan.blocked.length} blocked, ${plan.unknown.length} peek unknown`);
   for (const s of plan.skip) say(`  skip ${s.file} — ${s.reason}`);
   for (const u of plan.unknown) say(`  ? ${u} — peek error/null; NAHI lagaya (haath se jaancho)`);
-  const fileOfKey = (k) => migs.find((m) => m.key === k)?.file ?? k;
   /* Blocked (R-2480's deploy rule): a newer redefiner is in, but this file's other parts are not. */
   if (plan.blocked.length && (!repair || plan.repairStops.length)) {
     say(`✗ BLOCKED (deploy rule R-2480) — in migrations ki nayi body lagi hui hai par inke baaki hisse (column/table/doosre functions) NAHI:`);
-    for (const b of plan.blocked) say(`   ${b.file} (nayi: ${fileOfKey(b.by)})`);
+    for (const b of plan.blocked) say(`   ${b.file} (nayi: ${b.byFile}; key ${b.key})`);
     for (const s of plan.repairStops) say(`   ! repair nahi ho sakta: ${s.file} — ${s.reason}`);
     say("   Dobara chalane se purani body wapas aati, chhodne se hissa gayab rehta. Koi migration NAHI lagi.");
     if (!plan.repairStops.length) say("   Local DB theek karo: npm run localhost:update -- --repair   (pehle -- --dry-run --repair se dekho: ye file order me lagegi, phir har function/view ki sabse nayi body dobara chalegi)");
+    say("   Ya agar baad wali migration ne woh hissa JAAN-BOOJH kar hataya: -- --accept-superseded <key,key> (deploy ka ACCEPT_SUPERSEDED).");
     finish(say, { changed, port, kept, git });
     return done(EXIT.blocked);
   }
@@ -475,7 +494,7 @@ function realPsql() {
 function main(argv) {
   let args;
   try { args = parseArgs(argv); } catch (e) { console.error(`✗ ${e.message}`); process.exit(EXIT.refused); }
-  if (args.help) { console.log("npm run localhost:update [-- --dry-run] [--repair] [--dir <checkout>] [--to <ref>] [--port 3001]"); return; }
+  if (args.help) { console.log("npm run localhost:update [-- --dry-run] [--repair] [--accept-superseded <keys>] [--dir <checkout>] [--to <ref>] [--port 3001]"); return; }
   const start = args.dir ? path.resolve(args.dir) : process.cwd();
   let top;
   try { top = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: start, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim(); }
@@ -483,7 +502,7 @@ function main(argv) {
   console.log(`localhost:update → ${top}${args.dryRun ? "  (dry-run: kuch nahi badlega)" : ""}`);
   const git = (a) => execFileSync("git", a, { cwd: top, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
   let r;
-  try { r = runUpdate({ git, psql: realPsql(), print: (l) => console.log(l), dryRun: args.dryRun, repair: args.repair, to: args.to, noFetch: args.noFetch, port: args.port }); }
+  try { r = runUpdate({ git, psql: realPsql(), print: (l) => console.log(l), dryRun: args.dryRun, repair: args.repair, accept: [...args.accept, ...String(process.env.ACCEPT_SUPERSEDED ?? "").split(/[\s,]+/).filter(Boolean)], to: args.to, noFetch: args.noFetch, port: args.port }); }
   catch (e) { console.error(`✗ ${String(e?.stderr ?? e?.message ?? e).slice(0, 800)}`); process.exit(EXIT.refused); }
   process.exit(r.code);
 }

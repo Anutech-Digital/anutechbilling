@@ -25,11 +25,11 @@ describe("superseded migrations (alsoDo4: the three real files) — R-2484: the 
   const B = "20261018173040_r1556_backup_mfa_tenant.sql";
   const C = "20261025141647_r1896_employee_exit.sql";
   const three = () => deployEntries([A, B, C].map((file) => ({ file, sql: read(file) })));
-  const withStatus = (st: Record<string, string>) => three().map((e: { file: string }) => ({ ...e, status: st[e.file], rest: undefined }));
+  const withStatus = (st: Record<string, string>) => three().map((e: { file: string }) => ({ ...e, status: st[e.file], restAnswer: undefined }));
 
   it("173040 (peek false) is BLOCKED, not skipped: 141647 (applied) redefines current_user_has_role, but 173040's get_tenant_backup body is not in", () => {
     const plan = planMigrations(withStatus({ [A]: "pending", [B]: "pending", [C]: "applied" }));
-    expect(plan.blocked).toEqual([{ file: B, key: "r1556backupmfa", by: expect.any(String) }]);
+    expect(plan.blocked).toEqual([{ file: B, key: "r1556backupmfa", by: expect.any(String), byFile: C }]);
     expect(plan.skip).toEqual([]);
     /* 223000's only later redefiner (173040) is not in → applied in order (as the deploy script would) */
     expect(plan.apply).toEqual([A]);
