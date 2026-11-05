@@ -24,6 +24,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
+// @ts-expect-error — plain .mjs ops script, no types (stripComments below gives it its type)
 import { stripSqlComments } from "../../../scripts/ops/sql-comments.mjs";
 
 const DIR = "supabase/migrations";
@@ -50,7 +51,7 @@ export const RAW_ROLE_CHECK = { test: (sql: string) => SHAPES.some((re) => re.te
  *  a `--` line (e.g. "-- /accounting/* by prefix") is not read as a block comment, and quoted
  *  text ('--') is kept. R-2491: the one shared copy (gen-deploy-db / localhost-update use it too). */
 export function stripComments(sql: string): string {
-  return stripSqlComments(sql);
+  return stripSqlComments(sql) as string;
 }
 
 /** Every `create [or replace] function public.X(...) ... as $tag$ body $tag$`, in order. */
