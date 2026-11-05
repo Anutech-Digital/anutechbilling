@@ -97,10 +97,3 @@ export async function readAppPurchasesByMonth(db: FyImportDb, tenantId: string, 
   }
   return [...m.values()].sort((a, b) => a.month.localeCompare(b.month));
 }
-
-export interface BankAccountLite { id: string; name: string; last4: string | null }
-export async function readBankAccounts(db: FyImportDb, tenantId: string): Promise<BankAccountLite[]> {
-  const r = await (db.from("bank_accounts").select("id, name, account_number_last4").eq("tenant_id", tenantId).is("closed_on", null)
-    .order("name", { ascending: true }).limit(200) as Res<Array<{ id: string; name: string; account_number_last4: string | null }>>);
-  return must(r, "the bank accounts").map((b) => ({ id: b.id, name: b.name, last4: b.account_number_last4 }));
-}

@@ -25,7 +25,6 @@ const preview = {
   },
   payments: null,
   categories: ["Software", "Office Rent", "COGS-Other"],
-  bankAccounts: [],
   batches: [],
 };
 
@@ -64,6 +63,15 @@ describe("ZohoPurchaseImportDialog", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save the map" }));
     await waitFor(() => expect(calls.some((c) => c.action === "saveMap")).toBe(true));
     expect(calls.find((c) => c.action === "saveMap")).toMatchObject({ rows: [{ zohoAccountId: "A9", category: "Office Rent", zohoAccountName: "Misc Expenses" }] });
+  });
+
+  it("payments on COGS bills are listed for Reconcile — no bank-account picker (no manual bank line)", async () => {
+    const withPay = { ...preview, payments: { counts: { scanned: 2, import: 1, already: 0, skip: 1, advanceAmount: 0, amount: 1180, cogsAmount: 500 }, parts: 1,
+      paidThrough: [{ name: "HDFC 4523", count: 1, amount: 1180 }], skipReasons: [], cogs: [{ number: "7", date: "2025-06-01", vendor: "Mehta", bill: "C-1", amount: 500 }] } };
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(withPay))));
+    renderIt();
+    expect(await screen.findByText(/payments on COGS bills .* Banking → Reconcile/)).toBeTruthy();
+    expect(screen.queryByText(/Pick the bank account/)).toBeNull();
   });
 
   it("Import is off until the check (dry run) ran; the check sends dryRun true", async () => {

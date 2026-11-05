@@ -14,10 +14,11 @@
  *              the category choices, bank accounts; and (when that scan is complete) the vendor
  *              payments plan. Nothing written.
  *   saveMap  { rows: [{ zohoAccountId, zohoAccountName, category }] } → save_zoho_account_categories.
- *   import   { kind, part, dryRun, banks? } → one part through import_zoho_fy_purchases (bills /
+ *   import   { kind, part, dryRun } → one part through import_zoho_fy_purchases (bills /
  *              expenses) or import_zoho_fy_vendor_payments; dryRun true (default) writes nothing.
- *              Picks name only Zoho ids + the matched vendor (+ for payments the bank account the
- *              owner picked for that Zoho paid-through account) — every amount comes from the scan.
+ *              Picks name only Zoho ids + the matched vendor — every amount comes from the scan.
+ *              Vendor payments make NO bank line (R-2502b): expense bills are marked paid, COGS-bill
+ *              payments are listed (payments.cogs) to pay in Reconcile on the real 4523 debit.
  *   undo     { batchId, reason } → remove_zoho_fy_purchase_import (while untouched).
  * Zoho is never written to.
  */
@@ -35,7 +36,7 @@ import {
   CATEGORY_CHOICES, PURCHASE_IMPORT_ROLES, buildPaymentPlan, buildPurchasePlan, toPurchasePick,
 } from "@/lib/integrations/zoho-books/purchase-import/plan";
 import {
-  readAppPurchasesByMonth, readBankAccounts, readPaymentContext, readPurchaseContext,
+  readAppPurchasesByMonth, readPaymentContext, readPurchaseContext,
 } from "@/lib/integrations/zoho-books/purchase-import/store";
 import { createClient } from "@/lib/supabase/server";
 
@@ -151,14 +152,13 @@ export async function POST(req: NextRequest) {
   };
 
   if (action === "preview") {
-    let plan, pays, appByMonth, batches, bankAccounts;
+    let plan, pays, appByMonth, batches;
     try {
       [plan, pays] = await Promise.all([purchasePlan(), paymentPlan()]);
       if (!plan) return fail(409, "Read bills and expenses from Zoho first (Read from Zoho) — it is not complete yet.");
-      [appByMonth, batches, bankAccounts] = await Promise.all([
+      [appByMonth, batches] = await Promise.all([
         readAppPurchasesByMonth(db, caller.tenantId, range),
         Promise.all(KINDS.map((k) => readImportBatches(db, caller.tenantId, k, fy).then((rows) => rows.map((x) => ({ ...x, kind: k }))))).then((a) => a.flat()),
-        readBankAccounts(db, caller.tenantId),
       ]);
     } catch { return fail(500, "Could not build the preview. Refresh and try again."); }
     const parts = (k: Kind) => partCount(plan.rows.filter((r) => r.verdict !== "skip" && r.facts.kind === k).length);
@@ -173,9 +173,9 @@ export async function POST(req: NextRequest) {
       },
       payments: pays && {
         counts: pays.counts, parts: partCount(pays.rows.filter((r) => r.verdict !== "skip").length),
-        paidThrough: pays.paidThrough, skipReasons: pays.skipReasons,
+        paidThrough: pays.paidThrough, skipReasons: pays.skipReasons, cogs: pays.cogs.slice(0, 500),
       },
-      categories: CATEGORY_CHOICES, bankAccounts, batches,
+      categories: CATEGORY_CHOICES, batches,
     });
   }
 
@@ -184,19 +184,12 @@ export async function POST(req: NextRequest) {
     const kind = body.kind;
     const dryRun = body.dryRun !== false;
     if (kind === "vendorpayments") {
-      let pays, banks;
-      try { [pays, banks] = await Promise.all([paymentPlan(), readBankAccounts(db, caller.tenantId)]); }
+      let pays;
+      try { pays = await paymentPlan(); }
       catch { return fail(500, "Could not build the preview. Refresh and try again."); }
       if (!pays) return fail(409, "Read vendor payments from Zoho first — it is not complete yet.");
-      const chosen = (body.banks && typeof body.banks === "object" ? body.banks : {}) as Record<string, unknown>;
-      const ours = new Set(banks.map((b) => b.id));
-      for (const v of Object.values(chosen)) {
-        if (v !== null && v !== "" && (typeof v !== "string" || !UUID.test(v) || !ours.has(v))) return fail(400, "Pick one of your own bank accounts.");
-      }
-      const picks = pays.rows.filter((r) => r.verdict !== "skip").map((r) => {
-        const bank = chosen[r.facts.paidThrough || "(not given)"];
-        return { zoho_id: r.facts.zohoId, ...(typeof bank === "string" && bank ? { bank_account_id: bank } : {}) };
-      });
+      /* R-2502b: Zoho ids only — no bank account, no manual bank line (COGS bills are paid in Reconcile). */
+      const picks = pays.rows.filter((r) => r.verdict !== "skip").map((r) => ({ zoho_id: r.facts.zohoId }));
       if (!picks.length) return fail(409, "Nothing to import.");
       const part = Number(body.part ?? 0);
       const slice = partOf(picks, part);

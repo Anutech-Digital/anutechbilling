@@ -253,48 +253,60 @@ export interface PaymentPlanRow {
   facts: VendorPaymentFacts;
   verdict: "import" | "already" | "skip";
   reason: string | null;
-  /** A COGS bill is paid from a bank account (pay_vendor_bill) — the owner picks which. */
-  needsBank: boolean;
 }
+
+/** A Zoho payment on a COGS bill: never booked by the import (no manual bank line, R-2502b) — paid in Reconcile on its 4523 debit. */
+export interface CogsPaymentToReconcile { number: string; date: string; vendor: string; bill: string; amount: number }
 
 export interface PaymentPlan {
   rows: PaymentPlanRow[];
-  counts: { scanned: number; import: number; already: number; skip: number; advanceAmount: number; amount: number };
-  paidThrough: { name: string; count: number; amount: number; needsBank: boolean }[];
+  counts: { scanned: number; import: number; already: number; skip: number; advanceAmount: number; amount: number; cogsAmount: number };
+  paidThrough: { name: string; count: number; amount: number }[];
   skipReasons: { reason: string; count: number }[];
+  cogs: CogsPaymentToReconcile[];
 }
+
+export const COGS_PAYMENT_REASON = "Pays a COGS bill — pay it in Banking → Reconcile on its 4523 debit (with the bill's Zoho TDS), so the cash is counted once.";
 
 export function buildPaymentPlan(facts: readonly VendorPaymentFacts[], ctx: PaymentPlanContext): PaymentPlan {
   const rows: PaymentPlanRow[] = [];
-  const counts = { scanned: facts.length, import: 0, already: 0, skip: 0, advanceAmount: 0, amount: 0 };
-  const through = new Map<string, { name: string; count: number; amount: number; needsBank: boolean }>();
+  const counts = { scanned: facts.length, import: 0, already: 0, skip: 0, advanceAmount: 0, amount: 0, cogsAmount: 0 };
+  const through = new Map<string, { name: string; count: number; amount: number }>();
   const reasons = new Map<string, number>();
+  const cogs: CogsPaymentToReconcile[] = [];
   for (const f of facts) {
     let reason: string | null = f.status === "void" ? "Void in Zoho." : f.problems[0] ?? dateRefusal(f.date, ctx);
     if (!reason && !f.applied.length) reason = "An advance — not applied to any bill in Zoho; book it as an advance (Prepaid) by hand.";
     const missing = f.applied.find((a) => !ctx.targets.has(a.billZohoId));
     if (!reason && missing) reason = `Bill ${missing.billNumber || missing.billZohoId} is not in the app yet — Import the bills first, then preview again.`;
-    const needsBank = f.applied.some((a) => ctx.targets.get(a.billZohoId)?.type === "vendor_bill");
+    /* COGS bills: not booked here (no manual bank line) — the expense-bill part of a payment still comes in. */
+    const onCogs = f.applied.filter((a) => ctx.targets.get(a.billZohoId)?.type === "vendor_bill");
+    const booked = f.applied.filter((a) => !onCogs.includes(a)).reduce((s, a) => s + a.amount, 0);
+    if (!reason && onCogs.length) {
+      for (const a of onCogs) cogs.push({ number: f.number, date: f.date, vendor: f.vendorName, bill: a.billNumber || a.billZohoId, amount: a.amount });
+      counts.cogsAmount += onCogs.reduce((s, a) => s + a.amount, 0);
+      if (onCogs.length === f.applied.length) reason = COGS_PAYMENT_REASON;
+    }
     let verdict: PaymentPlanRow["verdict"];
     if (reason) {
       verdict = "skip"; counts.skip++;
-      const k = reason.replace(/Bill \S+ /, "A bill ");
+      const k = reason.replace(/Bill S+ /, "A bill ");
       reasons.set(k, (reasons.get(k) ?? 0) + 1);
     }
     else if (ctx.importedPayments.has(f.zohoId)) { verdict = "already"; counts.already++; }
     else {
-      verdict = "import"; counts.import++; counts.amount += f.amount - f.unapplied;
+      verdict = "import"; counts.import++; counts.amount += booked;
       const k = f.paidThrough || "(not given)";
-      const t = through.get(k) ?? { name: k, count: 0, amount: 0, needsBank: false };
-      t.count += 1; t.amount += f.amount - f.unapplied; t.needsBank ||= needsBank;
+      const t = through.get(k) ?? { name: k, count: 0, amount: 0 };
+      t.count += 1; t.amount += booked;
       through.set(k, t);
     }
-    /* Advances to book by hand: what is unapplied on a payment that comes in, or an advance-only one — never a void / refused one. */
-    if (verdict === "import" || reason?.startsWith("An advance")) counts.advanceAmount += f.unapplied;
-    rows.push({ facts: f, verdict, reason, needsBank });
+    /* Advances to book by hand: what is unapplied on a payment that comes in (or that only pays COGS bills), or an advance-only one — never a void / refused one. */
+    if (verdict === "import" || reason === COGS_PAYMENT_REASON || reason?.startsWith("An advance")) counts.advanceAmount += f.unapplied;
+    rows.push({ facts: f, verdict, reason });
   }
   return {
-    rows, counts,
+    rows, counts, cogs,
     paidThrough: [...through.values()].sort((a, b) => b.amount - a.amount),
     skipReasons: [...reasons].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count),
   };

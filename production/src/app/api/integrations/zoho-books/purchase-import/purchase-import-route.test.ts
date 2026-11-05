@@ -42,7 +42,6 @@ vi.mock("@/lib/integrations/zoho-books/purchase-import/store", () => ({
   }),
   readPaymentContext: async () => ({ fyStart: "2025-04-01", fyEnd: "2026-03-31", booksStart: "2025-04-01", lockedUntil: null, targets: st.targets, importedPayments: new Set<string>() }),
   readAppPurchasesByMonth: async () => [],
-  readBankAccounts: async () => [{ id: "b2502000-0000-0000-0000-0000000000e1", name: "HDFC", last4: "4523" }],
   readCategoryMap: async () => ({ A1: "Software" }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -101,7 +100,6 @@ describe("R-2502 purchase-import route", () => {
     expect(body.purchases.skipped[0]).toMatchObject({ number: "VB-1", reason: expect.stringMatching(/Void/) });
     expect(body.purchases.zohoByMonth[0]).toMatchObject({ month: "2025-05", count: 1, taxable: 1000, igst: 180 });
     expect(body.categories).toContain("Software");
-    expect(body.bankAccounts[0].id).toBe("b2502000-0000-0000-0000-0000000000e1");
     expect(body.payments.counts.skip).toBe(1);
     expect(st.rpc).toEqual([]);
   });
@@ -120,17 +118,17 @@ describe("R-2502 purchase-import route", () => {
     expect((await POST(req({ action: "import", fy: "2025-26", kind: "invoices", part: 0 }))).status).toBe(400);
   });
 
-  it("payments: the picked bank account per paid-through account goes with each pick; nothing else", async () => {
-    st.targets = new Map([["B1", { type: "vendor_bill" as const }]]);
+  it("payments: Zoho ids only — no bank account goes with them (no manual bank line, R-2502b)", async () => {
+    st.targets = new Map([["B1", { type: "expense" as const }]]);
     await POST(req({ action: "import", fy: "2025-26", kind: "vendorpayments", part: 0, banks: { "HDFC 4523": "b2502000-0000-0000-0000-0000000000e1" } }));
-    expect(st.rpc[0]).toEqual({ fn: "import_zoho_fy_vendor_payments", args: { p_fy: "2025-26", p_dry_run: true,
-      p_picks: [{ zoho_id: "P1", bank_account_id: "b2502000-0000-0000-0000-0000000000e1" }] } });
+    expect(st.rpc[0]).toEqual({ fn: "import_zoho_fy_vendor_payments", args: { p_fy: "2025-26", p_dry_run: true, p_picks: [{ zoho_id: "P1" }] } });
   });
 
-  it("payments: a bank account that is not this company's is refused", async () => {
+  it("payments only on COGS bills: nothing to import here — listed for Reconcile in the preview", async () => {
     st.targets = new Map([["B1", { type: "vendor_bill" as const }]]);
-    const res = await POST(req({ action: "import", fy: "2025-26", kind: "vendorpayments", part: 0, banks: { "HDFC 4523": "00000000-0000-0000-0000-000000000000" } }));
-    expect(res.status).toBe(400);
+    expect((await POST(req({ action: "import", fy: "2025-26", kind: "vendorpayments", part: 0 }))).status).toBe(409);
+    const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.payments.cogs).toEqual([expect.objectContaining({ bill: "VB-1", amount: 1180 })]);
     expect(st.rpc).toEqual([]);
   });
 

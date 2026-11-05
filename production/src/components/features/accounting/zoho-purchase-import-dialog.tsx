@@ -10,6 +10,8 @@
  *   3. Preview             — per month: Zoho vs what will come in vs already in the app (ITC, TDS).
  *   4. Check (dry run)     — the database runs the real import and rolls it back.
  *   5. Import              — bills, then expenses, then payments; each part one batch, removable.
+ *      Payments make no bank line: expense bills are marked paid; payments on COGS bills are listed
+ *      to pay in Banking → Reconcile on their 4523 debit (R-2502b).
  * Zoho is only read.
  */
 "use client";
@@ -50,13 +52,13 @@ interface Preview {
     skipped: { kind: string; number: string; date: string; vendor: string; amount: number; reason: string | null }[];
   };
   payments: null | {
-    counts: { scanned: number; import: number; already: number; skip: number; advanceAmount: number; amount: number };
+    counts: { scanned: number; import: number; already: number; skip: number; advanceAmount: number; amount: number; cogsAmount: number };
     parts: number;
-    paidThrough: { name: string; count: number; amount: number; needsBank: boolean }[];
+    paidThrough: { name: string; count: number; amount: number }[];
     skipReasons: { reason: string; count: number }[];
+    cogs: { number: string; date: string; vendor: string; bill: string; amount: number }[];
   };
   categories: string[];
-  bankAccounts: { id: string; name: string; last4: string | null }[];
   batches: (ImportBatch & { kind: Kind })[];
 }
 interface PartResult { imported: number; already: number; skipped: { number: string; reason: string }[] }
@@ -78,7 +80,6 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
   const [read, setRead] = React.useState<Partial<Record<Kind, { listed: number; detailed: number; complete: boolean }>>>({});
   const [preview, setPreview] = React.useState<Preview | null>(null);
   const [map, setMap] = React.useState<Record<string, string>>({});
-  const [banks, setBanks] = React.useState<Record<string, string>>({});
   const [check, setCheck] = React.useState<Partial<Record<Kind, PartResult>>>({});
   const [done, setDone] = React.useState<Partial<Record<Kind, PartResult>>>({});
   const stop = React.useRef(false);
@@ -129,7 +130,7 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
     const sum: PartResult = { imported: 0, already: 0, skipped: [] };
     for (let part = 0; part < partsOf(kind) && !stop.current; part++) {
       const r = await call<{ result: { imported: number; already: number; skipped: { number: string; reason: string }[] } }>(
-        { action: "import", kind, part, dryRun, ...(kind === "vendorpayments" ? { banks } : {}) });
+        { action: "import", kind, part, dryRun });
       sum.imported += r.result.imported; sum.already += r.result.already; sum.skipped.push(...r.result.skipped);
     }
     return sum;
@@ -153,7 +154,6 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
 
   const p = preview?.purchases;
   const pay = preview?.payments;
-  const needsBank = (pay?.paidThrough ?? []).filter((t) => t.needsBank);
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
       <DialogContent className="max-w-4xl">
@@ -236,20 +236,15 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
                     <b>Vendor payments:</b> {n(pay.counts.scanned)} in Zoho · <b>{n(pay.counts.import)}</b> to import ({rupee(pay.counts.amount)})
                     {pay.counts.advanceAmount > 0 && <> · advances not applied to a bill {rupee(pay.counts.advanceAmount)} (book by hand)</>}
                   </p>
-                  {needsBank.length > 0 && (
-                    <div className="space-y-1">
-                      <p className="text-xs text-ink-2">Payments on COGS bills are recorded from a bank account (matched later to its bank line). Which account?</p>
-                      {needsBank.map((t) => (
-                        <div key={t.name} className="flex items-center gap-2 text-xs">
-                          <label htmlFor={`bank-${t.name}`} className="w-48 text-ink">{t.name} ({t.count})</label>
-                          <select id={`bank-${t.name}`} className={selectCls} value={banks[t.name] ?? ""}
-                            onChange={(e) => { setBanks((b) => ({ ...b, [t.name]: e.target.value })); setCheck((c) => ({ ...c, vendorpayments: undefined })); }}>
-                            <option value="">Pick the bank account</option>
-                            {preview!.bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name}{b.last4 ? ` ··${b.last4}` : ""}</option>)}
-                          </select>
-                        </div>
-                      ))}
-                    </div>
+                  {pay.cogs.length > 0 && (
+                    <details className="text-xs">
+                      <summary className="cursor-pointer text-ink-2">
+                        {pay.cogs.length} payments on COGS bills ({rupee(pay.counts.cogsAmount)}) are not booked here — pay them in Banking → Reconcile on their 4523 debit, so the cash is counted once
+                      </summary>
+                      <ul className="max-h-40 overflow-y-auto mt-1 space-y-0.5 text-ink-2">
+                        {pay.cogs.map((c, i) => <li key={`${c.number}-${c.bill}-${i}`}>{formatDate(c.date)} · {c.vendor} · bill <span className="font-mono">{c.bill}</span> · {rupee(c.amount)}</li>)}
+                      </ul>
+                    </details>
                   )}
                   <Reasons title="Payments left out" reasons={pay.skipReasons} />
                   {pay.parts > 0 && (

@@ -5,7 +5,7 @@
 -- ineligible ITC in the cost, RCM, TDS by section; unmapped account → "Unmapped — review"; vendor
 -- created from Zoho once; rerun = already; one batch + one activity row per part; payments: an expense
 -- bill marked paid once covered, a part payment recorded, a COGS bill paid through pay_vendor_bill with
--- its Zoho TDS, a COGS payment with no bank account refused; undo while untouched, refused after.
+-- its Zoho TDS reported for Reconcile (no manual bank line, R-2502b); Reconcile afterwards counts the cash once; undo while untouched, refused after.
 -- The money comes from the server's scan (zoho_fy_scan) — the picks carry none.
 -- Self-asserting; the whole file rolls back.
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 < this file
@@ -269,27 +269,31 @@ begin
   if (r->>'imported')::int <> 0 or (r->>'already')::int <> 6 then raise exception 'FAIL 4: rerun %', r; end if;
   if (select count(*) from public.vendors where tenant_id = 'b2502000-0000-0000-0000-0000000000f0' and name = 'R2502 NewCo') <> 1 then raise exception 'FAIL 4b: vendor made twice'; end if;
 
-  -- 5. Vendor payments. COGS payment without a bank account → refused (dry run).
-  r := public.import_zoho_fy_vendor_payments('2025-26', '[{"zoho_id":"p2"}]', true);
-  if r->'skipped'->0->>'reason' not like '%Pick the bank account%' then raise exception 'FAIL 5: no bank accepted %', r; end if;
+  -- 5. Vendor payments (R-2502b): NO manual bank line. A COGS bill's payment is reported for
+  --    Reconcile, never booked; an expense bill is marked paid (no bank line).
   r := public.import_zoho_fy_vendor_payments('2025-26',
-    '[{"zoho_id":"p1"},{"zoho_id":"p2","bank_account_id":"b2502000-0000-0000-0000-0000000000e1"},{"zoho_id":"p3"},{"zoho_id":"p4"},{"zoho_id":"p5","bank_account_id":"b2502000-0000-0000-0000-0000000000e1"}]', false);
+    '[{"zoho_id":"p1"},{"zoho_id":"p2","bank_account_id":"b2502000-0000-0000-0000-0000000000e1"},{"zoho_id":"p3"},{"zoho_id":"p4"},{"zoho_id":"p5"}]', false);
   v_pay := (r->>'batch_id')::uuid;
-  if (r->>'imported')::int <> 4 or jsonb_array_length(r->'part_paid') <> 1 or (r->'advances'->0->>'amount')::int <> 500
-     or r->'skipped'->0->>'reason' not like '%advance%' or (r->>'tds')::int <> 200 then
+  if (r->>'imported')::int <> 2 or jsonb_array_length(r->'part_paid') <> 1 or (r->'advances'->0->>'amount')::int <> 500
+     or r->'skipped'->0->>'reason' not like '%advance%' or (r->>'tds')::int <> 0 then
     raise exception 'FAIL 5a: payments %', r;
   end if;
-  -- 5b. b1 paid: 1080 + TDS 100 = 1180.
+  -- 5a2. Both COGS payments listed for Reconcile; the bill's Zoho TDS once (with the first).
+  if jsonb_array_length(r->'cogs_bills') <> 2
+     or (r->'cogs_bills'->0->>'amount')::int <> 1000 or (r->'cogs_bills'->0->>'tds')::int <> 200 or r->'cogs_bills'->0->>'tds_section' <> '194C'
+     or (r->'cogs_bills'->1->>'amount')::int <> 1160 or (r->'cogs_bills'->1->>'tds')::int <> 0 then
+    raise exception 'FAIL 5a2: cogs list %', r->'cogs_bills';
+  end if;
+  -- 5b. b1 paid: 1080 + TDS 100 = 1180 — and no bank line made for it.
   select * into e from public.expenses where zoho_doc_id = 'bills:b1';
-  if not e.paid or e.paid_date <> '2025-06-10' then raise exception 'FAIL 5b: b1 not paid %', to_jsonb(e); end if;
+  if not e.paid or e.paid_date <> '2025-06-10' or e.reconciled_txn_id is not null then raise exception 'FAIL 5b: b1 not paid %', to_jsonb(e); end if;
   -- 5c. b2 part paid → still unpaid.
   if exists (select 1 from public.expenses where zoho_doc_id = 'bills:b2' and paid) then raise exception 'FAIL 5c: part payment marked paid'; end if;
-  -- 5d. b3 paid through pay_vendor_bill with TDS 194C on the manual line.
+  -- 5d. b3 (COGS) untouched: unpaid, and NO bank line anywhere for this company.
   select * into b from public.vendor_bills where zoho_doc_id = 'bills:b3';
-  if b.paid_amount <> 2360 or b.status <> 'paid' then raise exception 'FAIL 5d: b3 %', to_jsonb(b); end if;
-  if not exists (select 1 from public.bank_transactions t join public.bank_vendor_payment_lines l on l.bank_txn_id = t.id
-                  where t.matched_to_id = b.id and t.debit = 1000 and t.source = 'manual' and l.tds_amount = 200 and l.tds_section = '194C') then
-    raise exception 'FAIL 5e: no manual line with TDS';
+  if b.paid_amount <> 0 or b.status <> 'unpaid' then raise exception 'FAIL 5d: b3 booked %', to_jsonb(b); end if;
+  if exists (select 1 from public.bank_transactions t where t.tenant_id = 'b2502000-0000-0000-0000-0000000000f0') then
+    raise exception 'FAIL 5e: the import made a bank line';
   end if;
   -- 5f. Rerun payments = already.
   r := public.import_zoho_fy_vendor_payments('2025-26', '[{"zoho_id":"p1"}]', false);
@@ -303,16 +307,58 @@ begin
     if sqlerrm not like '%already has a payment%' then raise; end if;
   end;
   r := public.remove_zoho_fy_purchase_import(v_pay, 'test undo payments');
-  if (r->>'removed')::int <> 4 then raise exception 'FAIL 6a: payments undo %', r; end if;
+  if (r->>'removed')::int <> 2 then raise exception 'FAIL 6a: payments undo %', r; end if;
   if exists (select 1 from public.expenses where zoho_doc_id = 'bills:b1' and paid) then raise exception 'FAIL 6b: b1 still paid'; end if;
-  select * into b from public.vendor_bills where zoho_doc_id = 'bills:b3';
-  if b.paid_amount <> 0 or b.status <> 'unpaid'
-     or exists (select 1 from public.bank_transactions t where t.matched_to_id = b.id) then raise exception 'FAIL 6c: b3 not restored %', to_jsonb(b); end if;
   r := public.remove_zoho_fy_purchase_import(v_batch, 'test undo bills');
   if (r->>'removed')::int <> 7 then raise exception 'FAIL 6d: bills undo %', r; end if;
   if exists (select 1 from public.expenses where purchase_import_batch_id = v_batch) then raise exception 'FAIL 6e: rows left'; end if;
   if (select removed_at from public.zoho_fy_import_batches where id = v_batch) is null then raise exception 'FAIL 6f: batch not marked'; end if;
   if (select count(*) from public.activity_log where action = 'zoho_fy_purchases.import_removed') <> 2 then raise exception 'FAIL 6g: undo not logged'; end if;
+
+  -- 7. Import again, then the FY 4523 statement arrives: Reconcile banks the imported payment on the
+  --    real debit (expense bill: recorded payment; COGS bill: paid on the debit with its Zoho TDS) —
+  --    the cash is counted ONCE (one bank line each, nothing left "paid outside the bank").
+  r := public.import_zoho_fy_purchases('bills', '2025-26', pg_temp.bill_picks(), false);
+  r := public.import_zoho_fy_vendor_payments('2025-26', '[{"zoho_id":"p1"},{"zoho_id":"p2"}]', false);
+  v_pay := (r->>'batch_id')::uuid;
+  reset role;
+  insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, source)
+  values ('b2502000-0000-0000-0000-00000000aa01', 'b2502000-0000-0000-0000-0000000000f0', 'b2502000-0000-0000-0000-0000000000e1', '2025-06-10', 'NEFT R2502 MEHTA VB-1', 1080, 0, 'csv_upload'),
+         ('b2502000-0000-0000-0000-00000000aa02', 'b2502000-0000-0000-0000-0000000000f0', 'b2502000-0000-0000-0000-0000000000e1', '2025-06-11', 'NEFT R2502 MEHTA C-1', 1000, 0, 'csv_upload');
+  set local role authenticated;
+  select * into e from public.expenses where zoho_doc_id = 'bills:b1';
+  perform public.reconcile_bank_debit_to_vendor('b2502000-0000-0000-0000-00000000aa01'::uuid, 'b2502000-0000-0000-0000-0000000000d1'::uuid, null,
+    jsonb_build_array(jsonb_build_object('source', 'recorded_payment', 'doc_id', e.id, 'amount', 1080)));
+  select * into b from public.vendor_bills where zoho_doc_id = 'bills:b3';
+  perform public.reconcile_bank_debit_to_vendor('b2502000-0000-0000-0000-00000000aa02'::uuid, 'b2502000-0000-0000-0000-0000000000d1'::uuid, null,
+    jsonb_build_array(jsonb_build_object('source', 'vendor_bill', 'doc_id', b.id, 'amount', 1200, 'tds_amount', 200, 'tds_section', '194C')));
+  select * into e from public.expenses where zoho_doc_id = 'bills:b1';
+  if e.reconciled_txn_id <> 'b2502000-0000-0000-0000-00000000aa01' or not e.paid then raise exception 'FAIL 7a: b1 not banked %', to_jsonb(e); end if;
+  select * into b from public.vendor_bills where zoho_doc_id = 'bills:b3';
+  if b.paid_amount <> 1200 or b.status <> 'partial' then raise exception 'FAIL 7b: b3 %', to_jsonb(b); end if;
+  reset role;
+  -- Cash once: only the two statement lines, no manual line; the TDS on the statement line.
+  if (select count(*) from public.bank_transactions where tenant_id = 'b2502000-0000-0000-0000-0000000000f0') <> 2
+     or (select sum(debit) from public.bank_transactions where tenant_id = 'b2502000-0000-0000-0000-0000000000f0') <> 2080
+     or exists (select 1 from public.bank_transactions where tenant_id = 'b2502000-0000-0000-0000-0000000000f0' and source = 'manual') then
+    raise exception 'FAIL 7c: cash counted twice / manual line';
+  end if;
+  if (select count(*) from public.bank_vendor_payment_lines l where l.bank_txn_id = 'b2502000-0000-0000-0000-00000000aa02'
+        and l.vendor_bill_id = b.id and l.cash = 1000 and l.tds_amount = 200) <> 1 then
+    raise exception 'FAIL 7d: COGS payment line wrong';
+  end if;
+  -- b1 is no longer "paid outside the bank" (the balance sheet's unbanked bucket reads exactly this).
+  if exists (select 1 from public.expenses x where x.zoho_doc_id = 'bills:b1' and x.paid and x.reconciled_txn_id is null) then
+    raise exception 'FAIL 7e: b1 still unbanked';
+  end if;
+  set local role authenticated;
+  -- 7f. Now banked, the payments import cannot be taken back without un-reconciling first.
+  begin
+    perform public.remove_zoho_fy_purchase_import(v_pay, 'test undo after reconcile');
+    raise exception 'FAIL 7f: undo after reconcile';
+  exception when sqlstate 'P0001' then
+    if sqlerrm not like '%matched to a bank line%' then raise; end if;
+  end;
 
   raise notice 'R-2502 SQL test: all passed';
 end $$;

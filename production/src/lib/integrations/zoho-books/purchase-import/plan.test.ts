@@ -144,13 +144,19 @@ describe("buildPaymentPlan — vendor payments onto imported bills", () => {
 
   it("onto an imported expense bill: import; listed by paid-through account", () => {
     const p = buildPaymentPlan([pay()], pctx);
-    expect(p.rows[0]).toMatchObject({ verdict: "import", needsBank: false });
-    expect(p.paidThrough).toEqual([{ name: "HDFC 4523", count: 1, amount: 1180, needsBank: false }]);
+    expect(p.rows[0]).toMatchObject({ verdict: "import" });
+    expect(p.paidThrough).toEqual([{ name: "HDFC 4523", count: 1, amount: 1180 }]);
   });
-  it("onto a COGS bill: needs the app bank account it was paid from", () => {
+  it("onto a COGS bill only: not booked here (no manual bank line) — listed to pay in Reconcile", () => {
     const p = buildPaymentPlan([pay({ applied: [{ billZohoId: "BC", billNumber: "C-1", amount: 500 }], amount: 500 })], pctx);
-    expect(p.rows[0]).toMatchObject({ verdict: "import", needsBank: true });
-    expect(p.paidThrough[0].needsBank).toBe(true);
+    expect(p.rows[0]).toMatchObject({ verdict: "skip", reason: expect.stringMatching(/Reconcile/) });
+    expect(p.counts.cogsAmount).toBe(500);
+    expect(p.cogs).toEqual([{ number: "7", date: "2025-06-01", vendor: "Mehta Cloud", bill: "C-1", amount: 500 }]);
+  });
+  it("a payment on an expense bill AND a COGS bill: the expense part comes in, the COGS part is listed", () => {
+    const p = buildPaymentPlan([pay({ amount: 1680, applied: [{ billZohoId: "B1", billNumber: "VB-1", amount: 1180 }, { billZohoId: "BC", billNumber: "C-1", amount: 500 }] })], pctx);
+    expect(p.rows[0].verdict).toBe("import");
+    expect(p.counts).toMatchObject({ amount: 1180, cogsAmount: 500 });
   });
   it("bill not imported yet → left out, says import bills first", () => {
     const p = buildPaymentPlan([pay({ applied: [{ billZohoId: "NOPE", billNumber: "X", amount: 5 }] })], pctx);
