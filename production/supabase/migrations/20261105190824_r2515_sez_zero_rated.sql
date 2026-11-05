@@ -210,7 +210,7 @@ CREATE OR REPLACE FUNCTION public.create_direct_invoice(p_customer_id uuid, p_li
 AS $function$
 declare
   v_tenant   uuid := public.current_tenant_id();
-  v_is_svc   boolean := auth.role() = 'service_role';
+  v_is_svc   boolean := public.current_request_role() = 'service_role';   -- R-2487: not auth.role()
   v_cust     record;
   v_export   boolean;
   v_rate     integer;
@@ -223,9 +223,10 @@ declare
   v_r1643_problem text;
 begin
   /* R-718: role gate (Pardeep's role table, 11 Oct 2026). Trusted = service_role or a direct
-     DB session with no request role (R-454 / R-714 / R-717); everyone else needs the role. */
-  if not (coalesce(auth.role(), '') = 'service_role'
-          or (auth.role() is null
+     DB session with no request role (R-454 / R-714 / R-717); everyone else needs the role.
+     R-2487: public.current_request_role(), not auth.role() — it maps the Cloud SQL gateway logins. */
+  if not (coalesce(public.current_request_role(), '') = 'service_role'
+          or (public.current_request_role() is null
               and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
      and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing') then
     raise exception 'Only an owner, manager, accountant or billing user can create an invoice' using errcode = '42501';
