@@ -34,13 +34,21 @@ interface KindSpec {
   idKey: string; numberKey: string; contactSide: "customer" | "vendor"; amountKey: "total" | "amount";
 }
 
-export const FY_DOC_SPECS: Record<FyDocKind, KindSpec> = {
+/**
+ * R-2501: every Zoho list the FY imports READ — the counted ones (FY_DOC_KINDS) plus customer payments
+ * (receipts + TDS, kind "customerpayments"; R-2359's scope, so not one of the Count FY lists).
+ */
+export type FyReadKind = FyDocKind | "customerpayments";
+
+export const FY_DOC_SPECS: Record<FyReadKind, KindSpec> = {
   invoices: { path: "/invoices", listKey: "invoices", detailKey: "invoice", idKey: "invoice_id", numberKey: "invoice_number", contactSide: "customer", amountKey: "total" },
   creditnotes: { path: "/creditnotes", listKey: "creditnotes", detailKey: "creditnote", idKey: "creditnote_id", numberKey: "creditnote_number", contactSide: "customer", amountKey: "total" },
   bills: { path: "/bills", listKey: "bills", detailKey: "bill", idKey: "bill_id", numberKey: "bill_number", contactSide: "vendor", amountKey: "total" },
   /* An expense has no number of its own; its reference number stands in. */
   expenses: { path: "/expenses", listKey: "expenses", detailKey: "expense", idKey: "expense_id", numberKey: "reference_number", contactSide: "vendor", amountKey: "total" },
   vendorpayments: { path: "/vendorpayments", listKey: "vendorpayments", detailKey: "vendorpayment", idKey: "payment_id", numberKey: "payment_number", contactSide: "vendor", amountKey: "amount" },
+  /* R-2501: a customer payment's detail carries the invoices it was applied to (and their TDS) in `raw`. */
+  customerpayments: { path: "/customerpayments", listKey: "customerpayments", detailKey: "payment", idKey: "payment_id", numberKey: "payment_number", contactSide: "customer", amountKey: "amount" },
 };
 
 /** What the card says when the stored Zoho sign-in was made before these scopes existed (config.ts). */
@@ -82,7 +90,7 @@ export function isZohoBusy(e: unknown): boolean {
 // ── typed rows ────────────────────────────────────────────────────────────────────────────
 
 export interface ZohoFyDoc {
-  kind: FyDocKind;
+  kind: FyReadKind;
   id: string;
   number: string;
   date: string;
@@ -113,7 +121,7 @@ export interface ZohoFyDocDetail extends ZohoFyDoc {
   reverseCharge: boolean;
 }
 
-function toDoc(kind: FyDocKind, r: Record<string, unknown>): ZohoFyDoc {
+function toDoc(kind: FyReadKind, r: Record<string, unknown>): ZohoFyDoc {
   const s = FY_DOC_SPECS[kind];
   const side = s.contactSide;
   const bal = num(r.balance);
@@ -146,7 +154,7 @@ function toLine(l: Record<string, unknown>): ZohoFyLine {
   };
 }
 
-function toDetail(kind: FyDocKind, r: Record<string, unknown>): ZohoFyDocDetail {
+function toDetail(kind: FyReadKind, r: Record<string, unknown>): ZohoFyDocDetail {
   const rawLines = Array.isArray(r.line_items) ? (r.line_items as Array<Record<string, unknown>>) : [];
   /* An expense often has no line items: its own account, pre-tax amount and tax make the one line. */
   const lines = rawLines.length
@@ -177,7 +185,7 @@ function toDetail(kind: FyDocKind, r: Record<string, unknown>): ZohoFyDocDetail 
 export interface FyDocsPage { rows: ZohoFyDoc[]; more: boolean }
 
 /** One page (200) of `kind` dated inside `range` (oldest first, so a resumed walk is stable). */
-export async function listFyDocsPage(kind: FyDocKind, orgId: string, token: string, range: DateRange, page: number, f: Fetch = fetch): Promise<FyDocsPage> {
+export async function listFyDocsPage(kind: FyReadKind, orgId: string, token: string, range: DateRange, page: number, f: Fetch = fetch): Promise<FyDocsPage> {
   const s = FY_DOC_SPECS[kind];
   const p = await listPage(s.path, s.listKey, orgId, token, Math.max(1, Math.floor(page)), f, {
     date_start: assertIsoDate(range.dateStart),
@@ -189,7 +197,7 @@ export async function listFyDocsPage(kind: FyDocKind, orgId: string, token: stri
 }
 
 /** One document with its lines, taxes and TDS. */
-export async function getFyDocDetail(kind: FyDocKind, orgId: string, token: string, id: string, f: Fetch = fetch): Promise<ZohoFyDocDetail> {
+export async function getFyDocDetail(kind: FyReadKind, orgId: string, token: string, id: string, f: Fetch = fetch): Promise<ZohoFyDocDetail> {
   const s = FY_DOC_SPECS[kind];
   return toDetail(kind, await getOne(s.path, s.detailKey, orgId, token, id, f));
 }

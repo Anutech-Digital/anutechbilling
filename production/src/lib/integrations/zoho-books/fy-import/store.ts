@@ -6,7 +6,7 @@
  * Tables: zoho_fy_scan_runs, zoho_fy_scan, zoho_fy_import_batches (migration 20261105160100).
  */
 import { fetchAllRows } from "@/lib/ops/fetch-all";
-import type { FyDocKind } from "../fy-fetch";
+import type { FyReadKind } from "../fy-fetch";
 import type { ScanFacts, ScanStore, ScanRun, ListedRow } from "./scan";
 
 type Res<T = unknown> = PromiseLike<{ data: T | null; error: { message?: string; code?: string } | null }>;
@@ -20,7 +20,7 @@ export function must<T>(r: { data: T | null; error: { message?: string } | null 
   return (r.data ?? ([] as unknown)) as T;
 }
 
-export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId: string, kind: FyDocKind): ScanStore<F> {
+export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId: string, kind: FyReadKind): ScanStore<F> {
   const scan = () => db.from("zoho_fy_scan");
   const runs = () => db.from("zoho_fy_scan_runs");
   return {
@@ -90,7 +90,7 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
 }
 
 /** Every detailed document of the FY with its facts, in the scan's stable order (date, Zoho id). */
-export async function readScannedFacts<F>(db: FyImportDb, tenantId: string, kind: FyDocKind, fy: string): Promise<F[]> {
+export async function readScannedFacts<F>(db: FyImportDb, tenantId: string, kind: FyReadKind, fy: string): Promise<F[]> {
   const rows = await fetchAllRows<{ payload: F }>((from, to) => db.from("zoho_fy_scan")
     .select("payload").eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy).not("payload", "is", null)
     .order("doc_date", { ascending: true }).order("zoho_id", { ascending: true }).range(from, to));
@@ -103,7 +103,7 @@ export interface ImportBatch {
 }
 
 /** This company's import batches of one kind for the FY, newest first. */
-export async function readImportBatches(db: FyImportDb, tenantId: string, kind: FyDocKind, fy: string): Promise<ImportBatch[]> {
+export async function readImportBatches(db: FyImportDb, tenantId: string, kind: FyReadKind, fy: string): Promise<ImportBatch[]> {
   const r = await (db.from("zoho_fy_import_batches")
     .select("id, created_at, imported_count, skipped_count, already_count, taxable_total, tax_total, amount_total, removed_at")
     .eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy).order("created_at", { ascending: false }).limit(50) as Res<Array<Record<string, unknown>>>);

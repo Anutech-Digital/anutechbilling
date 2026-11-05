@@ -20,7 +20,7 @@
  * (import_zoho_fy_sales is the pattern: one block, R2499 raised at the end of a dry run).
  */
 import { ZohoApiError } from "../api";
-import { getFyDocDetail, listFyDocsPage, runPaced, fyDateRange, type FyDocKind, type PaceOpts, type ZohoFyDocDetail } from "../fy-fetch";
+import { getFyDocDetail, listFyDocsPage, runPaced, fyDateRange, type FyReadKind, type PaceOpts, type ZohoFyDocDetail } from "../fy-fetch";
 
 type Fetch = typeof fetch;
 
@@ -56,7 +56,7 @@ export interface ScanResult {
 }
 
 export async function scanStep<F extends ScanFacts>(
-  store: ScanStore<F>, kind: FyDocKind, toFacts: (d: ZohoFyDocDetail) => F,
+  store: ScanStore<F>, kind: FyReadKind, toFacts: (d: ZohoFyDocDetail) => F,
   orgId: string, token: string, fy: string, pace: PaceOpts, f: Fetch = fetch,
 ): Promise<ScanResult> {
   const range = fyDateRange(fy);
