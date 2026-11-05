@@ -194,3 +194,25 @@ describe("plan — what comes in", () => {
     expect(plan.rows[0].facts.lines[0]).toMatchObject({ hsn: "998315", qty: 100, taxable: 100000 });
   });
 });
+
+describe("review fixes", () => {
+  const noTax = (pos: string) => detail({ placeOfSupply: pos, totalPaise: 1000_00, taxTotalPaise: 0, taxes: [],
+    lines: [{ accountId: "a", accountName: "S", description: "", hsnOrSac: "1", quantity: 1, amountPaise: 1000_00, taxId: "", taxName: "", taxPercent: 0 }] });
+
+  it("a nil / exempt sale keeps its inter- or intra-state head from the place of supply", () => {
+    expect(zohoSaleFacts(noTax("KA"), SELLER).head).toBe("igst");
+    expect(zohoSaleFacts(noTax("DL"), SELLER).head).toBe("none");
+  });
+
+  it("the 40% slab is a rate; a fractional rate is not rounded into a whole-number column", () => {
+    const at = (pct: number) => detail({ totalPaise: (100 + pct) * 1000_00, taxTotalPaise: pct * 1000_00, taxes: [{ name: `IGST${pct}`, amountPaise: pct * 1000_00 }],
+      lines: [{ accountId: "a", accountName: "S", description: "", hsnOrSac: "1", quantity: 1, amountPaise: 100 * 1000_00, taxId: "", taxName: `IGST${pct}`, taxPercent: pct }] });
+    expect(zohoSaleFacts(at(40), SELLER)).toMatchObject({ taxRate: 40, problems: [] });
+    expect(zohoSaleFacts(at(1.5), SELLER).problems.join(" ")).toMatch(/GST rate 1.5% is not one this app stores/);
+  });
+
+  it("an app invoice whose number is the Zoho number is caught in the preview, as the SQL does", () => {
+    const plan = buildSalesPlan([zohoSaleFacts(detail(), SELLER)], ctx({ invoices: [{ id: "INV/25-26/0001", externalNumber: null, documentKind: "tax_invoice", zohoInvoiceId: null }] }));
+    expect(plan.rows[0]).toMatchObject({ verdict: "skip", reason: "INV/25-26/0001 is already on app invoice INV/25-26/0001." });
+  });
+});

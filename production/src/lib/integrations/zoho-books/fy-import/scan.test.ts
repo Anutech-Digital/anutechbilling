@@ -21,6 +21,7 @@ function memoryStore() {
     },
     async pendingDetails(fy, limit) { return [...rows.values()].filter((r) => r.fy === fy && !r.payload).map((r) => r.zohoId).slice(0, limit); },
     async saveDetail(_fy, id, facts) { rows.get(id)!.payload = facts; },
+    async drop(_fy, id) { rows.delete(id); },
     async counts(fy) {
       const all = [...rows.values()].filter((r) => r.fy === fy);
       return { listed: all.length, detailed: all.filter((r) => r.payload).length };
@@ -31,7 +32,7 @@ function memoryStore() {
 }
 
 /** Zoho with `n` invoices over pages of `per`; one is dated outside the FY (Zoho filter slip). */
-function fakeZoho(n: number, per = 2) {
+function fakeZoho(n: number, per = 2, gone: string[] = []) {
   const urls: URL[] = [];
   const j = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { "content-type": "application/json" } });
   const f = (async (input: string) => {
@@ -40,6 +41,7 @@ function fakeZoho(n: number, per = 2) {
     const path = u.pathname.replace("/books/v3/", "");
     if (path.startsWith("invoices/")) {
       const id = path.split("/")[1];
+      if (gone.includes(id)) return j({ code: 1002, message: "Invoice does not exist." }, 404);
       const i = Number(id.replace("inv-", ""));
       return j({ code: 0, invoice: {
         invoice_id: id, invoice_number: `INV/25-26/${String(i).padStart(4, "0")}`, date: "2025-06-01", due_date: "2025-06-15",
@@ -87,6 +89,13 @@ describe("R-2499 scan — resumable, server-side, READ only", () => {
     // 1180.50 − 180.09 − 0.41 = 1000.00 taxable; 180 GST; 1181 total (half up)
     expect(one).toMatchObject({ taxable: 1000, tax: 180, amount: 1181, head: "igst", taxRate: 18, problems: [] });
     expect(rows.get("inv-2")!.payload!.problems[0]).toMatch(/Void in Zoho/);
+  });
+
+  it("an invoice deleted in Zoho after the list is dropped, never a stuck scan", async () => {
+    const { store, rows } = memoryStore();
+    const r = await scanStep(store, "invoices", toFacts, "600", "tok", "2025-26", { ...noWait, maxCalls: 50 }, fakeZoho(4, 2, ["inv-1"]).f);   // inv-4 is outside the FY
+    expect(r).toMatchObject({ listed: 2, detailed: 2, complete: true });
+    expect(rows.has("inv-1")).toBe(false);
   });
 
   it("a rerun reads nothing again when Zoho has not changed", async () => {

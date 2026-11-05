@@ -223,6 +223,7 @@ begin
   insert into public.zoho_fy_import_batches (tenant_id, kind, fy, created_by)
   values (v_tenant, 'invoices', p_fy, auth.uid())
   returning id into v_batch;
+  perform set_config('app.zoho_sale_import', 'on', true);
 
   for v_pick in select value from jsonb_array_elements(p_picks) loop
     v_zid := btrim(coalesce(v_pick->>'zoho_invoice_id', ''));
@@ -232,6 +233,12 @@ begin
 
     if v_zid = '' or v_zid = any (v_seen) then
       v_reason := 'Listed twice or with no Zoho id.';
+    elsif exists (select 1 from public.invoices i where i.tenant_id = v_tenant and i.zoho_invoice_id = v_zid) then
+      -- Already here (a rerun) — before any other rule, so a later lock or a Zoho change never
+      -- reports a booked sale as "refused".
+      v_seen := v_seen || v_zid;
+      v_already := v_already + 1;
+      continue;
     else
       v_seen := v_seen || v_zid;
       select * into v_scan from public.zoho_fy_scan s
@@ -274,17 +281,14 @@ begin
       elsif v_taxable is null or v_tax is null or v_amount is null
          or v_taxable < 0 or v_tax < 0 or v_amount <= 0 or abs(v_amount - v_taxable - v_tax) > 1 then
         v_reason := 'Taxable, GST and total do not add up.';
-      elsif v_rate is null or v_rate < 0 or v_rate > 28 or (v_tax > 0 and v_rate = 0) then
-        v_reason := 'The GST rate cannot be read.';
+      elsif v_rate is null or v_rate not in (0, 3, 5, 12, 18, 28, 40) or (v_tax > 0 and v_rate = 0) then
+        -- invoices.tax_rate is a whole number: a 0.25 / 1.5 % rate is not rounded into it.
+        v_reason := format('GST rate %s%% is not one this app stores on an invoice — book it by hand.', coalesce(v_rate::text, '?'));
       end if;
     end if;
 
-    -- Already here? Same Zoho id → already (a rerun); same number on another invoice → skipped.
+    -- The same number on another invoice → skipped (an opening invoice is R-2504's).
     if v_reason is null then
-      if exists (select 1 from public.invoices i where i.tenant_id = v_tenant and i.zoho_invoice_id = v_zid) then
-        v_already := v_already + 1;
-        continue;
-      end if;
       select i.id, i.document_kind into v_clash from public.invoices i
        where i.tenant_id = v_tenant
          and (upper(i.external_number) = upper(v_num) or upper(i.id) = upper(v_num))
@@ -364,6 +368,7 @@ begin
       'date', v_date, 'taxable', v_taxable, 'tax', v_tax, 'inter_state', (v_p->>'head') = 'igst');
   end loop;
 
+  perform set_config('app.zoho_sale_import', '', true);
   update public.zoho_fy_import_batches
        set imported_count = v_n, skipped_count = jsonb_array_length(v_skipped), already_count = v_already,
            taxable_total = v_sum_tx, tax_total = v_sum_tax, amount_total = v_sum_amt, skipped = v_skipped
@@ -492,7 +497,7 @@ begin
 
   /* R-2499: remove_zoho_fy_sales_import() takes back one FY sales batch from Zoho (untouched).
      Zoho's numbers, not our series — no gap. Only that batch. */
-  if old.sale_import_batch_id is not null
+  if old.sale_import_batch_id is not null and old.zoho_invoice_id is not null
      and coalesce(current_setting('app.zoho_sale_remove', true), '') = old.sale_import_batch_id::text then
     return old;
   end if;
@@ -508,6 +513,37 @@ begin
     using errcode = 'restrict_violation';
 end;
 $function$;
+
+-- ── 6b. Only the import writes the Zoho id / batch; nobody changes them afterwards ───────────
+-- Review fix: an owner / accountant may UPDATE invoices (invoices_update_money_roles). Without this,
+-- a real app invoice could be tagged into a batch and then deleted by the batch undo.
+create or replace function public.tg_invoices_zoho_sale_guard()
+returns trigger
+language plpgsql
+set search_path to 'public'
+as $function$
+begin
+  /* R-2499 */
+  if tg_op = 'INSERT' then
+    if (new.zoho_invoice_id is not null or new.sale_import_batch_id is not null)
+       and coalesce(current_setting('app.zoho_sale_import', true), '') <> 'on' then
+      raise exception 'An FY sale from Zoho can only be added by Invoices → FY 2025-26 sales from Zoho.'
+        using errcode = 'check_violation';
+    end if;
+  elsif new.zoho_invoice_id is distinct from old.zoho_invoice_id
+     or new.sale_import_batch_id is distinct from old.sale_import_batch_id then
+    raise exception 'Invoice %: which Zoho invoice it came from cannot be changed.', old.id
+      using errcode = 'check_violation';
+  end if;
+  return new;
+end;
+$function$;
+revoke all on function public.tg_invoices_zoho_sale_guard() from public, anon, authenticated;
+
+drop trigger if exists trg_invoices_zoho_sale_guard on public.invoices;
+create trigger trg_invoices_zoho_sale_guard
+  before insert or update of zoho_invoice_id, sale_import_batch_id on public.invoices
+  for each row execute function public.tg_invoices_zoho_sale_guard();
 
 -- ── 7. No child bill / network copy for an imported FY sale ──────────────────────────────────
 drop trigger if exists trg_mirror_invoice_to_child on public.invoices;

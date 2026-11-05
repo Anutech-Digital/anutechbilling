@@ -240,6 +240,24 @@ begin
   exception when restrict_violation then null;
   end;
 end $$;
+-- review fix: nobody but the import tags an invoice with a Zoho id / batch, and nobody changes it
+do $$
+begin
+  begin
+    update public.invoices set zoho_invoice_id = 'zx', sale_import_batch_id = current_setting('r2499.batch')::uuid
+     where id = 'INV/25-26/R2499-06';
+    raise exception 'FAIL 7c: a real invoice was tagged into an import batch';
+  exception when check_violation then
+    if sqlerrm not like '%cannot be changed%' then raise exception 'FAIL 7c: wrong refusal %', sqlerrm; end if;
+  end;
+  begin
+    insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, external_number, zoho_invoice_id, sale_import_batch_id)
+    values ('R2499-FAKE', 'b2499000-0000-0000-0000-0000000000f0', 'b2499000-0000-0000-0000-0000000000c1', 'X', 100, 'pending', '2025-08-01', 'R2499-FAKE', 'zfake', current_setting('r2499.batch')::uuid);
+    raise exception 'FAIL 7d: an invoice with a Zoho id was inserted outside the import';
+  exception when check_violation then
+    if sqlerrm not like '%only be added by Invoices%' then raise exception 'FAIL 7d: wrong refusal %', sqlerrm; end if;
+  end;
+end $$;
 update public.invoices set paid_amount = 100 where zoho_invoice_id = 'z9' and tenant_id = 'b2499000-0000-0000-0000-0000000000f0';
 set local role authenticated;
 

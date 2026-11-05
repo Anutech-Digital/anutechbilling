@@ -67,6 +67,10 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
         .eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy).eq("zoho_id", zohoId) as Res);
       if (r.error) throw new Error("Could not save the Zoho read.");
     },
+    async drop(fy, zohoId) {
+      const r = await (scan().delete().eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy).eq("zoho_id", zohoId) as Res);
+      if (r.error) throw new Error("Could not save the Zoho read.");
+    },
     async counts(fy) {
       const head = (detailed: boolean) => {
         let q = scan().select("zoho_id", { count: "exact", head: true }).eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy);

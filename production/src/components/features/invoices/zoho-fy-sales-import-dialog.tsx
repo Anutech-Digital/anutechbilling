@@ -61,7 +61,8 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
   const [check, setCheck] = React.useState<PartResult | null>(null);
   const [done, setDone] = React.useState<PartResult | null>(null);
   const stop = React.useRef(false);
-  React.useEffect(() => () => { stop.current = true; }, []);
+  /* Set on mount too: React strict mode mounts twice, and a stale `true` would stop every loop. */
+  React.useEffect(() => { stop.current = false; return () => { stop.current = true; }; }, []);
 
   const loadPreview = React.useCallback(async () => {
     setBusy("preview"); setError(null);
@@ -71,8 +72,11 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
   }, []);
 
   async function readZoho() {
+    const again = !!(read?.complete || preview);
     setBusy("read"); setError(null); setPreview(null); setCheck(null); setDone(null);
     try {
+      /* Read again = from the start: a Zoho invoice voided, edited or added since is seen. */
+      if (again) await call({ action: "restart" });
       for (;;) {
         const r = await call<{ listed: number; detailed: number; complete: boolean; busy: boolean }>({ action: "read" });
         setRead(r);

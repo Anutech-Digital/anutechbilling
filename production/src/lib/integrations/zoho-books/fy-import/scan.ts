@@ -19,6 +19,7 @@
  * (invoices.zoho_invoice_id here); dry run + batch + audit row live in each kind's SQL import
  * (import_zoho_fy_sales is the pattern: one block, R2499 raised at the end of a dry run).
  */
+import { ZohoApiError } from "../api";
 import { getFyDocDetail, listFyDocsPage, runPaced, fyDateRange, type FyDocKind, type PaceOpts, type ZohoFyDocDetail } from "../fy-fetch";
 
 type Fetch = typeof fetch;
@@ -37,6 +38,8 @@ export interface ScanStore<F extends ScanFacts = ScanFacts> {
   /** Zoho ids listed but not yet detailed, oldest first. */
   pendingDetails(fy: string, limit: number): Promise<string[]>;
   saveDetail(fy: string, zohoId: string, facts: F): Promise<void>;
+  /** A listed document Zoho no longer has (deleted between the list and its detail). */
+  drop(fy: string, zohoId: string): Promise<void>;
   counts(fy: string): Promise<{ listed: number; detailed: number }>;
   /** Forget the scan (read again from the start). */
   reset(fy: string): Promise<void>;
@@ -79,7 +82,12 @@ export async function scanStep<F extends ScanFacts>(
         if (queue.length === 0) { complete = true; return true; }
       }
       const id = queue[0];
-      const d = await getFyDocDetail(kind, orgId, token, id, f);
+      let d;
+      try { d = await getFyDocDetail(kind, orgId, token, id, f); } catch (e) {
+        /* Deleted in Zoho after it was listed: not a document any more — never a stuck scan. */
+        if (e instanceof ZohoApiError && e.status === 404) { await store.drop(fy, id); queue.shift(); return false; }
+        throw e;
+      }
       await store.saveDetail(fy, id, toFacts(d));
       queue.shift();
       return false;

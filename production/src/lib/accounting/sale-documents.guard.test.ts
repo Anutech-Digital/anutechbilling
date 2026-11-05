@@ -168,7 +168,7 @@ const TS_SALE = new Set([
   "src/components/features/collections/owner-report.tsx",        // R-2414: invoiced in the last 30 days, for DSO / CEI
 ]);
 const TS_NOT_SALE: Record<string, string> = {
-  "src/lib/integrations/zoho-books/sales-import/store.ts": "R-2499: invoices carrying a Zoho number / Zoho id (skip what is already in the books; per-month recount of what came in from Zoho) — not a revenue or GST report",
+  "src/lib/integrations/zoho-books/sales-import/store.ts": "R-2499: every invoice's number / Zoho number / Zoho id (skip what is already in the books) and the per-month recount of what came in from Zoho — not a revenue or GST report",
   "src/lib/payments/payment-link.server.ts": "R-2415: the open invoices (by id) a Send-reminder pay link may carry, and their due for the stale-link sweep — not a list or a total",
   "src/app/(app)/renewals/last-paid-data.ts": "R-2422: the invoice numbers raised from one subscription's own quotes (by quote_id), to name what a payment paid on the Renewals row's Last paid — not a list or a total",
   "src/lib/payments/online-fee.server.ts": "R-2416: one invoice's online-fee waiver flag (by id) for the fee policy on capture — not a list or a total",

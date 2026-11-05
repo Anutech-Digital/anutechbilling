@@ -91,10 +91,16 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
   }
   const byZohoId = new Map<string, AppInvoiceRef>();
   const byNumber = new Map<string, AppInvoiceRef>();
+  /* A Zoho number is taken when any invoice carries it as its number or its id — an opening
+     invoice first (same order as the SQL import), so its R-2504 reason wins. */
+  const take = (k: string, i: AppInvoiceRef) => {
+    const prev = byNumber.get(k);
+    if (!prev || (prev.documentKind !== "opening_invoice" && i.documentKind === "opening_invoice")) byNumber.set(k, i);
+  };
   for (const i of ctx.invoices) {
     if (i.zohoInvoiceId) byZohoId.set(i.zohoInvoiceId, i);
-    if (i.externalNumber) byNumber.set(i.externalNumber.toUpperCase(), i);
-    if (i.documentKind === "opening_invoice") byNumber.set(i.id.toUpperCase(), byNumber.get(i.id.toUpperCase()) ?? i);
+    if (i.externalNumber) take(i.externalNumber.toUpperCase(), i);
+    take(i.id.toUpperCase(), i);
   }
 
   const seen = new Set<string>();

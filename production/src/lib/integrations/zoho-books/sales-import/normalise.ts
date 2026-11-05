@@ -81,6 +81,9 @@ const num = (v: unknown): number | null => {
 const paiseOf = (v: unknown): number => { const n = num(v); return n === null ? 0 : Math.round(n * 100); };
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
 
+/** The rates an invoice here can carry (invoices.tax_rate is a whole number; 40% from 22 Sep 2025). */
+export const GST_RATES: readonly number[] = [0, 3, 5, 12, 18, 28, 40];
+
 /** Zoho statuses that are not a sale at all. */
 export const NOT_A_SALE: Record<string, string> = {
   void: "Void in Zoho — not a sale, not in revenue or GST.",
@@ -134,7 +137,9 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
   const hasCs = all.some((n) => /CGST|SGST|UTGST/.test(n));
   const pos = parsePlaceOfSupply(d.placeOfSupply);
   let head: TaxHead;
-  if (taxPaise === 0) head = "none";
+  /* No tax (nil / exempt / zero-rated): the head still says inter- or intra-state (GSTR-1 / 3B
+     split nil and exempt that way) — from the place of supply against the seller's state. */
+  if (taxPaise === 0) head = pos && sellerStateCode && pos !== sellerStateCode ? "igst" : "none";
   else if (hasIgst && hasCs) { head = "none"; problems.push("Zoho charged IGST and CGST/SGST on the same invoice."); }
   else if (hasIgst) head = "igst";
   else if (hasCs) head = "cgst_sgst";
@@ -169,13 +174,14 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
   else if (rates.length === 0) {
     /* No lines to read: the rate is the tax over the taxable, when it is a GST slab. */
     const pct = taxablePaise > 0 ? Math.round((taxPaise / taxablePaise) * 1000) / 10 : 0;
-    taxRate = [5, 12, 18, 28].includes(pct) ? pct : null;
+    taxRate = GST_RATES.includes(pct) && pct > 0 ? pct : null;
     if (taxRate === null) problems.push("The GST rate cannot be read from Zoho.");
   } else {
     taxRate = null;
     problems.push(`Lines carry different GST rates (${rates.sort((a, b) => a - b).join("%, ")}%) — one invoice here has one rate.`);
   }
   if (taxRate !== null && taxPaise > 0 && taxRate === 0) problems.push("GST charged at a 0% rate.");
+  else if (taxRate !== null && !GST_RATES.includes(taxRate)) problems.push(`GST rate ${taxRate}% is not one this app stores on an invoice — book it by hand.`);
 
   const due = str(raw.due_date);
   return {

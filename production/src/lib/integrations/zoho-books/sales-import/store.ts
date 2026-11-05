@@ -24,7 +24,7 @@ export async function readPlanContext(db: SalesImportDb, tenantId: string, range
       .select("id, name").eq("tenant_id", tenantId).order("id", { ascending: true }).range(from, to)),
     fetchAllRows<{ id: string; external_number: string | null; document_kind: string; zoho_invoice_id: string | null }>((from, to) => db.from("invoices")
       .select("id, external_number, document_kind, zoho_invoice_id").eq("tenant_id", tenantId)
-      .or("external_number.not.is.null,zoho_invoice_id.not.is.null")
+      /* Every invoice: its number (id) or Zoho number may already be a scanned Zoho number. */
       .order("id", { ascending: true }).range(from, to)),
   ]);
   const t = must(tenant, "the company")[0];
