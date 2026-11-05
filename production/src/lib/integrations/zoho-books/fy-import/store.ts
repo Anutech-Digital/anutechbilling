@@ -3,7 +3,7 @@
  * company and ONE kind (Zoho list), through the server's admin client. The admin client bypasses
  * RLS, so EVERY read and write below is filtered by `tenantId` and `kind` (CLAUDE.md §17c); the
  * tenant comes from the signed-in user's own row (resolveZohoCaller), never from the request.
- * Tables: zoho_fy_scan_runs, zoho_fy_scan, zoho_fy_import_batches (migration 20261105140500).
+ * Tables: zoho_fy_scan_runs, zoho_fy_scan, zoho_fy_import_batches (migration 20261105160100).
  */
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { FyDocKind } from "../fy-fetch";
