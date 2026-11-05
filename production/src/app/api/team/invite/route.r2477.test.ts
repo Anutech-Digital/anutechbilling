@@ -1,12 +1,14 @@
 /**
- * R-2477 (R-2471 slice 3): Team → Invite for a login that already works in ANOTHER company.
- * Pinned (the owner's real path — company B invites a manager of company A):
- *   release_stale_team_invite → 'member_elsewhere', then prepare_invite_for_existing_login
- *   (session client, cleaned address):
- *     'ready'          → the invite is written, the answer says existingLogin, the email has NO
- *                        signup link (they have a login) and says they keep their company;
+ * R-2477 (R-2471 slice 3 + independent review): Team → Invite for a login that already works in
+ * ANOTHER company. Pinned:
+ *   invite_existing_login FIRST (session client, cleaned address, the role); release_stale_team_invite
+ *   only when the answer is not 'invited' / 'already_member':
+ *     'invited'        → NO team_invites row; the answer says existingLogin; the email has no signup
+ *                        link and tells them to press Accept on the invite in their app;
  *     'already_member' → 409 "already a member of your company" with a next step, nothing written;
- *     error / unknown  → the R-2469 refusal stays (e.g. migration not deployed yet).
+ *     'no_company' / 'not_found' → the plain invite (team_invites row + signup link);
+ *     54000            → 429;
+ *     error            → for a member of another company the R-2469 refusal stays.
  *   No other company is ever named.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -16,7 +18,8 @@ const OWNER = "a0000000-0000-4000-8000-000000000001";
 
 const st = vi.hoisted(() => ({
   rpcCalls: [] as Array<{ fn: string; args: Record<string, unknown> }>,
-  prep: { data: "ready" as unknown, error: null as null | { message: string } },
+  held: "member_elsewhere" as unknown,
+  ex: { data: "invited" as unknown, error: null as null | { message: string; code?: string } },
   inserts: [] as Array<Record<string, unknown>>,
   emails: [] as Array<{ to: string; text: string; subject: string }>,
 }));
@@ -43,8 +46,8 @@ vi.mock("@/lib/supabase/server", () => ({
     auth: { getUser: async () => ({ data: { user: { id: OWNER } } }) },
     rpc: async (fn: string, args: Record<string, unknown>) => {
       st.rpcCalls.push({ fn, args });
-      if (fn === "release_stale_team_invite") return { data: "member_elsewhere", error: null };
-      if (fn === "prepare_invite_for_existing_login") return st.prep;
+      if (fn === "release_stale_team_invite") return { data: st.held, error: null };
+      if (fn === "invite_existing_login") return st.ex;
       throw new Error(`unexpected rpc ${fn}`);
     },
     from: (table: string) => {
@@ -75,28 +78,31 @@ const call = (body: unknown) =>
   }) as never);
 
 beforeEach(() => {
-  st.rpcCalls = []; st.prep = { data: "ready", error: null }; st.inserts = []; st.emails = [];
+  st.rpcCalls = []; st.held = "member_elsewhere"; st.ex = { data: "invited", error: null };
+  st.inserts = []; st.emails = [];
 });
 
 const EMAIL = "ravi@betatraders.test";
 
 describe("R-2477: invite a login that works in another company", () => {
-  it("ready → invite written, existingLogin answer, email without a signup link that says they keep their company", async () => {
+  it("invited → no team_invites row, existingLogin answer, email asks them to accept (no signup link)", async () => {
     const r = await call({ email: "Ravi@BetaTraders.test", role: "sales" });
     expect(r.status).toBe(200);
-    expect(st.rpcCalls.map((c) => c.fn)).toEqual(["release_stale_team_invite", "prepare_invite_for_existing_login"]);
-    expect(st.rpcCalls[1].args).toEqual({ p_email: EMAIL });
-    expect(st.inserts).toEqual([expect.objectContaining({ tenant_id: T1, email: EMAIL, role: "sales" })]);
+    /* review: the membership invite comes FIRST, and the R-2469 clean-up (which may delete another
+       workspace's stale team_invites row) never runs for it */
+    expect(st.rpcCalls).toEqual([{ fn: "invite_existing_login", args: { p_email: EMAIL, p_role: "sales" } }]);
+    expect(st.inserts).toHaveLength(0);
     const body = await r.json() as { ok: boolean; existingLogin?: boolean };
     expect(body.existingLogin).toBe(true);
     expect(st.emails).toHaveLength(1);
     expect(st.emails[0].text).not.toMatch(/signup\?invite=/);
     expect(st.emails[0].text).toMatch(/you keep your current company/i);
-    expect(st.emails[0].text).toMatch(/switch between your companies/i);
+    expect(st.emails[0].text).toMatch(/press Accept/i);
+    expect(st.emails[0].text).toMatch(/Nothing changes until you accept/i);
   });
 
   it("already a member here → 409 with a next step, nothing written, no email", async () => {
-    st.prep = { data: "already_member", error: null };
+    st.ex = { data: "already_member", error: null };
     const r = await call({ email: EMAIL, role: "sales" });
     expect(r.status).toBe(409);
     const { error } = await r.json() as { error: string };
@@ -106,20 +112,30 @@ describe("R-2477: invite a login that works in another company", () => {
     expect(st.emails).toHaveLength(0);
   });
 
-  it("the membership step failing keeps the R-2469 refusal (never a half-done invite)", async () => {
-    st.prep = { data: null, error: { message: "function does not exist" } };
+  it.each(["no_company", "not_found"])("%s → the plain invite (team_invites row + signup link)", async (outcome) => {
+    st.ex = { data: outcome, error: null };
+    st.held = "none";
+    const r = await call({ email: EMAIL, role: "sales" });
+    expect(r.status).toBe(200);
+    expect(st.inserts).toEqual([expect.objectContaining({ tenant_id: T1, email: EMAIL, role: "sales" })]);
+    expect(st.emails[0].text).toMatch(/signup\?invite=tok-123/);
+    expect((await r.json() as { existingLogin?: boolean }).existingLogin).toBeUndefined();
+  });
+
+  it("over its hourly cap → 429, nothing written", async () => {
+    st.ex = { data: null, error: { code: "54000", message: "Too many invites in the last hour." } };
+    const r = await call({ email: EMAIL, role: "sales" });
+    expect(r.status).toBe(429);
+    expect(st.inserts).toHaveLength(0);
+  });
+
+  it("the step failing keeps the R-2469 refusal for a member of another company (never a half-done invite)", async () => {
+    st.ex = { data: null, error: { message: "function does not exist" } };
     const r = await call({ email: EMAIL, role: "sales" });
     expect(r.status).toBe(409);
     const { error } = await r.json() as { error: string };
     expect(error).toMatch(/member of another company/i);
     expect(error).not.toMatch(/function does not exist/);
-    expect(st.inserts).toHaveLength(0);
-  });
-
-  it("an unknown answer also keeps the refusal", async () => {
-    st.prep = { data: "something-else", error: null };
-    const r = await call({ email: EMAIL, role: "sales" });
-    expect(r.status).toBe(409);
     expect(st.inserts).toHaveLength(0);
   });
 });

@@ -62,7 +62,9 @@ const ROLE_TONE: Record<Role, "success" | "info" | "muted" | "warning"> = {
 interface Member { id: string; full_name: string | null; email: string | null; role: Role; initials: string | null; color: string | null; is_active: boolean | null; can_view_deals: boolean | null; manager_id: string | null; gets_new_leads: boolean | null;
   /* R-2477 (company_members): last day in THIS company, and whether this is the company they work in right now. */
   access_ends_on?: string | null; is_selected?: boolean | null; }
-interface Invite { id: string; email: string; role: Role; created_at: string; }
+/* R-2477: "membership" = an invite to a login that already works in another company (it accepts it
+   itself, membership_invites); "team" = the plain invite (team_invites). Both are withdrawn here. */
+interface Invite { id: string; email: string; role: Role; created_at: string; source?: "team" | "membership"; }
 
 export default function TeamPage() {
   const { data: me } = useCurrentUser();
@@ -104,16 +106,32 @@ export default function TeamPage() {
         .is("accepted_at", null)
         .order("created_at", { ascending: false });
       if (error) throw error;
-      return (data ?? []) as Invite[];
+      const plain = ((data ?? []) as Invite[]).map((i) => ({ ...i, source: "team" as const }));
+      /* R-2477: invites waiting for a login of another company to accept them. Only the typed
+         address is known here. A failure of this one list (e.g. migration not deployed yet) must not
+         hide the plain invites. */
+      const { data: mem, error: memErr } = await (supabase.from as unknown as (t: "membership_invites") => {
+        select(c: string): { is(c: string, v: null): { gt(c: string, v: string): { order(c: string, o: { ascending: boolean }): PromiseLike<{ data: Invite[] | null; error: unknown }> } } };
+      }).call(supabase, "membership_invites")
+        .select("id, email, role, created_at")
+        .is("accepted_at", null)
+        /* an expired one can no longer be accepted — invite again to renew it */
+        .gt("expires_at", new Date().toISOString())
+        .order("created_at", { ascending: false });
+      const pending = memErr ? [] : ((mem ?? []) as Invite[]).map((i) => ({ ...i, source: "membership" as const }));
+      return [...plain, ...pending];
     },
     enabled: canManage,
   });
   const invites = React.useMemo(() => invitesQ.data ?? [], [invitesQ.data]);
 
   const removeInvite = useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async (inv: Invite) => {
       const supabase = createClient();
-      const { error } = await supabase.from("team_invites").delete().eq("id", id);
+      const table = inv.source === "membership" ? "membership_invites" : "team_invites";
+      const { error } = await (supabase.from as unknown as (t: string) => {
+        delete(): { eq(c: string, v: string): PromiseLike<{ error: unknown }> };
+      }).call(supabase, table).delete().eq("id", inv.id);
       if (error) throw error;
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["team", "invites"] }); toast.success("Invite removed"); },
@@ -366,7 +384,7 @@ export default function TeamPage() {
                         ? <Badge kind="muted" dot>Stale — safe to delete</Badge>
                         : <Badge kind="warning" dot>Pending</Badge>}
                       <IconButton icon="trash" variant="ghost" size="sm" aria-label="Remove invite"
-                        onClick={() => removeInvite.mutate(inv.id)} />
+                        onClick={() => removeInvite.mutate(inv)} />
                     </div>
                   </td>
                 </tr>
@@ -487,7 +505,7 @@ export default function TeamPage() {
                     variant="ghost"
                     size="sm"
                     aria-label="Remove invite"
-                    onClick={() => removeInvite.mutate(inv.id)}
+                    onClick={() => removeInvite.mutate(inv)}
                   />
                 </div>
               </Card>

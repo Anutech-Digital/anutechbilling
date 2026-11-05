@@ -1,18 +1,18 @@
 -- R-2477 — memberships slice 3: Invite / Claim / "Remove from this company" (R-2471).
 -- Migration: *_r2477_membership_invite_claim_remove.sql   Spec: docs/specs/memberships.md §6
 --
--- The owner's real path (card doneWhen): Excel (B) invites pratik while he is a manager in
--- Anutech (A); he signs in; B claims him → he is in A AND B. A removes him → he lands only in B,
+-- The owner's real path (card doneWhen): company B invites pratik while he is a manager in
+-- company A; he accepts the invite himself → he is in A AND B. A removes him → he lands only in B,
 -- his A records keep their author, his users row stays.
 --
--- Before the migration prepare_invite_for_existing_login / remove_company_member / company_members
--- do not exist and Claim refuses a member of a real company, so this file FAILS (case 1 / 3). With it:
+-- Before the migrations remove_company_member / company_members / invite_existing_login do not
+-- exist, so this file FAILS (case 1). With them (R-2477 + its review fixes, 20261105192420):
 --   1. grants: anon calls none of the new functions; the internal mover is callable by no app role;
 --      every new definer function pins search_path.
---   2. Invite: B's owner gets 'ready' (A's used invite row is cleared, nothing written in A), the
---      invite row can be written; A's owner gets 'already_member'; B's sales is refused.
---   3. Claim: refused until he signs in after the invite (R-721 handshake); then listed and
---      claimed → 'added', membership in B, his selected company is still A, no A name returned.
+--   2. Invite: B's owner gets 'invited' (a membership invite; nothing written or deleted in A);
+--      A's owner gets 'already_member'; B's sales is refused.
+--   3. Consent: B can neither list nor claim him, even after a routine sign-in; he sees B's invite
+--      himself (my_company_invites) and accepts it → membership in B, his selected company stays A.
 --   4. Cross-tenant: B's owner sees none of A's users / memberships / leads; company_members() of B
 --      lists him (and nobody from A); his own company_members() (A selected) lists A only.
 --   5. update_company_member: B's owner changes his B role — his A role (users mirror) stays; a sales
@@ -25,8 +25,9 @@
 --   7. Remove with no other company: membership ended, users row stays, inactive, no tenant.
 --   8. Owner removes another owner (another owner left); the last owner cannot be removed/demoted.
 --   9. users_tenant_delete is gone: an owner's DELETE of a teammate's users row deletes nothing.
---  10. Re-invite + Claim after Remove → 'rejoined' (same membership row re-opened); he stays in B.
---  11. Re-claim of a login removed to "none" → 'rejoined' and that company is selected again.
+--  10. Re-invite after Remove → he accepts (same membership row re-opened); he stays in B.
+--  11. A login removed to "none" → invite_existing_login says no_company → plain invite + Claim
+--      (listed with the address only) → 'rejoined' and that company is selected again.
 --  12. switch_company still works both ways after all of this.
 --
 -- SAFETY: synthetic tenants + identities, one transaction ending in ROLLBACK.
@@ -86,8 +87,9 @@ do $$
 declare
   f text;
 begin
-  foreach f in array array['public.prepare_invite_for_existing_login(text)', 'public.remove_company_member(uuid)',
-                           'public.company_members()', 'public.update_company_member(uuid,jsonb)'] loop
+  foreach f in array array['public.invite_existing_login(text,public.user_role)', 'public.remove_company_member(uuid)',
+                           'public.company_members()', 'public.update_company_member(uuid,jsonb)',
+                           'public.my_company_invites()', 'public.accept_company_invite(uuid)'] loop
     if has_function_privilege('anon', f, 'execute') then raise exception 'FAIL 1: anon may execute %', f; end if;
     if not has_function_privilege('authenticated', f, 'execute') then raise exception 'FAIL 1: authenticated may not execute %', f; end if;
   end loop;
@@ -96,7 +98,9 @@ begin
     raise exception 'FAIL 1: the internal mover is callable by an app role';
   end if;
   if exists (select 1 from pg_proc p
-              where p.oid in ('public.prepare_invite_for_existing_login(text)'::regprocedure,
+              where p.oid in ('public.invite_existing_login(text,public.user_role)'::regprocedure,
+                              'public.my_company_invites()'::regprocedure,
+                              'public.accept_company_invite(uuid)'::regprocedure,
                               'public.remove_company_member(uuid)'::regprocedure,
                               'public.company_members()'::regprocedure,
                               'public.update_company_member(uuid,jsonb)'::regprocedure,
@@ -121,36 +125,35 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
   v := public.release_stale_team_invite('r2477-pratik@example.test');
   if v <> 'member_elsewhere' then raise exception 'FAIL 2: release said % (expected member_elsewhere)', v; end if;
-  v := public.prepare_invite_for_existing_login('  R2477-Pratik@Example.test ');
-  if v <> 'ready' then raise exception 'FAIL 2: prepare said % (expected ready)', v; end if;
-  insert into public.team_invites (tenant_id, email, role, invited_by)
-    values ('c2477000-0000-0000-0000-0000000000f2', 'r2477-pratik@example.test', 'sales', 'c2477000-0000-0000-0000-0000000000b1');
+  v := public.invite_existing_login('  R2477-Pratik@Example.test ', 'sales');
+  if v <> 'invited' then raise exception 'FAIL 2: invite_existing_login said % (expected invited)', v; end if;
 
   -- A's owner: already a member there
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000a1', 'role', 'authenticated')::text, true);
-  v := public.prepare_invite_for_existing_login('r2477-pratik@example.test');
+  v := public.invite_existing_login('r2477-pratik@example.test', 'manager');
   if v <> 'already_member' then raise exception 'FAIL 2: A''s owner got % (expected already_member)', v; end if;
-  if exists (select 1 from public.team_invites where tenant_id = 'c2477000-0000-0000-0000-0000000000f1' and email = 'r2477-pratik@example.test') then
-    raise exception 'FAIL 2: A''s used invite row is still there';
-  end if;
 
   -- B's sales
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000b2', 'role', 'authenticated')::text, true);
   begin
-    perform public.prepare_invite_for_existing_login('r2477-pratik@example.test');
+    perform public.invite_existing_login('r2477-pratik@example.test', 'sales');
   exception when insufficient_privilege then get stacked diagnostics v_msg = message_text;
   end;
-  if v_msg is null then raise exception 'FAIL 2: a sales user could prepare an invite'; end if;
-  raise notice 'PASS 2: invite of a login in another company is ready (used row cleared); already_member; non-owner refused';
+  if v_msg is null then raise exception 'FAIL 2: a sales user could invite'; end if;
+  raise notice 'PASS 2: invite of a login in another company → membership invite; already_member; non-owner refused';
 end $$;
 
 reset role;
 do $$
 begin
+  -- R-2477 review: nothing written or deleted in A (A's accepted invite row stays: its history)
   if exists (select 1 from public.activity_log a, r2477_mark k
               where a.id > k.last_id and a.tenant_id = 'c2477000-0000-0000-0000-0000000000f1'
-                and a.action not in ('team_invite.address_checked')) then
+                and a.action not in ('team_invite.address_checked', 'team_invite.existing_login')) then
     raise exception 'FAIL 2: the invite wrote a line in A (tells A another company invited their member)';
+  end if;
+  if not exists (select 1 from public.team_invites where tenant_id = 'c2477000-0000-0000-0000-0000000000f1' and email = 'r2477-pratik@example.test') then
+    raise exception 'FAIL 2: A''s accepted invite row was deleted by B''s invite';
   end if;
 end $$;
 set local role authenticated;
@@ -164,34 +167,47 @@ declare
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
   select count(*) into v_n from public.list_stranded_auth_users() s where s.email = 'r2477-pratik@example.test';
-  if v_n <> 0 then raise exception 'FAIL 3: listed before he signed in after the invite'; end if;
-  begin
-    perform public.merge_stranded_user_into_tenant('r2477-pratik@example.test', 'c2477000-0000-0000-0000-0000000000f2', 'sales');
-  exception when insufficient_privilege then get stacked diagnostics v_msg = message_text;
-  end;
-  if v_msg is null or v_msg not ilike '%sign in once%' then
-    raise exception 'FAIL 3: claim before his sign-in was not refused with the generic next step: %', v_msg;
-  end if;
+  if v_n <> 0 then raise exception 'FAIL 3: a login of another company is offered for Claim'; end if;
 end $$;
 
 reset role;
+-- R-2477 review: even after a routine sign-in, B cannot claim him — he accepts himself.
 update auth.users set last_sign_in_at = now() + interval '1 second' where id = 'c2477000-0000-0000-0000-0000000000c1';
+-- the R-721 path's own precondition, as if written straight through the API (the route uses
+-- membership_invites for him): an open team_invites row in B (A's old row moved out of the way)
+delete from public.team_invites where email = 'r2477-pratik@example.test';
+insert into public.team_invites (tenant_id, email, role, invited_by, created_at)
+  values ('c2477000-0000-0000-0000-0000000000f2', 'r2477-pratik@example.test', 'sales', 'c2477000-0000-0000-0000-0000000000b1', now() - interval '1 hour');
 set local role authenticated;
 
 do $$
 declare
   v jsonb;
   v_n int;
+  v_msg text;
+  v_inv uuid;
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
   select count(*) into v_n from public.list_stranded_auth_users() s where s.email = 'r2477-pratik@example.test';
-  if v_n <> 1 then raise exception 'FAIL 3: not listed for Claim after signing in (% rows)', v_n; end if;
-  v := public.merge_stranded_user_into_tenant('r2477-pratik@example.test', 'c2477000-0000-0000-0000-0000000000f2', 'sales');
-  if v->>'action' <> 'added' then raise exception 'FAIL 3: claim action % (expected added)', v; end if;
-  if v->>'old_tenant_name' is not null or (v->>'old_tenant_deleted')::boolean then
-    raise exception 'FAIL 3: claim names / deletes the other company: %', v;
+  if v_n <> 0 then raise exception 'FAIL 3: listed for Claim after a routine sign-in (% rows)', v_n; end if;
+  begin
+    perform public.merge_stranded_user_into_tenant('r2477-pratik@example.test', 'c2477000-0000-0000-0000-0000000000f2', 'sales');
+  exception when insufficient_privilege then get stacked diagnostics v_msg = message_text;
+  end;
+  if v_msg is null or v_msg not ilike '%accept it themselves%' then
+    raise exception 'FAIL 3: B claimed a login of another company without his agreement: %', v_msg;
   end if;
-  raise notice 'PASS 3: claim refused before his sign-in, then lists + adds a membership (no other-company name)';
+
+  -- pratik himself sees the invite and accepts it
+  perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000c1', 'role', 'authenticated')::text, true);
+  select i.invite_id into v_inv from public.my_company_invites() i
+   where i.company_name = 'R2477 Excel Co' and i.role = 'sales';
+  if v_inv is null then raise exception 'FAIL 3: pratik does not see B''s invite'; end if;
+  v := public.accept_company_invite(v_inv);
+  if (v->>'selected')::boolean then raise exception 'FAIL 3: accepting moved his selected company away from A: %', v; end if;
+  select count(*) into v_n from public.my_company_invites();
+  if v_n <> 0 then raise exception 'FAIL 3: the accepted invite is still listed'; end if;
+  raise notice 'PASS 3: B cannot claim him (no list, refused); he sees and accepts the invite himself';
 end $$;
 
 reset role;
@@ -209,8 +225,8 @@ begin
                   and tenant_id = 'c2477000-0000-0000-0000-0000000000f1' and ended_at is null and is_active) then
     raise exception 'FAIL 3: his A membership was ended by the claim';
   end if;
-  if exists (select 1 from public.team_invites where tenant_id = 'c2477000-0000-0000-0000-0000000000f2' and accepted_at is null) then
-    raise exception 'FAIL 3: B''s invite still open after the claim';
+  if exists (select 1 from public.membership_invites where tenant_id = 'c2477000-0000-0000-0000-0000000000f2' and accepted_at is null) then
+    raise exception 'FAIL 3: B''s invite still open after he accepted';
   end if;
 end $$;
 set local role authenticated;
@@ -474,15 +490,16 @@ begin
   raise notice 'PASS 9: a teammate''s users row cannot be deleted from the app';
 end $$;
 
--- ── 10. Re-invite + Claim after Remove → rejoined ───────────────────────────────────
+-- ── 10. Re-invite after Remove → he accepts (rejoined); solo → Claim ───────────────────────────────────
 do $$
 declare v text; j jsonb;
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000a1', 'role', 'authenticated')::text, true);
-  v := public.prepare_invite_for_existing_login('r2477-pratik@example.test');
-  if v <> 'ready' then raise exception 'FAIL 10: re-invite prepare said %', v; end if;
-  insert into public.team_invites (tenant_id, email, role, invited_by)
-    values ('c2477000-0000-0000-0000-0000000000f1', 'r2477-pratik@example.test', 'sales', 'c2477000-0000-0000-0000-0000000000a1');
+  -- pratik works in B now: a membership invite he accepts; solo works nowhere: invite + Claim
+  v := public.invite_existing_login('r2477-pratik@example.test', 'sales');
+  if v <> 'invited' then raise exception 'FAIL 10: re-invite of pratik said %', v; end if;
+  v := public.invite_existing_login('r2477-solo@example.test', 'support');
+  if v <> 'no_company' then raise exception 'FAIL 11: re-invite of solo said % (expected no_company)', v; end if;
   insert into public.team_invites (tenant_id, email, role, invited_by)
     values ('c2477000-0000-0000-0000-0000000000f1', 'r2477-solo@example.test', 'support', 'c2477000-0000-0000-0000-0000000000a1');
 end $$;
@@ -497,10 +514,16 @@ declare j jsonb; v_n int;
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000a1', 'role', 'authenticated')::text, true);
   select count(*) into v_n from public.list_stranded_auth_users() s
-   where s.email in ('r2477-pratik@example.test', 'r2477-solo@example.test');
-  if v_n <> 2 then raise exception 'FAIL 10: % of 2 removed+re-invited logins listed for Claim', v_n; end if;
-  j := public.merge_stranded_user_into_tenant('r2477-pratik@example.test', 'c2477000-0000-0000-0000-0000000000f1', 'sales');
-  if j->>'action' <> 'rejoined' then raise exception 'FAIL 10: action % (expected rejoined)', j; end if;
+   where s.email = 'r2477-solo@example.test' and s.full_name is null and s.last_sign_in_at is null and s.created_at is null;
+  if v_n <> 1 then raise exception 'FAIL 11: solo (works nowhere) not listed for Claim with the address only'; end if;
+  select count(*) into v_n from public.list_stranded_auth_users() s where s.email = 'r2477-pratik@example.test';
+  if v_n <> 0 then raise exception 'FAIL 10: pratik (works in B) listed for Claim'; end if;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000c1', 'role', 'authenticated')::text, true);
+  j := public.accept_company_invite((select i.invite_id from public.my_company_invites() i where i.company_name = 'R2477 Anu Co'));
+  if (j->>'selected')::boolean then raise exception 'FAIL 10: accepting A moved him away from B'; end if;
+
+  perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000a1', 'role', 'authenticated')::text, true);
   j := public.merge_stranded_user_into_tenant('r2477-solo@example.test', 'c2477000-0000-0000-0000-0000000000f1', 'support');
   if j->>'action' <> 'rejoined' then raise exception 'FAIL 11: solo action % (expected rejoined)', j; end if;
 
@@ -521,7 +544,7 @@ begin
   if public.current_tenant_id() is distinct from 'c2477000-0000-0000-0000-0000000000f1'::uuid then
     raise exception 'FAIL 11: re-claimed solo login has no company';
   end if;
-  raise notice 'PASS 10-12: re-invite + Claim re-opens the same membership; solo login back in A; switch works';
+  raise notice 'PASS 10-12: re-invite → he accepts (same membership re-opened); solo (works nowhere) → Claim; switch works';
 end $$;
 
 reset role;

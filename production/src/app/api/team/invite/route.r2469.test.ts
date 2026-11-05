@@ -102,7 +102,9 @@ const EMAIL = "ravi@acme.test";
 describe("R-2469: invite an address held by another workspace", () => {
   it("asks release_stale_team_invite first, with the cleaned address", async () => {
     await call({ email: "Ravi@Acme.test", role: "sales" });
-    expect(st.rpcCalls).toEqual([{ fn: "release_stale_team_invite", args: { p_email: EMAIL } }]);
+    /* R-2477: the existing-login step (invite_existing_login) runs first; this mock answers it with
+       an unknown value, so the R-2469 check follows. */
+    expect(st.rpcCalls.find((c) => c.fn === "release_stale_team_invite")).toEqual({ fn: "release_stale_team_invite", args: { p_email: EMAIL } });
   });
 
   /* R-2477: a member elsewhere is now invited (route.r2477.test.ts). This mock answers every rpc

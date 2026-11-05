@@ -18,7 +18,7 @@ const db = vi.hoisted(() => ({
 
 function builder(table: string) {
   const b = {
-    select: () => b, order: () => b, is: () => b, eq: () => b, limit: () => b,
+    select: () => b, order: () => b, is: () => b, eq: () => b, limit: () => b, gt: () => b,
     then: (ok: (v: Result) => unknown, bad?: (e: unknown) => unknown) => {
       const p: Promise<Result> = table === "users" && db.users ? db.users() : Promise.resolve({ data: [], error: null });
       return p.then(ok, bad);

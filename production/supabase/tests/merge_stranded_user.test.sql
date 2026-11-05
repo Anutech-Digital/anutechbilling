@@ -2,8 +2,9 @@
 -- Every block is rolled back — safe to run against any database, including prod.
 --
 -- Proves, on real fixtures rather than mocks:
---   1. MOVE + DELETE  — a colleague in an accidental EMPTY workspace is moved, and
---                       that workspace is deleted.
+--   1. KEEP (owned)   — a colleague who OWNS an accidental EMPTY workspace and asked to join
+--                       (their join request is their agreement) gets a membership here; their
+--                       own workspace is never moved out of or deleted (R-2477 review).
 --   2. ATTACH         — an auth account with no public.users row anywhere gets one.
 --   3. KEEP (data)    — a workspace holding business data is not touched AT ALL:
 --                       the user is NOT moved and the workspace is NOT deleted.
@@ -30,7 +31,7 @@
 -- Run by hand — these are NOT in CI and NOT in the Stop hook (CLAUDE.md §25.2).
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 1) MOVE + DELETE: empty accidental workspace is cleared away
+-- 1) KEEP (owned): the owner of an empty accidental workspace who asked to join gets a membership (R-2477)
 -- ─────────────────────────────────────────────────────────────────────────────
 begin;
 select set_config('request.jwt.claims','{"role":"service_role"}',true);
@@ -53,21 +54,22 @@ do $$ declare r jsonb; n int; t int; begin
 
   r := public.merge_stranded_user_into_tenant(
          'stray@m1.in','2222aaaa-0000-0000-0000-000000000001','support');
-
-  if r->>'action' <> 'moved' then
-    raise exception 'FAIL 1: expected action=moved, got %', r->>'action'; end if;
-  if (r->>'old_tenant_deleted')::boolean is not true then
-    raise exception 'FAIL 1: expected the empty workspace to be deleted'; end if;
+  if r->>'action' <> 'added' or (r->>'old_tenant_deleted')::boolean then
+    raise exception 'FAIL 1: expected a membership (added), nothing deleted — got %', r; end if;
+  if not exists (select 1 from public.tenant_memberships
+                  where user_id='3333bbbb-0000-0000-0000-000000000002'
+                    and tenant_id='2222aaaa-0000-0000-0000-000000000001' and role='support' and ended_at is null) then
+    raise exception 'FAIL 1: no support membership in Main Co'; end if;
 
   select count(*) into n from public.users
    where id='3333bbbb-0000-0000-0000-000000000002'
-     and tenant_id='2222aaaa-0000-0000-0000-000000000001' and role='support';
-  if n<>1 then raise exception 'FAIL 1: user not moved with the requested role'; end if;
+     and tenant_id='2222aaaa-0000-0000-0000-000000000002' and role='owner';
+  if n<>1 then raise exception 'FAIL 1: the workspace owner was moved'; end if;
 
   select count(*) into t from public.tenants where id='2222aaaa-0000-0000-0000-000000000002';
-  if t<>0 then raise exception 'FAIL 1: accidental tenant survived'; end if;
+  if t<>1 then raise exception 'FAIL 1: their own workspace was deleted'; end if;
 
-  raise notice 'PASS 1: moved + empty workspace deleted';
+  raise notice 'PASS 1: owner of an empty workspace who asked to join gets a membership; their workspace stays';
 end $$;
 rollback;
 

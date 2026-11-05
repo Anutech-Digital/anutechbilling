@@ -148,7 +148,8 @@ begin
               and label ilike '%Acme%') then
     insert into r2469_fail(label, detail) values ('audit', 'the other workspace''s line names the caller'); end if;
 
-  -- ── end to end: invite → sign in → claim ────────────────────────────────
+  -- ── end to end (R-2477 review): Ravi OWNS his blank workspace → no Claim; A invites his login,
+  --    he accepts himself → he works in A; his blank workspace is kept ───────────────────────
   update auth.users set last_sign_in_at = now() where id = 'e2469000-0000-4000-8000-0000000000b1';
   begin
     insert into public.team_invites (tenant_id, email, role, invited_by, created_at)
@@ -159,13 +160,26 @@ begin
     msg := sqlerrm;
   end;
   perform set_config('request.jwt.claims', '', true);
+  if msg is null or msg not like '%accept it themselves%' then
+    insert into r2469_fail(label, detail) values ('end to end claim', 'claim of a workspace owner was not refused with the accept step: ' || coalesce(msg, 'it succeeded'));
+  end if;
+  begin
+    perform set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', a), true);
+    perform public.invite_existing_login('r2469-ravi@example.test', 'sales');
+    perform set_config('request.jwt.claims', '{"sub":"e2469000-0000-4000-8000-0000000000b1","role":"authenticated"}', true);
+    perform public.accept_company_invite((select i.invite_id from public.my_company_invites() i where i.tenant_id = ta));
+    msg := null;
+  exception when others then
+    msg := sqlerrm;
+  end;
+  perform set_config('request.jwt.claims', '', true);
   if msg is not null then
-    insert into r2469_fail(label, detail) values ('end to end claim', 'claim refused: ' || msg);
+    insert into r2469_fail(label, detail) values ('end to end accept', 'invite / accept failed: ' || msg);
   else
     if (select tenant_id from public.users where id = 'e2469000-0000-4000-8000-0000000000b1') is distinct from ta then
-      insert into r2469_fail(label, detail) values ('end to end claim', 'Ravi is not in A'); end if;
-    if exists (select 1 from public.tenants where id = 'e2469000-0000-0000-0000-0000000000b0') then
-      insert into r2469_fail(label, detail) values ('end to end claim', 'blank workspace was not removed'); end if;
+      insert into r2469_fail(label, detail) values ('end to end accept', 'Ravi is not working in A after accepting'); end if;
+    if not exists (select 1 from public.tenants where id = 'e2469000-0000-0000-0000-0000000000b0') then
+      insert into r2469_fail(label, detail) values ('end to end accept', 'his own blank workspace was deleted'); end if;
   end if;
 end $$;
 

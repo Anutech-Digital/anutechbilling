@@ -289,3 +289,64 @@ Not in slice 3 (follow-ups): other pickers (assignee, chat #general R-2296, repo
 `users` of the selected company, so a member working in another company right now is not offered
 there until they switch; an invited existing login has no in-app "accept" — they sign in once and
 the owner presses Claim.
+
+### 6.1 Independent review fixes (R-2477, 5 Nov 2026 — review verdict BLOCK)
+
+Migration `20261105192420_r2477_review_consent_email_guard.sql`, SQL test
+`supabase/tests/r2477_review_consent_email_guard.test.sql` (its case R1 is the review's takeover
+proof: red before, green after). Decisions by the coordinator under Pardeep's delegation.
+
+- **Email takeover (BLOCK).** `users.email` is what Auth.js `linkOAuthUser` maps a Google sign-in
+  to. `guard_privileged_user_columns` now refuses a change of `users.email` by anyone but the login
+  itself while that login has a non-ended membership in ANOTHER company ("only they can change their
+  email"). Server paths with no user (OAuth re-link, scripts) are unchanged. Same rule as the
+  temporary-password route (§6).
+- **Consent.** A routine sign-in is no agreement to join another company. For a login that works in
+  another company, Team → Invite calls `invite_existing_login(email, role)` (owner + MFA, its own
+  30-an-hour cap counting every call, audit line in the caller's company, nothing written or deleted
+  in any other company) → a row in `public.membership_invites` (tenant, user, the typed address,
+  role, 7-day expiry). The login sees it in a banner at the top of the app ("Invite from <company> to
+  join as <role>. You keep your current company." — Accept / Not now) via `my_company_invites()`, and
+  accepts it with POST `/api/team/invites/:id/accept` → `accept_company_invite(id)` (only the invited
+  login, not expired, MFA). The inviting company sees only the typed address (owner-only RLS on the
+  table; Pending invites lists it and can withdraw it). Claim refuses such a login with that next
+  step; `list_stranded_auth_users` lists only logins that work in NO company right now, and for a
+  login with a profile returns the address only (no name, account age or last sign-in).
+  `'no_company'` (removed everywhere) and `'not_found'` keep the plain invite + Claim / Google path.
+- **Owned workspace.** Claim never moves out of, or deletes, a workspace the login OWNS (its
+  membership there is owner) — the owner of an accidental empty workspace accepts an invite instead;
+  `accept_company_invite` then makes the new company the selected one when the old one is unusable or
+  a blank workspace of their own (only them, no records). Nothing is deleted. A trusted (server) Claim
+  of such an owner adds a membership too.
+- **prepare_invite_for_existing_login dropped** — it deleted other companies' accepted-invite rows.
+- `company_members().is_selected` is returned to owners only; `membership_invites` is bookkeeping for
+  `tenant_holds_business_records` and the Claim scan.
+
+Changed old tests to the new intended behaviour (not loosened): `merge_stranded_user` case 1,
+`r721_stranded_users` "A claims empty-workspace requester", `r2469_replace_stale_invite` end to end
+(now: Claim refused with the accept step → invite → he accepts → he works in A, his blank workspace
+stays).
+
+Code-review (high) additions to §6.1 (same migration):
+- Team → Invite calls `invite_existing_login` FIRST; the R-2469 `release_stale_team_invite` clean-up
+  (which may delete another workspace's stale team_invites row) runs only when the answer is not
+  'invited' / 'already_member'.
+- The email guard also counts an OPEN (not accepted, not expired) membership invite from another
+  company; `accept_company_invite` requires the login's sign-in address (auth.users.email) to still
+  equal the invited address, and the person who sent the invite to still be an active owner there.
+- `invite_existing_login` refuses the never-invitable roles (`personal`, `partner_agent`).
+- No `log_row_change` row trigger on `membership_invites` (it would copy the invitee's login id into
+  the inviting company's activity log); the two functions write their own lines.
+- A pending join request to THIS company is the person's own agreement: Claim works for them even
+  when they have another company (membership added, nothing moved).
+- A personal account (G-PERSONAL) sees the banner too; accepting makes the business its selected
+  company (the personal workspace stays; the switcher brings it back).
+- Pending invites on the Team page leave out expired membership invites (invite again to renew).
+- Claim deletes a leftover workspace only when it never had any owner (membership or users role).
+- Security review (round 2): the email rule is universal, not only for multi-company logins —
+  anyone but the login itself may change `users.email` only back to the login's own sign-in address
+  (auth.users.email), or for a login that has never signed in and has no other company / open
+  invite (the R-712 owner fix of a mistyped address). Otherwise an owner could re-point a
+  one-company teammate's address first and use the login after it joins another company.
+  Follow-up (outside this card's area): `linkOAuthUser` step 2 could also require
+  `users.email = auth.users.email` for the matched profile.
