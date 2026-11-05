@@ -49,6 +49,9 @@ import { rowActivation, ROW_FOCUS_RING } from "@/lib/a11y/clickable-row";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { billAdvanceView } from "@/lib/accounting/vendor-account";
 import { AdvanceAppliedLine, ApplyAdvanceButton } from "./advance-on-bill";
+import { ZohoPurchaseImportDialog } from "@/components/features/accounting/zoho-purchase-import-dialog";
+import { canImportFyPurchases } from "@/lib/integrations/zoho-books/purchase-import/plan";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 
 type DateRange = { from: string; to: string };
 const GROUP_BY_CHOICES: readonly GroupBy[] = ["none", "vendor", "category"];
@@ -115,6 +118,10 @@ export default function ExpensesPage() {
       return next;
     });
   const [addOpen, setAddOpen] = React.useState(false);
+  /* R-2502: FY 2025-26 purchases from Zoho (owner / accountant — the route and RPC check too). */
+  const { data: me } = useCurrentUser();
+  const canImportFy = canImportFyPurchases(me?.role);
+  const [fyOpen, setFyOpen] = React.useState(false);
   const [editing, setEditing] = React.useState<Expense | null>(null);
   /* ?edit=<expense id> — Payments Made opens a paid expense straight into its edit form
      (2 Oct 2026). Fetched by id: the list here is date-range limited, the expense may be older. */
@@ -500,6 +507,9 @@ export default function ExpensesPage() {
             title="26Q working — non-salary TDS you deducted (rent/professional/contractor) for the selected date range">
             26Q (TDS)
           </Button>
+          {canImportFy && (
+            <Button variant="outline" icon="download" onClick={() => setFyOpen(true)}>FY 2025-26 from Zoho</Button>
+          )}
           <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
             Add Expense
           </Button>
@@ -812,6 +822,7 @@ export default function ExpensesPage() {
 
       <FAB icon="plus" label="Expense" onClick={() => setAddOpen(true)} ariaLabel="Add Expense" />
       {addOpen && <AddExpenseDialog onClose={() => setAddOpen(false)} />}
+      {fyOpen && <ZohoPurchaseImportDialog open={fyOpen} onOpenChange={setFyOpen} />}
       {editing && <AddExpenseDialog expense={editing} onClose={() => setEditing(null)} />}
       {detail && (
         <ExpenseDetailDialog
