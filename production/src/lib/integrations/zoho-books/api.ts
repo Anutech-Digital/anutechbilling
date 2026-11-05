@@ -263,7 +263,8 @@ export async function previewCounts(orgId: string, token: string, f: Fetch = fet
 
 export interface ZohoPage { rows: Array<Record<string, unknown>>; more: boolean }
 
-async function listPage(path: string, listKey: string, orgId: string, token: string, page: number, f: Fetch,
+/** R-2498: exported for the FY reads in fy-fetch.ts (same booksGet, same page size). */
+export async function listPage(path: string, listKey: string, orgId: string, token: string, page: number, f: Fetch = fetch,
   extra: Record<string, string> = {}): Promise<ZohoPage> {
   const q = new URLSearchParams({ organization_id: orgId, page: String(page), per_page: String(PAGE_SIZE), ...extra });
   const body = await booksGet(`${path}?${q}`, token, f);
@@ -340,4 +341,14 @@ export async function getContact(orgId: string, token: string, contactId: string
   const q = new URLSearchParams({ organization_id: orgId });
   const body = await booksGet(`/contacts/${encodeURIComponent(contactId)}?${q}`, token, f);
   return (body.contact as Record<string, unknown> | undefined) ?? {};
+}
+
+// ── R-2498: one record by id, for the FY reads (still read-only) ─────────────────────────
+
+/** GET <path>/<id> and return body[key] (an empty object when Zoho sends none). The id is URL-encoded. */
+export async function getOne(path: string, key: string, orgId: string, token: string, id: string, f: Fetch = fetch): Promise<Record<string, unknown>> {
+  const q = new URLSearchParams({ organization_id: orgId });
+  const body = await booksGet(`${path}/${encodeURIComponent(id)}?${q}`, token, f);
+  const v = body[key];
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }

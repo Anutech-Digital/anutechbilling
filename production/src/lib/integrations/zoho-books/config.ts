@@ -28,6 +28,15 @@ export const ZOHO_BOOKS_SCOPES = [
   /* R-2359: "Find in Zoho" on a bank credit reads the customer payment whose reference is the UTR. */
   "ZohoBooks.customerpayments.READ",
   "ZohoBooks.settings.READ",
+  /* R-2498 (G-FY2526): the FY 2025-26 books — credit notes, vendor bills, expenses, payments made, and
+     the accountant module (chart of accounts + each account's transactions → trial balance as at a
+     date). READ only. A connection made before R-2498 lacks them: Zoho answers 401 code 57 and the
+     card asks to Reconnect (Settings → Integrations → Zoho Books). */
+  "ZohoBooks.creditnotes.READ",
+  "ZohoBooks.bills.READ",
+  "ZohoBooks.expenses.READ",
+  "ZohoBooks.vendorpayments.READ",
+  "ZohoBooks.accountants.READ",
 ] as const;
 
 export const CALLBACK_PATH = "/api/integrations/zoho-books/callback";
