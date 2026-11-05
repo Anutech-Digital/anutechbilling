@@ -402,4 +402,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "paidcampaignplatformlinks", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'marketing_campaigns' and column_name = 'ads_manager_url')" },
   { key: "linkedinadssync", peek: "exists(select 1 from pg_constraint where conname = 'ad_accounts_platform_check' and pg_get_constraintdef(oid) like '%linkedin-ads%')" },
   { key: "linkedinadstenantcredentials", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'linkedin_ads_client_secret')" },
+  { key: "r2510socialschedule", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content' and column_name = 'scheduled_at') and to_regclass('public.social_content_due_idx') is not null" },
 ];

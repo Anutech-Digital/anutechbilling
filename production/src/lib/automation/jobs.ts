@@ -68,6 +68,7 @@ export const AUTOMATION_JOBS = {
   "gbp-sync":             { label: "Google Business Profile sync", what: "Pulls reviews and details from your Google Business Profile.", customerFacing: false, scope: "tenant", dryRun: false },
   "ads-sync":             { label: "Ad spend sync", what: "Pulls Google Ads and Meta Ads spend.", customerFacing: false, scope: "tenant", dryRun: false },
   "social-drafts":        { label: "Social draft preparation", what: "Prepares weekly Facebook and Instagram drafts for human review; never publishes.", customerFacing: false, scope: "tenant", dryRun: false },
+  "social-publish":       { label: "Scheduled social posts", what: "Publishes Facebook and Instagram posts a person has approved, at the post time they chose.", customerFacing: true, scope: "tenant", dryRun: false },
   "indiamart-leads":      { label: "IndiaMART leads", what: "Pulls new leads from IndiaMART.", customerFacing: false, scope: "tenant", dryRun: false },
   "lead-finder":          { label: "Lead finder", what: "Looks for new business leads.", customerFacing: false, scope: "tenant", dryRun: false },
   "mrr-snapshot":         { label: "Monthly revenue snapshot", what: "Saves each customer's monthly revenue for the reports.", customerFacing: false, scope: "tenant", dryRun: true },

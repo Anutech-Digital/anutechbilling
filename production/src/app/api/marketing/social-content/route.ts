@@ -6,6 +6,7 @@ import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { geminiJson, resolveGeminiConfig } from "@/lib/ai/gemini";
 import { readFacebookPage } from "@/lib/integrations/facebook-page";
 import { canReviewSocial, canWriteSocial, createSocial, instagramForPage, listSocial, socialRole, validMediaUrl } from "@/lib/marketing/social-content";
+import { parseIstLocal, scheduleProblem } from "@/lib/marketing/social-schedule";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,6 +15,8 @@ const draft = z.object({
   platform: z.enum(["facebook", "instagram"]), format: z.enum(["post", "story"]),
   caption: z.string().trim().max(2200).default(""), mediaUrl: z.string().trim().max(2000).nullable().default(null),
   topic: z.string().trim().max(500).default(""), ai: z.boolean().default(false),
+  /* R-2510: post time as typed in the form ("2026-11-06T09:00", India time). */
+  scheduledAt: z.string().trim().max(16).nullable().default(null),
 });
 
 export async function GET() {
@@ -47,6 +50,10 @@ export async function POST(req: Request) {
   const input = parsed.data;
   if (input.platform === "facebook" && input.format === "story") return NextResponse.json({ error: "Facebook Stories are not supported here yet. Choose a Facebook post or Instagram Story." }, { status: 400 });
   if (!validMediaUrl(input.mediaUrl)) return NextResponse.json({ error: "Use a public HTTPS media URL." }, { status: 400 });
+  const scheduledAt = input.scheduledAt ? parseIstLocal(input.scheduledAt) : null;
+  if (input.scheduledAt && !scheduledAt) return NextResponse.json({ error: "Choose a valid post date and time." }, { status: 400 });
+  const timeProblem = scheduledAt ? scheduleProblem(scheduledAt) : null;
+  if (timeProblem) return NextResponse.json({ error: timeProblem }, { status: 400 });
   if ((input.platform === "instagram" || input.format === "story") && !input.mediaUrl) return NextResponse.json({ error: "Instagram posts and stories need an image URL." }, { status: 400 });
   let caption = input.caption;
   let origin: "manual" | "ai" = "manual";
@@ -67,7 +74,7 @@ export async function POST(req: Request) {
   if (!caption && input.format === "post") return NextResponse.json({ error: "Write a caption." }, { status: 400 });
   try {
     const id = await createSocial(session, { platform: input.platform, format: input.format, caption,
-      mediaUrl: input.mediaUrl, topic: input.topic, origin });
+      mediaUrl: input.mediaUrl, topic: input.topic, origin, scheduledAt });
     return NextResponse.json({ id, caption }, { status: 201 });
   } catch (error) {
     console.error("[social-content] create failed", error instanceof Error ? error.message : "unknown");

@@ -10,6 +10,7 @@ export type SocialItem = {
   id: string; platform: SocialPlatform; format: SocialFormat; caption: string; media_url: string | null;
   topic: string; origin: string; status: SocialStatus; created_by: string | null; reviewed_by: string | null;
   reviewed_at: Date | null; published_at: Date | null; external_id: string | null; error: string | null; created_at: Date;
+  scheduled_at: Date | null;
 };
 
 export async function socialRole(session: TenantSession): Promise<string | null> {
@@ -28,29 +29,33 @@ export function canReviewSocial(role: string | null): boolean {
 export async function listSocial(session: TenantSession): Promise<SocialItem[]> {
   return withTenant(session, tx => tx.$queryRaw<SocialItem[]>`
     select id, platform, format, caption, media_url, topic, origin, status, created_by,
-      reviewed_by, reviewed_at, published_at, external_id, error, created_at
+      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at
     from public.social_content where tenant_id = ${session.tenantId}::uuid
     order by created_at desc limit 100`);
 }
 
 export async function createSocial(session: TenantSession, input: {
   platform: SocialPlatform; format: SocialFormat; caption: string; mediaUrl: string | null; topic: string; origin: "manual" | "ai" | "scheduled";
+  scheduledAt?: Date | null;
 }): Promise<string> {
   const rows = await withTenant(session, tx => tx.$queryRaw<{ id: string }[]>`
-    insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by)
-    values (${session.tenantId}::uuid, ${input.platform}, ${input.format}, ${input.caption}, ${input.mediaUrl}, ${input.topic}, ${input.origin}, ${session.userId}::uuid)
+    insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by, scheduled_at)
+    values (${session.tenantId}::uuid, ${input.platform}, ${input.format}, ${input.caption}, ${input.mediaUrl}, ${input.topic}, ${input.origin}, ${session.userId}::uuid, ${input.scheduledAt ?? null}::timestamptz)
     returning id`);
   return rows[0].id;
 }
 
 export async function updateSocial(session: TenantSession, id: string, patch: {
   caption?: string; mediaUrl?: string | null; topic?: string; status?: SocialStatus;
+  /** R-2510: undefined keeps the post time, null clears it. */
+  scheduledAt?: Date | null;
 }, expectedStatus: SocialStatus, reviewer = false): Promise<SocialItem | null> {
   const rows = await withTenant(session, tx => tx.$queryRaw<SocialItem[]>`
     update public.social_content set
       caption = coalesce(${patch.caption ?? null}, caption),
       media_url = case when ${patch.mediaUrl === undefined} then media_url else ${patch.mediaUrl ?? null} end,
       topic = coalesce(${patch.topic ?? null}, topic),
+      scheduled_at = case when ${patch.scheduledAt === undefined} then scheduled_at else ${patch.scheduledAt ?? null}::timestamptz end,
       status = coalesce(${patch.status ?? null}, status),
       reviewed_by = case when ${reviewer} then ${session.userId}::uuid else reviewed_by end,
       reviewed_at = case when ${reviewer} then now() else reviewed_at end,
@@ -59,7 +64,7 @@ export async function updateSocial(session: TenantSession, id: string, patch: {
     where id = ${id}::uuid and tenant_id = ${session.tenantId}::uuid
       and status = ${expectedStatus}
     returning id, platform, format, caption, media_url, topic, origin, status, created_by,
-      reviewed_by, reviewed_at, published_at, external_id, error, created_at`);
+      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at`);
   return rows[0] ?? null;
 }
 
@@ -68,7 +73,7 @@ export async function claimApproved(session: TenantSession, id: string): Promise
     update public.social_content set status = 'publishing', updated_at = now()
     where id = ${id}::uuid and tenant_id = ${session.tenantId}::uuid and status = 'approved'
     returning id, platform, format, caption, media_url, topic, origin, status, created_by,
-      reviewed_by, reviewed_at, published_at, external_id, error, created_at`);
+      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at`);
   return rows[0] ?? null;
 }
 
@@ -110,6 +115,18 @@ export async function publishSocial(session: TenantSession, item: SocialItem): P
   if (!user || user.id !== session.userId) throw new Error("Sign in again.");
   const { createAdminClientFor } = await import("@/lib/supabase/server");
   const connection = await readFacebookPage(createAdminClientFor(session.userId), session.tenantId);
+  return publishWithPage(item, connection);
+}
+
+/**
+ * Publish one approved item with the company's Page connection. Shared by "Publish now" (a
+ * signed-in reviewer) and the R-2510 social-publish cron (scheduled posts). The caller has
+ * already moved the row approved → publishing, so a post goes out at most once.
+ */
+export async function publishWithPage(
+  item: Pick<SocialItem, "platform" | "format" | "caption" | "media_url">,
+  connection: { pageId: string | null; pageToken: string | null },
+): Promise<string> {
   if (!connection.pageId || !connection.pageToken) throw new Error("Connect your Facebook Page first.");
   const token = connection.pageToken;
   if (item.platform === "facebook") {

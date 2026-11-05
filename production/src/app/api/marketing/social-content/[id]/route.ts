@@ -3,13 +3,16 @@ import { z } from "zod";
 import { getTenantSession } from "@/server/auth/session";
 import { withTenant } from "@/server/db";
 import { canReviewSocial, canWriteSocial, claimApproved, completePublish, publishSocial, socialRole, updateSocial, validMediaUrl } from "@/lib/marketing/social-content";
+import { parseIstLocal, scheduleProblem } from "@/lib/marketing/social-schedule";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const payload = z.object({ action: z.enum(["save", "submit", "approve", "return", "publish"]),
   caption: z.string().trim().max(2200).optional(), mediaUrl: z.string().trim().max(2000).nullable().optional(),
-  topic: z.string().trim().max(500).optional() });
+  topic: z.string().trim().max(500).optional(),
+  /* R-2510: post time as typed in the form ("2026-11-06T09:00", India time); null clears it. */
+  scheduledAt: z.string().trim().max(16).nullable().optional() });
 const UUID = /^[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}$/i;
 
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
@@ -23,6 +26,14 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid action." }, { status: 400 });
   const input = parsed.data;
   if (input.mediaUrl !== undefined && !validMediaUrl(input.mediaUrl)) return NextResponse.json({ error: "Use a public HTTPS media URL." }, { status: 400 });
+  let scheduledAt: Date | null | undefined;
+  if (input.scheduledAt !== undefined) {
+    if (!["save", "submit"].includes(input.action)) return NextResponse.json({ error: "Change the post time while the draft is being edited." }, { status: 400 });
+    scheduledAt = input.scheduledAt ? parseIstLocal(input.scheduledAt) : null;
+    if (scheduledAt === null && input.scheduledAt) return NextResponse.json({ error: "Choose a valid post date and time." }, { status: 400 });
+    const problem = scheduledAt ? scheduleProblem(scheduledAt) : null;
+    if (problem) return NextResponse.json({ error: problem }, { status: 400 });
+  }
   if (["approve", "return", "publish"].includes(input.action) && !canReviewSocial(role)) return NextResponse.json({ error: "Only an owner or manager can review and publish." }, { status: 403 });
   try {
     if (input.action === "publish") {
@@ -49,7 +60,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     if (current.platform === "instagram" && !media) return NextResponse.json({ error: "Instagram needs an image URL." }, { status: 400 });
     if (current.format === "post" && !caption) return NextResponse.json({ error: "Write a caption." }, { status: 400 });
     const next = input.action === "submit" ? "review" : input.action === "approve" ? "approved" : input.action === "return" ? "draft" : undefined;
-    const item = await updateSocial(session, id, { caption: input.caption, mediaUrl: input.mediaUrl, topic: input.topic, status: next }, current.status as "draft" | "review" | "failed", input.action === "approve" || input.action === "return");
+    const item = await updateSocial(session, id, { caption: input.caption, mediaUrl: input.mediaUrl, topic: input.topic, status: next, scheduledAt }, current.status as "draft" | "review" | "failed", input.action === "approve" || input.action === "return");
     if (!item) return NextResponse.json({ error: "Draft changed. Refresh the page." }, { status: 409 });
     return NextResponse.json({ item });
   } catch (error) {

@@ -47,6 +47,7 @@ export const CRON_ROUTES: Record<AutomationJob, Loader> = {
   "backup":               () => import("@/app/api/cron/backup/route"),
   "demo-reset":           () => import("@/app/api/cron/demo-reset/route"),
   "social-drafts":        () => import("@/app/api/cron/social-drafts/route"),
+  "social-publish":       () => import("@/app/api/cron/social-publish/route"),
 };
 
 /** The job's GET handler (the gated one), or null when the module has none. */

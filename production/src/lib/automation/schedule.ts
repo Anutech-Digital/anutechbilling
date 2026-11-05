@@ -35,6 +35,7 @@ export const JOB_CRON: Record<AutomationJob, string> = {
   "gbp-sync":             "30 2 * * *",
   "ads-sync":             "0 3 * * *",
   "social-drafts":        "0 9 * * 1",
+  "social-publish":       "*/10 * * * *",
   "indiamart-leads":      "*/15 8-21 * * *",
   "lead-finder":          "30 3 * * *",
   "mrr-snapshot":         "30 0 1 * *",
