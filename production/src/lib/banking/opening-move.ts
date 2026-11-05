@@ -11,7 +11,7 @@
  * The database checks the same thing on save (set_bank_opening_from_statement, on the stored
  * lines) and refuses unless the owner accepts the difference; this is the preview of it.
  */
-import { STATEMENT_TOLERANCE } from "./running-balance";
+import { STATEMENT_TOLERANCE, countsAfterOpening } from "./running-balance";
 
 type Line = { txn_date: string; debit: number; credit: number };
 
@@ -60,12 +60,5 @@ export function openingMoveCheck(args: {
 
 /** Lines dated before the opening date — inside the opening, not counted in the balance. */
 export function linesBeforeOpening(rows: readonly { txn_date: string }[], openingDate: string | null | undefined): number {
-  if (!openingDate) return 0;
-  return rows.filter((r) => r.txn_date < openingDate).length;
-}
-
-/** The database's refusal for a statement that does not match (hint r2497_opening_mismatch). */
-export function isOpeningMismatchError(err: unknown): boolean {
-  const e = err as { hint?: unknown; message?: unknown } | null;
-  return !!e && (e.hint === "r2497_opening_mismatch" || (typeof e.message === "string" && e.message.includes("The figures differ — set it anyway")));
+  return rows.filter((r) => !countsAfterOpening(r, openingDate)).length;
 }

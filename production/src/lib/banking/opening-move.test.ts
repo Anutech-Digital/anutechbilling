@@ -1,6 +1,6 @@
 /**
  * R-2497 — moving a bank account's opening balance from a statement must keep today's balance.
- * Owner example (Excel Technologies, HDFC 4523): opening ₹1,00,000 as of 1 Apr 2026; the FY 25-26
+ * Owner example (a company's current account): opening ₹1,00,000 as of 1 Apr 2026; the FY 25-26
  * statement starts at ₹70,000 on 1 Apr 2025 and its lines net +₹30,000.
  */
 import { describe, expect, it } from "vitest";

@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-2497%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_account_current_balance(uuid)') and prosrc like '%R-2497%') and to_regprocedure('public.set_bank_opening_from_statement(uuid,bigint,date,uuid,boolean)') is not null and to_regclass('public.bank_opening_history') is not null
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.report_balance_sheet(date)') and prosrc like '%R-2497%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_account_current_balance(uuid)') and prosrc like '%R-2497%') and to_regprocedure('public.set_bank_opening_from_statement(uuid,bigint,date,uuid,boolean)') is not null and to_regclass('public.bank_opening_history') is not null and to_regprocedure('public.import_bank_statement_with_opening(uuid,jsonb,text,text,bigint,date,boolean)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_bank_account_close_guard()') and prosrc like '%R-2497%')
 -- deploy-key: r2497bankopeningdate
 --
 -- R-2497 (p0 money, G-FY2526, 5 Nov 2026): a bank account's balance counted lines dated BEFORE
@@ -9,7 +9,7 @@
 --   redefines it) and report_balance_sheet's cash (20261102145600_r2373_bank_overdraft_bs, the
 --   latest body — r2374 / r2427 / r2407 only mention it) were opening_balance + Σ(ALL lines).
 --   The opening balance is the balance at the START of opening_balance_date, so it already holds
---   every line dated before it: importing Excel's FY 25-26 statement while the opening stays at
+--   every line dated before it: importing a company's FY 25-26 statement while the opening stays at
 --   1 Apr 2026 counted that year twice. And report_balance_sheet('2026-03-31') added lines of
 --   April onwards, so a 31 Mar Balance Sheet showed today's bank.
 --   The import dialog then overwrote opening_balance / opening_balance_date with no record and
@@ -21,6 +21,8 @@
 --   report_balance_sheet(date)          per account: opening + lines dated on/after the opening
 --     date AND on/before the report date. Before the account's books start (report date earlier
 --     than the day before the opening date) the account is 0 — its balance then is not known.
+--     undeposited_funds: a receipt received by the report date but banked AFTER it (its bank
+--     line is now left out of cash) counts as money in hand, so it is not lost from the sheet.
 --     Every other line is the R-2373 body as is (same signature, CREATE OR REPLACE, grants restated).
 --   bank_opening_history (new)           one row per change of an account's opening balance/date:
 --     old + new figure and date, source ('statement' | 'edit'), the statement's balance on the old
@@ -29,11 +31,18 @@
 --     by a client (no insert/update/delete grant). Read: own company (RLS).
 --   set_bank_opening_from_statement(...) (new) the import dialog's "Set opening balance from this
 --     statement". Owner / manager / accountant; books lock respected. When the account already
---     carries money (old opening ≠ 0, or a line imported before this import), the move must keep
+--     carries money (old opening ≠ 0, or a COUNTED line — on/after the old opening date — that
+--     came in before this import), the move must keep
 --     the balance the same: (new opening + Σ lines ≥ new date) − (old opening + Σ lines ≥ old
 --     date) must be within ₹1. Moving EARLIER that is "the statement's balance on the day before
 --     the old opening date = the old opening amount". Otherwise it refuses with the figures and
 --     the next step, unless the OWNER passes p_accept_difference (then the difference is recorded).
+--   import_bank_statement_with_opening(...) (new) the lines + the opening move in ONE transaction
+--     (§17b): a refused opening leaves no lines behind.
+--   tg_bank_account_close_guard()        R-2384 body; the ₹0 check uses the same balance (lines
+--     on/after the opening date), so Close agrees with the balance on the page.
+--   NOT changed (follow-up): book_bank_credit_as_interest's FD "principal ≤ balance" check still
+--     sums every line of the FD account.
 --   R-2472's trigger trg_bank_match_target_company and reconcile functions are not touched.
 --
 -- Test: supabase/tests/r2497_bank_opening_date.test.sql (begin … rollback; red without this file).
@@ -70,6 +79,9 @@ create policy "tenant read" on public.bank_opening_history
 revoke all on table public.bank_opening_history from public, anon, authenticated;
 grant select on table public.bank_opening_history to authenticated;
 grant all on table public.bank_opening_history to service_role;
+drop policy if exists bank_opening_history_service_role on public.bank_opening_history;
+create policy bank_opening_history_service_role on public.bank_opening_history
+  for all to service_role using (true) with check (true);
 
 -- ── 2. Every opening change leaves a row (account form, any path) ─────────────────────────
 create or replace function public.tg_bank_opening_history()
@@ -178,10 +190,14 @@ begin
   end if;
 
   /* Does the account already carry money the move must keep? Old opening ≠ 0, or a line that
-     came in before this import (this import's own lines are what is being set up). */
+     is COUNTED today (dated on/after the old opening date) and came in before this import
+     (this import's own lines are what is being set up). Lines before the old opening are not
+     in today's balance, so they are nothing to keep — a fresh account whose earlier statement
+     was imported with the tick off can still take the statement's opening. */
   v_has_money := coalesce(v_acc.opening_balance, 0) <> 0
     or exists (select 1 from public.bank_transactions t
                 where t.tenant_id = v_tenant and t.bank_account_id = v_acc.id
+                  and t.txn_date >= v_acc.opening_balance_date
                   and t.import_batch_id is distinct from p_import_batch_id);
 
   if v_has_money and v_acc.opening_balance_date is not null then
@@ -242,6 +258,71 @@ comment on function public.set_bank_opening_from_statement(uuid, bigint, date, u
   'R-2497: set a bank account''s opening from a statement; keeps the balance the same (±₹1) unless the owner accepts the difference; writes bank_opening_history.';
 revoke all on function public.set_bank_opening_from_statement(uuid, bigint, date, uuid, boolean) from public, anon;
 grant execute on function public.set_bank_opening_from_statement(uuid, bigint, date, uuid, boolean) to authenticated;
+
+-- ── 4b. Import + opening in ONE transaction (CLAUDE.md §17b) ──────────────────────────────
+-- The dialog's "Import N rows + opening balance": the lines and the opening move commit together.
+-- If the opening is refused (statement does not match, books lock, role) the lines do not stay
+-- behind either. SECURITY INVOKER: each inner function makes its own company / role checks.
+create or replace function public.import_bank_statement_with_opening(
+  p_account_id uuid, p_rows jsonb, p_file_name text, p_source text,
+  p_opening bigint, p_date date, p_accept_difference boolean default false)
+returns jsonb
+language plpgsql
+security invoker
+set search_path to 'public'
+as $function$
+declare
+  /* R-2497 */
+  v_import  jsonb;
+  v_opening jsonb;
+begin
+  v_import := public.import_bank_statement(p_account_id, p_rows, p_file_name, coalesce(p_source, 'csv'));
+  v_opening := public.set_bank_opening_from_statement(
+    p_account_id, p_opening, p_date, nullif(v_import ->> 'batch_id', '')::uuid, coalesce(p_accept_difference, false));
+  return v_import || jsonb_build_object('opening', v_opening);
+end;
+$function$;
+comment on function public.import_bank_statement_with_opening(uuid, jsonb, text, text, bigint, date, boolean) is
+  'R-2497: import_bank_statement + set_bank_opening_from_statement in one transaction — a refused opening leaves no lines behind.';
+revoke all on function public.import_bank_statement_with_opening(uuid, jsonb, text, text, bigint, date, boolean) from public, anon;
+grant execute on function public.import_bank_statement_with_opening(uuid, jsonb, text, text, bigint, date, boolean) to authenticated;
+
+-- ── 4c. Close guard: the same balance (R-2384 body, balance line marked R-2497) ───────────
+create or replace function public.tg_bank_account_close_guard()
+ returns trigger
+ language plpgsql
+ security definer
+ set search_path to 'public'
+as $function$
+declare
+  v_balance bigint;
+begin
+  /* R-2384: close only at ₹0; reopen clears the close stamp. */
+  if old.is_active and not new.is_active then
+    if new.is_default_petty_cash then
+      raise exception 'The company''s Petty Cash cannot be closed — it is the default cash account.'
+        using errcode = '23514';
+    end if;
+    /* R-2497: the balance the account page shows — lines dated on/after the opening date. */
+    select coalesce(new.opening_balance, 0)::bigint
+         + coalesce(sum(t.credit - t.debit), 0)::bigint
+      into v_balance
+      from public.bank_transactions t
+     where t.bank_account_id = new.id
+       and (new.opening_balance_date is null or t.txn_date >= new.opening_balance_date);
+    if v_balance <> 0 then
+      raise exception 'This account still has a balance of ₹% — an account can be closed only at ₹0. Move the money out first (Own transfer), then close it.', v_balance
+        using errcode = '23514';
+    end if;
+    new.closed_on := coalesce(new.closed_on, public.ist_today());
+  elsif not old.is_active and new.is_active then
+    new.closed_on   := null;
+    new.closed_note := null;
+  end if;
+  return new;
+end;
+$function$;
+revoke all on function public.tg_bank_account_close_guard() from public;
 
 -- ── 5. Balance Sheet: bank as of the report date ──────────────────────────────────────────
 -- R-2373 body (20261102145600) as is, except the cash block marked R-2497.
@@ -334,17 +415,34 @@ begin
                                                where e.tenant_id = v_tenant and e.id = 'EXP-RZPFEE-' || p.id::text), 0)), 0)
         from public.payments p
        where p.tenant_id = v_tenant and p.status = 'received'
+         -- R-2497: banked ON/BEFORE the report date = in cash_and_bank. A receipt banked AFTER
+         -- the report date (bank line left out of cash above) was money in hand then, if it had
+         -- been received by that date — it counts here, so it is not lost from the sheet.
          and not exists (select 1 from public.bank_transactions t
                           where t.tenant_id = v_tenant and t.matched_to_type = 'payment'
-                            and t.matched_to_id = p.id::text)
+                            and t.matched_to_id = p.id::text and t.txn_date <= v_to)
          -- R-2098: one bank line carrying several receipts (payments.bank_txn_id) — each is banked.
          and not (p.bank_txn_id is not null
                   and exists (select 1 from public.bank_transactions t2
                                where t2.tenant_id = v_tenant and t2.id = p.bank_txn_id
-                                 and t2.matched_to_type is not null)))
+                                 and t2.matched_to_type is not null and t2.txn_date <= v_to))
+         and (
+           (not exists (select 1 from public.bank_transactions t
+                         where t.tenant_id = v_tenant and t.matched_to_type = 'payment'
+                           and t.matched_to_id = p.id::text)
+            and not (p.bank_txn_id is not null
+                     and exists (select 1 from public.bank_transactions t2
+                                  where t2.tenant_id = v_tenant and t2.id = p.bank_txn_id
+                                    and t2.matched_to_type is not null)))
+           or (p.received_at at time zone 'Asia/Kolkata')::date <= v_to))
    + (select coalesce(sum(pp.amount), 0)
         from public.project_payments pp
-       where pp.tenant_id = v_tenant and pp.bank_txn_id is null
+       where pp.tenant_id = v_tenant
+         -- R-2497: not banked, or banked after the report date but received by it.
+         and (pp.bank_txn_id is null
+              or (pp.received_at <= v_to
+                  and exists (select 1 from public.bank_transactions t
+                               where t.tenant_id = v_tenant and t.id = pp.bank_txn_id and t.txn_date > v_to)))
          -- R-1992: the TDS part (record_project_receipt_with_tds) never came in as cash — it is
          -- in tds_receivable already; counting it here made the same ₹ an asset twice.
          and coalesce(pp.method, '') <> 'tds'))::bigint,

@@ -680,43 +680,6 @@ export function useExistingTxnKeys(accountId: string | null) {
   });
 }
 
-/**
- * R-2497: "Set opening balance from this statement" — never a plain overwrite.
- * set_bank_opening_from_statement keeps today's balance (±₹1) or refuses with the figures
- * (hint r2497_opening_mismatch) unless the owner accepts the difference, and writes a
- * bank_opening_history row (old → new). The caller shows the refusal (isOpeningMismatchError).
- */
-export type SetOpeningInput = {
-  accountId: string;
-  opening: number;
-  date: string;
-  /** The import that brought this statement's lines in (its own lines are not "money to keep"). */
-  batchId?: string | null;
-  acceptDifference?: boolean;
-};
-export function useSetBankOpeningFromStatement() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: SetOpeningInput) => {
-      const { data, error } = await createClient().rpc("set_bank_opening_from_statement" as never, {
-        p_account_id: input.accountId,
-        p_opening: input.opening,
-        p_date: input.date,
-        p_import_batch_id: input.batchId ?? null,
-        p_accept_difference: input.acceptDifference ?? false,
-      } as never);
-      if (error) throw error;
-      return data as unknown as { old_balance: number; old_date: string; new_balance: number; new_date: string; difference: number | null };
-    },
-    onSuccess: (_d, input) => {
-      qc.invalidateQueries({ queryKey: ["bank_accounts"] });
-      qc.invalidateQueries({ queryKey: ["bank_accounts", input.accountId] });
-      qc.invalidateQueries({ queryKey: ["bank_opening_history", input.accountId] });
-      toast.success("Opening balance set — the old one is kept in the account's history");
-    },
-  });
-}
-
 export type BankOpeningHistoryRow = {
   id: string;
   old_balance: number | null;
@@ -728,6 +691,29 @@ export type BankOpeningHistoryRow = {
   accepted_difference: boolean;
   changed_at: string;
 };
+
+/**
+ * R-2497: does the account have a line dated on/after `date` (counted in today's balance when
+ * `date` is its opening date)? The import dialog's preview uses it the way
+ * set_bank_opening_from_statement does: no opening and no counted line = nothing to keep.
+ */
+export function useHasBankLinesFrom(accountId: string | null | undefined, date: string | null | undefined) {
+  return useQuery({
+    queryKey: ["bank_transactions", accountId, "from", date],
+    enabled: Boolean(accountId && date),
+    queryFn: async (): Promise<boolean> => {
+      const { data, error } = await createClient()
+        .from("bank_transactions")
+        .select("id")
+        .eq("bank_account_id", accountId as string)
+        .gte("txn_date", date as string)
+        .limit(1);
+      if (error) throw error;
+      return (data ?? []).length > 0;
+    },
+    staleTime: 15_000,
+  });
+}
 
 /** R-2497: the account's opening-balance changes, newest first. */
 export function useBankOpeningHistory(accountId: string | null | undefined) {
@@ -768,9 +754,12 @@ export type BankImportInput = {
    * They go in with the rest; nothing is skipped.
    */
   importSkipped?: boolean;
-  /** R-2497: told the new batch id — the opening move leaves this import's own lines out of
-      "money the account already carries". The return value stays {inserted, duplicates}. */
-  onBatch?: (batchId: string) => void;
+  /**
+   * R-2497: "Set opening balance from this statement" — the lines and the opening move go in ONE
+   * transaction (import_bank_statement_with_opening, CLAUDE.md §17b): when the database refuses
+   * the opening (statement does not match, books lock, role) no line stays behind either.
+   */
+  opening?: { amount: number; date: string; acceptDifference?: boolean };
 };
 
 export async function importBankTransactions(
@@ -787,6 +776,15 @@ export async function importBankTransactions(
   const fresh = input.importSkipped ? [...plan.fresh, ...plan.skipped] : plan.fresh;
   const duplicates = input.importSkipped ? 0 : plan.duplicates;
 
+  if (fresh.length === 0 && input.opening) {
+    /* R-2497: every line is already in — only the opening moves (one checked RPC). */
+    const { error } = await supabase.rpc("set_bank_opening_from_statement" as never, {
+      p_account_id: input.accountId, p_opening: input.opening.amount, p_date: input.opening.date,
+      p_import_batch_id: null, p_accept_difference: input.opening.acceptDifference ?? false,
+    } as never);
+    if (error) throw error;
+    return { inserted: 0, duplicates };
+  }
   if (fresh.length === 0) {
     if (duplicates > 0) return { inserted: 0, duplicates };   // all already imported — no batch
     throw new Error("No valid transactions to import (each row needs exactly one of debit or credit > 0)");
@@ -808,15 +806,24 @@ export async function importBankTransactions(
     }
     return line;
   });
-  const { data, error } = await supabase.rpc("import_bank_statement", {
-    p_account_id: input.accountId,
-    p_rows: rows as unknown as Json,
-    p_file_name: input.fileName ?? undefined,
-    p_source: input.source ?? "csv",
-  });
+  const { data, error } = input.opening
+    ? await supabase.rpc("import_bank_statement_with_opening" as never, {
+        p_account_id: input.accountId,
+        p_rows: rows as unknown as Json,
+        p_file_name: input.fileName ?? null,
+        p_source: input.source ?? "csv",
+        p_opening: input.opening.amount,
+        p_date: input.opening.date,
+        p_accept_difference: input.opening.acceptDifference ?? false,
+      } as never)
+    : await supabase.rpc("import_bank_statement", {
+        p_account_id: input.accountId,
+        p_rows: rows as unknown as Json,
+        p_file_name: input.fileName ?? undefined,
+        p_source: input.source ?? "csv",
+      });
   if (error) throw error;
   const out = data as { batch_id?: string; inserted?: number } | null;
-  if (out?.batch_id) input.onBatch?.(out.batch_id);
   return { inserted: Number(out?.inserted ?? 0), duplicates };
 }
 
@@ -828,6 +835,11 @@ export function useImportBankTransactions() {
       qc.invalidateQueries({ queryKey: ["bank_transactions", vars.accountId] });
       qc.invalidateQueries({ queryKey: ["bank_accounts"] });   // current_balance changed
       qc.invalidateQueries({ queryKey: ["bank_imports", vars.accountId] });
+      if (vars.opening) {
+        qc.invalidateQueries({ queryKey: ["bank_opening_history", vars.accountId] });
+        toast.success("Opening balance set — the old one is kept in the account's history");
+        if (inserted === 0) return;   // only the opening moved — no "0 imported" toast
+      }
       const dupMsg = duplicates > 0 ? ` · ${duplicates} line${duplicates === 1 ? "" : "s"} skipped as already imported` : "";
       if (inserted === 0 && duplicates > 0) toast.success(`All ${duplicates} lines are already there — nothing new found`);
       else toast.success(`${inserted} transaction${inserted === 1 ? "" : "s"} imported${dupMsg}`);
