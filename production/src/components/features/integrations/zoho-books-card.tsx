@@ -24,7 +24,7 @@ import { useConfirm } from "@/components/providers/confirm-provider";
 import { describeError } from "@/lib/errors/toast-error";
 import { ZohoBooksImportDialog } from "./zoho-books-import-dialog";
 import { paceWaitMs, ZOHO_BUSY_WAIT_MS, type PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
-import { FY_CALLS_PER_REQUEST } from "@/lib/integrations/zoho-books/config";
+import { FY_CALLS_PER_REQUEST, FY_DOC_KINDS, FY_DOC_LABELS, fyDateRange } from "@/lib/integrations/zoho-books/config";
 
 const STATUS_URL = "/api/integrations/zoho-books";
 const CONNECT_URL = "/api/integrations/zoho-books/connect";
@@ -33,14 +33,19 @@ const FY_URL = "/api/integrations/zoho-books/fy-counts";
 /** R-2498: the financial year the FY 2025-26 books (G-FY2526) are brought from Zoho for. */
 export const ZOHO_COUNT_FY = "2025-26";
 
-const FY_LABELS: Array<[string, string]> = [
-  ["invoices", "Invoices"], ["creditnotes", "Credit notes"], ["bills", "Bills"], ["expenses", "Expenses"], ["vendorpayments", "Vendor payments"],
-];
+/** "2025-26" → "1 Apr 2025 – 31 Mar 2026" (from fyDateRange — the year is said in one place). */
+export function fyRangeText(fy: string): string {
+  const { dateStart, dateEnd } = fyDateRange(fy);
+  const day = (d: string) => new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+  return `${day(dateStart)} – ${day(dateEnd)}`;
+}
 interface FyCount {
   counts: Record<string, number>;
   needsReconnect: string[];
   message?: string;
   done: boolean;
+  /** The count stopped part-way (an error) — the numbers on screen are partial. */
+  stopped?: boolean;
 }
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
@@ -139,6 +144,7 @@ export default function ZohoBooksCard() {
   }
 
   async function runPreview() {
+    if (busy) return;
     setBusy("preview");
     try {
       const res = await fetch(`${STATUS_URL}/preview`, { method: "POST" });
@@ -150,10 +156,16 @@ export default function ZohoBooksCard() {
 
   /** R-2498: page by page, waiting between requests so Zoho stays under its per-minute limit. */
   async function runFyCount() {
+    if (busy) return;
     setBusy("fy");
     setFyCount(null);
     const history: PaceEntry[] = [];
     let cursor: unknown = null;
+    /* Any stop before the end keeps the partial numbers but says they are partial. */
+    const stop = (error: string) => {
+      setFyCount((prev) => (prev ? { ...prev, stopped: true } : prev));
+      toast.error(error, { description: "Nothing was imported or changed. Press Count FY again." });
+    };
     try {
       for (let round = 0; round < 500; round++) {
         const wait = paceWaitMs(history, Date.now(), FY_CALLS_PER_REQUEST);
@@ -162,7 +174,7 @@ export default function ZohoBooksCard() {
           method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fy: ZOHO_COUNT_FY, cursor }),
         });
         const body = await jsonOf(res);
-        if (!res.ok) { toast.error(String(body.error ?? "Could not read from Zoho Books."), { description: "Nothing was imported or changed." }); return; }
+        if (!res.ok) { stop(String(body.error ?? "Could not read from Zoho Books.")); return; }
         history.push({ at: Date.now(), calls: Number(body.calls ?? FY_CALLS_PER_REQUEST) });
         const done = !body.cursor;
         setFyCount({
@@ -175,6 +187,9 @@ export default function ZohoBooksCard() {
         if (body.busy) await sleep(ZOHO_BUSY_WAIT_MS);
         cursor = body.cursor;
       }
+      stop("The count took too long and was stopped.");
+    } catch {
+      stop("Could not reach the server. Check the connection.");
     } finally { setBusy(null); }
   }
 
@@ -250,7 +265,7 @@ export default function ZohoBooksCard() {
                     <Button variant="primary" size="sm" onClick={() => setImportOpen(true)} disabled={busy !== null}>
                       Import from Zoho
                     </Button>
-                    <Button variant="default" size="sm" onClick={runPreview} loading={busy === "preview"}>
+                    <Button variant="default" size="sm" onClick={runPreview} loading={busy === "preview"} disabled={busy !== null && busy !== "preview"}>
                       {busy === "preview" ? "Reading Zoho…" : "Preview from Zoho"}
                     </Button>
                     <Button variant="default" size="sm" onClick={runFyCount} loading={busy === "fy"} disabled={busy !== null && busy !== "fy"}>
@@ -313,9 +328,10 @@ export default function ZohoBooksCard() {
       )}
       {fyCount && (
         <div className="mt-4" data-testid="zoho-fy-count">
-          <p className="mb-2 text-xs font-medium text-ink-3">FY {ZOHO_COUNT_FY} in Zoho Books (1 Apr 2025 – 31 Mar 2026)</p>
+          <p className="mb-2 text-xs font-medium text-ink-3">FY {ZOHO_COUNT_FY} in Zoho Books ({fyRangeText(ZOHO_COUNT_FY)})</p>
           <dl className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-            {FY_LABELS.map(([key, label]) => {
+            {FY_DOC_KINDS.map((key) => {
+              const label = FY_DOC_LABELS[key];
               const blocked = fyCount.needsReconnect.includes(key);
               return (
                 <div key={key} className="rounded-lg border border-hairline p-3">
@@ -335,7 +351,7 @@ export default function ZohoBooksCard() {
             </div>
           ) : (
             <p className="mt-2 text-xs text-ink-3">
-              {fyCount.done ? "Counts only, read from Zoho Books just now. Nothing has been imported and nothing in Zoho was changed." : "Still counting — Zoho is read slowly so it stays within its limit."}
+              {fyCount.stopped ? "The count stopped part-way — these numbers are not complete. Press Count FY again." : fyCount.done ? "Counts only, read from Zoho Books just now. Nothing has been imported and nothing in Zoho was changed." : "Still counting — Zoho is read slowly so it stays within its limit."}
             </p>
           )}
         </div>

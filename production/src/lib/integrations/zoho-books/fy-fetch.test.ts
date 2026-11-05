@@ -12,6 +12,7 @@ import { ZOHO_BOOKS_SCOPES, buildZohoAuthUrl } from "./config";
 import {
   FY_DOC_KINDS, countFyDocs, fyDateRange, getFyDocDetail, listFyDocsPage, readChartOfAccounts,
   runPaced, trialBalanceAsAt, ZOHO_FY_RECONNECT_MESSAGE, type FyCountCursor,
+  FyCursorError, fyReconnectMessage, TB_PRIOR_YEARS_ROW,
 } from "./fy-fetch";
 import { ZohoApiError } from "./api";
 
@@ -302,5 +303,39 @@ describe("chart of accounts + trial balance as at a date", () => {
 
   it("refuses an as-at date that is not YYYY-MM-DD", async () => {
     await expect(trialBalanceAsAt(ORG, TOKEN, "31/03/2025", null, {}, fakeZoho().f)).rejects.toThrow();
+  });
+});
+
+describe("R-2498 review fixes", () => {
+  it("trial balance in a later year: income / expense before that year's 1 April go to the earlier-years row; Dr = Cr", async () => {
+    const r = await trialBalanceAsAt(ORG, TOKEN, "2026-03-31", null, { maxCalls: 50 }, fakeZoho().f);
+    expect(r.cursor).toBeNull();
+    expect(r.rows).toEqual([
+      { accountId: "a-bank", name: "Current Account", code: "1001", type: "bank", debitPaise: 8000025, creditPaise: 0 },
+      { accountId: "a-sales", name: "Sales", code: "4001", type: "income", debitPaise: 0, creditPaise: 0 },
+      { accountId: "a-cap", name: "Owner Capital", code: "3001", type: "equity", debitPaise: 0, creditPaise: 5000000 },
+      { ...TB_PRIOR_YEARS_ROW, debitPaise: 0, creditPaise: 3000025 },
+    ]);
+    expect(r.totalDebitPaise).toBe(r.totalCreditPaise);
+  });
+
+  it("the invoices probe after a refused list is counted in `calls` and in the pace history", async () => {
+    const { f, urls } = fakeZoho({ noScope: ["creditnotes", "bills", "expenses", "vendorpayments"], rowsPerList: { invoices: 5 } });
+    const history: Array<{ at: number; calls: number }> = [];
+    const r = await countFyDocs(ORG, TOKEN, "2025-26", null, { maxCalls: 50, history }, f);
+    expect(r.calls).toBe(urls.length);
+    expect(r.calls).toBe(1 + 4 * 2);
+    expect(history.reduce((s, h) => s + h.calls, 0)).toBe(urls.length);
+  });
+
+  it("a bad cursor is a FyCursorError (the route answers 400 by type, not by wording)", async () => {
+    const c = { fy: "2025-26", list: "journals", page: 1, counts: {}, needsReconnect: [] } as unknown as FyCountCursor;
+    await expect(countFyDocs(ORG, TOKEN, "2025-26", c, { maxCalls: 5 }, fakeZoho().f)).rejects.toBeInstanceOf(FyCursorError);
+  });
+
+  it("the Reconnect line names only the refused lists", () => {
+    expect(fyReconnectMessage(["expenses"])).toBe("Reconnect to allow reading expenses. Press Reconnect, then Allow on the Zoho screen.");
+    expect(fyReconnectMessage(["vendorpayments", "bills"])).toMatch(/^Reconnect to allow reading bills and vendor payments\./);
+    expect(fyReconnectMessage(["creditnotes", "bills", "expenses", "vendorpayments"])).toBe(ZOHO_FY_RECONNECT_MESSAGE);
   });
 });

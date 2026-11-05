@@ -8,7 +8,8 @@
  *                      no scope for is reported in `needsReconnect`, never fatal
  *   readChartOfAccounts the organization's accounts
  *   trialBalanceAsAt   every account's debit / credit up to an as-at date (each account's
- *                      transactions with date_end), resumable
+ *                      transactions with date_end), resumable; income / expense only from that
+ *                      date's 1 April — earlier years' result is one "earlier years" equity row
  *   runPaced           the pacing loop: at most `budget` calls in any 60 s (ZOHO_CALLS_PER_MIN = 80,
  *                      under Zoho's ~100/min per organization, room left for "Find in Zoho"); stops on
  *                      a call limit or when Zoho says busy (429), so the caller resumes from the cursor
@@ -22,25 +23,24 @@
  */
 import { getOne, listPage, ZohoApiError } from "./api";
 import { paceWaitMs, ZOHO_CALLS_PER_MIN, type PaceEntry } from "./zoho-pace";
+import { FY_DOC_KINDS, fyDateRange, type DateRange, type FyDocKind } from "./config";
+
+export { FY_DOC_KINDS, FY_DOC_LABELS, fyDateRange, fyReconnectMessage, type DateRange, type FyDocKind } from "./config";
 
 type Fetch = typeof fetch;
-
-export const FY_DOC_KINDS = ["invoices", "creditnotes", "bills", "expenses", "vendorpayments"] as const;
-export type FyDocKind = (typeof FY_DOC_KINDS)[number];
 
 interface KindSpec {
   path: string; listKey: string; detailKey: string;
   idKey: string; numberKey: string; contactSide: "customer" | "vendor"; amountKey: "total" | "amount";
-  label: string;
 }
 
 export const FY_DOC_SPECS: Record<FyDocKind, KindSpec> = {
-  invoices: { path: "/invoices", listKey: "invoices", detailKey: "invoice", idKey: "invoice_id", numberKey: "invoice_number", contactSide: "customer", amountKey: "total", label: "invoices" },
-  creditnotes: { path: "/creditnotes", listKey: "creditnotes", detailKey: "creditnote", idKey: "creditnote_id", numberKey: "creditnote_number", contactSide: "customer", amountKey: "total", label: "credit notes" },
-  bills: { path: "/bills", listKey: "bills", detailKey: "bill", idKey: "bill_id", numberKey: "bill_number", contactSide: "vendor", amountKey: "total", label: "bills" },
+  invoices: { path: "/invoices", listKey: "invoices", detailKey: "invoice", idKey: "invoice_id", numberKey: "invoice_number", contactSide: "customer", amountKey: "total" },
+  creditnotes: { path: "/creditnotes", listKey: "creditnotes", detailKey: "creditnote", idKey: "creditnote_id", numberKey: "creditnote_number", contactSide: "customer", amountKey: "total" },
+  bills: { path: "/bills", listKey: "bills", detailKey: "bill", idKey: "bill_id", numberKey: "bill_number", contactSide: "vendor", amountKey: "total" },
   /* An expense has no number of its own; its reference number stands in. */
-  expenses: { path: "/expenses", listKey: "expenses", detailKey: "expense", idKey: "expense_id", numberKey: "reference_number", contactSide: "vendor", amountKey: "total", label: "expenses" },
-  vendorpayments: { path: "/vendorpayments", listKey: "vendorpayments", detailKey: "vendorpayment", idKey: "payment_id", numberKey: "payment_number", contactSide: "vendor", amountKey: "amount", label: "vendor payments" },
+  expenses: { path: "/expenses", listKey: "expenses", detailKey: "expense", idKey: "expense_id", numberKey: "reference_number", contactSide: "vendor", amountKey: "total" },
+  vendorpayments: { path: "/vendorpayments", listKey: "vendorpayments", detailKey: "vendorpayment", idKey: "payment_id", numberKey: "payment_number", contactSide: "vendor", amountKey: "amount" },
 };
 
 /** What the card says when the stored Zoho sign-in was made before these scopes existed (config.ts). */
@@ -65,14 +65,9 @@ export function assertIsoDate(d: string): string {
   return d;
 }
 
-export interface DateRange { dateStart: string; dateEnd: string }
-
-/** "2025-26" → 1 Apr 2025 … 31 Mar 2026. Anything else is refused (it goes into a Zoho URL). */
-export function fyDateRange(fy: string): DateRange {
-  const m = /^(\d{4})-(\d{2})$/.exec(fy);
-  if (!m || (Number(m[1]) + 1) % 100 !== Number(m[2])) throw new Error("The financial year must look like 2025-26.");
-  const y = Number(m[1]);
-  return { dateStart: `${y}-04-01`, dateEnd: `${y + 1}-03-31` };
+/** A count cursor that came back from the browser and is not one this server would have made. */
+export class FyCursorError extends Error {
+  constructor() { super("The count cursor is not valid. Start the count again."); this.name = "FyCursorError"; }
 }
 
 /** Zoho's "this token has no scope for that list": HTTP 401 with code 57. */
@@ -258,7 +253,7 @@ const MAX_PAGE = 10_000;
 const isCount = (v: unknown) => Number.isInteger(v) && (v as number) >= 0 && (v as number) <= MAX_PAGE * 200;
 
 function checkCursor(c: FyCountCursor, fy: string): FyCountCursor {
-  const bad = () => new Error("The count cursor is not valid. Start the count again.");
+  const bad = () => new FyCursorError();
   if (!c || typeof c !== "object" || c.fy !== fy) throw bad();
   if (!(FY_DOC_KINDS as readonly string[]).includes(c.list)) throw bad();
   if (!Number.isInteger(c.page) || c.page < 1 || c.page > MAX_PAGE) throw bad();
@@ -300,8 +295,14 @@ export async function countFyDocs(
   const cur: FyCountCursor = cursor ? checkCursor(cursor, fy) : { fy, list: FY_DOC_KINDS[0], page: 1, counts: {}, needsReconnect: [] };
   let idx = FY_DOC_KINDS.indexOf(cur.list);
   let finished = false;
+  /* The invoices probe below is a Zoho call too: it goes into the pace history and the reported
+     `calls`, so the card's per-minute spacing is on the real number. */
+  const history = pace.history ?? [];
+  const now = pace.now ?? Date.now;
+  let extra = 0;
   const r = await runPaced({
     ...pace,
+    history,
     step: async () => {
       const kind = FY_DOC_KINDS[idx];
       let more = false;
@@ -313,7 +314,10 @@ export async function countFyDocs(
         if (!isScopeMissing(e)) throw e;
         /* Zoho Books answers an expired / revoked token with the same 401 code 57. Only call it a
            missing scope when a list every connection has (invoices, R-1749) still reads. */
-        if (kind === "invoices" || !(await tokenStillReads(orgId, token, f))) throw e;
+        if (kind === "invoices") throw e;
+        extra += 1;
+        history.push({ at: now(), calls: 1 });
+        if (!(await tokenStillReads(orgId, token, f))) throw e;
         if (!cur.needsReconnect.includes(kind)) cur.needsReconnect.push(kind);
       }
       if (more) { cur.page += 1; return false; }
@@ -326,7 +330,7 @@ export async function countFyDocs(
     },
   });
   const counts = Object.fromEntries(FY_DOC_KINDS.map((k) => [k, cur.counts[k] ?? 0])) as FyCounts;
-  return { counts, needsReconnect: cur.needsReconnect, cursor: finished ? null : cur, calls: r.calls, busy: r.stopped === "busy" };
+  return { counts, needsReconnect: cur.needsReconnect, cursor: finished ? null : cur, calls: r.calls + extra, busy: r.stopped === "busy" };
 }
 
 // ── chart of accounts + trial balance ─────────────────────────────────────────────────────
@@ -363,7 +367,20 @@ export interface TbCursor {
   accIdx: number;
   /** Running sums for accounts[accIdx…]; finished accounts are in `done`. */
   dr: number; cr: number;
+  /** Income / expense dated before the as-at date's financial year (debit − credit, paise): earlier years' result. */
+  priorPl: number;
   done: TbRow[];
+}
+
+/** Zoho's income and expense account types — a trial balance carries them for the current year only. */
+const PL_TYPES = new Set(["income", "other_income", "expense", "cost_of_goods_sold", "other_expense"]);
+/** The synthetic row that carries earlier years' profit (credit) or loss (debit). */
+export const TB_PRIOR_YEARS_ROW = { accountId: "", name: "Profit / loss of earlier years (into retained earnings)", code: "", type: "equity" } as const;
+
+/** 1 Apr of the financial year `d` (YYYY-MM-DD) falls in. */
+function fyStartOf(d: string): string {
+  const y = Number(d.slice(0, 4));
+  return Number(d.slice(5, 7)) >= 4 ? `${y}-04-01` : `${y - 1}-04-01`;
 }
 
 export interface TbResult {
@@ -386,8 +403,9 @@ export async function trialBalanceAsAt(
   assertIsoDate(asAt);
   if (cursor && cursor.asAt !== asAt) throw new Error("The trial balance cursor is for another date.");
   const cur: TbCursor = cursor
-    ? { ...cursor, accounts: [...cursor.accounts], done: [...cursor.done] }
-    : { asAt, phase: "accounts", page: 1, accounts: [], accIdx: 0, dr: 0, cr: 0, done: [] };
+    ? { ...cursor, priorPl: cursor.priorPl ?? 0, accounts: [...cursor.accounts], done: [...cursor.done] }
+    : { asAt, phase: "accounts", page: 1, accounts: [], accIdx: 0, dr: 0, cr: 0, priorPl: 0, done: [] };
+  const fyStart = fyStartOf(asAt);
   const closeAccount = () => {
     const a = cur.accounts[cur.accIdx];
     const net = cur.dr - cur.cr;
@@ -408,16 +426,26 @@ export async function trialBalanceAsAt(
       const p = await listPage("/chartofaccounts/accounttransactions", "transactions", orgId, token, cur.page, f, {
         account_id: a.id, date_end: asAt, sort_column: "date", sort_order: "A",
       });
-      let dr = 0, cr = 0;
-      for (const t of p.rows) { dr += toPaise(t.debit_amount); cr += toPaise(t.credit_amount); }
-      cur.dr += dr; cur.cr += cr;
+      /* An income / expense account's rows before this financial year are earlier years' result:
+         they go to the prior-years row (retained earnings), not to the account. */
+      const pl = PL_TYPES.has(a.type);
+      let dr = 0, cr = 0, prior = 0;
+      for (const t of p.rows) {
+        const d = toPaise(t.debit_amount), c = toPaise(t.credit_amount);
+        const td = str(t.transaction_date ?? t.date);
+        if (pl && td !== "" && td < fyStart) prior += d - c;
+        else { dr += d; cr += c; }
+      }
+      cur.dr += dr; cur.cr += cr; cur.priorPl += prior;
       if (p.more && cur.page < MAX_PAGE) { cur.page += 1; return false; }
       closeAccount();
       return cur.accIdx >= cur.accounts.length;
     },
   });
   const finished = r.stopped === "done";
-  const rows = cur.done;
+  const rows = finished && cur.priorPl !== 0
+    ? [...cur.done, { ...TB_PRIOR_YEARS_ROW, debitPaise: cur.priorPl > 0 ? cur.priorPl : 0, creditPaise: cur.priorPl < 0 ? -cur.priorPl : 0 }]
+    : cur.done;
   return {
     rows,
     totalDebitPaise: rows.reduce((s, x) => s + x.debitPaise, 0),
