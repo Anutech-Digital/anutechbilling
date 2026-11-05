@@ -114,7 +114,8 @@ describe("R-2105: push rebase regenerates deploy-db + peeks with both cards' mig
     g(["init", "-q", "-b", "main"]);
     g(["config", "user.email", "t@example.com"]); g(["config", "user.name", "t"]); g(["config", "core.autocrlf", "false"]);
     fs.mkdirSync(path.join(app(), "scripts", "ops"), { recursive: true });
-    fs.copyFileSync(path.join(root, "scripts", "ops", "gen-deploy-db.mjs"), path.join(app(), "scripts", "ops", "gen-deploy-db.mjs"));
+    /* gen-deploy-db.mjs + what it imports (R-2491: sql-comments.mjs). */
+    for (const f of ["gen-deploy-db.mjs", "sql-comments.mjs"]) fs.copyFileSync(path.join(root, "scripts", "ops", f), path.join(app(), "scripts", "ops", f));
     write(DEPLOY, script("staging")); write(DEPLOY_LIVE, script("live")); write(PEEKS, "");
     mig("20261029090000", "base0");
     execFileSync(process.execPath, [path.join(app(), "scripts", "ops", "gen-deploy-db.mjs"), "--date", "2026-10-07", "--since", "20261029090000"], { cwd: app(), stdio: "pipe" });
