@@ -485,19 +485,16 @@ export function fyInNumber(no: string): number | null {
  *  plan then refuses an opening invoice anyway). The number's year is used only when Zoho gives no
  *  date. Works for any books' start (1 Apr 2025, 1 Apr 2026, …). */
 export function isLastYearInvoice(inv: { number: string; date: string | null }, lineDate: string, booksStart: string | null): boolean {
-  if (inv.date) {
-    const d = inv.date.slice(0, 10);
-    return booksStart ? d < booksStart : fyOf(d) < fyOf(lineDate);
-  }
-  const fy = fyInNumber(inv.number);
-  return fy !== null && fy < fyOf(booksStart ?? lineDate);
+  const d = inv.date?.slice(0, 10);
+  if (d) return booksStart ? d < booksStart : fyOf(d) < fyOf(lineDate);
+  return (fyInNumber(inv.number) ?? Infinity) < fyOf(booksStart ?? lineDate); /* no number year → false */
 }
 
 /** R-2494: the number says an earlier financial year than the invoice's own date ("INV/25-26/0999"
  *  dated 2 Apr 2026) — Zoho kept the old number series after the year turned. */
 export function oldNumberSeries(inv: { number: string; date: string | null }): boolean {
-  const fy = fyInNumber(inv.number);
-  return fy !== null && !!inv.date && fy < fyOf(inv.date.slice(0, 10));
+  const fy = fyInNumber(inv.number), d = inv.date?.slice(0, 10);
+  return fy !== null && !!d && fy < fyOf(d);
 }
 
 /** (d) The TDS % (1 / 2 / 10) the withheld amount is of the taxable value, within ₹2; null = none. */
@@ -856,10 +853,8 @@ export function planRow(
   const lastYear = match.invoices.length > 0 && match.invoices.some((inv) => isLastYearInvoice(inv, line.txnDate, opts.booksStart ?? null));
   /* R-2494: Zoho kept the old number series for a day or two after the year turned — the date says
      which year's sale it is, so it goes down the same path as any invoice of that date. */
-  for (const inv of match.invoices) {
-    if (!isLastYearInvoice(inv, line.txnDate, opts.booksStart ?? null) && oldNumberSeries(inv)) {
-      notes.push(`Zoho's invoice ${inv.number} is dated ${fmtDay(inv.date!)} — a sale of this year; Zoho kept the old number series, so it is not last year's invoice.`);
-    }
+  for (const inv of match.invoices.filter((i) => !isLastYearInvoice(i, line.txnDate, opts.booksStart ?? null) && oldNumberSeries(i))) {
+    notes.push(`Zoho's invoice ${inv.number} is dated ${fmtDay(inv.date!)} — a sale of this year; Zoho kept the old number series, so it is not last year's invoice.`);
   }
   if (isExisting && facts == null && opts.requireFacts) {
     pathProblems.push("Not checked for doubles: the app's open quotes and receipts for this customer were not read with this line — press Start again to read it afresh.");
@@ -950,8 +945,7 @@ export function planRow(
   /* R-2494: an invoice inside the app's books but of an EARLIER financial year than the bank line
      (books from 1 Apr 2025, invoice Feb 2026, money May 2026) is never a new sale on the bank date —
      its revenue and GST belong to its own year. It is paid against that invoice in the app. */
-  const earlierFy = kind === "new_sale" && !noBook
-    ? match.invoices.find((inv) => !!inv.date && fyOf(inv.date.slice(0, 10)) < fyOf(line.txnDate)) ?? null : null;
+  const earlierFy = kind !== "new_sale" || noBook ? null : match.invoices.find((inv) => !!inv.date && fyOf(inv.date.slice(0, 10)) < fyOf(line.txnDate)) ?? null;
   if (earlierFy) {
     pathProblems.push(`Zoho's invoice ${earlierFy.number} is dated ${fmtDay(earlierFy.date!)}, in an earlier financial year than this bank line — a new sale on ${fmtDay(line.txnDate)} would put its revenue and GST in the wrong year. Enter or import that invoice in the app, then pay it (Record payment), or reconcile this line by hand.`);
     noBook = true;

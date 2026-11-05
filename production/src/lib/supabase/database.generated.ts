@@ -13523,6 +13523,7 @@ export type Database = {
           attendance_ingest_key: string | null
           auto_suspend_on_overdue: boolean
           books_locked_until: string | null
+          books_start_date: string | null
           business_type: string | null
           contact_name: string | null
           created_at: string
@@ -13578,6 +13579,7 @@ export type Database = {
           attendance_ingest_key?: string | null
           auto_suspend_on_overdue?: boolean
           books_locked_until?: string | null
+          books_start_date?: string | null
           business_type?: string | null
           contact_name?: string | null
           created_at?: string
@@ -13633,6 +13635,7 @@ export type Database = {
           attendance_ingest_key?: string | null
           auto_suspend_on_overdue?: boolean
           books_locked_until?: string | null
+          books_start_date?: string | null
           business_type?: string | null
           contact_name?: string | null
           created_at?: string
