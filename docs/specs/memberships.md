@@ -194,9 +194,8 @@ also be 0 on a healthy DB.
 
 - `users_tenant_delete` (owner deletes a teammate's users row) still exists and would delete the
   login's memberships in ALL companies. Slice 3 must replace it with "end this membership".
-- `switch_company` updates `users`, so `log_row_change` writes an activity_log row in the NEW
-  company showing the old company's uuid / role / employee uuid. Low risk (uuids, no data);
-  slice 2 should keep switches out of the company activity log.
+- ~~`switch_company` updates `users`, so `log_row_change` writes an activity_log row in the NEW
+  company showing the old company's uuid / role / employee uuid.~~ Fixed in slice 2 (R-2476, §5).
 
 - Team list of a company shows only logins whose SELECTED company it is (`users_tenant_read`).
   Slice 3 lists members from `tenant_memberships`.
@@ -204,3 +203,29 @@ also be 0 on a healthy DB.
   chat membership comes with slice 3.
 - Invite of a login that already has a company still refuses (R-2469); slice 3 adds a second
   membership instead.
+
+## 5. Slice 2 — company switcher (R-2476, 5 Nov 2026)
+
+- **List:** `public.my_companies()` (SECURITY DEFINER, `authenticated` only) returns the caller's
+  ACTIVE, not-ended, not-expired memberships — `tenant_id, company_name, role, is_current`, the
+  selected one first. Definer because tenants RLS hides the other companies' names. Empty before
+  two-step sign-in (`session_mfa_ok()`) and without a signed-in user.
+- **UI:** `components/layout/company-switcher.tsx`, logic in `lib/auth/company-switch.ts`. Shown
+  only for 2+ active memberships. From `sm` up a top-bar button (building icon + current company);
+  on a phone a "Switch company" row in the More menu (the 375px row has no room). Both open one
+  dialog: company name + role there, the current one ticked ("Current"), keyboard reachable.
+- **Switch:** `switch_company(uuid)`, then `finishCompanySwitch`: cancel running reads, clear the
+  whole React Query cache, forget the workspace tabs (`ros.workspace.tabs.v1` — record pages and
+  drafts of the old company) and load `/dashboard` fresh (a role without it goes to its own home,
+  R-1837). A full load also resets in-memory providers. Unsaved form → confirm first.
+- **Refusals (§24):** two-step sign-in pending → "Open two-step sign-in" (/mfa); ended / switched-off
+  membership → ask that company's owner to invite again; anything else → still in the same company,
+  try again.
+- **Activity log:** `switch_company` rewrites the row `log_row_change` wrote in the NEW company to
+  `{company: {new: <name>}, role: {new: <role>}}` ("<name> switched into this company") and adds one
+  in the OLD company `{company: {old: <name>}, role: {old: <role>}}` ("… switched to another
+  company"). Neither names the other company. Switching to the selected company writes nothing.
+  SQL test `supabase/tests/r2476_company_switch.test.sql`.
+- **Local check:** `node scripts/dev/scenario.mjs two-companies` gives "Local test login → Owner" a
+  Manager membership in "SCN Second Company Pvt Ltd" (`--clear` moves the login back first —
+  users.tenant_id cascades on a company delete).
