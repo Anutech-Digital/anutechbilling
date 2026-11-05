@@ -23,6 +23,9 @@ insert into public.users (id, tenant_id, email, full_name, role, is_active) valu
 -- A money row inside the books (an expense of 10 May 2025) and the other company's opening date.
 insert into public.expenses (id, tenant_id, category, amount, expense_date) values
   ('EXP-R2496-1', 'b2496000-0000-0000-0000-0000000000f0', 'Office Rent', 10000, '2025-05-10');
+-- Review fix: the other money tables count too — a statutory dues payment of 5 May 2025 (earliest).
+insert into public.statutory_dues_payments (tenant_id, amount, paid_on) values
+  ('b2496000-0000-0000-0000-0000000000f0', 5000, '2025-05-05');
 insert into public.opening_balances (tenant_id, as_of, owner_capital, retained_earnings) values
   ('b2496000-0000-0000-0000-0000000000f1', '2026-03-31', 100000, 0);
 
@@ -83,8 +86,9 @@ begin
   -- 3. never a future date
   if not pg_temp.refused(((now() at time zone 'Asia/Kolkata')::date + 1), '22023', '%future%') then raise exception 'FAIL 3: future books start accepted'; end if;
 
-  -- 4. not later than a money row already in the books (the 10 May 2025 expense)
-  if not pg_temp.refused('2025-06-01', '22023', '%10 May 2025%') then raise exception 'FAIL 4: books start after an expense accepted'; end if;
+  -- 4. not later than the earliest money row already in the books (the 5 May 2025 statutory dues
+  --    payment, before the 10 May expense)
+  if not pg_temp.refused('2025-06-01', '22023', '%a statutory dues payment dated 5 May 2025%') then raise exception 'FAIL 4: books start after a money row accepted'; end if;
 
   -- 5. owner sets 1 Apr 2025 (Excel, 5 Nov) → stored, read back by books_start_for, one audit row
   perform public.set_books_start_date('2025-04-01');
@@ -109,9 +113,9 @@ begin
   select count(*) into n from public.activity_log where tenant_id = t and action = 'books.start_date_set';
   if n <> 2 then raise exception 'FAIL 8: expected 2 audit rows (set, clear), got %', n; end if;
   if not exists (select 1 from public.activity_log where tenant_id = t and action = 'books.start_date_set'
-                  and changes->>'now' = '2025-04-01' and changes->>'was' is null
+                  and changes#>>'{books_start_date,new}' = '2025-04-01' and (changes#>'{books_start_date,old}') = 'null'::jsonb
                   and user_id = 'b2496000-0000-0000-0000-0000000000a1') then
-    raise exception 'FAIL 8b: audit row lacks was / now / user';
+    raise exception 'FAIL 8b: audit row lacks books_start_date {old, new} / user';
   end if;
 
   -- 9. the other company untouched

@@ -34,7 +34,8 @@ export function useBooksStartSetting() {
     queryFn: async (): Promise<string | null> => {
       const { data, error } = await createClient().from("tenants").select("books_start_date").eq("id", tenantId!).limit(1).maybeSingle();
       if (error) {
-        if (error.code === "42703") return null; /* migration not on this database yet */
+        /* migration not on this database yet — the same test as the server read (books-start.ts) */
+        if (error.code === "42703" || /column .*books_start_date.* does not exist/i.test(error.message ?? "")) return null;
         throw error;
       }
       const v = (data as { books_start_date?: string | null } | null)?.books_start_date ?? null;
@@ -45,7 +46,7 @@ export function useBooksStartSetting() {
 }
 
 /** The company's books start (setting, else opening date + 1); undefined while either is loading. */
-export function useBooksStart(): { data: BooksStart | undefined; isError: boolean; error: unknown; refetch: () => void } {
+export function useBooksStart(): { data: BooksStart | undefined; isError: boolean; anyError: boolean; error: unknown; refetch: () => void } {
   const setting = useBooksStartSetting();
   const opening = useOpeningBalances();
   const data = React.useMemo(
@@ -53,8 +54,10 @@ export function useBooksStart(): { data: BooksStart | undefined; isError: boolea
       : booksStartOf({ booksStartDate: setting.data, openingAsOf: opening.data?.asOf ?? null })),
     [setting.data, opening.data],
   );
+  /* isError = the setting's own read: a failed opening-balances read already shows on its own card
+     (and holds the profit P&L back) — it must not blank the whole Balance Sheet (review). */
   return {
-    data, isError: setting.isError || opening.isError, error: setting.error ?? opening.error,
+    data, isError: setting.isError, anyError: setting.isError || opening.isError, error: setting.error ?? opening.error,
     refetch: () => { if (setting.isError) void setting.refetch(); if (opening.isError) void opening.refetch(); },
   };
 }
@@ -109,7 +112,7 @@ export function BooksStartCard() {
             Books start
           </p>
           <p className="text-xs text-ink-2 mt-0.5" data-testid="books-start-text">
-            {bs.isError ? <span className="text-rose">Could not load the books start date. Reload the page.</span>
+            {bs.anyError ? <span className="text-rose">Could not load the books start date. Reload the page.</span>
               : !bs.data ? "…"
               : current ? <>Your books in the app start on <b>{formatDate(current)}</b>. Money dated before it is the opening balance.</>
               : bs.data.start ? <>Not set — the app uses the day after your opening balances: <b>{formatDate(bs.data.start)}</b>.</>

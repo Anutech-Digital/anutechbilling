@@ -945,9 +945,11 @@ export function planRow(
   /* R-2494: an invoice inside the app's books but of an EARLIER financial year than the bank line
      (books from 1 Apr 2025, invoice Feb 2026, money May 2026) is never a new sale on the bank date —
      its revenue and GST belong to its own year. It is paid against that invoice in the app. */
-  const earlierFy = kind !== "new_sale" || noBook ? null : match.invoices.find((inv) => !!inv.date && fyOf(inv.date.slice(0, 10)) < fyOf(line.txnDate)) ?? null;
+  /* Review: an undated invoice's year is the one in its number (INV/25-26/… → FY 2025-26). */
+  const invFy = (inv: { number: string; date: string | null }) => (inv.date ? fyOf(inv.date.slice(0, 10)) : fyInNumber(inv.number));
+  const earlierFy = kind !== "new_sale" || noBook ? null : match.invoices.find((inv) => { const fy = invFy(inv); return fy !== null && fy < fyOf(line.txnDate); }) ?? null;
   if (earlierFy) {
-    pathProblems.push(`Zoho's invoice ${earlierFy.number} is dated ${fmtDay(earlierFy.date!)}, in an earlier financial year than this bank line — a new sale on ${fmtDay(line.txnDate)} would put its revenue and GST in the wrong year. Enter or import that invoice in the app, then pay it (Record payment), or reconcile this line by hand.`);
+    pathProblems.push(`Zoho's invoice ${earlierFy.number} is ${earlierFy.date ? `dated ${fmtDay(earlierFy.date)}` : "of an earlier year by its number"}, in an earlier financial year than this bank line — a new sale on ${fmtDay(line.txnDate)} would put its revenue and GST in the wrong year. Enter or import that invoice in the app, then pay it (Record payment), or reconcile this line by hand.`);
     noBook = true;
   }
 

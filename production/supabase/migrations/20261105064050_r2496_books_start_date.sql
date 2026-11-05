@@ -11,9 +11,13 @@
 --      count as "before the books"). Refused: no company (28000), not the owner (42501), a future
 --      date, or a date LATER than a money row already in the books (that row would fall outside the
 --      books) — invoices (not opening invoices, which are dated before the start on purpose),
---      receipts, credit / debit notes, expenses, vendor bills, salaries, tax payments. Bank lines are
---      not checked: lines before the account's opening date are allowed (R-2497). NULL clears it.
---      Each change writes one activity_log row (action books.start_date_set, changes {was, now}).
+--      receipts, credit / debit notes, expenses, vendor bills, salaries, tax payments, project
+--      receipts, statutory dues, prepaid advances, capital / drawings, loan repayments. Bank lines and
+--      fixed assets (bought before the books, carried at WDV) are not checked: bank lines before the
+--      account's opening date are allowed (R-2497). NULL clears it. It does NOT stop a later entry
+--      dated before the start — that is the books lock's job (R-2506 locks to 31 Mar 2026).
+--      Each change writes one activity_log row (action books.start_date_set,
+--      changes {books_start_date: {old, new}} — the shape the Activity page shows).
 --   4. r2496_books_start_guard — a direct table write (the owner's tenants_self_update) cannot change
 --      books_start_date; only the function (SECURITY DEFINER: not a request login) or the server.
 -- opening_balances.as_of should equal books start − 1; the Balance Sheet warns when not (no
@@ -103,6 +107,16 @@ begin
       select min(s.pay_date), 'a salary payment' from public.salary_payments s where s.tenant_id = v_tenant
       union all
       select min(x.paid_on), 'a tax payment' from public.tax_payments x where x.tenant_id = v_tenant
+      union all
+      select min(pp.received_at), 'a project receipt' from public.project_payments pp where pp.tenant_id = v_tenant
+      union all
+      select min(sd.paid_on), 'a statutory dues payment' from public.statutory_dues_payments sd where sd.tenant_id = v_tenant
+      union all
+      select min(pa.paid_date), 'a prepaid advance' from public.prepaid_advances pa where pa.tenant_id = v_tenant
+      union all
+      select min(om.movement_date), 'a capital / drawings entry' from public.owner_equity_movements om where om.tenant_id = v_tenant
+      union all
+      select min(lr.repaid_on), 'a loan repayment' from public.loan_repayments lr where lr.tenant_id = v_tenant
     ) m
     where d is not null
     order by d
@@ -121,7 +135,7 @@ begin
   values (v_tenant, auth.uid(), 'books.start_date_set', 'tenant', v_tenant::text,
           case when p_date is null then 'Books start date cleared'
                else 'Books start date set to ' || to_char(p_date, 'FMDD Mon YYYY') end,
-          jsonb_build_object('was', v_current, 'now', p_date));
+          jsonb_build_object('books_start_date', jsonb_build_object('old', v_current, 'new', p_date)));
 
   return p_date;
 end;

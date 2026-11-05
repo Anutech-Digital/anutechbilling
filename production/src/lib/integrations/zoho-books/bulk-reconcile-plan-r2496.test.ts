@@ -58,4 +58,13 @@ describe("R-2496 books from 1 Apr 2025 — the books start decides, not the numb
     expect(row.book).toBeNull();
     expect(row.problems.join(" ")).toMatch(/No books start date.*Accounting → Overview → Books start/);
   });
+
+  it("review: an UNDATED INV/25-26 paid in FY 2026-27 is never a new sale on the bank date (its number says FY 2025-26)", () => {
+    const h = hist({ payments: [{ paymentId: "zp-1", date: "2026-05-12", amount: 59000, tds: 0 }] });
+    const undated = { ...inv("INV/25-26/0412", "2025-12-01", 59000, h), date: null };
+    const [row] = planAll([rowOf(bank("t-3", 59000, "2026-05-12"), match([undated], 59000, "2026-05-12"), "2025-04-01")], ctx);
+    expect(row.ticked).toBe(false);
+    expect(row.book).toBeNull();
+    expect(row.problems.join(" ")).toMatch(/INV\/25-26\/0412 is of an earlier year by its number.*wrong year/);
+  });
 });
