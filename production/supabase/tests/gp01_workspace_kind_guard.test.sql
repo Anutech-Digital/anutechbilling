@@ -72,11 +72,14 @@ begin
     raise exception 'FAIL 5b: personal insert refused by something else: %', v_msg;
   end if;
 
-  -- ── The guard lists app_runtime (staging's request role) beside authenticated/anon ─
+  -- ── The guard covers app_runtime (staging's request role) beside authenticated/anon ─
   -- (postgres cannot SET ROLE app_runtime on the local/CI DB, so the list is checked instead).
+  -- R-2485: the list lives in public.is_direct_request_login(); the guard must ask it.
   reset role;
   if (select prosrc from pg_proc where oid = 'public.r720_tenants_column_guard()'::regprocedure)
-       not like '%''authenticated'', ''anon'', ''app_runtime''%' then
+       not like '%public.is_direct_request_login()%'
+     or (select prosrc from pg_proc where oid = 'public.is_direct_request_login()'::regprocedure)
+       not like '%''authenticated'', ''anon'', ''authenticator'', ''app_runtime''%' then
     raise exception 'FAIL 6: the guard no longer covers app_runtime';
   end if;
   if exists (select 1 from public.tenants where id = c_me and workspace_kind <> 'business') then
