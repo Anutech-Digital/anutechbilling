@@ -12,12 +12,8 @@ import { spawnSync } from "node:child_process";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import {
-  resolveSqlTestTarget,
-  describeSqlTestTarget,
-  linkedRefReason,
-  readLinkedRef,
-} from "../scripts/dev/sql-test-target.mjs";
+// @ts-expect-error — plain .mjs script, no types
+import { resolveSqlTestTarget, describeSqlTestTarget, linkedRefReason, readLinkedRef } from "../scripts/dev/sql-test-target.mjs";
 
 const REF = "abcdefghijklmnopqrst"; // 20 chars, the shape of a Supabase project ref
 const OTHER = "zyxwvutsrqponmlkjihg";
