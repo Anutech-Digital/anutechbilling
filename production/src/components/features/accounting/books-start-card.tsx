@@ -2,7 +2,7 @@
  * R-2496 (G-FY2526) — Books start: the first day whose money lives in the app (Excel: 1 Apr 2025).
  * One per company, set by the OWNER on Accounting → Overview; the Balance Sheet, Trial Balance and
  * Reconcile from Zoho all read it (lib/accounting/books-start.ts). The database decides through
- * set_books_start_date() (migration 20261105050326): owner only, never a future date, never later
+ * set_books_start_date() (migration 20261105064050): owner only, never a future date, never later
  * than a money row already in the books, one activity-log row per change. Anyone else sees it.
  */
 "use client";

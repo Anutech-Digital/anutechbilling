@@ -4,7 +4,7 @@
  * screen guesses "1 Apr 2026" from an invoice number, a bank line's year or a hard-coded date.
  *
  *   1. tenants.books_start_date — the owner sets it (Accounting → Overview → Books start), through
- *      set_books_start_date() (migration 20261105050326; SQL twin: public.books_start_for()).
+ *      set_books_start_date() (migration 20261105064050; SQL twin: public.books_start_for()).
  *   2. Not set → the day after the CA's opening balances date (opening_balances.as_of + 1) — what
  *      the app used before this card.
  *   3. Neither → null: the books have no known start. Reports then read the whole book
