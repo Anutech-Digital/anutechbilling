@@ -110,7 +110,9 @@ describe("no later migration hands anon EXECUTE back", () => {
   it("every allow-listed trigger-guard helper is SECURITY INVOKER", () => {
     const all = later.map((f) => code(f)).join("\n");
     for (const fn of Object.keys(TRIGGER_GUARD_HELPERS)) {
-      const defs = all.match(new RegExp(`create\\s+or\\s+replace\\s+function\\s+public\\.${fn}\\(\\)[\\s\\S]*?\\bas\\s+\\$`, "gi")) ?? [];
+      expect(new RegExp(`alter\\s+function\\s+(public\\.)?${fn}\\b[^;]*security\\s+definer`, "i").test(all),
+        `${fn} must not be ALTERed to SECURITY DEFINER`).toBe(false);
+      const defs = all.match(new RegExp(`create\\s+(or\\s+replace\\s+)?function\\s+(public\\.)?${fn}\\(\\)[\\s\\S]*?\\bas\\s+\\$`, "gi")) ?? [];
       expect(defs.length, `${fn} is allow-listed but never defined`).toBeGreaterThan(0);
       expect(/security\s+definer/i.test(defs[defs.length - 1]), `${fn} must stay SECURITY INVOKER`).toBe(false);
     }

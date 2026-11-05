@@ -30,11 +30,20 @@ const R2485 = "20261105004823";
 const HELPER = "is_direct_request_login";
 const LOGINS = ["authenticated", "anon", "authenticator", "app_runtime", "app_anon", "app_jobs"];
 
-/** current_user (optionally ::text) compared (=, <>, !=, in, not in) with a request role. */
-export const RAW_ROLE_CHECK = new RegExp(
-  String.raw`\bcurrent_user(\s*::\s*(text|name))?\s*(=|<>|!=|\bnot\s+in\b|\bin\b)\s*\(?\s*'(` + LOGINS.join("|") + `)'`,
-  "i",
-);
+const WHO = String.raw`\bcurrent_(?:user|role)\b(?:\s*::\s*(?:text|name))?`;
+const LOGIN = `'(?:${LOGINS.join("|")})'`;
+const SHAPES = [
+  // current_user = 'authenticated'   /  'authenticated' <> current_user
+  new RegExp(`${WHO}\\s*(?:=|<>|!=)\\s*${LOGIN}`, "i"),
+  new RegExp(`${LOGIN}\\s*(?:=|<>|!=)\\s*${WHO}`, "i"),
+  // current_user [not] in ('postgres', 'authenticated', …) — a request login anywhere in the list
+  new RegExp(`${WHO}\\s*(?:not\\s+)?in\\s*\\([^)]*${LOGIN}`, "i"),
+  // current_user = any(array['authenticated', …])  /  = any('{authenticated,…}')
+  new RegExp(`${WHO}\\s*(?:=|<>|!=)\\s*(?:any|all)\\s*\\(\\s*(?:array\\s*\\[[^\\]]*${LOGIN}|'\\{[^}]*\\b(?:${LOGINS.join("|")})\\b)`, "i"),
+];
+
+/** current_user / current_role compared with a request login, in any of the shapes above. */
+export const RAW_ROLE_CHECK = { test: (sql: string) => SHAPES.some((re) => re.test(sql)) };
 
 /** Comments stripped — migrations quote the old form to explain it. One pass, so a `/*` inside
  *  a `--` line (e.g. "-- /accounting/* by prefix") is not read as a block comment, and quoted
@@ -80,6 +89,12 @@ describe("R-2485: the scan itself", () => {
     expect(RAW_ROLE_CHECK.test("if current_user::text not in ('authenticated', 'anon', 'app_runtime') then")).toBe(true);
     expect(RAW_ROLE_CHECK.test("if current_user in ('authenticated', 'anon') then")).toBe(true);
     expect(RAW_ROLE_CHECK.test("and current_user = 'app_jobs'")).toBe(true);
+    expect(RAW_ROLE_CHECK.test("if current_user not in ('postgres', 'authenticated') then")).toBe(true);
+    expect(RAW_ROLE_CHECK.test("if 'authenticated' = current_user then")).toBe(true);
+    expect(RAW_ROLE_CHECK.test("if current_user = any(array['authenticated','anon']) then")).toBe(true);
+    expect(RAW_ROLE_CHECK.test("if current_user::text = any('{postgres,app_runtime}') then")).toBe(true);
+    expect(RAW_ROLE_CHECK.test("if current_role in ('authenticated') then")).toBe(true);
+    expect(RAW_ROLE_CHECK.test("if current_user in ('postgres', 'supabase_admin') then")).toBe(false);
     expect(RAW_ROLE_CHECK.test("if not public.is_direct_request_login() then")).toBe(false);
     expect(RAW_ROLE_CHECK.test("if current_user = 'postgres' or pg_has_role(current_user, 'postgres', 'member')")).toBe(false);
     expect(RAW_ROLE_CHECK.test("when session_user = 'app_runtime' then")).toBe(false);

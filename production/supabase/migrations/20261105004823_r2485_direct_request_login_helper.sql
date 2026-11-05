@@ -63,6 +63,17 @@ comment on function public.is_direct_request_login() is
 -- Cloud SQL gives no PUBLIC EXECUTE (R-401), so each role is named.
 revoke all on function public.is_direct_request_login() from public;
 grant execute on function public.is_direct_request_login() to authenticated, anon, service_role;
+-- Named too (the 20261007260000 precedent): a Cloud SQL login created without INHERIT must not fail
+-- every guarded write with "permission denied for function" — the inline check needed no privilege.
+do $$
+declare r text;
+begin
+  foreach r in array array['app_runtime', 'app_jobs', 'app_anon', 'app_service', 'resellersos_app'] loop
+    if exists (select 1 from pg_roles where rolname = r) then
+      execute format('grant execute on function public.is_direct_request_login() to %I', r);
+    end if;
+  end loop;
+end $$;
 
 create or replace function public.attendance_direct_write_guard()
 returns trigger
@@ -315,3 +326,5 @@ revoke all on function public.r720_tenants_column_guard() from public, anon, aut
 revoke all on function public.r720_tenant_domains_guard() from public, anon, authenticated;
 revoke all on function public.r2445_tenants_owner_guard() from public, anon, authenticated;
 revoke all on function public.tg_quote_insert_approval_guard() from public, anon, authenticated;
+revoke all on function public.r1903_users_phone_verified_guard() from public, anon, authenticated;
+revoke all on function public.tg_users_insert_server_only() from public, anon, authenticated;
