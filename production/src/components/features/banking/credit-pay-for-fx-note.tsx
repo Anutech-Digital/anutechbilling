@@ -8,9 +8,9 @@
  * USD may have deducted TDS, or a gateway fee). An inward remittance in that currency has no ₹ choice:
  * it settles its invoices (R-2427).
  */
-import { splitFxText, type SplitFx } from "@/lib/banking/item-fx-pay";
+import { splitFxText, type FxChoice, type SplitFx } from "@/lib/banking/item-fx-pay";
 
-export type FxChoice = "fx" | "rupee";
+export type { FxChoice };
 
 export function FxSettleNote({ fx, choice, onChoice }: { fx: SplitFx; choice: FxChoice; onChoice: (c: FxChoice) => void }) {
   const canChoose = fx.remittance === null;

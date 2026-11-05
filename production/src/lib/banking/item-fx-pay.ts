@@ -23,6 +23,8 @@ import { formatForeign } from "@/lib/currency";
 import { formatRemittance, parseInwardRemittance, remittanceFitsCredit, remittanceInr, type InwardRemittance } from "@/lib/banking/inward-remittance";
 import { FX_CHARGES_MAX_SHARE, FX_RATE_MAX_DRIFT, fxInvoiceSettlement } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 import type { OpenItem } from "@/lib/banking/credit-pay-for";
+import { tdsRateFor } from "@/lib/banking/invoice-credit-match";
+import { isExportSupply } from "@/lib/gst/place-of-supply";
 
 /** What reconcile_bank_credit_fx_invoice is sent (the narration's figures) and what it will book. */
 export interface ItemFx {
@@ -41,9 +43,16 @@ export interface ItemFx {
 
 /** R-1678: the ledger an exchange difference is booked to (bank_fx_book_differences; CA to confirm the name). */
 export const EXCHANGE_LEDGER = "Exchange gain / loss (realised)";
-/** R-1678: a ₹ credit more than 10% away from the invoices' ₹ value is not an exchange difference
- *  (a part payment, TDS or another payment). Same number as reconcile_bank_credit_split's 0.10. */
-export const FX_INR_GAP_SHARE = 0.10;
+/** R-1678 → R-1678b (independent review): a ₹ credit more than 5% SHORT of the invoices' ₹ value is not an
+ *  exchange difference (TDS, a fee or a part payment); more than due is an advance, never a gain; a
+ *  customer in India never gets one. Same rules as reconcile_bank_credit_split (20261106030000). */
+export const FX_INR_GAP_SHARE = 0.05;
+
+/** R-1678b: a settlement-gateway credit — its gap is the gateway's fee (with GST ITC), not exchange. */
+const GATEWAY_RE = /RAZORPAY|PAYU|STRIPE|CASHFREE/i;
+
+/** The operator's answer for a ₹ credit on foreign invoices: an exchange difference, or a plain ₹ payment. */
+export type FxChoice = "fx" | "rupee";
 
 export interface SplitFxPart {
   id: string;
@@ -64,6 +73,8 @@ export interface SplitFx {
   due: number;
   /** The inward remittance on the line, or null for a ₹ credit. */
   remittance: InwardRemittance | null;
+  /** R-1678b: a ₹ credit's gap as % of the ₹ due (null with a remittance). */
+  gapPct: number | null;
   bankCharges: number;
   forex: number;
   parts: SplitFxPart[];
@@ -79,7 +90,7 @@ export interface ItemPayPlan {
 
 type PlanItem = Pick<OpenItem, "kind" | "invoice_id" | "quote_id" | "amount_due" | "currency" | "fx_rate">;
 
-export function itemPayPlan(item: PlanItem, line: { description: string | null | undefined; credit: number }, opts: { relink?: boolean } = {}): ItemPayPlan {
+export function itemPayPlan(item: PlanItem, line: { description: string | null | undefined; credit: number }, opts: { relink?: boolean; customerCountry?: string | null } = {}): ItemPayPlan {
   const id = item.invoice_id ?? item.quote_id ?? "This item";
   const cur = (item.currency ?? "").trim().toUpperCase() || "INR";
   const refuse = (problem: string): ItemPayPlan => ({ fx: null, problem });
@@ -95,7 +106,7 @@ export function itemPayPlan(item: PlanItem, line: { description: string | null |
      INVOICE) — settled in full through the split with p_rest 'fx'; a ₹ credit more than 10% off is a
      plain ₹ payment (part / TDS / advance as usual). */
   if (!r || !item.invoice_id) {
-    const sf = splitFxPlan([{ item, amount: item.amount_due }], line);
+    const sf = splitFxPlan([{ item, amount: item.amount_due }], line, { customerCountry: opts.customerCountry });
     return sf.problem ? refuse(sf.problem) : { fx: null, problem: null, splitFx: sf.fx };
   }
   if (r.currency !== cur) return refuse(`${id} is in ${cur}, but this money came in ${r.currency}. Reconcile this line by hand.`);
@@ -127,7 +138,7 @@ const curOf = (c: string | null | undefined) => (c ?? "").trim().toUpperCase() |
 export function splitFxPlan(
   picks: ReadonlyArray<{ item: PlanItem; amount: number }>,
   line: { description: string | null | undefined; credit: number },
-  opts: { sale?: boolean } = {},
+  opts: { sale?: boolean; customerCountry?: string | null } = {},
 ): { fx: SplitFx | null; problem: string | null } {
   const plain = { fx: null, problem: null };
   const foreign = picks.filter((p) => curOf(p.item.currency) !== "INR");
@@ -162,8 +173,10 @@ export function splitFxPlan(
     if (short < 0) return no(`The bank got ${f(r.amount)} but only ${f(foreignDue)} is due — the extra is the customer's advance. Reconcile this line by hand.`);
     if (short > foreignDue * FX_CHARGES_MAX_SHARE) return no(`The bank got ${f(r.amount)} but ${f(foreignDue)} is due — ${f(short)} short is more than bank charges (5%). Reconcile a part payment in ${cur} by hand.`);
     bankCharges = Math.round(short * r.rate);
-  } else if (Math.abs(line.credit - due) > due * FX_INR_GAP_SHARE) {
-    return plain;   // more than 10% off: a part payment, TDS or an advance — not an exchange difference
+  } else if (!isExportSupply(opts.customerCountry) || line.credit > due || due - line.credit > due * FX_INR_GAP_SHARE) {
+    /* R-1678b: a customer in India, more than due (an advance) or more than 5% short (TDS, a fee, a
+       part payment) — not an exchange difference. */
+    return plain;
   }
   const credit = Math.round(line.credit);
   const forex = due - bankCharges - credit;
@@ -177,7 +190,21 @@ export function splitFxPlan(
     leftCharges -= charges;
     return { id: idOf(p.item), foreignDue: fdues[k], due: dues[k], bankShare, bankCharges: charges, forex: dues[k] - bankShare - charges };
   });
-  return { fx: { currency: cur, foreignDue, due, remittance: r, bankCharges, forex, parts }, problem: null };
+  const gapPct = r ? null : Math.round(((due - line.credit) / due) * 10000) / 100;
+  return { fx: { currency: cur, foreignDue, due, remittance: r, gapPct, bankCharges, forex, parts }, problem: null };
+}
+
+/**
+ * R-1678b: what the sheet pre-selects for a ₹ credit on foreign invoices. "rupee" (book it in ₹) when the
+ * gap looks like TDS (1 / 2 / 5 / 10% of the taxable value — tdsRateFor, the rule the ₹ amount check
+ * uses) or the line is a gateway settlement (Razorpay / PayU / Stripe / Cashfree: the gap is its fee);
+ * else "fx". An inward remittance has no choice (its dollars settle the invoices).
+ */
+export function fxDefaultChoice(fx: SplitFx, line: { description: string | null | undefined; credit: number }, taxable: number): FxChoice {
+  if (fx.remittance) return "fx";
+  if (GATEWAY_RE.test(line.description ?? "")) return "rupee";
+  if (tdsRateFor(line.credit, fx.due, taxable > 0 ? taxable : null) !== null) return "rupee";
+  return "fx";
 }
 
 /** R-1678: one sentence for the sheet — what the exchange difference books. */
@@ -192,9 +219,10 @@ export function splitFxText(fx: SplitFx): string {
   const split = n > 1 && fx.forex !== 0
     ? ` By each invoice's ${fx.currency}: ${fx.parts.map((p) => `${p.id} ${p.forex < 0 ? "gain" : "loss"} ${rupee(Math.abs(p.forex))}`).join(", ")}.`
     : "";
+  const gap = fx.gapPct !== null && fx.gapPct !== 0 ? ` The ₹ gap is ${fx.gapPct}% of the due.` : "";
   return `${what} (${foreignDue} due = ${rupee(fx.due)} at ${n === 1 ? "its" : "their"} own rate)`
     + (bits.length ? ` — ${bits.join(" + ")} on the bank line's date. Nothing stays due; no TDS.` : ". Nothing stays due.")
-    + split;
+    + split + gap;
 }
 
 /** One sentence for the sheet: what the export receipt books. */

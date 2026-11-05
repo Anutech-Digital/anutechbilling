@@ -24,10 +24,10 @@ describe("R-2466 itemPayPlan", () => {
   });
 
   it("R-1678: a USD invoice paid in ₹ (no USD amount + rate in the narration) is settled in full, the gap an exchange difference", () => {
-    const p = itemPayPlan(usd, inw("NEFT CR TIMBERGLOSS", 177000));
+    const p = itemPayPlan(usd, inw("NEFT CR TIMBERGLOSS", 165000), { customerCountry: "United States" });
     expect(p.fx).toBeNull();
     expect(p.problem).toBeNull();
-    expect(p.splitFx).toMatchObject({ currency: "USD", due: 168000, forex: -9000, bankCharges: 0, remittance: null });
+    expect(p.splitFx).toMatchObject({ currency: "USD", due: 168000, forex: 3000, bankCharges: 0, remittance: null });
   });
 
   it("another currency, or more than 5% short, is refused with the reason", () => {

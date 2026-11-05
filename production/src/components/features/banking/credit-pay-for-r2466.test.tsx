@@ -99,20 +99,20 @@ describe("R-2466 quote-less invoices in 'An open quote / invoice'", () => {
   });
 
   it("R-1678: a USD invoice with a ₹ narration is settled in full through the split (no TDS, nothing due)", () => {
-    state.items = [item({ kind: "invoice", quote_id: "Q-SCN-USD-1", invoice_id: "INV-SCN-USD-1", amount_due: 168000, currency: "USD", fx_rate: 84 })];
-    openItems(177000, "NEFT CR TIMBERGLOSS", "c2");
+    state.items = [item({ kind: "invoice", quote_id: "Q-SCN-USD-1", invoice_id: "INV-SCN-USD-1", amount_due: 168000, taxable_value: 168000, currency: "USD", fx_rate: 84 })];
+    openItems(165000, "NEFT CR TIMBERGLOSS", "c2");
     fireEvent.click(screen.getByRole("radio", { name: /INV-SCN-USD-1/ }));
-    expect(screen.getByText(/INV-SCN-USD-1 is settled in full .* ₹9,000 exchange gain/)).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Settle INV-SCN-USD-1 in full & reconcile ₹1,77,000" }));
+    expect(screen.getByText(/INV-SCN-USD-1 is settled in full .* ₹3,000 exchange loss.*gap is 1.79% of the due/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Settle INV-SCN-USD-1 in full & reconcile ₹1,65,000" }));
     expect(state.pay).not.toHaveBeenCalled();
     expect(state.split.mock.calls[0][0]).toMatchObject({ rest: "fx", items: [{ invoice_id: "INV-SCN-USD-1", quote_id: "Q-SCN-USD-1", amount: 168000 }] });
   });
 
-  it("R-1678 code review: 'Not exchange — book in ₹' → the usual ₹ payment (TDS / part choice back), no exchange line", () => {
+  it("R-1678b: a gap of exactly 2% of taxable (TDS-shaped) pre-selects 'Not exchange — book in ₹' → the usual ₹ payment, no exchange line", () => {
     state.items = [item({ kind: "invoice", quote_id: "Q-SCN-USD-1", invoice_id: "INV-SCN-USD-1", amount_due: 168000, taxable_value: 168000, currency: "USD", fx_rate: 84 })];
     openItems(164640, "NEFT CR TIMBERGLOSS", "c2");
     fireEvent.click(screen.getByRole("radio", { name: /INV-SCN-USD-1/ }));
-    fireEvent.click(screen.getByRole("button", { name: /Not exchange — book in ₹/ }));
+    expect(screen.getByRole("button", { name: /Not exchange — book in ₹/ }).getAttribute("aria-pressed")).toBe("true");
     expect(screen.queryByText(/exchange loss to/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Record ₹1,64,640 on INV-SCN-USD-1 & reconcile" }));
     expect(state.split).not.toHaveBeenCalled();

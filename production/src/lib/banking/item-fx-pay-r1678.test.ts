@@ -5,38 +5,58 @@
      #10 Timbergloss (UAE)         USD 759 @ 95.17  = ₹72,234; "USD759.0@93.55" ₹71,004 → ₹1,230 loss.
      #27 Bot Workshop              several invoices on one inward credit → split by each invoice's USD. */
 import { describe, expect, it } from "vitest";
-import { EXCHANGE_LEDGER, itemPayPlan, splitFxPlan, splitFxText } from "./item-fx-pay";
+import { EXCHANGE_LEDGER, fxDefaultChoice, itemPayPlan, splitFxPlan, splitFxText } from "./item-fx-pay";
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 
 const inv = (id: string, due: number, rate: number, currency = "USD") =>
   ({ kind: "invoice" as const, invoice_id: id, quote_id: `Q-${id}`, amount_due: due, currency, fx_rate: rate });
 const line = (description: string, credit: number) => ({ description, credit });
+const US = { customerCountry: "United States" };
 
 describe("R-1678 a ₹ receipt settles a USD invoice", () => {
   it("Peak Performance: ₹12,976 for USD 139 @ 95.007 (₹13,206) → paid in full, ₹230 exchange loss, nothing due, no TDS", () => {
     const peak = inv("INV-0823", 13206, 95.007);
-    const p = itemPayPlan(peak, line("NEFT CR-CITI0000001-PEAK PERFORMANCE HACKERS", 12976));
+    const p = itemPayPlan(peak, line("NEFT CR-CITI0000001-PEAK PERFORMANCE HACKERS", 12976), US);
     expect(p.problem).toBeNull();
     expect(p.fx).toBeNull();
     expect(p.splitFx).toMatchObject({ currency: "USD", foreignDue: 139, due: 13206, remittance: null, bankCharges: 0, forex: 230 });
     expect(splitFxText(p.splitFx!)).toBe(
-      `INV-0823 is settled in full ($139 due = ₹13,206 at its own rate) — ₹230 exchange loss to "${EXCHANGE_LEDGER}" on the bank line's date. Nothing stays due; no TDS.`);
+      `INV-0823 is settled in full ($139 due = ₹13,206 at its own rate) — ₹230 exchange loss to "${EXCHANGE_LEDGER}" on the bank line's date. Nothing stays due; no TDS. The ₹ gap is 1.74% of the due.`);
+    expect(fxDefaultChoice(p.splitFx!, line("NEFT CR-CITI0000001-PEAK PERFORMANCE HACKERS", 12976), 13206)).toBe("fx");
   });
 
-  it("more ₹ than the invoice's value is a gain, not the customer's advance", () => {
-    const p = itemPayPlan(inv("INV-G", 83000, 83), line("NEFT CR", 84500));
-    expect(p.splitFx).toMatchObject({ forex: -1500 });
-    expect(splitFxText(p.splitFx!)).toContain("₹1,500 exchange gain");
+  it("R-1678b: more ₹ than due on a ₹ credit is an ADVANCE, never an exchange gain — a plain ₹ payment", () => {
+    expect(itemPayPlan(inv("INV-G", 83000, 83), line("NEFT CR", 84500), US)).toEqual({ fx: null, problem: null, splitFx: null });
   });
 
-  it("a ₹ gap of more than 10% is not an exchange difference — a plain ₹ payment (part / TDS / advance as usual)", () => {
-    const p = itemPayPlan(inv("INV-P", 47000, 94), line("NEFT CR BOT", 40000));
+  it("R-1678b: exactly 10% short (TDS-shaped) and anything over 5% is not exchange; 5% itself is", () => {
+    expect(itemPayPlan(inv("INV-T", 100000, 100), line("NEFT CR", 90000), US).splitFx).toBeNull();
+    expect(itemPayPlan(inv("INV-T", 100000, 100), line("NEFT CR", 94999), US).splitFx).toBeNull();
+    expect(itemPayPlan(inv("INV-T", 100000, 100), line("NEFT CR", 95000), US).splitFx).toMatchObject({ forex: 5000, gapPct: 5 });
+  });
+
+  it("R-1678b: a customer in India (or no country) never gets an exchange difference on a ₹ credit", () => {
+    expect(itemPayPlan(inv("INV-I", 100000, 100), line("NEFT CR", 98000), { customerCountry: "India" })).toEqual({ fx: null, problem: null, splitFx: null });
+    expect(itemPayPlan(inv("INV-I", 100000, 100), line("NEFT CR", 98000), {}).splitFx).toBeNull();
+  });
+
+  it("R-1678b: the sheet pre-selects 'book in ₹' for a 2% TDS-shaped gap and for a gateway settlement", () => {
+    const tds = itemPayPlan(inv("INV-2", 100000, 100), line("NEFT CR ACME LLC", 98000), US).splitFx!;
+    expect(fxDefaultChoice(tds, line("NEFT CR ACME LLC", 98000), 100000)).toBe("rupee");
+    const rzp = itemPayPlan(inv("INV-R", 13206, 95.007), line("RAZORPAY SOFTWARE PVT LTD SETTLEMENT", 12976), US).splitFx!;
+    expect(fxDefaultChoice(rzp, line("RAZORPAY SOFTWARE PVT LTD SETTLEMENT", 12976), 13206)).toBe("rupee");
+    const usd = splitFxPlan([{ item: inv("INV-W", 90000, 90), amount: 90000 }], line("INW X USD1000.0@95", 95000)).fx!;
+    expect(fxDefaultChoice(usd, line("INW X USD1000.0@95", 95000), 90000)).toBe("fx");   // a remittance: no choice
+  });
+
+  it("a ₹ gap of more than 5% is not an exchange difference — a plain ₹ payment (part / TDS / advance as usual)", () => {
+    const p = itemPayPlan(inv("INV-P", 47000, 94), line("NEFT CR BOT", 40000), US);
     expect(p).toEqual({ fx: null, problem: null, splitFx: null });
     expect(splitFxPlan([{ item: inv("INV-P", 47000, 94), amount: 40000 }], line("NEFT CR BOT", 40000))).toEqual({ fx: null, problem: null });
   });
 
   it("paise: the credit is rounded once, and the parts add up to the booked difference", () => {
-    const s = splitFxPlan([{ item: inv("INV-0823", 13206, 95.007), amount: 13206 }], line("NEFT CR PEAK", 12976.5));
+    const s = splitFxPlan([{ item: inv("INV-0823", 13206, 95.007), amount: 13206 }], line("NEFT CR PEAK", 12976.5), US);
     expect(s.fx).toMatchObject({ forex: 229, parts: [{ bankShare: 12977, forex: 229 }] });
   });
 
