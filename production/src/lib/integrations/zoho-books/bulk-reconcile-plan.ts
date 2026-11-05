@@ -900,7 +900,7 @@ export function planRow(
            a guessed 1 Apr (Pardeep, 5 Nov: a company may start its books on 1 Apr 2025 or 2026). */
         pathProblems.push(`No books start date: the company's books start is not set, so the balance of ${nos} on the books start is not known. Set it in Accounting → Overview → Books start, then run this again.`);
         noBook = true;
-      } else if (fromZoho) {
+      } else if (fromZoho && opts.booksStart) {
         /* R-2474: the opening invoice(s) from Zoho's own invoice — as it stood on the books' start —
            then one receipt across them with this line. Zoho's invoice number is stronger evidence
            than an open quote of the same amount (review), so that quote is only named. */
