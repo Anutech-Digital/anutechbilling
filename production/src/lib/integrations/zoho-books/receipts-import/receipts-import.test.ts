@@ -138,3 +138,38 @@ describe("R-2501 plan — receipts only onto imported Zoho sales", () => {
     expect(suggestAccount("Undeposited Funds", list)).toBeNull();
   });
 });
+
+describe("R-2501 scan — customer payments through the FY import framework (READ only)", () => {
+  it("lists /customerpayments for the FY, reads each detail (key 'payment'), stores rupees", async () => {
+    const { scanStep } = await import("../fy-import/scan");
+    const rows = new Map<string, ZohoReceiptFacts | null>();
+    let run: { nextPage: number; listDone: boolean } | null = null;
+    const store = {
+      readRun: async () => run, saveRun: async (_fy: string, r: { nextPage: number; listDone: boolean }) => { run = { ...r }; },
+      addListed: async (_fy: string, l: Array<{ zohoId: string }>) => { for (const x of l) if (!rows.has(x.zohoId)) rows.set(x.zohoId, null); },
+      pendingDetails: async () => [...rows.entries()].filter(([, v]) => !v).map(([k]) => k),
+      saveDetail: async (_fy: string, id: string, f: ZohoReceiptFacts) => { rows.set(id, f); },
+      drop: async (_fy: string, id: string) => { rows.delete(id); },
+      counts: async () => ({ listed: rows.size, detailed: [...rows.values()].filter(Boolean).length }),
+      reset: async () => {},
+    };
+    const urls: URL[] = [];
+    const j = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
+    const f = (async (input: string, init?: RequestInit) => {
+      expect((init?.method ?? "GET").toUpperCase()).toBe("GET");
+      const u = new URL(input); urls.push(u);
+      if (u.pathname === "/books/v3/customerpayments") {
+        return j({ code: 0, customerpayments: [{ payment_id: "p1", payment_number: "101", date: "2025-06-10", amount: 1180.5, customer_id: "zc", customer_name: "B" }], page_context: { has_more_page: false } });
+      }
+      return j({ code: 0, payment: { ...base, payment_id: "p1", amount: 1180.5, unused_amount: 0, customer_id: "zc", customer_name: "B",
+        invoices: [{ invoice_id: "zi1", invoice_number: "INV/25-26/0001", amount_applied: 1180.5 }] } });
+    }) as unknown as typeof fetch;
+    const r = await scanStep(store, "customerpayments", zohoReceiptFacts, "600", "tok", "2025-26", { sleep: async () => {}, now: () => 0, maxCalls: 10 }, f);
+    expect(r).toMatchObject({ listed: 1, detailed: 1, complete: true });
+    expect(rows.get("p1")).toMatchObject({ amount: 1181, receivedPaise: 118050, lines: [{ zohoInvoiceId: "zi1", settle: 1181, tds: 0 }] });
+    const list = urls.find((u) => u.pathname === "/books/v3/customerpayments")!;
+    expect(list.searchParams.get("date_start")).toBe("2025-04-01");
+    expect(list.searchParams.get("date_end")).toBe("2026-03-31");
+    expect(urls.some((u) => u.pathname === "/books/v3/customerpayments/p1")).toBe(true);
+  });
+});
