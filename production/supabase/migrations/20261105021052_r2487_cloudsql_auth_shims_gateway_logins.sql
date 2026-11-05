@@ -45,8 +45,12 @@
 --   Cloud SQL only (role cloudsqlsuperuser exists): staging and live, as postgres (member of
 --   supabase_auth_admin, the shims' owner — 01a). `create or replace` keeps owner and grants.
 --   On Supabase (local, CI) the auth schema is GoTrue's and is left alone: notice + no change.
---   On Cloud SQL it refuses (exception) if a shim is not the 01a claims shim it expects, so it
---   never overwrites something it does not know.
+--   On Cloud SQL it refuses (exception) if a shim is not the 01a claims shim it expects (exact
+--   body, whitespace aside) or its own earlier body, so it never overwrites something it does
+--   not know. Side effects judged (code review): the 05-restore policies that say
+--   role = 'service_role' now also admit app_service — a member of service_role that already
+--   passes every zzz_service_role_all policy, so no new power; the 06/07 backup helpers'
+--   `where id = <uid>` now find the signed-in user's own tenant for app_runtime, as on Supabase.
 --   No literal uid()/role() call with the auth schema prefix appears in this file: staging's
 --   deploy script sed-rewrites that text to the public helpers, which would turn this into
 --   "create function public.current_user_id() … calling itself". The statements are built with
@@ -75,7 +79,15 @@ begin
   if v_uid_src is null or v_role_src is null then
     raise exception 'R-2487: auth uid()/role() shims missing on this Cloud SQL DB — run supabase/cloudsql/01a first';
   end if;
-  if v_uid_src not like '%request.jwt.claim%' or v_role_src not like '%request.jwt.claim%' then
+  -- Only the known claims shims (01a, or GoTrue's identical body; role with or without ::text)
+  -- or this file's own body (a re-run) are replaced — whitespace-insensitive, exact otherwise.
+  if not (v_uid_src like '%R-2487%'
+          or regexp_replace(v_uid_src, '\s+', '', 'g') =
+             $k$selectcoalesce(nullif(current_setting('request.jwt.claim.sub',true),''),(nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'sub'))::uuid$k$)
+     or not (v_role_src like '%R-2487%'
+          or regexp_replace(v_role_src, '\s+', '', 'g') in (
+             $k$selectcoalesce(nullif(current_setting('request.jwt.claim.role',true),''),(nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'role'))$k$,
+             $k$selectcoalesce(nullif(current_setting('request.jwt.claim.role',true),''),(nullif(current_setting('request.jwt.claims',true),'')::jsonb->>'role'))::text$k$)) then
     raise exception 'R-2487: auth uid()/role() are not the 01a claims shims — refusing to overwrite them';
   end if;
 

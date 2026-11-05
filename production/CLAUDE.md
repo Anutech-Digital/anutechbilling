@@ -568,12 +568,15 @@ user accepted another company's quote (`accept_quote`, `generate_invoice`,
 parameter tenant). Every `SECURITY DEFINER` function that takes a row id must:
 
 ```sql
-v_trusted := coalesce(auth.role(), '') = 'service_role'          -- admin client: cron, webhooks, public accept
-             or (auth.role() is null and session_user::text not in ('authenticator','anon','authenticated','app_runtime'));  -- psql/scripts
+v_trusted := coalesce(public.current_request_role(), '') = 'service_role'          -- admin client: cron, webhooks, public accept
+             or (public.current_request_role() is null and session_user::text not in ('authenticator','anon','authenticated','app_runtime'));  -- psql/scripts
 v_caller := public.current_tenant_id();
 if v_caller is null and not v_trusted then raise exception '…' using errcode = '28000'; end if;
 if v_caller is not null and row.tenant_id <> v_caller then raise …; end if;
 ```
+(R-2487, 5 Nov 2026: `public.current_request_role()`, not `auth.role()` — it knows the Cloud SQL
+gateway logins (app_anon / app_jobs) by session_user. A new `auth.role() is null … session_user not
+in (…)` list fails `src/lib/security/cloudsql-auth-shim-scan.test.ts`.)
 
 Lessons from building it:
 - **Prove it in ONE rollback.** Strip the migration's `begin;`/`commit;`, the test's `begin;`/`rollback;`,

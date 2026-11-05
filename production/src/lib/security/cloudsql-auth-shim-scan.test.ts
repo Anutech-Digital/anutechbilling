@@ -9,14 +9,18 @@
  *   1. the migration contains the literal auth-prefixed uid()/role() call — staging's deploy
  *      script sed-rewrites that text to public.current_user_id()/current_request_role(), which
  *      would turn the shim into a public helper that calls itself;
- *   2. the shim block in the SQL test is not byte-equal to the migration's (the test must test
- *      what ships);
- *   3. the shims' login → role / login → uid mapping differs from the LATEST
+ *   2. the shim block in the SQL test (run twice there: install + re-run) is not byte-equal to
+ *      the migration's — the test must test what ships;
+ *   3. the bodies the migration agrees to replace are not exactly 01a's shims;
+ *   4. the shims' login → role / login → uid mapping differs from the LATEST
  *      public.current_request_role() / current_user_id() (staging's answer is the proven one);
- *   4. the migration stops being Cloud SQL only / postgres-run;
- *   5. a migration after R-2487 adds a new raw trusted-server list
+ *   5. the migration stops being Cloud SQL only / postgres-run;
+ *   6. a migration after R-2487 adds a new raw trusted-server list
  *      (`auth.role() is null … session_user … not in (`) — or the number of latest function
  *      bodies that still carry one goes UP (ratchet; R-2488/R-2489 move them to a helper).
+ *      The `public.current_request_role() is null and session_user … not in (…)` form (CLAUDE.md
+ *      §17c) is allowed: that helper maps every gateway login by session_user, so its list never
+ *      decides for app_anon / app_jobs. R-2488's is_trusted_server_path() will replace both.
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -25,9 +29,9 @@ const DIR = "supabase/migrations";
 const R2487 = "20261105021052";
 const MIG = `${DIR}/${R2487}_r2487_cloudsql_auth_shims_gateway_logins.sql`;
 const TEST = "supabase/tests/r2487_cloudsql_auth_shims.test.sql";
-/** Latest bodies (by function name; overloads count once) with the raw list, measured 5 Nov 2026 —
- *  138 (153 counting each overload, R-2487 card `measure`). Only falls. */
-const RAW_TRUSTED_BASELINE = 138;
+/** Latest bodies (each overload apart: name + argument text) with the raw list, measured
+ *  5 Nov 2026 (R-2487 card `measure`). Only falls — lower it when you move some. */
+const RAW_TRUSTED_BASELINE = 151; // the card says ~153: its one-off measure used a looser parser
 
 /** Comments stripped in one pass (same as direct-login-role-scan.test.ts; shared module: R-2491). */
 function stripComments(sql: string): string {
@@ -54,25 +58,34 @@ function stripComments(sql: string): string {
   return out;
 }
 
-function functionBodies(sql: string): { name: string; body: string }[] {
-  const out: { name: string; body: string }[] = [];
-  const re = /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?"?(\w+)"?\s*\(([\s\S]*?)\$(\w*)\$([\s\S]*?)\$\3\$/gi;
-  for (let m = re.exec(sql); m; m = re.exec(sql)) out.push({ name: m[1].toLowerCase(), body: m[4] });
+/** Every `create function public.X(args) returns … $tag$ body $tag$`. `sig` = name + argument
+ *  text, so overloads stay apart (code review: a name-only key let one overload hide another). */
+function functionBodies(sql: string): { name: string; sig: string; body: string }[] {
+  const out: { name: string; sig: string; body: string }[] = [];
+  const re = /create\s+(?:or\s+replace\s+)?function\s+(?:public\.)?"?(\w+)"?\s*\(([\s\S]*?)\)\s*returns[\s\S]*?\$(\w*)\$([\s\S]*?)\$\3\$/gi;
+  for (let m = re.exec(sql); m; m = re.exec(sql)) {
+    const name = m[1].toLowerCase();
+    out.push({ name, sig: `${name}(${m[2].replace(/\s+/g, " ").trim().toLowerCase()})`, body: m[4] });
+  }
   return out;
 }
 
 const norm = (s: string) => s.replace(/\r\n/g, "\n");
+const squash = (s: string) => s.replace(/\s+/g, "");
 const mig = norm(readFileSync(MIG, "utf8"));
-const block = (s: string) => {
-  const m = s.match(/-- r2487-shim-begin\n([\s\S]*?)\n-- r2487-shim-end/);
-  return m ? m[1] : null;
-};
+const blocks = (s: string) => [...s.matchAll(/-- r2487-shim-begin\n([\s\S]*?)\n-- r2487-shim-end/g)].map((m) => m[1]);
 /** The two shim bodies inside the migration's format() strings: $b$ … $b$, uid first. */
 const shimBodies = [...mig.matchAll(/\$b\$([\s\S]*?)\$b\$/g)].map((m) => m[1]);
 
 const files = readdirSync(DIR).filter((f) => /^\d{14}_.*\.sql$/.test(f)).sort();
-const latest = new Map<string, { file: string; body: string }>();
-for (const f of files) for (const b of functionBodies(stripComments(readFileSync(`${DIR}/${f}`, "utf8")))) latest.set(b.name, { file: f, body: b.body });
+const latestByName = new Map<string, string>();
+const latestBySig = new Map<string, string>();
+for (const f of files) {
+  for (const b of functionBodies(stripComments(readFileSync(`${DIR}/${f}`, "utf8")))) {
+    latestByName.set(b.name, b.body);
+    latestBySig.set(b.sig, b.body);
+  }
+}
 
 /** login → role from a `case session_user when 'x' then 'y'` body. */
 function roleMap(body: string): Record<string, string> {
@@ -98,32 +111,44 @@ describe("R-2487: the Cloud SQL auth shim migration", () => {
     expect(mig).toContain("$f$, 'auth', 'role')");
   });
 
-  it("runs as postgres, only on Cloud SQL, refuses unknown shims, and says R-2487 in both bodies", () => {
+  it("runs as postgres, only on Cloud SQL, and says R-2487 in both bodies", () => {
     expect(mig).toMatch(/^-- deploy-user: postgres$/m);
     expect(mig).toMatch(/^-- deploy-peek: not exists\(select 1 from pg_roles where rolname = 'cloudsqlsuperuser'\) or /);
     expect(mig).toContain("if not exists (select 1 from pg_roles where rolname = 'cloudsqlsuperuser') then");
-    expect(mig).toContain("refusing to overwrite them");
     expect(shimBodies).toHaveLength(2);
     for (const b of shimBodies) {
       expect(b).toContain("R-2487");
-      expect(b).toMatch(/request\.jwt\.claims/); // claims fallback kept (and the re-run check reads it)
+      expect(b).toMatch(/request\.jwt\.claims/); // the claims fallback is kept
     }
   });
 
-  it("the SQL test runs the same block the migration ships", () => {
-    const a = block(mig);
-    const b = block(norm(readFileSync(TEST, "utf8")));
-    expect(a, "migration has the r2487-shim markers").not.toBeNull();
-    expect(b, "SQL test has the r2487-shim markers").not.toBeNull();
-    expect(b).toBe(a);
+  it("replaces only 01a's exact shim bodies (or its own, on a re-run)", () => {
+    expect(mig).toContain("refusing to overwrite them");
+    const a01 = readFileSync("supabase/cloudsql/01a-roles-and-auth.sql", "utf8");
+    const body01 = (fn: string) => {
+      const m = a01.match(new RegExp(`function auth\\.${fn}\\(\\) returns \\w+ language sql stable as \\$\\$([\\s\\S]*?)\\$\\$`));
+      expect(m, `01a defines the ${fn} shim`).not.toBeNull();
+      return squash(m![1]);
+    };
+    const known = [...mig.matchAll(/\$k\$([\s\S]*?)\$k\$/g)].map((m) => m[1]);
+    expect(known).toContain(body01("uid"));
+    expect(known).toContain(body01("role"));
+  });
+
+  it("the SQL test runs the same block the migration ships (twice: install + re-run)", () => {
+    const a = blocks(mig);
+    const b = blocks(norm(readFileSync(TEST, "utf8")));
+    expect(a, "migration has one r2487-shim block").toHaveLength(1);
+    expect(b, "the SQL test runs it twice").toHaveLength(2);
+    for (const x of b) expect(x).toBe(a[0]);
   });
 
   it("maps every gateway login exactly like the latest current_request_role() / current_user_id()", () => {
-    const crr = latest.get("current_request_role");
-    const cui = latest.get("current_user_id");
+    const crr = latestByName.get("current_request_role");
+    const cui = latestByName.get("current_user_id");
     expect(crr && cui, "R-161 helpers defined in supabase/migrations").toBeTruthy();
-    const wantRole = roleMap(crr!.body);
-    const wantUid = uidMap(cui!.body);
+    const wantRole = roleMap(crr!);
+    const wantUid = uidMap(cui!);
     expect(Object.keys(wantRole).sort()).toEqual(["app_anon", "app_jobs", "app_runtime", "app_service"]);
     expect(roleMap(shimBodies[1])).toEqual(wantRole);
     expect(uidMap(shimBodies[0])).toEqual(wantUid);
@@ -139,11 +164,11 @@ describe("R-2487: raw trusted-server lists only shrink", () => {
 
   it("no migration after R-2487 adds a raw `auth.role() is null … session_user not in (…)` list", () => {
     const bad = files.filter((f) => f.slice(0, 14) > R2487 && RAW_TRUSTED.test(stripComments(readFileSync(`${DIR}/${f}`, "utf8"))));
-    expect(bad, "ask public.current_request_role() (or R-2488's helper) — never a new private session_user list").toEqual([]);
+    expect(bad, "write public.current_request_role() (CLAUDE.md §17c) — never a new auth.role() list").toEqual([]);
   });
 
   it(`latest bodies with a raw list stay <= ${RAW_TRUSTED_BASELINE} (lower the baseline when you move some)`, () => {
-    const n = [...latest.values()].filter((d) => RAW_TRUSTED.test(d.body)).length;
+    const n = [...latestBySig.values()].filter((b) => RAW_TRUSTED.test(b)).length;
     expect(n).toBeGreaterThan(0);
     expect(n).toBeLessThanOrEqual(RAW_TRUSTED_BASELINE);
   });
