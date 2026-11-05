@@ -3,6 +3,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,12 +38,12 @@ export default function LinkedInMarketingPage() {
     setStatus(next); setUrn(next.organizationUrn ?? ""); setPageName(next.organizationName ?? "");
   }, []);
 
-  React.useEffect(() => { void load().catch((e) => toast.error(e.message)); }, [load]);
+  React.useEffect(() => { void load().catch((e) => toastError(e, { description: "Refresh the page. If it keeps failing, connect LinkedIn again." })); }, [load]);
   React.useEffect(() => {
     const result = new URLSearchParams(window.location.search).get("linkedin");
     if (!result) return;
     const message = resultMessages[result];
-    if (message) result === "connected" ? toast.success(message) : toast.error(message);
+    if (message) result === "connected" ? toast.success(message) : toast.error(message, { description: "Press Connect LinkedIn to try again." });
     window.history.replaceState({}, "", window.location.pathname);
   }, []);
 
@@ -54,7 +55,7 @@ export default function LinkedInMarketingPage() {
       if (!res.ok) throw new Error(data.error ?? "Could not publish the post.");
       setText(""); toast.success("Posted on LinkedIn.");
       await load();
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not publish the post."); }
+    } catch (e) { toastError(e, { fallback: "Could not publish the post.", description: "Your text is kept. Check the LinkedIn connection, then post again." }); }
     finally { setPosting(false); }
   }
 
@@ -64,7 +65,7 @@ export default function LinkedInMarketingPage() {
       const res = await fetch("/api/integrations/linkedin", { method: "DELETE" });
       if (!res.ok) throw new Error("Could not disconnect LinkedIn.");
       toast.success("LinkedIn disconnected."); await load();
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not disconnect LinkedIn."); }
+    } catch (e) { toastError(e, { fallback: "Could not disconnect LinkedIn.", description: "Nothing changed. Refresh the page and try again." }); }
     finally { setDisconnecting(false); }
   }
 
@@ -97,7 +98,7 @@ export default function LinkedInMarketingPage() {
               <Input id="linkedin-urn" value={urn} onChange={(e) => setUrn(e.target.value)} placeholder="urn:li:organization:12345" disabled={!status.canManage} />
             </FormField>
             <FormField label="Company Page name (optional)" htmlFor="linkedin-name">
-              <Input id="linkedin-name" value={pageName} onChange={(e) => setPageName(e.target.value)} placeholder="Anutech Digital" disabled={!status.canManage} />
+              <Input id="linkedin-name" value={pageName} onChange={(e) => setPageName(e.target.value)} placeholder="Your company name" disabled={!status.canManage} />
             </FormField>
           </div>
           <p className="-mt-2 text-xs text-ink-3">Find the numeric page ID in LinkedIn Page admin tools. It is saved after the first successful post.</p>

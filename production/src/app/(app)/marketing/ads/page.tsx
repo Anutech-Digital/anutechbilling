@@ -13,6 +13,7 @@ import * as React from "react";
 import Link from "next/link";
 import type { Route } from "next";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend } from "recharts";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -83,7 +84,8 @@ export default function AdPlatformsPage() {
     if (q.get("account")) setSelectedAccountId(q.get("account")!);
     for (const key of ["google", "meta", "linkedin"]) {
       const v = q.get(key); if (!v) continue;
-      const m = MSG[v]; if (m) (m.ok ? toast.success : toast.error)(`${key === "google" ? "Google Ads" : key === "meta" ? "Meta Ads" : "LinkedIn Ads"}: ${m.text}`);
+      const m = MSG[v]; const label = key === "google" ? "Google Ads" : key === "meta" ? "Meta Ads" : "LinkedIn Ads";
+      if (m) { if (m.ok) toast.success(`${label}: ${m.text}`); else toast.error(`${label}: ${m.text}`, { description: "Open Manage accounts to connect the account again." }); }
     }
     if (q.get("why")) setWhy(q.get("why"));
     if (q.get("google") || q.get("meta") || q.get("linkedin")) window.history.replaceState({}, "", window.location.pathname);
@@ -146,7 +148,7 @@ export default function AdPlatformsPage() {
   async function syncSelectedAccounts() {
     const selected = enabledAccounts.filter((account) => syncSelection.includes(account.id));
     if (!selected.length || selected.length !== syncSelection.length) {
-      toast.error("Choose at least one active ad account."); return;
+      toast.error("Choose at least one active ad account.", { description: "Tick an account in the list, or connect one in Manage accounts." }); return;
     }
     let requests: { platform: AdPlatform; from: string; to: string; accountIds: string[] }[];
     try {
@@ -154,7 +156,7 @@ export default function AdPlatformsPage() {
         const ids = selected.filter((account) => account.platform === platform).map((account) => account.id);
         return ids.length ? adSyncChunks(platform, from, to, today).map((chunk) => ({ platform, from: chunk.from, to: chunk.to, accountIds: ids })) : [];
       });
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Choose valid dates."); return; }
+    } catch (e) { toastError(e, { fallback: "Choose valid dates.", description: "Pick a start date on or before the end date." }); return; }
     setSyncing(true);
     setSyncProgress({ done: 0, total: requests.length, rows: 0 });
     let written = 0;
@@ -170,7 +172,7 @@ export default function AdPlatformsPage() {
       toast.success(`Synced ${selected.length} ${selected.length === 1 ? "account" : "accounts"} for ${formatDate(from)} – ${formatDate(to)}.`);
       setSyncPickerOpen(false);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Ad account sync failed.");
+      toastError(e, { fallback: "Ad account sync failed.", description: "The last synced numbers are still shown. Try Sync again, or reconnect the account in Manage accounts." });
       await Promise.all([spend.refetch(), status.refetch(), runs.refetch()]);
     } finally { setSyncing(false); }
   }

@@ -1,3 +1,5 @@
+-- deploy-peek: to_regclass('public.linkedin_ad_metrics') is not null
+-- deploy-key: linkedinadsmetrics
 -- LinkedIn Campaign Manager metrics entered from its report while Advertising API access is pending.
 create table if not exists public.linkedin_ad_metrics (
   id uuid primary key default gen_random_uuid(),

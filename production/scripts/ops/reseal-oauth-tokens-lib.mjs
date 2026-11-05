@@ -35,6 +35,8 @@ export const TARGETS = [
       "whatsapp_access_token", "whatsapp_app_secret", "whatsapp_verify_token",
       "sandbox_api_secret", "resend_api_key", "indiamart_crm_key",
       "zoho_books_refresh_token", "zoho_books_access_token", "meta_capi_token",
+      "linkedin_access_token", "linkedin_ads_client_secret",
+      "facebook_page_pending_token", "facebook_page_access_token",
     ],
   },
 ];

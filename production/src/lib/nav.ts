@@ -509,6 +509,18 @@ const TEAM_CHAT: UserRole[] = [...STAFF, "marketing"];
  */
 export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/quotes/new": "Opened by the New quote / Send quote buttons on Quotes, leads and deals",
+  /* G-SOCIAL (5 Nov 2026): Marketing Hub tool pages — each opens from its card on /marketing (tool-catalog.ts / hub-navigation.ts) */
+  "/marketing/ads/accounts": "Manage ad accounts; opened from Ad accounts (live) on the Marketing Hub",
+  "/marketing/email": "Email tool page; opened from its Marketing Hub card",
+  "/marketing/facebook": "Facebook Page connection; opened from the Social (organic) cards on the Marketing Hub",
+  "/marketing/linkedin": "LinkedIn Company Page; opened from its Marketing Hub card",
+  "/marketing/linkedin-ads": "LinkedIn Ads setup; opened from its Marketing Hub card and Ad accounts",
+  "/marketing/listings": "Listings & marketplaces group page; opened from the Marketing Hub",
+  "/marketing/paid-ads": "Paid ads group page; opened from the Marketing Hub",
+  "/marketing/social-content": "Social content studio (drafts, review, publish); opened from Social (organic) and Facebook Page",
+  "/marketing/social-organic": "Social (organic) group page; opened from the Marketing Hub",
+  "/marketing/website-tracking": "Website & tracking group page; opened from the Marketing Hub",
+  "/marketing/whatsapp-calling": "WhatsApp & calling group page; opened from the Marketing Hub",
   "/customers/new": "Opened by Add company on Companies",
   "/setup": "First-run wizard; reached from onboarding and Settings",
   "/mobile": "Install-as-app guide; linked from the account menu",

@@ -55,9 +55,13 @@ const SECRET_EVIDENCE = new RegExp([
   "verifyClaimToken", "verifyUnsubscribe", "verifyTrialToken",
   /* R-739: the AGENT_QUEUE_TOKEN check, now shared (lib/security/agent-token.ts). */
   "authorizeAgent\\(",
+  /* 5 Nov 2026: gatedCron("job", handler) with no options refuses every call without the
+     CRON_SECRET bearer (lib/automation/cron-gate.ts, R-1552). Options (withoutBearer) are not matched. */
+  String.raw`\bgatedCron\s*\(\s*"[\w-]+"\s*,\s*\w+\s*\)`,
 ].join("|"));
 
-const SIGNED_IN = /\.auth\.getUser\s*\(/;
+/* getTenantSession / requireTenantSession (server/auth/session.ts) call auth.getUser() themselves. */
+const SIGNED_IN = /\.auth\.getUser\s*\(|\b(get|require)TenantSession\s*\(/;
 const USERS_ROW = /\.from\(\s*["']users["']\s*\)\s*\.select\(\s*["'`][^"'`]*\b(tenant_id|role)\b/;
 const PLATFORM = /isPlatformAdmin\s*\(/;
 const OWN_ID_ONLY = /["']user_id["']\s*,\s*(auth\.)?user\.id\b|updateUserById\(\s*user\.id\b/;
@@ -182,6 +186,9 @@ const VERIFIED_ACTOR = /createAdminClientFor\s*\(\s*((user|authData\.user|auth\.
  */
 const USER_GATE_HELPERS: Record<string, string> = {
   vaultGate: "vault/vault-access.ts", // owner / manager via public.users (R-716)
+  // 5 Nov 2026: tenant from public.users (tenant_id, is_active), never from the request.
+  getTenantSession: "../../server/auth/session.ts",
+  requireTenantSession: "../../server/auth/session.ts",
 };
 const helperProves = (name: string) =>
   USERS_ROW.test(code(fs.readFileSync(path.join(API, USER_GATE_HELPERS[name]), "utf8")));

@@ -82,6 +82,8 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
   "tenant_secrets.zoho_books_access_token": "R-1757: short-lived Zoho access token cache on the same owner-only tenant_secrets row; stored sealed (SECRET_COLUMNS); server routes only",
   "tenant_secrets.facebook_page_pending_token": "Temporary Meta user token on owner-only tenant_secrets; sealed in SECRET_COLUMNS; server routes only",
   "tenant_secrets.facebook_page_access_token": "Meta Page token on owner-only tenant_secrets; sealed in SECRET_COLUMNS; server routes only",
+  "tenant_secrets.linkedin_access_token": "LinkedIn Company Page token on owner-only tenant_secrets; sealed in SECRET_COLUMNS (lib/crypto/tenant-secrets.ts); server routes only (lib/integrations/linkedin)",
+  "tenant_secrets.linkedin_ads_client_secret": "LinkedIn Ads app secret on owner-only tenant_secrets; sealed in SECRET_COLUMNS (lib/crypto/tenant-secrets.ts); server routes only",
   "tenant_secrets.sandbox_api_key": "tenant_secrets is owner-only by RLS; the owner enters these keys",
   "tenant_secrets.sandbox_api_secret": "tenant_secrets is owner-only by RLS; the owner enters these keys",
   "tenant_secrets.whatsapp_access_token": "tenant_secrets is owner-only by RLS; the owner enters these keys",
@@ -223,12 +225,15 @@ describe("R-833 secret columns", () => {
       const s = read(f);
       for (const part of s.split(/\.from\(/).slice(1)) {
         if (!part.startsWith('"ad_accounts"') || !/\.(upsert|update|insert)\(/.test(part)) continue;
-        for (const m of part.matchAll(/\baccess_token\s*:\s*([A-Za-z_][\w.]*)/g)) writes.push({ file: f, value: m[1] });
+        // `access_token: null` clears the token (account removed) — nothing to seal.
+        for (const m of part.matchAll(/\baccess_token\s*:\s*([A-Za-z_][\w.]*)/g)) if (m[1] !== "null") writes.push({ file: f, value: m[1] });
       }
     }
     expect(writes.length, "scanner found no ad_accounts token write — did the Meta callback move?").toBeGreaterThan(0);
     for (const w of writes) {
-      expect(read(w.file), `${w.file} writes ad_accounts.access_token without the vault`).toMatch(/from "@\/lib\/meta\/meta-token-vault"/);
+      // Meta tokens seal with meta-token-vault; LinkedIn Ads tokens (same column, platform
+      // 'linkedin-ads') seal with linkedin-ads-token-vault — both encryptSecret from lib/crypto/vault.
+      expect(read(w.file), `${w.file} writes ad_accounts.access_token without the vault`).toMatch(/from "@\/lib\/(meta\/meta-token-vault|linkedin\/linkedin-ads-token-vault)"/);
       // the only value written into the column is the sealed one (sync reseals via a spread patch)
       expect(w.value, `${w.file}: access_token: ${w.value} — must be sealed`).toBe("sealed");
     }

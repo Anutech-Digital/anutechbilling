@@ -1,3 +1,5 @@
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'marketing_campaigns' and column_name = 'ads_manager_url')
+-- deploy-key: paidcampaignplatformlinks
 -- A paid campaign can point back to the exact campaign in its ad platform.
 -- `code` remains the UTM campaign value used to join leads and revenue.
 alter table public.marketing_campaigns

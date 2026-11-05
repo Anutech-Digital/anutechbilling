@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,12 +21,12 @@ export default function LinkedInAdsPage() {
   const [configForm, setConfigForm] = React.useState({ clientId: "", clientSecret: "" });
   const [savingConfig, setSavingConfig] = React.useState(false);
   React.useEffect(() => { setShowSetup(new URLSearchParams(window.location.search).get("setup") === "1"); }, []);
-  React.useEffect(() => { void fetch("/api/integrations/linkedin-ads").then(async (r) => { const b = await r.json(); if (!r.ok) throw new Error(b.error ?? "Could not check setup."); setConfigured(!!b.configured); }).catch((e) => toast.error(e.message)).finally(() => setCheckingConfig(false)); }, []);
+  React.useEffect(() => { void fetch("/api/integrations/linkedin-ads").then(async (r) => { const b = await r.json(); if (!r.ok) throw new Error(b.error ?? "Could not check setup."); setConfigured(!!b.configured); }).catch((e) => toastError(e, { description: "Refresh the page. The setup form below still works." })).finally(() => setCheckingConfig(false)); }, []);
   const [rows, setRows] = React.useState<Row[] | null>(null);
   const [saving, setSaving] = React.useState(false);
   const [form, setForm] = React.useState({ day: istToday(), campaignName: "", spend: "", impressions: "", clicks: "", leads: "" });
   const load = React.useCallback(async () => { const r = await fetch("/api/marketing/linkedin-ads/metrics"); const b = await r.json(); if (!r.ok) throw new Error(b.error ?? "Could not load metrics."); setRows(b.rows); }, []);
-  React.useEffect(() => { void load().catch((e) => toast.error(e.message)); }, [load]);
+  React.useEffect(() => { void load().catch((e) => toastError(e, { description: "Refresh the page. If it keeps failing, check the LinkedIn Ads setup below." })); }, [load]);
   const totals = (rows ?? []).reduce((a, r) => ({ spend: a.spend + n(r.spend), impressions: a.impressions + r.impressions, clicks: a.clicks + r.clicks, leads: a.leads + r.leads }), { spend: 0, impressions: 0, clicks: 0, leads: 0 });
   const ctr = totals.impressions ? (totals.clicks / totals.impressions * 100).toFixed(2) : "—";
   const cpl = totals.leads ? rupee(totals.spend / totals.leads) : "—";
@@ -35,7 +36,7 @@ export default function LinkedInAdsPage() {
       const r = await fetch("/api/marketing/linkedin-ads/metrics", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...form, spend: Number(form.spend || 0), impressions: Number(form.impressions || 0), clicks: Number(form.clicks || 0), leads: Number(form.leads || 0) }) });
       const b = await r.json(); if (!r.ok) throw new Error(b.error ?? "Could not save metrics.");
       toast.success("LinkedIn Ads metrics saved."); setForm({ day: istToday(), campaignName: "", spend: "", impressions: "", clicks: "", leads: "" }); await load();
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not save metrics."); } finally { setSaving(false); }
+    } catch (e) { toastError(e, { fallback: "Could not save metrics.", description: "Nothing was saved. Check the numbers and save again." }); } finally { setSaving(false); }
   }
   async function saveConfig() {
     setSavingConfig(true);
@@ -43,7 +44,7 @@ export default function LinkedInAdsPage() {
       const r = await fetch("/api/integrations/linkedin-ads", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(configForm) });
       const b = await r.json(); if (!r.ok) throw new Error(b.error ?? "Could not save setup.");
       setConfigured(true); setConfigForm({ clientId: "", clientSecret: "" }); toast.success("LinkedIn Ads setup saved. You can connect now.");
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not save setup."); } finally { setSavingConfig(false); }
+    } catch (e) { toastError(e, { fallback: "Could not save setup.", description: "Nothing was saved. Check the client ID and secret, then save again." }); } finally { setSavingConfig(false); }
   }
   if (!rows) return <div className="mx-auto max-w-5xl p-6"><Skeleton className="h-64" /></div>;
   return <div className="mx-auto max-w-5xl p-4 md:p-6 lg:p-8 space-y-5">

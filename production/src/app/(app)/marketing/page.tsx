@@ -28,7 +28,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { rupee, cn, formatDate } from "@/lib/utils";
 import {
   TOOL_GROUPS, TOOL_STATUS, MARKETING_HUB_SECTIONS, mergeTools, hubSummary,
-  type ToolGroup, type ToolRow, type ToolStatus,
+  type ToolRow, type ToolStatus,
 } from "@/lib/marketing/tool-catalog";
 import {
   useMarketingTools, useSaveMarketingTool, useSpendThisMonth,
@@ -43,8 +43,6 @@ import { approvedMonthlyBudget } from "@/lib/marketing-budget/budget";
 import { istToday } from "@/lib/dates/ist";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { NeoPanel, mayAskNeo } from "@/components/features/marketing-neo/neo-panel";
-
-const GROUP_ORDER: ToolGroup[] = ["ads", "listings", "messaging", "email", "website", "social"];
 
 export default function MarketingHubPage() {
   const tools = useMarketingTools();

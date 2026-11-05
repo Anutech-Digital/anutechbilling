@@ -1,3 +1,5 @@
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'linkedin_connected_by')
+-- deploy-key: linkedincompanyposts
 -- LinkedIn Company Page posting (OAuth access token is encrypted by the app before storage).
 -- One connection belongs to one tenant because tenant_secrets has tenant_id as its primary key.
 

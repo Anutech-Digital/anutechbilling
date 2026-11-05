@@ -1,3 +1,5 @@
+-- deploy-peek: to_regclass('public.social_content') is not null and to_regclass('public.social_content_settings') is not null
+-- deploy-key: socialcontentreview
 -- Organic content is drafted internally. Only an explicit reviewer action publishes it.
 begin;
 

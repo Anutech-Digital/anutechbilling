@@ -1,3 +1,5 @@
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'linkedin_ads_client_secret')
+-- deploy-key: linkedinadstenantcredentials
 -- Local/workspace setup for LinkedIn Advertising API. The secret is encrypted by
 -- lib/crypto/tenant-secrets before being written.
 alter table public.tenant_secrets

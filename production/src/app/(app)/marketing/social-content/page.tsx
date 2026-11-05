@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { ArrowUpRight, Check, Facebook, Instagram, Send, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -50,7 +51,7 @@ export default function SocialContentPage() {
       if (!response.ok) throw new Error(data.error ?? "Could not save draft.");
       toast.success(ai ? "AI draft ready for review." : "Draft saved.");
       setTopic(""); setCaption(""); setMediaUrl(""); await load();
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not save draft."); }
+    } catch (e) { toastError(e, { fallback: "Could not save draft.", description: "Your text is still in the form. Fix what the message says and save again." }); }
     finally { setBusy(false); }
   }
 
@@ -63,7 +64,7 @@ export default function SocialContentPage() {
       if (!response.ok) throw new Error(data.error ?? "Could not update draft.");
       toast.success(action === "publish" ? "Published to Meta." : "Content updated.");
       setEditing(null); setConfirmPublish(null); await load();
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not update draft."); }
+    } catch (e) { toastError(e, { fallback: "Could not update draft.", description: "Refresh the page to see its current stage, then try again." }); }
     finally { setBusy(false); }
   }
 
@@ -75,7 +76,7 @@ export default function SocialContentPage() {
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error ?? "Could not save settings.");
       toast.success("Draft automation saved."); await load();
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not save settings."); }
+    } catch (e) { toastError(e, { fallback: "Could not save settings.", description: "Nothing was saved. Try again." }); }
     finally { setBusy(false); }
   }
 
@@ -110,7 +111,7 @@ export default function SocialContentPage() {
           {items.length === 0 && <div className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-ink-3">No content in this view yet.</div>}
           <div className="max-h-[850px] space-y-3 overflow-y-auto pr-1">{items.map(item => <div key={item.id} className="rounded-xl border border-hairline bg-paper p-4">
             <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2">{item.platform === "facebook" ? <Facebook size={17} className="text-[#1877f2]" /> : <Instagram size={17} className="text-[#c13584]" />}<span className="text-sm font-medium">{item.platform === "facebook" ? "Facebook" : "Instagram"} {item.format === "story" ? "Story" : "post"}</span><Badge kind={item.status === "published" ? "success" : "muted"}>{statusLabel[item.status] ?? item.status}</Badge></div><time className="text-xs text-ink-3">{new Date(item.created_at).toLocaleDateString()}</time></div>
-            {editing === item.id ? <div className="mt-3 space-y-2"><textarea className={`${inputClass} min-h-28`} value={editCaption} maxLength={2200} onChange={e => setEditCaption(e.target.value)} /><input type="url" className={inputClass} value={editMediaUrl} onChange={e => setEditMediaUrl(e.target.value)} placeholder="Public HTTPS image URL" /><div className="flex gap-2"><Button size="sm" disabled={busy} onClick={() => void act(item.id, "save", { caption: editCaption, mediaUrl: editMediaUrl || null })}>Save changes</Button><Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button></div></div> : <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-2">{item.caption || (item.format === "story" ? "Image Story" : "No caption")}</p>{item.media_url && <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={item.media_url} alt="Content awaiting review" className="max-h-80 w-full object-contain" /></div>}{item.media_url && <a href={item.media_url} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs text-accent underline">Open original image <ArrowUpRight size={12} /></a>}</>}
+            {editing === item.id ? <div className="mt-3 space-y-2"><textarea className={`${inputClass} min-h-28`} value={editCaption} maxLength={2200} onChange={e => setEditCaption(e.target.value)} /><input type="url" className={inputClass} value={editMediaUrl} onChange={e => setEditMediaUrl(e.target.value)} placeholder="Public HTTPS image URL" /><div className="flex gap-2"><Button size="sm" disabled={busy} onClick={() => void act(item.id, "save", { caption: editCaption, mediaUrl: editMediaUrl || null })}>Save changes</Button><Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button></div></div> : <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-2">{item.caption || (item.format === "story" ? "Image Story" : "No caption")}</p>{item.media_url && <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={item.media_url} alt="Content awaiting review" className="max-h-80 w-full object-contain" /></div>}{item.media_url && <a href={item.media_url} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-1 text-xs text-amber-ink underline">Open original image <ArrowUpRight size={12} /></a>}</>}
             {item.error && <p className="mt-2 rounded-lg bg-rose-soft p-2 text-xs text-rose-ink">{item.error}</p>}
             <div className="mt-4 flex flex-wrap gap-2 border-t border-hairline pt-3">
               {["draft", "review", "failed"].includes(item.status) && editing !== item.id && <Button size="sm" variant="outline" disabled={busy} onClick={() => { setEditing(item.id); setEditCaption(item.caption); setEditMediaUrl(item.media_url ?? ""); }}>Edit</Button>}

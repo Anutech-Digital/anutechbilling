@@ -1,3 +1,4 @@
+import type { Route } from "next";
 import { notFound, redirect } from "next/navigation";
 import { MARKETING_HUB_SECTIONS } from "@/lib/marketing/tool-catalog";
 
@@ -6,5 +7,5 @@ export default async function OldMarketingHubLink({ params }: { params: Promise<
   const { group } = await params;
   const page = MARKETING_HUB_SECTIONS.find((item) => item.group === group);
   if (!page) notFound();
-  redirect(page.href);
+  redirect(page.href as Route);
 }

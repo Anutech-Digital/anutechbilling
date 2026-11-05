@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import { toast } from "sonner";
+import { toastError } from "@/lib/errors/toast-error";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -45,7 +46,7 @@ export default function FacebookPage() {
   React.useEffect(() => {
     const result = new URLSearchParams(window.location.search).get("facebook");
     if (!result) return;
-    if (messages[result]) toast.error(messages[result]);
+    if (messages[result]) toast.error(messages[result], { description: "Press Connect Facebook Page to try again." });
     window.history.replaceState({}, "", window.location.pathname);
   }, []);
 
@@ -59,7 +60,7 @@ export default function FacebookPage() {
       if (!response.ok) throw new Error(data.error ?? "Could not connect this Page.");
       toast.success("Facebook Page connected.");
       await load();
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not connect this Page."); }
+    } catch (e) { toastError(e, { fallback: "Could not connect this Page.", description: "Choose the Page again, or press Connect Facebook Page to sign in again." }); }
     finally { setBusy(false); }
   }
 
@@ -72,7 +73,7 @@ export default function FacebookPage() {
       toast.success("Facebook Page disconnected.");
       setConfirmDisconnect(false);
       await load();
-    } catch (e) { toast.error(e instanceof Error ? e.message : "Could not disconnect the Page."); }
+    } catch (e) { toastError(e, { fallback: "Could not disconnect the Page.", description: "Nothing changed. Refresh the page and try again." }); }
     finally { setBusy(false); }
   }
 

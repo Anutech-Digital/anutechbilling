@@ -1,3 +1,5 @@
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'facebook_page_connected_by')
+-- deploy-key: facebookpageconnection
 -- One Facebook Page per tenant. Tokens are encrypted by the application vault.
 begin;
 
