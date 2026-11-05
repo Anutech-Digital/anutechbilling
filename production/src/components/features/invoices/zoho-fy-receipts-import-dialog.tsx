@@ -40,6 +40,7 @@ interface Preview {
   skipReasons: { reason: string; count: number }[];
   skipped: { number: string; date: string; customer: string; amount: number; reason: string | null }[];
   batches: ImportBatch[];
+  canRemove: boolean;
 }
 interface PartResult { imported: number; already: number; banked: number; bankLater: number; skipped: { number: string; reason: string }[] }
 
@@ -61,6 +62,9 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
   const [check, setCheck] = React.useState<PartResult | null>(null);
   const [done, setDone] = React.useState<PartResult | null>(null);
   const stop = React.useRef(false);
+  const invalidateMoney = React.useCallback(() => {
+    for (const key of [["invoices"], ["payments"], ["bank"], ["balance-sheet"], ["outstanding-receivables"], ["aging"], ["tds"]]) void qc.invalidateQueries({ queryKey: key });
+  }, [qc]);
   React.useEffect(() => { stop.current = false; return () => { stop.current = true; }; }, []);
 
   const loadPreview = React.useCallback(async (map: Record<string, string>) => {
@@ -109,12 +113,18 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     setBusy("import"); setError(null);
     try {
       setDone(await runParts(false));
-      for (const key of [["invoices"], ["payments"], ["bank"], ["balance-sheet"], ["outstanding-receivables"], ["aging"], ["tds"]]) void qc.invalidateQueries({ queryKey: key });
+      invalidateMoney();
     } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
     await loadPreview(accounts);
   }
 
   React.useEffect(() => { if (open && !preview && !read) void loadPreview({}).catch(() => {}); }, [open, preview, read, loadPreview]);
+
+  /* After Remove import: the same screens as after Import show the receipts gone (review). */
+  async function afterRemove() {
+    invalidateMoney();
+    await loadPreview(accounts);
+  }
 
   const toBook = (preview?.counts.import ?? 0) + (preview?.counts.alreadyNotBanked ?? 0);
   return (
@@ -200,7 +210,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
                 <div>
                   <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Imports</p>
                   <ul className="space-y-1.5">
-                    {preview.batches.map((b) => <BatchRow key={b.id} b={b} onChanged={() => loadPreview(accounts)} />)}
+                    {preview.batches.map((b) => <BatchRow key={b.id} b={b} canRemove={preview.canRemove} onChanged={afterRemove} />)}
                   </ul>
                 </div>
               )}
@@ -243,7 +253,7 @@ function PartSummary({ title, r }: { title: string; r: PartResult }) {
 
 /** R-2501 follow-up: one import batch, with "Remove import" (owner only — the SQL checks; refused once
  *  anything in it was used: a refund, a TDS certificate, the advance spent, a line matched by hand). */
-function BatchRow({ b, onChanged }: { b: ImportBatch; onChanged: () => Promise<void> }) {
+function BatchRow({ b, canRemove, onChanged }: { b: ImportBatch; canRemove: boolean; onChanged: () => Promise<void> }) {
   const [asking, setAsking] = React.useState(false);
   const [reason, setReason] = React.useState("");
   const [busy, setBusy] = React.useState(false);
@@ -253,7 +263,7 @@ function BatchRow({ b, onChanged }: { b: ImportBatch; onChanged: () => Promise<v
       <div className="flex items-center justify-between gap-2 flex-wrap">
         <span className="text-ink-2">{formatDate(b.createdAt)} · {b.importedCount} payments · {rupee(b.amountTotal)} · TDS {rupee(b.taxTotal)}{b.skippedCount ? ` · ${b.skippedCount} refused` : ""}</span>
         {b.removedAt ? <Badge kind="muted" size="sm">Removed {formatDate(b.removedAt)}</Badge>
-          : b.importedCount > 0 && !asking ? <Button type="button" size="sm" variant="ghost" icon="trash" onClick={() => setAsking(true)}>Remove import</Button> : null}
+          : canRemove && b.importedCount > 0 && !asking ? <Button type="button" size="sm" variant="ghost" icon="trash" onClick={() => setAsking(true)}>Remove import</Button> : null}
       </div>
       {asking && !b.removedAt && (
         <form className="mt-2 flex items-center gap-2 flex-wrap" onSubmit={async (e) => {

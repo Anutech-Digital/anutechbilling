@@ -109,8 +109,11 @@ describe("R-2501 receipts-import route", () => {
     expect(st.rpc[0].args).toMatchObject({ p_dry_run: false, p_picks: [{ zoho_payment_id: "p1" }, { zoho_payment_id: "p2" }] });
   });
 
-  it("preview offers Record payment's deposit accounts with its label", async () => {
+  it("preview offers Record payment's deposit accounts with its label; Remove import only to the owner", async () => {
     const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.canRemove).toBe(true);
+    st.role = "accountant";
+    expect((await (await POST(req({ action: "preview", fy: "2025-26" }))).json()).canRemove).toBe(false);
     expect(body.accounts).toEqual([{ id: "11111111-1111-4111-8111-111111111111", name: expect.stringContaining("Current") }]);
   });
 

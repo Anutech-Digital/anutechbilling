@@ -125,6 +125,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true, fy, scanned: counts.listed, counts: plan.counts, totals: plan.totals, parts,
         deposits: plan.deposits, skipReasons: plan.skipReasons, skipped, batches,
+        /* Remove import is the OWNER's (remove_zoho_fy_receipts_import checks the same) — the screen
+           offers it only to the owner (button = action). */
+        canRemove: caller.role === "owner",
         /* For the "Zoho account → app account" choice: this company's open accounts. */
         accounts: depositAccounts(ctx.bankAccounts).map((a) => ({ id: a.id, name: depositAccountLabel(a) })),
       });

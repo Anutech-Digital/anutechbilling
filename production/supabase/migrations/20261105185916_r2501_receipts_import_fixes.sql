@@ -44,6 +44,11 @@
 
 begin;
 
+-- ── 0. Who matched the bank line: this import, or a person (the undo leaves a person's match alone) ──
+alter table public.zoho_fy_receipts add column if not exists bank_matched_by_import boolean not null default false;
+comment on column public.zoho_fy_receipts.bank_matched_by_import is
+  'R-2501 follow-up: true when import_zoho_fy_receipts itself matched bank_txn_id; false when a rerun only found a line a person matched. remove_zoho_fy_receipts_import refuses the latter.';
+
 -- ── 1. Voucher number of an imported Zoho receipt ───────────────────────────────────────────
 create or replace function public._zoho_fy_voucher_no(p_tenant uuid, p_zoho_no text, p_on date)
 returns text
@@ -79,22 +84,23 @@ stable
 security definer
 set search_path to 'public'
 as $function$
-  /* R-2501 follow-up: a significant word of the customer's name (4+ letters, not a company-form
-     word), or a payer the company already linked to this customer (customer_payers, R-2025). */
-  with t as (select ' ' || coalesce(public.payer_name_key(p_text), '') || ' ' as k)
-  select exists (
-           select 1
-             from public.customers c
-             cross join lateral regexp_split_to_table(coalesce(public.payer_name_key(c.name), ''), ' ') w
-             cross join t
-            where c.id = p_customer_id and c.tenant_id = p_tenant
-              and length(w) >= 4
-              and w not in ('private', 'limited', 'india', 'indian', 'technologies', 'technology', 'tech', 'services',
+  /* R-2501 follow-up: the significant words of the customer's name (4+ letters, not a company-form
+     word) are in the narration — ALL of them when there is one, at least TWO when there are more
+     (review: "Sharma" alone is somebody else's line) — or a payer the company already linked to this
+     customer (customer_payers, R-2025). */
+  with t as (select ' ' || coalesce(public.payer_name_key(p_text), '') || ' ' as k),
+       w as (select distinct x as w
+               from public.customers c
+               cross join lateral regexp_split_to_table(coalesce(public.payer_name_key(c.name), ''), ' ') x
+              where c.id = p_customer_id and c.tenant_id = p_tenant
+                and length(x) >= 4
+                and x not in ('private', 'limited', 'india', 'indian', 'technologies', 'technology', 'tech', 'services',
                             'service', 'solutions', 'solution', 'company', 'enterprises', 'enterprise', 'infotech',
                             'systems', 'system', 'global', 'digital', 'software', 'consultants', 'consulting', 'group',
                             'industries', 'international', 'traders', 'trading', 'associates', 'corporation', 'bank',
-                            'neft', 'rtgs', 'imps', 'transfer', 'payment')
-              and strpos(t.k, ' ' || w || ' ') > 0)
+                            'neft', 'rtgs', 'imps', 'transfer', 'payment')),
+       hit as (select count(*) filter (where strpos(t.k, ' ' || w.w || ' ') > 0) as n, count(*) as total from w, t)
+  select (select total > 0 and n >= least(2, total) from hit)
       or exists (
            select 1 from public.customer_payers cp, t
             where cp.tenant_id = p_tenant and cp.customer_id = p_customer_id
@@ -153,7 +159,8 @@ begin
                       where r.tenant_id = p_tenant
                         and (r.bank_txn_id = t.id or t.matched_to_id = any (r.payment_ids::text[])))
      and ((char_length(v_ref) >= 6 and strpos(upper(coalesce(t.reference, '') || ' ' || coalesce(t.description, '')), v_ref) > 0)
-          or t.txn_date = p_received_on)
+          or (t.txn_date = p_received_on
+              and public._zoho_fy_line_names_customer(p_tenant, p_customer_id, coalesce(t.description, '') || ' ' || coalesce(t.reference, ''))))
    order by 4 desc, t.txn_date, t.id
    limit 1;
   if found and (v_taken.ref_hit or cardinality(v_hits) = 0) then
@@ -206,7 +213,7 @@ begin
     into v_cash
     from public.payments p where p.tenant_id = p_tenant and p.id = any (p_payment_ids);
   v_diff := v_cash - round(v_credit)::integer;
-  if v_diff <> 0 and abs(v_diff) <= 1 then
+  if v_diff <> 0 and abs(v_diff) <= greatest(1, cardinality(p_payment_ids)) then   -- ₹1 per receipt line at most
     insert into public.bank_receipt_round_offs (tenant_id, bank_txn_id, amount, created_by)
     values (p_tenant, p_txn, v_diff, auth.uid())
     on conflict (bank_txn_id) do nothing;
@@ -488,7 +495,8 @@ begin
                    and t.matched_to_id = any (v_done_row.payment_ids::text[]) limit 1))
         into v_txn;
       if v_txn is distinct from v_done_row.bank_txn_id then
-        update public.zoho_fy_receipts set bank_txn_id = v_txn, banked_at = case when v_txn is not null then now() end
+        update public.zoho_fy_receipts set bank_txn_id = v_txn, banked_at = case when v_txn is not null then now() end,
+                                           bank_matched_by_import = false
          where tenant_id = v_tenant and zoho_payment_id = v_zid;
       end if;
       if v_txn is null then
@@ -498,7 +506,7 @@ begin
         if v_txn is not null and not (v_txn = any (v_used)) then
           begin
             if public._zoho_fy_receipt_link_line(v_tenant, v_txn, v_done_row.payment_ids, v_bank->>'confidence') then
-              update public.zoho_fy_receipts set bank_txn_id = v_txn, banked_at = now()
+              update public.zoho_fy_receipts set bank_txn_id = v_txn, banked_at = now(), bank_matched_by_import = true
                where tenant_id = v_tenant and zoho_payment_id = v_zid;
               v_used := v_used || v_txn;
               v_banked := v_banked + 1;
@@ -562,7 +570,7 @@ begin
     v_sum_tds := 0;
     if v_reason is null then
       for v_line in select value from jsonb_array_elements(v_p->'lines') loop
-        select i.id, i.customer_id, i.status, i.amount, i.net_payable, i.paid_amount, i.document_kind into v_inv
+        select i.id, i.customer_id, i.status, i.amount, i.net_payable, i.paid_amount, i.document_kind, i.taxable_value into v_inv
           from public.invoices i
          where i.tenant_id = v_tenant and i.zoho_invoice_id = v_line->>'zohoInvoiceId';
         if not found then
@@ -626,7 +634,9 @@ begin
         /* Follow-up (low): TDS gross = what this payment settles on the invoice (money + TDS), not the whole
            invoice — so a part payment's rate is right. */
         v_alloc := v_alloc || jsonb_build_object('invoice_id', v_inv.id, 'amount', v_cash, 'tds_amount', v_tds,
-                                                 'tds_gross', case when v_tds > 0 then v_settle end);
+                                                 'tds_gross', case when v_tds > 0 then
+                                                   round(coalesce(nullif(v_inv.taxable_value, 0), v_inv.amount)::numeric * v_settle
+                                                         / nullif(coalesce(v_inv.net_payable, v_inv.amount), 0))::integer end);
       end loop;
       if v_reason is null and v_sum_cash <= 0 then
         v_reason := 'Zoho booked only TDS on this payment, no money — record it by hand.';
@@ -685,9 +695,9 @@ begin
       end if;
 
       insert into public.zoho_fy_receipts (tenant_id, zoho_payment_id, fy, batch_id, customer_id, received_on, bank_account_id,
-                                           received_paise, cash, tds, advance, reference, payment_ids, bank_txn_id, banked_at)
+                                           received_paise, cash, tds, advance, reference, payment_ids, bank_txn_id, banked_at, bank_matched_by_import)
       values (v_tenant, v_zid, p_fy, v_batch, v_cust, v_date, v_acct, v_paise, v_sum_cash + v_excess, v_sum_tds, v_excess,
-              v_ref, v_pays, v_txn, case when v_txn is not null then now() end);
+              v_ref, v_pays, v_txn, case when v_txn is not null then now() end, v_txn is not null);
     exception when others then
       perform set_config('app.payment_ref_batch', '', true);
       perform set_config('app.zoho_fy_receipt_on', '', true);
@@ -782,6 +792,14 @@ begin
             from public.zoho_fy_receipts r
            where r.tenant_id = v_tenant and r.batch_id = p_batch_id) x;
   perform 1 from public.payments p where p.tenant_id = v_tenant and p.id = any (v_pays) order by p.id for update;
+  /* The bank lines its receipts are on NOW (review: never the stored id alone — it can be stale). */
+  select coalesce(array_agg(distinct t.id), '{}') into v_lines
+    from public.bank_transactions t
+   where t.tenant_id = v_tenant
+     and (t.matched_to_id = any (v_pays::text[])
+          or t.id in (select p.bank_txn_id from public.payments p
+                       where p.tenant_id = v_tenant and p.id = any (v_pays) and p.bank_txn_id is not null));
+  perform 1 from public.bank_transactions t where t.id = any (v_lines) order by t.id for update;
 
   /* Untouched since the import? */
   select string_agg(w, '; ') into v_bad from (
@@ -797,13 +815,18 @@ begin
     select format('the advance of ₹%s is %s', c.amount, c.status)
       from public.customer_credits c where c.tenant_id = v_tenant and c.source_payment_id = any (v_pays) and c.status <> 'open'
     union all
-    select format('bank line of %s was matched by hand', to_char(t.txn_date, 'DD Mon YYYY'))
+    /* a line matched by a person (not by this import), shared with a receipt this import did not make,
+       or no longer pointing at this import's receipt — left alone: the undo is refused */
+    select format('the bank line of %s was matched by hand', to_char(t.txn_date, 'DD Mon YYYY'))
       from public.bank_transactions t
-     where t.tenant_id = v_tenant
-       and (t.matched_to_id = any (v_pays::text[])
-            or t.id in (select p.bank_txn_id from public.payments p where p.tenant_id = v_tenant and p.id = any (v_pays)))
-       and t.id not in (select r.bank_txn_id from public.zoho_fy_receipts r
-                         where r.tenant_id = v_tenant and r.batch_id = p_batch_id and r.bank_txn_id is not null)
+     where t.id = any (v_lines)
+       and (not exists (select 1 from public.zoho_fy_receipts r
+                         where r.tenant_id = v_tenant and r.batch_id = p_batch_id
+                           and r.bank_txn_id = t.id and r.bank_matched_by_import)
+            or exists (select 1 from public.payments p
+                        where p.tenant_id = v_tenant and p.bank_txn_id = t.id and not (p.id = any (v_pays)))
+            or t.matched_to_type is distinct from 'payment'
+            or not (t.matched_to_id = any (v_pays::text[])))
     limit 10) z;
   if v_bad is not null then
     raise exception 'This import cannot be removed — it was used since: %. Take that back first, then remove the import.', v_bad using errcode = 'P0001';
@@ -811,8 +834,7 @@ begin
 
   /* Un-reconcile the lines this import matched (R-2098's trigger clears payments.bank_txn_id and
      the round-off), then take the rest back. */
-  for v_txn in select distinct r.bank_txn_id from public.zoho_fy_receipts r
-                where r.tenant_id = v_tenant and r.batch_id = p_batch_id and r.bank_txn_id is not null loop
+  foreach v_txn in array v_lines loop
     perform public.reconcile_bank_txn(v_txn, null, null, null);
   end loop;
   update public.payments set bank_txn_id = null where tenant_id = v_tenant and id = any (v_pays) and bank_txn_id is not null;

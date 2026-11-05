@@ -97,6 +97,20 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
 update public.bank_transactions set matched_to_type = 'manual', matched_at = now(), match_confidence = 'manual'
  where id = 'c2501000-0000-0000-0000-0000000000e2';
 
+-- 0z. 2c's name test: one significant word must be there; with two or more, at least two (a surname alone is not the customer)
+insert into public.customers (id, tenant_id, name, state_code, country) values
+  ('c2501000-0000-0000-0000-0000000000c3', 'c2501000-0000-0000-0000-0000000000f0', 'Rahul Sharma', '07', 'India');
+do $$
+declare t constant uuid := 'c2501000-0000-0000-0000-0000000000f0';
+begin
+  if public._zoho_fy_line_names_customer(t, 'c2501000-0000-0000-0000-0000000000c3', 'NEFT-AMIT SHARMA-HDFC')
+     or not public._zoho_fy_line_names_customer(t, 'c2501000-0000-0000-0000-0000000000c3', 'NEFT CR RAHUL SHARMA ICICI')
+     or not public._zoho_fy_line_names_customer(t, 'c2501000-0000-0000-0000-0000000000c1', 'NEFT CR-ACMEWIDGET PVT')
+     or public._zoho_fy_line_names_customer(t, 'c2501000-0000-0000-0000-0000000000c1', 'NEFT CR-PRIVATE LIMITED') then
+    raise exception 'FAIL 0z: names-customer test';
+  end if;
+end $$;
+
 -- 0. An invoice with a quote never takes a quote-less receipt, and no invoice can be tagged as a Zoho sale afterwards
 do $$
 begin
@@ -198,8 +212,8 @@ begin
   if v_q.id not like '%-26-%' or v_q.created_date <> '2025-08-10' then
     raise exception 'FAIL 8: holder quote % %', v_q.id, v_q.created_date;
   end if;
-  -- TDS gross = what pA settles on the invoice
-  if not exists (select 1 from public.tds_receivable x where x.tenant_id = t and x.tds_amount = 1000 and x.gross_amount = 11800) then
+  -- TDS gross = the taxable share of what pA settles (₹11,800 incl. GST → ₹10,000) → 10%
+  if not exists (select 1 from public.tds_receivable x where x.tenant_id = t and x.tds_amount = 1000 and x.gross_amount = 10000 and x.rate_pct = 10) then
     raise exception 'FAIL 9: TDS gross';
   end if;
 
@@ -214,6 +228,25 @@ begin
 end $$;
 
 reset role;
+-- 10c. a person matched pC's receipt to a line by hand → the undo leaves it alone: refused
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source, matched_to_type, matched_to_id, matched_at)
+select 'c2501000-0000-0000-0000-0000000000e9', 'c2501000-0000-0000-0000-0000000000f0', 'c2501000-0000-0000-0000-0000000000d1', '2025-06-22',
+       'CASH DEP', 0, 2950, '000000000000000', 'manual', 'payment', p.id::text, now()
+  from public.payments p where p.tenant_id = 'c2501000-0000-0000-0000-0000000000f0' and p.reference = 'ZOHO-PAY-PMT-C';
+set local role authenticated;
+do $$
+declare v_batch uuid := (select id from public.zoho_fy_import_batches where tenant_id = 'c2501000-0000-0000-0000-0000000000f0' and kind = 'customerpayments');
+begin
+  perform pg_temp.as_user('c2501000-0000-0000-0000-0000000000a1');
+  begin
+    perform public.remove_zoho_fy_receipts_import(v_batch, 'wrong account');
+    raise exception 'FAIL 10c: removed although a person matched a line to its receipt';
+  exception when others then
+    if sqlerrm not like '%the bank line of 22 Jun 2025 was matched by hand%' then raise exception 'FAIL 10c: %', sqlerrm; end if;
+  end;
+end $$;
+reset role;
+delete from public.bank_transactions where id = 'c2501000-0000-0000-0000-0000000000e9';
 update public.tds_receivable set status = 'cert_received' where tenant_id = 'c2501000-0000-0000-0000-0000000000f0' and tds_amount = 1000;
 set local role authenticated;
 do $$
