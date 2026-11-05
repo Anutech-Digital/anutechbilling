@@ -9,7 +9,7 @@
 - `npx vitest related <changed files> --run`;
 - the touched area's test folders;
 - the repo-wide guard/scan tests: every *ratchet*, *scan*, *wiring* and *guard* test file, PLUS the CI-only guard list (R-2443 — most of its names match none of those words): from production/ `npx vitest run $(node scripts/ops/push-guard-suites.mjs --ci-only)`;
-- `npm run test:sql:local` ONLY if you added or changed SQL;
+- `npm run test:sql:local` ONLY if you added or changed SQL — **LOCAL only (R-2493, 5 Nov 2026):** `node scripts/test-sql.mjs` / `npm run test:sql` / `test:sql:local` run on the local docker DB by default and print `target: …` first — check that line says local. **Never pass `--remote`** and never set `TEST_SQL_REMOTE_OK` (remote needs both, with the same project ref; CI refuses it; anything else — `--linked`, a typo — exits 2 before connecting). Why: 5 Nov night a worker ran it without `--local` and it started on staging (the old default). Logic: `production/scripts/dev/sql-test-target.mjs`; tests `tests/test-sql-target.test.ts`.
 - `worker-lock tsc`, eslint on the changed files, and `worker-lock check`.
 
 Do NOT run the full `npm run test` locally (about 40 minutes, and it crashes under load). GitHub CI runs it on every push, and `worker-lock push` still runs its guard files. After the push you wait for CI yourself (step 5b); if CI turns red, fixing that comes first.

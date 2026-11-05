@@ -35,7 +35,7 @@ There is no direct Postgres driver in the code. Cloud SQL on its own cannot serv
   own uptime check.
 - A new table needs the `service_role` policy too, or crons/webhooks lose access to it.
 - The Supabase CLI's `--linked` commands talk to a hosted Supabase project, not to Cloud
-  SQL. Scripts built on `supabase db query --linked` (`test-sql.mjs` default mode,
+  SQL. Scripts built on `supabase db query --linked` (`test-sql.mjs --remote` — local by default since R-2493,
   `migration-drift-check.mjs`, `backup-db.mjs`) are therefore not a check of production
   any more until they are repointed — confirm which database a script reached before
   believing its result.
