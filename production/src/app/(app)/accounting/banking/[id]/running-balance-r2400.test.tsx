@@ -22,6 +22,7 @@ vi.mock("@/lib/queries/bank", async (orig) => ({
   ...(await orig<object>()),
   useBankAccount: () => ({ data: state.account, isLoading: false, isError: false, refetch: vi.fn() }),
   useBankTransactions: () => ({ data: state.txns, isLoading: false, isError: false, refetch: vi.fn() }),
+  useBankOpeningHistory: noData,   // R-2497: the opening-history note
   useReconcileTransaction: mutation,
   useAutoReconcile: mutation,
   useOpenInvoicesForCreditMatch: noData,

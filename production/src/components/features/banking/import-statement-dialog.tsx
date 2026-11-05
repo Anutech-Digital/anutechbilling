@@ -35,8 +35,10 @@ import {
   useExistingTxnKeys,
   planBankImport,
   useBankAccount,
-  useUpdateBankAccount,
+  useSetBankOpeningFromStatement,
 } from "@/lib/queries/bank";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { openingMoveCheck, linesBeforeOpening, isOpeningMismatchError } from "@/lib/banking/opening-move";
 import { importBadge } from "./import-badge";
 import { openingBalanceFromStatement, fyStartFor } from "@/lib/banking/opening-balance";
 import { isEncryptedPdf, pdfPageCount } from "@/lib/banking/pdf-check";
@@ -192,8 +194,13 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
      start of the FY the statement's LATEST line is in — a statement that dips a few
      days into March is still this year's statement. */
   const { data: account } = useBankAccount(open ? accountId : null);
-  const updateAccount = useUpdateBankAccount();
+  /* R-2497: never a plain overwrite — set_bank_opening_from_statement checks that today's
+     balance stays the same and keeps the old opening in bank_opening_history. */
+  const setOpening = useSetBankOpeningFromStatement();
+  const { data: me } = useCurrentUser();
+  const isOwner = me?.role === "owner";
   const [applyOpening, setApplyOpening] = React.useState(false);
+  const [acceptDifference, setAcceptDifference] = React.useState(false);
   const [openingDate, setOpeningDate] = React.useState("");
   React.useEffect(() => {
     setApplyOpening(false);
@@ -206,6 +213,31 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     [parsed, openingDate],
   );
   const openingOn = applyOpening && opening?.ok === true;
+  React.useEffect(() => { setAcceptDifference(false); }, [parsed, openingDate, applyOpening]);
+
+  /* R-2497: moving the opening EARLIER must keep today's balance — the statement's balance at
+     the start of the old opening date must equal the old opening (±₹1). Preview of the check
+     the database makes on save. */
+  const moveCheck = React.useMemo(() => {
+    if (!openingOn || !opening?.ok || !parsed || !account) return null;
+    const hasLines = !!existingKeys && (existingKeys.bal.size > 0 || existingKeys.prefix.size > 0 || existingKeys.prefixNoBal.size > 0);
+    return openingMoveCheck({
+      rows: parsed.rows,
+      newOpening: opening.amount,
+      newDate: openingDate,
+      oldOpening: account.opening_balance ?? 0,
+      oldDate: account.opening_balance_date,
+      accountHasMoney: (account.opening_balance ?? 0) !== 0 || hasLines,
+    });
+  }, [openingOn, opening, parsed, account, existingKeys, openingDate]);
+  const openingMismatch = moveCheck?.kind === "earlier" && !moveCheck.matches;
+  const openingWaits = openingMismatch && !(isOwner && acceptDifference);
+
+  /* R-2497: with the opening left as it is, lines dated before the account's opening date are
+     imported but NOT counted in the balance (the opening already holds them) — said up front. */
+  const beforeOpeningCount = parsed && account && !openingOn
+    ? linesBeforeOpening(parsed.rows, account.opening_balance_date)
+    : 0;
 
   /* Lines dated before the opening date are already inside the opening balance —
      importing them too would count that money twice. */
@@ -419,8 +451,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
          picked it and 'rule' where a layer did, because the DB refuses a category with no
          stated source — an unattributable number in the books is the thing an auditor
          asks about first. */
+      let batchId: string | null = null;
       if (freshCount > 0) {
-        await importMut.mutateAsync({
+        const res = await importMut.mutateAsync({
           accountId,
           fileName: origin?.name ?? null,
           source: origin?.source ?? "paste",
@@ -438,14 +471,31 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             }];
           }),
         });
+        batchId = res?.batchId ?? null;
       }
       /* After the lines, not before: if the import fails the account keeps its old
          opening balance rather than one that assumes lines which never arrived. */
       if (openingOn && opening?.ok) {
-        await updateAccount.mutateAsync({
-          id: accountId,
-          patch: { opening_balance: opening.amount, opening_balance_date: openingDate },
-        });
+        if (openingWaits) return;
+        try {
+          await setOpening.mutateAsync({
+            accountId,
+            opening: opening.amount,
+            date: openingDate,
+            batchId,
+            acceptDifference: isOwner && acceptDifference,
+          });
+        } catch (err) {
+          /* R-2497: the lines are in (dated before the opening, so not counted); the opening
+             stayed as it was. The dialog stays open with the figures. */
+          toastError(err, {
+            fallback: "The opening balance was not changed.",
+            description: isOpeningMismatchError(err)
+              ? (freshCount > 0 ? "The statement's lines were imported; the opening balance stayed as it was. " : "") + "Check the figures in the opening balance box, then try again."
+              : undefined,
+          });
+          return;
+        }
       }
       onOpenChange(false);
     } catch {
@@ -785,6 +835,41 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                     </span>
                   </p>
                 )}
+                {moveCheck?.kind === "earlier" && (
+                  <div
+                    data-testid="opening-move-check"
+                    className={`mt-1 rounded border px-2 py-1.5 ${moveCheck.matches ? "border-emerald/30 bg-emerald-50 text-emerald-ink" : "border-rose/30 bg-rose-50 text-rose-ink"}`}
+                  >
+                    <p>
+                      By this statement the balance at the start of {formatDate(moveCheck.oldDate)} is{" "}
+                      <b className="tabular-nums">{rupee(moveCheck.balanceOnOldDate)}</b>; the current opening on that date is{" "}
+                      <b className="tabular-nums">{rupee(moveCheck.oldOpening)}</b>.
+                    </p>
+                    {moveCheck.matches ? (
+                      <p>It matches the current opening, so today&apos;s balance stays the same. The old opening is kept in the account&apos;s history.</p>
+                    ) : (
+                      <>
+                        <p>
+                          It differs by {moveCheck.difference < 0 ? "−" : "+"}{rupee(Math.abs(moveCheck.difference))}, so today&apos;s balance would change by that much.
+                          A line may be missing from the statement, or the date may be wrong — check the preview and the date.
+                        </p>
+                        {isOwner ? (
+                          <label className="mt-1 flex items-start gap-2 cursor-pointer text-ink">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 accent-amber"
+                              checked={acceptDifference}
+                              onChange={(e) => setAcceptDifference(e.target.checked)}
+                            />
+                            <span>The figures differ — set it anyway (the difference is recorded in the account&apos;s history)</span>
+                          </label>
+                        ) : (
+                          <p className="font-semibold">Only the owner can accept a difference — ask the owner to import this statement.</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
                 {openingOn && excludedCount > 0 && (
                   <p className="text-ink-2">
                     {excludedCount} line{excludedCount === 1 ? "" : "s"} dated before {formatDate(openingDate)} will <b>not</b> be imported — the opening balance already includes {excludedCount === 1 ? "it" : "them"}.
@@ -792,6 +877,14 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                 )}
               </div>
             </div>
+          )}
+
+          {beforeOpeningCount > 0 && account && (
+            <p data-testid="lines-before-opening" className="rounded-md border border-amber/30 bg-amber-50 px-3 py-2 text-xs text-amber-ink">
+              {beforeOpeningCount} line{beforeOpeningCount === 1 ? " is" : "s are"} dated before this account&apos;s opening date ({formatDate(account.opening_balance_date)}).
+              {" "}They will be imported but will <b>not be counted</b> in the balance — the opening balance already holds them.
+              To count them, tick &quot;Set opening balance from this statement&quot; with an earlier date.
+            </p>
           )}
 
           <div className="rounded-md bg-indigo-50 border border-indigo/20 px-3 py-2 text-xs text-indigo-ink">
@@ -808,9 +901,13 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           <Button
             variant="primary"
             icon="upload"
-            disabled={(freshCount === 0 && !openingOn) || blocked}
-            title={blocked ? "Some statement lines are missing — see the red box in the preview" : undefined}
-            loading={importMut.isPending || updateAccount.isPending}
+            disabled={(freshCount === 0 && !openingOn) || blocked || (openingOn && openingWaits)}
+            title={blocked
+              ? "Some statement lines are missing — see the red box in the preview"
+              : openingOn && openingWaits
+                ? "The statement does not match the current opening — see the opening balance box"
+                : undefined}
+            loading={importMut.isPending || setOpening.isPending}
             onClick={handleImport}
           >
             {freshCount === 0 && openingOn

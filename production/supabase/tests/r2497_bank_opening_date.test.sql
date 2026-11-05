@@ -2,7 +2,7 @@
 -- on/after its opening date; a past-dated Balance Sheet leaves out later bank lines; moving the
 -- opening from a statement keeps today's balance (or is refused / accepted by the owner) and
 -- leaves a history row.
--- Migration 20261105050529_r2497_bank_opening_date.
+-- Migration 20261105071119_r2497_bank_opening_date.
 -- Self-asserting, ONE transaction, rolled back. Run on a LOCAL DB only:
 --   begin; <migration without begin/commit>; <this file without begin/rollback>; rollback;
 --
