@@ -35,6 +35,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { stripSqlComments } from "./sql-comments.mjs";
 
 export const DEFAULT_USER = "resellersos_migration";
 export const ENVS = ["staging", "live"];
@@ -96,10 +97,11 @@ export function parseDeployHeaders(sql, file) {
 /**
  * THE parser (R-2480: one copy — localhost-update.mjs imports it): functions and views a migration
  * (re)defines — objects a later `create or replace` overwrites. ["function f", "view v"], lower case,
- * no schema. SQL comments (-- and block) are ignored.
+ * no schema. SQL comments (-- and block, in one pass — R-2491) are ignored.
  */
 export function redefinedObjects(sql) {
-  const src = String(sql ?? "").replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, "");
+  /* R-2491: one pass (sql-comments.mjs) — removing block comments first let "-- /accounting/* …" open a fake block. */
+  const src = stripSqlComments(sql);
   const id = String.raw`(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?`;
   const out = new Set();
   for (const m of src.matchAll(new RegExp(String.raw`create\s+(?:or\s+replace\s+)?function\s+${id}`, "gi"))) out.add(`function ${m[1].toLowerCase()}`);
