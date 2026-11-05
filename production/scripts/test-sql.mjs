@@ -119,7 +119,9 @@ function runOne(path) {
           { input: readFileSync(path, "utf8"), encoding: "utf8", timeout: 120_000 },
         )
       : /* sirf target "remote" — jo upar do baar maanga aur link se mila hua hai (R-2493) */
-        spawnSync("npx", ["supabase", "db", "query", "--linked", "-f", path], {
+        /* --project-ref: the CLI runs on exactly the ref that was checked, never on whatever
+           SUPABASE_PROJECT_ID / a parent workdir would pick (code-review, R-2493). */
+        spawnSync("npx", ["supabase", "db", "query", "--linked", "--project-ref", resolved.target.ref, "-f", path], {
           encoding: "utf8", shell: true, timeout: 120_000,
         });
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;

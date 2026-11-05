@@ -7,9 +7,9 @@
  * tested directly, and the CLI is only spawned for REFUSALS, from an empty temp folder (no
  * supabase/.temp link, no supabase/tests), so even a refusal that slipped would stop there.
  */
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 // @ts-expect-error — plain .mjs script, no types
@@ -17,6 +17,11 @@ import { resolveSqlTestTarget, describeSqlTestTarget, linkedRefReason, readLinke
 
 const REF = "abcdefghijklmnopqrst"; // 20 chars, the shape of a Supabase project ref
 const OTHER = "zyxwvutsrqponmlkjihg";
+
+/* Temp folders this file makes (plain temp dirs — no junction inside), removed at the end. */
+const made: string[] = [];
+const tempDir = (prefix: string) => { const d = mkdtempSync(join(tmpdir(), prefix)); made.push(d); return d; };
+afterAll(() => { for (const d of made) rmSync(d, { recursive: true, force: true }); });
 
 describe("resolveSqlTestTarget — local is the default", () => {
   it("no flags → local docker DB", () => {
@@ -76,8 +81,9 @@ describe("resolveSqlTestTarget — remote only when asked twice", () => {
     expect(resolveSqlTestTarget(["--remote", "staging"], { TEST_SQL_REMOTE_OK: "staging" }).reason).toMatch(/ref/);
   });
 
-  it("CI never goes remote, even with both", () => {
+  it("CI never goes remote, even with both (CI=0/false/no is not CI)", () => {
     expect(resolveSqlTestTarget(["--remote", REF], { TEST_SQL_REMOTE_OK: REF, CI: "true" }).reason).toMatch(/CI/);
+    for (const ci of ["0", "false", "no", ""]) expect(resolveSqlTestTarget(["--remote", REF], { TEST_SQL_REMOTE_OK: REF, CI: ci }).reason).toBeNull();
   });
 
   it("--remote mixed with --local or --db-url → refused", () => {
@@ -92,6 +98,9 @@ describe("resolveSqlTestTarget — everything else is refused", () => {
   it("--db-url on a non-local host → refused", () => {
     expect(resolveSqlTestTarget(["--db-url=postgresql://u:p@db.example.com:5432/postgres"], {}).reason).toMatch(/not local/);
     expect(resolveSqlTestTarget(["--db-url="], {}).reason).toBeTruthy();
+    // loopback only, as before R-2493 — not host.docker.internal
+    expect(resolveSqlTestTarget(["--db-url=postgresql://p@host.docker.internal:54322/postgres"], {}).reason).toMatch(/loopback/);
+    expect(resolveSqlTestTarget(["--db-url=postgresql://p@[::1]:54322/postgres"], {}).reason).toBeNull();
   });
 
   it("unknown flags (--linked, --project-ref, typos) → refused, not ignored", () => {
@@ -126,7 +135,7 @@ describe("linked project check before a remote run", () => {
   });
 
   it("reads the ref from supabase/.temp (project-ref or linked-project.json)", () => {
-    const a = mkdtempSync(join(tmpdir(), "r2493-link-"));
+    const a = tempDir("r2493-link-");
     expect(readLinkedRef(a)).toBeNull();
     mkdirSync(join(a, "supabase", ".temp"), { recursive: true });
     writeFileSync(join(a, "supabase", ".temp", "linked-project.json"), JSON.stringify({ ref: REF, name: "x" }));
@@ -139,7 +148,7 @@ describe("linked project check before a remote run", () => {
 describe("scripts/test-sql.mjs — prints the target first and refuses before connecting", () => {
   const SCRIPT = resolve(__dirname, "../scripts/test-sql.mjs");
   const run = (args: string[], env: Record<string, string> = {}) => {
-    const cwd = mkdtempSync(join(tmpdir(), "r2493-cli-"));
+    const cwd = tempDir("r2493-cli-");
     const base = { ...process.env };
     delete base.TEST_SQL_REMOTE_OK;
     delete base.CI;
@@ -166,6 +175,10 @@ describe("scripts/test-sql.mjs — prints the target first and refuses before co
     const r = run(["--linked"]);
     expect(r.status).toBe(2);
     expect(r.out).not.toMatch(/canary/i);
+  });
+
+  it("the remote CLI call names the checked ref (--project-ref), so the CLI cannot pick another project", () => {
+    expect(readFileSync(SCRIPT, "utf8")).toMatch(/"--linked", "--project-ref", resolved.target.ref/);
   });
 
   it("no flags → 'target: local' is the first line", () => {

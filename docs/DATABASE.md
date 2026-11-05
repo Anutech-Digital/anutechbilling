@@ -262,8 +262,8 @@ Notes:
 - Run: `cd production && npm run test:sql:local` (local docker Supabase) or
   `npm run test:sql:local -- <name-filter>`. `scripts/test-sql.mjs` refuses any file without
   `rollback` or with `commit`, and runs a canary that must fail first.
-- The default `npm run test:sql` uses the Supabase CLI `--linked` project, which is no longer
-  production since the Cloud SQL move (ADR 0001) — know which database you reached.
+- `npm run test:sql` is LOCAL by default too (R-2493) and prints `target: …` first. A remote run
+  needs `--remote <ref>` AND `TEST_SQL_REMOTE_OK=<same ref>` (refused in CI) — workers never use it.
 - CI: `.github/workflows/sql-tests.yml` rebuilds a local database and runs the suite.
 - Proving a DDL fix: pipe `begin; <migration without begin/commit> <test> rollback;` into the local
   database; mutation-check by putting the old body back — it must go red (production/CLAUDE.md §17c,

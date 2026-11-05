@@ -12,12 +12,14 @@
  *   - anything else (`--linked`, `--project-ref`, a typo, two filters) → refused.
  * Every refusal happens before any connection. Pure functions; nothing here prints a key.
  */
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { dbUrlLocalReason } from "./local-guard.mjs";
 
 /** A Supabase project ref: 20 lowercase letters/digits. */
 const PROJECT_REF = /^[a-z0-9]{20}$/;
+/** --db-url hosts: this machine's loopback only. */
+const DB_URL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
 
 /**
  * @param {string[]} argv  process.argv.slice(2)
@@ -49,7 +51,7 @@ export function resolveSqlTestTarget(argv, env = {}) {
     if (local || dbUrl !== null) return out(null, "--remote cannot be mixed with --local / --db-url");
     if (!PROJECT_REF.test(remote)) return out(null, `--remote needs a Supabase project ref (20 lowercase letters/digits), got "${remote}"`);
     const target = { kind: "remote", ref: remote };
-    if (String(env.CI ?? "").trim() && String(env.CI).toLowerCase() !== "false") {
+    if (!["", "0", "false", "no"].includes(String(env.CI ?? "").trim().toLowerCase())) {
       return out(target, "CI never runs SQL tests on a remote DB — CI uses its own local stack (--local)");
     }
     if (String(env.TEST_SQL_REMOTE_OK ?? "").trim() !== remote) {
@@ -61,6 +63,11 @@ export function resolveSqlTestTarget(argv, env = {}) {
   if (dbUrl !== null) {
     const why = dbUrlLocalReason(dbUrl);
     if (why) return out(null, `--db-url: ${why}`);
+    /* Stricter than local-guard: this machine's loopback only (as before R-2493) — never
+       host.docker.internal, which inside a container can be another machine's DB. */
+    if (!DB_URL_HOSTS.has(new URL(dbUrl.trim()).hostname.toLowerCase())) {
+      return out(null, "--db-url: loopback only (localhost / 127.0.0.1 / ::1)");
+    }
     return out({ kind: "db-url", url: dbUrl }, null);
   }
   return out({ kind: "local" }, null);
@@ -81,12 +88,11 @@ export function describeSqlTestTarget(target) {
 /** The project ref supabase/.temp links under `dir` (project-ref wins), or null. */
 export function readLinkedRef(dir) {
   const tmp = join(dir, "supabase", ".temp");
+  try { const r = readFileSync(join(tmp, "project-ref"), "utf8").trim(); if (r) return r; } catch { /* missing → try the json */ }
   try {
-    const p = join(tmp, "project-ref");
-    if (existsSync(p)) { const r = readFileSync(p, "utf8").trim(); if (r) return r; }
-    const j = join(tmp, "linked-project.json");
-    if (existsSync(j)) { const r = JSON.parse(readFileSync(j, "utf8"))?.ref; if (typeof r === "string" && r.trim()) return r.trim(); }
-  } catch { /* unreadable → not linked */ }
+    const r = JSON.parse(readFileSync(join(tmp, "linked-project.json"), "utf8"))?.ref;
+    if (typeof r === "string" && r.trim()) return r.trim();
+  } catch { /* missing / unreadable → not linked */ }
   return null;
 }
 
