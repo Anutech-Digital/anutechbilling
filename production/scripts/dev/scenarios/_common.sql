@@ -330,6 +330,11 @@ begin
     return query execute
       'select ''gstinClaim''::text, x.id::text from public.gstin_ownership_claims x where x.tenant_id = any($1)' using co;
   end if;
+  -- R-2476: memberships in a scenario company (two-companies) — they go with the company
+  if cardinality(co) > 0 and pg_temp.scn_has('tenant_memberships') then
+    return query execute
+      'select ''membership''::text, x.id::text from public.tenant_memberships x where x.tenant_id = any($1)' using co;
+  end if;
   if pg_temp.scn_has('tenant_luts') then
     return query execute 'select ''lut''::text, x.id::text from public.tenant_luts x where x.tenant_id = $1 and x.id::text = any($2)'
       using p_tenant, p_extra;
@@ -354,7 +359,8 @@ language sql stable as $f$
     'companies',     (select count(*) from s where kind = 'company'),
     'connections',   (select count(*) from s where kind = 'connection'),
     'networkDocs',   (select count(*) from s where kind = 'networkDoc'),
-    'gstinClaims',   (select count(*) from s where kind = 'gstinClaim')
+    'gstinClaims',   (select count(*) from s where kind = 'gstinClaim'),
+    'memberships',   (select count(*) from s where kind = 'membership')
   )
 $f$;
 
@@ -423,6 +429,20 @@ begin
                   set gstin_owner_verified_at = null, gstin_owner_verified_gstin = null,
                       gstin_owner_verified_how = null, gstin_owner_verified_by = null
                 where id = $1 and gstin_owner_verified_by = ''R-2458 scenario''' using p_tenant;
+    end if;
+    -- R-2476: a login left switched INTO a scenario company goes back to its membership here first —
+    -- users.tenant_id cascades, so deleting the company would delete the login. Refuse if any is left.
+    if pg_temp.scn_has('tenant_memberships') then
+      execute 'update public.users u
+                  set tenant_id = m.tenant_id, role = m.role, is_active = m.is_active,
+                      access_ends_on = m.access_ends_on, employee_id = m.employee_id, manager_id = m.manager_id,
+                      can_view_deals = m.can_view_deals, gets_new_leads = m.gets_new_leads
+                 from public.tenant_memberships m
+                where u.tenant_id = any($1) and m.user_id = u.id and m.tenant_id = $2 and m.ended_at is null'
+        using ids.co, p_tenant;
+    end if;
+    if exists (select 1 from public.users u where u.tenant_id = any(ids.co)) then
+      raise exception 'scenario clear refused: a login still works in a scenario company and would be deleted with it — switch it back to the test company first';
     end if;
     delete from public.tenants where id = any(ids.co);
   end if;
