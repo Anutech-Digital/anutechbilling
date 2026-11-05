@@ -30,7 +30,7 @@ import { isSplitBilled, quoteInstalmentPlan } from "@/lib/billing/instalments";
 import { ROUND_OFF_LIMIT } from "@/lib/banking/credit-pay-for-multi";
 import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { rupee, formatDate } from "@/lib/utils";
-import { knownPayerCustomer, payerFromNarration, type KnownPayer } from "@/lib/banking/customer-payer";
+import { knownPayerCustomer, notPayerNames, payerFromNarration, type KnownPayer } from "@/lib/banking/customer-payer";
 import type { BillingCycle, Item, QuoteLineItem } from "@/lib/supabase/database.types";
 import { linesBelowCost, NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 
@@ -142,7 +142,8 @@ function nameWords(s: string | null | undefined): string[] {
  *  UPI payee name "RAVI SHARMA" does not hide customer "Sharma Traders". */
 function withoutOwnNames(description: string | null | undefined, ownNames: readonly string[] | undefined): string[] {
   let seq = nameWords(description);
-  for (const own of ownNames ?? []) {
+  /* R-2390: + the bank's own words (AUTO_REDEEM, AUTO-SWEEP) — one ignore list (customer-payer.ts). */
+  for (const own of notPayerNames(ownNames)) {
     const run = nameWords(own);
     if (run.length === 0) continue;
     const kept: string[] = [];
