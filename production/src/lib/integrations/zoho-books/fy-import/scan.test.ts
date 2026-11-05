@@ -1,16 +1,16 @@
 /**
- * R-2499 — the server's resumable read of the FY's Zoho invoices (list, then details) into its own
+ * R-2499 — the generic FY import framework's resumable read (here: invoices, list then details) into its own
  * scan. Zoho is a fake fetch in v3 shapes (money in RUPEES as Zoho sends it); the store is memory.
  * Names and numbers are made up.
  */
 import { describe, it, expect } from "vitest";
 import { scanStep, type ScanStore, type ScanRun, type ListedRow } from "./scan";
-import type { ZohoSaleFacts } from "./normalise";
+import { zohoSaleFacts, type ZohoSaleFacts } from "../sales-import/normalise";
 
 function memoryStore() {
   const runs = new Map<string, ScanRun>();
   const rows = new Map<string, ListedRow & { fy: string; payload: ZohoSaleFacts | null }>();
-  const store: ScanStore = {
+  const store: ScanStore<ZohoSaleFacts> = {
     async readRun(fy) { return runs.get(fy) ?? null; },
     async saveRun(fy, r) { runs.set(fy, { ...r }); },
     async addListed(fy, list) {
@@ -60,17 +60,18 @@ function fakeZoho(n: number, per = 2) {
   return { f, urls };
 }
 
+const toFacts = (d: Parameters<typeof zohoSaleFacts>[0]) => zohoSaleFacts(d, "07");
 const noWait = { sleep: async () => {}, now: () => 0, budget: 1000 };
 
 describe("R-2499 scan — resumable, server-side, READ only", () => {
   it("lists the FY page by page, then reads each detail; stops on the call limit and carries on", async () => {
     const { store, rows } = memoryStore();
     const z = fakeZoho(5);   // inv-5 is dated outside the FY → never kept
-    const a = await scanStep(store, "600", "tok", "2025-26", "07", { ...noWait, maxCalls: 2 }, z.f);
+    const a = await scanStep(store, "invoices", toFacts, "600", "tok", "2025-26", { ...noWait, maxCalls: 2 }, z.f);
     expect(a).toMatchObject({ listed: 4, detailed: 0, listDone: false, complete: false, calls: 2 });
-    const b = await scanStep(store, "600", "tok", "2025-26", "07", { ...noWait, maxCalls: 3 }, z.f);
+    const b = await scanStep(store, "invoices", toFacts, "600", "tok", "2025-26", { ...noWait, maxCalls: 3 }, z.f);
     expect(b).toMatchObject({ listed: 4, detailed: 2, listDone: true, complete: false });
-    const c = await scanStep(store, "600", "tok", "2025-26", "07", { ...noWait, maxCalls: 50 }, z.f);
+    const c = await scanStep(store, "invoices", toFacts, "600", "tok", "2025-26", { ...noWait, maxCalls: 50 }, z.f);
     expect(c).toMatchObject({ listed: 4, detailed: 4, complete: true });
     expect(rows.has("inv-5")).toBe(false);
     expect(z.urls.every((u) => u.searchParams.get("organization_id") === "600")).toBe(true);
@@ -81,7 +82,7 @@ describe("R-2499 scan — resumable, server-side, READ only", () => {
 
   it("stores whole rupees (paise converted once) and Zoho's status, void included", async () => {
     const { store, rows } = memoryStore();
-    await scanStep(store, "600", "tok", "2025-26", "07", { ...noWait, maxCalls: 50 }, fakeZoho(3).f);
+    await scanStep(store, "invoices", toFacts, "600", "tok", "2025-26", { ...noWait, maxCalls: 50 }, fakeZoho(3).f);
     const one = rows.get("inv-1")!.payload!;
     // 1180.50 − 180.09 − 0.41 = 1000.00 taxable; 180 GST; 1181 total (half up)
     expect(one).toMatchObject({ taxable: 1000, tax: 180, amount: 1181, head: "igst", taxRate: 18, problems: [] });
@@ -91,9 +92,9 @@ describe("R-2499 scan — resumable, server-side, READ only", () => {
   it("a rerun reads nothing again when Zoho has not changed", async () => {
     const { store } = memoryStore();
     const z = fakeZoho(3);
-    await scanStep(store, "600", "tok", "2025-26", "07", { ...noWait, maxCalls: 50 }, z.f);
+    await scanStep(store, "invoices", toFacts, "600", "tok", "2025-26", { ...noWait, maxCalls: 50 }, z.f);
     const before = z.urls.length;
-    const again = await scanStep(store, "600", "tok", "2025-26", "07", { ...noWait, maxCalls: 50 }, z.f);
+    const again = await scanStep(store, "invoices", toFacts, "600", "tok", "2025-26", { ...noWait, maxCalls: 50 }, z.f);
     expect(again.complete).toBe(true);
     expect(z.urls.length).toBe(before);
   });

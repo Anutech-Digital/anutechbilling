@@ -80,6 +80,8 @@ import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import { downloadServerExport } from "@/lib/exports/download-server-export";
 import { mayExport } from "@/lib/exports/server-export";
 import { ImportZohoInvoicesDialog, canImportOpeningInvoices } from "@/components/features/invoices/import-zoho-invoices-dialog";
+import { ZohoFySalesImportDialog } from "@/components/features/invoices/zoho-fy-sales-import-dialog";
+import { canImportFySales } from "@/lib/integrations/zoho-books/sales-import/plan";
 
 /* R-085: on the shared DataTable. Widths are fluid percentages (with the 3% checkbox
    column they sum to 100) so the table always fits — no horizontal scroll. Clicking a
@@ -108,6 +110,9 @@ function InvoicesPageInner() {
   /* R-1739: Import open invoices from Zoho (owner / manager / accountant). */
   const canImportZoho = canImportOpeningInvoices(me?.role);
   const [zohoOpen, setZohoOpen] = React.useState(false);
+  /* R-2499: FY 2025-26 sales from Zoho (owner / accountant — the RPC checks too). */
+  const canImportFy = canImportFySales(me?.role);
+  const [fyOpen, setFyOpen] = React.useState(false);
   /* R-487: "Fill missing costs" writes invoice lines — the owner's call only (the RPC checks too). */
   const isOwner      = me?.role === "owner";
   const [fillCostsOpen, setFillCostsOpen] = React.useState(false);
@@ -395,6 +400,9 @@ function InvoicesPageInner() {
           {canImportZoho && (
             <Button icon="download" onClick={() => setZohoOpen(true)}>Import from Zoho</Button>
           )}
+          {canImportFy && (
+            <Button icon="download" onClick={() => setFyOpen(true)}>FY 2025-26 sales from Zoho</Button>
+          )}
           <Button icon="upload" onClick={() => router.push("/accounting/gst" as any)}>Export GSTR-1</Button>
           {canQuotes && (
             <Button variant="primary" icon="plus" onClick={() => router.push(NEW_INVOICE_HREF as never)}>
@@ -406,6 +414,7 @@ function InvoicesPageInner() {
 
       {!canWrite && <ViewOnlyNote what="issue invoices, record payments or credit notes" />}
       {zohoOpen && <ImportZohoInvoicesDialog open={zohoOpen} onOpenChange={setZohoOpen} />}
+      {fyOpen && <ZohoFySalesImportDialog open={fyOpen} onOpenChange={setFyOpen} />}
 
       {/* R-337: ₹10 Cr+ turnover — B2B invoices 25+ days old with no IRN. */}
       <EinvoiceBanner notice={irnAgeing} className="mb-4" />

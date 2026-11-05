@@ -10,7 +10,7 @@
  *   restart  → forgets the scan (read again from the start).
  *   preview  → the plan from the COMPLETE scan: counts, skip reasons, Zoho vs to-import totals per
  *              month, what is already in the app per month, past batches. Nothing written.
- *   import   → { part, dryRun } — one part (IMPORT_PART invoices) through import_zoho_fy_sales:
+ *   import   → { part, dryRun } — one part (fy-import/parts.ts IMPORT_PART invoices) through import_zoho_fy_sales:
  *              dryRun true (default) writes nothing; false writes one batch (+ activity_log row).
  *              The request names only Zoho ids + the matched customer / items — every amount comes
  *              from the scan in the database.
@@ -23,18 +23,19 @@ import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken
 import { ZohoApiError } from "@/lib/integrations/zoho-books/api";
 import { fyDateRange } from "@/lib/integrations/zoho-books/fy-fetch";
 import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
-import { scanStep } from "@/lib/integrations/zoho-books/sales-import/scan";
-import { IMPORT_PART, SALES_IMPORT_ROLES, buildSalesPlan, toPick } from "@/lib/integrations/zoho-books/sales-import/plan";
-import {
-  readImportedByMonth, readPlanContext, readSaleBatches, readScannedFacts, readSellerState, supabaseScanStore, type SalesImportDb,
-} from "@/lib/integrations/zoho-books/sales-import/store";
+import { scanStep } from "@/lib/integrations/zoho-books/fy-import/scan";
+import { partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts";
+import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb } from "@/lib/integrations/zoho-books/fy-import/store";
+import { zohoSaleFacts, type ZohoSaleFacts } from "@/lib/integrations/zoho-books/sales-import/normalise";
+import { SALES_IMPORT_ROLES, buildSalesPlan, toPick } from "@/lib/integrations/zoho-books/sales-import/plan";
+import { readImportedByMonth, readPlanContext, readSellerState } from "@/lib/integrations/zoho-books/sales-import/store";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-
+const KIND = "invoices" as const;
 const ROLE_MSG = "Only the owner or an accountant can import FY sales from Zoho.";
 
 function fail(status: number, error: string) {
@@ -51,8 +52,8 @@ export async function POST(req: NextRequest) {
   const fy = typeof body.fy === "string" ? body.fy : "";
   let range;
   try { range = fyDateRange(fy); } catch { return fail(400, "Choose a financial year like 2025-26."); }
-  const db = caller.admin as unknown as SalesImportDb;
-  const store = supabaseScanStore(db, caller.tenantId);
+  const db = caller.admin as unknown as FyImportDb;
+  const store = supabaseScanStore<ZohoSaleFacts>(db, caller.tenantId, KIND);
 
   if (action === "restart") {
     try { await store.reset(fy); } catch { return fail(500, "Could not clear the Zoho read. Try again."); }
@@ -71,7 +72,7 @@ export async function POST(req: NextRequest) {
     const used = () => history.reduce((s, h) => s + h.calls, 0);
     try {
       const seller = await readSellerState(db, caller.tenantId);
-      const run = async () => scanStep(store, conn.orgId!, await zohoAccessToken(caller, conn.refreshToken!, creds), fy, seller,
+      const run = async () => scanStep(store, KIND, (d) => zohoSaleFacts(d, seller), conn.orgId!, await zohoAccessToken(caller, conn.refreshToken!, creds), fy,
         { history, maxCalls: Math.max(1, FY_CALLS_PER_REQUEST - used()) });
       let result;
       try { result = await run(); } catch (e) {
@@ -96,19 +97,19 @@ export async function POST(req: NextRequest) {
       if (!run?.listDone || counts.detailed < counts.listed || counts.listed === 0) {
         return fail(409, "Read the year from Zoho first (Read from Zoho) — it is not complete yet.");
       }
-      const [facts, ctx] = await Promise.all([readScannedFacts(db, caller.tenantId, fy), readPlanContext(db, caller.tenantId, range)]);
+      const [facts, ctx] = await Promise.all([readScannedFacts<ZohoSaleFacts>(db, caller.tenantId, KIND, fy), readPlanContext(db, caller.tenantId, range)]);
       plan = buildSalesPlan(facts, ctx);
     } catch {
       return fail(500, "Could not build the preview. Refresh and try again.");
     }
     /* Import + already, in the scan's stable order: part N is the same invoices on every call. */
     const picks = plan.rows.filter((r) => r.verdict !== "skip").map(toPick);
-    const parts = Math.ceil(picks.length / IMPORT_PART);
+    const parts = partCount(picks.length);
 
     if (action === "preview") {
       let appByMonth, batches;
       try {
-        [appByMonth, batches] = await Promise.all([readImportedByMonth(db, caller.tenantId, range), readSaleBatches(db, caller.tenantId, fy)]);
+        [appByMonth, batches] = await Promise.all([readImportedByMonth(db, caller.tenantId, range), readImportBatches(db, caller.tenantId, KIND, fy)]);
       } catch { return fail(500, "Could not read what is already imported. Refresh and try again."); }
       const skipped = plan.rows.filter((r) => r.verdict === "skip").slice(0, 500)
         .map((r) => ({ number: r.facts.number, date: r.facts.date, customer: r.facts.customerName, amount: r.facts.amount, reason: r.reason }));
@@ -119,14 +120,15 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    const part = Number(body.part ?? 0);
-    if (!Number.isInteger(part) || part < 0 || part >= Math.max(1, parts)) return fail(400, "That part does not exist. Preview again.");
     if (!picks.length) return fail(409, "Nothing to import.");
+    const part = Number(body.part ?? 0);
+    const slice = partOf(picks, part);
+    if (!slice) return fail(400, "That part does not exist. Preview again.");
     const dryRun = body.dryRun !== false;
     const supabase = createClient();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const { data, error } = await (supabase as any).rpc("import_zoho_fy_sales", {
-      p_fy: fy, p_picks: picks.slice(part * IMPORT_PART, (part + 1) * IMPORT_PART), p_dry_run: dryRun,
+      p_fy: fy, p_picks: slice, p_dry_run: dryRun,
     });
     if (error) return fail(400, (error as { message?: string }).message ?? "The import was refused.");
     return NextResponse.json({ ok: true, fy, part, parts, result: data });

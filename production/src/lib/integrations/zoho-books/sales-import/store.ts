@@ -1,99 +1,17 @@
 /**
- * R-2499 — the scan and the app facts the plan needs, for ONE company, through the server's admin
- * client. The admin client bypasses RLS, so EVERY read and write below is filtered by `tenantId`
- * (CLAUDE.md §17c); the tenant comes from the signed-in user's own row (resolveZohoCaller), never
- * from the request.
+ * R-2499 — what the FY sales import needs from the app for ONE company (customers, catalogue,
+ * invoices already carrying a Zoho number / id, books start, lock) and the per-month recount of
+ * what came in. The admin client bypasses RLS, so every read is filtered by `tenantId`
+ * (CLAUDE.md §17c). The generic scan / batch store is ../fy-import/store.ts.
  */
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { readBooksStart, type BooksStartDb } from "@/lib/accounting/books-start";
-import type { ZohoSaleFacts } from "./normalise";
-import type { ScanStore, ScanRun, ListedRow } from "./scan";
-import type { MonthTotals, PlanContext } from "./plan";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
+import { must, type FyImportDb } from "../fy-import/store";
+import type { MonthTotals, PlanContext } from "./plan";
 
 type Res<T = unknown> = PromiseLike<{ data: T | null; error: { message?: string; code?: string } | null }>;
-/** The slice of the Supabase query builder used here (the new tables are not in the generated types yet). */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type Q = any;
-export interface SalesImportDb { from(table: string): Q }
-
-
-function must<T>(r: { data: T | null; error: { message?: string } | null }, what: string): T {
-  if (r.error) throw new Error(`Could not read ${what}.`);
-  return (r.data ?? ([] as unknown)) as T;
-}
-
-export function supabaseScanStore(db: SalesImportDb, tenantId: string): ScanStore {
-  const scan = () => db.from("zoho_sale_import_scan");
-  return {
-    async readRun(fy) {
-      const r = await (db.from("zoho_sale_import_runs").select("next_page, list_done").eq("tenant_id", tenantId).eq("fy", fy).limit(1) as Res<Array<{ next_page: number; list_done: boolean }>>);
-      const row = must(r, "the Zoho read")[0];
-      return row ? { nextPage: row.next_page, listDone: row.list_done } : null;
-    },
-    async saveRun(fy, run: ScanRun) {
-      const r = await (db.from("zoho_sale_import_runs").upsert(
-        { tenant_id: tenantId, fy, next_page: run.nextPage, list_done: run.listDone, updated_at: new Date().toISOString() },
-        { onConflict: "tenant_id,fy" }) as Res);
-      if (r.error) throw new Error("Could not save the Zoho read.");
-    },
-    async addListed(fy, rows: ListedRow[]) {
-      if (!rows.length) return;
-      const ids = rows.map((x) => x.zohoId);
-      const known = must(await (scan().select("zoho_invoice_id, zoho_status, fy").eq("tenant_id", tenantId).in("zoho_invoice_id", ids) as Res<Array<{ zoho_invoice_id: string; zoho_status: string; fy: string }>>), "the Zoho read");
-      const prev = new Map(known.map((k) => [k.zoho_invoice_id, k]));
-      const upserts = rows.map((x) => {
-        const p = prev.get(x.zohoId);
-        /* Status changed in Zoho since it was read (draft → sent, sent → void): read the detail again. */
-        const stale = !p || p.zoho_status !== x.status || p.fy !== fy;
-        return {
-          tenant_id: tenantId, fy, zoho_invoice_id: x.zohoId, number: x.number.slice(0, 60), invoice_date: x.date || null,
-          zoho_status: x.status, listed_at: new Date().toISOString(),
-          ...(stale ? { payload: null, detailed_at: null } : {}),
-        };
-      });
-      /* Two shapes (with / without the payload reset) → two upserts, so a kept payload is never nulled. */
-      for (const group of [upserts.filter((u) => "payload" in u), upserts.filter((u) => !("payload" in u))]) {
-        if (!group.length) continue;
-        const r = await (scan().upsert(group, { onConflict: "tenant_id,zoho_invoice_id" }) as Res);
-        if (r.error) throw new Error("Could not save the Zoho read.");
-      }
-    },
-    async pendingDetails(fy, limit) {
-      const r = await (scan().select("zoho_invoice_id").eq("tenant_id", tenantId).eq("fy", fy).is("payload", null)
-        .order("invoice_date", { ascending: true }).order("zoho_invoice_id", { ascending: true }).limit(limit) as Res<Array<{ zoho_invoice_id: string }>>);
-      return must(r, "the Zoho read").map((x) => x.zoho_invoice_id);
-    },
-    async saveDetail(fy, zohoId, facts: ZohoSaleFacts) {
-      const r = await (scan().update({ payload: facts, detailed_at: new Date().toISOString(), zoho_status: facts.status, number: facts.number.slice(0, 60), invoice_date: facts.date || null })
-        .eq("tenant_id", tenantId).eq("fy", fy).eq("zoho_invoice_id", zohoId) as Res);
-      if (r.error) throw new Error("Could not save the Zoho read.");
-    },
-    async counts(fy) {
-      const head = (detailed: boolean) => {
-        let q = scan().select("zoho_invoice_id", { count: "exact", head: true }).eq("tenant_id", tenantId).eq("fy", fy);
-        q = detailed ? q.not("payload", "is", null) : q;
-        return q as PromiseLike<{ count: number | null; error: unknown }>;
-      };
-      const [a, b] = await Promise.all([head(false), head(true)]);
-      if (a.error || b.error) throw new Error("Could not count the Zoho read.");
-      return { listed: a.count ?? 0, detailed: b.count ?? 0 };
-    },
-    async reset(fy) {
-      const a = await (db.from("zoho_sale_import_runs").delete().eq("tenant_id", tenantId).eq("fy", fy) as Res);
-      const b = await (scan().delete().eq("tenant_id", tenantId).eq("fy", fy) as Res);
-      if (a.error || b.error) throw new Error("Could not clear the Zoho read.");
-    },
-  };
-}
-
-/** Every scanned invoice of the FY with its facts (detailed ones only). */
-export async function readScannedFacts(db: SalesImportDb, tenantId: string, fy: string): Promise<ZohoSaleFacts[]> {
-  const rows = await fetchAllRows<{ payload: ZohoSaleFacts }>((from, to) => db.from("zoho_sale_import_scan")
-    .select("payload").eq("tenant_id", tenantId).eq("fy", fy).not("payload", "is", null)
-    .order("invoice_date", { ascending: true }).order("zoho_invoice_id", { ascending: true }).range(from, to));
-  return rows.map((r) => r.payload);
-}
+type SalesImportDb = FyImportDb;
 
 /** What the plan needs from the app for this company. */
 export async function readPlanContext(db: SalesImportDb, tenantId: string, range: { dateStart: string; dateEnd: string }): Promise<PlanContext & { sellerStateCode: string | null }> {
@@ -148,21 +66,4 @@ export async function readImportedByMonth(db: SalesImportDb, tenantId: string, r
     m.set(month, t);
   }
   return [...m.values()].sort((a, b) => a.month.localeCompare(b.month));
-}
-
-export interface SaleBatch {
-  id: string; createdAt: string; importedCount: number; skippedCount: number; alreadyCount: number;
-  taxableTotal: number; taxTotal: number; removedAt: string | null;
-}
-
-/** This company's import batches for the FY, newest first. */
-export async function readSaleBatches(db: SalesImportDb, tenantId: string, fy: string): Promise<SaleBatch[]> {
-  const r = await (db.from("zoho_sale_import_batches")
-    .select("id, created_at, imported_count, skipped_count, already_count, taxable_total, tax_total, removed_at")
-    .eq("tenant_id", tenantId).eq("fy", fy).order("created_at", { ascending: false }).limit(50) as Res<Array<Record<string, unknown>>>);
-  return must(r, "the imports").map((b) => ({
-    id: String(b.id), createdAt: String(b.created_at), importedCount: Number(b.imported_count), skippedCount: Number(b.skipped_count),
-    alreadyCount: Number(b.already_count), taxableTotal: Number(b.taxable_total), taxTotal: Number(b.tax_total),
-    removedAt: (b.removed_at as string | null) ?? null,
-  }));
 }

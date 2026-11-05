@@ -24,19 +24,21 @@ vi.mock("@/lib/integrations/zoho-books/store", () => ({
   zohoAccessToken: async () => "access",
   dropZohoAccessToken: async () => {},
 }));
-vi.mock("@/lib/integrations/zoho-books/sales-import/store", () => ({
+vi.mock("@/lib/integrations/zoho-books/fy-import/store", () => ({
   supabaseScanStore: () => ({
     readRun: async () => st.run,
     counts: async () => st.counts,
     reset: async () => { st.resets += 1; },
   }),
   readScannedFacts: async () => st.facts,
+  readImportBatches: async () => [],
+}));
+vi.mock("@/lib/integrations/zoho-books/sales-import/store", () => ({
   readPlanContext: async () => ({
     fyStart: "2025-04-01", fyEnd: "2026-03-31", booksStart: "2025-04-01", lockedUntil: null, sellerStateCode: "07",
     customers: [{ id: "cust-1", name: "Test Buyer", gstin: "29ABCDE1234F1Z5" }], items: [], invoices: [],
   }),
   readImportedByMonth: async () => [],
-  readSaleBatches: async () => [],
   readSellerState: async () => "07",
 }));
 vi.mock("@/lib/supabase/server", () => ({

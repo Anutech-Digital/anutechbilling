@@ -1,4 +1,4 @@
--- deploy-peek: to_regclass('public.zoho_sale_import_batches') is not null and to_regclass('public.zoho_sale_import_scan') is not null and to_regclass('public.zoho_sale_import_runs') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'invoices' and column_name = 'zoho_invoice_id') and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_zoho_fy_sales(text,jsonb,boolean)') and prosrc like '%R-2499%') and to_regprocedure('public.remove_zoho_fy_sales_import(uuid,text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_invoices_block_delete_issued()') and prosrc like '%R-2499%')
+-- deploy-peek: to_regclass('public.zoho_fy_import_batches') is not null and to_regclass('public.zoho_fy_scan') is not null and to_regclass('public.zoho_fy_scan_runs') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'invoices' and column_name = 'zoho_invoice_id') and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_zoho_fy_sales(text,jsonb,boolean)') and prosrc like '%R-2499%') and to_regprocedure('public.remove_zoho_fy_sales_import(uuid,text)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_invoices_block_delete_issued()') and prosrc like '%R-2499%')
 -- deploy-key: r2499zohofysales
 --
 -- R-2499 (goal G-FY2526, owner decision D2, 5 Nov 2026): Excel's FY 2025-26 sales come in as ZOHO'S
@@ -10,11 +10,12 @@
 -- ══ WHAT THIS ADDS ═════════════════════════════════════════════════════════════════════════════
 --   1. invoices.zoho_invoice_id (Zoho's own id; unique per company → a rerun never makes a second
 --      sale) + invoices.sale_import_batch_id (the batch that brought it in).
---   2. zoho_sale_import_runs / zoho_sale_import_scan — the server's own copy of what it read from
+--   2. GENERIC FY import framework, keyed by kind (Zoho list: invoices here; bills / expenses /
+--      vendor payments in R-2502): zoho_fy_scan_runs / zoho_fy_scan — the server's own copy of what it read from
 --      Zoho (list walk + each invoice's detail, already in WHOLE RUPEES — the paise → rupees step is
 --      lib/integrations/zoho-books/sales-import/normalise.ts). Written only by the server
 --      (service_role); the import reads the money from here, never from the browser.
---   3. zoho_sale_import_batches — one row per Import part (who, when, FY, counts, totals, skipped
+--   3. zoho_fy_import_batches (kind too) — one row per Import part (who, when, FY, counts, totals, skipped
 --      with reasons) + one activity_log row per batch (zoho_fy_sales.imported).
 --   4. import_zoho_fy_sales(fy, picks, dry_run) — OWNER / ACCOUNTANT. `picks` names Zoho ids with
 --      the customer (and catalogue items) the preview matched; every money fact comes from the scan.
@@ -47,10 +48,12 @@
 
 begin;
 
--- ── 1. Batches ───────────────────────────────────────────────────────────────────────────────
-create table if not exists public.zoho_sale_import_batches (
+-- ── 1. Generic FY import framework (R-2499; R-2502 bills / expenses / vendor payments reuse it) ──
+-- Every table is keyed by `kind` — Zoho's list name (fy-fetch.ts FY_DOC_KINDS).
+create table if not exists public.zoho_fy_import_batches (
   id             uuid        primary key default gen_random_uuid(),
   tenant_id      uuid        not null references public.tenants(id) on delete cascade,
+  kind           text        not null check (kind in ('invoices', 'creditnotes', 'bills', 'expenses', 'vendorpayments')),
   fy             text        not null check (fy ~ '^\d{4}-\d{2}$'),
   imported_count integer     not null default 0 check (imported_count >= 0),
   skipped_count  integer     not null default 0 check (skipped_count >= 0),
@@ -66,53 +69,55 @@ create table if not exists public.zoho_sale_import_batches (
   remove_reason  text        check (remove_reason is null or char_length(remove_reason) <= 500),
   removed_rows   integer     check (removed_rows is null or removed_rows >= 0)
 );
-comment on table public.zoho_sale_import_batches is
-  'R-2499: one row per "Import FY sales from Zoho" part. Written only by import_zoho_fy_sales() / remove_zoho_fy_sales_import(); a removed batch keeps its row with removed_at.';
-create index if not exists zoho_sale_import_batches_tenant_idx on public.zoho_sale_import_batches (tenant_id, created_at desc);
+comment on table public.zoho_fy_import_batches is
+  'R-2499: one row per FY import part from Zoho (kind = invoices for sales, R-2499; bills / expenses / vendorpayments for R-2502). Written only by the import / remove functions; a removed batch keeps its row with removed_at.';
+create index if not exists zoho_fy_import_batches_tenant_idx on public.zoho_fy_import_batches (tenant_id, kind, created_at desc);
 
-alter table public.zoho_sale_import_batches enable row level security;
-revoke all on table public.zoho_sale_import_batches from public, anon, authenticated;
-grant select on table public.zoho_sale_import_batches to authenticated;
-grant all on table public.zoho_sale_import_batches to service_role;
-drop policy if exists zoho_sale_import_batches_select on public.zoho_sale_import_batches;
-create policy zoho_sale_import_batches_select on public.zoho_sale_import_batches as permissive for select to authenticated
+alter table public.zoho_fy_import_batches enable row level security;
+revoke all on table public.zoho_fy_import_batches from public, anon, authenticated;
+grant select on table public.zoho_fy_import_batches to authenticated;
+grant all on table public.zoho_fy_import_batches to service_role;
+drop policy if exists zoho_fy_import_batches_select on public.zoho_fy_import_batches;
+create policy zoho_fy_import_batches_select on public.zoho_fy_import_batches as permissive for select to authenticated
   using (tenant_id = ( select public.current_tenant_id() ));
-drop policy if exists zzz_service_role_all on public.zoho_sale_import_batches;
-create policy zzz_service_role_all on public.zoho_sale_import_batches as permissive for all to service_role using (true) with check (true);
+drop policy if exists zzz_service_role_all on public.zoho_fy_import_batches;
+create policy zzz_service_role_all on public.zoho_fy_import_batches as permissive for all to service_role using (true) with check (true);
 
 -- ── 2. The server's scan of Zoho (service_role only) ──────────────────────────────────────────
-create table if not exists public.zoho_sale_import_runs (
+create table if not exists public.zoho_fy_scan_runs (
   tenant_id   uuid        not null references public.tenants(id) on delete cascade,
+  kind        text        not null check (kind in ('invoices', 'creditnotes', 'bills', 'expenses', 'vendorpayments')),
   fy          text        not null check (fy ~ '^\d{4}-\d{2}$'),
   next_page   integer     not null default 1 check (next_page >= 1),
   list_done   boolean     not null default false,
   started_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
-  primary key (tenant_id, fy)
+  primary key (tenant_id, kind, fy)
 );
-comment on table public.zoho_sale_import_runs is
-  'R-2499: where the server''s walk of Zoho''s FY invoice list stands (next page, list finished). Server only.';
+comment on table public.zoho_fy_scan_runs is
+  'R-2499: where the server''s walk of one Zoho FY list stands (next page, list finished). Server only.';
 
-create table if not exists public.zoho_sale_import_scan (
-  tenant_id       uuid        not null references public.tenants(id) on delete cascade,
-  fy              text        not null check (fy ~ '^\d{4}-\d{2}$'),
-  zoho_invoice_id text        not null check (char_length(zoho_invoice_id) between 1 and 40),
-  number          text        not null check (char_length(number) <= 60),
-  invoice_date    date,
-  zoho_status     text        not null default '',
-  payload         jsonb,
-  listed_at       timestamptz not null default now(),
-  detailed_at     timestamptz,
-  primary key (tenant_id, zoho_invoice_id)
+create table if not exists public.zoho_fy_scan (
+  tenant_id    uuid        not null references public.tenants(id) on delete cascade,
+  kind         text        not null check (kind in ('invoices', 'creditnotes', 'bills', 'expenses', 'vendorpayments')),
+  fy           text        not null check (fy ~ '^\d{4}-\d{2}$'),
+  zoho_id      text        not null check (char_length(zoho_id) between 1 and 40),
+  number       text        not null check (char_length(number) <= 60),
+  doc_date     date,
+  zoho_status  text        not null default '',
+  payload      jsonb,
+  listed_at    timestamptz not null default now(),
+  detailed_at  timestamptz,
+  primary key (tenant_id, kind, zoho_id)
 );
-comment on table public.zoho_sale_import_scan is
-  'R-2499: one row per Zoho invoice the server listed for the FY; payload = its facts in WHOLE RUPEES (normalise.ts), null until the detail is read. Server only; the import takes its money from here.';
-create index if not exists zoho_sale_import_scan_fy_idx on public.zoho_sale_import_scan (tenant_id, fy, invoice_date);
+comment on table public.zoho_fy_scan is
+  'R-2499: one row per Zoho document the server listed for the FY (kind = Zoho list); payload = its facts in WHOLE RUPEES (each kind''s normaliser), null until the detail is read. Server only; an import takes its money from here.';
+create index if not exists zoho_fy_scan_fy_idx on public.zoho_fy_scan (tenant_id, kind, fy, doc_date);
 
 do $$
 declare t text;
 begin
-  foreach t in array array['zoho_sale_import_runs', 'zoho_sale_import_scan'] loop
+  foreach t in array array['zoho_fy_scan_runs', 'zoho_fy_scan'] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('revoke all on table public.%I from public, anon, authenticated', t);
     execute format('grant all on table public.%I to service_role', t);
@@ -124,7 +129,7 @@ end $$;
 -- ── 3. invoices: Zoho id + batch ─────────────────────────────────────────────────────────────
 alter table public.invoices add column if not exists zoho_invoice_id text;
 alter table public.invoices add column if not exists sale_import_batch_id uuid
-  references public.zoho_sale_import_batches(id) on delete restrict;
+  references public.zoho_fy_import_batches(id) on delete restrict;
 create unique index if not exists invoices_tenant_zoho_invoice_id_uq
   on public.invoices (tenant_id, zoho_invoice_id) where zoho_invoice_id is not null;
 create index if not exists invoices_sale_import_batch_idx
@@ -140,7 +145,7 @@ end $$;
 comment on column public.invoices.zoho_invoice_id is
   'R-2499: Zoho Books invoice_id of an FY sale imported as Zoho''s own invoice (unique per company — a rerun skips it). NULL on every other invoice.';
 comment on column public.invoices.sale_import_batch_id is
-  'R-2499: the zoho_sale_import_batches row that brought this sale in.';
+  'R-2499: the zoho_fy_import_batches row that brought this sale in.';
 
 -- ── 4. Import (and dry run) ──────────────────────────────────────────────────────────────────
 create or replace function public.import_zoho_fy_sales(p_fy text, p_picks jsonb, p_dry_run boolean default true)
@@ -160,7 +165,7 @@ declare
   v_fy_to    date;
   v_batch    uuid;
   v_pick     jsonb;
-  v_scan     public.zoho_sale_import_scan;
+  v_scan     public.zoho_fy_scan;
   v_p        jsonb;
   v_zid      text;
   v_num      text;
@@ -215,8 +220,8 @@ begin
   /* The whole run sits in one block: a dry run raises R2499 at the end, so the batch row, every
      invoice and every trigger's work (activity log, …) roll back — the preview ran the real thing. */
   begin
-  insert into public.zoho_sale_import_batches (tenant_id, fy, created_by)
-  values (v_tenant, p_fy, auth.uid())
+  insert into public.zoho_fy_import_batches (tenant_id, kind, fy, created_by)
+  values (v_tenant, 'invoices', p_fy, auth.uid())
   returning id into v_batch;
 
   for v_pick in select value from jsonb_array_elements(p_picks) loop
@@ -229,8 +234,8 @@ begin
       v_reason := 'Listed twice or with no Zoho id.';
     else
       v_seen := v_seen || v_zid;
-      select * into v_scan from public.zoho_sale_import_scan s
-       where s.tenant_id = v_tenant and s.zoho_invoice_id = v_zid and s.fy = p_fy;
+      select * into v_scan from public.zoho_fy_scan s
+       where s.tenant_id = v_tenant and s.kind = 'invoices' and s.zoho_id = v_zid and s.fy = p_fy;
       if not found or v_scan.payload is null then
         v_reason := 'Not read from Zoho yet — press Read from Zoho, then preview again.';
       end if;
@@ -359,12 +364,12 @@ begin
       'date', v_date, 'taxable', v_taxable, 'tax', v_tax, 'inter_state', (v_p->>'head') = 'igst');
   end loop;
 
-  update public.zoho_sale_import_batches
+  update public.zoho_fy_import_batches
        set imported_count = v_n, skipped_count = jsonb_array_length(v_skipped), already_count = v_already,
            taxable_total = v_sum_tx, tax_total = v_sum_tax, amount_total = v_sum_amt, skipped = v_skipped
      where id = v_batch;
     insert into public.activity_log (tenant_id, user_id, action, entity, entity_id, label, changes)
-    values (v_tenant, auth.uid(), 'zoho_fy_sales.imported', 'zoho_sale_import_batch', v_batch::text,
+    values (v_tenant, auth.uid(), 'zoho_fy_sales.imported', 'zoho_fy_import_batch', v_batch::text,
             left(format('Imported %s FY %s sales from Zoho (taxable ₹%s, GST ₹%s); %s skipped', v_n, p_fy, v_sum_tx, v_sum_tax, jsonb_array_length(v_skipped)), 120),
             jsonb_build_object('batch_id', v_batch, 'fy', p_fy, 'imported', v_n, 'already', v_already,
                                'skipped', jsonb_array_length(v_skipped), 'taxable', v_sum_tx, 'tax', v_sum_tax, 'amount', v_sum_amt));
@@ -383,7 +388,7 @@ end;
 $function$;
 
 comment on function public.import_zoho_fy_sales(text, jsonb, boolean) is
-  'R-2499: FY sales from Zoho as Zoho''s own invoices (number, date, GST). Money from zoho_sale_import_scan (server-read), picks = Zoho id + matched customer / items. dry_run (default) writes nothing. Owner / accountant.';
+  'R-2499: FY sales from Zoho as Zoho''s own invoices (number, date, GST). Money from zoho_fy_scan (server-read), picks = Zoho id + matched customer / items. dry_run (default) writes nothing. Owner / accountant.';
 revoke all on function public.import_zoho_fy_sales(text, jsonb, boolean) from public, anon;
 grant execute on function public.import_zoho_fy_sales(text, jsonb, boolean) to authenticated, service_role;
 
@@ -399,7 +404,7 @@ declare
   /* R-2499 */
   v_tenant uuid := public.current_tenant_id();
   v_reason text := btrim(coalesce(p_reason, ''));
-  v_batch  public.zoho_sale_import_batches;
+  v_batch  public.zoho_fy_import_batches;
   v_ids    text[];
   v_bad    text;
   v_n      integer;
@@ -413,8 +418,8 @@ begin
   if char_length(v_reason) < 3 then
     raise exception 'Write why you are removing this import (at least 3 characters) — it goes in the activity log.' using errcode = '22023';
   end if;
-  select * into v_batch from public.zoho_sale_import_batches
-   where id = p_batch_id and tenant_id = v_tenant for update;
+  select * into v_batch from public.zoho_fy_import_batches
+   where id = p_batch_id and tenant_id = v_tenant and kind = 'invoices' for update;
   if not found then
     raise exception 'That import was not found. Refresh and look at the imports list again.' using errcode = 'P0002';
   end if;
@@ -444,12 +449,12 @@ begin
   get diagnostics v_n = row_count;
   perform set_config('app.zoho_sale_remove', '', true);
 
-  update public.zoho_sale_import_batches
+  update public.zoho_fy_import_batches
      set removed_at = now(), removed_by = auth.uid(), remove_reason = left(v_reason, 500), removed_rows = v_n
    where id = p_batch_id;
 
   insert into public.activity_log (tenant_id, user_id, action, entity, entity_id, label, changes)
-  values (v_tenant, auth.uid(), 'zoho_fy_sales.import_removed', 'zoho_sale_import_batch', p_batch_id::text,
+  values (v_tenant, auth.uid(), 'zoho_fy_sales.import_removed', 'zoho_fy_import_batch', p_batch_id::text,
           left(format('Removed FY %s sales import: %s invoices — %s', v_batch.fy, v_n, v_reason), 120),
           jsonb_build_object('batch_id', p_batch_id, 'removed', v_n, 'reason', v_reason, 'fy', v_batch.fy));
 

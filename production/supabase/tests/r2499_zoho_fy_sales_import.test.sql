@@ -4,7 +4,7 @@
 -- company's customer refused; IGST vs CGST + SGST kept; rerun = already (no second sale); one batch
 -- row + one activity_log row per batch; undo while untouched, refused once money touched it; a
 -- direct delete is still refused; no child bill / network copy trigger on an imported sale.
--- The money comes from the server's scan (zoho_sale_import_scan) — the picks carry none.
+-- The money comes from the server's scan (zoho_fy_scan) — the picks carry none.
 -- Self-asserting; the whole file rolls back.
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 < this file
 
@@ -53,19 +53,19 @@ returns jsonb language sql as $f$
     'lines', jsonb_build_array(jsonb_build_object('name', 'R2499 Cloud Seat', 'description', 'seats', 'hsn', '998315', 'qty', 10, 'rate', taxable / 10.0, 'taxable', taxable, 'zohoItemId', 'z-item')));
 $f$;
 
-insert into public.zoho_sale_import_scan (tenant_id, fy, zoho_invoice_id, number, invoice_date, zoho_status, payload, detailed_at) values
-  ('b2499000-0000-0000-0000-0000000000f0', '2025-26', 'z1', 'INV/25-26/R2499-01', '2025-05-10', 'paid',     pg_temp.p('INV/25-26/R2499-01', '2025-05-10', 'paid', 100000, 18000, 'igst', '29', 18), now()),
-  ('b2499000-0000-0000-0000-0000000000f0', '2025-26', 'z2', 'INV/25-26/R2499-02', '2025-06-01', 'overdue',  pg_temp.p('INV/25-26/R2499-02', '2025-06-01', 'overdue', 1000, 180, 'cgst_sgst', '07', 18), now()),
-  ('b2499000-0000-0000-0000-0000000000f0', '2025-26', 'z3', 'INV/25-26/R2499-03', '2025-06-02', 'void',     pg_temp.p('INV/25-26/R2499-03', '2025-06-02', 'void', 500, 90, 'igst', '29', 18), now()),
-  ('b2499000-0000-0000-0000-0000000000f0', '2025-26', 'z4', 'INV/25-26/R2499-04', '2025-06-03', 'draft',    pg_temp.p('INV/25-26/R2499-04', '2025-06-03', 'draft', 500, 90, 'igst', '29', 18), now()),
-  ('b2499000-0000-0000-0000-0000000000f0', '2025-26', 'z5', 'INV/25-26/R2499-05', '2025-04-20', 'paid',     pg_temp.p('INV/25-26/R2499-05', '2025-04-20', 'paid', 500, 90, 'igst', '29', 18), now()),
-  ('b2499000-0000-0000-0000-0000000000f0', '2025-26', 'z6', 'INV/25-26/R2499-06', '2025-07-01', 'overdue',  pg_temp.p('INV/25-26/R2499-06', '2025-07-01', 'overdue', 5000, 900, 'cgst_sgst', '07', 18), now()),
-  ('b2499000-0000-0000-0000-0000000000f0', '2025-26', 'z7', 'INV/25-26/R2499-07', '2025-07-02', 'paid',     pg_temp.p('INV/25-26/R2499-07', '2025-07-02', 'paid', 500, 90, 'cgst_sgst', '07', 18), now()),
-  ('b2499000-0000-0000-0000-0000000000f0', '2025-26', 'z8', 'INV/25-26/R2499-08', '2025-07-03', 'paid',     pg_temp.p('INV/25-26/R2499-08', '2025-07-03', 'paid', 500, 90, 'igst', '29', null,
+insert into public.zoho_fy_scan (tenant_id, kind, fy, zoho_id, number, doc_date, zoho_status, payload, detailed_at) values
+  ('b2499000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'z1', 'INV/25-26/R2499-01', '2025-05-10', 'paid',     pg_temp.p('INV/25-26/R2499-01', '2025-05-10', 'paid', 100000, 18000, 'igst', '29', 18), now()),
+  ('b2499000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'z2', 'INV/25-26/R2499-02', '2025-06-01', 'overdue',  pg_temp.p('INV/25-26/R2499-02', '2025-06-01', 'overdue', 1000, 180, 'cgst_sgst', '07', 18), now()),
+  ('b2499000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'z3', 'INV/25-26/R2499-03', '2025-06-02', 'void',     pg_temp.p('INV/25-26/R2499-03', '2025-06-02', 'void', 500, 90, 'igst', '29', 18), now()),
+  ('b2499000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'z4', 'INV/25-26/R2499-04', '2025-06-03', 'draft',    pg_temp.p('INV/25-26/R2499-04', '2025-06-03', 'draft', 500, 90, 'igst', '29', 18), now()),
+  ('b2499000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'z5', 'INV/25-26/R2499-05', '2025-04-20', 'paid',     pg_temp.p('INV/25-26/R2499-05', '2025-04-20', 'paid', 500, 90, 'igst', '29', 18), now()),
+  ('b2499000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'z6', 'INV/25-26/R2499-06', '2025-07-01', 'overdue',  pg_temp.p('INV/25-26/R2499-06', '2025-07-01', 'overdue', 5000, 900, 'cgst_sgst', '07', 18), now()),
+  ('b2499000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'z7', 'INV/25-26/R2499-07', '2025-07-02', 'paid',     pg_temp.p('INV/25-26/R2499-07', '2025-07-02', 'paid', 500, 90, 'cgst_sgst', '07', 18), now()),
+  ('b2499000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'z8', 'INV/25-26/R2499-08', '2025-07-03', 'paid',     pg_temp.p('INV/25-26/R2499-08', '2025-07-03', 'paid', 500, 90, 'igst', '29', null,
      '["Lines carry different GST rates (5%, 18%) — one invoice here has one rate."]'), now()),
-  ('b2499000-0000-0000-0000-0000000000f0', '2025-26', 'z9', 'INV/25-26/R2499-09', '2025-05-20', 'paid',     pg_temp.p('INV/25-26/R2499-09', '2025-05-20', 'paid', 2000, 360, 'igst', '29', 18), now()),
+  ('b2499000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'z9', 'INV/25-26/R2499-09', '2025-05-20', 'paid',     pg_temp.p('INV/25-26/R2499-09', '2025-05-20', 'paid', 2000, 360, 'igst', '29', 18), now()),
   -- the other company's scan row: never readable from T
-  ('b2499000-0000-0000-0000-0000000000f1', '2025-26', 'zo', 'INV/25-26/R2499-OT', '2025-05-10', 'paid',     pg_temp.p('INV/25-26/R2499-OT', '2025-05-10', 'paid', 100, 18, 'igst', '29', 18), now());
+  ('b2499000-0000-0000-0000-0000000000f1', 'invoices', '2025-26', 'zo', 'INV/25-26/R2499-OT', '2025-05-10', 'paid',     pg_temp.p('INV/25-26/R2499-OT', '2025-05-10', 'paid', 100, 18, 'igst', '29', 18), now());
 
 do $$
 begin
@@ -76,8 +76,8 @@ begin
      or has_function_privilege('anon', 'public.remove_zoho_fy_sales_import(uuid,text)', 'execute') then
     raise exception 'FAIL 0: anon can execute the import / remove';
   end if;
-  if has_table_privilege('authenticated', 'public.zoho_sale_import_scan', 'select')
-     or has_table_privilege('authenticated', 'public.zoho_sale_import_scan', 'insert') then
+  if has_table_privilege('authenticated', 'public.zoho_fy_scan', 'select')
+     or has_table_privilege('authenticated', 'public.zoho_fy_scan', 'insert') then
     raise exception 'FAIL 0: a login can read or write the server scan';
   end if;
   if (select count(*) from pg_trigger where tgrelid = 'public.invoices'::regclass
@@ -150,7 +150,7 @@ begin
   if reasons not like '%zo=Not read from Zoho yet%' then raise exception 'FAIL 2g: other company''s scan row was read: %', reasons; end if;
   if (r->>'taxable')::int <> 101000 or (r->>'tax')::int <> 18180 then raise exception 'FAIL 2h: dry-run totals %', r; end if;
   if exists (select 1 from public.invoices where tenant_id = t and zoho_invoice_id is not null)
-     or exists (select 1 from public.zoho_sale_import_batches where tenant_id = t)
+     or exists (select 1 from public.zoho_fy_import_batches where tenant_id = t)
      or exists (select 1 from public.activity_log where tenant_id = t and action like 'zoho_fy_sales.%') then
     raise exception 'FAIL 2i: the dry run wrote something';
   end if;
@@ -178,7 +178,7 @@ begin
   end if;
   if inv.line_items->0 ? 'item_id' then raise exception 'FAIL 3d: another company''s / unknown item id kept: %', inv.line_items; end if;
 
-  select count(*) into n from public.zoho_sale_import_batches where id = v_batch and tenant_id = t and imported_count = 2 and skipped_count = 7 and taxable_total = 101000 and tax_total = 18180;
+  select count(*) into n from public.zoho_fy_import_batches where id = v_batch and tenant_id = t and imported_count = 2 and skipped_count = 7 and taxable_total = 101000 and tax_total = 18180;
   if n <> 1 then raise exception 'FAIL 3e: batch row wrong'; end if;
   select count(*) into n from public.activity_log where tenant_id = t and action = 'zoho_fy_sales.imported' and entity_id = v_batch::text;
   if n <> 1 then raise exception 'FAIL 3f: % activity rows for the batch', n; end if;
@@ -203,7 +203,7 @@ begin
   r := public.remove_zoho_fy_sales_import(v_batch, 'R2499 test undo');
   if (r->>'removed')::int <> 2 then raise exception 'FAIL 6: undo %', r; end if;
   if exists (select 1 from public.invoices where tenant_id = t and zoho_invoice_id is not null) then raise exception 'FAIL 6b: rows left after undo'; end if;
-  if not exists (select 1 from public.zoho_sale_import_batches where id = v_batch and removed_at is not null and removed_rows = 2) then raise exception 'FAIL 6c: batch not marked removed'; end if;
+  if not exists (select 1 from public.zoho_fy_import_batches where id = v_batch and removed_at is not null and removed_rows = 2) then raise exception 'FAIL 6c: batch not marked removed'; end if;
   perform pg_temp.as_user('b2499000-0000-0000-0000-0000000000a1');   -- the owner reads the activity log
   if not exists (select 1 from public.activity_log where tenant_id = t and action = 'zoho_fy_sales.import_removed') then raise exception 'FAIL 6d: no activity row for the undo'; end if;
 end $$;

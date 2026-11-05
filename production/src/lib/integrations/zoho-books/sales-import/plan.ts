@@ -187,5 +187,3 @@ export const SALES_IMPORT_ROLES = ["owner", "accountant"] as const;
 export function canImportFySales(role: string | null | undefined): boolean {
   return (SALES_IMPORT_ROLES as readonly string[]).includes(role ?? "");
 }
-/** Invoices per import part (the SQL takes at most 500). */
-export const IMPORT_PART = 250;
