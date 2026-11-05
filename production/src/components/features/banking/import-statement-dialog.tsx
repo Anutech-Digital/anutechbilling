@@ -35,10 +35,10 @@ import {
   useExistingTxnKeys,
   planBankImport,
   useBankAccount,
-  useSetBankOpeningFromStatement,
+  useHasBankLinesFrom,
 } from "@/lib/queries/bank";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { openingMoveCheck, linesBeforeOpening, isOpeningMismatchError } from "@/lib/banking/opening-move";
+import { openingMoveCheck, linesBeforeOpening } from "@/lib/banking/opening-move";
 import { importBadge } from "./import-badge";
 import { openingBalanceFromStatement, fyStartFor } from "@/lib/banking/opening-balance";
 import { isEncryptedPdf, pdfPageCount } from "@/lib/banking/pdf-check";
@@ -194,10 +194,13 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
      start of the FY the statement's LATEST line is in — a statement that dips a few
      days into March is still this year's statement. */
   const { data: account } = useBankAccount(open ? accountId : null);
-  /* R-2497: never a plain overwrite — set_bank_opening_from_statement checks that today's
-     balance stays the same and keeps the old opening in bank_opening_history. */
-  const setOpening = useSetBankOpeningFromStatement();
+  /* R-2497: never a plain overwrite — the import carries the opening to the database
+     (set_bank_opening_from_statement), which checks that today's balance stays the same and
+     keeps the old opening in bank_opening_history. */
   const { data: me } = useCurrentUser();
+  /* Lines already counted under the current opening (dated on/after it) — the database's
+     "money to keep" next to the opening amount. */
+  const { data: hasCountedLines } = useHasBankLinesFrom(open ? accountId : null, account?.opening_balance_date);
   const isOwner = me?.role === "owner";
   const [applyOpening, setApplyOpening] = React.useState(false);
   const [acceptDifference, setAcceptDifference] = React.useState(false);
@@ -220,16 +223,15 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
      the database makes on save. */
   const moveCheck = React.useMemo(() => {
     if (!openingOn || !opening?.ok || !parsed || !account) return null;
-    const hasLines = !!existingKeys && (existingKeys.bal.size > 0 || existingKeys.prefix.size > 0 || existingKeys.prefixNoBal.size > 0);
     return openingMoveCheck({
       rows: parsed.rows,
       newOpening: opening.amount,
       newDate: openingDate,
       oldOpening: account.opening_balance ?? 0,
       oldDate: account.opening_balance_date,
-      accountHasMoney: (account.opening_balance ?? 0) !== 0 || hasLines,
+      accountHasMoney: (account.opening_balance ?? 0) !== 0 || hasCountedLines === true,
     });
-  }, [openingOn, opening, parsed, account, existingKeys, openingDate]);
+  }, [openingOn, opening, parsed, account, hasCountedLines, openingDate]);
   const openingMismatch = moveCheck?.kind === "earlier" && !moveCheck.matches;
   const openingWaits = openingMismatch && !(isOwner && acceptDifference);
 
@@ -446,16 +448,27 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       toast.error("Some statement lines are missing from the preview.", { description: "Read the red box in the preview — import a CSV / Excel file instead, or tick the box to import the incomplete statement knowingly." });
       return;
     }
+    /* R-2497: a statement that does not match the current opening waits for the owner's tick —
+       checked BEFORE anything is saved. */
+    if (openingOn && openingWaits) {
+      toast.error("The statement does not match the current opening.", { description: "Read the opening balance box — only the owner can set it anyway." });
+      return;
+    }
+    const withOpening = openingOn && opening?.ok
+      ? { amount: opening.amount, date: openingDate, acceptDifference: isOwner && acceptDifference }
+      : undefined;
     try {
       /* Categories travel with the rows. category_source is 'manual' where the operator
          picked it and 'rule' where a layer did, because the DB refuses a category with no
          stated source — an unattributable number in the books is the thing an auditor
-         asks about first. */
-      let batchId: string | null = null;
-      if (freshCount > 0) {
+         asks about first.
+         R-2497: with the opening tick, the lines and the opening move are ONE database
+         transaction (import_bank_statement_with_opening) — if the opening is refused, no line
+         stays behind; with every line already in, only the opening moves. */
+      if (freshCount > 0 || withOpening) {
         await importMut.mutateAsync({
           accountId,
-          onBatch: (id) => { batchId = id; },
+          opening: withOpening,
           fileName: origin?.name ?? null,
           source: origin?.source ?? "paste",
           importSkipped,
@@ -473,33 +486,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           }),
         });
       }
-      /* After the lines, not before: if the import fails the account keeps its old
-         opening balance rather than one that assumes lines which never arrived. */
-      if (openingOn && opening?.ok) {
-        if (openingWaits) return;
-        try {
-          await setOpening.mutateAsync({
-            accountId,
-            opening: opening.amount,
-            date: openingDate,
-            batchId,
-            acceptDifference: isOwner && acceptDifference,
-          });
-        } catch (err) {
-          /* R-2497: the lines are in (dated before the opening, so not counted); the opening
-             stayed as it was. The dialog stays open with the figures. */
-          toastError(err, {
-            fallback: "The opening balance was not changed.",
-            description: isOpeningMismatchError(err)
-              ? (freshCount > 0 ? "The statement's lines were imported; the opening balance stayed as it was. " : "") + "Check the figures in the opening balance box, then try again."
-              : undefined,
-          });
-          return;
-        }
-      }
       onOpenChange(false);
     } catch {
-      /* hook handles toast */
+      /* hook handles toast (a refused opening: nothing was saved; the dialog stays open) */
     }
   };
 
@@ -907,7 +896,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
               : openingOn && openingWaits
                 ? "The statement does not match the current opening — see the opening balance box"
                 : undefined}
-            loading={importMut.isPending || setOpening.isPending}
+            loading={importMut.isPending}
             onClick={handleImport}
           >
             {freshCount === 0 && openingOn

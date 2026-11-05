@@ -25,6 +25,12 @@
 --   H. Books lock: a move into the locked period is refused.
 --   I. Tenant isolation: the other company cannot read the balance, move the opening or see
 --      the history; a signed-in user cannot write history rows.
+--   J. Lines before the old opening are not "money to keep": a fresh account takes the opening
+--      later without a batch id.
+--   K. import_bank_statement_with_opening: a refused opening leaves no lines / batch behind;
+--      an agreeing one imports and moves together.
+--   L. Close at ₹0 uses the same balance (a line before the opening is not counted).
+--   M. A receipt received by the report date but banked after it is undeposited then.
 
 begin;
 
@@ -218,6 +224,96 @@ begin
   if not ok then raise exception 'FAIL H: a move into the locked period was not refused (got %)', msg; end if;
 end $$;
 update public.tenants set books_locked_until = null where id = 'dddddddd-0000-0000-0000-000000249701';
+
+-- ── J. Fresh account, earlier statement imported with the tick OFF, opening set later ─────
+-- (no batch: the lines are duplicates on the second try). They are before the opening date, so
+-- not in today's balance — nothing to keep; the statement's opening is taken without a check.
+select set_config('request.jwt.claims', '', true);
+insert into public.bank_accounts (id, tenant_id, name, bank_name, account_type, opening_balance, opening_balance_date) values
+  ('bbbbbbbb-0000-0000-0000-000000249705','dddddddd-0000-0000-0000-000000249701','Kotak new','Kotak','current', 0, '2026-11-01'),
+  ('bbbbbbbb-0000-0000-0000-000000249706','dddddddd-0000-0000-0000-000000249701','Old FD','HDFC','fixed_deposit', 0, '2026-04-01');
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
+  ('22222222-0000-0000-0000-000000249708','dddddddd-0000-0000-0000-000000249701','bbbbbbbb-0000-0000-0000-000000249705','2026-06-01','NEFT IN',0,7000,'K1','csv_upload'),
+  ('22222222-0000-0000-0000-000000249709','dddddddd-0000-0000-0000-000000249701','bbbbbbbb-0000-0000-0000-000000249706','2025-09-01','FD IN',0,500,'Z1','csv_upload');
+select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000249701","role":"authenticated"}', true);
+do $$
+declare j jsonb; v bigint;
+begin
+  j := public.set_bank_opening_from_statement('bbbbbbbb-0000-0000-0000-000000249705', 40000, '2026-04-01', null, false);
+  if j ->> 'difference' is not null then
+    raise exception 'FAIL J1: lines before the old opening were treated as money to keep (%)', j;
+  end if;
+  v := public.bank_account_current_balance('bbbbbbbb-0000-0000-0000-000000249705');
+  if v <> 47000 then raise exception 'FAIL J2: balance % (expected 40000 + 7000)', v; end if;
+end $$;
+
+-- ── K. Import + opening in one transaction: a refused opening leaves no lines behind ──────
+do $$
+declare ok boolean := false; n_before int; n_after int; j jsonb; v bigint;
+begin
+  select count(*) into n_before from public.bank_transactions where bank_account_id = 'bbbbbbbb-0000-0000-0000-000000249701';
+  begin
+    -- HDFC now opens 70,000 on 1 Apr 2025; a "statement" claiming 1,000 on 1 Apr 2024 with one
+    -- +5,000 line does not reach 70,000 by then → refused, and its line must not stay.
+    perform public.import_bank_statement_with_opening('bbbbbbbb-0000-0000-0000-000000249701',
+      '[{"txn_date":"2024-06-01","description":"FY24 IN","debit":0,"credit":5000,"balance_after":6000,"reference":"Y1"}]'::jsonb,
+      'fy2425.csv', 'csv', 1000, '2024-04-01', false);
+  exception when check_violation then ok := true;
+  end;
+  if not ok then raise exception 'FAIL K1: a mismatching opening was not refused'; end if;
+  select count(*) into n_after from public.bank_transactions where bank_account_id = 'bbbbbbbb-0000-0000-0000-000000249701';
+  if n_after <> n_before or exists (select 1 from public.bank_import_batches where file_name = 'fy2425.csv') then
+    raise exception 'FAIL K2: the refused import left lines/batch behind (% → %)', n_before, n_after;
+  end if;
+  -- agreeing statement: 65,000 on 1 Apr 2024 + 5,000 = 70,000 at the start of 1 Apr 2025
+  j := public.import_bank_statement_with_opening('bbbbbbbb-0000-0000-0000-000000249701',
+      '[{"txn_date":"2024-06-01","description":"FY24 IN","debit":0,"credit":5000,"balance_after":70000,"reference":"Y1"}]'::jsonb,
+      'fy2425.csv', 'csv', 65000, '2024-04-01', false);
+  if (j -> 'opening' ->> 'difference')::bigint <> 0 or (j ->> 'inserted')::int <> 1 then
+    raise exception 'FAIL K3: result %', j;
+  end if;
+  v := public.bank_account_current_balance('bbbbbbbb-0000-0000-0000-000000249701');
+  if v <> 150000 then raise exception 'FAIL K4: balance % (expected 150000 — unchanged)', v; end if;
+end $$;
+
+-- ── L. Close at ₹0 uses the same balance (a line before the opening is not counted) ───────
+do $$
+begin
+  update public.bank_accounts set is_active = false where id = 'bbbbbbbb-0000-0000-0000-000000249706';
+  if (select is_active from public.bank_accounts where id = 'bbbbbbbb-0000-0000-0000-000000249706') then
+    raise exception 'FAIL L: account not closed';
+  end if;
+exception when check_violation then
+  raise exception 'FAIL L: close refused although the page shows ₹0 (%)', sqlerrm;
+end $$;
+
+-- ── M. Received by the report date, banked after it → undeposited then, not lost ──────────
+select set_config('request.jwt.claims', '', true);
+insert into public.customers (id, tenant_id, name, state_code, domain) values
+  ('cccccccc-0000-0000-0000-0000002497c1','dddddddd-0000-0000-0000-000000249701','Acme 2497','07','acme2497.in');
+insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, discount_pct, tax_rate,
+                           status, payment_status, billing_cycle, line_items, is_one_off, created_date)
+values ('Q-2497-1', 'dddddddd-0000-0000-0000-000000249701', 'cccccccc-0000-0000-0000-0000002497c1', 'Acme 2497',
+        50000, 42373, 0, 18, 'accepted', 'awaiting', 'yearly',
+        jsonb_build_array(jsonb_build_object('name', 'Service', 'qty', 1, 'rate', 42373, 'one_time', true)), true, '2026-03-20');
+insert into public.payments (id, tenant_id, quote_id, customer_id, amount, method, status, received_at, created_at) values
+  ('eeeeeeee-0000-0000-0000-000000249701','dddddddd-0000-0000-0000-000000249701', 'Q-2497-1', 'cccccccc-0000-0000-0000-0000002497c1',
+   50000, 'upi', 'received', '2026-03-30 10:00+05:30', now());
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source, matched_to_type, matched_to_id) values
+  ('22222222-0000-0000-0000-000000249710','dddddddd-0000-0000-0000-000000249701','bbbbbbbb-0000-0000-0000-000000249702','2026-04-02','NEFT CUST',0,50000,'P1','csv_upload','payment','eeeeeeee-0000-0000-0000-000000249701');
+select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000249701","role":"authenticated"}', true);
+do $$
+declare r record;
+begin
+  select * into r from public.report_balance_sheet('2026-03-31');
+  if r.undeposited_funds <> 50000 then
+    raise exception 'FAIL M1: 31 Mar undeposited % (expected 50000 — received 30 Mar, banked 2 Apr)', r.undeposited_funds;
+  end if;
+  select * into r from public.report_balance_sheet('2026-04-30');
+  if r.undeposited_funds <> 0 then
+    raise exception 'FAIL M2: 30 Apr undeposited % (expected 0 — banked by then, in cash)', r.undeposited_funds;
+  end if;
+end $$;
 
 -- ── I. Tenant isolation ───────────────────────────────────────────────────────────────────
 select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000249702","role":"authenticated"}', true);
