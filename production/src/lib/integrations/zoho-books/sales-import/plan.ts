@@ -173,34 +173,11 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
   };
 }
 
-/** The row the SQL import takes (import_zoho_fy_sales p_rows) — whole rupees only. */
-export function toSqlRow(p: PlannedSale) {
-  const f = p.facts;
-  return {
-    zoho_invoice_id: f.zohoId,
-    number: f.number,
-    invoice_date: f.date,
-    due_date: f.dueDate,
-    zoho_status: f.status,
-    customer_id: p.customerId,
-    customer_gstin: f.gstin || null,
-    pos_state_code: f.posStateCode,
-    inter_state: f.head === "igst",
-    currency: f.currency === "INR" ? null : f.currency,
-    fx_rate: f.fxRate,
-    taxable_value: f.taxable,
-    tax_amount: f.tax,
-    tax_rate: f.taxRate,
-    amount: f.amount,
-    line_items: f.lines.map((l, i) => ({
-      name: l.name,
-      description: l.description || undefined,
-      hsn: l.hsn || undefined,
-      qty: l.qty,
-      rate: l.rate,
-      amount: l.taxable,
-      item_id: p.itemIds[i] ?? undefined,
-      zoho_item_id: l.zohoItemId || undefined,
-    })),
-  };
+/**
+ * What the SQL import takes per invoice (import_zoho_fy_sales p_picks): the Zoho id and the
+ * customer / catalogue items the preview matched. NO money — the SQL reads every amount from the
+ * server's own scan of Zoho (zoho_sale_import_scan), so nothing sent here can change a figure.
+ */
+export function toPick(p: PlannedSale) {
+  return { zoho_invoice_id: p.facts.zohoId, customer_id: p.customerId, item_ids: p.itemIds };
 }

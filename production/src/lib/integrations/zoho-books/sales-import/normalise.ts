@@ -18,6 +18,7 @@
  */
 import type { ZohoFyDocDetail } from "../fy-fetch";
 import { parsePlaceOfSupply } from "@/lib/import/zoho-opening-invoices";
+import { mapGstTreatment } from "../import-plan";
 
 /** Whole rupees from whole paise, rounded once (half up). */
 export function paiseToRupees(paise: number): number {
@@ -52,6 +53,8 @@ export interface ZohoSaleFacts {
   gstin: string;
   /** Zoho's gst_treatment code (business_gst, consumer, overseas, …). */
   gstTreatment: string;
+  /** The same in the app's words (invoices.gst_treatment), null when Zoho sent none we know. */
+  appGstTreatment: string | null;
   /** Two-digit GST state code of the place of supply, null when Zoho sent none we can read. */
   posStateCode: string | null;
   currency: string;
@@ -185,6 +188,7 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
     customerName: d.contactName,
     gstin: d.gstNo.toUpperCase(),
     gstTreatment: d.gstTreatment,
+    appGstTreatment: mapGstTreatment(d.gstTreatment),
     posStateCode: pos,
     currency,
     fxRate: fx,

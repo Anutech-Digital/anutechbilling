@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import type { ZohoFyDocDetail } from "../fy-fetch";
 import { paiseToRupees, zohoSaleFacts } from "./normalise";
-import { buildSalesPlan, toSqlRow, type PlanContext } from "./plan";
+import { buildSalesPlan, toPick, type PlanContext } from "./plan";
 
 const SELLER = "07"; // Delhi
 
@@ -113,7 +113,7 @@ describe("GST head — IGST vs CGST + SGST as Zoho charged it", () => {
     expect(f.posStateCode).toBe("07");
     const plan = buildSalesPlan([f], ctx());
     expect(plan.importByMonth[0]).toMatchObject({ month: "2025-05", taxable: 100000, cgst: 9000, sgst: 9000, igst: 0 });
-    expect(toSqlRow(plan.rows[0]).inter_state).toBe(false);
+    expect(plan.rows[0].facts.head).toBe("cgst_sgst");
   });
 
   it("CGST/SGST charged to another state's place of supply is refused, not booked", () => {
@@ -187,9 +187,10 @@ describe("plan — what comes in", () => {
     const plan = buildSalesPlan([zohoSaleFacts(detail(), SELLER), zohoSaleFacts(intra({ id: "2", number: "INV/25-26/0002", gstNo: "", contactName: "delhi  buyer" }), SELLER)], ctx());
     expect(plan.rows[0]).toMatchObject({ verdict: "import", customerId: "cust-ka", matchedBy: "gstin", itemIds: ["ITEM-CSP"] });
     expect(plan.rows[1]).toMatchObject({ verdict: "import", customerId: "cust-dl", matchedBy: "name" });
-    const sql = toSqlRow(plan.rows[0]);
-    expect(sql).toMatchObject({ zoho_invoice_id: "9000001", number: "INV/25-26/0001", invoice_date: "2025-05-10", due_date: "2025-05-25",
-      taxable_value: 100000, tax_amount: 18000, amount: 118000, tax_rate: 18, inter_state: true, pos_state_code: "29", currency: null });
-    expect(sql.line_items[0]).toMatchObject({ item_id: "ITEM-CSP", hsn: "998315", qty: 100, amount: 100000 });
+    // The pick carries no money — the SQL reads every amount from the server's scan.
+    expect(toPick(plan.rows[0])).toEqual({ zoho_invoice_id: "9000001", customer_id: "cust-ka", item_ids: ["ITEM-CSP"] });
+    expect(plan.rows[0].facts).toMatchObject({ number: "INV/25-26/0001", date: "2025-05-10", dueDate: "2025-05-25",
+      taxable: 100000, tax: 18000, amount: 118000, taxRate: 18, head: "igst", posStateCode: "29", currency: "INR", appGstTreatment: "registered_regular" });
+    expect(plan.rows[0].facts.lines[0]).toMatchObject({ hsn: "998315", qty: 100, taxable: 100000 });
   });
 });
