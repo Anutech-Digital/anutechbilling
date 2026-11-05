@@ -47,7 +47,7 @@ describe("R-1775 wipe — SQL", () => {
     const keep = [...m![1].matchAll(/'([a-z_]+)'/g)].map((x) => x[1]).sort();
     expect(keep).toEqual(
       [
-        "users", "user_google_tokens", "push_subscriptions", "api_keys", "team_invites", "join_requests",
+        "users", "tenant_memberships", "user_google_tokens", "push_subscriptions", "api_keys", "team_invites", "join_requests",
         "personal_vault_pin", "attendance_settings", "whatsapp_reminder_settings", "ai_autonomy", "demo_tenants",
         "tenant_domains", "document_series", "customer_number_seq", "tenant_secrets", "ad_accounts",
         "gbp_locations", "indiamart_sync_state", "feedback", "feedback_screenshots", "feedback_votes",

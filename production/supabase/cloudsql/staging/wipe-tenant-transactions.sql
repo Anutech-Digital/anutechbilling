@@ -17,7 +17,8 @@
 -- not from a hand list, so a table added later is wiped unless it is added here.
 -- Scope (Pardeep, 23 Oct 2026, changed the same morning): ONE company, ALL its data - keep only what a
 -- login, the company settings and the integration keys need.
---  * Roles/permissions have no table of their own: they are columns on users, kept with it.
+--  * Roles/permissions: columns on users AND (since R-2471) the login's row in tenant_memberships -
+--    the role a login holds in a company comes from its membership, so both are kept (R-2481).
 --  * Chart of accounts: there is NO per-tenant chart-of-accounts table - the ledger is worked out from
 --    the documents and the account heads are code, not rows. bank_accounts / personal_accounts are the
 --    business's own data (made by people, not seeded), so they go. The app runs without them.
@@ -25,8 +26,9 @@
 create or replace function pg_temp.r1775_keep() returns text[] language sql immutable as $f$
   select array[
     -- logins and what hangs off a login (Google sign-in tokens, push devices, API keys, invites, vault PIN)
-    'users', 'user_google_tokens', 'push_subscriptions', 'api_keys', 'team_invites', 'join_requests',
-    'personal_vault_pin',
+    -- R-2481: tenant_memberships too - since R-2471 a login without its membership has no company
+    'users', 'tenant_memberships', 'user_google_tokens', 'push_subscriptions', 'api_keys', 'team_invites',
+    'join_requests', 'personal_vault_pin',
     -- company settings (the tenants row itself is never touched: name, GSTIN, address, settings columns)
     'attendance_settings', 'whatsapp_reminder_settings', 'ai_autonomy', 'demo_tenants', 'tenant_domains',
     -- numbering / sequence config: next numbers are NOT reset (runbook says how, if ever wanted)
