@@ -65,7 +65,8 @@ import { directionOf } from "@/lib/banking/categorise";
 import { EXPENSE_CATEGORIES, suggestCategory } from "@/lib/queries/expenses";
 import { suggestForLine } from "@/lib/banking/categorise";
 import { rupee, formatDate } from "@/lib/utils";
-import { parseStatement, rowsToCsv, countReversals, reversalWarning, type ParsedRow, type ParseResult } from "@/lib/banking/statement-parse";
+import { parseStatement, rowsToCsv, settleReversals, withReversalWarning, applySignChoice, type ParsedRow, type ParseResult, type SignChoice } from "@/lib/banking/statement-parse";
+import { StatementSignCheck } from "./statement-sign-check";
 // Only the small reader module — SheetJS itself is `await import("xlsx")` inside excelToRows,
 // a separate chunk fetched when an Excel file is picked (R-1512).
 import { excelToRows, isExcelFile } from "@/lib/banking/statement-xlsx";
@@ -116,10 +117,10 @@ function withRealDates(p: Preview | ParseResult, serverSwapped = 0): Preview {
   /* R-1890: a future date is kept as written, never swapped — only flagged. */
   if (fix.future > 0) warnings.push(`${fix.future} line${fix.future === 1 ? " is" : "s are"} dated after today — kept as written. Check ${fix.future === 1 ? "it" : "them"} in the preview before importing.`);
   /* R-2495: a line read as a reversal (negative amount) is said out loud on the PDF / photo
-     path too — the CSV / Excel parser already added the same sentence. */
-  const reversals = countReversals(p.rows);
-  if (reversals > 0 && !warnings.includes(reversalWarning(reversals))) warnings.push(reversalWarning(reversals));
-  return { ...p, rows, skipped: p.skipped + dropped, warnings };
+     path too. R-2508: settled again over the WHOLE statement (an AI chunk's first line had no
+     neighbour) — a minus the running balance does not explain stays "check sign". */
+  const settled = settleReversals(rows);
+  return { ...p, rows: settled, skipped: p.skipped + dropped, warnings: withReversalWarning(warnings, settled) };
 }
 
 /** R-1623: where an import came from (bank_import_batches.source). */
@@ -129,7 +130,20 @@ type ImportOrigin = "pdf" | "csv" | "xlsx" | "paste" | "image";
 
 export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) {
   const [csvText, setCsvText] = React.useState("");
-  const [parsed, setParsed]   = React.useState<Preview | null>(null);
+  const [rawParsed, setParsed] = React.useState<Preview | null>(null);
+  /* R-2508: the owner's Money in / Money out answers for "check sign" lines, kept apart from the
+     parse (and tied to it) so answering never resets the other choices made in the preview. */
+  const [signPicks, setSignPicks] = React.useState<{ of: Preview | null; picks: Record<number, SignChoice> }>({ of: null, picks: {} });
+  const parsed = React.useMemo(() => {
+    const picks = rawParsed && signPicks.of === rawParsed ? Object.entries(signPicks.picks) : [];
+    if (!rawParsed || picks.length === 0) return rawParsed;
+    const rows = picks.reduce((rs, [i, c]) => applySignChoice(rs, Number(i), c), rawParsed.rows);
+    return { ...rawParsed, rows, warnings: withReversalWarning(rawParsed.warnings, rows) };
+  }, [rawParsed, signPicks]);
+  const chooseSign = (index: number, choice: SignChoice) => setSignPicks((s) => ({
+    of: rawParsed,
+    picks: { ...(s.of === rawParsed ? s.picks : {}), [index]: choice },
+  }));
   // "csv" = parsed from pasted/CSV text; "ai" = read from a PDF/photo via Gemini.
   const [mode, setMode]       = React.useState<"csv" | "ai">("csv");
   const [reading, setReading] = React.useState(false);
@@ -181,7 +195,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     [parsed],
   );
   const blocked = importBlocked(chainCheck, ackIncomplete);
-  React.useEffect(() => { setOverride({}); setRuleDone({}); setAckIncomplete(false); }, [parsed]);
+  React.useEffect(() => { setOverride({}); setRuleDone({}); setAckIncomplete(false); }, [rawParsed]);
 
   const categoryFor = (i: number): string | null =>
     override[i] !== undefined ? (override[i] || null) : (suggestions[i]?.category ?? null);
@@ -207,16 +221,16 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const [openingDate, setOpeningDate] = React.useState("");
   React.useEffect(() => {
     setApplyOpening(false);
-    const latest = parsed?.rows.reduce<string | null>(
+    const latest = rawParsed?.rows.reduce<string | null>(
       (max, r) => (max === null || r.txn_date > max ? r.txn_date : max), null);
     setOpeningDate(latest ? fyStartFor(latest) : "");
-  }, [parsed]);
+  }, [rawParsed]);
   const opening = React.useMemo(
     () => (parsed && openingDate ? openingBalanceFromStatement(parsed.rows, openingDate) : null),
     [parsed, openingDate],
   );
   const openingOn = applyOpening && opening?.ok === true;
-  React.useEffect(() => { setAcceptDifference(false); }, [parsed, openingDate, applyOpening]);
+  React.useEffect(() => { setAcceptDifference(false); }, [rawParsed, openingDate, applyOpening]);
 
   /* R-2497: moving the opening EARLIER must keep today's balance — the statement's balance at
      the start of the old opening date must equal the old opening (±₹1). Preview of the check
@@ -248,6 +262,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     [openingOn, openingDate],
   );
   const excludedCount = parsed ? parsed.rows.filter(isExcluded).length : 0;
+  /* R-2508: a minus the file does not explain waits for the owner — never guessed. A line that
+     will not be imported (before the new opening date) does not hold the import up. */
+  const signWaits = parsed ? parsed.rows.some((r) => r.checkSign && !isExcluded(r)) : false;
 
   /* How many parsed rows are already in the books (will be skipped on import) — the same
      function the import itself runs (planBankImport, R-1691), so the count shown here is
@@ -262,7 +279,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     return { duplicates: p.duplicates, freshCount: p.fresh.length, skipped: p.skipped };
   }, [parsed, existingKeys, isExcluded]);
   const [importSkipped, setImportSkipped] = React.useState(false);
-  React.useEffect(() => { setImportSkipped(false); }, [parsed]);
+  React.useEffect(() => { setImportSkipped(false); }, [rawParsed]);
   const dupCount = importSkipped ? 0 : (plan?.duplicates ?? 0);
   const skippedLines = plan?.skipped ?? [];
   const freshCount = (plan?.freshCount ?? 0) + (importSkipped ? skippedLines.length : 0);
@@ -444,6 +461,10 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       toast.error("Nothing to import yet.", { description: "Upload the statement file or paste its CSV text above first." });
       return;
     }
+    if (signWaits) {
+      toast.error("Check the sign of the marked lines first.", { description: "Read the \"Check the sign\" box in the preview and choose Money in or Money out for each line." });
+      return;
+    }
     if (blocked) {
       toast.error("Some statement lines are missing from the preview.", { description: "Read the red box in the preview — import a CSV / Excel file instead, or tick the box to import the incomplete statement knowingly." });
       return;
@@ -610,6 +631,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                   note={parsed.rereadNote}
                 />
               )}
+              <StatementSignCheck rows={parsed.rows} onChoose={chooseSign} skip={isExcluded} />
               {parsed.warnings.length > 0 && (
                 <ul className="text-xs text-rose space-y-0.5 mb-2">
                   {parsed.warnings.map((w, i) => <li key={i}>• {w}</li>)}
@@ -890,8 +912,10 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
           <Button
             variant="primary"
             icon="upload"
-            disabled={(freshCount === 0 && !openingOn) || blocked || (openingOn && openingWaits)}
-            title={blocked
+            disabled={(freshCount === 0 && !openingOn) || blocked || signWaits || (openingOn && openingWaits)}
+            title={signWaits
+              ? "Check the sign of the marked lines — see the \"Check the sign\" box in the preview"
+              : blocked
               ? "Some statement lines are missing — see the red box in the preview"
               : openingOn && openingWaits
                 ? "The statement does not match the current opening — see the opening balance box"
