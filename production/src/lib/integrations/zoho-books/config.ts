@@ -95,3 +95,10 @@ export function buildZohoAuthUrl(clientId: string, redirectUri: string, state: s
   u.searchParams.set("state", state);
   return u.toString();
 }
+
+/** R-2498: the card's line when the stored Zoho sign-in was made before the FY read scopes existed. */
+export const ZOHO_FY_RECONNECT_MESSAGE =
+  "Reconnect to allow reading credit notes, bills, expenses and vendor payments. Press Reconnect, then Allow on the Zoho screen.";
+
+/** R-2498: Zoho calls one "Count FY" request may make; the card paces the next request (zoho-pace.ts). */
+export const FY_CALLS_PER_REQUEST = 20;

@@ -232,6 +232,13 @@ describe("countFyDocs — FY counts, resumable, scope gaps reported (not fatal)"
     expect(ZOHO_FY_RECONNECT_MESSAGE).toMatch(/Reconnect to allow reading credit notes, bills, expenses/);
   });
 
+  it("every list (invoices too) refused = the token itself ended, not a scope gap → thrown", async () => {
+    const { f } = fakeZoho({ noScope: ["invoices", "creditnotes", "bills", "expenses", "vendorpayments"] });
+    await expect(countFyDocs(ORG, TOKEN, "2025-26", null, { maxCalls: 50 }, f)).rejects.toMatchObject({ status: 401 });
+    const resumed = { fy: "2025-26", list: "bills", page: 1, counts: { invoices: 5 }, needsReconnect: [] } as FyCountCursor;
+    await expect(countFyDocs(ORG, TOKEN, "2025-26", resumed, { maxCalls: 50 }, f)).rejects.toMatchObject({ status: 401 });
+  });
+
   it("stopped by the call limit or Zoho busy → a cursor; resuming gives the same totals as one run", async () => {
     const rows = { invoices: 450, creditnotes: 12, bills: 201, expenses: 3, vendorpayments: 7 };
     const one = await countFyDocs(ORG, TOKEN, "2025-26", null, { maxCalls: 50 }, fakeZoho({ rowsPerList: rows }).f);
