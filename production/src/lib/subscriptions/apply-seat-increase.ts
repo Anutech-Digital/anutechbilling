@@ -20,7 +20,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { addSeats, type AddSeatsResult, type AddSeatsError } from "./add-seats";
-import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
 import { seatChargePlan, seatTermEnd, seatTermDays } from "./seat-charge-window";
 import { checkSeatEffectiveDate } from "./seat-effective-date";
@@ -82,7 +82,8 @@ export async function resolveSeatTax(
       : Promise.resolve({ data: null }),
     supabase.from("tenants").select("state_code, gstin").eq("id", tenantId).maybeSingle(),
   ]);
-  const taxRatePct = isExportSupply(customer?.country) ? 0 : 18;
+  /* R-2515: an export or an SEZ unit supplied without payment of tax is 0% under the LUT. */
+  const taxRatePct = isZeroRatedSupply({ country: customer?.country, treatment: customer?.gst_treatment }) ? 0 : 18;
   const pos = quotePlaceOfSupply({ customer: customer ?? null, seller: tenant ?? {} });
   return { taxRatePct, taxLabel: gstHeadLabel({ ratePct: taxRatePct, interState: pos.interState, isExport: pos.isExport }) };
 }

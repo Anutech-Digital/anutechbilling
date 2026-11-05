@@ -925,6 +925,8 @@ function QuoteBuilderBody() {
   /* R-1736: the picked customer's GST treatment — an SEZ buyer is IGST even in our own state. */
   const buyerTreatment = !isLeadMode && customerId ? (customer?.gst_treatment ?? null) : null;
   const sezBuyer = treatmentIsAlwaysInterState(buyerTreatment);
+  /* R-2515: an SEZ unit supplied WITHOUT payment of tax is zero-rated under the LUT, like an export. */
+  const sezZeroRated = buyerTreatment === "sez_without_payment";
   const interState = isInterStateSupply(buyerStateCode, currentUser?.tenantStateCode, { customerGstin: customerId ? customer?.gstin : null, sellerGstin: currentUser?.tenantGstin, treatment: buyerTreatment });
 
   // Selling gross = the (negotiated) rate × qty. This is the actual revenue and
@@ -990,7 +992,7 @@ function QuoteBuilderBody() {
     void fetchLatestFx("USD");
   }, [isExport, currency, duplicateOf, fetchLatestFx]);
 
-  const effectiveTaxRate  = quoteEffectiveTaxRate({ saved: gstSaved, isExport, taxRate });
+  const effectiveTaxRate  = quoteEffectiveTaxRate({ saved: gstSaved, isExport: isExport || sezZeroRated, taxRate });
   const tax               = Math.round(taxable * (effectiveTaxRate / 100));
   const total             = taxable + tax;
   // Foreign-currency billing (books stay ₹). The whole builder renders in `currency`
@@ -2193,7 +2195,7 @@ function QuoteBuilderBody() {
                           ⚠ No state on this customer — add one to fix the GST head. The {taxRate}% total is the same either way.
                         </span>
                       ) : interState ? (
-                        <span className="text-amber-ink">{sezBuyer ? `⚠ SEZ customer → IGST ${taxRate}% (always, even in your state)` : `⚠ Inter-state → IGST ${taxRate}% will apply`}</span>
+                        <span className="text-amber-ink">{sezZeroRated ? "SEZ (without payment) → zero-rated under LUT, no GST" : sezBuyer ? `⚠ SEZ customer → IGST ${taxRate}% (always, even in your state)` : `⚠ Inter-state → IGST ${taxRate}% will apply`}</span>
                       ) : (
                         <span className="text-emerald">✓ Intra-state → CGST + SGST split @ {taxRate}%</span>
                       )}
@@ -2251,7 +2253,7 @@ function QuoteBuilderBody() {
                           ⚠ No state on this customer — add one to fix the GST head. The {taxRate}% total is the same either way.
                         </span>
                       ) : interState ? (
-                        <span className="text-amber-ink">{sezBuyer ? `⚠ SEZ customer → IGST ${taxRate}% (always, even in your state)` : `⚠ Inter-state → IGST ${taxRate}% will apply`}</span>
+                        <span className="text-amber-ink">{sezZeroRated ? "SEZ (without payment) → zero-rated under LUT, no GST" : sezBuyer ? `⚠ SEZ customer → IGST ${taxRate}% (always, even in your state)` : `⚠ Inter-state → IGST ${taxRate}% will apply`}</span>
                       ) : (
                         <span className="text-emerald">✓ Intra-state → CGST + SGST split @ {taxRate}%</span>
                       )}
@@ -2925,7 +2927,7 @@ function QuoteBuilderBody() {
                     : !buyerStateCode
                     ? `Pick the customer's state to fix the GST head — the ${taxRate}% total is the same either way`
                     : interState
-                      ? (sezBuyer ? `SEZ customer → IGST applicable @ ${taxRate}%` : `Different state → IGST applicable @ ${taxRate}%`)
+                      ? (sezZeroRated ? "SEZ (without payment) → zero-rated under LUT, no GST" : sezBuyer ? `SEZ customer → IGST applicable @ ${taxRate}%` : `Different state → IGST applicable @ ${taxRate}%`)
                       : `Same state → CGST + SGST split @ ${taxRate}%`}
                 </div>
               )}
@@ -2954,7 +2956,7 @@ function QuoteBuilderBody() {
                         </span>
                       )}
                       <span className="text-ink-3" aria-hidden>·</span>
-                      <span>GST <b>{isExport ? "0% (export)" : bosStatus ? "0% (Bill of Supply)" : `${taxRate}%`}</b></span>
+                      <span>GST <b>{isExport ? "0% (export)" : sezZeroRated ? "0% (SEZ, under LUT)" : bosStatus ? "0% (Bill of Supply)" : `${taxRate}%`}</b></span>
                       <button
                         type="button"
                         onClick={() => setTermsOpen(true)}
@@ -3053,10 +3055,11 @@ function QuoteBuilderBody() {
                     suffix="%"
                     // Export supply is zero-rated under LUT — show 0% and lock the field
                     // so it never contradicts the "Export → no GST" badge above.
-                    value={isExport || bosStatus ? 0 : taxRate}
+                    value={isExport || sezZeroRated || bosStatus ? 0 : taxRate}
                     onChange={(e) => setTaxRate(parseInt(e.target.value) || 18)}
-                    /* R-1532: a Bill of Supply business cannot charge GST — locked at 0. */
-                    disabled={isExport || !!bosStatus}
+                    /* R-1532: a Bill of Supply business cannot charge GST — locked at 0.
+                       R-2515: nor an SEZ unit supplied without payment of tax (0% under the LUT). */
+                    disabled={isExport || sezZeroRated || !!bosStatus}
                     /* The smart default, SAID OUT LOUD. The rate and the SAC are filled in
                        for the operator and always were — but nothing ever showed what would
                        be printed on the document their customer's accountant reads, and a
@@ -3068,10 +3071,12 @@ function QuoteBuilderBody() {
                        knows. hsnSummary(null) says so instead. */
                     helper={isExport
                       ? "Export → zero-rated under LUT · no GST"
+                      : sezZeroRated
+                      ? "SEZ (without payment) → zero-rated under LUT · no GST. To charge IGST, set the customer to SEZ (with payment)."
                       : bosStatus
                       ? "Bill of Supply → no GST. Your GST registration is set in Settings → Company."
                       : hsnSummary(buyerStateCode && !sellerStateMissing ? interState : null)}
-                    className={isExport || bosStatus ? "bg-paper-2 cursor-not-allowed" : undefined}
+                    className={isExport || sezZeroRated || bosStatus ? "bg-paper-2 cursor-not-allowed" : undefined}
                   />
                 </FormField>
                 <button
@@ -3097,7 +3102,7 @@ function QuoteBuilderBody() {
 
               {/* R-431: an unknown head (company or customer state empty) is one GST line,
                   never a guessed CGST + SGST split. The amount is the same either way. */}
-              {isExport || bosStatus ? null : (sellerStateMissing || !buyerStateCode) ? (
+              {isExport || sezZeroRated || bosStatus ? null : (sellerStateMissing || !buyerStateCode) ? (
                 <TotalRow label={`GST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
               ) : interState ? (
                 <TotalRow label={`IGST (${taxRate}%)`} value={fmtTotalC(dispTax)} />

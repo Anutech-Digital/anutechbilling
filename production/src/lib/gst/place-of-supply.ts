@@ -6,8 +6,8 @@ import type { CustomerGstTreatment } from "./customer-gst-treatment";
  * R-1736 — THE one tax rule a customer's GST treatment adds: a supply to an SEZ unit or
  * developer is INTER-STATE whatever the two states are (IGST Act §7(5)(b)), so it is IGST
  * even when the SEZ sits in the seller's own state. Every other treatment keeps the state
- * comparison. (Zero-rating SEZ-without-payment / exports under an LUT is Hitesh's pending
- * decision — LUT_ZERO_RATING_PENDING in customer-gst-treatment.ts.)
+ * comparison. (R-2515: an SEZ supplied WITHOUT payment of tax is also zero-rated under the
+ * LUT, like an export — isZeroRatedSupply below. SEZ with payment stays IGST.)
  *
  * The SQL side applies the same rule in tg_invoice_snapshot_parties (migration
  * ..._r1736_customer_gst_treatment), so every invoice path agrees with this.
@@ -86,6 +86,22 @@ export function isExportSupply(customerCountry: string | null | undefined): bool
   const c = (customerCountry ?? "").trim().toLowerCase();
   if (c === "") return false;
   return !DOMESTIC_COUNTRIES.has(c);
+}
+
+/**
+ * R-2515 — is a supply to this customer zero-rated (0% GST under the LUT)? True for an export
+ * (customer outside India, whatever treatment it still carries) and for an SEZ unit / developer
+ * supplied WITHOUT payment of tax (IGST Act s.16(1)(b), s.16(3)(a)). SEZ WITH payment is taxed.
+ * SQL twin: public.supply_is_zero_rated(country, treatment) (migration
+ * 20261105151859_r2515_sez_zero_rated); a 0% invoice of either kind needs the LUT of its FY.
+ *
+ * @example isZeroRatedSupply({ country: "India", treatment: "sez_without_payment" }) // true
+ */
+export function isZeroRatedSupply(a: {
+  country: string | null | undefined;
+  treatment: CustomerGstTreatment | string | null | undefined;
+}): boolean {
+  return isExportSupply(a.country) || a.treatment === "sez_without_payment";
 }
 
 /** Resolve the GST treatment. Export (outside India) wins over the state comparison. */
