@@ -36,3 +36,12 @@ describe("R-2510 social post time (IST)", () => {
     for (const status of ["draft", "review", "publishing", "published", "failed"]) expect(isDue({ status, scheduled_at: at }, now)).toBe(false);
   });
 });
+
+describe("R-2513 one-click post times", () => {
+  it("tomorrow is India's tomorrow, even late at night UTC", async () => {
+    const { quickTimes } = await import("./social-schedule");
+    // 5 Nov 20:00 UTC = 6 Nov 01:30 IST → tomorrow is 7 Nov
+    expect(quickTimes(new Date("2026-11-05T20:00:00Z"))).toEqual({ tomorrowMorning: "2026-11-07T09:00", tomorrowEvening: "2026-11-07T18:00" });
+    expect(quickTimes(new Date("2026-12-31T10:00:00Z")).tomorrowMorning).toBe("2027-01-01T09:00");
+  });
+});

@@ -44,3 +44,12 @@ export function scheduleProblem(at: Date, now: Date = new Date()): string | null
 export function isDue(item: { status: string; scheduled_at: Date | string | null }, now: Date = new Date()): boolean {
   return item.status === "approved" && item.scheduled_at !== null && new Date(item.scheduled_at).getTime() <= now.getTime();
 }
+
+/** One-click post times for the form: tomorrow 9 AM and 6 PM, India time ("YYYY-MM-DDTHH:MM"). */
+export function quickTimes(now: Date = new Date()): { tomorrowMorning: string; tomorrowEvening: string } {
+  const ist = new Date(now.getTime() + IST_OFFSET_MS);
+  const d = new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() + 1));
+  const p = (n: number) => String(n).padStart(2, "0");
+  const day = `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`;
+  return { tomorrowMorning: `${day}T09:00`, tomorrowEvening: `${day}T18:00` };
+}

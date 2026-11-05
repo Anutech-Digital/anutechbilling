@@ -17,6 +17,10 @@ const draft = z.object({
   topic: z.string().trim().max(500).default(""), ai: z.boolean().default(false),
   /* R-2510: post time as typed in the form ("2026-11-06T09:00", India time). */
   scheduledAt: z.string().trim().max(16).nullable().default(null),
+  /* R-2513: save and send for approval in one step (status review). */
+  submit: z.boolean().default(false),
+  /* R-2513: "Write with AI" only fills the caption box — nothing is saved until the person sends it. */
+  previewOnly: z.boolean().default(false),
 });
 
 export async function GET() {
@@ -54,7 +58,7 @@ export async function POST(req: Request) {
   if (input.scheduledAt && !scheduledAt) return NextResponse.json({ error: "Choose a valid post date and time." }, { status: 400 });
   const timeProblem = scheduledAt ? scheduleProblem(scheduledAt) : null;
   if (timeProblem) return NextResponse.json({ error: timeProblem }, { status: 400 });
-  if ((input.platform === "instagram" || input.format === "story") && !input.mediaUrl) return NextResponse.json({ error: "Instagram posts and stories need an image URL." }, { status: 400 });
+  if (!input.previewOnly && (input.platform === "instagram" || input.format === "story") && !input.mediaUrl) return NextResponse.json({ error: "Instagram posts and stories need an image URL." }, { status: 400 });
   let caption = input.caption;
   let origin: "manual" | "ai" = "manual";
   if (input.ai) {
@@ -70,11 +74,12 @@ export async function POST(req: Request) {
     caption = result?.caption?.trim().slice(0, 2200) ?? "";
     if (!caption) return NextResponse.json({ error: "AI could not write a draft. Please try again or write it yourself." }, { status: 502 });
     origin = "ai";
+    if (input.previewOnly) return NextResponse.json({ caption });
   }
   if (!caption && input.format === "post") return NextResponse.json({ error: "Write a caption." }, { status: 400 });
   try {
     const id = await createSocial(session, { platform: input.platform, format: input.format, caption,
-      mediaUrl: input.mediaUrl, topic: input.topic, origin, scheduledAt });
+      mediaUrl: input.mediaUrl, topic: input.topic, origin, scheduledAt, status: input.submit ? "review" : "draft" });
     return NextResponse.json({ id, caption }, { status: 201 });
   } catch (error) {
     console.error("[social-content] create failed", error instanceof Error ? error.message : "unknown");

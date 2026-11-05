@@ -37,10 +37,12 @@ export async function listSocial(session: TenantSession): Promise<SocialItem[]> 
 export async function createSocial(session: TenantSession, input: {
   platform: SocialPlatform; format: SocialFormat; caption: string; mediaUrl: string | null; topic: string; origin: "manual" | "ai" | "scheduled";
   scheduledAt?: Date | null;
+  /** R-2513: "Send for approval" saves straight into review. Never approved or published here. */
+  status?: "draft" | "review";
 }): Promise<string> {
   const rows = await withTenant(session, tx => tx.$queryRaw<{ id: string }[]>`
-    insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by, scheduled_at)
-    values (${session.tenantId}::uuid, ${input.platform}, ${input.format}, ${input.caption}, ${input.mediaUrl}, ${input.topic}, ${input.origin}, ${session.userId}::uuid, ${input.scheduledAt ?? null}::timestamptz)
+    insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by, scheduled_at, status)
+    values (${session.tenantId}::uuid, ${input.platform}, ${input.format}, ${input.caption}, ${input.mediaUrl}, ${input.topic}, ${input.origin}, ${session.userId}::uuid, ${input.scheduledAt ?? null}::timestamptz, ${input.status ?? "draft"})
     returning id`);
   return rows[0].id;
 }
