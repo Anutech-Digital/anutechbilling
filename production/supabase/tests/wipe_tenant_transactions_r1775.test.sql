@@ -17,7 +17,8 @@ begin;
 -- not from a hand list, so a table added later is wiped unless it is added here.
 -- Scope (Pardeep, 23 Oct 2026, changed the same morning): ONE company, ALL its data - keep only what a
 -- login, the company settings and the integration keys need.
---  * Roles/permissions have no table of their own: they are columns on users, kept with it.
+--  * Roles/permissions: columns on users AND (since R-2471) the login's row in tenant_memberships -
+--    the role a login holds in a company comes from its membership, so both are kept (R-2481).
 --  * Chart of accounts: there is NO per-tenant chart-of-accounts table - the ledger is worked out from
 --    the documents and the account heads are code, not rows. bank_accounts / personal_accounts are the
 --    business's own data (made by people, not seeded), so they go. The app runs without them.
@@ -25,8 +26,9 @@ begin;
 create or replace function pg_temp.r1775_keep() returns text[] language sql immutable as $f$
   select array[
     -- logins and what hangs off a login (Google sign-in tokens, push devices, API keys, invites, vault PIN)
-    'users', 'user_google_tokens', 'push_subscriptions', 'api_keys', 'team_invites', 'join_requests',
-    'personal_vault_pin',
+    -- R-2481: tenant_memberships too - since R-2471 a login without its membership has no company
+    'users', 'tenant_memberships', 'user_google_tokens', 'push_subscriptions', 'api_keys', 'team_invites',
+    'join_requests', 'personal_vault_pin',
     -- company settings (the tenants row itself is never touched: name, GSTIN, address, settings columns)
     'attendance_settings', 'whatsapp_reminder_settings', 'ai_autonomy', 'demo_tenants', 'tenant_domains',
     -- numbering / sequence config: next numbers are NOT reset (runbook says how, if ever wanted)
@@ -323,6 +325,7 @@ declare
   v_trig_before text; v_trig_after text; v_rls_before text; v_rls_after text;
   v_t text; v_n bigint; v_ok boolean; con record; v_sql text;
   v_fb uuid; v_fb_user uuid; v_fb_before text; v_fb_after text;
+  v_login uuid; v_login_tid uuid;
 begin
   -- a bug report of 1111 with a screenshot and a vote (local 1111 has none; rolled back with the rest).
   -- Pardeep, 23 Oct: the bug reports stay through the wipe, screenshot rows and votes with them.
@@ -352,7 +355,8 @@ begin
     union all select to_jsonb(v)::text from public.feedback_votes v where v.tenant_id = t1) q;
 
   -- the keep-list is what Pardeep chose on 23 Oct (scope change): logins, settings, secrets/keys only
-  foreach v_t in array array['users', 'tenant_secrets', 'document_series', 'user_google_tokens',
+  -- R-2481: tenant_memberships with users - since R-2471 a login without its membership has no company
+  foreach v_t in array array['users', 'tenant_memberships', 'tenant_secrets', 'document_series', 'user_google_tokens',
                              'feedback', 'feedback_screenshots', 'feedback_votes'] loop
     if not v_t = any (v_keep) then raise exception 'FAIL: % must be on the keep-list', v_t; end if;
   end loop;
@@ -431,6 +435,19 @@ begin
   select string_agg((to_jsonb(u) - 'employee_id' - 'updated_at')::text, '|' order by id) into v_users_after
     from public.users u where tenant_id = t1;
   if v_users_after is distinct from v_users_before then raise exception 'FAIL: login rows of 1111 changed'; end if;
+  -- R-2481 (F2 of the R-2471 review): a kept active login of 1111 still gets its company after the wipe -
+  -- current_tenant_id() needs the login's membership (R-2471), so the memberships must survive too.
+  select u.id into v_login from public.users u
+   where u.tenant_id = t1 and u.is_active and (u.access_ends_on is null or u.access_ends_on >= public.ist_today())
+   order by u.id limit 1;
+  if v_login is null then raise exception 'FAIL: no active login of 1111 to check after the wipe'; end if;
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', v_login, 'role', 'authenticated', 'aal', 'aal2')::text, true);
+  v_login_tid := public.current_tenant_id();
+  perform set_config('request.jwt.claims', '', true);
+  if v_login_tid is distinct from t1 then
+    raise exception 'FAIL: kept login % of 1111 lost its company after the wipe (current_tenant_id() = %)', v_login, v_login_tid;
+  end if;
   -- the bug reports, their screenshot rows and votes: every row byte-for-byte the same
   select string_agg(x, '|' order by x) into v_fb_after from (
     select to_jsonb(f)::text as x from public.feedback f where f.tenant_id = t1

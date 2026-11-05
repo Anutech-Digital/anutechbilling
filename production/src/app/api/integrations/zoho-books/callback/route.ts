@@ -9,6 +9,8 @@
  *   4. No vault key on this server → refuse (the token is stored encrypted or not at all).
  *   5. Exchange the code at accounts.zoho.in, store the refresh token SEALED on this tenant's
  *      tenant_secrets row, organization cleared (the owner picks it next on the card).
+ *   6. Reconnect (R-2508): the previous refresh token is revoked at Zoho after the new one is
+ *      stored — best-effort, never logged.
  * The token never goes to the browser; the redirect carries only a status word.
  * Zoho's `accounts-server` query param is ignored on purpose — the India DC is fixed.
  */
@@ -19,8 +21,8 @@ import {
   SETTINGS_RETURN, STATE_COOKIE, ZOHO_STATUS_PARAM, zohoBooksCreds, zohoRedirectUri,
 } from "@/lib/integrations/zoho-books/config";
 import { verifyState } from "@/lib/integrations/zoho-books/state";
-import { resolveZohoCaller, saveConnection } from "@/lib/integrations/zoho-books/store";
-import { exchangeCode, ZohoApiError } from "@/lib/integrations/zoho-books/api";
+import { readConnection, resolveZohoCaller, saveConnection } from "@/lib/integrations/zoho-books/store";
+import { exchangeCode, revokeToken, ZohoApiError } from "@/lib/integrations/zoho-books/api";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -58,7 +60,16 @@ export async function GET(request: NextRequest) {
 
   try {
     const tokens = await exchangeCode(code, zohoRedirectUri(origin), creds);
+    /* R-2508 (R-2498 review): a Reconnect must not leave the OLD refresh token alive at Zoho.
+       Read it before the save overwrites it; revoke it only AFTER the new one is stored — if the
+       save fails, the old connection keeps working. Best-effort: a failed read or revoke never
+       stops the new connection, and the token is never logged. */
+    const oldToken = await readConnection(caller.admin, caller.tenantId).then((c) => c.refreshToken, () => null);
     await saveConnection(caller.admin, caller.tenantId, caller.userId, tokens.refreshToken);
+    if (oldToken && oldToken !== tokens.refreshToken) {
+      const revoked = await revokeToken(oldToken).catch(() => false);
+      if (!revoked) console.warn("[zoho-books/callback] reconnect: the previous Zoho token could not be revoked (new connection saved)");
+    }
     return back("connected");
   } catch (e) {
     // Code only — never the token or the secret.

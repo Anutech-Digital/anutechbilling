@@ -13571,6 +13571,7 @@ export type Database = {
           attendance_ingest_key: string | null
           auto_suspend_on_overdue: boolean
           books_locked_until: string | null
+          books_start_date: string | null
           business_type: string | null
           contact_name: string | null
           created_at: string
@@ -13626,6 +13627,7 @@ export type Database = {
           attendance_ingest_key?: string | null
           auto_suspend_on_overdue?: boolean
           books_locked_until?: string | null
+          books_start_date?: string | null
           business_type?: string | null
           contact_name?: string | null
           created_at?: string
@@ -13681,6 +13683,7 @@ export type Database = {
           attendance_ingest_key?: string | null
           auto_suspend_on_overdue?: boolean
           books_locked_until?: string | null
+          books_start_date?: string | null
           business_type?: string | null
           contact_name?: string | null
           created_at?: string
@@ -16649,6 +16652,7 @@ export type Database = {
         Args: { p_claim_id: string; p_reason?: string }
         Returns: undefined
       }
+      release_stale_team_invite: { Args: { p_email: string }; Returns: string }
       remove_bank_import: {
         Args: {
           p_account_id: string
@@ -16947,6 +16951,10 @@ export type Database = {
       tds_mark_26as_verified: {
         Args: { p_ids: string[]; p_seen_on: string }
         Returns: number
+      }
+      tenant_holds_business_records: {
+        Args: { p_tenant: string }
+        Returns: boolean
       }
       today_inbox: {
         Args: never

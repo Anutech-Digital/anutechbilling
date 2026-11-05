@@ -44,6 +44,7 @@ import { useUnreconciledExpenses, useUnpaidBillsDue } from "@/lib/queries/expens
 import { useBankAccounts, useUnmatchedBankCredits } from "@/lib/queries/bank";
 import { useInvoices } from "@/lib/queries/invoices";
 import { BooksLockCard } from "@/components/features/accounting/books-lock-card";
+import { BooksStartCard } from "@/components/features/accounting/books-start-card";
 import { GstHealthCard } from "@/components/features/accounting/gst-health-card";
 import {
   MONEY_FOLDERS, moneyInboxState, totalOpenItems, gstInboxFields,
@@ -190,6 +191,7 @@ export default function AccountingOverviewPage() {
           hint={gstTileHint} href={gstTileHref} />
       </div>
 
+      <BooksStartCard />
       <BooksLockCard />
 
       {/* Data-integrity + debit-side reconciliation. See the note where `alerts` is built

@@ -263,7 +263,8 @@ export async function previewCounts(orgId: string, token: string, f: Fetch = fet
 
 export interface ZohoPage { rows: Array<Record<string, unknown>>; more: boolean }
 
-async function listPage(path: string, listKey: string, orgId: string, token: string, page: number, f: Fetch,
+/** R-2498: exported for the FY reads in fy-fetch.ts (same booksGet, same page size). */
+export async function listPage(path: string, listKey: string, orgId: string, token: string, page: number, f: Fetch = fetch,
   extra: Record<string, string> = {}): Promise<ZohoPage> {
   const q = new URLSearchParams({ organization_id: orgId, page: String(page), per_page: String(PAGE_SIZE), ...extra });
   const body = await booksGet(`${path}?${q}`, token, f);
@@ -287,6 +288,23 @@ export async function getInvoiceDetail(orgId: string, token: string, invoiceId: 
   const q = new URLSearchParams({ organization_id: orgId });
   const body = await booksGet(`/invoices/${encodeURIComponent(invoiceId)}?${q}`, token, f);
   return (body.invoice as Record<string, unknown> | undefined) ?? {};
+}
+
+/** R-2494: one invoice's dated receipts or applied credit notes — Zoho's invoice detail carries only
+ *  the payment_made / credits_applied totals. GET /invoices/{id}/payments → `payments`;
+ *  GET /invoices/{id}/creditsapplied → `credits`. */
+async function listInvoiceSub(orgId: string, token: string, invoiceId: string, sub: "payments" | "creditsapplied", key: string, f: Fetch): Promise<Array<Record<string, unknown>>> {
+  const q = new URLSearchParams({ organization_id: orgId });
+  const body = await booksGet(`/invoices/${encodeURIComponent(invoiceId)}/${sub}?${q}`, token, f);
+  return Array.isArray(body[key]) ? (body[key] as Array<Record<string, unknown>>) : [];
+}
+
+export function listInvoicePayments(orgId: string, token: string, invoiceId: string, f: Fetch = fetch): Promise<Array<Record<string, unknown>>> {
+  return listInvoiceSub(orgId, token, invoiceId, "payments", "payments", f);
+}
+
+export function listInvoiceCreditsApplied(orgId: string, token: string, invoiceId: string, f: Fetch = fetch): Promise<Array<Record<string, unknown>>> {
+  return listInvoiceSub(orgId, token, invoiceId, "creditsapplied", "credits", f);
 }
 
 /** The value of a custom field whose name is one of `names` (both Zoho shapes), or null. */
@@ -340,4 +358,14 @@ export async function getContact(orgId: string, token: string, contactId: string
   const q = new URLSearchParams({ organization_id: orgId });
   const body = await booksGet(`/contacts/${encodeURIComponent(contactId)}?${q}`, token, f);
   return (body.contact as Record<string, unknown> | undefined) ?? {};
+}
+
+// ── R-2498: one record by id, for the FY reads (still read-only) ─────────────────────────
+
+/** GET <path>/<id> and return body[key] (an empty object when Zoho sends none). The id is URL-encoded. */
+export async function getOne(path: string, key: string, orgId: string, token: string, id: string, f: Fetch = fetch): Promise<Record<string, unknown>> {
+  const q = new URLSearchParams({ organization_id: orgId });
+  const body = await booksGet(`${path}/${encodeURIComponent(id)}?${q}`, token, f);
+  const v = body[key];
+  return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 }

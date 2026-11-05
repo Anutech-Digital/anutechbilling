@@ -46,9 +46,9 @@ insert into auth.users (id, email) values
 insert into public.users (id, tenant_id, email, full_name, role, created_at) values
   ('aaaaaaaa-0000-0000-0000-000000232301','dddddddd-0000-0000-0000-000000232301','owner2323@example.in','Owner 2323','owner', now() - interval '1 day'),
   ('aaaaaaaa-0000-0000-0000-000000232302','dddddddd-0000-0000-0000-000000232301','sales2323@example.in','Sales 2323','sales', now() - interval '1 day');
-insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance) values
-  ('bbbbbbbb-0000-0000-0000-000000232301','dddddddd-0000-0000-0000-000000232301','HDFC Current','HDFC', 500000),
-  ('bbbbbbbb-0000-0000-0000-000000232302','dddddddd-0000-0000-0000-000000232302','Other bank','SBI', 0);
+insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance, opening_balance_date) values
+  ('bbbbbbbb-0000-0000-0000-000000232301','dddddddd-0000-0000-0000-000000232301','HDFC Current','HDFC', 500000, '2025-04-01'),
+  ('bbbbbbbb-0000-0000-0000-000000232302','dddddddd-0000-0000-0000-000000232302','Other bank','SBI', 0, '2025-04-01');
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
   ('22222222-0000-0000-0000-000000232301','dddddddd-0000-0000-0000-000000232301','bbbbbbbb-0000-0000-0000-000000232301','2026-10-05','NACH DR HDFC BANK BIKE EMI',19054,0,'N1','csv_upload'),
   ('22222222-0000-0000-0000-000000232302','dddddddd-0000-0000-0000-000000232301','bbbbbbbb-0000-0000-0000-000000232301','2026-11-05','NACH DR HDFC BANK BIKE EMI',19054,0,'N2','csv_upload'),

@@ -17,7 +17,8 @@ const NO_SALES = { leads: 0, quotes: 0, invoices: 0, payments: 0, subscriptions:
 const NO_PROJECTS = { customers: 0, projects: 0, milestones: 0, projectPayments: 0, projectInvoices: 0, tdsRows: 0 };
 /** R-2458: the localhost-check counts (_common.sql scn_extra_count) — 0 for every older scenario. */
 const NO_EXTRA = { xCustomers: 0, xQuotes: 0, xInvoices: 0, xPayments: 0, employees: 0, salaries: 0, loans: 0, loanPayments: 0,
-                   luts: 0, companies: 0, connections: 0, networkDocs: 0, gstinClaims: 0 };
+                   luts: 0, companies: 0, connections: 0, networkDocs: 0, gstinClaims: 0,
+                   memberships: 0 /* R-2476 */ };
 /** R-2458 ids: c2458000-0000-4000-8000-0000000000NN. */
 const x = (n) => `c2458000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 /** A scenario that touches no vendor / sales / project rows. */
@@ -236,6 +237,17 @@ export const SCENARIOS = [
     ],
   },
   {
+    name: "employee-owed-back",
+    about: "SCN Neelam Sharma: last month's ₹30,000 salary (made with pay_salary, unpaid), a ₹16,000 money-in line 'UPI/…/SCN NEELAM SHARMA/PAID BY MISTAKE' (no advance held) and a ₹46,000 'NEFT DR-…-SALARY-SCN NEELAM SHARMA' line (salary + the ₹16,000 back).",
+    cards: ["R-2407"],
+    scope: { vendors: [], txns: [x(103), x(104)], docs: [], names: [], upis: [], extra: [x(101)] },
+    expect: { ...NO_OLD, txns: 2, ...NO_EXTRA, employees: 1, salaries: 1 },
+    pages: [
+      { path: "banking", for: "R-2407 the ₹16,000 SCN Neelam line → Reconcile → Employee return → every employee listed → 'Paid to us by mistake — we owe it back' → Book; then the ₹46,000 line → Employee / salary → 'Also pays back ₹16,000 owed to SCN Neelam Sharma' → Pay salary + ₹16,000 owed back" },
+      { path: "payroll", for: "R-2407 SCN Neelam Sharma's salary Paid (₹30,000) — no extra salary" },
+    ],
+  },
+  {
     name: "nbfc-interest",
     about: "Business Loans: SCN Bajaj Finance Ltd (NBFC) ₹13,000 interest this FY (2 EMIs × ₹6,500) and SCN HDFC Bank ₹8,000; a ₹15,000 'ACH DR-SCN BAJAJ FINANCE LTD-EMI' money-out line.",
     cards: ["R-2376"],
@@ -274,6 +286,24 @@ export const SCENARIOS = [
       { path: "purchase-inbox", for: "R-2449 From network → two Pending invoices → Accept SNP/26-27/0101 (bill VB-NET-…), Reject SNP/26-27/0102 with a reason" },
     ],
   },
+  {
+    name: "two-companies",
+    about: "One login in two companies (R-2471 memberships): a second local company, SCN Second Company Pvt Ltd (no customers, quotes or invoices), and an active membership in it as Manager for e2e-owner@example.test (the login 'Local test login → Owner' uses). That login sees the company switcher in the top bar: E2E Test Co (Owner, ticked) and SCN Second Company Pvt Ltd (Manager). --reset / --clear first moves that login back to E2E Test Co if it was left in the second company.",
+    cards: ["R-2476"],
+    needs: { sql: "to_regprocedure('public.my_companies()') is not null", what: "company switcher (migration R-2476)" },
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: ["c2476000-0000-4000-8000-000000000001"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, companies: 1, memberships: 1 },
+    // --self-test: the owner switches into the second company — the reset must bring the login back, not delete it
+    selfTestUse: `
+      select set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub',
+        (select u.id from public.users u where lower(u.email) = 'e2e-owner@example.test'))::text, true);
+      select public.switch_company('c2476000-0000-4000-8000-000000000001');
+    `,
+    pages: [
+      { path: "dashboard", for: "R-2476 top bar: the company button (E2E Test Co) → Switch company lists both companies with their roles" },
+      { path: "customers-all", for: "R-2476 after switching to SCN Second Company Pvt Ltd: the list is empty (no E2E Test Co customer stays)" },
+    ],
+  },
 ];
 
 export const SCENARIO_NAMES = SCENARIOS.map((s) => s.name);
@@ -310,6 +340,9 @@ export function pageUrl(host, key, today = new Date()) {
     case "settings-company": return `${base}/settings?tab=company`;
     case "settings-network": return `${base}/settings?tab=network`;
     case "purchase-inbox": return `${base}/purchases/inbox`;
+    /* R-2476 */
+    case "dashboard": return `${base}/dashboard`;
+    case "customers-all": return `${base}/customers`;
     default:
       if (key.startsWith("quote:")) return `${base}/quotes/${encodeURIComponent(key.slice(6))}`;
       return `${base}/accounting/${key}`;

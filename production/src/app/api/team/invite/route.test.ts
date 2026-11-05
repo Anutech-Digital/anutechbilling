@@ -56,6 +56,8 @@ function chain(result: () => unknown, onUpdate?: (v: Record<string, unknown>) =>
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({
     auth: { getUser: async () => ({ data: { user: st.sessionUserId ? { id: st.sessionUserId } : null } }) },
+    /* R-2469: nothing held by another workspace. */
+    rpc: async () => ({ data: "none", error: null }),
     from: (table: string) => {
       if (table === "users") return chain(() => ({ data: { tenant_id: T1, role: st.callerRole, is_active: st.callerActive }, error: null }));
       if (table === "tenants") return chain(() => ({ data: { name: "Acme" }, error: null }));

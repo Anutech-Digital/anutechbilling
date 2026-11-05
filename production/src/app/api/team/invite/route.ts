@@ -30,6 +30,13 @@ import { MUST_CHANGE_PASSWORD_KEY } from "@/lib/auth/must-change-password";
 import { initials } from "@/lib/utils";
 import { can, roleLabel } from "@/lib/auth/roles";
 import { inviteExpiresAt, isInviteExpired } from "@/lib/auth/invite-accept";
+import {
+  INVITE_CHECK_RATE,
+  inviteInUseMessage,
+  loginElsewhereMessage,
+  memberElsewhereMessage,
+  parseStaleInviteOutcome,
+} from "@/lib/auth/stale-invite";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 
@@ -95,15 +102,51 @@ export async function POST(request: NextRequest) {
 
     const { data: hasLogin } = await createAdminClientFor(authData.user.id)
       .from("users")
-      .select("id")
+      .select("id, tenant_id")
       .eq("email", email)
       .maybeSingle();
     if (hasLogin) {
+      /* R-2469: a login in ANOTHER workspace has no row here to "Set temporary password" on —
+         point to the plain invite, which says what to do next. */
+      const elsewhere = (hasLogin as { tenant_id?: string | null }).tenant_id !== me.tenant_id;
       return NextResponse.json(
-        { error: `${email} already has a login. Invite without a temporary password, or use Set temporary password on their row.` },
+        { error: elsewhere
+            ? loginElsewhereMessage(email)
+            : `${email} already has a login. Invite without a temporary password, or use Set temporary password on their row.` },
         { status: 409 },
       );
     }
+  }
+
+  /* ── R-2469: is the address held by ANOTHER workspace? ──────────────────
+     team_invites has one row per address across every workspace, and RLS hides the other
+     workspace's row, so the owner used to get a dead end. release_stale_team_invite (session
+     client: auth.uid() is this owner; the function re-checks owner + MFA) clears that row only
+     when it holds nobody back — expired, already used by someone who left, or sitting in a
+     blank workspace — and answers 'member_elsewhere' for a member of another REAL company, who
+     is never moved. It never names the other company (R-721). If the check itself fails (e.g.
+     the migration is not deployed yet) the invite goes on exactly as before.
+     Its answer says whether an address belongs to some company, so it is capped per owner —
+     a real team is never invited 30 times an hour; a scraper probing addresses is. */
+  const checkRl = await rateLimitShared(`team-invite-check:${authData.user.id}`, INVITE_CHECK_RATE);
+  if (!checkRl.ok) {
+    return NextResponse.json(
+      { error: "Too many invites in the last hour. Try again later." },
+      { status: 429, headers: { "Retry-After": String(checkRl.retryAfterSec) } },
+    );
+  }
+  const { data: heldElsewhere, error: heldErr } = await supabase.rpc("release_stale_team_invite", { p_email: email });
+  /* R-2483: the check also caps itself in SQL (30 an hour per login, 54000) — a cap reached by direct
+     calls must not let this invite go out WITHOUT the member-of-another-company check. Any other
+     error keeps the old behaviour (e.g. the migration is not deployed yet). */
+  if (heldErr?.code === "54000") {
+    return NextResponse.json(
+      { error: "Too many invites in the last hour. Try again later." },
+      { status: 429, headers: { "Retry-After": "3600" } },
+    );
+  }
+  if (parseStaleInviteOutcome(heldElsewhere) === "member_elsewhere") {
+    return NextResponse.json({ error: memberElsewhereMessage(email) }, { status: 409, headers: NO_STORE });
   }
 
   // ── Create the invite (RLS: team_invites is owner-scoped) ─────────────
@@ -146,11 +189,9 @@ export async function POST(request: NextRequest) {
     if (!existing) {
       /* RLS hid it, which means it belongs to ANOTHER workspace. Refused, and
          deliberately without naming which one — that would leak who else is using the
-         product to anyone who can guess an address. */
-      return NextResponse.json(
-        { error: "That email is already invited to a different workspace. They need to leave it, or use another address." },
-        { status: 409 },
-      );
+         product to anyone who can guess an address. R-2469: a stale one was already cleared
+         above, so this is a live invite — say what to do next. */
+      return NextResponse.json({ error: inviteInUseMessage(email) }, { status: 409 });
     }
 
     /* R-733: invites expire after 7 days. Re-inviting an EXPIRED one is how the owner sends a

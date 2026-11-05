@@ -4,7 +4,9 @@
  * ONE formula for the account's balance: `bankBalanceOf` = opening balance + Σ(credit − debit)
  * over every line. The bank account page's "Balance in bank" uses it, and the running balance
  * below is the same sum taken line by line, so the newest line's balance IS "Balance in bank".
- * (The opening is used as the page always has: lines are not cut at the opening date.)
+ * R-2497: only lines dated ON/AFTER the account's opening date count — the opening is the balance
+ * at the START of that date, so an earlier line is already inside it (the same rule as
+ * bank_account_current_balance() and the BRS). An earlier line is marked `beforeOpening`.
  *
  * ─── ORDER ──────────────────────────────────────────────────────────────────
  * Date order (oldest first). Inside one day, statement order — but bank_transactions has no
@@ -39,6 +41,8 @@ export type RunningBalance = {
   seq: number;
   /** The bank's own balance_after, only when it differs from `balance` by more than ₹1. */
   statementSays: number | null;
+  /** R-2497: dated before the opening date — inside the opening balance, not counted again. */
+  beforeOpening?: true;
 };
 
 /** More than this (whole rupees) apart = the statement disagrees; statements carry paise. */
@@ -46,9 +50,18 @@ export const STATEMENT_TOLERANCE = 1;
 const close = (a: number, b: number) => Math.abs(a - b) <= STATEMENT_TOLERANCE;
 const net = (l: Pick<RunningLine, "debit" | "credit">) => (l.credit ?? 0) - (l.debit ?? 0);
 
-/** The account's balance: opening + every line. The page's "Balance in bank". */
-export function bankBalanceOf(lines: readonly Pick<RunningLine, "debit" | "credit">[], openingBalance: number | null | undefined): number {
-  return (openingBalance ?? 0) + lines.reduce((s, l) => s + net(l), 0);
+/** R-2497: is this line counted in the balance (dated on/after the opening date)? */
+export function countsAfterOpening(l: { txn_date?: string | null }, openingDate: string | null | undefined): boolean {
+  return !openingDate || !l.txn_date || l.txn_date >= openingDate;
+}
+
+/** The account's balance: opening + every line dated on/after the opening date. The page's "Balance in bank". */
+export function bankBalanceOf(
+  lines: readonly (Pick<RunningLine, "debit" | "credit"> & { txn_date?: string | null })[],
+  openingBalance: number | null | undefined,
+  openingDate?: string | null,
+): number {
+  return (openingBalance ?? 0) + lines.reduce((s, l) => s + (countsAfterOpening(l, openingDate) ? net(l) : 0), 0);
 }
 
 const startOf = (l: RunningLine) => (l.balance_after as number) - net(l);
@@ -113,10 +126,19 @@ export function ledgerOrder<T extends RunningLine>(lines: readonly T[]): T[] {
  * The balance after each line, keyed by line id — over ALL the lines given (pass the whole
  * account, not a filtered list). The newest line's balance equals bankBalanceOf(lines, opening).
  */
-export function runningBalances(lines: readonly RunningLine[], openingBalance: number | null | undefined): Map<string, RunningBalance> {
+export function runningBalances(
+  lines: readonly RunningLine[],
+  openingBalance: number | null | undefined,
+  openingDate?: string | null,
+): Map<string, RunningBalance> {
   const out = new Map<string, RunningBalance>();
   let bal = openingBalance ?? 0;
   ledgerOrder(lines).forEach((l, seq) => {
+    /* R-2497: before the opening → already inside it; keeps its place (seq), adds nothing. */
+    if (!countsAfterOpening(l, openingDate)) {
+      out.set(l.id, { balance: openingBalance ?? 0, seq, statementSays: null, beforeOpening: true });
+      return;
+    }
     bal += net(l);
     const said = l.balance_after;
     out.set(l.id, { balance: bal, seq, statementSays: said !== null && !close(said, bal) ? said : null });

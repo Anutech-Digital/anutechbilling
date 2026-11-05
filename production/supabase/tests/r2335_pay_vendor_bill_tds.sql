@@ -39,8 +39,8 @@ insert into auth.users (id, email) values
 insert into public.users (id, tenant_id, email, full_name, role, created_at) values
   ('aaaaaaaa-0000-0000-0000-000000233501','dddddddd-0000-0000-0000-000000233501','owner2335@example.in','Owner 2335','owner', now() - interval '1 day'),
   ('aaaaaaaa-0000-0000-0000-000000233502','dddddddd-0000-0000-0000-000000233501','acct2335@example.in','Accountant 2335','accountant', now() - interval '1 day');
-insert into public.bank_accounts (id, tenant_id, name, bank_name) values
-  ('bbbbbbbb-0000-0000-0000-000000233501','dddddddd-0000-0000-0000-000000233501','HDFC Current','HDFC');
+insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance_date) values
+  ('bbbbbbbb-0000-0000-0000-000000233501','dddddddd-0000-0000-0000-000000233501','HDFC Current','HDFC', '2025-04-01');
 insert into public.vendors (id, tenant_id, name, gstin, pan, default_category, default_tds_section) values
   ('eeeeeeee-0000-0000-0000-000000233501','dddddddd-0000-0000-0000-000000233501','Google India Test','07AACCG2335A1Z5','AACCG2335A','COGS-Workspace','194C'),
   ('eeeeeeee-0000-0000-0000-000000233502','dddddddd-0000-0000-0000-000000233501','Mehta Cloud Test','07AAKFM2335A1Z5','AAKFM2335A','COGS-Other','194C');

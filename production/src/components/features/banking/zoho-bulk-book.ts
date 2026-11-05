@@ -31,8 +31,9 @@ import { describeError } from "@/lib/errors/toast-error";
 import { rupee } from "@/lib/utils";
 import { defaultContactName } from "@/components/features/customers/new-customer-contact";
 import { bankLinePaymentReference } from "@/lib/payments/bank-line-reference";
+import type { SplitInput } from "@/lib/banking/credit-pay-for-multi";
 import {
-  newCustomerKey, rowsToBook, type DateFix, type FxInvoicePay, type PlanCustomer, type PlanRow, type SaleFx,
+  newCustomerKey, rowsToBook, type DateFix, type FxInvoicePay, type OpeningCreate, type PlanCustomer, type PlanRow, type SaleFx,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 
 type NewCustomer = Extract<PlanCustomer, { kind: "new" }>;
@@ -88,6 +89,56 @@ export interface BookDeps {
   newSaleFx?: (i: NewSaleInput, fx: SaleFx) => Promise<PayForResult>;
   /** R-2427: an export receipt paying an invoice in its currency (reconcile_bank_credit_fx_invoice). */
   payFxInvoice?: (args: ReturnType<typeof fxInvoiceArgs>) => Promise<PayForResult>;
+  /** R-2474: make last year's opening invoices from Zoho (ensureOpeningInvoices) → app invoice id by
+   *  upper-cased Zoho number. */
+  ensureOpenings?: (customerId: string, creates: OpeningCreate[]) => Promise<Map<string, string>>;
+  /** R-2474: one bank line → several opening invoices (reconcile_bank_credit_split, R-2466 path). */
+  paySplit?: (i: SplitInput) => Promise<PayForResult>;
+}
+
+/** R-2474: import_opening_invoices' rows (R-1739's shape — the CSV import's toImportRpcRows). */
+export function openingImportRows(customerId: string, creates: readonly OpeningCreate[]) {
+  return creates.map((c) => ({
+    number: c.number.trim(), invoice_date: c.invoiceDate, due_date: c.dueDate, customer_id: customerId,
+    total: c.total, balance: c.balance, currency: "INR", gstin: c.gstin, pos_state_code: c.posStateCode,
+  }));
+}
+
+export interface OpeningInvoiceRow { id: string; external_number: string | null; customer_id: string | null; document_kind: string | null }
+
+/**
+ * R-2474: last year's invoices made as opening invoices from Zoho's data — import_opening_invoices
+ * (R-1739: GST / revenue stay in Zoho, never counted again; one atomic batch). The Zoho number is the
+ * key: a number already in the company is SKIPPED by the import, so a re-run (or two lines paying one
+ * invoice) uses the same invoice. Then each number is read back to its app invoice id; a number that is
+ * a sale invoice here, or another customer's, is refused before any money is recorded.
+ */
+export async function ensureOpeningInvoices(
+  customerId: string, creates: readonly OpeningCreate[], rpc: Rpc,
+  read: (numbers: string[]) => Promise<OpeningInvoiceRow[]>,
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (creates.length === 0) return out;
+  const numbers = creates.map((c) => c.number.trim());
+  const has = (rows: OpeningInvoiceRow[], no: string) => rows.some((r) => (r.external_number ?? "").trim().toUpperCase() === no.toUpperCase());
+  /* Review: read first — import only the numbers the app does not have (no empty import batches). */
+  const before = await read(numbers);
+  const missing = creates.filter((c) => !has(before, c.number.trim()));
+  let rows = before;
+  if (missing.length) {
+    const { error } = await rpc("import_opening_invoices", { p_rows: openingImportRows(customerId, missing), p_file_name: "Reconcile from Zoho (bank line)" });
+    if (error) throw new Error(error.message);
+    rows = await read(numbers);
+  }
+  for (const c of creates) {
+    const key = c.number.trim().toUpperCase();
+    const hit = rows.find((r) => (r.external_number ?? "").trim().toUpperCase() === key) ?? null;
+    if (!hit) throw new Error(`The opening invoice for Zoho's ${c.number} was not made — nothing was recorded on this line. Press Book selected again.`);
+    if (hit.document_kind !== "opening_invoice") throw new Error(`Zoho's ${c.number} is already in the app as a sale invoice (${hit.id}) — reconcile this line by hand.`);
+    if (hit.customer_id !== customerId) throw new Error(`Zoho's ${c.number} is already in the app as an opening invoice of another customer — reconcile this line by hand.`);
+    out.set(key, hit.id);
+  }
+  return out;
 }
 
 /** R-2427: the reconcile_bank_credit_fx_invoice arguments — the narration's currency, rate and amount. */
@@ -224,6 +275,16 @@ export async function bookRows(
       if (fxPay && (!deps.payFxInvoice || !book.item?.invoiceId)) {
         throw new Error(`This line is an export receipt in ${fxPay.currency}, and this screen cannot pay an invoice in that currency. Reload the page and try again.`);
       }
+      /* R-2474: last year's invoice made from Zoho needs this screen's opening-invoice steps — said
+         BEFORE any customer or payer is saved. */
+      const opParts = book.kind === "opening" && !book.opening?.invoiceId ? book.opening?.parts ?? [] : [];
+      /* Review: an opening row with neither an invoice nor parts is never booked as a new sale. */
+      if (book.kind === "opening" && !book.opening?.invoiceId && opParts.length === 0) {
+        throw new Error("This line settles last year's invoice, but its plan names no opening invoice. Press Start again to plan it afresh.");
+      }
+      if ((opParts.some((p) => p.create) && !deps.ensureOpenings) || (opParts.length > 1 && !deps.paySplit)) {
+        throw new Error("This line settles last year's invoice from Zoho, and this screen cannot make its opening invoice. Reload the page and try again.");
+      }
       if (await deps.isReconciled(row.txnId)) {
         const r: BookedRow = {
           txnId: row.txnId, txnDate: row.txnDate, credit: row.credit, outcome: "skipped", customerName: cust.name, customerCreated: false,
@@ -248,7 +309,41 @@ export async function bookRows(
       if (row.payer?.record) {
         await deps.setPayer({ transactionId: row.txnId, customerId, payer: row.payer.payer, relation: row.payer.record.relation, note: row.payer.record.note });
       }
-      if (book.kind === "opening" && book.opening) {
+      if (book.kind === "opening" && book.opening && !book.opening.invoiceId && book.opening.parts?.length) {
+        /* R-2474: last year's invoice(s) — opening invoices made from Zoho where the app has none,
+           then paid with this line through R-2466's opening path (never a new sale). */
+        const parts = book.opening.parts;
+        const creates = parts.flatMap((p) => (p.create ? [p.create] : []));
+        const made = creates.length ? await deps.ensureOpenings!(customerId, creates) : new Map<string, string>();
+        const ids = parts.map((p) => {
+          const id = p.invoiceId ?? made.get(p.number.toUpperCase());
+          if (!id) throw new Error(`The opening invoice for Zoho's ${p.number} was not found — nothing was recorded on this line. Press Book selected again.`);
+          return id;
+        });
+        const res = parts.length === 1
+          ? await deps.payItem({
+            transactionId: row.txnId, quoteId: null, invoiceId: ids[0],
+            tdsAmount: book.tdsAmount, tdsRatePct: book.tdsRatePct, tdsSection: book.tdsSection,
+            createSubscription: null, subStart: null, subRenewal: null,
+          })
+          : await deps.paySplit!({
+            transactionId: row.txnId, customerId, sale: null, rest: null,
+            items: parts.map((p, k) => ({ quote_id: null, invoice_id: ids[k], amount: p.amount })),
+          });
+        const nos = parts.map((p) => p.number).join(", ");
+        const madeNos = parts.filter((p) => p.create).map((p) => p.number);
+        const r: BookedRow = {
+          txnId: row.txnId, txnDate: row.txnDate, credit: row.credit, outcome: "booked", customerName: cust.name, customerCreated,
+          quoteId: null, invoiceId: ids[0], subscriptions: [], todo: [...row.notes],
+          text: res.already_recorded ? `Receipt was already on opening invoice ${nos} — nothing booked again.`
+            : parts.length === 1
+              ? (madeNos.length ? `Opening invoice ${nos} made from Zoho and paid — line reconciled.` : `Opening balance settled — receipt on ${nos}, line reconciled.`)
+              : `Opening invoices ${nos} settled${madeNos.length ? ` (made from Zoho: ${madeNos.join(", ")})` : ""} — line reconciled.`,
+        };
+        done.push(r); onEach?.(r, i, queue.length);
+        continue;
+      }
+      if (book.kind === "opening" && book.opening?.invoiceId) {
         /* R-2419 (a): last year's invoice — a receipt on its opening invoice, never a new sale. */
         const paid = await deps.payOpening({
           transactionId: row.txnId, customerId, invoiceId: book.opening.invoiceId, received: book.opening.received,

@@ -13,6 +13,7 @@
 import type { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { CashFlowTxn } from "@/lib/accounting/cash-flow-lines";
+import { countsAfterOpening } from "@/lib/banking/running-balance";
 
 type Client = ReturnType<typeof createClient>;
 
@@ -21,15 +22,17 @@ export type CashFlowData = { lines: CashFlowTxn[]; balanceBefore: number };
 export async function loadCashFlow(supabase: Client, from: string | null, to: string | null): Promise<CashFlowData> {
   /* The balance the first month starts from: every account's opening balance plus every line
      dated before the range — the same sum bank_account_current_balance() makes, so the last
-     month ends on the bank's own balance. */
+     month ends on the bank's own balance.
+     R-2497: a line dated before its account's opening date is inside that opening — it is left
+     out of both the starting balance and the months, as bank_account_current_balance() does. */
   const [accts, before, data] = await Promise.all([
     fetchAllRows((a, b) =>
-      supabase.from("bank_accounts").select("id, opening_balance").order("id").range(a, b)),
+      supabase.from("bank_accounts").select("id, opening_balance, opening_balance_date").order("id").range(a, b)),
     from
       ? fetchAllRows((a, b) =>
-          supabase.from("bank_transactions").select("id, credit, debit")
+          supabase.from("bank_transactions").select("id, bank_account_id, txn_date, credit, debit")
             .lt("txn_date", from).order("id").range(a, b))
-      : Promise.resolve([] as { credit: number | null; debit: number | null }[]),
+      : Promise.resolve([] as { bank_account_id: string; txn_date: string; credit: number | null; debit: number | null }[]),
     /* The whole line, not just amounts: the month drill-down lists these same rows, so its
        totals are the row's totals by construction. */
     fetchAllRows((a, b) => {
@@ -42,10 +45,14 @@ export async function loadCashFlow(supabase: Client, from: string | null, to: st
     }),
   ]);
 
-  const balanceBefore = accts.reduce((s, a) => s + (a.opening_balance ?? 0), 0)
-    + before.reduce((s, t) => s + (t.credit ?? 0) - (t.debit ?? 0), 0);
+  const openedOn = new Map(accts.map((a) => [a.id, (a as { opening_balance_date?: string | null }).opening_balance_date ?? null]));
+  const counted = (t: { bank_account_id?: string | null; txn_date?: string | null }) =>
+    countsAfterOpening(t, t.bank_account_id ? openedOn.get(t.bank_account_id) : null);
 
-  const lines = data.map((t) => ({
+  const balanceBefore = accts.reduce((s, a) => s + (a.opening_balance ?? 0), 0)
+    + before.filter(counted).reduce((s, t) => s + (t.credit ?? 0) - (t.debit ?? 0), 0);
+
+  const lines = data.filter(counted).map((t) => ({
     id: t.id,
     bank_account_id: t.bank_account_id,
     txn_date: t.txn_date,

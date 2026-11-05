@@ -17,7 +17,7 @@
  */
 import {
   CF_SERVICE_EXPIRY, CF_SUBS_PERIOD, getContact, getCustomerPayment, getInvoiceDetail, invoiceFieldValue,
-  listCustomerPaymentsPage,
+  listCustomerPaymentsPage, listInvoiceCreditsApplied, listInvoicePayments, ZohoApiError,
 } from "./api";
 import { mapGstTreatment, monthsOf, parseLineDescription, subsPeriodMonths } from "./import-plan";
 import { parsePlaceOfSupply, parseZohoDate } from "@/lib/import/zoho-opening-invoices";
@@ -80,8 +80,30 @@ export interface ZohoMatchInvoice {
   number: string;
   date: string | null;
   amountApplied: number | null;
+  /** R-2494: TDS this payment withheld on this invoice (the payment's invoices[].tax_amount_withheld). */
+  tdsApplied?: number | null;
   total: number | null;
   lines: ZohoMatchLine[];
+  /** R-2474: what Zoho's invoice says was paid / credited and when — the plan makes last year's
+   *  opening invoice from it (balance as at the FY start). Absent = read before R-2474. */
+  history?: ZohoInvoiceHistory | null;
+}
+
+/** R-2474: one Zoho invoice's money history (from the invoice detail the match already reads). */
+export interface ZohoInvoiceHistory {
+  dueDate: string | null;
+  /** Zoho's currency code (null = none given). */
+  currency: string | null;
+  /** What Zoho says is still due today. */
+  balance: number | null;
+  writeOff: number;
+  gstin: string | null;
+  /** GST state code of the invoice's place of supply ("07"), null = none. */
+  placeOfSupply: string | null;
+  /** Receipts applied to the invoice: cash amount + TDS withheld, by date. */
+  payments: Array<{ paymentId: string | null; date: string | null; amount: number; tds: number }>;
+  /** Credit notes applied to the invoice, by date. */
+  credits: Array<{ date: string | null; amount: number }>;
 }
 
 /** The Zoho customer of a match. R-2363: also WHERE it is, so "Create customer" makes it right
@@ -265,6 +287,90 @@ export async function findZohoPayment(line: BankCreditLine, deps: ZohoReadDeps):
   return { kind: "none", utrs, from, to };
 }
 
+/** R-2474: a Zoho invoice detail → its money history (payments, credits, write-off, balance). No
+ *  extra Zoho call: readZohoPaymentMatch already reads each invoice's detail. */
+export function zohoInvoiceHistory(inv: Record<string, unknown>): ZohoInvoiceHistory {
+  const arr = (v: unknown) => (Array.isArray(v) ? (v as Array<Record<string, unknown>>) : []);
+  const gstin = str(inv.gst_no);
+  return {
+    dueDate: parseZohoDate(str(inv.due_date)),
+    currency: str(inv.currency_code)?.toUpperCase() ?? null,
+    balance: num(inv.balance),
+    writeOff: num(inv.write_off_amount) ?? 0,
+    gstin: gstin ? gstin.toUpperCase() : null,
+    placeOfSupply: parsePlaceOfSupply(str(inv.place_of_supply)),
+    payments: arr(inv.payments).map(receiptFromZoho),
+    credits: arr(inv.credits).map(creditFromZoho),
+  };
+}
+
+type InvoiceReceipt = ZohoInvoiceHistory["payments"][number];
+
+/** One receipt on an invoice — the invoice detail's payments[] or GET /invoices/{id}/payments. */
+function receiptFromZoho(p: Record<string, unknown>): InvoiceReceipt {
+  return { paymentId: str(p.payment_id), date: parseZohoDate(str(p.date)), amount: num(p.amount) ?? 0, tds: num(p.tax_amount_withheld) ?? 0 };
+}
+
+/** One applied credit note — the invoice detail's shape (credited_amount) or /creditsapplied's (amount_applied). */
+function creditFromZoho(c: Record<string, unknown>): { date: string | null; amount: number } {
+  return { date: parseZohoDate(str(c.credited_date) ?? str(c.date)), amount: num(c.credited_amount) ?? num(c.amount_applied) ?? num(c.amount) ?? 0 };
+}
+
+const near = (a: number, b: number) => Math.abs(a - b) <= 0.5;
+
+/** A Zoho error on an extra history read that is not "busy" (429), "signed out" (401) or Zoho being
+ *  down (5xx / network) → the history stays as the detail gave it; openingFromZoho then refuses an
+ *  invoice that does not add up. Busy / signed out / down are thrown — the bulk route pauses on 429. */
+async function orKeep<T>(read: () => Promise<T>, keep: T): Promise<T> {
+  try {
+    return await read();
+  } catch (e) {
+    const s = e instanceof ZohoApiError ? e.status : undefined;
+    if (s !== undefined && s >= 400 && s < 500 && s !== 401 && s !== 429) return keep;
+    throw e;
+  }
+}
+
+/**
+ * R-2494: the invoice's history with its dated receipts and credits. Zoho's GET /invoices/{id} (v3
+ * reference) has only the totals payment_made / credits_applied — no lists (5 Nov staging: every
+ * fully-paid invoice read "receipts and credits ₹0"). A list is judged by its SUM against Zoho's total
+ * (an empty `payments: []` with payment_made > 0 is incomplete too):
+ *   - payments: the list adds up to payment_made → used as it is. Otherwise payment_made is THIS
+ *     payment's amount applied (± its TDS) → this payment is the one receipt (no extra call);
+ *     otherwise (or no payment_made and no list) GET /invoices/{id}/payments.
+ *   - credits: the list adds up to credits_applied (or none applied / no total) → as it is;
+ *     otherwise GET /invoices/{id}/creditsapplied.
+ * THIS payment's row always carries its amount applied to this invoice (a split payment's list row
+ * may carry the whole payment). The two reads run together.
+ */
+async function completeInvoiceHistory(
+  inv: Record<string, unknown>, applied: { id: string; amount: number | null; tds: number },
+  payment: ZohoPaymentRow, deps: ZohoReadDeps,
+): Promise<ZohoInvoiceHistory> {
+  const f = deps.fetch ?? fetch;
+  const h = zohoInvoiceHistory(inv);
+  const cash = applied.amount ?? 0;
+  const own = (p: InvoiceReceipt): InvoiceReceipt => (cash > 0 && p.paymentId === payment.zohoId ? { ...p, amount: cash, tds: applied.tds } : p);
+
+  const made = num(inv.payment_made);
+  const listedCash = h.payments.reduce((s, p) => s + p.amount, 0);
+  const listedAll = listedCash + h.payments.reduce((s, p) => s + p.tds, 0);
+  const paymentsOk = made === null ? Array.isArray(inv.payments) : made <= 0 || near(listedCash, made) || near(listedAll, made);
+  const onlyThis = made !== null && cash > 0 && (near(made, cash) || near(made, cash + applied.tds));
+  const payments: Promise<InvoiceReceipt[]> = paymentsOk ? Promise.resolve(h.payments)
+    : onlyThis ? Promise.resolve([{ paymentId: payment.zohoId, date: parseZohoDate(payment.date), amount: cash, tds: applied.tds }])
+      : orKeep(async () => (await listInvoicePayments(deps.orgId, deps.token, applied.id, f)).map(receiptFromZoho), h.payments);
+
+  const credited = num(inv.credits_applied);
+  const creditsOk = credited === null || credited <= 0 || near(h.credits.reduce((s, c) => s + c.amount, 0), credited);
+  const credits = creditsOk ? Promise.resolve(h.credits)
+    : orKeep(async () => (await listInvoiceCreditsApplied(deps.orgId, deps.token, applied.id, f)).map(creditFromZoho), h.credits);
+
+  const [p, c] = await Promise.all([payments, credits]);
+  return { ...h, payments: p.map(own), credits: c };
+}
+
 /** One invoice's lines with their periods. */
 export function matchLinesFromInvoice(inv: Record<string, unknown>): ZohoMatchLine[] {
   const number = str(inv.invoice_number) ?? "";
@@ -300,8 +406,8 @@ export async function readZohoPaymentMatch(
   const raw = await getCustomerPayment(deps.orgId, deps.token, paymentId, f);
   const payment = paymentFromZoho({ ...raw, payment_id: raw.payment_id ?? paymentId }) as ZohoPaymentRow;
   const applied = (Array.isArray(raw.invoices) ? (raw.invoices as Array<Record<string, unknown>>) : [])
-    .map((i) => ({ id: str(i.invoice_id), number: str(i.invoice_number) ?? "", amount: num(i.amount_applied) }))
-    .filter((i): i is { id: string; number: string; amount: number | null } => !!i.id);
+    .map((i) => ({ id: str(i.invoice_id), number: str(i.invoice_number) ?? "", amount: num(i.amount_applied), tds: num(i.tax_amount_withheld) ?? 0 }))
+    .filter((i): i is { id: string; number: string; amount: number | null; tds: number } => !!i.id);
 
   const invoices: ZohoMatchInvoice[] = [];
   let gstin: string | null = null;
@@ -316,8 +422,10 @@ export async function readZohoPaymentMatch(
       number: str(inv.invoice_number) ?? a.number,
       date: parseZohoDate(str(inv.date)),
       amountApplied: a.amount,
+      tdsApplied: a.tds,
       total: num(inv.total),
       lines: matchLinesFromInvoice({ ...inv, invoice_number: str(inv.invoice_number) ?? a.number }),
+      history: await completeInvoiceHistory(inv, a, payment, deps),
     });
   }
   if (!gstin && payment.customerZohoId) {

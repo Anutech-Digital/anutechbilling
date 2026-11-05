@@ -42,8 +42,8 @@ insert into auth.users (id, email) values
 insert into public.users (id, tenant_id, email, full_name, role, created_at) values
   ('aaaaaaaa-0000-0000-0000-000000234601','dddddddd-0000-0000-0000-000000234601','owner2346@example.in','Owner 2346','owner', now() - interval '1 day'),
   ('aaaaaaaa-0000-0000-0000-000000234602','dddddddd-0000-0000-0000-000000234601','sales2346@example.in','Sales 2346','sales', now() - interval '1 day');
-insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance) values
-  ('bbbbbbbb-0000-0000-0000-000000234601','dddddddd-0000-0000-0000-000000234601','HDFC Current','HDFC', 500000);
+insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance, opening_balance_date) values
+  ('bbbbbbbb-0000-0000-0000-000000234601','dddddddd-0000-0000-0000-000000234601','HDFC Current','HDFC', 500000, '2025-04-01');
 
 create temp table r2346_ids (k text primary key, v uuid);
 grant all on r2346_ids to public;

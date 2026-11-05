@@ -28,6 +28,7 @@ import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { fixStatementDates } from "@/lib/banking/statement-dates";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { classifyStatementFailure } from "@/lib/banking/statement-chunks";
+import { signedAmounts, columnIsSigned, parseAmount, signedRound, settleReversals, REVERSAL_MARK, type ParsedRow } from "@/lib/banking/statement-parse";
 
 /* Worst case for ONE request: 60 s + retry 60 s on the main model, then the same on the
    lighter one ≈ 4 min. Cloud Run's request timeout is 600 s (cloudbuild.yaml --timeout=600);
@@ -73,7 +74,7 @@ const PROMPT =
   "rows must hold exactly that many lines for each page. " +
   "RULES: date as YYYY-MM-DD (Indian statements are DD/MM/YYYY — convert). " +
   "A row is EITHER a debit (money out / withdrawal) OR a credit (money in / deposit) — put the amount in the right field and 0 in the other; never both. " +
-  "Amounts are plain numbers, no commas or ₹. balance = running/closing balance if the statement shows one, else null. " +
+  "Amounts are plain numbers, no commas or ₹; ordinary debits and credits are always POSITIVE; only a minus sign actually printed on the statement (a reversal, e.g. debit -20000) is kept, in the column it was printed in. balance = running/closing balance if the statement shows one, else null. " +
   "description = the narration/particulars text (UPI/NEFT/cheque details). " +
   "SKIP non-transaction lines: opening balance, closing balance, sub-totals, carried-forward, page headers/footers. " +
   "Keep chronological order as printed. If you cannot read it, return { \"rows\": [] }.";
@@ -95,30 +96,43 @@ function toDate(input: unknown): string | null {
   const d = new Date(s);
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
-const toInt = (v: unknown): number => {
-  const n = typeof v === "number" ? v : Number(String(v ?? "").replace(/[₹,\s]/g, ""));
-  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : 0;
-};
+/** Whole rupees, sign kept (R-2495: a negative debit is a reversal, not junk). R-2508: the sign
+    goes on after rounding the size, so -20000.5 and a printed (20000.50) are the same ₹. */
+const toSignedInt = (v: unknown): number =>
+  typeof v === "number" ? signedRound(v) : parseAmount(String(v ?? ""));
 
 /** Turn the AI rows into the ParsedRow shape the import expects; drop junk. */
-function sanitizeRows(rows: AiRow[]) {
-  const out: { txn_date: string; description: string; debit: number; credit: number; balance_after: number | null; reference: null }[] = [];
+function sanitizeRows(rows: AiRow[], final: boolean) {
+  const out: ParsedRow[] = [];
   let skipped = 0;
+  /* A model that writes EVERY withdrawal as -N is using signed amounts, not showing reversals. */
+  const signed = {
+    debit:  columnIsSigned(rows.map((r) => toSignedInt(r.debit))),
+    credit: columnIsSigned(rows.map((r) => toSignedInt(r.credit))),
+  };
   for (const r of rows) {
     const date = toDate(r.date);
-    const debit = toInt(r.debit);
-    const credit = toInt(r.credit);
+    /* R-2495: the same rule as the CSV / Excel parser — a negative debit is a credit of the
+       same amount (and a negative credit a debit), marked "(reversal)". */
+    const { debit, credit, reversal } = signedAmounts(toSignedInt(r.debit), toSignedInt(r.credit), signed);
     if (!date || (debit === 0 && credit === 0) || (debit > 0 && credit > 0)) { skipped++; continue; }
     const balRaw = r.balance;
+    const description = String(r.description ?? "").trim() || "(no description)";
     out.push({
       txn_date: date,
-      description: String(r.description ?? "").trim() || "(no description)",
+      description: reversal ? description + REVERSAL_MARK : description,
+      ...(reversal ? { reversal: true as const } : {}),
       debit, credit,
-      balance_after: balRaw == null ? null : (toInt(balRaw) || null),
+      /* Sign kept, as in the CSV / Excel parser: an overdraft / CC account balance is below 0. */
+      balance_after: balRaw == null ? null : (toSignedInt(balRaw) || null),
       reference: null,
     });
   }
-  return { rows: out, skipped };
+  /* R-2508: with 1–2 negatives (below the signed-column rule) a minus is a reversal only when the
+     running balance agrees; otherwise the line is marked checkSign and the dialog waits for the
+     owner. The dialog settles once more over the merged chunks (a chunk's first line has no
+     neighbour here). */
+  return { rows: settleReversals(out, { final }), skipped };
 }
 
 /* When the configured model is busy (503) or does not answer in time, one attempt on a
@@ -248,7 +262,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error, kind }, { status });
   }
 
-  const clean = sanitizeRows(answer.rows);
+  const clean = sanitizeRows(answer.rows, !pages);   // R-2508: one chunk of a longer PDF never settles "money out" alone
   /* R-1693: the model's own line count for the pages asked, and how many rows it wrote out —
      the browser treats "wrote fewer than it counted" like a break in the balance chain. */
   const rowCount = countedRows(answer.pages, pages ?? null);
