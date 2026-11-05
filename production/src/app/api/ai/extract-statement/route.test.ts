@@ -292,3 +292,14 @@ describe("R-2508 — review follow-ups on the PDF path", () => {
     expect(r.json.rows[1].checkSign).toBeUndefined();
   });
 });
+
+describe("R-2508 review — one chunk of a longer PDF", () => {
+  it("does not settle 'money out' on its own: the line comes back as check sign for the whole-statement check", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2025-09-09", description: "NEFT CR-DEMO", debit: 0, credit: 5000, balance: 105000 },
+      { date: "2025-09-10", description: "DEMO RENT", debit: -20000, credit: 0, balance: 85000 },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf", pages: { from: 1, to: 3, total: 12 } });
+    expect(r.json.rows[1]).toMatchObject({ checkSign: true, reversal: true });
+  });
+});

@@ -102,7 +102,7 @@ const toSignedInt = (v: unknown): number =>
   typeof v === "number" ? signedRound(v) : parseAmount(String(v ?? ""));
 
 /** Turn the AI rows into the ParsedRow shape the import expects; drop junk. */
-function sanitizeRows(rows: AiRow[]) {
+function sanitizeRows(rows: AiRow[], final: boolean) {
   const out: ParsedRow[] = [];
   let skipped = 0;
   /* A model that writes EVERY withdrawal as -N is using signed amounts, not showing reversals. */
@@ -132,7 +132,7 @@ function sanitizeRows(rows: AiRow[]) {
      running balance agrees; otherwise the line is marked checkSign and the dialog waits for the
      owner. The dialog settles once more over the merged chunks (a chunk's first line has no
      neighbour here). */
-  return { rows: settleReversals(out), skipped };
+  return { rows: settleReversals(out, { final }), skipped };
 }
 
 /* When the configured model is busy (503) or does not answer in time, one attempt on a
@@ -262,7 +262,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error, kind }, { status });
   }
 
-  const clean = sanitizeRows(answer.rows);
+  const clean = sanitizeRows(answer.rows, !pages);   // R-2508: one chunk of a longer PDF never settles "money out" alone
   /* R-1693: the model's own line count for the pages asked, and how many rows it wrote out —
      the browser treats "wrote fewer than it counted" like a break in the balance chain. */
   const rowCount = countedRows(answer.pages, pages ?? null);

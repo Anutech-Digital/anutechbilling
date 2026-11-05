@@ -65,7 +65,7 @@ import { directionOf } from "@/lib/banking/categorise";
 import { EXPENSE_CATEGORIES, suggestCategory } from "@/lib/queries/expenses";
 import { suggestForLine } from "@/lib/banking/categorise";
 import { rupee, formatDate } from "@/lib/utils";
-import { parseStatement, rowsToCsv, settleReversals, withReversalWarning, signCheckCount, applySignChoice, type ParsedRow, type ParseResult } from "@/lib/banking/statement-parse";
+import { parseStatement, rowsToCsv, settleReversals, withReversalWarning, applySignChoice, type ParsedRow, type ParseResult, type SignChoice } from "@/lib/banking/statement-parse";
 import { StatementSignCheck } from "./statement-sign-check";
 // Only the small reader module — SheetJS itself is `await import("xlsx")` inside excelToRows,
 // a separate chunk fetched when an Excel file is picked (R-1512).
@@ -130,7 +130,20 @@ type ImportOrigin = "pdf" | "csv" | "xlsx" | "paste" | "image";
 
 export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) {
   const [csvText, setCsvText] = React.useState("");
-  const [parsed, setParsed]   = React.useState<Preview | null>(null);
+  const [rawParsed, setParsed] = React.useState<Preview | null>(null);
+  /* R-2508: the owner's Money in / Money out answers for "check sign" lines, kept apart from the
+     parse (and tied to it) so answering never resets the other choices made in the preview. */
+  const [signPicks, setSignPicks] = React.useState<{ of: Preview | null; picks: Record<number, SignChoice> }>({ of: null, picks: {} });
+  const parsed = React.useMemo(() => {
+    const picks = rawParsed && signPicks.of === rawParsed ? Object.entries(signPicks.picks) : [];
+    if (!rawParsed || picks.length === 0) return rawParsed;
+    const rows = picks.reduce((rs, [i, c]) => applySignChoice(rs, Number(i), c), rawParsed.rows);
+    return { ...rawParsed, rows, warnings: withReversalWarning(rawParsed.warnings, rows) };
+  }, [rawParsed, signPicks]);
+  const chooseSign = (index: number, choice: SignChoice) => setSignPicks((s) => ({
+    of: rawParsed,
+    picks: { ...(s.of === rawParsed ? s.picks : {}), [index]: choice },
+  }));
   // "csv" = parsed from pasted/CSV text; "ai" = read from a PDF/photo via Gemini.
   const [mode, setMode]       = React.useState<"csv" | "ai">("csv");
   const [reading, setReading] = React.useState(false);
@@ -182,14 +195,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     [parsed],
   );
   const blocked = importBlocked(chainCheck, ackIncomplete);
-  /* R-2508: a minus the file does not explain waits for the owner — never guessed. */
-  const signWaits = parsed ? signCheckCount(parsed.rows) > 0 : false;
-  const chooseSign = (index: number, choice: "in" | "out") => setParsed((p) => {
-    if (!p) return p;
-    const rows = applySignChoice(p.rows, index, choice);
-    return { ...p, rows, warnings: withReversalWarning(p.warnings, rows) };
-  });
-  React.useEffect(() => { setOverride({}); setRuleDone({}); setAckIncomplete(false); }, [parsed]);
+  React.useEffect(() => { setOverride({}); setRuleDone({}); setAckIncomplete(false); }, [rawParsed]);
 
   const categoryFor = (i: number): string | null =>
     override[i] !== undefined ? (override[i] || null) : (suggestions[i]?.category ?? null);
@@ -215,16 +221,16 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const [openingDate, setOpeningDate] = React.useState("");
   React.useEffect(() => {
     setApplyOpening(false);
-    const latest = parsed?.rows.reduce<string | null>(
+    const latest = rawParsed?.rows.reduce<string | null>(
       (max, r) => (max === null || r.txn_date > max ? r.txn_date : max), null);
     setOpeningDate(latest ? fyStartFor(latest) : "");
-  }, [parsed]);
+  }, [rawParsed]);
   const opening = React.useMemo(
     () => (parsed && openingDate ? openingBalanceFromStatement(parsed.rows, openingDate) : null),
     [parsed, openingDate],
   );
   const openingOn = applyOpening && opening?.ok === true;
-  React.useEffect(() => { setAcceptDifference(false); }, [parsed, openingDate, applyOpening]);
+  React.useEffect(() => { setAcceptDifference(false); }, [rawParsed, openingDate, applyOpening]);
 
   /* R-2497: moving the opening EARLIER must keep today's balance — the statement's balance at
      the start of the old opening date must equal the old opening (±₹1). Preview of the check
@@ -256,6 +262,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     [openingOn, openingDate],
   );
   const excludedCount = parsed ? parsed.rows.filter(isExcluded).length : 0;
+  /* R-2508: a minus the file does not explain waits for the owner — never guessed. A line that
+     will not be imported (before the new opening date) does not hold the import up. */
+  const signWaits = parsed ? parsed.rows.some((r) => r.checkSign && !isExcluded(r)) : false;
 
   /* How many parsed rows are already in the books (will be skipped on import) — the same
      function the import itself runs (planBankImport, R-1691), so the count shown here is
@@ -270,7 +279,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     return { duplicates: p.duplicates, freshCount: p.fresh.length, skipped: p.skipped };
   }, [parsed, existingKeys, isExcluded]);
   const [importSkipped, setImportSkipped] = React.useState(false);
-  React.useEffect(() => { setImportSkipped(false); }, [parsed]);
+  React.useEffect(() => { setImportSkipped(false); }, [rawParsed]);
   const dupCount = importSkipped ? 0 : (plan?.duplicates ?? 0);
   const skippedLines = plan?.skipped ?? [];
   const freshCount = (plan?.freshCount ?? 0) + (importSkipped ? skippedLines.length : 0);
@@ -622,7 +631,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                   note={parsed.rereadNote}
                 />
               )}
-              <StatementSignCheck rows={parsed.rows} onChoose={chooseSign} />
+              <StatementSignCheck rows={parsed.rows} onChoose={chooseSign} skip={isExcluded} />
               {parsed.warnings.length > 0 && (
                 <ul className="text-xs text-rose space-y-0.5 mb-2">
                   {parsed.warnings.map((w, i) => <li key={i}>• {w}</li>)}

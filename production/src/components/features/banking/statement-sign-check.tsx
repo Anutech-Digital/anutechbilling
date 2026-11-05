@@ -1,9 +1,10 @@
 /**
  * StatementSignCheck — in the import preview: lines whose minus sign the file does not explain
  * (R-2508). A withdrawal printed "-20,000" can be a reversal (money back in, e.g. a failed ATM
- * withdrawal) or just a withdrawal written with a minus. With no running balance that moves by
- * the amount, the app does not guess: each such line is listed here and Import waits until the
- * owner presses Money in or Money out for it (lib/banking/statement-parse.ts applySignChoice).
+ * withdrawal) or just a withdrawal written with a minus; a deposit printed "-750" the other way
+ * round. When the running balance next to the line does not show which, the app does not guess:
+ * each such line is listed here and Import waits until the owner presses Money in or Money out
+ * (lib/banking/statement-parse.ts applySignChoice).
  */
 "use client";
 
@@ -11,15 +12,17 @@ import * as React from "react";
 import { Icon } from "@/components/ui/icon";
 import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
-import type { ParsedRow } from "@/lib/banking/statement-parse";
+import { signChoiceDirections, type ParsedRow, type SignChoice } from "@/lib/banking/statement-parse";
 
 interface Props {
   rows: readonly ParsedRow[];
-  onChoose: (index: number, choice: "in" | "out") => void;
+  onChoose: (index: number, choice: SignChoice) => void;
+  /** Lines that will not be imported (e.g. before a new opening date) — not asked about. */
+  skip?: (r: ParsedRow) => boolean;
 }
 
-export function StatementSignCheck({ rows, onChoose }: Props) {
-  const waiting = rows.flatMap((r, i) => (r.checkSign ? [{ r, i }] : []));
+export function StatementSignCheck({ rows, onChoose, skip }: Props) {
+  const waiting = rows.flatMap((r, i) => (r.checkSign && !skip?.(r) ? [{ r, i }] : []));
   if (waiting.length === 0) return null;
   const n = waiting.length;
   return (
@@ -29,26 +32,28 @@ export function StatementSignCheck({ rows, onChoose }: Props) {
         <span>Check the sign — {n} line{n === 1 ? "" : "s"}</span>
       </p>
       <p className="mt-1 text-xs text-ink-2">
-        {n === 1 ? "This line has" : "These lines have"} a minus sign in the amount column, and the file has no running
-        balance that shows whether it is money back in (a reversal, e.g. a failed ATM withdrawal) or money out.
-        Import waits until you choose for each line.
+        {n === 1 ? "This line has" : "These lines have"} a minus sign in the amount column, and the statement&apos;s
+        running balance does not show whether the money came back (a reversal, e.g. a failed ATM withdrawal) or
+        is an ordinary {n === 1 ? "entry" : "entries"} written with a minus. Import waits until you choose for each line.
       </p>
       <ul className="mt-2 space-y-1.5">
         {waiting.map(({ r, i }) => {
-          // The line is held as the reversal reading: a minus in Withdrawal shows as a credit.
-          const fromWithdrawal = r.credit > 0;
-          const amount = fromWithdrawal ? r.credit : r.debit;
+          const d = signChoiceDirections(r);
+          // Money in first, then Money out — whichever reading each one is.
+          const options: Array<{ dir: "in" | "out"; choice: SignChoice }> = [
+            { dir: "in", choice: d.reversal === "in" ? "reversal" : "printed" },
+            { dir: "out", choice: d.reversal === "out" ? "reversal" : "printed" },
+          ];
           return (
             <li key={i} className="flex flex-wrap items-center gap-2 text-xs">
               <span className="min-w-0 flex-1 truncate" title={r.description}>
-                {formatDate(r.txn_date)} · {fromWithdrawal ? "Withdrawal" : "Deposit"} column shows −{rupee(amount)} · {r.description}
+                {formatDate(r.txn_date)} · {d.column} column shows −{rupee(d.amount)} · {r.description}
               </span>
-              <Button type="button" size="sm" variant="default" onClick={() => onChoose(i, "in")}>
-                Money in (reversal)
-              </Button>
-              <Button type="button" size="sm" variant="default" onClick={() => onChoose(i, "out")}>
-                Money out
-              </Button>
+              {options.map((o) => (
+                <Button key={o.dir} type="button" size="sm" variant="default" onClick={() => onChoose(i, o.choice)}>
+                  {o.dir === "in" ? "Money in" : "Money out"}{o.choice === "reversal" ? " (reversal)" : ""}
+                </Button>
+              ))}
             </li>
           );
         })}

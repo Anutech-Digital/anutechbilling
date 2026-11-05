@@ -220,17 +220,15 @@ function reversalVerdict(rows: readonly ParsedRow[], i: number, dir: "asc" | "de
   const r = rows[i];
   if (!hasBalance(r)) return "unknown";
   const net = netOf(r);                       // the flipped (reversal) reading's movement
-  const neighbours = dir === "asc" ? [i - 1] : dir === "desc" ? [i + 1] : [i - 1, i + 1];
-  let flipped = 0, printed = 0;
-  for (const j of neighbours) {
-    const n = rows[j];
-    if (!hasBalance(n)) continue;
-    const moved = r.balance_after - n.balance_after;
-    if (near(moved, net)) flipped++;
-    if (near(moved, -net)) printed++;
-  }
-  if (flipped > 0 && printed === 0) return "flipped";
-  if (printed > 0 && flipped === 0) return "printed";
+  /* The line BEFORE it in time: the previous line in an oldest-first file, the next one in a
+     newest-first file. No settled lines to tell the order → oldest-first, as banks print and the
+     AI prompt asks — never both neighbours (the wrong one only matches by coincidence). */
+  const n = rows[dir === "desc" ? i + 1 : i - 1];
+  if (!hasBalance(n)) return "unknown";
+  const moved = r.balance_after - n.balance_after;
+  const flipped = near(moved, net), printed = near(moved, -net);
+  if (flipped && !printed) return "flipped";
+  if (printed && !flipped) return "printed";
   return "unknown";
 }
 
@@ -255,43 +253,62 @@ function asUnsettled<T extends ParsedRow>(r: T): T {
  * Settle every line read as a reversal against the running balance (see above). Same answer
  * when run again — the CSV / Excel parser runs it, and the dialog runs it once more over the
  * merged AI chunks, where a line on a chunk's edge finally has its neighbour.
+ * `final: false` (one AI chunk of a longer PDF): "printed" is NOT decided there — that drops the
+ * reversal flag, so the dialog's run over the whole statement could never look again. The line
+ * stays "check sign" until the whole-statement run settles it.
  */
-export function settleReversals<T extends ParsedRow>(rows: readonly T[]): T[] {
+export function settleReversals<T extends ParsedRow>(rows: readonly T[], opts: { final?: boolean } = {}): T[] {
   if (!rows.some((r) => r.reversal)) return [...rows];
+  const final = opts.final ?? true;
   const dir = chainDirection(rows);
   return rows.map((r, i) => {
     if (!r.reversal) return r;
     const v = reversalVerdict(rows, i, dir);
     if (v === "flipped") return asReversal(r);
-    if (v === "printed") return asPrinted(r);
+    if (v === "printed" && final) return asPrinted(r);
     return asUnsettled(r);
   });
 }
 
-/** R-2508: the owner's answer for one "check sign" line — money "in" (a reversal) or "out". */
-export function applySignChoice<T extends ParsedRow>(rows: readonly T[], index: number, choice: "in" | "out"): T[] {
+/**
+ * R-2508: the owner's answer for one "check sign" line — "reversal" (the minus means the money
+ * moved back: a Withdrawal-column minus is money IN, a Deposit-column minus money OUT) or
+ * "printed" (the minus is only how the file writes that column).
+ */
+export type SignChoice = "reversal" | "printed";
+export function applySignChoice<T extends ParsedRow>(rows: readonly T[], index: number, choice: SignChoice): T[] {
   return rows.map((r, i) => {
     if (i !== index || !r.checkSign) return r;
-    return choice === "in" ? asReversal(r) : asPrinted(r);
+    return choice === "reversal" ? asReversal(r) : asPrinted(r);
   });
+}
+
+/** R-2508: what a "check sign" line does to the account under each choice (for the buttons). */
+export function signChoiceDirections(r: Pick<ParsedRow, "debit" | "credit">): {
+  reversal: "in" | "out"; printed: "in" | "out"; amount: number; column: "Withdrawal" | "Deposit";
+} {
+  // The line is held as the reversal reading: a Withdrawal-column minus shows as a credit.
+  return r.credit > 0
+    ? { reversal: "in", printed: "out", amount: r.credit, column: "Withdrawal" }
+    : { reversal: "out", printed: "in", amount: r.debit, column: "Deposit" };
 }
 
 /** The mark a reversal line's narration gets, so the owner sees why the money moved back. */
 export const REVERSAL_MARK = " (reversal)";
 
 /** R-2495: said in the preview, so a flipped line is never a silent change. */
+const REVERSAL_PHRASE = "a negative amount — a reversal";
 export function reversalWarning(n: number): string {
-  return `${n} line${n === 1 ? " has" : "s have"} a negative amount — a reversal (e.g. a failed ATM withdrawal) — and ${n === 1 ? "was" : "were"} read as the opposite side, marked "(reversal)". Check ${n === 1 ? "it" : "them"} in the preview.`;
+  return `${n} line${n === 1 ? " has" : "s have"} ${REVERSAL_PHRASE} (e.g. a failed ATM withdrawal) — and ${n === 1 ? "was" : "were"} read as the opposite side, marked "(reversal)". Check ${n === 1 ? "it" : "them"} in the preview.`;
 }
 
 /** R-2508: the warnings with ONE up-to-date reversal sentence for these rows (none when 0) — a
     line the owner settled as money out must not leave "1 line … reversal" behind. */
 export function withReversalWarning(warnings: readonly string[], rows: readonly { reversal?: true; checkSign?: true }[]): string[] {
   const n = countReversals(rows);
-  const rest = warnings.filter((w) => !REVERSAL_SENTENCE.test(w));
+  const rest = warnings.filter((w) => !w.includes(REVERSAL_PHRASE));
   return n > 0 ? [...rest, reversalWarning(n)] : rest;
 }
-const REVERSAL_SENTENCE = /^\d+ lines? ha(?:s|ve) a negative amount — a reversal/;
 
 /**
  * Normalise a header cell so HDFC's "Withdrawal Amt." matches the alias

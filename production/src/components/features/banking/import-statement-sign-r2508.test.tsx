@@ -70,3 +70,23 @@ describe("R-2508 import dialog — check the sign", () => {
     expect(rows.find((r) => r.description.startsWith("DEMO RENT"))).toMatchObject({ debit: 0, credit: 20000, description: "DEMO RENT (reversal)" });
   });
 });
+
+describe("R-2508 review — Deposit column, and other choices survive", () => {
+  it("a Deposit-column minus: Money out is the reversal, Money in keeps it as a deposit", async () => {
+    await paste(["Date,Narration,Withdrawal Amt.,Deposit Amt.", "09/09/2025,NEFT CR-DEMO,,5000.00", "10/09/2025,DEMO REFUND,,-750.00"].join("\n"));
+    expect(screen.getByRole("button", { name: "Money out (reversal)" })).toBeTruthy();
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Money in" })); });
+    await act(async () => { fireEvent.click(importButton()); });
+    const rows = state.importSpy.mock.calls[0][0].rows as Array<{ description: string; debit: number; credit: number }>;
+    expect(rows.find((r) => r.description === "DEMO REFUND")).toMatchObject({ debit: 0, credit: 750 });
+  });
+
+  it("answering the sign keeps a category the owner already picked", async () => {
+    await paste();
+    const pick = screen.getByLabelText("Category for NEFT CR-DEMO") as HTMLSelectElement;
+    const value = Array.from(pick.options).map((o) => o.value).find((v) => v !== "")!;
+    await act(async () => { fireEvent.change(pick, { target: { value } }); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Money out/ })); });
+    expect((screen.getByLabelText("Category for NEFT CR-DEMO") as HTMLSelectElement).value).toBe(value);
+  });
+});

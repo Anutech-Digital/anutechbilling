@@ -60,7 +60,13 @@ const MATCH = {
 let answer: unknown;
 const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) => new Response(JSON.stringify(answer), { status: 200 }));
 
+/* R-2508: the clock is frozen on the bank line's own day (21 Jul 2026, IST noon) so nothing in
+   this file depends on the day the suite runs. Only Date is faked — timers stay real for waitFor. */
+const FROZEN_NOW = new Date("2026-07-21T06:30:00Z");
+
 beforeEach(() => {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(FROZEN_NOW);
   Object.values(state).forEach((f) => f.mockReset());
   fetchMock.mockClear();
   answer = { ok: true, result: { kind: "match", match: MATCH } };
