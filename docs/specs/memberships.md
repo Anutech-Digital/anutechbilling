@@ -237,3 +237,55 @@ also be 0 on a healthy DB.
 - **Local check:** `node scripts/dev/scenario.mjs two-companies` gives "Local test login → Owner" a
   Manager membership in "SCN Second Company Pvt Ltd" (`--clear` moves the login back first —
   users.tenant_id cascades on a company delete).
+
+## 6. Slice 3 — Invite / Claim / Remove on memberships (R-2477, 5 Nov 2026)
+
+Migration `20261105160300_r2477_membership_invite_claim_remove.sql`, SQL test
+`supabase/tests/r2477_membership_invite_claim_remove.test.sql`.
+
+- **Invite a login that works in another company** (Team → Invite). `release_stale_team_invite`
+  still answers `member_elsewhere`; the route then calls `prepare_invite_for_existing_login(email)`
+  (owner + MFA re-checked in SQL). It deletes the other company's ACCEPTED invite row for that
+  address (history only — it just blocks the one-row-per-address index; no line is written there,
+  so that company is not told another company invited their member) and answers `ready`, or
+  `already_member` when the login is already a member here. The invite is written; the email has no
+  signup link (they have a login) and says they keep their company. A live (not accepted) invite
+  elsewhere still answers "open invite from another company". Unknown answer / error → the R-2469
+  refusal (old behaviour, e.g. migration not deployed yet).
+- **Claim activates the membership** (Team → Claim a colleague). The R-721 handshake is unchanged:
+  an invite counts only after the person signed in AFTER it. `list_stranded_auth_users()` now also
+  lists an existing login that is not a member here, has an open invite here and signed in after it.
+  `merge_stranded_user_into_tenant`: already a member here (not ended) → role fix only, on the
+  membership; a login in a real company (anyone else there, another active membership, or any
+  business record) → a membership here (`added`), or the ended one re-opened (`rejoined` — role from
+  the claim, no end date, no manager / deals / new-lead turn, employee link kept); they keep the
+  other company and pick this one in the switcher. If their selected company is no longer usable
+  (removed / off / expired) this membership becomes the selected one. A blank accidental workspace
+  is still moved + removed (R-721). The other company's name is never returned for `added`.
+- **Remove from this company** — `remove_company_member(user)` via DELETE `/api/team/members/:id`
+  (session forwarded; the route drops the gateway role cache of the removed login). Owner of the
+  current company only (MFA), never yourself, never the last active owner; every owner membership
+  of the company is locked in one order first, so two owners removing each other cannot both win.
+  Ends ONLY this membership (`ended_at`, `end_reason = 'removed'`, `ended_by`), audit line
+  `member_removed` in this company (does not name any other company). The users row and every FK
+  stay. If it was their selected company, the selection moves to their newest other active
+  membership (same UPDATE + activity-log rule as `switch_company`, via internal
+  `r2477_select_membership`, no grant to any app role), else to none (mirror → `users.is_active =
+  false` → `current_tenant_id()` NULL, R-722 signs them out). To come back: invite again + Claim.
+- **Team list / edits** — `company_members()` lists the selected company's memberships (not ended)
+  with name / email from users, so a member working in another company right now is still listed;
+  `update_company_member(user, patch)` (role, manager_id, can_view_deals, gets_new_leads only) edits
+  the membership — the selected company's values reach users through the mirror. Last active owner
+  cannot be demoted; a manager must be a member of this company.
+- **`users_tenant_delete` dropped** (§4): deleting a teammate's login row deleted their memberships in
+  every company. No app path used it.
+- **guard_privileged_user_columns**: the switch branch now accepts a selection change of the ROW's
+  login (not only the caller's own) onto that login's active membership with exactly its values —
+  needed for the definer move above. A direct PATCH still cannot move another login:
+  `users_tenant_update` has no WITH CHECK of its own, so its USING (`tenant_id =
+  current_tenant_id()`) is the check and keeps the row in the caller's company.
+
+Not in slice 3 (follow-ups): other pickers (assignee, chat #general R-2296, reports) still read
+`users` of the selected company, so a member working in another company right now is not offered
+there until they switch; an invited existing login has no in-app "accept" — they sign in once and
+the owner presses Claim.

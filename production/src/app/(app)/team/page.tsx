@@ -41,6 +41,9 @@ import { ClaimColleagueCard } from "@/components/features/team/claim-colleague-c
 import { INVITABLE_ROLES, ROLE_LABEL, type InvitableRole } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
 import { teamAccess } from "./team-access";
+import { existingLoginInvitedNote } from "@/lib/auth/stale-invite";
+import { istToday } from "@/lib/dates/ist";
+import { canRemoveMember, removeMember, updateMembership, type MembershipPatch } from "@/lib/auth/team-membership";
 
 /* Role vocabulary comes from roles.ts, not from here. This file used to carry its
    own ROLES list and ROLE_LABEL map — a fourth description of roles alongside the
@@ -56,7 +59,9 @@ const ROLE_TONE: Record<Role, "success" | "info" | "muted" | "warning"> = {
   marketing: "info",
 };
 
-interface Member { id: string; full_name: string | null; email: string | null; role: Role; initials: string | null; color: string | null; is_active: boolean | null; can_view_deals: boolean | null; manager_id: string | null; gets_new_leads: boolean | null; }
+interface Member { id: string; full_name: string | null; email: string | null; role: Role; initials: string | null; color: string | null; is_active: boolean | null; can_view_deals: boolean | null; manager_id: string | null; gets_new_leads: boolean | null;
+  /* R-2477 (company_members): last day in THIS company, and whether this is the company they work in right now. */
+  access_ends_on?: string | null; is_selected?: boolean | null; }
 interface Invite { id: string; email: string; role: Role; created_at: string; }
 
 export default function TeamPage() {
@@ -71,16 +76,16 @@ export default function TeamPage() {
      `[]` and nothing read isLoading/isError, so a failed load printed "Members 0" and an
      empty table — "my whole team is gone". */
   const membersQ = useQuery({
-    queryKey: ["team", "members"],
+    /* R-2477: its own key — ["team", "members"] is the assignee pickers' list (useTeamMembers:
+       active logins of the selected company only), a different shape. */
+    queryKey: ["team", "memberships"],
     queryFn: async () => {
       const supabase = createClient();
-      const { data, error } = await supabase
-        .from("users")
-        /* manager_id is safe to name here: it is LIVE in production, verified 18 Aug 2026.
-           Naming a column that does not exist makes PostgREST reject the whole request
-           (PGRST201) — the failure that once left the sidebar reading "Loading…" for ever. */
-        .select("id, full_name, email, role, initials, color, is_active, can_view_deals, manager_id, gets_new_leads")
-        .order("created_at", { ascending: true });
+      /* R-2477: the company's MEMBERSHIPS (company_members(), SECURITY DEFINER, this company only),
+         not the users rows whose selected company is this one — a member working in another
+         company right now is still on the list, and can still be edited and removed. */
+      const { data, error } = await (supabase.rpc as unknown as (fn: "company_members") =>
+        PromiseLike<{ data: Member[] | null; error: Error | null }>).call(supabase, "company_members");
       if (error) throw error;
       return (data ?? []) as Member[];
     },
@@ -116,16 +121,31 @@ export default function TeamPage() {
   });
 
   const updateMember = useMutation({
-    mutationFn: async (input: { id: string; patch: { role?: Role; can_view_deals?: boolean; manager_id?: string | null; gets_new_leads?: boolean } }) => {
-      const supabase = createClient();
-      const { error } = await supabase.from("users").update(input.patch).eq("id", input.id);
-      if (error) throw error;
+    /* R-2477: the membership in THIS company (update_company_member — owner, last owner and
+       manager rules in SQL); the users mirror follows for the selected company. */
+    mutationFn: async (input: { id: string; patch: MembershipPatch }) => {
+      await updateMembership(createClient(), input.id, input.patch);
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["team", "members"] }); toast.success("Member updated"); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["team"] }); toast.success("Member updated"); },
     onError: (e) => toastError(e, { fallback: "Couldn't update this member." }),
   });
 
+  const [removing, setRemoving] = React.useState<Member | null>(null);
+  const removeMut = useMutation({
+    mutationFn: async (m: Member) => { await removeMember(m.id); },
+    onSuccess: (_d, m) => {
+      qc.invalidateQueries({ queryKey: ["team"] });
+      toast.success(`Removed ${m.full_name ?? m.email} from this company. Their records stay, with their name on them.`);
+      setRemoving(null);
+    },
+    onError: (e) => toastError(e, { fallback: "Couldn't remove this member." }),
+  });
+
   const owners = members.filter((m) => m.role === "owner").length;
+  /* Same rule as the SQL "last active owner": on, and not past their last day (IST). */
+  const today = istToday();
+  const activeOwners = members.filter((m) => m.role === "owner" && m.is_active !== false
+    && (!m.access_ends_on || m.access_ends_on >= today)).length;
 
   /* The shape src/lib/team/visibility.ts reasons in. No useMemo: this list is a handful of
      people, and a hook added below a conditional return is how the last rules-of-hooks
@@ -231,7 +251,7 @@ export default function TeamPage() {
                 {canManage && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Deals access</th>}
                 {canManage && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3" title="New website, WhatsApp and IndiaMART leads are shared in turn between the ticked people">New leads</th>}
                 <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Status</th>
-                {canManage && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Password</th>}
+                {canManage && <th className="p-3 text-left text-xs font-semibold uppercase tracking-wider text-ink-3">Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -309,8 +329,14 @@ export default function TeamPage() {
                     <td className="p-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <SendResetLinkButton email={m.email} />
-                        {canSetTempPassword(m, me?.userId) && (
+                        {canSetTempPassword(m, me?.userId) && m.is_selected !== false && (
                           <SetTempPasswordButton memberId={m.id} name={m.full_name ?? m.email ?? "this teammate"} />
+                        )}
+                        {canRemoveMember(m, me?.userId, activeOwners) && (
+                          <Button variant="ghost" size="sm" icon="logout" onClick={() => setRemoving(m)}
+                            aria-label={`Remove ${m.full_name ?? m.email ?? "this member"} from this company`}>
+                            Remove
+                          </Button>
                         )}
                       </div>
                     </td>
@@ -416,8 +442,14 @@ export default function TeamPage() {
               {canManage && (
                 <div className="mt-3 flex flex-wrap items-center gap-2">
                   <SendResetLinkButton email={m.email} />
-                  {canSetTempPassword(m, me?.userId) && (
+                  {canSetTempPassword(m, me?.userId) && m.is_selected !== false && (
                     <SetTempPasswordButton memberId={m.id} name={m.full_name ?? m.email ?? "this teammate"} />
+                  )}
+                  {canRemoveMember(m, me?.userId, activeOwners) && (
+                    <Button variant="ghost" size="sm" icon="logout" onClick={() => setRemoving(m)}
+                      aria-label={`Remove ${m.full_name ?? m.email ?? "this member"} from this company`}>
+                      Remove
+                    </Button>
                   )}
                 </div>
               )}
@@ -477,10 +509,31 @@ export default function TeamPage() {
           onInvited={() => {
             qc.invalidateQueries({ queryKey: ["team", "invites"] });
             /* R-534: an invite with a temporary password adds the member straight away. */
-            qc.invalidateQueries({ queryKey: ["team", "members"] });
+            qc.invalidateQueries({ queryKey: ["team"] });
           }}
         />
       )}
+
+      {/* R-2477: one confirm for desktop and phone. Says exactly what Remove does and does not do. */}
+      <Dialog open={removing !== null} onOpenChange={(o) => { if (!o && !removeMut.isPending) setRemoving(null); }}>
+        <DialogContent className="md:!max-w-md">
+          <DialogHeader>
+            <DialogTitle>Remove {removing?.full_name ?? removing?.email} from this company?</DialogTitle>
+            <DialogDescription>
+              They lose access to this company straight away. Their login is not deleted, and every
+              record they made here stays, with their name on it. If they work in another company on
+              ResellerOS, they keep that. To bring them back later, invite them again.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setRemoving(null)} disabled={removeMut.isPending}>Cancel</Button>
+            <Button variant="danger" icon="logout" loading={removeMut.isPending}
+              onClick={() => { if (removing) removeMut.mutate(removing); }}>
+              Remove from this company
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Mobile FAB — primary list action (owner only) */}
       {canManage && (
@@ -526,6 +579,13 @@ function InviteDialog({ open, onOpenChange, onInvited }: {
       const json = await res.json().catch(() => ({}));
       if (!res.ok) {
         toastError(json.error, { fallback: "Couldn't send the invite." });
+        return;
+      }
+      if (json.existingLogin) {
+        /* R-2477: they already work in another company — say the next step (sign in, then Claim). */
+        toast.success(existingLoginInvitedNote(clean), { duration: 10_000 });
+        onInvited();
+        onOpenChange(false);
         return;
       }
       if (json.memberCreated && typeof json.password === "string") {

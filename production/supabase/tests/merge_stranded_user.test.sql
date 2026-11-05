@@ -5,9 +5,12 @@
 --   1. MOVE + DELETE  — a colleague in an accidental EMPTY workspace is moved, and
 --                       that workspace is deleted.
 --   2. ATTACH         — an auth account with no public.users row anywhere gets one.
---   3. REFUSE (data)  — a workspace holding business data is not touched AT ALL:
+--   3. KEEP (data)    — a workspace holding business data is not touched AT ALL:
 --                       the user is NOT moved and the workspace is NOT deleted.
---   4. REFUSE (people)— a workspace with other members is refused before that.
+--                       R-2477 (memberships): the claim now ADDS a membership in the
+--                       claiming company instead of refusing; they keep their workspace.
+--   4. KEEP (people)  — a workspace with other members is a real company: same — a
+--                       membership is added, nobody is moved, nothing named.
 --   5. REFUSE (role)  — a non-owner cannot claim anyone.
 --   6. NO CROSS-TENANT— an owner cannot claim into a tenant that is not theirs.
 --
@@ -107,7 +110,8 @@ rollback;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 3) REFUSE (data): THE IMPORTANT ONE — nothing is touched, not even the user
+-- 3) KEEP (data): THE IMPORTANT ONE — their workspace is not touched, not even the user
+--    (R-2477: the claim adds a membership here instead of refusing)
 -- ─────────────────────────────────────────────────────────────────────────────
 begin;
 select set_config('request.jwt.claims','{"role":"service_role"}',true);
@@ -127,39 +131,43 @@ insert into public.join_requests (tenant_id,auth_user_id,email,matched_by) value
 insert into public.customers (id,tenant_id,name,contact_email) values
   ('4444cccc-0000-0000-0000-000000000006','2222aaaa-0000-0000-0000-000000000006','A IOTA TECHNOLOGIES','vinay@x.in');
 
-do $$ declare msg text; tid uuid; t int; begin
+do $$ declare r jsonb; tid uuid; t int; begin
   perform set_config('request.jwt.claims',
     '{"sub":"3333bbbb-0000-0000-0000-000000000005","role":"authenticated"}', true);
 
-  begin
-    perform public.merge_stranded_user_into_tenant(
-      'ranjeet@m4.in','2222aaaa-0000-0000-0000-000000000005','support');
-    raise exception 'FAIL 3: the call SUCCEEDED against a workspace holding data';
-  exception when others then
-    msg := sqlerrm;
-    if msg like 'FAIL 3:%' then raise; end if;
-  end;
+  r := public.merge_stranded_user_into_tenant(
+    'ranjeet@m4.in','2222aaaa-0000-0000-0000-000000000005','support');
+  if r->>'action' <> 'added' then
+    raise exception 'FAIL 3: expected a membership to be added (R-2477), got %', r; end if;
+  -- R-721: never names the other workspace.
+  if r::text like '%Has Data Co%' or r->>'old_tenant_name' is not null or (r->>'old_tenant_deleted')::boolean then
+    raise exception 'FAIL 3: result names / deletes the other workspace: %', r; end if;
 
-  if msg not like '%still holds%' then
-    raise exception 'FAIL 3: refusal did not state what was in the way: %', msg; end if;
-  -- R-721: the refusal no longer names the other workspace or lists its tables.
-  if msg like '%Has Data Co%' or msg like '%customers%' then
-    raise exception 'FAIL 3: refusal leaks the other workspace''s name or contents: %', msg; end if;
-
-  -- The whole point: the refusal is total. No partial application.
+  -- The whole point: their workspace and its data are untouched.
   select tenant_id into tid from public.users where id='3333bbbb-0000-0000-0000-000000000006';
   if tid <> '2222aaaa-0000-0000-0000-000000000006' then
-    raise exception 'FAIL 3: user was moved anyway — data is now orphaned'; end if;
+    raise exception 'FAIL 3: user was moved — data is now orphaned'; end if;
   select count(*) into t from public.tenants where id='2222aaaa-0000-0000-0000-000000000006';
   if t<>1 then raise exception 'FAIL 3: workspace holding data was deleted'; end if;
+  select count(*) into t from public.customers where id='4444cccc-0000-0000-0000-000000000006';
+  if t<>1 then raise exception 'FAIL 3: the workspace''s customer is gone'; end if;
+  select count(*) into t from public.tenant_memberships
+   where user_id='3333bbbb-0000-0000-0000-000000000006' and tenant_id='2222aaaa-0000-0000-0000-000000000006'
+     and ended_at is null and is_active;
+  if t<>1 then raise exception 'FAIL 3: their own membership was ended'; end if;
+  select count(*) into t from public.tenant_memberships
+   where user_id='3333bbbb-0000-0000-0000-000000000006' and tenant_id='2222aaaa-0000-0000-0000-000000000005'
+     and role='support' and ended_at is null and is_active;
+  if t<>1 then raise exception 'FAIL 3: no active support membership in Main Co'; end if;
 
-  raise notice 'PASS 3: refused, and NOTHING was changed';
+  raise notice 'PASS 3: membership added, their workspace and its data untouched';
 end $$;
 rollback;
 
 
 -- ─────────────────────────────────────────────────────────────────────────────
--- 4) REFUSE (people): a workspace with other members is somebody's real company
+-- 4) KEEP (people): a workspace with other members is somebody's real company
+--    (R-2477: a membership is added; nobody is moved out of it)
 -- ─────────────────────────────────────────────────────────────────────────────
 begin;
 select set_config('request.jwt.claims','{"role":"service_role"}',true);
@@ -178,22 +186,21 @@ insert into public.users (id,tenant_id,email,full_name,role) values
 insert into public.join_requests (tenant_id,auth_user_id,email,matched_by) values
   ('2222aaaa-0000-0000-0000-000000000007','3333bbbb-0000-0000-0000-000000000008','a@m6.in','manual');
 
-do $$ declare msg text; begin
+do $$ declare r jsonb; t int; begin
   perform set_config('request.jwt.claims',
     '{"sub":"3333bbbb-0000-0000-0000-000000000007","role":"authenticated"}', true);
-  begin
-    perform public.merge_stranded_user_into_tenant(
-      'a@m6.in','2222aaaa-0000-0000-0000-000000000007','support');
-    raise exception 'FAIL 4: claimed a user out of a multi-person company';
-  exception when others then
-    msg := sqlerrm;
-    if msg like 'FAIL 4:%' then raise; end if;
-  end;
-  if msg not like '%people in it%' then
-    raise exception 'FAIL 4: wrong refusal reason: %', msg; end if;
-  if msg like '%Real Other Co%' then
-    raise exception 'FAIL 4: refusal leaks the other company''s name: %', msg; end if;
-  raise notice 'PASS 4: refused — separate company, not an accident';
+  r := public.merge_stranded_user_into_tenant(
+    'a@m6.in','2222aaaa-0000-0000-0000-000000000007','support');
+  if r->>'action' <> 'added' then
+    raise exception 'FAIL 4: expected a membership to be added (R-2477), got %', r; end if;
+  if r::text like '%Real Other Co%' then
+    raise exception 'FAIL 4: result leaks the other company''s name: %', r; end if;
+  select count(*) into t from public.users
+   where id='3333bbbb-0000-0000-0000-000000000008' and tenant_id='2222aaaa-0000-0000-0000-000000000008';
+  if t<>1 then raise exception 'FAIL 4: claimed a user out of a multi-person company'; end if;
+  select count(*) into t from public.tenants where id='2222aaaa-0000-0000-0000-000000000008';
+  if t<>1 then raise exception 'FAIL 4: their company was deleted'; end if;
+  raise notice 'PASS 4: membership added — separate company kept, nobody moved';
 end $$;
 rollback;
 

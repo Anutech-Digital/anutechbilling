@@ -45,3 +45,42 @@ export function loginElsewhereMessage(email: string): string {
     "If they ended up in an empty workspace of their own, they sign in once and you use Claim a colleague on this page."
   );
 }
+
+/* ── R-2477 (memberships slice 3): inviting a login that already works in another company ── */
+
+/** What prepare_invite_for_existing_login answers (migration 20261105160300). */
+export type ExistingLoginPrep = "ready" | "already_member";
+
+export function parseExistingLoginPrep(v: unknown): ExistingLoginPrep | null {
+  return v === "ready" || v === "already_member" ? v : null;
+}
+
+/** The login is already a member of the inviting company (maybe working in another one right now). */
+export function alreadyMemberMessage(email: string): string {
+  return (
+    `${email} is already a member of your company, so there is nothing to invite. ` +
+    "Next step: change their role on the Team page if needed. If they can't see your company, ask them to pick it from the company switcher in the top bar."
+  );
+}
+
+/** Shown to the owner after inviting a login that already works in another company. */
+export function existingLoginInvitedNote(email: string): string {
+  return (
+    `${email} already uses ResellerOS with another company — they keep it. ` +
+    "Next step: ask them to sign in once; then press Claim on this page (Claim a colleague) to add them to your company."
+  );
+}
+
+/** The email such a person gets: no signup link (they have a login), and what happens next. */
+export function existingLoginInviteEmail(p: { workspace: string; roleName: string; email: string; loginUrl: string }): string {
+  return `Hello,
+
+${p.workspace} has invited you to join them on ResellerOS as ${p.roleName}.
+
+You already have a ResellerOS login with this address (${p.email}) — you keep your current company. Sign in once here, the way you always do:
+${p.loginUrl}
+
+After that, ${p.workspace} adds you, and you can switch between your companies from the top bar.
+
+— ${p.workspace} (via ResellerOS)`;
+}

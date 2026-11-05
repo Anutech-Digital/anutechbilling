@@ -78,6 +78,32 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   if (!decision.ok) return fail(decision.error, decision.status);
   if (!caller?.tenant_id || !target) return fail("That person is not in your workspace.", 403); // narrows types
 
+  /* R-2477: a login can now belong to several companies (memberships). A temporary password is a
+     password for the whole LOGIN — with it this owner could sign in as them and open their OTHER
+     company (maybe as its owner). So it is only for a login that works in no other company. */
+  /* tenant_memberships (R-2471) is not in the generated types yet — a narrow shape, not `any`. */
+  type MembershipQ = {
+    select(c: string): MembershipQ; eq(c: string, v: string): MembershipQ; neq(c: string, v: string): MembershipQ;
+    is(c: string, v: null): MembershipQ;
+    limit(n: number): PromiseLike<{ data: Array<{ tenant_id: string }> | null; error: { message: string } | null }>;
+  };
+  const { data: elsewhere, error: elsewhereErr } = await (admin.from as unknown as (t: "tenant_memberships") => MembershipQ)
+    .call(admin, "tenant_memberships")
+    .select("tenant_id")
+    .eq("user_id", target.id)
+    .neq("tenant_id", caller.tenant_id)
+    .is("ended_at", null)
+    .limit(1);
+  if (elsewhereErr) {
+    return fail("Could not check whether they work in another company, so no password was set. Try again.", 500);
+  }
+  if ((elsewhere ?? []).length > 0) {
+    return fail(
+      "They also work in another company on ResellerOS, so only they can change their password. Next step: use Send reset link on their row, or ask them to use Forgot password on the sign-in page.",
+      409,
+    );
+  }
+
   const typed = parsed.data.password;
   let password: string;
   if (typed !== undefined && typed !== "") {

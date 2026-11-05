@@ -3,9 +3,11 @@
 -- WHAT IT PROVES (self-asserting; whole file rolls back)
 --   1. A sales user CANNOT delete the owner's row.        ← the audit hole
 --   2. A sales user CANNOT delete their own row.
---   3. The owner CAN delete a teammate's row.             ← not bricked
+--   3. The owner can NOT delete a teammate's row either (R-2477: deleting the login row
+--      deleted their memberships in EVERY company). "Remove from this company"
+--      (remove_company_member) ends only this company's membership.  ← not bricked
 --   4. The owner CANNOT delete their OWN row.             ← last-owner lock
---   5. The delete in (3) leaves an activity_log row.      ← audit trigger
+--   5. The Remove in (3) leaves an activity_log row.      ← audit
 --
 -- RLS-delete refuses silently (0 rows), isliye yahan row-count hi nishaan
 -- hai — dono disha naapte hain (block par count same, allow par count-1),
@@ -52,22 +54,27 @@ begin
     raise exception 'FAIL 2: a non-owner deleted their own row';
   end if;
 
-  -- ── 3. owner deletes a teammate — allowed ──────────────────────────────
+  -- ── 3. owner: no DELETE of a teammate's login row (R-2477) — Remove instead ──
   perform set_config('request.jwt.claims',
     json_build_object('sub', v_owner, 'role', 'authenticated')::text, true);
 
   delete from public.users where id = v_victim;
   select count(*) into v_n from public.users where id = v_victim;
+  if v_n <> 1 then
+    raise exception 'FAIL 3: owner deleted a teammate''s login row (R-2477: Remove ends the membership only)';
+  end if;
+  perform public.remove_company_member(v_victim);
+  select count(*) into v_n from public.company_members() m where m.id = v_victim;
   if v_n <> 0 then
-    raise exception 'FAIL 3: owner could not delete a teammate — over-blocked';
+    raise exception 'FAIL 3: owner could not remove a teammate — over-blocked';
   end if;
 
-  -- ── 5. and that delete left an audit row ───────────────────────────────
+  -- ── 5. and that Remove left an audit row ───────────────────────────────
   select count(*) into v_n from public.activity_log
-   where entity = 'users' and action = 'delete'
+   where entity = 'users' and action = 'member_removed'
      and entity_id = v_victim::text;
   if v_n < 1 then
-    raise exception 'FAIL 5: teammate delete left no activity_log row — audit trigger missing';
+    raise exception 'FAIL 5: Remove left no activity_log row';
   end if;
 
   -- ── 4. owner cannot delete their OWN row ───────────────────────────────
@@ -77,7 +84,7 @@ begin
     raise exception 'FAIL 4: owner deleted their own row — last-owner lock gone';
   end if;
 
-  raise notice 'PASS: users delete is owner-only, self-delete blocked, audited';
+  raise notice 'PASS: no teammate login row can be deleted; Remove is owner-only, self-delete blocked, audited';
 end $$;
 
 rollback;

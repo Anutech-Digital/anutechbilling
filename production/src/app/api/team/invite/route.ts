@@ -36,6 +36,9 @@ import {
   loginElsewhereMessage,
   memberElsewhereMessage,
   parseStaleInviteOutcome,
+  parseExistingLoginPrep,
+  alreadyMemberMessage,
+  existingLoginInviteEmail,
 } from "@/lib/auth/stale-invite";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
@@ -145,8 +148,27 @@ export async function POST(request: NextRequest) {
       { status: 429, headers: { "Retry-After": "3600" } },
     );
   }
+  /* R-2477 (memberships slice 3): a login that already works in another company is no longer
+     refused — this company's invite is written and, once they sign in, Claim a colleague adds a
+     SECOND membership (they keep the other company). prepare_invite_for_existing_login (session
+     client; owner + MFA re-checked in SQL) clears the other company's ACCEPTED invite row that
+     would block the one-row-per-address index, or says they are already a member here. Any other
+     answer or an error (e.g. migration not deployed yet) keeps the R-2469 refusal. */
+  let existingLogin = false;
   if (parseStaleInviteOutcome(heldElsewhere) === "member_elsewhere") {
-    return NextResponse.json({ error: memberElsewhereMessage(email) }, { status: 409, headers: NO_STORE });
+    const { data: prep, error: prepErr } = await (supabase.rpc as unknown as (
+      fn: "prepare_invite_for_existing_login", args: { p_email: string },
+    ) => PromiseLike<{ data: unknown; error: { message: string } | null }>).call(
+      supabase, "prepare_invite_for_existing_login", { p_email: email },
+    );
+    const outcome = prepErr ? null : parseExistingLoginPrep(prep);
+    if (outcome === "already_member") {
+      return NextResponse.json({ error: alreadyMemberMessage(email) }, { status: 409, headers: NO_STORE });
+    }
+    if (outcome !== "ready") {
+      return NextResponse.json({ error: memberElsewhereMessage(email) }, { status: 409, headers: NO_STORE });
+    }
+    existingLogin = true;
   }
 
   // ── Create the invite (RLS: team_invites is owner-scoped) ─────────────
@@ -259,7 +281,7 @@ export async function POST(request: NextRequest) {
   const loginUrl  = `${base}/login`;
   /* Password-raasta: token wale link se hi khulta hai. Ye link hi mailbox ka
      saboot hai — bina iske signup 409 deta hai (audit 1 Sep 2026). */
-  const signupUrl = inviteToken && !memberCreated ? `${base}/signup?invite=${inviteToken}` : null;
+  const signupUrl = inviteToken && !memberCreated && !existingLogin ? `${base}/signup?invite=${inviteToken}` : null;
 
   const emailRes = await sendInternalEmail({
     /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
@@ -269,7 +291,9 @@ export async function POST(request: NextRequest) {
     from:    FROM_EMAIL,
     subject: `You've been invited to ${workspace} on ResellerOS`,
     /* R-534: the password itself is never in the email — the owner hands it over. */
-    text: memberCreated
+    text: existingLogin
+? existingLoginInviteEmail({ workspace, roleName, email, loginUrl })
+: memberCreated
 ? `Hello,
 
 You've been added to ${workspace} on ResellerOS as ${roleName}.
@@ -300,6 +324,9 @@ ${signupUrl}
     /* Reported so the screen can say "role changed from billing to sales_senior" rather
        than "invited", which would read as a new person to anyone glancing at it. */
     roleChangedFrom,
+    /* R-2477: they already use ResellerOS with another company — the screen says the next step
+       (they sign in once, then Claim a colleague adds them here). */
+    ...(existingLogin ? { existingLogin: true } : {}),
     emailStatus: emailRes.status,             // "sent" | "stubbed" | "failed"
     emailError:  emailRes.errorMessage,
   }, { headers: NO_STORE });

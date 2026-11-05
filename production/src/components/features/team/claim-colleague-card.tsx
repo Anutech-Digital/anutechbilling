@@ -107,6 +107,7 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
           <p className="text-xs text-ink-3 leading-relaxed">
             Someone who signed in before you invited them ends up outside this workspace —
             either with nowhere to go, or in an empty company of their own. Put them back here.
+            Someone who already works in another company is added here too, and keeps that company.
             Only people who asked to join, or signed in after your invite, can be claimed.
           </p>
         </div>
@@ -172,7 +173,7 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
         <div className="mt-4 border-t border-hairline pt-3">
           <p className="mb-2 text-xs text-ink-3">
             {list.length} {list.length === 1 ? "person" : "people"} asked to join or {list.length === 1 ? "was" : "were"} invited
-            here but {list.length === 1 ? "has" : "have"} no workspace yet. Until claimed, they land in an app with nothing in it.
+            here and signed in. Until claimed, they can't open this company.
           </p>
           <ul className="flex flex-wrap gap-1.5">
             {list.map((u) => (

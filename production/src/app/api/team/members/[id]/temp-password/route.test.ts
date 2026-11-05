@@ -33,6 +33,8 @@ const st = vi.hoisted(() => ({
   authFails: false,
   rateOk: true,
   order: [] as string[],
+  /* R-2477: target user ids that also hold a membership in another company. */
+  elsewhere: [] as string[],
 }));
 
 vi.mock("@/lib/security/rate-limit", () => ({
@@ -64,6 +66,19 @@ vi.mock("@/lib/supabase/server", () => ({
             if (!row) return { data: null, error: null };
             if (eqs.tenant_id !== undefined && row.tenant_id !== eqs.tenant_id) return { data: null, error: null };
             return { data: row, error: null };
+          },
+        };
+        return q;
+      }
+      if (table === "tenant_memberships") {
+        const eqs: Record<string, unknown> = {};
+        const q = {
+          select() { return q; },
+          eq(c: string, v: unknown) { eqs[c] = v; return q; },
+          neq() { return q; },
+          is() { return q; },
+          async limit() {
+            return { data: st.elsewhere.includes(String(eqs.user_id)) ? [{ tenant_id: T2 }] : [], error: null };
           },
         };
         return q;
@@ -109,7 +124,7 @@ beforeEach(() => {
   actors.length = 0;
   st.sessionUserId = OWNER;
   st.inserts = []; st.auditUpdates = []; st.authUpdates = []; st.order = [];
-  st.auditFails = false; st.authFails = false; st.rateOk = true;
+  st.auditFails = false; st.authFails = false; st.rateOk = true; st.elsewhere = [];
   spies.push(
     vi.spyOn(console, "log").mockImplementation(() => {}),
     vi.spyOn(console, "error").mockImplementation(() => {}),
@@ -123,6 +138,18 @@ const nothingChanged = () => {
   expect(st.authUpdates).toHaveLength(0);
   expect(st.inserts).toHaveLength(0);
 };
+
+describe("R-2477: a login that also works in another company", () => {
+  it("→ 409 with a next step; no password set, nothing written (it would open their other company)", async () => {
+    st.elsewhere = [SALES];
+    const r = await call(SALES);
+    expect(r.status).toBe(409);
+    const { error } = await r.json() as { error: string };
+    expect(error).toMatch(/another company/);
+    expect(error).toMatch(/Send reset link|Forgot password/);
+    nothingChanged();
+  });
+});
 
 describe("POST /api/team/members/[id]/temp-password", () => {
   it("401 when signed out", async () => {

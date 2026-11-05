@@ -14,8 +14,10 @@
  * carry the reason and the next step (CLAUDE.md §24) and are surfaced verbatim.
  */
 
-/** The four things the RPC reports it did. Mirrors migration 0243's `v_action`. */
-export type MergeAction = "attached" | "moved" | "already_member" | "role_updated";
+/** What the RPC reports it did. Mirrors migration 0243's `v_action`; R-2477 added
+    "added" (a membership here, they keep their other company) and "rejoined" (an ended
+    membership here re-opened). */
+export type MergeAction = "attached" | "moved" | "already_member" | "role_updated" | "added" | "rejoined";
 
 export interface MergeResult {
   action:             MergeAction;
@@ -54,6 +56,13 @@ export function describeMergeOutcome(r: MergeResult): string {
 
     case "already_member":
       return `${r.email} is already in your workspace as ${r.role}. Nothing changed.`;
+
+    /* R-2477: never names their other company (the RPC does not return it for these). */
+    case "added":
+      return `${r.email} is now also in your company as ${r.role}. They keep the other company they work in and pick yours from the company switcher in the top bar.`;
+
+    case "rejoined":
+      return `${r.email} is back in your company as ${r.role}.`;
   }
 }
 

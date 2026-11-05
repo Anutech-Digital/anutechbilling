@@ -27,7 +27,10 @@ function builder(table: string) {
   return b;
 }
 
-vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ from: builder }) }));
+/* R-2477: members come from company_members() (the company's memberships), not a users select. */
+const rpc = (fn: string): Promise<Result> =>
+  fn === "company_members" && db.users ? db.users() : Promise.resolve({ data: [], error: null });
+vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ from: builder, rpc }) }));
 vi.mock("@/lib/hooks/useCurrentUser", () => ({
   useCurrentUser: () => ({ data: { userId: "u1", role: "owner", tenantId: "t1" }, isLoading: false }),
 }));
