@@ -96,7 +96,28 @@ const PRE_REQUEST_HOOKS: Record<string, string> = {
     "R-524: makes a 'Try the demo' visitor's request READ ONLY (20261009220000 / 20261009220100)",
 };
 
+/**
+ * SECURITY INVOKER helpers that trigger guards call AS the request's role — anon / app_anon
+ * included — so a visitor's write gets the guard's own answer, not "permission denied for
+ * function". Each must stay invoker (it reads current_user) and return no data.
+ */
+const TRIGGER_GUARD_HELPERS: Record<string, string> = {
+  is_direct_request_login:
+    "R-2485: every trigger guard's 'is this a direct request login?' (20261105004823); returns only a boolean about current_user",
+};
+
 describe("no later migration hands anon EXECUTE back", () => {
+  it("every allow-listed trigger-guard helper is SECURITY INVOKER", () => {
+    const all = later.map((f) => code(f)).join("\n");
+    for (const fn of Object.keys(TRIGGER_GUARD_HELPERS)) {
+      expect(new RegExp(`alter\\s+function\\s+(public\\.)?${fn}\\b[^;]*security\\s+definer`, "i").test(all),
+        `${fn} must not be ALTERed to SECURITY DEFINER`).toBe(false);
+      const defs = all.match(new RegExp(`create\\s+(or\\s+replace\\s+)?function\\s+(public\\.)?${fn}\\(\\)[\\s\\S]*?\\bas\\s+\\$`, "gi")) ?? [];
+      expect(defs.length, `${fn} is allow-listed but never defined`).toBeGreaterThan(0);
+      expect(/security\s+definer/i.test(defs[defs.length - 1]), `${fn} must stay SECURITY INVOKER`).toBe(false);
+    }
+  });
+
   /* `create or replace function` KEEPS a function's grants. `drop function` + `create`
      RESETS them to the PUBLIC default — which is how hole 3 regenerates, and it is the
      difference nobody would notice while writing the migration. */
@@ -105,7 +126,8 @@ describe("no later migration hands anon EXECUTE back", () => {
     const grants = src.match(/grant\s+execute\s+on\s+function[\s\S]{0,300}?;/gi) ?? [];
     for (const g of grants) {
       if (!/\banon\b/.test(g)) continue;
-      const exempt = [...Object.keys(POLICY_HELPERS), ...Object.keys(PRE_REQUEST_HOOKS)].find((fn) => g.includes(fn));
+      const exempt = [...Object.keys(POLICY_HELPERS), ...Object.keys(PRE_REQUEST_HOOKS), ...Object.keys(TRIGGER_GUARD_HELPERS)]
+        .find((fn) => g.includes(fn));
       expect(
         exempt,
         `${file} grants anon EXECUTE on a function that is not a known RLS policy ` +

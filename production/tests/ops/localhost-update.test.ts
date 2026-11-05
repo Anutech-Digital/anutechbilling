@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 import {
-  planMigrations, redefinedObjects, parsePorcelain, planLocalEdits, stashShaFor, stashRefFor,
+  planMigrations, deployEntries, redefinedObjects, parsePorcelain, planLocalEdits, stashShaFor, stashRefFor,
   parsePeekOutput, peekScript, restartHints, runUpdate, EXIT, parseArgs,
   // @ts-expect-error — plain .mjs ops script, no types
 } from "../../scripts/ops/localhost-update.mjs";
@@ -20,39 +20,37 @@ const APP = path.resolve(__dirname, "../..");
 const MIG = path.join(APP, "supabase", "migrations");
 const read = (f: string) => fs.readFileSync(path.join(MIG, f), "utf8");
 
-describe("superseded migrations (alsoDo4: the three real files)", () => {
+describe("superseded migrations (alsoDo4: the three real files) — R-2484: the deploy rule, with its 'other parts' check", () => {
   const A = "20261010223000_list_tenant_backups_ambiguous_id.sql";
   const B = "20261018173040_r1556_backup_mfa_tenant.sql";
   const C = "20261025141647_r1896_employee_exit.sql";
+  const three = () => deployEntries([A, B, C].map((file) => ({ file, sql: read(file) })));
+  const withStatus = (st: Record<string, string>) => three().map((e: { file: string }) => ({ ...e, status: st[e.file], restAnswer: undefined }));
 
-  it("skips 223000 and 173040 (peek false) because 141647 (applied) redefines what 173040 defines", () => {
-    const migs = [
-      { file: A, defines: redefinedObjects(read(A)), status: "pending" },
-      { file: B, defines: redefinedObjects(read(B)), status: "pending" },
-      { file: C, defines: redefinedObjects(read(C)), status: "applied" },
-    ];
-    const plan = planMigrations(migs);
-    expect(plan.apply).toEqual([]);
-    expect(plan.skip.map((s: { file: string }) => s.file)).toEqual([A, B]);
-    expect(plan.skip.find((s: { file: string }) => s.file === B)!.reason).toMatch(/superseded by 20261025141647_r1896_employee_exit\.sql \(function current_user_has_role; applied\)/);
-    expect(plan.skip.find((s: { file: string }) => s.file === A)!.reason).toMatch(/superseded by 20261018173040_r1556_backup_mfa_tenant\.sql \(function list_tenant_backups; itself skipped\)/);
+  it("173040 (peek false) is BLOCKED, not skipped: 141647 (applied) redefines current_user_has_role, but 173040's get_tenant_backup body is not in", () => {
+    const plan = planMigrations(withStatus({ [A]: "pending", [B]: "pending", [C]: "applied" }));
+    expect(plan.blocked).toEqual([{ file: B, key: "r1556backupmfa", by: expect.any(String), byFile: C }]);
+    expect(plan.skip).toEqual([]);
+    /* 223000's only later redefiner (173040) is not in → applied in order (as the deploy script would) */
+    expect(plan.apply).toEqual([A]);
+    const rep = planMigrations(withStatus({ [A]: "pending", [B]: "pending", [C]: "applied" }), { repair: true });
+    expect(rep.apply).toEqual([A, B, C]);
+    expect(rep.rerun).toEqual([C]);
   });
 
   it("without the newer applied one, both old ones are applied in version order", () => {
-    const plan = planMigrations([
-      { file: B, defines: redefinedObjects(read(B)), status: "pending" },
-      { file: A, defines: redefinedObjects(read(A)), status: "pending" },
-    ]);
-    expect(plan.apply).toEqual([A, B]);
+    const plan = planMigrations(withStatus({ [A]: "pending", [B]: "pending", [C]: "pending" }));
+    expect(plan.apply).toEqual([A, B, C]);
     expect(plan.skip).toEqual([]);
+    expect(plan.blocked).toEqual([]);
   });
 
-  it("a pending migration with no later redefinition is applied; an unknown later definer blocks", () => {
+  it("a pending migration with no later redefinition is applied; an unknown later definer holds the older one", () => {
     const plan = planMigrations([
-      { file: "20261030131008_x.sql", defines: [], status: "pending" },
-      { file: "20261001000000_f.sql", defines: ["function f"], status: "pending" },
-      { file: "20261002000000_g.sql", defines: ["function f"], status: "unknown" },
-      { file: "20261003000000_h.sql", defines: ["view v"], status: "applied" },
+      { file: "20261030131008_x.sql", key: "x", later: [], defines: [], status: "pending" },
+      { file: "20261001000000_f.sql", key: "f", later: ["g"], defines: ["function f"], status: "pending" },
+      { file: "20261002000000_g.sql", key: "g", later: [], defines: ["function f"], status: "unknown" },
+      { file: "20261003000000_h.sql", key: "h", later: [], defines: ["view v"], status: "applied" },
     ]);
     expect(plan.apply).toEqual(["20261030131008_x.sql"]);
     expect(plan.skip[0].reason).toMatch(/peek unknown/);

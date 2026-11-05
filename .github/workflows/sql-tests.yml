@@ -16,8 +16,8 @@
 #   2. scripts/rebuild-db.mjs --local                           → baseline + storage + seed
 #   3. every file in supabase/migrations/, in name order        → today's schema
 #   4. npm run test:sql:local                                   → the suite (canary first)
-# Step 4 uses `test:sql:local`, not plain `test:sql`: the plain script targets the LINKED
-# (remote) project, which a CI runner must never do.
+# Step 4 uses `test:sql:local` (explicit --local). Since R-2493 (5 Nov 2026) plain `test:sql` is
+# local too; a remote run needs --remote <ref> + TEST_SQL_REMOTE_OK and is refused when CI is set.
 #
 # ─── BLOCKING ───────────────────────────────────────────────────────────────
 # A red test fails the run. To make it gate merges, add `sql-tests` as a required status
@@ -33,12 +33,16 @@ on:
     paths:
       - "production/supabase/**"
       - "production/scripts/test-sql.mjs"
+      - "production/scripts/dev/sql-test-target.mjs"
+      - "production/scripts/dev/local-guard.mjs"
       - "production/scripts/rebuild-db.mjs"
       - ".github/workflows/sql-tests.yml"
   pull_request:
     paths:
       - "production/supabase/**"
       - "production/scripts/test-sql.mjs"
+      - "production/scripts/dev/sql-test-target.mjs"
+      - "production/scripts/dev/local-guard.mjs"
       - "production/scripts/rebuild-db.mjs"
       - ".github/workflows/sql-tests.yml"
 

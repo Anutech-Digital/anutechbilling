@@ -73,11 +73,28 @@ const isName = (s: string | undefined): s is string =>
 
 const tidy = (s: string) => s.trim().replace(/\s+/g, " ");
 
-/** Is this name our own company (every meaningful word of it is in one of our names)? */
+/**
+ * R-2390 (staging 2 Nov): bank words that are never a payer. The FD auto-redeem line said
+ * "…AUTO_REDEEM" and the guess was "M/S NARAIN AUTO MOBILES". They sit on the SAME ignore list as
+ * our own company names (R-2371) — notPayerNames() is the one list both payer guesses read
+ * (payerFromNarration here, guessCustomer in credit-pay-for.ts).
+ */
+export const BANK_NOT_PAYER_WORDS: readonly string[] = [
+  "AUTO REDEEM", "AUTOREDEEM", "AUTO REDEMPTION", "AUTO SWEEP", "AUTOSWEEP", "AUTO RENEWAL", "AUTO CLOSURE",
+  "SWEEP IN", "SWEEP OUT",
+];
+
+/** Our own company names + the bank's own words: text that never says who paid. */
+export function notPayerNames(ownNames: readonly string[] | undefined): readonly string[] {
+  return [...(ownNames ?? []), ...BANK_NOT_PAYER_WORDS];
+}
+
+/** Is this name our own company (every meaningful word of it is in one of our names)? R-2390: or
+ *  only the bank's own words (AUTO SWEEP). */
 function isOwn(name: string, ownNames: readonly string[]): boolean {
   const toks = customerNameTokens(name);
   if (toks.length === 0) return true;   // only "PRIVATE LIMITED" etc. — not a payer either
-  return ownNames.some((own) => {
+  return notPayerNames(ownNames).some((own) => {
     const mine = new Set(customerNameTokens(own));
     return mine.size > 0 && toks.every((t) => mine.has(t));
   });
