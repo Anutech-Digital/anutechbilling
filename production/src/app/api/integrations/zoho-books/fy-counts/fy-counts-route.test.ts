@@ -9,7 +9,7 @@ import { NextRequest } from "next/server";
 
 const st = vi.hoisted(() => ({
   role: "owner" as string | null,
-  conn: { refreshToken: "rt" as string | null, orgId: "600" as string | null, orgName: "Org", connectedAt: null },
+  conn: { refreshToken: "rt" as string | null, orgId: "600" as string | null, orgName: "Org" as string | null, connectedAt: null as string | null },
   dropped: 0,
   noScope: [] as string[],
   expired: false,
@@ -76,6 +76,16 @@ describe("R-2498 FY counts route", () => {
     const body = await (await POST(req({ fy: "2025-26" }))).json();
     expect(st.dropped).toBe(1);
     expect(body.counts.bills).toBe(2);
+  });
+
+  it("review: calls counts both tries of a 401 retry; the Reconnect line names only the refused lists", async () => {
+    st.expired = true;
+    const body = await (await POST(req({ fy: "2025-26" }))).json();
+    expect(body.calls).toBe(urls.length);
+    expect(body.calls).toBe(6);
+    st.noScope = ["expenses"];
+    const b2 = await (await POST(req({ fy: "2025-26" }))).json();
+    expect(b2.message).toBe("Reconnect to allow reading expenses. Press Reconnect, then Allow on the Zoho screen.");
   });
 
   it("refuses a bad FY or cursor, other roles, no connection", async () => {

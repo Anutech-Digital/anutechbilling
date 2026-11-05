@@ -13,11 +13,12 @@
  */
 import { NextResponse, type NextRequest } from "next/server";
 import {
-  NOT_CONFIGURED_MESSAGE, ROLE_MESSAGE, ZOHO_BOOKS_MANAGE_ROLES, FY_CALLS_PER_REQUEST, ZOHO_FY_RECONNECT_MESSAGE, zohoBooksCreds,
+  NOT_CONFIGURED_MESSAGE, ROLE_MESSAGE, ZOHO_BOOKS_MANAGE_ROLES, FY_CALLS_PER_REQUEST, fyReconnectMessage, zohoBooksCreds,
 } from "@/lib/integrations/zoho-books/config";
 import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
 import { ZohoApiError } from "@/lib/integrations/zoho-books/api";
-import { countFyDocs, fyDateRange, type FyCountCursor } from "@/lib/integrations/zoho-books/fy-fetch";
+import { countFyDocs, FyCursorError, fyDateRange, type FyCountCursor } from "@/lib/integrations/zoho-books/fy-fetch";
+import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -45,7 +46,12 @@ export async function POST(req: NextRequest) {
   if (!conn.refreshToken) return fail(409, "Zoho Books is not connected. Press Connect Zoho Books first.");
   if (!conn.orgId) return fail(409, "Choose your Zoho Books organization first.");
 
-  const run = async () => countFyDocs(conn.orgId!, await zohoAccessToken(caller, conn.refreshToken!, creds), fy, cursor, { maxCalls: FY_CALLS_PER_REQUEST });
+  /* One history for both tries: a 401 retry still counts the first try's Zoho calls, so `calls`
+     (what the card paces on) is the real number and the request stays within FY_CALLS_PER_REQUEST. */
+  const history: PaceEntry[] = [];
+  const used = () => history.reduce((s, h) => s + h.calls, 0);
+  const run = async () => countFyDocs(conn.orgId!, await zohoAccessToken(caller, conn.refreshToken!, creds), fy, cursor,
+    { history, maxCalls: Math.max(1, FY_CALLS_PER_REQUEST - used()) });
   try {
     let result;
     try {
@@ -56,11 +62,11 @@ export async function POST(req: NextRequest) {
       result = await run();
     }
     return NextResponse.json({
-      ok: true, fy, ...result,
-      ...(result.needsReconnect.length ? { message: ZOHO_FY_RECONNECT_MESSAGE } : {}),
+      ok: true, fy, ...result, calls: used(),
+      ...(result.needsReconnect.length ? { message: fyReconnectMessage(result.needsReconnect) } : {}),
     });
   } catch (e) {
-    if (e instanceof Error && /cursor/i.test(e.message) && !(e instanceof ZohoApiError)) return fail(400, "The count was interrupted. Press Count FY again.");
+    if (e instanceof FyCursorError) return fail(400, "The count was interrupted. Press Count FY again.");
     if (e instanceof ZohoApiError) {
       if (e.status === 401 || e.code === "reconnect") return fail(502, "Zoho Books did not let ResellerOS read — press Reconnect, then Allow on the Zoho screen.");
       return fail(502, e.message);

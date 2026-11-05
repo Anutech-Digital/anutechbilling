@@ -29,7 +29,7 @@ beforeEach(() => {
     const j = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { "content-type": "application/json" } });
     if (init?.method === "POST" || init?.method === "DELETE") {
       posts.push({ url, body: init.body ? JSON.parse(String(init.body)) : null });
-      if (url.endsWith("/fy-counts")) return j(fyAnswers.shift() ?? { ok: false, error: "no more" });
+      if (url.endsWith("/fy-counts")) { const a = fyAnswers.shift() ?? { ok: false, error: "no more" }; return j(a, Number(a.__status ?? 200)); }
       if (url.endsWith("/preview")) {
         return j({ ok: true, preview: { contacts: 237, invoices: 1450, openInvoices: 38, withSubsPeriod: 912, withServiceExpiry: 640, capped: false } });
       }
@@ -120,6 +120,23 @@ describe("Zoho Books card", () => {
     expect(screen.queryByRole("link", { name: "Reconnect" })).toBeNull();
     const fy = posts.filter((x) => x.url.endsWith("/fy-counts"));
     expect(fy.map((x) => (x.body as { cursor: unknown }).cursor)).toEqual([null, cursor]);
+  });
+
+  it("R-2498 review: a request failing part-way keeps the numbers but says they are partial; Preview is off while counting", async () => {
+    status = { configured: true, connected: true, needs_org: false, org_name: "Acme Traders Pvt Ltd", can_manage: true };
+    const cursor = { fy: "2025-26", list: "bills", page: 1, counts: { invoices: 1210, creditnotes: 14 }, needsReconnect: [] };
+    fyAnswers = [
+      { ok: true, fy: "2025-26", cursor, calls: 2, busy: false, counts: { invoices: 1210, creditnotes: 14, bills: 0, expenses: 0, vendorpayments: 0 }, needsReconnect: [] },
+      { ok: false, error: "Could not read from Zoho Books. Try again.", __status: 502 },
+    ];
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Count FY 2025-26" }));
+    expect((screen.getByRole("button", { name: "Preview from Zoho" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(await screen.findByText(/The count stopped part-way/)).toBeTruthy();
+    expect(screen.getByText("1,210")).toBeTruthy();
+    expect(screen.queryByText(/Still counting/)).toBeNull();
+    expect(toastMock.error).toHaveBeenCalledWith("Could not read from Zoho Books. Try again.", expect.anything());
+    expect(screen.getByTestId("zoho-fy-count").textContent).toContain("FY 2025-26 in Zoho Books (1 Apr 2025 – 31 Mar 2026)");
   });
 
   it("a billing user is told who can connect, with no buttons", async () => {
