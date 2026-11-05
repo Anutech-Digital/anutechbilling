@@ -25,8 +25,9 @@
 create or replace function pg_temp.r1775_keep() returns text[] language sql immutable as $f$
   select array[
     -- logins and what hangs off a login (Google sign-in tokens, push devices, API keys, invites, vault PIN)
-    'users', 'user_google_tokens', 'push_subscriptions', 'api_keys', 'team_invites', 'join_requests',
-    'personal_vault_pin',
+    -- R-2481: tenant_memberships too - since R-2471 a login without its membership has no company
+    'users', 'tenant_memberships', 'user_google_tokens', 'push_subscriptions', 'api_keys', 'team_invites',
+    'join_requests', 'personal_vault_pin',
     -- company settings (the tenants row itself is never touched: name, GSTIN, address, settings columns)
     'attendance_settings', 'whatsapp_reminder_settings', 'ai_autonomy', 'demo_tenants', 'tenant_domains',
     -- numbering / sequence config: next numbers are NOT reset (runbook says how, if ever wanted)

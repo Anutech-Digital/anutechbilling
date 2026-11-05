@@ -87,6 +87,17 @@ end-date (R-1896) checks it never had. No membership → NULL / false (fail clos
 - Supabase branch: `public.current_user_id()` (= `auth.uid()` there). Written with
   `current_user_id()`, so staging's `apply()` rewrite of `auth.uid()` (R-161) has nothing to change.
 
+**Speed (R-2481, 5 Nov 2026).** The slice-1 SQL bodies made `current_user_has_role()` 1.1–2.0 ms
+per call (it called `current_tenant_id()` inside its WHERE; SQL bodies are re-planned per call),
+and 96 RLS policies call it per row. Both helpers are now plpgsql with the SAME checks: the login
+id sits in a variable (users found by primary key, plans cached) and `current_tenant_id()` runs
+once per role check. Measured on the local DB in one rolled-back transaction (`date -u`
+2026-11-04 ~23:50): role check before R-2471 ~250 µs, after R-2471 ~1,600–1,900 µs, after R-2481
+~80 µs; `current_tenant_id()` ~200 → ~400 → ~40 µs; a `select … for update` of 1,526 bank lines
+as owner ~390 ms → ~2,300 ms → ~120 ms. `supabase/tests/r2481_membership_review_fixes.test.sql`
+keeps the role check ≤ 0.5 ms per call. A later card can still initplan-wrap the 96/124 bare
+policy calls (`20260928100000_rls_initplan_wrap.sql` pattern).
+
 ### 2.4 Sync triggers
 
 - `users` AFTER INSERT → membership for (`id`, `tenant_id`) with the row's values (upsert).
@@ -123,6 +134,25 @@ employee_id / manager_id / can_view_deals / gets_new_leads; `created_at` = the u
 `created_at`. `on conflict do nothing` (idempotent). Slice 4 (R-2478) adds the repair report
 that proves 0 mismatches on staging.
 
+**Deploy race and repair (R-2481).** The slice-1 backfill runs before its users→membership
+trigger exists and takes no lock on `users`, so a signup committed in between gets no membership
+(locked out: `current_tenant_id()` NULL). `public.repair_missing_tenant_memberships()` (service
+side only, idempotent, returns rows added) gives every `users` row with NO membership row for its
+selected company the backfill membership; an ENDED membership is a decision and is left alone.
+Migration `20261105000700` runs it once, after the trigger exists, so the window is closed.
+
+**Post-train check (deploy step, staging then live) — expect 0:**
+
+```sql
+select count(*) from public.users u
+ where not exists (select 1 from public.tenant_memberships m
+                    where m.user_id = u.id and m.tenant_id = u.tenant_id);
+```
+
+Not 0 → `select public.repair_missing_tenant_memberships();` (as the migration owner) and run the
+check again. The stricter R-2471 test case 11 query (role / active / end date equal too) should
+also be 0 on a healthy DB.
+
 ## 3. Threats and answers
 
 | threat | answer (slice 1) | test |
@@ -151,6 +181,10 @@ that proves 0 mismatches on staging.
 - `restore_tenant_backup` restores every tenant table in replica mode except `users` →
   `tenant_memberships` is excluded too: a restore must never give a REMOVED member access back
   (test case 15). Snapshots still contain the rows (harmless, read-only).
+- The staging wipe tool (R-1775, `supabase/cloudsql/staging/wipe-tenant-transactions.sql`)
+  deletes every tenant table NOT on its keep-list → `tenant_memberships` is on the keep-list with
+  `users` (R-2481); without it every kept login lost its company. Its SQL test checks that a kept
+  login still gets `current_tenant_id()` after the wipe.
 - Membership audit is insert/update only: deletes come only by CASCADE (login or company gone).
 - Re-activating a login (users.is_active = true) in a company whose membership has ENDED is
   refused with a next step ("Invite them again from the Team page") instead of being silently
