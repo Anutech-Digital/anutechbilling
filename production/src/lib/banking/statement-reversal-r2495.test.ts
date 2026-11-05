@@ -10,7 +10,7 @@
  * Fixture below is made up (synthetic narrations, made-up amounts) in HDFC's column layout.
  */
 import { describe, it, expect } from "vitest";
-import { parseStatement, parseStatementRows, signedAmounts } from "./statement-parse";
+import { parseStatement, parseStatementRows, signedAmounts, parseAmount, columnIsSigned, countReversals } from "./statement-parse";
 import { checkStatement } from "./statement-check";
 import { planBankImport, indexBankLines } from "@/lib/queries/bank";
 
@@ -94,5 +94,50 @@ describe("R-2495 — dedupe keeps the ATM pair as two lines", () => {
   it("re-uploading the same file adds nothing", () => {
     const p = parseStatement(HDFC_LIKE);
     expect(planBankImport(p.rows, indexBankLines(p.rows)).fresh).toHaveLength(0);
+  });
+});
+
+describe("R-2495 review — what a minus is NOT", () => {
+  it("both cells filled with opposite signs are still skipped, never added up", () => {
+    expect(signedAmounts(100, -100)).toEqual({ debit: 100, credit: 100, reversal: false });
+    const p = parseStatementRows([
+      ["Date", "Description", "Debit", "Credit"],
+      ["01/10/25", "MISALIGNED", "100", "-100"],
+    ]);
+    expect(p.rows).toHaveLength(0);
+    expect(p.skipped).toBe(1);
+  });
+
+  it("an export that writes EVERY withdrawal with a minus is a signed column, not reversals", () => {
+    const p = parseStatementRows([
+      ["Date", "Description", "Debit", "Credit", "Balance"],
+      ["01/10/25", "DEMO SHOP A", "-100", "", "900"],
+      ["02/10/25", "DEMO SHOP B", "-200", "", "700"],
+      ["03/10/25", "DEMO SALARY", "", "1000", "1700"],
+      ["04/10/25", "DEMO SHOP C", "-300", "", "1400"],
+    ]);
+    expect(p.rows.map((r) => [r.debit, r.credit])).toEqual([[100, 0], [200, 0], [0, 1000], [300, 0]]);
+    expect(countReversals(p.rows)).toBe(0);
+    expect(p.warnings.join(" ")).not.toMatch(/reversal/);
+  });
+
+  it("one lone reversal in a short file is still a reversal", () => {
+    expect(columnIsSigned([-20000])).toBe(false);
+    expect(columnIsSigned([-1, -2, -3, 4])).toBe(true);
+  });
+
+  it("(20,000.00) and 20,000.00- are negatives too", () => {
+    expect(parseAmount("(20,000.00)")).toBe(-20000);
+    expect(parseAmount("20,000.00-")).toBe(-20000);
+    expect(parseAmount("-20,000.00")).toBe(-20000);
+    expect(parseAmount("1,234.40 Cr")).toBe(1234);
+    const p = parseStatementRows([
+      ["Date", "Description", "Debit", "Credit"],
+      ["10/09/25", "ATW-DEMO", "20,000.00", ""],
+      ["10/09/25", "ATW-DEMO", "(20,000.00)", ""],
+      ["11/09/25", "ATW-DEMO-2", "5,000.00", ""],
+      ["11/09/25", "ATW-DEMO-2", "5,000.00-", ""],
+    ]);
+    expect(p.rows.map((r) => [r.debit, r.credit])).toEqual([[20000, 0], [0, 20000], [5000, 0], [0, 5000]]);
   });
 });

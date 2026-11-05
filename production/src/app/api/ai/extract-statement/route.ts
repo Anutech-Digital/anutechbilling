@@ -28,7 +28,7 @@ import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { fixStatementDates } from "@/lib/banking/statement-dates";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { classifyStatementFailure } from "@/lib/banking/statement-chunks";
-import { signedAmounts, REVERSAL_MARK } from "@/lib/banking/statement-parse";
+import { signedAmounts, columnIsSigned, parseAmount, REVERSAL_MARK, type ParsedRow } from "@/lib/banking/statement-parse";
 
 /* Worst case for ONE request: 60 s + retry 60 s on the main model, then the same on the
    lighter one ≈ 4 min. Cloud Run's request timeout is 600 s (cloudbuild.yaml --timeout=600);
@@ -74,7 +74,7 @@ const PROMPT =
   "rows must hold exactly that many lines for each page. " +
   "RULES: date as YYYY-MM-DD (Indian statements are DD/MM/YYYY — convert). " +
   "A row is EITHER a debit (money out / withdrawal) OR a credit (money in / deposit) — put the amount in the right field and 0 in the other; never both. " +
-  "Amounts are plain numbers, no commas or ₹; a NEGATIVE amount printed by the bank (a reversal, e.g. debit -20000) keeps its minus sign, in the column it was printed in. balance = running/closing balance if the statement shows one, else null. " +
+  "Amounts are plain numbers, no commas or ₹; ordinary debits and credits are always POSITIVE; only a minus sign actually printed on the statement (a reversal, e.g. debit -20000) is kept, in the column it was printed in. balance = running/closing balance if the statement shows one, else null. " +
   "description = the narration/particulars text (UPI/NEFT/cheque details). " +
   "SKIP non-transaction lines: opening balance, closing balance, sub-totals, carried-forward, page headers/footers. " +
   "Keep chronological order as printed. If you cannot read it, return { \"rows\": [] }.";
@@ -97,21 +97,24 @@ function toDate(input: unknown): string | null {
   return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 /** Whole rupees, sign kept (R-2495: a negative debit is a reversal, not junk). */
-const toSignedInt = (v: unknown): number => {
-  const n = typeof v === "number" ? v : Number(String(v ?? "").replace(/[₹,\s]/g, ""));
-  return Number.isFinite(n) ? Math.round(n) : 0;
-};
+const toSignedInt = (v: unknown): number =>
+  typeof v === "number" ? (Number.isFinite(v) ? Math.round(v) : 0) : parseAmount(String(v ?? ""));
 const toInt = (v: unknown): number => Math.max(0, toSignedInt(v));
 
 /** Turn the AI rows into the ParsedRow shape the import expects; drop junk. */
 function sanitizeRows(rows: AiRow[]) {
-  const out: { txn_date: string; description: string; debit: number; credit: number; balance_after: number | null; reference: null; reversal?: true }[] = [];
+  const out: ParsedRow[] = [];
   let skipped = 0;
+  /* A model that writes EVERY withdrawal as -N is using signed amounts, not showing reversals. */
+  const signed = {
+    debit:  columnIsSigned(rows.map((r) => toSignedInt(r.debit))),
+    credit: columnIsSigned(rows.map((r) => toSignedInt(r.credit))),
+  };
   for (const r of rows) {
     const date = toDate(r.date);
     /* R-2495: the same rule as the CSV / Excel parser — a negative debit is a credit of the
        same amount (and a negative credit a debit), marked "(reversal)". */
-    const { debit, credit, reversal } = signedAmounts(toSignedInt(r.debit), toSignedInt(r.credit));
+    const { debit, credit, reversal } = signedAmounts(toSignedInt(r.debit), toSignedInt(r.credit), signed);
     if (!date || (debit === 0 && credit === 0) || (debit > 0 && credit > 0)) { skipped++; continue; }
     const balRaw = r.balance;
     const description = String(r.description ?? "").trim() || "(no description)";

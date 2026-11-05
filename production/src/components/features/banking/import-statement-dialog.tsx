@@ -63,7 +63,7 @@ import { directionOf } from "@/lib/banking/categorise";
 import { EXPENSE_CATEGORIES, suggestCategory } from "@/lib/queries/expenses";
 import { suggestForLine } from "@/lib/banking/categorise";
 import { rupee, formatDate } from "@/lib/utils";
-import { parseStatement, rowsToCsv, type ParsedRow, type ParseResult } from "@/lib/banking/statement-parse";
+import { parseStatement, rowsToCsv, countReversals, reversalWarning, type ParsedRow, type ParseResult } from "@/lib/banking/statement-parse";
 // Only the small reader module — SheetJS itself is `await import("xlsx")` inside excelToRows,
 // a separate chunk fetched when an Excel file is picked (R-1512).
 import { excelToRows, isExcelFile } from "@/lib/banking/statement-xlsx";
@@ -113,6 +113,10 @@ function withRealDates(p: Preview | ParseResult, serverSwapped = 0): Preview {
   if (dropped > 0) warnings.push(`${dropped} row${dropped === 1 ? "" : "s"} had an impossible date and ${dropped === 1 ? "was" : "were"} skipped.`);
   /* R-1890: a future date is kept as written, never swapped — only flagged. */
   if (fix.future > 0) warnings.push(`${fix.future} line${fix.future === 1 ? " is" : "s are"} dated after today — kept as written. Check ${fix.future === 1 ? "it" : "them"} in the preview before importing.`);
+  /* R-2495: a line read as a reversal (negative amount) is said out loud on the PDF / photo
+     path too — the CSV / Excel parser already added the same sentence. */
+  const reversals = countReversals(p.rows);
+  if (reversals > 0 && !warnings.includes(reversalWarning(reversals))) warnings.push(reversalWarning(reversals));
   return { ...p, rows, skipped: p.skipped + dropped, warnings };
 }
 

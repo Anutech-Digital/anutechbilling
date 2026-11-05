@@ -241,6 +241,15 @@ describe("R-2495 — a negative amount from the PDF is a reversal, not junk", ()
     expect(r.json.rows.map((x: { debit: number; credit: number }) => [x.debit, x.credit])).toEqual([[20000, 0], [0, 20000], [750, 0]]);
     expect(r.json.rows[1].description).toBe("ATW-DEMO-TESTATM (reversal)");
     expect(r.json.rows[0].description).toBe("ATW-DEMO-TESTATM");
-    expect((ai.json.mock.calls[0][0] as GeminiArgs).user).toMatch(/NEGATIVE amount .*keeps its minus sign/);
+    expect((ai.json.mock.calls[0][0] as GeminiArgs).user).toMatch(/always POSITIVE; only a minus sign actually printed/);
+  });
+});
+
+describe("R-2495 review — the model writing every withdrawal as -N", () => {
+  it("is read as plain withdrawals, not reversals", async () => {
+    ai.json.mockResolvedValue({ rows: [1, 2, 3].map((d) => ({ date: `2025-09-0${d}`, description: `DEMO-${d}`, debit: -100 * d, credit: 0, balance: null })) });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows.map((x: { debit: number; credit: number }) => [x.debit, x.credit])).toEqual([[100, 0], [200, 0], [300, 0]]);
+    expect(r.json.rows.every((x: { description: string }) => !x.description.includes("(reversal)"))).toBe(true);
   });
 });

@@ -113,12 +113,32 @@ function parseDate(input: string, order: "dmy" | "mdy" = "dmy"): string | null {
   return null;
 }
 
-/** Strip commas / spaces / ₹ from amount string, return integer rupees. */
-function parseAmount(input: string | undefined): number {
+/**
+ * Strip commas / spaces / ₹ from amount string, return integer rupees, sign kept.
+ * R-2495: a negative is also written "(20,000.00)" or "20,000.00-" by some banks.
+ */
+export function parseAmount(input: string | undefined): number {
   if (!input) return 0;
-  const cleaned = input.replace(/[₹,\s]/g, "").replace(/[Cc][Rr]$/, "").replace(/[Dd][Rr]$/, "");
+  let cleaned = input.replace(/[₹,\s]/g, "").replace(/[Cc][Rr]$/, "").replace(/[Dd][Rr]$/, "");
+  let sign = 1;
+  const paren = /^\((.*)\)$/.exec(cleaned);
+  if (paren) { cleaned = paren[1]; sign = -1; }
+  else if (/^\d[\d.]*-$/.test(cleaned)) { cleaned = cleaned.slice(0, -1); sign = -1; }
   const n = parseFloat(cleaned);
-  return isNaN(n) ? 0 : Math.round(n);
+  return isNaN(n) ? 0 : sign * Math.round(n);
+}
+
+/**
+ * R-2495: does this amount column write EVERY amount with a minus (a "signed" export, e.g. all
+ * withdrawals as -1000)? Then a minus there is just the column's style, not a reversal. Decided
+ * once per file (or per AI answer): at least SIGNED_MIN negatives and more negative than
+ * positive non-zero values — so one reversal alone in a short file is still a reversal.
+ */
+const SIGNED_MIN = 3;
+export function columnIsSigned(values: readonly number[]): boolean {
+  let neg = 0, pos = 0;
+  for (const v of values) { if (v < 0) neg++; else if (v > 0) pos++; }
+  return neg >= SIGNED_MIN && neg > pos;
 }
 
 /**
@@ -126,11 +146,26 @@ function parseAmount(input: string | undefined): number {
  * (HDFC prints a failed ATM withdrawal's reversal as "debit -20000"), so it becomes a credit of
  * the same amount; a negative credit becomes a debit. `reversal` says the sign was flipped.
  * Never clamp it to 0: a dropped reversal makes the running-balance check report a false gap.
+ *  - A column that writes every amount negative (`signed`) only loses its minus.
+ *  - Both cells filled (any sign) stays both-sided, so the caller skips it as before — we
+ *    cannot tell which figure is right, and must not add them up.
  */
-export function signedAmounts(debitRaw: number, creditRaw: number): { debit: number; credit: number; reversal: boolean } {
-  const debit  = (debitRaw  > 0 ? debitRaw  : 0) + (creditRaw < 0 ? -creditRaw : 0);
-  const credit = (creditRaw > 0 ? creditRaw : 0) + (debitRaw  < 0 ? -debitRaw  : 0);
-  return { debit, credit, reversal: debitRaw < 0 || creditRaw < 0 };
+export function signedAmounts(
+  debitRaw: number,
+  creditRaw: number,
+  signed: { debit?: boolean; credit?: boolean } = {},
+): { debit: number; credit: number; reversal: boolean } {
+  if (debitRaw !== 0 && creditRaw !== 0) return { debit: Math.abs(debitRaw), credit: Math.abs(creditRaw), reversal: false };
+  if (debitRaw < 0 && signed.debit)   return { debit: -debitRaw, credit: 0, reversal: false };
+  if (creditRaw < 0 && signed.credit) return { debit: 0, credit: -creditRaw, reversal: false };
+  if (debitRaw < 0)  return { debit: 0, credit: -debitRaw, reversal: true };
+  if (creditRaw < 0) return { debit: -creditRaw, credit: 0, reversal: true };
+  return { debit: debitRaw, credit: creditRaw, reversal: false };
+}
+
+/** Rows read as reversals, counted — for the preview warning (CSV, Excel and AI alike). */
+export function countReversals(rows: readonly { reversal?: true }[]): number {
+  return rows.reduce((n, r) => n + (r.reversal ? 1 : 0), 0);
 }
 
 /** The mark a reversal line's narration gets, so the owner sees why the money moved back. */
@@ -215,6 +250,8 @@ export function parseStatementRows(raw: string[][]): ParseResult {
   let reversals = 0;
   const dateCol = mapping.txn_date;
   const order = detectDayOrder(raw.slice(headerIdx + 1).map((r) => r[dateCol] ?? ""));
+  const amountsOf = (col: number) => (col >= 0 ? raw.slice(headerIdx + 1).map((r) => parseAmount(r[col])) : []);
+  const signed = { debit: columnIsSigned(amountsOf(mapping.debit)), credit: columnIsSigned(amountsOf(mapping.credit)) };
   for (let i = headerIdx + 1; i < raw.length; i++) {
     const r = raw[i];
     const date = parseDate(r[mapping.txn_date] ?? "", order);
@@ -224,6 +261,7 @@ export function parseStatementRows(raw: string[][]): ParseResult {
     const { debit, credit, reversal } = signedAmounts(
       mapping.debit  >= 0 ? parseAmount(r[mapping.debit])  : 0,
       mapping.credit >= 0 ? parseAmount(r[mapping.credit]) : 0,
+      signed,
     );
     if (debit === 0 && credit === 0) { skipped++; continue; }
     // A bank line is debit XOR credit. If a row genuinely has both populated
