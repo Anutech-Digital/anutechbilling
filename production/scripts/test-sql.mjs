@@ -10,7 +10,13 @@
  *
  * 29 Aug 2026: koi npm script tha hi nahi. Yaani inhe ek saath kabhi chalaya hi nahi gaya.
  *
- * ─── PRODUCTION PAR CHALTE HAIN, AUR YE SURAKSHIT HAI ───────────────────────
+ * ─── DEFAULT LOCAL DB (R-2493, 5 Nov 2026) ─────────────────────────────────
+ * Bina flag ke ye LOCAL docker DB par chalti hai. Pehle default linked project (staging) tha —
+ * 5 Nov ek worker ne `--local` bhoola aur ye staging par chal padi. Remote ab sirf
+ * `--remote <ref>` AUR TEST_SQL_REMOTE_OK=<wahi ref> se, CI me kabhi nahi; pehli line hamesha
+ * `target: …`. Niyam: scripts/dev/sql-test-target.mjs; test: tests/test-sql-target.test.ts.
+ *
+ * ─── HAR FILE ROLLBACK KARTI HAI ────────────────────────────────────────────
  * Har file `begin; … rollback;` me lipti hai, aur Postgres me DDL bhi transactional hai.
  * Chalane se pehle ye script khud jaanchti hai ki har file me `rollback` hai aur `commit`
  * NAHI hai — ek bhi file is shart par fail hui to kuch bhi nahi chalta.
@@ -25,9 +31,20 @@ import { readdirSync, readFileSync, writeFileSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
+import { resolveSqlTestTarget, describeSqlTestTarget, readLinkedRef, linkedRefReason } from "./dev/sql-test-target.mjs";
+
+/* ── 0. Kahan chalega — sabse pehle, kuch bhi jodne se pehle (R-2493) ── */
+const resolved = resolveSqlTestTarget(process.argv.slice(2), process.env);
+console.log(describeSqlTestTarget(resolved.target));
+const refuse = (why) => { console.error(`RUKA — ${why}`); process.exit(2); };
+if (resolved.reason) refuse(resolved.reason);
+if (resolved.target.kind === "remote") {
+  const why = linkedRefReason(resolved.target.ref, readLinkedRef(process.cwd()));
+  if (why) refuse(why);
+}
+const only = resolved.only;
 
 const DIR = "supabase/tests";
-const only = process.argv.slice(2).find((a) => !a.startsWith("-")) ?? null;
 
 /* ── 1. Surakshit hai ya nahi — kuch chalane se pehle ── */
 const files = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
@@ -47,42 +64,27 @@ writeFileSync(canary, "begin;\n  do $$ begin raise exception 'CANARY'; end $$;\n
 
 const TRANSIENT = /TransportError|LegacyDbConfigLoginRole|ECONNRESET|fetch failed/i;
 
-/* ── --local: chalao local Supabase par, production par nahi ────────────────
- *
- * 23 Sep 2026: `npm run test:sql` seedha `LegacyProjectNotLinkedError` deta tha, yaani
- * bina link kiye ye script chalti hi nahi thi — aur AGENTS.md §4a kehta hai ki kaam
- * production par nahi, local par hota hai. Ab `--local` local container se baat karta
- * hai; bina flag ke purana raasta (production, --linked) waisa hi hai. */
-const LOCAL = process.argv.includes("--local");
-/* ── --db-url=postgres://…@127.0.0.1:54322/postgres : psql seedha, bina docker exec ──
- *
- * S18 (28 Sep 2026): CI runner me SQL test chalane ke liye (ek service container ya
- * `supabase start`, jisme baseline + migrations lage hon) container ka naam dhoondhna
- * kaam nahi aata — wahan sirf ek URL hota hai. Isliye ye raasta. SIRF localhost /
- * 127.0.0.1 / ::1 maana jata hai: production ka URL diya to script ruk jaati hai, taaki
- * ye flag kabhi `--linked` ka chor-darwaza na bane. */
-const DB_URL = (process.argv.find((a) => a.startsWith("--db-url=")) ?? "").slice("--db-url=".length) || null;
-if (DB_URL) {
-  let host = "";
-  try { host = new URL(DB_URL).hostname.replace(/^\[|\]$/g, ""); } catch { /* host stays "" */ }
-  if (!["127.0.0.1", "localhost", "::1"].includes(host)) {
-    console.error(`RUKA — --db-url sirf local database ke liye hai (mila host: "${host || "?"}").`);
-    process.exit(2);
-  }
-  if (spawnSync("psql", ["--version"], { encoding: "utf8" }).status !== 0) {
-    console.error("--db-url ke liye `psql` PATH par chahiye.");
-    process.exit(2);
-  }
+/* ── Target (R-2493; pehle --local 23 Sep, --db-url S18 28 Sep) ───────────────
+ * local — default, aur `--local` (CI ka `npm run test:sql:local`, apna throwaway stack):
+ *   docker ke supabase_db_* container me psql.
+ * `--db-url=postgres://…@127.0.0.1:54322/postgres` — psql seedha, bina docker exec; sirf
+ *   local host (scripts/dev/local-guard.mjs), taaki ye kabhi remote ka chor-darwaza na bane.
+ * `--remote <ref>` — linked project; upar ref + TEST_SQL_REMOTE_OK + link teeno jaanch chuke. */
+const LOCAL = resolved.target.kind === "local";
+const DB_URL = resolved.target.kind === "db-url" ? resolved.target.url : null;
+if (DB_URL && spawnSync("psql", ["--version"], { encoding: "utf8" }).status !== 0) {
+  console.error("--db-url ke liye `psql` PATH par chahiye.");
+  process.exit(2);
 }
 let CONTAINER = null;
-if (LOCAL && !DB_URL) {
+if (LOCAL) {
   const ps = spawnSync("docker", ["ps", "--format", "{{.Names}}"], { encoding: "utf8" });
   CONTAINER = (ps.stdout ?? "")
     .split(/[\r\n]+/)
     .map((x) => x.trim())
     .find((n) => /^supabase_db_/.test(n));
   if (!CONTAINER) {
-    console.error("--local ke liye local Supabase chalu hona chahiye (supabase_db_* container nahi mila).");
+    console.error("Local Supabase chalu hona chahiye (supabase_db_* container nahi mila) — `npx supabase start`. Remote par apne aap kabhi nahi jaata.");
     process.exit(2);
   }
 }
@@ -116,7 +118,8 @@ function runOne(path) {
              har laal test hara padha jaata. */
           { input: readFileSync(path, "utf8"), encoding: "utf8", timeout: 120_000 },
         )
-      : spawnSync("npx", ["supabase", "db", "query", "--linked", "-f", path], {
+      : /* sirf target "remote" — jo upar do baar maanga aur link se mila hua hai (R-2493) */
+        spawnSync("npx", ["supabase", "db", "query", "--linked", "-f", path], {
           encoding: "utf8", shell: true, timeout: 120_000,
         });
     const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;

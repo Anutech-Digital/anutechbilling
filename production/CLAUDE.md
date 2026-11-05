@@ -845,7 +845,7 @@ hook**. ⚠️ **Corrected 29 Aug 2026** — this said "28" and there are **42**
 way to run them together at all, so they had never been run as a suite. There is now:
 
 ```bash
-cd production && npm run test:sql          # sab 42 · ~3.5 min · production par, sab rollback
+cd production && npm run test:sql          # LOCAL docker DB (R-2493: default local; remote only --remote <ref> + TEST_SQL_REMOTE_OK=<ref>), sab rollback
 cd production && npm run test:sql payment  # naam se chhaan kar
 ```
 
