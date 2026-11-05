@@ -3,6 +3,7 @@ import {
   disconnectFacebookPage, facebookPageCaller, listFacebookPages, metaAppCreds, pendingIsFresh,
   readFacebookPage, selectFacebookPage,
 } from "@/lib/integrations/facebook-page";
+import { instagramForPage } from "@/lib/marketing/social-content";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -14,10 +15,13 @@ export async function GET() {
     const connection = await readFacebookPage(caller.admin, caller.tenantId);
     const choosing = caller.canManage && Boolean(connection.pendingToken && pendingIsFresh(connection.pendingAt));
     const pages = choosing ? await listFacebookPages(connection.pendingToken!) : [];
+    // The Instagram account linked to the Page in Meta — found through the Page, nothing to choose here.
+    const instagram = connection.pageId && connection.pageToken ? await instagramForPage(connection.pageId, connection.pageToken).catch(() => null) : null;
     return NextResponse.json({
       configured: Boolean(metaAppCreds()), canManage: caller.canManage,
       connected: Boolean(connection.pageId && connection.pageToken),
       pageId: connection.pageId, pageName: connection.pageName,
+      instagram: instagram ? { username: instagram.username ?? null } : null,
       choosing, pages: pages.map(({ id, name, tasks }) => ({ id, name, tasks })),
     });
   } catch (error) {

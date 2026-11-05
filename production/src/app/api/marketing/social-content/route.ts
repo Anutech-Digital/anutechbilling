@@ -38,7 +38,7 @@ export async function GET() {
     return NextResponse.json({ items, settings: settings[0] ?? { auto_drafts: false, brief: "" },
       canReview: canReviewSocial(role), canManage: role === "owner",
       facebook: connection.pageId ? { name: connection.pageName, connected: true } : null,
-      instagram: instagram ? { name: instagram.username ?? "Instagram", type: instagram.account_type ?? null } : null });
+      instagram: instagram ? { name: instagram.username ?? "Instagram", type: null } : null });
   } catch (error) {
     console.error("[social-content] load failed", error instanceof Error ? error.message : "unknown");
     return NextResponse.json({ error: "Could not load social content. Apply the latest database migration and retry." }, { status: 500 });

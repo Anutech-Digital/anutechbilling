@@ -8,12 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { MarketingPageHeader } from "@/components/features/marketing-hub/workspace-links";
-import { ArrowUpRight, Facebook, Link2 } from "lucide-react";
+import { ArrowUpRight, Facebook, Instagram, Link2 } from "lucide-react";
 
 type PageChoice = { id: string; name: string; tasks?: string[] };
 type Status = {
   configured: boolean; connected: boolean; canManage: boolean;
   pageId: string | null; pageName: string | null;
+  instagram?: { username: string | null } | null;
   choosing: boolean; pages: PageChoice[];
 };
 
@@ -113,9 +114,12 @@ export default function FacebookPage() {
               </div>
               <Badge kind="success" dot>Connected</Badge>
             </div>
-            <div className="rounded-lg border border-hairline bg-paper-2 px-4 py-3 text-sm text-ink-2">
-              Your Page is connected. Reconnect once to grant publishing permissions and link its Instagram account.
-            </div>
+            {status.instagram ? <div className="flex items-center gap-3 rounded-lg border border-hairline bg-paper-2 px-4 py-3 text-sm text-ink-2">
+              <Instagram size={18} className="shrink-0 text-[#c13584]" aria-hidden="true" />
+              <span>Instagram <strong className="text-ink">@{status.instagram.username ?? "linked"}</strong> is linked to this Page. Posts can go to Facebook and Instagram.</span>
+            </div> : <div className="rounded-lg border border-hairline bg-paper-2 px-4 py-3 text-sm text-ink-2">
+              Instagram is not linked. In Facebook, open this Page&apos;s Settings → Linked accounts → Instagram and connect a professional account, then press Reconnect here.
+            </div>}
             <div className="flex flex-col gap-3 border-t border-hairline pt-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap gap-2"><Button asChild variant="primary"><a href="/marketing/social-content">Open content studio</a></Button><Button asChild variant="outline"><a href={`https://business.facebook.com/latest/home?asset_id=${status.pageId}`} target="_blank" rel="noopener noreferrer">Meta Business Suite <ArrowUpRight size={15} aria-hidden="true" /></a></Button></div>
               {status.canManage && <div className="flex flex-wrap items-center gap-2"><Button asChild variant="outline"><a href="/api/integrations/facebook-page/connect">Reconnect / change Page</a></Button><Button variant="ghost" onClick={() => setConfirmDisconnect(true)}>Disconnect</Button></div>}

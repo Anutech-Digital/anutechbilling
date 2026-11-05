@@ -95,10 +95,13 @@ async function graphPost(path: string, fields: Record<string, string>): Promise<
   return { id: json.id };
 }
 
-export async function instagramForPage(pageId: string, pageToken: string): Promise<{ id: string; username?: string; account_type?: string } | null> {
-  const url = `${GRAPH}/${encodeURIComponent(pageId)}?${new URLSearchParams({ fields: "instagram_business_account{id,username,account_type}", access_token: pageToken })}`;
+/* 5 Nov 2026: ask only for id + username. The Graph API has no `account_type` on an Instagram
+   business account, and asking for it made Meta refuse the whole call — so a linked account
+   always looked "not linked". */
+export async function instagramForPage(pageId: string, pageToken: string): Promise<{ id: string; username?: string } | null> {
+  const url = `${GRAPH}/${encodeURIComponent(pageId)}?${new URLSearchParams({ fields: "instagram_business_account{id,username}", access_token: pageToken })}`;
   const response = await fetch(url, { cache: "no-store" });
-  const json = await response.json().catch(() => ({})) as { instagram_business_account?: { id: string; username?: string; account_type?: string } };
+  const json = await response.json().catch(() => ({})) as { instagram_business_account?: { id: string; username?: string } };
   if (!response.ok) return null;
   return json.instagram_business_account ?? null;
 }
@@ -138,7 +141,6 @@ export async function publishWithPage(
   }
   const ig = await instagramForPage(connection.pageId, token);
   if (!ig) throw new Error("Link a professional Instagram account to this Facebook Page, then reconnect Meta.");
-  if (item.format === "story" && ig.account_type !== "BUSINESS") throw new Error("Instagram Stories require a Business account.");
   if (!item.media_url) throw new Error("Instagram needs a public HTTPS image URL.");
   const container = await graphPost(`${ig.id}/media`, {
     image_url: item.media_url, ...(item.format === "story" ? { media_type: "STORIES" } : { caption: item.caption }), access_token: token,
