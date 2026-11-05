@@ -7,6 +7,11 @@
  * came from (FD / savings / other), may name the FD, and an FD premature closure is ONE save —
  * principal back from the FD (its balance goes down) + the rest as interest; TDS the bank deducted
  * goes to TDS receivable and the income is booked gross (book_bank_credit_as_interest).
+ *
+ * R-2390 (staging 2 Nov): nothing is pre-picked any more unless the narration says interest — the
+ * ₹40,02,110 FD auto-redeem line had "Other income" pre-picked (one click = ₹40 L booked as income).
+ * An FD redeem / premature closure / sweep line pre-picks Interest received → Fixed deposit → that FD
+ * with "FD closed" ticked, i.e. the R-2366 closure above (principal back + the rest as interest).
  */
 "use client";
 
@@ -17,15 +22,37 @@ import { Input } from "@/components/ui/input";
 import { rupee } from "@/lib/utils";
 import { useBankAccounts, type BankTransactionRow } from "@/lib/queries/bank";
 import { useBookInterestIncome, useBookOtherIncome, type OtherIncomeHead } from "@/lib/queries/bank-other-income";
-import { guessInterestSource, interestSplit, type InterestSource } from "@/lib/banking/interest-income";
+import { fdRedeemGuess, guessInterestSource, interestSplit, looksLikeInterest, type InterestSource } from "@/lib/banking/interest-income";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
-/** The narration says interest (INT.PD, INTEREST, FD INT …) — then "Interest received" is picked first. */
-export function looksLikeInterest(description: string | null | undefined): boolean {
-  return /\b(int\.?\s?pd|interest|int\s+cr|fd\s+int|sb\s+int|int\.?\s+credit|int\.?\s+on\s+(fd|td|sb|dep\w*))\b/i.test(description ?? "");
+export { looksLikeInterest };
+
+type FdLite = { id: string; name: string; account_type?: string | null; account_number_last4?: string | null; is_active?: boolean | null; current_balance?: number | null };
+
+/** Smart default for an FD closure: the FD's whole balance comes back, when it fits in this line. */
+function defaultPrincipal(fd: FdLite | null | undefined, amount: number): string {
+  const bal = fd?.current_balance ?? 0;
+  return bal > 0 && bal < amount ? String(bal) : "";
 }
 
-type FdLite = { id: string; name: string; account_type?: string | null; is_active?: boolean | null; current_balance?: number | null };
+type Pick = { head: OtherIncomeHead | null; source: InterestSource; fdId: string; closure: boolean; principalText: string };
+
+/** R-2390: what the narration lets us pre-pick — never "Other income" on its own. */
+function pickFor(description: string | null | undefined, fds: readonly FdLite[], amount: number): Pick {
+  const g = fdRedeemGuess(description, fds);
+  const fd = g.fdId ? fds.find((a) => a.id === g.fdId) ?? null : null;
+  if (g.redeem) {
+    return { head: "interest", source: "fd", fdId: fd?.id ?? "", closure: !!fd, principalText: fd ? defaultPrincipal(fd, amount) : "" };
+  }
+  const interest = looksLikeInterest(description);
+  const source = guessInterestSource(description);
+  return {
+    head: interest ? "interest" : null, source,
+    fdId: interest && source === "fd" && fd ? fd.id : "", closure: false, principalText: "",
+  };
+}
+
+const PICK_HEAD = "Pick Interest received or Other income";
 
 const SOURCES: readonly (readonly [InterestSource, string])[] = [["fd", "Fixed deposit"], ["savings", "Savings account"], ["other", "Other"]];
 
@@ -45,21 +72,26 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
   const book = useBookOtherIncome();
   const bookInterest = useBookInterestIncome();
   const accountsQ = useBankAccounts();
-  const [head, setHead] = React.useState<OtherIncomeHead>(looksLikeInterest(transaction.description) ? "interest" : "other");
-  const [source, setSource] = React.useState<InterestSource>(guessInterestSource(transaction.description));
-  const [fdId, setFdId] = React.useState("");
-  const [closure, setClosure] = React.useState(false);
-  const [principalText, setPrincipalText] = React.useState("");
-  const [tdsText, setTdsText] = React.useState("");
-  React.useEffect(() => {
-    setHead(looksLikeInterest(transaction.description) ? "interest" : "other");
-    setSource(guessInterestSource(transaction.description));
-    setFdId(""); setClosure(false); setPrincipalText(""); setTdsText("");
-  }, [transaction.id, transaction.description]);
   const amount = transaction.credit ?? 0;
-
   const fds = ((accountsQ.data ?? []) as FdLite[])
     .filter((a) => a.account_type === "fixed_deposit" && a.id !== transaction.bank_account_id && a.is_active !== false);
+  /* R-2390: the pre-pick (pickFor) is redone when the line changes or the FD list arrives — not on a
+     balance refetch, so it never undoes what the owner picked. */
+  const fdsKey = fds.map((a) => a.id).join(",");
+  const first = React.useMemo(() => pickFor(transaction.description, fds, amount),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [transaction.id, transaction.description, fdsKey, amount]);
+  const [head, setHead] = React.useState<OtherIncomeHead | null>(first.head);
+  const [source, setSource] = React.useState<InterestSource>(first.source);
+  const [fdId, setFdId] = React.useState(first.fdId);
+  const [closure, setClosure] = React.useState(first.closure);
+  const [principalText, setPrincipalText] = React.useState(first.principalText);
+  const [tdsText, setTdsText] = React.useState("");
+  React.useEffect(() => {
+    setHead(first.head); setSource(first.source); setFdId(first.fdId);
+    setClosure(first.closure); setPrincipalText(first.principalText); setTdsText("");
+  }, [first]);
+
   const fd = fds.find((a) => a.id === fdId) ?? null;
   const isClosure = head === "interest" && source === "fd" && !!fd && closure;
   const principal = isClosure ? rupeesIn(principalText) : 0;
@@ -77,12 +109,11 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
   }
   function toggleClosure(on: boolean) {
     setClosure(on);
-    /* Smart default: the FD's whole balance comes back, when it fits in this line. */
-    const bal = fd?.current_balance ?? 0;
-    if (on && !principalText && bal > 0 && bal < amount) setPrincipalText(String(bal));
+    if (on && !principalText) setPrincipalText(defaultPrincipal(fd, amount));
   }
 
   async function submit() {
+    if (head === null) return;   // R-2390: the owner must pick first
     try {
       if (head === "interest") {
         await bookInterest.mutateAsync({
@@ -98,12 +129,16 @@ export function OtherIncomeSection({ transaction, onDone, onFooterSave }: {
   }
 
   /* R-2354: same label, same rule, same submit() — in the footer when the sheet asks. */
-  const saveLabel = head !== "interest" ? `Book ${rupee(amount)} as other income`
+  const saveLabel = head === null ? (onFooterSave ? `Book ${rupee(amount)}` : PICK_HEAD)
+    : head !== "interest" ? `Book ${rupee(amount)} as other income`
     : isClosure && principal > 0 ? `Book FD closure: ${rupee(principal)} principal + ${rupee(split.gross)} interest`
     : `Book ${rupee(split.gross)} as interest received`;
   const pending = book.isPending || bookInterest.isPending;
-  const disabled = amount <= 0 || !!interestError;
-  useFooterSaveReport(onFooterSave, { label: saveLabel, onSave: () => { void submit(); }, disabled, loading: pending });
+  const disabled = amount <= 0 || head === null || !!interestError;
+  useFooterSaveReport(onFooterSave, {
+    label: saveLabel, onSave: () => { void submit(); }, disabled, loading: pending,
+    disabledReason: head === null ? `${PICK_HEAD} first.` : null,
+  });
 
   return (
     <section aria-label="Income that is not a sale" className="rounded-md border border-emerald/40 bg-emerald-soft/20 p-3 space-y-2">
