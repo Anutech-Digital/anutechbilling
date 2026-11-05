@@ -18,14 +18,18 @@ import ZohoBooksCard from "./zoho-books-card";
 
 let status: Record<string, unknown>;
 let posts: Array<{ url: string; body: unknown }>;
+/** R-2498: what the FY count route answers, in order (one per request). */
+let fyAnswers: Array<Record<string, unknown>>;
 
 beforeEach(() => {
   posts = [];
+  fyAnswers = [];
   toastMock.mockReset(); toastMock.success.mockReset(); toastMock.error.mockReset();
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     const j = (b: unknown, s = 200) => new Response(JSON.stringify(b), { status: s, headers: { "content-type": "application/json" } });
     if (init?.method === "POST" || init?.method === "DELETE") {
       posts.push({ url, body: init.body ? JSON.parse(String(init.body)) : null });
+      if (url.endsWith("/fy-counts")) return j(fyAnswers.shift() ?? { ok: false, error: "no more" });
       if (url.endsWith("/preview")) {
         return j({ ok: true, preview: { contacts: 237, invoices: 1450, openInvoices: 38, withSubsPeriod: 912, withServiceExpiry: 640, capped: false } });
       }
@@ -82,6 +86,40 @@ describe("Zoho Books card", () => {
     expect(screen.getByRole("button", { name: "Disconnect" })).toBeTruthy();
     // R-1753: the next step is the import
     expect(screen.getByRole("button", { name: "Import from Zoho" })).toBeTruthy();
+  });
+
+  it("R-2498: Count FY 2025-26 on an old connection says Reconnect, and Reconnect goes to Zoho consent", async () => {
+    status = { configured: true, connected: true, needs_org: false, org_name: "Acme Traders Pvt Ltd", can_manage: true };
+    fyAnswers = [{
+      ok: true, fy: "2025-26", cursor: null, calls: 6, busy: false,
+      counts: { invoices: 1210, creditnotes: 0, bills: 0, expenses: 0, vendorpayments: 0 },
+      needsReconnect: ["creditnotes", "bills", "expenses", "vendorpayments"],
+      message: "Reconnect to allow reading credit notes, bills, expenses and vendor payments. Press Reconnect, then Allow on the Zoho screen.",
+    }];
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Count FY 2025-26" }));
+    expect(await screen.findByText(/^Reconnect to allow reading credit notes, bills, expenses/)).toBeTruthy();
+    expect(screen.getByText("1,210")).toBeTruthy();
+    expect(screen.getAllByText("Needs reconnect")).toHaveLength(4);
+    expect(screen.getByRole("link", { name: "Reconnect" }).getAttribute("href")).toBe("/api/integrations/zoho-books/connect");
+    expect(posts.filter((x) => x.url.endsWith("/fy-counts"))).toEqual([{ url: "/api/integrations/zoho-books/fy-counts", body: { fy: "2025-26", cursor: null } }]);
+  });
+
+  it("R-2498: Count FY carries on from the cursor until done and shows all five counts", async () => {
+    status = { configured: true, connected: true, needs_org: false, org_name: "Acme Traders Pvt Ltd", can_manage: true };
+    const cursor = { fy: "2025-26", list: "bills", page: 1, counts: { invoices: 1210, creditnotes: 14 }, needsReconnect: [] };
+    fyAnswers = [
+      { ok: true, fy: "2025-26", cursor, calls: 2, busy: false, counts: { invoices: 1210, creditnotes: 14, bills: 0, expenses: 0, vendorpayments: 0 }, needsReconnect: [] },
+      { ok: true, fy: "2025-26", cursor: null, calls: 3, busy: false, counts: { invoices: 1210, creditnotes: 14, bills: 388, expenses: 96, vendorpayments: 301 }, needsReconnect: [] },
+    ];
+    show();
+    fireEvent.click(await screen.findByRole("button", { name: "Count FY 2025-26" }));
+    expect(await screen.findByText("388")).toBeTruthy();
+    expect(screen.getByText("301")).toBeTruthy();
+    expect(screen.getByText(/Nothing has been imported/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Reconnect" })).toBeNull();
+    const fy = posts.filter((x) => x.url.endsWith("/fy-counts"));
+    expect(fy.map((x) => (x.body as { cursor: unknown }).cursor)).toEqual([null, cursor]);
   });
 
   it("a billing user is told who can connect, with no buttons", async () => {

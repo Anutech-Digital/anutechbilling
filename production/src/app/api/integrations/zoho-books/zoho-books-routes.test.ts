@@ -202,7 +202,8 @@ describe("connect", () => {
     signIn("u-acme-owner");
     const { res, loc, state } = await startConnect();
     expect(res.status).toBe(307);
-    expect(loc.searchParams.get("scope")).toBe("ZohoBooks.contacts.READ,ZohoBooks.invoices.READ,ZohoBooks.customerpayments.READ,ZohoBooks.settings.READ");
+    expect(loc.searchParams.get("scope")).toBe("ZohoBooks.contacts.READ,ZohoBooks.invoices.READ,ZohoBooks.customerpayments.READ,ZohoBooks.settings.READ,"
+      + "ZohoBooks.creditnotes.READ,ZohoBooks.bills.READ,ZohoBooks.expenses.READ,ZohoBooks.vendorpayments.READ,ZohoBooks.accountants.READ");
     expect(loc.searchParams.get("scope")).not.toMatch(/CREATE|UPDATE|DELETE|ALL/);
     expect(loc.searchParams.get("access_type")).toBe("offline");
     expect(loc.searchParams.get("prompt")).toBe("consent");

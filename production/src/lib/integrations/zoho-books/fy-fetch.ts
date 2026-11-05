@@ -43,9 +43,8 @@ export const FY_DOC_SPECS: Record<FyDocKind, KindSpec> = {
   vendorpayments: { path: "/vendorpayments", listKey: "vendorpayments", detailKey: "vendorpayment", idKey: "payment_id", numberKey: "payment_number", contactSide: "vendor", amountKey: "amount", label: "vendor payments" },
 };
 
-/** What the card says when the stored Zoho sign-in was made before these scopes existed. */
-export const ZOHO_FY_RECONNECT_MESSAGE =
-  "Reconnect to allow reading credit notes, bills, expenses and vendor payments. Press Reconnect, then Allow on the Zoho screen.";
+/** What the card says when the stored Zoho sign-in was made before these scopes existed (config.ts). */
+export { ZOHO_FY_RECONNECT_MESSAGE } from "./config";
 
 // ── small, pure helpers ───────────────────────────────────────────────────────────────────
 
@@ -282,6 +281,17 @@ export interface FyCountResult {
   busy: boolean;
 }
 
+/** One-row read of invoices (scope every connection has): true when the token itself works. */
+async function tokenStillReads(orgId: string, token: string, f: Fetch): Promise<boolean> {
+  try {
+    await listPage("/invoices", "invoices", orgId, token, 1, f, { per_page: "1" });
+    return true;
+  } catch (e) {
+    if (isScopeMissing(e) || (e instanceof ZohoApiError && e.status === 401)) return false;
+    throw e;
+  }
+}
+
 /** Counts the FY's documents of each kind, resumable. */
 export async function countFyDocs(
   orgId: string, token: string, fy: string, cursor: FyCountCursor | null, pace: PaceOpts, f: Fetch = fetch,
@@ -301,6 +311,9 @@ export async function countFyDocs(
         more = p.more && cur.page < MAX_PAGE;
       } catch (e) {
         if (!isScopeMissing(e)) throw e;
+        /* Zoho Books answers an expired / revoked token with the same 401 code 57. Only call it a
+           missing scope when a list every connection has (invoices, R-1749) still reads. */
+        if (kind === "invoices" || !(await tokenStillReads(orgId, token, f))) throw e;
         if (!cur.needsReconnect.includes(kind)) cur.needsReconnect.push(kind);
       }
       if (more) { cur.page += 1; return false; }
