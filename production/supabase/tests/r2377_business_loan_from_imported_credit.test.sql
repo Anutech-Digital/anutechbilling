@@ -43,10 +43,10 @@ insert into auth.users (id, email) values
   ('aaaaaaaa-0000-0000-0000-000000237701','owner2377@example.in');
 insert into public.users (id, tenant_id, email, full_name, role, created_at) values
   ('aaaaaaaa-0000-0000-0000-000000237701','dddddddd-0000-0000-0000-000000237701','owner2377@example.in','Owner 2377','owner', now() - interval '1 day');
-insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance) values
-  ('bbbbbbbb-0000-0000-0000-000000237701','dddddddd-0000-0000-0000-000000237701','HDFC Current','HDFC', 500000),
-  ('bbbbbbbb-0000-0000-0000-000000237703','dddddddd-0000-0000-0000-000000237701','Kotak Savings','Kotak', 0),
-  ('bbbbbbbb-0000-0000-0000-000000237702','dddddddd-0000-0000-0000-000000237702','Other bank','SBI', 0);
+insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance, opening_balance_date) values
+  ('bbbbbbbb-0000-0000-0000-000000237701','dddddddd-0000-0000-0000-000000237701','HDFC Current','HDFC', 500000, '2025-04-01'),
+  ('bbbbbbbb-0000-0000-0000-000000237703','dddddddd-0000-0000-0000-000000237701','Kotak Savings','Kotak', 0, '2025-04-01'),
+  ('bbbbbbbb-0000-0000-0000-000000237702','dddddddd-0000-0000-0000-000000237702','Other bank','SBI', 0, '2025-04-01');
 insert into public.company_directors (id, tenant_id, name, din, appointed_on) values
   ('cccccccc-0000-0000-0000-000000237701','dddddddd-0000-0000-0000-000000237701','Asha Director','01234567','2020-01-01');
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values

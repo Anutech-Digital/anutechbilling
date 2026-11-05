@@ -681,6 +681,74 @@ export function useExistingTxnKeys(accountId: string | null) {
 }
 
 /**
+ * R-2497: "Set opening balance from this statement" — never a plain overwrite.
+ * set_bank_opening_from_statement keeps today's balance (±₹1) or refuses with the figures
+ * (hint r2497_opening_mismatch) unless the owner accepts the difference, and writes a
+ * bank_opening_history row (old → new). The caller shows the refusal (isOpeningMismatchError).
+ */
+export type SetOpeningInput = {
+  accountId: string;
+  opening: number;
+  date: string;
+  /** The import that brought this statement's lines in (its own lines are not "money to keep"). */
+  batchId?: string | null;
+  acceptDifference?: boolean;
+};
+export function useSetBankOpeningFromStatement() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: SetOpeningInput) => {
+      const { data, error } = await createClient().rpc("set_bank_opening_from_statement" as never, {
+        p_account_id: input.accountId,
+        p_opening: input.opening,
+        p_date: input.date,
+        p_import_batch_id: input.batchId ?? null,
+        p_accept_difference: input.acceptDifference ?? false,
+      } as never);
+      if (error) throw error;
+      return data as unknown as { old_balance: number; old_date: string; new_balance: number; new_date: string; difference: number | null };
+    },
+    onSuccess: (_d, input) => {
+      qc.invalidateQueries({ queryKey: ["bank_accounts"] });
+      qc.invalidateQueries({ queryKey: ["bank_accounts", input.accountId] });
+      qc.invalidateQueries({ queryKey: ["bank_opening_history", input.accountId] });
+      toast.success("Opening balance set — the old one is kept in the account's history");
+    },
+  });
+}
+
+export type BankOpeningHistoryRow = {
+  id: string;
+  old_balance: number | null;
+  old_date: string | null;
+  new_balance: number;
+  new_date: string;
+  source: "statement" | "edit";
+  difference: number | null;
+  accepted_difference: boolean;
+  changed_at: string;
+};
+
+/** R-2497: the account's opening-balance changes, newest first. */
+export function useBankOpeningHistory(accountId: string | null | undefined) {
+  return useQuery({
+    queryKey: ["bank_opening_history", accountId],
+    enabled: Boolean(accountId),
+    queryFn: async (): Promise<BankOpeningHistoryRow[]> => {
+      const { data, error } = await createClient()
+        .from("bank_opening_history" as never)
+        .select("id, old_balance, old_date, new_balance, new_date, source, difference, accepted_difference, changed_at")
+        .eq("bank_account_id" as never, accountId as never)
+        .order("changed_at" as never, { ascending: false })
+        .limit(20);
+      if (error) throw error;
+      return (data ?? []) as unknown as BankOpeningHistoryRow[];
+    },
+    staleTime: 15_000,
+  });
+}
+
+/**
  * Bulk insert bank transactions from a parsed CSV/PDF upload.
  * Skips rows where both debit and credit are zero, AND skips DUPLICATES already
  * in the account (splitNewBankLines: date + amount + running balance, else the narration
@@ -705,7 +773,7 @@ export type BankImportInput = {
 export async function importBankTransactions(
   supabase: BankClient,
   input: BankImportInput,
-): Promise<{ inserted: number; duplicates: number }> {
+): Promise<{ inserted: number; duplicates: number; batchId?: string | null }> {
   const { data: authData } = await supabase.auth.getUser();
   if (!authData?.user) throw new Error("Not authenticated");
 
@@ -745,7 +813,7 @@ export async function importBankTransactions(
   });
   if (error) throw error;
   const out = data as { batch_id?: string; inserted?: number } | null;
-  return { inserted: Number(out?.inserted ?? 0), duplicates };
+  return { inserted: Number(out?.inserted ?? 0), duplicates, batchId: out?.batch_id ?? null };
 }
 
 export function useImportBankTransactions() {
