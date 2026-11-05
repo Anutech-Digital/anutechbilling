@@ -34,7 +34,7 @@
 -- New guards: call public.is_direct_request_login(), never a raw current_user role list —
 -- src/lib/security/direct-login-role-scan.test.ts fails on one.
 --
--- Not in this file (a different class, card R-2486): the ~315 RPC "v_trusted" checks
+-- Not in this file (a different class, card R-2487): the ~315 RPC "v_trusted" checks
 -- (auth.role() is null and session_user not in (...)) and r2158_trusted(). They ask "is this a
 -- trusted server path", not "is this a request login"; on staging the deploy script rewrites
 -- auth.role() to current_request_role(), which is non-null for every app_* login, so they hold

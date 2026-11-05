@@ -18,7 +18,7 @@
  *
  * Not covered on purpose: `session_user` checks (current_tenant_id() and friends read app.user_id
  * for the app_* logins — a different question) and the RPC "v_trusted" checks
- * (auth.role() is null and session_user not in (...)) — "is this a trusted server path", R-2486.
+ * (auth.role() is null and session_user not in (...)) — "is this a trusted server path", R-2487.
  * The SQL half (supabase/tests/r2485_direct_request_login_guards.test.sql) proves the guards on a
  * real database.
  */
