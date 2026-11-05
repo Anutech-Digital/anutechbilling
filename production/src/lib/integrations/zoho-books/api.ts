@@ -290,6 +290,21 @@ export async function getInvoiceDetail(orgId: string, token: string, invoiceId: 
   return (body.invoice as Record<string, unknown> | undefined) ?? {};
 }
 
+/** R-2494: the receipts applied to one invoice (GET /invoices/{id}/payments) — Zoho's invoice detail
+ *  carries only the payment_made total, not the dated list. */
+export async function listInvoicePayments(orgId: string, token: string, invoiceId: string, f: Fetch = fetch): Promise<Array<Record<string, unknown>>> {
+  const q = new URLSearchParams({ organization_id: orgId });
+  const body = await booksGet(`/invoices/${encodeURIComponent(invoiceId)}/payments?${q}`, token, f);
+  return Array.isArray(body.payments) ? (body.payments as Array<Record<string, unknown>>) : [];
+}
+
+/** R-2494: the credit notes applied to one invoice (GET /invoices/{id}/creditsapplied). */
+export async function listInvoiceCreditsApplied(orgId: string, token: string, invoiceId: string, f: Fetch = fetch): Promise<Array<Record<string, unknown>>> {
+  const q = new URLSearchParams({ organization_id: orgId });
+  const body = await booksGet(`/invoices/${encodeURIComponent(invoiceId)}/creditsapplied?${q}`, token, f);
+  return Array.isArray(body.credits) ? (body.credits as Array<Record<string, unknown>>) : [];
+}
+
 /** The value of a custom field whose name is one of `names` (both Zoho shapes), or null. */
 export function invoiceFieldValue(inv: Record<string, unknown>, names: Set<string>): string | null {
   const arr = Array.isArray(inv.custom_fields) ? (inv.custom_fields as Array<Record<string, unknown>>) : [];
