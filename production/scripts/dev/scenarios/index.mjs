@@ -288,13 +288,15 @@ export const SCENARIOS = [
   },
   {
     name: "two-companies",
-    about: "One login in two companies (R-2471 memberships): a second local company, SCN Second Company Pvt Ltd (no customers, quotes or invoices), and an active membership in it as Manager for the login 'Local test login → Owner' uses. That login sees the company switcher in the top bar: E2E Test Co (Owner, ticked) and SCN Second Company Pvt Ltd (Manager). --reset / --clear first moves that login back to E2E Test Co if it was left in the second company.",
+    about: "One login in two companies (R-2471 memberships): a second local company, SCN Second Company Pvt Ltd (no customers, quotes or invoices), and an active membership in it as Manager for e2e-owner@example.test (the login 'Local test login → Owner' uses). That login sees the company switcher in the top bar: E2E Test Co (Owner, ticked) and SCN Second Company Pvt Ltd (Manager). --reset / --clear first moves that login back to E2E Test Co if it was left in the second company.",
     cards: ["R-2476"],
     needs: { sql: "to_regprocedure('public.my_companies()') is not null", what: "company switcher (migration R-2476)" },
     scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: ["c2476000-0000-4000-8000-000000000001"] },
     expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, companies: 1, memberships: 1 },
     // --self-test: the owner switches into the second company — the reset must bring the login back, not delete it
     selfTestUse: `
+      select set_config('request.jwt.claims', json_build_object('role', 'authenticated', 'sub',
+        (select u.id from public.users u where lower(u.email) = 'e2e-owner@example.test'))::text, true);
       select public.switch_company('c2476000-0000-4000-8000-000000000001');
     `,
     pages: [

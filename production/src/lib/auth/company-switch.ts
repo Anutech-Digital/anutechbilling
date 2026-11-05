@@ -5,7 +5,8 @@
  * - `my_companies()` (SECURITY DEFINER) lists the login's ACTIVE memberships with company name,
  *   role there and which one is selected. tenants RLS hides other companies' names, so the list
  *   cannot be a plain select.
- * - `switch_company(uuid)` sets `users.tenant_id` (= the selected company) from the membership.
+ * - `switch_company(uuid)` sets `users.tenant_id` (= the selected company) from the membership;
+ *   the browser reaches it through POST /api/team/switch-company (drops the gateway's role cache).
  *   There are no tenant/role JWT claims (spec §1): the database row is the only truth and the next
  *   request already reads the new company. What can still show the OLD company is the browser:
  *   React Query's cache and the workspace tabs (sessionStorage — record pages and half-typed drafts
@@ -34,10 +35,9 @@ interface CompanyRow {
 }
 
 type RpcResult<T> = PromiseLike<{ data: T | null; error: { message: string } | null }>;
-/** The two RPCs are newer than the generated Database type — typed here, not in database.types. */
+/** my_companies is newer than the generated Database type — typed here, not in database.types. */
 export interface CompanySwitchClient {
   rpc(fn: "my_companies"): RpcResult<CompanyRow[]>;
-  rpc(fn: "switch_company", args: { p_tenant_id: string }): RpcResult<string>;
 }
 
 export function toCompanyOptions(rows: CompanyRow[] | null | undefined): CompanyOption[] {
@@ -61,9 +61,26 @@ export function shouldShowSwitcher(companies: CompanyOption[] | null | undefined
   return (companies?.length ?? 0) >= 2;
 }
 
-export async function switchCompany(client: CompanySwitchClient, tenantId: string): Promise<void> {
-  const { error } = await client.rpc("switch_company", { p_tenant_id: tenantId });
-  if (error) throw new Error(error.message);
+/** A refusal the server gave in words (403/401/400) — as opposed to a lost request. */
+export class SwitchRefusedError extends Error {}
+
+/**
+ * POST /api/team/switch-company (the route runs switch_company as the session and drops the data
+ * gateway's cached role for this login). Throws SwitchRefusedError with the server's words on a
+ * refusal; any other throw means we do not know whether the switch happened.
+ */
+export async function switchCompany(tenantId: string, fetchImpl: typeof fetch = fetch): Promise<void> {
+  const res = await fetchImpl("/api/team/switch-company", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tenantId }),
+    cache: "no-store",
+  });
+  if (res.ok) return;
+  const body = (await res.json().catch(() => null)) as { error?: unknown } | null;
+  const msg = typeof body?.error === "string" ? body.error : "";
+  if (res.status >= 400 && res.status < 500 && msg) throw new SwitchRefusedError(msg);
+  throw new Error(msg || `switch-company answered ${res.status}`);
 }
 
 export interface SwitchRefusal {
@@ -74,11 +91,19 @@ export interface SwitchRefusal {
 
 /**
  * §24 for a refused switch: what happened · why · what to do next (+ a button where one exists).
- * Decided by the message text the database raises (switch_company / the gateway's MFA refusal).
+ * Decided by the message text switch_company / the middleware raise.
  */
 export function describeSwitchRefusal(err: unknown): SwitchRefusal {
   const raw = err instanceof Error ? err.message : typeof err === "string" ? err : "";
-  if (/two-step sign-in|authenticator app|aal2|\bmfa\b/i.test(raw) || raw.includes(MFA_PENDING_MARKER)) {
+  // The data gateway's own MFA refusal names a different way out — keep its words (toast-error.ts).
+  if (raw.includes(MFA_PENDING_MARKER)) {
+    return {
+      message: "Could not switch company — two-step sign-in is not finished.",
+      description: "Sign out, sign in again and enter the code from your authenticator app, then switch again.",
+    };
+  }
+  // switch_company's refusal and the middleware's MFA_API_REFUSAL both send the person to /mfa.
+  if (/two-step sign-in|authenticator app/i.test(raw)) {
     return {
       message: "Could not switch company — two-step sign-in is not finished.",
       description: "Open the two-step sign-in page, type the 6-digit code from your authenticator app, then switch again.",
@@ -91,11 +116,23 @@ export function describeSwitchRefusal(err: unknown): SwitchRefusal {
       description: "That company's owner removed you or switched you off. Ask them to invite you again from their Team page.",
     };
   }
+  if (/sign in first|sign-in has expired|not authenticated/i.test(raw)) {
+    return {
+      message: "Could not switch company — you are signed out.",
+      description: "Your sign-in has expired. Sign in again, then switch company.",
+      action: { label: "Sign in again", href: "/login" },
+    };
+  }
   return {
     message: "Could not switch company.",
-    description: "You are still in the same company. Check your internet connection and try again.",
+    description: raw && err instanceof SwitchRefusedError
+      ? raw
+      : "Try again in a moment. If it keeps failing, report it from Help → Report a problem.",
   };
 }
+
+/** BroadcastChannel the switching tab posts {type: "switched"} on; this login's other tabs load fresh. */
+export const COMPANY_SWITCH_CHANNEL = "ros.company-switch";
 
 /** Workspace tabs (components/providers/workspace-tabs-provider.tsx STORAGE_KEY). */
 export const WORKSPACE_TABS_STORAGE_KEY = "ros.workspace.tabs.v1";

@@ -214,14 +214,22 @@ also be 0 on a healthy DB.
   only for 2+ active memberships. From `sm` up a top-bar button (building icon + current company);
   on a phone a "Switch company" row in the More menu (the 375px row has no room). Both open one
   dialog: company name + role there, the current one ticked ("Current"), keyboard reachable.
-- **Switch:** `switch_company(uuid)`, then `finishCompanySwitch`: cancel running reads, clear the
-  whole React Query cache, forget the workspace tabs (`ros.workspace.tabs.v1` — record pages and
-  drafts of the old company) and load `/dashboard` fresh (a role without it goes to its own home,
-  R-1837). A full load also resets in-memory providers. Unsaved form → confirm first.
-- **Refusals (§24):** two-step sign-in pending → "Open two-step sign-in" (/mfa); ended / switched-off
-  membership → ask that company's owner to invite again; anything else → still in the same company,
-  try again.
-- **Activity log:** `switch_company` rewrites the row `log_row_change` wrote in the NEW company to
+- **Switch:** POST `/api/team/switch-company` → `switch_company(uuid)` as the session, then
+  `invalidateGatewayRole` (the data gateway caches each login's role 60 s for contact masking and
+  limits — per server instance; another instance keeps its entry up to that TTL). Then
+  `finishCompanySwitch`: cancel running reads, clear the whole React Query cache, forget the
+  workspace tabs (`ros.workspace.tabs.v1` — record pages and drafts of the old company) and load
+  `/dashboard` fresh (a role without it goes to its own home, R-1837). A full load also resets
+  in-memory providers. This login's other browser tabs get a `ros.company-switch`
+  BroadcastChannel message and load fresh too (users.tenant_id is per login). An unsaved form
+  refuses the switch up front (the browser's "Leave site?" would otherwise let the person stay on
+  the old company's form after the server switched). A lost answer is checked with my_companies()
+  first; when that cannot tell either, the page loads fresh (it then shows the truth).
+- **Refusals (§24):** two-step sign-in pending → "Open two-step sign-in" (/mfa; the gateway's own
+  refusal keeps its "sign out, sign in again"); ended / switched-off membership → ask that company's
+  owner to invite again; signed out → "Sign in again"; anything else → try again / report.
+- **Activity log:** `switch_company` rewrites the row `log_row_change` wrote for this UPDATE (found
+  by activity_log id above a mark taken under the users row lock) in the NEW company to
   `{company: {new: <name>}, role: {new: <role>}}` ("<name> switched into this company") and adds one
   in the OLD company `{company: {old: <name>}, role: {old: <role>}}` ("… switched to another
   company"). Neither names the other company. Switching to the selected company writes nothing.

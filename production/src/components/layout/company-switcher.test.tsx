@@ -3,8 +3,12 @@
  * R-2476 (R-2471 slice 2): the top-bar company switcher.
  *  - hidden for a login with ONE active membership (and while loading / on error);
  *  - with two, lists company name + role, the current one ticked;
- *  - picking another calls switch_company, then drops every cached query and the old company's
- *    workspace tabs and loads the app fresh — nothing of the old company stays on screen;
+ *  - picking another POSTs /api/team/switch-company, then drops every cached query and the old
+ *    company's workspace tabs and loads the app fresh — nothing of the old company stays on screen;
+ *    the login's other browser tabs are told to load fresh too;
+ *  - an unsaved form refuses the switch up front (the server switch would otherwise outrun the
+ *    browser's "Leave site?");
+ *  - a lost answer is checked against the database before saying anything;
  *  - a refused switch (two-step sign-in pending) shows what happened, why and a button to /mfa,
  *    and leaves the caches alone.
  */
@@ -19,19 +23,18 @@ const st = vi.hoisted(() => ({
   listError: null as { message: string } | null,
   switchError: null as { message: string } | null,
   rpc: vi.fn(),
+  fetch: vi.fn(),
   push: vi.fn(),
-  confirm: vi.fn(async () => true),
   toastError: vi.fn(),
 }));
 
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({ rpc: st.rpc }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: st.push, refresh: vi.fn() }), usePathname: () => "/quotes/Q-1" }));
-vi.mock("@/components/providers/confirm-provider", () => ({ useConfirm: () => st.confirm }));
 vi.mock("sonner", () => ({ toast: { error: st.toastError, success: vi.fn(), info: vi.fn() } }));
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { userId: "u-1", role: "manager" } }) }));
 
 import { CompanySwitcher, CompanySwitcherMenuItem, companySwitchNav } from "./company-switcher";
-import { WORKSPACE_TABS_STORAGE_KEY } from "@/lib/auth/company-switch";
+import { COMPANY_SWITCH_CHANNEL, WORKSPACE_TABS_STORAGE_KEY } from "@/lib/auth/company-switch";
 
 const A = "c2476000-0000-0000-0000-0000000000f1";
 const B = "c2476000-0000-0000-0000-0000000000f2";
@@ -55,15 +58,19 @@ beforeEach(() => {
   st.switchError = null;
   st.rpc.mockReset().mockImplementation(async (fn: string) => {
     if (fn === "my_companies") return { data: st.listError ? null : st.rows, error: st.listError };
-    if (fn === "switch_company") return { data: st.switchError ? null : B, error: st.switchError };
     return { data: null, error: { message: `unexpected rpc ${fn}` } };
   });
+  st.fetch.mockReset().mockImplementation(async () =>
+    st.switchError
+      ? new Response(JSON.stringify({ error: st.switchError.message }), { status: 403 })
+      : new Response(JSON.stringify({ ok: true, tenantId: B }), { status: 200 }));
+  vi.stubGlobal("fetch", st.fetch);
   st.toastError.mockReset();
-  st.confirm.mockReset().mockResolvedValue(true);
 });
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
   window.sessionStorage.clear();
 });
 
@@ -110,7 +117,7 @@ describe("CompanySwitcher (R-2476)", () => {
     expect(other.getAttribute("aria-current")).toBeNull();
   });
 
-  it("switching calls switch_company, clears every cache and the old tabs, then loads the app fresh", async () => {
+  it("switching posts the switch, clears every cache and the old tabs, then loads the app fresh", async () => {
     st.rows = twoCompanies;
     const go = vi.spyOn(companySwitchNav, "go").mockImplementation(() => {});
     window.sessionStorage.setItem(WORKSPACE_TABS_STORAGE_KEY, '{"tabs":{"tabs":[{"id":"/quotes/Q-1"}]}}');
@@ -122,30 +129,70 @@ describe("CompanySwitcher (R-2476)", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Beta Cloud Pvt Ltd/i }));
 
     await waitFor(() => expect(go).toHaveBeenCalledWith("/dashboard"));
-    expect(st.rpc).toHaveBeenCalledWith("switch_company", { p_tenant_id: B });
+    expect(st.fetch).toHaveBeenCalledWith("/api/team/switch-company", expect.objectContaining({ method: "POST", body: JSON.stringify({ tenantId: B }) }));
     expect(clear).toHaveBeenCalled();
     expect(qc.getQueryData(["quotes", "Q-1"])).toBeUndefined();
     expect(window.sessionStorage.getItem(WORKSPACE_TABS_STORAGE_KEY)).toBeNull();
     expect(st.toastError).not.toHaveBeenCalled();
   });
 
-  it("asks before switching away from unsaved changes, and stays when told no", async () => {
+  it("an unsaved form refuses the switch up front with the next step — nothing sent", async () => {
     st.rows = twoCompanies;
     const go = vi.spyOn(companySwitchNav, "go").mockImplementation(() => {});
     const dirty = await import("@/lib/hooks/dirty-forms");
     const token = Symbol("form");
     dirty.setFormDirty(token, true);
-    st.confirm.mockResolvedValue(false);
     try {
       renderSwitcher();
       fireEvent.click(await screen.findByRole("button", { name: /switch company/i }));
       fireEvent.click(await screen.findByRole("button", { name: /Beta Cloud Pvt Ltd/i }));
-      await waitFor(() => expect(st.confirm).toHaveBeenCalled());
-      expect(st.rpc).not.toHaveBeenCalledWith("switch_company", expect.anything());
+      await waitFor(() => expect(st.toastError).toHaveBeenCalled());
+      const [msg, opts] = st.toastError.mock.calls[0] as [string, { description: string }];
+      expect(msg).toMatch(/unsaved changes/);
+      expect(opts.description).toMatch(/Save or discard/);
+      expect(st.fetch).not.toHaveBeenCalled();
       expect(go).not.toHaveBeenCalled();
     } finally {
       dirty.setFormDirty(token, false);
     }
+  });
+
+  it("a lost answer: the database says it switched → load fresh; says not → tell the person", async () => {
+    st.rows = twoCompanies;
+    const go = vi.spyOn(companySwitchNav, "go").mockImplementation(() => {});
+    st.fetch.mockRejectedValue(new TypeError("Failed to fetch"));
+
+    renderSwitcher();
+    fireEvent.click(await screen.findByRole("button", { name: /switch company/i }));
+    st.rows = [{ ...twoCompanies[0], is_current: false }, { ...twoCompanies[1], is_current: true }];
+    fireEvent.click(await screen.findByRole("button", { name: /Beta Cloud Pvt Ltd/i }));
+    await waitFor(() => expect(go).toHaveBeenCalledWith("/dashboard"));
+    expect(st.toastError).not.toHaveBeenCalled();
+
+    cleanup();
+    go.mockClear();
+    st.rows = twoCompanies;
+    qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    renderSwitcher();
+    fireEvent.click(await screen.findByRole("button", { name: /switch company/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /Beta Cloud Pvt Ltd/i }));
+    await waitFor(() => expect(st.toastError).toHaveBeenCalled());
+    expect(go).not.toHaveBeenCalled();
+    expect((st.toastError.mock.calls[0] as [string, { description: string }])[1].description).toMatch(/Try again/);
+  });
+
+  it("another tab of this login switched → this tab drops its cache and loads fresh", async () => {
+    expect(typeof BroadcastChannel).toBe("function");
+    st.rows = twoCompanies;
+    const go = vi.spyOn(companySwitchNav, "go").mockImplementation(() => {});
+    qc.setQueryData(["quotes", "Q-1"], { id: "Q-1" });
+    renderSwitcher();
+    await screen.findByRole("button", { name: /switch company/i });
+    const other = new BroadcastChannel(COMPANY_SWITCH_CHANNEL);
+    other.postMessage({ type: "switched" });
+    other.close();
+    await waitFor(() => expect(go).toHaveBeenCalledWith("/dashboard"));
+    expect(qc.getQueryData(["quotes", "Q-1"])).toBeUndefined();
   });
 
   it("a refused switch (two-step sign-in pending) says why + next step with a button, caches kept", async () => {
@@ -163,6 +210,7 @@ describe("CompanySwitcher (R-2476)", () => {
     expect(msg).toMatch(/two-step sign-in/i);
     expect(opts.description).toMatch(/authenticator app/);
     expect(opts.action.label).toBe("Open two-step sign-in");
+    expect((opts as { duration?: number }).duration).toBeGreaterThanOrEqual(10_000);
     opts.action.onClick();
     expect(st.push).toHaveBeenCalledWith("/mfa");
     expect(go).not.toHaveBeenCalled();

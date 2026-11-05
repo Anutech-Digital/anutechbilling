@@ -64,6 +64,7 @@ declare
   v_old_co   text;
   v_new_co   text;
   v_log      bigint;
+  v_mark     bigint;
 begin
   if v_uid is null then
     raise exception 'Sign in first.' using errcode = '42501';
@@ -84,6 +85,9 @@ begin
 
   select u.tenant_id, u.role::text, u.full_name into v_old_tid, v_old_role, v_name
     from public.users u where u.id = v_uid for update;
+  -- Every activity row the UPDATE below makes has a larger id (identity). The users row lock above
+  -- keeps any other change of this login's row (and so its users_activity rows) out until commit.
+  select coalesce(max(a.id), 0) into v_mark from public.activity_log a;
 
   update public.users
      set tenant_id = v_m.tenant_id, role = v_m.role, is_active = true,
@@ -96,15 +100,19 @@ begin
     select t.name into v_new_co from public.tenants t where t.id = v_m.tenant_id;
     select t.name into v_old_co from public.tenants t where t.id = v_old_tid;
 
-    /* The row users_activity (log_row_change) just wrote in the NEW company carries the old
-       company's tenant_id / role / employee_id. Same transaction (created_at = now()), so it is
-       this switch's row — rewrite it to the new company's facts only. */
+    /* The row(s) users_activity (log_row_change) just wrote for THIS update carry the old
+       company's tenant_id / role / employee_id. Found by id > v_mark (not by the shape of
+       changes), so a later change to log_row_change cannot turn this into a silent no-op:
+       rewrite the newest to the new company's facts only, drop any other. */
     select max(a.id) into v_log from public.activity_log a
-     where a.tenant_id = v_m.tenant_id and a.entity = 'users' and a.entity_id = v_uid::text
-       and a.action = 'update' and a.created_at = now() and a.changes ? 'tenant_id';
+     where a.id > v_mark and a.entity = 'users' and a.entity_id = v_uid::text;
     if v_log is not null then
+      delete from public.activity_log a
+       where a.id > v_mark and a.id <> v_log and a.entity = 'users' and a.entity_id = v_uid::text;
       update public.activity_log a
-         set label = left(coalesce(v_name, '') || ' switched into this company', 120),
+         set tenant_id = v_m.tenant_id,
+             action = 'update',
+             label = left(coalesce(v_name, '') || ' switched into this company', 120),
              changes = jsonb_build_object(
                'company', jsonb_build_object('old', null, 'new', v_new_co),
                'role',    jsonb_build_object('old', null, 'new', v_m.role::text))

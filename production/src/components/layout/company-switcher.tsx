@@ -20,14 +20,13 @@ import { toast } from "sonner";
 import { Icon } from "@/components/ui/icon";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
-import { useConfirm } from "@/components/providers/confirm-provider";
 import { createClient } from "@/lib/supabase/client";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { hasDirtyForm } from "@/lib/hooks/dirty-forms";
 import { cn } from "@/lib/utils";
 import {
-  describeSwitchRefusal, fetchMyCompanies, finishCompanySwitch, shouldShowSwitcher, switchCompany,
-  type CompanyOption, type CompanySwitchClient,
+  COMPANY_SWITCH_CHANNEL, describeSwitchRefusal, fetchMyCompanies, finishCompanySwitch, shouldShowSwitcher,
+  switchCompany, SwitchRefusedError, type CompanyOption, type CompanySwitchClient,
 } from "@/lib/auth/company-switch";
 
 /** The full page load after a switch — an object so tests can replace it (jsdom has no navigation). */
@@ -46,7 +45,7 @@ export function useMyCompanies() {
     queryKey: ["my-companies", me?.userId ?? null],
     queryFn: () => fetchMyCompanies(client()),
     enabled: !!me?.userId && me?.role !== "personal",
-    staleTime: 5 * 60_000,
+    staleTime: 60_000,
     retry: false,
   });
 }
@@ -75,7 +74,6 @@ export function CompanySwitcher({ open: openProp, onOpenChange }: CompanySwitche
   const { data } = useMyCompanies();
   const queryClient = useQueryClient();
   const router = useRouter();
-  const confirm = useConfirm();
   const [openState, setOpenState] = React.useState(false);
   const open = openProp ?? openState;
   const setOpen = React.useCallback((v: boolean) => {
@@ -84,9 +82,39 @@ export function CompanySwitcher({ open: openProp, onOpenChange }: CompanySwitche
   }, [onOpenChange]);
   const [busyId, setBusyId] = React.useState<string | null>(null);
 
+  const reloadFresh = React.useCallback(() => finishCompanySwitch({
+    queryClient,
+    storage: typeof window !== "undefined" ? window.sessionStorage : null,
+    go: (href) => companySwitchNav.go(href),
+  }), [queryClient]);
+
+  /* Another browser tab of this login switched: users.tenant_id is per LOGIN (spec §2.2), so this
+     tab's screen and cache are the old company's now — anything saved here would land in the new
+     one. Load fresh too. */
+  React.useEffect(() => {
+    if (typeof BroadcastChannel === "undefined") return;
+    const ch = new BroadcastChannel(COMPANY_SWITCH_CHANNEL);
+    ch.onmessage = (e: MessageEvent) => {
+      if ((e.data as { type?: string } | null)?.type === "switched") void reloadFresh();
+    };
+    return () => ch.close();
+  }, [reloadFresh]);
+
   if (!shouldShowSwitcher(data)) return null;
   const companies = data!;
   const current = companies.find((c) => c.isCurrent);
+
+  /** Tell this login's other browser tabs to load fresh (the sender gets no copy). */
+  function announce() {
+    if (typeof BroadcastChannel === "undefined") return;
+    try {
+      const ch = new BroadcastChannel(COMPANY_SWITCH_CHANNEL);
+      ch.postMessage({ type: "switched" });
+      ch.close();
+    } catch {
+      // no channel: the other tabs follow on their next full load
+    }
+  }
 
   async function pick(c: CompanyOption) {
     if (busyId) return;
@@ -94,32 +122,43 @@ export function CompanySwitcher({ open: openProp, onOpenChange }: CompanySwitche
       setOpen(false);
       return;
     }
+    /* Refused up front: a switch commits on the server first, and the browser's own "Leave site?"
+       for an unsaved form would then let the person stay on the OLD company's form while the
+       database already points at the new one (a Save would land there). */
     if (hasDirtyForm()) {
-      const ok = await confirm({
-        title: "Leave unsaved changes?",
-        body: `Switching to ${c.name} closes this page and the changes you have not saved.`,
-        confirmLabel: `Switch to ${c.name}`,
-        danger: true,
+      toast.error("Could not switch company — this page has unsaved changes.", {
+        description: `Save or discard your changes first, then switch to ${c.name}.`,
       });
-      if (!ok) return;
+      return;
     }
     setBusyId(c.tenantId);
     try {
-      await switchCompany(client(), c.tenantId);
+      await switchCompany(c.tenantId);
     } catch (err) {
+      // eslint-disable-next-line no-console
+      console.error("[company-switch]", err);
+      if (!(err instanceof SwitchRefusedError)) {
+        /* The answer was lost: did the switch happen? Ask the database. Switched — or cannot
+           tell — load fresh, so the screen always shows the company the database has. */
+        const now = await fetchMyCompanies(client()).catch(() => null);
+        const stillOld = !!now && now.find((x) => x.isCurrent)?.tenantId === current?.tenantId;
+        if (!stillOld) {
+          announce();
+          await reloadFresh();
+          return;
+        }
+      }
       setBusyId(null);
       const r = describeSwitchRefusal(err);
       toast.error(r.message, {
         description: r.description,
-        ...(r.action ? { action: { label: r.action.label, onClick: () => router.push(r.action!.href as Route) } } : {}),
+        // R-431: an error with a fix button stays long enough to press it
+        ...(r.action ? { action: { label: r.action.label, onClick: () => router.push(r.action!.href as Route) }, duration: 10_000 } : {}),
       });
       return;
     }
-    await finishCompanySwitch({
-      queryClient,
-      storage: typeof window !== "undefined" ? window.sessionStorage : null,
-      go: (href) => companySwitchNav.go(href),
-    });
+    announce();
+    await reloadFresh();
   }
 
   return (

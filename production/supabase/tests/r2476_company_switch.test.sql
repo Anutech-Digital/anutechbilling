@@ -13,6 +13,8 @@
 --      and one in A (company A / role manager — no B uuid / name / role).
 --   5. switching to the company already selected writes no activity row.
 --   6. my_companies() after the switch ticks B.
+--   7. B → A → B in ONE transaction (a script, a self-test): still no row in either company carries
+--      the other company's uuid / name / role.
 --
 -- SAFETY: synthetic tenants + identities, one transaction ending in ROLLBACK.
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 \
@@ -208,6 +210,36 @@ begin
      and entity_id = 'c2476000-0000-0000-0000-0000000000a3';
   if v_n <> 0 then raise exception 'FAIL 5: switching to the selected company wrote % activity rows', v_n; end if;
   raise notice 'PASS 5: switching to the company already selected writes nothing';
+end $$;
+
+-- ── 7. several switches in one transaction ──────────────────────────────────────────
+set local role authenticated;
+do $$
+begin
+  perform set_config('request.jwt.claims',
+    json_build_object('sub', 'c2476000-0000-0000-0000-0000000000a3', 'role', 'authenticated')::text, true);
+  perform public.switch_company('c2476000-0000-0000-0000-0000000000f1');
+  perform public.switch_company('c2476000-0000-0000-0000-0000000000f2');
+end $$;
+reset role;
+do $$
+declare
+  v_a uuid := 'c2476000-0000-0000-0000-0000000000f1';
+  v_b uuid := 'c2476000-0000-0000-0000-0000000000f2';
+  v_bad int;
+  v_n int;
+begin
+  select count(*) into v_bad from public.activity_log a
+   where a.id > (select last_id from r2476_mark) and a.entity = 'users'
+     and a.entity_id = 'c2476000-0000-0000-0000-0000000000a3'
+     and ((a.tenant_id = v_b and (to_jsonb(a)::text like '%' || v_a::text || '%' or a.changes::text like '%R2476 Alpha Co%'))
+       or (a.tenant_id = v_a and (to_jsonb(a)::text like '%' || v_b::text || '%' or a.changes::text like '%R2476 Beta Co%')));
+  if v_bad <> 0 then raise exception 'FAIL 7: % rows carry the other company''s facts after B → A → B', v_bad; end if;
+  select count(*) into v_n from public.activity_log a
+   where a.id > (select last_id from r2476_mark) and a.entity = 'users'
+     and a.entity_id = 'c2476000-0000-0000-0000-0000000000a3';
+  if v_n <> 4 then raise exception 'FAIL 7: % rows for two switches, expected 4 (in + out each)', v_n; end if;
+  raise notice 'PASS 7: B → A → B in one transaction — every row holds only its own company''s facts';
 end $$;
 
 rollback;
