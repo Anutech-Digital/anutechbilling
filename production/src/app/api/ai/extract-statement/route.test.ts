@@ -227,3 +227,20 @@ describe("image path unchanged", () => {
     expect(askedPages((ai.json.mock.calls[0][0] as GeminiArgs).user)).toBeNull();
   });
 });
+
+describe("R-2495 — a negative amount from the PDF is a reversal, not junk", () => {
+  it("debit -20000 comes back as a 20,000 credit marked (reversal); the withdrawal stays a debit", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2025-09-10", description: "ATW-DEMO-TESTATM", debit: 20000, credit: 0, balance: 85000 },
+      { date: "2025-09-10", description: "ATW-DEMO-TESTATM", debit: -20000, credit: 0, balance: 105000 },
+      { date: "2025-09-11", description: "DEMO CREDIT REVERSED", debit: 0, credit: "-750", balance: 104250 },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.status).toBe(200);
+    expect(r.json.skipped).toBe(0);
+    expect(r.json.rows.map((x: { debit: number; credit: number }) => [x.debit, x.credit])).toEqual([[20000, 0], [0, 20000], [750, 0]]);
+    expect(r.json.rows[1].description).toBe("ATW-DEMO-TESTATM (reversal)");
+    expect(r.json.rows[0].description).toBe("ATW-DEMO-TESTATM");
+    expect((ai.json.mock.calls[0][0] as GeminiArgs).user).toMatch(/NEGATIVE amount .*keeps its minus sign/);
+  });
+});

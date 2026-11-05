@@ -14,6 +14,9 @@ export type ParsedRow = {
   credit:        number;       // ₹ integer
   balance_after: number | null;
   reference:     string | null;
+  /** R-2495: the bank printed this line with a NEGATIVE amount (a reversal — e.g. a failed
+      ATM withdrawal shown as debit -20000), so it was read as the opposite side. Preview only. */
+  reversal?:     true;
 };
 
 export type ParseResult = { rows: ParsedRow[]; skipped: number; warnings: string[] };
@@ -116,6 +119,26 @@ function parseAmount(input: string | undefined): number {
 }
 
 /**
+ * R-2495: a bank line's two amount cells → one clean side. A NEGATIVE debit is money back in
+ * (HDFC prints a failed ATM withdrawal's reversal as "debit -20000"), so it becomes a credit of
+ * the same amount; a negative credit becomes a debit. `reversal` says the sign was flipped.
+ * Never clamp it to 0: a dropped reversal makes the running-balance check report a false gap.
+ */
+export function signedAmounts(debitRaw: number, creditRaw: number): { debit: number; credit: number; reversal: boolean } {
+  const debit  = (debitRaw  > 0 ? debitRaw  : 0) + (creditRaw < 0 ? -creditRaw : 0);
+  const credit = (creditRaw > 0 ? creditRaw : 0) + (debitRaw  < 0 ? -debitRaw  : 0);
+  return { debit, credit, reversal: debitRaw < 0 || creditRaw < 0 };
+}
+
+/** The mark a reversal line's narration gets, so the owner sees why the money moved back. */
+export const REVERSAL_MARK = " (reversal)";
+
+/** R-2495: said in the preview, so a flipped line is never a silent change. */
+export function reversalWarning(n: number): string {
+  return `${n} line${n === 1 ? " has" : "s have"} a negative amount — a reversal (e.g. a failed ATM withdrawal) — and ${n === 1 ? "was" : "were"} read as the opposite side, marked "(reversal)". Check ${n === 1 ? "it" : "them"} in the preview.`;
+}
+
+/**
  * Normalise a header cell so HDFC's "Withdrawal Amt." matches the alias
  * "withdrawal amt", ICICI's "Chq.No./Ref.No." matches "chq./ref. no.", etc.
  * Strips dots, parens, slashes, extra whitespace — collapses to a single
@@ -186,33 +209,40 @@ export function parseStatementRows(raw: string[][]): ParseResult {
 
   const out: ParsedRow[] = [];
   let skipped = 0;
+  let reversals = 0;
   const dateCol = mapping.txn_date;
   const order = detectDayOrder(raw.slice(headerIdx + 1).map((r) => r[dateCol] ?? ""));
   for (let i = headerIdx + 1; i < raw.length; i++) {
     const r = raw[i];
     const date = parseDate(r[mapping.txn_date] ?? "", order);
     if (!date) { skipped++; continue; }
-    // Coerce to non-negative integers — a stray minus sign or a decimal would
-    // otherwise break the integer column or the debit-xor-credit rule.
-    const debit  = Math.max(0, mapping.debit  >= 0 ? parseAmount(r[mapping.debit])  : 0);
-    const credit = Math.max(0, mapping.credit >= 0 ? parseAmount(r[mapping.credit]) : 0);
+    // R-2495: a negative amount is a reversal — it moves to the other side. It was clamped to
+    // 0 and skipped, which dropped a ₹20,000 ATM reversal and broke the balance check.
+    const { debit, credit, reversal } = signedAmounts(
+      mapping.debit  >= 0 ? parseAmount(r[mapping.debit])  : 0,
+      mapping.credit >= 0 ? parseAmount(r[mapping.credit]) : 0,
+    );
     if (debit === 0 && credit === 0) { skipped++; continue; }
     // A bank line is debit XOR credit. If a row genuinely has both populated
     // (a mis-aligned column / reversal line), we can't tell which figure is
     // right — skip it rather than invent a number or fail the whole batch.
     if (debit > 0 && credit > 0) { skipped++; continue; }
+    const description = (r[mapping.description] ?? "").trim() || "(no description)";
+    if (reversal) reversals++;
     out.push({
       txn_date:      date,
-      description:   (r[mapping.description] ?? "").trim() || "(no description)",
+      description:   reversal ? description + REVERSAL_MARK : description,
       debit, credit,
       balance_after: mapping.balance_after >= 0 ? parseAmount(r[mapping.balance_after]) || null : null,
       reference:     mapping.reference     >= 0 ? (r[mapping.reference]?.trim() || null)        : null,
+      ...(reversal ? { reversal: true as const } : {}),
     });
   }
 
   const warnings = order === "mdy"
     ? ["Dates in this file are written month first (MM/DD/YYYY) — read that way for every line. Check a few dates in the preview."]
     : [];
+  if (reversals > 0) warnings.push(reversalWarning(reversals));
   return { rows: out, skipped, warnings };
 }
 
