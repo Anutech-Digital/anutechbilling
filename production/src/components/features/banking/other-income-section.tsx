@@ -35,10 +35,10 @@ function defaultPrincipal(fd: FdLite | null | undefined, amount: number): string
   return bal > 0 && bal < amount ? String(bal) : "";
 }
 
-type Pick = { head: OtherIncomeHead | null; source: InterestSource; fdId: string; closure: boolean; principalText: string };
+type PrePick = { head: OtherIncomeHead | null; source: InterestSource; fdId: string; closure: boolean; principalText: string };
 
 /** R-2390: what the narration lets us pre-pick — never "Other income" on its own. */
-function pickFor(description: string | null | undefined, fds: readonly FdLite[], amount: number): Pick {
+function pickFor(description: string | null | undefined, fds: readonly FdLite[], amount: number): PrePick {
   const g = fdRedeemGuess(description, fds);
   const fd = g.fdId ? fds.find((a) => a.id === g.fdId) ?? null : null;
   if (g.redeem) {
