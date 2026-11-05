@@ -46,8 +46,8 @@ insert into public.users (id, tenant_id, email, full_name, role, created_at) val
   ('aaaaaaaa-0000-0000-0000-000000233901','dddddddd-0000-0000-0000-000000233901','owner2339@example.in','Owner 2339','owner', now() - interval '1 day'),
   ('aaaaaaaa-0000-0000-0000-000000233902','dddddddd-0000-0000-0000-000000233901','sales2339@example.in','Sales 2339','sales', now() - interval '1 day'),
   ('aaaaaaaa-0000-0000-0000-000000233903','dddddddd-0000-0000-0000-000000233902','owner2339b@example.in','Owner 2339b','owner', now() - interval '1 day');
-insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance) values
-  ('bbbbbbbb-0000-0000-0000-000000233901','dddddddd-0000-0000-0000-000000233901','HDFC Current','HDFC', 500000);
+insert into public.bank_accounts (id, tenant_id, name, bank_name, opening_balance, opening_balance_date) values
+  ('bbbbbbbb-0000-0000-0000-000000233901','dddddddd-0000-0000-0000-000000233901','HDFC Current','HDFC', 500000, '2025-04-01');
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
   ('22222222-0000-0000-0000-000000233901','dddddddd-0000-0000-0000-000000233901','bbbbbbbb-0000-0000-0000-000000233901','2026-09-04','NEFT CR HDFC BANK LOAN DISB',0,250000,'D1','csv_upload'),
   ('22222222-0000-0000-0000-000000233902','dddddddd-0000-0000-0000-000000233901','bbbbbbbb-0000-0000-0000-000000233901','2026-10-05','NACH DR HDFC BANK BIKE EMI',19054,0,'N1','csv_upload');

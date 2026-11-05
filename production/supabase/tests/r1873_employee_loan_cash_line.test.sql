@@ -44,9 +44,9 @@ insert into public.users (id, tenant_id, email, role, full_name) values
   ('c1873000-0000-0000-0000-00000000a0a2', 'c1873000-0000-0000-0000-0000000000a1', 'r1873-sales-a@example.in', 'sales', 'Sales A'),
   ('c1873000-0000-0000-0000-00000000b0b1', 'c1873000-0000-0000-0000-0000000000b1', 'r1873-owner-b@example.in', 'owner', 'Owner B');
 
-insert into public.bank_accounts (id, tenant_id, name, bank_name, account_type, opening_balance, is_active) values
-  ('c1873000-0000-0000-0000-0000000ca5a1', 'c1873000-0000-0000-0000-0000000000a1', 'Petty Cash', 'Cash', 'cash', 0, true),
-  ('c1873000-0000-0000-0000-0000000ba4a1', 'c1873000-0000-0000-0000-0000000000a1', 'T-Bank', 'T-Bank', 'current', 0, true);
+insert into public.bank_accounts (id, tenant_id, name, bank_name, account_type, opening_balance, is_active, opening_balance_date) values
+  ('c1873000-0000-0000-0000-0000000ca5a1', 'c1873000-0000-0000-0000-0000000000a1', 'Petty Cash', 'Cash', 'cash', 0, true, '2025-04-01'),
+  ('c1873000-0000-0000-0000-0000000ba4a1', 'c1873000-0000-0000-0000-0000000000a1', 'T-Bank', 'T-Bank', 'current', 0, true, '2025-04-01');
 
 -- The readers, as their screens read them.
 create function pg_temp.paid_rows(p_acct uuid) returns int language sql as $f$
