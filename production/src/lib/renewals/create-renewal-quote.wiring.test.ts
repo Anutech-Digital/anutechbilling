@@ -94,7 +94,7 @@ describe("R-012 follow-ups from Pawan's brief", () => {
     /* R-1574: Path 2 no longer starts with next_document_number (the number is taken inside
        create_renewal_quote) — its first step is the export-customer check. */
     const start = code.indexOf("if (existingQuoteId)");
-    const end = code.indexOf("isExportSupply(");
+    const end = code.indexOf("isZeroRatedSupply(");   // R-2515: the export / SEZ rule
     expect(start).toBeGreaterThan(0);
     expect(end).toBeGreaterThan(start);
     const path1 = code.slice(start, end);

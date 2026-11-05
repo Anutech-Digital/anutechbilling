@@ -93,7 +93,7 @@ export function isExportSupply(customerCountry: string | null | undefined): bool
  * (customer outside India, whatever treatment it still carries) and for an SEZ unit / developer
  * supplied WITHOUT payment of tax (IGST Act s.16(1)(b), s.16(3)(a)). SEZ WITH payment is taxed.
  * SQL twin: public.supply_is_zero_rated(country, treatment) (migration
- * 20261105151859_r2515_sez_zero_rated); a 0% invoice of either kind needs the LUT of its FY.
+ * 20261105190824_r2515_sez_zero_rated); a 0% invoice of either kind needs the LUT of its FY.
  *
  * @example isZeroRatedSupply({ country: "India", treatment: "sez_without_payment" }) // true
  */

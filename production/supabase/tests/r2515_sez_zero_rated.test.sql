@@ -14,6 +14,7 @@
 --   D. Quote → invoice at 0% for an SEZ-without-payment customer, no LUT → refused (the invoice trigger
 --      covers every path, not only the bank sale). With 18% the same customer's invoice is issued.
 --   E. A regular Indian customer: the bank sale is still 18% (nothing else became 0%).
+--   F. A direct invoice (create_direct_invoice) to the SEZ-without-payment customer is 0% too.
 
 begin;
 
@@ -135,6 +136,14 @@ begin
          false, null, null, 0, null, null, 'yearly', null);
   if (r->>'tax_rate')::int is distinct from 18 then raise exception 'FAIL E: regular customer sale at % percent', r->>'tax_rate'; end if;
   raise notice 'E PASS: regular customer still 18%%';
+
+  -- F. a direct invoice (Invoices → New) to the SEZ-without-payment customer: 0%, like the bank sale.
+  select * into q from public.create_direct_invoice('cccccccc-0000-0000-0000-000000251501',
+         '[{"name":"Setup fee","qty":1,"rate":10000}]'::jsonb, 'r2515 direct');
+  if q.tax_rate is distinct from 0 or q.net_payable is distinct from 10000 then
+    raise exception 'FAIL F: direct SEZ invoice at % percent, payable %', q.tax_rate, q.net_payable;
+  end if;
+  raise notice 'F PASS: direct invoice to SEZ (without payment) at 0%%';
 end $$;
 
 rollback;

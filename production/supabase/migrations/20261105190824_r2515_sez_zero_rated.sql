@@ -17,9 +17,10 @@
 --      that relies on an LUT — an export (R-2444's rule) OR a 0% invoice to an SEZ-without-payment customer.
 --   3. bank_credit_new_sale_quote (latest body 20261030123423_r2095_sale_invoice_on_receipt) zero-rates
 --      by supply_is_zero_rated — the only change in its body. Its callers (reconcile_bank_credit_new_sale,
---      the split, the fx sale) are unchanged.
+--      the split, the fx sale) are unchanged. create_direct_invoice (latest body R-1643 20261023192418)
+--      uses the same rule.
 --   4. tg_invoice_export_needs_lut (latest body R-2444 20261104023601): the LUT check also covers a 0% SEZ
---      invoice, on every path (bank sale, quote → invoice, renewals, direct); the refusal names the SEZ.
+--      invoice, on every path (bank sale, quote → invoice, instalments, direct); the refusal names the SEZ.
 --   5. delete_tenant_lut and tg_tenants_lut_to_fy (latest bodies R-2444): an LUT that 0% SEZ invoices of
 --      its FY rely on is kept, like one export invoices rely on.
 -- Test: supabase/tests/r2515_sez_zero_rated.test.sql (begin … rollback; red without this file).
@@ -200,6 +201,94 @@ $$;
 revoke all on function public.bank_credit_new_sale_quote(uuid, uuid, jsonb, text) from public, anon, authenticated;
 grant execute on function public.bank_credit_new_sale_quote(uuid, uuid, jsonb, text) to service_role;
 
+-- ── 2b. A direct invoice (Invoices → New, from 20261023192418_r1643_tax_invoice_needs_supplier_gstin) ──
+CREATE OR REPLACE FUNCTION public.create_direct_invoice(p_customer_id uuid, p_line_items jsonb, p_notes text DEFAULT NULL::text, p_recurring boolean DEFAULT false)
+ RETURNS TABLE(invoice_id text, quote_id text, net_payable integer, tax_rate integer)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_tenant   uuid := public.current_tenant_id();
+  v_is_svc   boolean := auth.role() = 'service_role';
+  v_cust     record;
+  v_export   boolean;
+  v_rate     integer;
+  v_subtotal integer;
+  v_gross    integer;
+  v_qid      text;
+  v_inv      record;
+  v_commit   text := case when p_recurring then 'annual_yearly' else 'one_time' end;
+  v_lines    jsonb;
+  v_r1643_problem text;
+begin
+  /* R-718: role gate (Pardeep's role table, 11 Oct 2026). Trusted = service_role or a direct
+     DB session with no request role (R-454 / R-714 / R-717); everyone else needs the role. */
+  if not (coalesce(auth.role(), '') = 'service_role'
+          or (auth.role() is null
+              and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
+     and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing') then
+    raise exception 'Only an owner, manager, accountant or billing user can create an invoice' using errcode = '42501';
+  end if;
+  if not v_is_svc and v_tenant is null then raise exception 'No tenant context'; end if;
+  if p_customer_id is null then raise exception 'Customer required'; end if;
+  if jsonb_typeof(p_line_items) <> 'array' or jsonb_array_length(p_line_items) = 0 then
+    raise exception 'At least one line item is required';
+  end if;
+
+  select c.id, c.name, c.country, c.gst_treatment, c.tenant_id into v_cust
+    from public.customers c where c.id = p_customer_id;
+  if not found then raise exception 'Customer not found'; end if;
+  if not v_is_svc and v_cust.tenant_id is distinct from v_tenant then
+    raise exception 'Customer is not in the caller''s tenant';
+  end if;
+  v_tenant := v_cust.tenant_id;
+
+  /* R-1643: refuse before any number is taken (generate_invoice checks again). */
+  v_r1643_problem := public.supplier_invoice_problem(v_tenant, public.ist_today());
+  if v_r1643_problem is not null then
+    raise exception '%', v_r1643_problem using errcode = 'check_violation';
+  end if;
+
+  /* R-2515: an export OR an SEZ unit supplied without payment of tax is zero-rated (LUT checked on the invoice). */
+  v_export := public.supply_is_zero_rated(v_cust.country, v_cust.gst_treatment);
+  /* R-1529: no GST on a Bill of Supply — a business that is not GST-registered (or is under
+     composition) cannot charge it. 0 here, so the direct invoice becomes a Bill of Supply
+     instead of being refused by tg_invoice_document_kind. */
+  v_rate := case
+              when v_export then 0
+              when public.supplier_gst_status(v_tenant, public.ist_today()) in ('unregistered', 'composition') then 0
+              else 18
+            end;
+
+  select coalesce(jsonb_agg(li || jsonb_build_object('commitment', v_commit)), '[]'::jsonb)
+    into v_lines
+    from jsonb_array_elements(p_line_items) li;
+
+  select coalesce(sum( coalesce((li->>'qty')::int, 1) * coalesce((li->>'rate')::int, 0) ), 0)
+    into v_subtotal
+    from jsonb_array_elements(v_lines) li;
+  if v_subtotal <= 0 then raise exception 'Invoice total must be greater than zero'; end if;
+  v_gross := v_subtotal + round(v_subtotal * v_rate / 100.0)::int;
+
+  v_qid := public.next_document_number('quote', v_tenant, public.ist_today());
+  if v_qid is null then raise exception 'Could not allocate a quote number'; end if;
+
+  insert into public.quotes (
+    id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, discount_pct,
+    line_items, status, payment_status, is_one_off, created_date, notes
+  ) values (
+    v_qid, v_tenant, p_customer_id, v_cust.name, v_gross, v_subtotal, v_rate, 0,
+    v_lines, 'accepted', 'awaiting', not p_recurring, public.ist_today(), p_notes
+  );
+
+  select gi.invoice_id, gi.net_payable into v_inv
+    from public.generate_invoice(v_qid) gi;
+
+  return query select v_inv.invoice_id, v_qid, v_inv.net_payable, v_rate;
+end;
+$function$;
+
 -- ── 3. Every 0% export OR SEZ-without-payment invoice needs the LUT of its date's FY (from R-2444) ─
 create or replace function public.tg_invoice_export_needs_lut()
 returns trigger
@@ -223,8 +312,10 @@ begin
   end if;
   v_msg := public.export_lut_refusal(new.tenant_id, coalesce(new.invoice_date, public.ist_today()));
   if v_msg is not null then
+    /* An SEZ supply, not an export (the customer is in India). The words come from export_lut_refusal
+       (R-2444); if they are ever reworded the refusal still stops the invoice, only it says "export". */
     v_sez := new.gst_treatment is not distinct from 'sez_without_payment'
-             and coalesce(nullif(lower(btrim(new.customer_country)), ''), 'india') in ('india', 'in', 'ind', 'bharat');
+             and not public.supply_is_zero_rated(new.customer_country, null);
     if v_sez then
       v_msg := replace(replace(v_msg,
                  'An export sale at 0% GST', 'A supply to an SEZ unit without payment of tax (0% GST)'),
@@ -253,13 +344,14 @@ begin
   if not public.current_user_has_role('owner', 'accountant') then
     raise exception 'Only the owner or an accountant can change the company''s LUT.' using errcode = '42501';
   end if;
-  /* R-2515: export OR SEZ-without-payment 0% invoices of that FY rely on it. */
+  /* R-2515: export OR SEZ-without-payment 0% invoices of that FY rely on it (the count includes both;
+     the words stay R-2444's, which its test and the Settings toast match). */
   select count(*) into v_n from public.invoices i
    where i.tenant_id = v_t
      and public.invoice_zero_rated_under_lut(i.document_kind::text, i.gst_treatment, i.customer_country, i.tax_amount, i.tax_rate)
      and i.invoice_date >= v_fy and i.invoice_date < (v_fy + interval '1 year')::date;
   if v_n > 0 then
-    raise exception '% export / SEZ invoice(s) of FY % were issued at 0%% GST under this LUT — correct its ARN or dates instead of deleting it.',
+    raise exception '% export invoice(s) of FY % were issued at 0%% GST under this LUT — correct its ARN or dates instead of deleting it.',
       v_n, public.lut_fy_label(v_fy) using errcode = 'check_violation';
   end if;
   delete from public.tenant_luts where tenant_id = v_t and fy_start = v_fy;
