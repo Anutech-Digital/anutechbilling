@@ -45,6 +45,9 @@ export const SECRET_COLUMNS = [
   "linkedin_access_token",
   // LinkedIn Advertising API app secret (migration 20261031120000).
   "linkedin_ads_client_secret",
+  // Facebook Page OAuth: user token is temporary until the owner picks a Page.
+  "facebook_page_pending_token",
+  "facebook_page_access_token",
 ] as const;
 
 const SECRET_SET = new Set<string>(SECRET_COLUMNS);

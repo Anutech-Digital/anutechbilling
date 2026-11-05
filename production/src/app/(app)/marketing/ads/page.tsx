@@ -118,6 +118,7 @@ export default function AdPlatformsPage() {
   const allRows = React.useMemo(() => spend.data ?? [], [spend.data]);
   const rows = React.useMemo(() => allRows.filter((r) => (pf === "all" || r.platform === pf) && (selectedAccountId === "all" || r.account_id === selectedAccountId)), [allRows, pf, selectedAccountId]);
   const inRange = React.useMemo(() => rows.filter((r) => r.day <= to && (r.day >= from || (r.platform === "linkedin-ads" && r.day < dailyFrom && r.day.slice(0, 7) === from.slice(0, 7)))), [rows, from, to, dailyFrom]);
+  const activeDays = React.useMemo(() => new Set(inRange.map((row) => row.day)).size, [inRange]);
   const prevRows = React.useMemo(() => isPreset ? rows.filter((r) => r.day >= addDays(from, -presetDays) && r.day < from) : [], [rows, from, isPreset, presetDays]);
   const totals = React.useMemo(() => totalsOf(inRange), [inRange]);
   const prev = React.useMemo(() => totalsOf(prevRows), [prevRows]);
@@ -273,6 +274,7 @@ export default function AdPlatformsPage() {
             </div>
             {range === "custom" && <div className="flex flex-wrap items-end gap-3 mb-4"><FormField label="From" htmlFor="report-from"><Input id="report-from" type="date" min={historyStart} max={to} value={customFrom || addDays(today, -89)} onChange={(e) => setCustomFrom(e.target.value)} /></FormField><FormField label="To" htmlFor="report-to"><Input id="report-to" type="date" min={from} max={today} value={customTo || today} onChange={(e) => setCustomTo(e.target.value)} /></FormField></div>}
             {syncing && syncProgress && <p role="status" className="text-xs text-ink-3 mb-3">Syncing {syncProgress.done}/{syncProgress.total} date windows · {syncProgress.rows} rows saved. Keep this page open.</p>}
+            {isPreset && <p className="mb-3 text-xs text-ink-3">Showing ad activity on {activeDays} of {presetDays} days. Days without reported ad activity have no campaign rows.</p>}
             {(range === "all" || range === "custom") && from < dailyFrom && <p className="text-xs text-ink-3 mb-3">Older LinkedIn results are monthly. A custom date inside an older month includes that full month.</p>}
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               <Kpi label="Spend" value={rupee(totals.spend)} change={pct(totals.spend, prev.spend)} compare={isPreset} />

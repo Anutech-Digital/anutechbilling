@@ -54,6 +54,10 @@ const MACHINE_CALLER = new RegExp([
   "verifyClaimToken", "verifyUnsubscribe", "verifyTrialToken", "portalSession", "requirePortal",
   /* R-739: the AGENT_QUEUE_TOKEN check, now shared (lib/security/agent-token.ts). */
   "authorizeAgent\\(",
+  /* 5 Nov 2026: gatedCron("job", handler) with no options refuses every call without the
+     CRON_SECRET bearer (lib/automation/cron-gate.ts, R-1552). A withoutBearer option lets a
+     user reach the handler, so a call that passes options is NOT matched here. */
+  String.raw`\bgatedCron\s*\(\s*"[\w-]+"\s*,\s*\w+\s*\)`,
 ].join("|"));
 
 const ROLE_GATE = new RegExp([
@@ -76,6 +80,13 @@ const ROLE_GATE = new RegExp([
   // BUDGET_ROLES (owner, marketing, billing, accountant); who may approve / pay is then checked
   // per route (canApproveBudget / canPay / canAskBudget) and again by the DB triggers.
   String.raw`\bbudgetContext\s*\(`,
+  // 5 Nov 2026: social content routes check canWriteSocial / canReviewSocial (owner, manager,
+  // marketing / owner, manager — lib/marketing/social-content.ts) or the owner-only settings check.
+  String.raw`\bcanWriteSocial\s*\(`, String.raw`\bcanReviewSocial\s*\(`,
+  String.raw`\bsocialRole\s*\([^)]*\)\s*!==\s*["']owner["']`,
+  // Facebook Page + LinkedIn page routes refuse unless caller.canManage — set from the users
+  // row (mayDo "integration.company" / owner|manager) in facebookPageCaller / resolveLinkedInCaller.
+  String.raw`if\s*\(\s*!caller\.canManage\s*\)`,
 ].join("|"));
 
 /** Anonymous or self-service by design — a session is not what bounds these. Each says why. */

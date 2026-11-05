@@ -13416,6 +13416,13 @@ export type Database = {
       tenant_secrets: {
         Row: {
           created_at: string
+          facebook_page_access_token: string | null
+          facebook_page_connected_at: string | null
+          facebook_page_connected_by: string | null
+          facebook_page_id: string | null
+          facebook_page_name: string | null
+          facebook_page_pending_at: string | null
+          facebook_page_pending_token: string | null
           gemini_api_key: string | null
           gemini_model: string | null
           indiamart_crm_key: string | null
@@ -13453,6 +13460,13 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          facebook_page_access_token?: string | null
+          facebook_page_connected_at?: string | null
+          facebook_page_connected_by?: string | null
+          facebook_page_id?: string | null
+          facebook_page_name?: string | null
+          facebook_page_pending_at?: string | null
+          facebook_page_pending_token?: string | null
           gemini_api_key?: string | null
           gemini_model?: string | null
           indiamart_crm_key?: string | null
@@ -13490,6 +13504,13 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          facebook_page_access_token?: string | null
+          facebook_page_connected_at?: string | null
+          facebook_page_connected_by?: string | null
+          facebook_page_id?: string | null
+          facebook_page_name?: string | null
+          facebook_page_pending_at?: string | null
+          facebook_page_pending_token?: string | null
           gemini_api_key?: string | null
           gemini_model?: string | null
           indiamart_crm_key?: string | null

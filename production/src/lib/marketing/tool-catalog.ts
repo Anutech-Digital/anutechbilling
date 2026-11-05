@@ -142,10 +142,10 @@ export const MARKETING_TOOLS: readonly MarketingTool[] = [
   },
   // ── Social ───────────────────────────────────────────────────────────────
   {
-    key: "facebook-page", name: "Facebook / Instagram page", group: "social", channel: "meta-organic",
+    key: "facebook-page", name: "Facebook Page", group: "social", channel: "meta-organic",
     why: "Work photos and customer reviews — people who see an ad check the page first.",
     homeUrl: "https://business.facebook.com",
-    inApp: [{ href: "/marketing/links", label: "Tracking link for posts" }],
+    inApp: [{ href: "/marketing/facebook", label: "Manage Facebook Page" }, { href: "/marketing/links", label: "Tracking link for posts" }],
     setup: ["2 posts a week: one project, one tip", "Build the bio link in Tracking links"],
   },
   {

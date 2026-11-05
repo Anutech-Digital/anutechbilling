@@ -80,6 +80,8 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
   "tenant_secrets.meta_capi_token": "R-1979: tenant_secrets is owner-only by RLS (same tenant, r1979_meta_pixel_secrets.test.sql); stored sealed (SECRET_COLUMNS in lib/crypto/tenant-secrets.ts); only server code opens it (lib/meta/capi.server.ts) — never sent to a browser",
   "tenant_secrets.zoho_books_refresh_token": "R-1749: tenant_secrets is owner-only by RLS (same tenant, zoho_books_connection_r1749.test.sql); stored sealed (SECRET_COLUMNS); only server routes open it",
   "tenant_secrets.zoho_books_access_token": "R-1757: short-lived Zoho access token cache on the same owner-only tenant_secrets row; stored sealed (SECRET_COLUMNS); server routes only",
+  "tenant_secrets.facebook_page_pending_token": "Temporary Meta user token on owner-only tenant_secrets; sealed in SECRET_COLUMNS; server routes only",
+  "tenant_secrets.facebook_page_access_token": "Meta Page token on owner-only tenant_secrets; sealed in SECRET_COLUMNS; server routes only",
   "tenant_secrets.sandbox_api_key": "tenant_secrets is owner-only by RLS; the owner enters these keys",
   "tenant_secrets.sandbox_api_secret": "tenant_secrets is owner-only by RLS; the owner enters these keys",
   "tenant_secrets.whatsapp_access_token": "tenant_secrets is owner-only by RLS; the owner enters these keys",

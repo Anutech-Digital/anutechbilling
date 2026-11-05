@@ -12,7 +12,7 @@ export const TOOL_WORKSPACES: Readonly<Record<string, HubLink>> = {
   "email-campaigns": { label: "Open email campaigns", href: "/campaigns" },
   "search-console": { label: "Open Search Console", href: "https://search.google.com/search-console" },
   ga4: { label: "Open Google Analytics", href: "https://analytics.google.com" },
-  "facebook-page": { label: "Open Meta Business", href: "https://business.facebook.com" },
+  "facebook-page": { label: "Manage Facebook Page", href: "/marketing/facebook" },
   "linkedin-page": { label: "Open LinkedIn Company Page", href: "/marketing/linkedin" },
 };
 

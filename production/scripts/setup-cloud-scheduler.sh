@@ -78,6 +78,7 @@ JOBS=(
   "resellersos-google-contacts-sync|0 */6 * * *|/api/cron/google-contacts-sync|Two-way Google Contacts sync"
   "resellersos-gbp-sync|30 2 * * *|/api/cron/gbp-sync|Google Business Profile reviews + performance sync"
   "resellersos-ads-sync|0 3 * * *|/api/cron/ads-sync|Google Ads + Meta Ads daily spend sync"
+  "resellersos-social-drafts|0 9 * * 1|/api/cron/social-drafts|Prepare weekly Facebook and Instagram drafts for human review"
   # R-524: "Try the demo" sample workspace — fresh sample rows nightly. Does nothing while DEMO_ENABLED is off.
   "resellersos-demo-reset|30 2 * * *|/api/cron/demo-reset|Reset the read-only demo workspace sample data"
   "resellersos-lead-finder|30 3 * * *|/api/cron/lead-finder|AI Lead Finder — nightly prospect discovery"

@@ -922,6 +922,7 @@ export const APP_NAV: NavSection[] = [
 /** Pages that are not nav entries: detail pages, sub-pages, and routes kept alive for
  *  bookmarks. `tail` is appended to the crumb of whatever they sit under. */
 const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
+  "/marketing/facebook": { tail: ["Facebook Page"], under: "/marketing" },
   // NB: /deals is an APP_NAV entry again (30 Sep 2026), so its crumb comes from the nav
   //     ("Sell / Deals") — an entry here would override that with a stale title.
   // R-497: /contacts is a Customers accordion row, so its crumb comes from the nav.
