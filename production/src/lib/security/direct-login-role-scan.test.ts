@@ -24,6 +24,8 @@
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
+// @ts-expect-error — plain .mjs ops script, no types (stripComments below gives it its type)
+import { stripSqlComments } from "../../../scripts/ops/sql-comments.mjs";
 
 const DIR = "supabase/migrations";
 const R2485 = "20261105004823";
@@ -47,29 +49,9 @@ export const RAW_ROLE_CHECK = { test: (sql: string) => SHAPES.some((re) => re.te
 
 /** Comments stripped — migrations quote the old form to explain it. One pass, so a `/*` inside
  *  a `--` line (e.g. "-- /accounting/* by prefix") is not read as a block comment, and quoted
- *  text ('--') is kept. */
+ *  text ('--') is kept. R-2491: the one shared copy (gen-deploy-db / localhost-update use it too). */
 export function stripComments(sql: string): string {
-  let out = "";
-  let i = 0;
-  while (i < sql.length) {
-    const two = sql.slice(i, i + 2);
-    if (two === "--") {
-      const nl = sql.indexOf("\n", i);
-      i = nl === -1 ? sql.length : nl;
-    } else if (two === "/*") {
-      const end = sql.indexOf("*/", i + 2);
-      i = end === -1 ? sql.length : end + 2;
-    } else if (sql[i] === "'") {
-      let j = i + 1;
-      while (j < sql.length && !(sql[j] === "'" && sql[j + 1] !== "'")) j += sql[j] === "'" ? 2 : 1;
-      out += sql.slice(i, j + 1);
-      i = j + 1;
-    } else {
-      out += sql[i];
-      i += 1;
-    }
-  }
-  return out;
+  return stripSqlComments(sql) as string;
 }
 
 /** Every `create [or replace] function public.X(...) ... as $tag$ body $tag$`, in order. */

@@ -122,3 +122,22 @@ describe("Cash Flow reads every bank line (R-265)", () => {
     expect(closing(d)).toBe(bankBalance(tables));
   });
 });
+
+describe("Cash Flow respects each account's opening date (R-2497)", () => {
+  it("lines before the opening date are inside the opening: not in the start balance, not in the months", async () => {
+    // Opening 1,00,000 as of 1 Apr 2026; the FY 25-26 statement (+30,000 net) was imported without moving it.
+    const tables = {
+      bank_accounts: [{ id: "acct-1", opening_balance: 100_000, opening_balance_date: "2026-04-01" }],
+      bank_transactions: [
+        ...txns(2, "2025-06-10", "fy25", 40_000, 10_000),   // +40,000 −10,000, before the opening
+        ...txns(2, "2026-03-20", "mar", 5_000, 5_000),      // in range, still before the opening
+        ...txns(2, "2026-05-02", "fy26", 20_000, 5_000),    // counted
+      ],
+    };
+    const { client } = fakeClient(tables);
+    const d = await loadCashFlow(client, "2026-03-01", "2026-10-07");
+    expect(d.balanceBefore).toBe(100_000);
+    expect(d.lines.map((l) => l.id).sort()).toEqual(["fy26-00000", "fy26-00001"]);
+    expect(closing(d)).toBe(115_000);   // = bank_account_current_balance after R-2497
+  });
+});

@@ -37,11 +37,11 @@ insert into auth.users (id, email) values
 insert into public.users (id, tenant_id, email, full_name, role, created_at) values
   ('aaaaaaaa-0000-0000-0000-000000237301','dddddddd-0000-0000-0000-000000237301','owner2373@example.in','Owner 2373','owner', now() - interval '1 day'),
   ('aaaaaaaa-0000-0000-0000-000000237302','dddddddd-0000-0000-0000-000000237302','owner2373b@example.in','Owner 2373B','owner', now() - interval '1 day');
-insert into public.bank_accounts (id, tenant_id, name, bank_name, account_type, opening_balance) values
-  ('bbbbbbbb-0000-0000-0000-000000237301','dddddddd-0000-0000-0000-000000237301','HDFC Current','HDFC','current', 200000),
-  ('bbbbbbbb-0000-0000-0000-000000237302','dddddddd-0000-0000-0000-000000237301','HDFC OD','HDFC','overdraft', 0),
-  ('bbbbbbbb-0000-0000-0000-000000237303','dddddddd-0000-0000-0000-000000237301','Company card','HDFC','credit_card', -5000),
-  ('bbbbbbbb-0000-0000-0000-000000237304','dddddddd-0000-0000-0000-000000237302','Other OD','SBI','overdraft', 0);
+insert into public.bank_accounts (id, tenant_id, name, bank_name, account_type, opening_balance, opening_balance_date) values
+  ('bbbbbbbb-0000-0000-0000-000000237301','dddddddd-0000-0000-0000-000000237301','HDFC Current','HDFC','current', 200000, '2025-04-01'),
+  ('bbbbbbbb-0000-0000-0000-000000237302','dddddddd-0000-0000-0000-000000237301','HDFC OD','HDFC','overdraft', 0, '2025-04-01'),
+  ('bbbbbbbb-0000-0000-0000-000000237303','dddddddd-0000-0000-0000-000000237301','Company card','HDFC','credit_card', -5000, '2025-04-01'),
+  ('bbbbbbbb-0000-0000-0000-000000237304','dddddddd-0000-0000-0000-000000237302','Other OD','SBI','overdraft', 0, '2025-04-01');
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
   -- the OD is drawn: ₹50,000 out of the OD account
   ('22222222-0000-0000-0000-000000237301','dddddddd-0000-0000-0000-000000237301','bbbbbbbb-0000-0000-0000-000000237302','2026-10-10','OD DRAWN VENDOR',50000,0,'OD1','csv_upload'),

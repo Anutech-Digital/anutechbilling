@@ -227,3 +227,79 @@ describe("image path unchanged", () => {
     expect(askedPages((ai.json.mock.calls[0][0] as GeminiArgs).user)).toBeNull();
   });
 });
+
+describe("R-2495 — a negative amount from the PDF is a reversal, not junk", () => {
+  it("debit -20000 comes back as a 20,000 credit marked (reversal); the withdrawal stays a debit", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2025-09-10", description: "ATW-DEMO-TESTATM", debit: 20000, credit: 0, balance: 85000 },
+      { date: "2025-09-10", description: "ATW-DEMO-TESTATM", debit: -20000, credit: 0, balance: 105000 },
+      { date: "2025-09-11", description: "DEMO CREDIT REVERSED", debit: 0, credit: "-750", balance: 104250 },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.status).toBe(200);
+    expect(r.json.skipped).toBe(0);
+    expect(r.json.rows.map((x: { debit: number; credit: number }) => [x.debit, x.credit])).toEqual([[20000, 0], [0, 20000], [750, 0]]);
+    expect(r.json.rows[1].description).toBe("ATW-DEMO-TESTATM (reversal)");
+    expect(r.json.rows[0].description).toBe("ATW-DEMO-TESTATM");
+    expect((ai.json.mock.calls[0][0] as GeminiArgs).user).toMatch(/always POSITIVE; only a minus sign actually printed/);
+  });
+});
+
+describe("R-2495 review — the model writing every withdrawal as -N", () => {
+  it("is read as plain withdrawals, not reversals", async () => {
+    ai.json.mockResolvedValue({ rows: [1, 2, 3].map((d) => ({ date: `2025-09-0${d}`, description: `DEMO-${d}`, debit: -100 * d, credit: 0, balance: null })) });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows.map((x: { debit: number; credit: number }) => [x.debit, x.credit])).toEqual([[100, 0], [200, 0], [300, 0]]);
+    expect(r.json.rows.every((x: { description: string }) => !x.description.includes("(reversal)"))).toBe(true);
+  });
+});
+
+describe("R-2495 review — an overdraft balance keeps its minus", () => {
+  it("balance -5000 stays -5000 (was clamped to 0 → no balance), same as the CSV / Excel parser", async () => {
+    ai.json.mockResolvedValue({ rows: [{ date: "2025-09-10", description: "DEMO-OD", debit: 1000, credit: 0, balance: -5000 }] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows[0].balance_after).toBe(-5000);
+  });
+});
+
+describe("R-2508 — review follow-ups on the PDF path", () => {
+  it("the sign goes on after rounding: a 20000.50 withdrawal and its -20000.50 reversal net to zero", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2025-09-10", description: "ATW-DEMO", debit: 20000.5, credit: 0, balance: 85000 },
+      { date: "2025-09-10", description: "ATW-DEMO", debit: -20000.5, credit: 0, balance: 105001 },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows.map((x: { debit: number; credit: number }) => [x.debit, x.credit])).toEqual([[20001, 0], [0, 20001]]);
+  });
+
+  it("one negative debit with no balance → marked 'check sign', never silently booked as money in", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2025-09-09", description: "NEFT CR-DEMO", debit: 0, credit: 5000, balance: null },
+      { date: "2025-09-10", description: "DEMO RENT", debit: -20000, credit: 0, balance: null },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows[1]).toMatchObject({ checkSign: true });
+    expect(r.json.rows[0].checkSign).toBeUndefined();
+  });
+
+  it("one negative debit where the balance went DOWN → money out", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2025-09-09", description: "NEFT CR-DEMO", debit: 0, credit: 5000, balance: 105000 },
+      { date: "2025-09-10", description: "DEMO RENT", debit: -20000, credit: 0, balance: 85000 },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows[1]).toMatchObject({ debit: 20000, credit: 0, description: "DEMO RENT" });
+    expect(r.json.rows[1].checkSign).toBeUndefined();
+  });
+});
+
+describe("R-2508 review — one chunk of a longer PDF", () => {
+  it("does not settle 'money out' on its own: the line comes back as check sign for the whole-statement check", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2025-09-09", description: "NEFT CR-DEMO", debit: 0, credit: 5000, balance: 105000 },
+      { date: "2025-09-10", description: "DEMO RENT", debit: -20000, credit: 0, balance: 85000 },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf", pages: { from: 1, to: 3, total: 12 } });
+    expect(r.json.rows[1]).toMatchObject({ checkSign: true, reversal: true });
+  });
+});

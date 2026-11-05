@@ -80,8 +80,9 @@ import {
   type StatusFilter,
 } from "@/lib/banking/bank-filters";
 import { reconcileCoverage } from "@/lib/banking/reconcile-coverage";
-import { balanceText, bankBalanceOf, runningBalances, type RunningBalance } from "@/lib/banking/running-balance";
+import { balanceText, bankBalanceOf, countsAfterOpening, runningBalances, type RunningBalance } from "@/lib/banking/running-balance";
 import { RunningBalanceText } from "./running-balance-text";
+import { OpeningBalanceTile } from "./opening-history-note";
 import { revealTxn } from "@/lib/banking/txn-deep-link";
 import { guessVendor, type VendorLite } from "@/lib/banking/debit-pay-for";
 import { useVendors } from "@/lib/queries/vendors";
@@ -165,7 +166,8 @@ export default function BankAccountDetailPage() {
   /* R-2400: the balance after each line — over ALL the account's lines (a filtered or paged
      view looks its rows up here), same formula as "Balance in bank" (lib/banking/running-balance). */
   const openingForRunning = account?.opening_balance ?? 0;
-  const running = React.useMemo(() => runningBalances(transactions ?? [], openingForRunning), [transactions, openingForRunning]);
+  const openingDateForRunning = account?.opening_balance_date ?? null;   // R-2497: lines on/after it count
+  const running = React.useMemo(() => runningBalances(transactions ?? [], openingForRunning, openingDateForRunning), [transactions, openingForRunning, openingDateForRunning]);
   const ledgerSeq = React.useMemo(() => new Map([...running].map(([id, r]) => [id, r.seq])), [running]);
   const salaryLines = React.useMemo(() => salaryLinesOf(transactions ?? []), [transactions]);
   const salaryLineCount = salaryLines.length;
@@ -408,12 +410,14 @@ export default function BankAccountDetailPage() {
   const openingBal = account.opening_balance ?? 0;
   const allTxns    = transactions ?? [];
   /* R-2400: one formula — the newest row's running Balance is this same figure. */
-  const bankBalance = bankBalanceOf(allTxns, openingBal);
+  const bankBalance = bankBalanceOf(allTxns, openingBal, account.opening_balance_date);
+  /* R-2497: lines dated before the opening date are inside the opening — listed, not counted. */
+  const countedTxns = allTxns.filter((t) => countsAfterOpening(t, account.opening_balance_date));
   const dateSorted  = filters.sort === "newest" || filters.sort === "oldest";
   const coverage    = reconcileCoverage(allTxns);
   const filtersOn   = hasAnyFilter(filters);
   /* Plain call, not a hook — this runs after the early returns above. Cheap: one pass. */
-  const statementCheck = checkStatement(allTxns, openingBal);
+  const statementCheck = checkStatement(countedTxns, openingBal);
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
@@ -496,11 +500,7 @@ export default function BankAccountDetailPage() {
                 : "Per imported statement"}
             </p>
           </div>
-          <div>
-            <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Opening balance</p>
-            <p className="font-serif text-2xl text-ink-2 mt-1">{rupee(account.opening_balance)}</p>
-            <p className="text-xs text-ink-3 mt-0.5">as of {formatDate(account.opening_balance_date)}</p>
-          </div>
+          <OpeningBalanceTile account={account} beforeOpeningCount={allTxns.length - countedTxns.length} />
           {/* R-1869: coverage of the books, not a second "balance" (see coverage above). */}
           <div className="col-span-2">
             <ReconcileCoverageTile

@@ -112,13 +112,15 @@ describe("R-2474 the plan: last year's invoice with no opening invoice in the ap
     expect(row.summary).toBe("Opening invoice from Zoho → paid: INV/25-26/0412 (₹59,000 due on 1 Apr 2026) — last year's invoice, no new sale");
   });
 
-  it("the opening balance is as at the books' start when one is set, else 1 Apr of the line's year", () => {
+  it("the opening balance is as at the books' start; no books' start set → unticked, never a guessed 1 Apr (R-2494)", () => {
     const h = hist({ payments: [{ paymentId: "zp-0", date: "2026-04-20", amount: 9000, tds: 0 }, { paymentId: "zp-1", date: "2026-05-12", amount: 50000, tds: 0 }] });
     const m = match("Acme Tools", [inv("INV/25-26/0412", "2025-12-01", 59000, 50000, h)], 50000);
     const [withStart] = planAll([rowOf(bank("t-2", 50000), m, facts(), "2026-05-01")], ctx);
     expect(withStart.book?.opening?.parts?.[0].create?.balance).toBe(50000);
     const [noStart] = planAll([rowOf(bank("t-3", 50000), m, facts(), null)], ctx);
-    expect(noStart.book?.opening?.parts?.[0].create?.balance).toBe(59000);
+    expect(noStart.ticked).toBe(false);
+    expect(noStart.book).toBeNull();
+    expect(noStart.problems.join(" ")).toMatch(/No books start date: the company's books start is not set/);
   });
 
   it("the line is more than was due on 1 Apr → unticked, says so", () => {

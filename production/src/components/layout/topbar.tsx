@@ -17,6 +17,7 @@ import { NotificationPanel, useNotificationFeed } from "./notification-panel";
 import { QuickActionsPanel } from "./quick-actions-panel";
 import { TopBarBreadcrumb } from "./topbar-breadcrumb";
 import { TeamChatButton, TeamChatMenuItem, TeamChatUnreadDot } from "./team-chat-button";
+import { CompanySwitcher, CompanySwitcherMenuItem } from "./company-switcher";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenRoute, crumbForRole, getParentListHref } from "@/lib/nav";
 import type { Route } from "next";
@@ -46,6 +47,8 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   const cmdk = useCommandPalette();
   const [notifOpen,   setNotifOpen]   = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
+  /* R-2476: the company switcher's dialog — its own button from sm up, a More-menu row on a phone. */
+  const [companyOpen, setCompanyOpen] = React.useState(false);
   // R-1122: bell badge = the panel's own unread count (same list, same read-state), so
   // "Mark all read" clears it and the panel header always agrees. It used to add every
   // due task on top, which no read-state could ever clear.
@@ -115,6 +118,10 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
 
 
       <div className="flex-1 md:hidden" />
+
+      {/* R-2476 (R-2471 slice 2): which company this login works in — only for a login with 2+
+          active memberships (renders nothing otherwise). Phone: a row in the More menu. */}
+      <CompanySwitcher open={companyOpen} onOpenChange={setCompanyOpen} />
 
       {/* R-383 (7 Oct 2026): no separate "Report Bug" button any more — reporting lives in the
           one Help button (AiHelpButton, below) on its "Report a problem" tab; Ctrl+Shift+B opens it. */}
@@ -208,6 +215,7 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
           {showTeamChat && <TeamChatUnreadDot />}
         </div>
         <DropdownMenuContent align="end" className="w-56">
+          <CompanySwitcherMenuItem onSelect={() => setCompanyOpen(true)} />
           {showTeamChat && <TeamChatMenuItem />}
           <DropdownMenuItem onSelect={() => setActionsOpen(true)}>
             <Icon name="sparkles" size={14} /> Quick actions

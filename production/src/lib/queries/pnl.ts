@@ -7,7 +7,7 @@
  *
  * ─── S17 (28 Sep 2026): TRANSACTIONS KA JOD AB SQL ME ───────────────────────
  * Pehle ye hook period ki har invoice, har expense, har note browser me laata tha — aur
- * Balance Sheet isse BOOKS_START se aaj tak maangti hai, yaani poori kitaab. `report_pnl`
+ * Balance Sheet isse books start (R-2496 books-start.ts) se aaj tak maangti hai, yaani poori kitaab. `report_pnl`
  * (migration 20260928110000) wahi filters SQL me chalata hai aur jode hue groups deta hai;
  * niyam (ITC, expense report, project cost, COGS basis) lib/accounting/pnl-assemble.ts
  * me wahi purane functions hain. Subscriptions / project labour / employees master data
@@ -33,8 +33,9 @@ import { fetchDirectorPayroll } from "@/lib/queries/director-payroll";
 
 export type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 
-/** Wide enough to hold every entry the books have; the Balance Sheet reads profit from here. */
-export const BOOKS_START = "2000-04-01";
+/* R-2496: the old BOOKS_START ("2000-04-01") is gone — the Balance Sheet and Trial Balance read the
+   company's books start from lib/accounting/books-start.ts (reportStart: the owner's setting, else
+   the opening date + 1, else the wide BOOKS_START_FALLBACK). */
 
 type Range = { from: string; to: string };
 type Client = ReturnType<typeof createClient>;

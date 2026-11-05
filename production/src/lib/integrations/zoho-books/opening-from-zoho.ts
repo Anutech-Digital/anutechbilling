@@ -58,7 +58,15 @@ export function openingFromZoho(
      note on an opening invoice (trg_credit_note_not_on_opening_invoice). */
   const lateCredit = h.credits.find((c) => c.amount > 0 && (!c.date || c.date >= cutoff));
   if (lateCredit) return { ok: false, problem: `Zoho applied a ${rupees(lateCredit.amount)} credit note to ${no} on or after ${fmtDay(cutoff)} — an opening invoice takes no credit note in the app. Reconcile this line by hand.` };
-  const paidAll = h.payments.reduce((s, p) => s + p.amount + p.tds, 0) + h.credits.reduce((s, c) => s + c.amount, 0);
+  let paidAll = h.payments.reduce((s, p) => s + p.amount + p.tds, 0) + h.credits.reduce((s, c) => s + c.amount, 0);
+  /* R-2494: THIS bank line's own Zoho payment is a receipt on the invoice too. When Zoho's list left
+     it out, it counts with its amount applied (+ its TDS) — only if that is exactly what is missing,
+     so a fully-paid-by-this-payment invoice adds up and anything else is still refused. */
+  const thisListed = !!thisPaymentId && h.payments.some((p) => p.paymentId === thisPaymentId);
+  const thisMoney = (inv.amountApplied ?? 0) + (inv.tdsApplied ?? 0);
+  if (thisPaymentId && !thisListed && thisMoney > 0 && h.balance !== null && Math.abs(total - paidAll - thisMoney - h.balance) <= 0.5) {
+    paidAll += thisMoney;
+  }
   if (h.balance === null || Math.abs(total - paidAll - h.balance) > 0.5) {
     return { ok: false, problem: `Zoho's invoice ${no} does not add up: total ${rupees(total)}, receipts and credits ${rupees(paidAll)}, balance ${rupees(h.balance ?? 0)}. Check it in Zoho, or reconcile this line by hand.` };
   }

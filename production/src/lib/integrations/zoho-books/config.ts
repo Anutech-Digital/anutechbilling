@@ -28,6 +28,15 @@ export const ZOHO_BOOKS_SCOPES = [
   /* R-2359: "Find in Zoho" on a bank credit reads the customer payment whose reference is the UTR. */
   "ZohoBooks.customerpayments.READ",
   "ZohoBooks.settings.READ",
+  /* R-2498 (G-FY2526): the FY 2025-26 books — credit notes, vendor bills, expenses, payments made, and
+     the accountant module (chart of accounts + each account's transactions → trial balance as at a
+     date). READ only. A connection made before R-2498 lacks them: Zoho answers 401 code 57 and the
+     card asks to Reconnect (Settings → Integrations → Zoho Books). */
+  "ZohoBooks.creditnotes.READ",
+  "ZohoBooks.bills.READ",
+  "ZohoBooks.expenses.READ",
+  "ZohoBooks.vendorpayments.READ",
+  "ZohoBooks.accountants.READ",
 ] as const;
 
 export const CALLBACK_PATH = "/api/integrations/zoho-books/callback";
@@ -86,3 +95,38 @@ export function buildZohoAuthUrl(clientId: string, redirectUri: string, state: s
   u.searchParams.set("state", state);
   return u.toString();
 }
+
+// ── R-2498: the FY reads (pure — the card imports these too) ───────────────────────────────
+
+export const FY_DOC_KINDS = ["invoices", "creditnotes", "bills", "expenses", "vendorpayments"] as const;
+export type FyDocKind = (typeof FY_DOC_KINDS)[number];
+
+/** Each FY list's name on the card (one place; fy-fetch.ts and the Reconnect line use it too). */
+export const FY_DOC_LABELS: Record<FyDocKind, string> = {
+  invoices: "Invoices", creditnotes: "Credit notes", bills: "Bills", expenses: "Expenses", vendorpayments: "Vendor payments",
+};
+
+export interface DateRange { dateStart: string; dateEnd: string }
+
+/** "2025-26" → 1 Apr 2025 … 31 Mar 2026. Anything else is refused (it goes into a Zoho URL). */
+export function fyDateRange(fy: string): DateRange {
+  const m = /^(\d{4})-(\d{2})$/.exec(fy);
+  if (!m || (Number(m[1]) + 1) % 100 !== Number(m[2])) throw new Error("The financial year must look like 2025-26.");
+  const y = Number(m[1]);
+  return { dateStart: `${y}-04-01`, dateEnd: `${y + 1}-03-31` };
+}
+
+/** The card's line when the stored Zoho sign-in was made before the FY read scopes existed. */
+export const ZOHO_FY_RECONNECT_MESSAGE =
+  "Reconnect to allow reading credit notes, bills, expenses and vendor payments. Press Reconnect, then Allow on the Zoho screen.";
+
+/** The Reconnect line naming only the lists Zoho refused ("… reading bills and expenses."). */
+export function fyReconnectMessage(kinds: readonly FyDocKind[]): string {
+  const names = FY_DOC_KINDS.filter((k) => kinds.includes(k)).map((k) => FY_DOC_LABELS[k].toLowerCase());
+  if (!names.length) return ZOHO_FY_RECONNECT_MESSAGE;
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `Reconnect to allow reading ${list}. Press Reconnect, then Allow on the Zoho screen.`;
+}
+
+/** R-2498: Zoho calls one "Count FY" request may make; the card paces the next request (zoho-pace.ts). */
+export const FY_CALLS_PER_REQUEST = 20;

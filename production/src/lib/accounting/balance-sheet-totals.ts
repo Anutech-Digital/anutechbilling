@@ -32,8 +32,9 @@ export interface BalanceSheetTotals {
 
 /**
  * R-1646: the P&L range whose profit the Balance Sheet carries as retained earnings — after the
- * CA's opening date when one is entered, else the whole books. The Trial Balance reads its
- * licence provision from the same range, so the two show one figure.
+ * CA's opening date when one is entered, else the whole books from `booksStart` (R-2496: the
+ * company's books start — books-start.ts reportStart, never a hard-coded date). The Trial Balance
+ * reads its licence provision from the same range, so the two show one figure.
  */
 export function retainedProfitRange(openingAsOf: string | null, today: string, booksStart: string): { from: string; to: string; open: boolean } {
   const from = openingAsOf ? addDaysISO(openingAsOf, 1) : booksStart;
