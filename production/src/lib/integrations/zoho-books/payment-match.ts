@@ -17,7 +17,7 @@
  */
 import {
   CF_SERVICE_EXPIRY, CF_SUBS_PERIOD, getContact, getCustomerPayment, getInvoiceDetail, invoiceFieldValue,
-  listCustomerPaymentsPage, listInvoiceCreditsApplied, listInvoicePayments,
+  listCustomerPaymentsPage, listInvoiceCreditsApplied, listInvoicePayments, ZohoApiError,
 } from "./api";
 import { mapGstTreatment, monthsOf, parseLineDescription, subsPeriodMonths } from "./import-plan";
 import { parsePlaceOfSupply, parseZohoDate } from "@/lib/import/zoho-opening-invoices";
@@ -299,11 +299,16 @@ export function zohoInvoiceHistory(inv: Record<string, unknown>): ZohoInvoiceHis
     writeOff: num(inv.write_off_amount) ?? 0,
     gstin: gstin ? gstin.toUpperCase() : null,
     placeOfSupply: parsePlaceOfSupply(str(inv.place_of_supply)),
-    payments: arr(inv.payments).map((p) => ({
-      paymentId: str(p.payment_id), date: parseZohoDate(str(p.date)), amount: num(p.amount) ?? 0, tds: num(p.tax_amount_withheld) ?? 0,
-    })),
+    payments: arr(inv.payments).map(receiptFromZoho),
     credits: arr(inv.credits).map(creditFromZoho),
   };
+}
+
+type InvoiceReceipt = ZohoInvoiceHistory["payments"][number];
+
+/** One receipt on an invoice — the invoice detail's payments[] or GET /invoices/{id}/payments. */
+function receiptFromZoho(p: Record<string, unknown>): InvoiceReceipt {
+  return { paymentId: str(p.payment_id), date: parseZohoDate(str(p.date)), amount: num(p.amount) ?? 0, tds: num(p.tax_amount_withheld) ?? 0 };
 }
 
 /** One applied credit note — the invoice detail's shape (credited_amount) or /creditsapplied's (amount_applied). */
@@ -311,14 +316,33 @@ function creditFromZoho(c: Record<string, unknown>): { date: string | null; amou
   return { date: parseZohoDate(str(c.credited_date) ?? str(c.date)), amount: num(c.credited_amount) ?? num(c.amount_applied) ?? num(c.amount) ?? 0 };
 }
 
+const near = (a: number, b: number) => Math.abs(a - b) <= 0.5;
+
+/** A Zoho error on an extra history read that is not "busy" (429), "signed out" (401) or Zoho being
+ *  down (5xx / network) → the history stays as the detail gave it; openingFromZoho then refuses an
+ *  invoice that does not add up. Busy / signed out / down are thrown — the bulk route pauses on 429. */
+async function orKeep<T>(read: () => Promise<T>, keep: T): Promise<T> {
+  try {
+    return await read();
+  } catch (e) {
+    const s = e instanceof ZohoApiError ? e.status : undefined;
+    if (s !== undefined && s >= 400 && s < 500 && s !== 401 && s !== 429) return keep;
+    throw e;
+  }
+}
+
 /**
  * R-2494: the invoice's history with its dated receipts and credits. Zoho's GET /invoices/{id} (v3
  * reference) has only the totals payment_made / credits_applied — no lists (5 Nov staging: every
- * fully-paid invoice read "receipts and credits ₹0"). When the detail has no list:
- *   - payments: payment_made is THIS payment's amount applied (± its TDS) → this payment is the one
- *     receipt (no extra call); otherwise GET /invoices/{id}/payments.
- *   - credits: credits_applied 0 → none; otherwise GET /invoices/{id}/creditsapplied.
- * A Zoho error is thrown as for the other reads (the bulk route pauses on 429 and carries on).
+ * fully-paid invoice read "receipts and credits ₹0"). A list is judged by its SUM against Zoho's total
+ * (an empty `payments: []` with payment_made > 0 is incomplete too):
+ *   - payments: the list adds up to payment_made → used as it is. Otherwise payment_made is THIS
+ *     payment's amount applied (± its TDS) → this payment is the one receipt (no extra call);
+ *     otherwise (or no payment_made and no list) GET /invoices/{id}/payments.
+ *   - credits: the list adds up to credits_applied (or none applied / no total) → as it is;
+ *     otherwise GET /invoices/{id}/creditsapplied.
+ * THIS payment's row always carries its amount applied to this invoice (a split payment's list row
+ * may carry the whole payment). The two reads run together.
  */
 async function completeInvoiceHistory(
   inv: Record<string, unknown>, applied: { id: string; amount: number | null; tds: number },
@@ -326,27 +350,25 @@ async function completeInvoiceHistory(
 ): Promise<ZohoInvoiceHistory> {
   const f = deps.fetch ?? fetch;
   const h = zohoInvoiceHistory(inv);
-  if (!Array.isArray(inv.payments)) {
-    const made = num(inv.payment_made);
-    const cash = applied.amount ?? 0;
-    const onlyThis = made !== null && cash > 0 && (Math.abs(made - cash) <= 0.5 || Math.abs(made - cash - applied.tds) <= 0.5);
-    if (made === null || made <= 0) {
-      /* Nothing paid, or Zoho gave no total: no list. openingFromZoho still counts this payment when
-         it is exactly what is missing, and refuses anything else (never a guessed balance). */
-      h.payments = [];
-    } else if (onlyThis) {
-      h.payments = [{ paymentId: payment.zohoId, date: parseZohoDate(payment.date), amount: cash, tds: applied.tds }];
-    } else {
-      h.payments = (await listInvoicePayments(deps.orgId, deps.token, applied.id, f)).map((p) => ({
-        paymentId: str(p.payment_id), date: parseZohoDate(str(p.date)), amount: num(p.amount) ?? 0, tds: num(p.tax_amount_withheld) ?? 0,
-      }));
-    }
-  }
-  if (!Array.isArray(inv.credits)) {
-    const credited = num(inv.credits_applied);
-    h.credits = credited === null || credited <= 0 ? [] : (await listInvoiceCreditsApplied(deps.orgId, deps.token, applied.id, f)).map(creditFromZoho);
-  }
-  return h;
+  const cash = applied.amount ?? 0;
+  const own = (p: InvoiceReceipt): InvoiceReceipt => (cash > 0 && p.paymentId === payment.zohoId ? { ...p, amount: cash, tds: applied.tds } : p);
+
+  const made = num(inv.payment_made);
+  const listedCash = h.payments.reduce((s, p) => s + p.amount, 0);
+  const listedAll = listedCash + h.payments.reduce((s, p) => s + p.tds, 0);
+  const paymentsOk = made === null ? Array.isArray(inv.payments) : made <= 0 || near(listedCash, made) || near(listedAll, made);
+  const onlyThis = made !== null && cash > 0 && (near(made, cash) || near(made, cash + applied.tds));
+  const payments: Promise<InvoiceReceipt[]> = paymentsOk ? Promise.resolve(h.payments)
+    : onlyThis ? Promise.resolve([{ paymentId: payment.zohoId, date: parseZohoDate(payment.date), amount: cash, tds: applied.tds }])
+      : orKeep(async () => (await listInvoicePayments(deps.orgId, deps.token, applied.id, f)).map(receiptFromZoho), h.payments);
+
+  const credited = num(inv.credits_applied);
+  const creditsOk = credited === null || credited <= 0 || near(h.credits.reduce((s, c) => s + c.amount, 0), credited);
+  const credits = creditsOk ? Promise.resolve(h.credits)
+    : orKeep(async () => (await listInvoiceCreditsApplied(deps.orgId, deps.token, applied.id, f)).map(creditFromZoho), h.credits);
+
+  const [p, c] = await Promise.all([payments, credits]);
+  return { ...h, payments: p.map(own), credits: c };
 }
 
 /** One invoice's lines with their periods. */

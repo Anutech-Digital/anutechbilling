@@ -113,6 +113,81 @@ describe("R-2494 readZohoPaymentMatch: the invoice's receipts when Zoho's invoic
   });
 });
 
+describe("R-2494 review: a list that does not reach Zoho's totals, unknown totals, Zoho errors", () => {
+  it("detail has payments: [] but payment_made > 0 → still completed (the list is judged by its sum, not by being there)", async () => {
+    const z = fakeZoho({
+      "/customerpayments/zp-1": payment([{ invoice_id: "zi-1", invoice_number: "INV/25-26/0412", amount_applied: 59000 }]),
+      "/invoices/zi-1": invoiceDetail({ payments: [], credits: [] }),
+    });
+    const m = await readZohoPaymentMatch("zp-1", "utr", deps(z.f));
+    expect(m.invoices[0].history?.payments).toEqual([{ paymentId: "zp-1", date: "2026-04-03", amount: 59000, tds: 0 }]);
+    expect(openingFromZoho(m.invoices[0], "2026-04-01", "zp-1")).toMatchObject({ ok: true, create: { balance: 59000 } });
+  });
+
+  it("detail has credits: [] but credits_applied > 0 → reads /creditsapplied", async () => {
+    const z = fakeZoho({
+      "/customerpayments/zp-1": payment([{ invoice_id: "zi-1", invoice_number: "INV/25-26/0412", amount_applied: 49000 }], { amount: 49000 }),
+      "/invoices/zi-1": invoiceDetail({ payment_made: 49000, credits_applied: 10000, credits: [] }),
+      "/invoices/zi-1/creditsapplied": { credits: [{ creditnote_id: "cn-1", credited_date: "2026-03-01", amount_applied: 10000 }] },
+    });
+    const m = await readZohoPaymentMatch("zp-1", "utr", deps(z.f));
+    expect(m.invoices[0].history?.credits).toEqual([{ date: "2026-03-01", amount: 10000 }]);
+  });
+
+  it("payment_made missing → reads /payments (an earlier receipt of the same amount is not mistaken for this one)", async () => {
+    const z = fakeZoho({
+      "/customerpayments/zp-1": payment([{ invoice_id: "zi-1", invoice_number: "INV/25-26/0412", amount_applied: 29500 }], { amount: 29500 }),
+      "/invoices/zi-1": invoiceDetail({ payment_made: undefined, balance: 0 }),
+      "/invoices/zi-1/payments": {
+        payments: [
+          { payment_id: "zp-0", date: "2026-02-10", amount: 29500, tax_amount_withheld: 0 },
+          { payment_id: "zp-1", date: "2026-04-03", amount: 29500, tax_amount_withheld: 0 },
+        ],
+      },
+    });
+    const m = await readZohoPaymentMatch("zp-1", "utr", deps(z.f));
+    expect(z.calls).toContain("/invoices/zi-1/payments");
+    expect(openingFromZoho(m.invoices[0], "2026-04-01", "zp-1")).toMatchObject({ ok: true, create: { balance: 29500 } });
+  });
+
+  it("this payment's row in /payments uses ITS amount applied to this invoice (a split payment's row may carry the whole payment)", async () => {
+    const z = fakeZoho({
+      "/customerpayments/zp-1": payment([{ invoice_id: "zi-1", invoice_number: "INV/25-26/0412", amount_applied: 29000 }], { amount: 50000 }),
+      "/invoices/zi-1": invoiceDetail(),
+      "/invoices/zi-1/payments": {
+        payments: [
+          { payment_id: "zp-0", date: "2026-02-10", amount: 30000, tax_amount_withheld: 0 },
+          { payment_id: "zp-1", date: "2026-04-03", amount: 50000, tax_amount_withheld: 0, is_single_invoice_payment: false },
+        ],
+      },
+    });
+    const m = await readZohoPaymentMatch("zp-1", "utr", deps(z.f));
+    expect(m.invoices[0].history?.payments.find((p) => p.paymentId === "zp-1")?.amount).toBe(29000);
+  });
+
+  it("a Zoho error (not busy, not signed out) on the extra read → the match still comes back; the plan refuses that invoice", async () => {
+    const z = fakeZoho({
+      "/customerpayments/zp-1": payment([{ invoice_id: "zi-1", invoice_number: "INV/25-26/0412", amount_applied: 29000 }], { amount: 29000 }),
+      "/invoices/zi-1": invoiceDetail(),
+      /* no /invoices/zi-1/payments route → 404 */
+    });
+    const m = await readZohoPaymentMatch("zp-1", "utr", deps(z.f));
+    expect(m.invoices[0].number).toBe("INV/25-26/0412");
+    expect(openingFromZoho(m.invoices[0], "2026-04-01", "zp-1")).toMatchObject({ ok: false, problem: expect.stringMatching(/does not add up/) });
+  });
+
+  it("Zoho busy (429) on the extra read is thrown, so the bulk run pauses and carries on", async () => {
+    const base = fakeZoho({
+      "/customerpayments/zp-1": payment([{ invoice_id: "zi-1", invoice_number: "INV/25-26/0412", amount_applied: 29000 }], { amount: 29000 }),
+      "/invoices/zi-1": invoiceDetail(),
+    });
+    const f = (async (input: RequestInfo | URL, init?: RequestInit) => (String(input).includes("/invoices/zi-1/payments")
+      ? new Response(JSON.stringify({ code: 1070, message: "rate limit" }), { status: 429 })
+      : base.f(input, init))) as typeof fetch;
+    await expect(readZohoPaymentMatch("zp-1", "utr", deps(f))).rejects.toMatchObject({ status: 429 });
+  });
+});
+
 describe("R-2494 openingFromZoho: this bank line's own payment always counts in the add-up check", () => {
   it("Zoho's list leaves this payment out but the gap is exactly its amount applied → adds up, not refused", () => {
     const inv = {
