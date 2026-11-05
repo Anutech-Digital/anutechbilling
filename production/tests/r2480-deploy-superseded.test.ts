@@ -130,7 +130,7 @@ const opsJson = (vals: Record<string, string>) =>
   JSON.stringify([{ operationType: "IMPORT", error: { errors: [{ message: `ERROR: PEEK ${Object.entries(vals).map(([k, v]) => `${k}=${v}`).join(" ")}\nCONTEXT: PL/pgSQL function inline_code_block` }] } }], null, 2);
 
 /** Runs `scriptFile` (inside a supabase dir laid out like the repo) with before/after PEEK answers. */
-function runScript(scriptFile: string, before: Record<string, string>, after: Record<string, string>): Run {
+function runScript(scriptFile: string, before: Record<string, string>, after: Record<string, string>, extraEnv: Record<string, string> = {}): Run {
   const state = fs.mkdtempSync(path.join(os.tmpdir(), "r2480-state-"));
   const bin = fs.mkdtempSync(path.join(os.tmpdir(), "r2480-bin-"));
   fakeGcloud(bin);
@@ -142,7 +142,7 @@ function runScript(scriptFile: string, before: Record<string, string>, after: Re
     'S="$R2480_SCRIPT"; command -v cygpath >/dev/null 2>&1 && S="$(cygpath -u "$S")"',
     'SKIP_BACKUP=1 bash "$S"',
   ].join("\n");
-  const r = spawnSync(BASH!, ["-s"], { input, encoding: "utf8", timeout: 380_000, env: { ...process.env, R2480_STATE: state, R2480_BIN: bin, R2480_SCRIPT: scriptFile } });
+  const r = spawnSync(BASH!, ["-s"], { input, encoding: "utf8", timeout: 380_000, env: { ...process.env, R2480_STATE: state, R2480_BIN: bin, R2480_SCRIPT: scriptFile, ...extraEnv } });
   const log = path.join(state, "imports.log");
   const imported = fs.existsSync(log) ? fs.readFileSync(log, "utf8").split(/\r?\n/).filter((l) => /^\d{14}_/.test(l)) : [];
   const peekSql = fs.existsSync(path.join(state, "peek.sql")) ? fs.readFileSync(path.join(state, "peek.sql"), "utf8") : "";
@@ -173,7 +173,7 @@ describe.skipIf(!BASH)("R-2480 deploy-db script never re-runs a superseded migra
   const rests = { r1_rest: "true", r2_rest: "true", r3_rest: "true" };
 
   for (const env of ["staging", "live"]) {
-    const extra = env === "staging" ? { cuid: "true" } : {};
+    const extra: Record<string, string> = env === "staging" ? { cuid: "true" } : {};
     it(`${env}: staging-like state (R-3 body in, R-4 + e new) → applies only r4 and e; r1/r2 reported superseded`, () => {
       const before = { r1: "false", r2: "false", r3: "true", r4: "false", e: "false", ...rests, ...extra };
       const after = { ...allTrue(keys), r1: "false", r2: "false", ...rests, ...extra };
@@ -213,7 +213,39 @@ describe.skipIf(!BASH)("R-2480 deploy-db script never re-runs a superseded migra
       expect(r.imported).toEqual([]);
       expect(r.out).toMatch(/did not answer for: r4|did not answer for:.*r3/);
     });
+
+    /* Review (5 Nov): a value cut short ("tr") is no answer — never read as "false → apply". */
+    it(`${env}: a cut-short value (r4=tr) counts as no answer → nothing changed`, () => {
+      const before = { r1: "true", r2: "true", r3: "true", e: "true", ...rests, ...extra, r4: "tr" };
+      const r = runScript(fx.script(env), before, before);
+      expect(r.status).toBe(1);
+      expect(r.imported).toEqual([]);
+      expect(r.out).toMatch(/did not answer for: r4/);
+    });
+
+    /* Review (5 Nov): the way on when a later migration on purpose removed what an older peek checks. */
+    it(`${env}: ACCEPT_SUPERSEDED="r1" (after a check) lets a blocked key through as superseded`, () => {
+      const before = { r1: "false", r2: "true", r3: "true", r4: "true", e: "true", r1_rest: "false", r2_rest: "true", r3_rest: "true", ...extra };
+      const r = runScript(fx.script(env), before, before, { ACCEPT_SUPERSEDED: "r1" });
+      expect(r.status, r.out).toBe(0);
+      expect(r.imported).toEqual([]);
+      expect(r.out).toMatch(/-- r1: superseded by r2 \(ACCEPT_SUPERSEDED\)/);
+      expect(r.out).toContain("DB READY");
+    });
   }
+});
+
+describe("R-2480 plan() is one copy", () => {
+  it("staging and live carry the same SUPS loader + plan() text", () => {
+    const part = (env: string) => {
+      const t = fs.readFileSync(path.join(SUPA, "cloudsql", env, "deploy-db-2026-10-07.sh"), "utf8").replace(/\r\n/g, "\n");
+      const a = t.indexOf("declare -A LATER=()");
+      const b = t.indexOf("\n}\n", a);
+      expect(a, env).toBeGreaterThan(-1);
+      return t.slice(a, b);
+    };
+    expect(part("live")).toBe(part("staging"));
+  });
 });
 
 /* ── today's real list ───────────────────────────────────────────────────────────────────────── */

@@ -599,7 +599,6 @@ SUPS=(
   "r2364suggestionsskipused|r2472banktargettenant|exists(select 1 from pg_proc where oid = to_regprocedure('public.suggest_bank_transaction_matches(uuid)') and prosrc like '%R-2364%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_txn(uuid,text,text,text)') and true)"
   "r2469staleinvite|r2471memberships|"
 )
-field() { echo "$1" | cut -d'|' -f"$2"; }   # $1 = MIGS line, $2 = 1 key / 2 file / 3 user / 4 peek
 
 # R-545 (10 Oct): the staging branch (R-161) moves applied migrations to prisma/migrations/<name>/migration.sql,
 # so look there too — the staging DB run stopped at "Missing file" on 20261006130000.
@@ -608,7 +607,7 @@ migsrc() { if [ -f "$HERE/migrations/$1" ]; then echo "$HERE/migrations/$1"; eli
 seen=" "
 for m in "${MIGS[@]}"; do
   IFS='|' read -r k f _ <<< "$m"   # R-2480: no subshell per line (Git Bash forks are slow)
-  [ -f "$HERE/migrations/$f" ] || [ -f "$HERE/../prisma/migrations/${f%.sql}/migration.sql" ] || { echo "Missing file: migrations/$f — nothing changed. Send Claude this screen."; exit 1; }
+  [ -n "$(migsrc "$f")" ] || { echo "Missing file: migrations/$f — nothing changed. Send Claude this screen."; exit 1; }
   case "$seen" in *" $k "*) echo "Key '$k' twice in MIGS — nothing changed."; exit 1;; esac
   seen="$seen$k "
 done
@@ -627,7 +626,7 @@ TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
   # R-2480: the "other parts" check of each migration a later one supersedes (key_rest=…). coalesce:
   # every key answers (null → 'null'), so a cut-short PEEK line is caught below, never read as "apply".
   for s in "${SUPS[@]}"; do
-    r="${s##*|}"; if [ -n "$r" ]; then printf "   ,'%s_rest=' || coalesce((%s)::text, 'null')\n" "${s%%|*}" "$r"; fi
+    IFS='|' read -r k _ r <<< "$s"; if [ -n "$r" ]; then printf "   ,'%s_rest=' || coalesce((%s)::text, 'null')\n" "$k" "$r"; fi
   done
   echo "  ]::text[], ' ') INTO r;"
   echo "  RAISE EXCEPTION 'PEEK %', r; END \$\$;"
@@ -661,15 +660,17 @@ is_true() { echo "$1" | grep -qE "(^| )$2=true([^a-z0-9_]|$)"; }   # $1 = PEEK l
 #   blocked    — a later redefiner is in but its other parts are NOT: re-running brings the old body back,
 #                skipping loses a column/table — the script stops before any change;
 #   apply      — anything else (e.g. a fresh DB): applied in file order, exactly as before.
-# GAP = keys the PEEK line has no answer for.
+# GAP = keys the PEEK line has no answer (true/false/null) for.
+# ACCEPT_SUPERSEDED="key1 key2" (env): after Claude has checked them, blocked keys count as superseded —
+# the way on when a later migration on purpose removed what an older peek checks (no header may be edited).
 declare -A LATER=() REST=() VAL=() ST=() BY=()
-for s in "${SUPS[@]}"; do k="${s%%|*}"; r="${s#*|}"; LATER[$k]="${r%%|*}"; REST[$k]="${r#*|}"; done
+for s in "${SUPS[@]}"; do IFS='|' read -r k l r <<< "$s"; LATER[$k]="$l"; REST[$k]="$r"; done
 GAP=""
 plan() {
   local w k v i later by
   VAL=(); ST=(); BY=(); GAP=""
   for w in $1; do
-    case "$w" in [A-Za-z0-9]*=*) k="${w%%=*}"; v="${w#*=}"; VAL[$k]="${v%%[!a-z]*}";; esac
+    case "$w" in [A-Za-z0-9]*=*) k="${w%%=*}"; v="${w#*=}"; v="${v%%[!a-z]*}"; case "$v" in true|false|null) VAL[$k]="$v";; esac;; esac
   done
   for (( i=${#MIGS[@]}-1; i>=0; i-- )); do
     k="${MIGS[$i]%%|*}"
@@ -681,6 +682,7 @@ plan() {
     done
     if [ -z "$by" ]; then ST[$k]=apply
     elif [ -n "${REST[$k]:-}" ] && [ "${VAL[${k}_rest]:-}" = true ]; then ST[$k]=superseded; BY[$k]="$by"
+    elif [[ " ${ACCEPT_SUPERSEDED:-} " == *" $k "* ]]; then ST[$k]=superseded; BY[$k]="$by (ACCEPT_SUPERSEDED)"
     else ST[$k]=blocked; BY[$k]="$by"
     fi
   done
@@ -709,7 +711,7 @@ if [ -n "$blocked" ]; then
   echo "STOPPED before any change (R-2480). These migrations are not in, but a NEWER migration that redefines the same function/view IS:"
   for k in $blocked; do echo "  $k (newer: ${BY[$k]})"; done
   echo "Re-running them would put the OLD function body back, and their other parts (columns/tables/triggers) are not all in, so skipping is not safe either."
-  echo "Nothing changed. Send Claude this screen — the fix is a NEW migration that adds the missing parts."
+  echo "Nothing changed. Send Claude this screen — the fix is a NEW migration that adds the missing parts (or, once Claude has checked, ACCEPT_SUPERSEDED=\"<keys>\")."
   exit 1
 fi
 

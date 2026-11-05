@@ -11,8 +11,10 @@
  *   -- deploy-user: postgres                                                (optional — default resellersos_migration)
  *   -- deploy-skip: R-531 redesign first                                    (optional — keep the file OUT of both scripts)
  *
- * and this script rewrites ONLY the lines between `MIGS=(` and its closing `)` in both scripts.
- * Everything else (backup, peek, the staging-only auth.uid() rewrite in apply()) stays byte-identical.
+ * and this script rewrites ONLY the lines between `MIGS=(` and its closing `)` in both scripts — and,
+ * since R-2480, between `SUPS=(` and its `)` (which migrations a later one supersedes; see below).
+ * Everything else (backup, peek, plan(), the staging-only auth.uid() rewrite in apply()) stays
+ * byte-identical; tests/r2480-deploy-superseded.test.ts proves plan() is the same in both scripts.
  *
  *   node scripts/ops/gen-deploy-db.mjs --date 2026-10-07                 # files already listed + every newer migration
  *   node scripts/ops/gen-deploy-db.mjs --date 2026-10-07 --since 20261006130000
