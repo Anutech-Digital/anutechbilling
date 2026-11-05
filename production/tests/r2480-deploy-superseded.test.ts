@@ -296,9 +296,15 @@ describe("R-2480 today's deploy scripts", () => {
     for (const s of sups) if (s.rest) vals[`${s.key}_rest`] = "true";
     /* what R-2473's widened peeks read on staging now: the R-2447 body has neither R-2383 nor R-2470 */
     for (const k of ["r2383soleownerapproval", "r2426soleownersanytier", "r2441approvalroleprefixedrefs", "r2470quoteapprovalheaderbelowcost"]) vals[k] = "false";
-    const r = runScript(path.join(SUPA, "cloudsql", "staging", "deploy-db-2026-10-07.sh"), vals, { ...vals, ...allTrue(["r2470quoteapprovalheaderbelowcost"]) });
+    /* R-2485: a migration that later redefines one of R-2470's functions is not on staging either —
+       it is applied after R-2470, in file order (while it is out, R-2470 is not "superseded"). */
+    const fileOf = new Map([...script.matchAll(/^\s*"([^|"]+)\|(\d{14}_[^|]+\.sql)\|/gm)].map((m) => [m[1], m[2]]));
+    const after2470 = sups.find((s) => s.key === "r2470quoteapprovalheaderbelowcost")?.later ?? [];
+    for (const k of after2470) vals[k] = "false";
+    const r = runScript(path.join(SUPA, "cloudsql", "staging", "deploy-db-2026-10-07.sh"), vals,
+      { ...vals, ...allTrue(["r2470quoteapprovalheaderbelowcost", ...after2470]) });
     expect(r.status, r.out.slice(-2000)).toBe(0);
-    expect(r.imported).toEqual(["20261105000100_r2470_quote_approval_header_below_cost.sql"]);
+    expect(r.imported).toEqual(["20261105000100_r2470_quote_approval_header_below_cost.sql", ...after2470.map((k) => fileOf.get(k))]);
     expect(r.out).toMatch(/-- r2383soleownerapproval: superseded by /);
     expect(r.out).toContain("DB READY");
   }, 400_000);
