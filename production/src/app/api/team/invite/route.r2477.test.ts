@@ -112,7 +112,7 @@ describe("R-2477: invite a login that works in another company", () => {
     expect(st.emails).toHaveLength(0);
   });
 
-  it.each(["no_company", "not_found"])("%s → the plain invite (team_invites row + signup link)", async (outcome) => {
+  it.each(["plain", "no_company", "not_found"])("%s → the plain invite (team_invites row + signup link)", async (outcome) => {
     st.ex = { data: outcome, error: null };
     st.held = "none";
     const r = await call({ email: EMAIL, role: "sales" });
@@ -127,6 +127,14 @@ describe("R-2477: invite a login that works in another company", () => {
     const r = await call({ email: EMAIL, role: "sales" });
     expect(r.status).toBe(429);
     expect(st.inserts).toHaveLength(0);
+  });
+
+  it("plain for a member_elsewhere address (a login removed from every company) is NOT refused — plain invite + Claim", async () => {
+    st.ex = { data: "plain", error: null };
+    st.held = "member_elsewhere";
+    const r = await call({ email: EMAIL, role: "sales" });
+    expect(r.status).toBe(200);
+    expect(st.inserts).toHaveLength(1);
   });
 
   it("the step failing keeps the R-2469 refusal for a member of another company (never a half-done invite)", async () => {
