@@ -122,13 +122,13 @@ describe("R-2499 sales-import route", () => {
     const pre = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
     expect(pre.counts).toMatchObject({ import: 0, skip: 1 });
     expect(pre.skipped[0].reason).toMatch(/^Name matches "Test Buyer" but the GSTIN differs/);
-    expect(pre.gstinChoices).toEqual([expect.objectContaining({ key: "test buyer", customerId: "cust-1", chosen: false, count: 1 })]);
+    expect(pre.gstinChoices).toEqual([expect.objectContaining({ key: "test buyer|ZZZZZ9999Z", customerId: "cust-1", chosen: false, count: 1 })]);
     expect((await POST(req({ action: "import", fy: "2025-26", part: 0 }))).status).toBe(409);
 
-    const ticked = await (await POST(req({ action: "preview", fy: "2025-26", useAnyway: { "test buyer": "cust-1" } }))).json();
+    const ticked = await (await POST(req({ action: "preview", fy: "2025-26", useAnyway: { "test buyer|ZZZZZ9999Z": "cust-1" } }))).json();
     expect(ticked.counts).toMatchObject({ import: 1, skip: 0 });
     expect(ticked.gstinChoices[0].chosen).toBe(true);
-    await POST(req({ action: "import", fy: "2025-26", part: 0, useAnyway: { "test buyer": "cust-1" } }));
+    await POST(req({ action: "import", fy: "2025-26", part: 0, useAnyway: { "test buyer|ZZZZZ9999Z": "cust-1" } }));
     expect(st.rpc[0].args.p_picks).toEqual([{ zoho_invoice_id: "z1", customer_id: "cust-1", item_ids: [] }]);
   });
 

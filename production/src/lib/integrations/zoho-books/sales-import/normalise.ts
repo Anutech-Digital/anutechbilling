@@ -57,6 +57,13 @@ export interface ZohoSaleFacts {
   appGstTreatment: string | null;
   /** Two-digit GST state code of the place of supply, null when Zoho sent none we can read. */
   posStateCode: string | null;
+  /** R-2536: the invoice's OWN billing address as Zoho printed it (address, street 2, city,
+   *  "state pin", and the country when outside India — the customer snapshot's shape), null when
+   *  Zoho has none. The import writes it on the invoice, so a branch invoice never prints another
+   *  branch's address. */
+  billingAddress: string | null;
+  /** R-2536: that address's country as Zoho wrote it, null when none. */
+  billingCountry: string | null;
   currency: string;
   /** INR per unit when foreign, else null. */
   fxRate: number | null;
@@ -80,6 +87,17 @@ const num = (v: unknown): number | null => {
 };
 const paiseOf = (v: unknown): number => { const n = num(v); return n === null ? 0 : Math.round(n * 100); };
 const ISO = /^\d{4}-\d{2}-\d{2}$/;
+const INDIA = new Set(["in", "ind", "india", "bharat"]);
+
+/** R-2536: Zoho's billing_address object → one printed line (same shape as invoice_party_snapshot). */
+export function zohoBillingAddress(v: unknown): { address: string | null; country: string | null } {
+  const a = v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+  const country = str(a.country) || null;
+  const abroad = !!country && !INDIA.has(country.toLowerCase());
+  const stateZip = [str(a.state), str(a.zip)].filter(Boolean).join(" ");
+  const parts = [str(a.address), str(a.street2), str(a.city), stateZip, abroad && country ? country : ""].filter(Boolean);
+  return { address: parts.length ? parts.join(", ").slice(0, 500) : null, country: country ? country.slice(0, 60) : null };
+}
 
 /** The rates an invoice here can carry (invoices.tax_rate is a whole number; 40% from 22 Sep 2025). */
 export const GST_RATES: readonly number[] = [0, 3, 5, 12, 18, 28, 40];
@@ -184,6 +202,7 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
   else if (taxRate !== null && !GST_RATES.includes(taxRate)) problems.push(`GST rate ${taxRate}% is not one this app stores on an invoice — book it by hand.`);
 
   const due = str(raw.due_date);
+  const bill = zohoBillingAddress(raw.billing_address);
   return {
     zohoId: d.id,
     number: d.number,
@@ -196,6 +215,8 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
     gstTreatment: d.gstTreatment,
     appGstTreatment: mapGstTreatment(d.gstTreatment),
     posStateCode: pos,
+    billingAddress: bill.address,
+    billingCountry: bill.country,
     currency,
     fxRate: fx,
     taxable,
