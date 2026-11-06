@@ -167,3 +167,14 @@ describe("R-2519 — the quotes list reads Cancelled", () => {
     expect(unifiedStatus(q, "2026-11-06").label).not.toBe("Cancelled");
   });
 });
+
+describe("R-2519 — the preview's GST follows the proforma's rule", () => {
+  it("export customer → 0%; India / unknown → the part's rate", async () => {
+    const { partTaxRate } = await import("./proforma");
+    expect(partTaxRate("US", 18)).toBe(0);
+    expect(partTaxRate(" India ", 18)).toBe(18);
+    expect(partTaxRate("IN", 18)).toBe(18);
+    expect(partTaxRate(null, 18)).toBe(18);
+    expect(partTaxRate("", 18)).toBe(18);
+  });
+});

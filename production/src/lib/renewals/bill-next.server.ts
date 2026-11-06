@@ -12,12 +12,13 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { addMonthsClamped, CYCLE_MONTHS } from "@/lib/billing/schedule";
-import { defaultSeatRate, nextPeriods, partAmounts, type BillNextPreview } from "@/lib/billing/proforma";
+import { defaultSeatRate, nextPeriods, partAmounts, partTaxRate, type BillNextPreview } from "@/lib/billing/proforma";
 export type { BillNextPreview, PreviewPeriod } from "@/lib/billing/proforma";
 
 export interface BillNextSub {
   id: string;
   tenant_id: string;
+  customer_id?: string | null;
   seats: number | null;
   mrr: number | null;
   billing_cycle: BillingCycle | null;
@@ -66,7 +67,11 @@ export async function billNextPreview(db: SupabaseClient, sub: BillNextSub, coun
   const partTaxable = row?.taxable_amount
     ?? (sub.term_amount && parts ? Math.round(sub.term_amount / parts) : Math.round((sub.mrr ?? 0) * months));
   const seats = Math.max(0, sub.seats ?? 0);
-  const taxRate = row?.tax_rate ?? rows[rows.length - 1]?.tax_rate ?? 18;
+  /* The customer's country decides as in bill_subscription_instalment: outside India → 0%. */
+  const country = sub.customer_id
+    ? ((await db.from("customers").select("country").eq("id", sub.customer_id).maybeSingle()).data as { country?: string | null } | null)?.country ?? null
+    : null;
+  const taxRate = partTaxRate(country, row?.tax_rate ?? rows[rows.length - 1]?.tax_rate ?? 18);
   const seatRate = defaultSeatRate({ seats, partTaxable });
   const periods = nextPeriods({ cycle, firstStart: start, count });
 

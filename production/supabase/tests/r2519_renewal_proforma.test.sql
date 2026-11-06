@@ -66,6 +66,24 @@ select ('bbbbbbbb-0000-0000-0000-00000025190' || n)::uuid, 'dddddddd-0000-0000-0
        public.ist_today() - 5, 1, public.ist_today() - 5, public.ist_today() - 5, public.ist_today() + 25, 5100, 18
   from generate_series(1, 4) n;
 
+-- 5: a part that starts in 6 days (billed ahead, for G2); 6: a sale quote's own subscription (for K).
+insert into public.quotes (id, tenant_id, customer_name, customer_id, tax_rate, amount, subtotal, status, payment_status, line_items, billing_cycle)
+values ('TESTQ-R2519-SALE2', 'dddddddd-0000-0000-0000-000000251901', 'Bitdecentro 2519', 'cccccccc-0000-0000-0000-000000251901',
+        18, 6018, 5100, 'sent', 'awaiting', '[{"name":"Google Workspace Business Starter","qty":17,"rate":300,"commitment":"flex_monthly"}]'::jsonb, 'monthly');
+insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr,
+                                  billing_cycle, term_months, start_date, renewal_date, status, domain, quote_id)
+select ('eeeeeeee-0000-0000-0000-00000025190' || n)::uuid, 'dddddddd-0000-0000-0000-000000251901',
+       'cccccccc-0000-0000-0000-000000251901', 'Bitdecentro 2519', 'Google Workspace Business Starter', 'google'::vendor,
+       17, 5100, 'monthly'::billing_cycle, 1, public.ist_today() - 35, public.ist_today() + 25, 'active', 'bit' || n || '.in',
+       case n when 6 then 'TESTQ-R2519-SALE2' end
+  from generate_series(5, 6) n;
+insert into public.subscription_billings (id, tenant_id, subscription_id, term_start, period_index, bill_on,
+                                          period_start, period_end, taxable_amount, tax_rate)
+values ('bbbbbbbb-0000-0000-0000-000000251905', 'dddddddd-0000-0000-0000-000000251901', 'eeeeeeee-0000-0000-0000-000000251905',
+        public.ist_today() + 6, 1, public.ist_today() + 6, public.ist_today() + 6, public.ist_today() + 36, 5100, 18),
+       ('bbbbbbbb-0000-0000-0000-000000251906', 'dddddddd-0000-0000-0000-000000251901', 'eeeeeeee-0000-0000-0000-000000251906',
+        public.ist_today() - 5, 1, public.ist_today() - 5, public.ist_today() - 5, public.ist_today() + 25, 5100, 18);
+
 -- An ordinary sales quote (for I).
 insert into public.quotes (id, tenant_id, customer_name, customer_id, tax_rate, amount, subtotal, status, payment_status, line_items)
 values ('TESTQ-R2519-SALE', 'dddddddd-0000-0000-0000-000000251901', 'Bitdecentro 2519', 'cccccccc-0000-0000-0000-000000251901',
@@ -139,6 +157,9 @@ begin
   select s.seats, s.mrr into v_s from public.subscriptions s where s.id = 'eeeeeeee-0000-0000-0000-000000251902';
   if v_s.seats <> 20 or v_s.mrr <> 6000 then raise exception 'E FAIL: % / %', v_s.seats, v_s.mrr; end if;
   raise notice 'E PASS: accepted → 20 seats';
+  begin perform public.cancel_quote(v_id2, 'Customer backed out, test');
+    raise exception 'E FAIL: cancelled an accepted proforma whose seats are on the subscription';
+  exception when invalid_parameter_value then raise notice 'E PASS (cancel refused): %', sqlerrm; end;
 
   -- F. cancel a proforma — kept, subscription untouched, part free again
   r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-000000251903', false);
@@ -156,6 +177,9 @@ begin
   r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-000000251903', false);
   if r->>'action' <> 'request' or r->>'quote_id' = v_id3 then raise exception 'F FAIL: part not billable again: %', r; end if;
   raise notice 'F PASS: % cancelled, kept; part re-billed as %', v_id3, r->>'quote_id';
+  begin update public.quotes set status = 'sent' where id = v_id3;
+    raise exception 'F FAIL: a plain Reopen re-opened a cancelled quote';
+  exception when invalid_parameter_value then raise notice 'F PASS (Reopen refused): %', sqlerrm; end;
 
   -- G. undo is refused while the new proforma holds the part; fine once that one is cancelled
   begin
@@ -169,8 +193,17 @@ begin
   if v_q.status::text <> 'sent' or v_q.payment_status::text <> 'awaiting' or v_q.cancelled_at is not null
      or v_q.subscription_billing_id <> 'bbbbbbbb-0000-0000-0000-000000251903' then
     raise exception 'G FAIL: undo %', row_to_json(v_q); end if;
-  if (select due_on from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-000000251903') is null then
-    raise exception 'G FAIL: due date not back'; end if;
+  if (select due_on from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-000000251903') is distinct from public.ist_today() then
+    raise exception 'G FAIL: due date not back to today'; end if;
+  -- G2. billed ahead (part starts in 6 days): cancel → undo keeps the due date at the part start
+  r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-000000251905', false);
+  if (select due_on from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-000000251905') <> public.ist_today() + 6 then
+    raise exception 'G2 FAIL: ahead part due %', (select due_on from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-000000251905'); end if;
+  perform public.cancel_quote(r->>'quote_id', 'Testing the undo date');
+  perform public.undo_cancel_quote(r->>'quote_id');
+  if (select due_on from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-000000251905') <> public.ist_today() + 6 then
+    raise exception 'G2 FAIL: undo moved the due date to %', (select due_on from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-000000251905'); end if;
+  raise notice 'G2 PASS: ahead proforma keeps its due date through cancel / undo';
   raise notice 'G PASS: undo → sent, awaiting, part linked again';
 
   -- H. refusals
@@ -188,6 +221,14 @@ begin
   select q.* into v_q from public.quotes q where q.id = 'TESTQ-R2519-SALE';
   if v_q.status::text <> 'sent' or v_q.payment_status::text <> 'awaiting' then raise exception 'I FAIL: %', row_to_json(v_q); end if;
   raise notice 'I PASS: ordinary quote cancel / undo';
+
+  -- K. a cancelled SALE quote whose subscription's part got its own proforma cannot be undone
+  perform public.cancel_quote('TESTQ-R2519-SALE2', 'Customer wants monthly proformas');
+  r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-000000251906', false);
+  if r->>'action' <> 'request' then raise exception 'K FAIL: part not billed after the sale quote was cancelled: %', r; end if;
+  begin perform public.undo_cancel_quote('TESTQ-R2519-SALE2');
+    raise exception 'K FAIL: undo reopened a sale quote whose part now has %', r->>'quote_id';
+  exception when invalid_parameter_value then raise notice 'K PASS: %', sqlerrm; end;
 end $$;
 
 -- J. as the company's OWNER (role + company checks), then a SALES user (refused).

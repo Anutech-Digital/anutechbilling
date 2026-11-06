@@ -238,7 +238,7 @@ export const GET = withRoute({
   const supabase = createAdminClientFor(user.id);
   const { data: sub, error } = await supabase
     .from("subscriptions")
-    .select("id, tenant_id, seats, mrr, billing_cycle, term_months, term_amount, start_date, renewal_date, billed_externally_until, status")
+    .select("id, tenant_id, customer_id, seats, mrr, billing_cycle, term_months, term_amount, start_date, renewal_date, billed_externally_until, status")
     .eq("id", params.id)
     .maybeSingle();
   if (error || !sub) return NextResponse.json({ error: "subscription not found" }, { status: 404 });

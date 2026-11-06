@@ -370,7 +370,11 @@ export default function QuoteDetailPage() {
   );
   const { data: partFacts } = usePartFacts(partBillingIds);
   /* R-2519: the proforma's pay-by date (its part's due date). */
-  const { data: partDueOn = null } = usePartDueOn(leadBillingId);
+  const { data: partDue = null } = usePartDueOn(leadBillingId);
+  const partDueOn = partDue?.dueOn ?? null;
+  /* A real email went (send log), or — before R-2519 wrote send-log rows — the billing job's mail step. */
+  const proformaMailed = (quoteSends ?? []).some((s) => s.status === "sent")
+    || ((quoteSends ?? []).length === 0 && !!partDue?.mailStep);
   /* R-2101: the parts' tax invoices (linked through subscription_billings) tick INVOICED. Not
      loaded / failed → null: the step falls back to quote.invoice_id alone (as before R-2101). */
   const { data: partInvoices = null, isLoading: partInvoicesLoading } = useQuotePartInvoices(
@@ -883,8 +887,8 @@ export default function QuoteDetailPage() {
     isPartRequest: partRequest, status: quote.status,
     cancelledAt: (quote as { cancelled_at?: string | null }).cancelled_at,
     invoiceId: quote.invoice_id, paymentStatus: quote.payment_status,
-    mailed: (quoteSends ?? []).some((s) => s.status === "sent"),
-    dueOn: partDueOn ?? null, todayISO: istToday(),
+    mailed: proformaMailed,
+    dueOn: partDue?.dueOn ?? null, todayISO: istToday(),
   });
   const status = proformaState ?? quoteHeaderStatus(
     quote as typeof quote & { below_cost?: boolean | null },
@@ -1871,6 +1875,9 @@ export default function QuoteDetailPage() {
                   </Link>
                   . The customer&apos;s old link now shows that this quote was replaced.
                 </>
+              ) : quote.status === "rejected" && (quote as { cancelled_at?: string | null }).cancelled_at ? (
+                /* R-2519: cancelled, kept — the reason, and Undo (not Reopen: Undo re-links its part). */
+                <>Cancelled — {(quote as { cancel_reason?: string | null }).cancel_reason ?? "no reason given"}. Kept on record; no reminders. Use More → Undo cancel while nothing is paid.</>
               ) : quote.status === "rejected" && seatsTakenBack ? (
                 <>Rejected{lossLabel(quote.rejected_reason) ? <> · <b>{lossLabel(quote.rejected_reason)}</b></> : null}
                   {quote.rejected_note ? <> — {quote.rejected_note}</> : null}. The {addSeatsCount(quote.seats)} {quote.seats === 1 ? "was" : "were"} taken back off the subscription. If the customer comes back, add them again from Manage seats.
@@ -1884,7 +1891,7 @@ export default function QuoteDetailPage() {
               )}
             </div>
             <div className="flex gap-2 flex-wrap">
-              {quote.status === "rejected" && !quote.superseded_by && !seatsTakenBack && (
+              {quote.status === "rejected" && !quote.superseded_by && !(quote as { cancelled_at?: string | null }).cancelled_at && !seatsTakenBack && (
                 <Button
                   variant="default"
                   icon="arrow_left"
@@ -2382,7 +2389,7 @@ export default function QuoteDetailPage() {
         quoteId={quote.id}
         customerName={quote.customer_name}
         defaultRecipient={customer?.contact_email ?? null}
-        alreadySent={(quote.status === "sent" || quote.status === "viewed") && (!partRequest || (quoteSends ?? []).some((s) => s.status === "sent"))}
+        alreadySent={(quote.status === "sent" || quote.status === "viewed") && (!partRequest || proformaMailed)}
         /* R-2519: a part payment request goes out as a Proforma Invoice. */
         defaultTemplate={partRequest ? "proforma" : "quotation"}
         /* The quote's own figures, so the dialog can state what sending commits you to

@@ -60,6 +60,9 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy }:
   const changed = !!preview && valid && (seatsN !== preview.seats || rateN !== preview.seatRate);
   /* Not exact per seat (₹2,000 over 3 seats): the proforma keeps the part's own amount unless a rate is typed. */
   const noRate = preview?.seatRate == null && rate === "";
+  /* Different seats need a rate — else the change would be dropped without a word. */
+  const seatsNeedRate = !!preview && noRate && seats !== "" && seatsN !== preview.seats;
+  const canCreate = !!preview && !seatsNeedRate && (valid || noRate);
 
   const confirm = () => {
     if (!preview) return;
@@ -112,6 +115,9 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy }:
               ))}
             </ul>
 
+            {seatsNeedRate && (
+              <p className="text-2xs text-rose" role="alert">Type the rate a seat to bill {seatsN} seats — this part&apos;s amount does not divide evenly by its seats.</p>
+            )}
             <p className="text-2xs text-ink-3">
               One proforma per period, from the PI series, due from {formatDate(preview.firstStart > istToday() ? preview.firstStart : istToday())} + the customer&apos;s payment terms.
               {changed ? ` The subscription moves to ${seatsN} seats only when a proforma is paid.` : ""}
@@ -122,7 +128,7 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy }:
 
         <DialogFooter className="mt-4">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
-          <Button variant="primary" onClick={confirm} disabled={!preview || (!valid && !noRate)} loading={busy}>
+          <Button variant="primary" onClick={confirm} disabled={!canCreate} loading={busy}>
             {periods > 1 ? `Create ${periods} proformas` : "Create proforma"}
           </Button>
         </DialogFooter>

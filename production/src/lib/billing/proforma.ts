@@ -168,3 +168,10 @@ export function cancelQuoteAction(q: {
   if (q.invoiceId || q.receivedSoFar > 0 || q.isAddSeats || q.supersededBy) return null;
   return ["draft", "sent", "viewed", "accepted"].includes(q.status) ? "cancel" : null;
 }
+
+/** R-2519: the part request's GST rule (bill_subscription_instalment) — a customer outside India pays 0%. */
+export function partTaxRate(country: string | null | undefined, partTaxRate: number): number {
+  if (country == null) return partTaxRate;
+  const c = country.trim().toLowerCase();
+  return ["", "in", "ind", "india", "bharat"].includes(c) ? partTaxRate : 0;
+}

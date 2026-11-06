@@ -230,6 +230,12 @@ begin
   if v_b.invoice_id is not null then
     raise exception 'This part already has its tax invoice — it cannot be changed.' using errcode = '22023';
   end if;
+  /* A customer invoiced on the due date gets the part's tax invoice then, paid or not — a seat
+     change on the proforma would be lost there. Change the seats from Manage seats instead. */
+  if exists (select 1 from public.customers c where c.id = v_q.customer_id and coalesce(c.invoice_parts_on_due_date, false)) then
+    raise exception 'This customer is invoiced on the due date, so the proforma''s seats cannot change here — use Manage seats.'
+      using errcode = '22023';
+  end if;
   select s.plan, s.domain, s.term_months, s.billing_cycle::text as cycle into v_s
     from public.subscriptions s where s.id = v_b.subscription_id;
 
@@ -278,6 +284,28 @@ drop trigger if exists trg_quotes_part_request_terms on public.quotes;
 create trigger trg_quotes_part_request_terms
   after update of status on public.quotes
   for each row execute function public.tg_quotes_part_request_terms();
+
+/* A cancelled quote is reopened ONLY by undo_cancel_quote (it re-links its part and checks no
+   newer proforma took the period) — never by a plain status change such as the page's Reopen. */
+create or replace function public.tg_quotes_cancelled_stays_closed()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  /* R-2519 */
+  if old.cancelled_at is not null and new.cancelled_at is not null
+     and new.status::text is distinct from old.status::text then
+    raise exception 'Quote % was cancelled — use Undo cancel to reopen it.', old.id using errcode = '22023';
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.tg_quotes_cancelled_stays_closed() from public, anon, authenticated;
+drop trigger if exists trg_quotes_cancelled_stays_closed on public.quotes;
+create trigger trg_quotes_cancelled_stays_closed
+  before update of status on public.quotes
+  for each row execute function public.tg_quotes_cancelled_stays_closed();
 
 -- ── 5. Cancel / Undo cancel (kept, never deleted) ──────────────────────────────────────────
 create or replace function public.cancel_quote(p_quote_id text, p_reason text)
@@ -331,6 +359,11 @@ begin
     raise exception 'Quote % added seats to a subscription — use Mark rejected, which also takes those seats back.', v_q.id
       using errcode = '22023';
   end if;
+  /* Accepted with a seat change → those seats are already on the subscription (apply_part_request_terms). */
+  if v_q.proforma_terms_applied_at is not null then
+    raise exception 'Proforma % was accepted and its % seats are already on the subscription — change the seats from Manage seats, or record the payment.',
+      v_q.id, v_q.proforma_seats using errcode = '22023';
+  end if;
 
   update public.quotes
      set cancelled_from_status = v_q.status::text,
@@ -344,11 +377,15 @@ begin
          cancel_reason = v_reason,
          notes = concat_ws(E'\n', nullif(notes, ''), 'Cancelled — ' || v_reason || ' (' || to_char(public.ist_today(), 'DD Mon YYYY') || ').')
    where id = v_q.id;
-  /* The part is free to be billed again — its due date was this request's. */
+  /* The part(s) are free to be billed again — their due date was this request's (a group request
+     names every part on its lines: billing_id). */
   if v_q.subscription_billing_id is not null then
     update public.subscription_billings
        set due_on = null, request_reminder_step = null, updated_at = now()
-     where id = v_q.subscription_billing_id and invoice_id is null;
+     where invoice_id is null
+       and (id = v_q.subscription_billing_id
+            or id::text in (select l->>'billing_id' from jsonb_array_elements(coalesce(v_q.line_items, '[]'::jsonb)) l
+                             where l ? 'billing_id'));
   end if;
 
   insert into public.activity_log (tenant_id, user_id, action, entity, entity_id, label, changes)
@@ -374,6 +411,8 @@ declare
   v_trusted boolean;
   v_caller  uuid := public.current_tenant_id();
   v_q       record;
+  v_parts   uuid[] := '{}'::uuid[];
+  v_newer   text;
 begin
   v_trusted := coalesce(auth.role(), '') = 'service_role'
                or (public.current_request_role() is null
@@ -402,10 +441,31 @@ begin
     if exists (select 1 from public.subscription_billings b where b.id = v_q.cancelled_part_billing_id and b.invoice_id is not null) then
       raise exception 'Its part already has a tax invoice — % cannot be reopened.', v_q.id using errcode = '22023';
     end if;
-    if exists (select 1 from public.quotes q2 where q2.subscription_billing_id = v_q.cancelled_part_billing_id) then
-      raise exception 'A new proforma (%) was made for this part — cancel that one first.',
-        (select q2.id from public.quotes q2 where q2.subscription_billing_id = v_q.cancelled_part_billing_id limit 1)
-        using errcode = '22023';
+    /* Its part(s) — the lead and every part a group request's lines name. */
+    v_parts := array[v_q.cancelled_part_billing_id]
+      || coalesce((select array_agg((l->>'billing_id')::uuid) from jsonb_array_elements(coalesce(v_q.line_items, '[]'::jsonb)) l
+                    where l ? 'billing_id'), '{}'::uuid[]);
+    if exists (select 1 from public.subscription_billings b where b.id = any(v_parts) and b.invoice_id is not null) then
+      raise exception 'Its part already has a tax invoice — % cannot be reopened.', v_q.id using errcode = '22023';
+    end if;
+    select q2.id into v_newer from public.quotes q2
+     where q2.id <> v_q.id
+       and (q2.subscription_billing_id = any(v_parts)
+            or exists (select 1 from jsonb_array_elements(coalesce(q2.line_items, '[]'::jsonb)) l2
+                        where q2.subscription_billing_id is not null and (l2->>'billing_id')::uuid = any(v_parts)))
+     limit 1;
+    if v_newer is not null then
+      raise exception 'A new proforma (%) was made for this part — cancel that one first.', v_newer using errcode = '22023';
+    end if;
+  else
+    /* A sale quote: its subscriptions' first part may have been billed on its own since the cancel. */
+    select q2.id into v_newer from public.quotes q2
+      join public.subscription_billings b on b.id = q2.subscription_billing_id
+      join public.subscriptions s on s.id = b.subscription_id
+     where s.quote_id = v_q.id and q2.created_at >= v_q.cancelled_at
+     limit 1;
+    if v_newer is not null then
+      raise exception 'Proforma % now bills this sale''s part — cancel it first, or keep this quote cancelled.', v_newer using errcode = '22023';
     end if;
   end if;
 
@@ -419,10 +479,12 @@ begin
          notes = concat_ws(E'\n', nullif(notes, ''), 'Cancel undone (' || to_char(public.ist_today(), 'DD Mon YYYY') || ').')
    where id = v_q.id;
   if v_q.cancelled_part_billing_id is not null then
+    /* The due date bill_subscription_instalment gave it: the later of the part start and the day
+       it was made, + its terms. */
     update public.subscription_billings
-       set due_on = coalesce(due_on, greatest(bill_on, coalesce(v_q.created_date, public.ist_today())) + coalesce(v_q.payment_terms_days, 0)),
+       set due_on = coalesce(due_on, greatest(period_start, coalesce(v_q.created_date, public.ist_today())) + coalesce(v_q.payment_terms_days, 0)),
            updated_at = now()
-     where id = v_q.cancelled_part_billing_id;
+     where id = any(v_parts);
   end if;
 
   insert into public.activity_log (tenant_id, user_id, action, entity, entity_id, label, changes)
@@ -834,6 +896,11 @@ begin
              and v_b.term_start = (select min(b2.term_start) from public.subscription_billings b2
                                     where b2.subscription_id = v_b.subscription_id);
   v_paid_up := public.instalment_credit(v_b.subscription_id) >= v_gross;
+  /* R-2519: a proforma whose seats / rate were changed asks its OWN amount — credit covers the part
+     only when it covers that (the part's laid amount is the old seats until it is paid). */
+  if v_has_q and exists (select 1 from public.quotes pq where pq.id = v_q.id and pq.proforma_seats is not null) then
+    v_paid_up := public.instalment_credit(v_b.subscription_id) >= coalesce(v_q.amount, 0);
+  end if;
   /* R-2095 (Sept reconcile): a sale booked from a bank receipt — its first part is invoiced on the
      first receipt even when part-paid (balance due on the invoice), like the whole-quote rule in
      bank_credit_pay_item. Staging: Suresh's half-yearly sale had money and no GST invoice. */
@@ -852,7 +919,7 @@ begin
     end if;
     /* R-2519: the proforma's own seats / rate (changed before it was paid) go on the subscription
        and the part first, so the tax invoice bills what the customer paid. */
-    if v_req_paid then
+    if v_has_q and (v_req_paid or v_paid_up) then
       perform public.apply_part_request_terms(v_q.id);
     end if;
     select r.* into v_raised from public.raise_subscription_billing(v_b.id) r;
