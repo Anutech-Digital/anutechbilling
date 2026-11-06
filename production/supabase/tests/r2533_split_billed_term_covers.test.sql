@@ -2,7 +2,7 @@
 -- its start date. Suresh Kumar & Co shape (staging sub 52a285c1): start 19 Jun 2026, renewal
 -- 19 Dec 2026, term 12 months, half-yearly → the schedule counted the term back to 20 Dec 2025
 -- and part #1 was invoiced six months before the sale.
--- Migration 20261106132256_r2533_split_billed_term_covers.
+-- Migration 20261106143540_r2533_split_billed_term_covers.
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only.
 --
 -- Proves:

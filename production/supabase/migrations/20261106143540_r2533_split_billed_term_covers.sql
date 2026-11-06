@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_trigger where tgname = 'trg_subscriptions_zzz_split_term_covers' and tgrelid = to_regclass('public.subscriptions')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.subscription_term_follows_line()') and prosrc like '%R-2533%')
 -- deploy-key: r2533splittermcovers
--- 20261106132256_r2533_split_billed_term_covers.sql
+-- 20261106143540_r2533_split_billed_term_covers.sql
 --
 -- R-2533 (6 Nov 2026, found by w-term-scan) — a split-billed subscription's renewal date must
 -- cover at least one whole term from its start date.
