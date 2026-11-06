@@ -48,8 +48,8 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('11111111-0000-0000-0000-000000251801','dddddddd-0000-0000-0000-000000251801','bbbbbbbb-0000-0000-0000-000000251801','2026-06-29','UPI KITE BUYER A',0,6294,'UTR2518A','manual'),
   ('11111111-0000-0000-0000-000000251802','dddddddd-0000-0000-0000-000000251801','bbbbbbbb-0000-0000-0000-000000251801','2026-06-30','UPI KITE BUYER B',0,6294,'UTR2518B','manual'),
   ('11111111-0000-0000-0000-000000251803','dddddddd-0000-0000-0000-000000251801','bbbbbbbb-0000-0000-0000-000000251801','2026-07-01','UPI KITE BUYER C',0,1180,'UTR2518C','manual'),
-  ('11111111-0000-0000-0000-000000251804','dddddddd-0000-0000-0000-000000251801','bbbbbbbb-0000-0000-0000-000000251801','2026-07-02','UPI KITE BUYER D',0,6294,'UTR2518D','manual'),
-  ('11111111-0000-0000-0000-000000251805','dddddddd-0000-0000-0000-000000251801','bbbbbbbb-0000-0000-0000-000000251801','2026-07-03','UPI KITE BUYER F',0,6294,'UTR2518F','manual');
+  ('11111111-0000-0000-0000-000000251804','dddddddd-0000-0000-0000-000000251801','bbbbbbbb-0000-0000-0000-000000251801',public.ist_today(),'UPI KITE BUYER D',0,6294,'UTR2518D','manual'),
+  ('11111111-0000-0000-0000-000000251805','dddddddd-0000-0000-0000-000000251801','bbbbbbbb-0000-0000-0000-000000251801',public.ist_today(),'UPI KITE BUYER F',0,6294,'UTR2518F','manual');
 
 select set_config('request.jwt.claims',
   '{"sub":"aaaaaaaa-0000-0000-0000-000000251801","role":"authenticated"}', true);
@@ -171,7 +171,7 @@ declare
   c_groups constant jsonb := '[{"external_number":"INV/26-27/0816","line_ids":["l1","l2"]},{"external_number":"INV/26-27/0817","line_ids":["l3","l4"]}]';
   r jsonb; v_m text; v_q text; n_subs int; n_q int; ok boolean; v_rid uuid; v_a text; v_b text;
 begin
-  r := public.reconcile_bank_credit_new_sale('11111111-0000-0000-0000-000000251804', c_c, c_all, true, '2026-07-02', null, 0, null, null, 'yearly');
+  r := public.reconcile_bank_credit_new_sale('11111111-0000-0000-0000-000000251804', c_c, c_all, true, public.ist_today(), null, 0, null, null, 'yearly');
   v_m := r->>'invoice_id';
   select quote_id into v_q from public.invoices where id = v_m;
   if v_m is null or (select amount from public.invoices where id = v_m) <> 6294 then raise exception 'FAIL F setup: merged sale (%)', r; end if;
@@ -213,8 +213,8 @@ begin
      or (select amount from public.invoices where id = v_a) <> 3243 or (select amount from public.invoices where id = v_b) <> 3051 then
     raise exception 'FAIL F: per-Zoho invoices wrong (%)', r;
   end if;
-  if (select invoice_date from public.invoices where id = v_a) <> date '2026-07-02' then
-    raise exception 'FAIL F: new invoice dated % (want the bank date 2026-07-02)', (select invoice_date from public.invoices where id = v_a);
+  if (select invoice_date from public.invoices where id = v_a) <> public.ist_today() then   -- R-2518b: the bank date; today (IST) so the repair stays in this FY
+    raise exception 'FAIL F: new invoice dated % (want the bank date %)', (select invoice_date from public.invoices where id = v_a), public.ist_today();
   end if;
   if (select count(*) from public.payments where bank_txn_id = '11111111-0000-0000-0000-000000251804') <> 2
      or exists (select 1 from public.payments where quote_id = v_q) then
