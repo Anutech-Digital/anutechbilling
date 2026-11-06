@@ -35,6 +35,8 @@ import {
   reconciledLinesOf,
   removeImportArgs,
   sourceLabel,
+  statementFyLabel,
+  statementPeriodLabel,
   type BankImportRow,
 } from "@/lib/banking/import-history";
 import { linesLabel } from "./import-badge";
@@ -117,6 +119,17 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
   if (historyQ.isLoading || (imports.length === 0 && !historyQ.isError)) return null;
 
   const latest = active[0] ?? gone[0] ?? null;
+  /* R-2522: the collapsed line says which years the active statements cover, e.g.
+     "3 active (FY 2025-26, FY 2026-27 ×2)" — "3 active" alone read as one file imported 3 times. */
+  const periodsSummary = (() => {
+    const counts = new Map<string, number>();
+    for (const r of active) if (r.txn_from) {
+      const fy = statementFyLabel(r.txn_from, r.txn_to);
+      counts.set(fy, (counts.get(fy) ?? 0) + 1);
+    }
+    return [...counts.entries()].sort(([a], [b]) => a.localeCompare(b))
+      .map(([fy, n]) => (n > 1 ? `${fy} ×${n}` : fy)).join(", ");
+  })();
   const shown = showAll ? active : active.slice(0, FIRST_ROWS);
   const toggle = () => { const next = !open; setChoice(next); writeOpen(next); };
 
@@ -127,7 +140,7 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
           <span className="text-sm font-semibold text-ink">Imports</span>
           {historyQ.isError ? null : (
             <>
-              {" · "}{active.length} active{" · "}{gone.length} removed
+              {" · "}{active.length} active{periodsSummary ? <> ({periodsSummary})</> : null}{" · "}{gone.length} removed
               {latest && (
                 <>
                   {" · "}last: {formatDate(latest.imported_at)}{" · "}
@@ -179,7 +192,8 @@ export function BankImportsSection({ accountId, transactions, openingBalance, ro
                           <span className="truncate text-ink-2" title={tip}>{name}</span>
                         </span>
                         <span className="whitespace-nowrap text-xs text-ink-3">
-                          {linesLabel(r.line_count)} · {dateRange(r.txn_from, r.txn_to)}
+                          {/* R-2522: which period this statement covers — FY · first – last line · lines */}
+                          <span data-testid="import-period">{statementPeriodLabel(r.txn_from, r.txn_to, r.line_count)}</span>
                           {r.reconciled_count > 0 ? <> · {r.reconciled_count} reconciled</> : null}
                         </span>
                       </div>
