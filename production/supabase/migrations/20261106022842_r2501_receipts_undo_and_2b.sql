@@ -55,7 +55,8 @@ begin
   /* 2b, always: a line of this money already reconciled to something else. Carrying Zoho's reference →
      refused; the same day → refused unless a free line carries Zoho's reference. */
   select t.id, coalesce(t.matched_to_type, 'split receipt') as matched_to_type, t.txn_date,
-         (char_length(v_ref) >= 6 and strpos(upper(coalesce(t.reference, '') || ' ' || coalesce(t.description, '')), v_ref) > 0) as ref_hit
+         (char_length(v_ref) >= 6 and strpos(upper(coalesce(t.reference, '') || ' ' || coalesce(t.description, '')), v_ref) > 0) as ref_hit,
+         t.txn_date = p_received_on as same_day
     into v_taken
     from public.bank_transactions t
    where t.tenant_id = p_tenant
@@ -74,9 +75,17 @@ begin
           -- days a reconciled line refuses when it names this customer.
           or t.txn_date = p_received_on
           or public._zoho_fy_line_names_customer(p_tenant, p_customer_id, coalesce(t.description, '') || ' ' || coalesce(t.reference, '')))
-   order by 4 desc, t.txn_date, t.id
+   order by 4 desc, 5 desc, t.txn_date, t.id
    limit 1;
-  if found and (v_taken.ref_hit or cardinality(v_hits) = 0) then
+  /* Refused: a reconciled line carrying Zoho's reference — always; one the same day (any narration)
+     — unless a free line carries Zoho's reference; one within ±3 days naming the customer — unless a
+     free line carries Zoho's reference or a free same-day line names the customer (2c may take it). */
+  if found and (v_taken.ref_hit
+                or (cardinality(v_hits) = 0
+                    and (v_taken.same_day
+                         or not exists (select 1 from public.bank_transactions t
+                                         where t.id = any (v_same)
+                                           and public._zoho_fy_line_names_customer(p_tenant, p_customer_id, coalesce(t.description, '') || ' ' || coalesce(t.reference, '')))))) then
     return jsonb_build_object('txn_id', null, 'taken_txn', v_taken.id, 'taken_as', v_taken.matched_to_type, 'taken_on', v_taken.txn_date);
   end if;
 
@@ -152,6 +161,13 @@ begin
           or t.id in (select p.bank_txn_id from public.payments p
                        where p.tenant_id = v_tenant and p.id = any (v_pays) and p.bank_txn_id is not null));
   perform 1 from public.bank_transactions t where t.id = any (v_lines) order by t.id for update;
+  /* re-review v13 (review): lock what the checks below read — a commission paid, or a credit note issued
+     on one of its invoices, at the same moment waits here and is then seen. */
+  perform 1 from public.referral_commissions c where c.tenant_id = v_tenant and c.payment_id = any (v_pays) order by c.id for update;
+  perform 1 from public.invoices i
+   where i.tenant_id = v_tenant
+     and i.id in (select p.invoice_id from public.payments p where p.tenant_id = v_tenant and p.id = any (v_pays) and p.invoice_id is not null)
+   order by i.id for update;
 
   /* Untouched since the import? */
   select string_agg(w, '; ') into v_bad from (
@@ -181,8 +197,11 @@ begin
             or not (t.matched_to_id = any (v_pays::text[])))
     union all
     /* re-review v13: the partner was paid on one of its receipts */
-    select format('a referral commission of ₹%s on receipt %s is %s', c.gross_commission,
-                  coalesce((select p.receipt_voucher_no from public.payments p where p.id = c.payment_id), c.payment_id::text), c.status)
+    select format('the referral commission of ₹%s on receipt %s is already %s (Referrals → that partner)', c.gross_commission,
+                  coalesce((select p.receipt_voucher_no from public.payments p where p.id = c.payment_id), c.payment_id::text),
+                  case when c.status = 'paid' or c.paid_date is not null then 'paid to the partner'
+                       when c.pay_txn_id is not null then 'paid on a bank line'
+                       else c.status end)
       from public.referral_commissions c
      where c.tenant_id = v_tenant and c.payment_id = any (v_pays)
        and (c.status not in ('earned', 'cancelled') or c.pay_txn_id is not null or c.paid_date is not null)
@@ -224,9 +243,13 @@ begin
   delete from public.panel_account_outbox o
    where o.tenant_id = v_tenant and o.customer_id = any (v_custs)
      and o.source = 'payment' and o.status in ('pending', 'needs_email') and o.done_at is null and o.dms_user_id is null
+     and o.attempts = 0 and (o.next_attempt_at is null or o.next_attempt_at <= now())   -- not leased by the panel worker
      and o.created_at >= v_batch.created_at
      and not exists (select 1 from public.payments p
-                      where p.tenant_id = v_tenant and p.customer_id = o.customer_id and p.status = 'received');
+                       left join public.invoices i on i.id = p.invoice_id and i.tenant_id = p.tenant_id
+                       left join public.quotes q on q.id = p.quote_id and q.tenant_id = p.tenant_id
+                      where p.tenant_id = v_tenant and p.status = 'received'
+                        and coalesce(p.customer_id, i.customer_id, q.customer_id) = o.customer_id);
   /* The ₹0 "Advance on account" holder quotes this import made (nothing else hangs on them). */
   delete from public.quotes q
    where q.tenant_id = v_tenant and q.id = any (v_quotes) and q.plan = 'Advance on account' and q.amount = 0
@@ -246,7 +269,7 @@ end;
 $function$;
 
 comment on function public.remove_zoho_fy_receipts_import(uuid, text) is
-  'R-2501 follow-up: takes one FY receipts import batch back while untouched (every receipt received, TDS not certified, advance unused, bank lines matched only by the import). Owner only; un-reconciles its lines; activity_log; the batch row stays, marked removed.';
+  'R-2501 follow-up + re-review v13: takes one FY receipts import batch back while untouched (every receipt received, TDS not certified, advance unused, bank lines matched only by the import, no referral commission paid, no credit note on its invoices since). Owner only; un-reconciles its lines; deletes its earned referral commissions and the unsent customer-panel invite; activity_log; the batch row stays, marked removed.';
 revoke all on function public.remove_zoho_fy_receipts_import(uuid, text) from public, anon;
 grant execute on function public.remove_zoho_fy_receipts_import(uuid, text) to authenticated, service_role;
 

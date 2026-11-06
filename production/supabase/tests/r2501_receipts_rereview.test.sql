@@ -38,7 +38,8 @@ select 'd2501000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', v.z, v.n, 
   from (values
     ('zi1', 'INV/25-26/G01', '2025-05-10', 10000, 1800, 'igst', '29'),
     ('zi2', 'INV/25-26/G02', '2025-06-05', 5000, 900, 'igst', '29'),
-    ('zi3', 'INV/25-26/G03', '2025-06-01', 2000, 360, 'cgst_sgst', '07')) v(z, n, d, tx, tax, h, pos);
+    ('zi3', 'INV/25-26/G03', '2025-06-01', 2000, 360, 'cgst_sgst', '07'),
+    ('zi4', 'INV/25-26/G04', '2025-06-01', 1000, 180, 'igst', '29')) v(z, n, d, tx, tax, h, pos);
 
 create function pg_temp.pay(num text, d text, ref text, paise bigint, lines jsonb)
 returns jsonb language sql as $f$
@@ -60,21 +61,27 @@ insert into public.zoho_fy_scan (tenant_id, kind, fy, zoho_id, number, doc_date,
      pg_temp.pay('PMT-E', '2025-06-20', 'FIXUTREEEE01', 590000, jsonb_build_array(pg_temp.l('zi2', 'INV/25-26/G02', 5900))), now()),
   -- a PART payment with TDS: ₹5,900 settled (₹500 TDS) of the ₹11,800 invoice → gross ₹5,000 (its taxable share), 10%
   ('d2501000-0000-0000-0000-0000000000f0', 'customerpayments', '2025-26', 'PMT-P', 'PMT-P', '2025-07-01', '',
-     pg_temp.pay('PMT-P', '2025-07-01', 'FIXUTRPPPP03', 540000, jsonb_build_array(pg_temp.l('zi1', 'INV/25-26/G01', 5900, 500))), now());
+     pg_temp.pay('PMT-P', '2025-07-01', 'FIXUTRPPPP03', 540000, jsonb_build_array(pg_temp.l('zi1', 'INV/25-26/G01', 5900, 500))), now()),
+  -- not a regression: a reconciled line of the same money 2 days earlier that names the customer (another
+  -- invoice it paid, booked by hand) does NOT stop its own free same-day line that names it (2c 'high')
+  ('d2501000-0000-0000-0000-0000000000f0', 'customerpayments', '2025-26', 'PMT-N', 'PMT-N', '2025-06-25', '',
+     pg_temp.pay('PMT-N', '2025-06-25', '', 118000, jsonb_build_array(pg_temp.l('zi4', 'INV/25-26/G04', 1180))), now());
 
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
   ('d2501000-0000-0000-0000-0000000000e2', 'd2501000-0000-0000-0000-0000000000f0', 'd2501000-0000-0000-0000-0000000000d1', '2025-06-12', 'UPI-9876543210-PAYMENT', 0, 2360, '000000000000000', 'manual'),
   ('d2501000-0000-0000-0000-0000000000e4', 'd2501000-0000-0000-0000-0000000000f0', 'd2501000-0000-0000-0000-0000000000d1', '2025-06-20', 'NEFT CR-FIXUTREEEE01', 0, 5900, 'FIXUTREEEE01', 'manual'),
-  ('d2501000-0000-0000-0000-0000000000e5', 'd2501000-0000-0000-0000-0000000000f0', 'd2501000-0000-0000-0000-0000000000d1', '2025-06-20', 'UPI-1111111111-PAY', 0, 5900, '000000000000000', 'manual');
+  ('d2501000-0000-0000-0000-0000000000e5', 'd2501000-0000-0000-0000-0000000000f0', 'd2501000-0000-0000-0000-0000000000d1', '2025-06-20', 'UPI-1111111111-PAY', 0, 5900, '000000000000000', 'manual'),
+  ('d2501000-0000-0000-0000-0000000000e6', 'd2501000-0000-0000-0000-0000000000f0', 'd2501000-0000-0000-0000-0000000000d1', '2025-06-23', 'NEFT CR-ACMEWIDGET', 0, 1180, '000000000000000', 'manual'),
+  ('d2501000-0000-0000-0000-0000000000e7', 'd2501000-0000-0000-0000-0000000000f0', 'd2501000-0000-0000-0000-0000000000d1', '2025-06-25', 'NEFT CR-ACMEWIDGET PVT', 0, 1180, '000000000000000', 'manual');
 update public.bank_transactions set matched_to_type = 'manual', matched_at = now(), match_confidence = 'manual'
- where id in ('d2501000-0000-0000-0000-0000000000e2', 'd2501000-0000-0000-0000-0000000000e5');
+ where id in ('d2501000-0000-0000-0000-0000000000e2', 'd2501000-0000-0000-0000-0000000000e5', 'd2501000-0000-0000-0000-0000000000e6');
 
 create function pg_temp.as_user(p uuid) returns void language sql as $f$
   select set_config('request.jwt.claims', json_build_object('sub', p, 'role', 'authenticated')::text, true);
 $f$;
 create function pg_temp.picks() returns jsonb language sql as $f$
   select jsonb_agg(jsonb_build_object('zoho_payment_id', z, 'bank_account_id', 'd2501000-0000-0000-0000-0000000000d1'))
-    from unnest(array['PMT-T', 'PMT-E', 'PMT-P']) z;
+    from unnest(array['PMT-T', 'PMT-E', 'PMT-P', 'PMT-N']) z;
 $f$;
 create function pg_temp.undo_error() returns text language plpgsql as $f$
 begin
@@ -96,8 +103,9 @@ begin
   r := public.import_zoho_fy_sales('2025-26', jsonb_build_array(
     jsonb_build_object('zoho_invoice_id', 'zi1', 'customer_id', 'd2501000-0000-0000-0000-0000000000c1'),
     jsonb_build_object('zoho_invoice_id', 'zi2', 'customer_id', 'd2501000-0000-0000-0000-0000000000c1'),
-    jsonb_build_object('zoho_invoice_id', 'zi3', 'customer_id', 'd2501000-0000-0000-0000-0000000000c2')), false);
-  if (r->>'imported')::int <> 3 then raise exception 'SETUP: sales %', r; end if;
+    jsonb_build_object('zoho_invoice_id', 'zi3', 'customer_id', 'd2501000-0000-0000-0000-0000000000c2'),
+    jsonb_build_object('zoho_invoice_id', 'zi4', 'customer_id', 'd2501000-0000-0000-0000-0000000000c1')), false);
+  if (r->>'imported')::int <> 4 then raise exception 'SETUP: sales %', r; end if;
 
   r := public.import_zoho_fy_receipts('2025-26', pg_temp.picks(), false);
 
@@ -112,13 +120,17 @@ begin
   if (select bank_txn_id from public.zoho_fy_receipts where tenant_id = t and zoho_payment_id = 'PMT-E') is distinct from 'd2501000-0000-0000-0000-0000000000e4'::uuid then
     raise exception 'FAIL 1b: PMT-E not on its UTR line: %', r;
   end if;
+  -- 1c. PMT-N: the reconciled named line 2 days earlier does not block its own free named same-day line
+  if (select bank_txn_id from public.zoho_fy_receipts where tenant_id = t and zoho_payment_id = 'PMT-N') is distinct from 'd2501000-0000-0000-0000-0000000000e7'::uuid then
+    raise exception 'FAIL 1c: PMT-N not on its own named line: %', r;
+  end if;
   -- 3. TDS gross of the part payment = its taxable share
   if not exists (select 1 from public.tds_receivable x where x.tenant_id = t and x.tds_amount = 500 and x.gross_amount = 5000 and x.rate_pct = 10) then
     raise exception 'FAIL 3: part-payment TDS gross %', (select json_agg(row_to_json(x)) from public.tds_receivable x where x.tenant_id = t);
   end if;
   -- setup checks for the undo: the receipts earned commissions and queued the panel invite
   if (select count(*) from public.referral_commissions c where c.tenant_id = t and c.status = 'earned'
-        and c.payment_id in (select unnest(payment_ids) from public.zoho_fy_receipts where tenant_id = t)) <> 2 then
+        and c.payment_id in (select unnest(payment_ids) from public.zoho_fy_receipts where tenant_id = t)) <> 3 then
     raise exception 'SETUP 2: commissions not made by the receipts';
   end if;
 end $$;
@@ -143,7 +155,7 @@ declare e text;
 begin
   perform pg_temp.as_user('d2501000-0000-0000-0000-0000000000a1');
   e := pg_temp.undo_error();
-  if e is null or e not like '%referral commission%paid%' then raise exception 'FAIL 2a: undo with a paid commission: %', coalesce(e, 'went through'); end if;
+  if e is null or e not like '%referral commission%already paid to the partner%' then raise exception 'FAIL 2a: undo with a paid commission: %', coalesce(e, 'went through'); end if;
 end $$;
 reset role;
 update public.referral_commissions set status = 'earned', paid_date = null where tenant_id = 'd2501000-0000-0000-0000-0000000000f0';
