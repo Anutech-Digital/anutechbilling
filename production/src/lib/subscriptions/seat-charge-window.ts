@@ -17,7 +17,7 @@
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { isSplitBilled } from "@/lib/billing/instalments";
-import { subscriptionSchedule, followingTermStart, currentTermStart, previousTermStart } from "@/lib/billing/subscription-schedule";
+import { subscriptionSchedule, followingTermStart, currentTermStart, previousTermStart, uncheckedTermStart } from "@/lib/billing/subscription-schedule";
 import { periodLastDay, addDaysISO } from "@/lib/billing/schedule";
 import { daysBetweenDates } from "./proration";
 
@@ -154,9 +154,13 @@ export function seatTermStart(sub: Pick<SeatWindowSub, "term_months" | "start_da
  * R-802: length of the CURRENT term in days — prorate()'s denominator. 365 (366 across a
  * 29 Feb) for a 12-month term however many times it has been renewed, 730/731 for 24 months.
  * 365 when there is no renewal date (nothing can be charged then anyway).
+ *
+ * R-2533: measured from the counted-back start (uncheckedTermStart), NOT the start_date-clamped
+ * currentTermStart — a co-termed yearly sale (10 Jan → 31 Dec) is priced per year, so its
+ * pro-rata denominator stays the whole year (365), not the 356 days since the sale.
  */
 export function seatTermDays(sub: Pick<SeatWindowSub, "term_months" | "start_date" | "renewal_date">): number {
-  const start = seatTermStart(sub);
+  const start = sub.renewal_date ? uncheckedTermStart(sub) : null;
   const end = seatTermEnd(sub);
   return start && end ? Math.max(1, daysBetweenDates(start, end)) : 365;
 }
