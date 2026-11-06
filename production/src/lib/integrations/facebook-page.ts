@@ -15,7 +15,7 @@ export function facebookPageRedirectUri(origin: string): string {
 export function facebookPageAuthUrl(appId: string, origin: string, state: string): string {
   const params = new URLSearchParams({
     client_id: appId, redirect_uri: facebookPageRedirectUri(origin), state,
-    scope: "pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish", response_type: "code",
+    scope: "pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,leads_retrieval,pages_manage_ads,pages_manage_metadata", response_type: "code",
   });
   return `https://www.facebook.com/${VERSION}/dialog/oauth?${params}`;
 }

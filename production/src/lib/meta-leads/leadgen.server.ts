@@ -126,6 +126,8 @@ export async function ingestMetaLead(opts: {
   ref: LeadgenRef;
   cfg: Pick<MetaLeadsConfig, "pageAccessToken" | "graphVersion">;
   fetchImpl?: typeof fetch;
+  /** R-2521: the page pull already has the answers — no second Graph call per lead. */
+  prefetched?: GraphLead;
 }): Promise<IngestOutcome> {
   const { admin, tenantId, ref } = opts;
   const id = metaLeadId(tenantId, ref.leadgenId);
@@ -135,7 +137,9 @@ export async function ingestMetaLead(opts: {
     .eq("tenant_id", tenantId).eq("id", id).maybeSingle();
   if (already?.id) return { kind: "already_imported", leadId: id };
 
-  const fetched = await fetchGraphLead(ref.leadgenId, opts.cfg, opts.fetchImpl);
+  const fetched: FetchResult = opts.prefetched && Array.isArray(opts.prefetched.field_data)
+    ? { ok: true, lead: opts.prefetched }
+    : await fetchGraphLead(ref.leadgenId, opts.cfg, opts.fetchImpl);
   const graph = fetched.ok ? fetched.lead : null;
   const keys = dedupeKeys(graph ? mapFieldData(graph.field_data) : null);
 
@@ -168,4 +172,24 @@ export async function ingestMetaLead(opts: {
     return { kind: "failed", message: error.message.slice(0, 300) };
   }
   return { kind: "created", leadId: id };
+}
+
+/**
+ * R-2521: import the leads a Page pull found. Each goes through ingestMetaLead — same lead id as
+ * the webhook, so a lead seen by both is saved once; a known email/phone gets a note, not a copy.
+ */
+export async function importPulledLeads(opts: {
+  admin: Admin; tenantId: string; pageId: string; leads: readonly GraphLead[]; graphVersion?: string;
+}): Promise<{ created: number; duplicate: number; already: number; failed: number }> {
+  const out = { created: 0, duplicate: 0, already: 0, failed: 0 };
+  for (const lead of opts.leads) {
+    if (!lead.id || !/^\d{1,30}$/.test(lead.id)) { out.failed++; continue; }
+    const ref: LeadgenRef = { leadgenId: lead.id, pageId: opts.pageId, formId: lead.form_id ?? null, adId: lead.ad_id ?? null, createdTime: lead.created_time ?? null };
+    const r = await ingestMetaLead({ admin: opts.admin, tenantId: opts.tenantId, ref, cfg: { pageAccessToken: null, graphVersion: opts.graphVersion ?? "v21.0" }, prefetched: lead });
+    if (r.kind === "created") out.created++;
+    else if (r.kind === "duplicate") out.duplicate++;
+    else if (r.kind === "already_imported") out.already++;
+    else { out.failed++; console.error(`[meta-leads] pulled lead ${lead.id} not saved: ${r.message}`); }
+  }
+  return out;
 }

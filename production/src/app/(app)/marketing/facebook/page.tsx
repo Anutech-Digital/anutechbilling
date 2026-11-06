@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { MarketingPageHeader } from "@/components/features/marketing-hub/workspace-links";
-import { ArrowUpRight, Facebook, Instagram, Link2 } from "lucide-react";
+import { ArrowUpRight, Facebook, Instagram, Link2, UserPlus } from "lucide-react";
 
 type PageChoice = { id: string; name: string; tasks?: string[] };
 type Status = {
@@ -63,6 +63,30 @@ export default function FacebookPage() {
       await load();
     } catch (e) { toastError(e, { fallback: "Could not connect this Page.", description: "Choose the Page again, or press Connect Facebook Page to sign in again." }); }
     finally { setBusy(false); }
+  }
+
+  /** R-2521: lead-form leads of the connected Page → Sales leads. */
+  const [leadsBusy, setLeadsBusy] = React.useState(false);
+  const [leadsResult, setLeadsResult] = React.useState<{ text: string; reconnect: boolean } | null>(null);
+  async function fetchLeads() {
+    setLeadsBusy(true); setLeadsResult(null);
+    try {
+      const response = await fetch("/api/integrations/facebook-page/leads", {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ days: 30 }),
+      });
+      const data = await response.json() as { error?: string; needsReconnect?: boolean; forms?: number; found?: number; created?: number; duplicate?: number; already?: number; failed?: number };
+      if (!response.ok) {
+        setLeadsResult({ text: data.error ?? "Could not fetch Facebook leads.", reconnect: Boolean(data.needsReconnect) });
+        return;
+      }
+      const created = data.created ?? 0;
+      const text = data.forms === 0
+        ? "This Page has no lead forms yet. Leads appear here after you run a Facebook lead form ad."
+        : `Last 30 days: ${data.found ?? 0} leads on ${data.forms} form${data.forms === 1 ? "" : "s"}. ${created} new added to Leads${data.duplicate ? `, ${data.duplicate} matched an existing lead (note added)` : ""}${data.already ? `, ${data.already} already in Leads` : ""}${data.failed ? `, ${data.failed} could not be saved` : ""}.`;
+      setLeadsResult({ text, reconnect: false });
+      if (created > 0) toast.success(`${created} new Facebook lead${created === 1 ? "" : "s"} added.`, { description: "Open Leads to call them.", action: { label: "Open Leads", onClick: () => { window.location.href = "/leads"; } } });
+    } catch (e) { toastError(e, { fallback: "Could not fetch Facebook leads.", description: "Check your internet and press Fetch leads now again." }); }
+    finally { setLeadsBusy(false); }
   }
 
   async function disconnect() {
@@ -120,6 +144,20 @@ export default function FacebookPage() {
             </div> : <div className="rounded-lg border border-hairline bg-paper-2 px-4 py-3 text-sm text-ink-2">
               Instagram is not linked. In Facebook, open this Page&apos;s Settings → Linked accounts → Instagram and connect a professional account, then press Reconnect here.
             </div>}
+            <div className="space-y-3 rounded-lg border border-hairline p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div className="flex min-w-0 items-start gap-3">
+                  <UserPlus size={18} className="mt-0.5 shrink-0 text-ink-3" aria-hidden="true" />
+                  <div className="min-w-0"><p className="text-sm font-semibold text-ink">Lead form leads</p><p className="mt-0.5 text-sm text-ink-3">People who fill your Facebook or Instagram lead form are added to Leads automatically every 30 minutes, with their answers in the notes.</p></div>
+                </div>
+                {status.canManage && <Button variant="outline" loading={leadsBusy} onClick={() => void fetchLeads()}>Fetch leads now</Button>}
+              </div>
+              {leadsResult && <div role="status" className={leadsResult.reconnect ? "rounded-md bg-amber-soft px-3 py-2 text-sm text-amber-ink" : "rounded-md bg-paper-2 px-3 py-2 text-sm text-ink-2"}>
+                {leadsResult.text}
+                {leadsResult.reconnect && <> <a className="font-medium underline" href="/api/integrations/facebook-page/connect">Reconnect the Page</a></>}
+                {!leadsResult.reconnect && <> <a className="font-medium underline" href="/leads">Open Leads</a></>}
+              </div>}
+            </div>
             <div className="flex flex-col gap-3 border-t border-hairline pt-5 sm:flex-row sm:items-center sm:justify-between">
               <div className="flex flex-wrap gap-2"><Button asChild variant="primary"><a href="/marketing/social-content">Open content studio</a></Button><Button asChild variant="outline"><a href={`https://business.facebook.com/latest/home?asset_id=${status.pageId}`} target="_blank" rel="noopener noreferrer">Meta Business Suite <ArrowUpRight size={15} aria-hidden="true" /></a></Button></div>
               {status.canManage && <div className="flex flex-wrap items-center gap-2"><Button asChild variant="outline"><a href="/api/integrations/facebook-page/connect">Reconnect / change Page</a></Button><Button variant="ghost" onClick={() => setConfirmDisconnect(true)}>Disconnect</Button></div>}
