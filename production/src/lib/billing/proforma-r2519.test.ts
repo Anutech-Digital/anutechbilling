@@ -178,3 +178,11 @@ describe("R-2519 — the preview's GST follows the proforma's rule", () => {
     expect(partTaxRate("", 18)).toBe(18);
   });
 });
+
+describe("R-2519b — a cancelled proforma is still a part request", () => {
+  it("isPartRequest reads the part it let go of", async () => {
+    const { isPartRequest } = await import("./part-requests");
+    expect(isPartRequest({ subscription_billing_id: null, cancelled_part_billing_id: "b-1" })).toBe(true);
+    expect(isPartRequest({ subscription_billing_id: null, cancelled_part_billing_id: null })).toBe(false);
+  });
+});

@@ -236,8 +236,10 @@ export function showCustomerStopped(q: {
    the Record payment toast read these rules, so they never show the sales-quote flow on it. */
 
 /** True when this quote is the payment request for one part of a subscription billed in parts. */
-export function isPartRequest(q: { subscription_billing_id?: string | null } | null | undefined): boolean {
-  return Boolean(q?.subscription_billing_id);
+export function isPartRequest(q: { subscription_billing_id?: string | null; cancelled_part_billing_id?: string | null } | null | undefined): boolean {
+  /* R-2519b: a CANCELLED proforma let go of its part (cancelled_part_billing_id keeps it) — it is still
+     a part request, never shown as a sales quote. */
+  return Boolean(q?.subscription_billing_id || q?.cancelled_part_billing_id);
 }
 
 /** The badge next to the status on a part request's page. */

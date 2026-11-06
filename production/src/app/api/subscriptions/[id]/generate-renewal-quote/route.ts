@@ -31,7 +31,10 @@ import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { renewalIsSettled, firstReminderDaysOut } from "@/lib/renewals/cadence";
-import { billDueTermsOldestFirst, termsMessage } from "@/lib/renewals/split-billed-next-part";
+import { billDueTermsOldestFirst, termsMessage, withFreedPart } from "@/lib/renewals/split-billed-next-part";
+import { billSubscriptionInstalment, emptySyncResult } from "@/lib/billing/sync-instalments.server";
+import { applyBillOutcome } from "@/lib/billing/part-requests";
+import { addDaysISO } from "@/lib/dates/ist";
 import { syncSubscriptionInstalments, readQuotePaymentFacts, INSTALMENT_SUB_SELECT, type InstalmentSub } from "@/lib/billing/sync-instalments.server";
 import { istToday } from "@/lib/dates/ist";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -101,7 +104,18 @@ export const POST = withRoute({
        start (oldest first, one proforma a period), so a period not begun yet is billed ahead. */
     const first = await firstUnbilledPeriod(supabase as unknown as SupabaseClient, sub as BillNextSub);
     const today = billThroughDay(first.start, sub.billing_cycle as BillingCycle, choice.periods, istToday());
-    const runTerms = await billDueTermsOldestFirst({
+    /* R-2519b: a laid part with no proforma and no invoice (its proforma was cancelled) is billed on ITS
+       OWN row — the run below bills only the current term and would never reach an earlier one. */
+    let freed: { periodStart: string; periodEnd: string; bill: { raised: { period_index: number; invoice_id: string }[]; requests: { period_index: number; quote_id: string }[]; requestsOpen: { period_index: number; quote_id: string; status: string }[]; skip: null } } | null = null;
+    if (first.row) {
+      const { data: fb, error: fErr } = await billSubscriptionInstalment(supabase, first.row.id, false);
+      if (fErr) return NextResponse.json({ error: `Could not bill the period from ${first.row.period_start}: ${fErr.message}` }, { status: 400 });
+      const tally = emptySyncResult();
+      applyBillOutcome(tally, 1, fb, false);
+      freed = { periodStart: first.row.period_start, periodEnd: addDaysISO(first.row.period_end, -1),
+        bill: { raised: tally.raised, requests: tally.requests, requestsOpen: tally.requestsOpen, skip: null } };
+    }
+    const runTermsRaw = await billDueTermsOldestFirst({
       sub: {
         billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date,
         renewal_date: sub.renewal_date, renewal_quote_id: sub.renewal_quote_id,
@@ -123,6 +137,7 @@ export const POST = withRoute({
         return { raised: r.raised, requests: r.requests, requestsOpen: r.requestsOpen, skip: r.skip };
       },
     });
+    const runTerms = withFreedPart(runTermsRaw, freed);
     if (runTerms.heldBy) {
       return NextResponse.json({ error: `Renewal quote ${runTerms.heldBy} is still open — paying it would bill the new term twice. Cancel it first, then Generate the next part.`, code: "split_billed" }, { status: 400 });
     }

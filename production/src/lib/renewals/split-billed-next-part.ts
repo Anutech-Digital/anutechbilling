@@ -179,3 +179,21 @@ export function partsDue(sub: SplitRenewalFields, todayISO: string): { count: nu
   if (count === 0) return null;
   return { count, from, text: `${count} ${count === 1 ? unit[0] : unit[1]} due` };
 }
+
+/**
+ * R-2519b (independent review): a period whose proforma was CANCELLED lies before the term the
+ * billing run works on (the run bills only the CURRENT term), so Bill next part bills that freed part
+ * on its own billing row first (bill_subscription_instalment(row)) and reports it as the oldest
+ * period. Its document is dropped from a later term's entry if the run reported it again.
+ */
+export function withFreedPart(r: TermsBilled, freed: { periodStart: string; periodEnd: string; bill: TermBill } | null): TermsBilled {
+  if (!freed || freed.bill.raised.length + freed.bill.requests.length + freed.bill.requestsOpen.length === 0) return r;
+  const docs = new Set([...freed.bill.raised.map((x) => x.invoice_id), ...freed.bill.requests.map((x) => x.quote_id), ...freed.bill.requestsOpen.map((x) => x.quote_id)]);
+  const rest = r.terms
+    .map((t) => ({ ...t, bill: { ...t.bill,
+      raised: t.bill.raised.filter((x) => !docs.has(x.invoice_id)),
+      requests: t.bill.requests.filter((x) => !docs.has(x.quote_id)),
+      requestsOpen: t.bill.requestsOpen.filter((x) => !docs.has(x.quote_id)) } }))
+    .filter((t) => t.bill.raised.length + t.bill.requests.length + t.bill.requestsOpen.length > 0);
+  return { ...r, terms: [freed, ...rest] };
+}
