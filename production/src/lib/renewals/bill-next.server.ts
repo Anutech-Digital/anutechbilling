@@ -31,31 +31,37 @@ export interface BillNextSub {
 
 interface BillingRow {
   id: string; period_start: string; period_end: string; taxable_amount: number; tax_rate: number | null; invoice_id: string | null;
+  period_index: number;
 }
 
 /** The earliest period of this subscription with no tax invoice and no request — where billing goes on. */
-export async function firstUnbilledPeriod(db: SupabaseClient, sub: BillNextSub): Promise<{ start: string; row: BillingRow | null; rows: BillingRow[] }> {
+/** `freed` (R-2519b): the row's proforma was cancelled — Bill next part bills that row itself. */
+export async function firstUnbilledPeriod(db: SupabaseClient, sub: BillNextSub): Promise<{ start: string; row: BillingRow | null; rows: BillingRow[]; freed: boolean }> {
   const { data, error } = await db.from("subscription_billings")
-    .select("id, period_start, period_end, taxable_amount, tax_rate, invoice_id")
+    .select("id, period_start, period_end, taxable_amount, tax_rate, invoice_id, period_index")
     .eq("subscription_id", sub.id).order("period_start", { ascending: true });
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as BillingRow[];
   const open = rows.filter((r) => r.invoice_id == null);
   const requested = new Set<string>();
+  const cancelledOn = new Set<string>();
   if (open.length > 0) {
     const { data: reqs, error: rErr } = await db.from("quotes").select("subscription_billing_id").in("subscription_billing_id", open.map((r) => r.id));
     if (rErr) throw new Error(rErr.message);
     for (const q of (reqs ?? []) as { subscription_billing_id: string }[]) requested.add(q.subscription_billing_id);
+    const { data: gone, error: gErr } = await db.from("quotes").select("cancelled_part_billing_id").in("cancelled_part_billing_id", open.map((r) => r.id));
+    if (gErr) throw new Error(gErr.message);
+    for (const q of (gone ?? []) as { cancelled_part_billing_id: string }[]) cancelledOn.add(q.cancelled_part_billing_id);
   }
   const free = open.find((r) => !requested.has(r.id));
-  if (free) return { start: free.period_start, row: free, rows };
+  if (free) return { start: free.period_start, row: free, rows, freed: cancelledOn.has(free.id) };
   const following = sub.renewal_date ? followingTermStart({ ...sub, term_months: sub.term_months ?? 12 }) : (sub.start_date ?? "");
   /* The current term was never laid (and not billed elsewhere) → it starts there, not after it. */
   const termStart = addMonthsClamped(following, -Math.max(1, sub.term_months ?? 12));
   const laidInTerm = rows.some((r) => r.period_start >= termStart);
   const elsewhere = sub.billed_externally_until && sub.billed_externally_until >= termStart;
-  if (!laidInTerm && !elsewhere && rows.length > 0) return { start: termStart, row: null, rows };
-  return { start: following, row: null, rows };
+  if (!laidInTerm && !elsewhere && rows.length > 0) return { start: termStart, row: null, rows, freed: false };
+  return { start: following, row: null, rows, freed: false };
 }
 
 /** The preview (writes nothing). */

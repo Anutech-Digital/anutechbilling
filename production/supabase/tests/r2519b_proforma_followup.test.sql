@@ -81,11 +81,11 @@ begin
   update public.quotes set status = 'accepted' where id = v_id;
   if (select seats from public.subscriptions where id = 'eeeeeeee-0000-0000-0000-000000251951') <> 18 then
     raise exception 'O SETUP FAIL: marked terms not applied on accept'; end if;
-  begin
-    update public.quotes set status = 'rejected' where id = v_id;
-    raise exception 'O FAIL: Mark rejected kept 18 seats on the subscription with nothing paid';
-  exception when invalid_parameter_value then raise notice 'O PASS: %', sqlerrm; end;
+  create temp table r2519b_o(id text) on commit drop;
+  insert into r2519b_o values (v_id);
+  raise notice 'O SETUP: % accepted, 18 seats applied', v_id;
 end $$;
+grant select on r2519b_o to authenticated;
 
 -- M. monthly Flexible: earlier vs later period
 do $$
@@ -108,6 +108,15 @@ begin
   if (select due_on from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-00000025195a') is null then
     raise exception 'M FAIL: re-billed month has no due date'; end if;
   raise notice 'M PASS: earlier month re-billed on its own row as %', r->>'quote_id';
+  -- M2. a later month already PAID (tax invoice) → the earlier month is not freed
+  rb := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-00000025195b', false);
+  perform public.record_payment(rb->>'quote_id', 6018, 'upi', 'R2519B-PAY-B');
+  if (select invoice_id from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-00000025195b') is null then
+    raise exception 'M2 SETUP FAIL: later month not invoiced'; end if;
+  begin
+    perform public.cancel_quote(r->>'quote_id', 'Earlier month after a paid later one');
+    raise exception 'M2 FAIL: freed an earlier month while a later one is invoiced';
+  exception when invalid_parameter_value then raise notice 'M2 PASS (refused): %', sqlerrm; end;
 end $$;
 
 -- N. future part of an on-due customer → a proforma, no tax invoice
@@ -119,6 +128,32 @@ begin
   if (select invoice_id from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-000000251953') is not null then
     raise exception 'N FAIL: a tax invoice was raised for a future period'; end if;
   raise notice 'N PASS: future period of an on-due customer → proforma %', r->>'quote_id';
+end $$;
+
+-- N2. a future part already covered by the customer's money → no proforma, no invoice ahead (waits for its date)
+insert into public.quotes (id, tenant_id, customer_id, customer_name, tax_rate, amount, subtotal, status, payment_status, billing_cycle, line_items)
+values ('TESTQ-R2519B-SALE4', 'dddddddd-0000-0000-0000-000000251951', 'cccccccc-0000-0000-0000-000000251951', 'Bit 2519b', 18, 6018, 5100,
+        'accepted', 'received', 'monthly', '[{"name":"Google Workspace Business Starter","qty":17,"rate":300,"commitment":"flex_monthly"}]'::jsonb);
+insert into public.payments (id, tenant_id, quote_id, customer_id, amount, method, status, reference, received_at, created_at)
+values (gen_random_uuid(), 'dddddddd-0000-0000-0000-000000251951', 'TESTQ-R2519B-SALE4', 'cccccccc-0000-0000-0000-000000251951',
+        6018, 'upi', 'received', 'R2519B-SALE4', now(), now());
+insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, billing_cycle, term_months,
+                                  start_date, renewal_date, status, domain, quote_id)
+values ('eeeeeeee-0000-0000-0000-000000251954', 'dddddddd-0000-0000-0000-000000251951', 'cccccccc-0000-0000-0000-000000251951', 'Bit 2519b',
+        'Google Workspace Business Starter', 'google', 17, 5100, 'monthly', 1, public.ist_today() + 6, public.ist_today() + 35, 'active', 'b4.in',
+        'TESTQ-R2519B-SALE4');
+insert into public.subscription_billings (id, tenant_id, subscription_id, term_start, period_index, bill_on, period_start, period_end, taxable_amount, tax_rate)
+values ('bbbbbbbb-0000-0000-0000-000000251954', 'dddddddd-0000-0000-0000-000000251951', 'eeeeeeee-0000-0000-0000-000000251954',
+        public.ist_today() + 6, 1, public.ist_today() + 6, public.ist_today() + 6, public.ist_today() + 36, 5100, 18);
+do $$
+declare r jsonb;
+begin
+  r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-000000251954', false);
+  if r->>'action' = 'invoice' or (select invoice_id from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-000000251954') is not null then
+    raise exception 'N2 FAIL: a tax invoice for a future period: %', r; end if;
+  if exists (select 1 from public.quotes where subscription_billing_id = 'bbbbbbbb-0000-0000-0000-000000251954') then
+    raise exception 'N2 FAIL: a proforma asks again for money already received: %', r; end if;
+  raise notice 'N2 PASS: paid ahead → %', r;
 end $$;
 
 -- P. a cancelled quote owes nothing
@@ -170,6 +205,11 @@ begin
   values ('TESTQ-R2519B-OK', 'dddddddd-0000-0000-0000-000000251951', 'cccccccc-0000-0000-0000-000000251951', 'Bit 2519b',
           1180, 1000, 18, 'draft', '[{"name":"x","qty":1,"rate":1000}]'::jsonb);
   raise notice 'J2 PASS: an ordinary quote still inserts';
+  -- O. the owner's Mark rejected on the accepted, seat-changed proforma is refused
+  begin
+    update public.quotes set status = 'rejected' where id = (select id from r2519b_o);
+    raise exception 'O FAIL: Mark rejected kept 18 seats on the subscription with nothing paid';
+  exception when invalid_parameter_value then raise notice 'O PASS: %', sqlerrm; end;
 end $$;
 reset role;
 

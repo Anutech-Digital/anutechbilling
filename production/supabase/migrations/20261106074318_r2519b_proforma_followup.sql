@@ -8,16 +8,17 @@
 --   1. BLOCKER: trg_quotes_proforma_columns_guarded is now BEFORE INSERT OR UPDATE. A signed-in user
 --      can no longer INSERT a quote carrying subscription_billing_id / proforma_* / cancelled_* (a
 --      sales user set a subscription to 1 seat / ₹1 MRR that way, and could plant a fake "cancelled"
---      row for an owner's Undo). bill_subscription_instalment sets app.r2519_write around its insert.
+--      row for an owner's Undo). Only server code passes (definer functions, service role, direct DB).
 --      New marker quotes.proforma_terms_set_at / _by, written only by set_part_request_terms;
 --      apply_part_request_terms applies only marked terms.
---   2. HIGH: cancel_quote refuses an EARLIER period's proforma while a LATER period of the same
---      subscription has an open one ("cancel the later one(s) first"). The app re-bills a freed
+--   2. HIGH: cancel_quote frees only the LATEST billed period of a subscription (a later period with
+--      a proforma or tax invoice → "cancel the later one(s) first"). The app re-bills a freed
 --      period on THAT billing row (generate-renewal-quote → bill_subscription_instalment(row)).
 --   3. MEDIUM (coordinator): a part that has not begun is billed ahead as a proforma only — never a
 --      tax invoice (not for "invoice on due date", not from credit) unless that proforma is paid.
 --   4. LOW: Mark rejected / expired on an accepted proforma whose seats were applied → refused (as
---      Cancel); quote_open_balance of a cancelled quote is 0 (body of 20261019162652 R-1686, plus that).
+--      Cancel); quote_open_balance of a cancelled quote is 0 (body of 20261019162652 R-1686, plus that; its
+--      trusted check uses the R-2487 current_request_role() form the auth-shim scan requires).
 -- Bodies: set_part_request_terms, apply_part_request_terms, cancel_quote, bill_subscription_instalment,
 -- tg_quotes_cancelled_stays_closed from 20261106065103 (R-2519); only the lines named above change.
 -- Test: supabase/tests/r2519b_proforma_followup.test.sql (one transaction, rolled back).
@@ -26,6 +27,9 @@ begin;
 
 alter table public.quotes add column if not exists proforma_terms_set_at timestamptz;
 alter table public.quotes add column if not exists proforma_terms_set_by uuid;
+/* Terms set under R-2519 (before this marker) are the function's own writes — mark them. */
+update public.quotes set proforma_terms_set_at = now()
+ where proforma_seats is not null and proforma_terms_set_at is null;
 comment on column public.quotes.proforma_terms_set_at is
   'R-2519b: when set_part_request_terms wrote proforma_seats / proforma_seat_rate — apply_part_request_terms applies only marked terms.';
 
@@ -37,11 +41,10 @@ as $$
 begin
   /* R-2519b (independent review, BLOCK): INSERT too. A signed-in user could INSERT a quote already
      carrying subscription_billing_id + proforma seats (or a fake cancelled row) and accept it. Only
-     this card's functions (app.r2519_write) and trusted server paths write these columns. */
-  /* Server code = a SECURITY DEFINER function (current_user is its owner), the service role, or a
-     direct DB session. A client request is a direct request login (public.is_direct_request_login, R-2485). */
-  if coalesce(current_setting('app.r2519_write', true), '') = 'on'
-     or coalesce(public.current_request_role(), '') = 'service_role'
+     server code writes these columns: a SECURITY DEFINER function (current_user is its owner), the
+     service role, or a direct DB session. A client request is a direct request login
+     (public.is_direct_request_login, R-2485). No settable flag is trusted — any session can SET one. */
+  if coalesce(public.current_request_role(), '') = 'service_role'
      or not public.is_direct_request_login() then
     return new;
   end if;
@@ -283,18 +286,18 @@ begin
   if exists (select 1 from public.payments p where p.quote_id = v_q.id and p.status = 'received' and p.amount > 0) then
     raise exception 'Money was already received on % — refund it first, or record the rest.', v_q.id using errcode = '22023';
   end if;
-  /* R-2519b: an EARLIER period is not freed while a LATER period of the same subscription has an open
-     proforma — the billing job bills only the current term, so the earlier one would stay unbilled. */
+  /* R-2519b: only the LATEST billed period of a subscription is freed. With a later period billed
+     (a proforma, paid or not, or its tax invoice) the billing job — which bills only the current
+     term — would never bill the freed earlier one again. */
   if v_q.subscription_billing_id is not null then
-    select string_agg(q2.id, ', ' order by b2.period_start) into v_later
-      from public.quotes q2
-      join public.subscription_billings b2 on b2.id = q2.subscription_billing_id
-      join public.subscription_billings b on b.id = v_q.subscription_billing_id
-     where b2.subscription_id = b.subscription_id and b2.period_start > b.period_start
-       and q2.tenant_id = v_q.tenant_id
-       and q2.status::text in ('draft', 'sent', 'viewed', 'accepted') and q2.invoice_id is null;
+    select string_agg(coalesce(q2.id, b2.invoice_id), ', ' order by b2.period_start) into v_later
+      from public.subscription_billings b
+      join public.subscription_billings b2 on b2.subscription_id = b.subscription_id and b2.period_start > b.period_start
+      left join public.quotes q2 on q2.subscription_billing_id = b2.id and q2.tenant_id = v_q.tenant_id
+     where b.id = v_q.subscription_billing_id
+       and (q2.id is not null or b2.invoice_id is not null);
     if v_later is not null then
-      raise exception 'A later period of this subscription still has an open proforma (%) — cancel the later one(s) first.', v_later
+      raise exception 'A later period of this subscription is already billed (%) — cancel the later proforma(s) first; a paid or invoiced later period needs a credit note, not a cancel here.', v_later
         using errcode = '22023';
     end if;
   end if;
@@ -356,7 +359,10 @@ begin
   end if;
   /* R-2519b: closing (rejected / expired) an accepted proforma whose seats are already on the
      subscription, with no invoice, would leave those seats unpaid — refused, as Cancel refuses it. */
-  if new.status::text in ('rejected', 'expired') and old.status::text not in ('rejected', 'expired')
+  /* Only a client's own status change (Mark rejected) — the billing code closes a proforma it just
+     invoiced from credit ('paid another way') and Customer stopped ends the subscription itself. */
+  if public.is_direct_request_login()
+     and new.status::text in ('rejected', 'expired') and old.status::text not in ('rejected', 'expired')
      and old.proforma_terms_applied_at is not null and old.invoice_id is null and new.invoice_id is null then
     raise exception 'Proforma % was accepted and its % seats are already on the subscription — record the payment, or change the seats from Manage seats first.',
       old.id, old.proforma_seats using errcode = '22023';
@@ -585,6 +591,12 @@ begin
      invoice (not for an 'invoice on due date' customer, not from credit). Its tax invoice comes when
      the proforma is paid, or on its real date (the billing job). */
   if v_b.period_start > public.ist_today() and not v_req_paid then
+    /* Already covered by the customer's money: no proforma asking for it again and no invoice ahead —
+       the billing job invoices it on its date. */
+    if v_paid_up and not v_has_q then
+      return jsonb_build_object('action', 'waiting', 'reason', 'paid_ahead', 'subscription_ids', '[]'::jsonb,
+                                'gross', v_gross, 'bill_on', v_b.bill_on);
+    end if;
     v_on_due := false; v_paid_up := false; v_on_rcpt := false;
   end if;
 
