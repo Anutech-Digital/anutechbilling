@@ -16,22 +16,28 @@
 -- ══ WHAT CHANGES ══
 --   bank_transactions.value_date (new, nullable)   the statement's value date, when it prints one.
 --   bank_opening_history.accepted_reason (new)     the owner's reason for "set it anyway".
+--   bank_opening_history.rounding_drift (new)      Σ(rupee amounts) − the bank's balance when that
+--     balance was used: the ₹ today's balance moves by paise rounding (the FY case: −2), kept.
 --   import_bank_statement(uuid,jsonb,text,text)    the R-1623b body as is + value_date stored
 --     from the row (no value date → null). Same signature, security, grants.
+--   r2522_bank_meet_balance(...) (new, internal)   one reading of the meeting point (below);
+--     no grant to any client role — only set_bank_opening_from_statement calls it.
 --   set_bank_opening_from_statement(uuid,bigint,date,uuid,boolean,text) (new overload, p_reason;
 --     no defaults, so a 3–5 argument call still resolves to the old signature only):
 --     moving EARLIER — the statement's balance where it MEETS the existing data must equal the
 --     old opening (±₹1). Counted up to that point:
 --       • every line in the account dated from the new date up to the day before the old date
 --         (any batch, manual lines too — after the move they are all counted), and
---       • THIS import's lines dated ON or before the old date, by value date where it is earlier
---         (least(txn_date, value_date)) — new to the app, so before the existing data. A line
---         that was already in the account on that date is existing data and is not counted.
+--       • THIS import's lines dated on/after the old date that belong before it. Two readings,
+--         the statement matches if either does (else the closer one is reported): (a) value date
+--         before the old date (least(txn_date, value_date)) — a real 1 Apr charge is after a
+--         31 Mar closing; (b) also every line dated ON the old date — a file with no value-date
+--         column still meets on SUBHVISION. A line already in the account is never counted here.
 --     The figure is the statement's own running balance after those lines (the one line of their
 --     last day that no other line of that day continues from), when every line of that day has a
---     balance and the summed figure (new opening + Σ amounts) is within rounding of it
---     (floor(n/2)+1, the account page's roundingAllowance) — else the summed figure, so a
---     missing line still shows. Same / later date: unchanged (R-2497).
+--     balance, no line of this import on that day is left out, and the summed figure (new
+--     opening + Σ amounts) is within least(floor(n/2)+1, 25) of it — else the summed figure, so
+--     a missing line still shows on a long statement. Same / later date: unchanged (R-2497).
 --     Accepting a difference (owner only, as before) now needs a reason (5+ characters); it is
 --     stored in bank_opening_history.accepted_reason.
 --   set_bank_opening_from_statement(uuid,bigint,date,uuid,boolean)  (R-2497 signature) kept as a

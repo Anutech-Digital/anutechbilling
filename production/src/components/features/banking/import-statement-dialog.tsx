@@ -41,7 +41,7 @@ import {
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { openingMoveCheck, linesBeforeOpening } from "@/lib/banking/opening-move";
 import { importBadge } from "./import-badge";
-import { openingBalanceFromStatement } from "@/lib/banking/opening-balance";
+import { openingBalanceFromStatement, fyStartFor } from "@/lib/banking/opening-balance";
 import { isEncryptedPdf, pdfPageCount } from "@/lib/banking/pdf-check";
 import {
   readStatementInChunks,
@@ -108,6 +108,18 @@ export const PREVIEW_PAGE_SIZE = 100;
 const REASON_MIN = 5;
 
 /**
+ * R-2522: the "As of" date proposed for a statement whose first line is `first`: 1 April of its
+ * FY when the first line falls in that FY's first 30 days (a year's statement whose first entry
+ * is on 3 Apr still opens the books on 1 Apr; the box then says nothing moved in between is
+ * assumed), else the first line's date.
+ */
+export function defaultOpeningDate(first: string): string {
+  const fyStart = fyStartFor(first);
+  const days = (Date.parse(first) - Date.parse(fyStart)) / 86_400_000;
+  return days <= 30 ? fyStart : first;
+}
+
+/**
  * Last gate before the preview (CSV and AI alike): every date must be a real calendar
  * date. A day/month swap is corrected — for the whole statement when it was read
  * day-first — and said out loud; a date impossible either way skips its row, counted.
@@ -115,7 +127,17 @@ const REASON_MIN = 5;
  */
 function withRealDates(p: Preview | ParseResult, serverSwapped = 0): Preview {
   const fix = fixStatementDates(p.rows.map((r) => r.txn_date), localDateISO(new Date(Date.now() + 86_400_000)));   // +1 day: server clock may be UTC
-  const rows = p.rows.flatMap((r, i) => (fix.dates[i] ? [{ ...r, txn_date: fix.dates[i]! }] : []));
+  const rows = p.rows.flatMap((r, i) => {
+    const d = fix.dates[i];
+    if (!d) return [];
+    /* R-2522: a value date read in the order the txn date was NOT read in is unknown — dropped
+       when the txn date was corrected, never kept half-swapped (it places a line at the opening). */
+    if (d !== r.txn_date && r.value_date) {
+      const { value_date: _v, ...rest } = r;
+      return [{ ...rest, txn_date: d }];
+    }
+    return [{ ...r, txn_date: d }];
+  });
   const dropped = p.rows.length - rows.length;
   const swapped = fix.swapped + serverSwapped;
   const warnings = [...p.warnings];
@@ -215,7 +237,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
      shows, so it happens only when the operator ticks it. R-2522: the date defaults to the
      statement's FIRST date — a year's statement sets the opening at its start (it used to
      default to the FY of the LATEST line, so a FY 25-26 statement ending on 1 Apr 2026
-     proposed 1 Apr 2026 and the date had to be typed by hand). */
+     proposed 1 Apr 2026 and the date had to be typed by hand). A first line in the FY's first
+     month proposes 1 Apr itself (defaultOpeningDate), so the books open on the FY start. */
   const { data: account } = useBankAccount(open ? accountId : null);
   /* R-2497: never a plain overwrite — the import carries the opening to the database
      (set_bank_opening_from_statement), which checks that today's balance stays the same and
@@ -234,7 +257,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     setApplyOpening(false);
     const earliest = rawParsed?.rows.reduce<string | null>(
       (min, r) => (min === null || r.txn_date < min ? r.txn_date : min), null);
-    setOpeningDate(earliest ?? "");
+    setOpeningDate(earliest ? defaultOpeningDate(earliest) : "");
   }, [rawParsed]);
   const opening = React.useMemo(
     () => (parsed && openingDate ? openingBalanceFromStatement(parsed.rows, openingDate) : null),
@@ -284,10 +307,13 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
      adds (`newRows`), and the lines the app already holds between the two dates — manual ones
      too (`existingInWindow`), so the preview and the save never show different differences. */
   const movingEarlier = openingOn && !!account?.opening_balance_date && openingDate < account.opening_balance_date;
-  const { data: windowLines } = useBankLinesBetween(
+  const windowQ = useBankLinesBetween(
     open && movingEarlier ? accountId : null, openingDate, account?.opening_balance_date);
+  const windowLines = windowQ.data;
+  /* Never a preview without them — it would differ from the database's answer on save. */
+  const windowMissing = movingEarlier && !windowLines;
   const moveCheck = React.useMemo(() => {
-    if (!openingOn || !opening?.ok || !parsed || !account || !plan) return null;
+    if (!openingOn || !opening?.ok || !parsed || !account || !plan || windowMissing) return null;
     return openingMoveCheck({
       rows: parsed.rows,
       newRows: importSkipped ? [...plan.fresh, ...plan.skipped] : plan.fresh,
@@ -298,10 +324,10 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       oldDate: account.opening_balance_date,
       accountHasMoney: (account.opening_balance ?? 0) !== 0 || hasCountedLines === true,
     });
-  }, [openingOn, opening, parsed, account, hasCountedLines, openingDate, plan, importSkipped, windowLines]);
+  }, [openingOn, opening, parsed, account, hasCountedLines, openingDate, plan, importSkipped, windowLines, windowMissing]);
   const openingMismatch = moveCheck?.kind === "earlier" && !moveCheck.matches;
   const reasonOk = acceptReason.trim().length >= REASON_MIN;
-  const openingWaits = openingMismatch && !(isOwner && acceptDifference && reasonOk);
+  const openingWaits = windowMissing || (openingMismatch && !(isOwner && acceptDifference && reasonOk));
   /* R-2522: hand-entered lines between the new and the old opening date — after the move they
      count, and one may be the same payment as a statement line (real case: manual "EMI 1 Thar
      Roxx" ₹27,764 on 3 Mar 2026 next to the bank's EMI ₹30,183 on 5 Mar). */
@@ -907,9 +933,19 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                   <p data-testid="out-of-order-note" className="text-ink-3 flex items-start gap-1.5">
                     <Icon name="info" size={12} className="mt-0.5 shrink-0" />
                     <span>
-                      {opening.outOfOrder.lines} line{opening.outOfOrder.lines === 1 ? " is" : "s are"} printed out of order within the day
+                      Some lines are printed out of order within the day
                       ({opening.outOfOrder.days.map((d) => formatDate(d)).join(", ")}); each day&apos;s closing balance is right, so nothing is missing.
                     </span>
+                  </p>
+                )}
+                {windowMissing && (
+                  <p data-testid="opening-move-loading" className={windowQ.isError ? "text-rose-ink" : "text-ink-3"}>
+                    {windowQ.isError ? (
+                      <>
+                        Could not load the lines already in this account between these dates, so the opening cannot be checked.{" "}
+                        <button type="button" className="underline" onClick={() => void windowQ.refetch()}>Try again</button>
+                      </>
+                    ) : "Checking the lines already in this account between these dates…"}
                   </p>
                 )}
                 {moveCheck?.kind === "earlier" && (
@@ -1029,6 +1065,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
               ? "Check the sign of the marked lines — see the \"Check the sign\" box in the preview"
               : blocked
               ? "Some statement lines are missing — see the red box in the preview"
+              : openingOn && windowMissing
+                ? "Checking the lines already in this account — see the opening balance box"
               : openingOn && openingWaits
                 ? "The statement does not match the current opening — see the opening balance box"
                 : undefined}

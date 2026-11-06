@@ -16,7 +16,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 const state = vi.hoisted(() => ({
   importSpy: vi.fn(),
   account: { id: "acc-1", opening_balance: 903552, opening_balance_date: "2026-04-01", account_type: "current" },
-  windowLines: [] as unknown[],
+  windowLines: [] as unknown[] | undefined,
 }));
 
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role: "owner" } }) }));
@@ -58,7 +58,7 @@ afterEach(() => cleanup());
 describe("R-2522 import dialog — the FY 25-26 HDFC statement", () => {
   it("As of = the statement's first date; SUBHVISION matches the opening; value date sent", async () => {
     await paste(SUBHVISION_CSV);
-    expect(dateBox().value).toBe("2025-04-10");
+    expect(dateBox().value).toBe("2025-04-01");   // first line 10 Apr 2025, in the FY's first month → 1 Apr
     await tick();
     const check = screen.getByTestId("opening-move-check");
     expect(check.textContent).toMatch(/₹9,03,552.*₹9,03,552/);
@@ -68,7 +68,7 @@ describe("R-2522 import dialog — the FY 25-26 HDFC statement", () => {
     expect(importButton().disabled).toBe(false);
     await act(async () => { fireEvent.click(importButton()); });
     const call = state.importSpy.mock.calls[0][0];
-    expect(call.opening).toEqual({ amount: 2020919, date: "2025-04-10", acceptDifference: false });
+    expect(call.opening).toEqual({ amount: 2020919, date: "2025-04-01", acceptDifference: false });
     expect(call.rows.find((r: { reference: string }) => r.reference === "IN42609055612841")).toMatchObject({
       txn_date: "2026-04-01", value_date: "2026-03-31", credit: 37170,
     });
@@ -126,5 +126,19 @@ describe("R-2522 import dialog — the FY 25-26 HDFC statement", () => {
     expect(importButton().disabled).toBe(false);
     await act(async () => { fireEvent.click(importButton()); });
     expect(state.importSpy.mock.calls[0][0].opening).toMatchObject({ acceptDifference: true, reason: "EMI entered by hand twice" });
+  });
+  it("while the account's lines between the dates load, no verdict is shown and Import waits", async () => {
+    state.windowLines = undefined;
+    await paste(SUBHVISION_CSV);
+    await tick();
+    expect(screen.queryByTestId("opening-move-check")).toBeNull();
+    expect(screen.getByTestId("opening-move-loading").textContent).toMatch(/Checking the lines already in this account/);
+    expect(importButton().disabled).toBe(true);
+  });
+
+  it("As of: a statement starting mid-year proposes its own first date", async () => {
+    const { defaultOpeningDate } = await import("./import-statement-dialog");
+    expect(defaultOpeningDate("2025-04-03")).toBe("2025-04-01");
+    expect(defaultOpeningDate("2025-10-15")).toBe("2025-10-15");
   });
 });

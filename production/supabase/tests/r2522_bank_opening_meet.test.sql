@@ -23,6 +23,9 @@
 --      with the difference −27,764.
 --   F. Accepting a difference: no reason → refused (hint r2522_reason_needed), also through the
 --      old 5-argument call; with a reason → history keeps it.
+--   G. A real 1 Apr line (no earlier value date) is after the 31 Mar closing: matches.
+--   H. A ₹1,500 line missing from a long statement is not taken as rounding (cap ₹25): refused.
+--   (A4: the ₹2 paise drift is kept in bank_opening_history.rounding_drift.)
 
 begin;
 
