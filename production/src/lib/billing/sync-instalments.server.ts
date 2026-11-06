@@ -486,3 +486,34 @@ export async function raiseDueInstalmentsForQuote(args: {
   return out;
 }
 
+
+/**
+ * R-2519d (coordinator, BITDECENTRO): parts whose proforma was CANCELLED and not billed again —
+ * public.freed_parts_due, earliest first — are billed before each subscription's current term. The
+ * term run bills only the current term, so a freed earlier period (the wrong Oct proforma cancelled
+ * while the Nov row is laid) would otherwise never be billed. Errors are returned, not thrown.
+ */
+export async function billFreedParts(
+  supabase: Admin,
+  args: { todayISO: string; dryRun: boolean; allowed: (tenantId: string) => boolean },
+): Promise<{ parts: { subscription_id: string; billing_id: string; result: InstalmentSyncResult }[]; errors: { subscription_id: string; message: string }[] }> {
+  const parts: { subscription_id: string; billing_id: string; result: InstalmentSyncResult }[] = [];
+  const errors: { subscription_id: string; message: string }[] = [];
+  const { data, error } = await (supabase as unknown as SupabaseClient).rpc("freed_parts_due", { p_today: args.todayISO });
+  if (error) return { parts, errors: [{ subscription_id: "", message: `freed parts: ${error.message}` }] };
+  const rows = ((data ?? []) as { billing_id: string; subscription_id: string; tenant_id: string; period_start: string }[])
+    .filter((r) => args.allowed(r.tenant_id))
+    .sort((a, b) => a.period_start.localeCompare(b.period_start));
+  for (const r of rows) {
+    try {
+      const { data: out, error: bErr } = await billSubscriptionInstalment(supabase, r.billing_id, args.dryRun);
+      if (bErr) throw new Error(bErr.message);
+      const result = emptySyncResult();
+      applyBillOutcome(result, 1, out, args.dryRun);
+      parts.push({ subscription_id: r.subscription_id, billing_id: r.billing_id, result });
+    } catch (e) {
+      errors.push({ subscription_id: r.subscription_id, message: `freed part ${r.billing_id}: ${e instanceof Error ? e.message : String(e)}` });
+    }
+  }
+  return { parts, errors };
+}

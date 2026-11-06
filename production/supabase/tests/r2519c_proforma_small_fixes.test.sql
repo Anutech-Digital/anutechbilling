@@ -3,8 +3,10 @@
 --
 --   D. A part request (or a cancelled one) is never DELETED by a signed-in user — only cancelled.
 --      An ordinary quote still deletes.
---   S3. Monthly Flexible: period A's proforma cannot be cancelled while the NEXT term's row B is laid
---       (even unbilled) — the billing job bills only the current term, so A would never be billed again.
+--   S3. Monthly Flexible (BITDECENTRO: the wrong Oct proforma Q-A378-27-0947 while the Nov row is laid):
+--       the LATEST REQUESTED period's proforma CAN be cancelled though a later row is laid (unrequested);
+--       freed_parts_due lists the freed Oct row (earliest first) so the billing job bills it again first.
+--       (R-2519d, coordinator — replaces R-2519c's refusal.)
 --   G. The guard does not trust a forged JWT role claim: a direct client login claiming service_role
 --      still cannot write the guarded columns.
 --   R. A payment on a CANCELLED quote is refused with "Undo cancel" (not "Reopen").
@@ -60,12 +62,25 @@ declare r jsonb; v_c text;
 begin
   r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-000000251961', false);
   insert into r2519c_ids values ('open', r->>'quote_id');
-  -- S3: A billed; B laid but not requested → cancelling A is refused
+  -- S3: Oct (A) billed; Nov (B) laid, not requested → cancelling Oct is allowed …
   r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-00000025196a', false);
+  perform public.cancel_quote(r->>'quote_id', 'Wrong seats on the Oct proforma');
+  -- … and the freed Oct row is due for billing again, before Nov
+  if (select array_agg(billing_id order by period_start) from public.freed_parts_due(public.ist_today()) f
+       where f.subscription_id = 'eeeeeeee-0000-0000-0000-000000251962') is distinct from array['bbbbbbbb-0000-0000-0000-00000025196a'::uuid] then
+    raise exception 'S3 FAIL: freed_parts_due does not list the freed Oct row: %',
+      (select array_agg(billing_id) from public.freed_parts_due(public.ist_today()) f where f.subscription_id = 'eeeeeeee-0000-0000-0000-000000251962'); end if;
+  r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-00000025196a', false);
+  if r->>'action' <> 'request' then raise exception 'S3 FAIL: Oct not billed again: %', r; end if;
+  if exists (select 1 from public.freed_parts_due(public.ist_today()) f where f.subscription_id = 'eeeeeeee-0000-0000-0000-000000251962') then
+    raise exception 'S3 FAIL: Oct still listed after it was billed'; end if;
+  -- with Nov now requested, the Oct proforma (earlier) cannot be freed again
+  r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-00000025196b', false);
   begin
-    perform public.cancel_quote(r->>'quote_id', 'Cancel A while B is laid');
-    raise exception 'S3 FAIL: freed period A while the next term''s row is laid — A would never be billed again';
-  exception when invalid_parameter_value then raise notice 'S3 PASS (refused): %', sqlerrm; end;
+    perform public.cancel_quote((select id from public.quotes where subscription_billing_id = 'bbbbbbbb-0000-0000-0000-00000025196a'), 'Oct again, Nov requested');
+    raise exception 'S3 FAIL: freed Oct while Nov has a proforma';
+  exception when invalid_parameter_value then null; end;
+  raise notice 'S3 PASS: Oct cancelled while Nov laid → listed first → billed again; refused once Nov is requested';
   -- R: a cancelled proforma refuses a payment with the Undo cancel words
   select q.id into v_c from public.quotes q where q.subscription_billing_id = 'bbbbbbbb-0000-0000-0000-000000251961';
   perform public.cancel_quote(v_c, 'For the payment message');

@@ -102,13 +102,12 @@ begin
     raise notice 'M PASS (refused): %', sqlerrm;
   end;
   perform public.cancel_quote(rb->>'quote_id', 'Later month first, test');
-  /* R-2519c (re-review S3): month B's row is a LATER TERM and stays laid after its proforma is
-     cancelled, so the earlier month A is still not freed — the billing job would never bill A again. */
-  begin
-    perform public.cancel_quote(ra->>'quote_id', 'Then the earlier month');
-    raise exception 'M FAIL: freed month A while the next term''s row is laid';
-  exception when invalid_parameter_value then raise notice 'M PASS (R-2519c, later term laid): %', sqlerrm; end;
-  r := ra;
+  perform public.cancel_quote(ra->>'quote_id', 'Then the earlier month');
+  r := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-00000025195a', false);
+  if r->>'action' <> 'request' or r->>'quote_id' = ra->>'quote_id' then raise exception 'M FAIL: freed earlier month not billed again: %', r; end if;
+  if (select due_on from public.subscription_billings where id = 'bbbbbbbb-0000-0000-0000-00000025195a') is null then
+    raise exception 'M FAIL: re-billed month has no due date'; end if;
+  raise notice 'M PASS: earlier month re-billed on its own row as %', r->>'quote_id';
   -- M2. a later month already PAID (tax invoice) → the earlier month is not freed
   rb := public.bill_subscription_instalment('bbbbbbbb-0000-0000-0000-00000025195b', false);
   perform public.record_payment(rb->>'quote_id', 6018, 'upi', 'R2519B-PAY-B');
