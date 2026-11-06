@@ -24,12 +24,16 @@
 
 import { fyStartISO } from "@/lib/dates/ist";
 import { checkStatement } from "./statement-check";
+import { signedRound } from "./statement-parse";
 
 export type StatementLine = {
   txn_date:      string;        // ISO YYYY-MM-DD
   debit:         number;
   credit:        number;
   balance_after: number | null;
+  /** R-2528: the printed paise (statement-parse), when the figure has them. */
+  amount_paise?: number;
+  balance_paise?: number;
 };
 
 export type OpeningBalanceResult =
@@ -104,12 +108,23 @@ export function openingBalanceFromStatement(
 
   return {
     ok: true,
-    amount: Math.round(first.balance_after - first.credit + first.debit),
+    amount: openingFromLine(first),
     firstLineDate: first.txn_date,
     linesBefore: idx,
     chainBreaks,
     ...(reordered.length > 0 ? { outOfOrder: { lines: reordered.length, days: [...new Set(reordered)].sort() } } : {}),
   };
+}
+
+/**
+ * R-2528: the balance before a line, worked out in PAISE when the statement printed them, then
+ * rounded once — so the opening is at most 50 paise from the bank's (the opening move allows
+ * exactly that much). From the rupee-rounded figures it could be ₹1 off (1,000.50 − 10.50).
+ */
+function openingFromLine(l: StatementLine): number {
+  const balP = l.balance_paise ?? (l.balance_after as number) * 100;
+  const amtP = l.amount_paise ?? (l.debit + l.credit) * 100;
+  return signedRound((balP - (l.credit > 0 ? amtP : -amtP)) / 100);
 }
 
 /** 1 April of the Indian financial year an ISO date falls in. */

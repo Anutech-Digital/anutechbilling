@@ -739,6 +739,8 @@ export function useHasBankLinesFrom(accountId: string | null | undefined, date: 
 export type BankWindowLine = {
   id: string; txn_date: string; debit: number; credit: number; balance_after: number | null;
   source: string; description: string;
+  /** R-2528: the line's stored paise (null = not known) — the opening move compares in paise. */
+  net_paise?: number | null; balance_after_paise?: number | null;
 };
 
 /**
@@ -752,14 +754,16 @@ export function useBankLinesBetween(accountId: string | null | undefined, from: 
     enabled: Boolean(accountId && from && before && from < before),
     queryFn: async (): Promise<BankWindowLine[]> => {
       const supabase = createClient();
+      /* R-2528: net_paise / balance_after_paise are newer than the generated types — the row
+         shape is BankWindowLine. */
       return fetchAllRows<BankWindowLine>((lo, hi) => supabase
         .from("bank_transactions")
-        .select("id, txn_date, debit, credit, balance_after, source, description")
+        .select("id, txn_date, debit, credit, balance_after, source, description, net_paise, balance_after_paise")
         .eq("bank_account_id", accountId as string)
         .gte("txn_date", from as string)
         .lt("txn_date", before as string)
         .order("id", { ascending: true })
-        .range(lo, hi));
+        .range(lo, hi) as never);
     },
     staleTime: 15_000,
   });
@@ -857,6 +861,10 @@ export async function importBankTransactions(
     /* R-2522: the statement's value date, when it differs from the txn date. */
     const valueDate = (r as { value_date?: string | null }).value_date;
     if (valueDate) line.value_date = valueDate;
+    /* R-2528: the printed paise, when the line has them — the opening move compares in paise. */
+    const { amount_paise, balance_paise } = r as { amount_paise?: number; balance_paise?: number };
+    if (amount_paise != null) line.amount_paise = amount_paise;
+    if (balance_paise != null) line.balance_paise = balance_paise;
     if (r.category) {
       line.category = r.category;
       line.category_source = (r as { category_source?: string }).category_source ?? null;

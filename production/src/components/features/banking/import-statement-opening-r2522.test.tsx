@@ -70,7 +70,11 @@ describe("R-2522 import dialog — the FY 25-26 HDFC statement", () => {
     const call = state.importSpy.mock.calls[0][0];
     expect(call.opening).toEqual({ amount: 2020919, date: "2025-04-01", acceptDifference: false });
     expect(call.rows.find((r: { reference: string }) => r.reference === "IN42609055612841")).toMatchObject({
-      txn_date: "2026-04-01", value_date: "2026-03-31", credit: 37170,
+      txn_date: "2026-04-01", value_date: "2026-03-31", credit: 37170, balance_paise: 90355193,
+    });
+    // R-2528: the printed paise reach the import (the database compares the meeting point in paise).
+    expect(call.rows.find((r: { reference: string }) => r.reference === "F1")).toMatchObject({
+      debit: 500001, amount_paise: 50000050, balance_paise: 152091846,
     });
   });
 

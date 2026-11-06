@@ -101,6 +101,9 @@ const toLine = (r: PreviewRow): ParsedRow => ({
   reference: r.reference,
   /* R-2522: the value date travels when the file printed one that differs (opening meeting point). */
   ...(r.value_date ? { value_date: r.value_date } : {}),
+  /* R-2528: and the printed paise — the database compares the opening move in paise. */
+  ...(r.amount_paise != null ? { amount_paise: r.amount_paise } : {}),
+  ...(r.balance_paise != null ? { balance_paise: r.balance_paise } : {}),
 });
 
 /** R-2522: preview rows per page — 3,665 rows each with a category dropdown froze the dialog. */
