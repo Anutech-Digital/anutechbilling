@@ -105,7 +105,9 @@ export function renewalActionSet(
 export const FOLLOW_UP = "Follow-up";
 
 /** What the ⋯ menu may hold, in the order it shows (the ending action last). */
-export type RenewalMenuItem = "create-quote" | "followup" | "nudge" | "voice" | "not-renewing";
+/* R-2519: "bill-ahead" — Bill next part (proforma preview) for a subscription billed in parts whose
+   next part is not due yet, or whose cancelled proforma left a period to bill again. */
+export type RenewalMenuItem = "bill-ahead" | "create-quote" | "followup" | "nudge" | "voice" | "not-renewing";
 
 export interface RenewalNextStep {
   /** The ONE visible button: the R-2401 rule's primary, else Follow-up; null = nothing to do here. */

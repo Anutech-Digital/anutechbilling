@@ -305,6 +305,18 @@ export const SCENARIOS = [
       { path: "customers-all", for: "R-2476 after switching to SCN Second Company Pvt Ltd: the list is empty (no E2E Test Co customer stays)" },
     ],
   },
+  {
+    name: "renewal-proforma",
+    about: "SCN Bit Labs — monthly Google Workspace Business Starter, 17 seats × ₹300; its current month was billed the old way as Q-SCN-PF-1 (1 × ₹5,100 'One-time' + IGST = ₹6,018, Sent, nothing emailed) — staging BITDECENTRO Q-A378-27-0947 in miniature. Cancel it, then Renewals → Bill next part at 18 seats.",
+    cards: ["R-2519"],
+    needs: { sql: "to_regprocedure('public.cancel_quote(text,text)') is not null", what: "proforma + cancel (migration R-2519)" },
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: [x(201), "Q-SCN-PF-1"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1, xQuotes: 1 },
+    pages: [
+      { path: "quote:Q-SCN-PF-1", for: "R-2519 More → Cancel quote (reason) → 'Cancelled', kept; More → Undo cancel brings it back; cancel again" },
+      { path: "renewals", for: "R-2519 SCN Bit Labs → ⋯ → Bill next part… → preview 17 × ₹300 → Seats 18, Periods 2 → Create 2 proformas (PI-…)" },
+    ],
+  },
 ];
 
 export const SCENARIO_NAMES = SCENARIOS.map((s) => s.name);
@@ -344,6 +356,8 @@ export function pageUrl(host, key, today = new Date()) {
     /* R-2476 */
     case "dashboard": return `${base}/dashboard`;
     case "customers-all": return `${base}/customers`;
+    /* R-2519 */
+    case "renewals": return `${base}/renewals?q=SCN`;
     default:
       if (key.startsWith("quote:")) return `${base}/quotes/${encodeURIComponent(key.slice(6))}`;
       return `${base}/accounting/${key}`;
