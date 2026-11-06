@@ -9,6 +9,8 @@
  *              the server's scan; READ only; at most FY_CALLS_PER_REQUEST Zoho calls a request — call
  *              again until `complete`. Counts come from the stored rows.
  *   restart  { kind } → forgets that list's scan.
+ *   accounts { "<Zoho paid-through account>": "<app account id>" } may go with preview / import (R-2502c):
+ *              the owner's map of where Zoho's expenses and payments were paid from (else suggested).
  *   preview  → from the COMPLETE bills + expenses scans: counts, skip reasons, Zoho vs to-import vs
  *              already-in-the-app per month (ITC, RCM, TDS), TDS by section, unmapped Zoho accounts,
  *              the category choices, bank accounts; and (when that scan is complete) the vendor
@@ -33,10 +35,10 @@ import { partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts
 import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb } from "@/lib/integrations/zoho-books/fy-import/store";
 import { zohoPurchaseFacts, zohoVendorPaymentFacts, type PurchaseFacts, type VendorPaymentFacts } from "@/lib/integrations/zoho-books/purchase-import/normalise";
 import {
-  CATEGORY_CHOICES, PURCHASE_IMPORT_ROLES, buildPaymentPlan, buildPurchasePlan, toPurchasePick,
+  CATEGORY_CHOICES, PURCHASE_IMPORT_ROLES, buildPaymentPlan, buildPurchasePlan, toPaymentPick, toPurchasePick,
 } from "@/lib/integrations/zoho-books/purchase-import/plan";
 import {
-  readAppPurchasesByMonth, readPaymentContext, readPurchaseContext,
+  parseAccountMap, readAppPurchasesByMonth, readBankAccounts, readOtherPurchasesByMonth, readPaymentContext, readPurchaseContext,
 } from "@/lib/integrations/zoho-books/purchase-import/store";
 import { createClient } from "@/lib/supabase/server";
 
@@ -131,34 +133,38 @@ export async function POST(req: NextRequest) {
     return { done: Boolean(run?.listDone) && c.detailed >= c.listed, listed: c.listed };
   };
 
+  const accountMap = parseAccountMap(body.accounts);
   const purchasePlan = async () => {
     const [b, e] = await Promise.all([complete("bills"), complete("expenses")]);
     if (!b.done || !e.done || b.listed + e.listed === 0) return null;
     const [bills, exps, ctx] = await Promise.all([
       readScannedFacts<PurchaseFacts>(db, caller.tenantId, "bills", fy),
       readScannedFacts<PurchaseFacts>(db, caller.tenantId, "expenses", fy),
-      readPurchaseContext(db, caller.tenantId, range),
+      readPurchaseContext(db, caller.tenantId, range, accountMap),
     ]);
     return buildPurchasePlan([...bills, ...exps], ctx);
   };
   const paymentPlan = async () => {
     const p = await complete("vendorpayments");
     if (!p.done || p.listed === 0) return null;
-    const [facts, ctx] = await Promise.all([
+    const [facts, bills] = await Promise.all([
       readScannedFacts<VendorPaymentFacts>(db, caller.tenantId, "vendorpayments", fy),
-      readPaymentContext(db, caller.tenantId, range),
+      readScannedFacts<PurchaseFacts>(db, caller.tenantId, "bills", fy),
     ]);
+    const ctx = await readPaymentContext(db, caller.tenantId, range, accountMap, bills);
     return buildPaymentPlan(facts, ctx);
   };
 
   if (action === "preview") {
-    let plan, pays, appByMonth, batches;
+    let plan, pays, appByMonth, otherByMonth, batches, banks;
     try {
       [plan, pays] = await Promise.all([purchasePlan(), paymentPlan()]);
       if (!plan) return fail(409, "Read bills and expenses from Zoho first (Read from Zoho) — it is not complete yet.");
-      [appByMonth, batches] = await Promise.all([
+      [appByMonth, otherByMonth, batches, banks] = await Promise.all([
         readAppPurchasesByMonth(db, caller.tenantId, range),
+        readOtherPurchasesByMonth(db, caller.tenantId, range),
         Promise.all(KINDS.map((k) => readImportBatches(db, caller.tenantId, k, fy).then((rows) => rows.map((x) => ({ ...x, kind: k }))))).then((a) => a.flat()),
+        readBankAccounts(db, caller.tenantId),
       ]);
     } catch { return fail(500, "Could not build the preview. Refresh and try again."); }
     const parts = (k: Kind) => partCount(plan.rows.filter((r) => r.verdict !== "skip" && r.facts.kind === k).length);
@@ -166,16 +172,18 @@ export async function POST(req: NextRequest) {
       ok: true, fy,
       purchases: {
         counts: plan.counts, parts: { bills: parts("bills"), expenses: parts("expenses") },
-        zohoByMonth: plan.zohoByMonth, importByMonth: plan.importByMonth, appByMonth,
+        zohoByMonth: plan.zohoByMonth, importByMonth: plan.importByMonth, appByMonth, otherByMonth, accounts: plan.accounts,
         skipReasons: plan.skipReasons, tdsBySection: plan.tdsBySection, unmapped: plan.unmapped,
         skipped: plan.rows.filter((r) => r.verdict === "skip").slice(0, 500).map((r) => ({
           kind: r.facts.kind, number: r.facts.number, date: r.facts.date, vendor: r.facts.vendorName, amount: r.facts.total, reason: r.reason })),
       },
       payments: pays && {
         counts: pays.counts, parts: partCount(pays.rows.filter((r) => r.verdict !== "skip").length),
-        paidThrough: pays.paidThrough, skipReasons: pays.skipReasons, cogs: pays.cogs.slice(0, 500),
+        accounts: pays.accounts, skipReasons: pays.skipReasons, toReconcile: pays.toReconcile.slice(0, 1000),
       },
       categories: CATEGORY_CHOICES, batches,
+      bankAccounts: banks
+        .filter((a) => a.is_active !== false).map((a) => ({ id: a.id, name: a.name, last4: a.account_number_last4 ?? null, type: a.account_type ?? null })),
     });
   }
 
@@ -188,8 +196,8 @@ export async function POST(req: NextRequest) {
       try { pays = await paymentPlan(); }
       catch { return fail(500, "Could not build the preview. Refresh and try again."); }
       if (!pays) return fail(409, "Read vendor payments from Zoho first — it is not complete yet.");
-      /* R-2502b: Zoho ids only — no bank account, no manual bank line (COGS bills are paid in Reconcile). */
-      const picks = pays.rows.filter((r) => r.verdict !== "skip").map((r) => ({ zoho_id: r.facts.zohoId }));
+      /* Zoho id + the app account it was paid from — no money, no bank line (COGS bills and bills paid in parts are paid in Reconcile). */
+      const picks = pays.rows.filter((r) => r.verdict !== "skip").map(toPaymentPick);
       if (!picks.length) return fail(409, "Nothing to import.");
       const part = Number(body.part ?? 0);
       const slice = partOf(picks, part);

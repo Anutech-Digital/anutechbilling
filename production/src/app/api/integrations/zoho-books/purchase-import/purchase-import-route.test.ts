@@ -35,13 +35,24 @@ vi.mock("@/lib/integrations/zoho-books/fy-import/store", () => ({
   readScannedFacts: async (_db: unknown, _t: string, kind: string) => st.facts[kind] ?? [],
   readImportBatches: async () => [],
 }));
-vi.mock("@/lib/integrations/zoho-books/purchase-import/store", () => ({
-  readPurchaseContext: async () => ({
+const ACCTS = vi.hoisted(() => [
+  { id: "b2502000-0000-0000-0000-0000000000e1", name: "HDFC Current", bank_name: "HDFC", account_number_last4: "4523", account_type: "current", is_active: true, is_default_petty_cash: false },
+  { id: "b2502000-0000-0000-0000-0000000000e2", name: "Petty Cash", bank_name: "Cash", account_number_last4: null, account_type: "cash", is_active: true, is_default_petty_cash: true },
+]);
+vi.mock("@/lib/integrations/zoho-books/purchase-import/store", async (orig) => ({
+  parseAccountMap: ((await orig()) as { parseAccountMap: unknown }).parseAccountMap,
+  readPurchaseContext: async (_db: unknown, _t: string, _r: unknown, accountMap: Record<string, string>) => ({
     fyStart: "2025-04-01", fyEnd: "2026-03-31", booksStart: "2025-04-01", lockedUntil: null,
     vendors: [{ id: "v1", name: "Test Vendor", gstin: null, zohoContactId: "VZ1" }], categoryMap: { A1: "Software" }, imported: new Set<string>(),
+    bankAccounts: ACCTS, accountMap,
   }),
-  readPaymentContext: async () => ({ fyStart: "2025-04-01", fyEnd: "2026-03-31", booksStart: "2025-04-01", lockedUntil: null, targets: st.targets, importedPayments: new Set<string>() }),
+  readPaymentContext: async (_db: unknown, _t: string, _r: unknown, accountMap: Record<string, string>, bills: Array<{ zohoId: string; total: number; tdsAmount: number; tdsSection: string | null }>) => ({
+    fyStart: "2025-04-01", fyEnd: "2026-03-31", booksStart: "2025-04-01", lockedUntil: null, targets: st.targets, importedPayments: new Set<string>(),
+    bills: new Map(bills.map((b) => [b.zohoId, { total: b.total, tds: b.tdsAmount, tdsSection: b.tdsSection }])), bankAccounts: ACCTS, accountMap,
+  }),
   readAppPurchasesByMonth: async () => [],
+  readBankAccounts: async () => ACCTS,
+  readOtherPurchasesByMonth: async () => [{ month: "2025-05", count: 3, amount: 4200 }],
   readCategoryMap: async () => ({ A1: "Software" }),
 }));
 vi.mock("@/lib/supabase/server", () => ({
@@ -118,17 +129,30 @@ describe("R-2502 purchase-import route", () => {
     expect((await POST(req({ action: "import", fy: "2025-26", kind: "invoices", part: 0 }))).status).toBe(400);
   });
 
-  it("payments: Zoho ids only — no bank account goes with them (no manual bank line, R-2502b)", async () => {
+  it("payments: Zoho id + the app account its paid-through account maps to (suggested by last 4 digits) — no money", async () => {
     st.targets = new Map([["B1", { type: "expense" as const }]]);
-    await POST(req({ action: "import", fy: "2025-26", kind: "vendorpayments", part: 0, banks: { "HDFC 4523": "b2502000-0000-0000-0000-0000000000e1" } }));
-    expect(st.rpc[0]).toEqual({ fn: "import_zoho_fy_vendor_payments", args: { p_fy: "2025-26", p_dry_run: true, p_picks: [{ zoho_id: "P1" }] } });
+    await POST(req({ action: "import", fy: "2025-26", kind: "vendorpayments", part: 0 }));
+    expect(st.rpc[0]).toEqual({ fn: "import_zoho_fy_vendor_payments", args: { p_fy: "2025-26", p_dry_run: true,
+      p_picks: [{ zoho_id: "P1", account_id: "b2502000-0000-0000-0000-0000000000e1" }] } });
+  });
+
+  it("a Zoho expense goes with the account the owner chose for its paid-through account (R-2502c)", async () => {
+    st.facts.expenses = [bill({ kind: "expenses", zohoId: "E1", number: "", paidThrough: "Director - Rakesh" })];
+    st.counts.expenses = { listed: 1, detailed: 1 };
+    expect((await POST(req({ action: "import", fy: "2025-26", kind: "expenses", part: 0 }))).status).toBe(409);
+    await POST(req({ action: "import", fy: "2025-26", kind: "expenses", part: 0, accounts: { "Director - Rakesh": "b2502000-0000-0000-0000-0000000000e2" } }));
+    expect(st.rpc[0].args.p_picks).toEqual([{ kind: "expenses", zoho_id: "E1", vendor_id: "v1", account_id: "b2502000-0000-0000-0000-0000000000e2" }]);
+    const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.purchases.accounts).toEqual([expect.objectContaining({ zohoName: "Director - Rakesh", appAccountId: null })]);
+    expect(body.purchases.otherByMonth).toEqual([{ month: "2025-05", count: 3, amount: 4200 }]);
+    expect(body.bankAccounts.map((a: { id: string }) => a.id)).toContain("b2502000-0000-0000-0000-0000000000e2");
   });
 
   it("payments only on COGS bills: nothing to import here — listed for Reconcile in the preview", async () => {
     st.targets = new Map([["B1", { type: "vendor_bill" as const }]]);
     expect((await POST(req({ action: "import", fy: "2025-26", kind: "vendorpayments", part: 0 }))).status).toBe(409);
     const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
-    expect(body.payments.cogs).toEqual([expect.objectContaining({ bill: "VB-1", amount: 1180 })]);
+    expect(body.payments.toReconcile).toEqual([expect.objectContaining({ why: "cogs", bill: "VB-1", amount: 1180 })]);
     expect(st.rpc).toEqual([]);
   });
 

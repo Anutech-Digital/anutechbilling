@@ -59,9 +59,9 @@ describe("zohoPurchaseFacts — paise → whole rupees, GST heads", () => {
     expect(f).toMatchObject({ rcm: true, rcmTax: 180, igst: 0, cgst: 0, sgst: 0, tax: 0, total: 1000 });
   });
 
-  it("TDS by section (194J) from Zoho's TDS name; amount in rupees", () => {
+  it("TDS by section from Zoho's TDS name (professional fees → 194JB); amount in rupees", () => {
     const f = zohoPurchaseFacts(detail({ tdsPaise: 100_00, raw: { tds_tax_name: "Professional Fees [10%] - 194 J" } }));
-    expect(f).toMatchObject({ tdsAmount: 100, tdsSection: "194J" });
+    expect(f).toMatchObject({ tdsAmount: 100, tdsSection: "194JB" });
   });
 
   it("TDS without a readable section is a problem (never guessed)", () => {
@@ -99,10 +99,23 @@ describe("zohoPurchaseFacts — paise → whole rupees, GST heads", () => {
 });
 
 describe("tdsSectionOf", () => {
+  /* The app's own section codes (lib/accounting/tds-rates.ts): 194J split three ways (R-2338),
+     rent 194-I(a)/(b) is the app's one "194I" (194IA is a different section — property purchase). */
   it.each([
-    ["194J", "194J"], ["Section 194C", "194C"], ["194 J - Professional", "194J"], ["Rent - 194-I(b)", "194IB"],
+    ["194J", "194J"], ["Section 194C", "194C"], ["194 J - Professional", "194JB"], ["Professional Fees [10%] - 194J", "194JB"],
+    ["Technical Services - 194J", "194JA"], ["194J(a)", "194JA"], ["194J(b)", "194JB"], ["Royalty 194J", "194JR"],
+    ["Rent - 194-I(b)", "194I"], ["Rent on plant - 194-I(a)", "194I"], ["194I", "194I"], ["TDS on Property - 194-IA", "194IA"], ["Rent by individual - 194-IB", "194IB"],
     ["194Q", "194Q"], ["Commission 194H", "194H"], ["", null], ["10%", null],
   ])("%s → %s", (input, out) => expect(tdsSectionOf(input)).toBe(out));
+});
+
+describe("TDS section — read from the section TEXT, never an id", () => {
+  it("a numeric id in tds_section (with 19x digits inside) is not a section", () => {
+    const f = zohoPurchaseFacts(detail({ tdsPaise: 100_00, raw: { tds_section: "460000000194123", tds_tax_name: "Contractor - 194C" } }));
+    expect(f.tdsSection).toBe("194C");
+    const g = zohoPurchaseFacts(detail({ tdsPaise: 100_00, raw: { tds_section: "460000000194123" } }));
+    expect(g.tdsSection).toBeNull();
+  });
 });
 
 describe("zohoVendorPaymentFacts", () => {

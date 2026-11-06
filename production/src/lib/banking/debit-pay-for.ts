@@ -278,10 +278,13 @@ export function planTds(
   /* R-2320: a COGS bill takes a services section (not 194Q) like an expense bill — while nothing
      is paid on it yet (its whole TDS goes with the first payment). */
   const servicesCogs = (i: VendorOpenItem) =>
-    i.source === "vendor_bill" && sec !== "194Q" && i.tds_base > 0 && i.amount_due === i.total;
+    i.source === "vendor_bill" && !(i.tds_amount > 0) && sec !== "194Q" && i.tds_base > 0 && i.amount_due === i.total;
+  /* R-1915: an expense bill's own TDS; R-2502c: a COGS bill imported from Zoho carries Zoho's TDS
+     (pre-filled on its first payment) — both exactly as booked, never worked out again. */
+  const ownTds = (i: VendorOpenItem) => (i.source === "expense" || i.source === "vendor_bill") && i.tds_amount > 0;
   /* R-1915: a part-paid expense bill (tds_base 0) takes no TDS — it went with its first part. */
   const free = items.filter((i) => (i.source === "expense" && !(i.tds_amount > 0) && i.tds_base > 0) || servicesCogs(i));
-  const fixedBase = items.filter((i) => i.source === "expense" && i.tds_amount > 0).reduce((s, i) => s + i.tds_base, 0);
+  const fixedBase = items.filter(ownTds).reduce((s, i) => s + i.tds_base, 0);
   const base = free.reduce((s, i) => s + i.tds_base, 0);
   const d = !opts.off && sec && base > 0
     ? tdsDecision({ section: sec, base, fyBaseSoFar: Math.max(0, opts.fyOthers?.base ?? 0) + fixedBase, fyBaseWithoutTds: Math.max(0, opts.fyOthers?.baseWithoutTds ?? 0), pan: opts.pan })
@@ -296,7 +299,7 @@ export function planTds(
   const lastFree = free.length ? itemKey(free[free.length - 1]) : "";
   return items.map((i) => {
     const key = itemKey(i);
-    if (i.source === "expense" && i.tds_amount > 0) return { key, tds: i.tds_amount, section: i.tds_section, reason: "TDS already on this bill", fixed: true };
+    if (ownTds(i)) return { key, tds: i.tds_amount, section: i.tds_section, reason: i.source === "vendor_bill" ? "TDS Zoho deducted on this bill" : "TDS already on this bill", fixed: true };
     if (!freeKeys.has(key)) return (i.source === "vendor_bill" ? goods(i) : null) ?? { key, tds: 0, section: null, reason: null, fixed: false };
     if (!d) return { key, tds: 0, section: null, reason: null, fixed: false };
     const share = key === lastFree ? total - given : Math.round((total * i.tds_base) / base);
