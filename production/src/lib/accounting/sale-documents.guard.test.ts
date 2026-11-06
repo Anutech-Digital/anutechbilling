@@ -82,6 +82,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   set_books_start_date: "R-2496: only the earliest dated invoice (not opening invoices) — refuses a books start after a money row; not GST or revenue",
   import_zoho_fy_sales: "R-2499: writes Zoho's FY sales as tax invoices; reads invoices only to skip a Zoho id / number already in the books — not GST or revenue",
   remove_zoho_fy_sales_import: "R-2499: the invoices of one import batch (to check they are untouched, then delete) — not GST or revenue",
+  remove_zoho_fy_receipts_import: "R-2501 re-review: locks the invoices its receipts paid (so a credit note issued at the same moment is seen) — not GST or revenue",
   import_zoho_fy_receipts: "R-2501: finds the imported Zoho sale (or opening invoice) a Zoho payment was applied to and what is still due on it, to record the receipt — not GST or revenue",
   set_invoice_external_number: "R-2360: stores the Zoho invoice number on one invoice (duplicate check) — not GST or revenue",
   invoice_external_number_holder: "R-2360: which invoice already is a Zoho number (duplicate check) — not GST or revenue",
