@@ -95,7 +95,8 @@ export function plannedInstalments(sub: ScheduleFields): PlannedInstalment[] {
  * top of that would be a second tax invoice for the same supply.
  */
 export interface InstalmentSkip {
-  code:   "not_split_billed" | "term_already_invoiced" | "no_schedule" | "billed_elsewhere";
+  /** R-2543: "short_term" — split-billed with a renewal date short of one whole term (shortSplitTerm). */
+  code:   "not_split_billed" | "term_already_invoiced" | "no_schedule" | "billed_elsewhere" | "short_term";
   reason: string;
 }
 

@@ -71,21 +71,50 @@ export function subscriptionSchedule(sub: ScheduleFields, termAmountOverride?: n
   const start = currentTermStart(sub);
   if (!start || termAmount <= 0) return [];
 
-  /* R-2533: a SHORT first term — the renewal date is less than one term after start_date, so
-     counting back from it lands before the sale (Suresh: 19 Jun 2026 → 19 Dec 2026 on a 12-month
-     half-yearly term counted back to 20 Dec 2025, and part #1 was invoiced for Dec 2025).
-     - Split-billed: no parts at all. Laying them from the counted-back date bills months before
-       the sale; laying a whole term from start_date runs past the renewal date into the next
-       term. The database refuses this shape since R-2533 (trg_subscriptions_zzz_split_term_covers),
-       so only an older row has it, and its parts wait until its renewal date is corrected.
-     - Yearly (co-termed: sold 10 Jan, renewing 31 Dec): one invoice from the quote, nothing laid
-       from this schedule — it keeps the counted-back term it always showed. */
-  if (counted && counted < start) {
-    if (cycle !== "yearly" && CYCLE_MONTHS[cycle] < termMonths) return [];
+  /* R-2533 / R-2543: a SHORT split-billed term — the renewal date is less than one whole term after
+     start_date (Suresh: 19 Jun 2026 → 19 Dec 2026 on a 12-month half-yearly term counted back to
+     20 Dec 2025, and part #1 was invoiced for Dec 2025). No parts at all: laying them from the
+     counted-back date bills months before the sale, and laying a whole term from start_date runs
+     past the renewal date into the next term. "Short" is EXACTLY the database's rule (shortSplitTerm
+     = trg_subscriptions_zzz_split_term_covers), so a row the database accepts always gets its parts;
+     syncSubscriptionInstalments reports a short row (skip "short_term"), it is never silent. */
+  if (shortSplitTerm(sub)) return [];
+
+  /* Counted back to before start_date but NOT short:
+     - Split-billed: only addMonths' day cap does this (R-2543: 31 Mar + 6 months = 30 Sep, back
+       6 months = 30 Mar) — the first term starts on start_date (currentTermStart's clamp).
+     - Yearly (co-termed: sold 10 Jan, renewing 31 Dec) or one invoice a term: one invoice from the
+       quote, nothing laid from this schedule — it keeps the counted-back term it always showed. */
+  if (counted && counted < start && !isSplitTerm(cycle, termMonths)) {
     return buildBillingSchedule({ startDate: counted, termMonths, cycle, termAmount });
   }
 
   return buildBillingSchedule({ startDate: start, termMonths, cycle, termAmount });
+}
+
+/** More than one part per term — the database's split-billed rule (cycle months < term months). */
+function isSplitTerm(cycle: string, termMonths: number): boolean {
+  const months = (CYCLE_MONTHS as Record<string, number | undefined>)[cycle];
+  return cycle !== "yearly" && months != null && months < termMonths;
+}
+
+/**
+ * R-2543 (rv-train3, 6 Nov 2026): is this split-billed row's renewal date SHORT of one whole term?
+ * Exactly trg_subscriptions_zzz_split_term_covers' rule: renewal < addMonths(start, term) − 1 day
+ * (the inclusive last day of the first term; the anniversary is a day later and passes too).
+ * Returns the earliest renewal date the database accepts, or null when the row is not short (or not
+ * split-billed, or has no dates). R-2533 used "counted back to before start_date", which addMonths'
+ * day cap made true for sales started on the 29th–31st (31 Mar + 6 months renewing 30 Sep → no
+ * parts at all, silently).
+ */
+export function shortSplitTerm(
+  sub: Pick<ScheduleFields, "billing_cycle" | "term_months" | "start_date" | "renewal_date">,
+): { minRenewal: string } | null {
+  if (!sub.start_date || !sub.renewal_date) return null;
+  const termMonths = Math.max(1, sub.term_months ?? 12);
+  if (!isSplitTerm(sub.billing_cycle ?? "yearly", termMonths)) return null;
+  const minRenewal = addDaysISO(addMonths(sub.start_date.slice(0, 10), termMonths), -1);
+  return sub.renewal_date.slice(0, 10) < minRenewal ? { minRenewal } : null;
 }
 
 /**
