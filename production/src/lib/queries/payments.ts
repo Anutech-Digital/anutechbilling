@@ -7,6 +7,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { toastError, describeError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
@@ -759,7 +760,8 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
     queryFn: async (): Promise<MultiPayInvoiceRow[]> => {
       const supabase = createClient();
       const invoices = await fetchAllRows<MultiPayInvoiceRow>((from, to) =>
-        supabase
+        /* R-2542: zoho_invoice_id (R-2499) is not in the generated types yet — this one read is untyped. */
+        (supabase as unknown as SupabaseClient)
           .from("invoices")
           .select("id, invoice_date, due_date, amount, net_payable, paid_amount, status, tax_rate, quote_id, document_kind, zoho_invoice_id")
           .eq("customer_id", customerId!)
