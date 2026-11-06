@@ -146,8 +146,8 @@ begin
 end $$;
 
 reset role;
--- a teammate who has never signed in (the R-712 owner fix of a typo) and one whose profile email
--- drifted from the login's own address (re-align) are still the owner's to fix
+-- re-review: a teammate who has never signed in is NOT re-pointable any more (the lever); a profile
+-- email that drifted from the login's own address can still be re-aligned by the owner
 select set_config('request.jwt.claims', '', true);   -- a server path (no signed-in user) for the fixture
 insert into auth.users (id, email) values ('c2478000-0000-0000-0000-0000000000b4', 'r2477r-new-b@example.test');
 insert into public.users (id, tenant_id, email, full_name, role, is_active) values
@@ -158,13 +158,15 @@ do $$
 declare v_n int;
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
-  update public.users set email = 'r2477r-new-b-fixed@example.test' where id = 'c2478000-0000-0000-0000-0000000000b4';
-  get diagnostics v_n = row_count;
-  if v_n <> 1 then raise exception 'FAIL R1: owner cannot fix the address of a teammate who never signed in'; end if;
+  begin
+    update public.users set email = 'r2477r-new-b-fixed@example.test' where id = 'c2478000-0000-0000-0000-0000000000b4';
+    raise exception 'FAIL R1: owner re-pointed the email of a teammate who never signed in';
+  exception when insufficient_privilege then null;
+  end;
   update public.users set email = 'r2477r-sales-b@example.test' where id = 'c2478000-0000-0000-0000-0000000000b2';
   get diagnostics v_n = row_count;
   if v_n <> 1 then raise exception 'FAIL R1: owner cannot re-align a profile email to the login''s own address'; end if;
-  raise notice 'PASS R1b: never-signed-in fix and re-align to the sign-in address still work';
+  raise notice 'PASS R1b: never-signed-in teammate not re-pointable; re-align to the sign-in address still works';
 end $$;
 
 reset role;
@@ -344,16 +346,21 @@ insert into auth.users (id, email) values
   ('c2478000-0000-0000-0000-0000000000e2', 'r2477r-tina@example.test');            -- never signed in
 insert into public.users (id, tenant_id, email, full_name, role, is_active) values
   ('c2478000-0000-0000-0000-0000000000e2', 'c2478000-0000-0000-0000-0000000000f5', 'r2477r-tina@example.test', 'R2477R Tina', 'sales', true);
+-- a profile email that ALREADY differs from her sign-in address (older data, re-pointed before this
+-- guard existed) — a server path, as superuser
+update public.users set email = 'tina-owned-by-e@r2477r-evil.test' where id = 'c2478000-0000-0000-0000-0000000000e2';
 set local role authenticated;
 
 do $$
 declare v text; v_msg text; v_inv uuid; v_n int;
 begin
-  -- E's owner re-points Tina's profile email (allowed: she never signed in, no other company yet)
+  -- E's owner can no longer re-point Tina's profile email (the root fix) …
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000e1', 'role', 'authenticated')::text, true);
-  update public.users set email = 'tina-owned-by-e@r2477r-evil.test' where id = 'c2478000-0000-0000-0000-0000000000e2';
-  get diagnostics v_n = row_count;
-  if v_n <> 1 then raise exception 'FAIL R8: setup — the never-signed-in typo fix is refused'; end if;
+  begin
+    update public.users set email = 'tina-again@r2477r-evil.test' where id = 'c2478000-0000-0000-0000-0000000000e2';
+    raise exception 'FAIL R8: E''s owner re-pointed a never-signed-in teammate''s email';
+  exception when insufficient_privilege then null;
+  end;
 
   -- B invites Tina's real address
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);

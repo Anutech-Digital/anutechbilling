@@ -359,8 +359,10 @@ login before it accepted:
 
 - **Temporary password** (`/api/team/members/:id/temp-password`): also refused while the target has
   an OPEN, unexpired invite from another company (same rule as the users.email guard). Route test.
-- **Re-pointed profile email.** An owner may still set `users.email` of a teammate who never signed
-  in (R-712 typo fix). Two closes:
+- **Re-pointed profile email — root fix.** `guard_privileged_user_columns` no longer lets an owner
+  set `users.email` of a teammate who never signed in (that R-712 typo-fix exception was the lever).
+  Anyone but the login itself may set it only BACK to the login's own sign-in address; a mistyped
+  invite is withdrawn and re-sent. Defence for profile emails that already differ (older data):
   - `accept_company_invite` refuses while the login's profile email is not its sign-in address
     (`users.email` ≠ `auth.users.email`) — with a next step (support fixes the profile email).
   - Auth.js `linkOAuthUser` step 2 (profile by email) no longer links a Google sign-in to a profile
@@ -370,3 +372,6 @@ login before it accepted:
     with an old login address still sign in. The teammate's own address still signs them in (step 3).
 - `invite_existing_login` answers `plain` for both "no login" and "works in no company"; the route
   treats `plain` (and the older `no_company` / `not_found`) as the plain invite.
+- Residual (card `review.left`): an owner who set a teammate's temporary password BEFORE any invite
+  existed still knows a password for that login; the robust close is proof of the mailbox (accept by
+  an emailed link / token, not the in-app banner alone) — follow-up.

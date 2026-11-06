@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.accept_company_invite(uuid)') and prosrc like '%R-2477 re-review%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.invite_existing_login(text,public.user_role)') and prosrc like '%R-2477 re-review%')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.guard_privileged_user_columns()') and prosrc like '%R-2477 re-review%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.accept_company_invite(uuid)') and prosrc like '%R-2477 re-review%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.invite_existing_login(text,public.user_role)') and prosrc like '%R-2477 re-review%')
 -- deploy-key: r2477rereview
 -- 20261106034600_r2477_rereview_accept_profile_email.sql
 --
@@ -7,14 +7,161 @@
 -- login with an open invite from another company; Auth.js linkOAuthUser no longer links a Google
 -- sign-in through a profile email that differs from a never-signed-in login's own address.
 --
+--   0. guard_privileged_user_columns: the never-signed-in exception is removed — anyone but the
+--      login itself may set users.email only back to the login's own sign-in address (the root
+--      cause of the re-pointed-email lever; a mistyped invite is withdrawn and re-sent instead).
 --   1. accept_company_invite refuses when the login's profile email (users.email) is no longer its
 --      sign-in address (auth.users.email) — an owner may set it for a never-signed-in teammate.
 --   2. invite_existing_login answers 'plain' for both "no login" and "works in no company" (was
 --      not_found / no_company), so it does not say whether an address has a login.
 --
--- Bodies redefined from their LATEST versions: 20261105192420_r2477_review_consent_email_guard.sql.
+-- Bodies redefined from their LATEST versions: 20261105192420_r2477_review_consent_email_guard.sql
+-- (guard_privileged_user_columns, invite_existing_login, accept_company_invite).
 
 begin;
+
+create or replace function public.guard_privileged_user_columns()
+returns trigger
+language plpgsql
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_uid       uuid := auth.uid();
+  v_is_owner  boolean;
+  v_emp_email text;
+begin
+  /* R-712: nothing guarded changed → the common case (names, reminder prefs) pays nothing. */
+  if new.role           is not distinct from old.role
+     and new.manager_id     is not distinct from old.manager_id
+     and new.can_view_deals is not distinct from old.can_view_deals
+     and new.gets_new_leads is not distinct from old.gets_new_leads
+     and new.tenant_id      is not distinct from old.tenant_id
+     and new.is_active      is not distinct from old.is_active
+     and new.access_ends_on is not distinct from old.access_ends_on
+     and new.employee_id    is not distinct from old.employee_id
+     and new.email          is not distinct from old.email then
+    return new;
+  end if;
+
+  /* Server paths (OAuth callback re-link, claim-merge, reset-data, scripts) carry no user. */
+  if v_uid is null or coalesce(auth.role(), '') = 'service_role' then
+    return new;
+  end if;
+
+  /* R-2471: switching a selected company. R-2477: for the ROW's login (its own switch, or the
+     definer move when an owner removes them / claims them back) — allowed only onto an ACTIVE,
+     not-ended, not-expired membership of THAT login, with exactly that membership's values, so a
+     selection change can never invent a company or a role. A direct PATCH cannot reach this for
+     another login: users_tenant_update's WITH CHECK keeps the row in the caller's company. */
+  if new.tenant_id is distinct from old.tenant_id
+     and new.email is not distinct from old.email
+     and new.is_active
+     and exists (
+       select 1 from public.tenant_memberships m
+        where m.user_id = old.id and m.tenant_id = new.tenant_id
+          and m.is_active and m.ended_at is null
+          and (m.access_ends_on is null or m.access_ends_on >= public.ist_today())
+          and m.role = new.role
+          and m.access_ends_on is not distinct from new.access_ends_on
+          and m.employee_id    is not distinct from new.employee_id
+          and m.manager_id     is not distinct from new.manager_id
+          and m.can_view_deals = new.can_view_deals
+          and m.gets_new_leads = new.gets_new_leads) then
+    return new;
+  end if;
+
+  /* Moving a login between workspaces: never your own row. The one legitimate signed-in path
+     is merge_stranded_user_into_tenant (Team -> Claim a colleague, SECURITY DEFINER, its own
+     empty-workspace checks): an ACTIVE owner of the DESTINATION pulling someone else in. RLS
+     hides other workspaces' rows from a plain PATCH, so only definer code reaches this branch. */
+  if new.tenant_id is distinct from old.tenant_id then
+    if old.id = v_uid or not exists (
+         select 1 from public.users u
+          where u.id = v_uid and u.role = 'owner' and u.is_active and u.tenant_id = new.tenant_id) then
+      raise exception 'A login cannot be moved to another workspace from the app.'
+        using errcode = '42501';
+    end if;
+  end if;
+
+  if new.employee_id is distinct from old.employee_id and new.employee_id is not null then
+    if not exists (select 1 from public.employees e
+                    where e.id = new.employee_id and e.tenant_id = new.tenant_id) then
+      raise exception 'Employee not in your workspace' using errcode = '42501';
+    end if;
+    if exists (select 1 from public.users u
+                where u.employee_id = new.employee_id and u.id <> old.id) then
+      raise exception 'This employee record is already linked to another login.' using errcode = '42501';
+    end if;
+  end if;
+
+  /* R-2477 review (BLOCK): users.email is the LOGIN's identity — Auth.js maps a verified Google
+     sign-in to the profile with that email (server/auth/accounts.ts linkOAuthUser). Pointed at an
+     address someone else controls, it hands them the login — and with it every company the login
+     works in now or LATER (security review: the change can be made while the login is still in one
+     company and used after it joins another). So anyone but the login itself may change it only
+       (a) back to the login's own sign-in address (auth.users.email) — re-aligning, never
+           redirecting; or
+       (b) for a login that has never signed in and has no other company and no open invite from
+           one (the R-712 owner fix of a mistyped teammate address keeps working).
+     Server paths with no user pass above. Same spirit as the temporary-password route. */
+  /* R-2477 re-review: the never-signed-in exception is gone — re-pointing a never-signed-in
+     teammate's address was the last lever (sign in as them via linkOAuthUser, accept another
+     company's invite). Anyone but the login itself may only set it BACK to the login's own sign-in
+     address. A mistyped invite is fixed by withdrawing it and inviting the right address. */
+  if new.email is distinct from old.email
+     and old.id is distinct from v_uid
+     and lower(coalesce(new.email, '')) is distinct from
+         (select lower(au.email) from auth.users au where au.id = old.id) then
+    raise exception 'This email is their sign-in identity, so only they can change their email, never a company owner. Next step: if the address was mistyped, remove them and invite the right address; otherwise ask them to contact ResellerOS support from their own login.'
+      using errcode = '42501';
+  end if;
+
+  if new.email is distinct from old.email then
+    if new.email is null
+       or exists (select 1 from public.users u
+                   where lower(u.email) = lower(new.email) and u.id <> old.id)
+       or exists (select 1 from public.team_invites i
+                   where lower(i.email) = lower(new.email) and i.accepted_at is null
+                     and i.tenant_id <> new.tenant_id) then
+      raise exception 'This email already belongs to another login or a pending invite.' using errcode = '42501';
+    end if;
+  end if;
+
+  select exists (
+    select 1 from public.users u
+     where u.id = v_uid and u.role = 'owner' and u.is_active and u.tenant_id = new.tenant_id
+  ) into v_is_owner;
+
+  if v_is_owner then
+    return new;
+  end if;
+
+  /* The one self-service change: link MY login to MY employee record (set_my_employee rules). */
+  if old.id = v_uid
+     and new.employee_id is distinct from old.employee_id and new.employee_id is not null
+     and new.role           is not distinct from old.role
+     and new.manager_id     is not distinct from old.manager_id
+     and new.can_view_deals is not distinct from old.can_view_deals
+     and new.gets_new_leads is not distinct from old.gets_new_leads
+     and new.is_active      is not distinct from old.is_active
+     and new.access_ends_on is not distinct from old.access_ends_on
+     and new.email          is not distinct from old.email then
+    select e.email into v_emp_email from public.employees e where e.id = new.employee_id;
+    if v_emp_email is not null and lower(v_emp_email) <> lower(coalesce(old.email, '')) then
+      raise exception 'Your login email does not match this employee record. Ask an owner to link you.' using errcode = '42501';
+    end if;
+    return new;
+  end if;
+
+  raise exception 'Only an owner can change a teammate''s role, reporting manager, deals access, new-lead assignment, active status, login end date, email or employee link. Ask an owner to do it on the Team page (/team).'
+    using errcode = '42501';
+end;
+$$;
+
+comment on function public.guard_privileged_user_columns() is
+  'R-712 / R-2477: signed-in callers can never change users.tenant_id (one exception, R-2471/R-2477: a selection change of the row''s login onto its own active membership with exactly its values); role / manager_id / can_view_deals / gets_new_leads / is_active / access_ends_on (R-1896) / email / employee_id need an ACTIVE owner of the SAME tenant (one exception: linking your own login to your own employee record, set_my_employee rules). employee_id must be in-tenant and unlinked; email may not collide with another login or another tenant''s pending invite, and is changed by anyone but the login itself only back to the login''s own sign-in address (R-2477 re-review). No auth.uid() / service_role passes through.';
+
 
 create or replace function public.invite_existing_login(p_email text, p_role public.user_role)
 returns text
