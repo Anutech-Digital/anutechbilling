@@ -213,6 +213,26 @@ export const META_LEAD_ACTIONS = new Set([
   "contact", "submit_application", "schedule",
 ]);
 
+/**
+ * R-2520: Meta lists the SAME lead under several overlapping action types ("lead" is the total;
+ * "onsite_conversion.lead_grouped" / "leadgen_grouped" / the pixel lead are parts of it), and one chat
+ * shows up as both "conversation started" and "first reply". Adding them all counted one person 2–3
+ * times. A result is counted once: leads from the first type Meta reports in this order, chats only as
+ * "conversation started", plus contact / application / booking.
+ */
+const META_LEAD_TYPES_IN_ORDER = ["lead", "onsite_conversion.lead_grouped", "leadgen_grouped", "offsite_conversion.fb_pixel_lead"] as const;
+const META_CHAT_TYPE = "onsite_conversion.messaging_conversation_started_7d";
+const META_OTHER_RESULT_TYPES = ["contact", "submit_application", "schedule"] as const;
+
+export function metaResultCount(actions: MetaInsightRow["actions"]): number {
+  const by = new Map<string, number>();
+  for (const a of actions ?? []) if (a.action_type) by.set(a.action_type, (by.get(a.action_type) ?? 0) + Number(a.value ?? 0));
+  const leadType = META_LEAD_TYPES_IN_ORDER.find((t) => by.has(t));
+  const leads = leadType ? by.get(leadType) ?? 0 : 0;
+  const others = META_OTHER_RESULT_TYPES.reduce((s, t) => s + (by.get(t) ?? 0), 0);
+  return leads + (by.get(META_CHAT_TYPE) ?? 0) + others;
+}
+
 export interface MetaInsightRow {
   campaign_id?: string; campaign_name?: string; date_start?: string; spend?: string | number;
   impressions?: string | number; clicks?: string | number;
@@ -223,8 +243,8 @@ export interface MetaInsightRow {
 export function metaRowsFromInsights(data: readonly MetaInsightRow[], accountId: string): AdSpendRow[] {
   return data.flatMap((r) => {
     if (!r.campaign_id || !r.date_start) return [];
-    const conv = (r.actions ?? []).filter((a) => a.action_type && META_LEAD_ACTIONS.has(a.action_type)).reduce((s, a) => s + Number(a.value ?? 0), 0);
-    const val = (r.action_values ?? []).filter((a) => a.action_type && META_LEAD_ACTIONS.has(a.action_type)).reduce((s, a) => s + Number(a.value ?? 0), 0);
+    const conv = metaResultCount(r.actions);
+    const val = metaResultCount(r.action_values);
     return [{
       platform: "meta-ads" as const, account_id: accountId, day: r.date_start, campaign_id: r.campaign_id, campaign_name: r.campaign_name ?? r.campaign_id,
       spend: r2(Number(r.spend ?? 0)), impressions: Math.round(Number(r.impressions ?? 0)), clicks: Math.round(Number(r.clicks ?? 0)),

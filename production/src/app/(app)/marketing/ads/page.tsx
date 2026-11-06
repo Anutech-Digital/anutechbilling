@@ -283,8 +283,8 @@ export default function AdPlatformsPage() {
               <Kpi label="Impressions" value={num(totals.impressions)} change={pct(totals.impressions, prev.impressions)} compare={isPreset} />
               <Kpi label="Clicks" value={num(totals.clicks)} change={pct(totals.clicks, prev.clicks)} compare={isPreset} hint={totals.ctr !== null ? `CTR ${totals.ctr}%` : undefined} />
               <Kpi label="Cost / click" value={totals.cpc !== null ? rupee(totals.cpc) : "—"} change={totals.cpc !== null && prev.cpc !== null ? pct(totals.cpc, prev.cpc) : null} compare={isPreset} invert />
-              <Kpi label="Conversions (platform)" value={num(totals.conversions)} change={pct(totals.conversions, prev.conversions)} compare={isPreset} />
-              <Kpi label="Cost / conversion" value={totals.cpa !== null ? rupee(totals.cpa) : "—"} change={totals.cpa !== null && prev.cpa !== null ? pct(totals.cpa, prev.cpa) : null} compare={isPreset} invert />
+              <Kpi label="Results" hint="leads + chats" value={num(totals.conversions)} change={pct(totals.conversions, prev.conversions)} compare={isPreset} />
+              <Kpi label="Cost / result" value={totals.cpa !== null ? rupee(totals.cpa) : "—"} change={totals.cpa !== null && prev.cpa !== null ? pct(totals.cpa, prev.cpa) : null} compare={isPreset} invert />
             </div>
             {inRange.length > 0 && (
               <div className="h-64 mt-4 -ml-2">
@@ -293,7 +293,7 @@ export default function AdPlatformsPage() {
                     <CartesianGrid stroke="hsl(var(--hairline))" vertical={false} />
                     <XAxis dataKey="day" tick={{ fontSize: 11, fill: "hsl(var(--ink-3))" }} stroke="hsl(var(--hairline))" tickFormatter={(d: string) => useMonthlySeries ? d.slice(0, 7) : d.slice(5)} />
                     <YAxis tick={{ fontSize: 11, fill: "hsl(var(--ink-3))" }} stroke="hsl(var(--hairline))" tickFormatter={(v: number) => rupee(v, { compact: true })} />
-                    <Tooltip formatter={(v: number, name: string) => [name === "Clicks" ? num(v) : rupee(v), name]} labelFormatter={(d) => formatDate(String(d))} contentStyle={{ fontSize: 12, borderRadius: 8, border: "1px solid hsl(var(--hairline))", background: "hsl(var(--paper))" }} />
+                    <Tooltip content={<SpendTooltip monthly={useMonthlySeries} />} />
                     <Legend wrapperStyle={{ fontSize: 11 }} />
                     <Bar dataKey="google" name="Google Ads" stackId="s" fill="hsl(var(--amber))" maxBarSize={28} />
                     <Bar dataKey="meta" name="Meta Ads" stackId="s" fill="hsl(var(--indigo))" radius={[4, 4, 0, 0]} maxBarSize={28} />
@@ -308,7 +308,7 @@ export default function AdPlatformsPage() {
           <Card className="p-0 overflow-hidden">
             <div className="p-4 pb-2">
               <p className="text-sm font-semibold text-ink">Campaigns · {isPreset ? `last ${range} days` : `${formatDate(from)} – ${formatDate(to)}`}</p>
-              <p className="text-xs text-ink-3">LinkedIn rows show Campaign Groups, the top campaign level. Leads match utm_campaign to the name. Conversions are the platform's number.</p>
+              <p className="text-xs text-ink-3">LinkedIn rows show Campaign Groups, the top campaign level. Leads match utm_campaign to the name. Results are the platform's own count (leads, chats, contacts).</p>
               {linkedinAccounts.length > 0 && <p className="text-xs text-ink-3 mt-1">To refresh older LinkedIn Campaign Groups, choose All time or Custom above and sync the LinkedIn account.</p>}
             </div>
             {campaigns.length === 0 ? (
@@ -318,7 +318,7 @@ export default function AdPlatformsPage() {
                 <table className="w-full text-sm">
                   <thead className="bg-paper-2 border-b border-hairline">
                     <tr className="text-left text-3xs uppercase tracking-wider text-ink-3 font-semibold">
-                      <th className="p-3">Campaign</th><th className="p-3 text-right">Spend</th><th className="p-3 text-right">Impr.</th><th className="p-3 text-right">Clicks</th><th className="p-3 text-right">CPC</th><th className="p-3 text-right">Conv.</th><th className="p-3 text-right">Leads (app)</th><th className="p-3 text-right">CPL</th><th className="p-3">Last active</th>
+                      <th className="p-3">Campaign</th><th className="p-3 text-right">Spend</th><th className="p-3 text-right">Impr.</th><th className="p-3 text-right">Clicks</th><th className="p-3 text-right">CPC</th><th className="p-3 text-right">Results</th><th className="p-3 text-right">Leads (app)</th><th className="p-3 text-right">CPL</th><th className="p-3">Last active</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -458,6 +458,22 @@ function monthlySeries(rows: readonly import("@/lib/marketing/ad-platforms").AdS
     byMonth.set(day, point);
   }
   return [...byMonth.values()].sort((a, b) => a.day.localeCompare(b.day));
+}
+
+/** R-2520: the bar shows spend; the tooltip also gives that day's clicks and results, so a bar can be read against the boxes above. */
+function SpendTooltip({ active, payload, label, monthly }: { active?: boolean; payload?: { name?: string; value?: number; payload?: { clicks: number; conversions: number } }[]; label?: string; monthly: boolean }) {
+  if (!active || !payload?.length) return null;
+  const point = payload[0]?.payload;
+  const spend = payload.reduce((s, p) => s + Number(p.value ?? 0), 0);
+  return (
+    <div className="rounded-lg border border-hairline bg-paper px-3 py-2 text-xs shadow-sm">
+      <p className="mb-1 font-semibold text-ink">{monthly ? String(label ?? "") : formatDate(String(label ?? ""))}</p>
+      {payload.filter((p) => Number(p.value ?? 0) > 0).map((p) => <p key={p.name} className="text-ink-2">{p.name}: {rupee(Number(p.value ?? 0))}</p>)}
+      <p className="text-ink">Spend: {rupee(spend)}</p>
+      <p className="text-ink-2">Clicks: {num(point?.clicks ?? 0)}</p>
+      <p className="text-ink-2">Results: {num(point?.conversions ?? 0)}</p>
+    </div>
+  );
 }
 
 function Kpi({ label, value, change, hint, invert, compare }: { label: string; value: string; change: number | null; hint?: string; invert?: boolean; compare?: boolean }) {

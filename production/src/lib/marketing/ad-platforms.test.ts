@@ -78,4 +78,15 @@ describe("ad platforms", () => {
     expect(rows[0].spend).toBe(250.5); expect(rows[0].conversions).toBe(3);
     expect(adCsvRows(rows, new Map([["acc", "Main Meta account"]]))[0]).toEqual(["2026-09-01", "Facebook / Instagram Ads", "Main Meta account", "Diwali", 250.5, 900, 20, 3, 0]);
   });
+
+  it("R-2520: one lead or one chat is one result, even when Meta lists it under several action types", async () => {
+    const { metaResultCount } = await import("./ad-platforms");
+    // Meta's "lead" is the total; lead_grouped + pixel lead are parts of it.
+    expect(metaResultCount([{ action_type: "lead", value: "5" }, { action_type: "onsite_conversion.lead_grouped", value: "5" }, { action_type: "leadgen_grouped", value: "5" }])).toBe(5);
+    // One chat: started + first reply → 1.
+    expect(metaResultCount([{ action_type: "onsite_conversion.messaging_conversation_started_7d", value: "3" }, { action_type: "onsite_conversion.messaging_first_reply", value: "3" }])).toBe(3);
+    // No "lead" total → the grouped number is used once.
+    expect(metaResultCount([{ action_type: "onsite_conversion.lead_grouped", value: "4" }, { action_type: "contact", value: "1" }, { action_type: "link_click", value: "40" }])).toBe(5);
+    expect(metaResultCount(undefined)).toBe(0);
+  });
 });
