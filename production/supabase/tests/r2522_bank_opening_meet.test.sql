@@ -191,7 +191,7 @@ begin
 end $$;
 
 -- ── G. A real 1 Apr line (no earlier value date) is after the 31 Mar closing ──────────────
-do $
+do $$
 declare j jsonb;
 begin
   j := public.import_bank_statement_with_opening('bbbbbbbb-0000-0000-0000-000000252208',
@@ -201,10 +201,10 @@ begin
   if (j -> 'opening' ->> 'difference')::bigint <> 0 then
     raise exception 'FAIL G: a genuine 1 Apr charge was counted before the 1 Apr opening (%)', j -> 'opening';
   end if;
-end $;
+end $$;
 
 -- ── H. A missing line on a long statement is not hidden as rounding (cap ₹25) ───────────────
-do $
+do $$
 declare ok boolean := false; msg text; rows jsonb;
 begin
   -- 60 × ₹10 out, then (₹1,500 out on 1 Sep — LEFT OUT of the file), then ₹10 out on 31 Mar
@@ -220,7 +220,7 @@ begin
     ok := msg like '%difference ₹+1,500%';
   end;
   if not ok then raise exception 'FAIL H: a ₹1,500 line missing from the file was taken as rounding (got %)', msg; end if;
-end $;
+end $$;
 
 select 'R-2522 bank opening meeting point: all checks passed' as result;
 
