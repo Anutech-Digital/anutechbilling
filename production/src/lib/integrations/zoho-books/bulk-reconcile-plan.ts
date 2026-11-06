@@ -43,8 +43,6 @@
 import {
   salePreview, type SaleCycle, type SaleLine,
 } from "@/lib/banking/credit-pay-for";
-import { zohoSalesPlan } from "@/lib/banking/zoho-sales-split";
-import type { SplitRest } from "@/lib/banking/credit-pay-for-multi";
 import {
   payerFromNarration, payerMatchesCustomer, type KnownPayer, type NarrationPayer, type PayerRelation,
 } from "@/lib/banking/customer-payer";
@@ -297,26 +295,6 @@ export interface BookSpec {
   /** R-2425: an export receipt — the sale is in this currency at the bank's rate (₹ = the bank
    *  credit; reconcile_bank_credit_new_sale_fx). Null = an INR sale. */
   fx: SaleFx | null;
-  /** R-2518: the Zoho payment paid SEVERAL Zoho invoices — one app sale per invoice (each with its
-   *  Zoho number), booked in ONE reconcile_bank_credit_split call. Absent = one sale (lines above). */
-  sales?: BookSale[];
-  /** R-2518: what the difference between the bank line and the sales is (zohoSalesPlan). */
-  salesRest?: SplitRest | null;
-}
-
-/** R-2518: one app sale for one Zoho invoice. */
-export interface BookSale {
-  externalNumber: string;
-  lines: SaleLine[];
-  /** The sale's total (GST included). */
-  total: number;
-  /** What the bank line puts on it (zohoSalesPlan). */
-  amount: number;
-  createSubscription: boolean;
-  subStart: string | null;
-  subRenewal: string | null;
-  billingCycle: "monthly" | null;
-  dateFixes: DateFix[];
 }
 
 /** R-2425: the foreign side of an export sale booked from an inward remittance. R-2427: billed =
@@ -990,47 +968,6 @@ export function planRow(
     saleProblems.push(`A monthly sale in ${fx.currency} is billed in parts — reconcile this line by hand.`);
   }
 
-  /* R-2518: one Zoho payment applied to SEVERAL Zoho invoices (all read) → one app sale per Zoho
-     invoice, each with its own lines, GST and Zoho number — booked in ONE split call (never merged). */
-  let sales: BookSale[] | null = null;
-  let salesRest: SplitRest | null = null;
-  const invNos = new Set(match.invoices.map((i) => i.number.trim().toUpperCase()).filter(Boolean));
-  if (kind === "new_sale" && !noBook && !fx && invNos.size > 1 && match.moreInvoices.length === 0 && lines.length) {
-    if (tds > 0) {
-      pathProblems.push(`Zoho records TDS ${rupees(tds)} on a payment for ${invoiceNumbers.length} invoices — book it in the line's Reconcile (one sale per Zoho invoice), then record the TDS on the invoice.`);
-      noBook = true;
-    } else {
-      const order: string[] = [];
-      for (const pl of lines) if (!order.includes(pl.invoiceNumber.trim().toUpperCase())) order.push(pl.invoiceNumber.trim().toUpperCase());
-      sales = order.map((no) => {
-        const idx = lines.map((pl, i) => (pl.invoiceNumber.trim().toUpperCase() === no ? i : -1)).filter((i) => i >= 0);
-        const gl = idx.map((i) => bookLines[i]);
-        const gNew = idx.map((i) => lines[i]).filter((pl) => pl.action === "new_sub");
-        const sub = createSubscription && gNew.length > 0;
-        const gDated = gNew.filter((pl) => pl.start && pl.renewal && pl.renewal > pl.start);
-        const gFirst = gDated[0] ?? null;
-        return {
-          externalNumber: lines[idx[0]].invoiceNumber.trim(),
-          lines: gl,
-          total: salePreview(gl, gstRate).total,
-          amount: 0,
-          createSubscription: sub,
-          subStart: sub && gFirst ? gFirst.start : null,
-          subRenewal: sub && gFirst ? gFirst.renewal : null,
-          billingCycle: gl.some((l) => l.cycle === "monthly") && !gl.some((l) => l.cycle === "annual_yearly") ? "monthly" as const : null,
-          dateFixes: sub ? gDated.slice(1).filter((l) => l.start !== gFirst!.start || l.renewal !== gFirst!.renewal)
-            .map((l) => ({ name: l.name, qty: l.qty, domain: l.domain, start: l.start!, renewal: l.renewal! })) : [],
-        };
-      });
-      const sp = zohoSalesPlan(sales.map((s) => s.total), line.credit);
-      if (sp.problem) saleProblems.push(sp.problem);
-      sales = sales.map((s, k) => ({ ...s, amount: sp.amounts[k] }));
-      salesRest = sp.rest;
-      notes.push(`One app invoice per Zoho invoice: ${sales.map((s) => `${s.externalNumber} ${rupees(s.total)}`).join(", ")} — each keeps its Zoho number.`);
-      if (sp.shortOnLast > 0) notes.push(`${rupees(sp.shortOnLast)} stays due on ${sales[sales.length - 1].externalNumber} (the money is short of the invoices).`);
-    }
-  }
-
   const problems = kind === "new_sale"
     ? [...custProblems, ...zohoProblems, ...saleProblems, ...pathProblems, ...doubleProblems, ...payerProblems]
     : kind === "pay_item"
@@ -1048,13 +985,12 @@ export function planRow(
     subStart: sale && createSubscription && first ? first.start : null,
     subRenewal: sale && createSubscription && first ? first.renewal : null,
     billingCycle: sale && bookLines.some((l) => l.cycle === "monthly") && !bookLines.some((l) => l.cycle === "annual_yearly") ? "monthly" : null,
-    externalNumber: sale && !sales ? externalNumber : null,
+    externalNumber: sale ? externalNumber : null,
     tdsAmount: tds,
     tdsRatePct: tds > 0 ? rate : null,
     tdsSection: section,
-    dateFixes: sale && createSubscription && !sales ? dateFixes : [],
+    dateFixes: sale && createSubscription ? dateFixes : [],
     fx: sale ? fx : null,
-    ...(sale && sales ? { sales, salesRest } : {}),
   };
 
   return {

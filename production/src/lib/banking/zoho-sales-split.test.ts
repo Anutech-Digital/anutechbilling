@@ -8,7 +8,8 @@ import { describe, expect, it, vi } from "vitest";
 import { zohoInvoiceGroups, zohoSalesPlan } from "./zoho-sales-split";
 import { splitArgs } from "./credit-pay-for-multi";
 import type { SaleLine } from "./credit-pay-for";
-import { planAll, type BulkLine, type PlanContext } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
+import type { BulkLine, PlanContext } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
+import { planAllWithZohoSales as planAll, type ZohoSalesSpec } from "@/lib/integrations/zoho-books/bulk-zoho-sales";
 import type { ZohoMatchLine, ZohoPaymentMatch } from "@/lib/integrations/zoho-books/payment-match";
 import { bookRows, type BookDeps } from "@/components/features/banking/zoho-bulk-book";
 
@@ -93,10 +94,10 @@ describe("R-2518 bulk plan: a Zoho payment for two invoices → two sales", () =
     expect(row.problems).toEqual([]);
     expect(row.book?.kind).toBe("new_sale");
     expect(row.book?.externalNumber).toBeNull();
-    expect(row.book?.sales?.map((s) => [s.externalNumber, s.total, s.amount, s.lines.length])).toEqual([
+    expect((row.book as ZohoSalesSpec | null)?.sales?.map((s) => [s.externalNumber, s.total, s.amount, s.lines.length])).toEqual([
       ["INV/26-27/0516", 3243, 3243, 2], ["INV/26-27/0517", 3051, 3051, 2],
     ]);
-    expect(row.book?.salesRest).toBeNull();
+    expect((row.book as ZohoSalesSpec | null)?.salesRest).toBeNull();
   });
   it("Zoho TDS on a payment for two invoices → not booked, the reason says so", () => {
     const [row] = planAll([{ line: line(6000), result: { kind: "match", match: twoInv(294) }, contact: null, facts, booksStart: "2025-04-01" }], ctx);

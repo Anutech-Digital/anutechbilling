@@ -38,8 +38,9 @@ import { useTenantLuts } from "@/lib/queries/tenant-luts";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 import {
-  BULK_PAGE, planAll, type BulkMatchRow, type PlanContext, type PlanRow,
+  BULK_PAGE, type BulkMatchRow, type PlanContext, type PlanRow,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
+import { planAllWithZohoSales } from "@/lib/integrations/zoho-books/bulk-zoho-sales";
 import { expectedPageCost, paceWaitMs, ZOHO_BUSY_WAIT_MS, type PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { bookRows, ensureOpeningInvoices, newSaleFxArgs, payOpeningInvoice, type BookDeps, type OpeningInvoiceRow, type BookedRow, type BookRun, type NewCustomerPayload, type SubForFix } from "./zoho-bulk-book";
 import { ZohoBulkTable } from "./zoho-bulk-table";
@@ -141,7 +142,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const plan: PlanRow[] = React.useMemo(() => {
     if (!ctx) return [];
     /* R-2419: the whole run at once — one new subscription per customer + domain + product. */
-    return planAll(matches, ctx);
+    return planAllWithZohoSales(matches, ctx);   // R-2518: one sale per Zoho invoice
   }, [matches, ctx]);
 
   const ticked = React.useMemo(() => {

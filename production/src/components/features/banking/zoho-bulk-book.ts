@@ -32,8 +32,10 @@ import { rupee } from "@/lib/utils";
 import { defaultContactName } from "@/components/features/customers/new-customer-contact";
 import { bankLinePaymentReference } from "@/lib/payments/bank-line-reference";
 import type { SplitInput } from "@/lib/banking/credit-pay-for-multi";
+import type { ZohoSalesSpec } from "@/lib/integrations/zoho-books/bulk-zoho-sales";
+type ZohoBook = BookSpec & ZohoSalesSpec;   // R-2518
 import {
-  newCustomerKey, rowsToBook, type DateFix, type FxInvoicePay, type OpeningCreate, type PlanCustomer, type PlanRow, type SaleFx,
+  newCustomerKey, rowsToBook, type BookSpec, type DateFix, type FxInvoicePay, type OpeningCreate, type PlanCustomer, type PlanRow, type SaleFx,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 
 type NewCustomer = Extract<PlanCustomer, { kind: "new" }>;
@@ -286,7 +288,7 @@ export async function bookRows(
         throw new Error("This line settles last year's invoice from Zoho, and this screen cannot make its opening invoice. Reload the page and try again.");
       }
       /* R-2518: several Zoho invoices need the split call — said BEFORE any customer or payer is saved. */
-      if (book.kind === "new_sale" && book.sales?.length && !deps.paySplit) {
+      if (book.kind === "new_sale" && (book as ZohoBook).sales?.length && !deps.paySplit) {
         throw new Error("This line pays several Zoho invoices, and this screen cannot book them one per invoice. Reload the page and try again.");
       }
       if (await deps.isReconciled(row.txnId)) {
@@ -364,12 +366,13 @@ export async function bookRows(
         done.push(r); onEach?.(r, i, queue.length);
         continue;
       }
-      if (book.kind === "new_sale" && book.sales?.length) {
+      const zSales = book.kind === "new_sale" ? (book as ZohoBook).sales ?? [] : [];   // R-2518
+      if (zSales.length) {
         /* R-2518: the Zoho payment paid several Zoho invoices — one app sale per invoice, each with
            its Zoho number, in ONE reconcile_bank_credit_split call (all or nothing). */
         const res = await deps.paySplit!({
-          transactionId: row.txnId, customerId, items: [], rest: book.salesRest ?? null,
-          sale: book.sales.map((s) => ({
+          transactionId: row.txnId, customerId, items: [], rest: (book as ZohoBook).salesRest ?? null,
+          sale: zSales.map((s) => ({
             lines: saleLinesPayload(s.lines), billingCycle: s.billingCycle, createSubscription: s.createSubscription,
             subStart: s.subStart, subRenewal: s.subRenewal, amount: s.amount, externalNumber: s.externalNumber,
           })),
@@ -389,7 +392,7 @@ export async function bookRows(
         }
         const saleParts = (res.parts ?? []).filter((p) => p.new_quote);
         for (let k = 0; k < saleParts.length; k++) {
-          const fixes = book.sales[k]?.dateFixes ?? [];
+          const fixes = zSales[k]?.dateFixes ?? [];
           const qid = saleParts[k].quote_id;
           if (!fixes.length || !qid) continue;
           try {
@@ -402,7 +405,7 @@ export async function bookRows(
             todo.push(`Renewal dates were not set (${msg(e)}) — set them on the new subscriptions by hand.`);
           }
         }
-        const pairs = saleParts.map((p, k) => `${book.sales![k]?.externalNumber ?? "?"} → ${p.invoice_issued ?? p.invoice_id ?? p.quote_id}`);
+        const pairs = saleParts.map((p, k) => `${zSales[k]?.externalNumber ?? "?"} → ${p.invoice_issued ?? p.invoice_id ?? p.quote_id}`);
         const r: BookedRow = {
           txnId: row.txnId, txnDate: row.txnDate, credit: row.credit, outcome: "booked", customerName: cust.name, customerCreated,
           quoteId: saleParts[0]?.quote_id ?? null, invoiceId: saleParts[0]?.invoice_issued ?? saleParts[0]?.invoice_id ?? null,
