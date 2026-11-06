@@ -26,6 +26,9 @@
 --   G. A real 1 Apr line (no earlier value date) is after the 31 Mar closing: matches.
 --   H. A ₹1,500 line missing from a long statement is not taken as rounding (cap ₹25): refused.
 --   (A4: the ₹2 paise drift is kept in bank_opening_history.rounding_drift.)
+--   R-2528: A sends each line's paise (amount_paise / balance_paise) as the app now does — the
+--   meeting point is compared in paise, so whole rupees alone ₹2 off the bank's balance would be
+--   refused (r2528_bank_opening_rounding.test.sql F).
 
 begin;
 
@@ -82,11 +85,11 @@ do $$
 declare j jsonb; v bigint; vd date;
 begin
   j := public.import_bank_statement_with_opening('bbbbbbbb-0000-0000-0000-000000252201',
-    '[{"txn_date":"2025-04-10","description":"RTGS OUT","debit":500001,"credit":0,"balance_after":1520918,"reference":"F1"},
-      {"txn_date":"2025-11-21","description":"FD BOOKED","debit":655237,"credit":0,"balance_after":865682,"reference":"F2"},
-      {"txn_date":"2026-03-31","description":"NEFT IN","debit":0,"credit":1000,"balance_after":866682,"reference":"F3"},
-      {"txn_date":"2026-03-31","description":"BANK CHARGES","debit":301,"credit":0,"balance_after":866382,"reference":"F4"},
-      {"txn_date":"2026-04-01","value_date":"2026-03-31","description":"NEFT CR-SUBHVISION","debit":0,"credit":37170,"balance_after":903552,"reference":"IN42609055612841"}]'::jsonb,
+    '[{"txn_date":"2025-04-10","description":"RTGS OUT","debit":500001,"credit":0,"amount_paise":50000050,"balance_after":1520918,"balance_paise":152091846,"reference":"F1"},
+      {"txn_date":"2025-11-21","description":"FD BOOKED","debit":655237,"credit":0,"amount_paise":65523650,"balance_after":865682,"balance_paise":86568196,"reference":"F2"},
+      {"txn_date":"2026-03-31","description":"NEFT IN","debit":0,"credit":1000,"amount_paise":100047,"balance_after":866682,"balance_paise":86668243,"reference":"F3"},
+      {"txn_date":"2026-03-31","description":"BANK CHARGES","debit":301,"credit":0,"amount_paise":30050,"balance_after":866382,"balance_paise":86638193,"reference":"F4"},
+      {"txn_date":"2026-04-01","value_date":"2026-03-31","description":"NEFT CR-SUBHVISION","debit":0,"credit":37170,"balance_after":903552,"balance_paise":90355193,"reference":"IN42609055612841"}]'::jsonb,
     'fy2526.xls', 'xlsx', 2020919, '2025-04-01', false, null);
   if (j -> 'opening' ->> 'difference')::bigint <> 0 or (j -> 'opening' ->> 'balance_on_old_date')::bigint <> 903552 then
     raise exception 'FAIL A1: opening result % (expected balance_on_old_date 903552, difference 0 — SUBHVISION is in the 31 Mar closing)', j -> 'opening';
