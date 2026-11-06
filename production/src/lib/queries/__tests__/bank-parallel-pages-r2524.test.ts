@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({}) }));
 vi.mock("sonner", () => ({ toast: Object.assign(() => undefined, { success: () => undefined }) }));
 
-import { BANK_PAGE_PARALLEL, fetchPagesInParallel } from "../bank";
+import { BANK_PAGE_PARALLEL, fetchPagesInParallel } from "@/lib/banking/parallel-pages";
 
 type Ans = { data: number[] | null; error: unknown; count?: number | null };
 

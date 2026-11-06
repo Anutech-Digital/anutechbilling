@@ -12,6 +12,7 @@ import type { BankImportRow } from "@/lib/banking/import-history";
 import type { CustomerLite } from "@/lib/banking/credit-pay-for";
 import type { VendorLite } from "@/lib/banking/debit-pay-for";
 import type { OpenInvoice } from "@/lib/banking/invoice-credit-match";
+import { utcDateISO } from "@/lib/dates/ist";
 
 /** Small seeded PRNG (mulberry32) — the same 6,000 lines on every run. */
 function rng(seed: number): () => number {
@@ -93,6 +94,5 @@ export function bankPerfFixture(lines = 6000, seed = 4523): PerfFixture {
 
 /** 1 Apr 2025 + n days, YYYY-MM-DD (FY 2025-26 into FY 2026-27, as on staging). */
 function dayIso(n: number): string {
-  const d = new Date(Date.UTC(2025, 3, 1) + n * 86_400_000);
-  return d.toISOString().slice(0, 10);
+  return utcDateISO(new Date(Date.UTC(2025, 3, 1) + n * 86_400_000));
 }
