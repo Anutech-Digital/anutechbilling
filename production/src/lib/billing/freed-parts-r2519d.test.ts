@@ -10,7 +10,11 @@ import { billFreedParts } from "./sync-instalments.server";
 
 function fakeDb(rows: { billing_id: string; subscription_id: string; tenant_id: string; period_start: string }[]) {
   const calls: string[] = [];
+  /* R-2541: repriceUnbilledPart reads the part first — none here, so nothing is repriced. */
+  const none = { select: () => none, eq: () => none, is: () => none, limit: () => none,
+    maybeSingle: async () => ({ data: null, error: null }) };
   const db = {
+    from: () => none,
     rpc: async (fn: string, args: Record<string, unknown>) => {
       if (fn === "freed_parts_due") return { data: rows, error: null };
       if (fn === "bill_subscription_instalment") {

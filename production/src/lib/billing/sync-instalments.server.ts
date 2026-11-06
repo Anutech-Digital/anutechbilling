@@ -105,10 +105,7 @@ export async function syncSubscriptionInstalments(args: {
      whole term's first day, so the periods still to bill here keep their usual key. */
   /* R-2104: the quote's only split-billed subscription is laid with the QUOTE's period amounts —
      the figure the Record payment sheet asked (quotePeriodTaxables). */
-  const mrrTerm = plannedInstalments(sub);
-  const wholeTerm = mrrTerm.length > 0
-    ? quotePeriodTaxables(mrrTerm, { mrr: sub.mrr, cycle: sub.billing_cycle, ...(await quotePlanFacts(supabase, sub)) })
-    : mrrTerm;
+  const wholeTerm = await plannedTermParts(supabase, sub);
   const planned = wholeTerm.filter((p) => !billedElsewhere(sub, p.periodStart));
   if (wholeTerm.length > 0 && planned.length === 0) {
     out.skip = { code: "billed_elsewhere", reason: `${billedElsewhereLabel(sub)} — this term is not invoiced again here; the next term is.` };
@@ -241,6 +238,57 @@ export async function syncSubscriptionInstalments(args: {
     if (error) throw new Error(error.message);
   }
   return out;
+}
+
+/** The current term's parts at the subscription's current figures (R-2104: the quote's own period
+ *  amounts while it is the same deal) — what the term run lays and re-syncs unbilled parts to. */
+async function plannedTermParts(supabase: Admin, sub: InstalmentSub) {
+  const mrrTerm = plannedInstalments(sub);
+  return mrrTerm.length > 0
+    ? quotePeriodTaxables(mrrTerm, { mrr: sub.mrr, cycle: sub.billing_cycle, ...(await quotePlanFacts(supabase, sub)) })
+    : mrrTerm;
+}
+
+/**
+ * R-2541 (chk-local, 6 Nov — p0 money): an unbilled part with no open proforma is billed at the
+ * subscription's CURRENT seats × rate — the figure the term run re-syncs its unbilled parts to
+ * (plannedTermParts, same period number). A part freed by a cancelled proforma (R-2519d) sits in an
+ * EARLIER term the term run never re-syncs, so the billing job billed it at its stored amount:
+ * PI-F588-27-0004 asked 1 × ₹5,100 although the subscription is 18 × ₹300 = ₹5,400. Used by the
+ * billing job (billFreedParts), Bill next part (no seats / rate) and its preview — one rule.
+ *
+ * Left alone (null): an invoiced part (a GST document's source), a part with an open proforma (its
+ * own amount — set_part_request_terms), an inactive subscription, or no current figure for that
+ * period. Returns the change; writes it only when not a dry run (re-checked: no invoice yet).
+ */
+export async function repriceUnbilledPart(
+  supabase: Admin, billingId: string, dryRun: boolean,
+): Promise<{ from: number; to: number } | null> {
+  const db = supabase as unknown as SupabaseClient;
+  const { data: row, error } = await db.from("subscription_billings")
+    .select("id, tenant_id, subscription_id, period_index, taxable_amount, invoice_id")
+    .eq("id", billingId).maybeSingle();
+  if (error) throw new Error(error.message);
+  const b = row as { id: string; tenant_id: string; subscription_id: string; period_index: number; taxable_amount: number; invoice_id: string | null } | null;
+  if (!b || b.invoice_id != null) return null;
+  const { data: reqs, error: rErr } = await db.from("quotes").select("id").eq("subscription_billing_id", b.id).limit(1);
+  if (rErr) throw new Error(rErr.message);
+  if ((reqs ?? []).length > 0) return null;
+  const { data: subRow, error: sErr } = await db.from("subscriptions")
+    .select(`${INSTALMENT_SUB_SELECT}, status`).eq("id", b.subscription_id).eq("tenant_id", b.tenant_id).maybeSingle();
+  if (sErr) throw new Error(sErr.message);
+  const sub = subRow as (InstalmentSub & { status: string }) | null;
+  if (!sub || sub.status !== "active") return null;
+  const now = (await plannedTermParts(supabase, sub)).find((p) => p.periodIndex === b.period_index)?.taxableAmount;
+  const was = b.taxable_amount;
+  if (now == null || !(now > 0) || now === was) return null;
+  if (!dryRun) {
+    const { error: uErr } = await db.from("subscription_billings")
+      .update({ taxable_amount: now, updated_at: new Date().toISOString() })
+      .eq("id", b.id).is("invoice_id", null);
+    if (uErr) throw new Error(uErr.message);
+  }
+  return { from: was, to: now };
 }
 
 /**
@@ -487,6 +535,9 @@ export async function raiseDueInstalmentsForQuote(args: {
 }
 
 
+/** A freed part billed by the billing job; `repriced` = its amount moved to the current seats × rate (R-2541). */
+export interface FreedPartBilled { subscription_id: string; billing_id: string; result: InstalmentSyncResult; repriced: { from: number; to: number } | null }
+
 /**
  * R-2519d (coordinator, BITDECENTRO): parts whose proforma was CANCELLED and not billed again —
  * public.freed_parts_due, earliest first — are billed before each subscription's current term. The
@@ -496,8 +547,8 @@ export async function raiseDueInstalmentsForQuote(args: {
 export async function billFreedParts(
   supabase: Admin,
   args: { todayISO: string; dryRun: boolean; allowed: (tenantId: string) => boolean },
-): Promise<{ parts: { subscription_id: string; billing_id: string; result: InstalmentSyncResult }[]; errors: { subscription_id: string; message: string }[] }> {
-  const parts: { subscription_id: string; billing_id: string; result: InstalmentSyncResult }[] = [];
+): Promise<{ parts: FreedPartBilled[]; errors: { subscription_id: string; message: string }[] }> {
+  const parts: FreedPartBilled[] = [];
   const errors: { subscription_id: string; message: string }[] = [];
   const { data, error } = await (supabase as unknown as SupabaseClient).rpc("freed_parts_due", { p_today: args.todayISO });
   if (error) return { parts, errors: [{ subscription_id: "", message: `freed parts: ${error.message}` }] };
@@ -506,11 +557,13 @@ export async function billFreedParts(
     .sort((a, b) => a.period_start.localeCompare(b.period_start));
   for (const r of rows) {
     try {
+      /* R-2541: at the subscription's current seats × rate, not the amount stored when it was laid. */
+      const repriced = await repriceUnbilledPart(supabase, r.billing_id, args.dryRun);
       const { data: out, error: bErr } = await billSubscriptionInstalment(supabase, r.billing_id, args.dryRun);
       if (bErr) throw new Error(bErr.message);
       const result = emptySyncResult();
       applyBillOutcome(result, 1, out, args.dryRun);
-      parts.push({ subscription_id: r.subscription_id, billing_id: r.billing_id, result });
+      parts.push({ subscription_id: r.subscription_id, billing_id: r.billing_id, result, repriced });
     } catch (e) {
       errors.push({ subscription_id: r.subscription_id, message: `freed part ${r.billing_id}: ${e instanceof Error ? e.message : String(e)}` });
     }
