@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'invoices' and column_name = 'party_from_source') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_invoice_snapshot_parties()') and prosrc like '%R-2536%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_zoho_fy_sales(text,jsonb,boolean)') and prosrc like '%R-2536%')
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'invoices' and column_name = 'party_from_source') and exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_invoice_snapshot_parties()') and prosrc like '%R-2536%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_zoho_fy_sales(text,jsonb,boolean)') and prosrc like '%R-2536%') and exists(select 1 from pg_trigger where tgname = 'trg_invoices_party_source_guard' and tgrelid = to_regclass('public.invoices'))
 -- deploy-key: r2536zohopartyasfiled
 --
 -- R-2536 (fixes R-2530 review, goal G-FY2526, 6 Nov 2026): a Zoho FY 2025-26 sale keeps the buyer
@@ -20,8 +20,14 @@
 --      'on', set only inside import_zoho_fy_sales — the second only for a scan row with detailed_at —
 --      and the row carries a zoho_invoice_id) it stamps party_from_source and does NOT fill customer_gstin,
 --      pos_state_code or gst_treatment from the customer. The billing address / country come from
---      the customer only when Zoho gave none AND the invoice's GSTIN is empty or the customer's own
---      (never another branch's address). Seller facts and the SEZ head are filled as before.
+--      the customer only when Zoho gave none AND the invoice is not another registration's (GSTIN
+--      empty on one side, or the same) — never another branch's address. Place of supply Zoho left
+--      empty: the invoice GSTIN's state, else (same registration) the customer's — so an export
+--      still gets 96. Treatment Zoho left empty: the customer's only when the invoice carries the
+--      customer's own GSTIN. Seller facts and the SEZ head are filled as before.
+--   2b. tg_invoices_party_source_guard: on such a row the GSTIN / place of supply / treatment and
+--      the stamp itself change only with app.invoice_amend_reason (the freeze alone would let a
+--      NULL be filled later and turn a filed B2C into B2B).
 --      Every other insert (invoices made in the app, opening invoices, …) behaves exactly as before.
 --   3. import_zoho_fy_sales also writes Zoho's billing address / country from the scan
 --      (normalise.ts billingAddress / billingCountry — present on scans read after this change).
@@ -48,20 +54,27 @@ set search_path = public
 as $$
 declare s record;
   v_treatment text;
+  v_same boolean;
 begin
   /* R-2536: the Zoho FY sales import keeps the buyer facts as filed — decided here, from the
-     import's own session flag, so a plain insert cannot claim it. */
+     import's own session flags, so a plain insert cannot claim it. */
   new.party_from_source := coalesce(current_setting('app.zoho_sale_import', true), '') = 'on'
                            and coalesce(current_setting('app.zoho_sale_party_as_filed', true), '') = 'on'
                            and new.zoho_invoice_id is not null;
   if new.customer_id is null then return new; end if;
   select * into s from public.invoice_party_snapshot(new.tenant_id, new.customer_id);
   if new.party_from_source then
-    if new.billing_address is null
-       and (new.customer_gstin is null or new.customer_gstin = s.customer_gstin) then
+    /* The customer's own facts stand in only for what Zoho left empty AND only when the invoice is
+       not another registration's (no GSTIN on one side, or the same GSTIN) — never another
+       branch's address / state. The GSTIN itself is never filled: empty = B2C as filed. */
+    v_same := new.customer_gstin is null or s.customer_gstin is null or new.customer_gstin = s.customer_gstin;
+    if new.billing_address is null and v_same then
       new.billing_address  := s.billing_address;
       new.customer_country := coalesce(new.customer_country, s.customer_country);
     end if;
+    new.pos_state_code := coalesce(new.pos_state_code,
+      case when coalesce(new.customer_gstin, '') ~ '^[0-9]{2}' then left(new.customer_gstin, 2) end,
+      case when v_same then s.pos_state_code end);
   else
     new.customer_gstin    := coalesce(new.customer_gstin,    s.customer_gstin);
     new.billing_address   := coalesce(new.billing_address,   s.billing_address);
@@ -75,8 +88,11 @@ begin
      SEZ rule: a supply to an SEZ unit/developer is inter-state (IGST) even in the seller's
      own state (IGST Act §7(5)(b)). Every invoice path inserts through here, so none of
      them has to repeat it. The tax amount is untouched — only the head.
-     R-2536: an imported Zoho sale keeps Zoho's treatment (or none), never the customer's. */
-  if not new.party_from_source then
+     R-2536: an imported Zoho sale keeps Zoho's treatment; the customer's only when Zoho sent
+     none we know AND the invoice carries the customer's own GSTIN (same registration) — a B2C
+     sale never gets a registered customer's treatment. */
+  if not new.party_from_source
+     or (new.gst_treatment is null and new.customer_gstin is not null and new.customer_gstin = s.customer_gstin) then
     select cu.gst_treatment into v_treatment
       from public.customers cu where cu.id = new.customer_id and cu.tenant_id = new.tenant_id;
     new.gst_treatment := coalesce(new.gst_treatment, v_treatment);
@@ -87,6 +103,43 @@ begin
   return new;
 end $$;
 revoke all on function public.tg_invoice_snapshot_parties() from public, anon, authenticated;
+
+-- ── 1b. Keep it as filed after the insert ──────────────────────────────────────────────────
+/* The freeze (tg_invoices_freeze_issued) lets a NULL party fact be FILLED later — right for an
+   app invoice, wrong for a Zoho sale whose empty GSTIN / place of supply / treatment IS the
+   filed fact. And the stamp itself is the trigger's, never a column anyone sets. Both change
+   only with the reviewed escape hatch (app.invoice_amend_reason, transaction-scoped — the
+   R-2536 data repair uses it). */
+create or replace function public.tg_invoices_party_source_guard()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  /* R-2536 */
+  if nullif(btrim(coalesce(current_setting('app.invoice_amend_reason', true), '')), '') is not null then
+    return new;
+  end if;
+  if new.party_from_source is distinct from old.party_from_source then
+    raise exception 'Invoice %: "as filed" is set by the Zoho import itself and cannot be changed.', old.id
+      using errcode = '42501';
+  end if;
+  if old.party_from_source and (
+       new.customer_gstin is distinct from old.customer_gstin
+       or new.pos_state_code is distinct from old.pos_state_code
+       or new.gst_treatment is distinct from old.gst_treatment) then
+    raise exception 'Invoice % came from Zoho with the buyer GSTIN, place of supply and GST treatment as filed in GSTR-1 — they cannot be changed here.', old.id
+      using errcode = '42501';
+  end if;
+  return new;
+end $$;
+revoke all on function public.tg_invoices_party_source_guard() from public, anon, authenticated;
+
+drop trigger if exists trg_invoices_party_source_guard on public.invoices;
+create trigger trg_invoices_party_source_guard
+  before update of party_from_source, customer_gstin, pos_state_code, gst_treatment on public.invoices
+  for each row execute function public.tg_invoices_party_source_guard();
 
 -- ── 2. Import: also Zoho's billing address / country ────────────────────────────────────────
 create or replace function public.import_zoho_fy_sales(p_fy text, p_picks jsonb, p_dry_run boolean default true)

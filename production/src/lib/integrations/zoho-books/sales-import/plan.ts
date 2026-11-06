@@ -103,7 +103,7 @@ export function gstinChoiceKey(zohoName: string, invoiceGstin: string): string {
   const g = invoiceGstin.trim().toUpperCase();
   return `${normName(zohoName)}|${panFromGstin(g) ?? g}`;
 }
-const reasonKey =(r: string) => r.replace(/₹[\d,.]+|\d{2}(?=\))|"[^"]*"/g, "…");
+const reasonKey = (r: string) => r.replace(/₹[\d,.]+|\d{2}(?=\))|"[^"]*"/g, "…");
 
 /** One customer from several: the only one, else the only ACTIVE one, else none (no guess). */
 function onlyOne(list: AppCustomer[]): AppCustomer | null {

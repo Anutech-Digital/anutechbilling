@@ -59,8 +59,8 @@ export interface ZohoSaleFacts {
   posStateCode: string | null;
   /** R-2536: the invoice's OWN billing address as Zoho printed it (address, street 2, city,
    *  "state pin", and the country when outside India — the customer snapshot's shape), null when
-   *  Zoho has none. The import writes it on the invoice, so a branch invoice never prints another
-   *  branch's address. */
+   *  Zoho has none. The import stores it on the invoice (billing_address), so a branch invoice never
+   *  carries another branch's address. */
   billingAddress?: string | null;
   /** R-2536: that address's country as Zoho wrote it, null when none. (Both optional: a scan saved
    *  before R-2536 has neither — the SQL import then writes none.) */
@@ -96,7 +96,9 @@ export function zohoBillingAddress(v: unknown): { address: string | null; countr
   const country = str(a.country) || null;
   const abroad = !!country && !INDIA.has(country.toLowerCase());
   const stateZip = [str(a.state), str(a.zip)].filter(Boolean).join(" ");
-  const parts = [str(a.address), str(a.street2), str(a.city), stateZip, abroad && country ? country : ""].filter(Boolean);
+  /* Zoho keeps multi-line street text — one printed line, like the customer snapshot. */
+  const line = (x: unknown) => str(x).replace(/\s*[\r\n]+\s*/g, ", ");
+  const parts = [line(a.address), line(a.street2), str(a.city), stateZip, abroad && country ? country : ""].filter(Boolean);
   return { address: parts.length ? parts.join(", ").slice(0, 500) : null, country: country ? country.slice(0, 60) : null };
 }
 
