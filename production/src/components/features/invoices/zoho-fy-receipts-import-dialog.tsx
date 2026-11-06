@@ -7,7 +7,9 @@
  *
  *   1. Read from Zoho   — the server reads the year's payments (list + each detail), paced, resumable.
  *   2. Preview          — counts, money / TDS / advance totals, which app account each Zoho deposit
- *                         account goes to (suggested, changeable), why the rest is left out.
+ *                         account goes to (suggested, changeable, or "Leave out" — its payments are
+ *                         then skipped "Left out by owner."), why the rest is left out. The import
+ *                         sends exactly these choices: nothing is mapped that the screen did not show.
  *   3. Check (dry run)  — the database runs the real import and rolls it back.
  *   4. Import           — in parts; each part is one batch (activity log).
  */
@@ -24,7 +26,7 @@ import { Input } from "@/components/ui/input";
 import { formatDate, rupee } from "@/lib/utils";
 import { FY_CALLS_PER_REQUEST } from "@/lib/integrations/zoho-books/config";
 import { ZOHO_CALLS_PER_MIN } from "@/lib/integrations/zoho-books/zoho-pace";
-import type { ZohoDeposit } from "@/lib/integrations/zoho-books/receipts-import/plan";
+import { LEAVE_OUT, type ZohoDeposit } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
 
 const API = "/api/integrations/zoho-books/receipts-import";
@@ -72,8 +74,11 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     try {
       const p = await call<Preview>({ action: "preview", accounts: map });
       setPreview(p);
-      /* The screen's choice = what the server used (owner's pick, else its suggestion). */
-      setAccounts(Object.fromEntries(p.deposits.filter((d) => d.appAccountId).map((d) => [d.zohoAccountId, d.appAccountId as string])));
+      /* The screen's choice = what the server used (owner's pick, Leave these out, else its suggestion)
+         — and exactly what the import sends: the import maps nothing the screen did not show. An
+         account the owner set to "Choose…" stays "" (no suggestion fills it later). */
+      setAccounts(Object.fromEntries(p.deposits.flatMap((d): [string, string][] =>
+        d.leftOut ? [[d.zohoAccountId, LEAVE_OUT]] : d.appAccountId ? [[d.zohoAccountId, d.appAccountId]] : map[d.zohoAccountId] === "" ? [[d.zohoAccountId, ""]] : [])));
     } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
   }, []);
 
@@ -180,8 +185,10 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
                         >
                           <option value="">Choose the app account…</option>
                           {preview.accounts.map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                          <option value={LEAVE_OUT}>Leave these out</option>
                         </select>
                         {d.suggested && <span className="text-3xs text-ink-3">suggested</span>}
+                        {d.leftOut && <span className="text-3xs text-ink-3">left out — not imported</span>}
                       </li>
                     ))}
                   </ul>

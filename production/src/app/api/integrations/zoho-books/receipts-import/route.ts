@@ -5,17 +5,19 @@
  * ACCOUNTANT only (the SQL checks the same roles). The generic FY import framework (fy-import/), kind
  * "customerpayments".
  *
- * Body { action, fy: "2025-26", accounts?: { <Zoho account id>: <app bank account id> }, … }:
+ * Body { action, fy: "2025-26", accounts?: { <Zoho account id>: <app bank account id> | "leave-out" | "" }, … }:
  *   read     → the next piece of the FY from Zoho into the server's scan (list, then each payment's
  *              detail; READ only; at most FY_CALLS_PER_REQUEST Zoho calls — call again after a wait
  *              until `complete`).
  *   restart  → forgets the scan.
  *   preview  → the plan from the COMPLETE scan: counts, totals, Zoho deposit accounts with the app
- *              account each goes to (owner's choice, else a suggestion), skip reasons, past batches.
+ *              account each goes to (owner's choice, else a suggestion; "none" = Leave these out → its
+ *              payments are skipped "Left out by owner."), skip reasons, past batches.
  *   import   → { part, dryRun } — one part through import_zoho_fy_receipts: dryRun true (default)
  *              writes nothing. The request names only Zoho ids + the app account — every amount
- *              comes from the scan in the database. Already-booked payments with no bank line yet are
- *              sent again: the SQL matches their bank line if it has come in since.
+ *              comes from the scan in the database. NO suggestion here (R-2501 fix): only the accounts the
+ *              dialog sent (what it showed) are used — a Zoho account it did not send is skipped.
+ *              Already-booked payments with no bank line yet are sent again: the SQL matches their bank line if it has come in since.
  *   undo     → { batchId, reason } — remove_zoho_fy_receipts_import (OWNER only, while nothing in the
  *              batch was touched since; R-2501 follow-up).
  * Zoho is never written to.
@@ -106,7 +108,7 @@ export async function POST(req: NextRequest) {
         readScannedFacts<ZohoReceiptFacts>(db, caller.tenantId, KIND, fy),
         readReceiptsContext(db, caller.tenantId, range, accountMap),
       ]);
-      plan = buildReceiptsPlan(facts, ctx);
+      plan = buildReceiptsPlan(facts, ctx, { suggest: action === "preview" });
     } catch {
       return fail(500, "Could not build the preview. Refresh and try again.");
     }
@@ -133,7 +135,7 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    if (!picks.length) return fail(409, "Nothing to import.");
+    if (!picks.length) return fail(409, "Nothing to import — choose the app account for each Zoho account (or Leave these out), then check again.");
     const part = Number(body.part ?? 0);
     const slice = partOf(picks, part);
     if (!slice) return fail(400, "That part does not exist. Preview again.");

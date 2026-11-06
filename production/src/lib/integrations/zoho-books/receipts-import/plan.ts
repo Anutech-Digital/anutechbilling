@@ -10,7 +10,10 @@
  *   - an opening invoice (R-1739) is never paid from here: its balance was taken after these receipts,
  *     so paying it again would count them twice — R-2504 re-states those first;
  *   - a payment with no invoice at all (pure advance) → skipped (book it by hand: which customer is it?);
- *   - Zoho's deposit account must be mapped to one of the company's bank / cash accounts.
+ *   - Zoho's deposit account must be mapped to one of the company's bank / cash accounts — or the owner
+ *     LEAVES IT OUT (R-2501 fix, 6 Nov: Pardeep left out Kachha Khata + Petty Cash): its payments are
+ *     listed as skipped "Left out by owner." and never mapped automatically. A suggestion is only made
+ *     for the PREVIEW (shown in the dialog, changeable); the import uses only what the dialog sent.
  * Pure: no I/O.
  */
 import type { ZohoReceiptFacts } from "./normalise";
@@ -19,6 +22,11 @@ import { defaultCashAccountId, depositAccounts, type DepositAccount as AppBankAc
 export type { AppBankAccount };
 
 export const RECEIPTS_IMPORT_ROLES = ["owner", "accountant"] as const;
+
+/** The dialog's "Leave these out" choice for a Zoho deposit account (in place of an app account id) —
+ *  the same marker as the purchase import's (purchase-import/plan.ts LEAVE_OUT). */
+export const LEAVE_OUT = "none";
+export const LEFT_OUT_REASON = "Left out by owner.";
 
 export interface AppZohoInvoice {
   id: string;
@@ -39,7 +47,7 @@ export interface ReceiptsPlanContext {
   bankAccounts: AppBankAccount[];
   /** Zoho payment ids already booked (zoho_fy_receipts), with whether a bank line is on them. */
   booked: Map<string, { banked: boolean }>;
-  /** Zoho deposit account id → the app account the owner chose (or the suggestion). */
+  /** Zoho deposit account id → the app account the owner chose, LEAVE_OUT, or "" (chosen: none). */
   accountMap: Record<string, string>;
 }
 
@@ -55,7 +63,7 @@ export interface PlannedReceipt {
   invoiceIds: (string | null)[];
 }
 
-export interface ZohoDeposit { zohoAccountId: string; zohoName: string; count: number; amount: number; appAccountId: string | null; suggested: boolean }
+export interface ZohoDeposit { zohoAccountId: string; zohoName: string; count: number; amount: number; appAccountId: string | null; suggested: boolean; leftOut: boolean }
 
 export interface ReceiptsPlan {
   rows: PlannedReceipt[];
@@ -89,7 +97,12 @@ export function suggestAccount(zohoName: string, accounts: readonly AppBankAccou
   return null;
 }
 
-export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: ReceiptsPlanContext): ReceiptsPlan {
+/**
+ * `suggest`: true for the preview (the dialog shows each suggestion and sends it back as the owner's
+ * choice); false for the import — a Zoho account the dialog did not send gets no account (skipped).
+ */
+export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: ReceiptsPlanContext, opts: { suggest?: boolean } = {}): ReceiptsPlan {
+  const suggest = opts.suggest ?? true;
   const byZoho = new Map<string, AppZohoInvoice>();
   const byNumber = new Map<string, AppZohoInvoice>();
   for (const i of ctx.invoices) {
@@ -103,27 +116,32 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
   const deposits = new Map<string, ZohoDeposit>();
   for (const f of facts) {
     const key = f.depositAccountId || "";
-    const d = deposits.get(key) ?? { zohoAccountId: key, zohoName: f.depositAccountName || "(no account in Zoho)", count: 0, amount: 0, appAccountId: null, suggested: false };
+    const d = deposits.get(key) ?? { zohoAccountId: key, zohoName: f.depositAccountName || "(no account in Zoho)", count: 0, amount: 0, appAccountId: null, suggested: false, leftOut: false };
     d.count += 1;
     d.amount += f.amount;
     deposits.set(key, d);
   }
   for (const d of deposits.values()) {
-    const chosen = ctx.accountMap[d.zohoAccountId];
-    if (chosen && ownAccounts.has(chosen)) d.appAccountId = chosen;
-    else { d.appAccountId = suggestAccount(d.zohoName, ctx.bankAccounts); d.suggested = d.appAccountId !== null; }
+    const chosen = Object.prototype.hasOwnProperty.call(ctx.accountMap, d.zohoAccountId) ? ctx.accountMap[d.zohoAccountId] : undefined;
+    if (chosen === LEAVE_OUT) d.leftOut = true;                       // never mapped, whatever the suggestion
+    else if (chosen && ownAccounts.has(chosen)) d.appAccountId = chosen;
+    /* "" = the owner chose none: no suggestion fills it. */
+    else if (chosen !== "" && suggest) { d.appAccountId = suggestAccount(d.zohoName, ctx.bankAccounts); d.suggested = d.appAccountId !== null; }
   }
 
   /* What each invoice can still take, as this preview books the payments one after another. */
   const left = new Map(ctx.invoices.map((i) => [i.id, i.due]));
 
   const rows: PlannedReceipt[] = facts.map((f) => {
-    const bankAccountId = deposits.get(f.depositAccountId || "")?.appAccountId ?? null;
+    const dep = deposits.get(f.depositAccountId || "");
+    const bankAccountId = dep?.appAccountId ?? null;
     const invoiceIds = f.lines.map((l) => byZoho.get(l.zohoInvoiceId)?.id ?? null);
     const row = (verdict: ReceiptVerdict, reason: string | null, customerId: string | null = null): PlannedReceipt =>
       ({ facts: f, verdict, reason, customerId, bankAccountId, invoiceIds });
 
     const done = ctx.booked.get(f.zohoId);
+    /* Left out: never a pick — not booked, and an earlier booking is not bank-matched from here either. */
+    if (dep?.leftOut) return row("skip", done ? "Left out by owner — recorded by an earlier import (Remove import takes it out)." : LEFT_OUT_REASON);
     if (done) return row("already", done.banked ? null : "Booked — its bank line is not matched yet (Import again matches it once the statement is in).");
     if (f.problems.length) return row("skip", f.problems[0]);
     if (!f.date || f.date < ctx.fyStart || f.date > ctx.fyEnd) return row("skip", `Dated ${f.date || "?"}, outside the year.`);
