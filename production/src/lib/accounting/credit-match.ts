@@ -90,11 +90,42 @@ export function customerNameTokens(name: string | null | undefined): string[] {
  * to the wrong one is the failure this whole module is guarding against.
  */
 export function nameOverlap(description: string | null | undefined, customerName: string | null | undefined): string | null {
-  const narration = new Set(narrationNames(description));
-  for (const token of customerNameTokens(customerName)) {
+  const narration = cachedNarrationSet(description);
+  for (const token of cachedNameTokens(customerName)) {
     if (narration.has(token)) return token;
   }
   return null;
+}
+
+/* R-2524: the bank page runs nameOverlap for every unmatched credit × every open invoice
+   (≈ 800 × 400 on a 6,000-line account) — split each narration / name once, not per pair.
+   Same words as narrationNames / customerNameTokens; read-only, so the cached copy is shared.
+   Bounded: past CACHE_MAX entries a map starts again (a long session never grows it for ever). */
+const CACHE_MAX = 20_000;
+const narrationSets = new Map<string, ReadonlySet<string>>();
+const nameTokenLists = new Map<string, readonly string[]>();
+const NO_WORDS: ReadonlySet<string> = new Set();
+/** narrationNames as a Set, cached per narration text (R-2524). Never mutate the result. */
+export function cachedNarrationSet(description: string | null | undefined): ReadonlySet<string> {
+  if (!description) return NO_WORDS;
+  let hit = narrationSets.get(description);
+  if (!hit) {
+    if (narrationSets.size >= CACHE_MAX) narrationSets.clear();
+    hit = new Set(narrationNames(description));
+    narrationSets.set(description, hit);
+  }
+  return hit;
+}
+/** customerNameTokens, cached per name (R-2524). Never mutate the result. */
+export function cachedNameTokens(name: string | null | undefined): readonly string[] {
+  if (!name) return [];
+  let hit = nameTokenLists.get(name);
+  if (!hit) {
+    if (nameTokenLists.size >= CACHE_MAX) nameTokenLists.clear();
+    hit = customerNameTokens(name);
+    nameTokenLists.set(name, hit);
+  }
+  return hit;
 }
 
 export type MatchConfidence = "certain" | "likely" | "possible";

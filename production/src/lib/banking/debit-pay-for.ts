@@ -21,7 +21,7 @@
  *   payArgs            — the RPC arguments
  *   resultLines        — what happened, in the owner's words, after the save
  */
-import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-match";
+import { cachedNarrationSet, customerNameTokens } from "@/lib/accounting/credit-match";
 import { tdsDecision, tdsRatePct, panFromGstin } from "@/lib/accounting/tds-deductor";
 import { tds26qSection } from "@/lib/accounting/tds-rates";
 import { rupee, formatDate } from "@/lib/utils";
@@ -73,6 +73,23 @@ export function vendorsForRule(pattern: string, vendors: readonly VendorLite[]):
   });
 }
 
+type PreparedVendor = { v: VendorLite; upi: string; acct: string; toks: string[] };
+/* R-2524: the bank page asks guessVendor for every unmatched money-out line (~1,000 on a
+   6,000-line account) with the same vendor list — read each vendor once per list. */
+const preparedLists = new WeakMap<readonly VendorLite[], PreparedVendor[]>();
+function preparedVendors(vendors: readonly VendorLite[]): PreparedVendor[] {
+  const hit = preparedLists.get(vendors);
+  if (hit && hit.length === vendors.length) return hit;
+  const out = vendors.map((v) => ({
+    v,
+    upi: (v.upi_id ?? "").trim().toLowerCase(),
+    acct: (v.bank_account_no ?? "").replace(/[^0-9]/g, ""),
+    toks: [...new Set(customerNameTokens(v.name))],
+  }));
+  preparedLists.set(vendors, out);
+  return out;
+}
+
 /**
  * Who was paid — R-1919: ONE order, the same as the database's bank_debit_vendor_guess (which
  * auto-reconcile uses), so the sheet and auto-reconcile can never disagree:
@@ -93,23 +110,19 @@ export function guessVendor(
   const lower = text.toLowerCase();
   const digits = text.replace(/[^0-9]/g, " ");
 
-  const byUpi = vendors.filter((v) => v.upi_id && v.upi_id.trim() && lower.includes(v.upi_id.trim().toLowerCase()));
+  const prep = preparedVendors(vendors);   // R-2524: each vendor's UPI / account / name words read once per list
+  const byUpi = prep.filter((p) => p.upi && lower.includes(p.upi)).map((p) => p.v);
   if (byUpi.length === 1) return { vendorId: byUpi[0].id, reason: `the bank line has their UPI id ${byUpi[0].upi_id}`, step: "upi" };
 
-  const byAcct = vendors.filter((v) => {
-    const a = (v.bank_account_no ?? "").replace(/[^0-9]/g, "");
-    return a.length >= 6 && digits.split(/\s+/).some((d) => d.length >= 6 && (a.endsWith(d) || d.endsWith(a)));
-  });
+  const runs = digits.split(/\s+/).filter((d) => d.length >= 6);
+  const byAcct = prep.filter(({ acct: a }) => a.length >= 6 && runs.some((d) => a.endsWith(d) || d.endsWith(a))).map((p) => p.v);
   if (byAcct.length === 1) return { vendorId: byAcct[0].id, reason: "the bank line has their account number", step: "account" };
 
   /* R-1919: a masked account ("XXXXXX4521") shows only its last digits — R-1918's parser reads
      them; one vendor whose saved account ends with them (4+ digits) is a match. */
   const tail = bankDetailsFromNarration(txn.description).accountTail;
   if (tail && tail.length >= 4) {
-    const byTail = vendors.filter((v) => {
-      const a = (v.bank_account_no ?? "").replace(/[^0-9]/g, "");
-      return a.length >= 6 && a.endsWith(tail);
-    });
+    const byTail = prep.filter(({ acct: a }) => a.length >= 6 && a.endsWith(tail)).map((p) => p.v);
     if (byTail.length === 1) return { vendorId: byTail[0].id, reason: `the bank line shows their account ending ${tail}`, step: "account_tail" };
   }
 
@@ -128,9 +141,9 @@ export function guessVendor(
 
   /* Name words: the vendor sharing the MOST distinctive words wins, only when no other vendor
      shares as many ("Kapoor Legal Associates" over "Kapoor Stationers" for "KAPOOR LEGAL…"). */
-  const words = new Set(narrationNames(txn.description));
-  const hits = vendors
-    .map((v) => ({ v, shared: [...new Set(customerNameTokens(v.name))].filter((t) => words.has(t)) }))
+  const words = cachedNarrationSet(txn.description);
+  const hits = prep
+    .map(({ v, toks }) => ({ v, shared: toks.filter((t) => words.has(t)) }))
     .filter((h) => h.shared.length > 0)
     .sort((a, b) => b.shared.length - a.shared.length);
   if (hits.length > 0 && (hits.length === 1 || hits[0].shared.length > hits[1].shared.length)) {
