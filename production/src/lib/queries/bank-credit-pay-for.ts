@@ -13,7 +13,7 @@
  */
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { toastInvoiceIssueError } from "@/lib/queries/invoices";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
@@ -353,32 +353,38 @@ export function newSaleFxRpcArgs(i: NewSaleInput, fx: SaleFxInput) {
 
 /** The payment ids (matched_to_id of "payment" lines) that are R-1863 advances — read-only. */
 export function useBankAdvancePaymentIds(paymentIds: readonly string[]) {
-  const ids = [...new Set(paymentIds)].sort();
-  return useQuery({
-    queryKey: ["bank_advance_payment_ids", ids] as const,
-    placeholderData: (prev) => prev,   // R-2524: keep the badges while the next page's ids load
-    enabled: ids.length > 0,
-    queryFn: async (): Promise<Set<string>> => {
-      const sb = createClient();
-      const pays: Array<{ id: string; quote_id: string | null; notes: string | null }> = [];
-      for (let i = 0; i < ids.length; i += 150) {
+  /* R-2524: one query per chunk of the lines on screen (in screen order), all at once — "Load more"
+     adds a chunk instead of re-asking for every id, and a save re-reads only the chunk it touched. */
+  return useQueries({
+    queries: badgeChunks(paymentIds).map((ids) => ({
+      queryKey: ["bank_advance_payment_ids", ids] as const,
+      staleTime: 30_000,
+      queryFn: async (): Promise<Set<string>> => {
+        const sb = createClient();
         const { data, error } = await sb.from("payments").select("id, quote_id, notes")
-          .in("id", ids.slice(i, i + 150)).like("notes", `${ADVANCE_PAYMENT_NOTE_PREFIX}%`);
+          .in("id", ids).like("notes", `${ADVANCE_PAYMENT_NOTE_PREFIX}%`);
         if (error) throw error;
-        pays.push(...((data ?? []) as typeof pays));
-      }
-      const quoteIds = [...new Set(pays.map((p) => p.quote_id).filter((q): q is string => Boolean(q)))];
-      if (quoteIds.length === 0) return new Set();
-      const quotes: Array<{ id: string; plan: string | null; amount: number | null; invoice_id: string | null; line_items: unknown }> = [];
-      for (let i = 0; i < quoteIds.length; i += 150) {
-        const { data, error } = await sb.from("quotes").select("id, plan, amount, invoice_id, line_items").in("id", quoteIds.slice(i, i + 150));
-        if (error) throw error;
-        quotes.push(...((data ?? []) as unknown as typeof quotes));
-      }
-      return advancePaymentIds(pays, quotes.map((q) => ({ ...q, amount: Number(q.amount) || 0 })));
-    },
-    staleTime: 30_000,
+        const pays = (data ?? []) as Array<{ id: string; quote_id: string | null; notes: string | null }>;
+        const quoteIds = [...new Set(pays.map((x) => x.quote_id).filter((q): q is string => Boolean(q)))];
+        if (quoteIds.length === 0) return new Set();
+        const { data: qs, error: qErr } = await sb.from("quotes").select("id, plan, amount, invoice_id, line_items").in("id", quoteIds);
+        if (qErr) throw qErr;
+        const quotes = (qs ?? []) as unknown as Array<{ id: string; plan: string | null; amount: number | null; invoice_id: string | null; line_items: unknown }>;
+        return advancePaymentIds(pays, quotes.map((q) => ({ ...q, amount: Number(q.amount) || 0 })));
+      },
+    })),
+    combine: (rs) => ({ data: new Set(rs.flatMap((r) => (r.data ? [...r.data] : []))) as Set<string> | undefined }),
   });
+}
+
+/** R-2524: the ids of the lines on screen in BADGE_CHUNK runs (screen order, de-duplicated); each run
+ *  sorted so the same lines are the same cache entry. */
+export const BADGE_CHUNK = 100;
+export function badgeChunks(ids: readonly string[]): string[][] {
+  const uniq = [...new Set(ids)];
+  const out: string[][] = [];
+  for (let i = 0; i < uniq.length; i += BADGE_CHUNK) out.push(uniq.slice(i, i + BADGE_CHUNK).sort());
+  return out;
 }
 
 /* ─── R-2098: one line → several items (+ a new sale), the rest advance / round-off ─────────── */
@@ -424,26 +430,27 @@ export function useSplitFromBankCredit() {
 
 /** bank line id → its receipts (payments.bank_txn_id). Read-only; RLS scopes to the company. */
 export function useBankSplitLinePayments(txnIds: readonly string[]) {
-  const ids = [...new Set(txnIds)].sort();
-  return useQuery({
-    queryKey: ["bank_transactions", "split_payments", ids] as const,
-    placeholderData: (prev) => prev,   // R-2524: keep the badges while the next page's ids load
-    enabled: ids.length > 0,
-    queryFn: async (): Promise<Map<string, SplitLinePayment[]>> => {
-      const sb = createClient() as unknown as { from: (t: string) => { select: (c: string) => { in: (c: string, v: string[]) => { eq: (c: string, v: string) => PromiseLike<{ data: unknown; error: { message: string } | null }> } } } };
-      const out = new Map<string, SplitLinePayment[]>();
-      for (let i = 0; i < ids.length; i += 150) {
+  /* R-2524: chunked like useBankAdvancePaymentIds. The key stays under "bank_transactions" ON PURPOSE:
+     every bank save invalidates that prefix, so a line just split (or un-split) re-reads its receipts
+     at once — now that is one chunk of ≤ 100 ids on screen, not every payment line of the account. */
+  return useQueries({
+    queries: badgeChunks(txnIds).map((ids) => ({
+      queryKey: ["bank_transactions", "split_payments", ids] as const,
+      staleTime: 30_000,
+      queryFn: async (): Promise<Map<string, SplitLinePayment[]>> => {
+        const sb = createClient() as unknown as { from: (t: string) => { select: (c: string) => { in: (c: string, v: string[]) => { eq: (c: string, v: string) => PromiseLike<{ data: unknown; error: { message: string } | null }> } } } };
+        const out = new Map<string, SplitLinePayment[]>();
         const { data, error } = await sb.from("payments").select("id, amount, quote_id, invoice_id, receipt_voucher_no, bank_txn_id")
-          .in("bank_txn_id", ids.slice(i, i + 150)).eq("status", "received");
+          .in("bank_txn_id", ids).eq("status", "received");
         if (error) throw error;
         for (const r of (data ?? []) as Array<SplitLinePayment & { bank_txn_id: string }>) {
           const list = out.get(r.bank_txn_id) ?? [];
           list.push({ id: r.id, amount: Number(r.amount) || 0, quote_id: r.quote_id, invoice_id: r.invoice_id, receipt_voucher_no: r.receipt_voucher_no });
           out.set(r.bank_txn_id, list);
         }
-      }
-      return out;
-    },
-    staleTime: 30_000,
+        return out;
+      },
+    })),
+    combine: (rs) => ({ data: new Map(rs.flatMap((r) => (r.data ? [...r.data] : []))) as Map<string, SplitLinePayment[]> | undefined }),
   });
 }

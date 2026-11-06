@@ -24,6 +24,7 @@ import { toastInvoiceIssueError } from "@/lib/queries/invoices";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { fetchPagesInParallel } from "@/lib/banking/parallel-pages";
+import { readBankLines } from "@/lib/banking/bank-lines-delta";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { bankLinePaymentReference } from "@/lib/payments/bank-line-reference";
 import type { OpenInvoice } from "@/lib/banking/invoice-credit-match";
@@ -395,12 +396,29 @@ export async function fetchBankTransactions(supabase: BankClient, accountId: str
 }
 
 export function useBankTransactions(accountId: string | null | undefined) {
+  const qc = useQueryClient();
   return useQuery({
     queryKey: ["bank_transactions", accountId],
     enabled:  Boolean(accountId),
     queryFn: async (): Promise<BankTransactionRow[]> => {
       if (!accountId) return [];
-      return fetchBankTransactions(createClient(), accountId);
+      /* R-2524: a refetch (after every save) reads only the lines changed since the last read. */
+      const sb = createClient();
+      const prev = qc.getQueryData<BankTransactionRow[]>(["bank_transactions", accountId]);
+      return readBankLines(accountId, prev, {
+        full: () => fetchBankTransactions(sb, accountId),
+        changedSince: (since) => fetchAllRows<BankTransactionRow>((from, to) => sb
+          .from("bank_transactions").select("*")
+          .eq("bank_account_id", accountId).gte("updated_at", since)
+          .order("updated_at", { ascending: true }).order("id", { ascending: true })
+          .range(from, to)),
+        count: async () => {
+          const { count, error } = await sb.from("bank_transactions")
+            .select("id", { count: "exact", head: true }).eq("bank_account_id", accountId);
+          if (error) throw error;
+          return count ?? -1;   // no count → never equal → full read
+        },
+      });
     },
     staleTime: 30_000,
   });

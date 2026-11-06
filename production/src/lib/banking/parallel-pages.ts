@@ -19,11 +19,14 @@ export async function fetchPagesInParallel<T>(
   page: (from: number, to: number, withCount?: boolean) => PromiseLike<{ data: T[] | null; error: unknown; count?: number | null }>,
   size = FETCH_PAGE_SIZE,
 ): Promise<T[]> {
+  /* fetchAllRows' rule: a page longer than the server's max_rows reads as "done" too early. */
+  if (!Number.isInteger(size) || size < 1) throw new RangeError(`fetchPagesInParallel: size must be a positive integer, got ${size}`);
   const first = await page(0, size - 1, true);
   if (first.error) throw first.error;
   const out: T[] = [...(first.data ?? [])];
   if (out.length < size) return out;
   const total = typeof first.count === "number" ? first.count : null;
+  if (total !== null && out.length >= total) return out;   // exactly one full page — no empty check
   if (total !== null && total > size) {
     const starts: number[] = [];
     for (let from = size; from < total; from += size) starts.push(from);
@@ -34,7 +37,10 @@ export async function fetchPagesInParallel<T>(
     });
     for (const rows of pages) for (const r of rows) out.push(r);
     const last = pages[pages.length - 1];
-    if (last && last.length < size) return out;
+    /* Every row the count promised (or a short last page) → done. Lines added after the count
+       are read by the next refetch, as with any read. Fewer rows than counted (lines removed
+       meanwhile) also ends on the short page. */
+    if (out.length >= total || (last && last.length < size)) return out;
   }
   /* No count, or the last page was full: the rest one page at a time (fetchAllRows' rule). */
   for (let from = out.length; ; from += size) {

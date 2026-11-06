@@ -38,6 +38,7 @@ import {
 } from "@/lib/queries/bank";
 import { certainOf, invoiceMatchesOfCredits, type InvoiceMatch } from "@/lib/banking/invoice-credit-match";
 import { noCustomerYet } from "@/lib/banking/no-customer-yet";
+import { createLineMemo } from "@/lib/banking/line-memo";
 import type { OldOneOffBooking } from "@/lib/banking/credit-pay-for";
 import { useBankAdvancePaymentIds, useBankSplitLinePayments, useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
 import { bankRowStatusLabel, splitPaymentsTitle, type SplitLinePayment } from "@/lib/banking/bank-row-label";
@@ -137,9 +138,22 @@ export default function BankAccountDetailPage() {
   const [salaryOpen,    setSalaryOpen]    = React.useState(false);
   const [aaConnectOpen, setAaConnectOpen] = React.useState(false);
   const [reconcileTxn,  setReconcileTxn]  = React.useState<BankTransactionRow | null>(null);
-  /* R-2524: the Reconcile sheet stays mounted once opened (its reads are cached for the next line). */
+  /* R-2524: the Reconcile sheet (and its ~15 reads) is mounted AFTER the list has drawn — when the
+     browser is idle, or at the first Reconcile click if that comes sooner — so opening the page
+     does not wait on it, yet its data is in before the operator picks anything (a read landing
+     after a pick would re-run the sheet's pre-fill). Stays mounted for the next line. */
   const [drawerMounted, setDrawerMounted] = React.useState(false);
-  React.useEffect(() => { if (reconcileTxn) setDrawerMounted(true); }, [reconcileTxn]);
+  const linesLoaded = Boolean(txnQ.data);
+  React.useEffect(() => {
+    if (drawerMounted || !linesLoaded) return;
+    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (h: number) => void };
+    if (w.requestIdleCallback) {
+      const h = w.requestIdleCallback(() => setDrawerMounted(true), { timeout: 2000 });
+      return () => w.cancelIdleCallback?.(h);
+    }
+    const t = window.setTimeout(() => setDrawerMounted(true), 500);
+    return () => window.clearTimeout(t);
+  }, [drawerMounted, linesLoaded]);
   /* Un-reconcile goes through a confirm that says what the line leaves behind (and can
      undo a sale raised from it) — components/features/banking/unreconcile-dialog.tsx. */
   const [unreconcileTxn, setUnreconcileTxn] = React.useState<BankTransactionRow | null>(null);
@@ -190,11 +204,16 @@ export default function BankAccountDetailPage() {
     if (!z?.available) return null;
     return new Set((transactions ?? []).filter((t) => t.matched_to_type === null && t.credit > 0 && z.ids.has(t.id)).map((t) => t.id));
   }, [zohoQ.data, transactions]);
+  /* R-2524: per-line answers kept across saves — only a line that changed (or a changed customer /
+     invoice / vendor / rule list) is worked out again (lib/banking/line-memo). */
+  const [matchMemo] = React.useState(() => createLineMemo<InvoiceMatch[]>());
+  const [noCustomerMemo] = React.useState(() => createLineMemo<boolean>());
+  const [noVendorMemo] = React.useState(() => createLineMemo<boolean>());
   /* R-2524: each unmatched credit is matched against the open invoices ONCE — the chip and
      "no customer yet" below both read this map (it was done twice, ~800 lines × 400 invoices). */
   const creditMatches = React.useMemo(
-    () => invoiceMatchesOfCredits(transactions ?? [], openInvoices ?? []),
-    [transactions, openInvoices],
+    () => invoiceMatchesOfCredits(transactions ?? [], openInvoices ?? [], matchMemo),
+    [transactions, openInvoices, matchMemo],
   );
   const invoiceChips = React.useMemo(() => certainOf(creditMatches), [creditMatches]);
 
@@ -203,8 +222,14 @@ export default function BankAccountDetailPage() {
      as the sheet, so our own name in a narration is never a customer. */
   const { data: customers } = useCustomers({ enabled: canWrite && hasUnmatchedCredit });
   const payerMemory = usePayerMemory();
-  const noCustomerIds = React.useMemo(() => new Set(noCustomerYet(transactions ?? [], customers ?? [],
-    (t) => creditMatches.get(t.id) ?? [], payerMemory).map((t) => t.id)), [transactions, customers, creditMatches, payerMemory]);
+  const noCustomerIds = React.useMemo(() => {
+    noCustomerMemo.reset([customers, openInvoices, payerMemory]);
+    const list = customers ?? [];
+    return new Set((transactions ?? [])
+      .filter((t) => t.matched_to_type === null && t.credit > 0
+        && noCustomerMemo.get(t, () => noCustomerYet([t], list, () => creditMatches.get(t.id) ?? [], payerMemory).length > 0))
+      .map((t) => t.id));
+  }, [transactions, customers, openInvoices, creditMatches, payerMemory, noCustomerMemo]);
   /* R-1863: lines booked before R-1838 as a one-off "bank sale" — each can be relinked. */
   const { data: oldBookings } = useOldOneOffBookings(accountId, canWrite);
   const oldById = React.useMemo(() => new Map((oldBookings ?? []).map((b) => [b.txn_id, b])), [oldBookings]);
@@ -225,10 +250,12 @@ export default function BankAccountDetailPage() {
     const salaryIds = new Set(salaryLines.map((l) => l.txn.id));
     const vendors = (vendorRows ?? []) as unknown as VendorLite[];
     const extras = { rules: guessRules ?? [], aliases: guessAliases ?? [] };
+    noVendorMemo.reset([vendorRows, guessRules, guessAliases]);
     return new Set((transactions ?? [])
-      .filter((t) => t.matched_to_type === null && t.debit > 0 && !salaryIds.has(t.id) && guessVendor(t, vendors, extras) === null)
+      .filter((t) => t.matched_to_type === null && t.debit > 0 && !salaryIds.has(t.id)
+        && noVendorMemo.get(t, () => guessVendor(t, vendors, extras) === null))
       .map((t) => t.id));
-  }, [transactions, salaryLines, vendorRows, guessRules, guessAliases]);
+  }, [transactions, salaryLines, vendorRows, guessRules, guessAliases, noVendorMemo]);
 
   /* The Imports list (R-1623) — "Statement file" filter: which lines each import brought in. */
   const { data: importRows } = useBankImportHistory(accountId);

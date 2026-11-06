@@ -15,7 +15,7 @@ describe("bank list invoice-match chip (R-399)", () => {
   it("uses the R-109 matcher through certainInvoiceMatches, fetched only for writers with an unmatched credit", () => {
     /* R-2524: matched once per credit (invoiceMatchesOfCredits) and the chip is certainOf that —
        the same rule as certainInvoiceMatches (equality proven in lib/banking/bank-page-perf-6000.test.ts). */
-    expect(page).toMatch(/invoiceMatchesOfCredits\(transactions \?\? \[\], openInvoices \?\? \[\]\)/);
+    expect(page).toMatch(/invoiceMatchesOfCredits\(transactions \?\? \[\], openInvoices \?\? \[\], matchMemo\)/);
     expect(page).toMatch(/certainOf\(creditMatches\)/);
     expect(page).toMatch(/useOpenInvoicesForCreditMatch\(canWrite && hasUnmatchedCredit\)/);
   });

@@ -27,6 +27,8 @@ import { runningBalances } from "@/lib/banking/running-balance";
 import { reconcileCoverage } from "@/lib/banking/reconcile-coverage";
 import { checkStatement } from "@/lib/banking/statement-check";
 import { salaryLinesOf } from "@/components/features/banking/salary-lines-dialog";
+import { guessDigest } from "./bank-page-perf-golden";
+import golden from "./bank-page-perf-golden.json";
 
 function time<T>(fn: () => T): { ms: number; out: T } {
   const t0 = performance.now();
@@ -34,8 +36,9 @@ function time<T>(fn: () => T): { ms: number; out: T } {
   return { ms: performance.now() - t0, out };
 }
 
-/** Generous on purpose (CI machines are slower and shared): before R-2524 this was 15–20 s. */
-const BUDGET_MS = 4_000;
+/** Generous on purpose (CI shards are slower and shared — a flaky clock check is worse than none):
+ *  after R-2524 it is ~0.5 s here, before it was 15–20 s, so 8 s still catches the old bug coming back. */
+const BUDGET_MS = 8_000;
 
 describe("R-2524 bank page pipeline at 6,000 lines", () => {
   const f = bankPerfFixture(6000);
@@ -77,6 +80,10 @@ describe("R-2524 bank page pipeline at 6,000 lines", () => {
     expect(viaShared).toEqual(perLine);
     expect(perLine.length).toBeGreaterThan(0);   // the fixture really exercises the rule
     expect(chipsNew.size).toBeGreaterThan(0);
+  });
+
+  it("every guess answers exactly as BEFORE R-2524 (digest made with the old code, bank-page-perf-golden.json)", () => {
+    expect(guessDigest()).toEqual(golden);
   });
 
   it("the page matches each credit once and reads badges only for the lines it draws (source guard)", () => {

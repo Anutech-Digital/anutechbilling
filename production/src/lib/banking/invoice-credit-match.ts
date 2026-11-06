@@ -22,7 +22,8 @@
  * Nothing here writes. `oneClick` only says the drawer may show the "Match & record
  * payment" button; the operator still clicks it (see `canAutoApply` in credit-match.ts).
  */
-import { nameOverlap } from "@/lib/accounting/credit-match";
+import { cachedNameTokens, cachedNarrationSet } from "@/lib/accounting/credit-match";
+import type { LineMemo } from "@/lib/banking/line-memo";
 
 export interface CreditLine {
   /** Whole rupees credited. */
@@ -95,7 +96,7 @@ function dayMs(iso: string): number {
 }
 
 type PreparedInvoices = {
-  list: Array<{ inv: OpenInvoice; idN: string; quoteN: string; day: number }>;
+  list: Array<{ inv: OpenInvoice; idN: string; quoteN: string; day: number; nameToks: readonly string[] }>;
   byId: Map<string, OpenInvoice>;
 };
 /* R-2524: one prepared copy per invoice list (the bank page passes the same cached array for
@@ -105,7 +106,7 @@ function preparedInvoices(invoices: readonly OpenInvoice[]): PreparedInvoices {
   let hit = prepared.get(invoices);
   if (!hit || hit.list.length !== invoices.length) {   // a list pushed to after it was prepared
     hit = {
-      list: invoices.map((inv) => ({ inv, idN: norm(inv.id), quoteN: norm(inv.quoteId), day: dayMs(inv.invoiceDate) })),
+      list: invoices.map((inv) => ({ inv, idN: norm(inv.id), quoteN: norm(inv.quoteId), day: dayMs(inv.invoiceDate), nameToks: cachedNameTokens(inv.customerName) })),
       byId: new Map(invoices.map((i) => [i.id, i])),
     };
     prepared.set(invoices, hit);
@@ -152,15 +153,16 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
   const creditDay = dayMs(credit.txnDate);
   const said = (id: string) => id.length >= 6 && (descN.includes(id) || refN.includes(id));
   const prep = preparedInvoices(invoices);
+  const narration = cachedNarrationSet(credit.description);   // nameOverlap, read once per credit
 
-  for (const { inv, idN, quoteN, day } of prep.list) {
+  for (const { inv, idN, quoteN, day, nameToks } of prep.list) {
     const due = Math.round(inv.amountDue);
     if (!(due > 0)) continue;
     const age = Math.round((creditDay - day) / 86_400_000);
     if (age < -MAX_DAYS_BEFORE_INVOICE || age > MAX_INVOICE_AGE_DAYS) continue;
 
     const refHit = said(idN) || said(quoteN);
-    const nameHit = nameOverlap(credit.description, inv.customerName);
+    const nameHit = nameToks.find((t) => narration.has(t)) ?? null;   // = nameOverlap(credit.description, inv.customerName)
     const exactAmount = amount === due;
     const tdsRatePct = exactAmount ? null : tdsRateFor(amount, due, inv.taxableValue);
     if (!refHit && !nameHit && !exactAmount && tdsRatePct === null) continue;
@@ -253,15 +255,19 @@ export function certainInvoiceMatches(
 export function invoiceMatchesOfCredits(
   txns: readonly ChipTxn[],
   invoices: readonly OpenInvoice[],
+  /** R-2524: remember each line's answer across saves (the page passes one; reset on the invoice list). */
+  memo?: LineMemo<InvoiceMatch[]>,
 ): Map<string, InvoiceMatch[]> {
+  memo?.reset([invoices]);
   const out = new Map<string, InvoiceMatch[]>();
   if (invoices.length === 0) return out;
   for (const t of txns) {
     if (t.matched_to_type !== null || !(t.credit > 0)) continue;
-    const ms = matchCreditToInvoices(
+    const run = () => matchCreditToInvoices(
       { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference },
       invoices,
     );
+    const ms = memo ? memo.get(t, run) : run();
     if (ms.length > 0) out.set(t.id, ms);
   }
   return out;
