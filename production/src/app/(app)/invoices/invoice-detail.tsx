@@ -24,6 +24,8 @@ import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/queries/payments";
 import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
 import { invoiceReceiptsQuote, invoiceTdsMoney } from "./invoice-receipts";
+import { takesQuotelessReceipt } from "@/lib/payments/quoteless-receipt";
+import { useQuotelessReceipts } from "@/lib/queries/quoteless-receipts";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { invoiceMoneyIn } from "@/lib/invoices/payment-state";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
@@ -88,7 +90,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   /* R-1564: a subscription instalment has no quote of its own — Record payment goes through
      its subscription's quote (record_instalment_payment), so the button shows for it too. */
   const { data: instalment } = useInstalmentLink(invoice.quote_id ? null : invoice.id);
-  const canPay = !!quote?.id || !!instalment?.quoteId;
+  /* R-2542: + an FY sale imported from Zoho (no quote) — paid on the several-invoices sheet. */
+  const canPay = !!quote?.id || !!instalment?.quoteId || takesQuotelessReceipt(invoice);
   const { data: customer } = useCustomer(invoice.customer_id ?? undefined);
   const { data: me } = useCurrentUser();
   const waSender = useWhatsAppSender();
@@ -695,7 +698,12 @@ export function InvoicePaymentsAccordion({
   /* R-1636: an instalment has no quote of its own — its receipts are on its subscription's quote. */
   const { data: instalment } = useInstalmentLink(inv.quote_id ? null : inv.id);
   const source = invoiceReceiptsQuote(quote?.id, instalment);
-  const { data: payments, isLoading } = usePaymentsByQuote(source?.quoteId);
+  const { data: quotePays, isLoading: quoteLoading } = usePaymentsByQuote(source?.quoteId);
+  /* R-2542: a Zoho FY sale's receipts carry the invoice itself (no quote). */
+  const quoteless = !source && takesQuotelessReceipt(inv);
+  const { data: invoicePays, isLoading: invoiceLoading } = useQuotelessReceipts(quoteless ? inv.id : null);
+  const payments = quoteless ? invoicePays : quotePays;
+  const isLoading = quoteless ? invoiceLoading : quoteLoading;
   // Project invoices have no parent quote — their receipts live in project_payments.
   const { data: projPays, isLoading: projLoading } = useProjectPaymentsByInvoice(inv.id);
   const { data: customer } = useCustomer(inv.customer_id ?? undefined);

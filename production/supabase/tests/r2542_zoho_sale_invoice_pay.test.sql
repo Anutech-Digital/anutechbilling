@@ -1,7 +1,7 @@
 -- R-2542 (6 Nov 2026, p1 money): an FY sale imported from Zoho (R-2499 — invoices.zoho_invoice_id, no
 -- quote, no instalment) could not be paid from the bank page: Banking → Reconcile → "An open quote /
 -- invoice" listed only quotes, and "This money is for" refused it. Migration
--- 20261106160000_r2542_zoho_sale_invoice_bank_credit (bank_credit_open_items + bank_credit_pay_item):
+-- 20261106155253_r2542_zoho_sale_invoice_bank_credit (bank_credit_open_items + bank_credit_pay_item):
 -- such an invoice is an 'opening' item too and books through _record_opening_invoice_payment (the
 -- same quote-less receipt R-1739 / R-2466 / R-2501 use). Self-asserting, ONE transaction, rolled back.
 -- RED without the migration (A: the imported sale is not listed).
@@ -19,6 +19,7 @@
 --      its receipt carries the quote.
 --   I. Record payment (record_multi_invoice_payment) on a Zoho sale with 2% TDS → paid, ₹0 due.
 --   J. A hand-made tax invoice with no quote / instalment / Zoho id is still left out (no payment path).
+--   K. A void Zoho sale is refused even when the line's reference is already a receipt on it.
 
 begin;
 
@@ -260,6 +261,28 @@ begin
   if exists (select 1 from public.bank_credit_open_items('b2542000-0000-0000-0000-0000000000c1') o where o.invoice_id = 'INV-R2542-NOQ') then
     raise exception 'FAIL J: a tax invoice with no quote / instalment / Zoho id is listed (it cannot take a payment)'; end if;
   raise notice 'PASS J: a hand-made quote-less tax invoice is still left out';
+end $$;
+
+-- ── K. a VOID Zoho sale is refused even when the line's reference is already a receipt on it ──
+reset role;
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
+  ('b2542000-0000-0000-0000-0000000000e9', 'b2542000-0000-0000-0000-0000000000f0', 'b2542000-0000-0000-0000-0000000000d1', '2026-01-09',
+   'NEFT CR-R2542UTR0009-KA BUYER', 0, 5800, 'R2542UTR0009', 'manual');
+alter table public.invoices disable trigger user;
+update public.invoices set status = 'void' where id = pg_temp.zs('zs3');
+alter table public.invoices enable trigger user;
+set local role authenticated;
+do $$
+begin
+  begin
+    perform public.reconcile_bank_credit_to_item('b2542000-0000-0000-0000-0000000000e9', null, pg_temp.zs('zs3'));
+    raise exception 'FAIL K: a void invoice''s receipt was matched to the line';
+  exception when check_violation then
+    if sqlerrm not like '%is void%' then raise exception 'FAIL K: wrong refusal: %', sqlerrm; end if;
+  end;
+  if (select matched_to_type from public.bank_transactions where id = 'b2542000-0000-0000-0000-0000000000e9') is not null then
+    raise exception 'FAIL K: the line was matched'; end if;
+  raise notice 'PASS K: a void Zoho sale is refused, replay or not';
 end $$;
 
 rollback;

@@ -208,7 +208,7 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
     const inv = prep.byId.get(m.invoiceId);
     m.blockedReason =
       inv?.isProject ? "Project invoice — record it as a project payment"
-      : !m.quoteId ? "No quote behind this invoice — choose it under “This money is for” → An open quote / invoice"
+      : !m.quoteId ? "No quote behind this invoice — record the payment from the invoice"
       : m.tdsRatePct !== null ? `Short by ₹${inr(m.shortBy)} — looks like ${m.tdsRatePct}% TDS; record it with TDS from the invoice`
       : !m.exactAmount ? (m.overBy > 0 ? `Deposit is ₹${inr(m.overBy)} more than due` : `Deposit is ₹${inr(m.shortBy)} short of due`)
       : m.confidence === "possible" ? "Same amount as another invoice — open the invoice to be sure"

@@ -59,9 +59,9 @@ declare
   v_caller  uuid;
   v_trusted boolean;
 begin
-  /* R-1838 / §17c: fail closed for a login with no company. */
-  v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+  /* R-1838 / §17c: fail closed for a login with no company. R-2542: current_request_role() (R-2487 rule). */
+  v_trusted := coalesce(public.current_request_role(), '') = 'service_role'
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   v_caller := public.current_tenant_id();
   if v_caller is null and not v_trusted then
@@ -165,7 +165,7 @@ $$;
 revoke all on function public.bank_credit_open_items(uuid) from public, anon;
 grant execute on function public.bank_credit_open_items(uuid) to authenticated, service_role;
 
--- ── 3. bank_credit_pay_item (from 20261030123423_r2095_sale_invoice_on_receipt) ───────────────────
+-- ── 2. bank_credit_pay_item (from 20261104045700_r2466 — its latest body) ──────────────────────
 create or replace function public.bank_credit_pay_item(
   p_txn_id              uuid,
   p_amount              integer,
@@ -231,10 +231,12 @@ begin
     if not found or v_inv.tenant_id is distinct from v_txn.tenant_id then
       raise exception 'Invoice % not found in your company', p_invoice_id using errcode = 'no_data_found';
     end if;
-    /* R-2542: a quote-less receipt checks the status AFTER its replay (below) — a line un-reconciled
-       (receipt kept) from an invoice it paid in full is matched back to that receipt, not refused. */
+    /* R-2542: a quote-less receipt on a PAID invoice is checked after its replay (below) — a line
+       un-reconciled (receipt kept) from an invoice it paid in full is matched back to that receipt,
+       not refused. A void / draft invoice is refused here, replay or not. */
     if v_inv.status not in ('pending', 'overdue')
-       and not ((v_inv.document_kind = 'opening_invoice' or v_inv.zoho_invoice_id is not null) and v_inv.quote_id is null) then
+       and not (v_inv.status = 'paid'
+                and (v_inv.document_kind = 'opening_invoice' or v_inv.zoho_invoice_id is not null) and v_inv.quote_id is null) then
       raise exception 'Invoice % is %, so there is nothing left to pay on it.', p_invoice_id, v_inv.status using errcode = 'check_violation';
     end if;
 
