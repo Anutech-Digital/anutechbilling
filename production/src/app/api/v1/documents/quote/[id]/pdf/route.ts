@@ -95,14 +95,25 @@ export async function GET(req: NextRequest, props0: { params: Promise<{ id: stri
 
   /* R-1523: ?template=proforma → the same quote as a "Proforma Invoice" (quote number, no GST
      series — §17a). Chosen per download; nothing is stored on the quote. */
-  const template = parseQuoteTemplate(req.nextUrl.searchParams.get("template"));
+  /* R-2519: a part payment request IS a Proforma Invoice — its paper unless ?template= says
+     otherwise, with its pay-by date (the part's due date) as "Valid until". */
+  const partBillingId = (q as Quote & { subscription_billing_id?: string | null }).subscription_billing_id ?? null;
+  const askedTemplate = req.nextUrl.searchParams.get("template");
+  const template = askedTemplate == null && partBillingId ? "proforma" : parseQuoteTemplate(askedTemplate);
+  const partDue = partBillingId
+    ? ((await admin.from("subscription_billings").select("due_on, bill_on").eq("id", partBillingId).maybeSingle()).data as { due_on?: string | null; bill_on?: string | null } | null)
+    : null;
+  const payBy = partDue ? (partDue.due_on ?? partDue.bill_on ?? null) : null;
+  const payByProps = payBy && q.created_date
+    ? { expiresDate: payBy, validityDays: Math.max(0, Math.round((Date.parse(payBy) - Date.parse(q.created_date)) / 86_400_000)) }
+    : {};
   const payLinkUrl = q.public_token ? quoteAcceptUrl(trustedOrigin(req.headers), q.id, q.public_token) : null;
 
   const { renderToBuffer } = await import("@react-pdf/renderer");
   const { QuotePDF } = await import("@/lib/pdf/QuotePDF");
   const buffer = await renderToBuffer(
     createElement(QuotePDF, {
-      ...props, upiQrDataUrl: upi?.dataUrl ?? null, upiVpa: upi?.vpa ?? null,
+      ...props, ...payByProps, upiQrDataUrl: upi?.dataUrl ?? null, upiVpa: upi?.vpa ?? null,
       template,
       bank: template === "proforma" ? proformaBank(tenant as Parameters<typeof proformaBank>[0]) : null,
       payLinkUrl,

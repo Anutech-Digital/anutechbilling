@@ -43,6 +43,7 @@ import { quotePerPeriodFigures } from "@/lib/quotes/per-period-figures";
 import { isRenderableLogo } from "./logo";
 import { quoteDocumentLabel } from "./quote-document-kind";
 import { PROFORMA_NOTICE, PROFORMA_TITLE, type QuoteTemplate, type ProformaBank } from "./quote-template";
+import { partLineUnitLabel } from "@/lib/billing/proforma";
 import { includedSupportLine, type IncludedSupportLine } from "./quote-support-line";
 
 import { PDF_FONT, PDF_FONT_BOLD, registerPdfFonts } from "./fonts";
@@ -706,7 +707,8 @@ export function QuotePDF(props: QuotePDFProps) {
                     ) : (
                     <Text style={s.lineMeta}>
                       {/* R-809: a one-time charge is not "per year" and has no schedule. */}
-                      {lineUnitLabel(line, Boolean(perInvoice) || oneTime)} · HSN 998313
+                      {/* R-2519: a renewal part (proforma) line reads "Per seat · 12 Nov–11 Dec 2026", not "One-time". */}
+                      {partLineUnitLabel(line as Parameters<typeof partLineUnitLabel>[0]) ?? lineUnitLabel(line, Boolean(perInvoice) || oneTime)} · HSN 998313
                       {line.commitment && !oneTime && ` · ${scheduleLabel(line.commitment, effectiveCycle)}`}
                     </Text>
                     )}

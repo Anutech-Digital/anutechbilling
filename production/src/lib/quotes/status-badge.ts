@@ -54,6 +54,8 @@ type QuoteStatusFields = Pick<Quote, "status" | "payment_status" | "amount" | "p
   /** R-2213: approval state — a quote waiting on sign-off never reads "Sent". Optional so older callers still fit. */
   approval_status?: string | null;
   below_cost?: boolean | null;
+  /** R-2519: cancelled (kept, stored status rejected) — reads "Cancelled". */
+  cancelled_at?: string | null;
 };
 
 /** What is still owed on this quote. Never negative — an overpayment is not a debt. */
@@ -69,6 +71,8 @@ export function unifiedStatus(q: QuoteStatusFields, today: string = istToday()):
   /* R-2023: a customer's advance (R-1863 holder quote) is money kept as credit — never "Paid"
      or "Accepted" like a sale (customer-advance.ts). */
   if (isCustomerAdvanceQuote(q) && q.status !== "rejected") return { label: CUSTOMER_ADVANCE_LABEL, kind: "info" };
+  /* R-2519: Cancel keeps the quote — it reads Cancelled, not Rejected (the customer did not say no). */
+  if (q.cancelled_at && q.status === "rejected") return { label: "Cancelled", kind: "muted" };
   /* Payment first, and independent of `status`. This ordering IS the fix: every one of
      these was previously reachable only from `status === "accepted"`. */
   if (q.payment_status === "invoiced") {

@@ -18,6 +18,7 @@ import { sendCustomerEmail } from "@/lib/messaging";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { quoteAcceptUrl } from "@/lib/quotes/accept-link";
 import { rupee, formatDate } from "@/lib/utils";
+import { toIstDate } from "@/lib/dates/ist";
 import { cronTenantAllowed } from "@/lib/automation/cron-gate";
 import {
   requestReminderStep, requestReminderText, requestPauseDue, requestPauseReason,
@@ -50,6 +51,8 @@ interface BillRow {
   /** R-2230: when the request is due (part start + payment terms); older rows fall back to bill_on. */
   due_on?: string | null;
   period_index: number; request_reminder_step: string | null;
+  /** R-2519: when the last mail went out — the pre-due steps need it to be an earlier day. */
+  request_reminded_at?: string | null;
 }
 interface TenantRow { id: string; name: string; email: string | null; auto_suspend_on_overdue: boolean | null; grace_period_days: number | null }
 
@@ -77,7 +80,7 @@ export async function chasePartRequests(
   const [bills, tenants] = await Promise.all([
     fetchAllRowsIn(open.map((q) => q.subscription_billing_id), (ids, from, to) => db
       .from("subscription_billings")
-      .select("id, subscription_id, bill_on, due_on, period_start, period_end, period_index, request_reminder_step")
+      .select("id, subscription_id, bill_on, due_on, period_start, period_end, period_index, request_reminder_step, request_reminded_at")
       .in("id", ids).order("id", { ascending: true }).range(from, to)) as unknown as Promise<BillRow[]>,
     fetchAllRowsIn(open.map((q) => q.tenant_id), (ids, from, to) => db
       .from("tenants")
@@ -103,7 +106,11 @@ export async function chasePartRequests(
     try {
       const step: RequestReminderStep | "new" | null = !b.request_reminder_step
         ? "new"
-        : requestReminderStep({ dueOn, todayISO: opts.todayISO, lastStep: b.request_reminder_step, open: true, amountDue, graceDays: t.grace_period_days ?? 0 });
+        : requestReminderStep({
+            dueOn, todayISO: opts.todayISO, lastStep: b.request_reminder_step, open: true, amountDue, graceDays: t.grace_period_days ?? 0,
+            /* R-2519: the pre-due steps go out only after a mail on an earlier day. */
+            lastSentOn: b.request_reminded_at ? toIstDate(b.request_reminded_at) : null,
+          });
       if (step) {
         const stepName = step === "new" ? REQUEST_SENT_STEP : step;
         if (opts.dryRun) {
@@ -127,6 +134,15 @@ export async function chasePartRequests(
               automated: { tenantId: q.tenant_id, action: "dunning.send" },
             });
             out.sent.push({ quote_id: q.id, step: stepName, status: r.status });
+            /* R-2519: the quote's send log — the page shows "Sent" only when an email really went
+               ("stubbed" = no email provider, e.g. staging's mail guard: it stays "Ready to send"). */
+            {
+              const { error: logErr } = await db.from("quote_send_log").insert({
+                tenant_id: q.tenant_id, quote_id: q.id, recipient_email: contact.email,
+                subject: tpl.subject, status: r.status === "sent" ? "sent" : r.status,
+              });
+              if (logErr) out.errors.push({ quote_id: q.id, message: `Send log not written: ${logErr.message}` });
+            }
             if (r.status === "sent" || r.status === "stubbed") {
               const { error } = await db.from("subscription_billings")
                 .update({ request_reminder_step: stepName, request_reminded_at: new Date().toISOString() })

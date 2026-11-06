@@ -43,6 +43,8 @@ export function nextPartMessage(customer: string | null, o: NextPartOutcome, ski
   const inv = o.raised[0];
   if (inv) return { ok: true, text: `Tax invoice ${inv.invoice_id} raised for ${who}'s next part (it was paid).`, href: `/invoices/${inv.invoice_id}` };
   const req = o.requests[0];
+  /* R-2519: a PI- number is a Proforma Invoice — made, not emailed (it shows Ready to send). */
+  if (req && /^PI-/.test(req.quote_id)) return { ok: true, text: `Proforma Invoice ${req.quote_id} made for ${who}'s next part — not emailed yet. Its tax invoice is raised when it is paid.`, href: `/quotes/${req.quote_id}` };
   if (req) return { ok: true, text: `Payment request ${req.quote_id} made for ${who}'s next part. Its tax invoice is raised when it is paid.`, href: `/quotes/${req.quote_id}` };
   const open = o.requestsOpen[0];
   if (open) return { ok: true, text: `${who}'s next part already has payment request ${open.quote_id} (${open.status}).`, href: `/quotes/${open.quote_id}` };

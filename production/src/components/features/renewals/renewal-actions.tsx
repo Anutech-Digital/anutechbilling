@@ -38,6 +38,9 @@ import { openRenewalQuoteMap, openRenewalQuoteStatus } from "@/app/(app)/renewal
 import { NonRenewingDialog } from "@/components/features/subscriptions/non-renewing-dialog";
 import { CancelSubscriptionDialog } from "@/components/features/subscriptions/cancel-subscription-dialog";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
+import { BillNextPartDialog, type BillNextChoice } from "./bill-next-part-dialog";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import type { BillingCycle } from "@/lib/supabase/database.types";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
@@ -102,7 +105,9 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   const name = sub.customer_name ?? "this customer";
 
   const [busy, setBusy] = React.useState<"send-now" | "generate" | null>(null);
-  const [dialog, setDialog] = React.useState<"non-renewing" | "cancel" | "nudge" | null>(null);
+  const [dialog, setDialog] = React.useState<"non-renewing" | "cancel" | "nudge" | "bill-next" | null>(null);
+  /* R-2519: billed in parts → "Bill next part" opens the proforma preview first (seats, rate, periods). */
+  const splitBilled = isSplitBilled((sub.billing_cycle ?? null) as BillingCycle | null);
   const voice = useVoiceNoteSend({ customerId: sub.customer_id ?? "", purpose: "renewal", customerName: name });
 
   const refresh = () => {
@@ -111,22 +116,25 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
     void qc.invalidateQueries({ queryKey: queryKeys.collections() });
   };
 
-  async function onGenerate() {
+  async function onGenerate(choice?: BillNextChoice) {
+    if (splitBilled && !choice) { setDialog("bill-next"); return; }
     setBusy("generate");
     try {
       const res = await fetch(`/api/subscriptions/${sub.id}/generate-renewal-quote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: choice ? JSON.stringify(choice) : undefined,
       });
       /* R-239: an HTML 500 used to surface as "Failed: Unexpected token <". */
       const json = (await readJsonSafe(res)) as { error?: string; alreadyExisted?: boolean; quoteId?: string; split?: boolean; message?: string; href?: string | null };
       if (!res.ok) {
         toastError(new Error(json.error ?? "Could not create the renewal quote"), {
-          action: { label: "Retry", onClick: () => void onGenerate() },
+          action: { label: "Retry", onClick: () => void onGenerate(choice) },
         });
         return;
       }
       refresh();
+      setDialog(null);
       /* R-2095: billed in parts → this billed the next part (request or invoice), not a quote. */
       if (json.split) {
         void qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -288,6 +296,15 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
         )}
       </div>
 
+      {dialog === "bill-next" && (
+        <BillNextPartDialog
+          sub={{ id: sub.id, customer_name: name, plan: sub.plan }}
+          open
+          busy={busy === "generate"}
+          onOpenChange={(v) => { if (!v) setDialog(null); }}
+          onConfirm={(choice) => void onGenerate(choice)}
+        />
+      )}
       {dialog === "nudge" && sub.customer_id && (
         <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" onClose={() => setDialog(null)} />
       )}

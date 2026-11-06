@@ -15,7 +15,7 @@
  *   - when the subscription is paused for an unpaid request: after the grace, under the company's
  *     own opt-in (tenants.auto_suspend_on_overdue — the same switch as for unpaid invoices).
  */
-import { dunningRank } from "@/lib/invoices/dunning";
+import { dunningRank, PRE_DUE_WINDOW_DAYS } from "@/lib/invoices/dunning";
 import { daysBetweenISO } from "@/lib/dates/ist";
 import { rupee } from "@/lib/utils";
 
@@ -75,7 +75,7 @@ export function applyBillOutcome(out: BillTally, periodIndex: number, data: unkn
 }
 
 /** The steps an unpaid part request is chased with — the dunning ladder's names, so its log ranks the same. */
-export type RequestReminderStep = "reminder" | "retry" | "final";
+export type RequestReminderStep = "pre_due" | "due_today" | "reminder" | "retry" | "final";
 
 /** The company's grace (tenants.grace_period_days); 0 / unset → 7 days (Pardeep, 28 Oct). */
 export const DEFAULT_REQUEST_GRACE_DAYS = 7;
@@ -89,6 +89,12 @@ export function requestGraceDays(tenantGraceDays: number | null | undefined): nu
  * part's bill date and due that day. Inside the grace: Day 1 reminder, Day 3 retry (when the grace
  * is longer), and the FINAL notice on the grace's last day — then the reminders stop. Never repeats
  * a step already sent (dunningRank), never chases a closed or paid request.
+ *
+ * R-2519: a proforma billed AHEAD of its period (Bill next part → next N periods) is mailed before
+ * it is due, so it also gets the invoice-dunning ladder's two pre-due steps — a heads-up within
+ * PRE_DUE_WINDOW_DAYS before the due date and a "due today" on it — each once, and only when the
+ * last mail went out on an EARLIER day (lastSentOn): a request mailed on its due day is not
+ * followed by a second mail the same day.
  */
 export function requestReminderStep(args: {
   dueOn: string;
@@ -97,9 +103,18 @@ export function requestReminderStep(args: {
   open: boolean;
   amountDue: number;
   graceDays: number;
+  /** R-2519: the IST day the last mail for this request went out (request_reminded_at). */
+  lastSentOn?: string | null;
 }): RequestReminderStep | null {
   if (!args.open || args.amountDue <= 0) return null;
   const late = daysBetweenISO(args.dueOn, args.todayISO);
+  if (late <= 0) {
+    const sentEarlier = Boolean(args.lastSentOn) && (args.lastSentOn as string).slice(0, 10) < args.todayISO;
+    if (!sentEarlier) return null;
+    if (late === 0) return dunningRank(args.lastStep) < dunningRank("due_today") ? "due_today" : null;
+    if (-late > PRE_DUE_WINDOW_DAYS) return null;
+    return dunningRank(args.lastStep) < dunningRank("pre_due") ? "pre_due" : null;
+  }
   const grace = requestGraceDays(args.graceDays);
   const ladder: { day: number; step: RequestReminderStep }[] = [
     ...([{ day: 1, step: "reminder" }, { day: 3, step: "retry" }] as const).filter((x) => x.day < grace),
@@ -122,14 +137,22 @@ export function requestReminderText(a: {
   dueOn: string;
   payUrl: string | null;
 }): { subject: string; body: string } {
+  /* R-2519: a PI- number is a Proforma Invoice — Zoho's wording ("Urgent: Service renewal"). */
+  const pi = /^PI-/.test(a.quoteId);
   const lead: Record<RequestReminderStep | "new", string> = {
-    new:           `Here is your payment request: ${a.part}. It is due on ${a.dueOn}.`,
+    new:           pi ? `Here is your proforma invoice ${a.quoteId} for ${a.part}. It is due on ${a.dueOn}.`
+                      : `Here is your payment request: ${a.part}. It is due on ${a.dueOn}.`,
+    pre_due:       `A heads-up: the payment for ${a.part} is due on ${a.dueOn}.`,
+    due_today:     `The payment for ${a.part} is due today (${a.dueOn}).`,
     reminder:      `A reminder: the payment for ${a.part} was due on ${a.dueOn}.`,
     retry:         `We have not yet received the payment for ${a.part}, due on ${a.dueOn}.`,
     final:         `Final notice: the payment for ${a.part} (due ${a.dueOn}) is still open. Please pay to keep the service running.`,
   };
   const subject = a.step === "new"
-    ? `${a.part} — ${a.amount} (${a.quoteId})`
+    ? (pi ? `Proforma Invoice ${a.quoteId} — ${a.amount}` : `${a.part} — ${a.amount} (${a.quoteId})`)
+    : a.step === "pre_due" ? `Renewal due on ${a.dueOn} — ${a.quoteId} (${a.amount})`
+    : a.step === "due_today" ? `Renewal due today — ${a.quoteId} (${a.amount})`
+    : pi ? `Urgent: Service renewal — ${a.quoteId} (${a.amount}) is overdue`
     : `Reminder: payment request ${a.quoteId} — ${a.amount}`;
   const body = [
     `Dear ${a.customerName},`,
