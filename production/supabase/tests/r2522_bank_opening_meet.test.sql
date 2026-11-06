@@ -51,7 +51,9 @@ insert into public.bank_accounts (id, tenant_id, name, bank_name, account_type, 
   ('bbbbbbbb-0000-0000-0000-000000252204','dddddddd-0000-0000-0000-000000252201','No value date','ICICI','current', 1000, '2026-04-01'),
   ('bbbbbbbb-0000-0000-0000-000000252205','dddddddd-0000-0000-0000-000000252201','Dup on old date','SBI','current', 1000, '2026-04-01'),
   ('bbbbbbbb-0000-0000-0000-000000252206','dddddddd-0000-0000-0000-000000252201','Thar EMI','Axis','current', 10000, '2026-04-01'),
-  ('bbbbbbbb-0000-0000-0000-000000252207','dddddddd-0000-0000-0000-000000252201','Reason','Kotak','current', 1000, '2026-04-01');
+  ('bbbbbbbb-0000-0000-0000-000000252207','dddddddd-0000-0000-0000-000000252201','Reason','Kotak','current', 1000, '2026-04-01'),
+  ('bbbbbbbb-0000-0000-0000-000000252208','dddddddd-0000-0000-0000-000000252201','Real 1 Apr','IDFC','current', 1000, '2026-04-01'),
+  ('bbbbbbbb-0000-0000-0000-000000252209','dddddddd-0000-0000-0000-000000252201','Missing line','Yes','current', 7890, '2026-04-01');
 insert into public.bank_import_batches (id, tenant_id, bank_account_id, file_name, source) values
   ('cccccccc-0000-0000-0000-000000252201','dddddddd-0000-0000-0000-000000252201','bbbbbbbb-0000-0000-0000-000000252201','apr-oct.xls','xlsx'),
   ('cccccccc-0000-0000-0000-000000252205','dddddddd-0000-0000-0000-000000252201','bbbbbbbb-0000-0000-0000-000000252205','apr.csv','csv');
@@ -66,7 +68,9 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   -- E: a hand-entered EMI inside the old opening's period
   ('22222222-0000-0000-0000-000000252206','dddddddd-0000-0000-0000-000000252201','bbbbbbbb-0000-0000-0000-000000252206','2026-03-03','EMI 1 Thar Roxx',27764,0,null,null,'manual',null),
   ('22222222-0000-0000-0000-000000252207','dddddddd-0000-0000-0000-000000252201','bbbbbbbb-0000-0000-0000-000000252206','2026-04-10','NEFT IN',0,100,null,'E0','csv_upload',null),
-  ('22222222-0000-0000-0000-000000252208','dddddddd-0000-0000-0000-000000252201','bbbbbbbb-0000-0000-0000-000000252207','2026-04-10','NEFT IN',0,100,null,'R0','csv_upload',null);
+  ('22222222-0000-0000-0000-000000252208','dddddddd-0000-0000-0000-000000252201','bbbbbbbb-0000-0000-0000-000000252207','2026-04-10','NEFT IN',0,100,null,'R0','csv_upload',null),
+  ('22222222-0000-0000-0000-000000252209','dddddddd-0000-0000-0000-000000252201','bbbbbbbb-0000-0000-0000-000000252208','2026-04-10','NEFT IN',0,100,null,'G0','csv_upload',null),
+  ('22222222-0000-0000-0000-000000252210','dddddddd-0000-0000-0000-000000252201','bbbbbbbb-0000-0000-0000-000000252209','2026-04-10','NEFT IN',0,100,null,'H0','csv_upload',null);
 
 select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000252201","role":"authenticated"}', true);
 
@@ -89,6 +93,10 @@ begin
   v := public.bank_account_current_balance('bbbbbbbb-0000-0000-0000-000000252201');
   -- 20,20,919 + Σ rounded FY amounts (−11,17,369) − 5,000: ₹2 below 8,98,552 = paise rounding of the amounts
   if v <> 898550 then raise exception 'FAIL A3: balance % (expected 898550)', v; end if;
+  -- the ₹2 by which today's balance moved is kept in the history, never hidden
+  if (select rounding_drift from public.bank_opening_history where bank_account_id = 'bbbbbbbb-0000-0000-0000-000000252201') is distinct from -2 then
+    raise exception 'FAIL A4: history rounding_drift not -2';
+  end if;
 end $$;
 
 -- ── B. A line missing from the statement is still refused ─────────────────────────────────
@@ -181,6 +189,38 @@ begin
     raise exception 'FAIL F3: history row % (expected the reason kept)', row_to_json(h);
   end if;
 end $$;
+
+-- ── G. A real 1 Apr line (no earlier value date) is after the 31 Mar closing ──────────────
+do $
+declare j jsonb;
+begin
+  j := public.import_bank_statement_with_opening('bbbbbbbb-0000-0000-0000-000000252208',
+    '[{"txn_date":"2026-03-15","description":"IN","debit":0,"credit":200,"balance_after":1000,"reference":"G1"},
+      {"txn_date":"2026-04-01","description":"BANK CHARGE","debit":50,"credit":0,"balance_after":950,"reference":"G2"}]'::jsonb,
+    'mar.csv', 'csv', 800, '2026-03-01', false, null);
+  if (j -> 'opening' ->> 'difference')::bigint <> 0 then
+    raise exception 'FAIL G: a genuine 1 Apr charge was counted before the 1 Apr opening (%)', j -> 'opening';
+  end if;
+end $;
+
+-- ── H. A missing line on a long statement is not hidden as rounding (cap ₹25) ───────────────
+do $
+declare ok boolean := false; msg text; rows jsonb;
+begin
+  -- 60 × ₹10 out, then (₹1,500 out on 1 Sep — LEFT OUT of the file), then ₹10 out on 31 Mar
+  select jsonb_agg(jsonb_build_object('txn_date', '2025-06-01', 'description', 'FEE ' || g, 'debit', 10, 'credit', 0,
+                                      'balance_after', 10000 - 10 * g, 'reference', 'H' || g) order by g)
+    into rows from generate_series(1, 60) g;
+  rows := rows || '[{"txn_date":"2026-03-31","description":"FEE","debit":10,"credit":0,"balance_after":7890,"reference":"HZ"}]'::jsonb;
+  begin
+    perform public.import_bank_statement_with_opening('bbbbbbbb-0000-0000-0000-000000252209', rows,
+      'fy.csv', 'csv', 10000, '2025-04-01', false, null);
+  exception when check_violation then
+    get stacked diagnostics msg = message_text;
+    ok := msg like '%difference ₹+1,500%';
+  end;
+  if not ok then raise exception 'FAIL H: a ₹1,500 line missing from the file was taken as rounding (got %)', msg; end if;
+end $;
 
 select 'R-2522 bank opening meeting point: all checks passed' as result;
 

@@ -91,3 +91,30 @@ describe("helpers (R-2522)", () => {
     expect(statementBalanceAtMeet([{ txn_date: "2026-03-31", debit: 1, credit: 0, balance_after: null }])).toBeNull();
   });
 });
+
+describe("review fixes (R-2522)", () => {
+  it("a real 1 Apr line (value date 1 Apr) is after the 31 Mar closing — not counted, still matches", () => {
+    const withCharge = [...rows.slice(0, 4), { txn_date: "2026-04-01", debit: 590, credit: 0, balance_after: 865792 }];
+    expect(openingMoveCheck({ ...base, oldOpening: 866382, rows: withCharge })).toMatchObject({ matches: true, linesOnOldDate: 0 });
+  });
+
+  it("no value-date column: SUBHVISION on the old date still meets (the on-the-day reading)", () => {
+    const noValue = rows.map(({ value_date: _v, ...r }) => r);
+    expect(openingMoveCheck({ ...base, rows: noValue })).toMatchObject({ matches: true, balanceOnOldDate: 903552, linesOnOldDate: 1 });
+  });
+
+  it("a long statement missing a ₹1,500 line is NOT hidden as rounding (cap ₹25)", () => {
+    // 3,000 ₹10 lines, a ₹1,500 line in September, the year's last line on 31 Mar.
+    const st: { txn_date: string; debit: number; credit: number; balance_after: number }[] = [];
+    let bal = 1_000_000;
+    for (let i = 0; i < 3000; i++) { bal -= 10; st.push({ txn_date: "2025-06-01", debit: 10, credit: 0, balance_after: bal }); }
+    bal -= 1500; st.push({ txn_date: "2025-09-01", debit: 1500, credit: 0, balance_after: bal });
+    bal -= 10; st.push({ txn_date: "2026-03-31", debit: 10, credit: 0, balance_after: bal });
+    const args = { newOpening: 1_000_000, newDate: "2025-04-01", oldOpening: bal, oldDate: "2026-04-01", accountHasMoney: true };
+    expect(openingMoveCheck({ ...args, rows: st })).toMatchObject({ matches: true });
+    // The ₹1,500 line dropped (an AI read): the bank's 31 Mar balance still says the right figure,
+    // but the summed lines are ₹1,500 more — far beyond rounding, so the summed figure shows it.
+    const dropped = st.filter((r) => r.debit !== 1500);
+    expect(openingMoveCheck({ ...args, rows: dropped })).toMatchObject({ matches: false, difference: 1500, roundingDrift: 0 });
+  });
+});

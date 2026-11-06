@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bank_transactions' and column_name = 'value_date') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bank_opening_history' and column_name = 'accepted_reason') and exists(select 1 from pg_proc where oid = to_regprocedure('public.set_bank_opening_from_statement(uuid,bigint,date,uuid,boolean,text)') and prosrc like '%R-2522%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_bank_statement(uuid,jsonb,text,text)') and prosrc like '%R-2522%') and to_regprocedure('public.import_bank_statement_with_opening(uuid,jsonb,text,text,bigint,date,boolean,text)') is not null
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bank_transactions' and column_name = 'value_date') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bank_opening_history' and column_name = 'accepted_reason') and exists(select 1 from pg_proc where oid = to_regprocedure('public.set_bank_opening_from_statement(uuid,bigint,date,uuid,boolean,text)') and prosrc like '%R-2522%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_bank_statement(uuid,jsonb,text,text)') and prosrc like '%R-2522%') and to_regprocedure('public.import_bank_statement_with_opening(uuid,jsonb,text,text,bigint,date,boolean,text)') is not null and to_regprocedure('public.r2522_bank_meet_balance(uuid,uuid,date,date,uuid,bigint,boolean)') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bank_opening_history' and column_name = 'rounding_drift')
 -- deploy-key: r2522bankopeningmeet
 --
 -- R-2522 (6 Nov 2026, p1 paisa, G-RECON; follows R-2497): moving a bank account's opening
@@ -52,6 +52,9 @@ comment on column public.bank_transactions.value_date is
 alter table public.bank_opening_history add column if not exists accepted_reason text;
 comment on column public.bank_opening_history.accepted_reason is
   'R-2522: the owner''s reason when a statement that does not match the old opening was set anyway.';
+alter table public.bank_opening_history add column if not exists rounding_drift bigint;
+comment on column public.bank_opening_history.rounding_drift is
+  'R-2522: when the statement''s own balance was used at the meeting point: Σ(rupee-rounded amounts) − that balance — the ₹ today''s balance moves by paise rounding (null = none).';
 
 -- ── 2. import_bank_statement: R-1623b body + value_date ───────────────────────────────────
 create or replace function public.import_bank_statement(
@@ -124,6 +127,71 @@ revoke all on function public.import_bank_statement(uuid, jsonb, text, text) fro
 revoke all on function public.import_bank_statement(uuid, jsonb, text, text) from anon;
 grant execute on function public.import_bank_statement(uuid, jsonb, text, text) to authenticated, service_role;
 
+-- ── 3a. The meeting point (one reading) — internal helper of set_bank_opening_from_statement ──
+-- Counted: every line of the account from p_new_date up to the day before p_old_date (any batch,
+-- manual too), and THIS import's lines dated on/after p_old_date whose value date is before it
+-- (p_same_day = false) — or also every one dated ON p_old_date (p_same_day = true). The figure is
+-- the statement's own balance at the end of the counted lines' last day (the one line no other
+-- line of that day continues from), when every counted line of that day has a balance, no line of
+-- THIS import on that day is left out, and the summed figure is within rounding of it
+-- (least(floor(n/2)+1, 25)); else the summed figure. drift = summed − stated (0 when not used).
+create or replace function public.r2522_bank_meet_balance(
+  p_tenant uuid, p_account uuid, p_new_date date, p_old_date date,
+  p_batch uuid, p_opening bigint, p_same_day boolean,
+  out balance bigint, out drift bigint, out lines_on_old integer)
+language plpgsql
+stable
+set search_path to 'public'
+as $function$
+declare
+  /* R-2522 */
+  v_s bigint; v_n bigint; v_last date; v_stated bigint := null; v_left boolean; v_nulls boolean;
+begin
+  with c as (
+    select t.id, t.txn_date, t.debit, t.credit, t.balance_after
+      from public.bank_transactions t
+     where t.tenant_id = p_tenant and t.bank_account_id = p_account
+       and t.txn_date >= p_new_date
+       and (t.txn_date < p_old_date
+            or (p_batch is not null and t.import_batch_id = p_batch
+                and (least(t.txn_date, coalesce(t.value_date, t.txn_date)) < p_old_date
+                     or (p_same_day and t.txn_date = p_old_date))))
+  ), agg as (
+    select coalesce(sum(c.credit - c.debit), 0)::bigint as s, count(*)::bigint as n,
+           max(c.txn_date) as last_day, (count(*) filter (where c.txn_date >= p_old_date))::integer as on_old
+      from c
+  ), last_lines as (
+    select c.* from c, agg where c.txn_date = agg.last_day
+  ), ends as (
+    select l.balance_after from last_lines l
+     where not exists (select 1 from last_lines o
+                        where o.id <> l.id
+                          and abs(o.balance_after + o.debit - o.credit - l.balance_after) <= 1)
+  )
+  select agg.s, agg.n, agg.last_day, agg.on_old,
+         exists (select 1 from last_lines where balance_after is null),
+         /* a line of this import on that last day that is NOT counted would be inside its balance */
+         (p_batch is not null and agg.last_day >= p_old_date and exists (
+            select 1 from public.bank_transactions t
+             where t.tenant_id = p_tenant and t.bank_account_id = p_account and t.import_batch_id = p_batch
+               and t.txn_date = agg.last_day
+               and not exists (select 1 from last_lines l where l.id = t.id))),
+         case when (select count(*) from ends) = 1 then (select e.balance_after from ends e)::bigint end
+    into v_s, v_n, v_last, lines_on_old, v_nulls, v_left, v_stated
+    from agg;
+  v_s := p_opening + v_s;
+  if v_n > 0 and not v_nulls and not coalesce(v_left, false) and v_stated is not null
+     and abs(v_s - v_stated) <= least(floor(v_n / 2) + 1, 25) then
+    balance := v_stated; drift := v_s - v_stated;
+  else
+    balance := v_s; drift := 0;
+  end if;
+end;
+$function$;
+comment on function public.r2522_bank_meet_balance(uuid, uuid, date, date, uuid, bigint, boolean) is
+  'R-2522: internal — one reading of the statement''s balance where it meets the existing data; called only by set_bank_opening_from_statement (SECURITY DEFINER). Same rule as lib/banking/opening-move.ts.';
+revoke all on function public.r2522_bank_meet_balance(uuid, uuid, date, date, uuid, bigint, boolean) from public, anon, authenticated;
+
 -- ── 3. set_bank_opening_from_statement with the meeting point + reason ─────────────────────
 create or replace function public.set_bank_opening_from_statement(
   p_account_id uuid, p_opening bigint, p_date date,
@@ -145,9 +213,9 @@ declare
   v_diff    bigint := null;
   v_on_old  bigint := null;
   v_hist    uuid;
-  v_summed  bigint;
-  v_n       bigint;
-  v_stated  bigint;
+  v_drift   bigint := 0;
+  v_alt     bigint;
+  v_alt_drift bigint;
   v_reason  text := nullif(btrim(coalesce(p_reason, '')), '');
 begin
   if v_tenant is null then
@@ -190,40 +258,22 @@ begin
 
   if v_has_money and v_acc.opening_balance_date is not null then
     if p_date < v_acc.opening_balance_date then
-      /* R-2522: the statement's balance where it meets the existing data. Counted: every line
-         from the new date up to the day before the old date, and THIS import's lines dated on or
-         before the old date (by value date where earlier) — new to the app, so before what the
-         app already holds from that date. */
-      with c as (
-        select t.id, t.txn_date, t.debit, t.credit, t.balance_after
-          from public.bank_transactions t
-         where t.tenant_id = v_tenant and t.bank_account_id = v_acc.id
-           and t.txn_date >= p_date
-           and (t.txn_date < v_acc.opening_balance_date
-                or (p_import_batch_id is not null and t.import_batch_id = p_import_batch_id
-                    and least(t.txn_date, coalesce(t.value_date, t.txn_date)) <= v_acc.opening_balance_date))
-      ), agg as (
-        select coalesce(sum(c.credit - c.debit), 0)::bigint as s, count(*)::bigint as n, max(c.txn_date) as last_day from c
-      ), last_lines as (
-        select c.* from c, agg where c.txn_date = agg.last_day
-      ), ends as (
-        select l.balance_after from last_lines l
-         where not exists (select 1 from last_lines o
-                            where o.id <> l.id
-                              and abs(o.balance_after + o.debit - o.credit - l.balance_after) <= 1)
-      )
-      select agg.s, agg.n,
-             case when agg.n = 0
-                    or exists (select 1 from last_lines where balance_after is null)
-                    or (select count(*) from ends) <> 1
-                  then null else (select e.balance_after from ends e) end
-        into v_summed, v_n, v_stated
-        from agg;
-      v_summed := p_opening + v_summed;
-      /* The bank's own balance, unless the summed figure is further from it than rounding of the
-         n amounts can explain (then a line is missing — the summed figure shows it). */
-      v_on_old := case when v_stated is not null and abs(v_summed - v_stated) <= floor(v_n / 2) + 1
-                       then v_stated else v_summed end;
+      /* R-2522: the statement's balance where it meets the existing data — two readings of THIS
+         import's lines dated on/after the old date (value date before it only; or also every line
+         ON the old date); the statement matches if either does, else the closer one is reported.
+         Same rule as lib/banking/opening-move.ts (openingMoveCheck). */
+      select m.balance, m.drift into v_on_old, v_drift
+        from public.r2522_bank_meet_balance(v_tenant, v_acc.id, p_date, v_acc.opening_balance_date,
+                                            p_import_batch_id, p_opening, false) m;
+      select m.balance, m.drift into v_alt, v_alt_drift
+        from public.r2522_bank_meet_balance(v_tenant, v_acc.id, p_date, v_acc.opening_balance_date,
+                                            p_import_batch_id, p_opening, true) m;
+      if abs(v_on_old - coalesce(v_acc.opening_balance, 0)) > 1
+         and (abs(v_alt - coalesce(v_acc.opening_balance, 0)) <= 1
+              or abs(v_alt - coalesce(v_acc.opening_balance, 0)) < abs(v_on_old - coalesce(v_acc.opening_balance, 0))) then
+        v_on_old := v_alt;
+        v_drift := v_alt_drift;
+      end if;
       v_diff := v_on_old - coalesce(v_acc.opening_balance, 0);
     else
       select coalesce(v_acc.opening_balance, 0)
@@ -262,9 +312,9 @@ begin
 
   insert into public.bank_opening_history
     (tenant_id, bank_account_id, old_balance, old_date, new_balance, new_date, source,
-     balance_on_old_date, difference, accepted_difference, accepted_reason, import_batch_id)
+     balance_on_old_date, difference, rounding_drift, accepted_difference, accepted_reason, import_batch_id)
   values (v_tenant, v_acc.id, v_acc.opening_balance, v_acc.opening_balance_date, p_opening, p_date, 'statement',
-          v_on_old, v_diff, coalesce(abs(v_diff) > 1, false),
+          v_on_old, v_diff, nullif(v_drift, 0), coalesce(abs(v_diff) > 1, false),
           case when coalesce(abs(v_diff) > 1, false) then left(v_reason, 500) end, p_import_batch_id)
   returning id into v_hist;
 
