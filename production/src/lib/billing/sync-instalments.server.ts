@@ -16,7 +16,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { plannedInstalments, instalmentSkip, instalmentsDue, quotePeriodTaxables, type InstalmentSkip, type SplitQuoteFields } from "./instalments";
-import { billingTermStart } from "./subscription-schedule";
+import { billingTermStart, uncheckedTermStart } from "./subscription-schedule";
 import { addDaysISO } from "@/lib/dates/ist";
 import { billedElsewhere, billedElsewhereLabel } from "@/lib/subscriptions/billed-elsewhere";
 import { applyBillOutcome, type BillOutcome } from "./part-requests";
@@ -126,13 +126,18 @@ export async function syncSubscriptionInstalments(args: {
   /* R-451: the corrected term start can be one day earlier than the key this term's
      instalments were already filed under — keep that key, or they are made twice. */
   const correctedStart = planned[0].termStart;
+  /* R-2533: and the pre-R-2533 key of a term counted back to before start_date — parts already
+     filed (maybe invoiced) under it are kept, never laid a second time. */
+  const unchecked = uncheckedTermStart(sub);
+  const keys = [correctedStart, addDaysISO(correctedStart, 1)];
+  if (unchecked && !keys.includes(unchecked)) keys.push(unchecked);
   const { data: termRows, error: tsErr } = await supabase
     .from("subscription_billings")
     .select("term_start")
     .eq("subscription_id", sub.id)
-    .in("term_start", [correctedStart, addDaysISO(correctedStart, 1)]);
+    .in("term_start", keys);
   if (tsErr) throw new Error(tsErr.message);
-  const termStart = billingTermStart(correctedStart, (termRows ?? []).map((r) => r.term_start));
+  const termStart = billingTermStart(correctedStart, (termRows ?? []).map((r) => r.term_start), unchecked);
   if (termStart !== correctedStart) {
     for (const p of planned) p.termStart = termStart;
   }

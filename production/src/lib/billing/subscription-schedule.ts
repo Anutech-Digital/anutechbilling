@@ -84,10 +84,28 @@ export function subscriptionSchedule(sub: ScheduleFields, termAmountOverride?: n
  * 1,096-day "term", a +1 seat charge came out at a third of the right amount, and a
  * backdated effective date could reach into 2023. Falls back to start_date only when
  * there is no renewal date; null when there is neither. term_months null = 12.
+ *
+ * R-2533 (6 Nov 2026): never BEFORE start_date. A renewal date shorter than one term (Suresh:
+ * start 19 Jun 2026, renewal 19 Dec 2026, 12 months, half-yearly) counted back to 20 Dec 2025,
+ * and part #1 was invoiced six months before the sale. The database now refuses that shape for
+ * a split-billed row (trigger trg_subscriptions_zzz_split_term_covers); this clamp is the code's
+ * half of the same rule, so every caller (schedule, instalments, seats) reads one term start.
  */
 export function currentTermStart(sub: Pick<ScheduleFields, "term_months" | "start_date" | "renewal_date">): string | null {
-  if (sub.renewal_date) return addMonths(followingTermStart(sub), -Math.max(1, sub.term_months ?? 12));
-  return sub.start_date ? sub.start_date.slice(0, 10) : null;
+  const start = sub.start_date ? sub.start_date.slice(0, 10) : null;
+  const counted = uncheckedTermStart(sub);
+  if (counted && start && counted < start) return start;
+  return counted ?? start;
+}
+
+/**
+ * R-2533: the term start counted back from the renewal date with NO start_date clamp — what the
+ * billing job filed a term's parts under before R-2533. Only for finding those existing rows
+ * (billingTermStart); everything else uses currentTermStart. Null without a renewal date.
+ */
+export function uncheckedTermStart(sub: Pick<ScheduleFields, "term_months" | "start_date" | "renewal_date">): string | null {
+  if (!sub.renewal_date) return null;
+  return addMonths(followingTermStart(sub), -Math.max(1, sub.term_months ?? 12));
 }
 
 /**
@@ -152,11 +170,17 @@ export function followingTermStart(sub: Pick<ScheduleFields, "term_months" | "st
  * a second set of instalments for the same term — a customer invoiced twice. When rows
  * exist under the old (one-day-later) key and none under the corrected one, keep the old
  * key for this term; the next term is filed under the corrected date.
+ *
+ * R-2533: the same for a term whose start was counted back to BEFORE start_date (`unchecked`,
+ * from uncheckedTermStart). Its parts already exist under that key — one may be invoiced — so
+ * the job keeps the key and lays no second set; the wrong dates are a data repair, not a re-bill.
  */
-export function billingTermStart(corrected: string, existingTermStarts: readonly string[]): string {
+export function billingTermStart(corrected: string, existingTermStarts: readonly string[], unchecked?: string | null): string {
   if (existingTermStarts.includes(corrected)) return corrected;
   const legacy = addDaysISO(corrected, 1);
-  return existingTermStarts.includes(legacy) ? legacy : corrected;
+  if (existingTermStarts.includes(legacy)) return legacy;
+  if (unchecked && unchecked !== corrected && existingTermStarts.includes(unchecked)) return unchecked;
+  return corrected;
 }
 
 /** renewal_date = start_date + N whole terms (N ≥ 1) — see followingTermStart. */
