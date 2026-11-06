@@ -15,6 +15,10 @@
 --   F. an existing bad row (made before the guard) still takes other edits (status, seats), and
 --      its repair to a full-term renewal date goes through.
 --   G. cancelling a split-billed row mid-term (renewal_date = last day of service) still works.
+--   H. the way Suresh's date got in: a quote line carrying renewal_date 19 Dec 2026 on a
+--      half-yearly annual sale — filing the subscription (default start + 1 year) is NOT refused
+--      and keeps 19 Jun 2027 (red without the migration: 19 Dec 2026 is copied); a yearly line's
+--      own date is still copied (R-1445 unchanged there).
 
 begin;
 
@@ -99,7 +103,39 @@ begin
     raise exception 'B/C/D: expected 6 rows (b1 b2 b3 d1 d2 f1), got %',
       (select count(*) from public.subscriptions where tenant_id = '25330000-0000-4000-8000-000000000001');
   end if;
-  raise notice 'PASS R-2533: Suresh shape refused on insert and edit; valid, renewed and non-split rows pass; old bad row still editable and repairable';
+end $$;
+
+-- H. a quote line carrying the next PART's date (the Suresh bank-receipt shape) — the filer's
+--    default start + 1 year must stay, and the filing must not be refused.
+insert into public.quotes (id, tenant_id, customer_id, customer_name, tax_rate, amount, subtotal, billing_cycle, status, line_items)
+values
+  ('TESTQ-R2533-H1', '25330000-0000-4000-8000-000000000001', '25330000-0000-4000-8000-0000000000c1', 'R2533 Customer',
+   18, 185850, 157500, 'half_yearly', 'accepted',
+   '[{"name":"Workspace H1","qty":1,"rate":157500,"start_date":"2026-06-19","renewal_date":"2026-12-19"}]'::jsonb),
+  ('TESTQ-R2533-H2', '25330000-0000-4000-8000-000000000001', '25330000-0000-4000-8000-0000000000c1', 'R2533 Customer',
+   18, 3540, 3000, 'yearly', 'accepted',
+   '[{"name":"Workspace H2","qty":1,"rate":3000,"start_date":"2026-06-19","renewal_date":"2026-12-31"}]'::jsonb);
+
+insert into public.subscriptions
+  (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, term_months, billing_cycle, start_date, renewal_date, quote_id)
+values
+  ('25330000-0000-4000-8000-0000000000e1', '25330000-0000-4000-8000-000000000001', '25330000-0000-4000-8000-0000000000c1',
+   'R2533 Customer', 'Workspace H1', 'google', 1, 13125, 12, 'half_yearly', '2026-06-19', '2027-06-19', 'TESTQ-R2533-H1'),
+  ('25330000-0000-4000-8000-0000000000e2', '25330000-0000-4000-8000-000000000001', '25330000-0000-4000-8000-0000000000c1',
+   'R2533 Customer', 'Workspace H2', 'google', 1, 250, 12, 'yearly', '2026-06-19', '2027-06-19', 'TESTQ-R2533-H2');
+
+do $$
+declare v_h1 date; v_h2 date;
+begin
+  select renewal_date into v_h1 from public.subscriptions where id = '25330000-0000-4000-8000-0000000000e1';
+  select renewal_date into v_h2 from public.subscriptions where id = '25330000-0000-4000-8000-0000000000e2';
+  if v_h1 <> '2027-06-19' then
+    raise exception 'H1: half-yearly annual sale took the line''s part date % (want the whole term, 19 Jun 2027)', v_h1;
+  end if;
+  if v_h2 <> '2026-12-31' then
+    raise exception 'H2: a yearly line''s own renewal date (31 Dec 2026) is no longer copied — got %', v_h2;
+  end if;
+  raise notice 'PASS R-2533: Suresh shape refused on insert and edit; valid, renewed and non-split rows pass; old bad row still editable and repairable; a quote line''s part date never reaches a split-billed sale';
 end $$;
 
 rollback;

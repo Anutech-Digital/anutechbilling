@@ -17,7 +17,7 @@
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { isSplitBilled } from "@/lib/billing/instalments";
-import { subscriptionSchedule, followingTermStart, currentTermStart, previousTermStart, uncheckedTermStart } from "@/lib/billing/subscription-schedule";
+import { subscriptionSchedule, followingTermStart, previousTermStart, uncheckedTermStart } from "@/lib/billing/subscription-schedule";
 import { periodLastDay, addDaysISO } from "@/lib/billing/schedule";
 import { daysBetweenDates } from "./proration";
 
@@ -144,23 +144,23 @@ export function seatTermEnd(sub: Pick<SeatWindowSub, "term_months" | "start_date
  * (exclusive term end minus term_months), never the stored start_date. start_date is the
  * day the subscription was first sold and stays put across renewals, so on a row renewed
  * twice it is three years back. Null without a renewal date.
+ *
+ * R-2533: the WHOLE term counted back from the renewal (uncheckedTermStart), not the
+ * start_date-clamped currentTermStart — seats and support plans are priced per term, so a
+ * co-termed yearly sale (10 Jan → 31 Dec) keeps a 365-day pro-rata denominator, not 356.
+ * Effective dates are still bounded by start_date (seatEffectiveBounds).
  */
 export function seatTermStart(sub: Pick<SeatWindowSub, "term_months" | "start_date" | "renewal_date">): string | null {
-  if (!sub.renewal_date) return null;
-  return currentTermStart(sub);
+  return uncheckedTermStart(sub);
 }
 
 /**
  * R-802: length of the CURRENT term in days — prorate()'s denominator. 365 (366 across a
  * 29 Feb) for a 12-month term however many times it has been renewed, 730/731 for 24 months.
  * 365 when there is no renewal date (nothing can be charged then anyway).
- *
- * R-2533: measured from the counted-back start (uncheckedTermStart), NOT the start_date-clamped
- * currentTermStart — a co-termed yearly sale (10 Jan → 31 Dec) is priced per year, so its
- * pro-rata denominator stays the whole year (365), not the 356 days since the sale.
  */
 export function seatTermDays(sub: Pick<SeatWindowSub, "term_months" | "start_date" | "renewal_date">): number {
-  const start = sub.renewal_date ? uncheckedTermStart(sub) : null;
+  const start = seatTermStart(sub);
   const end = seatTermEnd(sub);
   return start && end ? Math.max(1, daysBetweenDates(start, end)) : 365;
 }

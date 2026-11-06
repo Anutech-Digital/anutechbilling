@@ -21,7 +21,7 @@
  * Any multi-year discount is already inside the agreed mrr.
  */
 import type { Subscription } from "@/lib/supabase/database.types";
-import { buildBillingSchedule, upcomingBillings, nextTermStart, type BillingPeriod } from "./schedule";
+import { buildBillingSchedule, upcomingBillings, nextTermStart, CYCLE_MONTHS, type BillingPeriod } from "./schedule";
 import { addDaysISO } from "@/lib/dates/ist";
 
 /** How far ahead the renewal cron shows what is coming. Matches the T-30 heads-up. */
@@ -67,8 +67,23 @@ export function subscriptionSchedule(sub: ScheduleFields, termAmountOverride?: n
     ? Math.round(termAmountOverride)
     : termAmountOf(sub);  // R-2369
 
+  const counted = uncheckedTermStart(sub);
   const start = currentTermStart(sub);
   if (!start || termAmount <= 0) return [];
+
+  /* R-2533: a SHORT first term — the renewal date is less than one term after start_date, so
+     counting back from it lands before the sale (Suresh: 19 Jun 2026 → 19 Dec 2026 on a 12-month
+     half-yearly term counted back to 20 Dec 2025, and part #1 was invoiced for Dec 2025).
+     - Split-billed: no parts at all. Laying them from the counted-back date bills months before
+       the sale; laying a whole term from start_date runs past the renewal date into the next
+       term. The database refuses this shape since R-2533 (trg_subscriptions_zzz_split_term_covers),
+       so only an older row has it, and its parts wait until its renewal date is corrected.
+     - Yearly (co-termed: sold 10 Jan, renewing 31 Dec): one invoice from the quote, nothing laid
+       from this schedule — it keeps the counted-back term it always showed. */
+  if (counted && counted < start) {
+    if (cycle !== "yearly" && CYCLE_MONTHS[cycle] < termMonths) return [];
+    return buildBillingSchedule({ startDate: counted, termMonths, cycle, termAmount });
+  }
 
   return buildBillingSchedule({ startDate: start, termMonths, cycle, termAmount });
 }
@@ -89,7 +104,9 @@ export function subscriptionSchedule(sub: ScheduleFields, termAmountOverride?: n
  * start 19 Jun 2026, renewal 19 Dec 2026, 12 months, half-yearly) counted back to 20 Dec 2025,
  * and part #1 was invoiced six months before the sale. The database now refuses that shape for
  * a split-billed row (trigger trg_subscriptions_zzz_split_term_covers); this clamp is the code's
- * half of the same rule, so every caller (schedule, instalments, seats) reads one term start.
+ * half of the same rule. subscriptionSchedule lays no parts for such a short split-billed term.
+ * Pricing that needs a WHOLE term's length (seat / support pro-rata of a co-termed yearly sale,
+ * priced per year) reads uncheckedTermStart instead — see seatTermStart.
  */
 export function currentTermStart(sub: Pick<ScheduleFields, "term_months" | "start_date" | "renewal_date">): string | null {
   const start = sub.start_date ? sub.start_date.slice(0, 10) : null;
@@ -99,9 +116,9 @@ export function currentTermStart(sub: Pick<ScheduleFields, "term_months" | "star
 }
 
 /**
- * R-2533: the term start counted back from the renewal date with NO start_date clamp — what the
- * billing job filed a term's parts under before R-2533. Only for finding those existing rows
- * (billingTermStart); everything else uses currentTermStart. Null without a renewal date.
+ * R-2533: the term start counted back from the renewal date with NO start_date clamp — one whole
+ * term before the term end. For a term's LENGTH (pro-rata denominators) and to spot a short first
+ * term (it is before start_date); billing dates use currentTermStart. Null without a renewal date.
  */
 export function uncheckedTermStart(sub: Pick<ScheduleFields, "term_months" | "start_date" | "renewal_date">): string | null {
   if (!sub.renewal_date) return null;
@@ -112,11 +129,12 @@ export function uncheckedTermStart(sub: Pick<ScheduleFields, "term_months" | "st
  * R-543 (10 Oct 2026): the first day of the PREVIOUS term — the current term start minus
  * term_months. Seats can be backdated into it (Add seats → Effective date). Null without a
  * renewal date. Says nothing about whether the subscription existed then — callers clamp
- * to start_date.
+ * to start_date. R-2533: one whole term before the counted-back start (uncheckedTermStart), the
+ * same anchor seatTermStart uses, so a seat charge never mixes two term starts.
  */
 export function previousTermStart(sub: Pick<ScheduleFields, "term_months" | "start_date" | "renewal_date">): string | null {
   if (!sub.renewal_date) return null;
-  const current = currentTermStart(sub);
+  const current = uncheckedTermStart(sub);
   return current ? addMonths(current, -Math.max(1, sub.term_months ?? 12)) : null;
 }
 
@@ -170,17 +188,11 @@ export function followingTermStart(sub: Pick<ScheduleFields, "term_months" | "st
  * a second set of instalments for the same term — a customer invoiced twice. When rows
  * exist under the old (one-day-later) key and none under the corrected one, keep the old
  * key for this term; the next term is filed under the corrected date.
- *
- * R-2533: the same for a term whose start was counted back to BEFORE start_date (`unchecked`,
- * from uncheckedTermStart). Its parts already exist under that key — one may be invoiced — so
- * the job keeps the key and lays no second set; the wrong dates are a data repair, not a re-bill.
  */
-export function billingTermStart(corrected: string, existingTermStarts: readonly string[], unchecked?: string | null): string {
+export function billingTermStart(corrected: string, existingTermStarts: readonly string[]): string {
   if (existingTermStarts.includes(corrected)) return corrected;
   const legacy = addDaysISO(corrected, 1);
-  if (existingTermStarts.includes(legacy)) return legacy;
-  if (unchecked && unchecked !== corrected && existingTermStarts.includes(unchecked)) return unchecked;
-  return corrected;
+  return existingTermStarts.includes(legacy) ? legacy : corrected;
 }
 
 /** renewal_date = start_date + N whole terms (N ≥ 1) — see followingTermStart. */

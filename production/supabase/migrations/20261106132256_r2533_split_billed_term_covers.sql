@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from pg_trigger where tgname = 'trg_subscriptions_zzz_split_term_covers' and tgrelid = to_regclass('public.subscriptions'))
+-- deploy-peek: exists(select 1 from pg_trigger where tgname = 'trg_subscriptions_zzz_split_term_covers' and tgrelid = to_regclass('public.subscriptions')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.subscription_term_follows_line()') and prosrc like '%R-2533%')
 -- deploy-key: r2533splittermcovers
 -- 20261106132256_r2533_split_billed_term_covers.sql
 --
@@ -26,7 +26,10 @@
 --   so existing rows keep working for every other edit (status, seats, payments).
 --   Cancelled / expired rows are left alone: cancelling writes the last day of service as
 --   renewal_date, mid-term on purpose (cancel_subscription, R-1711).
---   The app's half: currentTermStart never returns a date before start_date (same card).
+--   The R-1445 trigger no longer copies a too-short quote-line renewal_date onto a split-billed
+--   row (it keeps the filer's start + 1 year), so a payment is never refused for it.
+--   The app's half: currentTermStart never returns a date before start_date, and
+--   subscriptionSchedule lays no parts for a short split-billed term (same card).
 --
 --   The SQL twin of currentTermStart (correct_subscription_commitment's v_tstart, latest body
 --   20261031032023) is left as it is: it only asks "is today inside the current term" to stop a
@@ -93,6 +96,97 @@ comment on function public.subscription_split_term_covers() is
 
 -- Trigger function only: nobody calls it.
 revoke all on function public.subscription_split_term_covers() from public, anon, authenticated;
+
+-- ─── The way Suresh's date got in: R-1445 copies the quote line's renewal_date ──────────────
+-- Body as in 20261023162200 (the only definition) plus one R-2533 rule: on a split-billed row a
+-- line renewal_date shorter than one term is NOT copied — the filer's own default (start + 1
+-- year, a whole annual term) stays. R-1445 must never fail a payment, and the guard above would
+-- otherwise refuse the whole record_payment / reconcile for a date typed on the quote line.
+create or replace function public.subscription_term_follows_line()
+returns trigger
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  v_lines   jsonb;
+  v_line    jsonb;
+  v_yearly  boolean;
+  v_renewal date;
+  v_years   int;
+  v_term    int;
+  v_cycle_m int;
+begin
+  -- R-1445
+  if new.quote_id is null or new.start_date is null or new.renewal_date is null then
+    return new;
+  end if;
+
+  v_yearly := new.renewal_date = (new.start_date + interval '1 year')::date;
+  if not v_yearly and new.renewal_date <> (new.start_date + interval '1 month')::date then
+    return new;   -- the caller chose its own date: keep it
+  end if;
+
+  select q.line_items into v_lines
+    from public.quotes q
+   where q.id = new.quote_id and q.tenant_id = new.tenant_id;
+  if v_lines is null or jsonb_typeof(v_lines) <> 'array' then
+    return new;
+  end if;
+
+  select t.e into v_line
+    from jsonb_array_elements(v_lines) with ordinality as t(e, i)
+   where jsonb_typeof(t.e) = 'object'
+     and lower(btrim(coalesce(t.e->>'name', ''))) = lower(btrim(coalesce(new.plan, '')))
+   order by (nullif(lower(btrim(coalesce(t.e->>'domain', ''))), '')
+               is not distinct from nullif(lower(btrim(coalesce(new.domain, ''))), '')) desc,
+            t.i
+   limit 1;
+  if v_line is null then
+    return new;
+  end if;
+
+  -- 1. The date the operator saw / typed (Onboard dialog → line.renewal_date).
+  if coalesce(v_line->>'renewal_date', '') ~ '^\d{4}-\d{2}-\d{2}$' then
+    begin
+      v_renewal := (v_line->>'renewal_date')::date;
+    exception when others then
+      v_renewal := null;   -- 2026-02-30 and the like: ignore, never fail the payment
+    end;
+    -- R-2533: split-billed (more than one part per term) → the line date must cover one whole
+    -- term, else it is the next PART's date (Suresh: 19 Dec on a 19 Jun annual half-yearly sale).
+    v_term := greatest(1, coalesce(new.term_months, 12));
+    v_cycle_m := case coalesce(new.billing_cycle::text, '')
+                   when 'monthly' then 1 when 'quarterly' then 3 when 'half_yearly' then 6 else null end;
+    if v_renewal is not null and v_cycle_m is not null and v_cycle_m < v_term
+       and v_renewal < (new.start_date + make_interval(months => v_term))::date - 1 then
+      raise notice 'R-2533: quote % line renewal date % is shorter than its %-month term — kept %',
+        new.quote_id, v_renewal, v_term, new.renewal_date;
+      v_renewal := null;
+    end if;
+    if v_renewal > new.start_date and v_renewal <= (new.start_date + interval '10 years')::date then
+      new.renewal_date := v_renewal;
+      return new;
+    end if;
+  end if;
+
+  -- 2. A domain registered for several years (line.years, R-156).
+  if v_yearly and coalesce(v_line->>'years', '') ~ '^\d+$' then
+    v_years := (v_line->>'years')::int;
+    if v_years between 2 and 10 then
+      new.renewal_date := (new.start_date + make_interval(years => v_years))::date;
+      new.mrr := round(coalesce(new.mrr, 0)::numeric / v_years)::int;
+    end if;
+  end if;
+
+  return new;
+end;
+$function$;
+
+comment on function public.subscription_term_follows_line() is
+  'R-1445: a subscription filed from a quote with the default term (start + 1 year / + 1 month) takes its line''s renewal_date (Onboard dialog), or start + years for a multi-year domain line (mrr spread over the years). Any caller-chosen date is kept. R-2533: on a split-billed row a line date shorter than one term is not copied.';
+
+revoke all on function public.subscription_term_follows_line() from public, anon, authenticated;
 
 drop trigger if exists trg_subscriptions_zzz_split_term_covers on public.subscriptions;
 create trigger trg_subscriptions_zzz_split_term_covers
