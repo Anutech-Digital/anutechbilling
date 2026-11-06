@@ -14,9 +14,10 @@
  * Server-only — inserts into subscription_billings need the service role.
  */
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database } from "@/lib/supabase/database.types";
-import { plannedInstalments, instalmentSkip, instalmentsDue, quotePeriodTaxables, type InstalmentSkip, type SplitQuoteFields } from "./instalments";
-import { billingTermStart } from "./subscription-schedule";
+import type { Database, BillingCycle } from "@/lib/supabase/database.types";
+import { plannedInstalments, instalmentSkip, instalmentsDue, quotePeriodTaxables, isSplitBilled, type InstalmentSkip, type SplitQuoteFields } from "./instalments";
+import { billingTermStart, termAmountOf } from "./subscription-schedule";
+import { buildBillingSchedule } from "./schedule";
 import { addDaysISO } from "@/lib/dates/ist";
 import { billedElsewhere, billedElsewhereLabel } from "@/lib/subscriptions/billed-elsewhere";
 import { applyBillOutcome, type BillOutcome } from "./part-requests";
@@ -250,27 +251,32 @@ async function plannedTermParts(supabase: Admin, sub: InstalmentSub) {
 }
 
 /**
- * R-2541 (chk-local, 6 Nov — p0 money): an unbilled part with no open proforma is billed at the
- * subscription's CURRENT seats × rate — the figure the term run re-syncs its unbilled parts to
- * (plannedTermParts, same period number). A part freed by a cancelled proforma (R-2519d) sits in an
- * EARLIER term the term run never re-syncs, so the billing job billed it at its stored amount:
- * PI-F588-27-0004 asked 1 × ₹5,100 although the subscription is 18 × ₹300 = ₹5,400. Used by the
- * billing job (billFreedParts), Bill next part (no seats / rate) and its preview — one rule.
+ * R-2541 (chk-local, 6 Nov — p0 money): a part freed by a cancelled proforma (R-2519d) is billed at
+ * the subscription's CURRENT seats × rate — the figure the term run re-syncs its unbilled parts to
+ * (the term's schedule at today's term amount, R-2104's quote split when it is the same deal) —
+ * here laid out for the part's OWN term and matched on its period number AND start date (a part of
+ * an earlier term, or of another cycle, never takes a different period's amount). Before, the
+ * billing job billed the stored amount: PI-F588-27-0004 asked 1 × ₹5,100 although the subscription
+ * is 18 × ₹300 = ₹5,400. Used by the billing job (billFreedParts), Bill next part and its preview.
  *
- * Left alone (null): an invoiced part (a GST document's source), a part with an open proforma (its
- * own amount — set_part_request_terms), an inactive subscription, or no current figure for that
- * period. Returns the change; writes it only when not a dry run (re-checked: no invoice yet).
+ * Left alone (null): an invoiced part (a GST document's source); a part with an open proforma (its
+ * own amount — set_part_request_terms); an inactive subscription; a period billed elsewhere (Zoho);
+ * a period an add-seats pro-rata quote was raised in (its new seats were charged for that period
+ * already — R-527's window assumes the period at the old count); no matching period. Returns the
+ * change; writes it only when not a dry run (re-checked at write time: still no invoice).
  */
 export async function repriceUnbilledPart(
   supabase: Admin, billingId: string, dryRun: boolean,
 ): Promise<{ from: number; to: number } | null> {
   const db = supabase as unknown as SupabaseClient;
   const { data: row, error } = await db.from("subscription_billings")
-    .select("id, tenant_id, subscription_id, period_index, taxable_amount, invoice_id")
+    .select("id, tenant_id, subscription_id, term_start, period_index, period_start, period_end, taxable_amount, invoice_id")
     .eq("id", billingId).maybeSingle();
   if (error) throw new Error(error.message);
-  const b = row as { id: string; tenant_id: string; subscription_id: string; period_index: number; taxable_amount: number; invoice_id: string | null } | null;
+  const b = row as { id: string; tenant_id: string; subscription_id: string; term_start: string; period_index: number;
+    period_start: string; period_end: string; taxable_amount: number; invoice_id: string | null } | null;
   if (!b || b.invoice_id != null) return null;
+  const was = b.taxable_amount;
   const { data: reqs, error: rErr } = await db.from("quotes").select("id").eq("subscription_billing_id", b.id).limit(1);
   if (rErr) throw new Error(rErr.message);
   if ((reqs ?? []).length > 0) return null;
@@ -278,9 +284,20 @@ export async function repriceUnbilledPart(
     .select(`${INSTALMENT_SUB_SELECT}, status`).eq("id", b.subscription_id).eq("tenant_id", b.tenant_id).maybeSingle();
   if (sErr) throw new Error(sErr.message);
   const sub = subRow as (InstalmentSub & { status: string }) | null;
-  if (!sub || sub.status !== "active") return null;
-  const now = (await plannedTermParts(supabase, sub)).find((p) => p.periodIndex === b.period_index)?.taxableAmount;
-  const was = b.taxable_amount;
+  if (!sub || sub.status !== "active" || !isSplitBilled(sub.billing_cycle) || billedElsewhere(sub, b.period_start)) return null;
+  const { data: seatQs, error: qErr } = await db.from("quotes").select("id, status")
+    .eq("add_seats_subscription_id", sub.id).eq("is_add_seats", true)
+    .gte("created_date", b.period_start).lt("created_date", b.period_end);
+  if (qErr) throw new Error(qErr.message);
+  if (((seatQs ?? []) as { status: string }[]).some((q) => q.status !== "rejected")) return null;
+  const term = buildBillingSchedule({
+    startDate: b.term_start.slice(0, 10), termMonths: Math.max(1, sub.term_months ?? 12),
+    cycle: sub.billing_cycle as BillingCycle, termAmount: termAmountOf(sub),
+  }).map((p) => ({ termStart: b.term_start, periodIndex: p.index, billOn: p.billOn, periodStart: p.periodStart, periodEnd: p.periodEnd, taxableAmount: p.amount }));
+  const planned = term.length > 0
+    ? quotePeriodTaxables(term, { mrr: sub.mrr, cycle: sub.billing_cycle, ...(await quotePlanFacts(supabase, sub)) })
+    : term;
+  const now = planned.find((p) => p.periodIndex === b.period_index && p.periodStart === b.period_start.slice(0, 10))?.taxableAmount;
   if (now == null || !(now > 0) || now === was) return null;
   if (!dryRun) {
     const { error: uErr } = await db.from("subscription_billings")

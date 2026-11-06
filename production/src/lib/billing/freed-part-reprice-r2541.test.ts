@@ -38,6 +38,8 @@ function fakeDb(tables: Record<string, Row[]>) {
       eq: (k: string, v: unknown) => { filters.push((r) => r[k] === v); return b; },
       is: (k: string, v: unknown) => { filters.push((r) => (r[k] ?? null) === v); return b; },
       in: (k: string, v: unknown[]) => { filters.push((r) => v.includes(r[k])); return b; },
+      gte: (k: string, v: string) => { filters.push((r) => String(r[k]) >= v); return b; },
+      lt: (k: string, v: string) => { filters.push((r) => String(r[k]) < v); return b; },
       order: () => b,
       limit: (n: number) => { limit = n; return b; },
       maybeSingle: async () => ({ data: rows()[0] ?? null, error: null }),
@@ -70,11 +72,12 @@ function fakeDb(tables: Record<string, Row[]>) {
 }
 
 /** SCN Bit Labs: monthly, 12-month term; seats moved 17 → 18 (₹300 a seat) after the Oct part was laid at ₹5,100. */
-function bitLabs(over: { seats?: number; mrr?: number; octTaxable?: number; openRequestOnOct?: boolean; invoiced?: boolean } = {}) {
+function bitLabs(over: { seats?: number; mrr?: number; octTaxable?: number; openRequestOnOct?: boolean; invoiced?: boolean;
+  cycle?: string; addSeatsOn?: string } = {}) {
   return {
     subscriptions: [{
       id: "s1", tenant_id: "t1", quote_id: null, customer_id: null, status: "active",
-      seats: over.seats ?? 18, mrr: over.mrr ?? 5400, billing_cycle: "monthly", term_months: 12, term_amount: null,
+      seats: over.seats ?? 18, mrr: over.mrr ?? 5400, billing_cycle: over.cycle ?? "monthly", term_months: 12, term_amount: null,
       start_date: "2026-01-12", renewal_date: "2027-01-11", billed_externally_until: null, external_source: null, external_ref: null,
     }],
     subscription_billings: [{
@@ -82,9 +85,15 @@ function bitLabs(over: { seats?: number; mrr?: number; octTaxable?: number; open
       period_start: "2026-10-12", period_end: "2026-11-12", taxable_amount: over.octTaxable ?? 5100, tax_rate: 18,
       invoice_id: over.invoiced ? "INV-1" : null, freed: true,
     }],
-    quotes: over.openRequestOnOct
-      ? [{ id: "PI-F588-27-0005", subscription_billing_id: "oct", status: "sent", amount: 6372, cancelled_part_billing_id: null }]
-      : [{ id: "Q-SCN-PF-1", subscription_billing_id: null, cancelled_part_billing_id: "oct", status: "cancelled", amount: 6018 }],
+    quotes: [
+      ...(over.openRequestOnOct
+        ? [{ id: "PI-F588-27-0005", subscription_billing_id: "oct", status: "sent", amount: 6372, cancelled_part_billing_id: null }]
+        : [{ id: "Q-SCN-PF-1", subscription_billing_id: null, cancelled_part_billing_id: "oct", status: "cancelled", amount: 6018 }]),
+      ...(over.addSeatsOn
+        ? [{ id: "Q-ADD-1", subscription_billing_id: null, cancelled_part_billing_id: null, status: "sent", amount: 354,
+             is_add_seats: true, add_seats_subscription_id: "s1", created_date: over.addSeatsOn }]
+        : []),
+    ],
     customers: [],
   };
 }
@@ -123,6 +132,26 @@ describe("R-2541 — a freed part is billed at the subscription's CURRENT seats 
 
   it("UI path unchanged: a part whose proforma is open keeps the proforma's amount (set_part_request_terms owns it)", async () => {
     const t = bitLabs({ openRequestOnOct: true });
+    const { db, updates } = fakeDb(t);
+    expect(await repriceUnbilledPart(db, "oct", false)).toBeNull();
+    expect(updates).toEqual([]);
+  });
+
+  it("+1 seat added mid-Oct with its pro-rata quote → Oct is NOT repriced (that seat was already charged for Oct)", async () => {
+    const t = bitLabs({ addSeatsOn: "2026-10-20" });
+    const { db, updates } = fakeDb(t);
+    expect(await repriceUnbilledPart(db, "oct", false)).toBeNull();
+    expect(updates).toEqual([]);
+  });
+
+  it("a seat add in a LATER period does not block the Oct reprice", async () => {
+    const t = bitLabs({ addSeatsOn: "2026-11-15" });
+    const { db } = fakeDb(t);
+    expect(await repriceUnbilledPart(db, "oct", true)).toEqual({ from: 5100, to: 5400 });
+  });
+
+  it("the part's own term decides: a cycle that changed since (now quarterly) never gives Oct another period's amount", async () => {
+    const t = bitLabs({ cycle: "quarterly", mrr: 5400 });
     const { db, updates } = fakeDb(t);
     expect(await repriceUnbilledPart(db, "oct", false)).toBeNull();
     expect(updates).toEqual([]);

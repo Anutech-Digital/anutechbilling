@@ -68,12 +68,12 @@ export async function firstUnbilledPeriod(db: SupabaseClient, sub: BillNextSub):
 /** The preview (writes nothing). */
 export async function billNextPreview(db: SupabaseClient, sub: BillNextSub, count: number): Promise<BillNextPreview> {
   const cycle = (sub.billing_cycle ?? "monthly") as BillingCycle;
-  const { start, row, rows } = await firstUnbilledPeriod(db, sub);
+  const { start, row, rows, freed } = await firstUnbilledPeriod(db, sub);
   const months = CYCLE_MONTHS[cycle];
   const parts = sub.term_months && sub.term_months % months === 0 ? sub.term_months / months : null;
-  /* R-2541: the free part at the subscription's CURRENT seats × rate — what Generate and the billing job
-     bill it at (repriceUnbilledPart, dry run: nothing written), not the amount stored when it was laid. */
-  const repriced = row ? await repriceUnbilledPart(db as Parameters<typeof repriceUnbilledPart>[0], row.id, true) : null;
+  /* R-2541: a freed part (its proforma cancelled) at the subscription's CURRENT seats × rate — what
+     Generate and the billing job bill it at (repriceUnbilledPart; dry run: nothing written). */
+  const repriced = row && freed ? await repriceUnbilledPart(db as Parameters<typeof repriceUnbilledPart>[0], row.id, true) : null;
   const partTaxable = repriced?.to ?? row?.taxable_amount
     ?? (sub.term_amount && parts ? Math.round(sub.term_amount / parts) : Math.round((sub.mrr ?? 0) * months));
   const seats = Math.max(0, sub.seats ?? 0);
