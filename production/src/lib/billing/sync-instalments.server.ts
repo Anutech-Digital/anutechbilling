@@ -68,7 +68,7 @@ export interface InstalmentSyncResult {
   /** R-2044: would have got a payment request (dry run only). */
   wouldRequest: number;
   /** R-2092: parts held back until the quote's other subscriptions have their parts laid. */
-  waiting?: { period_index: number; subscription_ids: string[] }[];
+  waiting?: { period_index: number; subscription_ids: string[]; reason?: string; bill_on?: string }[];
   /** R-2095: due parts whose invoice credit notes cancelled in full — not re-billed by this run
    *  (only the owner's own Generate re-bills them: rebillCredited). */
   heldCredited?: { period_index: number; credited: string[] }[];

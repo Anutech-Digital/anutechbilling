@@ -29,7 +29,7 @@ export type BillOutcome =
   | { action: "request_open"; quote_id: string; status: string; gross: number; sale_quote?: boolean }
   /* R-2092: another subscription of the same quote has no parts laid yet — nothing is billed, so
      the quote's period goes on ONE invoice once they are (migration 20261029052411). */
-  | { action: "waiting"; reason: string; subscription_ids: string[] };
+  | { action: "waiting"; reason: string; subscription_ids: string[]; bill_on?: string };
 
 export interface BillTally {
   raised: { period_index: number; invoice_id: string; gross: number }[];
@@ -39,7 +39,7 @@ export interface BillTally {
   requestsOpen: { period_index: number; quote_id: string; status: string }[];
   wouldRequest: number;
   /** R-2092: parts held back until the quote's other subscriptions are laid. */
-  waiting?: { period_index: number; subscription_ids: string[] }[];
+  waiting?: { period_index: number; subscription_ids: string[]; reason?: string; bill_on?: string }[];
 }
 
 /** Adds one part's outcome to the run's tally. Unknown answers throw — never a silent "0". */
@@ -67,7 +67,9 @@ export function applyBillOutcome(out: BillTally, periodIndex: number, data: unkn
       out.requestsOpen.push({ period_index: periodIndex, quote_id: r.quote_id, status: r.status });
       return;
     case "waiting":
-      (out.waiting ??= []).push({ period_index: periodIndex, subscription_ids: r.subscription_ids ?? [] });
+      (out.waiting ??= []).push({ period_index: periodIndex, subscription_ids: r.subscription_ids ?? [],
+        /* R-2519c: only a paid-ahead part carries its reason + date (for the Bill next part message). */
+        ...(r.reason === "paid_ahead" ? { reason: r.reason, ...(r.bill_on ? { bill_on: r.bill_on } : {}) } : {}) });
       return;
     default:
       throw new Error(`bill_subscription_instalment answered "${(r as { action: string }).action}" for part ${periodIndex}`);
@@ -345,4 +347,14 @@ export function partRequestTdsCheck(a: { taxable: number; ratePct: number; tds: 
       ? `TDS ${inr(tds)} is more than ${rate}% of this part's taxable value ${inr(taxable)} (${inr(expected)}). TDS is deducted only on the part paid, not on GST or the full year — the customer may have deducted on the full year. Check with the customer; you can still save.`
       : null,
   };
+}
+
+/**
+ * R-2519c: why a part billed ahead made nothing — the customer's money already covers it
+ * (bill_subscription_instalment → waiting / paid_ahead). Null when no part waits for that reason.
+ */
+export function paidAheadReason(waiting: readonly { reason?: string; bill_on?: string }[] | undefined, formatDay: (iso: string) => string): string | null {
+  const w = (waiting ?? []).find((x) => x.reason === "paid_ahead");
+  if (!w) return null;
+  return `Already paid — the customer's money covers this period, so no proforma was made. Its tax invoice is raised on its date${w.bill_on ? ` (${formatDay(w.bill_on)})` : ""}.`;
 }

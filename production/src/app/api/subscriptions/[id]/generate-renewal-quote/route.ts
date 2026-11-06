@@ -33,7 +33,8 @@ import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { renewalIsSettled, firstReminderDaysOut } from "@/lib/renewals/cadence";
 import { billDueTermsOldestFirst, termsMessage, withFreedPart, rolledRenewalDate, type TermsBilled } from "@/lib/renewals/split-billed-next-part";
 import { billSubscriptionInstalment, emptySyncResult } from "@/lib/billing/sync-instalments.server";
-import { applyBillOutcome } from "@/lib/billing/part-requests";
+import { applyBillOutcome, paidAheadReason } from "@/lib/billing/part-requests";
+import { formatDate } from "@/lib/utils";
 import { addDaysISO } from "@/lib/dates/ist";
 import { syncSubscriptionInstalments, readQuotePaymentFacts, INSTALMENT_SUB_SELECT, type InstalmentSub } from "@/lib/billing/sync-instalments.server";
 import { istToday } from "@/lib/dates/ist";
@@ -120,6 +121,8 @@ export const POST = withRoute({
       if (fErr) return NextResponse.json({ error: `Could not bill the period from ${first.row.period_start}: ${fErr.message}` }, { status: 400 });
       const tally = emptySyncResult();
       applyBillOutcome(tally, first.row.period_index, fb, false);
+      const aheadFreed = paidAheadReason(tally.waiting, formatDate);
+      if (aheadFreed) return NextResponse.json({ error: aheadFreed, code: "paid_ahead" }, { status: 400 });
       freed = { periodStart: first.row.period_start, periodEnd: addDaysISO(first.row.period_end, -1),
         bill: { raised: tally.raised, requests: tally.requests, requestsOpen: tally.requestsOpen, skip: null } };
     }
@@ -142,7 +145,9 @@ export const POST = withRoute({
         if (fErr || !fresh) throw new Error(fErr?.message ?? "subscription not found");
         const facts = fresh.quote_id ? await readQuotePaymentFacts(supabase, fresh.quote_id) : undefined;
         const r = await syncSubscriptionInstalments({ supabase, sub: fresh as InstalmentSub, quote: facts, todayISO: today, rebillCredited: true });
-        return { raised: r.raised, requests: r.requests, requestsOpen: r.requestsOpen, skip: r.skip };
+        /* R-2519c: a part the customer's money already covers waits for its date — say so. */
+        const ahead = paidAheadReason(r.waiting, formatDate);
+        return { raised: r.raised, requests: r.requests, requestsOpen: r.requestsOpen, skip: r.skip ?? (ahead ? { code: "paid_ahead", reason: ahead } : null) };
       },
     });
     const runTerms = withFreedPart(runTermsRaw, freed);
