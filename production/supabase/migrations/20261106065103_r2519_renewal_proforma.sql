@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.bill_subscription_instalment(uuid,boolean)') and prosrc like '%R-2519%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.billing_part_group(uuid)') and prosrc like '%R-2519%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.next_document_number(text,uuid,date)') and prosrc like '%R-2519%') and to_regprocedure('public.set_part_request_terms(text,integer,integer)') is not null and to_regprocedure('public.cancel_quote(text,text)') is not null and to_regprocedure('public.undo_cancel_quote(text)') is not null
 -- deploy-key: r2519renewalproforma
--- 20261106053300_r2519_renewal_proforma.sql
+-- 20261106065103_r2519_renewal_proforma.sql
 --
 -- R-2519 (Pardeep, 6 Nov 2026: "Zoho ki tarah proforma bhejna") — staging BITDECENTRO
 -- Q-A378-27-0947: Renewals → "Bill next part" made a lump "1 × ₹5,100 One-time" QUOTATION on the

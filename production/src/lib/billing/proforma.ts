@@ -1,7 +1,7 @@
 /**
  * R-2519 (Pardeep, 6 Nov 2026 — "Zoho ki tarah proforma bhejna") — a renewal part's payment
  * request is a PROFORMA INVOICE: its own PI series (PI-<code>-<YY>-<NNNN>, migration
- * 20261106053300), seats × a per-seat rate with the period, a pay-by date, and a state that says
+ * 20261106065103), seats × a per-seat rate with the period, a pay-by date, and a state that says
  * what really happened — "Ready to send" until an email went, "Expired" once the pay-by date passed
  * unpaid (still payable — the service period is running, so the reminders go on), "Cancelled" when
  * it was cancelled (kept, never deleted).

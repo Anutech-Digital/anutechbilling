@@ -1,6 +1,6 @@
 -- R-2519 (Pardeep, 6 Nov 2026 — "Zoho ki tarah proforma bhejna"; staging BITDECENTRO Q-A378-27-0947):
 -- a renewal part's payment request is a Proforma Invoice like Zoho's PI/26-27/1296 (18 × ₹300).
--- Migration 20261106053300_r2519_renewal_proforma.
+-- Migration 20261106065103_r2519_renewal_proforma.
 -- Self-asserting, ONE transaction, rolled back. Run on a dev/test DB only.
 --
 -- Monthly (flexible) subscription, 17 seats at ₹300 = ₹5,100 a month, its part began 5 days ago
