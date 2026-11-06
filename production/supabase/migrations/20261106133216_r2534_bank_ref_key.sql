@@ -9,26 +9,32 @@
 -- ─── WHAT THIS CHANGES ────────────────────────────────────────────────────────
 --   bank_ref_norm(text)           — upper case, letters/digits only, leading zeros dropped (Tally's rule).
 --   normalize_bank_ref(text,text) — the SQL twin of src/lib/banking/narration-ref.ts parseNarrationRef:
---                                   rail by keyword (UPI/IMPS/MMT → 12-digit RRN; NEFT/RTGS → 12–22 char
---                                   UTR with a letter, else an all-digit 16/22; CHQ/CHEQUE/CLG/CLEARING/
---                                   MICR → 6-digit cheque no.), else the Ref column in the rail's shape;
---                                   no rail → NULL. Same table tested on both (narration-ref-cases.ts).
+--                                   the FIRST rail word decides (UPI/IMPS/MMT → 12-digit RRN, else a
+--                                   12-digit Ref column; NEFT/RTGS → 12–22 char UTR with a letter, else
+--                                   the Ref column in that shape — never an all-digit account number;
+--                                   CHQ/CHEQUE/CLG/CLEARING/MICR → a 3–6 digit Ref column, else a 6-digit
+--                                   run); no rail → NULL. Same table tested on both (narration-ref-cases.ts).
 --   bank_ref_matches(text,text)   — a receipt reference carries the key: equal, or (key ≥ 10 chars)
 --                                   contained — the twin of referenceMatchesKey.
---   bank_transactions.ref_key     — new nullable column + partial index (tenant_id, ref_key).
+--   bank_transactions.ref_key     — new nullable column + partial index (tenant_id, ref_key) for lookups
+--                                   by reference (R-2535 Zoho pairing; own-transfer pairs later).
 --   trg_bank_txn_ref_key          — BEFORE INSERT / UPDATE OF description, reference: fills ref_key on
 --                                   every write path (statement import, manual line, expense line).
---   Backfill                      — every existing line, row by row from its OWN description/reference
---                                   (no row reads another row, so no cross-company effect); only rows
---                                   whose key differs are written → a second run writes 0.
+--   Backfill                      — every existing line, from its OWN description/reference (no row
+--                                   reads another row, so no cross-company effect); the key computed once
+--                                   per row and only rows whose key differs are written → a second run
+--                                   writes 0. R-2524's updated_at trigger is off for this one statement
+--                                   (metadata only — the bank page need not re-read every line).
 --   suggest_bank_transaction_matches(uuid) ← 20261104060346_r2364_suggestions_skip_used (latest; checked
---     all anutech/* branches): a receipt (payments) or project receipt whose reference carries the
---     line's ref_key AND whose cash part equals the line is 'exact' and ranks first — even for another
---     customer than the known payer, and up to 60 days apart (the window stays 7 days without a
---     reference). When such a receipt exists, the other same-amount candidates of that block are at
---     most 'high', so auto_reconcile_bank_account's "one sure candidate" rule books the referenced
---     one; two receipts carrying the same reference are both 'exact' → still ambiguous (fail closed).
---     All R-2364 "already used" filters unchanged.
+--     all anutech/* branches): money in — receipts and project receipts are ONE ranked list now (each
+--     kind still at most 5). A receipt whose reference carries the line's UTR / RRN (a key of 10+
+--     characters — cheque numbers repeat across chequebooks, so they never rank) AND whose cash equals
+--     the line is 'exact' and first — even for another customer than the known payer, and up to 60
+--     days apart (7 days without a reference). When one exists, every other same-amount candidate (of
+--     either kind) is at most 'high', so auto_reconcile_bank_account's "one sure candidate" rule books
+--     the referenced one; two receipts carrying the same reference are both 'exact' → ambiguous (fail
+--     closed). With no reference match the order and confidences are exactly as before. Money out
+--     unchanged.
 -- Read-only metadata: no amount, match or books row changes.
 -- Test: supabase/tests/r2534_bank_ref_key.test.sql (begin … rollback; red without this file).
 begin;
@@ -52,51 +58,32 @@ set search_path to ''
 as $function$
 declare
   d    text := upper(coalesce(p_description, ''));
-  kind text;
+  r    text := public.bank_ref_norm(p_reference);
+  word text;
   f    text;
-  n    text;
 begin
-  /* R-2534: twin of narration-ref.ts — keep the steps in the same order. */
-  if d ~ '(^|[^A-Z])(UPI|IMPS|MMT)([^A-Z]|$)' then kind := 'rrn';
-  elsif d ~ '(^|[^A-Z])(NEFT|RTGS)([^A-Z]|$)' then kind := 'utr';
-  elsif d ~ '(^|[^A-Z])(CHQ|CHEQUE|CLG|CLEARING|MICR)([^A-Z]|$)' then kind := 'cheque';
-  else return null;
+  /* R-2534: twin of narration-ref.ts — keep the steps in the same order. The leftmost match of one
+     alternation = the first rail word by position. */
+  word := (regexp_match(d, '(^|[^A-Z])(UPI|IMPS|MMT|NEFT|RTGS|CHQ|CHEQUE|CLG|CLEARING|MICR)([^A-Z]|$)'))[2];
+  if word is null then
+    return null;
   end if;
 
-  if kind = 'rrn' then
-    f := (regexp_match(d, '(^|[^0-9])([0-9]{12})([^0-9@]|$)'))[2];
-  elsif kind = 'utr' then
+  if word in ('UPI', 'IMPS', 'MMT') then
+    return coalesce(nullif(public.bank_ref_norm((regexp_match(d, '(^|[^0-9])([0-9]{12})([^0-9@]|$)'))[2]), ''),
+                    case when r ~ '^[0-9]{12}$' then r end);
+  elsif word in ('NEFT', 'RTGS') then
     select x.t into f
       from regexp_split_to_table(d, '[^A-Z0-9]+') with ordinality as x(t, i)
      where length(x.t) between 12 and 22
        and length(regexp_replace(x.t, '[^0-9]', '', 'g')) >= 6
        and x.t ~ '[A-Z]'
      order by x.i limit 1;
-    if f is null then
-      select x.t into f
-        from regexp_split_to_table(d, '[^A-Z0-9]+') with ordinality as x(t, i)
-       where x.t ~ '^[0-9]+$' and length(x.t) in (16, 22)
-       order by x.i limit 1;
-    end if;
-  else
-    f := (regexp_match(d, '(^|[^0-9])([0-9]{6})([^0-9]|$)'))[2];
+    return coalesce(nullif(public.bank_ref_norm(f), ''),
+                    case when length(r) between 12 and 22 and length(regexp_replace(r, '[^0-9]', '', 'g')) >= 6 then r end);
   end if;
-
-  f := nullif(public.bank_ref_norm(f), '');
-  if f is not null then
-    return f;
-  end if;
-
-  n := public.bank_ref_norm(p_reference);
-  if n = '' then
-    return null;
-  end if;
-  if kind = 'rrn' then
-    return case when n ~ '^[0-9]{12}$' then n end;
-  elsif kind = 'utr' then
-    return case when length(n) between 12 and 22 and length(regexp_replace(n, '[^0-9]', '', 'g')) >= 6 then n end;
-  end if;
-  return case when n ~ '^[0-9]{1,6}$' then n end;
+  return coalesce(case when r ~ '^[0-9]{3,6}$' then r end,
+                  nullif(public.bank_ref_norm((regexp_match(d, '(^|[^0-9])([0-9]{6})([^0-9]|$)'))[2]), ''));
 end;
 $function$;
 
@@ -112,7 +99,7 @@ as $$
 $$;
 
 comment on function public.normalize_bank_ref(text, text) is
-  'R-2534: the bank''s own reference of a line (UTR / RRN / cheque no.) from its narration, else its Ref column; NULL when there is none. Twin of src/lib/banking/narration-ref.ts.';
+  'R-2534: the bank''s own reference of a line (UTR / RRN / cheque no.) from its narration or Ref column; NULL when there is none. Twin of src/lib/banking/narration-ref.ts.';
 
 revoke all on function public.bank_ref_norm(text) from public, anon;
 revoke all on function public.normalize_bank_ref(text, text) from public, anon;
@@ -129,9 +116,12 @@ create index if not exists bank_txn_tenant_ref_key_idx
   on public.bank_transactions (tenant_id, ref_key)
   where ref_key is not null;
 
+/* SECURITY DEFINER: every role that writes a bank line (statement import, cron, service) gets the key
+   without its own grant on the helpers; it reads nothing but the new row. */
 create or replace function public.tg_bank_txn_ref_key()
 returns trigger
 language plpgsql
+security definer
 set search_path to ''
 as $function$
 begin
@@ -139,16 +129,32 @@ begin
   return new;
 end;
 $function$;
+revoke all on function public.tg_bank_txn_ref_key() from public, anon;
 
 drop trigger if exists trg_bank_txn_ref_key on public.bank_transactions;
 create trigger trg_bank_txn_ref_key
   before insert or update of description, reference on public.bank_transactions
   for each row execute function public.tg_bank_txn_ref_key();
 
--- Backfill: each row from its own text only; rows already right are not written (idempotent).
+-- Backfill: each row from its own text only, the key computed once; rows already right are not written.
+do $$
+begin
+  if exists (select 1 from pg_trigger where tgname = 'trg_bank_transactions_touch_updated_at' and tgrelid = 'public.bank_transactions'::regclass) then
+    alter table public.bank_transactions disable trigger trg_bank_transactions_touch_updated_at;
+  end if;
+end $$;
 update public.bank_transactions bt
-   set ref_key = public.normalize_bank_ref(bt.description, bt.reference)
- where bt.ref_key is distinct from public.normalize_bank_ref(bt.description, bt.reference);
+   set ref_key = k.ref_key
+  from (select b.id, public.normalize_bank_ref(b.description, b.reference) as ref_key
+          from public.bank_transactions b) k
+ where k.id = bt.id
+   and bt.ref_key is distinct from k.ref_key;
+do $$
+begin
+  if exists (select 1 from pg_trigger where tgname = 'trg_bank_transactions_touch_updated_at' and tgrelid = 'public.bank_transactions'::regclass) then
+    alter table public.bank_transactions enable trigger trg_bank_transactions_touch_updated_at;
+  end if;
+end $$;
 
 CREATE OR REPLACE FUNCTION public.suggest_bank_transaction_matches(p_bank_txn_id uuid)
  RETURNS TABLE(match_type text, match_id text, match_label text, match_amount integer, match_date date, match_confidence text)
@@ -172,7 +178,8 @@ begin
   if not found then return; end if;
   if not v_trusted and v_txn.tenant_id is distinct from v_caller then return; end if;
   v_tenant := v_txn.tenant_id; v_search_amount := greatest(v_txn.debit, v_txn.credit); v_is_credit := v_txn.credit > 0;
-  v_ref := nullif(v_txn.ref_key, '');   -- R-2534: the line's own UTR / RRN / cheque no.
+  /* R-2534: the line's own UTR / RRN — a cheque number (under 10 characters) never ranks a receipt. */
+  v_ref := case when length(v_txn.ref_key) >= 10 then v_txn.ref_key end;
   if v_is_credit then
     /* R-2364: who paid — the line's own payer answer (R-2025), else exactly one customer with a
        known payer whose key EQUALS one dash/slash part of the narration (the rails' name slots —
@@ -191,11 +198,13 @@ begin
       if cardinality(v_payer_customers) = 1 then v_known := v_payer_customers[1]; end if;
     end if;
 
+    /* R-2534: receipts and project receipts in ONE ranked list (each kind still at most 5), so a
+       referenced project receipt ranks above an unreferenced payment — auto_reconcile reads the top
+       two of the whole result. With no reference match: the R-2364 order and confidences exactly. */
     return query
-    with cand as (
-      select p.id, p.customer_id, p.received_at::date as d, (p.amount - p.credit_applied) as cash,
+    with pay as (
+      select 'payment'::text as kind, p.id::text as mid, p.customer_id, p.received_at::date as d, (p.amount - p.credit_applied) as amt,
              coalesce(c.name, p.receipt_voucher_no, 'Payment') || case when p.reference is not null and p.reference <> '' then ' · ' || p.reference else '' end as label,
-             -- R-2534: the receipt carries this line's own bank reference.
              (v_ref is not null and public.bank_ref_matches(p.reference, v_ref)) as by_ref
         from public.payments p left join public.customers c on c.id = p.customer_id
        -- R-1565: the bank saw only the cash part; a payment paid wholly by advance credit is never suggested.
@@ -220,25 +229,8 @@ begin
                   and exists (select 1 from public.bank_transactions t3
                                where t3.id = lower(substr(p.reference, 6))::uuid and t3.tenant_id = v_tenant
                                  and t3.matched_to_type is not null))
-    ), ranked as (
-      select cand.*, (cand.by_ref and cand.cash = v_search_amount) as ref_exact,
-             bool_or(cand.by_ref and cand.cash = v_search_amount) over () as any_ref_exact
-        from cand
-    )
-    select 'payment'::text, r.id::text, r.label, r.cash, r.d,
-           case when r.ref_exact then 'exact'
-                when v_known is not null and r.customer_id is distinct from v_known then 'low'
-                when abs(r.d - v_txn.txn_date) > 7 then 'low'
-                -- R-2534: another receipt carries the line's reference → this one is at most 'high'.
-                when r.cash = v_search_amount and r.d = v_txn.txn_date and not r.any_ref_exact then 'exact'
-                when r.cash = v_search_amount and abs(r.d - v_txn.txn_date) <= 3 then 'high' else 'low' end::text
-      from ranked r
-    order by r.ref_exact desc, r.by_ref desc, coalesce(r.customer_id = v_known, false) desc,
-             abs(r.cash - v_search_amount), abs(r.d - v_txn.txn_date) limit 5;
-
-    return query
-    with cand as (
-      select pp.id, pp.amount, pp.received_at::date as d,
+    ), proj as (
+      select 'project'::text as kind, pp.id::text as mid, null::uuid as customer_id, pp.received_at::date as d, pp.amount as amt,
              coalesce(ps.customer_name, ps.title, 'Project payment') || ' · project' as label,
              (v_ref is not null and public.bank_ref_matches(pp.reference, v_ref)) as by_ref
         from public.project_payments pp
@@ -248,18 +240,27 @@ begin
          and (abs(pp.received_at::date - v_txn.txn_date) <= 7
               or (v_ref is not null and abs(pp.received_at::date - v_txn.txn_date) <= 60
                   and public.bank_ref_matches(pp.reference, v_ref)))
+    ), allc as (
+      select * from pay union all select * from proj
     ), ranked as (
-      select cand.*, (cand.by_ref and cand.amount = v_search_amount) as ref_exact,
-             bool_or(cand.by_ref and cand.amount = v_search_amount) over () as any_ref_exact
-        from cand
+      select a.*, (a.by_ref and a.amt = v_search_amount) as ref_exact,
+             bool_or(a.by_ref and a.amt = v_search_amount) over () as any_ref_exact,
+             row_number() over (partition by a.kind
+                                order by (a.by_ref and a.amt = v_search_amount) desc,
+                                         (a.kind = 'payment' and coalesce(a.customer_id = v_known, false)) desc,
+                                         abs(a.amt - v_search_amount), abs(a.d - v_txn.txn_date)) as rn
+        from allc a
     )
-    select 'project'::text, r.id::text, r.label, r.amount, r.d,
+    select r.kind, r.mid, r.label, r.amt, r.d,
            case when r.ref_exact then 'exact'
+                when r.kind = 'payment' and v_known is not null and r.customer_id is distinct from v_known then 'low'
                 when abs(r.d - v_txn.txn_date) > 7 then 'low'
-                when r.amount = v_search_amount and r.d = v_txn.txn_date and not r.any_ref_exact then 'exact'
-                when r.amount = v_search_amount and abs(r.d - v_txn.txn_date) <= 3 then 'high' else 'low' end::text
+                -- R-2534: another receipt carries the line's reference → this one is at most 'high'.
+                when r.amt = v_search_amount and r.d = v_txn.txn_date and not r.any_ref_exact then 'exact'
+                when r.amt = v_search_amount and abs(r.d - v_txn.txn_date) <= 3 then 'high' else 'low' end::text
       from ranked r
-    order by r.ref_exact desc, r.by_ref desc, abs(r.amount - v_search_amount), abs(r.d - v_txn.txn_date) limit 5;
+     where r.rn <= 5
+     order by r.ref_exact desc, (r.kind = 'project'), r.rn;
   end if;
   if not v_is_credit then
     return query

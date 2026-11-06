@@ -61,7 +61,11 @@ select 'normalize_bank_ref(' || n || ', ' || coalesce(r, 'null') || ') = ' || co
   ('NEFT ACME 1838 SALE', null, null),
   ('NEFT CR R2364 ZERO REF', '000000000000', null),
   ('UPI-ASHA DIRECTOR-ASHA@OKSBI-SBIN0001234-UPI', '0000531412345678', '531412345678'),
-  ('NEFT CR-HDFC0000240-KAPOOR LEGAL-EXCEL TECHNOLOGIES', 'HDFCN52026110699999', 'HDFCN52026110699999')
+  ('NEFT CR-HDFC0000240-KAPOOR LEGAL-EXCEL TECHNOLOGIES', 'HDFCN52026110699999', 'HDFCN52026110699999'),
+  ('NEFT CR-ICIC0000104-ABC UPI SOLUTIONS PVT LTD-EXCEL TECHNOLOGIES-ICICN52026110612345', null, 'ICICN52026110612345'),
+  ('NEFT-PUNB0123400-RAM TRADERS-1234567890123456-INV 9', '0000N310261234567890', 'N310261234567890'),
+  ('NEFT-PUNB0123400-RAM TRADERS-1234567890123456-INV 9', null, null),
+  ('CHQ DEP - MICR CTS - 110001 - NEW DELHI - SHARMA', '000000123456', '123456')
   ) v(n, r, k)
  where public.normalize_bank_ref(n, r) is distinct from k;
 
@@ -92,6 +96,7 @@ insert into public.customers (id, tenant_id, name, state_code, country) values
 insert into public.bank_accounts (id, tenant_id, name, bank_name) values
   ('e2534000-0000-4000-8000-0000000000ba', 'e2534000-0000-0000-0000-0000000000a0', 'R2534 Current', 'R2534 Bank'),
   ('e2534000-0000-4000-8000-0000000000bb', 'e2534000-0000-0000-0000-0000000000a0', 'R2534 Twin UTR', 'R2534 Bank'),
+  ('e2534000-0000-4000-8000-0000000000bc', 'e2534000-0000-0000-0000-0000000000a0', 'R2534 Review cases', 'R2534 Bank'),
   ('e2534000-0000-4000-8000-0000000000b9', 'e2534000-0000-0000-0000-0000000000b0', 'R2534 B Current', 'R2534 Bank');
 
 -- L1: the UTR line. L2: an IMPS debit (FILL). L3: the twin-UTR line (own account). LB: company B's line.
@@ -99,7 +104,12 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('e2534000-0000-4000-8000-0000000000e1', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000ba', '2026-10-10', 'NEFT CR-HDFC0000240-KAPOOR LEGAL-EXCEL TECHNOLOGIES-HDFCN52026110612345', null, 5000, 0),
   ('e2534000-0000-4000-8000-0000000000e2', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000ba', '2026-10-11', 'IMPS-621856395591-RAVI KUMAR-ICIC-XX XXXXXX4658-SALARY', '0000621856395591', 0, 700),
   ('e2534000-0000-4000-8000-0000000000e3', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000bb', '2026-10-12', 'NEFT CR-HDFC0000240-TWIN-EXCEL TECHNOLOGIES-HDFCN52026110677777', null, 8000, 0),
-  ('e2534000-0000-4000-8000-0000000000e9', 'e2534000-0000-0000-0000-0000000000b0', 'e2534000-0000-4000-8000-0000000000b9', '2026-10-10', 'UPI/531112345678/B PAYER/b@okhdfc/HDFC', null, 100, 0);
+  ('e2534000-0000-4000-8000-0000000000e9', 'e2534000-0000-0000-0000-0000000000b0', 'e2534000-0000-4000-8000-0000000000b9', '2026-10-10', 'UPI/531112345678/B PAYER/b@okhdfc/HDFC', null, 100, 0),
+  -- Review cases (account bc): L4 a project receipt carries the UTR; L5 a receipt carries the UTR but
+  -- the amount differs; L6 a cheque line (key 4521 — never ranks a receipt).
+  ('e2534000-0000-4000-8000-0000000000e4', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000bc', '2026-10-14', 'NEFT CR-HDFC0000240-PROJ CLIENT-EXCEL TECHNOLOGIES-HDFCN52026110644444', null, 9000, 0),
+  ('e2534000-0000-4000-8000-0000000000e5', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000bc', '2026-10-15', 'NEFT CR-HDFC0000240-SHORT PAYER-EXCEL TECHNOLOGIES-HDFCN52026110655555', null, 6000, 0),
+  ('e2534000-0000-4000-8000-0000000000e6', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000bc', '2026-10-16', 'CHQ DEP - MICR CTS - SHARMA', '000000004521', 7000, 0);
 
 -- ════ FILL ═════════════════════════════════════════════════════════════════════════
 insert into r2534_fail
@@ -149,6 +159,10 @@ select 'Q-R2534-' || k, t::uuid, null, c::uuid, n, amt, round(amt / 1.18), 18, '
                ('2', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c2', 'R2534 Same Amount Traders', 5000),
                ('3', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c1', 'R2534 Kapoor Legal', 8000),
                ('4', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c2', 'R2534 Same Amount Traders', 8000),
+               ('5', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c2', 'R2534 Same Amount Traders', 9000),
+               ('6', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c1', 'R2534 Kapoor Legal', 5950),
+               ('7', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c2', 'R2534 Same Amount Traders', 6000),
+               ('8', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c2', 'R2534 Same Amount Traders', 7000),
                ('9', 'e2534000-0000-0000-0000-0000000000b0', 'e2534000-0000-4000-8000-0000000000c9', 'R2534 B Customer', 5000)) v(k, t, c, n, amt);
 insert into public.payments (id, tenant_id, customer_id, amount, method, reference, status, received_at, quote_id) values
   -- P1: carries the line's UTR (typed with a prefix, lower case), 15 days after the line.
@@ -158,8 +172,21 @@ insert into public.payments (id, tenant_id, customer_id, amount, method, referen
   -- P3 / P4: two receipts carrying the same UTR (method cheque: R-1676's one-UTR-once rule is for UPI / transfer).
   ('e2534000-0000-4000-8000-0000000000f3', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c1', 8000, 'cheque', 'HDFCN52026110677777', 'received', '2026-10-12 10:00+05:30', 'Q-R2534-3'),
   ('e2534000-0000-4000-8000-0000000000f4', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c2', 8000, 'cheque', 'HDFCN52026110677777', 'received', '2026-10-12 11:00+05:30', 'Q-R2534-4'),
+  -- P5: same amount as L4, 2 days off, no reference ('high' before R-2534 — and still 'high').
+  ('e2534000-0000-4000-8000-0000000000f5', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c2', 9000, 'cheque', 'R2534 P5', 'received', '2026-10-16 10:00+05:30', 'Q-R2534-5'),
+  -- P6: carries L5's UTR but ₹5,950. P7: ₹6,000 on L5's day, no reference.
+  ('e2534000-0000-4000-8000-0000000000f6', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c1', 5950, 'bank_transfer', 'HDFCN52026110655555', 'received', '2026-10-15 10:00+05:30', 'Q-R2534-6'),
+  ('e2534000-0000-4000-8000-0000000000f7', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c2', 6000, 'cheque', 'R2534 P7', 'received', '2026-10-15 11:00+05:30', 'Q-R2534-7'),
+  -- P8: reference 4521 (= L6's cheque no.), 20 days after L6.
+  ('e2534000-0000-4000-8000-0000000000f8', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000c2', 7000, 'cheque', '4521', 'received', '2026-11-05 10:00+05:30', 'Q-R2534-8'),
   -- P9: company B's receipt carrying company A's UTR.
   ('e2534000-0000-4000-8000-0000000000f9', 'e2534000-0000-0000-0000-0000000000b0', 'e2534000-0000-4000-8000-0000000000c9', 5000, 'bank_transfer', 'HDFCN52026110612345', 'received', '2026-10-10 10:00+05:30', 'Q-R2534-9');
+
+-- PR1: a project receipt carrying L4's UTR, 10 days after L4.
+insert into public.project_sales (id, tenant_id, customer_name, title, taxable_amount, gst_amount, total_amount, status, gst_rate) values
+  ('e2534000-0000-4000-8000-0000000000d1', 'e2534000-0000-0000-0000-0000000000a0', 'R2534 Proj Client', 'R2534 Project', 7627, 1373, 9000, 'active', 18);
+insert into public.project_payments (id, tenant_id, project_id, amount, method, reference, received_at) values
+  ('e2534000-0000-4000-8000-0000000000d2', 'e2534000-0000-0000-0000-0000000000a0', 'e2534000-0000-4000-8000-0000000000d1', 9000, 'bank_transfer', 'HDFCN52026110644444', '2026-10-24 10:00+05:30');
 
 do $$
 declare v_first record; v_conf text; v_ids text[]; v_res jsonb;
@@ -188,12 +215,37 @@ begin
     insert into r2534_fail values ('twin UTR line: confidences ' || coalesce(array_to_string(v_ids, ','), 'none') || ' (want exact,exact)');
   end if;
 
+  -- Review: a project receipt carrying the UTR ranks above an unreferenced payment.
+  select s.match_type, s.match_id, s.match_confidence into v_first
+    from public.suggest_bank_transaction_matches('e2534000-0000-4000-8000-0000000000e4') with ordinality s(match_type, match_id, match_label, match_amount, match_date, match_confidence, ord)
+   order by s.ord limit 1;
+  if v_first.match_id is distinct from 'e2534000-0000-4000-8000-0000000000d2' or v_first.match_confidence is distinct from 'exact' then
+    insert into r2534_fail values ('project UTR line: first is ' || coalesce(v_first.match_type || ' ' || v_first.match_id, 'none') || ' (want project receipt PR1 exact)');
+  end if;
+  -- Review: a receipt carrying the UTR with another amount does not push a same-day exact one down.
+  select s.match_id, s.match_confidence into v_first
+    from public.suggest_bank_transaction_matches('e2534000-0000-4000-8000-0000000000e5') with ordinality s(match_type, match_id, match_label, match_amount, match_date, match_confidence, ord)
+   order by s.ord limit 1;
+  if v_first.match_id is distinct from 'e2534000-0000-4000-8000-0000000000f7' or v_first.match_confidence is distinct from 'exact' then
+    insert into r2534_fail values ('short-UTR line: first is ' || coalesce(v_first.match_id || ' ' || v_first.match_confidence, 'none') || ' (want P7 exact)');
+  end if;
+  -- Review: a cheque number never widens the window or ranks a receipt.
+  if exists (select 1 from public.suggest_bank_transaction_matches('e2534000-0000-4000-8000-0000000000e6') s
+              where s.match_id = 'e2534000-0000-4000-8000-0000000000f8') then
+    insert into r2534_fail values ('cheque line 4521 is offered P8 (reference 4521, 20 days later) — a cheque no. must not rank');
+  end if;
+
   v_res := public.auto_reconcile_bank_account('e2534000-0000-4000-8000-0000000000ba');
+  v_res := public.auto_reconcile_bank_account('e2534000-0000-4000-8000-0000000000bc');
   v_res := public.auto_reconcile_bank_account('e2534000-0000-4000-8000-0000000000bb');
   set local role postgres;
   if not exists (select 1 from public.bank_transactions where id = 'e2534000-0000-4000-8000-0000000000e1'
                   and matched_to_type = 'payment' and matched_to_id = 'e2534000-0000-4000-8000-0000000000f1') then
     insert into r2534_fail values ('auto-reconcile did not book the UTR line to P1');
+  end if;
+  if not exists (select 1 from public.bank_transactions where id = 'e2534000-0000-4000-8000-0000000000e4'
+                  and matched_to_type = 'project' and matched_to_id = 'e2534000-0000-4000-8000-0000000000d2') then
+    insert into r2534_fail values ('auto-reconcile did not book the project UTR line to PR1');
   end if;
   if exists (select 1 from public.bank_transactions where id = 'e2534000-0000-4000-8000-0000000000e3' and matched_to_type is not null) then
     insert into r2534_fail values ('auto-reconcile booked the twin-UTR line although two receipts carry its UTR');

@@ -26,7 +26,7 @@ import { normalizeCountry } from "@/lib/gst/countries";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import type { CustomerGstTreatment } from "@/lib/gst/customer-gst-treatment";
 import { parseInwardRemittance, type InwardRemittance } from "@/lib/banking/inward-remittance";
-import { bankRefKey } from "@/lib/banking/narration-ref";
+import { bankRefKey, bankRefNorm } from "@/lib/banking/narration-ref";
 
 /** ₹ either side of the bank amount the fallback accepts (bank charges / round-off). */
 export const AMOUNT_TOLERANCE = 2;
@@ -171,9 +171,7 @@ const num = (v: unknown): number | null => {
 };
 
 /** Upper-case letters and digits only, leading zeros dropped: "0000162440272175" → "162440272175". */
-export function normRef(s: string | null | undefined): string {
-  return (s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^0+/, "");
-}
+export const normRef = bankRefNorm;   // R-2534: one rule for bank references (narration-ref.ts)
 
 const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 

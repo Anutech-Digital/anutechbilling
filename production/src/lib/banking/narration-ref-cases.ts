@@ -61,4 +61,11 @@ export const NARRATION_REF_CASES: NarrationRefCase[] = [
   // A rail whose narration has no reference, but the Ref column does
   { bank: "HDFC", narration: "UPI-ASHA DIRECTOR-ASHA@OKSBI-SBIN0001234-UPI", ref: "0000531412345678", key: "531412345678", kind: "rrn" },
   { bank: "HDFC", narration: "NEFT CR-HDFC0000240-KAPOOR LEGAL-EXCEL TECHNOLOGIES", ref: "HDFCN52026110699999", key: "HDFCN52026110699999", kind: "utr" },
+  // Review (R-2534): the FIRST rail word decides — "UPI" inside a remitter's name does not
+  { bank: "HDFC", narration: "NEFT CR-ICIC0000104-ABC UPI SOLUTIONS PVT LTD-EXCEL TECHNOLOGIES-ICICN52026110612345", ref: null, key: "ICICN52026110612345", kind: "utr" },
+  // Review: an all-digit 16-digit account number is never the UTR; the Ref column is
+  { bank: "PNB", narration: "NEFT-PUNB0123400-RAM TRADERS-1234567890123456-INV 9", ref: "0000N310261234567890", key: "N310261234567890", kind: "utr" },
+  { bank: "PNB", narration: "NEFT-PUNB0123400-RAM TRADERS-1234567890123456-INV 9", ref: null, key: null, kind: null },
+  // Review: a cheque line's Ref column beats a PIN code / date in the narration
+  { bank: "HDFC", narration: "CHQ DEP - MICR CTS - 110001 - NEW DELHI - SHARMA", ref: "000000123456", key: "123456", kind: "cheque" },
 ];
