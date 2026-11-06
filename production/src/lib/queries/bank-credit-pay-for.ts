@@ -356,6 +356,7 @@ export function useBankAdvancePaymentIds(paymentIds: readonly string[]) {
   const ids = [...new Set(paymentIds)].sort();
   return useQuery({
     queryKey: ["bank_advance_payment_ids", ids] as const,
+    placeholderData: (prev) => prev,   // R-2524: keep the badges while the next page's ids load
     enabled: ids.length > 0,
     queryFn: async (): Promise<Set<string>> => {
       const sb = createClient();
@@ -426,6 +427,7 @@ export function useBankSplitLinePayments(txnIds: readonly string[]) {
   const ids = [...new Set(txnIds)].sort();
   return useQuery({
     queryKey: ["bank_transactions", "split_payments", ids] as const,
+    placeholderData: (prev) => prev,   // R-2524: keep the badges while the next page's ids load
     enabled: ids.length > 0,
     queryFn: async (): Promise<Map<string, SplitLinePayment[]>> => {
       const sb = createClient() as unknown as { from: (t: string) => { select: (c: string) => { in: (c: string, v: string[]) => { eq: (c: string, v: string) => PromiseLike<{ data: unknown; error: { message: string } | null }> } } } };

@@ -83,13 +83,34 @@ export const MAX_INVOICE_AGE_DAYS = 365;
 /** Money a couple of days BEFORE the invoice date (paid against the quote / proforma). */
 export const MAX_DAYS_BEFORE_INVOICE = 7;
 
-const inr = (n: number) => n.toLocaleString("en-IN");
+/* R-2524: one formatter, not toLocaleString per call (it builds a new Intl formatter each time —
+   ~30k calls on a 6,000-line account). Same output. */
+const INR_FMT = new Intl.NumberFormat("en-IN");
+const inr = (n: number) => INR_FMT.format(n);
 const norm = (s: string | null | undefined) => (s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
-function daysBetween(fromISO: string, toISO: string): number {
-  const a = Date.parse(`${fromISO.slice(0, 10)}T00:00:00+05:30`);
-  const b = Date.parse(`${toISO.slice(0, 10)}T00:00:00+05:30`);
-  return Math.round((b - a) / 86_400_000);
+/** Midnight IST of a YYYY-MM-DD (or ISO) date, in ms. */
+function dayMs(iso: string): number {
+  return Date.parse(`${iso.slice(0, 10)}T00:00:00+05:30`);
+}
+
+type PreparedInvoices = {
+  list: Array<{ inv: OpenInvoice; idN: string; quoteN: string; day: number }>;
+  byId: Map<string, OpenInvoice>;
+};
+/* R-2524: one prepared copy per invoice list (the bank page passes the same cached array for
+   every line); a new list (after a refetch) is prepared again. */
+const prepared = new WeakMap<readonly OpenInvoice[], PreparedInvoices>();
+function preparedInvoices(invoices: readonly OpenInvoice[]): PreparedInvoices {
+  let hit = prepared.get(invoices);
+  if (!hit || hit.list.length !== invoices.length) {   // a list pushed to after it was prepared
+    hit = {
+      list: invoices.map((inv) => ({ inv, idN: norm(inv.id), quoteN: norm(inv.quoteId), day: dayMs(inv.invoiceDate) })),
+      byId: new Map(invoices.map((i) => [i.id, i])),
+    };
+    prepared.set(invoices, hit);
+  }
+  return hit;
 }
 
 /** Does the narration/reference carry this document number? Whole id only — a bare "0013" matches too much. */
@@ -123,14 +144,22 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
   const amount = Math.round(credit.amount);
   if (!(amount > 0)) return [];
   const out: InvoiceMatch[] = [];
+  /* R-2524: the narration, reference and date are read once per credit, and each invoice's
+     ids and date once per invoice list — not once per (credit, invoice) pair. Same rules as
+     referencesDocument / daysBetween. */
+  const descN = norm(credit.description);
+  const refN = norm(credit.reference);
+  const creditDay = dayMs(credit.txnDate);
+  const said = (id: string) => id.length >= 6 && (descN.includes(id) || refN.includes(id));
+  const prep = preparedInvoices(invoices);
 
-  for (const inv of invoices) {
+  for (const { inv, idN, quoteN, day } of prep.list) {
     const due = Math.round(inv.amountDue);
     if (!(due > 0)) continue;
-    const age = daysBetween(inv.invoiceDate, credit.txnDate);
+    const age = Math.round((creditDay - day) / 86_400_000);
     if (age < -MAX_DAYS_BEFORE_INVOICE || age > MAX_INVOICE_AGE_DAYS) continue;
 
-    const refHit = referencesDocument(credit, inv.id) || referencesDocument(credit, inv.quoteId);
+    const refHit = said(idN) || said(quoteN);
     const nameHit = nameOverlap(credit.description, inv.customerName);
     const exactAmount = amount === due;
     const tdsRatePct = exactAmount ? null : tdsRateFor(amount, due, inv.taxableValue);
@@ -173,9 +202,8 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
     }
   }
 
-  const byId = new Map(invoices.map((i) => [i.id, i]));
   for (const m of out) {
-    const inv = byId.get(m.invoiceId);
+    const inv = prep.byId.get(m.invoiceId);
     m.blockedReason =
       inv?.isProject ? "Project invoice — record it as a project payment"
       : !m.quoteId ? "No quote behind this invoice — record the payment from the invoice"
@@ -214,7 +242,19 @@ export function certainInvoiceMatches(
   txns: readonly ChipTxn[],
   invoices: readonly OpenInvoice[],
 ): Map<string, InvoiceMatch> {
-  const out = new Map<string, InvoiceMatch>();
+  return certainOf(invoiceMatchesOfCredits(txns, invoices));
+}
+
+/**
+ * R-2524: the ranked invoice matches of every UNMATCHED credit line, by line id — worked out once
+ * for the bank page, which reads it for the chip (certainOf) and for "no customer yet". Lines
+ * that are matched or money out are left out (their answer is "no matches").
+ */
+export function invoiceMatchesOfCredits(
+  txns: readonly ChipTxn[],
+  invoices: readonly OpenInvoice[],
+): Map<string, InvoiceMatch[]> {
+  const out = new Map<string, InvoiceMatch[]>();
   if (invoices.length === 0) return out;
   for (const t of txns) {
     if (t.matched_to_type !== null || !(t.credit > 0)) continue;
@@ -222,7 +262,16 @@ export function certainInvoiceMatches(
       { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference },
       invoices,
     );
-    if (ms[0]?.confidence === "certain" && ms[1]?.confidence !== "certain") out.set(t.id, ms[0]);
+    if (ms.length > 0) out.set(t.id, ms);
+  }
+  return out;
+}
+
+/** R-399's chip rule over invoiceMatchesOfCredits: one "certain" candidate, never two. */
+export function certainOf(matches: ReadonlyMap<string, readonly InvoiceMatch[]>): Map<string, InvoiceMatch> {
+  const out = new Map<string, InvoiceMatch>();
+  for (const [id, ms] of matches) {
+    if (ms[0]?.confidence === "certain" && ms[1]?.confidence !== "certain") out.set(id, ms[0]);
   }
   return out;
 }

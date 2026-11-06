@@ -163,6 +163,28 @@ function wholeNameSaid(name: string, said: string): boolean {
   return ws.length >= 2 && said.includes(` ${ws.join(" ")} `);
 }
 
+type CustomerWordIndex = {
+  named: Array<{ c: CustomerLite; toks: string[] }>;
+  /** How many customers' names have each word. */
+  howMany: Map<string, number>;
+  /** A word only ONE customer's name has → that customer's index in `named`. */
+  owners: Map<string, number>;
+};
+/* R-2524: built once per customer list (the bank page passes the same cached array for every line). */
+const wordIndexes = new WeakMap<readonly CustomerLite[], CustomerWordIndex>();
+function customerWordIndex(customers: readonly CustomerLite[]): CustomerWordIndex {
+  const hit = wordIndexes.get(customers);
+  if (hit && hit.named.length === customers.length) return hit;
+  const named = customers.map((c) => ({ c, toks: [...new Set(customerNameTokens(c.name))].filter((t) => !GENERIC_NAME_WORDS.has(t)) }));
+  const howMany = new Map<string, number>();
+  for (const n of named) for (const t of n.toks) howMany.set(t, (howMany.get(t) ?? 0) + 1);
+  const owners = new Map<string, number>();
+  named.forEach((n, i) => { for (const t of n.toks) if (howMany.get(t) === 1) owners.set(t, i); });
+  const idx = { named, howMany, owners };
+  wordIndexes.set(customers, idx);
+  return idx;
+}
+
 /** R-2371: the name word a "certain" invoice match rests on, when its only identity is a name
  *  (no invoice number in the narration) — from invoice-credit-match's reason text. */
 function nameOnlyHit(m: { reasons?: readonly string[] }): string | null {
@@ -211,10 +233,12 @@ export function guessCustomer(
   const seq = withoutOwnNames(credit.description, memory?.ownNames);
   const words = new Set(narrationNames(seq.join(" ")));
   const said = ` ${seq.join(" ")} `;
-  const named = customers.map((c) => ({ c, toks: [...new Set(customerNameTokens(c.name))].filter((t) => !GENERIC_NAME_WORDS.has(t)) }));
-  const howMany = new Map<string, number>();
-  for (const n of named) for (const t of n.toks) howMany.set(t, (howMany.get(t) ?? 0) + 1);
-  const own = named
+  /* R-2524: the customers' name words are counted once per customer list, and only the customers
+     owning a word of THIS narration are looked at (was: every customer for every line). */
+  const { named, howMany, owners } = customerWordIndex(customers);
+  const touched = new Set<number>();
+  for (const w of words) { const at = owners.get(w); if (at !== undefined) touched.add(at); }
+  const own = [...touched].sort((a, b) => a - b).map((i) => named[i])
     .map((n) => ({ c: n.c, words: n.toks.filter((t) => words.has(t) && howMany.get(t) === 1) }))
     .filter((h) => h.words.some((t) => !TRADE_WORDS.has(t)) || (h.words.length > 0 && wholeNameSaid(h.c.name, said)));
   if (own.length === 1) return { customerId: own[0].c.id, reason: `the bank line says “${own[0].words.join(" ")}”` };
