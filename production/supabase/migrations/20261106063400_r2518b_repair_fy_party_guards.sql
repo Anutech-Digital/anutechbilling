@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.repair_split_merged_bank_sale(text,jsonb,boolean)') and prosrc like '%R-2518b%') and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'bank_sale_split_repairs' and policyname = 'bank_sale_split_repairs_select' and qual like '%accountant%')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.repair_split_merged_bank_sale(text,jsonb,boolean)') and prosrc like '%R-2518b%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.undo_split_merged_bank_sale(uuid,boolean)') and prosrc like '%R-2518b%') and exists(select 1 from pg_policies where schemaname = 'public' and tablename = 'bank_sale_split_repairs' and policyname = 'bank_sale_split_repairs_select' and qual like '%accountant%')
 -- deploy-key: r2518brepairfypartyguards
 --
 -- R-2518b (6 Nov 2026, G-RECON): the independent review (v8) of R-2518 said SAFE, with two findings to fix
@@ -10,7 +10,9 @@
 --     (CGST+SGST vs IGST), the customer's GSTIN or the GST treatment differ from what the invoice froze.
 --   Optional LOW — the backup table (full invoice / receipt rows) was readable by every login of the company.
 --     → owner and accountant only.
--- Function body = the R-2518 one (20261106043700, the only definition) + the two guards; nothing else changed.
+-- repair_split_merged_bank_sale and undo_split_merged_bank_sale = the R-2518 bodies (20261106043700, their only
+-- definition) + these guards (the undo moves documents the same way); nothing else changed.
+-- Left (owner's control): tax can still move between MONTHS of this FY — set books_locked_until to the last filed month first.
 -- Tests: supabase/tests/r2518b_repair_fy_party_guards.test.sql (+ r2518_zoho_invoice_per_sale.test.sql).
 
 begin;
@@ -121,12 +123,17 @@ begin
   end if;
   /* R-2518b (review v8, LOW 6): the new invoices take the party facts as they are NOW (tg_invoice_snapshot_parties).
      Refuse when they differ from what the merged invoice froze: place of supply / seller state (CGST+SGST vs
-     IGST), the customer's GSTIN (B2B vs B2C, GSTR-1 party) and the GST treatment (SEZ = IGST). */
+     IGST), our GSTIN and the customer's (B2B vs B2C, GSTR-1 party) and the GST treatment (SEZ = IGST). */
   select * into v_party from public.invoice_party_snapshot(v_inv.tenant_id, v_inv.customer_id);
   if v_party.pos_state_code is distinct from v_inv.pos_state_code or v_party.seller_state_code is distinct from v_inv.seller_state_code then
     raise exception 'The place of supply of invoice % has changed since the sale (customer state % → %, our state % → %) — CGST+SGST vs IGST would change. Split it by hand.',
       p_invoice_id, coalesce(v_inv.pos_state_code, '-'), coalesce(v_party.pos_state_code, '-'),
       coalesce(v_inv.seller_state_code, '-'), coalesce(v_party.seller_state_code, '-')
+      using errcode = 'check_violation';
+  end if;
+  if v_party.seller_gstin is distinct from nullif(upper(btrim(coalesce(v_inv.seller_gstin, ''))), '') then
+    raise exception 'Our GSTIN on invoice % (%) is not the company''s GSTIN now (%) — the new invoices would be under another registration. Split it by hand.',
+      p_invoice_id, coalesce(v_inv.seller_gstin, 'none'), coalesce(v_party.seller_gstin, 'none')
       using errcode = 'check_violation';
   end if;
   if v_party.customer_gstin is distinct from nullif(upper(btrim(coalesce(v_inv.customer_gstin, ''))), '') then
@@ -135,7 +142,9 @@ begin
       using errcode = 'check_violation';
   end if;
   select c.gst_treatment into v_treat from public.customers c where c.id = v_inv.customer_id and c.tenant_id = v_inv.tenant_id;
-  if v_inv.gst_treatment is not null and v_treat is distinct from v_inv.gst_treatment then
+  /* An invoice from before R-1736 (22 Oct) froze no treatment: then refuse only a move to SEZ (always IGST). */
+  if v_treat is distinct from v_inv.gst_treatment
+     and (v_inv.gst_treatment is not null or v_treat in ('sez_with_payment', 'sez_without_payment')) then
     raise exception 'The GST treatment of invoice % (%) is not the customer''s now (%). Split it by hand.', p_invoice_id, v_inv.gst_treatment, coalesce(v_treat, 'none')
       using errcode = 'check_violation';
   end if;
@@ -204,6 +213,136 @@ revoke all on function public.repair_split_merged_bank_sale(text, jsonb, boolean
 grant execute on function public.repair_split_merged_bank_sale(text, jsonb, boolean) to authenticated, service_role;
 comment on function public.repair_split_merged_bank_sale(text, jsonb, boolean) is
   'R-2518 DATA REPAIR (owner only; dry run by default; this financial year only and the same place of supply / GSTIN / GST treatment as at the sale, R-2518b): a bank-receipt sale that merged several Zoho invoices → credit note on it + one sale per Zoho invoice on the same bank line, each with its Zoho number. Backup in bank_sale_split_repairs; undo_split_merged_bank_sale takes it back.';
+
+create or replace function public.undo_split_merged_bank_sale(p_repair_id uuid, p_dry_run boolean default true)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  c_dry     constant text := 'R2518';
+  v_caller  uuid;
+  v_r       record;
+  v_txn     record;
+  v_part    jsonb;
+  v_pays    uuid[] := array[]::uuid[];
+  v_adv_id  uuid;
+  v_adv     public.payments;
+  v_open    integer;
+  v_taken   jsonb := '[]'::jsonb;
+  v_q       jsonb;
+  v_lines   jsonb;
+  v_plan    jsonb;
+  v_res     jsonb;
+  v_lock    date;
+  v_fy_now  text;
+  v_party   record;
+  v_orig    jsonb;
+  v_treat   text;
+begin
+  /* R-2518 + R-2518b: OWNER ONLY. */
+  v_caller := public.bank_sale_repair_gate();
+  select r.* into v_r from public.bank_sale_split_repairs r
+   where r.id = p_repair_id and (v_caller is null or r.tenant_id = v_caller) for update;
+  if not found then raise exception 'Repair % was not found in your company.', p_repair_id using errcode = 'no_data_found'; end if;
+  if v_r.undone_at is not null then
+    raise exception 'Repair % was already undone on %.', p_repair_id, to_char(v_r.undone_at, 'DD Mon YYYY') using errcode = 'check_violation';
+  end if;
+  if v_r.result is null or coalesce((v_r.result->>'dry_run')::boolean, false) then
+    raise exception 'Repair % was never booked — nothing to undo.', p_repair_id using errcode = 'check_violation';
+  end if;
+  select t.* into v_txn from public.bank_transactions t where t.id = v_r.bank_txn_id and t.tenant_id = v_r.tenant_id for update;
+  if not found then raise exception 'The bank line of repair % is gone — undo it by hand.', p_repair_id; end if;
+  select t.books_locked_until into v_lock from public.tenants t where t.id = v_r.tenant_id;
+  if v_lock is not null and v_lock >= v_txn.txn_date then
+    raise exception 'Books are locked up to % and this receipt (%) falls inside. Nothing was changed.', to_char(v_lock, 'DD Mon YYYY'), to_char(v_txn.txn_date, 'DD Mon YYYY')
+      using errcode = 'check_violation';
+  end if;
+  /* R-2518b (review v8, MEDIUM 5 — the undo moves documents the same way): credit notes dated today, the
+     merged sale booked again at the bank date. Only within the bank line's financial year (IST). */
+  v_fy_now := public.indian_fiscal_year(public.ist_today());
+  if public.indian_fiscal_year(v_txn.txn_date) <> v_fy_now then
+    raise exception 'The bank line of repair % (%) is in financial year %, but today is in %: the credit notes would be dated today while the sale is booked again at the old date, so taxable value and GST would move between financial years. Undo it by hand.',
+      p_repair_id, to_char(v_txn.txn_date, 'DD Mon YYYY'), public.indian_fiscal_year(v_txn.txn_date), v_fy_now
+      using errcode = 'check_violation';
+  end if;
+  /* R-2518b (LOW 6): the sale booked again takes today's party facts — they must be the merged invoice's. */
+  v_orig := v_r.backup->'invoice';
+  select * into v_party from public.invoice_party_snapshot(v_r.tenant_id, (v_orig->>'customer_id')::uuid);
+  select c.gst_treatment into v_treat from public.customers c where c.id = (v_orig->>'customer_id')::uuid and c.tenant_id = v_r.tenant_id;
+  if v_party.pos_state_code is distinct from v_orig->>'pos_state_code' or v_party.seller_state_code is distinct from v_orig->>'seller_state_code'
+     or v_party.seller_gstin is distinct from nullif(upper(btrim(coalesce(v_orig->>'seller_gstin', ''))), '')
+     or v_party.customer_gstin is distinct from nullif(upper(btrim(coalesce(v_orig->>'customer_gstin', ''))), '')
+     or (v_treat is distinct from v_orig->>'gst_treatment'
+         and (v_orig->>'gst_treatment' is not null or v_treat in ('sez_with_payment', 'sez_without_payment'))) then
+    raise exception 'The place of supply, a GSTIN or the GST treatment has changed since invoice % — undo repair % by hand.', v_orig->>'id', p_repair_id
+      using errcode = 'check_violation';
+  end if;
+
+  /* What the repair booked: each new sale's receipt (+ an advance) — still exactly that on the line. */
+  for v_part in select value from jsonb_array_elements(coalesce(v_r.result->'booked'->'parts', '[]'::jsonb)) loop
+    v_pays := v_pays || (v_part->>'payment_id')::uuid;
+    if exists (select 1 from public.credit_notes where invoice_id = v_part->>'invoice_id')
+       or exists (select 1 from public.debit_notes where invoice_id = v_part->>'invoice_id')
+       or exists (select 1 from public.tds_receivable where invoice_id = v_part->>'invoice_id')
+       or (select count(*) from public.payments p where p.quote_id = v_part->>'quote_id') <> 1 then
+      raise exception 'Invoice % (from this repair) has changed since (a note, TDS or another receipt) — undo it by hand.', v_part->>'invoice_id'
+        using errcode = 'check_violation';
+    end if;
+  end loop;
+  v_adv_id := (select p.id from public.payments p where p.tenant_id = v_r.tenant_id and p.bank_txn_id = v_txn.id
+                  and public.bank_advance_payment(p.id) limit 1);
+  if exists (select 1 from public.payments p where p.tenant_id = v_r.tenant_id and p.bank_txn_id = v_txn.id
+                and p.id <> all(v_pays) and p.id is distinct from v_adv_id)
+     or v_txn.matched_to_type is distinct from 'payment' or not (v_txn.matched_to_id::uuid = any(v_pays)) then
+    raise exception 'The bank line has changed since the repair — undo it by hand.' using errcode = 'check_violation';
+  end if;
+  if v_adv_id is not null then
+    select * into v_adv from public.payments where id = v_adv_id for update;
+    select coalesce(sum(cc.amount) filter (where cc.status = 'open'), 0)::int into v_open
+      from public.customer_credits cc where cc.tenant_id = v_r.tenant_id and cc.source_payment_id = v_adv_id;
+    if v_open <> v_adv.amount then
+      raise exception 'The ₹% advance this repair kept is already used or refunded — undo it by hand.', v_adv.amount using errcode = 'check_violation';
+    end if;
+  end if;
+
+  begin
+    perform public.reconcile_bank_txn(v_txn.id, null, null, 'manual');
+    if v_adv_id is not null then
+      perform public.delete_payment(v_adv_id);
+      update public.quotes
+         set status = 'rejected'::quote_status, payment_status = 'none'::payment_status, payment_amount = 0,
+             payment_method = null, payment_reference = null, payment_received_at = null, payment_notes = null
+       where id = v_adv.quote_id and tenant_id = v_r.tenant_id;
+    end if;
+    for v_part in select value from jsonb_array_elements(v_r.result->'booked'->'parts') loop
+      v_taken := v_taken || public.bank_sale_take_back(v_r.tenant_id, v_part->>'quote_id', (v_part->>'payment_id')::uuid,
+                              'Split per Zoho invoice undone (R-2518)', 'undo_split_merged_bank_sale ' || p_repair_id::text);
+    end loop;
+    /* The original lines again as ONE sale (an issued invoice is never deleted — a new number). */
+    v_q := v_r.backup->'quote';
+    v_lines := public.bank_sale_lines_from_quote(v_q->'line_items');
+    v_plan := public.bank_sale_split_amounts(
+                jsonb_build_array(jsonb_build_object('lines', v_lines, 'billing_cycle', v_q->>'billing_cycle', 'create_subscription', false,
+                                                     'amount', public.bank_sale_lines_total(v_lines, (v_q->>'tax_rate')::int))),
+                round(v_txn.credit)::int);
+    v_res := public.reconcile_bank_credit_split(v_txn.id, (v_q->>'customer_id')::uuid, '[]'::jsonb, v_plan->'sales', v_plan->>'rest');
+    v_res := jsonb_build_object('repair_id', p_repair_id, 'taken_back', v_taken, 'booked', v_res, 'dry_run', p_dry_run);
+    update public.bank_sale_split_repairs set undone_at = now(), undone_by = auth.uid(), undo_result = v_res where id = p_repair_id;
+    if p_dry_run then
+      raise exception using errcode = 'P0001', message = c_dry;
+    end if;
+  exception when sqlstate 'P0001' then
+    if sqlerrm <> c_dry then raise; end if;
+  end;
+  return v_res;
+end;
+$$;
+revoke all on function public.undo_split_merged_bank_sale(uuid, boolean) from public, anon;
+grant execute on function public.undo_split_merged_bank_sale(uuid, boolean) to authenticated, service_role;
+comment on function public.undo_split_merged_bank_sale(uuid, boolean) is
+  'R-2518 DATA REPAIR undo (owner only; dry run by default; the bank line''s financial year only and the same party facts as the merged invoice, R-2518b): credit notes the per-Zoho sales of a repair and books the original lines on the same bank line again as one sale.';
 
 drop policy if exists bank_sale_split_repairs_select on public.bank_sale_split_repairs;
 create policy bank_sale_split_repairs_select on public.bank_sale_split_repairs as permissive for select to authenticated

@@ -9,6 +9,7 @@
 --   B. LOW 6: a sale from THIS financial year whose customer has since changed state (place of supply)
 --      or GSTIN is refused — the new invoices would take the new party facts (CGST+SGST ↔ IGST, B2B ↔ B2C).
 --   C. Control: the same sale with the customer as at the sale passes the dry run.
+--   E. The undo: same two guards.
 --   D. Optional LOW: after a real run, an accountant reads the backup row; a sales login does not.
 
 begin;
@@ -128,10 +129,31 @@ begin
     ok := v_msg like '%GSTIN%';
   end;
   if not ok then raise exception 'FAIL B: a customer whose GSTIN changed was not refused (%)', v_msg; end if;
-  raise notice 'B PASS: state moved / GSTIN removed / GSTIN changed → refused';
+  update public.customers set gstin = '07AAACM2518B1Z5' where id = 'cccccccc-0000-0000-0000-000000251812';
+  update public.customers set gst_treatment = 'sez_with_payment' where id = 'cccccccc-0000-0000-0000-000000251812';
+  ok := false;
+  begin
+    perform public.repair_split_merged_bank_sale(v_new, c_groups, true);
+  exception when check_violation then
+    get stacked diagnostics v_msg = message_text;
+    ok := v_msg like '%GST treatment%';
+  end;
+  if not ok then raise exception 'FAIL B: a customer moved to SEZ (IGST) was not refused (%)', v_msg; end if;
+  update public.customers set gst_treatment = (select gst_treatment from public.invoices where id = v_new) where id = 'cccccccc-0000-0000-0000-000000251812';
+
+  update public.tenants set gstin = '07AAACZ2518B1Z5' where id = 'dddddddd-0000-0000-0000-000000251811';
+  ok := false;
+  begin
+    perform public.repair_split_merged_bank_sale(v_new, c_groups, true);
+  exception when check_violation then
+    get stacked diagnostics v_msg = message_text;
+    ok := v_msg like '%Our GSTIN%';
+  end;
+  if not ok then raise exception 'FAIL B: a changed company GSTIN was not refused (%)', v_msg; end if;
+  update public.tenants set gstin = (select seller_gstin from public.invoices where id = v_new) where id = 'dddddddd-0000-0000-0000-000000251811';
+  raise notice 'B PASS: state moved / GSTIN removed / GSTIN changed / moved to SEZ / our GSTIN changed → refused';
 
   -- C: back as at the sale → the dry run goes through, nothing changes
-  update public.customers set gstin = '07AAACM2518B1Z5' where id = 'cccccccc-0000-0000-0000-000000251812';
   r := public.repair_split_merged_bank_sale(v_new, c_groups, true);
   if (r->>'dry_run')::boolean is not true or jsonb_array_length(r->'booked'->'parts') <> 2
      or exists (select 1 from public.credit_notes where invoice_id = v_new) then
@@ -169,6 +191,39 @@ begin
   raise notice 'D PASS: owner + accountant read the backup row; sales does not';
 end $$;
 reset role;
+
+-- E: the undo has the same guards (the customer moved; the bank line in another FY), and works when nothing changed
+select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000251811","role":"authenticated"}', true);
+do $$
+declare
+  v_rid uuid := (select v::uuid from r2518b_ids where k = 'rid');
+  ok boolean := false; v_msg text; r jsonb;
+begin
+  update public.customers set state_code = '09' where id = 'cccccccc-0000-0000-0000-000000251812';
+  begin
+    perform public.undo_split_merged_bank_sale(v_rid, true);
+  exception when check_violation then
+    get stacked diagnostics v_msg = message_text; ok := v_msg like '%place of supply%';
+  end;
+  if not ok then raise exception 'FAIL E: undo after the customer moved state was not refused (%)', v_msg; end if;
+  update public.customers set state_code = '07' where id = 'cccccccc-0000-0000-0000-000000251812';
+
+  update public.bank_transactions
+     set txn_date = make_date(extract(year from public.ist_today())::int - case when extract(month from public.ist_today()) >= 4 then 0 else 1 end, 4, 1) - 1
+   where id = '11111111-0000-0000-0000-000000251812';
+  ok := false;
+  begin
+    perform public.undo_split_merged_bank_sale(v_rid, true);
+  exception when check_violation then
+    get stacked diagnostics v_msg = message_text; ok := v_msg like '%financial year%';
+  end;
+  if not ok then raise exception 'FAIL E: undo of a last-FY bank line was not refused (%)', v_msg; end if;
+  update public.bank_transactions set txn_date = public.ist_today() where id = '11111111-0000-0000-0000-000000251812';
+
+  r := public.undo_split_merged_bank_sale(v_rid, true);
+  if (r->>'dry_run')::boolean is not true or jsonb_array_length(r->'booked'->'parts') <> 1 then raise exception 'FAIL E: undo dry run: %', r; end if;
+  raise notice 'E PASS: undo refused after a state move / for a last-FY line; same party + this FY → dry run books the one sale';
+end $$;
 
 select 'R-2518b repair FY + party guards: ALL PASS' as result;
 
