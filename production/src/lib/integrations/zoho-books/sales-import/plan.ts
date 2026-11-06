@@ -11,13 +11,25 @@
  * (that conversion is R-2504's data repair, never a second copy); a Zoho number an app sale already
  * carries (bank-credit new sale, R-2360) → skip.
  *
+ * R-2530 — customer matching when the GSTINs differ. An invoice WITH a GSTIN keeps its own GSTIN,
+ * place of supply and GST head (the SQL import writes them from the scan; the party-snapshot trigger
+ * only fills what is empty) — GSTR-1 for FY 25-26 was filed from Zoho with them. (A Zoho invoice with
+ * NO GSTIN gets the customer's GSTIN filled by that trigger — older behaviour, follow-up card.) So:
+ *   - exactly one customer with the same name and the same PAN (valid GSTINs, characters 3–12) → the
+ *     same legal entity at another branch → imported onto it (matchedBy "pan");
+ *   - same name, a different PAN → skipped with "Name matches … but the GSTIN differs", unless the
+ *     owner ticks "Use this customer anyway" for that Zoho customer (ctx.useAnyway; matchedBy "chosen");
+ *   - an archived (inactive) customer does not block: when only one of the matches is active, it is used.
+ *
  * The SQL import (import_zoho_fy_sales) checks the same money rules again — this is the preview.
  * Pure: no I/O.
  */
 import { splitTaxHeads } from "@/lib/gst/tax-split";
+import { panFromGstin } from "@/lib/gst/customer-gst-treatment";
 import type { ZohoSaleFacts } from "./normalise";
 
-export interface AppCustomer { id: string; name: string; gstin: string | null }
+/** `active` false = archived (customers.is_active false); missing = active. */
+export interface AppCustomer { id: string; name: string; gstin: string | null; active?: boolean }
 export interface AppItem { id: string; name: string }
 export interface AppInvoiceRef { id: string; externalNumber: string | null; documentKind: string; zohoInvoiceId: string | null }
 
@@ -32,6 +44,9 @@ export interface PlanContext {
   customers: AppCustomer[];
   items: AppItem[];
   invoices: AppInvoiceRef[];
+  /** R-2530: the owner's "Use this customer anyway" ticks — normalised Zoho customer name → app
+   *  customer id. Honoured only when that customer is the one the name matched. */
+  useAnyway?: Readonly<Record<string, string>>;
 }
 
 export type Verdict = "import" | "already" | "skip";
@@ -41,9 +56,26 @@ export interface PlannedSale {
   verdict: Verdict;
   reason: string | null;
   customerId: string | null;
-  matchedBy: "gstin" | "name" | null;
+  /** gstin = same GSTIN; name = same name, GSTIN equal or missing on one side; pan = same name +
+   *  same PAN, another state's GSTIN; chosen = same name, other PAN, owner ticked it (R-2530). */
+  matchedBy: "gstin" | "name" | "pan" | "chosen" | null;
   /** Catalogue item per line (same order as facts.lines), null when none matched. */
   itemIds: (string | null)[];
+}
+
+/** R-2530: one per Zoho customer whose name matches one app customer with a different PAN. */
+export interface GstinChoice {
+  /** Normalised Zoho customer name — the key of PlanContext.useAnyway. */
+  key: string;
+  zohoName: string;
+  customerId: string;
+  customerName: string;
+  customerGstin: string;
+  /** The GSTINs on this customer's Zoho invoices (each invoice keeps its own). */
+  invoiceGstins: string[];
+  count: number;
+  amount: number;
+  chosen: boolean;
 }
 
 export interface MonthTotals { month: string; count: number; taxable: number; igst: number; cgst: number; sgst: number; amount: number }
@@ -57,10 +89,19 @@ export interface SalesPlan {
   importByMonth: MonthTotals[];
   /** Skip reasons, most common first. */
   skipReasons: { reason: string; count: number }[];
+  /** R-2530: name matches with a different PAN — the owner decides each. */
+  gstinChoices: GstinChoice[];
 }
 
 export const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 const reasonKey = (r: string) => r.replace(/₹[\d,.]+|\d{2}(?=\))|"[^"]*"/g, "…");
+
+/** One customer from several: the only one, else the only ACTIVE one, else none (no guess). */
+function onlyOne(list: AppCustomer[]): AppCustomer | null {
+  if (list.length === 1) return list[0];
+  const active = list.filter((c) => c.active !== false);
+  return active.length === 1 ? active[0] : null;
+}
 
 export function heads(f: Pick<ZohoSaleFacts, "tax" | "head">) {
   return splitTaxHeads(f.tax, f.head === "igst");
@@ -108,6 +149,7 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
   const imp = new Map<string, MonthTotals>();
   const reasons = new Map<string, { reason: string; count: number }>();
   const counts = { scanned: all.length, import: 0, already: 0, skip: 0, voidOrDraft: 0 };
+  const choices = new Map<string, GstinChoice>();
 
   const rows = all.map((f): PlannedSale => {
     const out: PlannedSale = { facts: f, verdict: "skip", reason: null, customerId: null, matchedBy: null, itemIds: f.lines.map(() => null) };
@@ -137,20 +179,39 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
       out.reason = `${f.number} is already on app invoice ${sameNumber.id}.`;
     } else {
       const g = f.gstin.trim().toUpperCase();
+      const key = normName(f.customerName);
       const gHits = g ? byGstin.get(g) ?? [] : [];
-      const nHits = byName.get(normName(f.customerName)) ?? [];
-      if (gHits.length === 1) { out.customerId = gHits[0].id; out.matchedBy = "gstin"; }
-      else if (gHits.length > 1) {
-        const pick = gHits.filter((c) => normName(c.name) === normName(f.customerName));
-        if (pick.length === 1) { out.customerId = pick[0].id; out.matchedBy = "gstin"; }
+      const nHits = byName.get(key) ?? [];
+      const nOne = onlyOne(nHits);
+      /* Same GSTIN: the only (active) one, else the only (active) one with this name. */
+      const gHit = gHits.length ? onlyOne(gHits) ?? onlyOne(gHits.filter((c) => normName(c.name) === key)) : null;
+      /* An ARCHIVED GSTIN match loses to the one active customer with this name (R-2530). */
+      const archivedOnly = !!gHit && gHit.active === false && !!nOne && nOne.active !== false && nOne.id !== gHit.id;
+      if (gHits.length && !archivedOnly) {
+        if (gHit) { out.customerId = gHit.id; out.matchedBy = "gstin"; }
         else out.reason = `${gHits.length} customers carry GSTIN ${g} — keep one, then preview again.`;
-      } else if (nHits.length === 1 && (!g || !nHits[0].gstin || nHits[0].gstin.toUpperCase() === g)) {
-        out.customerId = nHits[0].id; out.matchedBy = "name";
+      } else if (nOne) {
+        const cg = (nOne.gstin ?? "").trim().toUpperCase();
+        const pan = panFromGstin(g);
+        if (!g || !cg || cg === g) { out.customerId = nOne.id; out.matchedBy = "name"; }
+        /* Valid GSTINs only — a typo never invents a PAN (lib/gst/customer-gst-treatment.ts). */
+        else if (pan && pan === panFromGstin(cg)) { out.customerId = nOne.id; out.matchedBy = "pan"; }
+        else {
+          /* Another PAN: never on its own — the owner ticks "Use this customer anyway". */
+          const chosen = ctx.useAnyway?.[key] === nOne.id;
+          const ch = choices.get(key) ?? { key, zohoName: f.customerName, customerId: nOne.id, customerName: nOne.name,
+            customerGstin: cg, invoiceGstins: [], count: 0, amount: 0, chosen };
+          if (!ch.invoiceGstins.includes(g)) ch.invoiceGstins.push(g);
+          ch.count += 1; ch.amount += f.amount;
+          choices.set(key, ch);
+          if (chosen) { out.customerId = nOne.id; out.matchedBy = "chosen"; }
+          else out.reason = `Name matches "${nOne.name}" but the GSTIN differs (invoice "${g}" vs customer "${cg}") — tick "Use this customer anyway" if it is the same buyer.`;
+        }
       } else if (nHits.length > 1) {
         out.reason = `${nHits.length} customers are named "${f.customerName}" — add the GSTIN to the right one, then preview again.`;
       }
       if (!out.customerId && !out.reason) {
-        out.reason = `No customer "${f.customerName}" in the app — import customers from Zoho first, then preview again.`;
+        out.reason = `No app customer is named "${f.customerName}"${g ? ` or has GSTIN "${g}"` : ""} — import customers from Zoho first, then preview again.`;
       }
       if (out.customerId) {
         out.verdict = "import";
@@ -176,6 +237,7 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
     zohoByMonth: sorted(zoho),
     importByMonth: sorted(imp),
     skipReasons: [...reasons.values()].sort((a, b) => b.count - a.count),
+    gstinChoices: [...choices.values()].sort((a, b) => b.amount - a.amount),
   };
 }
 

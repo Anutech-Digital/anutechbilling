@@ -18,8 +18,9 @@ export async function readPlanContext(db: SalesImportDb, tenantId: string, range
   const [bs, tenant, customers, items, invoices] = await Promise.all([
     readBooksStart(db as unknown as BooksStartDb, tenantId),
     db.from("tenants").select("books_locked_until, state_code").eq("id", tenantId).limit(1) as Res<Array<{ books_locked_until: string | null; state_code: string | null }>>,
-    fetchAllRows<{ id: string; name: string; gstin: string | null }>((from, to) => db.from("customers")
-      .select("id, name, gstin").eq("tenant_id", tenantId).order("id", { ascending: true }).range(from, to)),
+    /* R-2530: is_active too — an archived duplicate must not block the one active customer. */
+    fetchAllRows<{ id: string; name: string; gstin: string | null; is_active: boolean | null }>((from, to) => db.from("customers")
+      .select("id, name, gstin, is_active").eq("tenant_id", tenantId).order("id", { ascending: true }).range(from, to)),
     fetchAllRows<{ id: string; name: string }>((from, to) => db.from("items")
       .select("id, name").eq("tenant_id", tenantId).order("id", { ascending: true }).range(from, to)),
     fetchAllRows<{ id: string; external_number: string | null; document_kind: string; zoho_invoice_id: string | null }>((from, to) => db.from("invoices")
@@ -34,7 +35,7 @@ export async function readPlanContext(db: SalesImportDb, tenantId: string, range
     booksStart: bs.start,
     lockedUntil: t?.books_locked_until ?? null,
     sellerStateCode: t?.state_code ? String(t.state_code).padStart(2, "0") : null,
-    customers,
+    customers: customers.map((c) => ({ id: c.id, name: c.name, gstin: c.gstin, active: c.is_active !== false })),
     items,
     invoices: invoices.map((i) => ({ id: i.id, externalNumber: i.external_number, documentKind: i.document_kind, zohoInvoiceId: i.zoho_invoice_id })),
   };
