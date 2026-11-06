@@ -1,4 +1,4 @@
--- deploy-peek: to_regprocedure('public.supply_is_zero_rated(text,text)') is not null and exists (select 1 from pg_proc where proname = 'bank_credit_new_sale_quote' and prosrc like '%R-2515%') and exists (select 1 from pg_proc where proname = 'tg_invoice_export_needs_lut' and prosrc like '%R-2515%')
+-- deploy-peek: to_regprocedure('public.supply_is_zero_rated(text,text)') is not null and exists (select 1 from pg_proc where proname = 'bank_credit_new_sale_quote' and prosrc like '%R-2515%') and exists (select 1 from pg_proc where proname = 'tg_invoice_export_needs_lut' and prosrc like '%R-2515%') and exists (select 1 from pg_proc where proname = 'create_direct_invoice' and prosrc like '%R-2515%' and prosrc like '%current_request_role%')
 -- deploy-key: r2515sezzerorated
 --
 -- R-2515 (5 Nov 2026, p1 money) — a supply to an SEZ unit WITHOUT payment of tax is zero-rated (0% GST)
