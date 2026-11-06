@@ -40,7 +40,8 @@ import { certainOf, invoiceMatchesOfCredits, type InvoiceMatch } from "@/lib/ban
 import { noCustomerYet } from "@/lib/banking/no-customer-yet";
 import { createLineMemo } from "@/lib/banking/line-memo";
 import type { OldOneOffBooking } from "@/lib/banking/credit-pay-for";
-import { useBankAdvancePaymentIds, useBankSplitLinePayments, useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
+import { useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
+import { useDrawnBadges, useMountWhenIdle } from "./use-drawn-lines";
 import { bankRowStatusLabel, splitPaymentsTitle, type SplitLinePayment } from "@/lib/banking/bank-row-label";
 import { useCustomers } from "@/lib/queries/customers";
 import { usePayerMemory } from "@/lib/queries/customer-payers";
@@ -138,22 +139,8 @@ export default function BankAccountDetailPage() {
   const [salaryOpen,    setSalaryOpen]    = React.useState(false);
   const [aaConnectOpen, setAaConnectOpen] = React.useState(false);
   const [reconcileTxn,  setReconcileTxn]  = React.useState<BankTransactionRow | null>(null);
-  /* R-2524: the Reconcile sheet (and its ~15 reads) is mounted AFTER the list has drawn — when the
-     browser is idle, or at the first Reconcile click if that comes sooner — so opening the page
-     does not wait on it, yet its data is in before the operator picks anything (a read landing
-     after a pick would re-run the sheet's pre-fill). Stays mounted for the next line. */
-  const [drawerMounted, setDrawerMounted] = React.useState(false);
-  const linesLoaded = Boolean(txnQ.data);
-  React.useEffect(() => {
-    if (drawerMounted || !linesLoaded) return;
-    const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (h: number) => void };
-    if (w.requestIdleCallback) {
-      const h = w.requestIdleCallback(() => setDrawerMounted(true), { timeout: 2000 });
-      return () => w.cancelIdleCallback?.(h);
-    }
-    const t = window.setTimeout(() => setDrawerMounted(true), 500);
-    return () => window.clearTimeout(t);
-  }, [drawerMounted, linesLoaded]);
+  /* R-2524: the Reconcile sheet mounts once the list has drawn and the browser is idle (use-drawn-lines). */
+  const drawerMounted = useMountWhenIdle(Boolean(txnQ.data));
   /* Un-reconcile goes through a confirm that says what the line leaves behind (and can
      undo a sale raised from it) — components/features/banking/unreconcile-dialog.tsx. */
   const [unreconcileTxn, setUnreconcileTxn] = React.useState<BankTransactionRow | null>(null);
@@ -287,21 +274,8 @@ export default function BankAccountDetailPage() {
   const totals = React.useMemo(() => filterTotals(visibleTxns), [visibleTxns]);
   const drawnTxns = React.useMemo(() => visibleTxns.slice(0, shownCount), [visibleTxns, shownCount]);
 
-  /* R-2524: the two badge reads below ask only about the lines DRAWN (a page of 100), not every
-     payment line of the account — 2,800 ids were ~19 requests each, again after every save. */
-  /* R-2025 (0): lines booked as a customer advance (R-1863) read "Advance", not "Payment". */
-  const paymentIdsOnLines = React.useMemo(
-    () => drawnTxns.filter((t) => t.matched_to_type === "payment" && t.credit > 0 && t.matched_to_id).map((t) => String(t.matched_to_id)),
-    [drawnTxns],
-  );
-  const { data: advancePayIds } = useBankAdvancePaymentIds(paymentIdsOnLines);
-  const isAdvanceTxn = (t: BankTransactionRow) => t.matched_to_type === "payment" && Boolean(t.matched_to_id && advancePayIds?.has(String(t.matched_to_id)));
-  /* R-2098: a line that paid several items — "N payments", each listed in the tooltip. */
-  const paymentLineIds = React.useMemo(
-    () => drawnTxns.filter((t) => t.matched_to_type === "payment" && t.credit > 0).map((t) => t.id),
-    [drawnTxns],
-  );
-  const { data: splitPays } = useBankSplitLinePayments(paymentLineIds);
+  /* R-2524: Advance / "N payments" badges — read only for the lines drawn (use-drawn-lines). */
+  const { isAdvanceTxn, splitPays } = useDrawnBadges(drawnTxns);
 
   const tabs: TabBarItem[] = [
     { id: "all",       label: "All",        count: facets.status.all       },

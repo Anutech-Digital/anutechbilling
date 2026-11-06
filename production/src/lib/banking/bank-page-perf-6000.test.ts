@@ -87,14 +87,18 @@ describe("R-2524 bank page pipeline at 6,000 lines", () => {
   });
 
   it("the page matches each credit once and reads badges only for the lines it draws (source guard)", () => {
-    const page = readFileSync(path.join(process.cwd(), "src/app/(app)/accounting/banking/[id]/page.tsx"), "utf8");
+    const dir = path.join(process.cwd(), "src/app/(app)/accounting/banking/[id]");
+    const page = readFileSync(path.join(dir, "page.tsx"), "utf8");
+    const drawn = readFileSync(path.join(dir, "use-drawn-lines.ts"), "utf8");
     expect(page).not.toMatch(/matchCreditToInvoices\(/);
     expect(page).not.toMatch(/certainInvoiceMatches\(/);
     expect(page).toMatch(/invoiceMatchesOfCredits\(/);
     // advance / split badges: only the drawn page of lines, never `transactions`
-    expect(page).toMatch(/drawnTxns\.filter\(\(t\) => t\.matched_to_type === "payment" && t\.credit > 0 && t\.matched_to_id\)/);
-    expect(page).toMatch(/drawnTxns\.filter\(\(t\) => t\.matched_to_type === "payment" && t\.credit > 0\)\.map\(\(t\) => t\.id\)/);
-    // no mutation hook per row; the Reconcile sheet mounts on first use
+    expect(drawn).toMatch(/drawnTxns\.filter\(\(t\) => t\.matched_to_type === "payment" && t\.credit > 0 && t\.matched_to_id\)/);
+    expect(drawn).toMatch(/drawnTxns\.filter\(\(t\) => t\.matched_to_type === "payment" && t\.credit > 0\)\.map\(\(t\) => t\.id\)/);
+    expect(page).toMatch(/useDrawnBadges\(drawnTxns\)/);
+    expect(page).toMatch(/useMountWhenIdle\(Boolean\(txnQ\.data\)\)/);
+    // no mutation hook per row; the Reconcile sheet mounts when idle, not with the page
     expect(page).not.toMatch(/useReconcileTransaction\(\)/);
     expect(page).toMatch(/\(drawerMounted \|\| reconcileTxn\) && <ReconcileTransactionDialog/);
   });
