@@ -36,7 +36,7 @@ import { linesBelowCost, NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-appro
 
 /* ─── Open items (rows of bank_credit_open_items) ──────────────────────────────────────── */
 
-/** R-2466: "opening" — an unpaid invoice imported from Zoho (R-1739, no quote). */
+/** R-2466: "opening" — an unpaid invoice imported from Zoho (R-1739, no quote); R-2542: or an FY sale imported from Zoho (R-2499). */
 export type OpenItemKind = "renewal" | "add_seats" | "new" | "one_off" | "invoice" | "instalment" | "opening";
 
 export interface OpenItem {
@@ -76,7 +76,7 @@ export function kindLabel(kind: OpenItemKind): string {
     case "new":        return "New product";
     case "one_off":    return "One-time sale";
     case "instalment": return "Instalment invoice";
-    case "opening":    return "Opening invoice (from Zoho)";
+    case "opening":    return "Invoice from Zoho";   // R-2542: opening invoice or FY sale — both have no quote
     default:          return "Invoice";
   }
 }

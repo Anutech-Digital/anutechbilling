@@ -18,7 +18,7 @@ import { queryKeys } from "@/lib/queries/keys";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { rupee } from "@/lib/utils";
 import { PAYMENT_COLUMNS } from "@/lib/queries/columns";
-import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { multiPayListed, takesQuotelessReceipt } from "@/lib/payments/quoteless-receipt";
 import type { Payment, PaymentMethod } from "@/lib/supabase/database.types";
 import { oldestInstalmentPerSubscription } from "@/lib/payments/instalment-payment";
 import { oldestPartDueBySubscription, type OpenPartRequest } from "@/lib/billing/part-request-dues";
@@ -742,6 +742,8 @@ export interface MultiPayInvoiceRow {
   instalment?: boolean;
   /** R-1739: imported from Zoho Books (no quote) — record_multi_invoice_payment pays it directly. */
   document_kind?: string | null;
+  /** R-2542: an FY sale imported from Zoho (no quote) — paid directly too. */
+  zoho_invoice_id?: string | null;
 }
 
 /**
@@ -759,7 +761,7 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
       const invoices = await fetchAllRows<MultiPayInvoiceRow>((from, to) =>
         supabase
           .from("invoices")
-          .select("id, invoice_date, due_date, amount, net_payable, paid_amount, status, tax_rate, quote_id, document_kind")
+          .select("id, invoice_date, due_date, amount, net_payable, paid_amount, status, tax_rate, quote_id, document_kind, zoho_invoice_id")
           .eq("customer_id", customerId!)
           .not("status", "in", "(paid,void)")
           .is("written_off_at", null)   // R-1635: written off = not collected here
@@ -781,7 +783,7 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
          quote + reference is the replay key, so the server takes one per receipt; anything
          over that instalment's due is recorded from the invoice page, where it goes to the
          next instalment by itself. */
-      const quoteless = invoices.filter((i) => !i.quote_id && !isOpeningInvoice(i)).map((i) => i.id);
+      const quoteless = invoices.filter((i) => !i.quote_id && !takesQuotelessReceipt(i)).map((i) => i.id);
       const billing: Array<{ invoice_id: string | null; subscription_id: string; term_start: string; period_index: number }> = [];
       for (let i = 0; i < quoteless.length; i += 200) {
         const { data, error } = await supabase
@@ -792,10 +794,9 @@ export function useCustomerOpenInvoices(customerId: string | null | undefined) {
         billing.push(...(data ?? []));
       }
       const instalments = new Set(oldestInstalmentPerSubscription(billing));
-      return invoices
-        /* R-1739: + invoices imported from Zoho Books (their payment carries the invoice). */
-        .filter((i) => isOpeningInvoice(i) || (i.quote_id ? own.has(`${i.quote_id}|${i.id}`) : instalments.has(i.id)))
-        .map((i) => (instalments.has(i.id) ? { ...i, instalment: true } : i));
+      /* R-1739 / R-2542: + invoices imported from Zoho Books — opening invoices and FY sales
+         (their payment carries the invoice). */
+      return multiPayListed(invoices, own, instalments);
     },
   });
 }

@@ -67,6 +67,6 @@ describe("R-2466 itemPayPlan", () => {
     expect(itemPayPlan(opening, inw("NEFT", 1800)).problem).toBeNull();
     expect(itemPayPlan(opening, inw("NEFT", 1700)).problem).toBeNull();
     expect(itemPayPlan(opening, inw("NEFT", 5000)).problem).toBe(
-      "OPN-1 is last year's invoice from Zoho with ₹1,800 due — it takes no more. Choose \"Several quotes / invoices\" and keep the rest as advance.");
+      "OPN-1 is an invoice imported from Zoho with ₹1,800 due — it takes no more. Choose \"Several quotes / invoices\" and keep the rest as advance.");
   });
 });
