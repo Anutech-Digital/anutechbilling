@@ -11,21 +11,26 @@
 --      un-reconcile fell back to a manual line on the statement line's OWN account (Petty Cash
 --      ₹2L, HDFC ₹1L #1 taken out of it, HDFC ₹1L #2 replaces the rest, un-reconcile #1 → HDFC
 --      manual ₹1L — the outflow then shows twice on HDFC). The record now also keeps account_id,
---      date and the amount taken; when the part is gone it is made again on that account and date.
+--      date; when the part is gone it is made again on that account and date. (A record written
+--      by R-2523 itself has no account_id and still falls back as before — R-2523 is not on
+--      staging/live yet, so only test data can carry one.) The owner record keeps the partner
+--      and note too, so a re-made owner part lands on the same partner.
 --   2. Books lock. The seq-0 reconcile and the un-reconcile trigger changed owner parts (no lock
 --      trigger on owner_equity_movements) and manual parts (the bank_transactions lock trigger
 --      lets service_role through) dated in a locked month. Every part they change, delete or
---      make is now checked against books_locked_until by its own date — for every caller, as
---      set_emi_down_payment_parts already does (emi_down_assert_open).
+--      make is now checked against books_locked_until by its own date — for every caller, the
+--      same rule set_emi_down_payment_parts applies inline (helper: emi_down_assert_open). The
+--      paid-by-hand EMI that a bigger statement line replaces is checked the same way.
 --   3. Extra interest cap. The RPC took any extra as interest; it now refuses more than the
 --      bank page offers: ₹2,000 or 10% of the EMI, whichever is bigger
 --      (emi_matches_for_bank_txn: diff <= greatest(2000, expected / 10)) — on a fresh instalment
 --      and on a paid-by-hand EMI replaced by a bigger line.
 --   4. Down-payment candidates. A manual / owner part of the line's exact amount was offered for
 --      ANY debit (no date or name check) and, being a match, stopped the R-1867 vendor
---      auto-match for that line. Every down-payment row now needs the same rule the partial
---      suggestions use: the narration names the item as a whole word, dated 90 days before …
---      10 days after the purchase.
+--      auto-match for that line. Every down-payment row now needs the 90-days-before …
+--      10-days-after window, and the narration naming the item as a whole word — except the
+--      R-1864 case (the down payment is ONE manual line of this amount) within 10 days of the
+--      purchase, which stays offered (dealer narrations rarely name the car).
 --
 -- Bodies: the R-2523 definitions (newest), changed only where marked R-2529.
 -- Proof: supabase/tests/r2529_emi_dp_followups.test.sql (one rollback); R-1864 / R-2395 /
@@ -106,7 +111,7 @@ begin
       perform public.emi_down_assert_open(v_tenant, v_old.txn_date, 'the down-payment part it replaces');  -- R-2529
       delete from public.bank_transactions where id = v_old.id;
       v_how := 'replaced';
-      v_taken := jsonb_build_object('kind', 'replaced_line', 'account_id', v_old.bank_account_id, 'date', v_old.txn_date, 'amount', v_old.debit);
+      v_taken := jsonb_build_object('kind', 'replaced_line', 'account_id', v_old.bank_account_id, 'date', v_old.txn_date);
     else
       select * into v_eq from public.owner_equity_movements where emi_purchase_id = v_p.id for update;
       if v_eq.id is not null and v_eq.amount = v_txn.debit then
@@ -130,13 +135,13 @@ begin
           -- R-2529: account + date + amount too, so un-reconcile can make the part again on the
           -- SAME account and date when this manual line is gone by then.
           v_taken := jsonb_build_object('kind', 'line', 'line_id', v_old.id, 'account_id', v_old.bank_account_id,
-                                        'date', v_old.txn_date, 'amount', v_txn.debit);
+                                        'date', v_old.txn_date);
         elsif v_eq.id is not null and v_eq.amount > v_txn.debit then
           -- … or out of the owner part.
           perform public.emi_down_assert_open(v_tenant, v_eq.movement_date, 'the owner''s part of the down payment');  -- R-2529
           update public.owner_equity_movements set amount = amount - v_txn.debit where id = v_eq.id;
           v_how := 'part_of_owner';
-          v_taken := jsonb_build_object('kind', 'owner', 'date', v_eq.movement_date, 'amount', v_txn.debit);
+          v_taken := jsonb_build_object('kind', 'owner', 'date', v_eq.movement_date, 'partner', v_eq.partner_name, 'note', v_eq.note);
         else
           select coalesce(sum(debit), 0)::integer into v_rest from public.bank_transactions
            where tenant_id = v_tenant and matched_to_type = 'emi' and matched_to_id = v_p.id::text and source = 'manual'
@@ -166,6 +171,9 @@ begin
     select * into v_pay from public.emi_payments where id = v_row.emi_payment_id for update;
     select * into v_old from public.bank_transactions where id = v_pay.bank_txn_id;
     if not found or v_old.source <> 'manual' then raise exception 'EMI % is already paid and matched to a bank line', p_seq; end if;
+    -- R-2529: the manual line goes and the payment moves to this line's date — both dates must be open.
+    perform public.emi_down_assert_open(v_tenant, v_old.txn_date, 'the EMI ' || p_seq || ' paid by hand');
+    perform public.emi_down_assert_open(v_tenant, v_txn.txn_date, 'this bank line');
     if v_pay.amount <> v_txn.debit then
       -- R-2523: a bigger line — the extra is interest (broken period) or a late fee, principal unchanged.
       if v_txn.debit < v_pay.amount or v_pay.kind <> 'emi'
@@ -485,6 +493,7 @@ begin
             (select m.amount from public.owner_equity_movements m where m.emi_purchase_id = p.id and m.amount > v_txn.debit)) as part
       ) r
      where p.tenant_id = v_tenant and coalesce(p.kind, 'asset') = 'asset' and coalesce(r.same, r.part) is not null
+       and v_txn.txn_date between p.purchased_on - 90 and p.purchased_on + 10  -- R-2529: the window, before the scans
   ), scored as (
     select c.*,
            v_txn.debit - c.expected as diff,
@@ -506,11 +515,13 @@ begin
               else 'low' end
     from scored s
    where (s.diff = 0 and s.kind <> 'down_payment')
-      -- R-2529: every down-payment row (equal amount or partial) needs the item named as a whole
-      -- word and the 90-days-before … 10-days-after window — an equal part offered for any debit
-      -- stopped the R-1867 vendor auto-match for that line.
-      or (s.kind = 'down_payment' and s.diff = 0 and s.item_named
-          and v_txn.txn_date between s.due_on - 90 and s.due_on + 10)
+      -- R-2529: a down-payment row of the line's amount needs the 90-days-before … 10-days-after
+      -- window and the item named as a whole word (an equal part offered for any debit stopped
+      -- the R-1867 vendor auto-match) — or, R-1864, be the ONE manual line of the down payment
+      -- within 10 days of the purchase.
+      or (s.kind = 'down_payment' and s.diff = 0
+          and v_txn.txn_date between s.due_on - 90 and s.due_on + 10
+          and (s.item_named or (s.whole and s.near)))
       or (s.kind = 'instalment' and s.diff > 0 and s.diff <= greatest(2000, s.expected / 10) and (s.near or s.named))
       or (s.kind = 'paid_by_hand' and s.diff > 0 and s.diff <= greatest(2000, s.expected / 10) and s.near and s.named)
       or (s.kind = 'instalment' and s.diff < 0 and -s.diff < s.expected / 2 and s.named)

@@ -19,8 +19,9 @@
 --      and changes nothing; undo of R-2523 case G (paid by hand → bigger statement line) puts
 --      the schedule, expense and line back.
 --   G. (finding 4) A down-payment part is not offered for a debit that does not name the item
---      or is outside 90 days before … 10 days after the purchase — so it no longer blocks the
---      R-1867 vendor auto-match; a named line in the window still is.
+--      (33 days before the purchase) or is outside 90 days before … 10 days after it — so it no
+--      longer blocks the R-1867 vendor auto-match. Still offered: a named line in the window, and
+--      (R-1864) an unnamed line on the purchase date when the down payment is ONE manual line.
 
 begin;
 
@@ -65,7 +66,8 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('11111111-0000-0000-0000-000000252912','dddddddd-0000-0000-0000-000000252901','bbbbbbbb-0000-0000-0000-000000252901','2026-03-05','EMI 168081883 CHQ',30183,0,'F1','csv_upload'),
   ('11111111-0000-0000-0000-000000252913','dddddddd-0000-0000-0000-000000252901','bbbbbbbb-0000-0000-0000-000000252901','2026-03-06','EMI 168081883 CHQ',30183,0,'F2','csv_upload'),
   -- G (vendor payments of the same amount as a down-payment part)
-  ('11111111-0000-0000-0000-000000252921','dddddddd-0000-0000-0000-000000252901','bbbbbbbb-0000-0000-0000-000000252901','2026-02-03','NEFT SHIVA AUTO CARS INV 77',200000,0,'G1','csv_upload'),
+  ('11111111-0000-0000-0000-000000252921','dddddddd-0000-0000-0000-000000252901','bbbbbbbb-0000-0000-0000-000000252901','2026-01-01','NEFT SHIVA AUTO CARS INV 77',200000,0,'G1','csv_upload'),
+  ('11111111-0000-0000-0000-000000252924','dddddddd-0000-0000-0000-000000252901','bbbbbbbb-0000-0000-0000-000000252901','2026-02-03','NEFT SHIVA AUTO CARS',200000,0,'G4','csv_upload'),
   ('11111111-0000-0000-0000-000000252922','dddddddd-0000-0000-0000-000000252901','bbbbbbbb-0000-0000-0000-000000252901','2026-08-20','THAR SERVICE',200000,0,'G2','csv_upload'),
   ('11111111-0000-0000-0000-000000252923','dddddddd-0000-0000-0000-000000252901','bbbbbbbb-0000-0000-0000-000000252901','2026-02-03','THAR FULL DOWN PAYMENT',200000,0,'G3','csv_upload');
 
@@ -178,7 +180,7 @@ exception when others then
   if sqlerrm like 'FAIL%' then raise; end if;
   if sqlerrm not like 'Books are locked%' then raise exception 'FAIL C1: wrong refusal: %', sqlerrm; end if;
 end $$;
--- C1b. … and out of a manual part dated 3 Feb — refused too.
+-- C1b. … and out of a manual part dated 10 Jan — refused too.
 do $$
 declare v_p uuid := (select v from r2529_ids where k = 'c_manual');
 begin
@@ -333,6 +335,10 @@ begin
   end if;
   if not exists (select 1 from public.emi_matches_for_bank_txn('11111111-0000-0000-0000-000000252923') m where m.purchase_id = v_p and m.kind = 'down_payment') then
     raise exception 'FAIL G: the named line on the purchase date is no longer offered';
+  end if;
+  if not exists (select 1 from public.emi_matches_for_bank_txn('11111111-0000-0000-0000-000000252924') m
+                  where m.purchase_id = v_p and m.kind = 'down_payment' and m.confidence in ('exact', 'high')) then
+    raise exception 'FAIL G: R-1864 — the one manual down-payment line is no longer offered for an equal line on the purchase date';
   end if;
 end $$;
 
