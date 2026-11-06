@@ -16,7 +16,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, BillingCycle } from "@/lib/supabase/database.types";
 import { plannedInstalments, instalmentSkip, instalmentsDue, quotePeriodTaxables, isSplitBilled, type InstalmentSkip, type SplitQuoteFields } from "./instalments";
-import { billingTermStart, termAmountOf, shortSplitTerm, currentTermStart } from "./subscription-schedule";
+import { billingTermStart, termAmountOf, shortSplitTerm, currentTermStart, uncheckedTermStart } from "./subscription-schedule";
 import { formatDate } from "@/lib/utils";
 import { buildBillingSchedule } from "./schedule";
 import { addDaysISO } from "@/lib/dates/ist";
@@ -106,11 +106,13 @@ export async function syncSubscriptionInstalments(args: {
      (the billing job lists it under skipped) with the date the database accepts, never a silent []. */
   const short = shortSplitTerm(sub);
   if (short) {
-    out.skip = {
-      code: "short_term",
-      reason: `The renewal date ${formatDate(sub.renewal_date?.slice(0, 10))} is less than one whole term after the start date ${formatDate(sub.start_date?.slice(0, 10))}, so no parts are laid. Correct the renewal date to ${formatDate(short.minRenewal)} (the last day of the term) — the parts are laid from it.`,
-    };
-    console.warn(`[billing/short-term] subscription ${sub.id}: renewal ${sub.renewal_date} < ${short.minRenewal} — no parts laid`);
+    /* A term Zoho already billed (R-1763) is not ours to correct — say that instead. */
+    out.skip = sub.start_date && billedElsewhere(sub, sub.start_date.slice(0, 10))
+      ? { code: "billed_elsewhere", reason: `${billedElsewhereLabel(sub)} — this term is not invoiced again here; the next term is.` }
+      : {
+          code: "short_term",
+          reason: `The renewal date ${formatDate(sub.renewal_date?.slice(0, 10))} is less than one whole term after the start date ${formatDate(sub.start_date?.slice(0, 10))}, so no parts are laid. Correct the renewal date to ${formatDate(short.minRenewal)} (the last day of the term) — the parts are laid from it.`,
+        };
     return out;
   }
 
@@ -135,15 +137,17 @@ export async function syncSubscriptionInstalments(args: {
   if (skip) { out.skip = skip; return out; }
 
   /* R-451: the corrected term start can be one day earlier than the key this term's
-     instalments were already filed under — keep that key, or they are made twice. */
+     instalments were already filed under — keep that key, or they are made twice.
+     R-2543: or a few days LATER than a 29th–31st sale's pre-R-2533 counted-back key — kept too. */
   const correctedStart = planned[0].termStart;
+  const countedBack = uncheckedTermStart(sub);
   const { data: termRows, error: tsErr } = await supabase
     .from("subscription_billings")
     .select("term_start")
     .eq("subscription_id", sub.id)
-    .in("term_start", [correctedStart, addDaysISO(correctedStart, 1)]);
+    .in("term_start", [correctedStart, addDaysISO(correctedStart, 1), ...(countedBack && countedBack < correctedStart ? [countedBack] : [])]);
   if (tsErr) throw new Error(tsErr.message);
-  const termStart = billingTermStart(correctedStart, (termRows ?? []).map((r) => r.term_start));
+  const termStart = billingTermStart(correctedStart, (termRows ?? []).map((r) => r.term_start), countedBack);
   if (termStart !== correctedStart) {
     for (const p of planned) p.termStart = termStart;
   }
@@ -309,24 +313,31 @@ export async function unbilledPartPrice(supabase: Admin, billingId: string): Pro
     console.info(`[billing/freed-part] part ${b.id} (subscription ${sub.id}, ${b.period_start}): kept its stored ₹${was} — ${why}`);
     return { from: was, to: was, kept: why };
   };
-  /* R-2543: the CURRENT term only (its key may be one day later for an R-451 legacy row). */
+  /* R-2543: the CURRENT term only. Its key may be one day later (R-451 legacy) or the unclamped
+     counted-back start (a one-invoice-a-term row, or a 29th–31st sale laid before R-2533). */
   const termStart = b.term_start.slice(0, 10);
-  const current = currentTermStart({ ...sub, term_months: sub.term_months ?? 12 });
-  if (!current || (termStart !== current && termStart !== addDaysISO(current, 1))) return kept("earlier_term");
+  const current = currentTermStart(sub);
+  const counted = uncheckedTermStart(sub);
+  const keys = current ? [current, addDaysISO(current, 1), ...(counted ? [counted] : [])] : [];
+  if (!keys.includes(termStart)) return kept("earlier_term");
   const { data: seatQs, error: qErr } = await db.from("quotes").select("id, status")
     .eq("add_seats_subscription_id", sub.id).eq("is_add_seats", true)
     .gte("created_date", b.period_start).lt("created_date", b.period_end);
   if (qErr) throw new Error(qErr.message);
   if (((seatQs ?? []) as { status: string }[]).some((q) => q.status !== "rejected")) return null;
-  const term = buildBillingSchedule({
-    startDate: termStart, termMonths: Math.max(1, sub.term_months ?? 12),
-    cycle: sub.billing_cycle as BillingCycle, termAmount: termAmountOf(sub),
-  }).map((p) => ({ termStart: b.term_start, periodIndex: p.index, billOn: p.billOn, periodStart: p.periodStart, periodEnd: p.periodEnd, taxableAmount: p.amount }));
-  const planned = term.length > 0
-    ? quotePeriodTaxables(term, { mrr: sub.mrr, cycle: sub.billing_cycle, ...(await quotePlanFacts(supabase, sub)) })
-    : term;
-  const same = planned.find((p) => p.periodIndex === b.period_index
-    && p.periodStart === b.period_start.slice(0, 10) && p.periodEnd === b.period_end.slice(0, 10));
+  /* Laid from its own key, or (a part added under a kept legacy key) from the corrected start. */
+  const facts = await quotePlanFacts(supabase, sub);
+  let same: { taxableAmount: number } | undefined;
+  for (const from of [...new Set([termStart, current as string])]) {
+    const term = buildBillingSchedule({
+      startDate: from, termMonths: Math.max(1, sub.term_months ?? 12),
+      cycle: sub.billing_cycle as BillingCycle, termAmount: termAmountOf(sub),
+    }).map((p) => ({ termStart: b.term_start, periodIndex: p.index, billOn: p.billOn, periodStart: p.periodStart, periodEnd: p.periodEnd, taxableAmount: p.amount }));
+    const planned = term.length > 0 ? quotePeriodTaxables(term, { mrr: sub.mrr, cycle: sub.billing_cycle, ...facts }) : term;
+    same = planned.find((p) => p.periodIndex === b.period_index
+      && p.periodStart === b.period_start.slice(0, 10) && p.periodEnd === b.period_end.slice(0, 10));
+    if (same) break;
+  }
   if (!same) return kept("period_changed");
   const now = same.taxableAmount;
   if (!(now > 0) || now === was) return null;

@@ -18,7 +18,8 @@
 --   amount_changed. The price itself stays in the app (unbilledPartPrice — the term run's rule).
 --   Same caller rules as bill_subscription_instalment (R-2527: trust only the login; owner /
 --   manager / accountant / billing; the part must be in the caller's company) — checked here
---   too, because this function writes before it calls that one.
+--   too, because this function writes before it calls that one. Executable by service_role only:
+--   p_to is the app's price, never a browser login's own figure.
 --
 -- ─── 2. subscription_term_follows_line: the filer's default on a split-billed row ───────────
 --   What renewal date does the filer write? record_payment, activate_quote_on_credit,
@@ -55,22 +56,22 @@ begin
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime', 'app_anon', 'app_jobs'));
   v_caller := public.current_tenant_id();
   if v_caller is null and not v_trusted then
-    raise exception 'No company on this login — only a user of the subscription''s company can bill its part'
+    raise exception 'No company on this login — sign in again, then bill the part from Renewals → Bill next part.'
       using errcode = '28000';
   end if;
   if not v_trusted and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing') then
-    raise exception 'Only an owner, manager, accountant or billing user can bill a subscription part' using errcode = '42501';
+    raise exception 'Billing a subscription part needs an owner, manager, accountant or billing user — ask one of them to bill it.' using errcode = '42501';
   end if;
   if p_from is null or p_to is null or p_to <= 0 then
-    raise exception 'A part is repriced to a whole-rupee amount above zero (from %, to %)', p_from, p_to using errcode = '22023';
+    raise exception 'The new amount for this part must be whole rupees above zero (from %, to %) — reload the page and bill it again.', p_from, p_to using errcode = '22023';
   end if;
 
   select b.* into v_b from public.subscription_billings b where b.id = p_billing_id for update;
   if not found then
-    raise exception 'Billing part % not found', p_billing_id using errcode = 'no_data_found';
+    raise exception 'That billing part (%) no longer exists — reload the subscription and bill the next part again.', p_billing_id using errcode = 'no_data_found';
   end if;
   if v_caller is not null and v_b.tenant_id is distinct from v_caller then
-    raise exception 'Billing part % is not in the caller''s company', p_billing_id using errcode = 'insufficient_privilege';
+    raise exception 'That billing part (%) is not in your company — open the subscription from your own company and bill it there.', p_billing_id using errcode = 'insufficient_privilege';
   end if;
 
   if v_b.invoice_id is not null then
@@ -101,8 +102,10 @@ $$;
 comment on function public.reprice_and_bill_part(uuid, integer, integer) is
   'R-2543: move a freed part from p_from to p_to (only while it has no invoice, no proforma linked and still holds p_from) and bill it in the same transaction; a failed bill rolls the reprice back, a bill that makes no invoice / proforma restores p_from. Answer = bill_subscription_instalment''s jsonb + reprice.';
 
-revoke all on function public.reprice_and_bill_part(uuid, integer, integer) from public, anon;
-grant execute on function public.reprice_and_bill_part(uuid, integer, integer) to authenticated, service_role;
+-- The server only (billing job, Bill next part — both use the service-role client): p_to is the app's
+-- price (unbilledPartPrice), so a browser login must not call this with an amount of its own.
+revoke all on function public.reprice_and_bill_part(uuid, integer, integer) from public, anon, authenticated;
+grant execute on function public.reprice_and_bill_part(uuid, integer, integer) to service_role;
 
 -- ─── 2. R-1445 + R-2533 + R-2543 ────────────────────────────────────────────────────────────
 create or replace function public.subscription_term_follows_line()
@@ -191,7 +194,10 @@ begin
   -- R-2543: the filer's default (start + 1 year / + 1 month) on a split-billed row whose term is
   -- longer than that would be refused by trg_subscriptions_zzz_split_term_covers and abort the
   -- whole payment — lift it to the last day of the term, the guard's own rule.
-  if v_cycle_m is not null and v_cycle_m < v_term and new.renewal_date < v_min then
+  -- Only the default itself: a multi-year domain line (step 2) already set its own date and mrr.
+  if v_cycle_m is not null and v_cycle_m < v_term and new.renewal_date < v_min
+     and (new.renewal_date = (new.start_date + interval '1 year')::date
+          or new.renewal_date = (new.start_date + interval '1 month')::date) then
     raise notice 'R-2543: subscription default renewal % is shorter than its %-month term — set to %',
       new.renewal_date, v_term, v_min;
     new.renewal_date := v_min;

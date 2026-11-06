@@ -217,11 +217,17 @@ export function followingTermStart(sub: Pick<ScheduleFields, "term_months" | "st
  * a second set of instalments for the same term — a customer invoiced twice. When rows
  * exist under the old (one-day-later) key and none under the corrected one, keep the old
  * key for this term; the next term is filed under the corrected date.
+ *
+ * R-2543: `countedBack` — the unclamped counted-back start (uncheckedTermStart) when it is BEFORE
+ * the corrected one. A sale started on the 29th–31st (31 Mar, 6-month quarterly) was laid under
+ * that earlier key (30 Mar) before R-2533; its first term now starts on start_date (31 Mar), and a
+ * new key would lay — and bill — every part a second time. Rows under it are kept the same way.
  */
-export function billingTermStart(corrected: string, existingTermStarts: readonly string[]): string {
+export function billingTermStart(corrected: string, existingTermStarts: readonly string[], countedBack?: string | null): string {
   if (existingTermStarts.includes(corrected)) return corrected;
   const legacy = addDaysISO(corrected, 1);
-  return existingTermStarts.includes(legacy) ? legacy : corrected;
+  if (existingTermStarts.includes(legacy)) return legacy;
+  return countedBack && countedBack < corrected && existingTermStarts.includes(countedBack) ? countedBack : corrected;
 }
 
 /** renewal_date = start_date + N whole terms (N ≥ 1) — see followingTermStart. */

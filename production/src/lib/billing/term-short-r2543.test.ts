@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { subscriptionSchedule, shortSplitTerm, currentTermStart } from "./subscription-schedule";
+import { subscriptionSchedule, shortSplitTerm, currentTermStart, billingTermStart } from "./subscription-schedule";
 import { plannedInstalments } from "./instalments";
 import { syncSubscriptionInstalments, type InstalmentSub } from "./sync-instalments.server";
 
@@ -100,5 +100,15 @@ describe("R-2543: syncSubscriptionInstalments says why a short term lays nothing
     expect(r.skip?.reason).toContain("18 Jun 2027");
     expect(r.created).toBe(0);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("R-2543 review: a 29th–31st sale laid before R-2533 keeps its counted-back key (no second set of parts)", () => {
+  it("billingTermStart keeps an existing earlier counted-back key; ignores it when absent or not earlier", () => {
+    expect(billingTermStart("2026-03-31", ["2026-03-30"], "2026-03-30")).toBe("2026-03-30");
+    expect(billingTermStart("2026-03-31", [], "2026-03-30")).toBe("2026-03-31");
+    expect(billingTermStart("2026-03-31", ["2026-03-31", "2026-03-30"], "2026-03-30")).toBe("2026-03-31");
+    expect(billingTermStart("2026-03-31", ["2026-04-01"], "2026-03-30")).toBe("2026-04-01");
+    expect(billingTermStart("2026-03-31", ["2026-04-02"], "2026-04-02")).toBe("2026-03-31");
   });
 });

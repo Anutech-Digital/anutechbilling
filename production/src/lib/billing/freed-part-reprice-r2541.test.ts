@@ -223,10 +223,10 @@ describe("R-2543 — freed-part reprice: same period, current term, one transact
     expect(r.parts[0].repriced).toEqual({ from: 5100, to: 5100, kept: "earlier_term" });
   });
 
-  it("an R-451 legacy term key (one day later) still counts as the current term", async () => {
+  it("an R-451 legacy term key (one day later) is the current term and is still repriced", async () => {
     const t = bitLabs({ part: { term_start: "2026-01-13" } });
     const { db } = fakeDb(t);
-    expect((await unbilledPartPrice(db, "oct"))?.kept).not.toBe("earlier_term");
+    expect(await unbilledPartPrice(db, "oct")).toEqual({ from: 5100, to: 5400 });
   });
 
   it("the bill fails → the error is reported and the stored amount is untouched (reprice + bill are ONE call)", async () => {
