@@ -26,7 +26,7 @@
 --   8. Owner removes another owner (another owner left); the last owner cannot be removed/demoted.
 --   9. users_tenant_delete is gone: an owner's DELETE of a teammate's users row deletes nothing.
 --  10. Re-invite after Remove → he accepts (same membership row re-opened); he stays in B.
---  11. A login removed to "none" → invite_existing_login says no_company → plain invite + Claim
+--  11. A login removed to "none" → invite_existing_login says plain → plain invite + Claim
 --      (listed with the address only) → 'rejoined' and that company is selected again.
 --  12. switch_company still works both ways after all of this.
 --
@@ -499,7 +499,7 @@ begin
   v := public.invite_existing_login('r2477-pratik@example.test', 'sales');
   if v <> 'invited' then raise exception 'FAIL 10: re-invite of pratik said %', v; end if;
   v := public.invite_existing_login('r2477-solo@example.test', 'support');
-  if v <> 'no_company' then raise exception 'FAIL 11: re-invite of solo said % (expected no_company)', v; end if;
+  if v <> 'plain' then raise exception 'FAIL 11: re-invite of solo said % (expected plain — works in no company)', v; end if;
   insert into public.team_invites (tenant_id, email, role, invited_by)
     values ('c2477000-0000-0000-0000-0000000000f1', 'r2477-solo@example.test', 'support', 'c2477000-0000-0000-0000-0000000000a1');
 end $$;

@@ -97,9 +97,28 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   if (elsewhereErr) {
     return fail("Could not check whether they work in another company, so no password was set. Try again.", 500);
   }
-  if ((elsewhere ?? []).length > 0) {
+  /* R-2477 re-review: an OPEN invite from another company is the same lever — with the password
+     this owner could sign in as them and accept that invite (maybe as owner). Same rule as the
+     users.email guard (migration 20261105192420). */
+  type InviteQ = {
+    select(c: string): InviteQ; eq(c: string, v: string): InviteQ; neq(c: string, v: string): InviteQ;
+    is(c: string, v: null): InviteQ; gt(c: string, v: string): InviteQ;
+    limit(n: number): PromiseLike<{ data: Array<{ tenant_id: string }> | null; error: { message: string } | null }>;
+  };
+  const { data: invitedElsewhere, error: invitedErr } = await (admin.from as unknown as (t: "membership_invites") => InviteQ)
+    .call(admin, "membership_invites")
+    .select("tenant_id")
+    .eq("user_id", target.id)
+    .neq("tenant_id", caller.tenant_id)
+    .is("accepted_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .limit(1);
+  if (invitedErr) {
+    return fail("Could not check whether they are invited to another company, so no password was set. Try again.", 500);
+  }
+  if ((elsewhere ?? []).length > 0 || (invitedElsewhere ?? []).length > 0) {
     return fail(
-      "They also work in another company on ResellerOS, so only they can change their password. Next step: use Send reset link on their row, or ask them to use Forgot password on the sign-in page.",
+      "They also work in (or are invited to) another company on ResellerOS, so only they can change their password. Next step: use Send reset link on their row, or ask them to use Forgot password on the sign-in page.",
       409,
     );
   }

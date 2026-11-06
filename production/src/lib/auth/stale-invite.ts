@@ -48,11 +48,13 @@ export function loginElsewhereMessage(email: string): string {
 
 /* ── R-2477 (memberships slice 3): inviting a login that already works in another company ── */
 
-/** What invite_existing_login answers (migration 20261105192420, R-2477 review). */
-export type ExistingLoginInvite = "invited" | "already_member" | "no_company" | "not_found";
+/** What invite_existing_login answers. R-2477 re-review (migration 20261106034600): "plain" for both
+    "no login" and "works in no company" (it no longer says whether an address has a login); the
+    older "no_company" / "not_found" are still understood while a database runs the earlier body. */
+export type ExistingLoginInvite = "invited" | "already_member" | "plain" | "no_company" | "not_found";
 
 export function parseExistingLoginInvite(v: unknown): ExistingLoginInvite | null {
-  return v === "invited" || v === "already_member" || v === "no_company" || v === "not_found" ? v : null;
+  return v === "invited" || v === "already_member" || v === "plain" || v === "no_company" || v === "not_found" ? v : null;
 }
 
 /** The login is already a member of the inviting company (maybe working in another one right now). */

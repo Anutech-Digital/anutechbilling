@@ -339,7 +339,7 @@ ${signupUrl}
        than "invited", which would read as a new person to anyone glancing at it. */
     roleChangedFrom,
     /* R-2477: they already use ResellerOS with another company — the screen says the next step
-       (they sign in once, then Claim a colleague adds them here). */
+       (they see the invite at the top of their app and accept it themselves). */
     ...(existingLogin ? { existingLogin: true } : {}),
     emailStatus: emailRes.status,             // "sent" | "stubbed" | "failed"
     emailError:  emailRes.errorMessage,

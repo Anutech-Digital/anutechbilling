@@ -61,6 +61,35 @@ const ownerProfile: Profile = { id: OWNER, email: "pardeep@anutech.in", tenant_i
 const google = (email: string, extra: { emailVerified?: boolean; subject?: string } = {}) =>
   ({ email, emailVerified: true, name: "Pardeep", provider: "google", subject: "g-sub-1", ...extra });
 
+describe("R-2477 re-review: a re-pointed profile email never takes a Google sign-in", () => {
+  /* An owner may change the profile email (users.email) of a teammate who has NEVER signed in
+     (R-712 typo fix). Pointed at an address the owner controls, step 2 used to hand the owner that
+     teammate's login — and with it any company that invites the teammate's real address. */
+  const teammate = "7e47a000-0000-4000-8000-000000000001";
+  const repointed: Profile = { id: teammate, email: "owner-controls@evil.test", tenant_id: TENANT, role: "sales" };
+
+  it("profile email ≠ its login's email and that login never signed in → refused (conflict), nothing created", async () => {
+    const f = fakeStore({ users: [user(teammate, "real.teammate@anutech.in")], profiles: [repointed] });
+    expect(await linkOAuthUser(google("owner-controls@evil.test", { subject: "attacker-sub" }), f.store))
+      .toEqual({ ok: false, reason: "conflict" });
+    expect(f.created).toEqual([]);
+  });
+
+  it("the teammate's own address still signs them in (no profile match → their login by email)", async () => {
+    const f = fakeStore({ users: [user(teammate, "real.teammate@anutech.in")], profiles: [repointed] });
+    const r = await linkOAuthUser(google("real.teammate@anutech.in", { subject: "teammate-sub" }), f.store);
+    expect(r).toMatchObject({ ok: true, how: "email" });
+    expect(r.ok && r.user.id).toBe(teammate);
+  });
+
+  it("an unchanged profile (email = login email) of a never-signed-in login → linked as before", async () => {
+    const f = fakeStore({ users: [user(OWNER, "pardeep@anutech.in")], profiles: [ownerProfile] });
+    const r = await linkOAuthUser(google("pardeep@anutech.in"), f.store);
+    expect(r).toMatchObject({ ok: true, how: "profile" });
+    expect(r.ok && r.user.id).toBe(OWNER);
+  });
+});
+
 describe("R-529: Google sign-in links to the existing account", () => {
   it("existing email (auth.users + profile) → SAME id, so the same tenant and role", async () => {
     const f = fakeStore({ users: [user(OWNER, "pardeep@anutech.in")], profiles: [ownerProfile] });
@@ -83,7 +112,8 @@ describe("R-529: Google sign-in links to the existing account", () => {
   });
 
   it("the profile owns the address but its login has another email → still the profile's id", async () => {
-    const f = fakeStore({ users: [user(OWNER, "old-login@anutech.in")], profiles: [ownerProfile] });
+    /* a login that has been used (R-2477: only such a login is linked through a different profile email) */
+    const f = fakeStore({ users: [user(OWNER, "old-login@anutech.in", { last_sign_in_at: "2026-09-01T00:00:00.000Z" })], profiles: [ownerProfile] });
     const r = await linkOAuthUser(google("pardeep@anutech.in", { subject: "other-sub" }), f.store);
     expect(r).toMatchObject({ ok: true, how: "profile" });
     expect(r.ok && r.user.id).toBe(OWNER);
@@ -92,7 +122,7 @@ describe("R-529: Google sign-in links to the existing account", () => {
 
   it("a stray duplicate login (the staging 6172ee49 case) is bypassed: the profile's id wins", async () => {
     const f = fakeStore({
-      users: [user(STRAY, "pardeep@anutech.in"), user(OWNER, "pardeep.old@anutech.in")],
+      users: [user(STRAY, "pardeep@anutech.in"), user(OWNER, "pardeep.old@anutech.in", { last_sign_in_at: "2026-09-01T00:00:00.000Z" })],
       profiles: [ownerProfile],
     });
     const r = await linkOAuthUser(google("pardeep@anutech.in"), f.store);

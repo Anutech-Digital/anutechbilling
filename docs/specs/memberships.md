@@ -350,3 +350,28 @@ Code-review (high) additions to §6.1 (same migration):
   one-company teammate's address first and use the login after it joins another company.
   Follow-up (outside this card's area): `linkOAuthUser` step 2 could also require
   `users.email = auth.users.email` for the matched profile.
+
+### 6.2 Re-review fixes (R-2477, 6 Nov 2026 — re-review verdict BLOCK)
+
+Migration `20261106034600_r2477_rereview_accept_profile_email.sql`; SQL case R8 in
+`supabase/tests/r2477_review_consent_email_guard.test.sql`. Two other levers could act as an invited
+login before it accepted:
+
+- **Temporary password** (`/api/team/members/:id/temp-password`): also refused while the target has
+  an OPEN, unexpired invite from another company (same rule as the users.email guard). Route test.
+- **Re-pointed profile email — root fix.** `guard_privileged_user_columns` no longer lets an owner
+  set `users.email` of a teammate who never signed in (that R-712 typo-fix exception was the lever).
+  Anyone but the login itself may set it only BACK to the login's own sign-in address; a mistyped
+  invite is withdrawn and re-sent. Defence for profile emails that already differ (older data):
+  - `accept_company_invite` refuses while the login's profile email is not its sign-in address
+    (`users.email` ≠ `auth.users.email`) — with a next step (support fixes the profile email).
+  - Auth.js `linkOAuthUser` step 2 (profile by email) no longer links a Google sign-in to a profile
+    whose email differs from its login's own address when that login has NEVER signed in → refused
+    as `conflict` (no account created). A login that has signed in keeps the R-529 behaviour (its
+    profile email is guarded since §6.1 — only the login itself can move it), so existing accounts
+    with an old login address still sign in. The teammate's own address still signs them in (step 3).
+- `invite_existing_login` answers `plain` for both "no login" and "works in no company"; the route
+  treats `plain` (and the older `no_company` / `not_found`) as the plain invite.
+- Residual (card `review.left`): an owner who set a teammate's temporary password BEFORE any invite
+  existed still knows a password for that login; the robust close is proof of the mailbox (accept by
+  an emailed link / token, not the in-app banner alone) — follow-up.

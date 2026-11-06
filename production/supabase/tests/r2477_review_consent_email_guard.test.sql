@@ -22,6 +22,9 @@
 --       one sent to an address the login no longer signs in with.
 --   R7. (code review) a pending join request to this company is the person's own agreement (Claim
 --       works); a personal account that accepts a business invite starts working in the business.
+--   R8. (re-review BLOCK) an owner re-points a never-signed-in teammate's profile email; another
+--       company invites the real address → the login cannot accept (profile email ≠ sign-in
+--       address); invite_existing_login answers 'plain' for "no login" and "no company" alike.
 --
 -- SAFETY: synthetic tenants + identities, one transaction ending in ROLLBACK.
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 \
@@ -67,7 +70,7 @@ begin
   v := public.invite_existing_login('R2477R-Olga@Example.test', 'sales');
   if v <> 'invited' then raise exception 'FAIL R2: invite said %', v; end if;
   v := public.invite_existing_login('r2477r-nobody@example.test', 'sales');
-  if v <> 'not_found' then raise exception 'FAIL R2: unknown address said %', v; end if;
+  if v <> 'plain' then raise exception 'FAIL R2: unknown address said %', v; end if;
   select count(*) into v_n from public.membership_invites i
    where i.email = 'r2477r-olga@example.test' and i.role = 'sales' and i.accepted_at is null;
   if v_n <> 1 then raise exception 'FAIL R2: B''s owner does not see its own invite (typed address)'; end if;
@@ -143,8 +146,8 @@ begin
 end $$;
 
 reset role;
--- a teammate who has never signed in (the R-712 owner fix of a typo) and one whose profile email
--- drifted from the login's own address (re-align) are still the owner's to fix
+-- re-review: a teammate who has never signed in is NOT re-pointable any more (the lever); a profile
+-- email that drifted from the login's own address can still be re-aligned by the owner
 select set_config('request.jwt.claims', '', true);   -- a server path (no signed-in user) for the fixture
 insert into auth.users (id, email) values ('c2478000-0000-0000-0000-0000000000b4', 'r2477r-new-b@example.test');
 insert into public.users (id, tenant_id, email, full_name, role, is_active) values
@@ -155,13 +158,15 @@ do $$
 declare v_n int;
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
-  update public.users set email = 'r2477r-new-b-fixed@example.test' where id = 'c2478000-0000-0000-0000-0000000000b4';
-  get diagnostics v_n = row_count;
-  if v_n <> 1 then raise exception 'FAIL R1: owner cannot fix the address of a teammate who never signed in'; end if;
+  begin
+    update public.users set email = 'r2477r-new-b-fixed@example.test' where id = 'c2478000-0000-0000-0000-0000000000b4';
+    raise exception 'FAIL R1: owner re-pointed the email of a teammate who never signed in';
+  exception when insufficient_privilege then null;
+  end;
   update public.users set email = 'r2477r-sales-b@example.test' where id = 'c2478000-0000-0000-0000-0000000000b2';
   get diagnostics v_n = row_count;
   if v_n <> 1 then raise exception 'FAIL R1: owner cannot re-align a profile email to the login''s own address'; end if;
-  raise notice 'PASS R1b: never-signed-in fix and re-align to the sign-in address still work';
+  raise notice 'PASS R1b: never-signed-in teammate not re-pointable; re-align to the sign-in address still works';
 end $$;
 
 reset role;
@@ -329,6 +334,55 @@ begin
   if not (j->>'selected')::boolean then raise exception 'FAIL R7: personal account not moved into the business on accept: %', j; end if;
   if not public.current_user_has_role('support') then raise exception 'FAIL R7: personal account has no business role after accept'; end if;
   raise notice 'PASS R7: join request counts as agreement; personal account accepting works in the business';
+end $$;
+
+
+-- ── R8 (re-review BLOCK): an owner re-points a never-signed-in teammate's profile email, another
+--    company invites the teammate's real address — the login cannot accept while its profile email
+--    is not its sign-in address. invite_existing_login answers 'plain' for "no login" and "no company".
+reset role;
+select set_config('request.jwt.claims', '', true);
+insert into auth.users (id, email) values
+  ('c2478000-0000-0000-0000-0000000000e2', 'r2477r-tina@example.test');            -- never signed in
+insert into public.users (id, tenant_id, email, full_name, role, is_active) values
+  ('c2478000-0000-0000-0000-0000000000e2', 'c2478000-0000-0000-0000-0000000000f5', 'r2477r-tina@example.test', 'R2477R Tina', 'sales', true);
+-- a profile email that ALREADY differs from her sign-in address (older data, re-pointed before this
+-- guard existed) — a server path, as superuser
+update public.users set email = 'tina-owned-by-e@r2477r-evil.test' where id = 'c2478000-0000-0000-0000-0000000000e2';
+set local role authenticated;
+
+do $$
+declare v text; v_msg text; v_inv uuid; v_n int;
+begin
+  -- E's owner can no longer re-point Tina's profile email (the root fix) …
+  perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000e1', 'role', 'authenticated')::text, true);
+  begin
+    update public.users set email = 'tina-again@r2477r-evil.test' where id = 'c2478000-0000-0000-0000-0000000000e2';
+    raise exception 'FAIL R8: E''s owner re-pointed a never-signed-in teammate''s email';
+  exception when insufficient_privilege then null;
+  end;
+
+  -- B invites Tina's real address
+  perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
+  v := public.invite_existing_login('r2477r-tina@example.test', 'manager');
+  if v <> 'invited' then raise exception 'FAIL R8: invite of Tina said %', v; end if;
+  -- uniform answers: an unknown address and a login in no company look the same
+  v := public.invite_existing_login('r2477r-nobody-at-all@example.test', 'sales');
+  if v <> 'plain' then raise exception 'FAIL R8: unknown address said % (expected plain)', v; end if;
+
+  -- whoever holds Tina's login now (E's owner via the re-pointed address) tries to accept
+  perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000e2', 'role', 'authenticated')::text, true);
+  select i.invite_id into v_inv from public.my_company_invites() i where i.company_name = 'R2477R Beta Co';
+  begin perform public.accept_company_invite(v_inv);
+  exception when insufficient_privilege then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is null or v_msg not ilike '%profile email is not the address you sign in with%' then
+    raise exception 'FAIL R8: accepted while the profile email was re-pointed: %', v_msg;
+  end if;
+  if exists (select 1 from public.tenant_memberships m where m.user_id = 'c2478000-0000-0000-0000-0000000000e2'
+              and m.tenant_id = 'c2478000-0000-0000-0000-0000000000f2') then
+    raise exception 'FAIL R8: a membership in B was created';
+  end if;
+  raise notice 'PASS R8: re-pointed profile email → the invite cannot be accepted; uniform plain answer';
 end $$;
 
 rollback;
