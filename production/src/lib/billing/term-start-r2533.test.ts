@@ -45,6 +45,18 @@ describe("R-2533: the term never starts before start_date", () => {
     ]);
   });
 
+  it("after the approved Suresh repair (renewal 19 Jun 2027, anniversary) the job lays exactly the re-keyed rows — nothing new", () => {
+    /* repair.sql: #1 term 2026-06-19, 19 Jun → 19 Dec 2026, bill_on 19 Jun (keeps INV-0001);
+       #2 term 2026-06-19, 19 Dec 2026 → 19 Jun 2027, bill_on 19 Dec 2026. Same
+       (term_start, period_index) → syncSubscriptionInstalments inserts nothing. */
+    const repaired = { ...suresh, renewal_date: "2027-06-19" };
+    expect(currentTermStart(repaired)).toBe("2026-06-19");
+    expect(plannedInstalments(repaired).map((p) => [p.periodIndex, p.termStart, p.periodStart, p.periodEnd, p.billOn])).toEqual([
+      [1, "2026-06-19", "2026-06-19", "2026-12-19", "2026-06-19"],
+      [2, "2026-06-19", "2026-12-19", "2027-06-19", "2026-12-19"],
+    ]);
+  });
+
   it("a renewed subscription still counts back from the renewal date (start_date is years ago)", () => {
     expect(currentTermStart({ term_months: 12, start_date: "2023-04-01", renewal_date: "2027-03-31" })).toBe("2026-04-01");
     expect(plannedInstalments({ ...suresh, start_date: "2023-06-19", renewal_date: "2026-12-19" })[0].periodStart).toBe("2025-12-20");
