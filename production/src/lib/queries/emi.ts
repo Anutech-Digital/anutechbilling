@@ -393,12 +393,15 @@ export function useEmiDownPayment(purchase: Pick<EmiPurchase, "id" | "down_bank_
     queryFn: async (): Promise<EmiDownPaymentSource> => {
       const supabase = loose();
       /* R-2523: every line matched to the purchase itself is a part (EMI lines match the payment id). */
-      const { data: lines, error } = await supabase.from<{ id: string; bank_account_id: string; source: string; txn_date: string; debit: number }>("bank_transactions")
-        .select("id, bank_account_id, source, txn_date, debit").eq("matched_to_type", "emi").eq("matched_to_id", purchase!.id);
-      if (error) throw error;
-      const { data: owner, error: e2 } = await supabase.from<{ amount: number; movement_date: string; partner_name: string | null }>("owner_equity_movements")
-        .select("amount, movement_date, partner_name").eq("emi_purchase_id", purchase!.id);
-      if (e2) throw e2;
+      const [linesR, ownerR] = await Promise.all([
+        supabase.from<{ id: string; bank_account_id: string; source: string; txn_date: string; debit: number }>("bank_transactions")
+          .select("id, bank_account_id, source, txn_date, debit").eq("matched_to_type", "emi").eq("matched_to_id", purchase!.id),
+        supabase.from<{ amount: number; movement_date: string; partner_name: string | null }>("owner_equity_movements")
+          .select("amount, movement_date, partner_name").eq("emi_purchase_id", purchase!.id),
+      ]);
+      if (linesR.error) throw linesR.error;
+      if (ownerR.error) throw ownerR.error;
+      const lines = linesR.data, owner = ownerR.data;
       const parts: EmiDownPart[] = [
         ...(lines ?? []).map((t): EmiDownPart => ({ kind: "account", lineId: t.id, accountId: t.bank_account_id, imported: t.source !== "manual", amount: t.debit, date: t.txn_date })),
         ...(owner ?? []).map((m): EmiDownPart => ({ kind: "owner", amount: m.amount, date: m.movement_date, partner: m.partner_name })),

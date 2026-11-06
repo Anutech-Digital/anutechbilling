@@ -283,7 +283,7 @@ export function EmiDownPaymentDialog({ purchase, onClose }: { purchase: EmiPurch
         <DialogHeader>
           <DialogTitle>Down payment — {purchase.name}</DialogTitle>
           <DialogDescription>
-            {isSplit || showSplit
+            {showSplit
               ? <>{rupee(total)} in total. Paid from several places? Add each part — they must add up to {rupee(total)}. The asset cost and the loan stay the same.</>
               : <>{rupee(amount)} paid on {formatDate(date)}. Changing where it came from moves only this money — the asset cost and the loan stay the same.</>}
           </DialogDescription>
@@ -292,7 +292,7 @@ export function EmiDownPaymentDialog({ purchase, onClose }: { purchase: EmiPurch
           <div className="rounded-md bg-paper-2/50 px-3 py-2 text-sm">
             <span className="text-ink-3">Paid from now: </span>
             <b className="text-ink" data-testid="down-now">{srcQ.isLoading ? "Loading…" : srcQ.isError ? "Could not load — close and open again" : currentText(src, accounts)}</b>
-            {isSplit && src?.kind === "split" && (
+            {src?.kind === "split" && (
               <ul className="mt-1 space-y-0.5 text-xs text-ink-2" data-testid="down-parts">
                 {src.parts.map((p, i) => (
                   <li key={i} className="flex justify-between gap-3">
@@ -339,7 +339,7 @@ export function EmiDownPaymentDialog({ purchase, onClose }: { purchase: EmiPurch
         ) : (
           <DialogFooter>
             <Button variant="ghost" onClick={onClose} disabled={change.isPending}>Cancel</Button>
-            {!imported && !showSplit && (
+            {!imported && (
               <Button variant="primary" loading={change.isPending} disabled={Boolean(problem) || srcQ.isLoading} onClick={submit}>
                 Save paid from
               </Button>

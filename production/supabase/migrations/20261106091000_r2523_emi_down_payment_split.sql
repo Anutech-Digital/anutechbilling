@@ -21,12 +21,14 @@
 --
 -- ══ WHAT CHANGES ════════════════════════════════════════════════════════════════════════════
 --   1. reconcile_bank_debit_to_emi(seq 0) — a statement line is matched as ONE PART: a manual
---      (or owner) part of the same amount is replaced (R-1864 as before); a smaller line is taken
---      out of the biggest manual part (else the owner part). A line bigger than what is still
---      off the statement is refused, nothing written.
---   2. Un-reconciling such a line (trigger) gives its amount back: to a manual part on the same
---      account, else to the only other manual / owner part, else (R-1864) a manual line on the
---      line's own account — the money did leave from there. Re-reconciling takes it again.
+--      part of the same amount (same account first), else the owner part of the same amount, is
+--      replaced (R-1864 as before); a smaller line is taken out of a manual part (same account
+--      first, else the biggest), else out of the owner part. No part big enough → refused,
+--      nothing written. emi_purchases.down_taken_from records which part it came from.
+--   2. Un-reconciling such a line (trigger) gives its amount back to exactly that part (a
+--      replaced manual line / owner capital row is made again). A line with no record (matched
+--      before R-2523, or kept through a split): a manual part on the same account, else
+--      (R-1864) a manual line on the line's own account — the money did leave from there.
 --   3. set_emi_down_payment_parts(purchase, parts, note) — the whole split in ONE step from
 --      Assets & EMIs: statement lines (used whole), account parts (bank / FD / Petty Cash, an
 --      amount and a date) and one "paid by owner" part. Must add up; a statement part already
@@ -34,11 +36,12 @@
 --      open on the part's date; locked months refused for every caller; one activity_log row.
 --   4. change_emi_down_payment_source (R-2395 body) refuses a split down payment (it moves ONE
 --      source — use the split instead).
---   5. emi_matches_for_bank_txn — one down-payment row per purchase: exact when a manual / owner
---      part has the line's amount; a "part of the down payment" row (always LOW, never auto-
---      reconciled) when the line is smaller than what is left, its narration names the item
---      (first word, e.g. THAR) and it is dated 90 days before … 10 days after the purchase.
---      A paid-by-hand EMI is also offered for a slightly bigger line (late fee / extra interest).
+--   5. emi_matches_for_bank_txn — one down-payment row per purchase: the line's amount when a
+--      manual / owner part has it, else the part reconcile would take it out of (narration names
+--      the item as a whole word, e.g. THAR; dated 90 days before … 10 days after the purchase).
+--      Only a down payment that is ONE manual line of the line's amount can be exact/high (auto-
+--      reconcile, as R-1864); every other down-payment row is LOW (the owner picks). A paid-by-
+--      hand EMI is also offered for a slightly bigger line near its due date that names the loan.
 --   6. EMI with an extra amount — "Broken-period / extra interest": p_interest = schedule
 --      interest + the extra, principal = the schedule's. ONE 'Interest' expense (the same head as
 --      EMI interest) whose text names the extra; principal, loan and the later schedule are not
@@ -50,6 +53,12 @@
 -- R-2341 tests unchanged.
 
 begin;
+
+-- ── 0. Where each matched statement line was taken from (so undo is the exact mirror) ───────
+alter table public.emi_purchases
+  add column if not exists down_taken_from jsonb not null default '{}'::jsonb;
+comment on column public.emi_purchases.down_taken_from is
+  'R-2523: {statement line id: {kind: line|owner|replaced_line|replaced_owner, …}} — which down-payment part a reconciled statement line was taken out of; un-reconciling gives it back there.';
 
 -- ── 1. Internal helpers ─────────────────────────────────────────────────────────────────────
 -- ₹ with Indian grouping, for messages and texts.
@@ -137,56 +146,64 @@ declare
   v_rest    integer;
   v_how     text;
   v_exp     text;
+  v_taken   jsonb;
 begin
   v_txn := public.emi_lock_debit_line(v_tenant, p_txn_id);
   select * into v_p from public.emi_purchases where id = p_purchase_id and tenant_id = v_tenant for update;
   if not found then raise exception 'That EMI purchase is not in your company'; end if;
 
-  -- Down payment — R-2523: the line is ONE part of it.
+  -- Down payment — R-2523: the line is ONE part of it. Where it was taken from is kept on the
+  -- purchase (down_taken_from) so un-reconciling gives it back to exactly that part.
   if coalesce(p_seq, 0) = 0 then
     if coalesce(v_p.kind, 'asset') <> 'asset' then raise exception 'A loan with no asset has no down payment'; end if;
-    -- a. A manual part of the same amount: this line takes its place (R-1864).
+    -- a. A manual part of the same amount (same account first): this line takes its place (R-1864).
     select * into v_old from public.bank_transactions
      where tenant_id = v_tenant and matched_to_type = 'emi' and matched_to_id = v_p.id::text and source = 'manual'
        and debit = v_txn.debit and id is distinct from v_p.received_bank_txn_id
-     order by txn_date, id limit 1 for update;
+     order by (bank_account_id = v_txn.bank_account_id) desc, txn_date, id limit 1 for update;
     if found then
       delete from public.bank_transactions where id = v_old.id;
       v_how := 'replaced';
+      v_taken := jsonb_build_object('kind', 'replaced_line', 'account_id', v_old.bank_account_id, 'date', v_old.txn_date);
     else
       select * into v_eq from public.owner_equity_movements where emi_purchase_id = v_p.id for update;
       if v_eq.id is not null and v_eq.amount = v_txn.debit then
-        -- b. The owner part of the same amount (it really left the company's bank).
+        -- b. The owner part of the same amount (the bank shows it left the company's account) …
         perform set_config('app.r2395_down_move', 'on', true);
         delete from public.owner_equity_movements where id = v_eq.id;
         perform set_config('app.r2395_down_move', '', true);
         v_how := 'owner_replaced';
+        v_taken := jsonb_build_object('kind', 'replaced_owner', 'date', v_eq.movement_date, 'partner', v_eq.partner_name, 'note', v_eq.note);
       else
-        -- c. Smaller: taken out of the biggest manual part, else the owner part.
+        -- c. Smaller: taken out of a manual part (same account first, else the biggest) …
         select * into v_old from public.bank_transactions
          where tenant_id = v_tenant and matched_to_type = 'emi' and matched_to_id = v_p.id::text and source = 'manual'
            and debit > v_txn.debit and id is distinct from v_p.received_bank_txn_id
-         order by debit desc, txn_date, id limit 1 for update;
+         order by (bank_account_id = v_txn.bank_account_id) desc, debit desc, txn_date, id limit 1 for update;
         if found then
           update public.bank_transactions set debit = debit - v_txn.debit, updated_at = now() where id = v_old.id;
           v_how := 'part_of_manual';
+          v_taken := jsonb_build_object('kind', 'line', 'line_id', v_old.id);
         elsif v_eq.id is not null and v_eq.amount > v_txn.debit then
+          -- … or out of the owner part.
           update public.owner_equity_movements set amount = amount - v_txn.debit where id = v_eq.id;
           v_how := 'part_of_owner';
+          v_taken := jsonb_build_object('kind', 'owner');
         else
           select coalesce(sum(debit), 0)::integer into v_rest from public.bank_transactions
            where tenant_id = v_tenant and matched_to_type = 'emi' and matched_to_id = v_p.id::text and source = 'manual'
              and id is distinct from v_p.received_bank_txn_id;
           v_rest := v_rest + coalesce(v_eq.amount, 0);
           if v_rest = 0 then
-            raise exception 'The down payment of % is already matched to bank lines in full', v_p.name;
+            raise exception 'The down payment of % is already matched to bank lines in full — if this line is part of it, un-reconcile the wrong line in Banking first, or change the parts with "Split across sources" on Assets & EMIs', v_p.name;
           end if;
-          raise exception 'This line is ₹% but only ₹% of the down payment of % is not matched to the bank yet — split the down payment on Assets & EMIs if this line pays more of it',
-            v_txn.debit, v_rest, v_p.name;
+          raise exception 'This line is ₹% but no part of the down payment of % still recorded by hand is that big (₹% left in all) — change the parts with "Split across sources" on Assets & EMIs',
+            v_txn.debit, v_p.name, v_rest;
         end if;
       end if;
     end if;
     perform public.emi_mark_line(v_txn.id, v_p.id);
+    update public.emi_purchases set down_taken_from = down_taken_from || jsonb_build_object(v_txn.id::text, v_taken) where id = v_p.id;
     perform public.emi_down_set_primary(v_p.id);
     return jsonb_build_object('kind', 'down_payment', 'purchase_id', v_p.id, 'amount', v_txn.debit, 'how', v_how,
                               'replaced_line', case when v_how = 'replaced' then v_old.id end,
@@ -329,6 +346,8 @@ declare
   v_new  public.bank_transactions;
   v_line public.bank_transactions;
   v_eq   public.owner_equity_movements;
+  v_acc  public.bank_accounts;
+  v_t    jsonb;
   v_n    integer;
 begin
   if old.matched_to_type = 'emi'
@@ -349,26 +368,47 @@ begin
        and received_bank_txn_id is distinct from old.id
      for update;
     if found then
-      -- The amount goes back to the part it most likely came from, so the parts still add up:
-      -- a manual part on the same account → the only other manual / owner part → (R-1864) a
-      -- manual line on this account (the money did leave from here).
-      select * into v_line from public.bank_transactions
-       where tenant_id = old.tenant_id and matched_to_type = 'emi' and matched_to_id = old.matched_to_id
-         and source = 'manual' and bank_account_id = old.bank_account_id
-       order by txn_date, id limit 1 for update;
-      if v_line.id is null then
-        select count(*) into v_n from public.bank_transactions
-         where tenant_id = old.tenant_id and matched_to_type = 'emi' and matched_to_id = old.matched_to_id and source = 'manual';
+      -- The amount goes back to the part it was taken out of (down_taken_from), so the parts
+      -- still add up and every account is as before the reconcile. A line with no record (matched
+      -- before R-2523, or kept through a split): a manual part on the same account, else (R-1864)
+      -- a manual line on this account — the money did leave from here.
+      v_t := v_p.down_taken_from -> old.id::text;
+      update public.emi_purchases set down_taken_from = down_taken_from - old.id::text where id = v_p.id;
+      if v_t ->> 'kind' = 'line' then
+        select * into v_line from public.bank_transactions
+         where id = (v_t ->> 'line_id')::uuid and tenant_id = old.tenant_id and source = 'manual'
+           and matched_to_type = 'emi' and matched_to_id = old.matched_to_id
+         for update;
+      elsif v_t ->> 'kind' in ('owner', 'replaced_owner') then
         select * into v_eq from public.owner_equity_movements where emi_purchase_id = v_p.id for update;
-        if v_n = 1 and v_eq.id is null then
-          select * into v_line from public.bank_transactions
-           where tenant_id = old.tenant_id and matched_to_type = 'emi' and matched_to_id = old.matched_to_id and source = 'manual'
-           for update;
-        elsif v_n = 0 and v_eq.id is not null then
+        if v_eq.id is not null then
           update public.owner_equity_movements set amount = amount + old.debit where id = v_eq.id;
+        else
+          insert into public.owner_equity_movements
+            (id, tenant_id, kind, movement_date, amount, bank_account_id, bank_txn_id, own_line, partner_name, note, created_by, emi_purchase_id)
+          values
+            (gen_random_uuid(), v_p.tenant_id, 'capital_introduced', coalesce((v_t ->> 'date')::date, v_p.purchased_on), old.debit,
+             null, null, false, v_t ->> 'partner',
+             left(coalesce(v_t ->> 'note', 'Down payment paid by owner: ' || v_p.name || coalesce(' (' || v_p.lender || ')', '')), 1000),
+             auth.uid(), v_p.id);
+        end if;
+        perform public.emi_down_set_primary(v_p.id);
+        return null;
+      elsif v_t ->> 'kind' = 'replaced_line' then
+        select * into v_acc from public.bank_accounts where id = (v_t ->> 'account_id')::uuid and tenant_id = old.tenant_id;
+        if v_acc.id is not null then
+          v_new := public.emi_manual_line(v_p.tenant_id, v_acc.id, coalesce((v_t ->> 'date')::date, old.txn_date), old.debit,
+                     'Down payment: ' || v_p.name || ' (' || coalesce(v_p.lender, '') || ')');
+          perform public.emi_mark_line(v_new.id, v_p.id);
           perform public.emi_down_set_primary(v_p.id);
           return null;
         end if;
+      end if;
+      if v_line.id is null then
+        select * into v_line from public.bank_transactions
+         where tenant_id = old.tenant_id and matched_to_type = 'emi' and matched_to_id = old.matched_to_id
+           and source = 'manual' and bank_account_id = old.bank_account_id
+         order by txn_date, id limit 1 for update;
       end if;
       if v_line.id is not null then
         update public.bank_transactions set debit = debit + old.debit, updated_at = now() where id = v_line.id;
@@ -418,35 +458,50 @@ begin
   with cand as (
     -- next unpaid instalment of each active loan
     select p.id as pid, p.name, p.lender as lname, p.lender_ref, s.seq, s.due_on, 'instalment'::text as kind,
-           s.emi as expected, s.principal, s.interest
+           s.emi as expected, s.principal, s.interest, true as whole
       from public.emi_purchases p
       join lateral (select * from public.emi_schedule s2
                      where s2.purchase_id = p.id and s2.emi_payment_id is null order by s2.seq limit 1) s on true
      where p.tenant_id = v_tenant and p.status = 'active'
     union all
     -- instalments paid by hand (their manual line can be replaced)
-    select p.id, p.name, p.lender, p.lender_ref, s.seq, s.due_on, 'paid_by_hand', ep.amount, ep.principal_part, ep.interest_part
+    select p.id, p.name, p.lender, p.lender_ref, s.seq, s.due_on, 'paid_by_hand', ep.amount, ep.principal_part, ep.interest_part, true
       from public.emi_purchases p
       join public.emi_schedule s on s.purchase_id = p.id
       join public.emi_payments ep on ep.id = s.emi_payment_id
       join public.bank_transactions bt on bt.id = ep.bank_txn_id and bt.source = 'manual'
      where p.tenant_id = v_tenant
     union all
-    -- R-2523: the down payment still off the statement (manual parts + owner part), one row per
-    -- purchase: the line's own amount when a part has it, else what is left (a part of it).
+    -- R-2523: the down payment still off the statement, one row per purchase: the line's own
+    -- amount when a manual / owner part has it, else the part this line would be taken out of
+    -- (the same choice reconcile_bank_debit_to_emi makes: same account first, then the biggest
+    -- manual part, then the owner part). "whole" = the down payment is ONE manual line of this
+    -- amount (R-1864) — only then can it be sure enough for auto-reconcile.
     select p.id, p.name, p.lender, p.lender_ref, 0, p.purchased_on, 'down_payment',
-           case when r.exact then v_txn.debit::integer else r.rest end, 0, 0
+           coalesce(r.same, r.part), 0, 0, (r.same is not null and r.manual_same and r.n_parts = 1)
       from public.emi_purchases p
       cross join lateral (
-        select (coalesce(sum(bt.debit), 0)
-                + coalesce((select m.amount from public.owner_equity_movements m where m.emi_purchase_id = p.id), 0))::integer as rest,
-               (coalesce(bool_or(bt.debit = v_txn.debit), false)
-                or exists (select 1 from public.owner_equity_movements m where m.emi_purchase_id = p.id and m.amount = v_txn.debit)) as exact
-          from public.bank_transactions bt
-         where bt.tenant_id = v_tenant and bt.matched_to_type = 'emi' and bt.matched_to_id = p.id::text
-           and bt.source = 'manual' and bt.id is distinct from p.received_bank_txn_id
+        select
+          (select count(*) from public.bank_transactions bt
+            where bt.tenant_id = v_tenant and bt.matched_to_type = 'emi' and bt.matched_to_id = p.id::text
+              and bt.id is distinct from p.received_bank_txn_id)
+          + (select count(*) from public.owner_equity_movements m where m.emi_purchase_id = p.id) as n_parts,
+          exists (select 1 from public.bank_transactions bt
+                   where bt.tenant_id = v_tenant and bt.matched_to_type = 'emi' and bt.matched_to_id = p.id::text
+                     and bt.source = 'manual' and bt.debit = v_txn.debit and bt.id is distinct from p.received_bank_txn_id) as manual_same,
+          case when exists (select 1 from public.bank_transactions bt
+                             where bt.tenant_id = v_tenant and bt.matched_to_type = 'emi' and bt.matched_to_id = p.id::text
+                               and bt.source = 'manual' and bt.debit = v_txn.debit and bt.id is distinct from p.received_bank_txn_id)
+                 or exists (select 1 from public.owner_equity_movements m where m.emi_purchase_id = p.id and m.amount = v_txn.debit)
+               then v_txn.debit::integer end as same,
+          coalesce(
+            (select bt.debit::integer from public.bank_transactions bt
+              where bt.tenant_id = v_tenant and bt.matched_to_type = 'emi' and bt.matched_to_id = p.id::text
+                and bt.source = 'manual' and bt.debit > v_txn.debit and bt.id is distinct from p.received_bank_txn_id
+              order by (bt.bank_account_id = v_txn.bank_account_id) desc, bt.debit desc, bt.txn_date, bt.id limit 1),
+            (select m.amount from public.owner_equity_movements m where m.emi_purchase_id = p.id and m.amount > v_txn.debit)) as part
       ) r
-     where p.tenant_id = v_tenant and coalesce(p.kind, 'asset') = 'asset' and r.rest > 0
+     where p.tenant_id = v_tenant and coalesce(p.kind, 'asset') = 'asset' and coalesce(r.same, r.part) is not null
   ), scored as (
     select c.*,
            v_txn.debit - c.expected as diff,
@@ -455,18 +510,21 @@ begin
                 and position(upper(split_part(trim(c.lname), ' ', 1)) in v_text) > 0)
              or (c.lender_ref is not null and position(upper(c.lender_ref) in v_text) > 0)
              or v_text ~ '(^|[^A-Z])(EMI|LOAN|NACH|ECS)([^A-Z]|$)' ) as named,
-           -- R-2523: the narration names the item ("THAR ADVANCE" for "Thar Roxx").
-           (length(split_part(trim(c.name), ' ', 1)) >= 3
-              and position(upper(split_part(trim(c.name), ' ', 1)) in v_text) > 0) as item_named
+           -- R-2523: the narration names the item as a whole word ("THAR ADVANCE" for "Thar Roxx";
+           -- "CARD" does not name "Car …").
+           (split_part(trim(c.name), ' ', 1) ~ '^[A-Za-z0-9]{3,}$'
+              and v_text ~ ('(^|[^A-Z0-9])' || upper(split_part(trim(c.name), ' ', 1)) || '([^A-Z0-9]|$)')) as item_named
       from cand c
   )
   select s.pid, s.name, s.lname, s.seq, s.due_on, s.kind, s.expected, s.principal, s.interest, s.diff,
-         case when s.diff = 0 and s.near and s.named then 'exact'
+         case when not s.whole then 'low'   -- R-2523: a part of a split down payment is never auto-reconciled
+              when s.diff = 0 and s.near and s.named then 'exact'
               when s.diff = 0 and (s.near or s.named) then 'high'
               else 'low' end
     from scored s
    where s.diff = 0
-      or (s.kind in ('instalment', 'paid_by_hand') and s.diff > 0 and s.diff <= greatest(2000, s.expected / 10) and (s.near or s.named))
+      or (s.kind = 'instalment' and s.diff > 0 and s.diff <= greatest(2000, s.expected / 10) and (s.near or s.named))
+      or (s.kind = 'paid_by_hand' and s.diff > 0 and s.diff <= greatest(2000, s.expected / 10) and s.near and s.named)
       or (s.kind = 'instalment' and s.diff < 0 and -s.diff < s.expected / 2 and s.named)
       or (s.kind = 'down_payment' and s.diff < 0 and s.item_named
           and v_txn.txn_date between s.due_on - 90 and s.due_on + 10)
@@ -592,7 +650,8 @@ begin
 
   -- Remove the app-made parts (removing them IS the reversal), then book the new ones.
   perform set_config('app.r2395_down_move', 'on', true);
-  update public.emi_purchases set down_bank_txn_id = null, down_account_id = null, updated_at = now() where id = v_p.id;
+  -- The parts a statement line was taken out of are gone: its un-reconcile falls back to R-1864.
+  update public.emi_purchases set down_bank_txn_id = null, down_account_id = null, down_taken_from = '{}'::jsonb, updated_at = now() where id = v_p.id;
   delete from public.bank_transactions
    where tenant_id = v_tenant and matched_to_type = 'emi' and matched_to_id = v_p.id::text and source = 'manual'
      and id is distinct from v_p.received_bank_txn_id;

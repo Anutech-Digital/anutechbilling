@@ -26,6 +26,8 @@
 --   F. First EMI ₹30,183 vs ₹27,764: 'interest' extra → principal = schedule principal,
 --      interest = schedule interest + 2,419 in ONE 'Interest' expense; schedule of later EMIs
 --      unchanged; loan outstanding as per schedule. Undo puts everything back.
+--   H. Undo is the exact mirror: an owner part replaced by an equal line comes back as capital;
+--      a line comes out of the part on its own account first and goes back there.
 --   G. EMI 1 paid by hand (₹27,764 manual line), then the ₹30,183 statement line replaces it
 --      with the extra as interest — the manual line goes, interest expense grows by 2,419.
 
@@ -347,6 +349,71 @@ begin
     raise exception 'FAIL D: owner part not booked';
   end if;
   if pg_temp.r2523_bal('bbbbbbbb-0000-0000-0000-000000252302') <> 500000 - 71906 then raise exception 'FAIL D: Petty Cash should only carry the first purchase''s 71,906'; end if;
+end $$;
+
+
+-- ── H. Undo is the exact mirror (down_taken_from) ───────────────────────────────────────
+--   H1. Paid by owner ₹2,00,000; an equal HDFC statement line replaces the owner part (offered,
+--       but LOW — never auto-reconciled); un-reconciling brings the capital row back, no
+--       manual line on HDFC.
+--   H2. Parts HDFC by hand ₹50,000 + Petty Cash ₹1,50,000: an HDFC ₹30,000 line comes out of the
+--       HDFC part (same account first), not the bigger Petty Cash one; undo puts HDFC back.
+select set_config('request.jwt.claims', '', true);
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
+  ('11111111-0000-0000-0000-000000252321','dddddddd-0000-0000-0000-000000252301','bbbbbbbb-0000-0000-0000-000000252301','2026-02-03','THAR FULL PAYMENT',200000,0,'V1','csv_upload'),
+  ('11111111-0000-0000-0000-000000252322','dddddddd-0000-0000-0000-000000252301','bbbbbbbb-0000-0000-0000-000000252301','2026-02-01','THAR PART PAYMENT',30000,0,'V2','csv_upload');
+select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000252301","role":"authenticated"}', true);
+insert into r2523_ids select 'thar3', public.record_emi_asset_purchase((pg_temp.r2523_input() - 'account_id') || '{"paid_by_owner": true}'::jsonb);
+
+do $$
+declare v_p uuid := (select v from r2523_ids where k = 'thar3'); v_m record;
+begin
+  if (select amount from public.owner_equity_movements where emi_purchase_id = v_p) <> 200000 then raise exception 'FAIL H1 setup: no owner part'; end if;
+  select * into v_m from public.emi_matches_for_bank_txn('11111111-0000-0000-0000-000000252321') m where m.purchase_id = v_p;
+  if v_m.purchase_id is null or v_m.difference <> 0 then raise exception 'FAIL H1: the equal line is not offered for the owner part'; end if;
+  if v_m.confidence <> 'low' then raise exception 'FAIL H1: replacing an owner part must never be auto (confidence %)', v_m.confidence; end if;
+
+  perform public.reconcile_bank_debit_to_emi('11111111-0000-0000-0000-000000252321', v_p, 0);
+  if exists (select 1 from public.owner_equity_movements where emi_purchase_id = v_p) or pg_temp.r2523_parts(v_p) <> 200000 then
+    raise exception 'FAIL H1: the line did not replace the owner part';
+  end if;
+end $$;
+update public.bank_transactions set matched_to_type = null, matched_to_id = null, matched_at = null, matched_by = null, match_confidence = null
+ where id = '11111111-0000-0000-0000-000000252321';
+do $$
+declare v_p uuid := (select v from r2523_ids where k = 'thar3');
+begin
+  if coalesce((select amount from public.owner_equity_movements where emi_purchase_id = v_p and kind = 'capital_introduced'), 0) <> 200000 then
+    raise exception 'FAIL H1: un-reconcile did not bring the owner capital back';
+  end if;
+  if exists (select 1 from public.bank_transactions where matched_to_type = 'emi' and matched_to_id = v_p::text) then
+    raise exception 'FAIL H1: un-reconcile made a manual line on HDFC (the outflow would show twice)';
+  end if;
+  if (select down_taken_from from public.emi_purchases where id = v_p) <> '{}'::jsonb then raise exception 'FAIL H1: down_taken_from not cleared'; end if;
+end $$;
+
+do $$
+declare v_p uuid := (select v from r2523_ids where k = 'thar3'); v_hdfc_manual bigint;
+begin
+  perform public.set_emi_down_payment_parts(v_p, jsonb_build_array(
+    jsonb_build_object('account_id','bbbbbbbb-0000-0000-0000-000000252301','amount',50000,'date','2026-02-03'),
+    jsonb_build_object('account_id','bbbbbbbb-0000-0000-0000-000000252302','amount',150000)));
+  perform public.reconcile_bank_debit_to_emi('11111111-0000-0000-0000-000000252322', v_p, 0);
+  select debit into v_hdfc_manual from public.bank_transactions
+   where matched_to_type = 'emi' and matched_to_id = v_p::text and source = 'manual' and bank_account_id = 'bbbbbbbb-0000-0000-0000-000000252301';
+  if v_hdfc_manual <> 20000 or pg_temp.r2523_petty(v_p) <> 150000 then
+    raise exception 'FAIL H2: the HDFC line should come out of the HDFC part (HDFC by hand %, petty %)', v_hdfc_manual, pg_temp.r2523_petty(v_p);
+  end if;
+end $$;
+update public.bank_transactions set matched_to_type = null, matched_to_id = null, matched_at = null, matched_by = null, match_confidence = null
+ where id = '11111111-0000-0000-0000-000000252322';
+do $$
+declare v_p uuid := (select v from r2523_ids where k = 'thar3');
+begin
+  if (select debit from public.bank_transactions where matched_to_type = 'emi' and matched_to_id = v_p::text and source = 'manual'
+        and bank_account_id = 'bbbbbbbb-0000-0000-0000-000000252301') <> 50000 or pg_temp.r2523_petty(v_p) <> 150000 then
+    raise exception 'FAIL H2: undo did not put the HDFC part back to 50,000';
+  end if;
 end $$;
 
 rollback;
