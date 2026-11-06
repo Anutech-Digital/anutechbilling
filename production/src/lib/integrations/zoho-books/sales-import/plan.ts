@@ -12,9 +12,10 @@
  * carries (bank-credit new sale, R-2360) → skip.
  *
  * R-2530 — customer matching when the GSTINs differ. An invoice WITH a GSTIN keeps its own GSTIN,
- * place of supply and GST head (the SQL import writes them from the scan; the party-snapshot trigger
- * only fills what is empty) — GSTR-1 for FY 25-26 was filed from Zoho with them. (A Zoho invoice with
- * NO GSTIN gets the customer's GSTIN filled by that trigger — older behaviour, follow-up card.) So:
+ * place of supply and GST head (the SQL import writes them from the scan) — GSTR-1 for FY 25-26 was
+ * filed from Zoho with them. R-2536: an invoice with NO GSTIN stays without one (B2C as filed) and
+ * keeps Zoho's own billing address — the party-snapshot trigger no longer fills an imported sale's
+ * buyer facts from the customer (invoices.party_from_source). So:
  *   - exactly one customer with the same name and the same PAN (valid GSTINs, characters 3–12) → the
  *     same legal entity at another branch → imported onto it (matchedBy "pan");
  *   - same name, a different PAN → skipped with "Name matches … but the GSTIN differs", unless the
@@ -44,8 +45,9 @@ export interface PlanContext {
   customers: AppCustomer[];
   items: AppItem[];
   invoices: AppInvoiceRef[];
-  /** R-2530: the owner's "Use this customer anyway" ticks — normalised Zoho customer name → app
-   *  customer id. Honoured only when that customer is the one the name matched. */
+  /** R-2530: the owner's "Use this customer anyway" ticks — gstinChoiceKey (normalised Zoho name +
+   *  the invoice's PAN, R-2536) → app customer id. Honoured only when that customer is the one the
+   *  name matched. */
   useAnyway?: Readonly<Record<string, string>>;
 }
 
@@ -65,7 +67,7 @@ export interface PlannedSale {
 
 /** R-2530: one per Zoho customer whose name matches one app customer with a different PAN. */
 export interface GstinChoice {
-  /** Normalised Zoho customer name — the key of PlanContext.useAnyway. */
+  /** gstinChoiceKey(Zoho name, invoice GSTIN) — the key of PlanContext.useAnyway. */
   key: string;
   zohoName: string;
   customerId: string;
@@ -94,6 +96,13 @@ export interface SalesPlan {
 }
 
 export const normName = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+/** R-2536: one "Use this customer anyway" tick = one Zoho buyer — its normalised name AND the
+ *  invoice's PAN (the full GSTIN when it has no valid PAN), so two near-same names with different
+ *  PANs never share a tick. */
+export function gstinChoiceKey(zohoName: string, invoiceGstin: string): string {
+  const g = invoiceGstin.trim().toUpperCase();
+  return `${normName(zohoName)}|${panFromGstin(g) ?? g}`;
+}
 const reasonKey = (r: string) => r.replace(/₹[\d,.]+|\d{2}(?=\))|"[^"]*"/g, "…");
 
 /** One customer from several: the only one, else the only ACTIVE one, else none (no guess). */
@@ -198,12 +207,14 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
         else if (pan && pan === panFromGstin(cg)) { out.customerId = nOne.id; out.matchedBy = "pan"; }
         else {
           /* Another PAN: never on its own — the owner ticks "Use this customer anyway". */
-          const chosen = ctx.useAnyway?.[key] === nOne.id;
-          const ch = choices.get(key) ?? { key, zohoName: f.customerName, customerId: nOne.id, customerName: nOne.name,
+          /* R-2536: keyed by name + the invoice's PAN — one tick never covers another PAN's buyer. */
+          const ck = gstinChoiceKey(f.customerName, g);
+          const chosen = ctx.useAnyway?.[ck] === nOne.id;
+          const ch = choices.get(ck) ?? { key: ck, zohoName: f.customerName, customerId: nOne.id, customerName: nOne.name,
             customerGstin: cg, invoiceGstins: [], count: 0, amount: 0, chosen };
           if (!ch.invoiceGstins.includes(g)) ch.invoiceGstins.push(g);
           ch.count += 1; ch.amount += f.amount;
-          choices.set(key, ch);
+          choices.set(ck, ch);
           if (chosen) { out.customerId = nOne.id; out.matchedBy = "chosen"; }
           else out.reason = `Name matches "${nOne.name}" but the GSTIN differs (invoice "${g}" vs customer "${cg}") — tick "Use this customer anyway" if it is the same buyer.`;
         }
