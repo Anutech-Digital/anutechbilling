@@ -18,6 +18,8 @@ const preview = {
     zohoByMonth: [{ month: "2025-05", count: 2, taxable: 2000, igst: 360, cgst: 0, sgst: 0, itc: 360, rcmTax: 0, tds: 100 }],
     importByMonth: [{ month: "2025-05", count: 2, taxable: 2000, igst: 360, cgst: 0, sgst: 0, itc: 360, rcmTax: 0, tds: 100 }],
     appByMonth: [],
+    otherByMonth: [{ month: "2025-05", count: 4, amount: 3300 }],
+    accounts: [{ zohoName: "Director - Rakesh", count: 2, amount: 900, appAccountId: null, suggested: false }],
     skipReasons: [{ reason: "Void in Zoho — not a purchase, not in the P&L or ITC.", count: 1 }],
     tdsBySection: [{ section: "194J", amount: 100, count: 1 }],
     unmapped: [{ accountId: "A9", accountName: "Misc Expenses", count: 2, taxable: 2000 }],
@@ -25,6 +27,7 @@ const preview = {
   },
   payments: null,
   categories: ["Software", "Office Rent", "COGS-Other"],
+  bankAccounts: [{ id: "acc-1", name: "HDFC Current", last4: "4523", type: "current" }, { id: "acc-cash", name: "Petty Cash", last4: null, type: "cash" }],
   batches: [],
 };
 
@@ -65,13 +68,25 @@ describe("ZohoPurchaseImportDialog", () => {
     expect(calls.find((c) => c.action === "saveMap")).toMatchObject({ rows: [{ zohoAccountId: "A9", category: "Office Rent", zohoAccountName: "Misc Expenses" }] });
   });
 
-  it("payments on COGS bills are listed for Reconcile — no bank-account picker (no manual bank line)", async () => {
-    const withPay = { ...preview, payments: { counts: { scanned: 2, import: 1, already: 0, skip: 1, advanceAmount: 0, amount: 1180, cogsAmount: 500 }, parts: 1,
-      paidThrough: [{ name: "HDFC 4523", count: 1, amount: 1180 }], skipReasons: [], cogs: [{ number: "7", date: "2025-06-01", vendor: "Mehta", bill: "C-1", amount: 500 }] } };
+  it("payments not booked here are listed for Reconcile WITH their TDS (COGS bill / part payment)", async () => {
+    const withPay = { ...preview, payments: { counts: { scanned: 3, import: 1, already: 0, skip: 2, advanceAmount: 0, amount: 1180, cogsAmount: 500, partsAmount: 300 }, parts: 1,
+      accounts: [], skipReasons: [], toReconcile: [
+        { why: "cogs", number: "7", date: "2025-06-01", vendor: "Mehta", bill: "C-1", amount: 500, tds: 200, tdsSection: "194C" },
+        { why: "parts", number: "8", date: "2025-06-02", vendor: "Mehta", bill: "TP-1", amount: 300, tds: 0, tdsSection: null }] } };
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify(withPay))));
     renderIt();
-    expect(await screen.findByText(/payments on COGS bills .* Banking → Reconcile/)).toBeTruthy();
-    expect(screen.queryByText(/Pick the bank account/)).toBeNull();
+    const list = await screen.findByTestId("to-reconcile");
+    expect(list.textContent).toMatch(/C-1.*TDS ₹200 194C.*COGS bill/);
+    expect(list.textContent).toMatch(/TP-1.*part payment/);
+  });
+
+  it("R-2502c: paid-from accounts — choose one, and it goes with the preview; other purchases per month shown", async () => {
+    renderIt();
+    expect((await screen.findByText(/In the app, not from Zoho/))).toBeTruthy();
+    expect(screen.getByText(/\(1 not chosen/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("App account for Director - Rakesh"), { target: { value: "acc-cash" } });
+    fireEvent.click(screen.getByRole("button", { name: "Use these accounts" }));
+    await waitFor(() => expect(calls.some((c) => c.action === "preview" && (c.accounts as Record<string, string>)?.["Director - Rakesh"] === "acc-cash")).toBe(true));
   });
 
   it("Import is off until the check (dry run) ran; the check sends dryRun true", async () => {

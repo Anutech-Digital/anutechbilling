@@ -27,7 +27,7 @@ import { Input } from "@/components/ui/input";
 import { formatDate, rupee } from "@/lib/utils";
 import { FY_CALLS_PER_REQUEST } from "@/lib/integrations/zoho-books/config";
 import { ZOHO_CALLS_PER_MIN } from "@/lib/integrations/zoho-books/zoho-pace";
-import type { MonthTotals } from "@/lib/integrations/zoho-books/purchase-import/plan";
+import type { MonthTotals, PaidThroughAccount, PaymentToReconcile } from "@/lib/integrations/zoho-books/purchase-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
 
 const API = "/api/integrations/zoho-books/purchase-import";
@@ -46,19 +46,23 @@ interface Preview {
     counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number; newVendors: number };
     parts: { bills: number; expenses: number };
     zohoByMonth: MonthTotals[]; importByMonth: MonthTotals[]; appByMonth: MonthTotals[];
+    /** R-2502c: purchases already in the app NOT from Zoho, per month — an overlap shows before importing. */
+    otherByMonth: { month: string; count: number; amount: number }[];
+    accounts: PaidThroughAccount[];
     skipReasons: { reason: string; count: number }[];
     tdsBySection: { section: string; amount: number; count: number }[];
     unmapped: { accountId: string; accountName: string; count: number; taxable: number }[];
     skipped: { kind: string; number: string; date: string; vendor: string; amount: number; reason: string | null }[];
   };
   payments: null | {
-    counts: { scanned: number; import: number; already: number; skip: number; advanceAmount: number; amount: number; cogsAmount: number };
+    counts: { scanned: number; import: number; already: number; skip: number; advanceAmount: number; amount: number; cogsAmount: number; partsAmount: number };
     parts: number;
-    paidThrough: { name: string; count: number; amount: number }[];
+    accounts: PaidThroughAccount[];
     skipReasons: { reason: string; count: number }[];
-    cogs: { number: string; date: string; vendor: string; bill: string; amount: number }[];
+    toReconcile: PaymentToReconcile[];
   };
   categories: string[];
+  bankAccounts: { id: string; name: string; last4: string | null; type: string | null }[];
   batches: (ImportBatch & { kind: Kind })[];
 }
 interface PartResult { imported: number; already: number; skipped: { number: string; reason: string }[] }
@@ -80,6 +84,10 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
   const [read, setRead] = React.useState<Partial<Record<Kind, { listed: number; detailed: number; complete: boolean }>>>({});
   const [preview, setPreview] = React.useState<Preview | null>(null);
   const [map, setMap] = React.useState<Record<string, string>>({});
+  /** R-2502c: Zoho paid-through account → app account (the owner's choice; sent with preview / import). */
+  const [accounts, setAccounts] = React.useState<Record<string, string>>({});
+  const accountsRef = React.useRef(accounts);
+  accountsRef.current = accounts;
   const [check, setCheck] = React.useState<Partial<Record<Kind, PartResult>>>({});
   const [done, setDone] = React.useState<Partial<Record<Kind, PartResult>>>({});
   const stop = React.useRef(false);
@@ -87,7 +95,7 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
 
   const loadPreview = React.useCallback(async () => {
     setBusy("preview"); setError(null);
-    try { setPreview(await call<Preview>({ action: "preview" })); }
+    try { setPreview(await call<Preview>({ action: "preview", accounts: accountsRef.current })); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(null); }
   }, []);
@@ -130,7 +138,7 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
     const sum: PartResult = { imported: 0, already: 0, skipped: [] };
     for (let part = 0; part < partsOf(kind) && !stop.current; part++) {
       const r = await call<{ result: { imported: number; already: number; skipped: { number: string; reason: string }[] } }>(
-        { action: "import", kind, part, dryRun });
+        { action: "import", kind, part, dryRun, accounts });
       sum.imported += r.result.imported; sum.already += r.result.already; sum.skipped.push(...r.result.skipped);
     }
     return sum;
@@ -215,6 +223,8 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
                 </div>
               )}
 
+              <AccountMap list={[...p.accounts, ...(pay?.accounts ?? [])]} bankAccounts={preview!.bankAccounts} chosen={accounts}
+                busy={!!busy} onChange={(k, v) => { setAccounts((m) => ({ ...m, [k]: v })); setCheck({}); }} onApply={loadPreview} />
               <MonthTable p={p} />
               {p.tdsBySection.length > 0 && (
                 <p className="text-xs text-ink-2">TDS in Zoho: {p.tdsBySection.map((t) => `${t.section} ${rupee(t.amount)} (${t.count})`).join(" · ")}</p>
@@ -236,13 +246,20 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
                     <b>Vendor payments:</b> {n(pay.counts.scanned)} in Zoho · <b>{n(pay.counts.import)}</b> to import ({rupee(pay.counts.amount)})
                     {pay.counts.advanceAmount > 0 && <> · advances not applied to a bill {rupee(pay.counts.advanceAmount)} (book by hand)</>}
                   </p>
-                  {pay.cogs.length > 0 && (
-                    <details className="text-xs">
+                  {pay.toReconcile.length > 0 && (
+                    <details className="text-xs" open>
                       <summary className="cursor-pointer text-ink-2">
-                        {pay.cogs.length} payments on COGS bills ({rupee(pay.counts.cogsAmount)}) are not booked here — pay them in Banking → Reconcile on their 4523 debit, so the cash is counted once
+                        {pay.toReconcile.length} payments are not booked here — pay each in Banking → Reconcile on its own bank debit, with the TDS shown
+                        (COGS bills {rupee(pay.counts.cogsAmount)}; bills Zoho paid in parts {rupee(pay.counts.partsAmount)}), so the cash is counted once
                       </summary>
-                      <ul className="max-h-40 overflow-y-auto mt-1 space-y-0.5 text-ink-2">
-                        {pay.cogs.map((c, i) => <li key={`${c.number}-${c.bill}-${i}`}>{formatDate(c.date)} · {c.vendor} · bill <span className="font-mono">{c.bill}</span> · {rupee(c.amount)}</li>)}
+                      <ul className="max-h-40 overflow-y-auto mt-1 space-y-0.5 text-ink-2" data-testid="to-reconcile">
+                        {pay.toReconcile.map((c, i) => (
+                          <li key={`${c.number}-${c.bill}-${i}`}>
+                            {formatDate(c.date)} · {c.vendor} · bill <span className="font-mono">{c.bill}</span> · {rupee(c.amount)}
+                            {c.tds > 0 ? <> · TDS {rupee(c.tds)} {c.tdsSection}</> : null}
+                            <span className="text-ink-3"> · {c.why === "cogs" ? "COGS bill" : "part payment"}</span>
+                          </li>
+                        ))}
                       </ul>
                     </details>
                   )}
@@ -286,7 +303,7 @@ function StepRow({ label, kind, busy, check, done, onCheck, onImport }: {
 }
 
 function MonthTable({ p }: { p: Preview["purchases"] }) {
-  const months = [...new Set([...p.zohoByMonth, ...p.importByMonth, ...p.appByMonth].map((m) => m.month))].sort();
+  const months = [...new Set([...p.zohoByMonth, ...p.importByMonth, ...p.appByMonth, ...p.otherByMonth].map((m) => m.month))].sort();
   const get = (list: MonthTotals[], m: string) => list.find((x) => x.month === m);
   const cell = (t: MonthTotals | undefined) => (t ? <>{rupee(t.taxable)}<span className="block text-3xs text-ink-3">ITC {rupee(t.itc)} · {t.count}</span></> : "—");
   return (
@@ -299,6 +316,7 @@ function MonthTable({ p }: { p: Preview["purchases"] }) {
             <th scope="col" className="p-2 text-right font-semibold text-ink-3">IGST · CGST · SGST · RCM · TDS</th>
             <th scope="col" className="p-2 text-right font-semibold text-ink-3">Will come in</th>
             <th scope="col" className="p-2 text-right font-semibold text-ink-3">Already in the app</th>
+            <th scope="col" className="p-2 text-right font-semibold text-ink-3" title="Purchases in the app that did not come from Zoho — if they are the same purchases, they would count twice">In the app, not from Zoho</th>
           </tr>
         </thead>
         <tbody>
@@ -311,6 +329,7 @@ function MonthTable({ p }: { p: Preview["purchases"] }) {
                 <td className="p-2 text-right text-ink-2 whitespace-nowrap">{z ? `${rupee(z.igst)} · ${rupee(z.cgst)} · ${rupee(z.sgst)} · ${rupee(z.rcmTax)} · ${rupee(z.tds)}` : "—"}</td>
                 <td className="p-2 text-right">{cell(get(p.importByMonth, m))}</td>
                 <td className="p-2 text-right">{cell(get(p.appByMonth, m))}</td>
+                <td className="p-2 text-right">{(() => { const o = p.otherByMonth.find((x) => x.month === m); return o ? <>{rupee(o.amount)}<span className="block text-3xs text-ink-3">{o.count}</span></> : "—"; })()}</td>
               </tr>
             );
           })}
@@ -386,5 +405,45 @@ function BatchRow({ b, onChanged }: { b: ImportBatch & { kind: Kind }; onChanged
         </form>
       )}
     </li>
+  );
+}
+
+/** R-2502c: where Zoho's expenses / payments were paid from → which app account (petty cash, card, bank). */
+function AccountMap({ list, bankAccounts, chosen, busy, onChange, onApply }: {
+  list: PaidThroughAccount[]; bankAccounts: Preview["bankAccounts"]; chosen: Record<string, string>; busy: boolean;
+  onChange: (zohoName: string, appId: string) => void; onApply: () => void;
+}) {
+  const merged = new Map<string, PaidThroughAccount>();
+  for (const a of list) {
+    const t = merged.get(a.zohoName);
+    merged.set(a.zohoName, t ? { ...t, count: t.count + a.count, amount: t.amount + a.amount } : a);
+  }
+  if (!merged.size) return null;
+  const missing = [...merged.values()].filter((a) => !(chosen[a.zohoName] || a.appAccountId)).length;
+  return (
+    <div className="rounded-md border border-hairline px-3 py-2">
+      <p className="text-xs font-semibold text-ink mb-1">
+        Paid from — which app account is each Zoho account?{missing > 0 ? ` (${missing} not chosen — their expenses and payments are left out)` : ""}
+      </p>
+      <table className="w-full text-xs">
+        <tbody>
+          {[...merged.values()].map((a) => (
+            <tr key={a.zohoName} className="border-b border-hairline last:border-0">
+              <td className="py-1 pr-2 text-ink">{a.zohoName}</td>
+              <td className="py-1 pr-2 text-right text-ink-2 tabular-nums whitespace-nowrap">{a.count} · {rupee(a.amount)}</td>
+              <td className="py-1 w-64">
+                <label htmlFor={`acct-${a.zohoName}`} className="sr-only">App account for {a.zohoName}</label>
+                <select id={`acct-${a.zohoName}`} className={selectCls} value={chosen[a.zohoName] ?? a.appAccountId ?? ""}
+                  onChange={(e) => onChange(a.zohoName, e.target.value)}>
+                  <option value="">Choose — or leave out</option>
+                  {bankAccounts.map((b) => <option key={b.id} value={b.id}>{b.name}{b.last4 ? ` ··${b.last4}` : ""}{b.type === "cash" ? " (cash)" : b.type === "credit_card" ? " (card)" : ""}</option>)}
+                </select>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <Button type="button" size="sm" className="mt-2" disabled={busy} onClick={onApply}>Use these accounts</Button>
+    </div>
   );
 }

@@ -33,8 +33,12 @@ insert into public.vendors (id, tenant_id, name, gstin) values
   ('b2502000-0000-0000-0000-0000000000d1', 'b2502000-0000-0000-0000-0000000000f0', 'R2502 Mehta', '07AAACM2502A1Z5'),
   ('b2502000-0000-0000-0000-0000000000d9', 'b2502000-0000-0000-0000-0000000000f1', 'R2502 Other Co Vendor', null),
   ('b2502000-0000-0000-0000-0000000000d2', 'b2502000-0000-0000-0000-0000000000f0', 'R2502 NoGst', null);
-insert into public.bank_accounts (id, tenant_id, name, bank_name) values
-  ('b2502000-0000-0000-0000-0000000000e1', 'b2502000-0000-0000-0000-0000000000f0', 'HDFC 4523', 'HDFC');
+insert into public.bank_accounts (id, tenant_id, name, bank_name, account_type) values
+  ('b2502000-0000-0000-0000-0000000000e1', 'b2502000-0000-0000-0000-0000000000f0', 'HDFC 4523', 'HDFC', 'current'),
+  ('b2502000-0000-0000-0000-0000000000e2', 'b2502000-0000-0000-0000-0000000000f0', 'R2502 Petty Cash', 'Cash', 'cash');
+-- Booked by hand from a bank debit, with no bill number: Mehta 590 on 2 Jul 2025 (R-2502c duplicate check).
+insert into public.expenses (id, tenant_id, category, vendor_name, vendor_id, expense_date, amount, paid)
+values ('EXP-R2502-HAND2', 'b2502000-0000-0000-0000-0000000000f0', 'Office Rent', 'R2502 Mehta', 'b2502000-0000-0000-0000-0000000000d1', '2025-07-02', 590, true);
 -- Entered by hand earlier: Mehta's HAND-1.
 insert into public.expenses (id, tenant_id, category, vendor_name, vendor_id, expense_date, amount, bill_no, paid)
 values ('EXP-R2502-HAND', 'b2502000-0000-0000-0000-0000000000f0', 'Software', 'R2502 Mehta', 'b2502000-0000-0000-0000-0000000000d1', '2025-06-01', 1180, 'HAND-1', false);
@@ -79,6 +83,15 @@ from (values
   ('bills', 'b12', pg_temp.doc('bills', 'b12', 'NG-1', '2025-06-05', 'open', 'VZ12', 'R2502 NoGst', '07AAACN2502A1Z5', 1000, 0, 90, 90, jsonb_build_array(pg_temp.ln('A-SW', 1000, 180)))),
   ('vendorpayments', 'p3', jsonb_build_object('kind', 'vendorpayments', 'zohoId', 'p3', 'number', '3', 'date', '2025-06-12', 'status', '', 'amount', 800, 'unapplied', 500, 'mode', 'UPI',
      'paidThrough', 'HDFC 4523', 'vendorName', 'R2502 NewCo', 'applied', jsonb_build_array(jsonb_build_object('billZohoId', 'b2', 'billNumber', 'NC-1', 'amount', 300)), 'problems', '[]'::jsonb)),
+  ('bills', 'b14', pg_temp.doc('bills', 'b14', 'TP-1', '2025-07-05', 'paid', 'VZ1', 'R2502 Mehta', '07AAACM2502A1Z5', 1000, 0, 90, 90, jsonb_build_array(pg_temp.ln('A-SW', 1000, 180)), 100, '194JB')),
+  ('bills', 'b15', pg_temp.doc('bills', 'b15', 'KA-1', '2025-07-06', 'open', 'VZ15', 'R2502 Mehta', '29AAACM2502A1Z5', 1000, 180, 0, 0, jsonb_build_array(pg_temp.ln('A-SW', 1000, 180)))),
+  ('bills', 'b16', pg_temp.doc('bills', 'b16', 'MC-1', '2025-07-07', 'open', 'VZ1', 'R2502 Mehta', '07AAACM2502A1Z5', 1000, 0, 0, 0, jsonb_build_array(pg_temp.ln('A-SW', 600, 0), pg_temp.ln('A-INT', 400, 0)), 100, '194JB')),
+  ('expenses', 'e2', pg_temp.doc('expenses', 'e2', '', '2025-07-08', 'nonbillable', 'VZ1', 'R2502 Mehta', '', 300, 0, 0, 0, jsonb_build_array(pg_temp.ln('A-RENT', 300, 0)))),
+  ('expenses', 'e3', pg_temp.doc('expenses', 'e3', '', '2025-07-01', 'nonbillable', 'VZ1', 'R2502 Mehta', '07AAACM2502A1Z5', 500, 90, 0, 0, jsonb_build_array(pg_temp.ln('A-RENT', 500, 90)))),
+  ('vendorpayments', 'p6', jsonb_build_object('kind', 'vendorpayments', 'zohoId', 'p6', 'number', '6', 'date', '2025-07-10', 'status', '', 'amount', 500, 'unapplied', 0, 'mode', 'NEFT',
+     'paidThrough', 'HDFC 4523', 'vendorName', 'R2502 Mehta', 'applied', jsonb_build_array(jsonb_build_object('billZohoId', 'b14', 'billNumber', 'TP-1', 'amount', 500)), 'problems', '[]'::jsonb)),
+  ('vendorpayments', 'p7', jsonb_build_object('kind', 'vendorpayments', 'zohoId', 'p7', 'number', '7', 'date', '2025-07-20', 'status', '', 'amount', 580, 'unapplied', 0, 'mode', 'NEFT',
+     'paidThrough', 'HDFC 4523', 'vendorName', 'R2502 Mehta', 'applied', jsonb_build_array(jsonb_build_object('billZohoId', 'b14', 'billNumber', 'TP-1', 'amount', 580)), 'problems', '[]'::jsonb)),
   ('vendorpayments', 'p4', jsonb_build_object('kind', 'vendorpayments', 'zohoId', 'p4', 'number', '4', 'date', '2025-06-13', 'status', '', 'amount', 50, 'unapplied', 50, 'mode', 'UPI',
      'paidThrough', 'HDFC 4523', 'vendorName', 'R2502 Mehta', 'applied', '[]'::jsonb, 'problems', '[]'::jsonb))
 ) as x(kind, zid, p);
@@ -222,10 +235,10 @@ begin
   if v.zoho_contact_id <> 'VZ9' or e.vendor_id <> v.id then raise exception 'FAIL 3d: vendor not created from Zoho %', to_jsonb(v); end if;
   -- 3d2. A hand vendor without GSTIN gets Zoho's (the ITC rule reads the vendor master).
   if (select gstin from public.vendors where id = 'b2502000-0000-0000-0000-0000000000d2') is distinct from '07AAACN2502A1Z5' then raise exception 'FAIL 3d2: GSTIN not copied'; end if;
-  -- 3e. b3: a COGS bill, unpaid, TDS noted for the first payment.
+  -- 3e. b3: a COGS bill, unpaid; its Zoho TDS in real fields (R-2502c), not in notes.
   select * into b from public.vendor_bills where zoho_doc_id = 'bills:b3';
   if b.category <> 'COGS-Workspace' or b.subtotal <> 2000 or b.igst <> 360 or b.total <> 2360 or b.status <> 'unpaid'
-     or b.document_type <> 'tax_invoice' or b.bill_no <> 'C-1' or b.notes not like '%TDS 194C ₹200%' then
+     or b.document_type <> 'tax_invoice' or b.bill_no <> 'C-1' or b.zoho_tds_amount <> 200 or b.zoho_tds_section <> '194C' or b.notes like '%TDS%' then
     raise exception 'FAIL 3e: b3 %', to_jsonb(b);
   end if;
   -- 3f. b9: unmapped → Unmapped — review. b10: RCM.
@@ -237,10 +250,14 @@ begin
   select count(*) into n from public.activity_log where action = 'zoho_fy_purchases.imported' and entity_id = v_batch::text;
   if n <> 1 then raise exception 'FAIL 3i: % activity rows', n; end if;
 
-  -- 3j. Expenses kind: paid (no bank line yet), Office Rent, IGST head.
-  r := public.import_zoho_fy_purchases('expenses', '2025-26', '[{"zoho_id":"e1","vendor_id":"b2502000-0000-0000-0000-0000000000d1"}]', false);
+  -- 3j. Expenses kind: paid from the mapped app account (bank: no line yet — Reconcile banks it), Office Rent, IGST head.
+  --     R-2502c: with no account it is not imported (never a blank method).
+  r := public.import_zoho_fy_purchases('expenses', '2025-26', '[{"zoho_id":"e1","vendor_id":"b2502000-0000-0000-0000-0000000000d1"}]', true);
+  if coalesce(r->'skipped'->0->>'reason', '') not like 'Choose the app account for Zoho''s "HDFC 4523"%' then raise exception 'FAIL 3j0: no account accepted %', r; end if;
+  r := public.import_zoho_fy_purchases('expenses', '2025-26', '[{"zoho_id":"e1","vendor_id":"b2502000-0000-0000-0000-0000000000d1","account_id":"b2502000-0000-0000-0000-0000000000e1"}]', false);
   select * into e from public.expenses where zoho_doc_id = 'expenses:e1';
-  if (r->>'imported')::int <> 1 or e.category <> 'Office Rent' or not e.paid or e.paid_date <> '2025-05-20' or e.amount <> 590 or e.igst <> 90 or e.due_date is not null then
+  if (r->>'imported')::int <> 1 or e.category <> 'Office Rent' or not e.paid or e.paid_date <> '2025-05-20' or e.amount <> 590 or e.igst <> 90 or e.due_date is not null
+     or e.payment_method <> 'bank' or e.bank_account_id <> 'b2502000-0000-0000-0000-0000000000e1' or e.reconciled_txn_id is not null then
     raise exception 'FAIL 3j: expense % %', r, to_jsonb(e);
   end if;
 
@@ -272,27 +289,33 @@ begin
   -- 5. Vendor payments (R-2502b): NO manual bank line. A COGS bill's payment is reported for
   --    Reconcile, never booked; an expense bill is marked paid (no bank line).
   r := public.import_zoho_fy_vendor_payments('2025-26',
-    '[{"zoho_id":"p1"},{"zoho_id":"p2","bank_account_id":"b2502000-0000-0000-0000-0000000000e1"},{"zoho_id":"p3"},{"zoho_id":"p4"},{"zoho_id":"p5"}]', false);
+    '[{"zoho_id":"p1","account_id":"b2502000-0000-0000-0000-0000000000e1"},{"zoho_id":"p2","account_id":"b2502000-0000-0000-0000-0000000000e1"},{"zoho_id":"p3","account_id":"b2502000-0000-0000-0000-0000000000e1"},{"zoho_id":"p4"},{"zoho_id":"p5","account_id":"b2502000-0000-0000-0000-0000000000e1"}]', false);
   v_pay := (r->>'batch_id')::uuid;
-  if (r->>'imported')::int <> 2 or jsonb_array_length(r->'part_paid') <> 1 or (r->'advances'->0->>'amount')::int <> 500
-     or r->'skipped'->0->>'reason' not like '%advance%' or (r->>'tds')::int <> 0 then
+  if (r->>'imported')::int <> 1 or (r->'advances'->0->>'amount')::int <> 500
+     or r->'skipped'->0->>'reason' not like '%advance%' then
     raise exception 'FAIL 5a: payments %', r;
   end if;
-  -- 5a2. Both COGS payments listed for Reconcile; the bill's Zoho TDS once (with the first).
-  if jsonb_array_length(r->'cogs_bills') <> 2
-     or (r->'cogs_bills'->0->>'amount')::int <> 1000 or (r->'cogs_bills'->0->>'tds')::int <> 200 or r->'cogs_bills'->0->>'tds_section' <> '194C'
-     or (r->'cogs_bills'->1->>'amount')::int <> 1160 or (r->'cogs_bills'->1->>'tds')::int <> 0 then
-    raise exception 'FAIL 5a2: cogs list %', r->'cogs_bills';
+  -- 5a2. Listed for Reconcile: both COGS payments (the bill's Zoho TDS once, with the first) and b2's part payment.
+  if jsonb_array_length(r->'to_reconcile') <> 3
+     or r->'to_reconcile'->0->>'why' <> 'cogs' or (r->'to_reconcile'->0->>'amount')::int <> 1000 or (r->'to_reconcile'->0->>'tds')::int <> 200 or r->'to_reconcile'->0->>'tds_section' <> '194C'
+     or (r->'to_reconcile'->1->>'why') <> 'parts' or (r->'to_reconcile'->1->>'amount')::int <> 300
+     or (r->'to_reconcile'->2->>'amount')::int <> 1160 or (r->'to_reconcile'->2->>'tds')::int <> 0 then
+    raise exception 'FAIL 5a2: to_reconcile %', r->'to_reconcile';
+  end if;
+  -- 5a3. Reconcile's open COGS-bill item pre-fills the bill's Zoho TDS (R-2502c).
+  if not exists (select 1 from public.bank_debit_vendor_open_items('b2502000-0000-0000-0000-0000000000d1') o
+                  where o.source = 'vendor_bill' and o.bill_no = 'C-1' and o.tds_amount = 200 and o.tds_section = '194C') then
+    raise exception 'FAIL 5a3: open item has no TDS';
   end if;
   -- 5b. b1 paid: 1080 + TDS 100 = 1180 — and no bank line made for it.
   select * into e from public.expenses where zoho_doc_id = 'bills:b1';
-  if not e.paid or e.paid_date <> '2025-06-10' or e.reconciled_txn_id is not null then raise exception 'FAIL 5b: b1 not paid %', to_jsonb(e); end if;
+  if not e.paid or e.paid_date <> '2025-06-10' or e.reconciled_txn_id is not null or e.payment_method <> 'bank' then raise exception 'FAIL 5b: b1 not paid %', to_jsonb(e); end if;
   -- 5c. b2 part paid → still unpaid.
   if exists (select 1 from public.expenses where zoho_doc_id = 'bills:b2' and paid) then raise exception 'FAIL 5c: part payment marked paid'; end if;
   -- 5d. b3 (COGS) untouched: unpaid, and NO bank line anywhere for this company.
   select * into b from public.vendor_bills where zoho_doc_id = 'bills:b3';
   if b.paid_amount <> 0 or b.status <> 'unpaid' then raise exception 'FAIL 5d: b3 booked %', to_jsonb(b); end if;
-  if exists (select 1 from public.bank_transactions t where t.tenant_id = 'b2502000-0000-0000-0000-0000000000f0') then
+  if exists (select 1 from public.bank_transactions t where t.tenant_id = 'b2502000-0000-0000-0000-0000000000f0' and t.bank_account_id = 'b2502000-0000-0000-0000-0000000000e1') then
     raise exception 'FAIL 5e: the import made a bank line';
   end if;
   -- 5f. Rerun payments = already.
@@ -307,19 +330,23 @@ begin
     if sqlerrm not like '%already has a payment%' then raise; end if;
   end;
   r := public.remove_zoho_fy_purchase_import(v_pay, 'test undo payments');
-  if (r->>'removed')::int <> 2 then raise exception 'FAIL 6a: payments undo %', r; end if;
+  if (r->>'removed')::int <> 1 then raise exception 'FAIL 6a: payments undo %', r; end if;
   if exists (select 1 from public.expenses where zoho_doc_id = 'bills:b1' and paid) then raise exception 'FAIL 6b: b1 still paid'; end if;
   r := public.remove_zoho_fy_purchase_import(v_batch, 'test undo bills');
   if (r->>'removed')::int <> 7 then raise exception 'FAIL 6d: bills undo %', r; end if;
   if exists (select 1 from public.expenses where purchase_import_batch_id = v_batch) then raise exception 'FAIL 6e: rows left'; end if;
   if (select removed_at from public.zoho_fy_import_batches where id = v_batch) is null then raise exception 'FAIL 6f: batch not marked'; end if;
   if (select count(*) from public.activity_log where action = 'zoho_fy_purchases.import_removed') <> 2 then raise exception 'FAIL 6g: undo not logged'; end if;
+  -- 6h. R-2502c: the vendor fields the import set are put back — the vendor it made is gone, the GSTIN / Zoho id it filled are empty again.
+  if exists (select 1 from public.vendors where tenant_id = 'b2502000-0000-0000-0000-0000000000f0' and name = 'R2502 NewCo') then raise exception 'FAIL 6h: made vendor left'; end if;
+  if (select gstin from public.vendors where id = 'b2502000-0000-0000-0000-0000000000d2') is not null then raise exception 'FAIL 6i: filled GSTIN left'; end if;
+  if (select zoho_contact_id from public.vendors where id = 'b2502000-0000-0000-0000-0000000000d1') is not null then raise exception 'FAIL 6j: filled Zoho id left'; end if;
 
   -- 7. Import again, then the FY 4523 statement arrives: Reconcile banks the imported payment on the
   --    real debit (expense bill: recorded payment; COGS bill: paid on the debit with its Zoho TDS) —
   --    the cash is counted ONCE (one bank line each, nothing left "paid outside the bank").
   r := public.import_zoho_fy_purchases('bills', '2025-26', pg_temp.bill_picks(), false);
-  r := public.import_zoho_fy_vendor_payments('2025-26', '[{"zoho_id":"p1"},{"zoho_id":"p2"}]', false);
+  r := public.import_zoho_fy_vendor_payments('2025-26', '[{"zoho_id":"p1","account_id":"b2502000-0000-0000-0000-0000000000e1"},{"zoho_id":"p2"}]', false);
   v_pay := (r->>'batch_id')::uuid;
   reset role;
   insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, source)
@@ -358,6 +385,94 @@ begin
     raise exception 'FAIL 7f: undo after reconcile';
   exception when sqlstate 'P0001' then
     if sqlerrm not like '%matched to a bank line%' then raise; end if;
+  end;
+
+  -- 8. Independent-review fixes (R-2502c).
+  -- 8a. The map takes only the whitelist (no special category, no free COGS-*, not "salaries").
+  perform pg_temp.as_user('b2502000-0000-0000-0000-0000000000a1');
+  begin
+    perform public.save_zoho_account_categories('[{"zoho_account_id":"A-X","category":"Employee advance"}]');
+    raise exception 'FAIL 8a: special category accepted';
+  exception when sqlstate '22023' then null;
+  end;
+  begin
+    perform public.save_zoho_account_categories('[{"zoho_account_id":"A-X","category":"COGS-Anything"}]');
+    raise exception 'FAIL 8a2: free COGS-* accepted';
+  exception when sqlstate '22023' then null;
+  end;
+  begin
+    perform public.save_zoho_account_categories('[{"zoho_account_id":"A-X","category":"salaries"}]');
+    raise exception 'FAIL 8a3: salaries accepted';
+  exception when sqlstate '22023' then null;
+  end;
+  perform public.save_zoho_account_categories('[{"zoho_account_id":"A-INT","category":"Internet & Phone"}]');
+
+  -- 8b. A bill from "R2502 Mehta" with ANOTHER GSTIN (KA): a picked Mehta is refused; unpicked → its own new vendor;
+  --     Mehta's Zoho id is never overwritten.
+  r := public.import_zoho_fy_purchases('bills', '2025-26', '[{"zoho_id":"b15","vendor_id":"b2502000-0000-0000-0000-0000000000d1"}]', true);
+  if coalesce(r->'skipped'->0->>'reason', '') not like '%has GSTIN 07AAACM2502A1Z5 in the app%' then raise exception 'FAIL 8b: other-GSTIN pick accepted %', r; end if;
+  r := public.import_zoho_fy_purchases('bills', '2025-26',
+    '[{"zoho_id":"b14","vendor_id":"b2502000-0000-0000-0000-0000000000d1"},{"zoho_id":"b15"},{"zoho_id":"b16","vendor_id":"b2502000-0000-0000-0000-0000000000d1"}]', false);
+  v_batch := (r->>'batch_id')::uuid;
+  if (r->>'imported')::int <> 3 then raise exception 'FAIL 8b2: %', r; end if;
+  select * into v from public.vendors where id = (select vendor_id from public.expenses where zoho_doc_id = 'bills:b15');
+  if v.id = 'b2502000-0000-0000-0000-0000000000d1' or v.gstin <> '29AAACM2502A1Z5' or v.zoho_contact_id <> 'VZ15' then raise exception 'FAIL 8b3: KA bill on % ', to_jsonb(v); end if;
+  if (select zoho_contact_id from public.vendors where id = 'b2502000-0000-0000-0000-0000000000d1') <> 'VZ1' then raise exception 'FAIL 8b4: Mehta''s Zoho id overwritten'; end if;
+
+  -- 8c. 26Q: TDS of a two-category bill spread by taxable (600 / 400 → 60 / 40), not all on the first row.
+  if (select string_agg(x.category || '=' || x.tds_amount || ':' || coalesce(x.tds_section, '-'), ',' order by x.zoho_leg) from public.expenses x where x.zoho_doc_id = 'bills:b16')
+     <> 'Software=60:194JB,Internet & Phone=40:194JB' then
+    raise exception 'FAIL 8c: TDS rows %', (select jsonb_agg(to_jsonb(x)) from public.expenses x where x.zoho_doc_id = 'bills:b16');
+  end if;
+
+  -- 8d. Duplicate check with no number: e3 (Mehta, 1 Jul, ₹590) ≈ the hand entry of 2 Jul ₹590 → refused.
+  r := public.import_zoho_fy_purchases('expenses', '2025-26',
+    '[{"zoho_id":"e3","vendor_id":"b2502000-0000-0000-0000-0000000000d1","account_id":"b2502000-0000-0000-0000-0000000000e1"},
+      {"zoho_id":"e2","vendor_id":"b2502000-0000-0000-0000-0000000000d1","account_id":"b2502000-0000-0000-0000-0000000000e2"}]', false);
+  if coalesce(r->'skipped'->0->>'reason', '') not like 'Looks already in the books (not from Zoho)%' or (r->>'imported')::int <> 1 then raise exception 'FAIL 8d: dup %', r; end if;
+  -- 8e. Paid from petty cash: payment method cash + its petty-cash line (the line IS the reconciliation).
+  select * into e from public.expenses where zoho_doc_id = 'expenses:e2';
+  if e.payment_method <> 'cash' or e.reconciled_txn_id is null
+     or not exists (select 1 from public.bank_transactions t where t.id = e.reconciled_txn_id and t.bank_account_id = 'b2502000-0000-0000-0000-0000000000e2' and t.debit = 300) then
+    raise exception 'FAIL 8e: petty cash %', to_jsonb(e);
+  end if;
+
+  -- 8f. An expense bill Zoho paid in TWO payments: never marked paid; both listed (TDS with the first);
+  --     then each 4523 debit pays its part in Reconcile (R-1915) — the cash counted once.
+  r := public.import_zoho_fy_vendor_payments('2025-26', '[{"zoho_id":"p6","account_id":"b2502000-0000-0000-0000-0000000000e1"},{"zoho_id":"p7","account_id":"b2502000-0000-0000-0000-0000000000e1"}]', false);
+  if (r->>'imported')::int <> 0 or jsonb_array_length(r->'to_reconcile') <> 2
+     or (r->'to_reconcile'->0->>'tds')::int <> 100 or (r->'to_reconcile'->1->>'tds')::int <> 0 then
+    raise exception 'FAIL 8f: %', r;
+  end if;
+  if exists (select 1 from public.expenses where zoho_doc_id = 'bills:b14' and paid) then raise exception 'FAIL 8f2: marked paid'; end if;
+  reset role;
+  insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, source)
+  values ('b2502000-0000-0000-0000-00000000aa03', 'b2502000-0000-0000-0000-0000000000f0', 'b2502000-0000-0000-0000-0000000000e1', '2025-07-10', 'NEFT R2502 MEHTA TP-1 a', 500, 0, 'csv_upload'),
+         ('b2502000-0000-0000-0000-00000000aa04', 'b2502000-0000-0000-0000-0000000000f0', 'b2502000-0000-0000-0000-0000000000e1', '2025-07-20', 'NEFT R2502 MEHTA TP-1 b', 580, 0, 'csv_upload');
+  set local role authenticated;
+  select * into e from public.expenses where zoho_doc_id = 'bills:b14';
+  perform public.reconcile_bank_debit_to_vendor('b2502000-0000-0000-0000-00000000aa03'::uuid, 'b2502000-0000-0000-0000-0000000000d1'::uuid, null,
+    jsonb_build_array(jsonb_build_object('source', 'expense', 'doc_id', e.id, 'amount', 600, 'tds_amount', 100, 'tds_section', '194JB')));
+  perform public.reconcile_bank_debit_to_vendor('b2502000-0000-0000-0000-00000000aa04'::uuid, 'b2502000-0000-0000-0000-0000000000d1'::uuid, null,
+    jsonb_build_array(jsonb_build_object('source', 'expense', 'doc_id', e.id, 'amount', 580)));
+  select * into e from public.expenses where zoho_doc_id = 'bills:b14';
+  reset role;
+  if not e.paid or (select count(*) from public.bank_vendor_payment_lines l where l.expense_id = e.id) <> 2
+     or (select sum(l.cash) from public.bank_vendor_payment_lines l where l.expense_id = e.id) <> 1080
+     or (select sum(l.tds_amount) from public.bank_vendor_payment_lines l where l.expense_id = e.id) <> 100 then
+    raise exception 'FAIL 8f3: two parts %', to_jsonb(e);
+  end if;
+  set local role authenticated;
+
+  -- 8g. Undo refuses a row edited after the import.
+  reset role;
+  update public.expenses set category = 'Travel' where zoho_doc_id = 'bills:b15';
+  set local role authenticated;
+  begin
+    perform public.remove_zoho_fy_purchase_import(v_batch, 'test undo edited');
+    raise exception 'FAIL 8g: edited row removed';
+  exception when sqlstate 'P0001' then
+    if sqlerrm not like '%was edited after the import%' then raise; end if;
   end;
 
   raise notice 'R-2502 SQL test: all passed';
