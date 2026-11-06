@@ -19,6 +19,7 @@ vi.mock("@/lib/queries/bank", async (orig) => ({
   useBankAccount: () => ({ data: { id: "acc-1", opening_balance: 0, opening_balance_date: "2025-04-01", account_type: "current" } }),
   useExistingTxnKeys: () => ({ data: { bal: new Map(), prefix: new Map(), prefixNoBal: new Map() } }),
   useHasBankLinesFrom: () => ({ data: false }),
+  useBankLinesBetween: () => ({ data: [] }),
   useImportBankTransactions: () => ({ mutateAsync: state.importSpy, isPending: false }),
   useUpdateBankAccount: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));

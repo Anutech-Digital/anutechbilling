@@ -13,8 +13,9 @@
  *   app's 1 Apr 2026 opening — and the app does not have that line yet. R-2497 only added lines
  *   dated BEFORE the old opening date, so it said −₹37,172 and refused a correct statement.
  *   The meeting point now holds:
- *     • every statement line dated from the new date up to the day before the old date (new or
- *       already in the app — after the move they are all counted), and
+ *     • every line dated from the new date up to the day before the old date — the statement's
+ *       new lines AND what the app already holds there, hand-entered lines too (after the move
+ *       they are all counted; the database counts them, so the preview does: `existingInWindow`), and
  *     • every statement line that is NEW to the app and dated ON or before the old date, by its
  *       value date where the bank gives one (`meetDate`: the earlier of the two dates). A line
  *       the app already has on that date is part of the existing data, so it is not counted.
@@ -88,6 +89,11 @@ export function openingMoveCheck(args: {
   rows: readonly Line[];
   /** R-2522: the statement lines NOT yet in the app (what the import adds). Default: all rows. */
   newRows?: readonly Line[];
+  /** R-2522: the lines ALREADY in the app dated from the new date to the day before the old
+      date — statement lines imported before AND hand-entered (manual) ones. After the move they
+      are all counted, so the database counts them; given here, the preview counts exactly what
+      the database will. Not loaded yet → the statement's own lines in that window stand in. */
+  existingInWindow?: readonly Line[];
   newOpening: number;
   newDate: string;
   oldOpening: number;
@@ -99,8 +105,14 @@ export function openingMoveCheck(args: {
   const newRows = args.newRows ?? rows;
   if (!accountHasMoney || !oldDate) return { kind: "none" };
   if (newDate >= oldDate) return { kind: "later", oldDate };
-  const before = rows.filter((r) => r.txn_date >= newDate && r.txn_date < oldDate);
   const onOld = newRows.filter((r) => r.txn_date >= oldDate && meetDate(r) <= oldDate);
+  /* The window [new date, old date): what will be in the app after the import — the lines
+     already there plus the new ones (the database's rule); before those are loaded, the
+     statement's own lines in the window. */
+  const inWindow = (r: Line) => r.txn_date >= newDate && r.txn_date < oldDate;
+  const before = args.existingInWindow
+    ? [...args.existingInWindow.filter(inWindow), ...newRows.filter(inWindow)]
+    : rows.filter(inWindow);
   const counted = [...before, ...onOld];
   const summed = Math.round(newOpening + counted.reduce((s, r) => s + net(r), 0));
   const stated = statementBalanceAtMeet(counted);

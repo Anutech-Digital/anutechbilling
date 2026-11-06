@@ -715,6 +715,36 @@ export function useHasBankLinesFrom(accountId: string | null | undefined, date: 
   });
 }
 
+/** R-2522: a line already in the account, as the opening-move preview needs it. */
+export type BankWindowLine = {
+  id: string; txn_date: string; debit: number; credit: number; balance_after: number | null;
+  source: string; description: string;
+};
+
+/**
+ * R-2522: the account's lines dated from `from` up to the day before `before` — what
+ * set_bank_opening_from_statement counts at the meeting point besides the statement's new lines
+ * (manual lines too). Paged (fetchAllRows); off until both dates are known.
+ */
+export function useBankLinesBetween(accountId: string | null | undefined, from: string | null | undefined, before: string | null | undefined) {
+  return useQuery({
+    queryKey: ["bank_transactions", accountId, "between", from, before],
+    enabled: Boolean(accountId && from && before && from < before),
+    queryFn: async (): Promise<BankWindowLine[]> => {
+      const supabase = createClient();
+      return fetchAllRows<BankWindowLine>((lo, hi) => supabase
+        .from("bank_transactions")
+        .select("id, txn_date, debit, credit, balance_after, source, description")
+        .eq("bank_account_id", accountId as string)
+        .gte("txn_date", from as string)
+        .lt("txn_date", before as string)
+        .order("id", { ascending: true })
+        .range(lo, hi));
+    },
+    staleTime: 15_000,
+  });
+}
+
 /** R-2497: the account's opening-balance changes, newest first. */
 export function useBankOpeningHistory(accountId: string | null | undefined) {
   return useQuery({
@@ -759,7 +789,11 @@ export type BankImportInput = {
    * transaction (import_bank_statement_with_opening, CLAUDE.md §17b): when the database refuses
    * the opening (statement does not match, books lock, role) no line stays behind either.
    */
-  opening?: { amount: number; date: string; acceptDifference?: boolean };
+  opening?: {
+    amount: number; date: string; acceptDifference?: boolean;
+    /** R-2522: the owner's reason for setting a non-matching opening anyway (kept in the history). */
+    reason?: string | null;
+  };
 };
 
 export async function importBankTransactions(
@@ -781,6 +815,7 @@ export async function importBankTransactions(
     const { error } = await supabase.rpc("set_bank_opening_from_statement" as never, {
       p_account_id: input.accountId, p_opening: input.opening.amount, p_date: input.opening.date,
       p_import_batch_id: null, p_accept_difference: input.opening.acceptDifference ?? false,
+      p_reason: input.opening.reason ?? null,
     } as never);
     if (error) throw error;
     return { inserted: 0, duplicates };
@@ -799,6 +834,9 @@ export async function importBankTransactions(
       txn_date: r.txn_date, description: r.description, debit: r.debit, credit: r.credit,
       balance_after: r.balance_after, reference: r.reference,
     };
+    /* R-2522: the statement's value date, when it differs from the txn date. */
+    const valueDate = (r as { value_date?: string | null }).value_date;
+    if (valueDate) line.value_date = valueDate;
     if (r.category) {
       line.category = r.category;
       line.category_source = (r as { category_source?: string }).category_source ?? null;
@@ -815,6 +853,7 @@ export async function importBankTransactions(
         p_opening: input.opening.amount,
         p_date: input.opening.date,
         p_accept_difference: input.opening.acceptDifference ?? false,
+        p_reason: input.opening.reason ?? null,
       } as never)
     : await supabase.rpc("import_bank_statement", {
         p_account_id: input.accountId,
