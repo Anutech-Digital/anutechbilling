@@ -86,6 +86,8 @@ const SQL_NOT_SALE: Record<string, string> = {
   import_zoho_fy_receipts: "R-2501: finds the imported Zoho sale (or opening invoice) a Zoho payment was applied to and what is still due on it, to record the receipt — not GST or revenue",
   set_invoice_external_number: "R-2360: stores the Zoho invoice number on one invoice (duplicate check) — not GST or revenue",
   invoice_external_number_holder: "R-2360: which invoice already is a Zoho number (duplicate check) — not GST or revenue",
+  bank_sale_take_back: "R-2518: the one invoice of a bank-receipt sale being taken back (credit note + receipt removed) — not GST or revenue",
+  repair_split_merged_bank_sale: "R-2518: the merged bank-sale invoice to split per Zoho invoice (checks + backup; owner data repair) — not GST or revenue",
   split_outstanding_for: "per quote",
   sync_invoice_subscription_outstanding: "R-2178: one invoice's quote / billing-part link, to re-sync the subscriptions' stored balance after a credit / debit note — not GST or revenue",
   subscription_dues_drift: "R-2154: read-only report — only asks whether a quote has any invoice (then the invoice is the claim)",

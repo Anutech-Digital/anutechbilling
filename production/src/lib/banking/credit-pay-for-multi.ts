@@ -134,13 +134,16 @@ export interface SplitSaleInput {
   subStart: string | null;
   subRenewal: string | null;
   amount: number;
+  /** R-2518: this sale's own Zoho invoice number (several sales on one line — one per Zoho invoice). */
+  externalNumber?: string | null;
 }
 
 export interface SplitInput {
   transactionId: string;
   customerId: string;
   items: ReadonlyArray<Pick<OpenItem, "quote_id" | "invoice_id"> & { amount: number }>;
-  sale: SplitSaleInput | null;
+  /** One new sale, or (R-2518) several — one per Zoho invoice, each with its own externalNumber. */
+  sale: SplitSaleInput | readonly SplitSaleInput[] | null;
   rest: SplitRest | null;
   /** R-2360: the Zoho invoice number of the NEW sale (Find in Zoho) — kept on its invoice. */
   externalNumber?: string | null;
@@ -148,24 +151,27 @@ export interface SplitInput {
 
 /** reconcile_bank_credit_split's arguments — exported so the tests pin what reaches the server. */
 export function splitArgs(i: SplitInput) {
+  const saleArg = (s: SplitSaleInput) => ({
+    lines: s.lines,
+    billing_cycle: s.billingCycle,
+    create_subscription: s.createSubscription,
+    sub_start: s.createSubscription ? s.subStart : null,
+    sub_renewal: s.createSubscription ? s.subRenewal : null,
+    amount: cleanAmount(s.amount),
+    /* R-2518: each sale's own Zoho number (stored on its invoice by the RPC). */
+    ...(s.externalNumber?.trim() ? { external_number: s.externalNumber.trim() } : {}),
+  });
+  const several = Array.isArray(i.sale);
   return {
     p_txn_id: i.transactionId,
     p_customer_id: i.customerId,
     p_items: i.items.map((it) => (it.invoice_id
       ? { invoice_id: it.invoice_id, amount: cleanAmount(it.amount) }
       : { quote_id: it.quote_id, amount: cleanAmount(it.amount) })),
-    p_sale: i.sale
-      ? {
-          lines: i.sale.lines,
-          billing_cycle: i.sale.billingCycle,
-          create_subscription: i.sale.createSubscription,
-          sub_start: i.sale.createSubscription ? i.sale.subStart : null,
-          sub_renewal: i.sale.createSubscription ? i.sale.subRenewal : null,
-          amount: cleanAmount(i.sale.amount),
-        }
-      : null,
+    /* R-2518: several sales → an array (one per Zoho invoice); one sale → the object, as before. */
+    p_sale: i.sale ? (several ? (i.sale as readonly SplitSaleInput[]).map(saleArg) : saleArg(i.sale as SplitSaleInput)) : null,
     p_rest: i.rest,
-    /* R-2360: only with a new sale — without it the call resolves to the old 5-argument function. */
-    ...(i.sale && i.externalNumber?.trim() ? { p_external_number: i.externalNumber.trim() } : {}),
+    /* R-2360: only with ONE new sale — without it the call resolves to the old 5-argument function. */
+    ...(i.sale && !several && i.externalNumber?.trim() ? { p_external_number: i.externalNumber.trim() } : {}),
   };
 }

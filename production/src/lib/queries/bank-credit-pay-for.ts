@@ -394,8 +394,16 @@ export function useSplitFromBankCredit() {
       const r = data as PayForResult & ZohoKept;
       /* R-2397: the new sale is below cost — nothing on the line was paid; its quote waits. */
       if (r.needs_approval) return { ...r, customer_id: input.customerId, customer_name: input.customerName ?? null };
-      const parts = await Promise.all((r.parts ?? []).map((p) =>
-        p.new_quote ? raiseFirstInstalment(p, (input.sale?.billingCycle ?? null) as BillingCycle | null) : Promise.resolve(p)));
+      /* R-2518: several new sales (one per Zoho invoice) — the n-th new-quote part is the n-th sale. */
+      const sales = input.sale ? (Array.isArray(input.sale) ? input.sale : [input.sale]) : [];
+      let n = 0;
+      const parts = await Promise.all((r.parts ?? []).map(async (p) => {
+        if (!p.new_quote) return p;
+        const s = sales[n++];
+        const raised = await raiseFirstInstalment(p, (s?.billingCycle ?? null) as BillingCycle | null);
+        /* R-2518: a per-Zoho sale billed in parts — its own number on its first part's invoice. */
+        return sales.length > 1 ? keepZohoNumberOnFirstPart<PayForResult & ZohoKept>(raised as PayForResult & ZohoKept) : raised;
+      }));
       /* R-2360: the new sale billed in parts — its first part's invoice gets the Zoho number now. */
       const sale = parts.find((p) => p.new_quote);
       const kept = sale && r.external_number

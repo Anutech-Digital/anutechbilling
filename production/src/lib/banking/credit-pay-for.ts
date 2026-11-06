@@ -323,6 +323,9 @@ export interface SaleLine {
   priceTyped?: boolean;
   /** R-2095 (Sept): the subscription's END-domain (Zoho bills per end-domain); empty = the customer's. */
   domain?: string | null;
+  /** R-2518: the Zoho invoice this line came from (Find in Zoho / Reconcile from Zoho). When a bank
+   *  receipt paid several Zoho invoices, Save books one app sale per invoice (lib/banking/zoho-sales-split). */
+  zohoInvoice?: string;
   /** R-2178: the commitment the typed price was entered for (its unit: ₹/year, ₹/month, once). A
    *  Commitment change never rewrites a typed price; when this differs from `cycle` the line asks
    *  (typedPriceCheck) until the operator converts or keeps the number. */
