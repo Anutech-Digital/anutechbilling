@@ -193,7 +193,7 @@ describe("review fixes", () => {
   it("a void payment's unapplied balance is not an advance to book", () => {
     const p = buildPaymentPlan([{ kind: "vendorpayments", zohoId: "PV", number: "9", date: "2025-06-01", status: "void", vendorZohoId: "V", vendorName: "X",
       currency: "INR", amount: 50000, unapplied: 50000, paidThrough: "", mode: "", reference: "", applied: [], problems: [] }],
-    { fyStart: "2025-04-01", fyEnd: "2026-03-31", booksStart: "2025-04-01", lockedUntil: null, targets: new Map(), importedPayments: new Set() });
+    { fyStart: "2025-04-01", fyEnd: "2026-03-31", booksStart: "2025-04-01", lockedUntil: null, targets: new Map(), importedPayments: new Set(), bills: new Map(), bankAccounts: [], accountMap: {} });
     expect(p.counts.advanceAmount).toBe(0);
   });
 });
