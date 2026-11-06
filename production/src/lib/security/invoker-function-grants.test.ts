@@ -55,6 +55,9 @@ const DEFINER_INTERNAL: Record<string, string> = {
     "20261003130000: used only by customer_names_agree, inside match_existing_customer (definer).",
   customer_names_agree:
     "20261003130000: used only inside match_existing_customer (security definer).",
+  r2522_bank_meet_balance:
+    "R-2522: takes a tenant id as a parameter, so no client role may call it (revoked from " +
+    "public/anon/authenticated); used only inside set_bank_opening_from_statement (security definer).",
 };
 
 /* ── parsing ──────────────────────────────────────────────────────────────── */

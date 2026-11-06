@@ -36,6 +36,7 @@ import {
   planBankImport,
   useBankAccount,
   useHasBankLinesFrom,
+  useBankLinesBetween,
 } from "@/lib/queries/bank";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { openingMoveCheck, linesBeforeOpening } from "@/lib/banking/opening-move";
@@ -97,7 +98,26 @@ const toLine = (r: PreviewRow): ParsedRow => ({
   credit: r.credit,
   balance_after: r.balance_after,
   reference: r.reference,
+  /* R-2522: the value date travels when the file printed one that differs (opening meeting point). */
+  ...(r.value_date ? { value_date: r.value_date } : {}),
 });
+
+/** R-2522: preview rows per page — 3,665 rows each with a category dropdown froze the dialog. */
+export const PREVIEW_PAGE_SIZE = 100;
+/** R-2522: the owner's reason for "set it anyway" — at least this many characters (the database's rule). */
+const REASON_MIN = 5;
+
+/**
+ * R-2522: the "As of" date proposed for a statement whose first line is `first`: 1 April of its
+ * FY when the first line falls in that FY's first 30 days (a year's statement whose first entry
+ * is on 3 Apr still opens the books on 1 Apr; the box then says nothing moved in between is
+ * assumed), else the first line's date.
+ */
+export function defaultOpeningDate(first: string): string {
+  const fyStart = fyStartFor(first);
+  const days = (Date.parse(first) - Date.parse(fyStart)) / 86_400_000;
+  return days <= 30 ? fyStart : first;
+}
 
 /**
  * Last gate before the preview (CSV and AI alike): every date must be a real calendar
@@ -107,7 +127,17 @@ const toLine = (r: PreviewRow): ParsedRow => ({
  */
 function withRealDates(p: Preview | ParseResult, serverSwapped = 0): Preview {
   const fix = fixStatementDates(p.rows.map((r) => r.txn_date), localDateISO(new Date(Date.now() + 86_400_000)));   // +1 day: server clock may be UTC
-  const rows = p.rows.flatMap((r, i) => (fix.dates[i] ? [{ ...r, txn_date: fix.dates[i]! }] : []));
+  const rows = p.rows.flatMap((r, i) => {
+    const d = fix.dates[i];
+    if (!d) return [];
+    /* R-2522: a value date read in the order the txn date was NOT read in is unknown — dropped
+       when the txn date was corrected, never kept half-swapped (it places a line at the opening). */
+    if (d !== r.txn_date && r.value_date) {
+      const { value_date: _v, ...rest } = r;
+      return [{ ...rest, txn_date: d }];
+    }
+    return [{ ...r, txn_date: d }];
+  });
   const dropped = p.rows.length - rows.length;
   const swapped = fix.swapped + serverSwapped;
   const warnings = [...p.warnings];
@@ -204,9 +234,11 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
 
   /* ── Opening balance from this statement ──────────────────────────────────
      Off by default: replacing an account's opening balance moves every balance it
-     shows, so it happens only when the operator ticks it. The date defaults to the
-     start of the FY the statement's LATEST line is in — a statement that dips a few
-     days into March is still this year's statement. */
+     shows, so it happens only when the operator ticks it. R-2522: the date defaults to the
+     statement's FIRST date — a year's statement sets the opening at its start (it used to
+     default to the FY of the LATEST line, so a FY 25-26 statement ending on 1 Apr 2026
+     proposed 1 Apr 2026 and the date had to be typed by hand). A first line in the FY's first
+     month proposes 1 Apr itself (defaultOpeningDate), so the books open on the FY start. */
   const { data: account } = useBankAccount(open ? accountId : null);
   /* R-2497: never a plain overwrite — the import carries the opening to the database
      (set_bank_opening_from_statement), which checks that today's balance stays the same and
@@ -218,36 +250,21 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const isOwner = me?.role === "owner";
   const [applyOpening, setApplyOpening] = React.useState(false);
   const [acceptDifference, setAcceptDifference] = React.useState(false);
+  /* R-2522: the owner's reason for "set it anyway" — required, kept in the account's history. */
+  const [acceptReason, setAcceptReason] = React.useState("");
   const [openingDate, setOpeningDate] = React.useState("");
   React.useEffect(() => {
     setApplyOpening(false);
-    const latest = rawParsed?.rows.reduce<string | null>(
-      (max, r) => (max === null || r.txn_date > max ? r.txn_date : max), null);
-    setOpeningDate(latest ? fyStartFor(latest) : "");
+    const earliest = rawParsed?.rows.reduce<string | null>(
+      (min, r) => (min === null || r.txn_date < min ? r.txn_date : min), null);
+    setOpeningDate(earliest ? defaultOpeningDate(earliest) : "");
   }, [rawParsed]);
   const opening = React.useMemo(
     () => (parsed && openingDate ? openingBalanceFromStatement(parsed.rows, openingDate) : null),
     [parsed, openingDate],
   );
   const openingOn = applyOpening && opening?.ok === true;
-  React.useEffect(() => { setAcceptDifference(false); }, [rawParsed, openingDate, applyOpening]);
-
-  /* R-2497: moving the opening EARLIER must keep today's balance — the statement's balance at
-     the start of the old opening date must equal the old opening (±₹1). Preview of the check
-     the database makes on save. */
-  const moveCheck = React.useMemo(() => {
-    if (!openingOn || !opening?.ok || !parsed || !account) return null;
-    return openingMoveCheck({
-      rows: parsed.rows,
-      newOpening: opening.amount,
-      newDate: openingDate,
-      oldOpening: account.opening_balance ?? 0,
-      oldDate: account.opening_balance_date,
-      accountHasMoney: (account.opening_balance ?? 0) !== 0 || hasCountedLines === true,
-    });
-  }, [openingOn, opening, parsed, account, hasCountedLines, openingDate]);
-  const openingMismatch = moveCheck?.kind === "earlier" && !moveCheck.matches;
-  const openingWaits = openingMismatch && !(isOwner && acceptDifference);
+  React.useEffect(() => { setAcceptDifference(false); setAcceptReason(""); }, [rawParsed, openingDate, applyOpening]);
 
   /* R-2497: with the opening left as it is, lines dated before the account's opening date are
      imported but NOT counted in the balance (the opening already holds them) — said up front. */
@@ -274,15 +291,51 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const plan = React.useMemo(() => {
     if (!parsed) return null;
     const rows = parsed.rows.filter((r) => !isExcluded(r));
-    if (!existingKeys) return { duplicates: 0, freshCount: rows.length, skipped: [] as ParsedRow[] };
+    if (!existingKeys) return { duplicates: 0, freshCount: rows.length, fresh: rows, skipped: [] as ParsedRow[] };
     const p = planBankImport(rows, existingKeys);
-    return { duplicates: p.duplicates, freshCount: p.fresh.length, skipped: p.skipped };
+    return { duplicates: p.duplicates, freshCount: p.fresh.length, fresh: p.fresh as ParsedRow[], skipped: p.skipped };
   }, [parsed, existingKeys, isExcluded]);
   const [importSkipped, setImportSkipped] = React.useState(false);
   React.useEffect(() => { setImportSkipped(false); }, [rawParsed]);
   const dupCount = importSkipped ? 0 : (plan?.duplicates ?? 0);
   const skippedLines = plan?.skipped ?? [];
   const freshCount = (plan?.freshCount ?? 0) + (importSkipped ? skippedLines.length : 0);
+
+  /* R-2497 · R-2522: moving the opening EARLIER must keep today's balance — the statement's
+     balance where it meets the app's existing data must equal the old opening (±₹1). The SAME
+     rule the database applies on save (set_bank_opening_from_statement): the lines the import
+     adds (`newRows`), and the lines the app already holds between the two dates — manual ones
+     too (`existingInWindow`), so the preview and the save never show different differences. */
+  const movingEarlier = openingOn && !!account?.opening_balance_date && openingDate < account.opening_balance_date;
+  const windowQ = useBankLinesBetween(
+    open && movingEarlier ? accountId : null, openingDate, account?.opening_balance_date);
+  const windowLines = windowQ.data;
+  /* Never a preview without them — it would differ from the database's answer on save. */
+  const windowMissing = movingEarlier && !windowLines;
+  const moveCheck = React.useMemo(() => {
+    if (!openingOn || !opening?.ok || !parsed || !account || !plan || windowMissing) return null;
+    return openingMoveCheck({
+      rows: parsed.rows,
+      newRows: importSkipped ? [...plan.fresh, ...plan.skipped] : plan.fresh,
+      existingInWindow: windowLines,
+      newOpening: opening.amount,
+      newDate: openingDate,
+      oldOpening: account.opening_balance ?? 0,
+      oldDate: account.opening_balance_date,
+      accountHasMoney: (account.opening_balance ?? 0) !== 0 || hasCountedLines === true,
+    });
+  }, [openingOn, opening, parsed, account, hasCountedLines, openingDate, plan, importSkipped, windowLines, windowMissing]);
+  const openingMismatch = moveCheck?.kind === "earlier" && !moveCheck.matches;
+  const reasonOk = acceptReason.trim().length >= REASON_MIN;
+  const openingWaits = windowMissing || (openingMismatch && !(isOwner && acceptDifference && reasonOk));
+  /* R-2522: hand-entered lines between the new and the old opening date — after the move they
+     count, and one may be the same payment as a statement line (real case: manual "EMI 1 Thar
+     Roxx" ₹27,764 on 3 Mar 2026 next to the bank's EMI ₹30,183 on 5 Mar). */
+  const manualInWindow = movingEarlier ? (windowLines ?? []).filter((l) => l.source === "manual") : [];
+
+  /* R-2522: the preview table shows one page of rows at a time. */
+  const [previewPage, setPreviewPage] = React.useState(0);
+  React.useEffect(() => { setPreviewPage(0); }, [rawParsed]);
 
   React.useEffect(() => {
     if (!open) { setCsvText(""); setParsed(null); setMode("csv"); setReading(false); setOrigin(null); }
@@ -476,7 +529,11 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       return;
     }
     const withOpening = openingOn && opening?.ok
-      ? { amount: opening.amount, date: openingDate, acceptDifference: isOwner && acceptDifference }
+      ? {
+          amount: opening.amount, date: openingDate, acceptDifference: isOwner && acceptDifference,
+          /* R-2522: the owner's reason travels only with an accepted difference. */
+          ...(isOwner && acceptDifference ? { reason: acceptReason.trim() } : {}),
+        }
       : undefined;
     try {
       /* Categories travel with the rows. category_source is 'manual' where the operator
@@ -671,7 +728,9 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                 <div className="overflow-x-auto">
                   {/* Every row, in a scroll box — not the first five. A five-row preview
                       beside an editable category column would let somebody set 5 of 39
-                      categories and believe they had reviewed the statement. */}
+                      categories and believe they had reviewed the statement.
+                      R-2522: one page of PREVIEW_PAGE_SIZE rows at a time — every row is still
+                      reachable (Previous / Next), but 3,665 rows each with a dropdown froze it. */}
                   <div className="max-h-[320px] overflow-y-auto custom-scrollbar">
                   <table className="w-full text-xs">
                     <thead className="text-ink-3 sticky top-0 bg-paper">
@@ -684,7 +743,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                       </tr>
                     </thead>
                     <tbody>
-                      {parsed.rows.map((r, i) => {
+                      {parsed.rows.slice(previewPage * PREVIEW_PAGE_SIZE, (previewPage + 1) * PREVIEW_PAGE_SIZE).map((r, j) => {
+                        const i = previewPage * PREVIEW_PAGE_SIZE + j;
                         const suggestion = suggestions[i];
                         const chosen = categoryFor(i);
                         return (
@@ -774,6 +834,23 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                     </tbody>
                   </table>
                   </div>
+                  {parsed.rows.length > PREVIEW_PAGE_SIZE && (() => {
+                    const pages = Math.ceil(parsed.rows.length / PREVIEW_PAGE_SIZE);
+                    const from = previewPage * PREVIEW_PAGE_SIZE + 1;
+                    const to = Math.min(parsed.rows.length, (previewPage + 1) * PREVIEW_PAGE_SIZE);
+                    return (
+                      <div data-testid="preview-pager" className="mt-1.5 flex items-center justify-between gap-2 text-xs text-ink-3">
+                        <span>Rows {from}–{to} of {parsed.rows.length}</span>
+                        <span className="flex items-center gap-1">
+                          <Button type="button" variant="ghost" size="sm" disabled={previewPage === 0}
+                            onClick={() => setPreviewPage((p) => Math.max(0, p - 1))}>Previous</Button>
+                          <span className="tabular-nums">Page {previewPage + 1} of {pages}</span>
+                          <Button type="button" variant="ghost" size="sm" disabled={previewPage >= pages - 1}
+                            onClick={() => setPreviewPage((p) => Math.min(pages - 1, p + 1))}>Next</Button>
+                        </span>
+                      </div>
+                    );
+                  })()}
                   {/* The honest number — it says what is NOT done, so a half-categorised
                       statement cannot read as a finished one. */}
                   <p className="text-xs text-ink-3 mt-1.5">
@@ -788,15 +865,18 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             </div>
           )}
 
-          {/* Opening balance from this statement's running-balance column. */}
-          {parsed && parsed.rows.length > 0 && opening && (
-            <div className="rounded-md border border-hairline bg-paper-2/30 p-3">
+          {/* Opening balance from this statement's running-balance column.
+              R-2522: shown whenever the preview has lines — it used to render only while the date
+              was filled, so typing a date (the field is empty mid-typing) made the whole box,
+              checkbox and date field included, disappear. */}
+          {parsed && parsed.rows.length > 0 && (
+            <div data-testid="opening-box" className="rounded-md border border-hairline bg-paper-2/30 p-3">
               <label className="flex items-start gap-2 cursor-pointer">
                 <input
                   type="checkbox"
                   className="mt-0.5 accent-amber"
                   checked={applyOpening}
-                  disabled={!opening.ok}
+                  disabled={!opening?.ok}
                   onChange={(e) => setApplyOpening(e.target.checked)}
                 />
                 <span>
@@ -816,19 +896,20 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                   onChange={(e) => setOpeningDate(e.target.value)}
                   className="rounded border border-hairline bg-paper px-2 py-0.5 text-2xs text-ink focus:outline-none focus:ring-2 focus:ring-amber"
                 />
-                {opening.ok && (
+                {opening?.ok && (
                   <span className="text-sm font-semibold tabular-nums text-ink">{rupee(opening.amount)}</span>
                 )}
               </div>
 
               <div className="mt-1.5 pl-6 space-y-1 text-xs">
-                {!opening.ok && <p className="text-rose-ink">{opening.reason}</p>}
-                {opening.ok && (
+                {!opening && <p className="text-ink-3">Pick the &quot;As of&quot; date to read the opening balance from the statement.</p>}
+                {opening && !opening.ok && <p className="text-rose-ink">{opening.reason}</p>}
+                {opening?.ok && (
                   <p className="text-ink-3">
                     Balance just before the {formatDate(opening.firstLineDate)} line (its balance, plus its debit, minus its credit).
                   </p>
                 )}
-                {opening.ok && opening.firstLineDate > openingDate && (
+                {opening?.ok && opening.firstLineDate > openingDate && (
                   <p className="text-amber-ink flex items-start gap-1.5">
                     <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
                     <span>
@@ -837,13 +918,34 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                     </span>
                   </p>
                 )}
-                {opening.ok && opening.chainBreaks > 0 && (
+                {opening?.ok && opening.chainBreaks > 0 && (
                   <p className="text-amber-ink flex items-start gap-1.5">
                     <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
                     <span>
                       {opening.chainBreaks} line{opening.chainBreaks === 1 ? "" : "s"} where the running balance does not follow from the line before.
                       Some lines may have been skipped while reading the statement — check before using this figure.
                     </span>
+                  </p>
+                )}
+                {/* R-2522: lines printed out of order inside one day whose day-end balance is right —
+                    nothing is missing, so a note, not a warning (the chain box above agrees). */}
+                {opening?.ok && opening.outOfOrder && (
+                  <p data-testid="out-of-order-note" className="text-ink-3 flex items-start gap-1.5">
+                    <Icon name="info" size={12} className="mt-0.5 shrink-0" />
+                    <span>
+                      Some lines are printed out of order within the day
+                      ({opening.outOfOrder.days.map((d) => formatDate(d)).join(", ")}); each day&apos;s closing balance is right, so nothing is missing.
+                    </span>
+                  </p>
+                )}
+                {windowMissing && (
+                  <p data-testid="opening-move-loading" className={windowQ.isError ? "text-rose-ink" : "text-ink-3"}>
+                    {windowQ.isError ? (
+                      <>
+                        Could not load the lines already in this account between these dates, so the opening cannot be checked.{" "}
+                        <button type="button" className="underline" onClick={() => void windowQ.refetch()}>Try again</button>
+                      </>
+                    ) : "Checking the lines already in this account between these dates…"}
                   </p>
                 )}
                 {moveCheck?.kind === "earlier" && (
@@ -856,6 +958,18 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                       <b className="tabular-nums">{rupee(moveCheck.balanceOnOldDate)}</b>; the current opening on that date is{" "}
                       <b className="tabular-nums">{rupee(moveCheck.oldOpening)}</b>.
                     </p>
+                    {moveCheck.linesOnOldDate > 0 && (
+                      <p>
+                        Includes {moveCheck.linesOnOldDate} new line{moveCheck.linesOnOldDate === 1 ? "" : "s"} dated {formatDate(moveCheck.oldDate)} (or with
+                        a value date before it) — the bank counts {moveCheck.linesOnOldDate === 1 ? "it" : "them"} in the balance the current opening was taken from.
+                      </p>
+                    )}
+                    {moveCheck.roundingDrift !== 0 && (
+                      <p>
+                        This is the statement&apos;s own balance; its amounts rounded to whole rupees add up to {rupee(Math.abs(moveCheck.roundingDrift))}{" "}
+                        {moveCheck.roundingDrift < 0 ? "less" : "more"} (paise rounding, not a missing line).
+                      </p>
+                    )}
                     {moveCheck.matches ? (
                       <p>It matches the current opening, so today&apos;s balance stays the same. The old opening is kept in the account&apos;s history.</p>
                     ) : (
@@ -865,20 +979,54 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
                           A line may be missing from the statement, or the date may be wrong — check the preview and the date.
                         </p>
                         {isOwner ? (
-                          <label className="mt-1 flex items-start gap-2 cursor-pointer text-ink">
-                            <input
-                              type="checkbox"
-                              className="mt-0.5 accent-amber"
-                              checked={acceptDifference}
-                              onChange={(e) => setAcceptDifference(e.target.checked)}
-                            />
-                            <span>The figures differ — set it anyway (the difference is recorded in the account&apos;s history)</span>
-                          </label>
+                          <>
+                            <label className="mt-1 flex items-start gap-2 cursor-pointer text-ink">
+                              <input
+                                type="checkbox"
+                                className="mt-0.5 accent-amber"
+                                checked={acceptDifference}
+                                onChange={(e) => setAcceptDifference(e.target.checked)}
+                              />
+                              <span>The figures differ — set it anyway (the difference is recorded in the account&apos;s history)</span>
+                            </label>
+                            {acceptDifference && (
+                              <div className="mt-1 pl-6">
+                                <label htmlFor="opening-accept-reason" className="block text-ink-2">Why do the figures differ? (required, kept in the history)</label>
+                                <textarea
+                                  id="opening-accept-reason"
+                                  rows={2}
+                                  value={acceptReason}
+                                  onChange={(e) => setAcceptReason(e.target.value)}
+                                  placeholder="e.g. Passbook checked — the bank reversed a charge after the statement date"
+                                  className="mt-0.5 w-full rounded border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber"
+                                />
+                                {!reasonOk && <p className="text-rose-ink">Write the reason ({REASON_MIN}+ characters) to import.</p>}
+                              </div>
+                            )}
+                          </>
                         ) : (
                           <p className="font-semibold">Only the owner can accept a difference — ask the owner to import this statement.</p>
                         )}
                       </>
                     )}
+                  </div>
+                )}
+                {/* R-2522: hand-entered lines between the two dates now count — one may be the same
+                    payment as a statement line. */}
+                {moveCheck?.kind === "earlier" && manualInWindow.length > 0 && (
+                  <div data-testid="manual-in-window" className="text-amber-ink flex items-start gap-1.5">
+                    <Icon name="alert" size={12} className="mt-0.5 shrink-0" />
+                    <div>
+                      {manualInWindow.length} hand-entered line{manualInWindow.length === 1 ? " is" : "s are"} already in this account
+                      between {formatDate(openingDate)} and {formatDate(moveCheck.oldDate)}; after this move {manualInWindow.length === 1 ? "it counts" : "they count"} too.
+                      If {manualInWindow.length === 1 ? "it is" : "one is"} the same payment as a statement line, delete it on the transactions page first:
+                      <ul className="mt-0.5 ml-4 list-disc">
+                        {manualInWindow.slice(0, 5).map((l) => (
+                          <li key={l.id}>{formatDate(l.txn_date)} · {l.debit ? `${rupee(l.debit)} out` : `${rupee(l.credit)} in`} · {l.description || "—"}</li>
+                        ))}
+                        {manualInWindow.length > 5 && <li>…and {manualInWindow.length - 5} more</li>}
+                      </ul>
+                    </div>
                   </div>
                 )}
                 {openingOn && excludedCount > 0 && (
@@ -917,6 +1065,8 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
               ? "Check the sign of the marked lines — see the \"Check the sign\" box in the preview"
               : blocked
               ? "Some statement lines are missing — see the red box in the preview"
+              : openingOn && windowMissing
+                ? "Checking the lines already in this account — see the opening balance box"
               : openingOn && openingWaits
                 ? "The statement does not match the current opening — see the opening balance box"
                 : undefined}

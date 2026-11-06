@@ -14,6 +14,9 @@ export type ParsedRow = {
   credit:        number;       // ₹ integer
   balance_after: number | null;
   reference:     string | null;
+  /** R-2522: the bank's value date (HDFC "Value Dt"), when the file has its own column for it.
+      Sent to the database; the opening move uses it to place a line at the meeting point. */
+  value_date?:   string | null;
   /** R-2495: the bank printed this line with a NEGATIVE amount (a reversal — e.g. a failed
       ATM withdrawal shown as debit -20000), so it was read as the opposite side. Preview only. */
   reversal?:     true;
@@ -37,6 +40,7 @@ const HEADER_ALIASES: Record<ColumnField, string[]> = {
   credit:        ["credit", "deposit", "deposit amt", "deposit (cr)", "amount (credit)", "credit (rs.)", "credit amount"],
   balance_after: ["balance", "closing balance", "running balance", "available balance"],
   reference:     ["ref no", "ref no./cheque no", "reference no", "chq./ref. no.", "ref.no./cheque no", "utr no"],
+  value_date:    ["value dt", "value date"],
 };
 
 // ─── CSV parsing ───────────────────────────────────────────────────────────
@@ -352,6 +356,9 @@ function detectColumns(headerRow: string[]): Record<ColumnField, number> | null 
     credit:        map.credit ?? -1,
     balance_after: map.balance_after ?? -1,
     reference:     map.reference ?? -1,
+    /* R-2522: a separate Value Dt column only — a file whose one date column IS the value date
+       already uses it as txn_date. */
+    value_date:    map.value_date != null && map.value_date !== map.txn_date ? map.value_date : -1,
   };
 }
 
@@ -403,6 +410,8 @@ export function parseStatementRows(raw: string[][]): ParseResult {
     // right — skip it rather than invent a number or fail the whole batch.
     if (debit > 0 && credit > 0) { skipped++; continue; }
     const description = (r[mapping.description] ?? "").trim() || "(no description)";
+    /* R-2522: kept only when it differs from the txn date — the usual same-day value date says nothing. */
+    const valueDate = mapping.value_date >= 0 ? parseDate(r[mapping.value_date] ?? "", order) : null;
     if (reversal) reversals++;
     out.push({
       txn_date:      date,
@@ -410,6 +419,7 @@ export function parseStatementRows(raw: string[][]): ParseResult {
       debit, credit,
       balance_after: mapping.balance_after >= 0 ? parseAmount(r[mapping.balance_after]) || null : null,
       reference:     mapping.reference     >= 0 ? (r[mapping.reference]?.trim() || null)        : null,
+      ...(valueDate && valueDate !== date ? { value_date: valueDate } : {}),
       ...(reversal ? { reversal: true as const } : {}),
     });
   }

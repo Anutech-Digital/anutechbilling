@@ -18,6 +18,7 @@ const state = vi.hoisted(() => ({
   importSpy: vi.fn(),
   updateSpy: vi.fn(),
   hasCountedLines: true,
+  windowLines: [] as unknown[],
 }));
 
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role: state.role } }) }));
@@ -34,6 +35,7 @@ vi.mock("@/lib/queries/bank", async (orig) => ({
   useExistingTxnKeys: () => ({ data: { bal: new Map(), prefix: new Map(), prefixNoBal: new Map() } }),
   // the account already has a FY 26-27 line counted under the 1 Apr 2026 opening — money to keep
   useHasBankLinesFrom: () => ({ data: state.hasCountedLines }),
+  useBankLinesBetween: () => ({ data: state.windowLines }),
   useImportBankTransactions: () => ({ mutateAsync: state.importSpy, isPending: false }),
   useUpdateBankAccount: () => ({ mutateAsync: state.updateSpy, isPending: false }),
 }));
@@ -100,10 +102,14 @@ describe("R-2497 import dialog — opening balance", () => {
     expect(check.textContent).toMatch(/differs by −₹10,000/);
     expect((importButton() as HTMLButtonElement).disabled).toBe(true);
     await act(async () => { fireEvent.click(screen.getByRole("checkbox", { name: /The figures differ — set it anyway/ })); });
+    // R-2522: the owner must say why — Import waits for the reason
+    expect((importButton() as HTMLButtonElement).disabled).toBe(true);
+    const reason = screen.getByLabelText(/Why do the figures differ/) as HTMLTextAreaElement;
+    await act(async () => { fireEvent.change(reason, { target: { value: "Passbook checked" } }); });
     expect((importButton() as HTMLButtonElement).disabled).toBe(false);
     await act(async () => { fireEvent.click(importButton()); });
     expect(state.importSpy).toHaveBeenCalledWith(expect.objectContaining({
-      opening: { amount: 60000, date: "2025-04-01", acceptDifference: true },
+      opening: { amount: 60000, date: "2025-04-01", acceptDifference: true, reason: "Passbook checked" },
     }));
   });
 
