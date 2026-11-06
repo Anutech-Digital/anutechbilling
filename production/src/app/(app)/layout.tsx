@@ -20,6 +20,7 @@ import { useGlobalKeys } from "@/lib/hooks/useKeyboard";
 import { MustChangePasswordGate } from "@/components/shared/must-change-password-gate";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { DeniedRouteToast } from "@/components/layout/denied-route-toast";
+import { CompanyInvitesBanner } from "@/components/features/team/company-invites-banner";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
@@ -54,6 +55,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* R-524: "Try the demo" visitor only — read-only notice + Sign up / Exit. */}
         <DemoBanner />
         <TopBar onMobileMenuClick={() => setMobileNavOpen(true)} />
+        {/* R-2477: an invite from another company — the login accepts it here itself.
+            Renders nothing when there is none. */}
+        <CompanyInvitesBanner />
         {/* Renders nothing until a second tab is open — a one-tab strip is
             decoration that costs vertical space on every screen. */}
         <WorkspaceTabBar />

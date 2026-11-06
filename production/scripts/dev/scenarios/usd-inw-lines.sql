@@ -39,3 +39,45 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
    'INW 041126I0SCN0000022 USD2000.0@88.5 SCN TIMBERGLOSS INC', 0, 177000, 'SCN-INW-2458-022', 'csv_upload'),
   ('c2458000-0000-4000-8000-000000000023', :'tenant', :'acct', current_date - 4,
    'INW 041126I0SCN0000023 USD1000.0@93.6 SCN DESIGN BOX LLC', 0, 93600, 'SCN-INW-2458-023', 'csv_upload');
+
+-- R-1678: a ₹ receipt for a USD invoice, and several USD invoices on ONE inward credit (R-2094 #7 / #27).
+--   · ₹12,976 NEFT from SCN Peak Performance Hackers for INV-SCN-USD-2 ($139 @ ₹95.007 = ₹13,206) → paid in
+--     full, ₹230 "Exchange gain / loss (realised)" (a loss) — never ₹230 due, never TDS.
+--   · ₹1,42,500 "INW … USD1500.0@95" from SCN Timbergloss Inc for INV-SCN-USD-3 ($1,000 @ ₹90) + INV-SCN-USD-4
+--     ($500 @ ₹92) → both paid, ₹6,500 gain split ₹5,000 + ₹1,500 by each invoice's USD; both record the INW ref.
+insert into public.customers (id, tenant_id, name, state, state_code, country, gst_treatment, customer_type, contact_email, notes) values
+  ('c2458000-0000-4000-8000-000000000013', :'tenant', 'SCN Peak Performance Hackers', null, null, 'United States', 'overseas', 'business',
+   'billing@peakperformance.example', 'SCN scenario usd-inw-lines (R-1678)');
+
+insert into public.quotes (id, tenant_id, customer_id, customer_name, plan, seats, amount, subtotal, total_cost, tax_rate, discount_pct,
+                           status, payment_status, created_date, billing_cycle, currency, exchange_rate, is_one_off, line_items, notes)
+select v.id, :'tenant', v.cust::uuid, v.cname, 'SCN Export services', 1, v.amt, v.amt, 0, 0, 0,
+       'accepted', 'awaiting', current_date - 32, 'yearly', 'USD', v.rate, true,
+       jsonb_build_array(jsonb_build_object('id', 'line-1', 'qty', 1, 'cost', 0, 'name', v.what, 'rate', v.amt, 'one_time', true)),
+       'SCN scenario usd-inw-lines (R-1678)'
+  from (values
+    ('Q-SCN-USD-2', 'c2458000-0000-4000-8000-000000000013', 'SCN Peak Performance Hackers', 13206, 95.007::numeric, 'SCN Export services — Peak ($139)'),
+    ('Q-SCN-USD-3', 'c2458000-0000-4000-8000-000000000012', 'SCN Timbergloss Inc',          90000, 90::numeric,     'SCN Export services — Timbergloss ($1,000)'),
+    ('Q-SCN-USD-4', 'c2458000-0000-4000-8000-000000000012', 'SCN Timbergloss Inc',          46000, 92::numeric,     'SCN Export services — Timbergloss ($500)')
+  ) as v(id, cust, cname, amt, rate, what);
+
+insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, due_date,
+                             taxable_value, tax_amount, tax_rate, inter_state, paid_amount, customer_country,
+                             currency, fx_rate, fx_source, fx_date, gst_treatment, document_kind, line_items, quote_id)
+select v.inv, :'tenant', v.cust::uuid, v.cname, v.amt, 'pending', current_date - 30, current_date - 5,
+       v.amt, 0, 0, true, 0, 'United States', 'USD', v.rate, 'manual', current_date - 30, 'overseas', 'tax_invoice',
+       jsonb_build_array(jsonb_build_object('id', 'line-1', 'qty', 1, 'cost', 0, 'name', v.what, 'rate', v.amt)), v.q
+  from (values
+    ('INV-SCN-USD-2', 'Q-SCN-USD-2', 'c2458000-0000-4000-8000-000000000013', 'SCN Peak Performance Hackers', 13206, 95.007::numeric, 'SCN Export services — Peak ($139)'),
+    ('INV-SCN-USD-3', 'Q-SCN-USD-3', 'c2458000-0000-4000-8000-000000000012', 'SCN Timbergloss Inc',          90000, 90::numeric,     'SCN Export services — Timbergloss ($1,000)'),
+    ('INV-SCN-USD-4', 'Q-SCN-USD-4', 'c2458000-0000-4000-8000-000000000012', 'SCN Timbergloss Inc',          46000, 92::numeric,     'SCN Export services — Timbergloss ($500)')
+  ) as v(inv, q, cust, cname, amt, rate, what);
+
+update public.quotes q set invoice_id = 'INV-' || substr(q.id, 3)
+ where q.tenant_id = :'tenant' and q.id in ('Q-SCN-USD-2', 'Q-SCN-USD-3', 'Q-SCN-USD-4');
+
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
+  ('c2458000-0000-4000-8000-000000000024', :'tenant', :'acct', current_date - 3,
+   'NEFT CR-CITI0000001-SCN PEAK PERFORMANCE HACKERS', 0, 12976, 'SCN-NEFT-2458-024', 'csv_upload'),
+  ('c2458000-0000-4000-8000-000000000025', :'tenant', :'acct', current_date - 2,
+   'INW 051126I0SCN0000025 USD1500.0@95 SCN TIMBERGLOSS INC', 0, 142500, 'SCN-INW-2458-025', 'csv_upload');

@@ -2,6 +2,8 @@
 
 > **Process changes go here (R-2105, 29 Oct 2026).** This file is the ONE place for worker rules — every team member's Claude reads it from git. A new or changed rule is written here in the same commit as the tooling change; never only in a local note (the old `<home>/Anutech-HQ/worker-steps.md` copy is retired and only points here). Newest rules: R-2385 cleanup order (node_modules junction FIRST — `worker-lock cleanup <CARD>`, never a recursive delete), R-2356 no `git stash`.
 
+**Team Claude playbook (R-2514, 5 Nov 2026).** Read [`docs/CLAUDE-TEAM-PLAYBOOK.md`](CLAUDE-TEAM-PLAYBOOK.md) first — the owner's rules (questions, decisions, logins, staging train, handoff) and the lessons log. RULE: whenever your Claude learns a new lesson or repeats a procedure, add a dated line to that file's Lessons log through a card push (`worker-lock push <CARD>`), never only in local memory — that is how every teammate's Claude stays updated.
+
 **Playbooks (R-2169, 30 Oct 2026).** Before a hands-on run (bank reconcile, demo, checks) read the matching playbook in `docs/playbooks/` (see its README) — method, hard rules and lessons from earlier runs; the observer appends new lessons there after each run.
 
 **FAST GATE (25 Oct 2026, Pardeep: "jo tumhe thik lage par kaam fast ho") — this replaces the "FULL suite" part of step 4.** Run:

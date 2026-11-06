@@ -237,3 +237,141 @@ also be 0 on a healthy DB.
 - **Local check:** `node scripts/dev/scenario.mjs two-companies` gives "Local test login → Owner" a
   Manager membership in "SCN Second Company Pvt Ltd" (`--clear` moves the login back first —
   users.tenant_id cascades on a company delete).
+
+## 6. Slice 3 — Invite / Claim / Remove on memberships (R-2477, 5 Nov 2026)
+
+Migration `20261105160300_r2477_membership_invite_claim_remove.sql`, SQL test
+`supabase/tests/r2477_membership_invite_claim_remove.test.sql`.
+
+- **Invite a login that works in another company** (Team → Invite). `release_stale_team_invite`
+  still answers `member_elsewhere`; the route then calls `prepare_invite_for_existing_login(email)`
+  (owner + MFA re-checked in SQL). It deletes the other company's ACCEPTED invite row for that
+  address (history only — it just blocks the one-row-per-address index; no line is written there,
+  so that company is not told another company invited their member) and answers `ready`, or
+  `already_member` when the login is already a member here. The invite is written; the email has no
+  signup link (they have a login) and says they keep their company. A live (not accepted) invite
+  elsewhere still answers "open invite from another company". Unknown answer / error → the R-2469
+  refusal (old behaviour, e.g. migration not deployed yet).
+- **Claim activates the membership** (Team → Claim a colleague). The R-721 handshake is unchanged:
+  an invite counts only after the person signed in AFTER it. `list_stranded_auth_users()` now also
+  lists an existing login that is not a member here, has an open invite here and signed in after it.
+  `merge_stranded_user_into_tenant`: already a member here (not ended) → role fix only, on the
+  membership; a login in a real company (anyone else there, another active membership, or any
+  business record) → a membership here (`added`), or the ended one re-opened (`rejoined` — role from
+  the claim, no end date, no manager / deals / new-lead turn, employee link kept); they keep the
+  other company and pick this one in the switcher. If their selected company is no longer usable
+  (removed / off / expired) this membership becomes the selected one. A blank accidental workspace
+  is still moved + removed (R-721). The other company's name is never returned for `added`.
+- **Remove from this company** — `remove_company_member(user)` via DELETE `/api/team/members/:id`
+  (session forwarded; the route drops the gateway role cache of the removed login). Owner of the
+  current company only (MFA), never yourself, never the last active owner; every owner membership
+  of the company is locked in one order first, so two owners removing each other cannot both win.
+  Ends ONLY this membership (`ended_at`, `end_reason = 'removed'`, `ended_by`), audit line
+  `member_removed` in this company (does not name any other company). The users row and every FK
+  stay. If it was their selected company, the selection moves to their newest other active
+  membership (same UPDATE + activity-log rule as `switch_company`, via internal
+  `r2477_select_membership`, no grant to any app role), else to none (mirror → `users.is_active =
+  false` → `current_tenant_id()` NULL, R-722 signs them out). To come back: invite again + Claim.
+- **Team list / edits** — `company_members()` lists the selected company's memberships (not ended)
+  with name / email from users, so a member working in another company right now is still listed;
+  `update_company_member(user, patch)` (role, manager_id, can_view_deals, gets_new_leads only) edits
+  the membership — the selected company's values reach users through the mirror. Last active owner
+  cannot be demoted; a manager must be a member of this company.
+- **`users_tenant_delete` dropped** (§4): deleting a teammate's login row deleted their memberships in
+  every company. No app path used it.
+- **guard_privileged_user_columns**: the switch branch now accepts a selection change of the ROW's
+  login (not only the caller's own) onto that login's active membership with exactly its values —
+  needed for the definer move above. A direct PATCH still cannot move another login:
+  `users_tenant_update` has no WITH CHECK of its own, so its USING (`tenant_id =
+  current_tenant_id()`) is the check and keeps the row in the caller's company.
+
+Not in slice 3 (follow-ups): other pickers (assignee, chat #general R-2296, reports) still read
+`users` of the selected company, so a member working in another company right now is not offered
+there until they switch; an invited existing login has no in-app "accept" — they sign in once and
+the owner presses Claim.
+
+### 6.1 Independent review fixes (R-2477, 5 Nov 2026 — review verdict BLOCK)
+
+Migration `20261105192420_r2477_review_consent_email_guard.sql`, SQL test
+`supabase/tests/r2477_review_consent_email_guard.test.sql` (its case R1 is the review's takeover
+proof: red before, green after). Decisions by the coordinator under Pardeep's delegation.
+
+- **Email takeover (BLOCK).** `users.email` is what Auth.js `linkOAuthUser` maps a Google sign-in
+  to. `guard_privileged_user_columns` now refuses a change of `users.email` by anyone but the login
+  itself while that login has a non-ended membership in ANOTHER company ("only they can change their
+  email"). Server paths with no user (OAuth re-link, scripts) are unchanged. Same rule as the
+  temporary-password route (§6).
+- **Consent.** A routine sign-in is no agreement to join another company. For a login that works in
+  another company, Team → Invite calls `invite_existing_login(email, role)` (owner + MFA, its own
+  30-an-hour cap counting every call, audit line in the caller's company, nothing written or deleted
+  in any other company) → a row in `public.membership_invites` (tenant, user, the typed address,
+  role, 7-day expiry). The login sees it in a banner at the top of the app ("Invite from <company> to
+  join as <role>. You keep your current company." — Accept / Not now) via `my_company_invites()`, and
+  accepts it with POST `/api/team/invites/:id/accept` → `accept_company_invite(id)` (only the invited
+  login, not expired, MFA). The inviting company sees only the typed address (owner-only RLS on the
+  table; Pending invites lists it and can withdraw it). Claim refuses such a login with that next
+  step; `list_stranded_auth_users` lists only logins that work in NO company right now, and for a
+  login with a profile returns the address only (no name, account age or last sign-in).
+  `'no_company'` (removed everywhere) and `'not_found'` keep the plain invite + Claim / Google path.
+- **Owned workspace.** Claim never moves out of, or deletes, a workspace the login OWNS (its
+  membership there is owner) — the owner of an accidental empty workspace accepts an invite instead;
+  `accept_company_invite` then makes the new company the selected one when the old one is unusable or
+  a blank workspace of their own (only them, no records). Nothing is deleted. A trusted (server) Claim
+  of such an owner adds a membership too.
+- **prepare_invite_for_existing_login dropped** — it deleted other companies' accepted-invite rows.
+- `company_members().is_selected` is returned to owners only; `membership_invites` is bookkeeping for
+  `tenant_holds_business_records` and the Claim scan.
+
+Changed old tests to the new intended behaviour (not loosened): `merge_stranded_user` case 1,
+`r721_stranded_users` "A claims empty-workspace requester", `r2469_replace_stale_invite` end to end
+(now: Claim refused with the accept step → invite → he accepts → he works in A, his blank workspace
+stays).
+
+Code-review (high) additions to §6.1 (same migration):
+- Team → Invite calls `invite_existing_login` FIRST; the R-2469 `release_stale_team_invite` clean-up
+  (which may delete another workspace's stale team_invites row) runs only when the answer is not
+  'invited' / 'already_member'.
+- The email guard also counts an OPEN (not accepted, not expired) membership invite from another
+  company; `accept_company_invite` requires the login's sign-in address (auth.users.email) to still
+  equal the invited address, and the person who sent the invite to still be an active owner there.
+- `invite_existing_login` refuses the never-invitable roles (`personal`, `partner_agent`).
+- No `log_row_change` row trigger on `membership_invites` (it would copy the invitee's login id into
+  the inviting company's activity log); the two functions write their own lines.
+- A pending join request to THIS company is the person's own agreement: Claim works for them even
+  when they have another company (membership added, nothing moved).
+- A personal account (G-PERSONAL) sees the banner too; accepting makes the business its selected
+  company (the personal workspace stays; the switcher brings it back).
+- Pending invites on the Team page leave out expired membership invites (invite again to renew).
+- Claim deletes a leftover workspace only when it never had any owner (membership or users role).
+- Security review (round 2): the email rule is universal, not only for multi-company logins —
+  anyone but the login itself may change `users.email` only back to the login's own sign-in address
+  (auth.users.email), or for a login that has never signed in and has no other company / open
+  invite (the R-712 owner fix of a mistyped address). Otherwise an owner could re-point a
+  one-company teammate's address first and use the login after it joins another company.
+  Follow-up (outside this card's area): `linkOAuthUser` step 2 could also require
+  `users.email = auth.users.email` for the matched profile.
+
+### 6.2 Re-review fixes (R-2477, 6 Nov 2026 — re-review verdict BLOCK)
+
+Migration `20261106034600_r2477_rereview_accept_profile_email.sql`; SQL case R8 in
+`supabase/tests/r2477_review_consent_email_guard.test.sql`. Two other levers could act as an invited
+login before it accepted:
+
+- **Temporary password** (`/api/team/members/:id/temp-password`): also refused while the target has
+  an OPEN, unexpired invite from another company (same rule as the users.email guard). Route test.
+- **Re-pointed profile email — root fix.** `guard_privileged_user_columns` no longer lets an owner
+  set `users.email` of a teammate who never signed in (that R-712 typo-fix exception was the lever).
+  Anyone but the login itself may set it only BACK to the login's own sign-in address; a mistyped
+  invite is withdrawn and re-sent. Defence for profile emails that already differ (older data):
+  - `accept_company_invite` refuses while the login's profile email is not its sign-in address
+    (`users.email` ≠ `auth.users.email`) — with a next step (support fixes the profile email).
+  - Auth.js `linkOAuthUser` step 2 (profile by email) no longer links a Google sign-in to a profile
+    whose email differs from its login's own address when that login has NEVER signed in → refused
+    as `conflict` (no account created). A login that has signed in keeps the R-529 behaviour (its
+    profile email is guarded since §6.1 — only the login itself can move it), so existing accounts
+    with an old login address still sign in. The teammate's own address still signs them in (step 3).
+- `invite_existing_login` answers `plain` for both "no login" and "works in no company"; the route
+  treats `plain` (and the older `no_company` / `not_found`) as the plain invite.
+- Residual (card `review.left`): an owner who set a teammate's temporary password BEFORE any invite
+  existed still knows a password for that login; the robust close is proof of the mailbox (accept by
+  an emailed link / token, not the in-app banner alone) — follow-up.

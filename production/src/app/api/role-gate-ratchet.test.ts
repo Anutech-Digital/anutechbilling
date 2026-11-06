@@ -124,6 +124,7 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "push/unsubscribe": "the caller's own push endpoint",
   "push/test": "a test push to the caller's own device",
   "settings/change-password": "the caller's own password",
+  "team/invites/[id]/accept": "R-2477: the caller accepts an invite addressed to ITS OWN login — accept_company_invite (SECURITY DEFINER) checks the invite is for this login, not expired, and MFA; called with the caller's own session",
   "team/switch-company": "R-2476: the caller picks which of its OWN companies to work in — switch_company (SECURITY DEFINER) checks the caller's active membership, end date and MFA and copies that membership's role; called with the caller's own session",
   "settings/mobile/send": "R-1903: a code to verify the caller's OWN mobile — request_phone_otp acts only on the caller's users row",
   "settings/mobile/verify": "R-1903: checks the caller's OWN code — verify_phone_otp reads and writes only the caller's rows",

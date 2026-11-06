@@ -182,13 +182,14 @@ export const SCENARIOS = [
   },
   {
     name: "usd-inw-lines",
-    about: "Three USD inward remittances on SCN HDFC Current ··7788: $1,024 @ ₹93.60 = ₹95,846 (SCN Design Box LLC, new export sale); $2,000 @ ₹88.50 = ₹1,77,000 (SCN Timbergloss Inc) paying INV-SCN-USD-1 raised at $2,000 @ ₹84.00 (₹9,000 forex gain); $1,000 @ ₹93.60 = ₹93,600 (Design Box, short: billed $1,024). LUTs: scenario lut-per-fy.",
-    cards: ["R-2425", "R-2427", "R-2440", "R-2466"],
+    about: "Three USD inward remittances on SCN HDFC Current ··7788: $1,024 @ ₹93.60 = ₹95,846 (SCN Design Box LLC, new export sale); $2,000 @ ₹88.50 = ₹1,77,000 (SCN Timbergloss Inc) paying INV-SCN-USD-1 raised at $2,000 @ ₹84.00 (₹9,000 forex gain); $1,000 @ ₹93.60 = ₹93,600 (Design Box, short: billed $1,024). R-1678: ₹12,976 NEFT from SCN Peak Performance Hackers for INV-SCN-USD-2 ($139 @ ₹95.007 = ₹13,206 → ₹230 exchange loss); $1,500 @ ₹95 = ₹1,42,500 (Timbergloss) for INV-SCN-USD-3 ($1,000 @ ₹90) + INV-SCN-USD-4 ($500 @ ₹92) → ₹6,500 gain. LUTs: scenario lut-per-fy.",
+    cards: ["R-2425", "R-2427", "R-2440", "R-2466", "R-1678"],
     /* R-2466: INV-SCN-USD-1 comes from its USD quote Q-SCN-USD-1 (as every export sale in the app). */
-    scope: { vendors: [], txns: [x(21), x(22), x(23)], docs: [], names: [], upis: [], extra: [x(11), x(12), "Q-SCN-USD-1", "INV-SCN-USD-1"] },
-    expect: { ...NO_OLD, txns: 3, ...NO_EXTRA, xCustomers: 2, xQuotes: 1, xInvoices: 1 },
+    scope: { vendors: [], txns: [x(21), x(22), x(23), x(24), x(25)], docs: [], names: [], upis: [],
+      extra: [x(11), x(12), x(13), "Q-SCN-USD-1", "INV-SCN-USD-1", "Q-SCN-USD-2", "INV-SCN-USD-2", "Q-SCN-USD-3", "INV-SCN-USD-3", "Q-SCN-USD-4", "INV-SCN-USD-4"] },
+    expect: { ...NO_OLD, txns: 5, ...NO_EXTRA, xCustomers: 3, xQuotes: 4, xInvoices: 4 },
     pages: [
-      { path: "banking", for: "R-2425 'INW … USD1024.0@93.6' line shows $1,024 @ ₹93.60 · R-2427 / R-2466 the ₹1,77,000 line → Reconcile → SCN Timbergloss Inc → An open quote / invoice → INV-SCN-USD-1 ('₹9,000 forex gain') and the ₹93,600 line is the short one · Reconcile from Zoho needs a Zoho connection (not local)" },
+      { path: "banking", for: "R-2425 'INW … USD1024.0@93.6' line shows $1,024 @ ₹93.60 · R-2427 / R-2466 the ₹1,77,000 line → Reconcile → SCN Timbergloss Inc → An open quote / invoice → INV-SCN-USD-1 ('₹9,000 forex gain') and the ₹93,600 line is the short one · R-1678 the ₹12,976 NEFT line → SCN Peak Performance Hackers → An open quote / invoice → INV-SCN-USD-2 (₹230 exchange loss) · the ₹1,42,500 line → SCN Timbergloss Inc → Several quotes / invoices → INV-SCN-USD-3 + INV-SCN-USD-4 (₹6,500 gain) · Reconcile from Zoho needs a Zoho connection (not local)" },
       { path: "invoices", for: "R-2427 INV-SCN-USD-1 in USD ($2,000 @ ₹84.00)" },
     ],
   },

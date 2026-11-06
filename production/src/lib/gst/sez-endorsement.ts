@@ -4,8 +4,8 @@
  * tax amount. The treatment comes from invoices.gst_treatment, frozen at issue (R-1736).
  *
  * Which line prints follows the tax ACTUALLY charged on the invoice — the same rule GSTR-1
- * uses for SEWP / SEWOP (gstr1.ts b2bInvType). Until Hitesh decides the LUT rule
- * (LUT_ZERO_RATING_PENDING), an "SEZ without payment" customer is billed IGST, so its invoice
+ * uses for SEWP / SEWOP (gstr1.ts b2bInvType). Since R-2515 an "SEZ without payment" sale is
+ * billed at 0% under the LUT, but an older invoice of such a customer may carry IGST — then it
  * says "on payment of integrated tax": the document must never claim no tax next to IGST.
  */
 import { treatmentIsAlwaysInterState } from "./place-of-supply";

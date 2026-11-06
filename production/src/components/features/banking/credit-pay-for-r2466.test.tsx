@@ -10,7 +10,7 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import type { OpenItem } from "@/lib/banking/credit-pay-for";
 
-const state = vi.hoisted(() => ({ pay: vi.fn(), items: [] as unknown[] }));
+const state = vi.hoisted(() => ({ pay: vi.fn(), split: vi.fn(), items: [] as unknown[] }));
 
 vi.mock("@/lib/queries/customer-payers", () => ({
   usePayerMemory: () => ({ payers: [], ownNames: [] }),
@@ -23,7 +23,7 @@ vi.mock("@/lib/queries/bank-credit-pay-for", () => ({
   useNewSaleFromBankCredit: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useAdvanceFromBankCredit: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useRelinkOneOffSale: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useSplitFromBankCredit: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useSplitFromBankCredit: () => ({ mutateAsync: state.split, isPending: false }),
 }));
 vi.mock("@/lib/queries/items", () => ({ useItems: () => ({ data: [] }) }));
 vi.mock("@/lib/compliance/gst-registration-query", () => ({ useGstRegistration: () => ({ data: { saved: null } }) }));
@@ -31,7 +31,10 @@ vi.mock("@/lib/compliance/gst-registration-query", () => ({ useGstRegistration: 
 import { CreditPayForSection } from "./credit-pay-for-section";
 
 afterEach(cleanup);
-beforeEach(() => { state.pay.mockReset(); state.pay.mockResolvedValue({ kind: "opening", payment_id: "p1", subscriptions: [] }); });
+beforeEach(() => {
+  state.pay.mockReset(); state.pay.mockResolvedValue({ kind: "opening", payment_id: "p1", subscriptions: [] });
+  state.split.mockReset(); state.split.mockResolvedValue({ kind: "split", payment_id: "p1", parts: [] });
+});
 
 const item = (o: Partial<OpenItem>): OpenItem => ({
   kind: "invoice", quote_id: null, invoice_id: null, doc_date: "2026-09-25", amount_due: 0, taxable_value: 0,
@@ -83,21 +86,36 @@ describe("R-2466 quote-less invoices in 'An open quote / invoice'", () => {
     });
   });
 
-  it("review: 'Several quotes / invoices' with a USD invoice ticked → Save locked with the reason", () => {
+  it("R-1678: 'Several quotes / invoices' with a USD invoice ticked → settled in full, the gap an exchange difference (split 'fx')", () => {
     state.items = [item({ kind: "invoice", quote_id: "Q-SCN-USD-1", invoice_id: "INV-SCN-USD-1", amount_due: 168000, currency: "USD", fx_rate: 84 })];
     render(<CreditPayForSection transaction={txn(177000, "INW 041126I0SCN0000022 USD2000.0@88.5")} customers={customers} onDone={() => {}} />);
     fireEvent.change(screen.getByLabelText("Customer who paid"), { target: { value: "c2" } });
     fireEvent.click(screen.getByRole("button", { name: /Several quotes \/ invoices/ }));
     fireEvent.click(screen.getByLabelText("Pay INV-SCN-USD-1"));
-    expect(screen.getByText(/INV-SCN-USD-1 is in USD — pay it on its own/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: /Record on 1 item & reconcile/ }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/INV-SCN-USD-1 is settled in full .* ₹9,000 exchange gain/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: /Record on 1 item & reconcile/ }));
+    expect(state.split).toHaveBeenCalledTimes(1);
+    expect(state.split.mock.calls[0][0]).toMatchObject({ rest: "fx", sale: null, items: [{ invoice_id: "INV-SCN-USD-1", amount: 168000 }] });
   });
 
-  it("a USD invoice with a ₹ narration is not booked in ₹", () => {
-    state.items = [item({ kind: "invoice", quote_id: "Q-SCN-USD-1", invoice_id: "INV-SCN-USD-1", amount_due: 168000, currency: "USD", fx_rate: 84 })];
-    openItems(177000, "NEFT CR TIMBERGLOSS", "c2");
+  it("R-1678: a USD invoice with a ₹ narration is settled in full through the split (no TDS, nothing due)", () => {
+    state.items = [item({ kind: "invoice", quote_id: "Q-SCN-USD-1", invoice_id: "INV-SCN-USD-1", amount_due: 168000, taxable_value: 168000, currency: "USD", fx_rate: 84 })];
+    openItems(165000, "NEFT CR TIMBERGLOSS", "c2");
     fireEvent.click(screen.getByRole("radio", { name: /INV-SCN-USD-1/ }));
-    expect(screen.getByText(/INV-SCN-USD-1 is in USD, but this bank line's narration has no USD amount and rate/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Record ₹1,77,000 on INV-SCN-USD-1 & reconcile" }) as HTMLButtonElement).disabled).toBe(true);
+    expect(screen.getByText(/INV-SCN-USD-1 is settled in full .* ₹3,000 exchange loss.*gap is 1.79% of the due/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Settle INV-SCN-USD-1 in full & reconcile ₹1,65,000" }));
+    expect(state.pay).not.toHaveBeenCalled();
+    expect(state.split.mock.calls[0][0]).toMatchObject({ rest: "fx", items: [{ invoice_id: "INV-SCN-USD-1", quote_id: "Q-SCN-USD-1", amount: 168000 }] });
+  });
+
+  it("R-1678b: a gap of exactly 2% of taxable (TDS-shaped) pre-selects 'Not exchange — book in ₹' → the usual ₹ payment, no exchange line", () => {
+    state.items = [item({ kind: "invoice", quote_id: "Q-SCN-USD-1", invoice_id: "INV-SCN-USD-1", amount_due: 168000, taxable_value: 168000, currency: "USD", fx_rate: 84 })];
+    openItems(164640, "NEFT CR TIMBERGLOSS", "c2");
+    fireEvent.click(screen.getByRole("radio", { name: /INV-SCN-USD-1/ }));
+    expect(screen.getByRole("button", { name: /Not exchange — book in ₹/ }).getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByText(/exchange loss to/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Record ₹1,64,640 on INV-SCN-USD-1 & reconcile" }));
+    expect(state.split).not.toHaveBeenCalled();
+    expect(state.pay.mock.calls[0][0]).toMatchObject({ invoiceId: "INV-SCN-USD-1", fx: null });
   });
 });

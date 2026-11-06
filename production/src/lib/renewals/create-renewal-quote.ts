@@ -27,7 +27,7 @@ import type { Database, Json, QuoteLineItem } from "@/lib/supabase/database.type
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
 import { grossAmount } from "@/lib/quotes/amounts";
-import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { renewalTerm } from "@/lib/renewals/renewal-term";
 import { renewalCost } from "@/lib/renewals/renewal-cost";
 import { istToday, toIstDate } from "@/lib/dates/ist";
@@ -136,8 +136,8 @@ export async function createOrGetRenewalQuote(
   let renewalTaxRate = quoteStartTaxRate(await readTenantGstRegistration(supabase, input.tenantId));
   if (input.customerId) {
     const { data: cust } = await supabase
-      .from("customers").select("country").eq("id", input.customerId).maybeSingle();
-    if (isExportSupply(cust?.country)) renewalTaxRate = 0;
+      .from("customers").select("country, gst_treatment").eq("id", input.customerId).maybeSingle();
+    if (isZeroRatedSupply({ country: cust?.country, treatment: cust?.gst_treatment })) renewalTaxRate = 0;   // R-2515: export or SEZ without payment
   }
 
   /* ── Price the renewal for its OWN term ──────────────────────────────────

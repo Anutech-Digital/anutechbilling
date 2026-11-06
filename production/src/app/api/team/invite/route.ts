@@ -36,6 +36,9 @@ import {
   loginElsewhereMessage,
   memberElsewhereMessage,
   parseStaleInviteOutcome,
+  parseExistingLoginInvite,
+  alreadyMemberMessage,
+  existingLoginInviteEmail,
 } from "@/lib/auth/stale-invite";
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
@@ -135,18 +138,50 @@ export async function POST(request: NextRequest) {
       { status: 429, headers: { "Retry-After": String(checkRl.retryAfterSec) } },
     );
   }
-  const { data: heldElsewhere, error: heldErr } = await supabase.rpc("release_stale_team_invite", { p_email: email });
-  /* R-2483: the check also caps itself in SQL (30 an hour per login, 54000) — a cap reached by direct
-     calls must not let this invite go out WITHOUT the member-of-another-company check. Any other
-     error keeps the old behaviour (e.g. the migration is not deployed yet). */
-  if (heldErr?.code === "54000") {
+  /* R-2477 (+ independent review, 5 Nov 2026): FIRST ask whether the address is a login that
+     already works in ANOTHER company. Such a login is never claimed — it gets a membership invite
+     (invite_existing_login: session client, owner + MFA + its own hourly cap re-checked in SQL;
+     nothing written or deleted in any other company) and ACCEPTS it itself in the app (accept
+     banner → accept_company_invite). This company sees only the address it typed. Only when it is
+     NOT such a login does the R-2469 clean-up below run (it may clear another workspace's stale
+     team_invites row — never needed for a membership invite). 'no_company' / 'not_found' go the
+     plain invite way (Google sign-in / Claim). An error keeps the R-2469 refusal for a member of
+     another company. */
+  let existingLogin = false;
+  const { data: ex, error: exErr } = await (supabase.rpc as unknown as (
+    fn: "invite_existing_login", args: { p_email: string; p_role: string },
+  ) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>).call(
+    supabase, "invite_existing_login", { p_email: email, p_role: role },
+  );
+  if (exErr?.code === "54000") {
     return NextResponse.json(
       { error: "Too many invites in the last hour. Try again later." },
       { status: 429, headers: { "Retry-After": "3600" } },
     );
   }
-  if (parseStaleInviteOutcome(heldElsewhere) === "member_elsewhere") {
-    return NextResponse.json({ error: memberElsewhereMessage(email) }, { status: 409, headers: NO_STORE });
+  const exOutcome = exErr ? null : parseExistingLoginInvite(ex);
+  if (exOutcome === "already_member") {
+    return NextResponse.json({ error: alreadyMemberMessage(email) }, { status: 409, headers: NO_STORE });
+  }
+  if (exOutcome === "invited") {
+    if (tempPassword !== null) {
+      return NextResponse.json({ error: loginElsewhereMessage(email) }, { status: 409, headers: NO_STORE });
+    }
+    existingLogin = true;
+  } else {
+    const { data: heldElsewhere, error: heldErr } = await supabase.rpc("release_stale_team_invite", { p_email: email });
+    /* R-2483: the check also caps itself in SQL (30 an hour per login, 54000) — a cap reached by
+       direct calls must not let this invite go out WITHOUT the member-of-another-company check. Any
+       other error keeps the old behaviour (e.g. the migration is not deployed yet). */
+    if (heldErr?.code === "54000") {
+      return NextResponse.json(
+        { error: "Too many invites in the last hour. Try again later." },
+        { status: 429, headers: { "Retry-After": "3600" } },
+      );
+    }
+    if (exOutcome === null && parseStaleInviteOutcome(heldElsewhere) === "member_elsewhere") {
+      return NextResponse.json({ error: memberElsewhereMessage(email) }, { status: 409, headers: NO_STORE });
+    }
   }
 
   // ── Create the invite (RLS: team_invites is owner-scoped) ─────────────
@@ -155,7 +190,8 @@ export async function POST(request: NextRequest) {
      ek-matra saboot (migration 20260901090000). */
   let inviteToken: string | null = null;
 
-  const { data: insData, error: insErr } = await supabase
+  /* R-2477: a membership invite (existingLogin) writes no team_invites row. */
+  const { data: insData, error: insErr } = existingLogin ? { data: null, error: null } : await supabase
     .from("team_invites")
     .insert({ tenant_id: me.tenant_id, email, role, invited_by: authData.user.id })
     .select("token")
@@ -259,7 +295,7 @@ export async function POST(request: NextRequest) {
   const loginUrl  = `${base}/login`;
   /* Password-raasta: token wale link se hi khulta hai. Ye link hi mailbox ka
      saboot hai — bina iske signup 409 deta hai (audit 1 Sep 2026). */
-  const signupUrl = inviteToken && !memberCreated ? `${base}/signup?invite=${inviteToken}` : null;
+  const signupUrl = inviteToken && !memberCreated && !existingLogin ? `${base}/signup?invite=${inviteToken}` : null;
 
   const emailRes = await sendInternalEmail({
     /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
@@ -269,7 +305,9 @@ export async function POST(request: NextRequest) {
     from:    FROM_EMAIL,
     subject: `You've been invited to ${workspace} on ResellerOS`,
     /* R-534: the password itself is never in the email — the owner hands it over. */
-    text: memberCreated
+    text: existingLogin
+? existingLoginInviteEmail({ workspace, roleName, email, loginUrl })
+: memberCreated
 ? `Hello,
 
 You've been added to ${workspace} on ResellerOS as ${roleName}.
@@ -300,6 +338,9 @@ ${signupUrl}
     /* Reported so the screen can say "role changed from billing to sales_senior" rather
        than "invited", which would read as a new person to anyone glancing at it. */
     roleChangedFrom,
+    /* R-2477: they already use ResellerOS with another company — the screen says the next step
+       (they see the invite at the top of their app and accept it themselves). */
+    ...(existingLogin ? { existingLogin: true } : {}),
     emailStatus: emailRes.status,             // "sent" | "stubbed" | "failed"
     emailError:  emailRes.errorMessage,
   }, { headers: NO_STORE });

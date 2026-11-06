@@ -78,6 +78,51 @@ export async function POST(request: NextRequest, props: { params: Promise<{ id: 
   if (!decision.ok) return fail(decision.error, decision.status);
   if (!caller?.tenant_id || !target) return fail("That person is not in your workspace.", 403); // narrows types
 
+  /* R-2477: a login can now belong to several companies (memberships). A temporary password is a
+     password for the whole LOGIN — with it this owner could sign in as them and open their OTHER
+     company (maybe as its owner). So it is only for a login that works in no other company. */
+  /* tenant_memberships (R-2471) is not in the generated types yet — a narrow shape, not `any`. */
+  type MembershipQ = {
+    select(c: string): MembershipQ; eq(c: string, v: string): MembershipQ; neq(c: string, v: string): MembershipQ;
+    is(c: string, v: null): MembershipQ;
+    limit(n: number): PromiseLike<{ data: Array<{ tenant_id: string }> | null; error: { message: string } | null }>;
+  };
+  const { data: elsewhere, error: elsewhereErr } = await (admin.from as unknown as (t: "tenant_memberships") => MembershipQ)
+    .call(admin, "tenant_memberships")
+    .select("tenant_id")
+    .eq("user_id", target.id)
+    .neq("tenant_id", caller.tenant_id)
+    .is("ended_at", null)
+    .limit(1);
+  if (elsewhereErr) {
+    return fail("Could not check whether they work in another company, so no password was set. Try again.", 500);
+  }
+  /* R-2477 re-review: an OPEN invite from another company is the same lever — with the password
+     this owner could sign in as them and accept that invite (maybe as owner). Same rule as the
+     users.email guard (migration 20261105192420). */
+  type InviteQ = {
+    select(c: string): InviteQ; eq(c: string, v: string): InviteQ; neq(c: string, v: string): InviteQ;
+    is(c: string, v: null): InviteQ; gt(c: string, v: string): InviteQ;
+    limit(n: number): PromiseLike<{ data: Array<{ tenant_id: string }> | null; error: { message: string } | null }>;
+  };
+  const { data: invitedElsewhere, error: invitedErr } = await (admin.from as unknown as (t: "membership_invites") => InviteQ)
+    .call(admin, "membership_invites")
+    .select("tenant_id")
+    .eq("user_id", target.id)
+    .neq("tenant_id", caller.tenant_id)
+    .is("accepted_at", null)
+    .gt("expires_at", new Date().toISOString())
+    .limit(1);
+  if (invitedErr) {
+    return fail("Could not check whether they are invited to another company, so no password was set. Try again.", 500);
+  }
+  if ((elsewhere ?? []).length > 0 || (invitedElsewhere ?? []).length > 0) {
+    return fail(
+      "They also work in (or are invited to) another company on ResellerOS, so only they can change their password. Next step: use Send reset link on their row, or ask them to use Forgot password on the sign-in page.",
+      409,
+    );
+  }
+
   const typed = parsed.data.password;
   let password: string;
   if (typed !== undefined && typed !== "") {

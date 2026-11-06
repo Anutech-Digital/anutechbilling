@@ -119,9 +119,9 @@ export function docHeads(d: Pick<Gstr1Doc, "gst" | "interState" | "customerGstin
  * with / without payment of IGST, DE = deemed export.
  *
  * SEZ with or without payment follows the tax ACTUALLY charged on the document, the same way
- * an export picks WPAY / WOPAY: until Hitesh decides the LUT rule (LUT_ZERO_RATING_PENDING),
- * an "SEZ without payment" customer is billed IGST, and the return must not say "without
- * payment" next to IGST the invoice carries.
+ * an export picks WPAY / WOPAY: an "SEZ without payment" customer is billed 0% under the LUT
+ * since R-2515, but an older invoice of theirs may carry IGST, and the return must not say
+ * "without payment" next to IGST the invoice carries.
  */
 export type B2bInvType = "R" | "SEWP" | "SEWOP" | "DE";
 export function b2bInvType(d: Pick<Gstr1Doc, "gst" | "gstTreatment">): B2bInvType {

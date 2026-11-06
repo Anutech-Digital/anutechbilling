@@ -227,7 +227,11 @@ export function auditInvoiceGst(
     });
   }
 
-  if (invoice.taxRate !== SAAS_GST_RATE) {
+  /* R-2515: a supply to an SEZ unit WITHOUT payment of tax is zero-rated under the LUT — 0% is
+     the right rate there, not a rate to question. */
+  const sezZeroRated = (invoice.gstTreatment ?? customer.gstTreatment) === "sez_without_payment"
+    && invoice.taxRate === 0 && tax === 0;
+  if (invoice.taxRate !== SAAS_GST_RATE && !sezZeroRated) {
     issues.push({
       code: "unexpected_rate",
       severity: "warning",

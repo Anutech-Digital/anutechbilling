@@ -102,8 +102,10 @@ export async function loadLateCharges(
     quoteIds = [q];
   }
 
+  /* R-2499: a past year's sale imported as Zoho's own invoice never gets a late fee here (its
+     receipts come later from the bank / Zoho, R-2501) — every read below leaves it out. */
   const base = () => sb.from("invoices").select(INVOICE_COLUMNS)
-    .in("status", ["pending", "overdue", "paid"]).not("due_date", "is", null);
+    .in("status", ["pending", "overdue", "paid"]).not("due_date", "is", null).is("zoho_invoice_id", null);
   let invoices: InvoiceRow[];
   if (scope.invoiceIds) {
     invoices = await fetchAllRowsIn<InvoiceRow, string>(scope.invoiceIds, (ids, from, to) => base().in("id", ids).order("id").range(from, to));
@@ -118,9 +120,9 @@ export async function loadLateCharges(
     const cutoff = addDaysISO(today, -PAID_LOOKBACK_DAYS);
     const [open, paid] = await Promise.all([
       fetchAllRows<InvoiceRow>((from, to) => sb.from("invoices").select(INVOICE_COLUMNS)
-        .in("status", ["pending", "overdue"]).is("written_off_at", null).not("due_date", "is", null).order("id").range(from, to)),
+        .in("status", ["pending", "overdue"]).is("written_off_at", null).is("zoho_invoice_id", null).not("due_date", "is", null).order("id").range(from, to)),
       fetchAllRows<InvoiceRow>((from, to) => sb.from("invoices").select(INVOICE_COLUMNS)
-        .eq("status", "paid").not("due_date", "is", null).gte("paid_date", cutoff).order("id").range(from, to)),
+        .eq("status", "paid").is("zoho_invoice_id", null).not("due_date", "is", null).gte("paid_date", cutoff).order("id").range(from, to)),
     ]);
     invoices = [...open, ...paid];
   }
