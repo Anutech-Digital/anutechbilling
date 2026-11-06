@@ -28,7 +28,7 @@ import { resolveGeminiConfig, geminiJson } from "@/lib/ai/gemini";
 import { fixStatementDates } from "@/lib/banking/statement-dates";
 import { localDateISO } from "@/lib/leads/outcomes";
 import { classifyStatementFailure } from "@/lib/banking/statement-chunks";
-import { signedAmounts, columnIsSigned, parseAmount, signedRound, settleReversals, REVERSAL_MARK, type ParsedRow } from "@/lib/banking/statement-parse";
+import { signedAmounts, columnIsSigned, parseAmount, parseAmountPaise, signedRound, settleReversals, REVERSAL_MARK, type ParsedRow } from "@/lib/banking/statement-parse";
 
 /* Worst case for ONE request: 60 s + retry 60 s on the main model, then the same on the
    lighter one ≈ 4 min. Cloud Run's request timeout is 600 s (cloudbuild.yaml --timeout=600);
@@ -100,6 +100,9 @@ function toDate(input: unknown): string | null {
     goes on after rounding the size, so -20000.5 and a printed (20000.50) are the same ₹. */
 const toSignedInt = (v: unknown): number =>
   typeof v === "number" ? signedRound(v) : parseAmount(String(v ?? ""));
+/** R-2528: the same amount in whole paise, sign kept. */
+const toPaise = (v: unknown): number =>
+  typeof v === "number" ? signedRound(v * 100) : parseAmountPaise(String(v ?? ""));
 
 /** Turn the AI rows into the ParsedRow shape the import expects; drop junk. */
 function sanitizeRows(rows: AiRow[], final: boolean) {
@@ -118,14 +121,20 @@ function sanitizeRows(rows: AiRow[], final: boolean) {
     if (!date || (debit === 0 && credit === 0) || (debit > 0 && credit > 0)) { skipped++; continue; }
     const balRaw = r.balance;
     const description = String(r.description ?? "").trim() || "(no description)";
+    const balanceAfter = balRaw == null ? null : (toSignedInt(balRaw) || null);
+    /* R-2528: the printed paise, as the CSV / Excel parser keeps them (only when there are any). */
+    const amountPaise = Math.abs(toSignedInt(r.debit) !== 0 ? toPaise(r.debit) : toPaise(r.credit));
+    const balancePaise = balanceAfter === null ? null : toPaise(balRaw);
     out.push({
       txn_date: date,
       description: reversal ? description + REVERSAL_MARK : description,
       ...(reversal ? { reversal: true as const } : {}),
       debit, credit,
       /* Sign kept, as in the CSV / Excel parser: an overdraft / CC account balance is below 0. */
-      balance_after: balRaw == null ? null : (toSignedInt(balRaw) || null),
+      balance_after: balanceAfter,
       reference: null,
+      ...(amountPaise !== (debit + credit) * 100 ? { amount_paise: amountPaise } : {}),
+      ...(balanceAfter !== null && balancePaise !== null && balancePaise !== balanceAfter * 100 ? { balance_paise: balancePaise } : {}),
     });
   }
   /* R-2508: with 1–2 negatives (below the signed-column rule) a minus is a reversal only when the

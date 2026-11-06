@@ -837,6 +837,10 @@ export async function importBankTransactions(
     /* R-2522: the statement's value date, when it differs from the txn date. */
     const valueDate = (r as { value_date?: string | null }).value_date;
     if (valueDate) line.value_date = valueDate;
+    /* R-2528: the printed paise, when the line has them — the opening move compares in paise. */
+    const { amount_paise, balance_paise } = r as { amount_paise?: number; balance_paise?: number };
+    if (amount_paise != null) line.amount_paise = amount_paise;
+    if (balance_paise != null) line.balance_paise = balance_paise;
     if (r.category) {
       line.category = r.category;
       line.category_source = (r as { category_source?: string }).category_source ?? null;

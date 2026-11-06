@@ -159,7 +159,7 @@ declare
   /* R-2522 · R-2528: the bank's balance is used only within the opening's own rounding (50 paise),
      compared in paise; a counted line whose paise are not known allows 100 paise at most */
   v_s bigint; v_sp bigint; v_n bigint; v_last date; v_stated bigint := null; v_left boolean; v_nulls boolean;
-  v_exact boolean;
+  v_exact boolean; v_tol bigint;
 begin
   with c as (
     select t.id, t.txn_date, t.debit, t.credit, t.balance_after,
@@ -202,8 +202,9 @@ begin
     from agg;
   v_s := p_opening + v_s;
   v_sp := p_opening * 100 + v_sp;
+  v_tol := case when v_exact then 50 else 100 end;
   if v_n > 0 and not v_nulls and not coalesce(v_left, false) and v_stated is not null
-     and abs(v_sp - v_stated) <= case when v_exact then 50 else 100 end then
+     and abs(v_sp - v_stated) <= v_tol then
     balance := round(v_stated / 100.0)::bigint; drift := v_s - balance;
   else
     balance := v_s; drift := 0;

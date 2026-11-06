@@ -17,6 +17,12 @@ export type ParsedRow = {
   /** R-2522: the bank's value date (HDFC "Value Dt"), when the file has its own column for it.
       Sent to the database; the opening move uses it to place a line at the meeting point. */
   value_date?:   string | null;
+  /** R-2528: the amount in PAISE as printed (always ≥ 0; the side is debit/credit), present only
+      when the printed amount has paise. Sent to the database (net_paise) so the opening move
+      compares the statement in paise and a missing ₹17.70 line is never taken as rounding. */
+  amount_paise?: number;
+  /** R-2528: the running balance in paise as printed, present only when it has paise. */
+  balance_paise?: number;
   /** R-2495: the bank printed this line with a NEGATIVE amount (a reversal — e.g. a failed
       ATM withdrawal shown as debit -20000), so it was read as the opposite side. Preview only. */
   reversal?:     true;
@@ -126,6 +132,16 @@ function parseDate(input: string, order: "dmy" | "mdy" = "dmy"): string | null {
  * R-2495: a negative is also written "(20,000.00)" or "20,000.00-" by some banks.
  */
 export function parseAmount(input: string | undefined): number {
+  return signedRound(parseAmountExact(input));
+}
+
+/** R-2528: the same amount in whole paise, sign kept. */
+export function parseAmountPaise(input: string | undefined): number {
+  return signedRound(parseAmountExact(input) * 100);
+}
+
+/** The printed amount as a number (paise kept), sign kept; 0 when unreadable. */
+function parseAmountExact(input: string | undefined): number {
   if (!input) return 0;
   let cleaned = input.replace(/[₹,\s]/g, "").replace(/[Cc][Rr]$/, "").replace(/[Dd][Rr]$/, "");
   let sign = 1;
@@ -133,7 +149,7 @@ export function parseAmount(input: string | undefined): number {
   if (paren) { cleaned = paren[1]; sign = -1; }
   else if (/^\d[\d.]*-$/.test(cleaned)) { cleaned = cleaned.slice(0, -1); sign = -1; }
   const n = parseFloat(cleaned);
-  return isNaN(n) ? 0 : signedRound(sign * n);
+  return isNaN(n) ? 0 : sign * n;
 }
 
 /**
@@ -413,13 +429,21 @@ export function parseStatementRows(raw: string[][]): ParseResult {
     /* R-2522: kept only when it differs from the txn date — the usual same-day value date says nothing. */
     const valueDate = mapping.value_date >= 0 ? parseDate(r[mapping.value_date] ?? "", order) : null;
     if (reversal) reversals++;
+    /* R-2528: paise kept only when the printed figure has them (from the line's own column). */
+    const dCell = mapping.debit >= 0 ? r[mapping.debit] : undefined;
+    const cCell = mapping.credit >= 0 ? r[mapping.credit] : undefined;
+    const amountPaise = Math.abs(parseAmount(dCell) !== 0 ? parseAmountPaise(dCell) : parseAmountPaise(cCell));
+    const balanceAfter = mapping.balance_after >= 0 ? parseAmount(r[mapping.balance_after]) || null : null;
+    const balancePaise = balanceAfter !== null ? parseAmountPaise(r[mapping.balance_after]) : null;
     out.push({
       txn_date:      date,
       description:   reversal ? description + REVERSAL_MARK : description,
       debit, credit,
-      balance_after: mapping.balance_after >= 0 ? parseAmount(r[mapping.balance_after]) || null : null,
+      balance_after: balanceAfter,
       reference:     mapping.reference     >= 0 ? (r[mapping.reference]?.trim() || null)        : null,
       ...(valueDate && valueDate !== date ? { value_date: valueDate } : {}),
+      ...(amountPaise !== (debit + credit) * 100 ? { amount_paise: amountPaise } : {}),
+      ...(balancePaise !== null && balancePaise !== (balanceAfter as number) * 100 ? { balance_paise: balancePaise } : {}),
       ...(reversal ? { reversal: true as const } : {}),
     });
   }
