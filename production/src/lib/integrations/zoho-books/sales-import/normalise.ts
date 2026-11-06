@@ -61,9 +61,10 @@ export interface ZohoSaleFacts {
    *  "state pin", and the country when outside India — the customer snapshot's shape), null when
    *  Zoho has none. The import writes it on the invoice, so a branch invoice never prints another
    *  branch's address. */
-  billingAddress: string | null;
-  /** R-2536: that address's country as Zoho wrote it, null when none. */
-  billingCountry: string | null;
+  billingAddress?: string | null;
+  /** R-2536: that address's country as Zoho wrote it, null when none. (Both optional: a scan saved
+   *  before R-2536 has neither — the SQL import then writes none.) */
+  billingCountry?: string | null;
   currency: string;
   /** INR per unit when foreign, else null. */
   fxRate: number | null;

@@ -9,6 +9,8 @@
 --   3. Same-PAN Haryana invoice with NO address in the scan → no address (never the Delhi one).
 --   4. An invoice made in the app still gets the full snapshot (GSTIN, POS, address, treatment).
 --   5. party_from_source is the trigger's own stamp: a plain insert cannot set it to skip the snapshot.
+--   6. A scan row WITHOUT the Zoho detail (detailed_at null — GSTIN never read, not "none") keeps the
+--      old customer snapshot: missing data never turns a B2B sale into B2C.
 -- Self-asserting; the whole file rolls back.
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 < this file
 
@@ -48,7 +50,10 @@ insert into public.zoho_fy_scan (tenant_id, kind, fy, zoho_id, number, doc_date,
      pg_temp.p('INV/25-26/R2536-03', '06AAFCV5915P1ZR', '06', 'igst', 'registered_regular', null, null), now()),
   -- B2C with no treatment code from Zoho: the customer's 'registered_regular' must not be put on it.
   ('b2536000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'r2536-z4', 'INV/25-26/R2536-04', '2025-06-10', 'paid',
-     pg_temp.p('INV/25-26/R2536-04', '', '07', 'cgst_sgst', null, null, null), now());
+     pg_temp.p('INV/25-26/R2536-04', '', '07', 'cgst_sgst', null, null, null), now()),
+  -- Detail never read (detailed_at null): its empty GSTIN means "unknown".
+  ('b2536000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'r2536-z5', 'INV/25-26/R2536-05', '2025-06-10', 'paid',
+     pg_temp.p('INV/25-26/R2536-05', '', null, 'cgst_sgst', null, null, null), null);
 
 create function pg_temp.as_user(p uuid) returns void language sql as $f$
   select set_config('request.jwt.claims', json_build_object('sub', p, 'role', 'authenticated')::text, true);
@@ -69,8 +74,9 @@ begin
     jsonb_build_object('zoho_invoice_id', 'r2536-z1', 'customer_id', c),
     jsonb_build_object('zoho_invoice_id', 'r2536-z2', 'customer_id', c),
     jsonb_build_object('zoho_invoice_id', 'r2536-z3', 'customer_id', c),
-    jsonb_build_object('zoho_invoice_id', 'r2536-z4', 'customer_id', c)), false);
-  if (r->>'imported')::int <> 4 then raise exception 'FAIL 0: import result %', r; end if;
+    jsonb_build_object('zoho_invoice_id', 'r2536-z4', 'customer_id', c),
+    jsonb_build_object('zoho_invoice_id', 'r2536-z5', 'customer_id', c)), false);
+  if (r->>'imported')::int <> 5 then raise exception 'FAIL 0: import result %', r; end if;
 
   -- 1. B2C stays B2C: no GSTIN, Zoho's place of supply, IGST, Zoho's treatment.
   select * into inv from public.invoices where zoho_invoice_id = 'r2536-z1';
@@ -111,6 +117,13 @@ begin
   select * into inv from public.invoices where zoho_invoice_id = 'r2536-z4';
   if inv.customer_gstin is not null or inv.gst_treatment is not null or inv.pos_state_code is distinct from '07' then
     raise exception 'FAIL 3b: B2C intra-state got % / % / %', inv.customer_gstin, inv.gst_treatment, inv.pos_state_code;
+  end if;
+
+  -- 6. Detail never read → customer snapshot as before, not marked.
+  select * into inv from public.invoices where zoho_invoice_id = 'r2536-z5';
+  if inv.customer_gstin is distinct from '07AAFCV5915P1ZP' or inv.pos_state_code is distinct from '07'
+     or inv.gst_treatment is distinct from 'registered_regular' or inv.party_from_source then
+    raise exception 'FAIL 6: undetailed scan row lost the snapshot: % / % / % / %', inv.customer_gstin, inv.pos_state_code, inv.gst_treatment, inv.party_from_source;
   end if;
 end $$;
 

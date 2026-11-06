@@ -15,15 +15,20 @@
 -- WHAT THIS DOES
 --   1. invoices.party_from_source — the trigger's own stamp (never trusted from the inserting
 --      row): true = the buyer facts came from the source document as they are, empty included.
---   2. tg_invoice_snapshot_parties: when the Zoho FY sales import is inserting (its session flag
---      app.zoho_sale_import = 'on', set only inside import_zoho_fy_sales, and the row carries a
---      zoho_invoice_id) it stamps party_from_source and does NOT fill customer_gstin,
+--   2. tg_invoice_snapshot_parties: when the Zoho FY sales import is inserting a sale whose Zoho
+--      DETAIL was read (session flags app.zoho_sale_import = 'on' and app.zoho_sale_party_as_filed =
+--      'on', set only inside import_zoho_fy_sales — the second only for a scan row with detailed_at —
+--      and the row carries a zoho_invoice_id) it stamps party_from_source and does NOT fill customer_gstin,
 --      pos_state_code or gst_treatment from the customer. The billing address / country come from
 --      the customer only when Zoho gave none AND the invoice's GSTIN is empty or the customer's own
 --      (never another branch's address). Seller facts and the SEZ head are filled as before.
 --      Every other insert (invoices made in the app, opening invoices, …) behaves exactly as before.
 --   3. import_zoho_fy_sales also writes Zoho's billing address / country from the scan
 --      (normalise.ts billingAddress / billingCountry — present on scans read after this change).
+--
+--      A scan row WITHOUT the detail (staging, 6 Nov: 2,249 Excel rows with payload but no
+--      detailed_at, gst treatment / GSTIN / place of supply all empty) has those facts UNKNOWN, not
+--      empty: it keeps the old customer snapshot, so missing data never turns B2B into B2C.
 --
 -- NOT HERE: invoices already imported keep what they got — correcting them is a data repair that
 -- needs the owner's OK (dry-run SQL kept outside the repo, card R-2536).
@@ -47,6 +52,7 @@ begin
   /* R-2536: the Zoho FY sales import keeps the buyer facts as filed — decided here, from the
      import's own session flag, so a plain insert cannot claim it. */
   new.party_from_source := coalesce(current_setting('app.zoho_sale_import', true), '') = 'on'
+                           and coalesce(current_setting('app.zoho_sale_party_as_filed', true), '') = 'on'
                            and new.zoho_invoice_id is not null;
   if new.customer_id is null then return new; end if;
   select * into s from public.invoice_party_snapshot(new.tenant_id, new.customer_id);
@@ -270,6 +276,11 @@ begin
        and it.id = (case when jsonb_typeof(v_pick->'item_ids') = 'array' then v_pick->'item_ids'->>(x.ord::int - 1) end);
 
     v_id := v_num;
+    /* R-2536: "as filed" only for a scan whose Zoho DETAIL was read (detailed_at) — that is where
+       GSTIN / place of supply / treatment / address come from. A row without the detail has them
+       EMPTY because they were never read, not because Zoho had none: it keeps the customer
+       snapshot as before (never turns a B2B sale into B2C on missing data). */
+    perform set_config('app.zoho_sale_party_as_filed', case when v_scan.detailed_at is not null then 'on' else '' end, true);
     if exists (select 1 from public.invoices i where i.id = v_id) then
       v_id := left(v_num, 40) || '-' || v_code;
     end if;
@@ -307,6 +318,7 @@ begin
   end loop;
 
   perform set_config('app.zoho_sale_import', '', true);
+  perform set_config('app.zoho_sale_party_as_filed', '', true);
   update public.zoho_fy_import_batches
        set imported_count = v_n, skipped_count = jsonb_array_length(v_skipped), already_count = v_already,
            taxable_total = v_sum_tx, tax_total = v_sum_tax, amount_total = v_sum_amt, skipped = v_skipped
