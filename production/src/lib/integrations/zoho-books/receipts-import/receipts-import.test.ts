@@ -5,7 +5,8 @@
 import { describe, it, expect } from "vitest";
 import type { ZohoFyDocDetail } from "../fy-fetch";
 import { zohoReceiptFacts, appMethod, apportion, type ZohoReceiptFacts } from "./normalise";
-import { buildReceiptsPlan, suggestAccount, toReceiptPick, type ReceiptsPlanContext, type AppBankAccount } from "./plan";
+import { LEAVE_OUT, buildReceiptsPlan, suggestAccount, toReceiptPick, type ReceiptsPlanContext, type AppBankAccount } from "./plan";
+import { parseAccountMap } from "./store";
 
 function detail(raw: Record<string, unknown>): ZohoFyDocDetail {
   return {
@@ -146,6 +147,42 @@ describe("R-2501 plan — receipts only onto imported Zoho sales", () => {
     expect(suggestAccount("HDFC Bank - 50200012344523", list)).toBe("b1");   // the credit card ending 4523 is never a deposit account
     expect(suggestAccount("Petty Cash", list)).toBe("pc");                    // several cash accounts → the company's Petty Cash
     expect(suggestAccount("Undeposited Funds", list)).toBeNull();
+  });
+
+  it("Pardeep's case: Kachha Khata + Petty Cash left out by the owner → 0 receipts booked for them, listed as skipped", () => {
+    const bankAccounts = [acct("b4523", "Current", "4523"), acct("pc", "Petty Cash", null, "cash", { is_default_petty_cash: true })];
+    const kk = { depositAccountId: "zkk", depositAccountName: "Kachha Khata Cash" };
+    const pc = { depositAccountId: "zpc", depositAccountName: "Petty Cash" };
+    const all = [facts("p1"), facts("p2", { ...kk, lines: [{ zohoInvoiceId: "zi2", invoiceNumber: "INV/25-26/0002", settle: 500, tds: 0 }] }), facts("p3", { ...pc, lines: [{ zohoInvoiceId: "zi1", invoiceNumber: "INV/25-26/0001", settle: 500, tds: 0 }] })];
+    /* Without a choice both are suggested (shown in the dialog) … */
+    const shown = buildReceiptsPlan(all, ctx({ bankAccounts }));
+    expect(shown.deposits.find((d) => d.zohoAccountId === "zpc")).toMatchObject({ appAccountId: "pc", suggested: true, leftOut: false });
+    /* … the owner leaves them out. */
+    const p = buildReceiptsPlan(all, ctx({ bankAccounts, accountMap: { zkk: LEAVE_OUT, zpc: LEAVE_OUT } }));
+    expect(p.rows.map((r) => r.verdict)).toEqual(["import", "skip", "skip"]);
+    expect(p.rows.filter((r) => r.facts.depositAccountId !== "za4523").every((r) => r.reason === "Left out by owner." && r.bankAccountId === null)).toBe(true);
+    expect(p.rows.filter((r) => r.verdict !== "skip").map(toReceiptPick)).toEqual([{ zoho_payment_id: "p1", bank_account_id: "b4523" }]);
+    expect(p.deposits.filter((d) => d.leftOut).map((d) => [d.zohoAccountId, d.appAccountId, d.suggested]).sort()).toEqual([["zkk", null, false], ["zpc", null, false]]);
+    expect(p.skipReasons).toContainEqual({ reason: "Left out by owner.", count: 2 });
+    expect(p.totals.cash).toBe(1000);
+  });
+
+  it("a suggested account can be left out too; an explicit blank is never filled with a suggestion", () => {
+    expect(buildReceiptsPlan([facts("p1")], ctx({ accountMap: { za4523: LEAVE_OUT } })).rows[0]).toMatchObject({ verdict: "skip", reason: "Left out by owner." });
+    const blank = buildReceiptsPlan([facts("p1")], ctx({ accountMap: { za4523: "" } }));
+    expect(blank.rows[0]).toMatchObject({ verdict: "skip", bankAccountId: null });
+    expect(blank.deposits[0]).toMatchObject({ appAccountId: null, suggested: false });
+  });
+
+  it("import (suggest off): only what the dialog sent is used — no account is mapped behind the screen", () => {
+    const p = buildReceiptsPlan([facts("p1")], ctx(), { suggest: false });
+    expect(p.rows[0]).toMatchObject({ verdict: "skip", bankAccountId: null });
+    expect(buildReceiptsPlan([facts("p1")], ctx({ accountMap: { za4523: "b4523" } }), { suggest: false }).rows[0]).toMatchObject({ verdict: "import", bankAccountId: "b4523" });
+  });
+
+  it("parseAccountMap keeps the Leave out choice and an explicit blank, drops anything else", () => {
+    expect(parseAccountMap({ a: LEAVE_OUT, b: "", c: "x' or 1=1", d: "22222222-2222-4222-8222-222222222222" }))
+      .toEqual({ a: LEAVE_OUT, b: "", d: "22222222-2222-4222-8222-222222222222" });
   });
 
   it("a credit card is never a deposit account, even when the owner picks it", () => {

@@ -95,7 +95,7 @@ describe("R-2501 receipts-import route", () => {
   });
 
   it("import: dry run by default, Zoho id + app account only — no amounts", async () => {
-    const body = await (await POST(req({ action: "import", fy: "2025-26", part: 0, amount: 999999 }))).json();
+    const body = await (await POST(req({ action: "import", fy: "2025-26", part: 0, amount: 999999, accounts: { za: "11111111-1111-4111-8111-111111111111" } }))).json();
     expect(body).toMatchObject({ ok: true, part: 0, parts: 1 });
     expect(st.rpc[0]).toEqual({ fn: "import_zoho_fy_receipts", args: { p_fy: "2025-26", p_dry_run: true,
       p_picks: [{ zoho_payment_id: "p1", bank_account_id: "11111111-1111-4111-8111-111111111111" }] } });
@@ -105,8 +105,20 @@ describe("R-2501 receipts-import route", () => {
   it("booked payments are sent again (SQL: already + bank match later), so part N stays the same payments", async () => {
     st.facts = [fact({}), fact({ zohoId: "p2", number: "102" })];
     st.booked = new Map([["p1", { banked: true }], ["p2", { banked: false }]]);
-    await POST(req({ action: "import", fy: "2025-26", part: 0, dryRun: false }));
+    await POST(req({ action: "import", fy: "2025-26", part: 0, dryRun: false, accounts: { za: "11111111-1111-4111-8111-111111111111" } }));
     expect(st.rpc[0].args).toMatchObject({ p_dry_run: false, p_picks: [{ zoho_payment_id: "p1" }, { zoho_payment_id: "p2" }] });
+  });
+
+  it("R-2501 fix: import maps only what the dialog sent — no suggestion behind the screen; Leave out sends nothing", async () => {
+    /* The preview suggests 4523 for Zoho's "HDFC 4523", but an import that did not send it books nothing. */
+    expect((await POST(req({ action: "import", fy: "2025-26", part: 0 }))).status).toBe(409);
+    expect((await POST(req({ action: "import", fy: "2025-26", part: 0, accounts: { za: "" } }))).status).toBe(409);
+    const left = await (await POST(req({ action: "preview", fy: "2025-26", accounts: { za: "leave-out" } }))).json();
+    expect(left.deposits[0]).toMatchObject({ zohoAccountId: "za", appAccountId: null, suggested: false, leftOut: true });
+    expect(left.counts).toMatchObject({ import: 0, skip: 2 });
+    expect(left.skipped.map((x: { reason: string }) => x.reason)).toContain("Left out by owner.");
+    expect((await POST(req({ action: "import", fy: "2025-26", part: 0, dryRun: false, accounts: { za: "leave-out" } }))).status).toBe(409);
+    expect(st.rpc).toEqual([]);
   });
 
   it("preview offers Record payment's deposit accounts with its label; Remove import only to the owner", async () => {
@@ -120,7 +132,7 @@ describe("R-2501 receipts-import route", () => {
   it("the account map is shape-checked (bad ids dropped); a part out of range is refused", async () => {
     await POST(req({ action: "preview", fy: "2025-26", accounts: { za: "not-a-uuid", zb: "22222222-2222-4222-8222-222222222222" } }));
     expect(st.accountMapSeen).toEqual({ zb: "22222222-2222-4222-8222-222222222222" });
-    expect((await POST(req({ action: "import", fy: "2025-26", part: 5 }))).status).toBe(400);
+    expect((await POST(req({ action: "import", fy: "2025-26", part: 5, accounts: { za: "11111111-1111-4111-8111-111111111111" } }))).status).toBe(400);
   });
 
   it("undo calls remove_zoho_fy_receipts_import with the reason; a bad batch id is refused", async () => {
@@ -131,7 +143,7 @@ describe("R-2501 receipts-import route", () => {
 
   it("the database's refusal comes back as the message; restart clears the scan", async () => {
     st.rpcResult = { data: null, error: { message: "Only the owner or an accountant can import FY receipts from Zoho. Ask one of them." } };
-    const res = await POST(req({ action: "import", fy: "2025-26", part: 0 }));
+    const res = await POST(req({ action: "import", fy: "2025-26", part: 0, accounts: { za: "11111111-1111-4111-8111-111111111111" } }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/owner or an accountant/);
     await POST(req({ action: "restart", fy: "2025-26" }));
