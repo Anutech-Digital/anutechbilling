@@ -30,6 +30,7 @@ const SQL_SALE = new Set([
   "get_partner_metrics",   // invoiced this month (reseller children)
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  cancel_quote: "R-2519: only checks whether a quote already has a live (non-void) invoice, to refuse cancelling it — no amounts, lists or totals",
   tg_tenants_lut_to_fy: "R-2444: checks only whether 0% export Tax Invoices of one FY exist, so an old writer of tenants.lut_number never drops the LUT they rely on; no amounts or totals",
   delete_tenant_lut: "R-2444: counts the company's 0% export Tax Invoices of one FY (document_kind 'tax_invoice' — never an opening invoice) only to refuse deleting the LUT they rely on; no amounts or totals",
   bank_line_kept_receipt_ref: "R-2430: reads only the quote_id of the ONE invoice a bank line is being matched to (by id), to find a kept receipt on that quote (R-2466: or on that opening invoice) — no amounts, lists or totals",

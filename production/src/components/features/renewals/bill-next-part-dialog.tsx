@@ -16,6 +16,7 @@ import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { formatDate, rupee } from "@/lib/utils";
 import { readJsonSafe } from "@/app/(app)/renewals/reminders";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { MAX_BILL_PERIODS, partAmounts, periodText } from "@/lib/billing/proforma";
 import type { BillNextPreview } from "@/lib/billing/proforma";
 import { istToday } from "@/lib/dates/ist";
@@ -34,7 +35,7 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy }:
   const [rate, setRate] = React.useState("");
   React.useEffect(() => { if (open) { setPeriods(1); setSeats(""); setRate(""); } }, [open, sub.id]);
 
-  const { data: preview, error, isLoading } = useQuery({
+  const { data: preview, error, isLoading, refetch } = useQuery({
     queryKey: ["subscriptions", sub.id, "bill-next-preview", periods],
     enabled: open,
     queryFn: async (): Promise<BillNextPreview> => {
@@ -75,7 +76,7 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy }:
         </DialogDescription>
 
         {isLoading && <p className="mt-4 text-sm text-ink-3">Loading what will be billed…</p>}
-        {error && <p className="mt-4 text-sm text-rose" role="alert">{(error as Error).message}</p>}
+        {error && <div className="mt-4"><LoadErrorInline what="what will be billed" error={error} onRetry={() => void refetch()} /></div>}
 
         {preview && (
           <div className="mt-4 space-y-3">

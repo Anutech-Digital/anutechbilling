@@ -191,7 +191,7 @@ declare
   v_line    jsonb;
 begin
   v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   if v_caller is null and not v_trusted then
     raise exception 'No company on this login — sign in again.' using errcode = '28000';
@@ -294,7 +294,7 @@ declare
   v_reason  text := nullif(btrim(coalesce(p_reason, '')), '');
 begin
   v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   if v_caller is null and not v_trusted then
     raise exception 'No company on this login — sign in again.' using errcode = '28000';
@@ -376,7 +376,7 @@ declare
   v_q       record;
 begin
   v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   if v_caller is null and not v_trusted then
     raise exception 'No company on this login — sign in again.' using errcode = '28000';
@@ -617,7 +617,7 @@ begin
      (customer-portal login, apprentice, mid-signup) is NOT trusted — before R-454 a NULL
      current_tenant_id() skipped the tenant check entirely (fail-open). */
   v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   if v_caller is not null then
     if p_tenant_id is not null and p_tenant_id <> v_caller then
@@ -723,7 +723,7 @@ declare
   v_nparts   integer;
 begin
   v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   v_caller := public.current_tenant_id();
   if v_caller is null and not v_trusted then
