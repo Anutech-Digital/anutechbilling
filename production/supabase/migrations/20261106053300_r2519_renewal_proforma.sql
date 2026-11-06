@@ -130,27 +130,33 @@ declare
   v_months integer;
   v_mrr    integer;
   v_parts  integer;
+  v_taxable integer;
 begin
-  select q.id, q.tenant_id, q.subtotal, q.proforma_seats, q.proforma_seat_rate, q.subscription_billing_id
+  select q.id, q.tenant_id, q.proforma_seats, q.proforma_seat_rate, q.subscription_billing_id
     into v_q from public.quotes q where q.id = p_quote_id;
-  if not found or v_q.proforma_seats is null or v_q.subscription_billing_id is null then
+  if not found or v_q.proforma_seats is null or v_q.proforma_seat_rate is null or v_q.subscription_billing_id is null then
     return false;
   end if;
-  select b.* into v_b from public.subscription_billings b where b.id = v_q.subscription_billing_id for update;
+  /* The amount comes from the two guarded columns (only set_part_request_terms writes them —
+     trg_quotes_proforma_columns_guarded), never from the editable subtotal. */
+  v_taxable := v_q.proforma_seats * v_q.proforma_seat_rate;
+  /* Same company only: the part and its subscription must be the quote's company's. */
+  select b.* into v_b from public.subscription_billings b
+   where b.id = v_q.subscription_billing_id and b.tenant_id = v_q.tenant_id for update;
   if not found then return false; end if;
-  if v_b.invoice_id is null and v_b.taxable_amount is distinct from v_q.subtotal then
+  select s.id, s.seats, s.mrr, s.term_amount, s.term_months, s.billing_cycle::text as cycle
+    into v_s from public.subscriptions s
+   where s.id = v_b.subscription_id and s.tenant_id = v_q.tenant_id for update;
+  if not found then return false; end if;
+  if v_b.invoice_id is null and v_b.taxable_amount is distinct from v_taxable then
     update public.subscription_billings
-       set taxable_amount = v_q.subtotal, updated_at = now()
+       set taxable_amount = v_taxable, updated_at = now()
      where id = v_b.id and invoice_id is null;
   end if;
-
-  select s.id, s.seats, s.mrr, s.term_amount, s.term_months, s.billing_cycle::text as cycle
-    into v_s from public.subscriptions s where s.id = v_b.subscription_id for update;
-  if not found then return false; end if;
   v_months := case v_s.cycle when 'monthly' then 1 when 'quarterly' then 3
                              when 'half_yearly' then 6 when 'yearly' then 12 else 1 end;
   /* MRR = the part's taxable ÷ its months (18 × ₹300 a month → ₹5,400). */
-  v_mrr := round(v_q.subtotal::numeric / v_months)::integer;
+  v_mrr := round(v_taxable::numeric / v_months)::integer;
   v_parts := public.part_request_parts_in_term(v_s.term_months, v_s.cycle);
   if v_s.seats is distinct from v_q.proforma_seats or v_s.mrr is distinct from v_mrr then
     perform set_config('app.amendment_note',
@@ -160,10 +166,12 @@ begin
            mrr = v_mrr,
            /* R-2369's exact term amount follows the new part amount (N parts in the term). */
            term_amount = case when term_amount is null or v_parts is null then term_amount
-                              else v_q.subtotal * v_parts end
+                              else v_taxable * v_parts end
      where id = v_s.id;
   end if;
+  perform set_config('app.r2519_write', 'on', true);
   update public.quotes set proforma_terms_applied_at = coalesce(proforma_terms_applied_at, now()) where id = v_q.id;
+  perform set_config('app.r2519_write', '', true);
   return true;
 end;
 $$;
@@ -248,6 +256,7 @@ begin
                                                        public.part_request_parts_in_term(v_s.term_months, v_s.cycle)),
                  'qty', p_seats, 'rate', p_seat_rate, 'per_seat', true,
                  'period_start', v_b.period_start, 'period_end', v_b.period_end - 1);
+  perform set_config('app.r2519_write', 'on', true);
   update public.quotes
      set line_items = jsonb_build_array(v_line),
          seats = p_seats,
@@ -256,6 +265,7 @@ begin
          proforma_seats = p_seats,
          proforma_seat_rate = p_seat_rate
    where id = v_q.id;
+  perform set_config('app.r2519_write', '', true);
   return jsonb_build_object('quote_id', v_q.id, 'seats', p_seats, 'seat_rate', p_seat_rate,
                             'taxable', v_taxable, 'amount', v_taxable + v_tax);
 end;
@@ -306,6 +316,44 @@ drop trigger if exists trg_quotes_cancelled_stays_closed on public.quotes;
 create trigger trg_quotes_cancelled_stays_closed
   before update of status on public.quotes
   for each row execute function public.tg_quotes_cancelled_stays_closed();
+
+/* The proforma / cancel columns are written ONLY by this card's functions (they set the
+   transaction-local app.r2519_write flag). A signed-in user's own update of quotes (PostgREST) may
+   not set them — else seats / MRR could be changed past set_part_request_terms's role and money
+   checks through the accept trigger (security review, 6 Nov). Trusted server paths are not limited. */
+create or replace function public.tg_quotes_proforma_columns_guarded()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  /* R-2519 */
+  if coalesce(current_setting('app.r2519_write', true), '') = 'on'
+     or coalesce(public.current_request_role(), '') = 'service_role'
+     or (public.current_request_role() is null
+         and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')) then
+    return new;
+  end if;
+  if new.proforma_seats is distinct from old.proforma_seats
+     or new.proforma_seat_rate is distinct from old.proforma_seat_rate
+     or new.proforma_terms_applied_at is distinct from old.proforma_terms_applied_at
+     or new.cancelled_at is distinct from old.cancelled_at
+     or new.cancelled_by is distinct from old.cancelled_by
+     or new.cancel_reason is distinct from old.cancel_reason
+     or new.cancelled_from_status is distinct from old.cancelled_from_status
+     or new.cancelled_payment_status is distinct from old.cancelled_payment_status
+     or new.cancelled_part_billing_id is distinct from old.cancelled_part_billing_id
+     or new.subscription_billing_id is distinct from old.subscription_billing_id then
+    raise exception 'These proforma fields change only through Bill next part, Cancel or Undo cancel.' using errcode = '42501';
+  end if;
+  return new;
+end;
+$$;
+revoke all on function public.tg_quotes_proforma_columns_guarded() from public, anon, authenticated;
+drop trigger if exists trg_quotes_proforma_columns_guarded on public.quotes;
+create trigger trg_quotes_proforma_columns_guarded
+  before update on public.quotes
+  for each row execute function public.tg_quotes_proforma_columns_guarded();
 
 -- ── 5. Cancel / Undo cancel (kept, never deleted) ──────────────────────────────────────────
 create or replace function public.cancel_quote(p_quote_id text, p_reason text)
@@ -365,6 +413,7 @@ begin
       v_q.id, v_q.proforma_seats using errcode = '22023';
   end if;
 
+  perform set_config('app.r2519_write', 'on', true);
   update public.quotes
      set cancelled_from_status = v_q.status::text,
          cancelled_payment_status = v_q.payment_status::text,
@@ -377,12 +426,13 @@ begin
          cancel_reason = v_reason,
          notes = concat_ws(E'\n', nullif(notes, ''), 'Cancelled — ' || v_reason || ' (' || to_char(public.ist_today(), 'DD Mon YYYY') || ').')
    where id = v_q.id;
+  perform set_config('app.r2519_write', '', true);
   /* The part(s) are free to be billed again — their due date was this request's (a group request
      names every part on its lines: billing_id). */
   if v_q.subscription_billing_id is not null then
     update public.subscription_billings
        set due_on = null, request_reminder_step = null, updated_at = now()
-     where invoice_id is null
+     where invoice_id is null and tenant_id = v_q.tenant_id
        and (id = v_q.subscription_billing_id
             or id::text in (select l->>'billing_id' from jsonb_array_elements(coalesce(v_q.line_items, '[]'::jsonb)) l
                              where l ? 'billing_id'));
@@ -469,6 +519,7 @@ begin
     end if;
   end if;
 
+  perform set_config('app.r2519_write', 'on', true);
   update public.quotes
      set status = coalesce(v_q.cancelled_from_status, 'sent')::public.quote_status,
          payment_status = coalesce(v_q.cancelled_payment_status, 'awaiting')::public.payment_status,
@@ -478,13 +529,14 @@ begin
          cancelled_from_status = null, cancelled_payment_status = null,
          notes = concat_ws(E'\n', nullif(notes, ''), 'Cancel undone (' || to_char(public.ist_today(), 'DD Mon YYYY') || ').')
    where id = v_q.id;
+  perform set_config('app.r2519_write', '', true);
   if v_q.cancelled_part_billing_id is not null then
     /* The due date bill_subscription_instalment gave it: the later of the part start and the day
        it was made, + its terms. */
     update public.subscription_billings
        set due_on = coalesce(due_on, greatest(period_start, coalesce(v_q.created_date, public.ist_today())) + coalesce(v_q.payment_terms_days, 0)),
            updated_at = now()
-     where id = any(v_parts);
+     where id = any(v_parts) and tenant_id = v_q.tenant_id;
   end if;
 
   insert into public.activity_log (tenant_id, user_id, action, entity, entity_id, label, changes)

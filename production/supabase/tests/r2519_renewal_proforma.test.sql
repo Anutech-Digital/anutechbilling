@@ -243,6 +243,11 @@ begin
   r := public.cancel_quote(v_id, 'Owner cancels it, test');
   if r->>'status' <> 'cancelled' then raise exception 'J FAIL: owner cancel %', r; end if;
   raise notice 'J PASS: owner can change and cancel';
+  -- a direct edit of the guarded columns (PostgREST) is refused — seats only through the RPCs
+  begin
+    update public.quotes set proforma_seats = 1, proforma_seat_rate = 1 where id = 'TESTQ-R2519-SALE';
+    raise exception 'J FAIL: a direct update set proforma_seats';
+  exception when insufficient_privilege then raise notice 'J PASS (direct edit refused): %', sqlerrm; end;
 end $$;
 reset role;
 select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000251902","role":"authenticated"}', true);
