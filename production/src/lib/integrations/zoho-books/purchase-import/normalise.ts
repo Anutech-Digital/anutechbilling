@@ -94,11 +94,42 @@ const toPaise = (v: unknown): number => {
 /** Paise → whole rupees (half away from zero, like every amount the app stores). */
 const rupees = (paise: number): number => Math.sign(paise) * Math.round(Math.abs(paise) / 100);
 
-/** "194 J", "Section 194C", "Rent - 194-I(b)" → "194J", "194C", "194IB"; null when none. */
+/**
+ * Zoho's TDS name ("Professional Fees [10%] - 194 J", "Rent - 194-I(b)") → the app's section code
+ * (lib/accounting/tds-rates.ts): 194J split by what the text says — technical → 194JA, professional
+ * → 194JB, royalty → 194JR, plain → legacy "194J"; rent 194-I(a)/(b) → the app's one "194I" (never
+ * "194IA", a different section). null when no section is written.
+ */
 export function tdsSectionOf(v: unknown): string | null {
-  const s = str(v).toUpperCase().replace(/\(([A-Z])\)/g, "$1");
-  const m = /(19[0-9]{1,2})(?:[\s.-]*([A-Z]{1,2})(?![A-Z]))?/.exec(s);
-  return m ? m[1] + (m[2] ?? "") : null;
+  const text = str(v).toUpperCase();
+  /* "194-I(b)" → "194-IB"; then the digits and up to two letters right after them. */
+  const flat = text.replace(/\(([A-Z])\)/g, "$1");
+  const m = /(19[0-9]{1,2})(?:[\s.-]*([A-Z]{1,2})(?![A-Z]))?/.exec(flat);
+  if (!m) return null;
+  const base = m[1];
+  const suffix = m[2] ?? "";
+  if (base === "194" && suffix.startsWith("I")) {
+    /* Rent: 194-I(a) / 194-I(b) / 194I → the app's "194I". A bare "194IA" (no bracket, no dash) is the property-purchase section. */
+    const written = text.replace(/\s/g, "");
+    return /194-?I\(?[AB]\)/.test(written) || /194-I[AB]?\b/.test(written) || suffix === "I" ? "194I" : `194${suffix}`;
+  }
+  if (base === "194" && suffix.startsWith("J")) {
+    if (suffix === "JA" || /TECHNICAL/.test(text)) return "194JA";
+    if (/ROYALT/.test(text)) return "194JR";
+    if (suffix === "JB" || /PROFESSION/.test(text)) return "194JB";
+    return "194J";
+  }
+  return base + suffix;
+}
+
+/** The section from Zoho's TDS fields: the readable names first; tds_section only when it is a section, not an id. */
+function tdsSectionFrom(raw: Record<string, unknown>): string | null {
+  for (const k of ["tds_tax_name", "tds_name", "tds_section_formatted"]) {
+    const s = tdsSectionOf(raw[k]);
+    if (s) return s;
+  }
+  const sec = str(raw.tds_section);
+  return /^\d{6,}$/.test(sec) || sec.length > 40 ? null : tdsSectionOf(sec);
 }
 
 /** Split `total` over `weights` in whole numbers; the last non-zero weight takes the difference. */
@@ -184,7 +215,7 @@ export function zohoPurchaseFacts(d: ZohoFyDocDetail): PurchaseFacts {
 
   const tdsAmount = rupees(d.tdsPaise);
   const tdsSection = tdsAmount > 0
-    ? tdsSectionOf(raw.tds_section) ?? tdsSectionOf(raw.tds_section_formatted) ?? tdsSectionOf(raw.tds_tax_name) ?? tdsSectionOf(raw.tds_name)
+    ? tdsSectionFrom(raw)
     : null;
   if (tdsAmount > 0 && !tdsSection) problems.push(`TDS ₹${tdsAmount} with no TDS section readable in Zoho — add it by hand.`);
 
