@@ -288,13 +288,16 @@ export function useReconcileDebitToEmi() {
         ...(input.newSchedule ? { p_new_schedule: toRpcRows(input.newSchedule) } : {}),
       });
       if (error) throw error;
-      return data as { kind: string; principal?: number; interest?: number; charges?: number };
+      return data as { kind: string; how?: string; amount?: number; principal?: number; interest?: number; charges?: number; extra_interest?: number };
     },
     onSuccess: (r) => {
       invalidateEmi(qc);
+      qc.invalidateQueries({ queryKey: ["owner_equity_movements"] });
       toast.success(r.kind === "down_payment"
-        ? "Down payment matched to the bank line"
-        : `EMI reconciled — ${rupee(r.principal ?? 0)} principal, ${rupee(r.interest ?? 0)} interest${r.charges ? `, ${rupee(r.charges)} late fee` : ""}`);
+        ? (r.how === "part_of_manual" || r.how === "part_of_owner"
+            ? `${rupee(r.amount ?? 0)} of the down payment matched to the bank line`
+            : "Down payment matched to the bank line")
+        : `EMI reconciled — ${rupee(r.principal ?? 0)} principal, ${rupee(r.interest ?? 0)} interest${r.extra_interest ? ` (incl. ${rupee(r.extra_interest)} broken-period)` : ""}${r.charges ? `, ${rupee(r.charges)} late fee` : ""}`);
     },
     onError: (err) => toastError(err),
   });
@@ -356,11 +359,32 @@ export function useUndoEmiPayment() {
 
 /* ── R-2395: where the down payment was paid from ────────────────────────────────────────── */
 
-/** Where an asset's down payment (down + processing fee) sits now. */
+/** R-2523: one part of a down payment — a bank / FD / Petty Cash line (made by the app, or an
+ *  imported statement line reconciled to it) or the owner's capital. The parts add up to
+ *  down payment + processing fee. */
+export type EmiDownPart =
+  | { kind: "account"; lineId: string; accountId: string; imported: boolean; amount: number; date: string }
+  | { kind: "owner"; amount: number; date: string; partner: string | null };
+
+/** Where an asset's down payment (down + processing fee) sits now. "split" = more than one part (R-2523). */
 export type EmiDownPaymentSource =
-  | { kind: "account"; accountId: string; imported: boolean; amount: number; date: string }
-  | { kind: "owner"; amount: number; date: string; partner: string | null }
-  | { kind: "none" };
+  | { kind: "account"; accountId: string; imported: boolean; amount: number; date: string; parts?: EmiDownPart[] }
+  | { kind: "owner"; amount: number; date: string; partner: string | null; parts?: EmiDownPart[] }
+  | { kind: "split"; amount: number; date: string; parts: EmiDownPart[] }
+  | { kind: "none"; parts?: EmiDownPart[] };
+
+/** The parts → one source (one part) or "split". Pure — tested. */
+export function downPaymentSource(parts: readonly EmiDownPart[]): EmiDownPaymentSource {
+  const list = [...parts].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.amount - a.amount));
+  if (list.length === 0) return { kind: "none", parts: [] };
+  if (list.length > 1) {
+    return { kind: "split", amount: list.reduce((s, p) => s + p.amount, 0), date: list[0].date, parts: list };
+  }
+  const only = list[0];
+  return only.kind === "owner"
+    ? { kind: "owner", amount: only.amount, date: only.date, partner: only.partner, parts: list }
+    : { kind: "account", accountId: only.accountId, imported: only.imported, amount: only.amount, date: only.date, parts: list };
+}
 
 export function useEmiDownPayment(purchase: Pick<EmiPurchase, "id" | "down_bank_txn_id"> | null | undefined) {
   return useQuery({
@@ -368,19 +392,81 @@ export function useEmiDownPayment(purchase: Pick<EmiPurchase, "id" | "down_bank_
     enabled: Boolean(purchase?.id),
     queryFn: async (): Promise<EmiDownPaymentSource> => {
       const supabase = loose();
-      if (purchase!.down_bank_txn_id) {
-        const { data, error } = await supabase.from<{ id: string; bank_account_id: string; source: string; txn_date: string; debit: number }>("bank_transactions")
-          .select("id, bank_account_id, source, txn_date, debit").eq("id", purchase!.down_bank_txn_id);
-        if (error) throw error;
-        const t = data?.[0];
-        if (t) return { kind: "account", accountId: t.bank_account_id, imported: t.source !== "manual", amount: t.debit, date: t.txn_date };
-      }
-      const { data, error } = await supabase.from<{ amount: number; movement_date: string; partner_name: string | null }>("owner_equity_movements")
-        .select("amount, movement_date, partner_name").eq("emi_purchase_id", purchase!.id);
+      /* R-2523: every line matched to the purchase itself is a part (EMI lines match the payment id). */
+      const { data: lines, error } = await supabase.from<{ id: string; bank_account_id: string; source: string; txn_date: string; debit: number }>("bank_transactions")
+        .select("id, bank_account_id, source, txn_date, debit").eq("matched_to_type", "emi").eq("matched_to_id", purchase!.id);
       if (error) throw error;
-      const m = data?.[0];
-      return m ? { kind: "owner", amount: m.amount, date: m.movement_date, partner: m.partner_name } : { kind: "none" };
+      const { data: owner, error: e2 } = await supabase.from<{ amount: number; movement_date: string; partner_name: string | null }>("owner_equity_movements")
+        .select("amount, movement_date, partner_name").eq("emi_purchase_id", purchase!.id);
+      if (e2) throw e2;
+      const parts: EmiDownPart[] = [
+        ...(lines ?? []).map((t): EmiDownPart => ({ kind: "account", lineId: t.id, accountId: t.bank_account_id, imported: t.source !== "manual", amount: t.debit, date: t.txn_date })),
+        ...(owner ?? []).map((m): EmiDownPart => ({ kind: "owner", amount: m.amount, date: m.movement_date, partner: m.partner_name })),
+      ];
+      return downPaymentSource(parts);
     },
+  });
+}
+
+/** R-2523: statement lines that could be a part of a down payment — money out, not reconciled,
+ *  90 days before … 10 days after the purchase (the window the bank page also uses). */
+export type DownPaymentLine = { id: string; bank_account_id: string; account_name: string; txn_date: string; description: string | null; debit: number };
+export function useDownPaymentLineCandidates(purchasedOn: string | null | undefined, enabled = true) {
+  return useQuery({
+    queryKey: ["bank_transactions", "down-payment-lines", purchasedOn],
+    enabled: Boolean(purchasedOn) && enabled,
+    queryFn: async (): Promise<DownPaymentLine[]> => {
+      const d = new Date(`${purchasedOn}T00:00:00Z`);
+      const iso = (days: number) => new Date(d.getTime() + days * 86_400_000).toISOString().slice(0, 10);
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("bank_transactions")
+        .select("id, bank_account_id, txn_date, description, debit, source, bank_accounts(name)")
+        .is("matched_to_id", null)
+        .gt("debit", 0)
+        .neq("source", "manual")
+        .gte("txn_date", iso(-90))
+        .lte("txn_date", iso(10))
+        .order("txn_date", { ascending: true })
+        .limit(500);
+      if (error) throw error;
+      return (data ?? []).map((r) => {
+        const acc = (r as { bank_accounts?: { name?: string } | { name?: string }[] }).bank_accounts;
+        const name = Array.isArray(acc) ? acc[0]?.name : acc?.name;
+        return {
+          id: r.id as string, bank_account_id: r.bank_account_id as string, account_name: name ?? "Account",
+          txn_date: r.txn_date as string, description: (r.description ?? null) as string | null, debit: (r.debit ?? 0) as number,
+        };
+      });
+    },
+    staleTime: 15_000,
+  });
+}
+
+/** R-2523: one part sent to set_emi_down_payment_parts. */
+export type EmiDownPartInput =
+  | { bank_txn_id: string }
+  | { account_id: string; amount: number; date: string }
+  | { paid_by_owner: true; amount: number; date: string; partner?: string | null };
+
+/** The whole split in one server step (set_emi_down_payment_parts): must add up to the down payment. */
+export function useSetEmiDownPaymentParts() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { purchaseId: string; parts: EmiDownPartInput[] }) => {
+      const supabase = loose();
+      const { data, error } = await supabase.rpc("set_emi_down_payment_parts", {
+        p_purchase_id: input.purchaseId, p_parts: input.parts, p_note: null,
+      });
+      if (error) throw error;
+      return data as { total: number; parts: unknown[] };
+    },
+    onSuccess: (r) => {
+      invalidateEmi(qc);
+      qc.invalidateQueries({ queryKey: ["owner_equity_movements"] });
+      toast.success(`Down payment ${rupee(r.total)} saved as ${r.parts.length} part${r.parts.length === 1 ? "" : "s"}`);
+    },
+    onError: (err) => toastError(err),
   });
 }
 
