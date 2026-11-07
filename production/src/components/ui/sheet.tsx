@@ -22,6 +22,7 @@ import { X } from "lucide-react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
 import { keepOpenForHelp } from "./help-panel-guard";
+import { ReleaseStaleBodyLock } from "./release-stale-body-lock";
 
 const Sheet = DialogPrimitive.Root;
 const SheetTrigger = DialogPrimitive.Trigger;
@@ -88,6 +89,8 @@ const SheetContent = React.forwardRef<
       onEscapeKeyDown={keepOpenForHelp(onEscapeKeyDown)}
     >
       {children}
+      {/* R-1427: after Close, never leave body at pointer-events:none with no layer open. */}
+      <ReleaseStaleBodyLock />
       {!hideClose && (
         <DialogPrimitive.Close
           className={cn(
