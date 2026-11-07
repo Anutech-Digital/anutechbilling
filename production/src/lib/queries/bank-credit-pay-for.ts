@@ -20,16 +20,13 @@ import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import type { OldOneOffBooking, OpenItem, PayForResult, SaleLine } from "@/lib/banking/credit-pay-for";
 import { saleLinesPayload } from "@/lib/banking/credit-pay-for";
 import { ADVANCE_PAYMENT_NOTE_PREFIX, advancePaymentIds, type SplitLinePayment } from "@/lib/banking/bank-row-label";
-import { isSplitBilled } from "@/lib/billing/instalments";
 import type { SplitInput } from "@/lib/banking/credit-pay-for-multi";
 import {
   keepZohoNumberOnFirstPart as keepZohoNumberCore, payItemCall as payItemCore, newSaleInCurrency as newSaleInCurrencyCore,
   newSaleCall, splitCall, raiseFirstInstalment, payItemArgs, newSaleArgs,
   type PayItemInput, type NewSaleInput, type SaleFxInput, type ZohoKept,
 } from "@/lib/banking/credit-pay-calls";
-import type { BillingCycle } from "@/lib/supabase/database.types";
 import { paymentApprovalBlock } from "@/lib/quotes/payment-approval";
-import type { ItemFx } from "@/lib/banking/item-fx-pay";
 
 /* The generated types do not know the R-1838 functions yet (migration not applied there). */
 type RpcClient = { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }> };

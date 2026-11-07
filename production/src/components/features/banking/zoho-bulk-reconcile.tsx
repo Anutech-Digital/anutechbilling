@@ -38,7 +38,7 @@ import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 import {
   BULK_PAGE, newCustomerKey, rowsToBook, type BulkMatchRow, type PlanContext, type PlanRow,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
-import { bookOnServer, isCleanPair, previewCounts, type RefusedRow } from "@/lib/integrations/zoho-books/bulk-book-run";
+import { bookOnServer, isCleanPair, previewCounts, screenRows, type RefusedRow, type ScreenRow } from "@/lib/integrations/zoho-books/bulk-book-run";
 import { planAllWithZohoSales } from "@/lib/integrations/zoho-books/bulk-zoho-sales";
 import { expectedPageCost, paceWaitMs, ZOHO_BUSY_WAIT_MS, type PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { newCustomerPayload, type BookedRow, type BookRun } from "./zoho-bulk-book";
@@ -51,7 +51,8 @@ type Next = { label: string; href?: string };
 type Failure = { error: string; why: string; next: Next };
 
 /** What is kept in this browser tab so a closed sheet (or Zoho busy) continues where it stopped. */
-interface Progress { ids: string[]; cursor: number; matches: BulkMatchRow[]; booked: string[] }
+/* R-2535: + the server run (id + the lines it holds), so "Undo this run" survives closing the sheet. */
+interface Progress { ids: string[]; cursor: number; matches: BulkMatchRow[]; booked: string[]; runId?: string | null; runLines?: string[] }
 /* R-2419: v2 — a run read before the double-booking checks (no facts) is not picked up again. */
 const storeKey = (accountId: string) => `ros_zoho_bulk_v2:${accountId}`;
 function loadProgress(accountId: string): Progress | null {
@@ -125,6 +126,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
     if (p) {
       setIds(p.ids); setCursor(p.cursor); setMatches(p.matches);
       setBooked((b) => { const n = new Map(b); for (const id of p.booked) if (!n.has(id)) n.set(id, { txnId: id, txnDate: "", credit: 0, outcome: "skipped", customerName: "", customerCreated: false, quoteId: null, invoiceId: null, subscriptions: [], todo: [], text: "Booked earlier in this run." }); return n; });
+      if (p.runId) { setRunId(p.runId); setRunLines(new Set(p.runLines ?? [])); }
       setPhase("paused");
     }
   }, [open, accountId]);
@@ -215,11 +217,32 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   };
 
   /* ── 2. Book (R-2535: on the server, in runs — the page refreshes ONCE at the end) ───── */
-  const clean = React.useMemo(() => new Set(plan.filter(isCleanPair).map((r) => r.txnId)), [plan]);
+  /* Review: a row the person unticked is never "clean". */
+  const unticked = React.useMemo(() => new Set([...overrides].filter(([, on]) => !on).map(([id]) => id)), [overrides]);
+  const clean = React.useMemo(() => new Set(plan.filter((r) => isCleanPair(r, unticked)).map((r) => r.txnId)), [plan, unticked]);
+  const rpc = (fn: string, args: Record<string, unknown>) =>
+    (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> }).rpc(fn, args);
   const book = async (mode: BookMode) => {
     setPhase("booking"); setFailure(null); setLastRun(null); setRefused([]); setUndoNote(null);
-    const queue = rowsToBook(plan, mode === "clean" ? clean : ticked, new Set(booked.keys()));
-    setBookProgress({ at: 0, of: queue.length });
+    const wanted = rowsToBook(plan, mode === "clean" ? clean : ticked, new Set(booked.keys()));
+    setBookProgress({ at: 0, of: wanted.length });
+    /* Review: ask the database first (reconciled / locked / not this account) — so no Zoho customer is
+       made for a line that will not be booked. The server screens again before each booking. */
+    const scr = wanted.length ? await rpc("bank_recon_run_screen", { p_account_id: accountId, p_txn_ids: wanted.map((r) => r.txnId) }) : { data: [], error: null };
+    if (scr.error) { setLastRun({ done: [], error: { txnId: wanted[0].txnId, txnDate: wanted[0].txnDate, credit: wanted[0].credit, reason: scr.error.message } }); setPhase("idle"); return; }
+    const pre = screenRows(wanted.map((r) => (r.customer?.kind === "new" ? { ...r, customer: { kind: "existing" as const, id: "", name: r.customer.name, by: "name" as const } } : r)), (scr.data ?? []) as ScreenRow[]);
+    const okIds = new Set(pre.ok.map((r) => r.txnId));
+    const queue = wanted.filter((r) => okIds.has(r.txnId));
+    setRefused(pre.refused);
+    /* One run for the whole sheet (every press), started once — "Undo this run" covers all of it. */
+    let rid = runId;
+    if (!rid && queue.length) {
+      const st = await rpc("bank_recon_run_start", { p_account_id: accountId });
+      if (st.error || typeof st.data !== "string") { setLastRun({ done: [], error: { txnId: queue[0].txnId, txnDate: queue[0].txnDate, credit: queue[0].credit, reason: st.error?.message ?? "The run did not start — nothing was booked." } }); setPhase("idle"); return; }
+      rid = st.data;
+      setRunId(rid);
+      persist({ runId: rid, runLines: [] });
+    }
     /* Zoho's customers the app does not have: made first, through the customer form's own path (its
        contact person) — once per company in this run. The server then books against them. */
     const made = new Map<string, string>();
@@ -245,13 +268,14 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
         return;
       }
     }
-    const res = await bookOnServer(accountId, rows, null, fetch, (at, of) => setBookProgress({ at, of }));
+    const res = await bookOnServer(accountId, rows, rid, fetch, (at, of) => setBookProgress({ at, of }));
     const done = res.done.map((d) => (createdFor.has(d.txnId) ? { ...d, customerCreated: true } : d));
     setBooked((b) => { const n = new Map(b); for (const d of done) n.set(d.txnId, d); return n; });
-    persist({ booked: [...new Set([...(loadProgress(accountId)?.booked ?? []), ...done.map((d) => d.txnId)])] });
+    const held = [...new Set([...runLines, ...res.recorded])];
+    persist({ booked: [...new Set([...(loadProgress(accountId)?.booked ?? []), ...done.map((d) => d.txnId)])], runId: res.runId ?? rid, runLines: held });
     if (res.runId) setRunId(res.runId);
-    setRunLines((s) => new Set([...s, ...done.filter((d) => d.outcome === "booked").map((d) => d.txnId)]));
-    setRefused(res.refused);
+    setRunLines(new Set(held));
+    setRefused((r) => [...r, ...res.refused]);
     setLastRun({ done, error: res.error });
     refreshOnce();
     setPhase("idle");
@@ -270,16 +294,18 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const undo = async () => {
     if (!runId) return;
     setUndoing(true); setUndoNote(null);
-    const { data, error } = await (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> })
-      .rpc("undo_bank_recon_run", { p_run_id: runId });
+    const { data, error } = await rpc("undo_bank_recon_run", { p_run_id: runId });
     setUndoing(false);
     if (error) { setUndoNote(`Nothing was undone: ${error.message}`); return; }
     const out = (data ?? {}) as { undone?: number; left?: Array<{ txn_id: string; reason: string }> };
     const left = new Set((out.left ?? []).map((l) => l.txn_id));
     const gone = [...runLines].filter((id) => !left.has(id));
     setBooked((b) => { const n = new Map(b); for (const id of gone) n.delete(id); return n; });
-    persist({ booked: (loadProgress(accountId)?.booked ?? []).filter((id) => !gone.includes(id)) });
-    setRunLines(new Set(left));
+    const stillHeld = [...runLines].filter((id) => left.has(id));
+    /* All undone → the run is closed on the server; the next Book starts a new one. */
+    persist({ booked: (loadProgress(accountId)?.booked ?? []).filter((id) => !gone.includes(id)), runId: stillHeld.length ? runId : null, runLines: stillHeld });
+    setRunLines(new Set(stillHeld));
+    if (!stillHeld.length) setRunId(null);
     setUndoNote(`Undone: ${out.undone ?? 0} ${out.undone === 1 ? "line" : "lines"} back to unmatched.${left.size ? ` ${left.size} left as they are — ${(out.left ?? []).map((l) => l.reason).filter((v, i, a) => a.indexOf(v) === i).join(" ")}` : ""}`);
     refreshOnce();
   };
@@ -302,7 +328,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const notInZoho = Math.max(0, matches.length - plan.length);
   const toBook = plan.filter((r) => ticked.has(r.txnId) && !booked.has(r.txnId));
   const bookTotal = toBook.reduce((s, r) => s + r.credit, 0);
-  const preview = previewCounts(plan, new Set(booked.keys()));
+  const preview = previewCounts(plan, new Set(booked.keys()), unticked);
   const results = [...booked.values()].filter((b) => b.txnDate);
 
   return (

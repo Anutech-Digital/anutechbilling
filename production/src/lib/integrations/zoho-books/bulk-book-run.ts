@@ -26,19 +26,20 @@ export function screenText(reason: ScreenReason | null): string {
   return "Not a bank line of this account — not booked. Reload the page.";
 }
 
-/** Plan rows a person need not look at: book them all in one go. */
-export function isCleanPair(r: PlanRow): boolean {
-  return Boolean(r.book && r.customer && r.ticked && r.problems.length === 0 && r.zoho.by === "utr");
+/** Plan rows a person need not look at: book them all in one go. A row the person UNTICKED is
+ *  never clean (review: "Book all clean" must not book what they took out). */
+export function isCleanPair(r: PlanRow, unticked?: ReadonlySet<string>): boolean {
+  return Boolean(r.book && r.customer && r.ticked && r.problems.length === 0 && r.zoho.by === "utr" && !unticked?.has(r.txnId));
 }
 
 export interface RunPreview { clean: number; cleanTotal: number; needLook: number }
 
 /** "N clean pairs, M need a look" — over the rows not booked yet. */
-export function previewCounts(plan: readonly PlanRow[], booked: ReadonlySet<string>): RunPreview {
+export function previewCounts(plan: readonly PlanRow[], booked: ReadonlySet<string>, unticked?: ReadonlySet<string>): RunPreview {
   let clean = 0, cleanTotal = 0, needLook = 0;
   for (const r of plan) {
     if (booked.has(r.txnId)) continue;
-    if (isCleanPair(r)) { clean += 1; cleanTotal += r.credit; } else needLook += 1;
+    if (isCleanPair(r, unticked)) { clean += 1; cleanTotal += r.credit; } else needLook += 1;
   }
   return { clean, cleanTotal, needLook };
 }
@@ -92,10 +93,12 @@ export function screenRows(rows: readonly PlanRow[], screen: readonly ScreenRow[
 export interface RunResult {
   runId: string | null;
   done: BookedRow[];
+  /** Lines the server recorded on the run (Undo reaches exactly these). */
+  recorded: string[];
   refused: RefusedRow[];
   error: { txnId: string; txnDate: string; credit: number; reason: string } | null;
 }
-type ChunkAnswer = { ok: true; runId: string | null; done: BookedRow[]; refused: RefusedRow[]; error: RunResult["error"] }
+type ChunkAnswer = { ok: true; runId: string | null; done: BookedRow[]; recorded?: string[]; refused: RefusedRow[]; error: RunResult["error"] }
   | { ok: false; error: string; why?: string };
 
 /**
@@ -106,7 +109,7 @@ export async function bookOnServer(
   accountId: string, rows: readonly PlanRow[], runId: string | null,
   post: typeof fetch = fetch, onChunk?: (doneSoFar: number, total: number) => void,
 ): Promise<RunResult> {
-  const out: RunResult = { runId, done: [], refused: [], error: null };
+  const out: RunResult = { runId, done: [], recorded: [], refused: [], error: null };
   let sent = 0;
   for (const part of chunks(rows)) {
     let ans: ChunkAnswer | null = null;
@@ -119,11 +122,13 @@ export async function bookOnServer(
     if (!ans || !ans.ok) {
       const first = part[0];
       out.error = { txnId: first.txnId, txnDate: first.txnDate, credit: first.credit,
-        reason: ans ? `${ans.error}${ans.why ? ` ${ans.why}` : ""}` : "The server did not answer — nothing in this group was booked." };
+        reason: ans ? `${ans.error}${ans.why ? ` ${ans.why}` : ""}`
+          : "The server did not answer in time — some lines of this group may already be booked (on this run). Press Book again: booked lines are skipped, never booked twice." };
       return out;
     }
     out.runId = ans.runId ?? out.runId;
     out.done.push(...ans.done);
+    out.recorded.push(...(ans.recorded ?? []));
     out.refused.push(...ans.refused);
     sent += part.length;
     onChunk?.(sent, rows.length);

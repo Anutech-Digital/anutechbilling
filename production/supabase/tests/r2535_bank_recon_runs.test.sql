@@ -11,7 +11,8 @@
 --   SCREEN   own free line → ok; a line already matched → 'matched'; a line in a locked month →
 --            'locked'; company B's line id, or a line of another account → 'not_found' (never
 --            booked, nothing said about B).
---   RECORD   a booked line is recorded once (a second record — double run — adds nothing); an
+--   RECORD   a booked line is recorded once (a second record — double run — adds nothing; a second
+--            live run cannot take it); an
 --            unmatched line is not recorded; company B's run id is refused.
 --   UNDO     the run's new-sale line goes back to unmatched and its receipt is removed; a line
 --            re-matched by hand since the run is left alone and listed; a second undo changes
@@ -110,6 +111,10 @@ begin
     v_ok := public.bank_recon_run_record(v_run, 'e2535000-0000-4000-8000-0000000000e9', 'new_sale');
   exception when others then v_code := sqlstate; end;
   if v_code is null then insert into r2535_fail values ('record: company B''s line was accepted into A''s run'); end if;
+  -- a second live run cannot take L5 (run 1 holds it): its Undo must never reverse run 1's booking.
+  if public.bank_recon_run_record(public.bank_recon_run_start('e2535000-0000-4000-8000-0000000000ba'), 'e2535000-0000-4000-8000-0000000000e5', 'new_sale') then
+    insert into r2535_fail values ('record: a second run took L5 although run 1 holds it');
+  end if;
 
   -- L6 is re-matched by hand after the run (to something else): undo must leave it.
   set local role postgres;

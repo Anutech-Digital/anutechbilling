@@ -18,6 +18,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { ZOHO_FIND_ROLES } from "@/lib/integrations/zoho-books/config";
 import { resolveZohoCaller } from "@/lib/integrations/zoho-books/store";
 import { createClient } from "@/lib/supabase/server";
+import { appUrl } from "@/lib/app-url";
 import { bookRows } from "@/components/features/banking/zoho-bulk-book";
 import type { PlanRow } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 import { BOOK_CHUNK, bookKindOf, screenRows, type ScreenRow } from "@/lib/integrations/zoho-books/bulk-book-run";
@@ -63,7 +64,7 @@ export async function POST(req: NextRequest) {
       denied ? screenErr.message : "The database did not answer — nothing was booked.", { label: "Press Book again" });
   }
   const { ok, refused } = screenRows(rows, (screenData ?? []) as ScreenRow[]);
-  if (ok.length === 0) return NextResponse.json({ ok: true, runId, done: [], error: null, refused });
+  if (ok.length === 0) return NextResponse.json({ ok: true, runId, done: [], recorded: [], error: null, refused });
 
   if (!runId) {
     const { data, error } = await db.rpc("bank_recon_run_start", { p_account_id: accountId });
@@ -73,15 +74,20 @@ export async function POST(req: NextRequest) {
     runId = data;
   }
 
-  const post = sameOriginPost(req.nextUrl.origin, req.headers.get("cookie"));
+  /* The app's own address from config in production (never a request header, R-723); localhost in dev. */
+  const origin = process.env.NODE_ENV === "production" ? appUrl() : req.nextUrl.origin;
+  const post = sameOriginPost(origin, req.headers.get("cookie"));
   const run = await bookRows(ok, new Set(ok.map((r) => r.txnId)), new Set(), serverBookDeps(db, accountId, post));
 
   /* Each booked line on the run (for Undo). A failed record does not undo the booking — it says so. */
   const kindOf = new Map(ok.map((r) => [r.txnId, bookKindOf(r)]));
+  const recorded: string[] = [];
   for (const d of run.done) {
     if (d.outcome !== "booked") continue;
-    const { error } = await db.rpc("bank_recon_run_record", { p_run_id: runId, p_txn_id: d.txnId, p_kind: kindOf.get(d.txnId) ?? "other" });
-    if (error) d.todo.push(`Booked, but not added to this run (${error.message}) — "Undo this run" will not undo it; un-reconcile it by hand if needed.`);
+    const { data, error } = await db.rpc("bank_recon_run_record", { p_run_id: runId, p_txn_id: d.txnId, p_kind: kindOf.get(d.txnId) ?? "other" });
+    if (error || data !== true) {
+      d.todo.push(`Booked, but not on this run${error ? ` (${error.message})` : " (another run already holds this line)"} — "Undo this run" leaves it; un-reconcile it by hand if needed.`);
+    } else recorded.push(d.txnId);
   }
-  return NextResponse.json({ ok: true, runId, done: run.done, error: run.error, refused });
+  return NextResponse.json({ ok: true, runId, done: run.done, recorded, error: run.error, refused });
 }

@@ -16,7 +16,8 @@
 --     else ok with the line's own credit and date (the route books those amounts, never the browser's).
 --   bank_recon_run_start(account) — a new run for the caller's own account.
 --   bank_recon_run_record(run, txn, kind) — after a booking: records the line if it IS matched now
---     (else false); recording it again (double run, retry) adds nothing.
+--     (else false); recording it again (double run, retry) adds nothing; a line another live run
+--     holds is not taken (false) — an Undo only reverses what its own run booked.
 --   undo_bank_recon_run(run) — every recorded line of kind 'new_sale' still matched to what the run
 --     matched it to goes back through unreconcile_bank_receipt(line, true) — the Reconcile sheet's own
 --     "un-reconcile and undo the sale" (receipt removed, invoice voided / credited, quote rejected).
@@ -122,7 +123,7 @@ as $function$
 declare v_tenant uuid := public._r2535_run_gate(); v_id uuid;
 begin
   if not exists (select 1 from public.bank_accounts ba where ba.id = p_account_id and ba.tenant_id = v_tenant) then
-    raise exception 'Bank account not found' using errcode = 'no_data_found';
+    raise exception 'This bank account is not in your company — reload the bank page and start again.' using errcode = 'no_data_found';
   end if;
   insert into public.bank_recon_runs (tenant_id, bank_account_id, created_by)
   values (v_tenant, p_account_id, public.current_user_id())
@@ -142,12 +143,18 @@ as $function$
 declare v_tenant uuid := public._r2535_run_gate(); v_run public.bank_recon_runs; v_txn public.bank_transactions;
 begin
   select * into v_run from public.bank_recon_runs r where r.id = p_run_id and r.tenant_id = v_tenant;
-  if not found then raise exception 'Reconcile run not found' using errcode = 'no_data_found'; end if;
-  if v_run.undone_at is not null then raise exception 'This run was undone — start a new one' using errcode = 'check_violation'; end if;
+  if not found then raise exception 'This Reconcile-from-Zoho run is not in your company — reload the page and press Book again.' using errcode = 'no_data_found'; end if;
+  if v_run.undone_at is not null then raise exception 'This run was undone — close and reopen Reconcile from Zoho, then press Book again (a new run starts).' using errcode = 'check_violation'; end if;
   select * into v_txn from public.bank_transactions bt
    where bt.id = p_txn_id and bt.tenant_id = v_tenant and bt.bank_account_id = v_run.bank_account_id;
-  if not found then raise exception 'Bank line not found in this run''s account' using errcode = 'no_data_found'; end if;
+  if not found then raise exception 'This bank line is not in the run''s account — reload the bank page.' using errcode = 'no_data_found'; end if;
   if v_txn.matched_to_type is null then return false; end if;
+  /* Review: a line another (not undone) run already holds is never taken into this one — its Undo
+     must not reverse a booking this run did not make. */
+  if exists (select 1 from public.bank_recon_run_lines o
+              where o.tenant_id = v_tenant and o.txn_id = p_txn_id and o.run_id <> p_run_id and o.undone_at is null) then
+    return false;
+  end if;
   insert into public.bank_recon_run_lines (run_id, tenant_id, txn_id, kind, matched_to_type, matched_to_id)
   values (p_run_id, v_tenant, p_txn_id,
           case when p_kind in ('new_sale', 'pay_item', 'opening', 'split') then p_kind else 'other' end,
@@ -173,7 +180,7 @@ declare
   v_left   jsonb := '[]'::jsonb;
 begin
   select * into v_run from public.bank_recon_runs r where r.id = p_run_id and r.tenant_id = v_tenant for update;
-  if not found then raise exception 'Reconcile run not found' using errcode = 'no_data_found'; end if;
+  if not found then raise exception 'This Reconcile-from-Zoho run is not in your company — reload the page and press Book again.' using errcode = 'no_data_found'; end if;
 
   for v_l in
     select l.id, l.txn_id, l.kind, l.matched_to_type, l.matched_to_id, bt.matched_to_type as now_type,
