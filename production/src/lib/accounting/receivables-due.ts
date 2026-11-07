@@ -110,3 +110,49 @@ export function chaseNote(s: ToChaseSummary): string {
   }
   return `${note} · may not be invoiced yet, so "Still owed" (invoices) can be lower`;
 }
+
+/**
+ * R-1473 (7 Nov 2026, Pawan's ✗ Galat): the line over Companies › Has receivables. The list adds
+ * up to the "To collect" tile — this says what it is made of, how much of it sits on ARCHIVED
+ * companies (still owed, so still listed), and names any money the list cannot show: a company
+ * not in the loaded list (`listedIds`), or a due on a subscription with no company. Whole rupees.
+ */
+export function toCollectBreakdown(
+  s: ToChaseSummary,
+  listedIds: ReadonlySet<string>,
+  archivedIds: ReadonlySet<string>,
+): string {
+  const parts = [`Subscription dues ${rupee(s.subscriptionDues)}`];
+  if (s.projectInvoices > 0) parts.push(`project invoices ${rupee(s.projectInvoices)}`);
+  let line = `${parts.join(" + ")} = ${rupee(s.companiesTotal)} to collect`;
+  let archived = 0;
+  let notListed = 0;
+  let notListedValue = 0;
+  for (const [id, amount] of s.byCustomer) {
+    if (!listedIds.has(id)) { notListed++; notListedValue += amount; continue; }
+    if (archivedIds.has(id)) archived++;
+  }
+  if (archived > 0) line += ` · includes ${archived} archived compan${archived === 1 ? "y" : "ies"}`;
+  if (notListed > 0) {
+    line += ` · ${rupee(notListedValue)} on ${notListed} compan${notListed === 1 ? "y" : "ies"} not in this list`;
+  }
+  if (s.unlinked.value > 0) {
+    const n = s.unlinked.count;
+    line += ` · + ${rupee(s.unlinked.value)} on ${n} subscription${n === 1 ? "" : "s"} with no company linked (in the dashboard figure)`;
+  }
+  return line;
+}
+
+/**
+ * R-1473 (7 Nov 2026): Renewals shows subscription dues only — a project invoice is not a renewal.
+ * Pawan added up the Renewals rows (₹44,746) against the dashboard (₹67,855) and could not find
+ * the ₹23,109 project money. This line, under the Renewals title, says both. null = nothing unpaid.
+ */
+export function subscriptionDuesLine(s: ToChaseSummary): string | null {
+  if (s.subscriptionDues <= 0 && s.projectInvoices <= 0) return null;
+  let line = `${rupee(s.subscriptionDues)} unpaid on subscriptions`;
+  if (s.projectInvoices > 0) {
+    line += ` · project invoices ${rupee(s.projectInvoices)} are not renewals — Companies › Has receivables shows both (${rupee(s.companiesTotal)})`;
+  }
+  return line;
+}

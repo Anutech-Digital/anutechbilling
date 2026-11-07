@@ -22,7 +22,7 @@ import { useProjectReceivablesByCustomer, useProjectSales, useReceivedThisFyByCu
 import { customerPortfolioStatus, countsAsNoBusiness, projectValue, type ProjectLike } from "@/lib/customers/portfolio-status";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useOutstandingReceivables } from "@/lib/queries/payments";
-import { toChaseSummary } from "@/lib/accounting/receivables-due";
+import { toChaseSummary, toCollectBreakdown } from "@/lib/accounting/receivables-due";
 import { ImportCustomersDialog } from "@/components/features/customers/import-customers-dialog";
 import { ImportDomainsDialog } from "@/components/features/customers/import-domains-dialog";
 import { CustomerProfile } from "@/components/features/customers/customer-profile";
@@ -33,7 +33,7 @@ import {
   useOpenCreditsByCustomer, useDeleteCustomer, useSetCustomerActive,
 } from "@/lib/queries/customers";
 import {
-  customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, customerSearchFromUrl, type ViewCtx,
+  customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, customerSearchFromUrl, customerInList, type ViewCtx,
 } from "./server-list";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
@@ -159,6 +159,7 @@ export default function CustomersPage() {
   /* R-1473: amounts from toChaseSummary — the dashboard Collections card's rule. This map
      kept only ONE subscription's due per company (the oldest), so a company with two unpaid
      subscriptions showed one; now every due is added. Days = the oldest due's age. */
+  const chase = React.useMemo(() => toChaseSummary(outstanding ?? [], projRecv), [outstanding, projRecv]);
   const outstandingByCustomer = React.useMemo(() => {
     const days = new Map<string, number>();
     for (const o of outstanding ?? []) {
@@ -166,11 +167,11 @@ export default function CustomersPage() {
       days.set(o.customer_id, Math.max(days.get(o.customer_id) ?? 0, o.days_outstanding));
     }
     const map = new Map<string, { days: number; amount: number }>();
-    for (const [custId, amount] of toChaseSummary(outstanding ?? [], projRecv).byCustomer) {
+    for (const [custId, amount] of chase.byCustomer) {
       map.set(custId, { days: days.get(custId) ?? 0, amount });
     }
     return map;
-  }, [outstanding, projRecv]);
+  }, [outstanding, chase]);
 
   const router = useRouter();
   const goAdd = () => router.push("/customers/new" as never);
@@ -325,12 +326,26 @@ export default function CustomersPage() {
     [listCounts.data, facts],
   );
 
+  /* R-1473: the line over "Has receivables" — what the To collect tile is made of, how much is on
+     archived companies, and any money the list cannot show (so tile == list, or the line says why). */
+  const collectLine = React.useMemo(() => {
+    if (mode !== "full" || view !== "unpaid" || showArchived || !customers || chase.companiesTotal <= 0) return null;
+    const listed = new Set<string>();
+    const archived = new Set<string>();
+    for (const c of customers) {
+      listed.add(c.id);
+      if (c.is_active === false) archived.add(c.id);
+    }
+    return toCollectBreakdown(chase, listed, archived);
+  }, [mode, view, showArchived, customers, chase]);
+
   // Filter — segment then free-text. In server mode the server already did both.
   const archivedCount = listCounts.data?.archived ?? 0;
   const filtered = mode === "server" ? customersByWorkspace : customersByWorkspace.filter((c) => {
-    // Active by default; the Archived toggle swaps to show only inactive ones.
-    if ((c.is_active === false) !== showArchived) return false;
     const out = outstandingByCustomer.get(c.id);
+    // Active by default; the Archived toggle swaps to show only inactive ones. R-1473: in
+    // "Has receivables" an archived company that still owes stays listed (the tile counts it).
+    if (!customerInList(c.is_active, { showArchived, viewId: view, owes: out?.amount ?? 0 })) return false;
     const ctx: ViewCtx = { amount: out?.amount ?? 0, credit: creditsByCustomer[c.id] ?? 0, hasSub: subsByCustomer.has(c.id), projects: projectsByCustomer.get(c.id) ?? NO_PROJECTS, received: receivedBy[c.id]?.total ?? 0, noState: missingInvoiceState(c) };
     if (!activeView.test(ctx)) return false;
     if (!search.trim()) return true;
@@ -797,6 +812,9 @@ export default function CustomersPage() {
               🔤 Name A-Z {sort.key === "name" ? (sort.dir === "asc" ? "↓" : "↑") : ""}
             </button>
           </div>
+          {collectLine && (
+            <p className="text-xs text-ink-3" data-testid="to-collect-breakdown">{collectLine}</p>
+          )}
         </div>
       )}
 
