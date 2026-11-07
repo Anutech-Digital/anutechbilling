@@ -45,7 +45,7 @@ import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemKey,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
   paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
-  tdsToRecord, roundOffSplit, saleLineDomainProblem, saleLinesBelowCost, BANK_SALE_BELOW_COST_TEXT,
+  tdsToRecord, roundOffSplit, autoShortChoice, overIsRoundOff, saleLineDomainProblem, saleLinesBelowCost, BANK_SALE_BELOW_COST_TEXT,
   typedPriceCheck, convertTypedPrice, keepTypedPrice, undoTypedConversion,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
@@ -314,7 +314,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const tdsLikely = Boolean(tdsDef?.likely);
   const cardSaysTds = Boolean(suggested?.tds && suggested.itemKey === pickKey);
   const shortBy = check?.kind === "short" ? check.shortBy : 0;
-  const shortDefault = shortChoiceDefault(shortBy, due ?? 0, tdsLikely || cardSaysTds);
+  /* R-2192: up to ₹1 short is a round-off — pre-chosen (not on a relink, which cannot write off). */
+  const shortDefault = (check && !relink ? autoShortChoice(check) : null) ?? shortChoiceDefault(shortBy, due ?? 0, tdsLikely || cardSaysTds);
   React.useEffect(() => { setShortChoice(shortDefault); }, [shortDefault, pickKey, mode]);
 
   /* ── 4. Save ─────────────────────────────────────────────────────────────────── */
@@ -358,7 +359,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const tdsOn = tdsAmount > 0 && !itemFx;
   const tdsProblem = tdsOn ? bankTdsProblem(tdsRateShown, tdsSection) : null;
   const shortUnanswered = check?.kind === "short" && shortChoice === null
-    ? "Say why less came in — TDS, part payment or round-off." : null;
+    ? "Say why less came in — TDS, part payment, round-off or bank charge." : null;
   const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
   /* R-2440: Find in Zoho left prices in USD (no bank rate fitting Zoho's) — no Save until they are in ₹. */
@@ -401,8 +402,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     /* R-1678: a foreign invoice paid in ₹ — the same split call, settled in full + the exchange difference. */
     const roundOff = !relink && mode === "item" && picked && itemInrFx
       ? { ...roundOffSplit({ mode: "item", item: picked }), rest: "fx" as const }
-      : !relink && shortChoice === "round_off" && check?.kind === "short" && (mode === "sale" || (mode === "item" && picked))
-      ? roundOffSplit(mode === "sale" ? { mode: "sale", saleTotal: preview.total } : { mode: "item", item: picked! })
+      : !relink && check && (mode === "sale" || (mode === "item" && picked))
+        && ((check.kind === "short" && (shortChoice === "round_off" || shortChoice === "bank_charge")) || overIsRoundOff(check))
+      /* R-2192: ₹1 over → round-off gain; a bank / SWIFT charge → rest "bank_charge" (Bank Charges expense). */
+      ? roundOffSplit(mode === "sale" ? { mode: "sale", saleTotal: preview.total } : { mode: "item", item: picked! },
+          check.kind === "short" && shortChoice === "bank_charge" ? "bank_charge" : "round_off")
       : null;
     if (roundOff) {
       return bookSplit({

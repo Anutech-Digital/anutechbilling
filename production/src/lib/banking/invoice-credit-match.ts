@@ -10,7 +10,8 @@
  *
  * Signals, strongest first:
  *   1. The invoice number (or its quote id) appears in the narration / reference.
- *   2. The amount equals what is still due (`invoiceAmountDue`, R-371) to the rupee.
+ *   2. The amount equals what is still due (`invoiceAmountDue`, R-371) to the rupee — or (R-2192)
+ *      is within ₹1 of it (sameMoney): the one click then books that ₹1 as a round-off.
  *   3. A distinctive word of the customer's name appears in the narration (`nameOverlap`).
  *   4. Date: money normally arrives after the invoice; closer is a little better.
  *
@@ -24,6 +25,7 @@
  */
 import { cachedNameTokens, cachedNarrationSet } from "@/lib/accounting/credit-match";
 import type { LineMemo } from "@/lib/banking/line-memo";
+import { sameMoney } from "@/lib/banking/same-money";
 
 export interface CreditLine {
   /** Whole rupees credited. */
@@ -39,6 +41,8 @@ export interface OpenInvoice {
   /** record_payment is quote-keyed; an invoice without one cannot be one-clicked. */
   quoteId: string | null;
   customerName: string | null;
+  /** R-2192: the invoice's customer — a ₹1 round-off is saved through the split RPC, which needs it. */
+  customerId?: string | null;
   /** YYYY-MM-DD. */
   invoiceDate: string;
   /** Rupees still owed — from invoiceAmountDue(), never recomputed here. */
@@ -63,6 +67,11 @@ export interface InvoiceMatch {
   reasons: string[];
   /** Credit == due to the rupee. */
   exactAmount: boolean;
+  /** R-2192: credit − due when they are within ₹1 (sameMoney) but not equal — the one click books
+   *  it as a round-off and settles the invoice in full. 0 otherwise. */
+  roundOff: number;
+  /** R-2192: the invoice's customer, when known. */
+  customerId: string | null;
   /** Credit looks like due minus TDS at this rate (%), else null. */
   tdsRatePct: number | null;
   /** Rupees short of the due amount (credit < due), 0 otherwise. */
@@ -164,13 +173,15 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
     const refHit = said(idN) || said(quoteN);
     const nameHit = nameToks.find((t) => narration.has(t)) ?? null;   // = nameOverlap(credit.description, inv.customerName)
     const exactAmount = amount === due;
-    const tdsRatePct = exactAmount ? null : tdsRateFor(amount, due, inv.taxableValue);
-    if (!refHit && !nameHit && !exactAmount && tdsRatePct === null) continue;
+    const roundOff = !exactAmount && sameMoney(credit.amount, due) ? amount - due : 0;
+    const tdsRatePct = exactAmount || roundOff !== 0 ? null : tdsRateFor(amount, due, inv.taxableValue);
+    if (!refHit && !nameHit && !exactAmount && roundOff === 0 && tdsRatePct === null) continue;
 
     const reasons: string[] = [];
     let score = 0;
     if (refHit) { score += 45; reasons.push(`Narration carries ${inv.id}`); }
     if (exactAmount) { score += 35; reasons.push("Exact amount due"); }
+    else if (roundOff !== 0) { score += 35; reasons.push(`Within ₹1 of due — ₹${inr(Math.abs(roundOff))} round-off`); }
     else if (tdsRatePct !== null) { score += 25; reasons.push(`Due less ${tdsRatePct}% TDS`); }
     if (nameHit) { score += 20; reasons.push(`Narration says “${nameHit}”`); }
     // Date: up to 5 points, highest within a month of the invoice.
@@ -179,13 +190,13 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
     score = Math.min(100, score);
 
     const strongIdentity = refHit || Boolean(nameHit);
-    const amountFits = exactAmount || tdsRatePct !== null;
+    const amountFits = exactAmount || roundOff !== 0 || tdsRatePct !== null;
     const confidence: InvoiceMatchConfidence =
       strongIdentity && amountFits ? "certain" : amountFits || refHit ? "likely" : "possible";
 
     out.push({
       invoiceId: inv.id, quoteId: inv.quoteId, customerName: inv.customerName, amountDue: due,
-      score, confidence, reasons, exactAmount, tdsRatePct,
+      score, confidence, reasons, exactAmount, roundOff, customerId: inv.customerId ?? null, tdsRatePct,
       shortBy: Math.max(0, due - amount), overBy: Math.max(0, amount - due),
       oneClick: false, blockedReason: null,
     });
@@ -194,8 +205,10 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
   /* Two invoices with the same due and no name/ref telling them apart: an amount alone
      cannot choose, so neither is "likely" — both drop to "possible" and lose one-click.
      Two customers on the same plan paying the same day is the normal case, not rare. */
-  const exactNoIdentity = out.filter((m) => m.exactAmount && !m.reasons.some((r) => r.startsWith("Narration")));
-  const exactCount = out.filter((m) => m.exactAmount).length;
+  /* R-2192: within ₹1 is the same amount here too. */
+  const sameAmount = (m: InvoiceMatch) => m.exactAmount || m.roundOff !== 0;
+  const exactNoIdentity = out.filter((m) => sameAmount(m) && !m.reasons.some((r) => r.startsWith("Narration")));
+  const exactCount = out.filter(sameAmount).length;
   if (exactNoIdentity.length > 0 && exactCount > 1) {
     for (const m of exactNoIdentity) {
       m.confidence = "possible";
@@ -210,7 +223,8 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
       inv?.isProject ? "Project invoice — record it as a project payment"
       : !m.quoteId ? "No quote behind this invoice — record the payment from the invoice"
       : m.tdsRatePct !== null ? `Short by ₹${inr(m.shortBy)} — looks like ${m.tdsRatePct}% TDS; record it with TDS from the invoice`
-      : !m.exactAmount ? (m.overBy > 0 ? `Deposit is ₹${inr(m.overBy)} more than due` : `Deposit is ₹${inr(m.shortBy)} short of due`)
+      : m.roundOff !== 0 && !m.customerId ? "No customer on this invoice — record the payment from the invoice"
+      : !m.exactAmount && m.roundOff === 0 ? (m.overBy > 0 ? `Deposit is ₹${inr(m.overBy)} more than due` : `Deposit is ₹${inr(m.shortBy)} short of due`)
       : m.confidence === "possible" ? "Same amount as another invoice — open the invoice to be sure"
       : null;
     m.oneClick = m.blockedReason === null;

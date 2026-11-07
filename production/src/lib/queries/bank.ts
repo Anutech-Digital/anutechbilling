@@ -28,6 +28,8 @@ import { readBankLines } from "@/lib/banking/bank-lines-delta";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { bankLinePaymentReference } from "@/lib/payments/bank-line-reference";
 import type { OpenInvoice } from "@/lib/banking/invoice-credit-match";
+import { sameMoney } from "@/lib/banking/same-money";
+import { splitCall, type RpcCall } from "@/lib/banking/credit-pay-calls";
 import { sortImports, type BankImportRow, type BankImportSource, type RemoveImportArgs } from "@/lib/banking/import-history";
 import type { Json } from "@/lib/supabase/database.types";
 
@@ -1498,12 +1500,12 @@ export function useOpenInvoicesForCreditMatch(enabled = true) {
     queryFn: async (): Promise<OpenInvoice[]> => {
       const supabase = createClient();
       const rows = await fetchAllRows<{
-        id: string; quote_id: string | null; customer_name: string | null; invoice_date: string;
+        id: string; quote_id: string | null; customer_id: string | null; customer_name: string | null; invoice_date: string;
         amount: number | null; net_payable: number | null; paid_amount: number | null;
         status: string | null; taxable_value: number | null;
       }>((from, to) => supabase
         .from("invoices")
-        .select("id, quote_id, customer_name, invoice_date, amount, net_payable, paid_amount, status, taxable_value")
+        .select("id, quote_id, customer_id, customer_name, invoice_date, amount, net_payable, paid_amount, status, taxable_value")
         .in("status", ["pending", "overdue"])
         .order("invoice_date", { ascending: false })
         .order("id", { ascending: true })
@@ -1516,6 +1518,7 @@ export function useOpenInvoicesForCreditMatch(enabled = true) {
         .map((r) => ({
           id: r.id,
           quoteId: r.quote_id,
+          customerId: r.customer_id,   // R-2192: a ₹1 round-off saves through the customer-keyed split
           customerName: r.customer_name,
           invoiceDate: r.invoice_date,
           amountDue: invoiceAmountDue(r),
@@ -1537,6 +1540,11 @@ export function useOpenInvoicesForCreditMatch(enabled = true) {
  *   2. reconcile_bank_txn links THIS bank line to that payment.
  * Only called for a candidate the matcher marked oneClick (exact due, not TDS-short, not a
  * project invoice). The caller passes the credit amount, which equals the due.
+ *
+ * R-2192: a credit within ₹1 of the due (the matcher's `roundOff`) is NOT recorded as a ₹1 short
+ * part payment (or a ₹1 advance): it goes through reconcile_bank_credit_split with rest
+ * 'round_off' — the invoice for its full due, the ₹1 in bank_receipt_round_offs (P&L Bank
+ * Charges), the line reconciled — ONE server transaction, the same call the drawer's round-off uses.
  */
 export function useMatchCreditToInvoice() {
   const qc = useQueryClient();
@@ -1548,10 +1556,25 @@ export function useMatchCreditToInvoice() {
       invoiceId: string;
       amount: number;
       reference: string | null;
+      /** R-2192: credit within ₹1 of the due — settle the invoice in full, book the ₹1 as round-off. */
+      roundOff?: { customerId: string; due: number } | null;
     }) => {
       const amount = Math.round(input.amount);
       if (!(amount > 0)) throw new Error("Amount must be more than ₹0.");
       const supabase = createClient();
+      if (input.roundOff) {
+        const due = Math.round(input.roundOff.due);
+        if (!sameMoney(input.amount, due)) throw new Error("The bank amount is more than ₹1 away from the due — open the line to record it.");
+        const rpc: RpcCall = (fn, args) => (supabase as unknown as { rpc: RpcCall }).rpc(fn, args);
+        await splitCall({
+          transactionId: input.transactionId,
+          customerId: input.roundOff.customerId,
+          items: [{ quote_id: null, invoice_id: input.invoiceId, amount: due }],
+          sale: null,
+          rest: "round_off",
+        }, rpc);
+        return { invoiceId: input.invoiceId, roundOff: amount - due };
+      }
       const ref = bankLinePaymentReference(input.reference, input.transactionId);   // R-2430: placeholder ref → BANK-<line id>
       const { data: payData, error: e1 } = await supabase.rpc("record_payment", {
         p_quote_id:  input.quoteId,
@@ -1572,12 +1595,14 @@ export function useMatchCreditToInvoice() {
         p_match_confidence: "manual",
       });
       if (e2) throw e2;
-      return { invoiceId: input.invoiceId };
+      return { invoiceId: input.invoiceId, roundOff: 0 };
     },
-    onSuccess: ({ invoiceId }) => {
+    onSuccess: ({ invoiceId, roundOff }) => {
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
       invalidateReceivables(qc);   // R-1634: /collections too
-      toast.success(`Payment recorded on ${invoiceId} & line reconciled`);
+      toast.success(roundOff === 0
+        ? `Payment recorded on ${invoiceId} & line reconciled`
+        : `${invoiceId} paid in full & line reconciled — ₹${Math.abs(roundOff)} ${roundOff < 0 ? "less" : "more"} came in, booked as round-off`);
     },
     onError: (err) => toastError(err, { fallback: "Match failed" }),
   });

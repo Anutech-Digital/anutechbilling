@@ -3,7 +3,8 @@
  *
  * Ranks the open invoices by the pure matcher (lib/banking/invoice-credit-match.ts) and
  * offers ONE operator click — "Match & record payment" — only where the deposit equals the
- * amount still due and nothing else muddies it. TDS-short, over/under-paid, project and
+ * amount still due (R-2192: or is within ₹1 of it — the ₹1 is booked as round-off) and nothing
+ * else muddies it. TDS-short, over/under-paid, project and
  * same-amount-twice candidates show why they are not one-click and link to the invoice,
  * where the full Record payment dialog (with TDS) lives. Nothing is ever recorded without
  * the click.
@@ -72,6 +73,8 @@ export function InvoiceCreditMatchSection({
         invoiceId: m.invoiceId,
         amount: transaction.credit,
         reference: transaction.reference,
+        /* R-2192: within ₹1 of the due → settled in full, the ₹1 booked as round-off. */
+        roundOff: m.roundOff !== 0 && m.customerId ? { customerId: m.customerId, due: m.amountDue } : null,
       });
       onDone();
     } catch { /* hook toasts */ } finally {
