@@ -59,9 +59,9 @@ describe("R-1821: Ctrl+K (palette) for a masked role", () => {
   it("owner: phone and email are still searched", async () => {
     const { db, ors } = fakeDb();
     await searchPaletteContacts(db, "98765", "t1", false);
-    /* R-2185: a typed number is matched whatever its spacing (imatch on the digits). */
-    expect(ors[0]).toContain('phone.imatch."9[^0-9]*8[^0-9]*7[^0-9]*6[^0-9]*5"');
-    expect(ors[0]).toContain('email.imatch."9[^0-9]*8[^0-9]*7[^0-9]*6[^0-9]*5"');
+    /* R-2185: a typed number is matched on the phone whatever its spacing (imatch on the digits). */
+    expect(ors[0]).toContain('phone.imatch."9[-+. ()/]*8[-+. ()/]*7[-+. ()/]*6[-+. ()/]*5"');
+    expect(ors[0]).toContain('email.ilike."%98765%"');
   });
 });
 

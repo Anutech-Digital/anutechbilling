@@ -135,6 +135,37 @@ describe("R-2185: Ctrl+K finds a company by its phone however it is typed", () =
   it("other groups keep their plain word terms (a quote number typed with spaces is unchanged)", () => {
     expect(paletteTerms("2026 0042")).toEqual(["2026", "0042"]);
   });
+
+  /* Review findings (code-review high, 7 Nov) — kept as tests. */
+  it("letters never sit between matched digits: '7093' does not find a GSTIN 27AAPFU0939F1ZV", async () => {
+    const row = { ...company, contact_phone: null, gstin: "27AAPFU0939F1ZV", name: "Plot 2, Sector 0, Block 26" };
+    expect(requestMatches(await customersFor("7093"), row)).toBe(false);
+    expect(requestMatches(await customersFor("2026"), row)).toBe(false);
+  });
+
+  it("a partial number typed with +91 finds a number stored without it", async () => {
+    const bare = { ...company, contact_phone: "9876500031" };
+    expect(requestMatches(await customersFor("+9198765"), bare)).toBe(true);
+  });
+
+  it("two numbers or a spaced reference are not squashed into one term", async () => {
+    const call = await customersFor("98765 00031 98765 00032");
+    expect(call.or.length).toBeGreaterThan(1);
+    expect(requestMatches(await customersFor("2026 0042 1234"), { ...company, customer_number: "CUS-2026-0042-1234" })).toBe(true);
+  });
+
+  it("a non-phone column keeps plain ilike for a typed number (no regex on names / emails / GSTIN)", async () => {
+    const call = await customersFor("9876500031");
+    expect(call.or[0]).toMatch(/contact_phone\.imatch/);
+    expect(call.or[0]).toMatch(/contact_mobile\.imatch/);
+    expect(call.or[0]).not.toMatch(/(name|gstin|contact_email|domain|customer_number)\.imatch/);
+  });
+
+  it("a contact saved with only a WhatsApp number is found by it", async () => {
+    const { db, calls } = fakeDb();
+    await searchPaletteContacts(db, "98765 00031", "t1");
+    expect(requestMatches(calls[0], { full_name: "Rohit", email: null, phone: null, whatsapp: "+919876500031", company: null })).toBe(true);
+  });
 });
 
 describe("R-2185: keywords carry the company's phone and mobile as digits", () => {

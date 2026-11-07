@@ -46,36 +46,50 @@ export function ilikeAny(columns: readonly string[], term: string): string {
  * R-2185: a typed number, as a pattern that ignores how it was written. A phone stored as
  * "+91 98765 00031" does not CONTAIN "9876500031", so `ilike "%9876500031%"` missed it — only
  * the spaced form worked, word by word. A term made only of digits and + - ( ) with 4+ digits
- * becomes a regex with any non-digits allowed between its digits ("9[^0-9]*8[^0-9]*7…"), so
- * digits-only, spaced, dashed and +91 forms all find the same number. More than ten digits
- * (+91 / 0 prefix typed) → the last ten, so a number stored bare is found too. The pattern is
- * built from digits only, so nothing typed can become a regex or PostgREST special character.
+ * becomes a regex that allows phone separators (space + - . ( ) /) between its digits
+ * ("9[-+. ()/]*8[-+. ()/]*7…") — never letters, so "7093" does not match a GSTIN's scattered
+ * digits. Digits-only, spaced, dashed and +91 forms all find the same number. A "+91" typed in
+ * front, or more than ten digits (+91 / 0 prefix), is dropped (the last ten kept), so a number
+ * stored bare is found too. Built from digits and a fixed class only, so nothing typed can
+ * become a regex or PostgREST special character. Used only on phone columns (phoneColumn).
  */
+const PHONE_SEP = "[-+. ()/]*";
 export function digitTermPattern(term: string): string | null {
   if (!/^[\d+\-()]+$/.test(term)) return null;
-  const digits = term.replace(/\D/g, "");
+  let digits = term.replace(/\D/g, "");
+  if (term.startsWith("+91") && digits.length > 6) digits = digits.slice(2);
   if (digits.length < 4) return null;
-  return (digits.length > 10 ? digits.slice(-10) : digits).split("").join("[^0-9]*");
+  return (digits.length > 10 ? digits.slice(-10) : digits).split("").join(PHONE_SEP);
 }
 
+/** R-2185: a column that holds a phone number (same names the R-1821 mask treats as contact). */
+const phoneColumn = (c: string) => /phone|mobile|whatsapp/.test(c);
+
 /**
- * R-2185: the words for a phone-bearing search (Companies, Contacts). A whole query that is one
- * phone number written with spaces ("+91 98765 00031") is ONE term — its digits — so the "+91"
- * piece need not appear on its own in the stored number. Other groups keep paletteTerms.
+ * R-2185: the words for a phone-bearing search (Companies, Contacts). A whole query that is ONE
+ * Indian phone number written with spaces ("+91 98765 00031", "098765 00031") is one term — its
+ * digits — so the "+91" piece need not appear on its own in the stored number. Ten digits, or
+ * eleven starting 0, or twelve starting 91 — anything else (two numbers, a spaced reference)
+ * keeps its words. Other groups keep paletteTerms.
  */
 export function palettePhoneTerms(query: string): string[] {
   const q = query.trim();
   if (/^[\d\s+\-()]+$/.test(q) && /\s/.test(q)) {
-    const digits = q.replace(/\D/g, "");
-    if (digits.length >= 10) return [digits];
+    const d = q.replace(/\D/g, "");
+    if (d.length === 10 || (d.length === 11 && d.startsWith("0")) || (d.length === 12 && d.startsWith("91"))) return [d];
   }
   return paletteTerms(query);
 }
 
-/** One or-group for a term: `imatch` with the digit pattern for a typed number, else `ilike`. */
+/**
+ * One or-group for a term. A typed number on a phone column → `imatch` with the digit pattern;
+ * every other column (and every other term) → `ilike` as before, so names, emails and GSTINs
+ * are matched exactly as they were.
+ */
 function termGroup(columns: readonly string[], term: string, digitAware: boolean): string {
   const pattern = digitAware ? digitTermPattern(term) : null;
-  return pattern ? columns.map((c) => `${c}.imatch."${pattern}"`).join(",") : ilikeAny(columns, term);
+  if (!pattern) return ilikeAny(columns, term);
+  return columns.map((c) => (phoneColumn(c) ? `${c}.imatch."${pattern}"` : `${c}.ilike."%${term}%"`)).join(",");
 }
 
 /** The filter-builder methods the searches use — real client or a test double. */
@@ -110,7 +124,8 @@ export const PALETTE_SUBSCRIPTION_COLUMNS = "*";
 export const PALETTE_SUBSCRIPTION_SEARCH = ["customer_name", "plan", "vendor", "domain"] as const;
 
 export const PALETTE_CONTACT_COLUMNS = "id, full_name, email, phone, company, title, customer_id";
-export const PALETTE_CONTACT_SEARCH = ["full_name", "email", "phone", "company"] as const;
+/* R-2185: whatsapp — a contact saved with only a WhatsApp number is found by it too. */
+export const PALETTE_CONTACT_SEARCH = ["full_name", "email", "phone", "whatsapp", "company"] as const;
 
 export const PALETTE_PAYMENT_COLUMNS = "id, amount, method, reference, received_at, customer_id, quote_id, invoice_id, receipt_voucher_no";
 /* R-1639: the receipt number and the document (quote / imported invoice) the payment is on. */
