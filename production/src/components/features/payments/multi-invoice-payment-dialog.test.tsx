@@ -153,7 +153,8 @@ describe("R-1525 multi-invoice payment sheet", () => {
     await waitFor(() => expect(document.getElementById("mip_tds_0")).toBeTruthy());
     fireEvent.change(document.getElementById("mip_tds_0")!, { target: { value: "10" } });
     fireEvent.change(document.getElementById("mip_tds_0")!, { target: { value: "100" } });
-    await new Promise((r) => setTimeout(r, 20));
+    /* fireEvent runs inside act, so this render is already the one after the typing. */
+    await waitFor(() => expect(screen.getByText("Applied to 1 invoice").nextSibling?.textContent).toBe("₹1,080"));
     expect(screen.queryByText("More than due")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
     fireEvent.change(document.getElementById("mip_reference")!, { target: { value: "402312345678" } });
@@ -170,7 +171,7 @@ describe("R-1525 multi-invoice payment sheet", () => {
     await waitFor(() => expect(lineValue(0)).toBe("1180"));
     fireEvent.change(document.getElementById("mip_line_0")!, { target: { value: "1000" } });
     fireEvent.change(document.getElementById("mip_line_0")!, { target: { value: "1180" } });
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => expect(screen.getByText("Applied to 1 invoice").nextSibling?.textContent).toBe("₹1,180"));
     expect(screen.queryByText("More than due")).toBeNull();
     expect(screen.queryByRole("alert")).toBeNull();
   });

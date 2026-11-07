@@ -944,12 +944,10 @@ export function resultLines(r: PayForResult): ResultLine[] {
 
   /* R-2546: a quote-less receipt (Zoho-imported invoice, kind "opening") names its invoice — it
      said "recorded on quote null". The first line then carries the invoice link, so no repeat. */
-  const invoiceOnly = !r.quote_id && !!r.invoice_id && r.kind !== "instalment";
+  const invoiceOnly = !r.quote_id && !!r.invoice_id && r.kind !== "renewal" && r.kind !== "add_seats" && r.kind !== "instalment";
   const invoiceHref = r.invoice_id ? `/invoices/${encodeURIComponent(r.invoice_id)}` : undefined;
   if (r.already_recorded) {
-    out.push({ text: `This payment was already recorded on ${r.quote_id ?? r.invoice_id} — the bank line is now matched to it.`, href: quoteHref ?? invoiceHref });
-  } else if (invoiceOnly) {
-    out.push({ text: `${rupee(r.amount)} recorded on invoice ${r.invoice_id}`, href: invoiceHref });
+    out.push({ text: `This payment was already recorded on ${r.quote_id || r.invoice_id || "this receipt"} — the bank line is now matched to it.`, href: quoteHref ?? invoiceHref });
   } else if (r.kind === "renewal") {
     out.push({
       text: r.renewal_rolled_forward && sub?.renewal_date
@@ -961,6 +959,8 @@ export function resultLines(r: PayForResult): ResultLine[] {
     out.push({ text: `Add-seats payment recorded${sub ? ` → ${subName}` : ""}`, href: quoteHref });
   } else if (r.kind === "instalment") {
     out.push({ text: `Instalment ${r.invoice_id} paid${sub ? ` · ${subName}` : ""}` });
+  } else if (invoiceOnly) {
+    out.push({ text: `${rupee(r.amount)} recorded on invoice ${r.invoice_id}`, href: invoiceHref });
   } else {
     out.push({ text: `${rupee(r.amount)} recorded on ${r.new_quote ? "new sale" : "quote"} ${r.quote_id}`, href: quoteHref });
     for (const s of subs) {
