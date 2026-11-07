@@ -70,11 +70,14 @@ describe("invoice page wiring (R-238)", () => {
   it("the list uses the same function with the same note totals, so the two cannot drift", () => {
     expect(list).toMatch(/invoiceStatusBadge\(inv, undefined, notes\)/);
     expect(list).not.toMatch(/invoiceStatusBadge\(inv\)/);
-    /* R-1709: chips, tile focus and KPIs read the same note totals as the row badge. */
-    expect(list).toMatch(/invoiceChipCounts\(viewInvoices, undefined, noteTotals\)/);
-    expect(list).toMatch(/invoiceKpis\(invoices \?\? \[\], undefined, noteTotals\)/);
-    expect(list).toMatch(/invoiceChip\(i, undefined, noteTotals\)/);
-    expect(list).toMatch(/invoiceInFocus\(i, focus, undefined, noteTotals\)/);
+    /* R-1709: chips, tile focus and KPIs read the same note totals as the row badge.
+       R-2566: and the same IST day — today, or todayAt (noon IST of today) where a Date is taken. */
+    expect(list).toMatch(/invoiceChipCounts\(viewInvoices, today, noteTotals\)/);
+    expect(list).toMatch(/invoiceKpis\(invoices \?\? \[\], todayAt, noteTotals\)/);
+    expect(list).toMatch(/invoiceChip\(i, today, noteTotals\)/);
+    expect(list).toMatch(/invoiceInFocus\(i, focus, todayAt, noteTotals\)/);
+    expect(list).toMatch(/const today = istToday\(\);/);
+    expect(list).toMatch(/const todayAt = React\.useMemo\(\(\) => new Date\(`\$\{today\}T12:00:00\+05:30`\), \[today\]\)/);
   });
 
   it("an empty receipts panel offers Record payment on the page", () => {
