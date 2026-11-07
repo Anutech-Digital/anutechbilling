@@ -3,7 +3,7 @@
 -- first sale can be undone and lists only it; the undo takes back sale A and leaves the rest on no bank line).
 --
 -- reconcile_bank_credit_split books every new sale / advance of ONE bank line as its own receipt and points the
--- line at the FIRST receipt only. "Undo this sale too" takes back one sale — so on such a line it is refused
+-- line at the FIRST receipt only. "Undo this sale too" (_bank_sale_undo_scope) takes back one sale — so on such a line it is refused
 -- (nothing changes) and the preview names every other receipt the line booked.
 --
 --   A. ₹17,700 line → "A new sale" A ₹11,800 + new sale B ₹5,900 (two sales, each with a subscription).
