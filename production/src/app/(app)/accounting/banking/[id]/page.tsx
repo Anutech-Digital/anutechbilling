@@ -17,6 +17,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
 
@@ -93,6 +94,7 @@ import { BankFilterBar, type ImportOption } from "@/components/features/banking/
 import { useZohoMatchSet } from "@/components/features/banking/use-zoho-match-count";
 import { ReconcileCoverageTile } from "@/components/features/banking/reconcile-coverage-tile";
 import { lineNoteLines, useOwnerBookingNotes, type LineNoteLines } from "@/lib/banking/manual-reconcile";
+import { useLineBookings, type LineBooking } from "@/lib/banking/line-booking";
 import { downloadCSV } from "@/lib/csv";
 import { ZohoBulkReconcileButton } from "@/components/features/banking/zoho-bulk-reconcile";
 import { istToday } from "@/lib/dates/ist";
@@ -225,6 +227,12 @@ export default function BankAccountDetailPage() {
   const { data: ownerNotes } = useOwnerBookingNotes(accountId);
   const txnById = React.useMemo(() => new Map((transactions ?? []).map((t) => [t.id, t])), [transactions]);
   const notesFor = (t: BankTransactionRow) => lineNoteLines(t, txnById, ownerNotes);
+  /* R-2378: a 'manual' line booked as a loan / advance / staff loan … reads as that booking + its party
+     (bank_line_bookings), never as "reconciled manually, no entry". Read only when such lines exist. */
+  const hasManual = React.useMemo(() => (transactions ?? []).some((t) => t.matched_to_type === "manual"), [transactions]);
+  const { data: lineBookings } = useLineBookings(accountId, hasManual);
+  const bookingFor = (t: BankTransactionRow): LineBooking | undefined =>
+    t.matched_to_type === "manual" ? lineBookings?.get(t.id) : undefined;
 
   /* R-1869 "Money out · no vendor yet": unmatched money out where R-1866's guessVendor (the
      same guess the Reconcile sheet pre-fills) finds nobody — and not a salary line (Salary lines
@@ -264,7 +272,8 @@ export default function BankAccountDetailPage() {
     sets: { no_customer: noCustomerIds, no_vendor: noVendorIds, old_one_off: new Set(oldById.keys()), ...(zohoIds ? { zoho_match: zohoIds } : {}) },
     importLines,
     order: ledgerSeq,
-  }), [noCustomerIds, noVendorIds, oldById, importLines, zohoIds, ledgerSeq]);
+    bookings: lineBookings,
+  }), [noCustomerIds, noVendorIds, oldById, importLines, zohoIds, ledgerSeq, lineBookings]);
 
   const facets = React.useMemo(() => facetCounts(transactions ?? [], filters, filterCtx), [transactions, filters, filterCtx]);
   const visibleTxns = React.useMemo(
@@ -304,7 +313,7 @@ export default function BankAccountDetailPage() {
   }, [filters]);
 
   const exportCsv = () => {
-    const { headers, rows } = bankLinesCsv(visibleTxns);
+    const { headers, rows } = bankLinesCsv(visibleTxns, lineBookings);
     const name = (account?.name ?? "bank").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-|-$/g, "");
     downloadCSV(`${name}-bank-lines-${istToday()}.csv`, headers, rows);
   };
@@ -682,6 +691,7 @@ export default function BankAccountDetailPage() {
                       isAdvance={isAdvanceTxn(txn)}
                       splitPays={splitPays?.get(txn.id)}
                       notes={notesFor(txn)}
+                      booking={bookingFor(txn)}
                     />
                   ))}
                 </tbody>
@@ -707,6 +717,7 @@ export default function BankAccountDetailPage() {
                 isAdvance={isAdvanceTxn(txn)}
                 splitPays={splitPays?.get(txn.id)}
                 notes={notesFor(txn)}
+                booking={bookingFor(txn)}
               />
             ))}
           </ul>
@@ -766,9 +777,9 @@ function TxnAmount({ txn }: { txn: BankTransactionRow }) {
 }
 
 /* R-2025 (0): an R-1863 advance reads "Advance", not "Payment" (lib/banking/bank-row-label). */
-function TxnStatusBadge({ txn, isAdvance = false, splitPays }: { txn: BankTransactionRow; isAdvance?: boolean; splitPays?: readonly SplitLinePayment[] }) {
+function TxnStatusBadge({ txn, isAdvance = false, splitPays, booking }: { txn: BankTransactionRow; isAdvance?: boolean; splitPays?: readonly SplitLinePayment[]; booking?: LineBooking }) {
   return txn.matched_to_type
-    ? <MatchedBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} />
+    ? <MatchedBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} booking={booking} />
     : <Badge kind="warning" size="sm" dot>Unmatched</Badge>;
 }
 
@@ -789,6 +800,7 @@ function TransactionRow({
   splitPays,
   notes = null,
   running,
+  booking,
 }: {
   txn: BankTransactionRow;
   /** R-2400: the balance after this line, from ALL the account's lines. */
@@ -796,6 +808,8 @@ function TransactionRow({
   highlighted?: boolean;
   /** R-2361: manual reason / owner note + reversal pair, shown under the badge. */
   notes?: LineNoteLines | null;
+  /** R-2378: the real booking of a 'manual' line — the badge + the party link. */
+  booking?: LineBooking;
   /** R-2025 (0): booked as the customer's advance — the badge reads "Advance". */
   isAdvance?: boolean;
   /** R-2098: the receipts of a line that paid several items. */
@@ -848,7 +862,8 @@ function TransactionRow({
           // Reconciled: show WHAT it matched (this replaces the Status column)
           // plus a quiet way to undo it.
           <div className="flex flex-col items-end gap-0.5">
-            <MatchedBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} />
+            <MatchedBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} booking={booking} />
+            <BookingParty booking={booking} />
             <LineNotes notes={notes} align="right" />
             {onRelink && (
               <Button size="sm" variant="default" onClick={onRelink} title="Move this one-off sale onto the renewal, extra seats or quote it paid">
@@ -871,7 +886,7 @@ function TransactionRow({
             Reconcile
           </Button>
         ) : (
-          <TxnStatusBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} />
+          <TxnStatusBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} booking={booking} />
         )}
       </td>
     </tr>
@@ -881,10 +896,11 @@ function TransactionRow({
 // ============================================================
 // Card (mobile)
 // ============================================================
-function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onReconcile, onUnreconcile, onRelink, isAdvance = false, splitPays, notes = null }: {
+function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onReconcile, onUnreconcile, onRelink, isAdvance = false, splitPays, notes = null, booking }: {
   txn: BankTransactionRow; running?: RunningBalance; highlighted?: boolean; invoiceMatch?: InvoiceMatch; onReconcile?: () => void; onUnreconcile?: () => void; onRelink?: () => void; isAdvance?: boolean;
   splitPays?: readonly SplitLinePayment[];
   notes?: LineNoteLines | null;
+  booking?: LineBooking;
 }) {
   return (
     <li data-txn-id={txn.id} aria-current={highlighted ? "true" : undefined}>
@@ -899,6 +915,7 @@ function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onRe
             {invoiceMatch && onReconcile && (
               <div className="mt-1"><InvoiceMatchChip match={invoiceMatch} onOpen={onReconcile} /></div>
             )}
+            <BookingParty booking={booking} />
             <LineNotes notes={notes} align="left" />
           </div>
           <div className="shrink-0 text-right font-serif text-base tabular-nums">
@@ -911,7 +928,7 @@ function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onRe
           </div>
         </div>
         <div className="mt-2 flex items-center justify-between gap-2">
-          <TxnStatusBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} />
+          <TxnStatusBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} booking={booking} />
           {txn.matched_to_type === "transfer" ? (
             <span className="text-xs text-ink-3">Auto</span>
           ) : txn.matched_to_type ? (
@@ -949,9 +966,21 @@ function LineNotes({ notes, align }: { notes: LineNoteLines | null; align: "left
   );
 }
 
+/** R-2378: the party of a booked 'manual' line, linking to the page that holds its booking. */
+function BookingParty({ booking }: { booking?: LineBooking }) {
+  if (!booking) return null;
+  return (
+    <Link href={booking.href as Route} data-testid="line-booking" title={`Open ${booking.hrefLabel}`}
+      className="mt-0.5 block max-w-full truncate text-xs text-ink-2 underline decoration-dotted underline-offset-2 hover:text-ink">
+      {booking.party ?? booking.hrefLabel}
+    </Link>
+  );
+}
+
 /** R-2098: "Payment" / "Advance" — or "N payments" with each receipt in the tooltip. */
-function MatchedBadge({ txn, isAdvance, splitPays }: { txn: BankTransactionRow; isAdvance: boolean; splitPays?: readonly SplitLinePayment[] }) {
+function MatchedBadge({ txn, isAdvance, splitPays, booking }: { txn: BankTransactionRow; isAdvance: boolean; splitPays?: readonly SplitLinePayment[]; booking?: LineBooking }) {
   const n = splitPays?.length ?? 0;
-  const badge = <Badge kind="success" size="sm" dot>{bankRowStatusLabel(txn.matched_to_type, isAdvance, n)}</Badge>;
+  /* R-2378: a booked 'manual' line names its booking ("Loan received"), never the bare "Reconciled". */
+  const badge = <Badge kind="success" size="sm" dot>{booking ? booking.label : bankRowStatusLabel(txn.matched_to_type, isAdvance, n)}</Badge>;
   return n > 1 && splitPays ? <span title={splitPaymentsTitle(splitPays)}>{badge}</span> : badge;
 }

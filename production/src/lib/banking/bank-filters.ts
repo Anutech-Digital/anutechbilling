@@ -76,7 +76,29 @@ export type FilterContext = {
   /** R-2400: each line's place in statement order (lib/banking/running-balance seq) — the
       same-day tie-break of the sorts, so the running Balance reads down the list. */
   order?: ReadonlyMap<string, number>;
+  /** R-2378: the real booking of a matched_to_type = 'manual' line (lib/banking/line-booking) — its group
+      (a loan booked through "Loan / advance with a person" is a Loan, not Other). */
+  bookings?: ReadonlyMap<string, LineBookingLike>;
 };
+
+/** R-2378: the part of lib/banking/line-booking's LineBooking the filters and the CSV read. */
+export type LineBookingLike = { label: string; party: string | null; group: MatchGroup };
+
+/** R-2378: the booking of a line, only when it is a 'manual' line the server found one for. */
+function bookingOf(t: Pick<FilterLine, "id" | "matched_to_type">, bookings?: ReadonlyMap<string, LineBookingLike>): LineBookingLike | undefined {
+  return t.matched_to_type === "manual" ? bookings?.get(t.id) : undefined;
+}
+
+/** The "Matched to" group of a line: a booked manual line's booking group, else its type's. */
+export function lineGroupOf(t: Pick<FilterLine, "id" | "matched_to_type">, bookings?: ReadonlyMap<string, LineBookingLike>): MatchGroup | null {
+  return bookingOf(t, bookings)?.group ?? matchGroupOf(t.matched_to_type);
+}
+
+/** R-2378: the Status a line exports — a booked manual line says what it booked ("Loan received · Bajaj Finance"). */
+export function lineStatusText(t: Pick<FilterLine, "id" | "matched_to_type">, bookings?: ReadonlyMap<string, LineBookingLike>): string {
+  const b = bookingOf(t, bookings);
+  return b ? (b.party ? `${b.label} · ${b.party}` : b.label) : lineStatusLabel(t.matched_to_type);
+}
 
 export const DEFAULT_FILTERS: BankFilters = {
   status: "all", dir: "all", from: null, to: null, min: null, max: null, exact: null,
@@ -226,7 +248,7 @@ function lineMatches(
     if (f.max !== null && amt > f.max) return false;
   }
   if (skip !== "types" && f.types.length > 0) {
-    const g = matchGroupOf(t.matched_to_type);
+    const g = lineGroupOf(t, ctx.bookings);
     if (g === null || !f.types.includes(g)) return false;
   }
   if (f.need) {
@@ -318,7 +340,7 @@ export function facetCounts(lines: readonly FilterLine[], f: BankFilters, ctx: F
       if ((t.debit ?? 0) > 0) c.dir.out += 1;
     }
     if (lineMatches(t, f, ctx, dupes, "types")) {
-      const g = matchGroupOf(t.matched_to_type);
+      const g = lineGroupOf(t, ctx.bookings);
       if (g) c.types[g] += 1;
     }
     if (lineMatches(t, noNeed, ctx, dupes, null)) {
@@ -478,7 +500,7 @@ export function hasAnyFilter(f: BankFilters): boolean {
 // ─── CSV ───────────────────────────────────────────────────────────────────
 
 /** Export CSV of exactly the filtered lines (lib/csv downloadCSV writes it). Amounts raw, whole ₹. */
-export function bankLinesCsv(lines: readonly FilterLine[]): { headers: string[]; rows: (string | number)[][] } {
+export function bankLinesCsv(lines: readonly FilterLine[], bookings?: ReadonlyMap<string, LineBookingLike>): { headers: string[]; rows: (string | number)[][] } {
   return {
     headers: ["Date", "Description", "Reference", "Money out", "Money in", "Status", "Balance after"],
     rows: lines.map((t) => [
@@ -487,7 +509,7 @@ export function bankLinesCsv(lines: readonly FilterLine[]): { headers: string[];
       t.reference ?? "",
       (t.debit ?? 0) > 0 ? t.debit : "",
       (t.credit ?? 0) > 0 ? t.credit : "",
-      lineStatusLabel(t.matched_to_type),
+      lineStatusText(t, bookings),
       t.balance_after ?? "",
     ]),
   };
