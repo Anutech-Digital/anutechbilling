@@ -125,6 +125,9 @@ export const PUSH_GUARD_SUITES = [
   // ── repo-wide file scans ──
   "tests/ops/deploy-targets.test.ts", // R-1604: only live + staging deploy targets
   "tests/ops/dev-local-resend.test.ts", // R-2106: dev:local never lets a send key (Resend/SMTP/…) through; cron:local secret = dev-local's
+  // R-2564: every scan above reads through this cache — it must never serve old text, and the skip is exactly Prisma's output
+  "src/lib/testing/source-cache.test.ts",
+  "src/lib/testing/prisma-generated.test.ts",
 ];
 
 /**

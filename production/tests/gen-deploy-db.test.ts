@@ -22,7 +22,10 @@ type Gen = { files: string[]; scripts: Record<string, { before: string; after: s
      Hard links were tried first: making one changes the repo file's ctime, so every link emptied the
      shared cache for all scans.
    Anything else (deploy-db scripts, files a test writes, a stand-in moved with moveMigration()) is
-   read as before, so generate() still sees the same text a full copy gave it. */
+   read as before, so generate() still sees the same text a full copy gave it. A stand-in read any
+   other way (another encoding form, fs.promises, a shell step) gets "" — parseDeployHeaders then
+   throws 'no "-- deploy-peek:"' for it, so a change in how generate() reads fails loudly here,
+   never passes quietly. */
 const MIG_HOMES = [path.join(supabaseDir, "migrations"), path.join(supabaseDir, "..", "prisma", "migrations")]
   .map((d) => path.resolve(d).toLowerCase() + path.sep);
 const standIn = new Map<string, string>(); // temp stand-in → repo file

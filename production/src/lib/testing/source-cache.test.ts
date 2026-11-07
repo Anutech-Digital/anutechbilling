@@ -8,7 +8,9 @@ import { readSource, flushSourceCache, resetSourceCacheForTest } from "./source-
    reads yesterday's file passes on today's bug. Every test points the cache at a temp folder. */
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "r2564-source-cache-"));
 const cacheFile = path.join(dir, "cache.json");
-afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+/* Hooks run in reverse: this runs BEFORE the module's own afterAll flush — clear the fresh set so that
+   flush writes nothing (it would recreate the temp folder just removed). */
+afterAll(() => { resetSourceCacheForTest(); fs.rmSync(dir, { recursive: true, force: true }); });
 beforeEach(() => { fs.rmSync(cacheFile, { force: true }); resetSourceCacheForTest(cacheFile); vi.restoreAllMocks(); });
 
 describe("readSource (shared, always-fresh read cache for scan tests)", () => {
@@ -75,6 +77,39 @@ describe("readSource (shared, always-fresh read cache for scan tests)", () => {
     expect(readSource(f)).toBe("from f");
     expect(readSource(g)).toBe("from g");
     expect(spy.mock.calls.filter(([p]) => p === f || p === g)).toEqual([]);
+  });
+
+  it("one writer at a time: a fresh lock skips the write, a crashed writer's old lock is taken over", () => {
+    const f = path.join(dir, "j.ts");
+    fs.writeFileSync(f, "locked");
+    const lock = `${cacheFile}.lock`;
+    fs.writeFileSync(lock, "");
+    readSource(f);
+    flushSourceCache();
+    expect(fs.existsSync(cacheFile)).toBe(false);
+    fs.utimesSync(lock, new Date(2000, 0, 1), new Date(2000, 0, 1));
+    resetSourceCacheForTest(cacheFile);
+    readSource(f);
+    flushSourceCache();
+    expect(fs.existsSync(cacheFile)).toBe(true);
+    expect(fs.existsSync(lock)).toBe(false);
+  });
+
+  it("drops entries whose file is gone", () => {
+    const f = path.join(dir, "k.ts"), g = path.join(dir, "l.ts");
+    fs.writeFileSync(f, "kept");
+    fs.writeFileSync(g, "deleted soon");
+    readSource(f);
+    readSource(g);
+    flushSourceCache();
+    const before = fs.statSync(cacheFile).size;
+    fs.rmSync(g);
+    fs.writeFileSync(f, "kept, edited");
+    resetSourceCacheForTest(cacheFile);
+    readSource(f);
+    flushSourceCache();
+    expect(fs.statSync(cacheFile).size).toBeLessThan(before);
+    expect(fs.readFileSync(cacheFile).includes(Buffer.from("deleted soon"))).toBe(false);
   });
 
   it("a cut-short cache file (torn write) is ignored, not trusted", () => {

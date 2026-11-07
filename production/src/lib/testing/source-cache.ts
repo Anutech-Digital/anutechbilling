@@ -92,14 +92,20 @@ export function readSource(file: string): string {
 
 /**
  * Add what this process read from disk to the cache file. Called by afterAll; safe to call again.
- * The file is re-read first and merged, and nothing is written when it already holds every fresh
- * entry — so when a dozen test files finish a cold run together, the first writes and the rest
- * (which read the same files) skip, instead of each writing ~50 MB.
+ * One writer at a time (a `.lock` file; a test file that finds it taken skips — the writer holds
+ * nearly the same files). Inside the lock the file is re-read and merged, nothing is written when it
+ * already holds every fresh entry, and entries whose file is gone (deleted, renamed) are dropped —
+ * so a dozen test files finishing a cold run (or a run after a rebase) write once, not ~50 MB each.
  */
 export function flushSourceCache(): void {
   if (!entries || !fresh.size) return;
   const mine = fresh;
   fresh = new Set();
+  const lock = `${cacheFile}.lock`;
+  try {
+    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    if (!takeLock(lock)) return;
+  } catch { return; }
   try {
     const merged = readCacheFile();
     let added = 0;
@@ -112,6 +118,7 @@ export function flushSourceCache(): void {
     }
     if (!added) return;
     pruneOldCaches();
+    for (const k of [...merged.keys()]) if (!mine.has(k) && !fs.existsSync(path.resolve(PRODUCTION_ROOT, k))) merged.delete(k);
     const rows: IndexRow[] = [];
     const parts: Buffer[] = [];
     let off = 0;
@@ -121,11 +128,24 @@ export function flushSourceCache(): void {
       parts.push(b);
       off += b.length;
     }
-    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
     const tmp = `${cacheFile}.${process.pid}.${Date.now()}.tmp`;
     fs.writeFileSync(tmp, Buffer.concat([Buffer.from(JSON.stringify({ magic: MAGIC, rows }) + "\n", "utf8"), ...parts]));
     try { fs.renameSync(tmp, cacheFile); } catch { fs.rmSync(tmp, { force: true }); }
   } catch { /* cache is only for speed */ }
+  finally { fs.rmSync(lock, { force: true }); }
+}
+
+/** Create the lock file; a lock older than 2 minutes is a crashed writer's and is taken over. */
+function takeLock(lock: string): boolean {
+  for (let i = 0; i < 2; i++) {
+    try { fs.closeSync(fs.openSync(lock, "wx")); return true; } catch {
+      try {
+        if (Date.now() - fs.statSync(lock).mtimeMs < 120_000) return false;
+        fs.rmSync(lock, { force: true });
+      } catch { return false; }
+    }
+  }
+  return false;
 }
 
 /** Caches of worktrees that were removed: delete any cache file not touched for 3 days. */
@@ -134,7 +154,7 @@ function pruneOldCaches(): void {
     const cutoff = Date.now() - 3 * 24 * 3600 * 1000;
     for (const n of fs.readdirSync(path.dirname(cacheFile))) {
       const p = path.join(path.dirname(cacheFile), n);
-      if (p !== cacheFile && fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { force: true });
+      if (p !== cacheFile && !p.endsWith(".lock") && fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { force: true });
     }
   } catch { /* best effort */ }
 }

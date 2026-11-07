@@ -42,7 +42,9 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe("the seed tenant is never a fallback", () => {
-  const files = walk("src");
+  /* R-2564: the generated Prisma client is skipped, so its source is scanned instead — a schema
+     default (`@default("1111…")`) used to reach the scan through the generated client's inline schema. */
+  const files = [...walk("src"), "prisma/schema.prisma"];
 
   it("scanned a believable number of files", () => {
     // A guard that silently scanned nothing passes forever. L23.
