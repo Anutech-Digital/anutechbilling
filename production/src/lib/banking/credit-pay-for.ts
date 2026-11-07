@@ -28,7 +28,7 @@ import { BILLING_CYCLE_OPTIONS, cycleScheduleLabel } from "@/lib/quotes/billing"
 import { COMMIT_CHOICES, type CommitChoice } from "@/lib/quotes/line-commit-choice";
 import { isSplitBilled, quoteInstalmentPlan } from "@/lib/billing/instalments";
 import { ROUND_OFF_LIMIT, bankChargeAllowed } from "@/lib/banking/credit-pay-for-multi";
-import { ROUND_OFF_AUTO } from "@/lib/banking/same-money";
+import { ROUND_OFF_AUTO, sameMoney } from "@/lib/banking/same-money";
 import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { rupee, formatDate } from "@/lib/utils";
 import { knownPayerCustomer, notPayerNames, payerFromNarration, type KnownPayer } from "@/lib/banking/customer-payer";
@@ -261,13 +261,17 @@ export function guessCustomer(
 /* ─── Pre-selection + amount check ────────────────────────────────────────────────────── */
 
 /**
- * The item to tick for the operator: the ONE whose due equals the credit to the rupee, else the
- * ONE that the credit pays less a common TDS rate. Two candidates → none (the operator picks).
+ * The item to tick for the operator: the ONE whose due equals the credit to the rupee, else
+ * (R-2192) the ONE within ₹1 of it (the ₹1 is a round-off), else the ONE that the credit pays less a
+ * common TDS rate. Two candidates → none (the operator picks).
  */
 export function preselectItem(items: readonly OpenItem[], credit: number): OpenItem | null {
   const exact = items.filter((i) => i.amount_due === credit);
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) return null;
+  const near = items.filter((i) => sameMoney(credit, i.amount_due));
+  if (near.length === 1) return near[0];
+  if (near.length > 1) return null;
   const tds = items.filter((i) => tdsRateFor(credit, i.amount_due, i.taxable_value || null) !== null);
   return tds.length === 1 ? tds[0] : null;
 }

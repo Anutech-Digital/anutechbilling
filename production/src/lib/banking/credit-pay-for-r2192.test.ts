@@ -7,8 +7,8 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  shortChoices, roundOffSplit, tdsToRecord, autoShortChoice, overIsRoundOff, resultLines,
-  type AmountCheck, type PayForResult,
+  shortChoices, roundOffSplit, tdsToRecord, autoShortChoice, overIsRoundOff, resultLines, preselectItem,
+  type AmountCheck, type OpenItem, type PayForResult,
 } from "./credit-pay-for";
 import { bankChargeAllowed, BANK_CHARGE_MAX, BANK_CHARGE_MAX_PCT } from "./credit-pay-for-multi";
 
@@ -65,7 +65,27 @@ describe("R-2192 bank / SWIFT charge on a wire", () => {
     expect(roundOffSplit({ mode: "sale", saleTotal: 100 }).rest).toBe("round_off");
   });
   it("the result says the charge was booked as Bank Charges", () => {
-    const r: PayForResult = { kind: "split", parts: [], round_off: 0, bank_charge: 500 } as PayForResult;
+    const r: PayForResult = { kind: "split", parts: [], round_off: 0, bank_charge: 500 } as unknown as PayForResult;
     expect(resultLines(r).map((l) => l.text)).toContain("₹500 bank / SWIFT charge booked as Bank Charges — invoice settled in full");
+  });
+});
+
+const item = (o: Partial<OpenItem>): OpenItem => ({
+  kind: "invoice", quote_id: "Q-1", invoice_id: "INV-1", doc_date: "2026-10-10", amount_due: 13106,
+  taxable_value: 11107, makes_subscription: false, subscription_id: null, plan: null, seats: null,
+  renewal_date: null, lines: [], ...o,
+} as OpenItem);
+
+describe("R-2192 the sheet ticks the invoice ₹1 away", () => {
+  it("₹13,105 in → INV ₹13,106 is pre-selected (then ₹1 round-off is pre-chosen)", () => {
+    expect(preselectItem([item({}), item({ quote_id: "Q-2", invoice_id: "INV-2", amount_due: 5000 })], 13105)?.invoice_id).toBe("INV-1");
+    expect(preselectItem([item({})], 13107)?.invoice_id).toBe("INV-1");
+  });
+  it("an exact one wins over a ₹1-off one; two ₹1-off ones → none", () => {
+    expect(preselectItem([item({}), item({ quote_id: "Q-2", invoice_id: "INV-2", amount_due: 13105 })], 13105)?.invoice_id).toBe("INV-2");
+    expect(preselectItem([item({}), item({ quote_id: "Q-2", invoice_id: "INV-2", amount_due: 13104 })], 13105)).toBeNull();
+  });
+  it("₹2 away is not pre-selected by amount", () => {
+    expect(preselectItem([item({ taxable_value: 0 })], 13104)).toBeNull();
   });
 });

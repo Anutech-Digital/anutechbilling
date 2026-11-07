@@ -1,13 +1,13 @@
 /**
  * R-2192: a credit ₹1 short (or over) of the invoice's due is the same money — a "certain"
- * match with one click that books the ₹1 as a round-off. ₹2 apart stays "short of due".
+ * match (the bank-list chip says "₹1 round-off"; the Reconcile sheet books it). ₹2 apart stays "short of due".
  */
 import { describe, it, expect } from "vitest";
 import { matchCreditToInvoices, certainInvoiceMatches, type OpenInvoice, type ChipTxn } from "./invoice-credit-match";
 
 const inv = (o: Partial<OpenInvoice> & { id: string }): OpenInvoice => ({
   quoteId: `Q-${o.id}`, customerName: "Mukul Bhardwaj", invoiceDate: "2026-09-20",
-  amountDue: 13106, taxableValue: 11107, customerId: "c-1", ...o,
+  amountDue: 13106, taxableValue: 11107, ...o,
 });
 const credit = (amount: number, description = "UPI-MUKUL BHARDWAJ-9896033878-2@AXL-BARB") =>
   ({ amount, txnDate: "2026-10-01", description, reference: null });
@@ -55,10 +55,3 @@ describe("R-2192 ₹1 tolerance on the invoice match", () => {
   });
 });
 
-describe("R-2192 ₹1 round-off needs the invoice's customer", () => {
-  it("no customer id → not one-click (the split RPC is customer-keyed)", () => {
-    const [m] = matchCreditToInvoices(credit(13105), [inv({ id: "INV-2026-0101", customerId: null })]);
-    expect(m.oneClick).toBe(false);
-    expect(m.blockedReason).toMatch(/No customer/);
-  });
-});

@@ -11,7 +11,7 @@
  * Signals, strongest first:
  *   1. The invoice number (or its quote id) appears in the narration / reference.
  *   2. The amount equals what is still due (`invoiceAmountDue`, R-371) to the rupee — or (R-2192)
- *      is within ₹1 of it (sameMoney): the one click then books that ₹1 as a round-off.
+ *      is within ₹1 of it (sameMoney): the Reconcile sheet books that ₹1 as a round-off.
  *   3. A distinctive word of the customer's name appears in the narration (`nameOverlap`).
  *   4. Date: money normally arrives after the invoice; closer is a little better.
  *
@@ -41,8 +41,6 @@ export interface OpenInvoice {
   /** record_payment is quote-keyed; an invoice without one cannot be one-clicked. */
   quoteId: string | null;
   customerName: string | null;
-  /** R-2192: the invoice's customer — a ₹1 round-off is saved through the split RPC, which needs it. */
-  customerId?: string | null;
   /** YYYY-MM-DD. */
   invoiceDate: string;
   /** Rupees still owed — from invoiceAmountDue(), never recomputed here. */
@@ -67,11 +65,9 @@ export interface InvoiceMatch {
   reasons: string[];
   /** Credit == due to the rupee. */
   exactAmount: boolean;
-  /** R-2192: credit − due when they are within ₹1 (sameMoney) but not equal — the one click books
-   *  it as a round-off and settles the invoice in full. 0 otherwise. */
+  /** R-2192: credit − due when they are within ₹1 (sameMoney) but not equal — the Reconcile sheet
+   *  books it as a round-off and settles the invoice in full. 0 otherwise. */
   roundOff: number;
-  /** R-2192: the invoice's customer, when known. */
-  customerId: string | null;
   /** Credit looks like due minus TDS at this rate (%), else null. */
   tdsRatePct: number | null;
   /** Rupees short of the due amount (credit < due), 0 otherwise. */
@@ -196,7 +192,7 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
 
     out.push({
       invoiceId: inv.id, quoteId: inv.quoteId, customerName: inv.customerName, amountDue: due,
-      score, confidence, reasons, exactAmount, roundOff, customerId: inv.customerId ?? null, tdsRatePct,
+      score, confidence, reasons, exactAmount, roundOff, tdsRatePct,
       shortBy: Math.max(0, due - amount), overBy: Math.max(0, amount - due),
       oneClick: false, blockedReason: null,
     });
@@ -223,7 +219,6 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
       inv?.isProject ? "Project invoice — record it as a project payment"
       : !m.quoteId ? "No quote behind this invoice — record the payment from the invoice"
       : m.tdsRatePct !== null ? `Short by ₹${inr(m.shortBy)} — looks like ${m.tdsRatePct}% TDS; record it with TDS from the invoice`
-      : m.roundOff !== 0 && !m.customerId ? "No customer on this invoice — record the payment from the invoice"
       : !m.exactAmount && m.roundOff === 0 ? (m.overBy > 0 ? `Deposit is ₹${inr(m.overBy)} more than due` : `Deposit is ₹${inr(m.shortBy)} short of due`)
       : m.confidence === "possible" ? "Same amount as another invoice — open the invoice to be sure"
       : null;
