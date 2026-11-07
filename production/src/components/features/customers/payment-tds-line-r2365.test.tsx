@@ -40,9 +40,10 @@ describe("R-2365 — TDS split on the Transactions payment row", () => {
     expect(screen.getByTestId("payment-tds-line").textContent).toBe("Received ₹980 + TDS ₹20");
   });
 
-  it("the Transactions row in customer-profile renders the line for Payment rows only", async () => {
+  it("the Transactions row renders the line for Payment rows only (R-2544: the tab lives in customer-transactions-tab.tsx)", async () => {
     const fs = await import("node:fs");
-    const src = fs.readFileSync(`${__dirname}/customer-profile.tsx`, "utf8");
-    expect(src).toContain('t.type === "Payment" && payId ? <PaymentTdsLine amount={t.amount} tds={tdsInfoOnPayment[payId]} />');
+    const src = fs.readFileSync(`${__dirname}/customer-transactions-tab.tsx`, "utf8");
+    expect(src).toContain('t.type === "Payment" && payId && (t.tds ?? true) ? <PaymentTdsLine amount={t.amount} tds={tdsInfo[payId]} />');
+    expect(fs.readFileSync(`${__dirname}/customer-profile.tsx`, "utf8")).toContain("tdsInfo={tdsInfoOnPayment}");
   });
 });
