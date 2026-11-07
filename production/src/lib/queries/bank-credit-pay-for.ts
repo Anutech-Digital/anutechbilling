@@ -24,7 +24,7 @@ import { isSplitBilled } from "@/lib/billing/instalments";
 import type { SplitInput } from "@/lib/banking/credit-pay-for-multi";
 import {
   keepZohoNumberOnFirstPart as keepZohoNumberCore, payItemCall as payItemCore, newSaleInCurrency as newSaleInCurrencyCore,
-  newSaleCall, splitCall, raiseFirstInstalment,
+  newSaleCall, splitCall, raiseFirstInstalment, payItemArgs, newSaleArgs,
   type PayItemInput, type NewSaleInput, type SaleFxInput, type ZohoKept,
 } from "@/lib/banking/credit-pay-calls";
 import type { BillingCycle } from "@/lib/supabase/database.types";
