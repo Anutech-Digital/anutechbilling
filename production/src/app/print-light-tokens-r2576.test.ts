@@ -10,31 +10,42 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
+// Comments out first: the :root block's prose may hold any character, `}` included.
+const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 
-/** `--name: value;` pairs of the first `{ … }` block that starts at `from` (no nested braces in these blocks). */
-function tokens(from: number): Map<string, string> {
+/** Body of the `{ … }` that follows `from` (these token blocks have no nested braces). */
+function body(from: number): string {
   const open = css.indexOf("{", from);
-  const block = css.slice(open + 1, css.indexOf("}", open));
+  return css.slice(open + 1, css.indexOf("}", open));
+}
+function tokens(block: string): Map<string, string> {
   const out = new Map<string, string>();
-  for (const m of block.replace(/\/\*[\s\S]*?\*\//g, "").matchAll(/--([\w-]+)\s*:\s*([^;]+);/g)) {
-    out.set(m[1], m[2].trim().replace(/\s+/g, " "));
-  }
+  for (const m of block.matchAll(/--([\w-]+)\s*:\s*([^;]+);/g)) out.set(m[1], m[2].trim().replace(/\s+/g, " "));
   return out;
 }
 
+/** First rule at or after `from` whose selector list contains `.dark`. */
+function darkRuleAt(from: number): number {
+  const re = /(^|[\s,{}])([^{}]*?)\{/g;
+  re.lastIndex = from;
+  for (let m = re.exec(css); m; m = re.exec(css)) {
+    if (m[2].split(",").some((s) => s.trim() === ".dark")) return m.index + m[1].length;
+  }
+  return -1;
+}
+
 const printAt = css.indexOf("@media print");
-const light = tokens(css.indexOf(":root {"));
-const dark = tokens(css.indexOf(".dark {"));
-const printed = tokens(css.indexOf(".dark {", printAt));
-const printSelector = css.slice(css.indexOf("{", printAt) + 1, css.indexOf(".dark {", printAt) + ".dark {".length);
+const light = tokens(body(css.indexOf(":root")));
+const dark = tokens(body(darkRuleAt(0)));
+const printRule = printAt < 0 ? -1 : darkRuleAt(printAt);
+const printBody = printRule < 0 ? "" : body(printRule);
+const printed = tokens(printBody);
 
 describe("R-2576 — the print block resets every theme token to its light value", () => {
-  it("the print block exists and covers :root, :root.dark and .dark with color-scheme: light", () => {
+  it("@media print has a .dark rule with color-scheme: light !important", () => {
     expect(printAt).toBeGreaterThan(-1);
-    expect(css.indexOf(".dark {", printAt), "a .dark rule inside @media print").toBeGreaterThan(printAt);
-    expect(printSelector).toMatch(/:root,\s*:root\.dark,\s*\.dark \{$/);
-    expect(css.slice(css.indexOf(".dark {", printAt))).toMatch(/^\.dark \{\s*(?:\/\*[\s\S]*?\*\/\s*)?color-scheme: light !important;/);
+    expect(printRule, "a .dark rule inside @media print").toBeGreaterThan(printAt);
+    expect(printBody).toMatch(/color-scheme:\s*light\s*!important;/);
   });
 
   it("every token the dark theme changes is reset in print", () => {

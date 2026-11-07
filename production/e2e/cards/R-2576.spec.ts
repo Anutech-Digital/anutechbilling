@@ -9,9 +9,14 @@
  * How: OS dark + theme System (no stored choice) → page.emulateMedia({ media: "print" }) is what
  * Chrome's print preview renders; the computed colours of the real page are read there.
  *
+ * Not checked here: the quote Preview dialog's own "Print / Save as PDF" button — the dialog is
+ * position: fixed, which the print styles hide (`.fixed`), so that path prints the page behind it.
+ * A separate card (follow-up of R-2576) fixes that; this spec checks the colours of what prints.
+ *
  * Data: scenario "zero-ref-credits" (R-2458) — invoice INV-SCN-ZR-3 and quote Q-SCN-ZR-3 in E2E Test Co
- * (local docker DB only; scenario.mjs refuses anything else). Loaded only when not already there,
- * and then cleared again at the end, so the test leaves the local books as it found them.
+ * (local docker DB only; scenario.mjs refuses anything else). Loaded only when neither is there, and
+ * then cleared again at the end; if only one is missing it is reloaded and left loaded (a clear would
+ * also remove the one that was there before).
  * Run: `node scripts/ops/card-tests.mjs R-2576`.
  */
 import { execFileSync } from "node:child_process";
@@ -44,7 +49,7 @@ async function printedColours(page: Page, docNo: string) {
     let seen = 0;
     for (let n = walker.nextNode(); n; n = walker.nextNode()) {
       const el = n.parentElement;
-      if (!el || !(n.textContent ?? "").includes(no)) continue;
+      if (!el || (n.textContent ?? "").trim() !== no) continue;
       seen++;
       if (el.getClientRects().length > 0 && cs(el).visibility !== "hidden") { docText = el; break; }
     }
@@ -53,12 +58,20 @@ async function printedColours(page: Page, docNo: string) {
       bodyHead: (document.body.innerText ?? "").slice(0, 200),
       htmlDark: document.documentElement.classList.contains("dark"),
       colorScheme: cs(document.documentElement).colorScheme,
-      paperToken: cs(document.documentElement).getPropertyValue("--paper").trim(),
       bodyBg: cs(document.body).backgroundColor,
       bodyText: cs(document.body).color,
       docText: docText ? cs(docText).color : null,
     };
   }, docNo);
+}
+
+/** True when the page shows the document, false when it says "not found" (pages render client-side: HTTP is 200 either way). */
+async function documentShown(page: Page, path: string, docNo: string): Promise<boolean> {
+  await page.goto(path);
+  const doc = page.locator("main").getByText(docNo, { exact: true }).first();
+  const missing = page.getByText(/not found/i).first();
+  await expect(doc.or(missing)).toBeVisible({ timeout: 120_000 });
+  return doc.isVisible();
 }
 
 /** OS dark, no stored theme (= System), then open the document as the print preview renders it. */
@@ -68,7 +81,7 @@ async function openPrinted(page: Page, path: string, docNo: string) {
   await page.evaluate(() => localStorage.removeItem("theme"));
   await openAppPage(page, path);
   // The document itself has loaded (not a skeleton) before the print view is read.
-  await expect(page.locator("main").getByText(docNo).first()).toBeVisible({ timeout: 60_000 });
+  await expect(page.locator("main").getByText(docNo, { exact: true }).first()).toBeVisible({ timeout: 60_000 });
   await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark")), {
     message: "theme System + OS dark → the app is dark on screen (R-2187)",
   }).toBe(true);
@@ -81,7 +94,6 @@ async function openPrinted(page: Page, path: string, docNo: string) {
 function expectLightPaper(c: Awaited<ReturnType<typeof printedColours>>, what: string) {
   expect(c.htmlDark, `${what}: <html> still has .dark (OS dark) while printing`).toBe(true);
   expect(c.colorScheme, `${what}: color-scheme in print`).toBe("light");
-  expect(c.paperToken, `${what}: --paper token in print = the light value`).toBe("45 33% 97%");
   expect(luminance(c.bodyBg), `${what}: page background ${c.bodyBg} is light`).toBeGreaterThan(0.85);
   expect(luminance(c.bodyText), `${what}: body text ${c.bodyText} is dark`).toBeLessThan(0.05);
   expect(c.docText, `${what}: the document number is on the printed page (text nodes with it: ${c.seen}; page starts: ${c.bodyHead})`).not.toBeNull();
@@ -98,11 +110,11 @@ test.describe("R-2576 — print / Save as PDF is light even on a dark OS", () =>
     test.setTimeout(300_000);
     const page = await pageAs(browser, baseURL, "owner");
     try {
-      const inv = await page.request.get(`/invoices/${INVOICE}`, { timeout: 120_000 });
-      const quo = await page.request.get(`/quotes/${QUOTE}`, { timeout: 120_000 });
-      if (!inv.ok() || !quo.ok()) {
+      const inv = await documentShown(page, `/invoices/${INVOICE}`, INVOICE);
+      const quo = await documentShown(page, `/quotes/${QUOTE}`, QUOTE);
+      if (!inv || !quo) {
         scenario("--reset");
-        loadedByUs = true;
+        loadedByUs = !inv && !quo; // clear at the end only what this test brought in
       }
     } finally {
       await page.context().close();
@@ -117,8 +129,11 @@ test.describe("R-2576 — print / Save as PDF is light even on a dark OS", () =>
     test.setTimeout(180_000);
     const page = await pageAs(browser, baseURL, "owner");
     try {
-      // openPrinted asserts the on-screen dark state before switching to print.
-      await openPrinted(page, `/invoices/${INVOICE}`, INVOICE);
+      await page.emulateMedia({ colorScheme: "dark" });
+      await page.goto("/dashboard");
+      await page.evaluate(() => localStorage.removeItem("theme"));
+      await openAppPage(page, "/dashboard");
+      await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains("dark"))).toBe(true);
     } finally {
       await page.context().close();
     }

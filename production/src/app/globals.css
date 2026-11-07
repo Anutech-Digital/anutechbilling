@@ -194,11 +194,10 @@
      — a customer's invoice / quote PDF came out dark (or unreadable once body went white).
      In print the dark values never apply: every theme token is reset to its LIGHT value
      (the :root block above — a test keeps the two lists equal) and the page renders as a
-     light page. `:root.dark` (0,2,0) out-specifies `.dark`; `!important` on color-scheme
-     beats the inline `style="color-scheme: dark"` next-themes writes on <html>.
-     On screen nothing changes: this whole block exists only for print. */
-  :root,
-  :root.dark,
+     light page. Same selector as the dark block above and later in the file, so it wins;
+     `!important` on color-scheme beats the inline `style="color-scheme: dark"` next-themes
+     writes on <html>. On screen nothing changes: this whole block exists only for print.
+     Not covered here: Tailwind `dark:` utilities (a few components) — follow-up card. */
   .dark {
     color-scheme: light !important;
 
