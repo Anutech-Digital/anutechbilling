@@ -76,7 +76,7 @@ function facts(id: string, extra: Partial<ZohoReceiptFacts> = {}): ZohoReceiptFa
     zohoId: id, number: id, date: "2025-06-10", status: "", zohoCustomerId: "zc1", customerName: "Test Buyer", method: "bank_transfer",
     zohoMode: "Bank Transfer", reference: `UTR-${id}`, depositAccountId: "za4523", depositAccountName: "HDFC Current 4523",
     amount: 1000, receivedPaise: 100000, lines: [{ zohoInvoiceId: "zi1", invoiceNumber: "INV/25-26/0001", settle: 1000, tds: 0 }],
-    excess: 0, tds: 0, problems: [], ...extra,
+    excess: 0, tds: 0, fee: 0, feeGst: 0, viaSettlement: false, problems: [], ...extra,
   };
 }
 
@@ -121,7 +121,7 @@ describe("R-2501 plan — receipts only onto imported Zoho sales", () => {
     expect(r(facts("a", { lines: [{ zohoInvoiceId: "zi1", invoiceNumber: "1", settle: 100, tds: 0 }, { zohoInvoiceId: "zi2", invoiceNumber: "2", settle: 100, tds: 0 }] }))).toMatch(/different customers/);
     expect(r(facts("a", { lines: [{ zohoInvoiceId: "zi1", invoiceNumber: "INV/25-26/0001", settle: 1600, tds: 0 }] }))).toMatch(/only ₹1500 due/);
     expect(r(facts("a", { depositAccountId: "zx", depositAccountName: "Some Wallet" }))).toMatch(/Choose the app account/);
-    expect(r(facts("a", { problems: ["Zoho took bank charges off this payment — book it by hand."] }))).toMatch(/bank charges/);
+    expect(r(facts("a", { problems: ["Zoho took bank charges off this payment and it is not a Razorpay payment — book it by hand."] }))).toMatch(/bank charges/);
   });
 
   it("two payments on one invoice: the second sees what the first took", () => {

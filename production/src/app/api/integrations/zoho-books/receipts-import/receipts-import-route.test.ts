@@ -56,7 +56,7 @@ import { POST } from "./route";
 const fact = (over: Partial<ZohoReceiptFacts>): ZohoReceiptFacts => ({
   zohoId: "p1", number: "101", date: "2025-06-10", status: "", zohoCustomerId: "zc", customerName: "Test Buyer", method: "bank_transfer",
   zohoMode: "Bank Transfer", reference: "UTR1", depositAccountId: "za", depositAccountName: "HDFC 4523", amount: 1180, receivedPaise: 118000,
-  lines: [{ zohoInvoiceId: "zi1", invoiceNumber: "INV/25-26/0001", settle: 1180, tds: 0 }], excess: 0, tds: 0, problems: [], ...over,
+  lines: [{ zohoInvoiceId: "zi1", invoiceNumber: "INV/25-26/0001", settle: 1180, tds: 0 }], excess: 0, tds: 0, fee: 0, feeGst: 0, viaSettlement: false, problems: [], ...over,
 });
 
 function req(body: unknown) {
@@ -68,7 +68,7 @@ function req(body: unknown) {
 beforeEach(() => {
   st.role = "owner"; st.run = { nextPage: 3, listDone: true }; st.counts = { listed: 2, detailed: 2 }; st.rpc = []; st.resets = 0;
   st.booked = new Map(); st.accountMapSeen = null;
-  st.facts = [fact({}), fact({ zohoId: "p2", number: "102", problems: ["Zoho took bank charges off this payment — book it by hand."] })];
+  st.facts = [fact({}), fact({ zohoId: "p2", number: "102", problems: ["Zoho took bank charges off this payment and it is not a Razorpay payment — book it by hand."] })];
   st.rpcResult = { data: { dry_run: true, imported: 1 }, error: null };
 });
 
@@ -88,7 +88,7 @@ describe("R-2501 receipts-import route", () => {
   it("preview: counts, totals, the deposit account suggested, skip reasons; nothing sent to the database", async () => {
     const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
     expect(body.counts).toMatchObject({ scanned: 2, import: 1, skip: 1 });
-    expect(body.totals).toEqual({ cash: 1180, tds: 0, excess: 0 });
+    expect(body.totals).toEqual({ cash: 1180, tds: 0, excess: 0, fee: 0 });
     expect(body.deposits[0]).toMatchObject({ zohoAccountId: "za", appAccountId: "11111111-1111-4111-8111-111111111111", suggested: true });
     expect(body.skipped[0].reason).toMatch(/bank charges/);
     expect(st.rpc).toEqual([]);

@@ -17,8 +17,19 @@
  * Rounding (review): the lines' cash is rounded so it ADDS UP to round(Σ applied) (largest remainder),
  * the same for TDS — so Σ cash + excess = round(amount): the receipts equal the money received.
  *
- * `problems` are reasons the payment must NOT be booked, whatever the app holds (not INR, bank
- * charges, the totals not adding up, TDS not split by invoice, …). Pure: no I/O.
+ * R-2565 — Razorpay's fee. Razorpay keeps its fee + 18% GST on it before it settles, and Zoho records
+ * that as the payment's `bank_charges`: `amount` stays the FULL money the customer paid (it is what is
+ * applied to the invoices), only `amount − bank_charges` reached the clearing account. So:
+ *   fee       = bank_charges, whole rupees rounded DOWN (see feeRupees), GST included (as payments.gateway_fee, R-045)
+ *   feeGst    = the GST inside it = round(fee × 18 / 118) (Razorpay's GST on its fee is 18%; Zoho keeps
+ *               no split) — input credit only when the Razorpay vendor carries a GSTIN (R-045 / R-2099)
+ * The receipt stays the full amount on the invoice; the fee is booked as Razorpay's "Bank Charges"
+ * expense (EXP-RZPFEE-<receipt>), and the bank line is the Razorpay SETTLEMENT (R-2099, which takes
+ * this already-booked fee off its own). Only for a Razorpay payment (mode or deposit account says
+ * Razorpay): any other bank charge is still booked by hand.
+ *
+ * `problems` are reasons the payment must NOT be booked, whatever the app holds (not INR, non-Razorpay
+ * bank charges, the totals not adding up, TDS not split by invoice, …). Pure: no I/O.
  */
 import type { ZohoFyDocDetail } from "../fy-fetch";
 import { toPaise } from "../fy-fetch";
@@ -58,10 +69,32 @@ export interface ZohoReceiptFacts {
   excess: number;
   /** TDS in total, whole rupees. */
   tds: number;
+  /** R-2565: Razorpay's fee Zoho took off as bank charges, whole rupees, GST included (0 = none). */
+  fee: number;
+  /** R-2565: the 18% GST inside `fee`, whole rupees. */
+  feeGst: number;
+  /** R-2565 (review): a Razorpay payment (mode or deposit account) — it reaches the bank inside a Razorpay
+   *  settlement (R-2099), so it is never matched alone to a bank line, fee or no fee. */
+  viaSettlement: boolean;
   problems: string[];
 }
 
 const str = (v: unknown): string => (v === null || v === undefined ? "" : String(v).trim());
+
+/** R-2565: the problem the scan carried for EVERY bank-charge payment before Razorpay's fee could be
+ *  booked — a payment read before R-2565 shows it until it is read from Zoho again. */
+export const OLD_BANK_CHARGES_PROBLEM = "Zoho took bank charges off this payment — book it by hand.";
+
+/** R-2565: the fee in whole rupees, ROUNDED DOWN (review): R-2099's settlement books only what is not yet
+ *  booked and refuses when the booked fees exceed its own — rounding each payment up (₹10.50 → ₹11 twice
+ *  against a ₹21 settlement fee) would block the settlement for good; the paise left over are booked by it. */
+export const feeRupees = (feePaise: number): number => (feePaise > 0 ? Math.floor(feePaise / 100) : 0);
+
+/** R-2565: GST inside a Razorpay fee (fee + 18% GST on it), whole rupees. */
+export const feeGstOf = (fee: number): number => (fee > 0 ? Math.round((fee * 18) / 118) : 0);
+
+/** R-2565: a Razorpay payment — Zoho's mode or the account it was deposited to says Razorpay. */
+export const isRazorpayPayment = (mode: string, accountName: string): boolean => /razorpay/i.test(mode) || /razorpay/i.test(accountName);
 
 /**
  * Paise amounts → whole rupees that ADD UP to the rounded total (largest remainder): rounding
@@ -107,7 +140,12 @@ export function zohoReceiptFacts(d: ZohoFyDocDetail): ZohoReceiptFacts {
 
   if (currency && currency !== "INR") problems.push(`Received in ${currency} in Zoho — book a foreign-currency receipt by hand.`);
   if (amountPaise <= 0) problems.push("Zoho shows no money received on this payment.");
-  if (toPaise(r.bank_charges) > 0) problems.push("Zoho took bank charges off this payment — book it by hand.");
+  /* R-2565: Razorpay's fee (bank_charges) is booked as its Bank Charges expense; any other bank charge by hand. */
+  const feePaise = toPaise(r.bank_charges);
+  const razorpay = isRazorpayPayment(str(r.payment_mode), str(r.account_name));
+  if (feePaise < 0) problems.push("Zoho shows negative bank charges on this payment — book it by hand.");
+  else if (feePaise > 0 && !razorpay) problems.push("Zoho took bank charges off this payment and it is not a Razorpay payment — book it by hand.");
+  else if (feePaise > 0 && feePaise >= amountPaise) problems.push("Zoho's Razorpay fee is not less than the money received — book it by hand.");
   if (lines.some((l) => !l.zohoInvoiceId)) problems.push("An invoice line in Zoho has no invoice id.");
   if (new Set(lines.map((l) => l.zohoInvoiceId)).size !== lines.length) problems.push("Zoho applies this payment to one invoice twice.");
   if (excessPaise < 0) {
@@ -127,7 +165,7 @@ export function zohoReceiptFacts(d: ZohoFyDocDetail): ZohoReceiptFacts {
     status: "",
     zohoCustomerId: d.contactId,
     customerName: d.contactName,
-    method: appMethod(str(r.payment_mode)),
+    method: feePaise > 0 && razorpay ? "razorpay" : appMethod(str(r.payment_mode)),
     zohoMode: str(r.payment_mode),
     reference: str(r.reference_number).slice(0, 100),
     depositAccountId: str(r.account_id),
@@ -137,6 +175,9 @@ export function zohoReceiptFacts(d: ZohoFyDocDetail): ZohoReceiptFacts {
     lines,
     excess: Math.max(0, paiseToRupees(amountPaise) - cash.reduce((s, x) => s + x, 0)),
     tds: paiseToRupees(tdsPaise),
+    fee: feeRupees(feePaise),
+    feeGst: feeGstOf(feeRupees(feePaise)),
+    viaSettlement: razorpay,
     problems: [...new Set(problems)],
   };
 }
