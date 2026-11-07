@@ -27,7 +27,7 @@
 -- Un-reconcile keeps working as before: the three new types have no unmatch trigger (same as
 -- 'manual'); reconcile_bank_txn(null) still removes a bs_item / statutory row by bank_txn_id. Two
 -- reused types DO have one (they drop the loan when the line is un-reconciled), so a line the loan's
--- own form made (source 'manual', no import) is refused there with the page to undo it on:
+-- own form made (source 'manual', no import, its own words) is refused there with the page to undo it on:
 -- tg_loan_given_line_unmatched, tg_business_loan_line_unmatched. 'emi' already refuses own lines.
 -- reconcile_bank_txn already refuses the new types for a signed-in caller ("only from its own
 -- Reconcile option"); bank_match_target_tenant learns them so the R-2472 company gate checks them.
@@ -122,7 +122,7 @@ begin
 
   update public.bank_transactions
      set matched_to_type = 'bs_item', matched_to_id = v_item::text,
-         matched_at = now(), matched_by = public.current_user_id(), match_confidence = 'manual',
+         matched_at = now(), matched_by = auth.uid(), match_confidence = 'manual',
          updated_at = now()
    where id = p_txn_id;
 end;
@@ -168,7 +168,7 @@ begin
 
   update public.bank_transactions
      set matched_to_type = 'bs_item', matched_to_id = v_item::text,
-         matched_at = now(), matched_by = public.current_user_id(), match_confidence = 'manual',
+         matched_at = now(), matched_by = auth.uid(), match_confidence = 'manual',
          updated_at = now()
    where id = p_txn_id;
 end;
@@ -183,8 +183,8 @@ AS $function$
 /* R-2570: the payout line is matched to its loan (employee_loan + loan id), not 'manual' */
 declare
   v_tenant  uuid := public.current_tenant_id();
-  v_trusted boolean := coalesce(public.current_request_role(), '') = 'service_role'
-                       or (public.current_request_role() is null
+  v_trusted boolean := coalesce(auth.role(), '') = 'service_role'
+                       or (auth.role() is null
                            and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   v_loan    uuid;
   v_txn     uuid;
@@ -223,7 +223,7 @@ begin
     (id, tenant_id, employee_name, principal, disbursed_on, bank_account_id, kind, notes, created_by, bank_txn_id)
   values
     (v_loan, v_tenant, trim(p_employee_name), p_principal, p_disbursed_on, p_bank_account_id, v_kind,
-     nullif(trim(coalesce(p_notes, '')), ''), public.current_user_id(), v_txn)
+     nullif(trim(coalesce(p_notes, '')), ''), auth.uid(), v_txn)
   returning id into v_loan;
 
   return v_loan;
@@ -239,8 +239,8 @@ AS $function$
 /* R-2570: the loan's own line is 'employee_loan' + loan id (old lines: 'manual'); an edit names it so */
 declare
   v_tenant  uuid := public.current_tenant_id();
-  v_trusted boolean := coalesce(public.current_request_role(), '') = 'service_role'
-                       or (public.current_request_role() is null
+  v_trusted boolean := coalesce(auth.role(), '') = 'service_role'
+                       or (auth.role() is null
                            and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   v_loan    public.employee_loans;
   v_line    public.bank_transactions;
@@ -351,8 +351,8 @@ AS $function$
 /* R-2570: the loan's own line is 'employee_loan' + loan id (old lines: 'manual') — not 'booked elsewhere' */
 declare
   v_tenant  uuid := public.current_tenant_id();
-  v_trusted boolean := coalesce(public.current_request_role(), '') = 'service_role'
-                       or (public.current_request_role() is null
+  v_trusted boolean := coalesce(auth.role(), '') = 'service_role'
+                       or (auth.role() is null
                            and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   v_loan    public.employee_loans;
   v_line    public.bank_transactions;
@@ -429,8 +429,8 @@ begin
   /* R-885: role gate (Pardeep's role table, 11 Oct 2026 — payroll group (R-717 rule): owner, manager, accountant).
      Trusted = service_role or a direct DB session with no request role (R-454 / R-714 /
      R-717 / R-718); everyone else needs the role. */
-  if not (coalesce(public.current_request_role(), '') = 'service_role'
-          or (public.current_request_role() is null
+  if not (coalesce(auth.role(), '') = 'service_role'
+          or (auth.role() is null
               and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
      and not public.current_user_has_role('owner', 'manager', 'accountant') then
     raise exception 'Only an owner, manager or accountant can record an employee loan repayment' using errcode = '42501';
@@ -631,7 +631,7 @@ begin
     (v_id, v_tenant, v_name, coalesce(p_borrower_type, 'person'), p_customer_id, p_vendor_id, p_principal, p_given_on,
      coalesce(p_interest_rate, 0), coalesce(p_repayment_plan, 'one_shot'), p_due_on,
      case when p_repayment_plan = 'instalments' then p_instalments else null end,
-     p_paid_from, v_txn, nullif(trim(coalesce(p_notes, '')), ''), 'open', public.current_user_id())
+     p_paid_from, v_txn, nullif(trim(coalesce(p_notes, '')), ''), 'open', auth.uid())
   returning id into v_id;
 
   return v_id;
@@ -655,8 +655,8 @@ begin
   /* R-885: role gate (Pardeep's role table, 11 Oct 2026 — record group: owner, manager, accountant, billing).
      Trusted = service_role or a direct DB session with no request role (R-454 / R-714 /
      R-717 / R-718); everyone else needs the role. R-2377: + the imported money-in line. */
-  if not (coalesce(public.current_request_role(), '') = 'service_role'
-          or (public.current_request_role() is null
+  if not (coalesce(auth.role(), '') = 'service_role'
+          or (auth.role() is null
               and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
      and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing') then
     raise exception 'Only an owner, manager, accountant or billing user can record a business loan' using errcode = '42501';
@@ -691,7 +691,7 @@ begin
   values
     (v_tenant, trim(p_lender), nullif(trim(coalesce(p_purpose,'')),''), p_principal,
      p_interest_rate, nullif(greatest(coalesce(p_tenure_months,0),0),0), nullif(greatest(coalesce(p_emi_amount,0),0),0),
-     v_on, p_deposit_account, 'active', public.current_user_id())
+     v_on, p_deposit_account, 'active', auth.uid())
   returning id into v_id;
 
   if p_bank_txn_id is not null then
@@ -730,8 +730,8 @@ begin
   /* R-885: role gate (Pardeep's role table, 11 Oct 2026 — record group: owner, manager, accountant, billing).
      Trusted = service_role or a direct DB session with no request role (R-454 / R-714 /
      R-717 / R-718); everyone else needs the role. */
-  if not (coalesce(public.current_request_role(), '') = 'service_role'
-          or (public.current_request_role() is null
+  if not (coalesce(auth.role(), '') = 'service_role'
+          or (auth.role() is null
               and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
      and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing') then
     raise exception 'Only an owner, manager, accountant or billing user can record a loan EMI' using errcode = '42501';
@@ -794,8 +794,8 @@ begin
   /* R-885: role gate (Pardeep's role table, 11 Oct 2026 — record group: owner, manager, accountant, billing).
      Trusted = service_role or a direct DB session with no request role (R-454 / R-714 /
      R-717 / R-718); everyone else needs the role. */
-  if not (coalesce(public.current_request_role(), '') = 'service_role'
-          or (public.current_request_role() is null
+  if not (coalesce(auth.role(), '') = 'service_role'
+          or (auth.role() is null
               and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
      and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing') then
     raise exception 'Only an owner, manager, accountant or billing user can record an EMI payment' using errcode = '42501';
@@ -854,8 +854,8 @@ begin
   /* R-885: role gate (Pardeep's role table, 11 Oct 2026 — payroll group (R-717 rule): owner, manager, accountant).
      Trusted = service_role or a direct DB session with no request role (R-454 / R-714 /
      R-717 / R-718); everyone else needs the role. */
-  if not (coalesce(public.current_request_role(), '') = 'service_role'
-          or (public.current_request_role() is null
+  if not (coalesce(auth.role(), '') = 'service_role'
+          or (auth.role() is null
               and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
      and not public.current_user_has_role('owner', 'manager', 'accountant') then
     raise exception 'Only an owner, manager or accountant can pay statutory dues' using errcode = '42501';
@@ -905,8 +905,8 @@ declare
   v_result   integer;
 begin
   /* R-1871: §17c guard + the advance money roles (give / top-up / settle refuse anyone else). */
-  v_trusted := coalesce(public.current_request_role(), '') = 'service_role'
-               or (public.current_request_role() is null
+  v_trusted := coalesce(auth.role(), '') = 'service_role'
+               or (auth.role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   if v_tenant is null then
     raise exception 'No company on this login — sign in as a user of the company' using errcode = '28000';
@@ -961,7 +961,7 @@ begin
       (v_tenant, v_emp.name,
        left('Paid to the company by mistake — owed back (bank line ' || to_char(v_txn.txn_date, 'DD Mon YYYY') || ')'
             || coalesce(' · ' || nullif(trim(coalesce(p_note, '')), ''), ''), 500),
-       'Owed to employee', v_amount, 0, v_txn.txn_date, 'Bank (money in)', 'pending', v_emp.id, public.current_user_id())
+       'Owed to employee', v_amount, 0, v_txn.txn_date, 'Bank (money in)', 'pending', v_emp.id, auth.uid())
     returning * into v_reimb;
     v_result := v_amount;
 
@@ -1014,7 +1014,7 @@ begin
          matched_to_id    = case when p_kind = 'owed_back' then 'reimbursement:' || v_reimb.id::text
                                  when p_kind = 'reimburse' then coalesce(v_reimb.expense_id, 'reimbursement:' || v_reimb.id::text)
                             else v_id::text end,
-         match_confidence = 'manual', matched_at = now(), matched_by = public.current_user_id(), updated_at = now()
+         match_confidence = 'manual', matched_at = now(), matched_by = auth.uid(), updated_at = now()
    where id = p_txn_id;
   if p_kind = 'reimburse' and v_reimb.expense_id is not null then
     update public.expenses set reconciled_txn_id = p_txn_id where id = v_reimb.expense_id and tenant_id = v_tenant;
@@ -1022,7 +1022,7 @@ begin
 
   insert into public.employee_advance_bank_links (tenant_id, bank_txn_id, kind, advance_id, reimbursement_id, amount, created_by)
   values (v_tenant, p_txn_id, p_kind, case when p_kind in ('reimburse', 'owed_back') then null else v_id end,
-          case when p_kind in ('reimburse', 'owed_back') then v_reimb.id end, v_amount, public.current_user_id());
+          case when p_kind in ('reimburse', 'owed_back') then v_reimb.id end, v_amount, auth.uid());
 
   return jsonb_build_object('kind', p_kind, 'advance_id', case when p_kind in ('reimburse', 'owed_back') then null else v_id end,
                             'reimbursement_id', case when p_kind in ('reimburse', 'owed_back') then v_reimb.id end,
@@ -1059,7 +1059,9 @@ begin
     -- R-2570: the types the own-line writers now set
     when 'bs_item'        then (select x.tenant_id from public.balance_sheet_items x     where x.id = v_uuid)
     when 'employee_loan'  then (select x.tenant_id from public.employee_loans x          where x.id = v_uuid)
-    when 'reimbursement'  then (select x.tenant_id from public.reimbursements x          where x.id = public.bank_match_uuid(substr(p_id, length('reimbursement:') + 1)))
+    -- 'reimbursement:<id>' (the shape the staff-advance flow writes) or a bare id — both are checked
+    when 'reimbursement'  then (select x.tenant_id from public.reimbursements x
+                                 where x.id = coalesce(v_uuid, public.bank_match_uuid(substr(p_id, length('reimbursement:') + 1))))
     when 'statutory'      then (select x.tenant_id from public.statutory_dues_payments x where x.id = v_uuid)
     else null
   end;
@@ -1101,7 +1103,7 @@ begin
     if found then
       -- R-2570: the payout line Give loan made itself (no statement behind it) — un-reconciling would
       -- drop the loan and leave the line. Delete the loan on Loans given instead (its line goes with it).
-      if old.source = 'manual' and old.import_batch_id is null then
+      if old.source = 'manual' and old.import_batch_id is null and old.description = 'Loan given: ' || v_l.borrower_name then
         raise exception 'This line was made by Loans given (loan to %) — delete that loan on Accounting → Loans given instead; its line goes with it', v_l.borrower_name
           using errcode = '23514';
       end if;
@@ -1133,7 +1135,7 @@ begin
     select * into v_l from public.business_loans where disbursal_bank_txn_id = old.id for update;
     if found then
       -- R-2570: the money-in line Add loan made itself — undone by deleting the loan on Business Loans.
-      if old.source = 'manual' and old.import_batch_id is null then
+      if old.source = 'manual' and old.import_batch_id is null and old.description = 'Loan received: ' || v_l.lender then
         raise exception 'This line was made by Business Loans (loan from %) — delete that loan on Accounting → Business Loans instead; its line goes with it', v_l.lender
           using errcode = '23514';
       end if;
@@ -1163,7 +1165,10 @@ as $function$
      the line keeps its party ("Loan received · Bajaj Finance"); 'manual' rows from before R-2570
      are still found the R-2378 way. */
   with lines as (
-    select t.id, t.source, t.description, t.txn_date, t.debit, t.credit, t.matched_to_type, t.matched_to_id
+    select t.id, t.source, t.description, t.txn_date, t.debit, t.credit, t.matched_to_type,
+           /* the record id as uuid (a non-uuid id → null), so the joins below use the primary keys */
+           case when t.matched_to_id ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+                then t.matched_to_id::uuid end as mid
       from public.bank_transactions t
      where t.bank_account_id = p_bank_account_id
        and t.matched_to_type in ('manual', 'bs_item', 'employee_loan', 'reimbursement', 'loan_given', 'business_loan',
@@ -1178,7 +1183,7 @@ as $function$
     /* R-2570: a staff loan's repayment / an advance's returned cash — matched to the loan by id. */
     select l.id, 2, case when e.kind = 'expense_advance' then 'employee_advance_returned' else 'employee_loan_repayment' end,
            null, e.employee_name, l.credit::numeric
-      from lines l join public.employee_loans e on e.id::text = l.matched_to_id
+      from lines l join public.employee_loans e on e.id = l.mid
      where l.matched_to_type = 'employee_loan' and l.credit > 0
     union all
     select g.bank_txn_id, 3, 'loan_given', g.borrower_type, g.borrower_name, g.principal::numeric
@@ -1197,7 +1202,7 @@ as $function$
     union all
     /* R-2570: record_loan_emi's own line — matched to the repayment by id (the payment has no bank_txn_id). */
     select l.id, 6, 'business_loan_payment', bl.kind, bl.lender, p.amount::numeric
-      from lines l join public.business_loan_payments p on p.id::text = l.matched_to_id
+      from lines l join public.business_loan_payments p on p.id = l.mid
       join public.business_loans bl on bl.id = p.loan_id
      where l.matched_to_type = 'loan_repayment' and p.bank_txn_id is null
     union all
@@ -1225,7 +1230,7 @@ as $function$
     union all
     /* R-2570: pay_statutory_dues' own line — matched to the payment by id. */
     select l.id, 12, 'statutory', s.kind, s.challan_no, s.amount::numeric
-      from lines l join public.statutory_dues_payments s on s.id::text = l.matched_to_id
+      from lines l join public.statutory_dues_payments s on s.id = l.mid
      where l.matched_to_type = 'statutory'
     union all
     /* A staff loan from before R-1873 (no bank_txn_id): its own hand-entered line, found the way

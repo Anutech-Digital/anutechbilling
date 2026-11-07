@@ -208,6 +208,23 @@ begin
     raise exception 'FAIL 17: a line was pointed at another company''s staff loan';
   exception when insufficient_privilege then null;
   end;
+  -- A reimbursement id is checked in both shapes ('reimbursement:<id>' and a bare id).
+  insert into public.reimbursements (id, tenant_id, person_name, purpose, amount, incurred_on)
+  values ('aaaaaaaa-0000-0000-0000-0000000025f8', 'aaaaaaaa-0000-0000-0000-0000000025a2', 'Other', 'x', 100, '2026-09-01');
+  begin
+    update public.bank_transactions
+       set matched_to_type = 'reimbursement', matched_to_id = 'aaaaaaaa-0000-0000-0000-0000000025f8'
+     where id = 'aaaaaaaa-0000-0000-0000-0000000025d4';
+    raise exception 'FAIL 17b: a line was pointed at another company''s reimbursement (bare id)';
+  exception when insufficient_privilege then null;
+  end;
+  begin
+    update public.bank_transactions
+       set matched_to_type = 'reimbursement', matched_to_id = 'reimbursement:aaaaaaaa-0000-0000-0000-0000000025f8'
+     where id = 'aaaaaaaa-0000-0000-0000-0000000025d4';
+    raise exception 'FAIL 17c: a line was pointed at another company''s reimbursement';
+  exception when insufficient_privilege then null;
+  end;
 end $$;
 
 select 'r2570_bank_line_own_type: all checks passed' as result;

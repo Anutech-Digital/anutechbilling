@@ -46,10 +46,15 @@ describe("R-2570 bank line type repair — safe by default", () => {
   it("plans exactly the lines the report counts (one plan text)", () => {
     expect(plan(REPAIR)).toBe(plan(REPORT));
   });
-  it("is a dry run (rollback) unless apply is set, and stops when the migration is missing", () => {
-    expect(REPAIR).toMatch(/\\if :\{\?apply\}\n\s+\\echo [^\n]*\n\s+commit;\n\\else\n\s+\\echo [^\n]*\n\s+rollback;\n\\endif\s*$/);
+  it("is a dry run (rollback) unless apply is exactly 1, clears apply after, and stops when the migration is missing", () => {
+    expect(REPAIR).toContain("select (:'apply' = '1') as r2570_apply \\gset");
+    expect(REPAIR).toMatch(/\\set r2570_apply false\n/);
+    expect(REPAIR).toMatch(/\\if :r2570_apply\n\s+\\echo [^\n]*\n\s+commit;\n\\else\n\s+\\echo [^\n]*\n\s+rollback;\n\\endif\n\\unset apply\n/);
     expect(REPAIR).toMatch(/pg_get_constraintdef\(oid\) like '%employee_loan%'/);
-    expect(REPAIR.indexOf("commit;")).toBeGreaterThan(REPAIR.indexOf("\\if :{?apply}"));
+    expect(REPAIR.indexOf("commit;")).toBeGreaterThan(REPAIR.indexOf("\\if :r2570_apply"));
+  });
+  it("leaves old Loans-given receipt lines manual (their un-reconcile would keep the line — review)", () => {
+    expect(plan(REPAIR)).not.toContain("loan_repayments");
   });
   it("only retypes 'manual' lines with no id, and touches no money column", () => {
     const code = codeOnly(REPAIR).toLowerCase();

@@ -12,7 +12,8 @@
 --   * bank_transactions.matched_to_type / matched_to_id of the planned lines (see the plan's rules);
 --   * emi_payments.bank_txn_id for an old "EMI: <purchase>" line matched by its words (as
 --     record_emi_payment now stores it, so Undo EMI removes the line).
--- WHAT IT LEAVES 'manual': a real "Mark reconciled manually", old staff-loan lines known only by
+-- WHAT IT LEAVES 'manual': a real "Mark reconciled manually", an old Loans-given receipt line (its
+--   un-reconcile would drop the receipt but keep a line without R-2346's marker), old staff-loan lines known only by
 --   their words, owed-back / reimbursement lines (changing their type would fire the staff-advance
 --   unmatch trigger), a line with two possible bookings, a note or a reversal pair, a receipt or a
 --   settlement on it. bank_line_bookings() keeps reading all of those as before.
@@ -55,9 +56,6 @@ create temp table r2570_plan on commit drop as
     union all
     select m.id, m.tenant_id, 'loan_given', g.id::text, 'Loan given payout', m.debit, m.credit
       from m join public.loans_given g on g.bank_txn_id = m.id and g.tenant_id = m.tenant_id
-    union all
-    select m.id, m.tenant_id, 'loan_given', r.id::text, 'Loan given receipt', m.debit, m.credit
-      from m join public.loan_repayments r on r.bank_txn_id = m.id and r.tenant_id = m.tenant_id
     union all
     select m.id, m.tenant_id, 'business_loan', bl.id::text, 'Business loan money in', m.debit, m.credit
       from m join public.business_loans bl on bl.disbursal_bank_txn_id = m.id and bl.tenant_id = m.tenant_id
@@ -128,10 +126,18 @@ with done as (
 )
 select count(*) as lines_retyped from done;
 
+-- Commit ONLY when apply is exactly 1 (a set-but-other value, e.g. apply=0, is a dry run); the
+-- variable is cleared at the end so a later \i in the same session is a dry run again.
+\set r2570_apply false
 \if :{?apply}
+  select (:'apply' = '1') as r2570_apply \gset
+\endif
+\if :r2570_apply
   \echo 'apply=1 → COMMIT'
   commit;
 \else
   \echo 'Dry run (no -v apply=1) → ROLLBACK, nothing changed'
   rollback;
 \endif
+\unset apply
+\unset r2570_apply

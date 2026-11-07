@@ -67,8 +67,11 @@ export function activityOf(t: Pick<CashFlowTxn, "matched_to_type" | "category">)
     case "transfer": return "transfer";
     case "manual":   return "financing";
     case "owner_equity": return "financing";   // R-1839: drawings / capital introduced — the owner, not the business
-    /* R-2570: these were stored as 'manual' (→ financing) until their flows wrote their own type;
-       they stay where they were — capital, director / bank loans, staff and given loans, EMIs. */
+    /* R-2570: the loan / capital flows stored 'manual' (→ financing) until they wrote their own type;
+       those lines stay in Financing. Statement lines matched to these loan types (R-2340 / R-2374 /
+       R-2377, EMIs) were "operating" by default before — a loan is financing (AS-3), so they move too.
+       A new challan ('statutory') and owed-back money ('reimbursement') are operating; their old
+       'manual' lines stay in Financing until the R-2570 repair retypes the challans. */
     case "bs_item": case "employee_loan": case "loan_given":
     case "business_loan": case "loan_drawdown": case "loan_repayment": case "emi":
       return "financing";

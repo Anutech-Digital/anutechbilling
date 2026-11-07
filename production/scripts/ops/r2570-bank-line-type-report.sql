@@ -46,9 +46,6 @@ set transaction read only;
     select m.id, m.tenant_id, 'loan_given', g.id::text, 'Loan given payout', m.debit, m.credit
       from m join public.loans_given g on g.bank_txn_id = m.id and g.tenant_id = m.tenant_id
     union all
-    select m.id, m.tenant_id, 'loan_given', r.id::text, 'Loan given receipt', m.debit, m.credit
-      from m join public.loan_repayments r on r.bank_txn_id = m.id and r.tenant_id = m.tenant_id
-    union all
     select m.id, m.tenant_id, 'business_loan', bl.id::text, 'Business loan money in', m.debit, m.credit
       from m join public.business_loans bl on bl.disbursal_bank_txn_id = m.id and bl.tenant_id = m.tenant_id
     union all

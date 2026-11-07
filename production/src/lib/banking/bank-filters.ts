@@ -193,7 +193,6 @@ export function matchGroupOf(type: string | null): MatchGroup | null {
     case "business_loan":                           return "loan";       // R-2377: Add loan linked an imported credit
     case "loan_drawdown": case "loan_repayment":    return "loan";       // R-2374: credit line drawdown / lender repayment
     case "employee_loan":                           return "loan";       // R-2570: a staff loan's payout / repayment line
-    case "bs_item": case "reimbursement":           return "other";      // R-2570: balance-sheet entry / money owed back (the booking says more)
   }
   if (/loan|emi/.test(type)) return "loan";
   return "other";
