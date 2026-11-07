@@ -317,6 +317,20 @@ export const SCENARIOS = [
       { path: "renewals", for: "R-2519 SCN Bit Labs → ⋯ → Bill next part… → preview 17 × ₹300 → Seats 18, Periods 2 → Create 2 proformas (PI-…)" },
     ],
   },
+  {
+    name: "money-owed-archived",
+    about: "R-1473 Pawan's staging case: SCN Kochi Hosting owes ₹25,488 on its subscription; SCN Delhi Traders (ARCHIVED) owes ₹19,258 on its subscription + ₹23,109 on project invoice INV-SCN-MO-1. Dashboard 'to collect', Companies › Has receivables and its line all say ₹67,855 (subscriptions ₹44,746 + project ₹23,109); Renewals says ₹44,746 on these renewals + the project money.",
+    cards: ["R-1473"],
+    // customers + project, like project-receipts: their subscriptions and invoices go with them (_common.sql scn_project_clear)
+    scope: { vendors: [], txns: [], docs: [x(301), x(302), x(321)], names: [], upis: [] },
+    expect: { vendors: 0, expenses: 0, bills: 0, txns: 0, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES,
+              customers: 2, projects: 1, milestones: 2, projectPayments: 0, projectInvoices: 1, tdsRows: 0, ...NO_EXTRA },
+    pages: [
+      { path: "dashboard", for: "R-1473 Collections card: ₹67,855 to collect (Subscription dues ₹44.7K + project invoices ₹23.1K)" },
+      { path: "customers?view=unpaid", for: "R-1473 Has receivables lists SCN Kochi Hosting ₹25,488 and SCN Delhi Traders ₹42,367 (Archived badge); line over the list: … = ₹67,855 to collect · includes 1 archived company" },
+      { path: "renewals", for: "R-1473 under the title: ₹44,746 unpaid on these renewals · Companies › Has receivables ₹67,855 also has project invoices ₹23,109" },
+    ],
+  },
 ];
 
 export const SCENARIO_NAMES = SCENARIOS.map((s) => s.name);

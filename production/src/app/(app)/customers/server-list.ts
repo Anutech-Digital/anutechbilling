@@ -137,3 +137,20 @@ export function customerSearchFromUrl(search: string): string {
   const p = new URLSearchParams(search);
   return p.get("q") ?? p.get("contact") ?? "";
 }
+
+/**
+ * R-1473 (7 Nov 2026): may this customer row be shown? The Archived switch swaps the list to
+ * archived companies only, as before — EXCEPT in "Has receivables": a company archived while it
+ * still owes money stays in that list (with its Archived badge). The "To collect" tile, the chip
+ * and the dashboard all count its due, so hiding the row made the list ₹42,367 short of the tile
+ * on staging (Delhi Traders). `isActive` null/undefined = active (name-only rows).
+ */
+export function customerInList(
+  isActive: boolean | null | undefined,
+  opts: { showArchived: boolean; viewId: string; owes: number },
+): boolean {
+  const archived = isActive === false;
+  if (opts.showArchived) return archived;
+  if (!archived) return true;
+  return opts.viewId === "unpaid" && opts.owes > 0;
+}
