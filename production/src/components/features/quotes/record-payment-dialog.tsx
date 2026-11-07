@@ -564,20 +564,11 @@ export function RecordPaymentDialog({
      than the document's TDS minus what its earlier parts already booked. It used to be rate × the WHOLE
      document even when half was paid, so paying the second half booked the whole TDS again.
      R-1520 "Record TDS" (tdsOnly) is the leftover the customer withheld on the whole document, so it
-     keeps rate × the whole taxable. */
-  const quotePreGST = tdsDeducted ? tdsBase(expectedAmount, quoteTaxRate) : 0;
-  const { partTaxable, tds: tdsAtRate } = React.useMemo(() => {
-    if (!tdsDeducted) return { partTaxable: 0, tds: 0 };
-    return tdsOnly
-      ? { partTaxable: quotePreGST, tds: computeTds(expectedAmount, tdsRatePct, quoteTaxRate).tds }
-      : tdsDefaultForPart({ remaining, taxable: quotePreGST, total: expectedAmount, ratePct: tdsRatePct, bookedTds });
-  }, [tdsDeducted, tdsOnly, quotePreGST, tdsRatePct, expectedAmount, quoteTaxRate, remaining, bookedTds]);
-  /* R-2045: on a part payment request the TDS the customer ACTUALLY withheld can be typed (the
-     field is shown only there). Bank + that TDS covering the part pays it in full; more than rate
-     × this part's taxable value is warned about below (partRequestTdsCheck), never blocked.
-     A rate change, unticking TDS or closing the sheet goes back to rate × taxable. */
-  const [typedPartTds, setTypedPartTds] = React.useState<number | null>(null);
-  React.useEffect(() => { setTypedPartTds(null); }, [open, tdsDeducted, tdsRatePct]);
+     keeps rate × the whole taxable.
+     R-2560: once the owner TYPES a bank amount smaller than the balance (the first payment too), this
+     payment's part is its money (bank + advance used) + TDS, not the whole balance — the default TDS
+     follows the typed amount (tdsDefaultForPart `money`). Until it is typed the bank amount follows
+     balance − TDS, so the balance rule stands (no loop: the amount effect below stops once typed). */
   // Advance credit applied to this payment — capped at the remaining balance
   // (can't apply more credit than is owed). Reduces the cash the customer needs.
   /* R-2023: "Use advance" — the whole advance that fits by default, or the part the person
@@ -587,6 +578,20 @@ export function RecordPaymentDialog({
   const appliedCreditAmount  = applyCredit
     ? advanceToUse({ available: availableCredit, owed: remaining, typed: typedCredit })
     : 0;
+  const typedMoney = amountEdited ? (Number(watchedAmount) || 0) + appliedCreditAmount : null;
+  const quotePreGST = tdsDeducted ? tdsBase(expectedAmount, quoteTaxRate) : 0;
+  const { partTaxable, tds: tdsAtRate } = React.useMemo(() => {
+    if (!tdsDeducted) return { partTaxable: 0, tds: 0 };
+    return tdsOnly
+      ? { partTaxable: quotePreGST, tds: computeTds(expectedAmount, tdsRatePct, quoteTaxRate).tds }
+      : tdsDefaultForPart({ remaining, taxable: quotePreGST, total: expectedAmount, ratePct: tdsRatePct, bookedTds, money: typedMoney });
+  }, [tdsDeducted, tdsOnly, quotePreGST, tdsRatePct, expectedAmount, quoteTaxRate, remaining, bookedTds, typedMoney]);
+  /* R-2045: on a part payment request the TDS the customer ACTUALLY withheld can be typed (the
+     field is shown only there). Bank + that TDS covering the part pays it in full; more than rate
+     × this part's taxable value is warned about below (partRequestTdsCheck), never blocked.
+     A rate change, unticking TDS or closing the sheet goes back to rate × taxable. */
+  const [typedPartTds, setTypedPartTds] = React.useState<number | null>(null);
+  React.useEffect(() => { setTypedPartTds(null); }, [open, tdsDeducted, tdsRatePct]);
   /* R-2095: the customer's TDS may be ₹1 off rate × pre-GST (paise rounding) — a typed bank amount
      ₹1 short / over the balance takes the ₹1 into the TDS (lib/payments/tds-rounding). */
   const tdsAmount = tdsDeducted && typedPartTds !== null ? typedPartTds
@@ -1678,7 +1683,11 @@ export function RecordPaymentDialog({
                   {/* R-2556: part already paid — TDS is on THIS payment's part only. */}
                   {!tdsOnly && partTaxable !== quotePreGST && (
                     <div className="flex justify-between" data-testid="tds-part-taxable">
-                      <span className="text-ink-3">Taxable value of this payment ({rupee(remaining)} balance)</span>
+                      <span className="text-ink-3">
+                        Taxable value of this payment ({settledAgainstQuote < remaining
+                          ? `${rupee(settledAgainstQuote)} with TDS`
+                          : `${rupee(remaining)} balance`})
+                      </span>
                       <span className="font-mono">{rupee(partTaxable)}</span>
                     </div>
                   )}
