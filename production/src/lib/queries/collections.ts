@@ -105,6 +105,8 @@ export interface CollectionRenewalSub {
   grace_until: string | null;
   outstanding_amount: number | null;
   start_date: string | null;
+  /** R-2548: for the "Renewal for <term> · <seats> × ₹<rate>" line under Bill renewal. */
+  seats?: number | null;
   /** R-1796: "Renew anyway" was pressed for this renewal date (newer than the generated types). */
   vendor_hold_override_for?: string | null;
 }
@@ -572,7 +574,7 @@ const INVOICE_COLS =
   "id, customer_id, customer_name, amount, net_payable, paid_amount, status, invoice_date, due_date, quote_id, taxable_value, tax_amount, tax_rate";
 const SUB_COLS = "id, customer_id, customer_name, plan, domain, quote_id, outstanding_amount, payment_due_date, created_at";
 const RENEWAL_COLS =
-  "id, customer_id, customer_name, plan, domain, quote_id, renewal_quote_id, renewal_date, renewal_state, status, auto_renew, billing_cycle, term_months, mrr, term_amount, grace_until, outstanding_amount, start_date, vendor_hold_override_for";
+  "id, customer_id, customer_name, plan, domain, quote_id, renewal_quote_id, renewal_date, renewal_state, status, auto_renew, billing_cycle, term_months, mrr, term_amount, grace_until, outstanding_amount, start_date, seats, vendor_hold_override_for";
 
 /* grace_until (R-1621) is newer than the generated types (database.types.ts is shared) — the
    R-2401 renewals read goes through this narrow shape, as grace-over-card.tsx does. */
