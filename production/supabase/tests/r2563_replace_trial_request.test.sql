@@ -1,4 +1,4 @@
--- R-2563 — replace_trial_request (migration 20261107133821_r2563_replace_trial_request).
+-- R-2563 — replace_trial_request (migration 20261107151134_r2563_replace_trial_request).
 --
 -- Self-asserting: RAISEs on failure. One transaction that ROLLS BACK.
 --

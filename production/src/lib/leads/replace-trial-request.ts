@@ -15,7 +15,7 @@
  * the SAME email and mobile as the new request. Tokens are only issued for trial requests, so a
  * plain /enquiry or /quote lead can never be closed this way.
  *
- * The database step is ONE function, `replace_trial_request` (migration 20261107133821), which
+ * The database step is ONE function, `replace_trial_request` (migration 20261107151134), which
  * re-checks everything under row locks and either closes the old request (Junk "Replaced by …",
  * never-sent draft quotes expired) or leaves a note for a person. See that migration.
  */
