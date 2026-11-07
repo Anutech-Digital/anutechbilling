@@ -285,7 +285,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   React.useEffect(() => { setFxChoice(null); }, [pickKey, mode, transaction.id]);
   const itemInrFx = fxChoice === "fx" || itemFxPlanned?.remittance ? itemFxPlanned : null;
   const splitFxBooked = fxChoice === "fx" || splitFxPlanned?.remittance ? splitFxPlanned : null;
-  const check: AmountCheck | null = due === null || itemFx || itemInrFx || itemPlan?.problem ? null : amountCheck(credit, due, taxable);
+  const check: AmountCheck | null = due === null || itemFx || itemInrFx || itemPlan?.problem ? null
+    : amountCheck(credit, due, taxable, { country: customer?.country, narration: transaction.description });   // R-2577: bank charge only on a real wire
   /* R-2052: annual commitment billed in parts — Renews on stays the end of the year; this says
      how far the money pays, and takes over the "Next N bills" line (the next bill said once). */
   const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0

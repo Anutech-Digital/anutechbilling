@@ -20,6 +20,8 @@
  */
 import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-match";
 import { tdsRateFor } from "@/lib/banking/invoice-credit-match";
+import { parseInwardRemittance, remittanceFitsCredit } from "@/lib/banking/inward-remittance";
+import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { billingUnitOf, defaultQtyForUnit, isPerSeat, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { headlinePrice } from "@/lib/catalog/headline-price";
 import { catalogLineListRate } from "@/lib/quotes/catalog-line";
@@ -278,15 +280,36 @@ export function preselectItem(items: readonly OpenItem[], credit: number): OpenI
 
 export type AmountCheck =
   | { kind: "exact" }
-  /** Credit is less than due. `tdsRatePct` when the gap looks like TDS on the taxable value. */
-  | { kind: "short"; shortBy: number; tdsRatePct: number | null }
+  /** Credit is less than due. `tdsRatePct` when the gap looks like TDS on the taxable value.
+   *  R-2577: `bankChargeOk` — the gap may be the bank's / SWIFT charge (bankChargeWire); absent = no. */
+  | { kind: "short"; shortBy: number; tdsRatePct: number | null; bankChargeOk?: boolean }
   /** Credit is more than due — record_payment keeps the extra as customer credit. */
   | { kind: "over"; overBy: number };
 
-export function amountCheck(credit: number, due: number, taxable: number | null): AmountCheck {
+/** R-2577 (independent review of R-2192) — may a gap on this line be the bank's / SWIFT charge? The
+ *  server (reconcile_bank_credit_split, migration 20261107221154) refuses the same cases:
+ *   - a customer in India (empty country = India, isExportSupply) on a line that is not an inward
+ *     remittance of THIS credit (amount × rate ±₹1, remittanceFitsCredit) — an Indian NEFT / RTGS / IMPS
+ *     has no bank deduction; the gap is TDS, a short payment or a discount;
+ *   - a customer in India whose gap is TDS at a common rate (TDS receivable, never an expense).
+ *  A customer outside India deducts no Indian TDS: a round SWIFT charge (₹500 on ₹50,000) stays allowed. */
+export function bankChargeWire(
+  country: string | null | undefined, narration: string | null | undefined, credit: number, tdsRatePct: number | null,
+): boolean {
+  if (isExportSupply(country)) return true;
+  const r = parseInwardRemittance(narration);
+  return r !== null && remittanceFitsCredit(r, credit) && tdsRatePct === null;
+}
+
+/** R-2577: `payer` (the customer's country + the line's narration) decides bankChargeOk; left out → no bank charge. */
+export function amountCheck(
+  credit: number, due: number, taxable: number | null,
+  payer?: { country: string | null | undefined; narration: string | null | undefined },
+): AmountCheck {
   if (credit === due) return { kind: "exact" };
   if (credit > due) return { kind: "over", overBy: credit - due };
-  return { kind: "short", shortBy: due - credit, tdsRatePct: tdsRateFor(credit, due, taxable && taxable > 0 ? taxable : null) };
+  const tdsRatePct = tdsRateFor(credit, due, taxable && taxable > 0 ? taxable : null);
+  return { kind: "short", shortBy: due - credit, tdsRatePct, ...(payer ? { bankChargeOk: bankChargeWire(payer.country, payer.narration, credit, tdsRatePct) } : {}) };
 }
 
 /** What the operator decided about a short payment. R-2095: or a round-off (≤ ROUND_OFF_LIMIT).
@@ -302,8 +325,9 @@ export function shortChoices(check: AmountCheck, due?: number): Array<{ value: S
     { value: "part", label: `Part payment — ${rupee(check.shortBy)} stays due` },
   ];
   if (check.shortBy <= ROUND_OFF_LIMIT) out.push({ value: "round_off", label: `Round off ${rupee(check.shortBy)} — settled in full` });
-  /* Not when the gap IS TDS at a common rate — that is TDS receivable, never an expense. */
-  if (due !== undefined && check.tdsRatePct === null && bankChargeAllowed(check.shortBy, due)) {
+  /* R-2577: only on a wire that may carry one (bankChargeWire: not an Indian transfer, not TDS of an
+     Indian customer) — the server refuses the rest. */
+  if (due !== undefined && check.bankChargeOk === true && bankChargeAllowed(check.shortBy, due)) {
     out.push({ value: "bank_charge", label: `Bank / SWIFT charge ${rupee(check.shortBy)} — settled in full` });
   }
   return out;

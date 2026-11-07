@@ -7,12 +7,13 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  shortChoices, roundOffSplit, tdsToRecord, autoShortChoice, overIsRoundOff, resultLines, preselectItem,
+  shortChoices, amountCheck, bankChargeWire, roundOffSplit, tdsToRecord, autoShortChoice, overIsRoundOff, resultLines, preselectItem,
   type AmountCheck, type OpenItem, type PayForResult,
 } from "./credit-pay-for";
 import { bankChargeAllowed, BANK_CHARGE_MAX, BANK_CHARGE_MAX_PCT } from "./credit-pay-for-multi";
 
-const short = (shortBy: number, tdsRatePct: number | null = null): AmountCheck => ({ kind: "short", shortBy, tdsRatePct });
+/* R-2577: a wire that may carry a bank charge unless said otherwise (bankChargeWire decides it in amountCheck). */
+const short = (shortBy: number, tdsRatePct: number | null = null, bankChargeOk = true): AmountCheck => ({ kind: "short", shortBy, tdsRatePct, bankChargeOk });
 const over = (overBy: number): AmountCheck => ({ kind: "over", overBy });
 
 describe("R-2192 ₹1 → round-off without asking", () => {
@@ -92,6 +93,38 @@ describe("R-2192 the sheet ticks the invoice ₹1 away", () => {
 
 describe("R-2192 review: a TDS-shaped gap is never offered as a bank charge", () => {
   it("₹4,237 short on ₹50,000 looks like 10% TDS → no Bank / SWIFT charge choice", () => {
-    expect(shortChoices(short(4237, 10), 50000).map((x) => x.value)).toEqual(["tds", "part"]);
+    expect(shortChoices(short(4237, 10, false), 50000).map((x) => x.value)).toEqual(["tds", "part"]);
+  });
+});
+
+/* R-2577 (independent review of R-2192): the sheet offers a bank charge only where the server books one. */
+describe("R-2577 bank / SWIFT charge only on a real wire", () => {
+  const choices = (credit: number, due: number, taxable: number, country: string | null, narration: string) =>
+    shortChoices(amountCheck(credit, due, taxable, { country, narration }), due).map((x) => x.value);
+
+  it("India customer, NEFT ₹57,500 for ₹59,000 (taxable ₹50,000) → no Bank / SWIFT charge, only TDS / part payment", () => {
+    expect(choices(57500, 59000, 50000, "India", "NEFT CR-HDFC0001234-DELHI TRADERS")).toEqual(["tds", "part"]);
+    expect(choices(57500, 59000, 50000, null, "NEFT CR-HDFC0001234-DELHI TRADERS")).toEqual(["tds", "part"]);   // empty = India
+    expect(choices(57500, 59000, 50000, " IN ", "RTGS DELHI TRADERS")).toEqual(["tds", "part"]);
+  });
+  it("foreign customer ₹500 short → offered (a customer abroad deducts no Indian TDS, so ₹500 on ₹50,000 is not 1% TDS)", () => {
+    expect(choices(58500, 59000, 50000, "Singapore", "INWARD SWIFT LION PTE")).toEqual(["tds", "part", "bank_charge"]);
+    expect(choices(49500, 50000, 42373, "United States", "INWARD SWIFT ACME")).toEqual(["tds", "part", "bank_charge"]);
+  });
+  it("a remittance-looking token that is not THIS credit is not a remittance (typed text alone)", () => {
+    expect(choices(57500, 59000, 50000, "India", "NEFT DELHI TRADERS USD1@1")).toEqual(["tds", "part"]);
+    expect(bankChargeWire("India", "INW USD100@90", 8500, null)).toBe(false);
+  });
+  it("India customer paying through an inward remittance: offered — unless the gap is TDS", () => {
+    expect(choices(58300, 59000, 50000, "India", "INW 070826I049902623 USD647.78@90")).toEqual(["tds", "part", "bank_charge"]);
+    expect(choices(54000, 59000, 50000, "India", "INW 070826I049902623 USD600.0@90")).toEqual(["tds", "part"]);
+  });
+  it("bankChargeWire: the rule on its own; amountCheck without a payer offers none", () => {
+    expect(bankChargeWire("India", "NEFT X", 9000, null)).toBe(false);
+    expect(bankChargeWire("india", "INW USD100@90", 9000, null)).toBe(true);
+    expect(bankChargeWire("india", "INW USD100@90", 9001, null)).toBe(true);    // ±₹1
+    expect(bankChargeWire("Bharat", "INW USD100@90", 9000, 10)).toBe(false);
+    expect(bankChargeWire("UAE", "anything", 9000, 1)).toBe(true);
+    expect(shortChoices(amountCheck(58500, 59000, 50000), 59000).map((x) => x.value)).toEqual(["tds", "part"]);
   });
 });

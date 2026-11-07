@@ -14,6 +14,7 @@
 --   EXACT-WINS ₹7,000 line, a ₹7,000 receipt 2 days off + a ₹7,001 receipt same day → the exact one
 --              is booked (the ₹1-off one stays 'low'; nothing that auto-matched before turns ambiguous).
 --   CHARGE     a ₹50,000 invoice paid by a wire of ₹49,500 → split rest 'bank_charge' → invoice paid,
+--              (R-2577: the line is an inward remittance — USD600.0@82.5 — so an Indian customer may have one)
 --              ONE Bank Charges expense EXP-FXC-<line> ₹500 on the line; un-reconcile removes it.
 --   LIMITS     bank_charge over 10% → refused; an over-payment with bank_charge → refused; nothing written.
 
@@ -152,7 +153,7 @@ create function pg_temp.due(p_quote text) returns int language sql as $f$
 -- W: the wire ₹500 short. X: a line far too short (₹2,000 of ~₹11,800) and one paying ₹10 extra.
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, reference, credit, debit, source)
 select v.id::uuid, 'e2192000-0000-0000-0000-0000000000a0', 'e2192000-0000-4000-8000-0000000000bb', '2026-10-20', v.d, v.r, v.amt, 0, 'manual'
-  from (values ('e2192000-0000-4000-8000-0000000000d1', 'INWARD SWIFT R2192 AKS', 'SWIFTR2192A', pg_temp.due('Q-R2192-W') - 500),
+  from (values ('e2192000-0000-4000-8000-0000000000d1', 'INWARD SWIFT R2192 AKS USD600.0@82.5', 'SWIFTR2192A', pg_temp.due('Q-R2192-W') - 500),
                ('e2192000-0000-4000-8000-0000000000d2', 'INWARD SWIFT R2192 BIG GAP', 'SWIFTR2192B', pg_temp.due('Q-R2192-X') - 2000),
                ('e2192000-0000-4000-8000-0000000000d3', 'INWARD SWIFT R2192 OVER', 'SWIFTR2192C', pg_temp.due('Q-R2192-X') + 10)) v(id, d, r, amt);
 
