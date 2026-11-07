@@ -51,7 +51,10 @@ function OneDialog({ kind }: { kind: "dialog" | "sheet" }) {
   );
 }
 
-/** The owner's path in miniature: a foreign modal menu holds body, the dialog opens, the menu goes. */
+/** The owner's path in miniature, two-copy style: a modal menu from ANOTHER copy of Radix's
+ *  dismissable layer holds body when the dialog opens (so the dialog saves "none" as the page's
+ *  normal value), then that menu goes and its copy puts back "" — exactly what the two
+ *  separate memories did on staging. vitest has one copy, so the other copy is played by hand. */
 async function openWithForeignLock() {
   document.body.style.pointerEvents = "none"; // the modal menu (other layer copy) holds the page
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Open it" })); });
@@ -101,24 +104,38 @@ describe("R-1427: shared dialog / sheet never leave body frozen after Close", ()
 });
 
 describe("releaseStaleBodyLock", () => {
-  it("clears 'none' when no layer is open", () => {
+  it("clears 'none' when no modal layer is mounted", () => {
     document.body.style.pointerEvents = "none";
-    expect(releaseStaleBodyLock(document)).toBe(true);
+    expect(releaseStaleBodyLock(document)).toBe("released");
     expect(document.body.style.pointerEvents).toBe("");
   });
 
-  it("keeps 'none' while an open menu / listbox / dialog owns it", () => {
+  it("keeps 'none' while an open modal layer (inline pointer-events from Radix) owns it", () => {
     for (const role of ["menu", "listbox", "dialog", "alertdialog"]) {
-      document.body.innerHTML = `<div role="${role}" data-state="open"></div>`;
+      document.body.innerHTML = `<div role="${role}" data-state="open" style="pointer-events: auto"></div>`;
       document.body.style.pointerEvents = "none";
-      expect(releaseStaleBodyLock(document)).toBe(false);
+      expect(releaseStaleBodyLock(document)).toBe("held");
       expect(document.body.style.pointerEvents).toBe("none");
     }
   });
 
+  it("waits while a layer is still animating closed", () => {
+    document.body.innerHTML = '<div role="dialog" data-state="closed" style="pointer-events: auto"></div>';
+    document.body.style.pointerEvents = "none";
+    expect(releaseStaleBodyLock(document)).toBe("closing");
+    expect(document.body.style.pointerEvents).toBe("none");
+  });
+
+  it("a NON-modal popover / menu that is open (no inline pointer-events) does not keep a stale lock", () => {
+    document.body.innerHTML = '<div role="dialog" data-state="open"></div><div role="menu" data-state="open"></div>';
+    document.body.style.pointerEvents = "none";
+    expect(releaseStaleBodyLock(document)).toBe("released");
+    expect(document.body.style.pointerEvents).toBe("");
+  });
+
   it("leaves any other body value alone", () => {
     document.body.style.pointerEvents = "auto";
-    expect(releaseStaleBodyLock(document)).toBe(false);
+    expect(releaseStaleBodyLock(document)).toBe("not-locked");
     expect(document.body.style.pointerEvents).toBe("auto");
   });
 });
