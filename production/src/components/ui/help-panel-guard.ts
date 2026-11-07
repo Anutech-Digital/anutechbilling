@@ -90,6 +90,38 @@ export function keepOpenForPopover<E extends Event>(handler?: (e: E) => void): (
   };
 }
 
+/* R-2172 (R-2168 Sandbox dialog, R-2095b reconcile drawer: "Save kiya, kuch hua hi nahi"): the
+   toaster lives at the end of <body>, outside every dialog/sheet. ui/toaster turns pointer
+   events back on for it while a modal has body at `pointer-events: none`, so a toast's ✕ or
+   action button takes the click — and that press must not count as "outside" and close the
+   dialog/sheet whose error the toast is reporting. The last press is remembered because a
+   toast button can remove its toast before a deferred (touch) "outside" report arrives. */
+export const TOAST_SELECTOR = "[data-sonner-toaster]";
+
+let lastToastPress: EventTarget | null = null;
+
+/** Inside the toaster now, or the toast element that was just pressed (maybe removed since). */
+export function isInToaster(target: EventTarget | null | undefined): boolean {
+  if (target == null) return false;
+  if (target === lastToastPress) return true;
+  return typeof Element !== "undefined" && target instanceof Element && target.closest(TOAST_SELECTOR) !== null;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("pointerdown", (e) => {
+    const t = e.target;
+    lastToastPress = typeof Element !== "undefined" && t instanceof Element && t.closest(TOAST_SELECTOR) ? t : null;
+  }, true);
+}
+
+/** Wrap a dialog's / sheet's onInteractOutside: a press or focus on a toast never closes it (R-2172). */
+export function keepOpenForToast<E extends Event>(handler?: (e: E) => void): (e: E) => void {
+  return (e: E) => {
+    handler?.(e);
+    if (isInToaster(outsideTarget(e))) e.preventDefault();
+  };
+}
+
 const MODAL = "[role=dialog],[role=alertdialog]";
 
 /**
