@@ -253,6 +253,47 @@
     display: none !important;
   }
 
+  /* R-2578: a dialog that shows a printable document (quote Preview, tax invoice) marks its
+     DialogContent `print-target`. While it is open, the paper carries ONLY that document:
+     every body child that does not hold it (the app, toasts, focus guards) is hidden, and the
+     dialog itself — `.fixed` like every Radix dialog, so the rule above hid it and the page
+     behind got printed instead — flows as a normal block from the top of the first page.
+     No print-target open → none of this matches and a page prints exactly as before.
+     `html body:has()` out-specifies react-remove-scroll's runtime `body[data-scroll-locked]
+     { overflow: hidden !important }`, which would cut the printout to one page; the
+     target selector (0,2,1) beats `.fixed` and the desktop `.dlg-movable.dlg-movable`. */
+  html:has(.print-target),
+  html body:has(.print-target) {
+    overflow: visible !important;
+    height: auto !important;
+  }
+  body:has(.print-target) > :not(:has(.print-target)) {
+    display: none !important;
+  }
+  body:has(.print-target) .print-target {
+    display: block !important;
+    position: static !important;
+    inset: auto !important;
+    transform: none !important;
+    animation: none !important;
+    width: auto !important;
+    max-width: none !important;
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+  }
+  /* The dialog's own chrome — mobile drag handle, move grips (aria-hidden) and the corner
+     close (X) button — is not part of the document. */
+  body:has(.print-target) .print-target > [aria-hidden="true"],
+  body:has(.print-target) .print-target > button {
+    display: none !important;
+  }
+
   /* On screen the reports sit in a 1240px column; on paper that wastes the
      margins the @page rule already set. */
   main {
