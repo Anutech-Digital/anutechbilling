@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { toChaseSummary, subscriptionDuesLine, toCollectBreakdown } from "@/lib/accounting/receivables-due";
-import { customerInList } from "./server-list";
+import { customerInList, collectLineState } from "./server-list";
 
 const KOCHI = "kochi";
 const DELHI = "delhi-traders";
@@ -110,5 +110,22 @@ describe("R-1473 subscriptionDuesLine", () => {
   it("says so when the project read failed", () => {
     expect(subscriptionDuesLine(toChaseSummary([{ customer_id: "a", outstanding_amount: 2_000 }]), 2_000, true))
       .toBe("₹2,000 unpaid on these renewals · project invoices could not be read");
+  });
+});
+
+describe("R-2559 the line waits for both halves (no 'Subscription dues ₹0 … = ₹23,109' while loading)", () => {
+  const loaded = { data: [], isError: false };
+  const loading = { data: undefined, isError: false };
+  const failed = { data: undefined, isError: true };
+  it("is loading while the subscription dues or the project invoices are still being read", () => {
+    expect(collectLineState([loading, loaded])).toBe("loading");
+    expect(collectLineState([loaded, loading])).toBe("loading");
+  });
+  it("is ready only when every part is in", () => {
+    expect(collectLineState([loaded, { data: {}, isError: false }])).toBe("ready");
+  });
+  it("is failed when a read failed — the page's money error says so; no half-made line", () => {
+    expect(collectLineState([failed, loaded])).toBe("failed");
+    expect(collectLineState([failed, loading])).toBe("failed");
   });
 });

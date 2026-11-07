@@ -154,3 +154,14 @@ export function customerInList(
   if (!archived) return true;
   return opts.viewId === "unpaid" && opts.owes > 0;
 }
+
+/**
+ * R-2559 (7 Nov 2026, card test R-1473): the line over "Has receivables" adds subscription dues
+ * and project invoices. Built while one read was still on its way it said "Subscription dues ₹0 …
+ * = ₹23,109" for a moment. So: "loading" until every read has data, "failed" when one failed (the
+ * page's money error says so — no half-made line), else "ready".
+ */
+export function collectLineState(reads: readonly { data: unknown; isError: boolean }[]): "loading" | "ready" | "failed" {
+  if (reads.some((r) => r.isError)) return "failed";
+  return reads.some((r) => r.data === undefined) ? "loading" : "ready";
+}

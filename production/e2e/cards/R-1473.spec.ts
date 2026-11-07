@@ -62,6 +62,16 @@ test.describe("R-1473 — money owed: dashboard, Companies and Renewals say the 
 
   test("Step 2: 'Who owes' → Companies › Has receivables lists SCN Kochi Hosting ₹25,488 and archived SCN Delhi Traders ₹42,367; the line's ₹X = dashboard ₹X", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
+    // R-2559: every text the Who-owes line ever shows, from its first paint — it may never say "₹0" for a moment.
+    await page.addInitScript(() => {
+      const w = window as unknown as { __collectSeen?: string[] };
+      w.__collectSeen = [];
+      const look = () => {
+        const t = document.querySelector('[data-testid="to-collect-breakdown"]')?.textContent?.replace(/\s+/g, " ").trim();
+        if (t && w.__collectSeen![w.__collectSeen!.length - 1] !== t) w.__collectSeen!.push(t);
+      };
+      new MutationObserver(look).observe(document, { subtree: true, childList: true, characterData: true });
+    });
     try {
       const d = await dashboardFigure(page);
       await page.getByRole("link", { name: "Who owes" }).click();
@@ -70,22 +80,25 @@ test.describe("R-1473 — money owed: dashboard, Companies and Renewals say the 
       await expect(line).toBeVisible({ timeout: 90_000 });
       const read = async () => (await line.innerText()).replace(/\s+/g, " ").trim();
       const firstText = await read();
-      // The figure may first show while the subscriptions are still loading (7 Nov: "Subscription dues ₹0 …");
-      // the step judges what it settles on within 30 s and notes the first text when it differed.
+      // R-2559: the line waits for all its parts, so it should not change once shown; poll in case data is still settling.
       let lineText = firstText;
       await expect.poll(async () => {
         lineText = await read();
         return rupees(/= ₹([\d,]+) to collect/.exec(lineText)?.[1] ?? "0");
       }, { timeout: 30_000, message: `Companies line vs dashboard ₹${d.total} less ₹${d.noCompany} with no company` }).toBe(d.total - d.noCompany);
       expect(lineText).toMatch(/includes 1 archived company/);
+      // R-2559: no "₹0" in the line, ever — not even for the moment the subscriptions were still loading.
+      const seen = await page.evaluate(() => (window as unknown as { __collectSeen?: string[] }).__collectSeen ?? []);
+      expect(seen.length, "the Who-owes line was seen").toBeGreaterThan(0);
+      expect(seen.filter((t) => /₹0(?![\d,])/.test(t)), `Who-owes line texts seen: ${seen.join(" ⟶ ")}`).toEqual([]);
       const kochi = page.locator("main table tbody tr").filter({ hasText: "SCN Kochi Hosting" }).first();
       const delhi = page.locator("main table tbody tr").filter({ hasText: "SCN Delhi Traders" }).first();
       await expect(kochi).toContainText("₹25,488");
       await expect(delhi).toContainText("₹42,367");
-      // The archived company's status badge: the list shows it as "Inactive" (the card says "Archived badge").
-      await expect(delhi).toContainText(/Inactive|Archived/);
-      const badge = (await delhi.innerText()).match(/Inactive|Archived/)?.[0];
-      test.info().annotations.push({ type: "note", description: `Line: "${lineText}"${firstText !== lineText ? ` (first showed: "${firstText}")` : ""} · SCN Delhi Traders badge reads "${badge}" (card says "Archived badge").` });
+      // R-2559: the archived company's badge says "Archived" — the app's one word (Archived switch, Archive button).
+      await expect(delhi).toContainText("Archived");
+      await expect(delhi).not.toContainText("Inactive");
+      test.info().annotations.push({ type: "note", description: `Line: "${lineText}"${firstText !== lineText ? ` (first showed: "${firstText}")` : ""} · texts seen: ${seen.length} · SCN Delhi Traders badge reads "Archived".` });
     } finally {
       await page.context().close();
     }

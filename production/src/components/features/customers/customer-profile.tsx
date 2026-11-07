@@ -89,7 +89,7 @@ import { RecordTable, RowLink } from "@/components/features/customers/customer-r
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { subscriptionReceivable } from "@/lib/payments/receivables";
 import { advanceTxnView, isPaymentTxn } from "@/components/features/customers/advance-txn";
-import { CustomerTransactionsTab, type TxnFilter } from "@/components/features/customers/customer-transactions-tab";
+import { CustomerTransactionsTab, paymentReference, type TxnFilter } from "@/components/features/customers/customer-transactions-tab";
 
 export interface CustomerProfileProps {
   customerId: string;
@@ -269,7 +269,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
       const status = pPaid <= 0 ? i.status : pPaid >= i.amount ? "paid" : "partially paid";
       return { date: i.invoice_date, type: "Invoice" as const, ref: i.id, amount: i.amount, status, href: txnHref({ kind: "invoice", invoiceId: i.id }, linkOpts) };
     }),
-    ...customerPayments.map((p) => ({ date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? ("Refund" as const) : ("Payment" as const), ref: p.receipt_voucher_no ?? p.id, amount: p.amount, status: p.status, href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId: params.id }, linkOpts), payId: p.id })),
+    ...customerPayments.map((p) => ({ date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? ("Refund" as const) : ("Payment" as const), ref: paymentReference(p, p.id), amount: p.amount, status: p.status, href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId: params.id }, linkOpts), payId: p.id })),
     // Project milestone receipts — show as Payment rows so they're not invisible.
     ...projPayments.map((p) => ({ date: p.received_at, type: "Payment" as const, ref: p.reference?.trim() || p.project_title, amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received", href: txnHref({ kind: "projectPayment", invoiceId: p.invoice_id ?? null, projectId: p.project_id }, linkOpts), projInvoiceId: p.invoice_id ?? null })),
     /* R-2033: an R-1863 advance holder is the customer's advance, not a ₹0 quote. */
@@ -647,7 +647,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
               invoicePaidByProject={invoicePaid}
               subs={allSubs}
               notes={{ creditNotes: customerNotes?.creditNotes ?? [], debitNotes: customerNotes?.debitNotes ?? [] }}
-              linksPending={subsQ.isPending || notesQ.isPending}
+              /* R-2559: every read the grouping needs — with invoices, quotes or payments still on their way a
+                 receipt sat under "Advance" for a moment and then jumped under its invoice. */
+              linksPending={[subsQ, notesQ, invoicesQ, quotesQ, paymentsQ, projectsQ, projPayQ].some((q) => q.isPending)}
               notesError={notesQ.isError ? { error: notesQ.error, retry: () => void notesQ.refetch() } : null}
               allPayments={allPayments ?? []}
               creditRows={creditRows ?? []}

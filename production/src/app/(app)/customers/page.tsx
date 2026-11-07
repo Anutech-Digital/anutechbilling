@@ -33,7 +33,7 @@ import {
   useOpenCreditsByCustomer, useDeleteCustomer, useSetCustomerActive,
 } from "@/lib/queries/customers";
 import {
-  customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, customerSearchFromUrl, customerInList, type ViewCtx,
+  customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, customerSearchFromUrl, customerInList, collectLineState, type ViewCtx,
 } from "./server-list";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
@@ -328,9 +328,13 @@ export default function CustomersPage() {
 
   /* R-1473: the line over "Has receivables" — what the To collect tile is made of, how much is on
      archived companies, and any money the list cannot show (so tile == list, or the line says why). */
+  /* R-2559: both halves of the line (subscription dues + project invoices) and the rows must be in —
+     else it showed "Subscription dues ₹0 …" for a moment. Until then a placeholder holds its place. */
+  const collectParts = collectLineState([outstandingQ, projRecvQ, { data: customers, isError: false }]);
+  const collectLineWanted = mode === "full" && view === "unpaid" && !showArchived && !search.trim();
   const collectLine = React.useMemo(() => {
     /* A search narrows the rows on purpose — the line speaks for the whole list, so it waits. */
-    if (mode !== "full" || view !== "unpaid" || showArchived || search.trim() || !customers || chase.companiesTotal <= 0) return null;
+    if (!collectLineWanted || collectParts !== "ready" || !customers || chase.companiesTotal <= 0) return null;
     const listed = new Set<string>();
     const archived = new Set<string>();
     for (const c of customers) {
@@ -338,7 +342,7 @@ export default function CustomersPage() {
       if (c.is_active === false) archived.add(c.id);
     }
     return toCollectBreakdown(chase, listed, archived);
-  }, [mode, view, showArchived, search, customers, chase]);
+  }, [collectLineWanted, collectParts, customers, chase]);
 
   // Filter — segment then free-text. In server mode the server already did both.
   const archivedCount = listCounts.data?.archived ?? 0;
@@ -813,9 +817,13 @@ export default function CustomersPage() {
               🔤 Name A-Z {sort.key === "name" ? (sort.dir === "asc" ? "↓" : "↑") : ""}
             </button>
           </div>
-          {collectLine && (
+          {collectLine ? (
             <p className="text-xs text-ink-3" data-testid="to-collect-breakdown">{collectLine}</p>
-          )}
+          ) : collectLineWanted && collectParts === "loading" ? (
+            <p role="status" aria-label="Adding up what is owed" className="text-xs text-ink-3" data-testid="to-collect-breakdown-loading">
+              Adding up what is owed…
+            </p>
+          ) : null}
         </div>
       )}
 
