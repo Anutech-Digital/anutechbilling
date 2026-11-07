@@ -14,7 +14,7 @@
  */
 import { expect, test, type Browser } from "@playwright/test";
 import { filterNavForRole, flattenNav, isRouteAllowed, APP_NAV } from "../../src/lib/nav";
-import { onlyInCardTests, openAppPage, pageAs, pathOf } from "./card-steps";
+import { namesShown, onlyInCardTests, openAppPage, pageAs, pathOf } from "./card-steps";
 
 /** Employee names the OWNER sees on /accounting/employees — read once, used by the Sales steps. */
 let ownerNames: Promise<string[]> | null = null;
@@ -72,19 +72,20 @@ test.describe("R-1001 — employee data only for owner / manager / accountant", 
     try {
       await openAppPage(page, "/attendance/me", /My Attendance/);
       expect(pathOf(page)).toBe("/attendance/me");
+      // Three right answers for Sales (R-1414): linked → own name + Check In; not linked → the
+      // "Profile not linked" card (ask the owner). "Select your profile" is only for owner /
+      // manager / accountant (canPickEmployee) — Sales seeing it would itself be a leak.
       const picker = page.getByRole("heading", { name: "Select your profile" });
+      const notLinked = page.getByRole("heading", { name: "Profile not linked" });
       const checkIn = page.getByRole("button", { name: /^Check In$/ });
-      await expect(picker.or(checkIn).first()).toBeVisible({ timeout: 60_000 });
-      const text = await page.locator("main").innerText();
-      const seen = all.filter((n) => text.includes(n));
-      if (await picker.isVisible()) {
-        await page.getByRole("combobox").first().click();
-        const options = (await page.getByRole("option").allInnerTexts()).map((s) => s.trim());
-        await page.keyboard.press("Escape");
-        expect(options.length, `'Select your profile' lists ${options.join(", ")}`).toBeLessThan(all.length);
-        test.info().annotations.push({ type: "note", description: `Profile list: ${options.join(", ") || "(empty)"}` });
+      await expect(picker.or(notLinked).or(checkIn).first()).toBeVisible({ timeout: 60_000 });
+      await expect(picker, "Sales must not get the 'Select your profile' list of employees").toHaveCount(0);
+      const seen = await namesShown(page, all);
+      if (await notLinked.isVisible()) {
+        expect(seen, `employee names visible to an unlinked Sales user: ${seen.join(", ")}`).toEqual([]);
+        test.info().annotations.push({ type: "note", description: "Sales is not linked to an employee: 'Profile not linked' card, no names shown." });
       } else {
-        // Already linked: exactly one employee name — their own — on the page.
+        // Linked: exactly one employee name — their own — on the page.
         expect(seen, `employee names visible to Sales on /attendance/me: ${seen.join(", ")}`).toHaveLength(1);
         test.info().annotations.push({ type: "note", description: `Linked profile: ${seen[0]}. Selfie/camera not checked (machine has no camera).` });
       }
@@ -111,9 +112,12 @@ test.describe("R-1001 — employee data only for owner / manager / accountant", 
     const page = await pageAs(browser, baseURL, "sales");
     try {
       await openAppPage(page, "/contacts", /^Contacts$/);
-      await expect(page.getByText(/Showing \d+ of \d+ people/)).toBeVisible({ timeout: 60_000 });
-      const text = await page.locator("main").innerText();
-      const leaked = all.filter((n) => text.includes(n));
+      const showing = page.getByText(/Showing \d+ of \d+ people/);
+      await expect(showing).toBeVisible({ timeout: 60_000 });
+      // The check reads one page; it is only a proof when that page holds every contact.
+      const [, shown, total] = /Showing (\d+) of (\d+)/.exec(await showing.innerText()) ?? [];
+      expect(shown, `Contacts shows ${shown} of ${total} — the list is paged, this step must search instead`).toBe(total);
+      const leaked = await namesShown(page, all);
       expect(leaked, `employee names on Sales' Contacts page: ${leaked.join(", ")}`).toEqual([]);
     } finally {
       await page.context().close();
@@ -124,7 +128,9 @@ test.describe("R-1001 — employee data only for owner / manager / accountant", 
     const page = await pageAs(browser, baseURL, "sales");
     try {
       await openAppPage(page, "/projects", /^Project Sales$/);
-      await expect(page.getByText(/labour/i)).toHaveCount(0);
+      // Wait for the project cards themselves, so "no labour" is judged on loaded data.
+      await expect(page.getByText(/Contract \(incl GST\)|No projects/i).first()).toBeVisible({ timeout: 60_000 });
+      await expect(page.locator("main").getByText(/labour/i)).toHaveCount(0);
       test.info().annotations.push({ type: "note", description: "No labour is allocated on any local project, so 'blank' is not a strong proof — add labour via a scenario to make it one." });
     } finally {
       await page.context().close();

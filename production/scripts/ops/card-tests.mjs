@@ -19,7 +19,8 @@
  * script never starts or stops a server.
  *
  * Result files: <home>/Anutech-HQ/card-tests/<card>-<timestamp>.json (CARD_TESTS_OUT overrides).
- * Exit: 0 all ran steps passed · 1 a step failed · 2 refused / bad input / app not reachable.
+ * Exit: 0 every card passed (≥1 step ran, none failed) · 1 a step failed, a load error, or
+ * nothing ran · 2 refused / bad input / app not reachable.
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
@@ -80,10 +81,15 @@ export function stepsFromReport(report) {
       for (const t of spec.tests ?? []) {
         const results = t.results ?? [];
         const last = results[results.length - 1] ?? {};
-        const status = t.status === "skipped" || last.status === "skipped" ? "skipped"
-          : last.status === "passed" ? "passed" : "failed";
+        // The test OUTCOME decides (expected / flaky = passed, skipped, unexpected = failed);
+        // a test with no result at all never ran — that is a failure, never a "skip".
+        const status = !results.length ? "failed"
+          : t.status === "skipped" ? "skipped"
+          : t.status === "expected" || t.status === "flaky" ? "passed" : "failed";
         const notes = (t.annotations ?? []).filter((a) => a.description).map((a) => `${a.type}: ${a.description}`);
-        const error = status === "failed" ? firstLine(last.error?.message ?? last.errors?.[0]?.message ?? "") : undefined;
+        const error = status !== "failed" ? undefined
+          : !results.length ? "did not run (the run stopped before this step)"
+          : firstLine(last.error?.message ?? last.errors?.[0]?.message ?? "") || `ended as ${last.status ?? "unknown"}`;
         out.push({ step: spec.title, status, seconds: round1((last.duration ?? 0) / 1000), notes, ...(error ? { error } : {}) });
       }
     }
@@ -99,9 +105,12 @@ function firstLine(s) {
 }
 const round1 = (n) => Math.round(n * 10) / 10;
 
-/** Overall verdict for the board: fail if any step failed; pass if ≥1 passed and none failed. */
-export function verdict(steps) {
-  if (steps.some((s) => s.status === "failed")) return "fail";
+/**
+ * Overall verdict for the board: fail if any step failed or Playwright reported a load/run error
+ * (a spec that does not compile has no steps); pass if ≥1 passed and none failed; else not-run.
+ */
+export function verdict(steps, runErrors = []) {
+  if (runErrors.length || steps.some((s) => s.status === "failed")) return "fail";
   if (steps.some((s) => s.status === "passed")) return "pass";
   return "not-run";
 }
@@ -128,7 +137,7 @@ const stamp = (d) => d.toISOString().replace(/[:.]/g, "-");
 
 async function reachable(base) {
   try {
-    const res = await fetch(new URL("/login", base), { redirect: "manual", signal: AbortSignal.timeout(15_000) });
+    const res = await fetch(new URL("/login", base), { redirect: "manual", signal: AbortSignal.timeout(60_000) }); // a busy dev server can take this long
     return res.status < 500;
   } catch {
     return false;
@@ -142,13 +151,16 @@ function runCard(card, base) {
   }
   const jsonFile = path.join(os.tmpdir(), `card-test-${card}-${process.pid}-${Date.now()}.json`);
   const started = new Date();
-  const npx = process.platform === "win32" ? "npx.cmd" : "npx";
-  const r = spawnSync(npx, [
-    "playwright", "test", `e2e/cards/${card}.spec.ts`,
+  // Playwright's own CLI through node — no shell, so a timeout kills the runner itself
+  // (on Windows a shell would be killed and leave the runner + Chromium behind).
+  const cli = path.join(PROD, "node_modules", "@playwright", "test", "cli.js");
+  const r = spawnSync(process.execPath, [
+    cli, "test", `e2e/cards/${card}.spec.ts`,
     "--project=chromium", "--workers=1", "--reporter=json", "--retries=0",
+    // A cold `next dev` compiles each page on first open (20–60 s); the config's 30 s is too short.
+    "--timeout=180000",
   ], {
     cwd: PROD,
-    shell: process.platform === "win32",
     encoding: "utf8",
     env: {
       ...process.env,
@@ -169,10 +181,14 @@ function runCard(card, base) {
   }
   const steps = stepsFromReport(report);
   const seconds = round1((finished - started) / 1000);
+  const reportErrors = (report.errors ?? []).map((e) => firstLine(e.message ?? "")).filter(Boolean);
+  if (r.status !== 0 && !steps.some((s) => s.status === "failed") && !reportErrors.length) {
+    reportErrors.push(`Playwright exited ${r.status ?? r.signal ?? "?"} with no failed step`);
+  }
   const run = {
     card, baseUrl: base, startedAt: started.toISOString().replace(/\.\d+Z$/, "Z"),
-    finishedAt: finished.toISOString().replace(/\.\d+Z$/, "Z"), seconds, result: verdict(steps), steps,
-    reportErrors: (report.errors ?? []).map((e) => firstLine(e.message ?? "")).filter(Boolean),
+    finishedAt: finished.toISOString().replace(/\.\d+Z$/, "Z"), seconds, result: verdict(steps, reportErrors), steps,
+    reportErrors,
   };
   run.browserCheck = browserCheckFor(run);
   return run;
@@ -222,7 +238,8 @@ async function main(argv) {
   for (const card of cards) {
     const run = runCard(card, base);
     print(run);
-    if (run.error || run.result === "fail") failed = true;
+    // Only a run where steps really passed is a success — "not-run" (all skipped / none found) is not.
+    if (run.error || run.result !== "pass") failed = true;
     if (!run.error) {
       const file = path.join(dir, `${card}-${stamp(new Date(run.finishedAt))}.json`);
       fs.writeFileSync(file, JSON.stringify(run, null, 2));

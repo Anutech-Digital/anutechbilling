@@ -65,6 +65,11 @@ describe("card-tests parsing and results", () => {
     expect(verdict(steps)).toBe("fail");
     expect(verdict([steps[0], steps[2]])).toBe("pass");
     expect(verdict([steps[2]])).toBe("not-run");
+    // A spec that fails to load has no steps — that is a fail, never a quiet "not-run".
+    expect(verdict([], ["SyntaxError in R-1001.spec.ts"])).toBe("fail");
+    // A step that never ran (run stopped) is a failure, not a "machine can't" skip.
+    const stopped = stepsFromReport({ suites: [{ specs: [{ title: "Step 9: x", tests: [{ status: "skipped", results: [] }] }] }] });
+    expect(stopped[0]).toMatchObject({ status: "failed", error: expect.stringMatching(/did not run/) });
     const bc = browserCheckFor({ card: "R-1001", baseUrl: "http://localhost:3001", finishedAt: "2026-11-07T09:00:00Z", seconds: 40, result: "fail", steps });
     expect(bc).toMatchObject({ env: "local", by: "card-test", at: "2026-11-07T09:00:00Z", result: "fail" });
     expect(bc.note).toMatch(/1 ✓ · 1 ✗ · 1 skip in 40s.*failed: Step 2.*skipped.*Step 4/);

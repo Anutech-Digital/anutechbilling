@@ -29,7 +29,8 @@ export type LocalRole = "owner" | "manager" | "accountant" | "sales" | "owner2";
 
 /** Sign this page's browser context in as a seeded local test role (cookies land in the context). */
 export async function loginLocal(page: Page, role: LocalRole): Promise<void> {
-  const res = await page.request.post("/api/dev/test-login", { data: { role } });
+  // 60 s, not the config's 10 s action timeout: sign-in on a busy local dev server can take longer.
+  const res = await page.request.post("/api/dev/test-login", { data: { role }, timeout: 60_000 });
   if (!res.ok()) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new Error(
@@ -52,7 +53,22 @@ export async function openAppPage(page: Page, path: string, heading?: RegExp): P
   await page.goto(path);
   await expect(page).not.toHaveURL(/\/login/);
   if (heading) await expect(page.getByRole("heading", { name: heading }).first()).toBeVisible({ timeout: 60_000 });
+  // Let the page's own data requests finish first — an error boundary or a row can appear after the heading.
+  // Capped at 15 s: pages that poll never go idle, and the steps wait for their own data anyway.
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => { /* polling page: judge what is there */ });
   await expect(page.getByText(/Something went wrong/i)).toHaveCount(0);
+}
+
+/**
+ * Which of `names` appear on the page as a WHOLE element text (exact match) — not as a piece of
+ * a longer name ("Ravi" inside "Ravi Traders" does not count).
+ */
+export async function namesShown(page: Page, names: readonly string[]): Promise<string[]> {
+  const shown: string[] = [];
+  for (const n of names) {
+    if ((await page.locator("main").getByText(n, { exact: true }).count()) > 0) shown.push(n);
+  }
+  return shown;
 }
 
 /** Pathname of the page's current URL. */
