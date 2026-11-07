@@ -99,6 +99,36 @@ export function tdsPartGross(i: {
   return part;
 }
 
+/**
+ * R-2556 — the Record payment sheet's DEFAULT TDS when part of the document may already be paid.
+ * - partTaxable = the taxable share of THIS payment's part (the balance it settles), by the same part
+ *   rule as tdsPartGross (R-2551 / SQL bank_credit_tds_gross): remaining × taxable ÷ GST-inclusive total.
+ * - tds = rate × partTaxable, half away from zero, rate exact to 6 decimals (0.125% stays exact).
+ * - and never more than the document's TDS at that rate minus the TDS already booked on its earlier
+ *   parts (`bookedTds`; null = not known yet → only the part rule), so earlier TDS is never added again.
+ * Nothing paid before → remaining = total → rate × the whole taxable, exactly as before.
+ */
+export function tdsDefaultForPart(i: {
+  remaining: number;
+  taxable: number | null | undefined;
+  total: number | null | undefined;
+  ratePct: number | null | undefined;
+  bookedTds: number | null | undefined;
+}): { partTaxable: number; tds: number } {
+  const remaining = Math.max(0, Math.round(i.remaining || 0));
+  const taxable = typeof i.taxable === "number" && Number.isFinite(i.taxable) ? Math.max(0, Math.round(i.taxable)) : 0;
+  const partTaxable = remaining > 0 ? tdsPartGross({ paid: remaining, taxable, total: i.total, tds: 0, ratePct: null }) : 0;
+  const rateM = typeof i.ratePct === "number" && Number.isFinite(i.ratePct) && i.ratePct > 0
+    ? Math.round(i.ratePct * 1_000_000) : 0;
+  if (rateM <= 0 || partTaxable <= 0) return { partTaxable, tds: 0 };
+  let tds = mulDivRound(partTaxable, rateM, 100_000_000);
+  if (typeof i.bookedTds === "number" && Number.isFinite(i.bookedTds)) {
+    const left = mulDivRound(taxable, rateM, 100_000_000) - Math.max(0, Math.round(i.bookedTds));
+    tds = Math.max(0, Math.min(tds, left));
+  }
+  return { partTaxable, tds };
+}
+
 /** Sum of TDS per payment id, from tds_receivable rows (one payment can carry more than one). */
 export function tdsByPayment(rows: readonly { payment_id: string | null; tds_amount: number | null }[]): Record<string, number> {
   const out: Record<string, number> = {};

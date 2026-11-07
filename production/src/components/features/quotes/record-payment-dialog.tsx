@@ -73,7 +73,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { rupee, formatDate } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
-import { paymentOutcome, tdsBase, tdsPartGross } from "@/lib/accounting/tds-receipt";
+import { paymentOutcome, tdsBase, tdsDefaultForPart, tdsPartGross } from "@/lib/accounting/tds-receipt";
 import { matchTdsShortfall, tdsShortfallLine, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { istToday } from "@/lib/dates/ist";
 import { domainConflictMessage } from "@/lib/quotes/payment-domain";
@@ -524,11 +524,51 @@ export function RecordPaymentDialog({
   // to (remaining − TDS) so net + TDS always settles the quote exactly.
   const [amountEdited, setAmountEdited] = React.useState(false);
 
-  // TDS computation — preGST × rate%
-  const { preGST: quotePreGST, tds: tdsAtRate } = React.useMemo(
-    () => tdsDeducted ? computeTds(expectedAmount, tdsRatePct, quoteTaxRate) : { preGST: 0, tds: 0 },
-    [tdsDeducted, tdsRatePct, expectedAmount, quoteTaxRate],
-  );
+  /* R-2556: the TDS already booked on this document's earlier parts (not reversed) — read once when
+     the sheet opens on a part-paid document. An instalment invoice: its own TDS rows; a quote: the TDS
+     rows of the quote's payments. null until known (or unreadable) → the part rule alone. */
+  const [bookedTds, setBookedTds] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (!open) { setBookedTds(null); return; }
+    if (!hasPriorPayments) { setBookedTds(0); return; }
+    let live = true;
+    (async () => {
+      const supabase = createClient();
+      let rows: { tds_amount: number | null }[] | null = null;
+      if (instalmentInvoiceId) {
+        const { data, error } = await supabase.from("tds_receivable").select("tds_amount")
+          .eq("invoice_id", instalmentInvoiceId).neq("status", "reversed");
+        rows = error ? null : data ?? [];
+      } else {
+        const { data: pays, error: pErr } = await supabase.from("payments").select("id").eq("quote_id", quoteId);
+        const ids = (pays ?? []).map((p) => p.id);
+        if (pErr) rows = null;
+        else if (ids.length === 0) rows = [];
+        else {
+          const { data, error } = await supabase.from("tds_receivable").select("tds_amount")
+            .in("payment_id", ids).neq("status", "reversed");
+          rows = error ? null : data ?? [];
+        }
+      }
+      if (!live) return;
+      setBookedTds(rows === null ? null : rows.reduce((s, r) => s + Math.max(0, Math.round(r.tds_amount ?? 0)), 0));
+    })();
+    return () => { live = false; };
+  }, [open, hasPriorPayments, instalmentInvoiceId, quoteId]);
+
+  /* TDS computation — preGST × rate%. R-2556: the DEFAULT TDS is rate × the taxable share of THIS
+     payment's part (the balance it settles) — the part rule of R-2551's tdsPartGross — and never more
+     than the document's TDS minus what its earlier parts already booked. It used to be rate × the WHOLE
+     document even when half was paid, so paying the second half booked the whole TDS again.
+     R-1520 "Record TDS" (tdsOnly) is the leftover the customer withheld on the whole document, so it
+     keeps rate × the whole taxable. */
+  const quotePreGST = tdsDeducted ? tdsBase(expectedAmount, quoteTaxRate) : 0;
+  const { partTaxable, tds: tdsAtRate } = React.useMemo(() => {
+    if (!tdsDeducted) return { partTaxable: 0, tds: 0 };
+    return tdsOnly
+      ? { partTaxable: quotePreGST, tds: computeTds(expectedAmount, tdsRatePct, quoteTaxRate).tds }
+      : tdsDefaultForPart({ remaining, taxable: quotePreGST, total: expectedAmount, ratePct: tdsRatePct, bookedTds });
+  }, [tdsDeducted, tdsOnly, quotePreGST, tdsRatePct, expectedAmount, quoteTaxRate, remaining, bookedTds]);
   /* R-2045: on a part payment request the TDS the customer ACTUALLY withheld can be typed (the
      field is shown only there). Bank + that TDS covering the part pays it in full; more than rate
      × this part's taxable value is warned about below (partRequestTdsCheck), never blocked.
@@ -783,7 +823,7 @@ export function RecordPaymentDialog({
           ? tdsAmount === tdsAtRate
             ? `TDS ${data.tdsSection} @ ${tdsRatePct}% = ${rupee(tdsAmount)} on pre-GST ${rupee(tdsGross)}`
             /* R-2045: the TDS the customer actually withheld on a part request, typed. */
-            : `TDS ${data.tdsSection} withheld ${rupee(tdsAmount)} on pre-GST ${rupee(tdsGross)} (${tdsRatePct}% of pre-GST ${rupee(quotePreGST)} = ${rupee(tdsAtRate)})`
+            : `TDS ${data.tdsSection} withheld ${rupee(tdsAmount)} on pre-GST ${rupee(tdsGross)} (${tdsRatePct}% of pre-GST ${rupee(partTaxable)} = ${rupee(tdsAtRate)})`
           : null,
       ].filter(Boolean).join(" · ") || null;
       /* R-2095: ₹0 in bank + TDS = the customer's TDS, not bank money (no bank account, method other). */
@@ -1572,7 +1612,7 @@ export function RecordPaymentDialog({
                 {/* R-2045: a part payment request — the TDS the customer actually withheld, and
                     a warning when it is more than rate × THIS part's taxable value. */}
                 {invoiceFacts?.partRequest && (() => {
-                  const check = partRequestTdsCheck({ taxable: quotePreGST, ratePct: tdsRatePct, tds: tdsAmount });
+                  const check = partRequestTdsCheck({ taxable: partTaxable, ratePct: tdsRatePct, tds: tdsAmount });
                   return (
                     <FormField label="TDS deducted by the customer (₹)" htmlFor="partTdsAmount">
                       <Input
@@ -1581,7 +1621,7 @@ export function RecordPaymentDialog({
                         min={0}
                         prefix="₹"
                         value={Number.isFinite(tdsAmount) ? tdsAmount : 0}
-                        helper={`${tdsRatePct}% of this part's taxable value ${rupee(quotePreGST)} is ${rupee(check.expected)}. Change it if the customer withheld a different amount.`}
+                        helper={`${tdsRatePct}% of this part's taxable value ${rupee(partTaxable)} is ${rupee(check.expected)}. Change it if the customer withheld a different amount.`}
                         onChange={(e) => {
                           const n = Math.max(0, Math.round(Number(e.target.value) || 0));
                           setTypedPartTds(n);
@@ -1626,6 +1666,19 @@ export function RecordPaymentDialog({
                     <span className="text-ink-3">Pre-GST taxable value</span>
                     <span className="font-mono">{rupee(quotePreGST)}</span>
                   </div>
+                  {/* R-2556: part already paid — TDS is on THIS payment's part only. */}
+                  {!tdsOnly && partTaxable !== quotePreGST && (
+                    <div className="flex justify-between" data-testid="tds-part-taxable">
+                      <span className="text-ink-3">Taxable value of this payment ({rupee(remaining)} balance)</span>
+                      <span className="font-mono">{rupee(partTaxable)}</span>
+                    </div>
+                  )}
+                  {!tdsOnly && hasPriorPayments && (bookedTds ?? 0) > 0 && (
+                    <div className="flex justify-between" data-testid="tds-already-booked">
+                      <span className="text-ink-3">TDS already booked on earlier payments</span>
+                      <span className="font-mono">{rupee(bookedTds ?? 0)}</span>
+                    </div>
+                  )}
                   <div className="flex justify-between text-rose">
                     <span>TDS @ {tdsRatePct}% (deposited to govt)</span>
                     <span className="font-mono">−{rupee(tdsAmount)}</span>
