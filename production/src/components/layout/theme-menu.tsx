@@ -4,18 +4,19 @@
  * R-2187: the header theme control — System / Light / Dark. "System" (the default until the user
  * picks) follows the OS prefers-color-scheme, live; Light or Dark is stored and wins over the OS.
  * One set of choices in both places: the desktop icon menu (ThemeMenu) and the phone More menu
- * (ThemeMenuItems, rendered inside that menu's content).
+ * (ThemeMenuItems, rendered inside that menu's content). The three are one choice, so they are a
+ * radio group (menuitemradio), not checkboxes.
  */
 import * as React from "react";
+import { Check } from "lucide-react";
 import { useTheme } from "next-themes";
-import { Icon } from "@/components/ui/icon";
+import * as DropdownMenuPrimitive from "@radix-ui/react-dropdown-menu";
 import { IconButton } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
-  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 
@@ -24,58 +25,60 @@ export const THEME_CHOICES = [
   { value: "light", label: "Light" },
   { value: "dark", label: "Dark" },
 ] as const;
+type ThemeChoice = (typeof THEME_CHOICES)[number];
+
+/** The stored choice as one of the three — anything else (none yet, an old value) is System. */
+function choiceOf(theme: string | undefined): ThemeChoice {
+  return THEME_CHOICES.find((c) => c.value === theme) ?? THEME_CHOICES[0];
+}
 
 /** The three choices, the current one ticked. Goes inside a DropdownMenuContent. */
 export function ThemeMenuItems() {
   const { theme, setTheme } = useTheme();
-  // Before mount next-themes has no theme on the server render — tick nothing until then.
-  const mounted = useMounted();
   return (
     <>
       <DropdownMenuLabel className="text-3xs uppercase tracking-wider text-ink-3">Theme</DropdownMenuLabel>
-      {THEME_CHOICES.map((c) => (
-        <DropdownMenuCheckboxItem
-          key={c.value}
-          checked={mounted && (theme ?? "system") === c.value}
-          onSelect={() => setTheme(c.value)}
-        >
-          {c.label}
-        </DropdownMenuCheckboxItem>
-      ))}
+      <DropdownMenuRadioGroup value={choiceOf(theme).value} onValueChange={setTheme}>
+        {THEME_CHOICES.map((c) => (
+          <DropdownMenuPrimitive.RadioItem
+            key={c.value}
+            value={c.value}
+            className="relative flex cursor-default select-none items-center rounded-sm py-1.5 pl-8 pr-2 text-sm outline-none focus:bg-paper-2"
+          >
+            <span className="absolute left-2 flex h-3.5 w-3.5 items-center justify-center">
+              <DropdownMenuPrimitive.ItemIndicator>
+                <Check className="h-4 w-4 text-amber" />
+              </DropdownMenuPrimitive.ItemIndicator>
+            </span>
+            {c.label}
+          </DropdownMenuPrimitive.RadioItem>
+        ))}
+      </DropdownMenuRadioGroup>
     </>
   );
 }
 
-/** Desktop header button: sun/moon for what is showing now, opens System / Light / Dark. */
+/** Desktop header button: moon/sun for what is showing now, opens System / Light / Dark. */
 export function ThemeMenu({ className, ...rest }: { className?: string; "data-topbar"?: string }) {
   const { theme, resolvedTheme } = useTheme();
-  const mounted = useMounted();
+  // next-themes knows nothing on the server render — the icon and label wait for mount.
+  const [mounted, setMounted] = React.useState(false);
+  React.useEffect(() => setMounted(true), []);
   const isDark = mounted && resolvedTheme === "dark";
-  const current = THEME_CHOICES.find((c) => c.value === (theme ?? "system"))?.label ?? "System";
   return (
     <DropdownMenu modal={false}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <DropdownMenuTrigger asChild>
-            <IconButton
-              icon={isDark ? "moon" : "sun"}
-              aria-label={mounted ? `Theme: ${current}` : "Theme"}
-              className={className}
-              {...rest}
-            />
-          </DropdownMenuTrigger>
-        </TooltipTrigger>
-        <TooltipContent>Theme</TooltipContent>
-      </Tooltip>
+      {/* No tooltip: focus returns here when a choice is picked and would pop it open again. */}
+      <DropdownMenuTrigger asChild>
+        <IconButton
+          icon={isDark ? "moon" : "sun"}
+          aria-label={mounted ? `Theme: ${choiceOf(theme).label}` : "Theme"}
+          className={className}
+          {...rest}
+        />
+      </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-40">
         <ThemeMenuItems />
       </DropdownMenuContent>
     </DropdownMenu>
   );
-}
-
-function useMounted() {
-  const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
-  return mounted;
 }

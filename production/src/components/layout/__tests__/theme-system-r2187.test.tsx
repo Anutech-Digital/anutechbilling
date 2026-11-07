@@ -12,11 +12,14 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, cleanup, act, screen, fireEvent, waitFor } from "@testing-library/react";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { ThemeProvider } from "@/components/providers/theme-provider";
+
+let pathname = "/dashboard";
+vi.mock("next/navigation", () => ({ usePathname: () => pathname }));
+
+import { ThemeProvider, APP_SHELL_SEGMENTS, isAppShellPath } from "@/components/providers/theme-provider";
 import { ThemeMenu } from "@/components/layout/theme-menu";
-import { TooltipProvider } from "@/components/ui/tooltip";
 
 type Listener = (e: MediaQueryListEvent) => void;
 
@@ -62,6 +65,7 @@ Object.defineProperty(window, "localStorage", { value: localStorage, configurabl
 
 beforeEach(() => {
   localStorage.clear();
+  pathname = "/dashboard";
   html().className = "";
   html().removeAttribute("style");
 });
@@ -105,10 +109,37 @@ describe("R-2187 — theme follows the OS until the user picks one", () => {
     expect(html().classList.contains("dark")).toBe(false);
   });
 
-  it("the provider's default is 'system', not a fixed theme", () => {
-    const src = readFileSync(join(process.cwd(), "src/components/providers/theme-provider.tsx"), "utf8");
-    expect(src).toMatch(/defaultTheme="system"/);
-    expect(src).toMatch(/\benableSystem\b/);
+});
+
+/* Review finding (R-2187): the website, buy/checkout, login and public links are built light only
+   (hard-coded white panels next to theme-token text) and have no theme control — an OS in dark
+   mode must not turn them dark. Only the signed-in app follows the OS / the stored choice. */
+describe("R-2187 — pages outside the signed-in app stay light", () => {
+  it.each(["/buy/support", "/login", "/checkout", "/quote/abc", "/", "/learn"])(
+    "%s with OS dark (and even a stored 'dark') → light",
+    (path) => {
+      pathname = path;
+      mockColorScheme(true);
+      localStorage.setItem("theme", "dark");
+      render(<ThemeProvider><div /></ThemeProvider>);
+      expect(html().classList.contains("dark")).toBe(false);
+    },
+  );
+
+  it("app pages are recognised by their first segment only", () => {
+    expect(isAppShellPath("/invoices/INV-1")).toBe(true);
+    expect(isAppShellPath("/settings")).toBe(true);
+    expect(isAppShellPath("/quote/abc")).toBe(false); // public quote link, not /quotes
+    expect(isAppShellPath("/")).toBe(false);
+    expect(isAppShellPath(null)).toBe(false);
+  });
+
+  it("APP_SHELL_SEGMENTS is exactly the folders of src/app/(app) — a new app section is never left light-only", () => {
+    const dirs = readdirSync(join(process.cwd(), "src/app/(app)"), { withFileTypes: true })
+      .filter((e) => e.isDirectory() && !e.name.startsWith("_") && !e.name.startsWith("("))
+      .map((e) => e.name)
+      .sort();
+    expect([...APP_SHELL_SEGMENTS].sort()).toEqual(dirs);
   });
 });
 
@@ -118,20 +149,20 @@ describe("R-2187 — header toggle offers System / Light / Dark", () => {
 
   it("lists the three choices, ticks the current one and stores the pick", async () => {
     mockColorScheme(true);
-    render(<TooltipProvider><ThemeProvider><ThemeMenu /></ThemeProvider></TooltipProvider>);
+    render(<ThemeProvider><ThemeMenu /></ThemeProvider>);
     openMenu();
-    const items = await screen.findAllByRole("menuitemcheckbox");
+    const items = await screen.findAllByRole("menuitemradio");
     expect(items.map((i) => i.textContent?.trim())).toEqual(["System", "Light", "Dark"]);
-    expect(screen.getByRole("menuitemcheckbox", { name: "System" }).getAttribute("aria-checked")).toBe("true");
+    expect(screen.getByRole("menuitemradio", { name: "System" }).getAttribute("aria-checked")).toBe("true");
 
-    fireEvent.click(screen.getByRole("menuitemcheckbox", { name: "Light" }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: "Light" }));
     expect(localStorage.getItem("theme")).toBe("light");
     expect(html().classList.contains("dark")).toBe(false);
 
-    await waitFor(() => expect(screen.queryAllByRole("menuitemcheckbox")).toHaveLength(0)); // picking closes the menu
+    await waitFor(() => expect(screen.queryAllByRole("menuitemradio")).toHaveLength(0)); // picking closes the menu
     openMenu();
-    const system = await screen.findByRole("menuitemcheckbox", { name: "System" });
-    expect(screen.getByRole("menuitemcheckbox", { name: "Light" }).getAttribute("aria-checked")).toBe("true");
+    const system = await screen.findByRole("menuitemradio", { name: "System" });
+    expect(screen.getByRole("menuitemradio", { name: "Light" }).getAttribute("aria-checked")).toBe("true");
     fireEvent.click(system);
     expect(localStorage.getItem("theme")).toBe("system");
     expect(html().classList.contains("dark")).toBe(true);
