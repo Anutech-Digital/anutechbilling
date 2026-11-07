@@ -25,7 +25,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { createClient } from "@/lib/supabase/client";
-import { toastError } from "@/lib/errors/toast-error";
+import { describeError, toastError } from "@/lib/errors/toast-error";
 
 export interface OpenMilestone {
   id: string;
@@ -121,6 +121,65 @@ export function receiptMilestones(totalInclusive: number, received: number) {
   ];
 }
 
+type Db = ReturnType<typeof createClient>;
+
+/**
+ * R-2567: the two state codes that decide IGST vs CGST+SGST for a new project. A failed read
+ * throws — it used to drop the error, so a network/permission failure read as "the state is not
+ * recorded" and sent the owner to fill in a state that was already there.
+ */
+export async function readSupplyStates(
+  supabase: Db, tenantId: string, customerId: string | null,
+): Promise<{ seller: string | null; customer: string | null }> {
+  const [{ data: tenant, error: tErr }, cust] = await Promise.all([
+    supabase.from("tenants").select("state_code").eq("id", tenantId).single(),
+    customerId
+      ? supabase.from("customers").select("state_code").eq("id", customerId).maybeSingle()
+      : Promise.resolve({ data: null, error: null }),
+  ]);
+  if (tErr) throw tErr;
+  if (cust.error) throw cust.error;
+  return { seller: tenant?.state_code ?? null, customer: cust.data?.state_code ?? null };
+}
+
+export const INVOICE_NOT_RAISED = "Payment booked, but the invoice could not be raised — raise it from the project page";
+export const INVOICE_NOT_CHECKED =
+  "Payment booked, but this instalment's invoice couldn't be checked — open the project page to see or raise it";
+
+/** What went wrong AFTER the booking: `text` says the payment is booked, `error` says why. */
+export interface AfterBookingWarning { text: string; error: unknown }
+
+/**
+ * R-2567: after the payment is booked, raise the instalment's tax invoice unless it already has
+ * one. The milestone read's error used to be dropped (R-2562's review): a failed read looked like
+ * "no invoice yet", so the raise ran blind and the server's "already raised" refusal came back as
+ * a failed invoice. Now a failed read raises nothing and says the invoice could not be checked.
+ * Never throws — the booking is already done; the caller shows `warning`.
+ */
+export async function raiseInvoiceAfterPayment(
+  supabase: Db, milestoneId: string,
+): Promise<{ invoiceId: string | null; warning: AfterBookingWarning | null }> {
+  const { data: ms, error: readErr } = await supabase
+    .from("project_milestones").select("invoice_id").eq("id", milestoneId).single();
+  if (readErr) return { invoiceId: null, warning: { text: INVOICE_NOT_CHECKED, error: readErr } };
+  if (ms?.invoice_id) return { invoiceId: null, warning: null };
+  const { data: inv, error: invErr } = await supabase.rpc("raise_project_milestone_invoice", { p_milestone_id: milestoneId });
+  if (invErr) return { invoiceId: null, warning: { text: INVOICE_NOT_RAISED, error: invErr } };
+  return { invoiceId: inv as string, warning: null };
+}
+
+/**
+ * The toast for an after-booking problem. The title always says the payment IS booked —
+ * toastError's `fallback` is used only when the error has no text, so it used to show just the
+ * reason and the owner could not tell whether the money was booked.
+ */
+function warnAfterBooking(w: AfterBookingWarning) {
+  const d = describeError(w.error);
+  // eslint-disable-next-line no-console
+  if (d.raw) console.error("[project-receipt]", d.raw, w.error);
+  toast.error(w.text, { description: d.message, duration: 10_000 });
+}
+
 export type ProjectReceiptTarget =
   /** milestoneId null = add a new milestone for this receipt (label: newMilestoneLabel). */
   | { kind: "existing"; projectId: string; milestoneId: string | null; newMilestoneLabel?: string }
@@ -162,11 +221,8 @@ export function useBookBankCreditAsProjectPayment() {
         if (!auth?.user) throw new Error("Not signed in");
         const { data: me, error: meErr } = await supabase.from("users").select("tenant_id").eq("id", auth.user.id).single();
         if (meErr) throw meErr;
-        const [{ data: tenant }, { data: cust }] = await Promise.all([
-          supabase.from("tenants").select("state_code").eq("id", me.tenant_id).single(),
-          t.customerId ? supabase.from("customers").select("state_code").eq("id", t.customerId).maybeSingle() : Promise.resolve({ data: null }),
-        ]);
-        const interState = isInterState(tenant?.state_code, cust?.state_code);
+        const states = await readSupplyStates(supabase, me.tenant_id, t.customerId);
+        const interState = isInterState(states.seller, states.customer);
         if (interState === null) {
           throw new Error("The state of the customer or your company is not recorded — GST (IGST or CGST+SGST) cannot be decided. Fill in the customer's state, then try again.");
         }
@@ -256,14 +312,11 @@ export function useBookBankCreditAsProjectPayment() {
 
       let invoiceId: string | null = null;
       if (input.raiseInvoice) {
-        const { data: ms } = await supabase.from("project_milestones").select("invoice_id").eq("id", milestoneId).single();
-        if (!ms?.invoice_id) {
-          const { data: inv, error: invErr } = await supabase.rpc("raise_project_milestone_invoice", { p_milestone_id: milestoneId });
-          /* The payment and the reconcile are already done — a failed invoice must not
-             read as a failed booking. Say so; it can be raised from the project page. */
-          if (invErr) toastError(invErr, { fallback: "Payment booked, but the invoice could not be raised — raise it from the project page" });
-          else invoiceId = inv as string;
-        }
+        /* The payment and the reconcile are already done — a failed invoice step must not
+           read as a failed booking. Say so; it can be raised from the project page. */
+        const r = await raiseInvoiceAfterPayment(supabase, milestoneId);
+        if (r.warning) warnAfterBooking(r.warning);
+        invoiceId = r.invoiceId;
       }
       return { projectId, invoiceId };
     },
