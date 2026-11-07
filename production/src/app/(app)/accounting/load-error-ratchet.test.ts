@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = path.join(process.cwd(), "src/app/(app)/accounting");
 
@@ -72,7 +73,7 @@ const KNOWN_GAPS = [
 ];
 
 describe("accounting pages show an error state, not ₹0 (R-270)", () => {
-  const all = pages(ROOT).map((f) => ({ file: rel(f), src: fs.readFileSync(f, "utf8") }));
+  const all = pages(ROOT).map((f) => ({ file: rel(f), src: readSource(f) }));
   const withLoading = all.filter((p) => /\bisLoading\b/.test(p.src));
 
   it("finds the pages it is meant to scan", () => {
@@ -89,7 +90,7 @@ describe("accounting pages show an error state, not ₹0 (R-270)", () => {
 
   it("the R-285 pages use the shared LoadError / LoadErrorBanner", () => {
     const missing = R285_PAGES.filter((f) => {
-      const src = fs.readFileSync(path.join(APP, f), "utf8");
+      const src = readSource(path.join(APP, f));
       return !/from "@\/components\/shared\/load-error"/.test(src) || !/\.isError\b/.test(src);
     });
     expect(missing, `These pages still fall through to ₹0 / not-found on a failed fetch:\n  ${missing.join("\n  ")}`).toEqual([]);

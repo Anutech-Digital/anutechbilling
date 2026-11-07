@@ -15,8 +15,9 @@
  * respond, or listed in ALLOWED with the place its explanation is visible.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = process.cwd();
 const AREAS = ["src/app/(marketing)", "src/app/(public)", "src/site"];
@@ -86,7 +87,7 @@ function onlyInProgress(expr: string): boolean {
 const files = AREAS.flatMap((a) => walk(join(ROOT, a)));
 const gates = files.flatMap((f) => {
   const rel = relative(ROOT, f).split(sep).join("/");
-  return disabledGates(readFileSync(f, "utf8")).map((expr) => ({ rel, expr }));
+  return disabledGates(readSource(f)).map((expr) => ({ rel, expr }));
 });
 
 describe("no silently disabled buttons (site, checkout, customer pages)", () => {
@@ -108,16 +109,16 @@ describe("no silently disabled buttons (site, checkout, customer pages)", () => 
   });
 
   it("the site gives a disabled .btn a disabled look", () => {
-    const css = readFileSync(join(ROOT, "src/site/site.css"), "utf8");
+    const css = readSource(join(ROOT, "src/site/site.css"));
     expect(css).toMatch(/\.anutech-site \.btn:disabled\s*\{[^}]*opacity:\s*0?\.\d/);
   });
 
   it("the three buttons found on 29 Sep respond to a press instead of being disabled", () => {
-    const checkout = readFileSync(join(ROOT, "src/app/(marketing)/checkout/page.tsx"), "utf8");
+    const checkout = readSource(join(ROOT, "src/app/(marketing)/checkout/page.tsx"));
     expect(checkout).toMatch(/onClick=\{\(\) => proceed\(\(\) => void startTrial\(\)\)\}/);
     expect(checkout).toMatch(/onClick=\{\(\) => proceed\(\(\) => setStep\("payment"\)\)\}/);
     expect(checkout).toMatch(/if \(!agreed\) \{ setAgreeNudge\(true\); return; \}/);
-    const accept = readFileSync(join(ROOT, "src/app/(public)/quote/[id]/accept/quote-accept-view.tsx"), "utf8");
+    const accept = readSource(join(ROOT, "src/app/(public)/quote/[id]/accept/quote-accept-view.tsx"));
     expect(accept).toMatch(/if \(!signerName\.trim\(\)\) \{\s*setNameNudge\(true\);/);
   });
 });

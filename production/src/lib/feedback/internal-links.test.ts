@@ -24,10 +24,11 @@
  * is worth more than a thorough one nobody trusts.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_ROUTES } from "./route-map";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const DYN = "[*]";
@@ -99,7 +100,7 @@ const LINK_PATTERNS = [
 ];
 
 describe("internal links point at routes that exist", () => {
-  const files = tsxFiles(SRC).map((file) => ({ file, src: stripComments(readFileSync(file, "utf8")) }));
+  const files = tsxFiles(SRC).map((file) => ({ file, src: stripComments(readSource(file)) }));
 
   it("has files and routes to work with", () => {
     expect(files.length).toBeGreaterThan(100);

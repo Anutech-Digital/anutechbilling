@@ -13,8 +13,9 @@
  * @/ and relative imports), since sections live in components, not in page.tsx.
  */
 import { describe, it, expect } from "vitest";
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = process.cwd();
 const SRC = join(ROOT, "src");
@@ -45,7 +46,7 @@ function resolveImport(from: string, spec: string): string | null {
 
 const srcCache = new Map<string, string>();
 const read = (f: string) => {
-  if (!srcCache.has(f)) srcCache.set(f, readFileSync(f, "utf8"));
+  if (!srcCache.has(f)) srcCache.set(f, readSource(f));
   return srcCache.get(f)!;
 };
 

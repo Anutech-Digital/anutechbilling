@@ -26,6 +26,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 import {
   PERSONAL_API_PREFIXES,
   PERSONAL_OPEN_API_PREFIXES,
@@ -75,7 +76,7 @@ const OWNER_PIN = new RegExp([
 /** The app-shell open prefixes: reached by a personal SESSION, with nothing else proving the caller. */
 const SESSION_SHELL_PREFIXES = ["/api/sb", "/api/monitoring/sentry-dsn"];
 
-const routes = walk(API).map((f) => ({ route: rel(f), src: code(fs.readFileSync(f, "utf8")) }));
+const routes = walk(API).map((f) => ({ route: rel(f), src: code(readSource(f)) }));
 
 describe("personal API classification (GP-07c ratchet)", () => {
   it("every route.ts lands in exactly one bucket, and it matches middleware's isPersonalApiAllowed", () => {

@@ -27,6 +27,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const API = path.resolve(__dirname);
 
@@ -184,7 +185,7 @@ const USER_GATE_HELPERS: Record<string, string> = {
   vaultGate: "vault/vault-access.ts", // owner / manager via public.users (R-716)
 };
 const helperProves = (name: string) =>
-  USERS_ROW.test(code(fs.readFileSync(path.join(API, USER_GATE_HELPERS[name]), "utf8")));
+  USERS_ROW.test(code(readSource(path.join(API, USER_GATE_HELPERS[name]))));
 const callsUserGate = (src: string) =>
   Object.keys(USER_GATE_HELPERS).some((n) => new RegExp(`\\b${n}\\s*\\(`).test(src) && helperProves(n));
 
@@ -201,7 +202,7 @@ function classify(route: string, src: string): Kind {
 }
 
 const routes = walk(API)
-  .map((f) => ({ route: rel(f), src: code(fs.readFileSync(f, "utf8")) }))
+  .map((f) => ({ route: rel(f), src: code(readSource(f)) }))
   .filter((r) => USES_SERVICE_ROLE.test(r.src));
 const kinds = new Map(routes.map((r) => [r.route, classify(r.route, r.src)]));
 
@@ -234,7 +235,7 @@ describe("service-role API routes prove their caller (R-051 ratchet)", () => {
   it("money / broadcast / company-account routes carry a role gate, not just sign-in", () => {
     const missing = ROLE_GATED.filter((r) => {
       const f = path.join(API, r, "route.ts");
-      return !fs.existsSync(f) || !ROLE_GATE.test(code(fs.readFileSync(f, "utf8")));
+      return !fs.existsSync(f) || !ROLE_GATE.test(code(readSource(f)));
     });
     expect(missing).toEqual([]);
   });
@@ -242,7 +243,7 @@ describe("service-role API routes prove their caller (R-051 ratchet)", () => {
   it("money routes pass the acting user to the admin client (audit log has a real actor)", () => {
     const plain = ACTOR_AUDITED.filter((r) => {
       const f = path.join(API, r, "route.ts");
-      const src = fs.existsSync(f) ? code(fs.readFileSync(f, "utf8")) : "";
+      const src = fs.existsSync(f) ? code(readSource(f)) : "";
       return !VERIFIED_ACTOR.test(src) || /createAdminClient\s*\(/.test(src);
     });
     expect(plain, "use createAdminClientFor(user.id) — the verified caller, never a body field").toEqual([]);

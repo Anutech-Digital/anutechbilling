@@ -1,8 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { pdfRupee, pdfSafeMoney, PDF_RUPEE_PREFIX } from "./pdf-money";
 import { rupee } from "@/lib/utils";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* ─────────────────────────────────────────────────────────────────────────────
    31 Aug 2026 — Q-ADPL-2026-27-0058, jaisa customer ke inbox me pahuncha:
@@ -31,7 +32,7 @@ import { rupee } from "@/lib/utils";
  * there the slashes follow a colon.
  */
 function runnable(file: string): string {
-  return readFileSync(file, "utf8")
+  return readSource(file)
     /* CRLF FIRST, and this one is subtle enough to have cost a run. These files are checked
        out with `\r\n`, and in JavaScript `.` does not match `\r` — it is a line terminator,
        like `\n`. So `\s\/\/.*$` could not reach the end of a trailing comment and stripped

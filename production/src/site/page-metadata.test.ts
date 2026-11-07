@@ -15,15 +15,16 @@
  * because importing the pages would pull in the database and auth code.
  */
 import { describe, it, expect } from "vitest";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const GROUPS = ["src/app/(marketing)", "src/app/(public)", "src/app/(product)", "src/app/(lp)"];
 /** Sign-in pages that are reachable from the public site (robots.txt disallows them). */
 const AUTH_PAGES = ["src/app/(auth)/login", "src/app/(auth)/signup", "src/app/(auth)/forgot-password"];
 const ROBOTS_BLOCKED = ["/cart", "/checkout", "/done", "/login", "/signup", "/forgot-password"];
 
-const read = (f: string) => readFileSync(f, "utf8");
+const read = (f: string) => readSource(f);
 
 function pages(dir: string): string[] {
   return readdirSync(dir).flatMap((n) => {

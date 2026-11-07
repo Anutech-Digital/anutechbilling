@@ -6,13 +6,14 @@
  * "Flexible monthly".
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { QUOTE_PRODUCTS, withLiveEditions, quoteRate, quoteInr } from "./quote-catalog";
 import { HOSTING_TIERS } from "./hosting-landing-v2";
 import { CERTS } from "./catalog";
 import { buildRateCard } from "../rate-card";
 import { mergeEditions } from "../live-catalog";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const hosting = QUOTE_PRODUCTS.filter((p) => p.vendor === "Web hosting");
 
@@ -43,7 +44,7 @@ describe("R-224 no plan called Agency anywhere on the site", () => {
       for (const f of readdirSync(d)) {
         const p = join(d, f);
         if (statSync(p).isDirectory()) walk(p);
-        else if (/\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f) && /\bAgency\b/.test(readFileSync(p, "utf8"))) hits.push(p);
+        else if (/\.(ts|tsx)$/.test(f) && !/\.test\.tsx?$/.test(f) && /\bAgency\b/.test(readSource(p))) hits.push(p);
       }
     };
     walk(root);

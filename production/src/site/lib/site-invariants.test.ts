@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { RESELLEROS_URL, OS_SIGNUP, ENQUIRY_API, resolveResellerosUrl, LIVE_RESELLEROS_URL } from "./config";
 import { TLDS, LICENCE_EDITIONS } from "./data/catalog";
 import { HOSTING_TIERS } from "./data/hosting-landing-v2";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Site ke apne niyam — jinke tootne se site jhooth bolne lagti.
@@ -29,7 +30,7 @@ function walk(dir: string): string[] {
 }
 
 const files = walk(SITE).filter((f) => !f.includes(".test."));
-const read = (f: string) => readFileSync(f, "utf8");
+const read = (f: string) => readSource(f);
 
 describe("app ka pata — ek jagah", () => {
   it("run.app sirf config.ts me likha hai", () => {

@@ -4,9 +4,10 @@
  * page's metadata (title + description) is scanned for internal notes: revenue targets, plan
  * names, people's names, TODOs.
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const APP = path.join(process.cwd(), "src/app");
 
@@ -39,7 +40,7 @@ describe("R-1631: public page metadata carries no internal notes", () => {
   });
 
   it("/pricing's description is customer copy, not a revenue target", () => {
-    const block = metadataBlock(readFileSync(path.join(APP, "(public)/pricing/page.tsx"), "utf8"));
+    const block = metadataBlock(readSource(path.join(APP, "(public)/pricing/page.tsx")));
     expect(block).not.toBeNull();
     expect(block).not.toMatch(INTERNAL);
     expect(block).toMatch(/description:/);
@@ -47,7 +48,7 @@ describe("R-1631: public page metadata carries no internal notes", () => {
 
   it("no public page's title/description names an internal target, plan or person", () => {
     const bad = files
-      .map((f) => ({ f: path.relative(APP, f), block: metadataBlock(readFileSync(f, "utf8")) }))
+      .map((f) => ({ f: path.relative(APP, f), block: metadataBlock(readSource(f)) }))
       .filter((x) => x.block && INTERNAL.test(x.block))
       .map((x) => `${x.f}: ${x.block!.match(INTERNAL)![0]}`);
     expect(bad).toEqual([]);
