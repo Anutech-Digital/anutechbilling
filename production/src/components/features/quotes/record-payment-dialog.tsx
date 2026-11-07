@@ -73,7 +73,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { rupee, formatDate } from "@/lib/utils";
 import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
-import { paymentOutcome, tdsBase } from "@/lib/accounting/tds-receipt";
+import { paymentOutcome, tdsBase, tdsPartGross } from "@/lib/accounting/tds-receipt";
 import { matchTdsShortfall, tdsShortfallLine, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
 import { istToday } from "@/lib/dates/ist";
 import { domainConflictMessage } from "@/lib/quotes/payment-domain";
@@ -772,14 +772,18 @@ export function RecordPaymentDialog({
       /* R-1520: ₹0 in bank passes the form only with TDS ticked; a 0% rate would still leave
          nothing to record — say so here instead of record_payment's "amount must be > 0". */
       if (settledAmount <= 0) throw new Error("Nothing to record — enter the amount received, or the TDS rate.");
+      /* R-2551: the TDS gross is the taxable value of the PART this receipt settles (money + TDS) —
+         R-2538's rule, the same answer the bank-reconcile path gives — never the whole document's
+         pre-GST value on a part payment; a rate the TDS does not fit on the part → TDS × 100 ÷ rate. */
+      const tdsGross = tdsPartGross({ paid: settledAmount, taxable: quotePreGST, total: expectedAmount, tds: tdsAmount, ratePct: tdsRatePct });
       const method = data.method as "upi" | "razorpay" | "bank_transfer" | "cheque" | "cash" | "other";
       const notes  = [
         data.notes || null,
         tdsActive
           ? tdsAmount === tdsAtRate
-            ? `TDS ${data.tdsSection} @ ${tdsRatePct}% = ${rupee(tdsAmount)} on pre-GST ${rupee(quotePreGST)}`
+            ? `TDS ${data.tdsSection} @ ${tdsRatePct}% = ${rupee(tdsAmount)} on pre-GST ${rupee(tdsGross)}`
             /* R-2045: the TDS the customer actually withheld on a part request, typed. */
-            : `TDS ${data.tdsSection} withheld ${rupee(tdsAmount)} (${tdsRatePct}% of pre-GST ${rupee(quotePreGST)} = ${rupee(tdsAtRate)})`
+            : `TDS ${data.tdsSection} withheld ${rupee(tdsAmount)} on pre-GST ${rupee(tdsGross)} (${tdsRatePct}% of pre-GST ${rupee(quotePreGST)} = ${rupee(tdsAtRate)})`
           : null,
       ].filter(Boolean).join(" · ") || null;
       /* R-2095: ₹0 in bank + TDS = the customer's TDS, not bank money (no bank account, method other). */
@@ -799,7 +803,7 @@ export function RecordPaymentDialog({
         ...(tdsActive
           ? {
               p_tds_amount:   tdsAmount,
-              p_tds_gross:    quotePreGST,
+              p_tds_gross:    tdsGross,
               p_tds_net_paid: data.amount,
               p_tds_section:  data.tdsSection ?? "194J",
               p_tds_rate_pct: tdsRatePct,
