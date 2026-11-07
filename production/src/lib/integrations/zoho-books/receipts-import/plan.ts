@@ -16,7 +16,7 @@
  *     for the PREVIEW (shown in the dialog, changeable); the import uses only what the dialog sent.
  * Pure: no I/O.
  */
-import type { ZohoReceiptFacts } from "./normalise";
+import { OLD_BANK_CHARGES_PROBLEM, type ZohoReceiptFacts } from "./normalise";
 import { defaultCashAccountId, depositAccounts, type DepositAccount as AppBankAccount } from "@/lib/payments/deposit-accounts";
 
 export type { AppBankAccount };
@@ -27,6 +27,8 @@ export const RECEIPTS_IMPORT_ROLES = ["owner", "accountant"] as const;
  *  the same marker as the purchase import's (purchase-import/plan.ts LEAVE_OUT). */
 export const LEAVE_OUT = "none";
 export const LEFT_OUT_REASON = "Left out by owner.";
+/** R-2565: a booked Razorpay fee payment waits for its Razorpay settlement line (R-2099), not a line of its own. */
+export const SETTLEMENT_WAIT_REASON = "Booked — waits for its Razorpay settlement (Banking → the settlement line → Reconcile).";
 
 export interface AppZohoInvoice {
   id: string;
@@ -46,7 +48,7 @@ export interface ReceiptsPlanContext {
   invoices: AppZohoInvoice[];
   bankAccounts: AppBankAccount[];
   /** Zoho payment ids already booked (zoho_fy_receipts), with whether a bank line is on them. */
-  booked: Map<string, { banked: boolean }>;
+  booked: Map<string, { banked: boolean; fee?: number }>;
   /** Zoho deposit account id → the app account the owner chose, LEAVE_OUT, or "" (chosen: none). */
   accountMap: Record<string, string>;
 }
@@ -67,8 +69,9 @@ export interface ZohoDeposit { zohoAccountId: string; zohoName: string; count: n
 
 export interface ReceiptsPlan {
   rows: PlannedReceipt[];
-  counts: { scanned: number; import: number; already: number; alreadyNotBanked: number; skip: number };
-  totals: { cash: number; tds: number; excess: number };
+  /** R-2565: withFee = payments to record whose Razorpay fee is booked as Bank Charges (its sum in totals.fee). */
+  counts: { scanned: number; import: number; already: number; alreadyNotBanked: number; skip: number; withFee: number };
+  totals: { cash: number; tds: number; excess: number; fee: number };
   deposits: ZohoDeposit[];
   skipReasons: { reason: string; count: number }[];
 }
@@ -142,7 +145,12 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     const done = ctx.booked.get(f.zohoId);
     /* Left out: never a pick — not booked, and an earlier booking is not bank-matched from here either. */
     if (dep?.leftOut) return row("skip", done ? "Left out by owner — recorded by an earlier import (Remove import takes it out)." : LEFT_OUT_REASON);
+    /* R-2565: a Razorpay fee payment reaches the bank inside a Razorpay settlement — matched there
+       (Banking → the settlement line → Reconcile, R-2099), never one by one from here. */
+    if (done && !done.banked && (done.fee ?? 0) > 0) return row("already", SETTLEMENT_WAIT_REASON);
     if (done) return row("already", done.banked ? null : "Booked — its bank line is not matched yet (Import again matches it once the statement is in).");
+    /* R-2565: read before Razorpay's fee could be booked — the fee is in the facts only after a new read. */
+    if (f.problems[0] === OLD_BANK_CHARGES_PROBLEM) return row("skip", "Read from Zoho again — a Razorpay fee payment can be imported now (fee booked as Bank Charges).");
     if (f.problems.length) return row("skip", f.problems[0]);
     if (!f.date || f.date < ctx.fyStart || f.date > ctx.fyEnd) return row("skip", `Dated ${f.date || "?"}, outside the year.`);
     if (!ctx.booksStart) return row("skip", "The books start date is not set (Accounting → Overview → Books start).");
@@ -174,13 +182,17 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     return row("import", null, customerId);
   });
 
-  const counts = { scanned: rows.length, import: 0, already: 0, alreadyNotBanked: 0, skip: 0 };
-  const totals = { cash: 0, tds: 0, excess: 0 };
+  const counts = { scanned: rows.length, import: 0, already: 0, alreadyNotBanked: 0, skip: 0, withFee: 0 };
+  const totals = { cash: 0, tds: 0, excess: 0, fee: 0 };
   const why = new Map<string, number>();
   for (const r of rows) {
     counts[r.verdict] += 1;
-    if (r.verdict === "already" && r.reason) counts.alreadyNotBanked += 1;
-    if (r.verdict === "import") { totals.cash += r.facts.amount; totals.tds += r.facts.tds; totals.excess += r.facts.excess; }
+    if (r.verdict === "already" && r.reason && r.reason !== SETTLEMENT_WAIT_REASON) counts.alreadyNotBanked += 1;
+    if (r.verdict === "import") {
+      totals.cash += r.facts.amount; totals.tds += r.facts.tds; totals.excess += r.facts.excess;
+      const fee = r.facts.fee ?? 0;   // facts read before R-2565 carry no fee
+      if (fee > 0) { counts.withFee += 1; totals.fee += fee; }
+    }
     if (r.verdict === "skip" && r.reason) why.set(reasonKey(r.reason), (why.get(reasonKey(r.reason)) ?? 0) + 1);
   }
   return {
