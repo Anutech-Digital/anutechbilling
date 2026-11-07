@@ -783,7 +783,7 @@ export function RecordPaymentDialog({
           ? tdsAmount === tdsAtRate
             ? `TDS ${data.tdsSection} @ ${tdsRatePct}% = ${rupee(tdsAmount)} on pre-GST ${rupee(tdsGross)}`
             /* R-2045: the TDS the customer actually withheld on a part request, typed. */
-            : `TDS ${data.tdsSection} withheld ${rupee(tdsAmount)} (${tdsRatePct}% of pre-GST ${rupee(quotePreGST)} = ${rupee(tdsAtRate)})`
+            : `TDS ${data.tdsSection} withheld ${rupee(tdsAmount)} on pre-GST ${rupee(tdsGross)} (${tdsRatePct}% of pre-GST ${rupee(quotePreGST)} = ${rupee(tdsAtRate)})`
           : null,
       ].filter(Boolean).join(" · ") || null;
       /* R-2095: ₹0 in bank + TDS = the customer's TDS, not bank money (no bank account, method other). */

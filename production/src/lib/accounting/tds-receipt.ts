@@ -72,7 +72,7 @@ function mulDivRound(a: number, b: number, c: number): number {
  * - a rate is given and the TDS does not fit it on that part (±₹1 is rounding) — the customer deducted
  *   on more than this part — → TDS × 100 ÷ rate, never above the taxable (what 26AS shows).
  * - never null: no taxable value → 0.
- * Rates are taken to 2 decimals (the sheet's own precision) so the arithmetic stays exact.
+ * Integer (BigInt) arithmetic with the rate to 6 decimals, so it gives the SQL helper's answer exactly.
  */
 export function tdsPartGross(i: {
   paid: number;
@@ -91,9 +91,10 @@ export function tdsPartGross(i: {
   if (total <= 0 || paid >= total) part = taxable;
   else if (paid <= 0) part = 0;
   else part = Math.min(taxable, mulDivRound(paid, taxable, total));
-  const rateH = typeof i.ratePct === "number" && Number.isFinite(i.ratePct) ? Math.round(i.ratePct * 100) : 0; // hundredths of a %
-  if (tds > 0 && rateH > 0 && Math.abs(mulDivRound(part, rateH, 10_000) - tds) > 1) {
-    return Math.min(taxable, mulDivRound(tds, 10_000, rateH));
+  // The rate in millionths of a % (0.125% → 125000): exact for any rate typed with up to 6 decimals.
+  const rateM = typeof i.ratePct === "number" && Number.isFinite(i.ratePct) ? Math.round(i.ratePct * 1_000_000) : 0;
+  if (tds > 0 && rateM > 0 && Math.abs(mulDivRound(part, rateM, 100_000_000) - tds) > 1) {
+    return Math.min(taxable, mulDivRound(tds, 100_000_000, rateM));
   }
   return part;
 }

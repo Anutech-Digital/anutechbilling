@@ -38,6 +38,8 @@ describe("R-2551 tdsPartGross — same answers as R-2538's bank_credit_tds_gross
     expect(tdsPartGross({ paid: 11_800, taxable: 10_000, total: 11_800, tds: 750, ratePct: 7.5 })).toBe(10_000);
     // 0.1% of the whole ₹10,000 = ₹10 kept from a half part → TDS × 100 ÷ 0.1 = ₹10,000
     expect(tdsPartGross({ paid: 5_900, taxable: 10_000, total: 11_800, tds: 10, ratePct: 0.1 })).toBe(10_000);
+    // 0.125% (more than 2 decimals) — SQL takes the exact rate: 5,000 × 0.125% = 6.25 → 6 ≠ 12 → 12 × 100 ÷ 0.125 = 9,600
+    expect(tdsPartGross({ paid: 5_900, taxable: 10_000, total: 11_800, tds: 12, ratePct: 0.125 })).toBe(9_600);
   });
   it("never null: no taxable → 0; no usable total → the taxable; nothing paid → 0", () => {
     expect(tdsPartGross({ paid: 5_900, taxable: 0, total: 11_800, tds: 100, ratePct: 2 })).toBe(0);

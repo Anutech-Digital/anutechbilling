@@ -15,10 +15,14 @@
 --      does not fit on the part → TDS × 100 ÷ rate (capped). Never null (0 with no taxable, as before).
 --      Taxable and total from ONE document: the invoice's; an invoice with no taxable value and its own
 --      quote → the quote's taxable (subtotal, else amount less GST) AND the quote's total (R-2538's rule).
---      An instalment / opening / Zoho invoice with no taxable → 0, as bank_credit_pay_item.
+--      An instalment invoice with no taxable → 0, as bank_credit_pay_item. An opening / Zoho invoice
+--      with no taxable (opening invoices are imported with taxable 0) → 0 here, and
+--      _record_opening_invoice_payment books the receipt amount as before (no tax split is known).
 --      The line's own "tds_gross" (no caller sends one) is no longer read — the server rule decides.
 --   2. No rate given → the rate is derived from that gross (TDS × 100 ÷ gross, 2 dp), as R-2538.
---      Still none (no taxable) → refused in words, never the bare NOT NULL error.
+--      Still none (no taxable), or above 100% (TDS bigger than the part's taxable) → refused in words
+--      ("enter the TDS rate"), never the bare NOT NULL error — except an opening / Zoho invoice, whose
+--      own function works its rate out as before. Replay lines skip all of this (the retry answer).
 --   Not changed: the desk Record payment sheet's own call (record_desk_payment) — its gross is now
 --   computed in the app by tdsPartGross (src/lib/accounting/tds-receipt.ts), the same rule.
 -- Test: supabase/tests/r2551_tds_gross_desk_multi.test.sql (begin … rollback; red without this file).
@@ -234,7 +238,7 @@ begin
        bank_credit_pay_item). A given rate the TDS does not fit on the part → TDS × 100 ÷ rate. */
     v_gross := 0;
     v_rate  := null;
-    if v_tds > 0 then
+    if v_tds > 0 and v_due is not null then   -- a replay line (v_due null) keeps the retry answer
       begin
         v_rate := nullif(nullif(trim(coalesce(v_alloc->>'tds_rate_pct', '')), '')::numeric, 0);
       exception when others then
@@ -252,9 +256,15 @@ begin
       end if;
       v_gross := public.bank_credit_tds_gross(v_amt::int + v_tds::int, v_taxable, v_total, v_tds::int, v_rate);
       v_rate  := coalesce(v_rate, round(v_tds * 100.0 / nullif(v_gross, 0), 2));
-      if v_rate is null then
+      /* An opening / Zoho invoice with no taxable: _record_opening_invoice_payment works its rate out
+         from the receipt, as before R-2551. Anything else needs a real rate. */
+      if not v_open and v_rate is null then
         raise exception 'Invoice % has no taxable value to work the TDS rate out from. Enter the TDS rate for it.', v_inv.id
           using errcode = '22023';
+      end if;
+      if v_rate > 100 then
+        raise exception 'The TDS on invoice % (₹%) is more than the taxable value this line pays (₹%). Enter the TDS rate the customer used.',
+          v_inv.id, v_tds::int, v_gross using errcode = '22023';
       end if;
     end if;
 
