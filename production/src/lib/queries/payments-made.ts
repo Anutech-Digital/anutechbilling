@@ -102,6 +102,13 @@ export async function fetchMoneyOut(supabase: Client): Promise<PaidOutLine[]> {
       case "prepaid": { const p = prep.get(id); if (p) { payee = p.vendor_name; what = `Advance (${p.category})`; } else what = "Advance"; break; }
       case "referral_commission": { const c = comm.get(id); payee = c?.referral_partners?.name ?? payee; what = "Referral commission"; break; }
       case "manual": what = "Capital / loan / EMI (hand-booked)"; break;
+      /* R-2570: the types the loan / advance flows now store (were "manual" — never the raw code). */
+      case "bs_item": what = "Capital / loan (balance sheet)"; break;
+      case "employee_loan": what = "Staff loan / advance"; break;
+      case "reimbursement": what = "Reimbursement"; break;
+      case "loan_given": what = "Loan given"; break;
+      case "business_loan": case "loan_drawdown": case "loan_repayment": what = "Loan / EMI"; break;
+      case "emi": what = "EMI"; break;
       case "project": what = "Project payment"; break;
       case "payment": what = "Customer refund"; break;
       default: what = t.matched_to_type ?? "Not reconciled";

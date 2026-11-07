@@ -35,6 +35,12 @@ export function lineLabel(t: Pick<CashFlowTxn, "matched_to_type" | "category">):
     case "transfer":    return "Transfer (own accounts)";
     case "manual":      return "Marked reconciled";
     case "owner_equity": return "Owner drawings / capital";
+    /* R-2570: the types the loan / advance / challan flows now store (were all "manual"). */
+    case "bs_item":       return "Capital / loans (balance sheet)";
+    case "employee_loan": return "Staff loans";
+    case "reimbursement": return "Reimbursements";
+    case "loan_given":    return "Loans given";
+    case "business_loan": case "loan_drawdown": case "loan_repayment": case "emi": return "Loans & EMIs";
     default:            return "Other";
   }
 }
@@ -61,6 +67,14 @@ export function activityOf(t: Pick<CashFlowTxn, "matched_to_type" | "category">)
     case "transfer": return "transfer";
     case "manual":   return "financing";
     case "owner_equity": return "financing";   // R-1839: drawings / capital introduced — the owner, not the business
+    /* R-2570: the loan / capital flows stored 'manual' (→ financing) until they wrote their own type;
+       those lines stay in Financing. Statement lines matched to these loan types (R-2340 / R-2374 /
+       R-2377, EMIs) were "operating" by default before — a loan is financing (AS-3), so they move too.
+       A new challan ('statutory') and owed-back money ('reimbursement') are operating; their old
+       'manual' lines stay in Financing until the R-2570 repair retypes the challans. */
+    case "bs_item": case "employee_loan": case "loan_given":
+    case "business_loan": case "loan_drawdown": case "loan_repayment": case "emi":
+      return "financing";
     case "expense":  return t.category === "Equipment" ? "investing" : "operating";
     default:         return "operating";
   }

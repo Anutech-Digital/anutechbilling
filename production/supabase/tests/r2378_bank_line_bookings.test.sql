@@ -45,8 +45,11 @@ begin
   perform public.book_bank_credit('aaaaaaaa-0000-0000-0000-0000000023d4', 'director_loan', 'Loan from Pardeep', null);
   perform public.reconcile_bank_txn_manual('aaaaaaaa-0000-0000-0000-0000000023d5', 'Returned by the bank, no entry');
 
-  if (select count(*) from public.bank_transactions where bank_account_id = 'aaaaaaaa-0000-0000-0000-0000000023c1' and matched_to_type = 'manual') <> 7 then
-    raise exception 'FAIL 0: the seven lines should all be manual';
+  /* R-2570: book_bank_advance / book_bank_credit now store their own type ('bs_item' + the row id);
+     the two old staff-loan lines and the real manual one stay 'manual'. */
+  if (select count(*) from public.bank_transactions where bank_account_id = 'aaaaaaaa-0000-0000-0000-0000000023c1' and matched_to_type = 'manual') <> 3
+     or (select count(*) from public.bank_transactions where bank_account_id = 'aaaaaaaa-0000-0000-0000-0000000023c1' and matched_to_type = 'bs_item') <> 4 then
+    raise exception 'FAIL 0: expected 3 manual + 4 bs_item lines';
   end if;
 
   select count(*) into n from public.bank_line_bookings('aaaaaaaa-0000-0000-0000-0000000023c1');

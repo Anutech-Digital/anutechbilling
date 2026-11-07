@@ -76,6 +76,7 @@ import {
   filtersFromQuery,
   filtersToQuery,
   hasAnyFilter,
+  readsLineBooking,
   type BankFilters,
   type FilterContext,
   type NeedKey,
@@ -228,11 +229,11 @@ export default function BankAccountDetailPage() {
   const txnById = React.useMemo(() => new Map((transactions ?? []).map((t) => [t.id, t])), [transactions]);
   const notesFor = (t: BankTransactionRow) => lineNoteLines(t, txnById, ownerNotes);
   /* R-2378: a 'manual' line booked as a loan / advance / staff loan … reads as that booking + its party
-     (bank_line_bookings), never as "reconciled manually, no entry". Read only when such lines exist. */
-  const hasManual = React.useMemo(() => (transactions ?? []).some((t) => t.matched_to_type === "manual"), [transactions]);
+     (bank_line_bookings), never as "reconciled manually, no entry". R-2570: also the types those flows now store. */
+  const hasManual = React.useMemo(() => (transactions ?? []).some((t) => readsLineBooking(t.matched_to_type)), [transactions]);
   const { data: lineBookings } = useLineBookings(accountId, hasManual);
   const bookingFor = (t: BankTransactionRow): LineBooking | undefined =>
-    t.matched_to_type === "manual" ? lineBookings?.get(t.id) : undefined;
+    readsLineBooking(t.matched_to_type) ? lineBookings?.get(t.id) : undefined;
 
   /* R-1869 "Money out · no vendor yet": unmatched money out where R-1866's guessVendor (the
      same guess the Reconcile sheet pre-fills) finds nobody — and not a salary line (Salary lines
