@@ -165,7 +165,7 @@ begin
 
   -- 5. The Razorpay settlement (R-2099): ₹11,800 − ₹11,522 = ₹278 fee, already booked → no second fee
   r := public.reconcile_razorpay_settlement('b2565000-0000-0000-0000-0000000000b9'::uuid, jsonb_build_object(
-         'id', 'setl_R2565SETL01', 'utr', 'AXISR2565SETL1', 'fee_paise', 23600, 'tax_paise', 4248,
+         'id', 'setl_R2565SETL01', 'utr', 'AXISR2565SETL1', 'fee_paise', 27800, 'tax_paise', 4200,
          'payments', jsonb_build_array(jsonb_build_object('rzp_id', 'pay_R2565AAAAAAAA1', 'amount_paise', 1180000, 'payment_ids', jsonb_build_array(v_pay))),
          'refunds', '[]'::jsonb));
   if (r->>'fee')::int <> 278 or (r->>'fee_booked_now')::int <> 0 or r->>'fee_expense_id' is not null then
