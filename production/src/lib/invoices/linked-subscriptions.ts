@@ -45,21 +45,28 @@ export function linkedSubscriptionsFilter(quoteIds: ReadonlyArray<string | null 
   return parts.join(",");
 }
 
+/** A Postgres text[] literal with every element quoted — `.contains(col, [id])` leaves the id
+ *  bare, so an imported invoice no. with a comma, brace or quote would split or break. */
+export function pgTextArrayLiteral(xs: ReadonlyArray<string>): string {
+  return `{${xs.map((x) => `"${x.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`).join(",")}}`;
+}
+
 export async function fetchInvoiceSubscriptions(
   supabase: SupabaseClient<Database>,
   args: { invoiceId: string; quoteIds: ReadonlyArray<string | null | undefined> },
 ): Promise<LinkedSubscriptionRow[]> {
   /* R-1717: a part invoice that was credited and raised again keeps only its id in the part's
-     credited_invoice_ids (invoice_id moved to the new one) — it is still that subscription's bill. */
+     credited_invoice_ids (invoice_id moved to the new one) — it is still that subscription's bill.
+     That read only ADDS links: if it fails, the invoice_id / quote links still show. */
   const [billed, credited] = await Promise.all([
     supabase.from("subscription_billings").select("subscription_id").eq("invoice_id", args.invoiceId).limit(20),
-    supabase.from("subscription_billings").select("subscription_id").contains("credited_invoice_ids", [args.invoiceId]).limit(20),
+    supabase.from("subscription_billings").select("subscription_id")
+      .filter("credited_invoice_ids", "cs", pgTextArrayLiteral([args.invoiceId])).limit(20),
   ]);
   if (billed.error) throw billed.error;
-  if (credited.error) throw credited.error;
   const filter = linkedSubscriptionsFilter(
     args.quoteIds,
-    [...(billed.data ?? []), ...(credited.data ?? [])].map((b) => b.subscription_id),
+    [...(billed.data ?? []), ...(credited.error ? [] : credited.data ?? [])].map((b) => b.subscription_id),
   );
   if (!filter) return [];
   const { data, error } = await supabase

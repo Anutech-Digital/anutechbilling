@@ -16,7 +16,6 @@
  */
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
 import { CARD_TESTS_ON, loginLocal, onlyInCardTests, openAppPage, pageAs } from "./card-steps";
@@ -108,14 +107,6 @@ function clearAll(): void {
   psql(c, [...clearSql(tenantId(c)), "commit;"].join("\n"));
 }
 
-/** Seed ONCE per run (a failed step restarts the worker and runs beforeAll again). */
-function seedOncePerRun(): void {
-  const marker = path.join(os.tmpdir(), `card-test-R-1717-${process.ppid}.seeded`);
-  if (fs.existsSync(marker)) return;
-  seed();
-  fs.writeFileSync(marker, new Date().toISOString());
-}
-
 /** Where the Subscriptions table's columns end, and every box that scrolls sideways. */
 async function measure(page: Page) {
   return page.evaluate(() => {
@@ -151,7 +142,8 @@ test.describe("R-1717 — Subscriptions fit a laptop; an invoice links to its su
   test.setTimeout(240_000);
 
   test.beforeAll(() => {
-    if (CARD_TESTS_ON) seedOncePerRun();
+    // Seeded again by every worker: a failed step restarts the worker after afterAll cleared it.
+    if (CARD_TESTS_ON) seed();
   });
   test.afterAll(() => {
     if (CARD_TESTS_ON) clearAll(); // leave no test data behind
