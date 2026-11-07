@@ -11,6 +11,9 @@
  * R-1999: a project-receipt line gets the same — every kist the line paid (bank + TDS), before and
  * after, from project_receipt_undo_preview; un-reconciling takes the whole booking back, and each
  * invoice stays, due again (Pardeep's D3: no credit note).
+ * R-2179: a line booked through "A new sale" gets the server's list of what "Undo this sale too" takes
+ * back (bank_sale_undo_preview) — receipt, TDS, invoice, quote, every subscription the sale made — or
+ * why it cannot, with the page to fix it on.
  */
 "use client";
 
@@ -22,6 +25,7 @@ import { rupee } from "@/lib/utils";
 import { tds26qSection } from "@/lib/accounting/tds-rates";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
+import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 
 /** The receipt note useBookCreditAsInvoice writes — how a sale raised FROM a bank line is recognised. */
 export const BANK_RECEIPT_NOTE = "Reconciled from bank receipt";
@@ -31,6 +35,8 @@ export const BANK_ADVANCE_NOTE_PREFIX = "Advance on account — bank credit of "
 
 export type UnreconcileImpact =
   | { kind: "bank-sale"; amount: number; invoiceId: string | null; quoteId: string }
+  /** R-2179: a sale booked through "A new sale" — what undoing it takes back (bank_sale_undo_preview). */
+  | { kind: "new-sale"; preview: NewSaleUndoPreview }
   /** R-1863: un-reconciling takes the advance back (receipt + credit); refused once any is used. */
   | { kind: "advance"; amount: number; customerName: string | null; voucherNo: string | null; usedOrRefunded: number }
   | { kind: "receipt"; amount: number; invoiceId: string | null }
@@ -39,6 +45,53 @@ export type UnreconcileImpact =
   /** R-1920: a vendor payment — what goes back, worked out by the server (vendor_payment_undo_preview). */
   | { kind: "vendor-payment"; preview: VendorUndoPreview }
   | { kind: "other" };
+
+/** R-2179: one subscription a bank "A new sale" made. */
+export type NewSaleUndoSub = {
+  id: string;
+  plan: string | null;
+  domain: string | null;
+  seats: number | null;
+  status: string | null;
+  renewal_date: string | null;
+  billing_cycle: string | null;
+};
+
+/** R-2179: the server's list of what "Undo this sale too" takes back for an "A new sale" line. */
+export type NewSaleUndoPreview = {
+  is_new_sale: true;
+  payment_id: string;
+  receipt_voucher_no: string | null;
+  amount: number;
+  quote_id: string;
+  invoice_id: string | null;
+  customer_id: string | null;
+  customer_name: string | null;
+  subscriptions: NewSaleUndoSub[];
+  tds_amount: number;
+  blocked: boolean;
+  block_message: string | null;
+  block_href: string | null;
+  /** Owner / accountant — undoing removes a receipt (unreconcile_bank_receipt's gate). */
+  can_undo: boolean;
+};
+
+/**
+ * R-2179: one plain line per thing "Undo this sale too" takes back, with the page it is on.
+ * The words follow what unreconcile_bank_receipt does (same server reader as the preview).
+ */
+export function newSaleUndoLines(p: NewSaleUndoPreview): { text: string; href: string | null }[] {
+  const lines: { text: string; href: string | null }[] = [];
+  const tds = p.tds_amount > 0 ? ` and its ${rupee(p.tds_amount)} TDS entry` : "";
+  lines.push({ text: `Receipt${p.receipt_voucher_no ? ` ${p.receipt_voucher_no}` : ""} of ${rupee(p.amount)}${tds} removed (the number is kept as cancelled)`, href: null });
+  if (p.invoice_id) lines.push({ text: `Invoice ${p.invoice_id} gets a full credit note — nothing due on it`, href: `/invoices/${p.invoice_id}` });
+  lines.push({ text: `Quote ${p.quote_id} cancelled`, href: `/quotes/${p.quote_id}` });
+  for (const s of p.subscriptions) {
+    const what = [s.plan ?? "Subscription", s.domain ? `on ${s.domain}` : null, s.seats != null ? `(${s.seats} seat${s.seats === 1 ? "" : "s"})` : null].filter(Boolean).join(" ");
+    lines.push({ text: `${what} cancelled — out of MRR and renewals`, href: subscriptionOpenHref({ id: s.id, domain: s.domain, customer_name: p.customer_name }) });
+  }
+  return lines;
+}
 
 /** R-1920: one row of bank_vendor_payment_lines, with its document before / after the undo. */
 export type VendorUndoLeg = {
@@ -163,6 +216,8 @@ export function blockHrefLabel(href: string): string {
   if (href.startsWith("/accounting/tds-receivable")) return "Open TDS receivable";
   if (href.startsWith("/referrals")) return "Open Referrals";
   if (href.startsWith("/projects")) return "Open project";
+  if (href.startsWith("/quotes")) return "Open quote";      // R-2179
+  if (href.startsWith("/invoices")) return "Open invoice";  // R-2179
   return "Open";
 }
 
@@ -198,9 +253,17 @@ export function useUnreconcileImpact(txn: BankTransactionRow | null) {
           ? await supabase.from("quotes").select("invoice_id").eq("id", pay.quote_id).maybeSingle()
           : { data: null };
         const invoiceId = q?.invoice_id ?? pay.invoice_id ?? null;
-        return pay.notes === BANK_RECEIPT_NOTE && pay.quote_id
-          ? { kind: "bank-sale", amount: pay.amount, invoiceId, quoteId: pay.quote_id }
-          : { kind: "receipt", amount: pay.amount, invoiceId };
+        if (pay.notes === BANK_RECEIPT_NOTE && pay.quote_id) {
+          return { kind: "bank-sale", amount: pay.amount, invoiceId, quoteId: pay.quote_id };
+        }
+        /* R-2179: booked through "A new sale"? The server says what undoing it takes back. */
+        if (pay.quote_id) {
+          const { data: prev, error: pErr } = await supabase.rpc("bank_sale_undo_preview" as never, { p_txn_id: txn.id } as never);
+          /* A failed preview never hides what the line is: it is then shown as a plain receipt. */
+          const preview = pErr ? null : prev as unknown as NewSaleUndoPreview | { is_new_sale: false } | null;
+          if (preview?.is_new_sale) return { kind: "new-sale", preview };
+        }
+        return { kind: "receipt", amount: pay.amount, invoiceId };
       }
 
       if (txn.matched_to_type === "project") {
@@ -236,6 +299,8 @@ export function useUnreconcileBankTxn() {
         invoice_voided: string | null; invoice_credited: string | null; credit_note_id: string | null; receipt_removed: string | null; advance_removed?: number | null;
         /* R-1999: a project-receipt line */
         project_payments_removed?: number; project_amount_removed?: number; project_tds_removed?: number; invoices_due_again?: string[];
+        /* R-2179: an "A new sale" line */
+        subscriptions_cancelled?: number; tds_removed?: number;
       };
     },
     onSuccess: (res) => {
@@ -249,13 +314,18 @@ export function useUnreconcileBankTxn() {
       toast.success(
         res?.project_payments_removed ? projectUndoneToast(res.project_amount_removed ?? 0, res.project_tds_removed ?? 0, res.invoices_due_again ?? [])
         : res?.advance_removed ? `Un-reconciled · advance of ${rupee(res.advance_removed)} and its receipt removed`
-        : res?.invoice_credited ? `Un-reconciled · credit note ${res.credit_note_id ?? ""} raised on invoice ${res.invoice_credited}, receipt removed`
+        : res?.invoice_credited ? `Un-reconciled · credit note ${res.credit_note_id ?? ""} raised on invoice ${res.invoice_credited}, receipt removed${subsCancelledText(res.subscriptions_cancelled ?? 0)}`
         : res?.invoice_voided ? `Un-reconciled · draft invoice ${res.invoice_voided} voided, receipt removed`
         : "Un-reconciled",
       );
     },
     onError: (err) => toastError(err, { fallback: "Un-reconcile failed" }),
   });
+}
+
+/** R-2179: the toast's tail when the undone sale's subscriptions were cancelled. */
+export function subsCancelledText(n: number): string {
+  return n <= 0 ? "" : n === 1 ? ", subscription cancelled" : `, ${n} subscriptions cancelled`;
 }
 
 /** R-1999: the toast after a project-receipt line is un-reconciled. */
