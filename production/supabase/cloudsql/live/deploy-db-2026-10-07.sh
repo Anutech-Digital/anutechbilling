@@ -457,6 +457,7 @@ MIGS=(
   "r2535bankreconruns|20261107043907_r2535_bank_recon_runs.sql|resellersos_migration|to_regclass('public.bank_recon_run_lines') is not null and to_regprocedure('public.undo_bank_recon_run(uuid)') is not null and to_regprocedure('public.bank_recon_run_screen(uuid,uuid[])') is not null"
   "r2538tdsgrosspartpaid|20261107074500_r2538_tds_gross_part_paid.sql|resellersos_migration|to_regprocedure('public.bank_credit_tds_part_gross(integer,integer,integer)') is not null and to_regprocedure('public.bank_credit_tds_gross(integer,integer,integer,integer,numeric)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_pay_item(uuid,integer,text,text,text,integer,numeric,text,boolean,date,date)') and prosrc like '%R-2538%')"
   "r2551tdsgrossmulti|20261107094500_r2551_tds_gross_multi_invoice.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_multi_invoice_payment(uuid,date,text,uuid,text,integer,jsonb,boolean,text)') and prosrc like '%R-2551%')"
+  "r2563replacetrial|20261107133821_r2563_replace_trial_request.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.replace_trial_request(uuid,text,text,text,text,text)') and prosrc like '%R-2563%')"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER

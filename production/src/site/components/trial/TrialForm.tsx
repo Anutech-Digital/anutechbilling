@@ -96,6 +96,11 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
   const [delivered, setDelivered] = useState<"email" | "wa" | "">("");
   /* R-1491: the request number(s) this one replaces — set by "← Change the request". */
   const [replaces, setReplaces] = useState("");
+  /* R-2563: the server's signed replace token for the request on screen, and the tokens of the
+     earlier request(s) this one replaces — sent back so the server can close those (the token, not
+     the number, proves it is this visitor's own request). */
+  const [replaceToken, setReplaceToken] = useState("");
+  const [replaceTokens, setReplaceTokens] = useState<string[]>([]);
 
   /* Home ka Trial button edition + users URL me bhejta hai; draft localStorage me. */
   useEffect(() => {
@@ -219,10 +224,11 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
         method: "POST",
         headers: { "Content-Type": "application/json", ...ts.headers },
         body: JSON.stringify({ fullName: contactName.trim(), companyName: company, email, phone, product: `Trial — ${labelOf(ed)}`, seats, requirement, edition: ed, term: "annual", trial: true,
+          ...(replaceTokens.length > 0 ? { replaces: replaceTokens } : {}),
           /* R-1598: landing page with gclid/utm + where the visitor came from. */
           ...landingForForm(), ...formConsent("trial", optIn) }),
       });
-      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; ackSent?: boolean; reference?: string | null };
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; ackSent?: boolean; reference?: string | null; replaceToken?: string | null };
       if (!res.ok || !json.ok) {
         setSubmitErr(json.error || "We could not send your trial request. Nothing was saved — please press the button to try again.");
         ts.reset();
@@ -230,6 +236,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
         return;
       }
       setAckSent(json.ackSent === true);
+      setReplaceToken(typeof json.replaceToken === "string" ? json.replaceToken : "");
       no = enquiryReference(json);
     } catch {
       setSubmitErr("We could not reach our server, so your trial request was not sent. Check your connection and press the button to try again.");
@@ -250,6 +257,8 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
   function changeRequest() {
     const old = reqNo || "(sent without a number)";
     setReplaces((prev) => (prev ? `${prev}, ${old}` : old));
+    if (replaceToken) setReplaceTokens((prev) => (prev.includes(replaceToken) ? prev : [...prev, replaceToken].slice(-5)));
+    setReplaceToken("");
     setSent(false); setOpen("plan");
     setDelivered(""); setReqNo(""); setReqAt(null); setAckSent(false);
     setSubmitErr(null); setFormErr(null);

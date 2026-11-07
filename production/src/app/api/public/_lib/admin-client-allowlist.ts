@@ -175,17 +175,17 @@ export const PUBLIC_ADMIN_CLIENT: Record<string, PublicAdminEntry> = {
   },
   "enquiry/general/route.ts": {
     reason: "website enquiry form: inserts a lead, emails the owner",
-    scope: `${WEBSITE}; Turnstile; tenant email read only to notify the owner`,
-    mustContain: ["websiteTenantId", "turnstileRefusalFor"],
+    scope: `${WEBSITE}; Turnstile; tenant email read only to notify the owner; R-2563 replace_trial_request only for an old lead named by a server-signed replace token (HMAC, same email + mobile, 24 h), this tenant only, never a sent quote`,
+    mustContain: ["websiteTenantId", "turnstileRefusalFor", "verifyReplaceTokens"],
     reads: { tenants: { columns: ["email", "name"], by: ["id"] } },
-    writes: ["leads"],
+    writes: ["leads", "replace_trial_request"],
   },
   "enquiry/workspace/route.ts": {
     reason: "website Workspace enquiry: lead + draft quote + activity",
-    scope: `${WEBSITE}; Turnstile; insert + update of the lead it just made`,
-    mustContain: ["websiteTenantId", "turnstileRefusalFor"],
+    scope: `${WEBSITE}; Turnstile; insert + update of the lead it just made; R-2563 replace_trial_request only for an old lead named by a server-signed replace token (HMAC, same email + mobile, 24 h), this tenant only, never a sent quote`,
+    mustContain: ["websiteTenantId", "turnstileRefusalFor", "verifyReplaceTokens"],
     reads: {},
-    writes: ["leads", "quotes", "lead_activities", "next_document_number"],
+    writes: ["leads", "quotes", "lead_activities", "next_document_number", "replace_trial_request"],
   },
   "expense-claim/manage/route.ts": {
     reason: "public expense-claim link: edit / delete a claim",
