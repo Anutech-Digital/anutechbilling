@@ -46,6 +46,7 @@ import { POST as workspaceEnquiry } from "@/app/api/public/enquiry/workspace/rou
 import { siteVisitorLimit, waitPhrase } from "@/lib/security/rate-limit";
 import { redactContacts } from "@/lib/security/redact-contact";
 import { readFormConsent } from "@/lib/consent/data-notice";
+import { cleanReplaceTokens } from "@/lib/leads/replace-trial-request";
 
 /** The app's two public enquiry endpoints — handled by this deployment (R-1598). */
 const ENQUIRY_API = "/api/public/enquiry/general";
@@ -68,6 +69,8 @@ interface EnquiryBody {
   /** The landing page (with ?gclid / utm_*) and where the visitor came from — attribution. */
   pageUrl?: string;
   pageReferrer?: string;
+  /** R-2563: trial form only — the signed replace token(s) of the earlier request(s) this one replaces. */
+  replaces?: string[];
 }
 
 const PRODUCTS = new Set(["google-workspace", "microsoft-365", "zoho", "other"]);
@@ -134,6 +137,8 @@ export async function POST(req: NextRequest) {
 
   const tier = typeof body.edition === "string" ? gwTierFor(body.edition) : null;
   const trial = body.trial === true;
+  /* R-2563: only a trial request can replace an earlier one; the handler verifies each token. */
+  const replaces = trial ? cleanReplaceTokens(body.replaces) : [];
 
   const fail = () =>
     NextResponse.json(
@@ -173,18 +178,19 @@ export async function POST(req: NextRequest) {
         billing: body.term === "monthly" ? "monthly" : "annual",
         message,
         ...(trial ? { trial: true } : {}),
+        ...(replaces.length > 0 ? { replaces } : {}),
       });
       if (res.status === 403) return botCheckFailed();
       if (!res.ok) {
         console.error("[enquiry] workspace handler refused:", res.status, redactContacts(await res.text().catch(() => "")));
         return fail();
       }
-      const data = (await res.json()) as { success?: boolean; leadId?: string | null; draftQuoteId?: string | null; autoSent?: boolean; ackSent?: boolean };
+      const data = (await res.json()) as { success?: boolean; leadId?: string | null; draftQuoteId?: string | null; autoSent?: boolean; ackSent?: boolean; replaceToken?: string | null };
       /* draftQuoteId can be null (doc-number retries exhausted) — the lead still exists
          and the operator was alerted, so that is a success with no number to show. */
       const quoteId = idOrNull(data.draftQuoteId);
       const leadId = idOrNull(data.leadId);
-      return NextResponse.json({ ok: true, quoteId, leadId, reference: quoteId ?? leadId, sent: data.autoSent === true, ackSent: data.ackSent === true });
+      return NextResponse.json({ ok: true, quoteId, leadId, reference: quoteId ?? leadId, sent: data.autoSent === true, ackSent: data.ackSent === true, replaceToken: idOrNull(data.replaceToken) });
     }
 
     /* ── GENERAL PATH: everything else ────────────────────────────────────── */
@@ -192,6 +198,7 @@ export async function POST(req: NextRequest) {
     if (typeof body.product === "string" && PRODUCTS.has(body.product)) payload.product = body.product;
     if (seats) payload.seats = seats;
     if (trial) payload.trial = true;
+    if (replaces.length > 0) payload.replaces = replaces;
 
     const res = await post(ENQUIRY_API, generalEnquiry, payload);
     if (res.status === 403) return botCheckFailed();
@@ -199,9 +206,9 @@ export async function POST(req: NextRequest) {
       console.error("[enquiry] general handler refused:", res.status, redactContacts(await res.text().catch(() => "")));
       return fail();
     }
-    const general = (await res.json().catch(() => ({}))) as { leadId?: string | null; ackSent?: boolean };
+    const general = (await res.json().catch(() => ({}))) as { leadId?: string | null; ackSent?: boolean; replaceToken?: string | null };
     const leadId = idOrNull(general.leadId);
-    return NextResponse.json({ ok: true, quoteId: null, leadId, reference: leadId, sent: false, ackSent: general.ackSent === true });
+    return NextResponse.json({ ok: true, quoteId: null, leadId, reference: leadId, sent: false, ackSent: general.ackSent === true, replaceToken: idOrNull(general.replaceToken) });
   } catch (err) {
     console.error("[enquiry] handler failed:", err);
     return fail();
