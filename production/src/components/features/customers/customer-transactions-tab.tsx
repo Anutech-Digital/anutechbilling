@@ -18,6 +18,7 @@ import { projectQuotationView } from "@/lib/projects/quotation-view";
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { paymentMethodLabel } from "@/lib/payments/method-label";
 import { istToday } from "@/lib/dates/ist";
+import { noteTotalsByInvoice } from "@/lib/invoices/note-totals";
 import { useCustomerInstalmentBillings } from "@/lib/queries/customer-instalment-links";
 import { Badge } from "@/components/ui/badge";
 import { IconButton } from "@/components/ui/button";
@@ -50,7 +51,7 @@ type CustPayment = LinkPayment & { receipt_voucher_no?: string | null; method?: 
 type Quote = { id: string; invoice_id?: string | null; created_date: string; amount: number; status: string; payment_amount?: number | null };
 interface ProjPayment { id: string; project_id: string; invoice_id?: string | null; received_at: string; amount: number; reference?: string | null; bank_txn_id?: string | null }
 interface Project { id: string; title: string; created_at: string; total_amount: number; paid?: number | null; status: string; accepted_at?: string | null }
-interface NoteRow { invoice_id: string | null; amount: number | null }
+interface NoteRow { invoice_id: string | null; amount: number | null; status?: string | null }
 
 export interface CustomerTransactionsTabProps {
   customerId: string;
@@ -67,6 +68,10 @@ export interface CustomerTransactionsTabProps {
   subs: readonly { id: string; quote_id: string | null }[];
   /** The customer's credit / debit notes (R-1682 useCustomerNotes) — they change what an invoice can take. */
   notes: { creditNotes: readonly NoteRow[]; debitNotes: readonly NoteRow[] };
+  /** The subscriptions or the notes are still being read — the links would move once they arrive, so wait. */
+  linksPending?: boolean;
+  /** The notes read failed — say so (an invoice's Paid / Credited depends on them). */
+  notesError?: { error: unknown; retry: () => void } | null;
   /** For the advance holder's "Available ₹X" (R-2033). */
   allPayments: readonly { id: string; quote_id?: string | null; status?: string | null; amount?: number | null }[];
   creditRows: readonly AdvanceTxnCredit[];
@@ -87,8 +92,12 @@ interface HRow {
   invoiceStatus?: InvoiceStatusView;
   /** Small text after the reference: method, "part of ₹X", the quote. */
   note?: string;
-  /** Show the TDS line (only when the row carries the whole payment). */
+  /** Show the TDS line (on the payment's first row when it is split). */
   tds?: boolean;
+  /** The amount the TDS line splits — the whole payment, also on a split payment's first row. */
+  tdsGross?: number;
+  /** A delete button deletes the WHOLE receipt — so only on a row that shows the whole receipt. */
+  wholeReceipt?: boolean;
   /** The advance group's heading row. */
   group?: boolean;
 }
@@ -99,6 +108,8 @@ const TXN_BADGE: Record<TxnType, "info" | "success" | "danger" | "muted" | "warn
 const STATUS_TONE: Record<InvoiceStatusView["tone"], string> = {
   paid: "text-emerald", part: "text-amber-ink", overdue: "text-rose", muted: "text-ink-3", open: "text-ink-2",
 };
+/** Child rows are inset 18px per level (Tailwind, no inline style). */
+const INDENT = ["pl-0", "pl-[18px]", "pl-[36px]", "pl-[54px]"] as const;
 export const ADVANCE_GROUP_TITLE = "Advance / not yet against an invoice";
 
 export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
@@ -108,22 +119,22 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
   const toggleCollapse = (key: string) => setCollapsed((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
 
   const billingsQ = useCustomerInstalmentBillings(subs.map((s) => s.id));
-  // Credit / debit notes change what an invoice can take (R-1709 invoiceMoneyIn).
-  const noteSum = (rows: readonly NoteRow[]) => {
-    const m = new Map<string, number>();
-    for (const r of rows) if (r.invoice_id) m.set(r.invoice_id, (m.get(r.invoice_id) ?? 0) + (r.amount ?? 0));
-    return m;
-  };
-  const credit = noteSum(props.notes.creditNotes);
-  const debit = noteSum(props.notes.debitNotes);
-  const invoices = props.invoices.map((i) => ({
-    ...i, credit_noted: credit.get(i.id) ?? 0, debit_noted: debit.get(i.id) ?? 0,
-    // A project invoice's money comes from project_payments (R-006); never less than they show.
-    paid_amount: Math.max(i.paid_amount ?? 0, invoicePaidByProject[i.id] ?? 0),
-  }));
-  const quoteOfSub = new Map(subs.map((s) => [s.id, s.quote_id] as const));
-  const instalments = (billingsQ.data ?? []).map((b) => ({ invoice_id: b.invoice_id, quote_id: quoteOfSub.get(b.subscription_id) ?? null }));
-  const links = linkPaymentsToInvoices({ invoices, payments, quotes, instalments });
+  const { creditNotes, debitNotes } = props.notes;
+  // Credit / debit notes change what an invoice can take (R-1709 invoiceMoneyIn) — the Invoices
+  // list's own per-invoice totals (lib/invoices/note-totals.ts: paise sums, void notes left out).
+  const invoices = React.useMemo(() => {
+    const notes = noteTotalsByInvoice(creditNotes, debitNotes);
+    return props.invoices.map((i) => ({
+      ...i, credit_noted: notes.get(i.id)?.credit ?? 0, debit_noted: notes.get(i.id)?.debit ?? 0,
+      // A project invoice's money comes from project_payments (R-006); never less than they show.
+      paid_amount: Math.max(i.paid_amount ?? 0, invoicePaidByProject[i.id] ?? 0),
+    }));
+  }, [props.invoices, creditNotes, debitNotes, invoicePaidByProject]);
+  const links = React.useMemo(() => {
+    const quoteOfSub = new Map(subs.map((s) => [s.id, s.quote_id] as const));
+    const instalments = (billingsQ.data ?? []).map((b) => ({ invoice_id: b.invoice_id, quote_id: quoteOfSub.get(b.subscription_id) ?? null }));
+    return linkPaymentsToInvoices({ invoices, payments, quotes, instalments });
+  }, [invoices, payments, quotes, subs, billingsQ.data]);
 
   const today = istToday();
   const payById = new Map(payments.map((p) => [p.id, p]));
@@ -139,7 +150,7 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
       key: `cpay:${p.id}:${s.invoiceId ?? "adv"}`, parentKey, indent,
       date: refunded ? (p.refunded_at ?? p.received_at) : p.received_at, type: refunded ? "Refund" : "Payment",
       ref: p.receipt_voucher_no ?? (p.reference?.trim() || "Receipt"), amount: s.amount, status: p.status,
-      payId: p.id, note: notes.join(" · ") || undefined, tds: s.whole,
+      payId: p.id, note: notes.join(" · ") || undefined, tds: s.first, tdsGross: s.paymentAmount, wholeReceipt: s.whole,
       href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId }, linkOpts),
     };
   };
@@ -190,7 +201,7 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
     rows = blocks.sort(newestFirst).flat();
     if (txnFilter === "all") rows.push(...advanceGroup());
   } else {
-    rows = filteredTxns.map((t, n) => ({ key: `flat:${n}`, parentKey: null, indent: 0, ...t }));
+    rows = filteredTxns.map((t, n) => ({ key: `flat:${n}`, parentKey: null, indent: 0, wholeReceipt: true, ...t }));
   }
 
   /** The advance group: money not against any invoice. An advance holder (R-1863) is one row with its receipts under it. */
@@ -248,9 +259,12 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
       {billingsQ.isError && (
         <LoadErrorInline what="Subscription instalments" error={billingsQ.error} onRetry={() => void billingsQ.refetch()} />
       )}
-      {nested && billingsQ.isLoading ? (
-        // Until the instalment links are read, an instalment's receipt would sit under "Advance" for a
-        // moment and then jump — so the nested lists wait (the query runs only when there are subscriptions).
+      {props.notesError && (
+        <LoadErrorInline what="Credit / debit notes" error={props.notesError.error} onRetry={props.notesError.retry} />
+      )}
+      {(props.linksPending || billingsQ.isLoading) && txnFilter !== "quotes" ? (
+        // Until the subscriptions, their instalment links and the notes are read, a receipt would sit under
+        // "Advance" (or say "Advance" in For) for a moment and then jump — so the lists wait.
         <div role="status" aria-label="Loading transactions" className="py-2"><SkeletonText lines={4} /></div>
       ) : visible.length > 0 ? (
         <RecordTable
@@ -263,7 +277,7 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
               t.date ? formatDate(t.date) : "",
               <Badge key="ty" kind={TXN_BADGE[t.type]} dot>{t.type}</Badge>,
               // Children are inset under their parent; parents get a chevron to fold them.
-              <span key="r" className="text-xs inline-flex items-center gap-1 max-w-[340px]" style={{ paddingLeft: t.indent * 18 }}>
+              <span key="r" className={cn("text-xs inline-flex items-center gap-1 max-w-[340px]", INDENT[Math.min(t.indent, INDENT.length - 1)])}>
                 {canExpand ? (
                   <button
                     type="button"
@@ -288,14 +302,15 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
               t.group ? <span key="a" /> : (
                 <span key="a" className="inline-flex flex-col">
                   <span className={cn("tabular-nums", t.indent === 0 ? "font-semibold" : "font-medium text-ink-2")}>{rupee(t.amount)}</span>
-                  {t.type === "Payment" && payId && (t.tds ?? true) ? <PaymentTdsLine amount={t.amount} tds={tdsInfo[payId]} /> : null}
+                  {t.type === "Payment" && payId && (t.tds ?? true) ? <PaymentTdsLine amount={t.tdsGross ?? t.amount} tds={tdsInfo[payId]} /> : null}
                 </span>
               ),
               t.invoiceStatus
                 ? <span key="s" className={cn("font-medium", STATUS_TONE[t.invoiceStatus.tone])}>{t.status}</span>
                 : <span key="s" className="text-ink-2 capitalize">{t.status}</span>,
-              // Delete — only on payments from the `payments` table.
-              payId && canDeletePay ? (
+              // Delete — only on payments from the `payments` table, and only on a row showing the whole
+              // receipt (a "part of ₹X" row would delete all of it; the Payments tab lists it whole).
+              payId && canDeletePay && t.wholeReceipt ? (
                 <IconButton key="del" icon="trash" size="sm" variant="ghost" aria-label="Delete payment" title="Delete this payment"
                   onClick={(e) => { e.stopPropagation(); onDeletePayment(payId); }} />
               ) : <span key="del" />,

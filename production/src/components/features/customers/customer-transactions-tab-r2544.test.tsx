@@ -115,6 +115,37 @@ describe("R-2544 Customer → Transactions: payments under their invoice", () =>
     expect(rows.slice(g).some((r) => r.includes("RV-A378-27-0170") && r.includes("₹3,000"))).toBe(true);
   });
 
+  it("while the subscriptions or notes are still being read, the lists wait too (Payments' For included)", () => {
+    for (const txnFilter of ["all", "payments"] as const) {
+      const { container } = render(<CustomerTransactionsTab {...props({ linksPending: true, txnFilter })} />);
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(0);
+      expect(container.querySelector('[role="status"]')).toBeTruthy();
+      cleanup();
+    }
+  });
+
+  it("a notes read that failed is said, with Try again", () => {
+    const retry = vi.fn();
+    const { getByText } = render(<CustomerTransactionsTab {...props({ notesError: { error: new Error("boom"), retry } })} />);
+    expect(getByText(/Credit \/ debit notes/)).toBeTruthy();
+  });
+
+  it("delete sits only on a row showing the whole receipt — never on a 'part of ₹X' row; the split's first row keeps the TDS line", () => {
+    const { container } = render(<CustomerTransactionsTab {...props({
+      canDeletePay: true,
+      notes: { creditNotes: [{ invoice_id: "INV-A378-27-0100", amount: 3000 }], debitNotes: [] },
+      tdsInfo: { p2: { tds: 600, section: "194J" } },
+    })} />);
+    const trs = [...container.querySelectorAll("tbody tr")];
+    const parts = trs.filter((tr) => (tr.textContent ?? "").includes("part of ₹6,000"));
+    expect(parts).toHaveLength(2);
+    for (const tr of parts) expect(tr.querySelector('[aria-label="Delete payment"]')).toBeNull();
+    expect(parts.filter((tr) => tr.querySelector('[data-testid="payment-tds-line"]'))).toHaveLength(1);
+    expect(parts[0].textContent).toContain("Received ₹5,400 + TDS ₹600");
+    const whole = trs.find((tr) => (tr.textContent ?? "").includes("RV-A378-27-0168"))!;
+    expect(whole.querySelector('[aria-label="Delete payment"]')).toBeTruthy();
+  });
+
   it("top-level rows newest first by date (invoice date / quote date)", () => {
     const { container } = render(<CustomerTransactionsTab {...props()} />);
     const rows = rowTexts(container);

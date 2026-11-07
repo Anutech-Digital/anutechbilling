@@ -132,7 +132,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const { data: openCredit } = useCustomerOpenCredit(params.id);
   const { data: creditRows } = useCustomerCreditRows(params.id);   // R-2023: the RVs behind it
   /* R-1682: credit / debit notes belong on the Statement. */
-  const { data: customerNotes } = useCustomerNotes(params.id);
+  const notesQ = useCustomerNotes(params.id);
+  const { data: customerNotes } = notesQ;
   /* R-1121: this customer's payments only (theirs, or on their quotes) — not every payment. */
   const paymentsQ = useCustomerPayments(params.id, quotesPending ? undefined : (quotes ?? []).map((q) => q.id as string));
   const { data: allPayments } = paymentsQ;
@@ -646,6 +647,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
               invoicePaidByProject={invoicePaid}
               subs={allSubs}
               notes={{ creditNotes: customerNotes?.creditNotes ?? [], debitNotes: customerNotes?.debitNotes ?? [] }}
+              linksPending={subsQ.isPending || notesQ.isPending}
+              notesError={notesQ.isError ? { error: notesQ.error, retry: () => void notesQ.refetch() } : null}
               allPayments={allPayments ?? []}
               creditRows={creditRows ?? []}
               tdsInfo={tdsInfoOnPayment}

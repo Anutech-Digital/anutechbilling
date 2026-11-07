@@ -128,6 +128,34 @@ describe("R-2544 linkPaymentsToInvoices", () => {
   });
 });
 
+describe("R-2544 review fixes", () => {
+  it("an advance on ANOTHER quote (R-1863 holder) folded into the invoice at issue sits under that invoice, not under Advance", () => {
+    // INV-X ₹10,000 on Q-X: ₹4,000 advance from holder quote Q-H adjusted at issue + ₹6,000 paid on Q-X.
+    const invoices = [inv({ id: "INV-X", quote_id: "Q-X", amount: 10000, net_payable: 6000, paid_amount: 6000, status: "paid",
+      adjusted_advances: [{ payment_id: "ph", amount: 4000 }] })];
+    const payments = [
+      pay({ id: "ph", quote_id: "Q-H", amount: 4000, received_at: "2026-08-01T05:00:00Z" }),
+      pay({ id: "px", quote_id: "Q-X", amount: 6000, received_at: "2026-09-10T05:00:00Z" }),
+    ];
+    const r = linkPaymentsToInvoices({ invoices, payments, quotes: [{ id: "Q-X", invoice_id: "INV-X" }, { id: "Q-H" }], instalments: [] });
+    expect(r.byInvoice["INV-X"].map((s) => [s.paymentId, s.amount])).toEqual([["ph", 4000], ["px", 6000]]);
+    expect(sum(r.byInvoice["INV-X"])).toBe(invoicePaidAmount(invoices[0]));
+    expect(r.unlinked).toEqual([]);
+    expect(r.forOf.ph).toEqual(["INV-X"]);
+  });
+
+  it("a split payment: only its first part is marked first (it carries the TDS line), none is whole", () => {
+    const invoices = [
+      inv({ id: "INV-I1", amount: 3000, paid_amount: 3000, status: "paid", invoice_date: "2026-07-01" }),
+      inv({ id: "INV-I2", amount: 3000, paid_amount: 1000, invoice_date: "2026-08-01" }),
+    ];
+    const r = linkPaymentsToInvoices({ invoices, payments: [pay({ id: "p", quote_id: "Q-S", amount: 4000 })], quotes: [],
+      instalments: [{ invoice_id: "INV-I1", quote_id: "Q-S" }, { invoice_id: "INV-I2", quote_id: "Q-S" }] });
+    expect(r.byInvoice["INV-I1"][0]).toMatchObject({ first: true, whole: false, amount: 3000, paymentAmount: 4000 });
+    expect(r.byInvoice["INV-I2"][0]).toMatchObject({ first: false, whole: false, amount: 1000 });
+  });
+});
+
 describe("R-2544 invoiceStatusView", () => {
   const today = "2026-11-07";
   it("Paid / Part-paid (₹X due) / Overdue / Void", () => {

@@ -64,6 +64,8 @@ export interface PaymentShare {
   /** The payment's full amount — differs from `amount` when one payment covers several invoices. */
   paymentAmount: number;
   whole: boolean;
+  /** The first part of the payment (the one that carries its TDS line when it is split). */
+  first: boolean;
   /** false for a refunded / not-received payment: shown, but adds nothing to what is paid. */
   counted: boolean;
 }
@@ -116,6 +118,18 @@ export function linkPaymentsToInvoices(input: {
     else out.unlinked.push(s);
   };
 
+  // An advance folded into an invoice at issue (invoices.adjusted_advances[].payment_id, R-1709) belongs
+  // to THAT invoice first, whatever quote the receipt sits on (e.g. an R-1863 advance holder).
+  const folded = new Map<string, { invoiceId: string; amount: number }[]>();
+  for (const inv of [...input.invoices].sort(oldestFirst)) {
+    if (!Array.isArray(inv.adjusted_advances)) continue;
+    for (const a of inv.adjusted_advances as { payment_id?: unknown; amount?: unknown }[]) {
+      if (typeof a?.payment_id !== "string") continue;
+      const amt = Math.max(0, Math.round(Number(a.amount) || 0));
+      if (amt > 0) (folded.get(a.payment_id) ?? folded.set(a.payment_id, []).get(a.payment_id)!).push({ invoiceId: inv.id, amount: amt });
+    }
+  }
+
   for (const p of [...input.payments].sort(byDateThenId<LinkPayment>(payDate, (x) => x.id))) {
     const amount = Math.max(0, Math.round(p.amount ?? 0));
     const cands = candidates(p);
@@ -125,25 +139,33 @@ export function linkPaymentsToInvoices(input: {
       // Shown where it belongs, never counted.
       const invoiceId = cands[0]?.id ?? null;
       if (invoiceId) out.forOf[p.id].push(invoiceId);
-      put({ ...base, invoiceId, amount, whole: true, counted: false });
+      put({ ...base, invoiceId, amount, whole: true, first: true, counted: false });
       continue;
     }
     let left = amount;
     const parts: { invoiceId: string | null; amount: number }[] = [];
+    const add = (invoiceId: string, take: number) => {
+      room.set(invoiceId, (room.get(invoiceId) ?? 0) - take);
+      const same = parts.find((x) => x.invoiceId === invoiceId);
+      if (same) same.amount += take; else parts.push({ invoiceId, amount: take });
+      left -= take;
+    };
+    for (const f of folded.get(p.id) ?? []) {
+      const take = Math.min(left, f.amount, room.get(f.invoiceId) ?? 0);
+      if (take > 0) add(f.invoiceId, take);
+    }
     for (const c of cands) {
       if (left <= 0) break;
       const take = Math.min(left, room.get(c.id) ?? 0);
       if (take <= 0) continue;
-      room.set(c.id, (room.get(c.id) ?? 0) - take);
-      parts.push({ invoiceId: c.id, amount: take });
-      left -= take;
+      add(c.id, take);
     }
     if (left > 0 || parts.length === 0) parts.push({ invoiceId: null, amount: left });
     const whole = parts.length === 1;
-    for (const part of parts) {
+    parts.forEach((part, n) => {
       if (part.invoiceId) out.forOf[p.id].push(part.invoiceId);
-      put({ ...base, invoiceId: part.invoiceId, amount: part.amount, whole, counted: true });
-    }
+      put({ ...base, invoiceId: part.invoiceId, amount: part.amount, whole, first: n === 0, counted: true });
+    });
   }
   return out;
 }
