@@ -4,7 +4,8 @@
  * the 7 Nov staging shape), and paging / searching only picks which rows are painted.
  */
 import { describe, expect, it } from "vitest";
-import { buildBrs, brsRows, searchBrsLines, BRS_PAGE_SIZE, type BrsLine } from "./brs";
+import { buildBrs, brsRows, searchBrsLines, withStatementClosing, BRS_PAGE_SIZE, type BrsLine } from "./brs";
+import { formatDate } from "@/lib/utils";
 
 /** The staging-sized account: 3,500 imported unbooked, 1,400 imported matched, 273 manual (3 before opening). */
 function bigAccount(): BrsLine[] {
@@ -80,5 +81,26 @@ describe("R-2566 BRS on 5,173 lines — totals from every line, painting paged",
     const amt = target.credit || target.debit;
     expect(searchBrsLines(u, `₹${amt.toLocaleString("en-IN")}`)).toContain(target);
     expect(searchBrsLines(u, "no such narration xyz")).toEqual([]);
+  });
+
+  it("search: the date as the list prints it, the rounded ₹ shown, and a money-out line by its own side", () => {
+    const u = brs.unbookedImports;
+    const target = u[777];
+    expect(searchBrsLines(u, formatDate(target.txn_date))).toContain(target);           // "15 Oct 2026"
+    expect(searchBrsLines(u, formatDate(target.txn_date).toUpperCase())).toContain(target);
+    const paise: BrsLine = { ...target, id: "p1", credit: 1234.5, debit: 0, description: "PAISE LINE" };
+    expect(searchBrsLines([paise], "₹1,235")).toEqual([paise]);                          // rupee() shows ₹1,235
+    const out: BrsLine = { ...target, id: "d1", txn_date: "2026-11-15", credit: 0, debit: 777, description: "CHARGES" };
+    expect(searchBrsLines([out], "777")).toEqual([out]);                                 // a money-out line by its debit
+    expect(searchBrsLines([out], "1")).toEqual([out]);                                   // "15 Nov" — the date still counts
+    expect(searchBrsLines([out], "88")).toEqual([]);
+  });
+
+  it("withStatementClosing = buildBrs with the closing typed (the page's per-keystroke step)", () => {
+    for (const closing of [null, 0, hand.statementBalance, hand.statementBalance + 12345, 1.6]) {
+      const whole = buildBrs({ openingBalance: 2500000, openingDate, asOf, lines, statementClosing: closing });
+      const split = withStatementClosing(brs, closing);
+      expect(split).toEqual(whole);
+    }
   });
 });

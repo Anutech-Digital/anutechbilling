@@ -12,8 +12,11 @@
  *     not presented) — the shape of the 7 Nov staging import;
  *   · 20 customers "PERF Customer NN", 2,100 tax invoices INV-PERF-00001… and 2,000 receipts.
  *
- * Inserts run with session_replication_role = replica (no triggers: pure test rows, fast) inside
- * ONE transaction. REFUSES (exit 1) unless the app reads the local docker DB — same guard as
+ * Inserts AND the clear run with session_replication_role = replica (no triggers: pure test rows,
+ * fast; an issued invoice could not be deleted otherwise) inside ONE transaction. Because nothing
+ * cascades then, the clear removes the PERF rows' children itself: receipts, credit / debit notes
+ * and every line on the PERF account. Rows the app made from PERF data in other tables (e.g. a
+ * journal from reconciling a PERF line) are not tracked — use a fresh load for timing only. REFUSES (exit 1) unless the app reads the local docker DB — same guard as
  * scripts/dev/scenario.mjs (local-guard.mjs). Prints counts only.
  */
 import { spawnSync } from "node:child_process";
@@ -61,6 +64,10 @@ if (!/^[0-9a-f-]{36}$/i.test(t)) die("tenant id is not a uuid");
 
 const clear = `
   delete from public.payments where tenant_id = '${t}' and reference like 'PERF-RCPT-%';
+  -- children first (inserts and this clear run without triggers, so nothing cascades by itself)
+  delete from public.credit_notes where tenant_id = '${t}' and invoice_id like 'INV-PERF-%';
+  delete from public.debit_notes where tenant_id = '${t}' and invoice_id like 'INV-PERF-%';
+  delete from public.payments where tenant_id = '${t}' and (invoice_id like 'INV-PERF-%' or id::text like 'c2566000-0000-4000-8000-4%');
   delete from public.invoices where tenant_id = '${t}' and id like 'INV-PERF-%';
   delete from public.customers where tenant_id = '${t}' and id::text like 'c2566000-0000-4000-8000-0000000c%';
   delete from public.bank_transactions where tenant_id = '${t}' and bank_account_id = '${PERF_ACCOUNT_ID}';
@@ -82,11 +89,12 @@ const load = `
          'PERF-U-' || g, case when g % 10 = 0 then 'api_fetch' else 'csv_upload' end
     from generate_series(1, ${PERF_COUNTS.unbooked}) g;
 
-  -- 1,400 imported, matched to a receipt
+  -- 1,400 imported, matched to receipt g (same amount; matched_to_id = the payment's id, as the app stores it)
   insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source, matched_to_type, matched_to_id, matched_at)
   select ('c2566000-0000-4000-8000-2' || lpad(g::text, 11, '0'))::uuid, '${t}', '${PERF_ACCOUNT_ID}',
-         current_date - 1 - (g % 360), 'NEFT CR-PERF CUSTOMER ' || (g % 20), 0, 1000 + (g * 71) % 200000,
-         'PERF-M-' || g, 'csv_upload', 'payment', 'PERF-RCPT-' || g, now()
+         current_date - (g % 380), 'NEFT CR-PERF CUSTOMER ' || ((g % 20) + 1), 0,
+         case when g % 4 = 0 then (1180 + (g * 97) % 250000) / 2 else 1180 + (g * 97) % 250000 end,
+         'PERF-M-' || g, 'csv_upload', 'payment', 'c2566000-0000-4000-8000-4' || lpad(g::text, 11, '0'), now()
     from generate_series(1, ${PERF_COUNTS.matched}) g;
 
   -- 273 manual lines (deposits in transit / payments not presented); a few before the opening date
@@ -109,13 +117,17 @@ const load = `
          ('c2566000-0000-4000-8000-0000000c' || lpad(((g % 20) + 1)::text, 4, '0'))::uuid, 'PERF Customer ' || lpad(((g % 20) + 1)::text, 2, '0'),
          amt, (case when g % 4 = 0 then 'pending' else 'paid' end)::invoice_status,
          current_date - (g % 380), current_date - (g % 380) + 15,
-         round(amt / 1.18), amt - round(amt / 1.18), 18, false, case when g % 4 = 0 then 0 else amt end, 'tax_invoice',
+         round(amt / 1.18), amt - round(amt / 1.18), 18, false,
+         case when g % 4 <> 0 then amt when g <= ${PERF_COUNTS.receipts} then amt / 2 else 0 end, 'tax_invoice',
          jsonb_build_array(jsonb_build_object('id', 'line-1', 'qty', 1, 'cost', 0, 'name', 'PERF service ' || g, 'rate', round(amt / 1.18)))
     from (select g, (1180 + (g * 97) % 250000)::int as amt from generate_series(1, ${PERF_COUNTS.invoices}) g) s;
 
-  insert into public.payments (tenant_id, invoice_id, customer_id, amount, method, status, received_at, reference)
-  select '${t}', 'INV-PERF-' || lpad(g::text, 5, '0'), ('c2566000-0000-4000-8000-0000000c' || lpad(((g % 20) + 1)::text, 4, '0'))::uuid,
-         (1180 + (g * 97) % 250000)::int, 'bank_transfer', 'received', now() - ((g % 380) || ' days')::interval, 'PERF-RCPT-' || g
+  -- receipt g pays invoice g: in full for a paid invoice, half for a pending one (it shows as part-paid)
+  insert into public.payments (id, tenant_id, invoice_id, customer_id, amount, method, status, received_at, reference)
+  select ('c2566000-0000-4000-8000-4' || lpad(g::text, 11, '0'))::uuid, '${t}', 'INV-PERF-' || lpad(g::text, 5, '0'),
+         ('c2566000-0000-4000-8000-0000000c' || lpad(((g % 20) + 1)::text, 4, '0'))::uuid,
+         case when g % 4 = 0 then (1180 + (g * 97) % 250000) / 2 else 1180 + (g * 97) % 250000 end,
+         'bank_transfer', 'received', now() - ((g % 380) || ' days')::interval, 'PERF-RCPT-' || g
     from generate_series(1, ${PERF_COUNTS.receipts}) g;
 `;
 

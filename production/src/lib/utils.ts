@@ -124,7 +124,7 @@ function enIn(key: "monUtc" | "dayIst" | "monIst" | "yearIst" | "timeIst"): Intl
   }
   return f;
 }
-export const FORMAT_OPTIONS = {
+const FORMAT_OPTIONS = {
   monUtc: { month: "short", timeZone: "UTC" },
   dayIst: { day: "numeric", timeZone: "Asia/Kolkata" },
   monIst: { month: "short", timeZone: "Asia/Kolkata" },

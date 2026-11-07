@@ -345,7 +345,9 @@ function InvoicesPageInner() {
   // split by whether advances were applied) + free-text search on invoice #,
   // customer, or status.
   /* R-2566: memoised — with 2,000+ invoices this ran invoiceChip on every one at EVERY render
-     (a row tick, a menu open). Same predicate, same inputs. */
+     (a row tick, a menu open). Same predicate, same inputs. Overdue / "this month" read the
+     clock, so the IST day is an input too: a page left open past midnight re-buckets. */
+  const today = istToday();
   const rows = React.useMemo(() => dateFilteredInvoices.filter((i) => {
     // Tile focus (R-118) — the same predicate the tile summed
     if (focus && !invoiceInFocus(i, focus, undefined, noteTotals)) return false;
@@ -362,14 +364,14 @@ function InvoicesPageInner() {
       if (!hit) return false;
     }
     return true;
-  }), [dateFilteredInvoices, focus, tab, search, noteTotals]);
+  }), [dateFilteredInvoices, focus, tab, search, noteTotals, today]);
 
   /* KPIs (R-062): lib/invoices/kpis.ts. Outstanding = what is still owed on pending /
      overdue invoices (net of advances and receipts) — void and draft owe nothing.
      "Paid this month" = invoices fully paid in this IST month, by paid date; the
      /payments page's "Collected MTD" is money RECEIVED (incl. part payments and TDS). */
   const { outstanding, overdueTotal, paidThisMonth: collectedMTD, paidThisMonthCount, outstandingCount } = React.useMemo(
-    () => invoiceKpis(invoices ?? [], undefined, noteTotals), [invoices, noteTotals]);   // R-2566: once per data change, not per render
+    () => invoiceKpis(invoices ?? [], undefined, noteTotals), [invoices, noteTotals, today]);   // R-2566: once per data / IST day, not per render
   /* A tile opens its exact set over EVERY invoice, as the tile counted it: no tab, date or
      type narrowing left over from before the click. */
   const focusOn = (f: InvoiceFocus) => { setView("all"); setDateRange("all"); setTab("all"); setFocus(f); };
@@ -1328,9 +1330,9 @@ function InvoiceRow({
           );
         })()}
 
-        {/* R-2566: these three dialogs mount only while open — every row (table + card, 100 per
-            page) used to mount all three with their queries / mutations: ~450 ms of render on
-            2,000 invoices. Same pattern as RecordSubscriptionPaymentContainer below. */}
+        {/* R-2566: these three dialogs mount only while open — each of the 50 painted rows used
+            to mount all three with their queries / mutations (~450 ms of render measured on
+            2,000 invoices). Same pattern as RecordSubscriptionPaymentContainer below. */}
         {delOpen && <DeleteInvoiceDialog
           open={delOpen}
           onOpenChange={setDelOpen}

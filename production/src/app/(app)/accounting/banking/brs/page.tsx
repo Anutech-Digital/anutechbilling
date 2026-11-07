@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LoadError } from "@/components/shared/load-error";
 import { useBankAccounts, useBankTransactions } from "@/lib/queries/bank";
-import { buildBrs, brsRows, searchBrsLines, BRS_PAGE_SIZE, type BrsLine } from "@/lib/banking/brs";
+import { buildBrs, brsRows, searchBrsLines, withStatementClosing, BRS_PAGE_SIZE, type BrsLine } from "@/lib/banking/brs";
 import { downloadCSV } from "@/lib/csv";
 import { rupee, formatDate } from "@/lib/utils";
 import { istToday } from "@/lib/dates/ist";
@@ -30,18 +30,18 @@ function todayIso(): string {
  * new component type on every render, so typing one digit in "Closing balance" re-built all
  * 3,500 rows. The count and ₹ in each list's header come from buildBrs over every line.
  */
-function LineTable({ rows, sign, label }: { rows: BrsLine[]; sign: "credit" | "debit" | "net"; label: string }) {
-  const [limit, setLimit] = React.useState(BRS_PAGE_SIZE);
+const LineTable = React.memo(function LineTable({ rows, sign, label }: { rows: BrsLine[]; sign: "credit" | "debit" | "net"; label: string }) {
+  const [limit, setLimit] = React.useState(BRS_PAGE_SIZE);   // a new account / date remounts it (key)
   const [query, setQuery] = React.useState("");
   const found = React.useMemo(() => searchBrsLines(rows, query), [rows, query]);
-  React.useEffect(() => { setLimit(BRS_PAGE_SIZE); }, [query]);   // a new account / date remounts it (key)
   const shown = found.length > limit ? found.slice(0, limit) : found;
   const hidden = found.length - shown.length;
   return (
     <>
-      {rows.length > BRS_PAGE_SIZE && (
+      {/* Kept while a search is typed, so a list that shrank below a page can still be cleared. */}
+      {(rows.length > BRS_PAGE_SIZE || query !== "") && (
         <div className="px-3 pt-2">
-          <Input type="search" value={query} onChange={(e) => setQuery(e.target.value)}
+          <Input type="search" value={query} onChange={(e) => { setQuery(e.target.value); setLimit(BRS_PAGE_SIZE); }}
             placeholder="Search narration, date or amount" aria-label={`Search ${label}`} className="h-8 text-sm" />
         </div>
       )}
@@ -74,7 +74,7 @@ function LineTable({ rows, sign, label }: { rows: BrsLine[]; sign: "credit" | "d
       )}
     </>
   );
-}
+});
 
 export default function BrsPage() {
   const { data: accounts, isLoading: accLoading, isError: accError, refetch: refetchAcc } = useBankAccounts();
@@ -86,14 +86,20 @@ export default function BrsPage() {
   const account = bankAccounts.find((a) => a.id === accountId) ?? null;
   const { data: txns, isLoading: txLoading, isError: txError, refetch: refetchTx } = useBankTransactions(accountId || null);
 
-  const brs = React.useMemo(() => {
+  /* R-2566: the lists + totals once per account / date / data; a keystroke in "Closing balance"
+     only re-derives the import gap (withStatementClosing — the same step buildBrs ends with). */
+  const brsLists = React.useMemo(() => {
     if (!account) return null;
-    const closingN = closing.trim() === "" ? null : Math.round(Number(closing) || 0);
     return buildBrs({
       openingBalance: account.opening_balance, openingDate: account.opening_balance_date, asOf,
-      lines: (txns ?? []) as BrsLine[], statementClosing: closingN,
+      lines: (txns ?? []) as BrsLine[], statementClosing: null,
     });
-  }, [account, txns, asOf, closing]);
+  }, [account, txns, asOf]);
+  const brs = React.useMemo(() => {
+    if (!brsLists) return null;
+    const closingN = closing.trim() === "" ? null : Math.round(Number(closing) || 0);
+    return withStatementClosing(brsLists, closingN);
+  }, [brsLists, closing]);
 
   function exportCsv() {
     if (!brs || !account) return;
