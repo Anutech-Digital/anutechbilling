@@ -9,7 +9,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { a11yReport } from "@/lib/testing/a11y-report"; // R-2564: in-process, shared read cache (was a node spawn per file)
-import { join } from "node:path";
 
 type Hit = { file: string; kind: string; lines: number[] };
 type Report = { detail: Record<string, Hit[]> };

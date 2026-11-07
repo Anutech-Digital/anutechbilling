@@ -19,7 +19,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { render, cleanup, screen } from "@testing-library/react";
 import { a11yReport } from "@/lib/testing/a11y-report"; // R-2564: in-process, shared read cache (was a node spawn per file)
-import { join } from "node:path";
 import { FormField } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 

@@ -7,7 +7,6 @@
  */
 import { describe, it, expect } from "vitest";
 import { a11yReport } from "@/lib/testing/a11y-report"; // R-2564: in-process, shared read cache (was a node spawn per file)
-import { join } from "node:path";
 
 const BILLING = [
   "production/src/app/(app)/customers/", "production/src/app/(app)/quotes/",
