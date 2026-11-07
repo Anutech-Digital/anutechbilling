@@ -94,6 +94,8 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
   const [optIn, setOptIn] = useState(false);
   const [reqAt, setReqAt] = useState<Date | null>(null);
   const [delivered, setDelivered] = useState<"email" | "wa" | "">("");
+  /* R-1491: the request number(s) this one replaces — set by "← Change the request". */
+  const [replaces, setReplaces] = useState("");
 
   /* Home ka Trial button edition + users URL me bhejta hai; draft localStorage me. */
   useEffect(() => {
@@ -165,6 +167,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
       `TRIAL REQUEST${no ? ` ${no}` : ""}`,
       "",
       ...rows.map((r) => `· ${r.k}: ${r.v}`),
+      ...(replaces ? [`· Replaces my earlier request ${replaces} — please ignore that one.`] : []),
       "",
       `· Company contact: ${email || "—"} · ${phone || "—"}`,
       "",
@@ -208,7 +211,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
     setSending(true);
     setSubmitErr(null);
     try {
-      const requirement = `TRIAL: ${labelOf(ed)}, ${seats} mailbox(es) on ${domain.trim().toLowerCase()}, clean start, mail today: ${current}${startWhen ? `, preferred start: ${startWhen}` : ""}. If they keep it: ${rateAfter}. No card. (via anutech.in trial page)`;
+      const requirement = `TRIAL: ${labelOf(ed)}, ${seats} mailbox(es) on ${domain.trim().toLowerCase()}, clean start, mail today: ${current}${startWhen ? `, preferred start: ${startWhen}` : ""}. If they keep it: ${rateAfter}. No card. (via anutech.in trial page)${replaces ? ` Replaces earlier request ${replaces}.` : ""}`;
       const res = await fetch("/api/enquiry", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...ts.headers },
@@ -232,6 +235,19 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
     }
     setReqNo(no); setReqAt(now); setSent(true); setSending(false);
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { /* ignore */ }
+  }
+
+  /* R-1491 (Pawan, 17 Oct 2026): "← Change the request" and then another product stacked the
+     old request onto the new one — its "WhatsApp also opened" note, number and email state
+     stayed. Going back now clears everything the sent request left, so the next confirmation
+     and its WhatsApp / email text are built only from the new choice (replace, never append),
+     and the new request names the one it replaces so the team sets up only the new product.
+     Same reset as the website quote builder's "Change something". */
+  function changeRequest() {
+    if (reqNo) setReplaces((prev) => (prev ? `${prev}, ${reqNo}` : reqNo));
+    setSent(false); setOpen("plan");
+    setDelivered(""); setReqNo(""); setReqAt(null); setAckSent(false);
+    setSubmitErr(null); setFormErr(null);
   }
 
   const fmt = (d: Date) => `${d.getDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()]} ${d.getFullYear()}`;
@@ -293,7 +309,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
               <a href={mailHref} onClick={() => setDelivered("email")} className="btn btn-primary" style={{ width: "100%" }}>Email the request</a>
               <a href={waHref} target="_blank" rel="noopener" onClick={() => setDelivered("wa")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", fontSize: 14.5, fontWeight: 600, padding: "11px 16px", borderRadius: 9, background: "#25D366", color: "#0A2B18", border: "1px solid #1DAE52", textDecoration: "none" }}>Send on WhatsApp</a>
               <a href={orderHref} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", fontSize: 14, fontWeight: 600, padding: "11px 16px", borderRadius: 9, background: "#0C1116", color: "#fff", textDecoration: "none" }}>Skip the trial and order</a>
-              <button onClick={() => { setSent(false); setOpen("plan"); }} style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 13, cursor: "pointer", marginTop: 2 }}>← Change the request</button>
+              <button onClick={changeRequest} style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 13, cursor: "pointer", marginTop: 2 }}>← Change the request</button>
             </div>
           </div>
         </div>
