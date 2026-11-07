@@ -19,7 +19,8 @@
  * Pure: the mutation case removes the R-2389 grant and requires the exact staging finding.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564/R-2571: shared, always-fresh read cache
 
 const DIR = "supabase/migrations";
 const ARCHIVE = "supabase/migrations-archive";
@@ -84,8 +85,8 @@ function analyse(migrations: Array<[string, string]>, archive: string[]): string
 
 const migrations: Array<[string, string]> = readdirSync(DIR)
   .filter((f) => f.endsWith(".sql")).sort()
-  .map((f) => [f, readFileSync(`${DIR}/${f}`, "utf8")]);
-const archive = readdirSync(ARCHIVE).filter((f) => f.endsWith(".sql")).map((f) => readFileSync(`${ARCHIVE}/${f}`, "utf8"));
+  .map((f) => [f, readSource(`${DIR}/${f}`)]);
+const archive = readdirSync(ARCHIVE).filter((f) => f.endsWith(".sql")).map((f) => readSource(`${ARCHIVE}/${f}`));
 
 describe("R-2389 invoker helpers are granted to authenticated (Cloud SQL)", () => {
   it("no invoker function calls a helper authenticated cannot EXECUTE", () => {
@@ -93,7 +94,7 @@ describe("R-2389 invoker helpers are granted to authenticated (Cloud SQL)", () =
   });
 
   it("the R-2389 migration grants the three date helpers", () => {
-    const text = readFileSync(`${DIR}/${R2389}`, "utf8");
+    const text = readSource(`${DIR}/${R2389}`);
     expect(text).toMatch(/grant execute on function public\.ist_today\(\) to authenticated/);
     expect(text).toMatch(/grant execute on function public\.indian_fiscal_year\(date\) to authenticated/);
     expect(text).toMatch(/grant execute on function public\.salary_expense_date\(text, date\) to authenticated/);

@@ -12,7 +12,8 @@
  * stay in the logs — they are what makes a failure diagnosable.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564/R-2571: shared, always-fresh read cache
 import { join, relative, sep } from "node:path";
 
 const ROOT = process.cwd();
@@ -123,7 +124,7 @@ describe("R-1610 — no unmasked customer email/phone in server logs", () => {
     const offenders: string[] = [];
     for (const f of files) {
       const rel = relative(ROOT, f).split(sep).join("/");
-      for (const hit of unmaskedContactLogs(readFileSync(f, "utf8"))) {
+      for (const hit of unmaskedContactLogs(readSource(f))) {
         if (KNOWN.includes(`${rel}|${hit.expr}`)) continue;
         offenders.push(`${rel}:${hit.line} prints ${hit.expr} — wrap it in maskContactValue()/redactContacts() (lib/security/redact-contact.ts)`);
       }

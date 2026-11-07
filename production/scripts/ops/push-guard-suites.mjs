@@ -37,6 +37,11 @@
  * spawning node five times. Measured alternating runs, 5–6 worker locks + tsc running: before
  * 202.5/169.0/64.2 s, after 48.8/35.0/26.2 s (light load: 55/57/49 → 28/27/28 s; cold cache 44.6 s).
  * A NEW whole-tree scan: read with readSource(), not readFileSync.
+ *
+ * R-2571 (7 Nov 2026): +6 migration/security scans (cloudsql-auth-shim etc.) — CI went red on one the
+ * push did not run. The six alone: 50 s → 14 s with readSource. Whole guard step (88 files + lint
+ * ratchet), 7 Nov with 64/44/21 node processes running: 32.0/29.5/28.4 s; a fresh worktree whose caches the
+ * fast gate has not warmed yet: 85.7 s once.
  */
 export const PUSH_GUARD_SUITES = [
   // ── ratchets ──
@@ -70,6 +75,16 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/security/definer-hardening-holds.test.ts",
   "src/lib/security/invoker-function-grants.test.ts", // R-401: Cloud SQL gives no PUBLIC EXECUTE
   "src/lib/security/service-role-policies.test.ts", // R-450: Cloud SQL gives service_role no BYPASSRLS
+  // R-2571 (7 Nov 2026): R-2570's migration added a raw `auth.role() is null … session_user not in (…)`
+  // list; cloudsql-auth-shim-scan caught it only in CI (red, every push stopped). Every src/lib/security
+  // test that reads supabase/migrations now runs here (tests/push-guard-suites.test.ts pins that). All
+  // read through readSource(); none needs a DB.
+  "src/lib/security/cloudsql-auth-shim-scan.test.ts", // R-2487: no new raw auth.role() trusted-server list
+  "src/lib/security/direct-login-role-scan.test.ts", // R-2485: no new raw current_user role check
+  "src/lib/security/invoker-helper-grants-r2389.test.ts", // R-2389: invoker helpers stay granted to authenticated
+  "src/lib/security/secret-columns.test.ts", // R-833: no browser role reads a secret column
+  "src/lib/security/contact-logging-scan.test.ts", // R-1610: no unmasked email/phone in a server log
+  "src/server/db/migrations-frozen.test.ts", // a new supabase/migrations file must reach the deploy-db scripts
   // ── repo-source scans (readdirSync / glob over src) ──
   "src/app/(app)/quotes/invoice-link.test.ts",
   "src/app/(app)/accounting/cash-flow/cash-flow-copy-english.test.ts",
