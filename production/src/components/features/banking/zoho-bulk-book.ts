@@ -22,7 +22,7 @@
  * is skipped (the RPC refuses a reconciled line too). The first error STOPS the run and is reported;
  * rows after it stay unbooked for the next press.
  */
-import { newSaleFxRpcArgs, type NewSaleInput, type PayItemInput } from "@/lib/queries/bank-credit-pay-for";
+import { newSaleFxRpcArgs, type NewSaleInput, type PayItemInput } from "@/lib/banking/credit-pay-calls";   // R-2535: server-safe
 import { saleLinesPayload, type PayForResult } from "@/lib/banking/credit-pay-for";
 import type { LinePayerAnswer } from "@/lib/queries/customer-payers";
 import { mapGstTreatment } from "@/lib/integrations/zoho-books/import-plan";
