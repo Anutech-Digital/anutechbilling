@@ -34,8 +34,9 @@ const FY = "2025-26";
 const READ_GAP_MS = Math.ceil((FY_CALLS_PER_REQUEST / ZOHO_CALLS_PER_MIN) * 60_000);
 
 interface Preview {
-  counts: { scanned: number; import: number; already: number; alreadyNotBanked: number; skip: number };
-  totals: { cash: number; tds: number; excess: number };
+  /* R-2565: withFee / fee — Razorpay payments whose fee Zoho took off (optional: an older server sends none). */
+  counts: { scanned: number; import: number; already: number; alreadyNotBanked: number; skip: number; withFee?: number };
+  totals: { cash: number; tds: number; excess: number; fee?: number };
   parts: number;
   deposits: ZohoDeposit[];
   accounts: { id: string; name: string }[];
@@ -44,7 +45,14 @@ interface Preview {
   batches: ImportBatch[];
   canRemove: boolean;
 }
-interface PartResult { imported: number; already: number; banked: number; bankLater: number; skipped: { number: string; reason: string }[] }
+/** R-2565: withFee / fee = Razorpay payments booked with their fee as Bank Charges (they wait for their Razorpay settlement line). */
+interface PartResult { imported: number; already: number; banked: number; bankLater: number; withFee: number; fee: number; skipped: { number: string; reason: string }[] }
+
+/** R-2565 — the Razorpay fee line for the summary / check result: shown apart, never taken off the receipts. */
+export function razorpayFeeText(count: number, fee: number): string | null {
+  if (!count || !fee) return null;
+  return `${count.toLocaleString("en-IN")} Razorpay payment${count === 1 ? "" : "s"} · fee ${rupee(fee)} booked as Bank Charges (receipts stay the full amount; banked by their Razorpay settlement)`;
+}
 
 async function call<T>(body: Record<string, unknown>): Promise<T> {
   const res = await fetch(API, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ fy: FY, ...body }) });
@@ -129,13 +137,14 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
 
   /** Parts `from`..last, in order; a failed part stops the run with PartFailed (what the earlier parts did + the message). */
   async function runParts(dryRun: boolean, from = 0): Promise<PartResult> {
-    const sum: PartResult = { imported: 0, already: 0, banked: 0, bankLater: 0, skipped: [] };
+    const sum: PartResult = { imported: 0, already: 0, banked: 0, bankLater: 0, withFee: 0, fee: 0, skipped: [] };
     const parts = preview?.parts ?? 0;
     for (let part = from; part < parts && !stop.current; part++) {
       try {
-        const r = await call<{ result: { imported: number; already: number; banked: number; bank_later: number; skipped: { number: string; reason: string }[] } }>(
+        const r = await call<{ result: { imported: number; already: number; banked: number; bank_later: number; with_fee?: number; fee?: number; skipped: { number: string; reason: string }[] } }>(
           { action: "import", part, dryRun, accounts });
         sum.imported += r.result.imported; sum.already += r.result.already; sum.banked += r.result.banked; sum.bankLater += r.result.bank_later;
+        sum.withFee += r.result.with_fee ?? 0; sum.fee += r.result.fee ?? 0;
         sum.skipped.push(...r.result.skipped);
       } catch (e) {
         throw new PartFailed(partFailedMessage(part, parts, (e as Error).message, dryRun ? null : sum), sum, part);
@@ -215,6 +224,9 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
                 {preview.counts.alreadyNotBanked > 0 && <> · <Badge kind="info" size="sm">{preview.counts.alreadyNotBanked} waiting for their bank line</Badge></>}
                 {preview.counts.skip > 0 && <> · <Badge kind="warning" size="sm">{preview.counts.skip} left out</Badge></>}
               </p>
+              {razorpayFeeText(preview.counts.withFee ?? 0, preview.totals.fee ?? 0) && (
+                <p className="text-xs text-ink-2" data-testid="fy-receipts-fee">{razorpayFeeText(preview.counts.withFee ?? 0, preview.totals.fee ?? 0)}</p>
+              )}
 
               {preview.deposits.length > 0 && (
                 <div>
@@ -302,6 +314,7 @@ function PartSummary({ title, r }: { title: string; r: PartResult }) {
         {title}: {r.imported.toLocaleString("en-IN")} receipts · {r.banked} matched to bank lines
         {r.bankLater ? ` · ${r.bankLater} wait for their bank line` : ""}{r.already ? ` · ${r.already} already recorded` : ""}{r.skipped.length ? ` · ${r.skipped.length} refused` : ""}
       </p>
+      {razorpayFeeText(r.withFee, r.fee) && <p className="text-ink-2" data-testid="fy-receipts-part-fee">{razorpayFeeText(r.withFee, r.fee)}</p>}
       {r.skipped.length > 0 && (
         <ul className="mt-1 max-h-32 overflow-y-auto text-ink-2">
           {r.skipped.slice(0, 200).map((s, i) => <li key={`${s.number}-${i}`}><span className="font-mono">{s.number}</span> — {s.reason}</li>)}

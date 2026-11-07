@@ -88,3 +88,28 @@ describe("R-2547 FY receipts dialog", () => {
     expect(partFailedMessage(1, 2, "boom", null)).toMatch(/This was the check — nothing was saved/);
   });
 });
+
+/* R-2565 — Razorpay fee payments: importable, the fee shown apart (preview and the check), never taken off the receipts. */
+describe("R-2565 FY receipts dialog — Razorpay fee shown apart", () => {
+  it("preview shows the Razorpay payments and their fee as Bank Charges; the check result shows the fee too", async () => {
+    const withFee = { ...preview, parts: 1, counts: { ...preview.counts, import: 130, withFee: 130 }, totals: { ...preview.totals, cash: 3500000, fee: 70123 } };
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      const b = JSON.parse(init.body) as Record<string, unknown>;
+      if (b.action === "preview") return { ok: true, json: async () => withFee } as Response;
+      return { ok: true, json: async () => ({ ok: true, result: { imported: 130, already: 0, banked: 0, bank_later: 130, with_fee: 130, fee: 70123, skipped: [] } }) } as Response;
+    }));
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    const fee = await screen.findByTestId("fy-receipts-fee");
+    expect(fee.textContent).toMatch(/130 Razorpay payments · fee ₹70,123 booked as Bank Charges/);
+    expect(screen.getByTestId("fy-receipts-summary").textContent).toMatch(/130.*to record \(₹35,00,000 received/);
+    fireEvent.click(await screen.findByRole("button", { name: /Check first/ }));
+    expect((await screen.findByTestId("fy-receipts-part-fee")).textContent).toMatch(/130 Razorpay payments · fee ₹70,123/);
+  });
+
+  it("no fee line when nothing has a fee (an older server sends no fee fields)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok: true, json: async () => preview }) as Response));
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    await screen.findByTestId("fy-receipts-summary");
+    expect(screen.queryByTestId("fy-receipts-fee")).toBeNull();
+  });
+});
