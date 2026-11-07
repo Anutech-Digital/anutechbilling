@@ -899,8 +899,8 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
         if (subsErr) throw subsErr;
         const dup = findDuplicateSubscription((theirSubs ?? []) as ExistingSub[], {
           customerId: existingMatch.id, domain: cleanDomain, itemId, plan,
-          customerDomain: ("domain" in existingMatch ? existingMatch.domain : null)
-            ?? existingCustomers.find((c) => c.id === existingMatch.id)?.domain ?? null,   // R-2179
+          customerDomain: existingCustomers.find((c) => c.id === existingMatch.id)?.domain
+            ?? liveMatches?.find((c) => c.id === existingMatch.id)?.domain ?? null,   // R-2179
         });
         if (dup) {
           toast.error("This subscription already exists — nothing was created", {

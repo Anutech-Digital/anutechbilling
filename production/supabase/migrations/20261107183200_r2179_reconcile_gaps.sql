@@ -314,6 +314,8 @@ begin
             /* R-2179: add-seats / renewal of a subscription billed yearly — invoice on the first receipt.
                A subscription billed in parts keeps its own part invoices (R-2044 / R-808). */
             or (v_kind in ('add_seats', 'renewal') and v_sub_id is not null
+                /* the quote's own cycle too: a renewal that moves a yearly sub to parts is billed per part */
+                and coalesce(v_quote.billing_cycle::text, 'yearly') = 'yearly'
                 and exists (select 1 from public.subscriptions s3
                              where s3.id = v_sub_id and s3.tenant_id = v_txn.tenant_id
                                and coalesce(s3.billing_cycle::text, 'yearly') = 'yearly')))
@@ -365,9 +367,12 @@ begin
   if not found or v_txn.matched_to_type is distinct from 'payment' or v_txn.matched_to_id is null then
     return jsonb_build_object('is_new_sale', false);
   end if;
+  /* The receipt this line booked — its reference is the line's (bank_line_payment_reference): a receipt
+     recorded elsewhere and matched to this line later is not "booked from this line". */
   select p.* into v_pay from public.payments p
    where p.id::text = v_txn.matched_to_id and p.tenant_id = v_txn.tenant_id;
-  if not found or v_pay.quote_id is null then
+  if not found or v_pay.quote_id is null
+     or v_pay.reference is distinct from public.bank_line_payment_reference(v_txn.reference, v_txn.id) then
     return jsonb_build_object('is_new_sale', false);
   end if;
   select q.id, q.invoice_id, q.status, q.amount, q.customer_id, q.customer_name, q.invoice_on_receipt into v_q
@@ -422,6 +427,29 @@ begin
       v_block := 'The ' || coalesce(v_bad.plan, 'subscription') || ' made by this sale already billed invoice ' || v_bad.invoice_id
                  || ', so the sale cannot be undone from here. Settle that invoice first (credit note), then un-reconcile this line.';
       v_href  := '/invoices/' || v_bad.invoice_id;
+    end if;
+  end if;
+  if v_block is null then
+    /* Money beyond the sale kept as the customer's credit (record_payment's overpayment) already used. */
+    select cc.amount into v_bad
+      from public.customer_credits cc
+     where cc.tenant_id = v_txn.tenant_id and cc.source_payment_id = v_pay.id and cc.status is distinct from 'open'
+     limit 1;
+    if found then
+      v_block := 'The extra money on this receipt was kept as the customer''s credit and is already used or refunded. Undo that first on the customer''s Payments, then un-reconcile this line.';
+      v_href  := '/payments';
+    end if;
+  end if;
+  if v_block is null then
+    /* A vendor order for one of its subscriptions already placed (a draft one is cancelled with it). */
+    select po.id, po.status into v_bad
+      from public.purchase_orders po
+      join public.subscriptions s on s.id = po.subscription_id
+     where s.tenant_id = v_txn.tenant_id and s.quote_id = v_q.id and po.status not in ('draft', 'cancelled')
+     limit 1;
+    if found then
+      v_block := 'The vendor order for this sale is already ' || v_bad.status || ', so the sale cannot be undone from here. Cancel it with the vendor (Purchase orders) first, then un-reconcile this line.';
+      v_href  := '/purchase-orders';
     end if;
   end if;
   if v_block is null then
@@ -480,7 +508,10 @@ begin
   if not v_trusted and v_txn_tenant is distinct from v_tenant then
     raise exception 'Not in caller''s tenant' using errcode = 'insufficient_privilege';
   end if;
-  return public._bank_sale_undo_scope(p_txn_id);
+  /* can_undo: "Undo the sale" removes a receipt — owner / accountant only (unreconcile_bank_receipt's gate),
+     so the dialog never ticks it for a role the undo would refuse. */
+  return public._bank_sale_undo_scope(p_txn_id)
+         || jsonb_build_object('can_undo', v_trusted or public.current_user_has_role('owner', 'accountant'));
 end;
 $$;
 revoke all on function public.bank_sale_undo_preview(uuid) from public, anon;
@@ -770,6 +801,9 @@ begin
          where t.tenant_id = v_tenant and t.payment_id = v_pay.id and t.status = 'pending_cert'
         returning t.tds_amount)
       select coalesce(sum(tds_amount), 0)::int into v_tds_gone from gone;
+      /* money beyond the sale kept as the customer's credit (still open — the scope refused a used one) */
+      delete from public.customer_credits cc
+       where cc.tenant_id = v_tenant and cc.source_payment_id = v_pay.id and cc.status = 'open';
     end if;
     if v_invoice is not null then
       select id, status, amount into v_inv from public.invoices where id = v_invoice and tenant_id = v_tenant for update;
@@ -829,6 +863,12 @@ begin
              updated_at = now()
        where s.tenant_id = v_tenant and s.quote_id = v_pay.quote_id and s.status is distinct from 'cancelled'::public.sub_status;
       get diagnostics v_subs_n = row_count;
+      /* the vendor order drafted for it (a placed one was refused by the scope) */
+      update public.purchase_orders po
+         set status = 'cancelled'
+        from public.subscriptions s
+       where po.subscription_id = s.id and s.tenant_id = v_tenant and s.quote_id = v_pay.quote_id
+         and po.status = 'draft';
     end if;
   end if;
 

@@ -72,6 +72,8 @@ export type NewSaleUndoPreview = {
   blocked: boolean;
   block_message: string | null;
   block_href: string | null;
+  /** Owner / accountant — undoing removes a receipt (unreconcile_bank_receipt's gate). */
+  can_undo: boolean;
 };
 
 /**
@@ -85,7 +87,7 @@ export function newSaleUndoLines(p: NewSaleUndoPreview): { text: string; href: s
   if (p.invoice_id) lines.push({ text: `Invoice ${p.invoice_id} gets a full credit note — nothing due on it`, href: `/invoices/${p.invoice_id}` });
   lines.push({ text: `Quote ${p.quote_id} cancelled`, href: `/quotes/${p.quote_id}` });
   for (const s of p.subscriptions) {
-    const what = [s.plan ?? "Subscription", s.domain ? `on ${s.domain}` : null, s.seats != null ? `(${s.seats} seats)` : null].filter(Boolean).join(" ");
+    const what = [s.plan ?? "Subscription", s.domain ? `on ${s.domain}` : null, s.seats != null ? `(${s.seats} seat${s.seats === 1 ? "" : "s"})` : null].filter(Boolean).join(" ");
     lines.push({ text: `${what} cancelled — out of MRR and renewals`, href: subscriptionOpenHref({ id: s.id, domain: s.domain, customer_name: p.customer_name }) });
   }
   return lines;
@@ -257,8 +259,8 @@ export function useUnreconcileImpact(txn: BankTransactionRow | null) {
         /* R-2179: booked through "A new sale"? The server says what undoing it takes back. */
         if (pay.quote_id) {
           const { data: prev, error: pErr } = await supabase.rpc("bank_sale_undo_preview" as never, { p_txn_id: txn.id } as never);
-          if (pErr) throw pErr;
-          const preview = prev as unknown as NewSaleUndoPreview | { is_new_sale: false } | null;
+          /* A failed preview never hides what the line is: it is then shown as a plain receipt. */
+          const preview = pErr ? null : prev as unknown as NewSaleUndoPreview | { is_new_sale: false } | null;
           if (preview?.is_new_sale) return { kind: "new-sale", preview };
         }
         return { kind: "receipt", amount: pay.amount, invoiceId };

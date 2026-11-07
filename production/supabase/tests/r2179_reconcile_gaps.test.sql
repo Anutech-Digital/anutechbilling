@@ -166,7 +166,8 @@ begin
 
   -- the preview the dialog shows
   p := public.bank_sale_undo_preview('b2179000-0000-0000-0000-0000000000e5');
-  if coalesce((p->>'is_new_sale')::boolean, false) is not true or coalesce((p->>'blocked')::boolean, true) then
+  if coalesce((p->>'is_new_sale')::boolean, false) is not true or coalesce((p->>'blocked')::boolean, true)
+     or coalesce((p->>'can_undo')::boolean, false) is not true then
     raise exception 'FAIL D: preview %', p;
   end if;
   if p->>'quote_id' is distinct from v_q or p->>'invoice_id' is distinct from v_inv
@@ -192,6 +193,9 @@ begin
   select count(*) into n from public.subscription_billings where subscription_id = v_sub and invoice_id is null;
   if n <> 0 then raise exception 'FAIL D: % unbilled parts left on the subscription', n; end if;
   if exists (select 1 from public.tds_receivable where payment_id = v_pay) then raise exception 'FAIL D: TDS row left'; end if;
+  if exists (select 1 from public.purchase_orders where subscription_id = v_sub and status = 'draft') then
+    raise exception 'FAIL D: a draft vendor order is left on the cancelled subscription';
+  end if;
   if coalesce((r->>'subscriptions_cancelled')::int, 0) <> 1 then raise exception 'FAIL D: result %', r; end if;
   raise notice 'D PASS: new sale undone — receipt, TDS, invoice (credit note), quote, subscription; line Unmatched';
 end $$;

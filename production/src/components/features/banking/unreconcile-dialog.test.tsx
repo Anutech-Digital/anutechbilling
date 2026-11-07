@@ -21,7 +21,7 @@ vi.mock("next/link", () => ({
 }));
 
 import { UnreconcileDialog } from "./unreconcile-dialog";
-import { vendorUndoLegLine, projectUndoRowLine, projectUndoneToast, subsCancelledText } from "@/lib/queries/unreconcile";
+import { vendorUndoLegLine, projectUndoRowLine, projectUndoneToast, subsCancelledText, newSaleUndoLines } from "@/lib/queries/unreconcile";
 
 const txn = {
   id: "t1", tenant_id: "x", bank_account_id: "acc-1", txn_date: "2026-10-05", description: "NEFT SHARMA ASSOCIATES",
@@ -170,7 +170,7 @@ describe("R-2179 un-reconcile an 'A new sale' line — undo the sale too", () =>
     is_new_sale: true, payment_id: "p1", receipt_voucher_no: "RV-27-0009", amount: 35400,
     quote_id: "Q-27-0042", invoice_id: "INV-27-0042", customer_id: "c1", customer_name: "Acme Traders",
     subscriptions: [{ id: "s1", plan: "Google Workspace Business Starter", domain: "acme.in", seats: 10, status: "active", renewal_date: "2027-08-14", billing_cycle: "yearly" }],
-    tds_amount: 708, blocked: false, block_message: null, block_href: null, ...over,
+    tds_amount: 708, blocked: false, block_message: null, block_href: null, can_undo: true, ...over,
   });
 
   it("lists receipt + TDS, invoice credit note, quote and subscription with links; confirm undoes the sale", async () => {
@@ -210,6 +210,22 @@ describe("R-2179 un-reconcile an 'A new sale' line — undo the sale too", () =>
     fireEvent.click(screen.getByRole("button", { name: "Un-reconcile" }));
     await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
     expect(mutateAsync).toHaveBeenCalledWith({ txnId: "t1", undoSale: false });
+  });
+
+  it("a manager / billing login is not offered the undo (owner / accountant only) — only the line is freed", async () => {
+    impact = { kind: "new-sale", preview: sale({ can_undo: false }) };
+    const onClose = vi.fn();
+    render(<UnreconcileDialog txn={saleTxn} onClose={onClose} />);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    expect(screen.getByText(/only an owner or accountant can do it/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Un-reconcile" }));
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(mutateAsync).toHaveBeenCalledWith({ txnId: "t1", undoSale: false });
+  });
+
+  it("one seat reads '(1 seat)'", () => {
+    const one = sale({ subscriptions: [{ id: "s2", plan: "Plan", domain: null, seats: 1, status: "active", renewal_date: null, billing_cycle: "yearly" }] });
+    expect(newSaleUndoLines(one).at(-1)?.text).toBe("Plan (1 seat) cancelled — out of MRR and renewals");
   });
 
   it("the toast says how many subscriptions were cancelled", () => {

@@ -111,7 +111,12 @@ function NewSaleUndoBlock({ preview, undoSale, setUndoSale }: {
       <p>
         This line was booked as a new sale to <b>{preview.customer_name ?? "a customer"}</b>.
       </p>
-      {preview.blocked ? (
+      {!preview.blocked && !preview.can_undo ? (
+        <p className="rounded-md border border-hairline bg-paper p-3 text-[13px] leading-snug">
+          Undoing the sale removes its receipt, so only an owner or accountant can do it — ask them to un-reconcile this line.
+          Un-reconcile now frees only the bank line; the sale stays.
+        </p>
+      ) : preview.blocked ? (
         <div role="alert" className="rounded-md border border-amber/50 bg-amber-soft/25 p-3 text-[13px] leading-snug">
           <b className="block">The sale cannot be undone from here.</b>
           {preview.block_message}
@@ -126,8 +131,8 @@ function NewSaleUndoBlock({ preview, undoSale, setUndoSale }: {
           <span className="text-[13px] leading-snug">
             <b>Also undo this sale</b>
             <ul className="mt-1 space-y-1" aria-label="What the undo takes back">
-              {newSaleUndoLines(preview).map((l) => (
-                <li key={l.text} className="flex items-start gap-2">
+              {newSaleUndoLines(preview).map((l, i) => (
+                <li key={i} className="flex items-start gap-2">
                   <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3" />
                   <span>
                     {l.text}
@@ -155,7 +160,7 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
 
   async function confirm() {
     if (!txn) return;
-    const canUndo = impact?.kind === "bank-sale" || (impact?.kind === "new-sale" && !impact.preview.blocked);
+    const canUndo = impact?.kind === "bank-sale" || (impact?.kind === "new-sale" && !impact.preview.blocked && impact.preview.can_undo);
     await unreconcile.mutateAsync({ txnId: txn.id, undoSale: canUndo && undoSale });
     onClose();
   }
@@ -239,7 +244,7 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
           ) : (
             <Button type="button" variant="danger" loading={unreconcile.isPending} disabled={isLoading} onClick={confirm}>
               Un-reconcile{impact?.kind === "bank-sale" && undoSale ? " & sale palto"
-                : impact?.kind === "new-sale" && !impact.preview.blocked && undoSale ? " & undo sale" : impact?.kind === "advance" ? " & remove advance" : impact?.kind === "vendor-payment" || impact?.kind === "project" ? " & reverse" : ""}
+                : impact?.kind === "new-sale" && !impact.preview.blocked && impact.preview.can_undo && undoSale ? " & undo sale" : impact?.kind === "advance" ? " & remove advance" : impact?.kind === "vendor-payment" || impact?.kind === "project" ? " & reverse" : ""}
             </Button>
           )}
         </DialogFooter>
