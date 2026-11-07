@@ -517,12 +517,15 @@ export default function RenewalsPage() {
      dues only; the dashboard and Companies "To collect" also count project invoices. One line under
      the title says both figures, from the same rule (lib/accounting/receivables-due). */
   const projRecvQ = useProjectReceivablesByCustomer();
+  /* R-2562: "unread" = failed with nothing to show — a failed background refetch keeps the last good
+     figure, as on Companies (collectLineState) and the dashboard (loadView). */
+  const projectsUnread = projRecvQ.isError && projRecvQ.data === undefined;
   const duesLine = React.useMemo(() => {
     if (!subs || projRecvQ.isPending) return null;
     // The page's own rows (onRenewalsPage) — what their "Unpaid balance" badges add up to.
     const renewalDues = subs.filter(onRenewalsPage).reduce((t, s) => t + subscriptionDue(s), 0);
-    return subscriptionDuesLine(toChaseSummary(subs, projRecvQ.data ?? {}), renewalDues, projRecvQ.isError);
-  }, [subs, projRecvQ.data, projRecvQ.isPending, projRecvQ.isError]);
+    return subscriptionDuesLine(toChaseSummary(subs, projRecvQ.data ?? {}), renewalDues, projectsUnread);
+  }, [subs, projRecvQ.data, projRecvQ.isPending, projectsUnread]);
   const qc = useQueryClient();
   const router = useRouter();
   /* R-118 / R-2403: ?bucket= holds the tab; the old values (urgent / upcoming / future / risk —
@@ -933,6 +936,15 @@ export default function RenewalsPage() {
                 <Link href={drillHref("customersUnpaid") as Route} className="text-rose hover:underline" data-testid="renewals-dues-line">
                   {duesLine}
                 </Link>
+                {/* R-2562: the project read failed — the line says so; this retries just that read. */}
+                {projectsUnread && (
+                  <>
+                    {" "}
+                    <Button size="sm" variant="ghost" icon="refresh" className="align-middle" loading={projRecvQ.isFetching} onClick={() => void projRecvQ.refetch()}>
+                      Try again
+                    </Button>
+                  </>
+                )}
               </>
             )}
             {/* R-2266: the at-risk ARR figure lived here AND in the strip — it is only on the

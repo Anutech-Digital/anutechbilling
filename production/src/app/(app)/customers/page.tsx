@@ -22,7 +22,7 @@ import { useProjectReceivablesByCustomer, useProjectSales, useReceivedThisFyByCu
 import { customerPortfolioStatus, countsAsNoBusiness, projectValue, type ProjectLike } from "@/lib/customers/portfolio-status";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useOutstandingReceivables } from "@/lib/queries/payments";
-import { toChaseSummary, toCollectBreakdown } from "@/lib/accounting/receivables-due";
+import { toChaseSummary, toCollectBreakdown, PROJECT_INVOICES_UNREAD, SUBSCRIPTION_DUES_UNREAD } from "@/lib/accounting/receivables-due";
 import { ImportCustomersDialog } from "@/components/features/customers/import-customers-dialog";
 import { ImportDomainsDialog } from "@/components/features/customers/import-domains-dialog";
 import { CustomerProfile } from "@/components/features/customers/customer-profile";
@@ -332,6 +332,15 @@ export default function CustomersPage() {
      line said "Subscription dues ₹0 …" for a moment, and the tile and the Has receivables rows showed
      part of the money. Until then the line has a placeholder, the tile "…", the unpaid list its skeleton. */
   const collectParts = collectLineState([outstandingQ, projRecvQ]);
+  /* R-2562: a failed read of what is owed — the tile, the Has receivables chip and every row say "—"
+     (never ₹0, or a figure short by the unread part) and the Has receivables line names what could
+     not be read, with Try again. */
+  const owedUnread = collectParts === "failed";
+  const owedUnreadText = [
+    outstandingQ.isError && outstandingQ.data === undefined ? SUBSCRIPTION_DUES_UNREAD : null,
+    projRecvQ.isError && projRecvQ.data === undefined ? PROJECT_INVOICES_UNREAD : null,
+  ].filter(Boolean).join(" · ");
+  const retryOwed = () => { for (const q of [outstandingQ, projRecvQ]) if (q.isError) void q.refetch(); };
   const collectLineWanted = mode === "full" && view === "unpaid" && !showArchived && !search.trim();
   const rowsLoading = isLoading || (view === "unpaid" && collectParts === "loading");
   const collectLine = React.useMemo(() => {
@@ -596,8 +605,8 @@ export default function CustomersPage() {
     }
     stats.push({
       label: "To collect",
-      value: collectParts === "loading" ? "…" : rupee(totalReceivables, { compact: true }),
-      tone: totalReceivables > 0 ? "rose" : "default",
+      value: collectParts === "loading" ? "…" : owedUnread ? "—" : rupee(totalReceivables, { compact: true }),
+      tone: totalReceivables > 0 && !owedUnread ? "rose" : "default",
       // The money-owed number is the action figure — tap it to see who owes.
       ...(totalReceivables > 0 ? { onClick: () => setView("unpaid"), active: view === "unpaid" } : {}),
     });
@@ -743,9 +752,9 @@ export default function CustomersPage() {
                     <span className={cn(
                       "rounded-full px-1.5 tabular-nums text-2xs",
                       active ? "bg-amber/25 text-amber-ink"
-                        : isDebt && viewCounts[v.id] > 0 ? "bg-rose-soft text-rose-ink"
+                        : isDebt && viewCounts[v.id] > 0 && !owedUnread ? "bg-rose-soft text-rose-ink"
                         : "bg-paper-2 text-ink-3",
-                    )}>{viewCounts[v.id]}</span>
+                    )}>{isDebt && owedUnread ? "—" : viewCounts[v.id]}</span>
                   </button>
                 );
               })}
@@ -821,6 +830,11 @@ export default function CustomersPage() {
           </div>
           {collectLine ? (
             <p className="text-xs text-ink-3" data-testid="to-collect-breakdown">{collectLine}</p>
+          ) : collectLineWanted && owedUnread ? (
+            <p role="alert" className="flex flex-wrap items-center gap-2 text-xs text-rose" data-testid="to-collect-unread">
+              {owedUnreadText}
+              <Button size="sm" icon="refresh" loading={outstandingQ.isFetching || projRecvQ.isFetching} onClick={retryOwed}>Try again</Button>
+            </p>
           ) : collectLineWanted && collectParts === "loading" ? (
             <p role="status" aria-label="Adding up what is owed" className="text-xs text-ink-3" data-testid="to-collect-breakdown-loading">
               Adding up what is owed…
@@ -927,7 +941,7 @@ export default function CustomersPage() {
                   </div>
                   <div className="flex items-center justify-between gap-3 pt-2 mt-2 border-t border-hairline/60 text-xs">
                     <span className="text-ink-3">
-                      To collect <b className={receivable > 0 ? "text-rose" : "text-ink-2"}>{rupee(receivable)}</b>
+                      To collect <b className={receivable > 0 && !owedUnread ? "text-rose" : "text-ink-2"} title={owedUnread ? owedUnreadText : undefined}>{owedUnread ? "—" : rupee(receivable)}</b>
                       {receivable > 0 && days > 0 && <span className={days > 45 ? "text-rose" : "text-ink-3"}> · {days}d overdue</span>}
                       {(receivedBy[c.id]?.total ?? 0) > 0 && (
                         <span> · Received <b className="text-emerald">{rupee(receivedBy[c.id]!.total, { compact: true })}</b></span>
@@ -1095,7 +1109,9 @@ export default function CustomersPage() {
                           ) : <span className="text-sm text-ink-3">{rupee(0)}</span>}
                         </td>
                         <td className="px-3 py-2.5 text-right tabular-nums">
-                          {receivable > 0 ? (
+                          {owedUnread ? (
+                            <span className="text-sm text-ink-3" title={owedUnreadText}>—</span>
+                          ) : receivable > 0 ? (
                             <div>
                               <div className="text-sm font-semibold text-rose">{rupee(receivable)}</div>
                               {days > 0 && (
@@ -1194,7 +1210,7 @@ export default function CustomersPage() {
                       <div className="font-medium text-sm text-ink truncate">{cleanDisplayName(c.display_name || c.name)}</div>
                       <div className="flex items-center justify-between gap-2 text-2xs mt-0.5">
                         <span className="truncate text-ink-3">{c.domain || c.contact_email || "—"}</span>
-                        {receivable > 0
+                        {receivable > 0 && !owedUnread
                           ? <span className="tabular-nums flex-shrink-0 text-rose font-medium">{rupee(receivable, { compact: true })}</span>
                           : sub ? <span className="tabular-nums flex-shrink-0 text-ink-3">{rupee(sub.mrr, { compact: true })}/mo</span> : null}
                       </div>
