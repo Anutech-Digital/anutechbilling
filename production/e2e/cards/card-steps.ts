@@ -99,3 +99,18 @@ export async function toCollectFigure(page: Page): Promise<Locator> {
   await expect(tile.or(fact).first()).toBeVisible({ timeout: 60_000 });
   return (await fact.count()) > 0 ? fact.first() : tile.first();
 }
+
+/**
+ * Banking → Reconcile sheet: choose the customer who paid (R-2572). The sheet opens the "Customer"
+ * tile by itself only when it can guess the payer from the narration — with another local customer
+ * sharing a word of the name (7 Nov: "Delhi Seats Check 2095" next to "CT R2179 Seats") it does not,
+ * and "Customer who paid" is not on screen. So click the tile when the picker is not there, then
+ * pick the customer by its exact name.
+ */
+export async function pickPayingCustomer(dlg: Locator, name: string): Promise<void> {
+  const picker = dlg.getByRole("combobox", { name: "Customer who paid" });
+  const tile = dlg.getByRole("radiogroup", { name: "Who is this money for?" }).getByRole("radio", { name: /^Customer\b/ });
+  await expect(picker.or(tile).first()).toBeVisible({ timeout: 60_000 });
+  if (!(await picker.isVisible())) await tile.click();
+  await picker.selectOption({ label: name });
+}

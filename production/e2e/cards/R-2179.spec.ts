@@ -16,7 +16,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { CARD_TESTS_ON, onlyInCardTests, openAppPage, pageAs } from "./card-steps";
+import { CARD_TESTS_ON, onlyInCardTests, openAppPage, pageAs, pickPayingCustomer } from "./card-steps";
 // @ts-expect-error — plain .mjs helpers (no types)
 import { scenarioTargetReason } from "../../scripts/dev/local-guard.mjs";
 import { E2E_TENANT_EMAIL } from "../fixtures/e2e-roles.mjs";
@@ -102,23 +102,42 @@ function clearAll(): void {
   psql(c, [...clearSql(tenantId(c)), "commit;"].join("\n"));
 }
 
-/** Seed ONCE per run (a failed step restarts the worker and runs beforeAll again). */
+/**
+ * One run = one data set (R-2572). A failed step makes Playwright start a NEW worker, which runs
+ * beforeAll and afterAll again — so the data is seeded once per run (marker file named after the
+ * runner, the workers' parent) and removed only after the LAST step has run, never when an earlier
+ * step's worker stops (7 Nov run #2: Step 1 failed → afterAll wiped the data → Steps 2 and 3 found none).
+ * The next run's seed clears whatever a stopped run left (scn_clear in clearSql).
+ */
+const RUN_MARKER = path.join(os.tmpdir(), `card-test-R-2179-${process.ppid}.seeded`);
+const LAST_STEP = "Step 3";
+
 function seedOncePerRun(): void {
-  const marker = path.join(os.tmpdir(), `card-test-R-2179-${process.ppid}.seeded`);
-  if (fs.existsSync(marker)) return;
+  if (fs.existsSync(RUN_MARKER)) return;
   seed();
-  fs.writeFileSync(marker, new Date().toISOString());
+  fs.writeFileSync(RUN_MARKER, new Date().toISOString());
+}
+
+/** Clean up only when this worker ran the last step (pass, fail or skip). */
+function clearAfterLastStep(stepsRun: readonly string[]): void {
+  if (!stepsRun.some((t) => t.startsWith(LAST_STEP))) return;
+  clearAll();
+  fs.rmSync(RUN_MARKER, { force: true });
 }
 
 test.describe("R-2179 — reconcile gaps from the August run", () => {
   onlyInCardTests();
-  test.setTimeout(300_000);
+  test.setTimeout(480_000);
 
   test.beforeAll(() => {
     if (CARD_TESTS_ON) seedOncePerRun();
   });
+  const stepsRun: string[] = [];
+  test.afterEach(() => {
+    stepsRun.push(test.info().title);
+  });
   test.afterAll(() => {
-    if (CARD_TESTS_ON) clearAll();   // leave no test data behind
+    if (CARD_TESTS_ON) clearAfterLastStep(stepsRun);   // leave no test data behind — after the last step only
   });
 
   test("Step 1: +2 seats quote ₹35,400 paid ₹34,000 from a bank line → GST invoice exists, ₹1,400 due", async ({ browser, baseURL }) => {
@@ -130,11 +149,14 @@ test.describe("R-2179 — reconcile gaps from the August run", () => {
       await row.getByRole("button", { name: /^Reconcile$/ }).click();
       const dlg = page.getByRole("dialog", { name: "Reconcile transaction" });
       await expect(dlg).toBeVisible({ timeout: 60_000 });
-      await dlg.getByRole("combobox", { name: "Customer who paid" }).selectOption({ label: NAME.seats });
+      await pickPayingCustomer(dlg, NAME.seats);
       await dlg.getByRole("button", { name: /^An open quote \/ invoice/ }).click();
       await dlg.getByRole("radiogroup", { name: "Open quotes and invoices" }).getByRole("radio").filter({ hasText: /2 more seats|Add seats|Extra seats/i }).first().click();
+      // R-2558 (7 Nov): a ₹1,400 gap (4% — could be TDS) is no longer pre-set to Part payment; the owner says why.
+      const part = dlg.getByRole("group", { name: "Why less was received" }).getByRole("button", { name: "Part payment — ₹1,400 stays due" });
+      if ((await part.getAttribute("aria-pressed")) !== "true") await part.click();
       await page.getByRole("button", { name: `Record ₹34,000 on ${QUOTE} & reconcile` }).click();
-      await expect(dlg.getByRole("region", { name: "Done — this bank line is reconciled" })).toBeVisible({ timeout: 120_000 });
+      await expect(dlg.getByRole("region", { name: "Done — this bank line is reconciled" })).toBeVisible({ timeout: 240_000 });
 
       const c = container();
       const [inv] = psql(c, `select q.invoice_id || '|' || i.amount || '|' || i.net_payable || '|' || i.status from public.quotes q join public.invoices i on i.id = q.invoice_id where q.id = '${QUOTE}';`);
@@ -160,14 +182,14 @@ test.describe("R-2179 — reconcile gaps from the August run", () => {
       await row.getByRole("button", { name: /^Reconcile$/ }).click();
       const dlg = page.getByRole("dialog", { name: "Reconcile transaction" });
       await expect(dlg).toBeVisible({ timeout: 60_000 });
-      await dlg.getByRole("combobox", { name: "Customer who paid" }).selectOption({ label: NAME.sale });
+      await pickPayingCustomer(dlg, NAME.sale);
       await dlg.getByRole("button", { name: /^A new sale/ }).click();
       await dlg.getByRole("combobox", { name: "Add a product" }).selectOption({ label: "E2E Microsoft 365 Business Basic · microsoft" });
       await dlg.getByRole("combobox", { name: "Commitment" }).selectOption({ label: "Annual commitment" });
       await dlg.getByLabel(/^Seats/).fill("50");
       await dlg.getByLabel(/^Unit price/).fill("3150");
       await page.getByRole("button", { name: /^Record sale & reconcile/ }).click();
-      await expect(dlg.getByRole("region", { name: "Done — this bank line is reconciled" })).toBeVisible({ timeout: 120_000 });
+      await expect(dlg.getByRole("region", { name: "Done — this bank line is reconciled" })).toBeVisible({ timeout: 240_000 });
 
       const c = container();
       const [q] = psql(c, `select p.quote_id from public.bank_transactions t join public.payments p on p.id::text = t.matched_to_id where t.id = '${TXN.sale}';`);
@@ -208,7 +230,10 @@ test.describe("R-2179 — reconcile gaps from the August run", () => {
       const dlg = page.getByRole("dialog");
       await expect(dlg).toBeVisible({ timeout: 60_000 });
       await dlg.locator("#custName").fill("CT R2179 Seats");
-      await dlg.getByRole("button", { name: new RegExp(NAME.seats) }).first().click();
+      // The customer search answers slowly on a busy local server (7 Nov run: >10 s) — wait for the match first.
+      const match = dlg.getByRole("button", { name: new RegExp(NAME.seats) }).first();
+      await expect(match).toBeVisible({ timeout: 60_000 });
+      await match.click();
       await dlg.getByRole("button", { name: /Opening — already billed/ }).click();
       await dlg.locator("#planSelect").click();
       await page.getByRole("option", { name: /E2E Google Workspace Business Starter/ }).click();
