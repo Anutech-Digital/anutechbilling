@@ -33,7 +33,7 @@
  * typecheck + push. A rebase conflict aborts and stops (exit 2) — never resolved by force.
  *
  * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 5 = push guard test failed
- * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = maxWorkersAt() (4 by day, 3 by night) already
+ * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = maxWorkersAt() (4 by day, 6 by night) already
  * running — R-1973: cards in ci-wait / ci-red (pushed, waiting on CI) do not count, but keep their files.
  * Either way: stop, do not work around it.
  *
@@ -107,11 +107,12 @@ export const MAX_WORKERS = Number(process.env.WORKER_MAX || 4);
  * (09:00–21:59 IST) only 2 workers ran; at night 4. WORKER_MAX still overrides.
  * R-1960 (26 Oct 2026): night cap 4 → 3 — 4 parallel tsc runs took the laptop to ~90 node processes.
  * 7 Nov 2026 (Pardeep): day cap 2 → 4 for speed (R-2552) — cards waited 10+ min in the slot queue.
+ * 7 Nov 2026 (Pardeep): night cap 3 → 6 (R-2557) — "raat ko 6 worker allow kar do" (22:00–08:59 IST).
  */
 export function maxWorkersAt(date) {
   if (process.env.WORKER_MAX) return Number(process.env.WORKER_MAX);
   const h = Number(new Date(date).toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false })) % 24;
-  return h >= 9 && h < 22 ? 4 : 3;
+  return h >= 9 && h < 22 ? 4 : 6;
 }
 
 /**
