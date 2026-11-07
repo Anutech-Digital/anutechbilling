@@ -87,7 +87,7 @@ describe("R-2544 linkPaymentsToInvoices", () => {
   });
 
   it("a Zoho-imported invoice's receipt (R-2542: invoice_id, no quote) is nested under it, with its TDS inside the amount", () => {
-    const invoices = [inv({ id: "INV/25-26/1913", amount: 89208, paid_amount: 89208, status: "paid", zoho_invoice_id: "z1" } as LinkInvoice)];
+    const invoices = [inv({ id: "INV/25-26/1913", amount: 89208, paid_amount: 89208, status: "paid" })];
     const payments = [pay({ id: "rv", invoice_id: "INV/25-26/1913", amount: 89208 })];
     const r = linkPaymentsToInvoices({ invoices, payments, quotes: [], instalments: [] });
     expect(r.byInvoice["INV/25-26/1913"].map((s) => [s.paymentId, s.amount, s.whole])).toEqual([["rv", 89208, true]]);

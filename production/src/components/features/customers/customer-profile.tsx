@@ -44,7 +44,7 @@ import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
 import { useCustomerPayments, useDeletePayment } from "@/lib/queries/payments";
 import { useTdsReceivables } from "@/lib/queries/tds-receivable";
 import { receiptSplitLine, tdsByPayment } from "@/lib/accounting/tds-receipt";
-import { PaymentTdsLine, tdsInfoByPayment } from "./payment-tds-line";
+import { tdsInfoByPayment } from "./payment-tds-line";
 import { useCustomerProjects, useCustomerProjectPayments } from "@/lib/queries/projects";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { Card } from "@/components/ui/card";
