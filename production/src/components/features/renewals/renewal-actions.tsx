@@ -47,7 +47,7 @@ import {
 import { AiDraftButton } from "@/components/shared/ai-draft-button";
 import { useVoiceNoteSend } from "@/components/shared/voice-note-button";
 import {
-  renewalActionSet, renewalNextStep, FOLLOW_UP,
+  renewalActionSet, renewalNextStep, billPartDialogTitle, FOLLOW_UP, BILL_NEXT_PART,
   type RenewalActionSub, type RenewalButtonKind, type RenewalMenuItem,
 } from "./renewal-actions-rules";
 
@@ -281,7 +281,7 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
             onClick={() => void run(button.kind as RenewalButtonKind)}
             title={button.kind === "send-now"
               ? "Email the customer the renewal quote with its accept / pay link (creates it first if needed)"
-              : set.note
+              : set.renewal
                 ? "Bill part 1 of the next term — the renewal, at today's seats × rate (you check them first; proforma, then the tax invoice when paid)"
                 : "Bill the next part of this subscription (payment request, or the tax invoice when paid)"}
           >
@@ -289,7 +289,7 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
             {button.label}
           </Button>
         )}
-        {button && button.kind === "generate" && set.note && (
+        {button && button.kind === "generate" && set.renewal && set.note && (
           /* R-2548: what the renewal click bills — the next term's dates and today's seats × rate. */
           <p className="basis-full text-2xs text-ink-3 tabular-nums" data-testid="renewal-part-note">{set.note}</p>
         )}
@@ -315,6 +315,7 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
       {dialog === "bill-next" && (
         <BillNextPartDialog
           sub={{ id: sub.id, customer_name: name, plan: sub.plan }}
+          titleFor={(firstStart) => billPartDialogTitle(sub, button && button.kind === "generate" ? button.label : BILL_NEXT_PART, firstStart)}
           open
           busy={busy === "generate"}
           onOpenChange={(v) => { if (!v) setDialog(null); }}

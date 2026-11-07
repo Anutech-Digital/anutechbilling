@@ -83,21 +83,41 @@ export function nextPartToBill(sub: RenewalActionSub, daysUntil: number): NextPa
 
   const termStart = followingTermStart({ term_months: termMonths, start_date: sub.start_date ?? null, renewal_date: sub.renewal_date });
   const today = addDaysISO(sub.renewal_date.slice(0, 10), -daysUntil);
-  for (let k = 1; k < parts; k++) {
-    /* A part of the CURRENT term still ahead (or starting today) → that part, not the renewal. */
-    if (addMonthsClamped(termStart, -k * CYCLE_MONTHS[cycle]) >= today) return next;
-  }
+  /* The current term's LAST part (it starts latest) still ahead or starting today → that part, not
+     the renewal (every earlier part starts before it). */
+  if (addMonthsClamped(termStart, -CYCLE_MONTHS[cycle]) >= today) return next;
 
   const termEnd = addDaysISO(addMonthsClamped(termStart, termMonths), -1);
+  const partEnd = addDaysISO(addMonthsClamped(termStart, CYCLE_MONTHS[cycle]), -1);
   const partTaxable = Math.round(termAmountOf({ mrr: sub.mrr ?? 0, term_months: termMonths, term_amount: sub.term_amount ?? null }) / parts);
   const seats = sub.seats ?? 0;
   const rate = seats > 0 ? defaultSeatRate({ seats, partTaxable }) : null;
-  const money = rate != null ? ` · ${seats} × ${rupee(rate)}` : partTaxable > 0 ? ` · ${rupee(partTaxable)} + GST` : "";
+  /* R-2548 review: the price sits next to PART 1's own dates — next to the whole term it read as the yearly price. */
+  const money = rate != null ? `: ${seats} × ${rupee(rate)}` : partTaxable > 0 ? `: ${rupee(partTaxable)} + GST` : "";
   return {
-    label: termMonths === 12 ? BILL_RENEWAL_YEAR : BILL_RENEWAL_TERM,
+    label: renewalLabel(termMonths),
     renewal: true,
-    note: `Renewal for ${periodText(termStart, termEnd)}${money}`,
+    note: `Renewal for ${periodText(termStart, termEnd)} · part 1 (${periodText(termStart, partEnd)})${money}`,
   };
+}
+
+function renewalLabel(termMonths: number): string {
+  return termMonths === 12 ? BILL_RENEWAL_YEAR : BILL_RENEWAL_TERM;
+}
+
+/**
+ * R-2548 review: the Bill next part dialog's title follows what the SERVER will bill (its preview's
+ * first period), not the row's calendar guess — a missed or freed part of the current term is
+ * billed first (firstUnbilledPeriod), and that is not the renewal; a part the billing job already
+ * raised this morning makes the click bill the renewal. Before the preview loads: the row's label.
+ */
+export function billPartDialogTitle(sub: RenewalActionSub, rowLabel: string, previewFirstStart: string | null | undefined): string {
+  const cycle = (sub.billing_cycle ?? null) as BillingCycle | null;
+  if (!previewFirstStart || !isSplitBilled(cycle) || !cycle || !sub.renewal_date) return rowLabel;
+  const termMonths = Math.max(1, sub.term_months ?? 12);
+  if (Math.floor(termMonths / CYCLE_MONTHS[cycle]) <= 1) return BILL_NEXT_PART;
+  const termStart = followingTermStart({ term_months: termMonths, start_date: sub.start_date ?? null, renewal_date: sub.renewal_date });
+  return previewFirstStart.slice(0, 10) === termStart ? renewalLabel(termMonths) : BILL_NEXT_PART;
 }
 
 export type RenewalButtonKind = "send-now" | "generate";
@@ -113,6 +133,8 @@ export interface RenewalActionSet {
   graceOver: boolean;
   /** R-2548: the small line under a "Bill renewal · part 1 of …" button ("Renewal for <term> · <seats> × ₹<rate>"); else null. */
   note: string | null;
+  /** R-2548: the primary button bills part 1 of the next term (the renewal). */
+  renewal: boolean;
 }
 
 /** Past the renewal date AND past the (company / owner-extended) grace — the owner decides. */
@@ -137,6 +159,7 @@ export function renewalActionSet(
   let primary: RenewalActionSet["primary"] = null;
   let secondary: RenewalActionSet["secondary"] = null;
   let note: string | null = null;
+  let renewal = false;
   /* R-2422: a monthly flex part not yet due is raised by the billing job on its date (R-2044) —
      "Bill next part" before then would re-bill the current term, so nothing to bill yet. */
   const flexNotDue = isFlexNextPart(sub, opts.daysUntil);
@@ -148,6 +171,7 @@ export function renewalActionSet(
       const part = nextPartToBill(sub, opts.daysUntil);
       primary = { kind: "generate", label: part.label };
       note = part.note;
+      renewal = part.renewal;
     } else {
       primary = { kind: "send-now", label: SEND_RENEWAL_QUOTE };
       secondary = { kind: "generate", label: CREATE_QUOTE_NO_SEND };
@@ -168,7 +192,7 @@ export function renewalActionSet(
       : { label: CUSTOMER_NOT_RENEWING, dialog: "non-renewing" };
   }
 
-  return { row, primary, secondary, notRenewing, graceOver, note };
+  return { row, primary, secondary, notRenewing, graceOver, note, renewal };
 }
 
 // ─── R-2422: one next-step button + a ⋯ menu ─────────────────────────────────

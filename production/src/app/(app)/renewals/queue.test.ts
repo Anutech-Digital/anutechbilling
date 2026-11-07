@@ -249,7 +249,7 @@ describe("R-2403 bulk: tick rows → Send renewal quote", () => {
     const t = bulkQuoteTargets(sel, status, 0);
     expect(t.send.map((r) => r.sub.id)).toEqual(["acme", "beta"]);
     expect(t.skipped.map((s) => [s.row.sub.id, s.reason])).toEqual([
-      ["parts", "billed in parts — use Bill next part"],
+      ["parts", "billed in parts — use Bill renewal · part 1 of next year"],
       ["leaver", "won't renew"],
       ["done", "Renewed — nothing to send"],
     ]);
@@ -260,7 +260,7 @@ describe("R-2403 bulk: tick rows → Send renewal quote", () => {
     const c = bulkQuoteConfirm(t.send, t.skipped);
     expect(c.title).toBe("Send the renewal quote to 2 customers?");
     expect(c.body).toContain("ACME, BETA.");
-    expect(c.body).toContain("Not sent (3): PARTS — billed in parts — use Bill next part");
+    expect(c.body).toContain("Not sent (3): PARTS — billed in parts — use Bill renewal · part 1 of next year");
   });
 });
 
