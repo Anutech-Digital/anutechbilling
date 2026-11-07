@@ -19,7 +19,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { WHATSAPP_URL, WHATSAPP_READY } from "@/site/lib/config";
 import { hideFloatingOn } from "@/site/components/chrome/Chrome";
-import { floatingLauncher, useAvoidFloating, useLauncherStepsAside } from "@/site/components/chrome/floating";
+import { floatingLauncher, useAvoidFloating } from "@/site/components/chrome/floating";
 import { useTurnstile } from "@/components/shared/turnstile";
 import { DataNotice } from "@/site/components/legal/DataNotice";
 
@@ -69,7 +69,6 @@ export function AgentChat() {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   /* R-464: phone par form (data-avoid-floating) screen par ho to launcher hat jaata hai. */
-  const narrow = useLauncherStepsAside();
   const avoidOnScreen = useAvoidFloating(pathname);
   const [msgs, setMsgs] = useState<Msg[]>([GREETING]);
   const [input, setInput] = useState("");
@@ -188,7 +187,7 @@ export function AgentChat() {
   /* R-230: /checkout aur /done par kuch float nahi karta — phone par launcher Pay button dhak
      deta tha. Saare hooks upar chal chuke, isliye yahan return safe hai. */
   if (hideFloatingOn(pathname)) return null;
-  const showLauncher = floatingLauncher({ pathname, narrow, avoidOnScreen, chatOpen: open || menuOpen });
+  const showLauncher = floatingLauncher({ pathname, avoidOnScreen, chatOpen: open || menuOpen });
   const launcherName = WHATSAPP_READY ? "Talk to us: AI sales agent or WhatsApp" : "Talk to us: AI sales agent";
 
   return (
@@ -196,7 +195,7 @@ export function AgentChat() {
       {/* R-1498: EK hi floating launcher (pehle AI launcher + WhatsApp pill ek ke upar ek the).
           R-230: 980px se neeche poori text wali pill ki jagah 48px gol icon (naam aria-label
           me). Position/size class me — inline style media query ko jeet leta. R-464/R-1495:
-          1400px se neeche form / plan cards / FAQ screen par hon to launcher chhup jaata hai. zIndex 90 —
+          form / plan cards / FAQ launcher ke kone me aayein to launcher chhup jaata hai (har chaudai). zIndex 90 —
           consent banner (95) ke neeche hi rehta hai. */}
       {showLauncher && (
       <button

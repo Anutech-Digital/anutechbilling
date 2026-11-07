@@ -250,7 +250,7 @@ export function Header({ emailFrom, domainTeaser = DOMAIN_TEASER_NO_PRICE }: { e
           href="/cart"
           aria-label={`Cart, ${cart.lines.length} items`}
           style={{
-            display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600, flexShrink: 0,
+            display: "inline-flex", alignItems: "center", gap: 8, fontSize: 14, fontWeight: 600,
             padding: "9px 14px", borderRadius: 6, border: "1px solid var(--border-strong)",
           }}
         >
@@ -276,7 +276,7 @@ export function Header({ emailFrom, domainTeaser = DOMAIN_TEASER_NO_PRICE }: { e
             customer panel; the ResellerOS login lives in the ResellerOS menu and pages. */}
         <Link href={CLIENT_AREA_URL as never} className="btn btn-sm hide-mobile" aria-label="Customer login (hosting & domains)"
           title="Customer login (hosting & domains)"
-          style={{ background: orange ? "var(--dark)" : "var(--primary)", borderColor: orange ? "var(--dark)" : "var(--primary)", color: "#fff", whiteSpace: "nowrap", flexShrink: 0 }}>Customer login</Link>
+          style={{ background: orange ? "var(--dark)" : "var(--primary)", borderColor: orange ? "var(--dark)" : "var(--primary)", color: "#fff", whiteSpace: "nowrap" }}>Customer login</Link>
         <button
           className="only-mobile"
           aria-label={mobile ? "Close menu" : "Open menu"}

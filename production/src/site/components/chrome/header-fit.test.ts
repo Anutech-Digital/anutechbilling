@@ -3,10 +3,9 @@
    +46px at 1000 and 1200px, +6px at 1280px — the row is ~47px wider than the 1180px .wrap
    leaves inside its padding, so it shows until the side margins absorb it at ~1290px).
 
-   From 980px up to 1299px the header row (logo, six menus, Cart, Customer login) tightens:
-   smaller gaps and side padding; below 1200px the menu items tighten too. Measured after the
-   fix in a browser at 980 / 1000 / 1100 / 1199 / 1200 / 1280 / 1440: no sideways scroll. This
-   test pins the rules that do it, so a later edit cannot quietly bring the overflow back. */
+   2nd galat (24 Oct): the first fix left 0–6px of room, so it still showed. Now three width
+   bands keep real room (measured: 980–1199 ~35px, 1200–1399 ~90px, 1400+ ~50px). This test pins
+   the rules; e2e/cards/R-1495.spec.ts measures the real page in a browser. */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -69,9 +68,5 @@ describe("site header fits from 980px up (R-1495)", () => {
   it("1400px up: the header row may use 1300px so all seven items fit with room", () => {
     expect(px(prop(ruleOf(block(WIDE), "hdr-row"), "max-width"))).toBeGreaterThanOrEqual(1300);
     expect(px(prop(ruleOf(block(WIDE), "nav-item"), "padding-left"))).toBeLessThanOrEqual(8);
-  });
-
-  it("Cart and Customer login never shrink (they stay whole; the menus give way first)", () => {
-    expect((header.match(/flexShrink: 0/g) ?? []).length).toBeGreaterThanOrEqual(3);
   });
 });

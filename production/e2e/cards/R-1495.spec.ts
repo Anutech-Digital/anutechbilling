@@ -36,7 +36,9 @@ async function headerFits(page: Page, width: number) {
     const el = document.querySelector<HTMLElement>('header a[aria-label^="Customer login"]');
     const r = el?.getBoundingClientRect();
     const hit = r ? document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2) : null;
+    const nav = document.querySelector<HTMLElement>('header nav[aria-label="Main"]');
     return {
+      navFits: nav ? nav.scrollWidth <= nav.clientWidth : false,
       scrollWidth: document.documentElement.scrollWidth,
       innerWidth: window.innerWidth,
       login: r ? { left: r.left, right: r.right, width: r.width } : null,
@@ -48,6 +50,7 @@ async function headerFits(page: Page, width: number) {
   expect(m.login!.left, `${width}px: Customer login starts inside the window`).toBeGreaterThanOrEqual(0);
   expect(m.login!.right, `${width}px: Customer login ends inside the window`).toBeLessThanOrEqual(m.innerWidth);
   expect(m.loginOnTop, `${width}px: nothing sits over Customer login`).toBe(true);
+  expect(m.navFits, `${width}px: every menu fits in the header (none cut off)`).toBe(true);
 }
 
 /** Plan columns in one row = cards sharing the first card's top edge. */
