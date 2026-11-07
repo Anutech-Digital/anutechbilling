@@ -28,7 +28,7 @@ import { cn, rupee, formatDate } from "@/lib/utils";
 import type { SeatRequest, Subscription } from "@/lib/supabase/database.types";
 import { assessRequest, previewCharge, requestBadge } from "@/lib/subscriptions/seat-request";
 import { localDateISO } from "@/lib/leads/outcomes";
-import { seatChargeWindow, seatTermEnd } from "@/lib/subscriptions/seat-charge-window";
+import { seatChargeWindow, seatChargeParts, seatTermEnd } from "@/lib/subscriptions/seat-charge-window";
 import { istToday } from "@/lib/dates/ist";
 import { useCustomer } from "@/lib/queries/customers";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -57,6 +57,8 @@ function SeatChargePreview({ sub, seatsToAdd }: { sub: Subscription; seatsToAdd:
     remainingDays: Math.max(0, window.remainingDays),
     termDays: window.termDays,
     taxRatePct: pos.isExport ? 0 : 18,
+    /* R-2226: split-billed → the part's own rate, as the server charges. */
+    parts: window.instalmentPeriod ? seatChargeParts(sub, istToday()) : null,
   });
   if (!preview) return null;
   return (

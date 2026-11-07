@@ -22,7 +22,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { addSeats, type AddSeatsResult, type AddSeatsError } from "./add-seats";
 import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
-import { seatChargePlan, seatTermEnd, seatTermDays } from "./seat-charge-window";
+import { seatChargePlan, seatChargeParts, seatTermEnd, seatTermDays } from "./seat-charge-window";
 import { checkSeatEffectiveDate } from "./seat-effective-date";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { syncSubscriptionInstalments, readQuotePaymentFacts } from "@/lib/billing/sync-instalments.server";
@@ -163,7 +163,10 @@ export async function applySeatIncrease(args: {
     taxLabel,
     termDays,
     termEnd:        seatTermEnd(sub),
-    chargeWindow:   window?.instalmentPeriod ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo } : null,
+    /* R-2226: the parts this window covers, so the seats are priced at the part's own rate. */
+    chargeWindow:   window?.instalmentPeriod
+      ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo, parts: seatChargeParts(sub, today, window.from) }
+      : null,
     effectiveDate:  eff.date,
     effectiveDateSetBy: args.effectiveDateSetBy ?? null,
     requestedBy:    args.requestedBy ?? null,

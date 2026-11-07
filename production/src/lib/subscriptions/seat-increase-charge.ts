@@ -31,6 +31,7 @@
  */
 import { prorate, rupeesToPaise, type ProrationResult } from "./proration";
 import { grossAmount } from "@/lib/quotes/amounts";
+import { partShareOf, type SeatPartSegment } from "./seat-part-rate";
 
 export interface SeatIncreaseChargeInput {
   /** Seats on the subscription before the change. */
@@ -51,6 +52,13 @@ export interface SeatIncreaseChargeInput {
    * Absent / null = the rate from mrr, exactly as before.
    */
   annualPerSeatOverride?: number | null;
+  /**
+   * R-2226: the parts of a split-billed subscription the seats are charged for
+   * (seatChargeParts). When given, perSeat = annual × Σ(part months × days ÷ part days) ÷ 12 —
+   * the PART's own rate — instead of annual × days ÷ termDays. Absent / null / empty = the
+   * yearly rule, exactly as before.
+   */
+  parts?: readonly SeatPartSegment[] | null;
 }
 
 export interface SeatIncreaseCharge {
@@ -71,6 +79,8 @@ export interface SeatIncreaseCharge {
   newMrr: number;
   /** The exact paise result, for notes and logs. */
   proration: ProrationResult;
+  /** R-2226: the parts priced at their own rate, or null for the yearly rule. */
+  parts: readonly SeatPartSegment[] | null;
 }
 
 /**
@@ -111,7 +121,10 @@ export function seatIncreaseCharge(input: SeatIncreaseChargeInput): SeatIncrease
 
   /* R-837: per seat first, whole rupees, from integers (annualPerSeat × days is exact), rounded
      once; the line total and the subtotal are built from it. Days are prorate()'s clamped days. */
-  const perSeat  = Math.round((annualPerSeat * proration.chargedDays) / termDays);
+  /* R-2226: split-billed → each part at its own rate (part price × days ÷ days in the part),
+     rounded once over all parts, so a whole part costs exactly one part's per-seat price. */
+  const parts    = input.parts && input.parts.length > 0 ? input.parts : null;
+  const perSeat  = parts ? partShareOf(annualPerSeat, parts) : Math.round((annualPerSeat * proration.chargedDays) / termDays);
   const subtotal = perSeat * Math.max(0, additionalSeats);
   const total    = grossAmount(subtotal, taxRatePct);
 
@@ -125,6 +138,7 @@ export function seatIncreaseCharge(input: SeatIncreaseChargeInput): SeatIncrease
     /* R-2292: the subscription keeps its stored rate — a typed quote rate never changes it. */
     newMrr:  Math.round((storedAnnualPerSeat * (currentSeats + additionalSeats)) / 12),
     proration,
+    parts,
   };
 }
 
@@ -140,7 +154,8 @@ export function seatIncreaseCharge(input: SeatIncreaseChargeInput): SeatIncrease
  */
 export interface SeatIncreaseQuoteInput extends Omit<SeatIncreaseChargeInput, "remainingDays" | "termDays"> {
   previous?: { remainingDays: number; termDays: number } | null;
-  current: { remainingDays: number; termDays: number };
+  /** R-2226: `parts` = seatChargeParts() for a split-billed subscription (the part's own rate). */
+  current: { remainingDays: number; termDays: number; parts?: readonly SeatPartSegment[] | null };
 }
 
 export interface SeatIncreaseQuote {
@@ -160,7 +175,7 @@ export interface SeatIncreaseQuote {
 
 export function seatIncreaseQuote(input: SeatIncreaseQuoteInput): SeatIncreaseQuote {
   const { previous: prevDays, current: curDays, ...base } = input;
-  const current = seatIncreaseCharge({ ...base, remainingDays: curDays.remainingDays, termDays: curDays.termDays });
+  const current = seatIncreaseCharge({ ...base, remainingDays: curDays.remainingDays, termDays: curDays.termDays, parts: curDays.parts ?? null });
   if (!prevDays) {
     return {
       annualPerSeat: current.annualPerSeat, storedAnnualPerSeat: current.storedAnnualPerSeat, previous: null, current,
