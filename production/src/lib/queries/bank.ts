@@ -1226,6 +1226,13 @@ export function useReconcileTransaction() {
         p_match_confidence: input.confidence ?? "manual",
       });
       if (error) throw error;
+      /* R-2192: a receipt ₹1 off the line (the suggester's ₹1 'high') — the ₹1 more that came in is
+         booked as round-off, exactly as auto_reconcile_bank_account does. Nothing for any other gap. */
+      if (input.matchedToType === "payment") {
+        const rpc = (supabase as unknown as { rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ error: { message: string } | null }> }).rpc;
+        const { error: e2 } = await rpc.call(supabase, "bank_line_receipt_round_off", { p_txn_id: input.transactionId });
+        if (e2) throw e2;
+      }
       return data as BankTransactionRow;
     },
     onSuccess: (row) => {

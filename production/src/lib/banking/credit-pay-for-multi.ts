@@ -21,8 +21,22 @@ export const ROUND_OFF_LIMIT = 50;
 export interface SplitPick { key: string; amount: number }
 
 /** R-1678: "fx" = foreign-currency items settled in full, the difference an exchange gain / loss
- *  (lib/banking/item-fx-pay splitFxPlan decides it, never the operator's round-off choice). */
-export type SplitRest = "advance" | "round_off" | "fx";
+ *  (lib/banking/item-fx-pay splitFxPlan decides it, never the operator's round-off choice).
+ *  R-2192: "bank_charge" = items settled in full, the shortfall the bank's / SWIFT charge — booked
+ *  as a Bank Charges expense (EXP-FXC-<line>, R-2427's row) on the line. */
+export type SplitRest = "advance" | "round_off" | "fx" | "bank_charge";
+
+/** R-2192: the largest bank / SWIFT charge on one line, and its largest share of what was settled.
+ *  Same numbers as c_charge_max / c_charge_pct in reconcile_bank_credit_split (migration
+ *  20261107205640_r2192_small_receipt_differences). More than that is not a bank charge — a part
+ *  payment or TDS. */
+export const BANK_CHARGE_MAX = 5000;
+export const BANK_CHARGE_MAX_PCT = 10;
+
+/** R-2192: may this shortfall on `due` be booked as the bank's charge? */
+export function bankChargeAllowed(shortBy: number, due: number): boolean {
+  return shortBy > 0 && due > 0 && shortBy <= BANK_CHARGE_MAX && shortBy * 100 <= due * BANK_CHARGE_MAX_PCT;
+}
 
 export type SplitState =
   | { kind: "empty" }

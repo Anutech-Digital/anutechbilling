@@ -343,6 +343,18 @@ export const SCENARIOS = [
       { path: "renewals", for: "R-2548 after adding SCN Part Bill Studio's Annual · Half-yearly subscription: 'Bill renewal · part 1 of next year'" },
     ],
   },
+  {
+    name: "receipt-gaps",
+    about: "R-2192 small receipt differences: SCN Round Off Traders INV-SCN-RG-1 ₹13,106 + a ₹13,105 NEFT line (₹1 short → round-off); SCN Wire Exports INV-SCN-RG-2 ₹50,000 + a ₹49,500 RTGS wire (₹500 kept by the bank → Bank / SWIFT charge).",
+    cards: ["R-2192"],
+    needs: { sql: "exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2192%')", what: "bank charge on a receipt (migration R-2192)" },
+    scope: { vendors: [], txns: ["c2192000-0000-4000-8000-000000000003", "c2192000-0000-4000-8000-000000000004"], docs: [], names: [], upis: [],
+             extra: ["c2192000-0000-4000-8000-000000000001", "c2192000-0000-4000-8000-000000000002", "Q-SCN-RG-1", "Q-SCN-RG-2", "INV-SCN-RG-1", "INV-SCN-RG-2"] },
+    expect: { ...NO_OLD, txns: 2, ...NO_EXTRA, xCustomers: 2, xQuotes: 2, xInvoices: 2 },
+    pages: [
+      { path: "banking", for: "R-2192 the ₹13,105 SCN Round Off Traders line: 'Matches INV-SCN-RG-1 · ₹1 round-off' → Reconcile: INV-SCN-RG-1 ticked, 'Round off ₹1' chosen → Record → Paid in full · the ₹49,500 SCN Wire Exports line → This money is for INV-SCN-RG-2 → Bank / SWIFT charge ₹500 → Paid" },
+    ],
+  },
 ];
 
 export const SCENARIO_NAMES = SCENARIOS.map((s) => s.name);
