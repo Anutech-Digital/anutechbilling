@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, afterAll } from "vitest";
+import { describe, it, expect, vi, afterAll, afterEach } from "vitest";
 import { readSource } from "@/lib/testing/source-cache";
 import fs from "node:fs";
 import os from "node:os";
@@ -13,35 +13,61 @@ type Gen = { files: string[]; scripts: Record<string, { before: string; after: s
 
 /* R-2564 (7 Nov 2026): this suite runs generate() over all ~600 migrations six times (the repo, the
    --since run, two temp layouts, the bad-header run) and reads them again for the R-2473 check — 40–125 s
-   under push load, almost all of it readFileSync (cpu profile) plus copying 11 MB twice. Now:
-   - a .sql file in a repo migration home is read through the shared, always-fresh read cache
-     (src/lib/testing/source-cache.ts — size/mtime/ctime checked on every read; the other migration
-     scans use it too);
-   - the temp layouts get an empty STAND-IN file per migration (same name, same folders) and reading a
-     stand-in returns its repo file's text — exactly what a copy would hold, without writing 11 MB.
-     Hard links were tried first: making one changes the repo file's ctime, so every link emptied the
-     shared cache for all scans.
-   Anything else (deploy-db scripts, files a test writes, a stand-in moved with moveMigration()) is
-   read as before, so generate() still sees the same text a full copy gave it. A stand-in read any
-   other way (another encoding form, fs.promises, a shell step) gets "" — parseDeployHeaders then
-   throws 'no "-- deploy-peek:"' for it, so a change in how generate() reads fails loudly here,
-   never passes quietly. */
+   under push load, almost all of it readFileSync (cpu profile). A .sql file in a repo migration home
+   is read through the shared, always-fresh read cache (src/lib/testing/source-cache.ts — size/mtime/
+   ctime checked on every read; the other migration scans use it too).
+   R-2568 (7 Nov 2026): the two tests that need a second layout (R-161's prisma home, a new migration)
+   still wrote ~620 empty stand-in files each and deleted them again — on this laptop every file create
+   is scanned (620 creates ≈ 1–1.7 s + 0.6 s delete, twice; ~3× that under push load: 12.8 s for this
+   file in R-2564's push). That layout is now VIRTUAL: nothing under VROOT exists on disk —
+   fs.readdirSync / existsSync / readFileSync answer for it from `vfs` (path → the repo file it mirrors,
+   or a test's own text). generate()'s real-disk path is still covered by the "today's deploy scripts"
+   tests, which run it on the repo itself.
+   Loud, never lenient: readdirSync with options or readFileSync without "utf8" on a VROOT path throws
+   "virtual layout …", and any other fs call there (statSync, open, a write into a missing folder) hits
+   a folder that does not exist and throws ENOENT — so a change in how generate() touches the disk
+   fails here instead of passing quietly. */
 const MIG_HOMES = [path.join(supabaseDir, "migrations"), path.join(supabaseDir, "..", "prisma", "migrations")]
   .map((d) => path.resolve(d).toLowerCase() + path.sep);
-const standIn = new Map<string, string>(); // temp stand-in → repo file
 const realReadFileSync = fs.readFileSync;
+const realReaddirSync = fs.readdirSync;
+const realExistsSync = fs.existsSync;
+const VROOT = path.join(os.tmpdir(), `gen-deploy-db-virtual-${process.pid}-${Date.now()}`);
+const vfs = new Map<string, { repo?: string; text?: string }>(); // absolute path under VROOT → content
+const underV = (p: unknown): p is string => typeof p === "string" && (path.resolve(p) === VROOT || path.resolve(p).startsWith(VROOT + path.sep));
+function vChildren(dir: string): string[] {
+  const pre = path.resolve(dir) + path.sep;
+  const out = new Set<string>();
+  for (const k of vfs.keys()) if (k.startsWith(pre)) out.add(k.slice(pre.length).split(path.sep)[0]);
+  return [...out].sort();
+}
+const enoent = (what: string) => Object.assign(new Error(`ENOENT: virtual layout has no ${what}`), { code: "ENOENT" });
 let inCache = false; // readSource() itself reads through fs.readFileSync — that call goes to disk
 vi.spyOn(fs, "readFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, opts?: unknown) => {
+  if (underV(file)) {
+    if (opts !== "utf8") throw new Error(`virtual layout: readFileSync(${file}) without "utf8" is not modelled`);
+    const v = vfs.get(path.resolve(file));
+    if (!v) throw enoent(file);
+    if (v.text !== undefined) return v.text;
+    file = v.repo!;
+  }
   if (!inCache && typeof file === "string" && opts === "utf8" && file.endsWith(".sql")) {
     const abs = path.resolve(file);
-    const repo = standIn.get(abs) ?? abs;
-    if (MIG_HOMES.some((h) => repo.toLowerCase().startsWith(h))) {
+    if (MIG_HOMES.some((h) => abs.toLowerCase().startsWith(h))) {
       inCache = true;
-      try { return readSource(repo); } finally { inCache = false; }
+      try { return readSource(abs); } finally { inCache = false; }
     }
   }
   return (realReadFileSync as (f: unknown, o?: unknown) => string | Buffer)(file, opts);
 }) as typeof fs.readFileSync);
+vi.spyOn(fs, "readdirSync").mockImplementation(((dir: fs.PathLike, opts?: unknown) => {
+  if (!underV(dir)) return (realReaddirSync as (d: unknown, o?: unknown) => unknown)(dir, opts);
+  if (opts !== undefined) throw new Error(`virtual layout: readdirSync(${dir}, options) is not modelled`);
+  const names = vChildren(dir);
+  if (!names.length) throw enoent(`folder ${dir}`);
+  return names;
+}) as typeof fs.readdirSync);
+vi.spyOn(fs, "existsSync").mockImplementation((p: fs.PathLike) => (underV(p) ? vfs.has(path.resolve(p)) || vChildren(p).length > 0 : realExistsSync(p)));
 afterAll(() => vi.restoreAllMocks());
 
 describe("gen-deploy-db headers", () => {
@@ -99,29 +125,45 @@ describe("gen-deploy-db file choice + rewrite", () => {
   });
 });
 
-/* Copy both migration homes: supabase/migrations, and prisma/migrations where the staging
-   branch (R-161) keeps applied ones — so these tests pass on either branch. */
-function standInTree(from: string, to: string) {
-  fs.mkdirSync(to, { recursive: true });
-  for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+/* Mirror both migration homes: supabase/migrations, and prisma/migrations where the staging branch
+   (R-161) keeps applied ones — so these tests pass on either branch. Virtual (R-2568, see the top). */
+function vTree(from: string, to: string) {
+  for (const e of realReaddirSync(from, { withFileTypes: true })) {
     const a = path.join(from, e.name), b = path.join(to, e.name);
-    if (e.isDirectory()) standInTree(a, b);
-    else if (e.name.endsWith(".sql")) { fs.writeFileSync(b, ""); standIn.set(path.resolve(b), path.resolve(a)); }
-    else fs.copyFileSync(a, b);
+    if (e.isDirectory()) vTree(a, b);
+    else vfs.set(path.resolve(b), { repo: path.resolve(a) });
   }
 }
-function copyMigrations(tmpSupabase: string) {
-  standInTree(path.join(supabaseDir, "migrations"), path.join(tmpSupabase, "migrations"));
+/* One virtual layout (both migration homes + the 7 Oct scripts) for the tests that change a layout.
+   Each test undoes its own change in a finally, and the last one proves the layout mirrors the repo
+   again, so test order cannot leak. */
+let layout: { root: string; tmp: string } | undefined;
+let pristine = new Map<string, { repo?: string; text?: string }>();
+/** Entries that differ from the layout as built (same key AND the same content object), as text. */
+const layoutDrift = () => [...new Set([...vfs.keys(), ...pristine.keys()])].filter((k) => vfs.get(k) !== pristine.get(k)).map((k) => path.relative(VROOT, k));
+/* Every test leaves the layout as built — checked after EACH test, so order, a filter or a test that
+   throws half-way can never hand the next test a changed layout (it is put back, and that test fails). */
+afterEach(() => {
+  if (!layout) return;
+  const drift = layoutDrift();
+  if (!drift.length) return;
+  vfs.clear();
+  for (const [k, v] of pristine) vfs.set(k, v);
+  throw new Error(`virtual layout left changed by this test: ${drift.join(", ")}`);
+});
+function sharedLayout() {
+  if (layout) return layout;
+  const root = VROOT;
+  const tmp = path.join(root, "supabase");
+  vTree(path.join(supabaseDir, "migrations"), path.join(tmp, "migrations"));
   const prisma = path.join(supabaseDir, "..", "prisma", "migrations");
-  if (fs.existsSync(prisma)) standInTree(prisma, path.join(tmpSupabase, "..", "prisma", "migrations"));
-}
-/** Move a copied migration the way a rename moves a real copy: its text goes with it. */
-function moveMigration(from: string, to: string) {
-  const repo = standIn.get(path.resolve(from));
-  if (!repo) { fs.renameSync(from, to); return; }
-  fs.writeFileSync(to, readSource(repo));
-  fs.rmSync(from);
-  standIn.delete(path.resolve(from));
+  if (realExistsSync(prisma)) vTree(prisma, path.join(root, "prisma", "migrations"));
+  for (const env of ENVS) {
+    const rel = path.join("cloudsql", env, "deploy-db-2026-10-07.sh");
+    vfs.set(path.resolve(tmp, rel), { repo: path.join(supabaseDir, rel) });
+  }
+  pristine = new Map(vfs);
+  return (layout = { root, tmp });
 }
 /* R-2564: the repo's own regeneration is the same pure read for three tests — run it once. */
 let todays: Gen | undefined;
@@ -154,44 +196,49 @@ describe("today's deploy scripts (7 Oct 2026)", () => {
   });
 
   it("finds a listed migration the staging branch moved to prisma/migrations (R-161 layout)", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gen-deploy-db-prisma-"));
+    const { root, tmp } = sharedLayout();
+    const moved = "20261006130000_feedback_checked";
+    const from = path.resolve(tmp, "migrations", `${moved}.sql`);
+    const to = path.resolve(root, "prisma", "migrations", moved, "migration.sql");
+    const entry = vfs.get(from);
+    const before = vfs.get(to); // the repo may already hold this folder (it does today)
     try {
-      const tmp = path.join(root, "supabase");
-      copyMigrations(tmp);
-      for (const env of ENVS) {
-        fs.mkdirSync(path.join(tmp, "cloudsql", env), { recursive: true });
-        fs.copyFileSync(path.join(supabaseDir, "cloudsql", env, "deploy-db-2026-10-07.sh"), path.join(tmp, "cloudsql", env, "deploy-db-2026-10-07.sh"));
-      }
-      const moved = "20261006130000_feedback_checked";
-      if (fs.existsSync(path.join(tmp, "migrations", `${moved}.sql`))) {
-        fs.mkdirSync(path.join(root, "prisma", "migrations", moved), { recursive: true });
-        moveMigration(path.join(tmp, "migrations", `${moved}.sql`), path.join(root, "prisma", "migrations", moved, "migration.sql"));
-      }
+      if (entry) { vfs.delete(from); vfs.set(to, entry); } // the file moves, its text goes with it
       const res: Gen = generate({ supabaseDir: tmp, date: "2026-10-07" });
       expect(res.files).toContain(`${moved}.sql`);
       for (const env of ENVS) expect(res.scripts[env].after).toBe(res.scripts[env].before);
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally {
+      if (entry) { vfs.set(from, entry); if (before) vfs.set(to, before); else vfs.delete(to); }
+    }
   });
 
   it("a new migration with a header is appended to BOTH scripts; one without fails", () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "gen-deploy-db-"));
-    const tmp = path.join(root, "supabase");
+    const { tmp } = sharedLayout();
+    const extra = [path.resolve(tmp, "migrations", "29991231000000_new_thing.sql"), path.resolve(tmp, "migrations", "29991231000059_no_header.sql")];
     try {
-      copyMigrations(tmp);
-      for (const env of ENVS) {
-        fs.mkdirSync(path.join(tmp, "cloudsql", env), { recursive: true });
-        fs.copyFileSync(path.join(supabaseDir, "cloudsql", env, "deploy-db-2026-10-07.sh"), path.join(tmp, "cloudsql", env, "deploy-db-2026-10-07.sh"));
-      }
-      fs.writeFileSync(path.join(tmp, "migrations", "29991231000000_new_thing.sql"), "-- deploy-peek: to_regclass('public.new_thing') is not null\ncreate table public.new_thing();\n");
+      vfs.set(extra[0], { text: "-- deploy-peek: to_regclass('public.new_thing') is not null\ncreate table public.new_thing();\n" });
       const res: Gen = generate({ supabaseDir: tmp, date: "2026-10-07" });
       for (const env of ENVS) {
         const before = res.scripts[env].before.split("\n");
         const added = res.scripts[env].after.split("\n").filter((l) => !before.includes(l));
         expect(added).toEqual([`  "newthing|29991231000000_new_thing.sql|resellersos_migration|to_regclass('public.new_thing') is not null"`]);
       }
-      fs.writeFileSync(path.join(tmp, "migrations", "29991231000059_no_header.sql"), "-- forgot\nselect 1;\n");
+      vfs.set(extra[1], { text: "-- forgot\nselect 1;\n" });
       expect(() => generate({ supabaseDir: tmp, date: "2026-10-07" })).toThrow(/29991231000059_no_header\.sql: no "-- deploy-peek:/);
-    } finally { fs.rmSync(root, { recursive: true, force: true }); }
+    } finally { for (const f of extra) vfs.delete(f); }
+  });
+
+  it("the shared layout mirrors the repo again after the tests that change it — and is not on disk", () => {
+    const { root, tmp } = sharedLayout();
+    expect(layoutDrift()).toEqual([]); // every entry still points at what it was built with
+    expect(fs.readdirSync(path.join(tmp, "migrations"))).toEqual(realReaddirSync(path.join(supabaseDir, "migrations")).slice().sort());
+    const prisma = path.join(supabaseDir, "..", "prisma", "migrations");
+    if (realExistsSync(prisma)) expect(fs.readdirSync(path.join(root, "prisma", "migrations"))).toEqual(realReaddirSync(prisma, { withFileTypes: true }).filter((e) => e.isFile() || realReaddirSync(path.join(prisma, e.name)).length > 0).map((e) => e.name).sort());
+    expect(realExistsSync(root)).toBe(false);
+    /* an fs call the layout does not model fails loudly, never quietly */
+    expect(() => fs.readdirSync(path.join(tmp, "migrations"), { withFileTypes: true })).toThrow(/virtual layout/);
+    expect(() => fs.readFileSync(path.join(tmp, "migrations", "x.sql"))).toThrow(/virtual layout/);
+    expect(() => fs.statSync(path.join(tmp, "migrations"))).toThrow(/ENOENT/);
   });
 });
 

@@ -56,7 +56,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL_STEP } from "./worker-tsc-cache.mjs";
-import { execSync, execFileSync, spawnSync } from "node:child_process";
+import { execSync, execFileSync, spawnSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites, slowestSuites } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderGate } from "./worker-lock-guards.mjs";
@@ -379,6 +379,7 @@ export function runGuardSuites(card) {
     const files = PUSH_GUARD_SUITES.filter((f) => !missing.includes(f));
     if (missing.length) console.log(`(guard list me ${missing.length} file nahi mili, chhodi: ${missing.join(", ")})`);
     const out = path.join(os.tmpdir(), `push-guard-${card}-${Date.now()}.json`);
+    const lint = startLintRatchet(root); // R-2568: CI's lint:ratchet, in parallel with the guard files
     const t0 = Date.now();
     let crashed = null;
     try {
@@ -395,8 +396,50 @@ export function runGuardSuites(card) {
       console.log(`(guard tests ${Math.round(ms / 1000)} s le gaye — ${PUSH_GUARD_BUDGET_MS / 1000} s se zyada; manager ko batao, list chhoti karni hai)`);
       if (slow.length) console.log(`  sabse dheemi (test time; fork/imports alag): ${slow.map((s) => `${s.file} ${(s.ms / 1000).toFixed(1)} s`).join(", ")}`);
     }
+    const lv = lintRatchetVerdict(await lint);
+    console.log(lv.message);
+    if (!lv.ok) failed.push(LINT_RATCHET_FAILED);
     return failed;
   });
+}
+
+/* R-2568 (7 Nov 2026): twice on 7 Nov a push went red in CI only on `npm run lint:ratchet` (R-2558
+   max-lines 26/25, R-2566 react-hooks/exhaustive-deps 12/10) — no local step ran it. The push now runs
+   the same script (`--cache`: one content-keyed ESLint cache per checkout, so after the first run only
+   changed files are re-linted) as a child process next to the guard vitest run, and refuses on a
+   non-zero exit with the text CI prints. Output goes to a file, not a pipe: the vitest call above is
+   synchronous, so a pipe would not be drained until it ends. */
+export const LINT_RATCHET_FAILED = "npm run lint:ratchet (CI ka lint ratchet — upar ka text dekho)";
+export function startLintRatchet(root, { spawnFn = spawn, script = path.join(root, "scripts", "lint-ratchet.mjs") } = {}) {
+  const t0 = Date.now();
+  const out = path.join(os.tmpdir(), `push-lint-${process.pid}-${t0}.txt`);
+  let fd;
+  try { fd = fs.openSync(out, "w"); } catch (e) { return Promise.resolve({ code: -1, text: String(e?.message ?? e), ms: 0 }); }
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (code, extra = "") => {
+      if (done) return;
+      done = true;
+      let text = "";
+      try { text = fs.readFileSync(out, "utf8"); } catch {}
+      fs.rmSync(out, { force: true });
+      resolve({ code, text: text + extra, ms: Date.now() - t0 });
+    };
+    let child;
+    try { child = spawnFn(process.execPath, [script, "--cache"], { cwd: root, stdio: ["ignore", fd, fd] }); }
+    catch (e) { fs.closeSync(fd); finish(-1, String(e?.message ?? e)); return; }
+    fs.closeSync(fd);
+    child.on("error", (e) => finish(-1, String(e?.message ?? e)));
+    child.on("exit", (code, signal) => finish(code ?? -1, signal ? `(lint ratchet ${signal} se ruka)` : ""));
+  });
+}
+/** Exit 0 WITH the script's own summary line = ok. Anything else (over a ceiling, an ESLint error, a
+    crash, a script that exited 0 without linting) refuses — CI would not be green either. */
+export function lintRatchetVerdict({ code, text, ms }) {
+  const secs = `${Math.round((ms ?? 0) / 1000)} s`;
+  if (code === 0 && /\(lint-ratchet --cache: \d+ file\(s\) linted, \d+ from cache/.test(String(text ?? ""))) return { ok: true, message: `✓ lint ratchet (CI jaisa): ${secs}` };
+  const tail = String(text ?? "").trim().split(/\r?\n/).slice(-40).join("\n");
+  return { ok: false, message: `✗ lint ratchet (CI ka \`npm run lint:ratchet\`) LAAL — push NAHI hoga (${secs}):\n${tail}` };
 }
 
 async function pushWithTurn(card, ciFlags = {}) {
@@ -446,7 +489,9 @@ async function pushWithTurn(card, ciFlags = {}) {
     if (failed.length) {
       console.error("✗ Guard test fail — push NAHI hua (repo-scan/ratchet test, shayad tumhare area ke bahar ka):");
       for (const f of failed) console.error(`   ${f}`);
-      console.error(`Chalao: npx vitest run "${failed[0].split("\n")[0]}" — apni badli file theek karo (test ko dheela mat karo), phir dobara push.`);
+      const vitestFail = failed.find((f) => f !== LINT_RATCHET_FAILED);
+      if (vitestFail) console.error(`Chalao: npx vitest run "${vitestFail.split("\n")[0]}" — apni badli file theek karo (test ko dheela mat karo), phir dobara push.`);
+      if (failed.includes(LINT_RATCHET_FAILED)) console.error("Chalao: npm run lint:ratchet (aur `npx next lint` jagah dekhne ko) — nayi warnings theek karo; lint-baseline.json mat badhao. Phir dobara push.");
       process.exit(5);
     }
     /* R-1430 (12 Oct): the repo is PUBLIC — scan the lines this push adds for secrets / client data.
