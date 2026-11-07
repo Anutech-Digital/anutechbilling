@@ -14,7 +14,7 @@
  * (`npm run test:e2e`, GitHub's E2E job against staging) also collects e2e/cards/*.spec.ts —
  * there every card spec skips, because the local test login does not exist there.
  */
-import { expect, test, type Browser, type Page } from "@playwright/test";
+import { expect, test, type Browser, type Locator, type Page } from "@playwright/test";
 import type { TestLoginRole } from "../../src/app/api/dev/test-login/rules";
 
 /** True only inside `node scripts/ops/card-tests.mjs`. */
@@ -84,4 +84,18 @@ export async function namesShown(page: Page, names: readonly string[]): Promise<
 /** Pathname of the page's current URL. */
 export function pathOf(page: Page): string {
   return new URL(page.url()).pathname;
+}
+
+/**
+ * The "To collect" figure on Companies › Has receivables, Insights strip open or closed (R-2567,
+ * shared since R-2569). Closed — the strip's default — it is the strip line's fact
+ * "To collect <b>…</b>"; open, it is the tile (its <p> label + value). Never the table's
+ * "To collect" column header, which is a sort button (R-2562's card test read that one with
+ * getByText("To collect").first() when the strip was closed).
+ */
+export async function toCollectFigure(page: Page): Promise<Locator> {
+  const tile = page.locator("p", { hasText: /^To collect$/ }).locator("xpath=..").filter({ visible: true });
+  const fact = page.getByText(/^To collect\s+\S/).filter({ visible: true });
+  await expect(tile.or(fact).first()).toBeVisible({ timeout: 60_000 });
+  return (await fact.count()) > 0 ? fact.first() : tile.first();
 }
