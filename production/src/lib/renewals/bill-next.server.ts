@@ -13,7 +13,7 @@ import type { BillingCycle } from "@/lib/supabase/database.types";
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { addMonthsClamped, CYCLE_MONTHS } from "@/lib/billing/schedule";
 import { defaultSeatRate, nextPeriods, partAmounts, partTaxRate, type BillNextPreview } from "@/lib/billing/proforma";
-import { repriceUnbilledPart } from "@/lib/billing/sync-instalments.server";
+import { unbilledPartPrice } from "@/lib/billing/sync-instalments.server";
 export type { BillNextPreview, PreviewPeriod } from "@/lib/billing/proforma";
 
 export interface BillNextSub {
@@ -72,8 +72,9 @@ export async function billNextPreview(db: SupabaseClient, sub: BillNextSub, coun
   const months = CYCLE_MONTHS[cycle];
   const parts = sub.term_months && sub.term_months % months === 0 ? sub.term_months / months : null;
   /* R-2541: a freed part (its proforma cancelled) at the subscription's CURRENT seats × rate — what
-     Generate and the billing job bill it at (repriceUnbilledPart; dry run: nothing written). */
-  const repriced = row && freed ? await repriceUnbilledPart(db as Parameters<typeof repriceUnbilledPart>[0], row.id, true) : null;
+     Generate and the billing job bill it at (unbilledPartPrice — reads only; R-2543: a part of an
+     earlier term, or of a period that changed shape, keeps its stored amount). */
+  const repriced = row && freed ? await unbilledPartPrice(db as Parameters<typeof unbilledPartPrice>[0], row.id) : null;
   const partTaxable = repriced?.to ?? row?.taxable_amount
     ?? (sub.term_amount && parts ? Math.round(sub.term_amount / parts) : Math.round((sub.mrr ?? 0) * months));
   const seats = Math.max(0, sub.seats ?? 0);

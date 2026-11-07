@@ -16,7 +16,8 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, BillingCycle } from "@/lib/supabase/database.types";
 import { plannedInstalments, instalmentSkip, instalmentsDue, quotePeriodTaxables, isSplitBilled, type InstalmentSkip, type SplitQuoteFields } from "./instalments";
-import { billingTermStart, termAmountOf } from "./subscription-schedule";
+import { billingTermStart, termAmountOf, shortSplitTerm, currentTermStart, uncheckedTermStart } from "./subscription-schedule";
+import { formatDate } from "@/lib/utils";
 import { buildBillingSchedule } from "./schedule";
 import { addDaysISO } from "@/lib/dates/ist";
 import { billedElsewhere, billedElsewhereLabel } from "@/lib/subscriptions/billed-elsewhere";
@@ -101,6 +102,20 @@ export async function syncSubscriptionInstalments(args: {
   const dryRun = args.dryRun ?? false;
   const out: InstalmentSyncResult = emptySyncResult();
 
+  /* R-2543: a split-billed row whose renewal date is short of one whole term lays no parts — say so
+     (the billing job lists it under skipped) with the date the database accepts, never a silent []. */
+  const short = shortSplitTerm(sub);
+  if (short) {
+    /* A term Zoho already billed (R-1763) is not ours to correct — say that instead. */
+    out.skip = sub.start_date && billedElsewhere(sub, sub.start_date.slice(0, 10))
+      ? { code: "billed_elsewhere", reason: `${billedElsewhereLabel(sub)} — this term is not invoiced again here; the next term is.` }
+      : {
+          code: "short_term",
+          reason: `The renewal date ${formatDate(sub.renewal_date?.slice(0, 10))} is less than one whole term after the start date ${formatDate(sub.start_date?.slice(0, 10))}, so no parts are laid. Correct the renewal date to ${formatDate(short.minRenewal)} (the last day of the term) — the parts are laid from it.`,
+        };
+    return out;
+  }
+
   /* R-1763: a period Zoho already billed is never laid or invoiced here (the database refuses
      it too — trigger subscription_billings_not_billed_elsewhere). The term key stays the
      whole term's first day, so the periods still to bill here keep their usual key. */
@@ -122,15 +137,17 @@ export async function syncSubscriptionInstalments(args: {
   if (skip) { out.skip = skip; return out; }
 
   /* R-451: the corrected term start can be one day earlier than the key this term's
-     instalments were already filed under — keep that key, or they are made twice. */
+     instalments were already filed under — keep that key, or they are made twice.
+     R-2543: or a few days LATER than a 29th–31st sale's pre-R-2533 counted-back key — kept too. */
   const correctedStart = planned[0].termStart;
+  const countedBack = uncheckedTermStart(sub);
   const { data: termRows, error: tsErr } = await supabase
     .from("subscription_billings")
     .select("term_start")
     .eq("subscription_id", sub.id)
-    .in("term_start", [correctedStart, addDaysISO(correctedStart, 1)]);
+    .in("term_start", [correctedStart, addDaysISO(correctedStart, 1), ...(countedBack && countedBack < correctedStart ? [countedBack] : [])]);
   if (tsErr) throw new Error(tsErr.message);
-  const termStart = billingTermStart(correctedStart, (termRows ?? []).map((r) => r.term_start));
+  const termStart = billingTermStart(correctedStart, (termRows ?? []).map((r) => r.term_start), countedBack);
   if (termStart !== correctedStart) {
     for (const p of planned) p.termStart = termStart;
   }
@@ -254,20 +271,27 @@ async function plannedTermParts(supabase: Admin, sub: InstalmentSub) {
  * R-2541 (chk-local, 6 Nov — p0 money): a part freed by a cancelled proforma (R-2519d) is billed at
  * the subscription's CURRENT seats × rate — the figure the term run re-syncs its unbilled parts to
  * (the term's schedule at today's term amount, R-2104's quote split when it is the same deal) —
- * here laid out for the part's OWN term and matched on its period number AND start date (a part of
- * an earlier term, or of another cycle, never takes a different period's amount). Before, the
- * billing job billed the stored amount: PI-F588-27-0004 asked 1 × ₹5,100 although the subscription
- * is 18 × ₹300 = ₹5,400. Used by the billing job (billFreedParts), Bill next part and its preview.
+ * laid out for the part's OWN term. Before, the billing job billed the stored amount:
+ * PI-F588-27-0004 asked 1 × ₹5,100 although the subscription is 18 × ₹300 = ₹5,400. Used by the
+ * billing job (billFreedParts), Bill next part and its preview. READS ONLY — billFreedPart writes.
+ *
+ * R-2543 (rv-train3, 6 Nov — train blocker):
+ * - The period must match on number, start AND end. After monthly → quarterly, freed monthly #1
+ *   (12 Jan–12 Feb) matched quarterly #1 (12 Jan–12 Apr) on number + start and was billed three
+ *   months' amount for one month. Now kept: "period_changed".
+ * - Coordinator decision (Pardeep delegates these): only a part of the subscription's CURRENT term
+ *   is repriced. A freed part of an earlier term keeps its stored amount — last year's period is
+ *   never billed at this year's price. Kept: "earlier_term".
+ * A kept part comes back as { from, to: from, kept } (to = the stored amount), and is logged.
  *
  * Left alone (null): an invoiced part (a GST document's source); a part with an open proforma (its
  * own amount — set_part_request_terms); an inactive subscription; a period billed elsewhere (Zoho);
  * a period an add-seats pro-rata quote was raised in (its new seats were charged for that period
- * already — R-527's window assumes the period at the old count); no matching period. Returns the
- * change; writes it only when not a dry run (re-checked at write time: still no invoice).
+ * already — R-527's window assumes the period at the old count); no change in amount.
  */
-export async function repriceUnbilledPart(
-  supabase: Admin, billingId: string, dryRun: boolean,
-): Promise<{ from: number; to: number } | null> {
+export interface PartPrice { from: number; to: number; kept?: "earlier_term" | "period_changed" }
+
+export async function unbilledPartPrice(supabase: Admin, billingId: string): Promise<PartPrice | null> {
   const db = supabase as unknown as SupabaseClient;
   const { data: row, error } = await db.from("subscription_billings")
     .select("id, tenant_id, subscription_id, term_start, period_index, period_start, period_end, taxable_amount, invoice_id")
@@ -285,27 +309,67 @@ export async function repriceUnbilledPart(
   if (sErr) throw new Error(sErr.message);
   const sub = subRow as (InstalmentSub & { status: string }) | null;
   if (!sub || sub.status !== "active" || !isSplitBilled(sub.billing_cycle) || billedElsewhere(sub, b.period_start)) return null;
+  const kept = (why: NonNullable<PartPrice["kept"]>): PartPrice => {
+    console.info(`[billing/freed-part] part ${b.id} (subscription ${sub.id}, ${b.period_start}): kept its stored ₹${was} — ${why}`);
+    return { from: was, to: was, kept: why };
+  };
+  /* R-2543: the CURRENT term only. Its key may be one day later (R-451 legacy) or the unclamped
+     counted-back start (a one-invoice-a-term row, or a 29th–31st sale laid before R-2533). */
+  const termStart = b.term_start.slice(0, 10);
+  const current = currentTermStart(sub);
+  const counted = uncheckedTermStart(sub);
+  const keys = current ? [current, addDaysISO(current, 1), ...(counted ? [counted] : [])] : [];
+  if (!keys.includes(termStart)) return kept("earlier_term");
   const { data: seatQs, error: qErr } = await db.from("quotes").select("id, status")
     .eq("add_seats_subscription_id", sub.id).eq("is_add_seats", true)
     .gte("created_date", b.period_start).lt("created_date", b.period_end);
   if (qErr) throw new Error(qErr.message);
   if (((seatQs ?? []) as { status: string }[]).some((q) => q.status !== "rejected")) return null;
-  const term = buildBillingSchedule({
-    startDate: b.term_start.slice(0, 10), termMonths: Math.max(1, sub.term_months ?? 12),
-    cycle: sub.billing_cycle as BillingCycle, termAmount: termAmountOf(sub),
-  }).map((p) => ({ termStart: b.term_start, periodIndex: p.index, billOn: p.billOn, periodStart: p.periodStart, periodEnd: p.periodEnd, taxableAmount: p.amount }));
-  const planned = term.length > 0
-    ? quotePeriodTaxables(term, { mrr: sub.mrr, cycle: sub.billing_cycle, ...(await quotePlanFacts(supabase, sub)) })
-    : term;
-  const now = planned.find((p) => p.periodIndex === b.period_index && p.periodStart === b.period_start.slice(0, 10))?.taxableAmount;
-  if (now == null || !(now > 0) || now === was) return null;
-  if (!dryRun) {
-    const { error: uErr } = await db.from("subscription_billings")
-      .update({ taxable_amount: now, updated_at: new Date().toISOString() })
-      .eq("id", b.id).is("invoice_id", null);
-    if (uErr) throw new Error(uErr.message);
+  /* Laid from its own key, or (a part added under a kept legacy key) from the corrected start. */
+  const facts = await quotePlanFacts(supabase, sub);
+  let same: { taxableAmount: number } | undefined;
+  for (const from of [...new Set([termStart, current as string])]) {
+    const term = buildBillingSchedule({
+      startDate: from, termMonths: Math.max(1, sub.term_months ?? 12),
+      cycle: sub.billing_cycle as BillingCycle, termAmount: termAmountOf(sub),
+    }).map((p) => ({ termStart: b.term_start, periodIndex: p.index, billOn: p.billOn, periodStart: p.periodStart, periodEnd: p.periodEnd, taxableAmount: p.amount }));
+    const planned = term.length > 0 ? quotePeriodTaxables(term, { mrr: sub.mrr, cycle: sub.billing_cycle, ...facts }) : term;
+    same = planned.find((p) => p.periodIndex === b.period_index
+      && p.periodStart === b.period_start.slice(0, 10) && p.periodEnd === b.period_end.slice(0, 10));
+    if (same) break;
   }
+  if (!same) return kept("period_changed");
+  const now = same.taxableAmount;
+  if (!(now > 0) || now === was) return null;
   return { from: was, to: now };
+}
+
+/**
+ * R-2541 + R-2543: bill a freed part at its current price (unbilledPartPrice) — the reprice and the
+ * bill in ONE database transaction (public.reprice_and_bill_part, migration 20261106162400): the new
+ * amount is written only while the part still has no invoice, no proforma linked and the amount
+ * read here; a bill that fails rolls the reprice back with it, and a bill that makes neither an
+ * invoice nor a proforma (waiting, request open, …) puts the old amount back. A dry run writes
+ * nothing (the bill's dry run prices the stored amount; `repriced` says what a real run would ask).
+ */
+export async function billFreedPart(
+  supabase: Admin, billingId: string, dryRun: boolean,
+): Promise<{ data: unknown; repriced: PartPrice | null }> {
+  const price = await unbilledPartPrice(supabase, billingId);
+  if (dryRun || !price || price.to === price.from) {
+    const { data, error } = await billSubscriptionInstalment(supabase, billingId, dryRun);
+    if (error) throw new Error(error.message);
+    return { data, repriced: price };
+  }
+  const { data, error } = await (supabase as unknown as SupabaseClient)
+    .rpc("reprice_and_bill_part", { p_billing_id: billingId, p_from: price.from, p_to: price.to });
+  if (error) throw new Error(error.message);
+  const note = (data as { reprice?: string } | null)?.reprice;
+  if (note !== "applied") {
+    console.info(`[billing/freed-part] part ${billingId}: reprice ₹${price.from} → ₹${price.to} not kept (${note ?? "no answer"})`);
+    return { data, repriced: { from: price.from, to: price.from } };
+  }
+  return { data, repriced: price };
 }
 
 /**
@@ -552,8 +616,9 @@ export async function raiseDueInstalmentsForQuote(args: {
 }
 
 
-/** A freed part billed by the billing job; `repriced` = its amount moved to the current seats × rate (R-2541). */
-export interface FreedPartBilled { subscription_id: string; billing_id: string; result: InstalmentSyncResult; repriced: { from: number; to: number } | null }
+/** A freed part billed by the billing job; `repriced` = its amount moved to the current seats × rate (R-2541),
+ *  or kept with the reason (R-2543: `kept` earlier_term / period_changed; to === from when not moved). */
+export interface FreedPartBilled { subscription_id: string; billing_id: string; result: InstalmentSyncResult; repriced: PartPrice | null }
 
 /**
  * R-2519d (coordinator, BITDECENTRO): parts whose proforma was CANCELLED and not billed again —
@@ -574,10 +639,9 @@ export async function billFreedParts(
     .sort((a, b) => a.period_start.localeCompare(b.period_start));
   for (const r of rows) {
     try {
-      /* R-2541: at the subscription's current seats × rate, not the amount stored when it was laid. */
-      const repriced = await repriceUnbilledPart(supabase, r.billing_id, args.dryRun);
-      const { data: out, error: bErr } = await billSubscriptionInstalment(supabase, r.billing_id, args.dryRun);
-      if (bErr) throw new Error(bErr.message);
+      /* R-2541: at the subscription's current seats × rate, not the amount stored when it was laid —
+         R-2543: repriced and billed in one transaction (billFreedPart). */
+      const { data: out, repriced } = await billFreedPart(supabase, r.billing_id, args.dryRun);
       const result = emptySyncResult();
       applyBillOutcome(result, 1, out, args.dryRun);
       parts.push({ subscription_id: r.subscription_id, billing_id: r.billing_id, result, repriced });

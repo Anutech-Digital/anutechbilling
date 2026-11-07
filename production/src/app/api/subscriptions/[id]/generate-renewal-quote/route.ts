@@ -32,7 +32,7 @@ import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { renewalIsSettled, firstReminderDaysOut } from "@/lib/renewals/cadence";
 import { billDueTermsOldestFirst, termsMessage, withFreedPart, rolledRenewalDate, type TermsBilled } from "@/lib/renewals/split-billed-next-part";
-import { billSubscriptionInstalment, emptySyncResult, repriceUnbilledPart } from "@/lib/billing/sync-instalments.server";
+import { billFreedPart, emptySyncResult } from "@/lib/billing/sync-instalments.server";
 import { applyBillOutcome, paidAheadReason } from "@/lib/billing/part-requests";
 import { formatDate } from "@/lib/utils";
 import { addDaysISO } from "@/lib/dates/ist";
@@ -117,12 +117,12 @@ export const POST = withRoute({
     }
     let freed: TermsBilled["terms"][number] | null = null;
     if (first.row && first.freed) {
-      /* R-2541: billed at the subscription's current seats × rate (the preview's figure), not the stored one. */
-      try { await repriceUnbilledPart(supabase, first.row.id, false); } catch (e) {
-        return NextResponse.json({ error: `Could not price the period from ${first.row.period_start}: ${e instanceof Error ? e.message : String(e)}` }, { status: 400 });
+      /* R-2541: billed at the subscription's current seats × rate (the preview's figure), not the stored one.
+         R-2543: the reprice and the bill are one transaction — a failed bill leaves the old amount. */
+      let fb: unknown;
+      try { fb = (await billFreedPart(supabase, first.row.id, false)).data; } catch (e) {
+        return NextResponse.json({ error: `Could not bill the period from ${first.row.period_start}: ${e instanceof Error ? e.message : String(e)}` }, { status: 400 });
       }
-      const { data: fb, error: fErr } = await billSubscriptionInstalment(supabase, first.row.id, false);
-      if (fErr) return NextResponse.json({ error: `Could not bill the period from ${first.row.period_start}: ${fErr.message}` }, { status: 400 });
       const tally = emptySyncResult();
       applyBillOutcome(tally, first.row.period_index, fb, false);
       const aheadFreed = paidAheadReason(tally.waiting, formatDate);
