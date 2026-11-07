@@ -50,6 +50,19 @@ memory. That is how every teammate's Claude stays updated.
   why; offer at most 1–2 process speed-ups per update (real ones become G-PROCESS cards with numbers).
 - Page tweaks from screenshots: collect all of them first ("aur kuch is page par?"), then ONE card.
 
+### Owner bahar / so raha hai (7 Nov 2026, Pardeep — R-2573)
+
+*"jisme mere bina kaam nahi chal sakta use pending kaam me daal dena aur aage badte rahna"* — Pardeep,
+7 Nov raat. Same for every teammate's Claude whenever he is out or asleep.
+
+1. **Keep working, don't stop.** Workers stay full (4 by day, 6 by night), make cards, push, watch CI,
+   run card tests, keep the board current.
+2. **Owner-only items go to the pending list, not to chat** (money/GST/price decision, data repair,
+   login/password, a classifier-blocked command): write them in
+   `Anutech-HQ/drafts/PARDEEP-PENDING-<date>.md` + `workstation.json` `pending`, and on the card
+   `needsDecision` with your recommendation. Don't ask in chat, don't wait — take the next card.
+3. **When he is back:** give a short "aapke liye pending" list (one line each, with your recommendation).
+
 ## b) Logins and browser
 
 *Login: command hum chalate hain, Pardeep sirf Allow dabata hai.*
@@ -277,3 +290,6 @@ Format: `- <date>: what went wrong → the rule it created (card).`
 - 7 Nov 2026 (R-2566): a long list froze because every row called `toLocaleString(…, options)` (a new
   Intl formatter per call) → build the `Intl.NumberFormat` / `DateTimeFormat` ONCE (module level) and
   reuse it for every row.
+- 7 Nov 2026 (R-2573): Pardeep went to sleep and said "jisme mere bina kaam nahi chal sakta use pending
+  kaam me daal dena aur aage badte rahna" → owner out/asleep = keep working; owner-only items go to
+  the pending list + card `needsDecision`, never a chat question that stops the work (section a).
