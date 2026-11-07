@@ -15,6 +15,7 @@
  * there every card spec skips, because the local test login does not exist there.
  */
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import type { TestLoginRole } from "../../src/app/api/dev/test-login/rules";
 
 /** True only inside `node scripts/ops/card-tests.mjs`. */
 export const CARD_TESTS_ON = process.env.CARD_TESTS === "1";
@@ -25,7 +26,10 @@ export function onlyInCardTests() {
 }
 
 /** The roles the Local test login box offers (src/app/api/dev/test-login/rules.ts). */
-export type LocalRole = "owner" | "manager" | "accountant" | "sales" | "owner2";
+export type LocalRole = TestLoginRole;
+
+/** Logins seeded only when their password is in .env.test (e2e-roles.mjs E2E_LOCAL_EXTRA_ROLES). */
+const LOCAL_ONLY_ROLES: ReadonlySet<LocalRole> = new Set<LocalRole>(["owner2", "billing", "support"]);
 
 /** Sign this page's browser context in as a seeded local test role (cookies land in the context). */
 export async function loginLocal(page: Page, role: LocalRole): Promise<void> {
@@ -33,6 +37,12 @@ export async function loginLocal(page: Page, role: LocalRole): Promise<void> {
   const res = await page.request.post("/api/dev/test-login", { data: { role }, timeout: 60_000 });
   if (!res.ok()) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
+    // R-2553: owner2 / billing / support are optional local-only logins. Not seeded on this machine
+    // (412: no password in .env.test) → the step is SKIPPED with the fix, not shown as a red ✗.
+    if (res.status() === 412 && LOCAL_ONLY_ROLES.has(role)) {
+      test.skip(true, `Local test login "${role}" is not seeded here: ${body.error ?? "no password"} ` +
+        "(add it to production/.env.test, then E2E_ALLOW_SEED=1 node e2e/fixtures/seed-e2e-tenant.mjs — local DB only).");
+    }
     throw new Error(
       `Local test login as ${role} answered ${res.status()}${body.error ? `: ${body.error}` : ""} — ` +
         "is localhost running with `npm run dev:local` and are the E2E test users seeded?",

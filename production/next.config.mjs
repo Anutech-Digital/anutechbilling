@@ -68,7 +68,7 @@ const nextConfig = {
      cloudbuild.yaml gate runs `next typegen` + `tsc --noEmit` instead — typegen writes the
      .next/types route files, so tsc catches typedRoutes there too. The gate runs beside the
      image build and `push` waits for it, so a type error still stops the deploy. A plain
-     `npm run build` (local, CI) leaves the variable unset and checks types as before. */
+     local `npm run build` leaves it unset and checks types; CI's build sets it too (R-2552) — CI's typecheck job runs typegen + tsc. */
   typescript: { ignoreBuildErrors: process.env.SKIP_BUILD_TYPECHECK === "1" },
   /* 5 Oct 2026: two Cloud Build runs died with SIGKILL inside `next build` on the 8 GB
      E2_HIGHCPU_8 machine (once in the morning, once after R-161 added `prisma generate`).

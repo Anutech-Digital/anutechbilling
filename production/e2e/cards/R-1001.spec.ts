@@ -9,11 +9,10 @@
  *   - Step 4 (kiosk PIN + selfie) needs a camera and the office network — a person checks it.
  *   - PAN / labour cost: the local company has no PAN filled and no labour allocated (7 Nov), so
  *     those parts are noted, not faked.
- *   - Billing: the Local test login has no billing button, so step 5 checks the menu RULE the
- *     sidebar is built from (src/lib/nav.ts), not a billing browser session.
+ *   - Billing (R-2553): step 5 signs in with the local Billing test login in the browser; the
+ *     "Reimbursements: employee name may be blank" part is a judgement, noted, not tested.
  */
 import { expect, test, type Browser } from "@playwright/test";
-import { filterNavForRole, flattenNav, isRouteAllowed, APP_NAV } from "../../src/lib/nav";
 import { namesShown, onlyInCardTests, openAppPage, pageAs, pathOf } from "./card-steps";
 
 /** Employee names the OWNER sees on /accounting/employees — read once, used by the Sales steps. */
@@ -141,14 +140,28 @@ test.describe("R-1001 — employee data only for owner / manager / accountant", 
     test.skip(true, "Machine can't: the kiosk needs a camera (selfie) and the office network — a person checks this on the device.");
   });
 
-  test("Step 5: Billing — Payroll / Loans not in the menu (menu rule)", async () => {
-    // No billing button in the Local test login, so this checks the rule the sidebar and the
-    // route guard are built from — the same functions the app calls for a billing user.
-    const billingMenu = flattenNav(filterNavForRole(APP_NAV, "billing")).map((e) => e.item.href);
-    for (const href of ["/accounting/payroll", "/accounting/loans", "/accounting/employees", "/accounting/salary-register"]) {
-      expect(billingMenu, `${href} in billing's menu`).not.toContain(href);
-      expect(isRouteAllowed("billing", href), `billing may open ${href}`).toBe(false);
+  test("Step 5: Billing — Payroll / Loans not in the menu, and bounced by URL (browser login)", async ({ browser, baseURL }) => {
+    const blocked = ["/accounting/payroll", "/accounting/loans", "/accounting/employees", "/accounting/salary-register"];
+    const page = await pageAs(browser, baseURL, "billing");
+    try {
+      // Billing's menu: wait until the sidebar has drawn Billing's own Invoices link, so
+      // "no Payroll link" is judged on a loaded menu, not an empty one. A closed accordion does not
+      // draw its children (Loans / Salary Register sit under Payroll), so the URL check below is
+      // the proof for those; this one proves the top-level rows.
+      await openAppPage(page, "/invoices");
+      await expect(page.locator('a[href="/invoices"]').first()).toBeVisible({ timeout: 60_000 });
+      for (const href of blocked) {
+        await expect(page.locator(`a[href="${href}"]`), `${href} link in Billing's menu`).toHaveCount(0);
+      }
+      // By URL: every payroll page sends Billing elsewhere, still signed in.
+      for (const path of blocked) {
+        await page.goto(path);
+        await expect(page, `${path} must bounce Billing away`).not.toHaveURL(new RegExp(`${path}$`), { timeout: 60_000 });
+        await expect(page).not.toHaveURL(/\/login/);
+      }
+      test.info().annotations.push({ type: "note", description: `Billing (browser login): no menu link and bounced by URL for ${blocked.join(", ")}. Reimbursements' blank employee name not judged (a decision, not a test).` });
+    } finally {
+      await page.context().close();
     }
-    test.info().annotations.push({ type: "note", description: "Checked the menu rule (nav.ts), not a billing browser session — the Local test login has no billing button." });
   });
 });

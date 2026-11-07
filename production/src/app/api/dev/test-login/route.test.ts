@@ -68,8 +68,9 @@ describe("POST /api/dev/test-login — 404 unless every gate passes", () => {
     expect((await POST(req({ role: "owner" }, "[::1]:3001"))).status).toBe(200);
   });
 
-  it("unknown role (billing, admin, an email) → 400, no sign-in", async () => {
-    for (const role of ["billing", "admin", "pardeep@anutech.in", undefined]) {
+  it("unknown role (delivery, admin, an email) → 400, no sign-in", async () => {
+    // R-2553: billing/support became test logins; "delivery" is a real users.role with no button.
+    for (const role of ["delivery", "partner_agent", "admin", "pardeep@anutech.in", undefined]) {
       expect((await POST(req({ role }))).status).toBe(400);
     }
     expect(signInWithPassword).not.toHaveBeenCalled();
@@ -118,6 +119,48 @@ describe("POST /api/dev/test-login — 404 unless every gate passes", () => {
     expect(signInWithPassword).not.toHaveBeenCalled();
   });
 
+  it("R-2553: billing and support → 200, sign in e2e-<role>@example.test with their own password", async () => {
+    vi.stubEnv("E2E_BILLING_PASSWORD", "b-test-only-b");
+    vi.stubEnv("E2E_BILLING_EMAIL", "");
+    vi.stubEnv("E2E_SUPPORT_PASSWORD", "s-test-only-s");
+    vi.stubEnv("E2E_SUPPORT_EMAIL", "");
+    const b = await POST(req({ role: "billing" }));
+    expect(b.status).toBe(200);
+    expect(signInWithPassword).toHaveBeenLastCalledWith({ email: "e2e-billing@example.test", password: "b-test-only-b" });
+    expect(await b.text()).not.toContain("b-test-only-b");
+    const s = await POST(req({ role: "support" }, "[::1]:3001"));
+    expect(s.status).toBe(200);
+    expect(signInWithPassword).toHaveBeenLastCalledWith({ email: "e2e-support@example.test", password: "s-test-only-s" });
+    expect(await s.text()).not.toContain("s-test-only-s");
+  });
+
+  it("R-2553: billing / support keep every gate — off localhost, off dev:local, in a build → 404", async () => {
+    vi.stubEnv("E2E_BILLING_PASSWORD", "b-test-only-b");
+    vi.stubEnv("E2E_SUPPORT_PASSWORD", "s-test-only-s");
+    for (const role of ["billing", "support"]) {
+      vi.stubEnv("NEXT_PUBLIC_APP_ENV", "local");
+      vi.stubEnv("NODE_ENV", "development");
+      expect((await POST(req({ role }, "reselleros.anutech.in"))).status).toBe(404);
+      vi.stubEnv("NEXT_PUBLIC_APP_ENV", "staging");
+      expect((await POST(req({ role }))).status).toBe(404);
+      vi.stubEnv("NEXT_PUBLIC_APP_ENV", "local");
+      vi.stubEnv("NODE_ENV", "production");
+      expect((await POST(req({ role }))).status).toBe(404);
+    }
+    expect(signInWithPassword).not.toHaveBeenCalled();
+  });
+
+  it("R-2553: billing with no password → 412 naming E2E_BILLING_PASSWORD; look-alikes refused", async () => {
+    vi.stubEnv("E2E_BILLING_PASSWORD", "");
+    const res = await POST(req({ role: "billing" }));
+    expect(res.status).toBe(412);
+    expect((await res.json()).error).toContain("E2E_BILLING_PASSWORD");
+    for (const role of ["Billing", "billing ", "billing2", "Support"]) {
+      expect((await POST(req({ role }))).status).toBe(400);
+    }
+    expect(signInWithPassword).not.toHaveBeenCalled();
+  });
+
   it("a failed sign-in → 401", async () => {
     signInWithPassword.mockResolvedValue({ error: { message: "Invalid login credentials" } });
     expect((await POST(req({ role: "owner" }))).status).toBe(401);
@@ -142,10 +185,27 @@ describe("rules", () => {
       expect(a).toEqual({ email: b.email, password: b.password });
     }
   });
+  it("R-2553: card:check and localhost:ready know the same logins as the route", async () => {
+    // @ts-expect-error — plain .mjs ops script, no types
+    const { TEST_ROLES } = await import("../../../../../scripts/ops/localhost-ready-lib.mjs");
+    // @ts-expect-error — plain .mjs ops script, no types
+    const { ROLE_LABEL } = await import("../../../../../scripts/ops/card-check-lib.mjs");
+    expect([...TEST_ROLES].sort()).toEqual([...TEST_LOGIN_ROLES].sort());
+    expect(Object.keys(ROLE_LABEL).sort()).toEqual([...TEST_LOGIN_ROLES].sort());
+  });
   it("R-2318: owner2 is seeded as an owner; CI's required roles stay the four (no new secret)", () => {
     expect(roleDbRole("owner2")).toBe("owner");
     expect(roleDbRole("sales")).toBe("sales");
     expect([...E2E_ROLES]).not.toContain("owner2");
+  });
+  it("R-2553: billing / support are seeded with users.role billing / support, local-only (no CI secret)", async () => {
+    const { USER_ROLES } = await import("@/lib/auth/roles");
+    for (const r of ["billing", "support"] as const) {
+      expect(roleDbRole(r)).toBe(r);
+      expect(USER_ROLES as readonly string[]).toContain(r);
+      expect([...E2E_LOCAL_EXTRA_ROLES]).toContain(r);
+      expect([...E2E_ROLES]).not.toContain(r);
+    }
   });
   it("reads only E2E_* lines from .env.test text", () => {
     const vars = e2eVarsFromEnvText("SUPABASE_SERVICE_ROLE_KEY=abc\n# E2E_X=1\nE2E_OWNER_PASSWORD=\"q\"\r\nE2E_SALES_EMAIL = s@x.test\n");
