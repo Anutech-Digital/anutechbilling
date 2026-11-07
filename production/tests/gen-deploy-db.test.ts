@@ -1,4 +1,5 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterAll } from "vitest";
+import { readSource } from "@/lib/testing/source-cache";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -9,6 +10,36 @@ import { parseDeployHeaders, supersedePeeks, pgProcPeekChecks, functionsDefined,
 // from `-- deploy-peek:` headers in the migrations instead of hand-edited (6 hand edits on 7 Oct).
 const supabaseDir = path.resolve(__dirname, "..", "supabase");
 type Gen = { files: string[]; scripts: Record<string, { before: string; after: string }> };
+
+/* R-2564 (7 Nov 2026): this suite runs generate() over all ~600 migrations six times (the repo, the
+   --since run, two temp layouts, the bad-header run) and reads them again for the R-2473 check — 40–125 s
+   under push load, almost all of it readFileSync (cpu profile) plus copying 11 MB twice. Now:
+   - a .sql file in a repo migration home is read through the shared, always-fresh read cache
+     (src/lib/testing/source-cache.ts — size/mtime/ctime checked on every read; the other migration
+     scans use it too);
+   - the temp layouts get an empty STAND-IN file per migration (same name, same folders) and reading a
+     stand-in returns its repo file's text — exactly what a copy would hold, without writing 11 MB.
+     Hard links were tried first: making one changes the repo file's ctime, so every link emptied the
+     shared cache for all scans.
+   Anything else (deploy-db scripts, files a test writes, a stand-in moved with moveMigration()) is
+   read as before, so generate() still sees the same text a full copy gave it. */
+const MIG_HOMES = [path.join(supabaseDir, "migrations"), path.join(supabaseDir, "..", "prisma", "migrations")]
+  .map((d) => path.resolve(d).toLowerCase() + path.sep);
+const standIn = new Map<string, string>(); // temp stand-in → repo file
+const realReadFileSync = fs.readFileSync;
+let inCache = false; // readSource() itself reads through fs.readFileSync — that call goes to disk
+vi.spyOn(fs, "readFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, opts?: unknown) => {
+  if (!inCache && typeof file === "string" && opts === "utf8" && file.endsWith(".sql")) {
+    const abs = path.resolve(file);
+    const repo = standIn.get(abs) ?? abs;
+    if (MIG_HOMES.some((h) => repo.toLowerCase().startsWith(h))) {
+      inCache = true;
+      try { return readSource(repo); } finally { inCache = false; }
+    }
+  }
+  return (realReadFileSync as (f: unknown, o?: unknown) => string | Buffer)(file, opts);
+}) as typeof fs.readFileSync);
+afterAll(() => vi.restoreAllMocks());
 
 describe("gen-deploy-db headers", () => {
   it("reads key, peek and user from the top comment block", () => {
@@ -67,14 +98,34 @@ describe("gen-deploy-db file choice + rewrite", () => {
 
 /* Copy both migration homes: supabase/migrations, and prisma/migrations where the staging
    branch (R-161) keeps applied ones — so these tests pass on either branch. */
-function copyMigrations(tmpSupabase: string) {
-  fs.cpSync(path.join(supabaseDir, "migrations"), path.join(tmpSupabase, "migrations"), { recursive: true });
-  const prisma = path.join(supabaseDir, "..", "prisma", "migrations");
-  if (fs.existsSync(prisma)) fs.cpSync(prisma, path.join(tmpSupabase, "..", "prisma", "migrations"), { recursive: true });
+function standInTree(from: string, to: string) {
+  fs.mkdirSync(to, { recursive: true });
+  for (const e of fs.readdirSync(from, { withFileTypes: true })) {
+    const a = path.join(from, e.name), b = path.join(to, e.name);
+    if (e.isDirectory()) standInTree(a, b);
+    else if (e.name.endsWith(".sql")) { fs.writeFileSync(b, ""); standIn.set(path.resolve(b), path.resolve(a)); }
+    else fs.copyFileSync(a, b);
+  }
 }
+function copyMigrations(tmpSupabase: string) {
+  standInTree(path.join(supabaseDir, "migrations"), path.join(tmpSupabase, "migrations"));
+  const prisma = path.join(supabaseDir, "..", "prisma", "migrations");
+  if (fs.existsSync(prisma)) standInTree(prisma, path.join(tmpSupabase, "..", "prisma", "migrations"));
+}
+/** Move a copied migration the way a rename moves a real copy: its text goes with it. */
+function moveMigration(from: string, to: string) {
+  const repo = standIn.get(path.resolve(from));
+  if (!repo) { fs.renameSync(from, to); return; }
+  fs.writeFileSync(to, readSource(repo));
+  fs.rmSync(from);
+  standIn.delete(path.resolve(from));
+}
+/* R-2564: the repo's own regeneration is the same pure read for three tests — run it once. */
+let todays: Gen | undefined;
+const generateToday = (): Gen => (todays ??= generate({ supabaseDir, date: "2026-10-07" }) as Gen);
 describe("today's deploy scripts (7 Oct 2026)", () => {
   it("regenerating is a no-op — the headers carry exactly the peeks the scripts had", () => {
-    const res: Gen = generate({ supabaseDir, date: "2026-10-07" });
+    const res: Gen = generateToday();
     /* The count grows every time a migration lands — pin "no drift", not a number. */
     expect(res.files.length).toBeGreaterThanOrEqual(17);
     expect(res.files).toEqual(res.files.slice().sort());
@@ -85,7 +136,7 @@ describe("today's deploy scripts (7 Oct 2026)", () => {
   });
 
   it("R-531: the global authenticator pre_request never reaches a deploy script", () => {
-    const res: Gen = generate({ supabaseDir, date: "2026-10-07" });
+    const res: Gen = generateToday();
     expect(res.files.some((f: string) => f.startsWith("20261009220100_"))).toBe(false);
     for (const env of ENVS) {
       expect(res.scripts[env].after).not.toContain("20261009220100_");
@@ -94,7 +145,7 @@ describe("today's deploy scripts (7 Oct 2026)", () => {
   });
 
   it("staging keeps its auth.uid() rewrite; live never gets it", () => {
-    const res: Gen = generate({ supabaseDir, date: "2026-10-07" });
+    const res: Gen = generateToday();
     expect(res.scripts.staging.after).toContain("s/auth\\.uid()/public.current_user_id()/g");
     expect(res.scripts.live.after).not.toContain("current_user_id()/g");
   });
@@ -111,7 +162,7 @@ describe("today's deploy scripts (7 Oct 2026)", () => {
       const moved = "20261006130000_feedback_checked";
       if (fs.existsSync(path.join(tmp, "migrations", `${moved}.sql`))) {
         fs.mkdirSync(path.join(root, "prisma", "migrations", moved), { recursive: true });
-        fs.renameSync(path.join(tmp, "migrations", `${moved}.sql`), path.join(root, "prisma", "migrations", moved, "migration.sql"));
+        moveMigration(path.join(tmp, "migrations", `${moved}.sql`), path.join(root, "prisma", "migrations", moved, "migration.sql"));
       }
       const res: Gen = generate({ supabaseDir: tmp, date: "2026-10-07" });
       expect(res.files).toContain(`${moved}.sql`);

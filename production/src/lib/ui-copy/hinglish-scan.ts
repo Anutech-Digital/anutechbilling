@@ -112,11 +112,12 @@ export function uiSourceFiles(root: string): string[] {
     .sort();
 }
 
-/** file -> Hinglish hits, only for files that have any. */
-export function scanHinglish(root: string): Map<string, string[]> {
+/** file -> Hinglish hits, only for files that have any. `read` (R-2564): the guard test passes the shared
+    read cache (src/lib/testing/source-cache.ts) — same text, read once per change instead of per run. */
+export function scanHinglish(root: string, read: (file: string) => string = (f) => readFileSync(f, "utf8")): Map<string, string[]> {
   const res = new Map<string, string[]>();
   for (const f of uiSourceFiles(root)) {
-    const hits = hinglishHits(readFileSync(join(root, f), "utf8"));
+    const hits = hinglishHits(read(join(root, f)));
     if (hits.length) res.set(f, hits);
   }
   return res;
