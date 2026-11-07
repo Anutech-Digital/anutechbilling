@@ -157,6 +157,8 @@ export function toCollectBreakdown(
  * listed (`renewalDues` = subscriptionDue of the page's own rows) and, when Companies › Has
  * receivables (`all.companiesTotal`) is more, what makes up the rest. null = nothing to say.
  * `projectsUnread`: the project read failed — say so rather than silently leave it out.
+ * R-2562: then the Companies › Has receivables figure is NOT named — without the project invoices
+ * it is short by them, a wrong total that looks right. The page puts a Try again button after it.
  */
 export function subscriptionDuesLine(
   all: ToChaseSummary,
@@ -166,10 +168,15 @@ export function subscriptionDuesLine(
   const other = all.subscriptionDues - all.unlinked.value - renewalDues;
   if (renewalDues <= 0 && all.companiesTotal <= 0 && !projectsUnread) return null;
   let line = renewalDues > 0 ? `${rupee(renewalDues)} unpaid on these renewals` : "No renewal unpaid";
+  if (projectsUnread) return `${line} · ${PROJECT_INVOICES_UNREAD}`;
   const rest: string[] = [];
   if (all.projectInvoices > 0) rest.push(`project invoices ${rupee(all.projectInvoices)}`);
   if (other > 0) rest.push(`${rupee(other)} on subscriptions not listed here`);
   if (rest.length > 0) line += ` · Companies › Has receivables ${rupee(all.companiesTotal)} also has ${rest.join(" + ")}`;
-  if (projectsUnread) line += " · project invoices could not be read";
   return line;
 }
+
+/** R-2562: one wording wherever the project-receivables read failed (Renewals, Companies). */
+export const PROJECT_INVOICES_UNREAD = "Project invoices couldn't be read";
+/** R-2562: the same for the subscription-dues read on Companies › Has receivables. */
+export const SUBSCRIPTION_DUES_UNREAD = "Subscription dues couldn't be read";

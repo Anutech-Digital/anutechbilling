@@ -109,7 +109,7 @@ describe("R-1473 subscriptionDuesLine", () => {
   });
   it("says so when the project read failed", () => {
     expect(subscriptionDuesLine(toChaseSummary([{ customer_id: "a", outstanding_amount: 2_000 }]), 2_000, true))
-      .toBe("₹2,000 unpaid on these renewals · project invoices could not be read");
+      .toBe("₹2,000 unpaid on these renewals · Project invoices couldn't be read");
   });
 });
 

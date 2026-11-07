@@ -933,6 +933,15 @@ export default function RenewalsPage() {
                 <Link href={drillHref("customersUnpaid") as Route} className="text-rose hover:underline" data-testid="renewals-dues-line">
                   {duesLine}
                 </Link>
+                {/* R-2562: the project read failed — the line says so; this retries just that read. */}
+                {projRecvQ.isError && (
+                  <>
+                    {" "}
+                    <Button size="sm" variant="ghost" icon="refresh" className="align-middle" onClick={() => void projRecvQ.refetch()}>
+                      Try again
+                    </Button>
+                  </>
+                )}
               </>
             )}
             {/* R-2266: the at-risk ARR figure lived here AND in the strip — it is only on the

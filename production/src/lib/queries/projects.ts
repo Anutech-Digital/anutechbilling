@@ -115,8 +115,10 @@ export function useAllProjectPayments() {
       const ids = [...new Set(rows.map((p) => p.project_id))];
       const titleBy = new Map<string, { title: string; customer: string; customerId: string | null }>();
       if (ids.length > 0) {
-        const { data: projs } = await supabase
+        // R-2562: a failed read filed every receipt under "Project" / "—" with no company.
+        const { data: projs, error: e2 } = await supabase
           .from("project_sales").select("id, title, customer_name, customer_id").in("id", ids);
+        if (e2) throw e2;
         for (const p of projs ?? []) titleBy.set(p.id, { title: p.title, customer: p.customer_name, customerId: p.customer_id });
       }
       return rows.map((p) => ({
@@ -163,29 +165,46 @@ export function useProjectInvoiceIds() {
 
 // ── Per-customer PROJECT receivable (invoiced-but-unpaid), for the Customers
 //    list — so project money shows there too, not just subscriptions. ──────────
+/**
+ * R-2562: the read behind Companies "To collect", the Renewals dues line and the dashboard
+ * Collections card. It used to drop each read's `error` and add up whatever came back — a failed
+ * read gave `{}`, which the pages showed as ₹0 project invoices (or a total short by the project
+ * money) with no warning. Now a failed read THROWS, so the query is in error and each page says
+ * "Project invoices couldn't be read — Try again". The three tables are also paged past
+ * PostgREST's silent 1000-row cap (R-264) — a capped sum is the same wrong number, minus the error.
+ */
+export async function readProjectReceivablesByCustomer(
+  supabase: ReturnType<typeof createClient>,
+): Promise<Record<string, number>> {
+  const [projects, ms, pays] = await Promise.all([
+    fetchAllRows((from, to) =>
+      supabase.from("project_sales").select("id, customer_id")
+        .order("id", { ascending: true }).range(from, to)),
+    fetchAllRows((from, to) =>
+      supabase.from("project_milestones").select("project_id, total_amount, invoice_id")
+        .order("id", { ascending: true }).range(from, to)),
+    fetchAllRows((from, to) =>
+      supabase.from("project_payments").select("project_id, amount")
+        .order("id", { ascending: true }).range(from, to)),
+  ]);
+  const custByProject = new Map(projects.map((p) => [p.id as string, p.customer_id as string | null]));
+  const invoicedBy = new Map<string, number>();
+  for (const m of ms) if (m.invoice_id) invoicedBy.set(m.project_id, (invoicedBy.get(m.project_id) ?? 0) + (m.total_amount ?? 0));
+  const paidBy = new Map<string, number>();
+  for (const p of pays) paidBy.set(p.project_id, (paidBy.get(p.project_id) ?? 0) + (p.amount ?? 0));
+  const out: Record<string, number> = {};
+  for (const [pid, cust] of custByProject) {
+    if (!cust) continue;
+    const recv = Math.max(0, (invoicedBy.get(pid) ?? 0) - (paidBy.get(pid) ?? 0));
+    if (recv > 0) out[cust] = (out[cust] ?? 0) + recv;
+  }
+  return out;
+}
+
 export function useProjectReceivablesByCustomer() {
   return useQuery({
     queryKey: ["project_receivables_by_customer"],
-    queryFn: async (): Promise<Record<string, number>> => {
-      const supabase = createClient();
-      const [{ data: projects }, { data: ms }, { data: pays }] = await Promise.all([
-        supabase.from("project_sales").select("id, customer_id"),
-        supabase.from("project_milestones").select("project_id, total_amount, invoice_id"),
-        supabase.from("project_payments").select("project_id, amount"),
-      ]);
-      const custByProject = new Map((projects ?? []).map((p) => [p.id as string, p.customer_id as string | null]));
-      const invoicedBy = new Map<string, number>();
-      for (const m of ms ?? []) if (m.invoice_id) invoicedBy.set(m.project_id, (invoicedBy.get(m.project_id) ?? 0) + (m.total_amount ?? 0));
-      const paidBy = new Map<string, number>();
-      for (const p of pays ?? []) paidBy.set(p.project_id, (paidBy.get(p.project_id) ?? 0) + (p.amount ?? 0));
-      const out: Record<string, number> = {};
-      for (const [pid, cust] of custByProject) {
-        if (!cust) continue;
-        const recv = Math.max(0, (invoicedBy.get(pid) ?? 0) - (paidBy.get(pid) ?? 0));
-        if (recv > 0) out[cust] = (out[cust] ?? 0) + recv;
-      }
-      return out;
-    },
+    queryFn: (): Promise<Record<string, number>> => readProjectReceivablesByCustomer(createClient()),
     staleTime: 30_000,
   });
 }
@@ -206,10 +225,12 @@ export function useCustomerProjects(customerId: string | null | undefined) {
       const paidBy = new Map<string, number>();
       const invoicedBy = new Map<string, number>();
       if (ids.length > 0) {
-        const [{ data: pays }, { data: ms }] = await Promise.all([
+        const [{ data: pays, error: e2 }, { data: ms, error: e3 }] = await Promise.all([
           supabase.from("project_payments").select("project_id, amount").in("project_id", ids),
           supabase.from("project_milestones").select("project_id, total_amount, invoice_id").in("project_id", ids),
         ]);
+        // R-2562: a failed read showed each project as ₹0 paid / ₹0 receivable — say it failed.
+        if (e2 || e3) throw (e2 ?? e3);
         for (const p of pays ?? []) paidBy.set(p.project_id, (paidBy.get(p.project_id) ?? 0) + (p.amount ?? 0));
         for (const m of ms ?? []) if (m.invoice_id) invoicedBy.set(m.project_id, (invoicedBy.get(m.project_id) ?? 0) + (m.total_amount ?? 0));
       }
@@ -249,14 +270,17 @@ export function useCustomerProjectPayments(customerId: string | null | undefined
       const empty = { payments: [], invoicePaid: {}, invoiceProject: {} };
       if (!customerId) return empty;
       const supabase = createClient();
-      const { data: projects } = await supabase.from("project_sales").select("id, title").eq("customer_id", customerId);
+      // R-2562: each read's error is thrown — "no project payments" after a failed read is a wrong ₹0.
+      const { data: projects, error: e1 } = await supabase.from("project_sales").select("id, title").eq("customer_id", customerId);
+      if (e1) throw e1;
       const ids = (projects ?? []).map((p) => p.id);
       if (ids.length === 0) return empty;
       const titleById = new Map((projects ?? []).map((p) => [p.id as string, (p.title as string) ?? "Project"]));
-      const [{ data: milestones }, { data: pays }] = await Promise.all([
+      const [{ data: milestones, error: e2 }, { data: pays, error: e3 }] = await Promise.all([
         supabase.from("project_milestones").select("id, invoice_id, project_id, label").in("project_id", ids),
         supabase.from("project_payments").select("*").in("project_id", ids).order("received_at", { ascending: false }),
       ]);
+      if (e2 || e3) throw (e2 ?? e3);
       const invByMs = new Map<string, string | null>((milestones ?? []).map((m) => [m.id as string, (m.invoice_id as string | null)]));
       const labelByMs = new Map<string, string | null>((milestones ?? []).map((m) => [m.id as string, (m.label as string | null) ?? null]));
       const invoiceProject: Record<string, { projectId: string; title: string }> = {};
@@ -372,7 +396,8 @@ export function useSaveProjectLabour() {
   return useMutation({
     mutationFn: async (input: { id?: string; projectId: string; employeeId: string; percent: number; months: number; startDate?: string | null; endDate?: string | null; note?: string | null }) => {
       const supabase = createClient();
-      const { data: authData } = await supabase.auth.getUser();
+      const { data: authData, error: authErr } = await supabase.auth.getUser();
+      if (authErr) throw authErr;
       if (!authData?.user) throw new Error("Not authenticated");
       const { data: me, error: meErr } = await supabase.from("users").select("tenant_id").eq("id", authData.user.id).single();
       if (meErr || !me) throw new Error("User not linked to a tenant");
@@ -825,7 +850,9 @@ export function useReceivedThisFyByCustomer() {
       const quoteIds = Array.from(new Set((pays ?? []).filter((p) => !p.customer_id && p.quote_id).map((p) => p.quote_id as string)));
       const quoteCustomer = new Map<string, string | null>();
       if (quoteIds.length) {
-        const { data: qs } = await supabase.from("quotes").select("id, customer_id").in("id", quoteIds);
+        // R-2562: a failed read left these receipts with no company — the FY figure came out short.
+        const { data: qs, error: e4 } = await supabase.from("quotes").select("id, customer_id").in("id", quoteIds);
+        if (e4) throw e4;
         for (const q of qs ?? []) quoteCustomer.set(q.id, q.customer_id ?? null);
       }
       return receivedThisFy({
