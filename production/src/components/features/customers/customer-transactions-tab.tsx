@@ -112,6 +112,17 @@ const STATUS_TONE: Record<InvoiceStatusView["tone"], string> = {
 const INDENT = ["pl-0", "pl-[18px]", "pl-[36px]", "pl-[54px]"] as const;
 export const ADVANCE_GROUP_TITLE = "Advance / not yet against an invoice";
 
+/**
+ * R-2559: a receipt's Reference — its receipt number, else the UTR / reference the user typed,
+ * else `fallback`. One rule for All and Payments (Payments showed the payment's id instead of the UTR).
+ */
+export function paymentReference(
+  p: { id: string; receipt_voucher_no?: string | null; reference?: string | null },
+  fallback: string,
+): string {
+  return p.receipt_voucher_no?.trim() || p.reference?.trim() || fallback;
+}
+
 export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
   const { customerId, linkOpts, canDeletePay, onDeletePayment, payments, quotes, projects, projPayments,
     invoiceProject, invoicePaidByProject, subs, tdsInfo, txnFilter, setTxnFilter, segments, filteredTxns, hasTxns } = props;
@@ -149,7 +160,7 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
     return {
       key: `cpay:${p.id}:${s.invoiceId ?? "adv"}`, parentKey, indent,
       date: refunded ? (p.refunded_at ?? p.received_at) : p.received_at, type: refunded ? "Refund" : "Payment",
-      ref: p.receipt_voucher_no ?? (p.reference?.trim() || "Receipt"), amount: s.amount, status: p.status,
+      ref: paymentReference(p, "Receipt"), amount: s.amount, status: p.status,
       payId: p.id, note: notes.join(" · ") || undefined, tds: s.first, tdsGross: s.paymentAmount, wholeReceipt: s.whole,
       href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId }, linkOpts),
     };
@@ -234,6 +245,9 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
     : t.payId ? forInvoicesText(links.forOf[t.payId])
     : t.projInvoiceId !== undefined ? (t.projInvoiceId ?? "Advance") : "—";
 
+  const loadingTxns = <div role="status" aria-label="Loading transactions" className="py-2"><SkeletonText lines={4} /></div>;
+  /* R-2559: the reads are still on their way — wait rather than say "No transactions yet" first. */
+  if (!hasTxns && props.linksPending) return loadingTxns;
   if (!hasTxns) return <EmptyState icon="receipt" title="No transactions yet" body="Quotes, invoices and payments for this customer will appear here." compact />;
   return (
     <>
@@ -265,7 +279,7 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
       {(props.linksPending || billingsQ.isLoading) && txnFilter !== "quotes" ? (
         // Until the subscriptions, their instalment links and the notes are read, a receipt would sit under
         // "Advance" (or say "Advance" in For) for a moment and then jump — so the lists wait.
-        <div role="status" aria-label="Loading transactions" className="py-2"><SkeletonText lines={4} /></div>
+        loadingTxns
       ) : visible.length > 0 ? (
         <RecordTable
           head={showFor ? ["Date", "Type", "Reference", "For", "Amount", "Status", ""] : ["Date", "Type", "Reference", "Amount", "Status", ""]}

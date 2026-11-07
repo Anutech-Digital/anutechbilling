@@ -13,7 +13,7 @@ vi.mock("@/lib/queries/customer-instalment-links", () => ({
     : { data: [{ invoice_id: "INV-I1", subscription_id: "sub-1" }], isLoading: false, isError: false, error: null, refetch: vi.fn() },
 }));
 
-import { CustomerTransactionsTab, ADVANCE_GROUP_TITLE, type CustomerTransactionsTabProps, type FlatTxn } from "./customer-transactions-tab";
+import { CustomerTransactionsTab, ADVANCE_GROUP_TITLE, paymentReference, type CustomerTransactionsTabProps, type FlatTxn } from "./customer-transactions-tab";
 
 afterEach(cleanup);
 
@@ -172,5 +172,17 @@ describe("R-2544 Customer → Transactions: payments under their invoice", () =>
     const rows = [...body.querySelectorAll("tr")];
     expect(within(rows[0]).getByText("Advance")).toBeTruthy();
     expect(within(rows[1]).getByText("INV-A378-27-0100")).toBeTruthy();
+  });
+it("R-2559: while the reads are still coming in and no row is known yet, it waits — never 'No transactions yet' first", () => {
+    const { container, queryByText } = render(<CustomerTransactionsTab {...props({ linksPending: true, hasTxns: false })} />);
+    expect(queryByText("No transactions yet")).toBeNull();
+    expect(container.querySelector('[role="status"][aria-label="Loading transactions"]')).toBeTruthy();
+  });
+
+  it("R-2559: a receipt's Reference is its receipt number, else the UTR / reference typed, else the fallback (never the id first)", () => {
+    expect(paymentReference({ id: "p-uuid", receipt_voucher_no: "RV-1", reference: "UTR9" }, "p-uuid")).toBe("RV-1");
+    expect(paymentReference({ id: "p-uuid", receipt_voucher_no: null, reference: " SCNUTR2458054 " }, "p-uuid")).toBe("SCNUTR2458054");
+    expect(paymentReference({ id: "p-uuid", receipt_voucher_no: null, reference: "  " }, "p-uuid")).toBe("p-uuid");
+    expect(paymentReference({ id: "p-uuid" }, "Receipt")).toBe("Receipt");
   });
 });
