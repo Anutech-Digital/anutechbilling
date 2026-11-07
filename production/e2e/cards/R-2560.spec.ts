@@ -49,7 +49,7 @@ test.describe("R-2560 — default TDS follows the bank amount typed on the first
     }
   });
 
-  test("Step 2+3: TDS 2%, bank amount typed less than the balance (₹6,000) → TDS ₹103 on that part, not ₹216", async ({ browser, baseURL }) => {
+  test("Step 2+3: TDS 2%, bank amount typed less than the balance (₹6,000) → TDS ₹103 on that part, not ₹216; Net to bank ₹6,000", async ({ browser, baseURL }) => {
     test.setTimeout(180_000);
     const page = await pageAs(browser, baseURL, "owner");
     try {
@@ -64,6 +64,7 @@ test.describe("R-2560 — default TDS follows the bank amount typed on the first
       await expect(tdsRow).not.toContainText("₹216");
       await expect(sheet.getByTestId("tds-part-taxable")).toContainText("₹5,172");
       await expect(sheet.locator("#amount")).toHaveValue("6000");
+      await expect(sheet.getByText("Net to your bank", { exact: true }).locator("..")).toContainText("₹6,000");
       // Not saved — the sheet is closed; afterAll reloads the scenario.
       await sheet.getByRole("button", { name: "Cancel" }).click();
     } finally {

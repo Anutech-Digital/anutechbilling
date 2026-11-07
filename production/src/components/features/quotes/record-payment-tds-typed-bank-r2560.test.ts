@@ -46,6 +46,19 @@ describe("R-2560 tdsDefaultForPart with the money typed for this payment", () =>
     // the whole TDS already booked → ₹0 whatever the money
     expect(tdsDefaultForPart({ remaining: 5_900, ...quote, ratePct: 2, bookedTds: 200, money: 2_000 }).tds).toBe(0);
   });
+  it("advance used with the payment: the TDS part is still bank + TDS (what the saved TDS gross is taken on)", () => {
+    // ₹3,000 advance + ₹3,000 bank: part ₹3,051 → taxable ₹2,586 → ₹52; the advance only decides whether the balance settles
+    const r = tdsDefaultForPart({ remaining: 11_800, ...quote, ratePct: 2, bookedTds: 0, money: 3_000, credit: 3_000 });
+    expect(r).toEqual({ partTaxable: 2_586, tds: 52 });
+    expect(tdsPartGross({ paid: 3_000 + r.tds, ...quote, tds: r.tds, ratePct: 2 })).toBe(r.partTaxable);
+    // advance + bank + whole TDS settle the balance → the balance rule
+    expect(tdsDefaultForPart({ remaining: 11_800, ...quote, ratePct: 2, bookedTds: 0, money: 8_600, credit: 3_000 }).tds).toBe(200);
+    // bank ₹0 with an advance (TDS only on the rest) → the balance rule, never cut to the advance's share
+    expect(tdsDefaultForPart({ remaining: 11_800, ...quote, ratePct: 2, bookedTds: 0, money: 0, credit: 2_000 }).tds).toBe(200);
+  });
+  it("no fixed point (100% on a no-GST bill) → the balance rule, never a half-found TDS", () => {
+    expect(tdsDefaultForPart({ remaining: 1_00_000, taxable: 1_00_000, total: 1_00_000, ratePct: 100, bookedTds: 0, money: 1 }).tds).toBe(1_00_000);
+  });
   it("is always a fixed point: TDS = rate × taxable share of (money + TDS), for many amounts and rates", () => {
     for (const rate of [0.1, 0.125, 1, 2, 5, 10, 20]) {
       for (let money = 1; money < 11_000; money += 137) {
@@ -63,10 +76,14 @@ describe("R-2560 tdsDefaultForPart with the money typed for this payment", () =>
 
 describe("R-2560 desk Record payment sheet — default TDS follows the typed bank amount", () => {
   const src = fs.readFileSync(path.join(process.cwd(), "src/components/features/quotes/record-payment-dialog.tsx"), "utf8");
-  it("passes this payment's money (bank + advance) once the bank amount is typed", () => {
-    expect(src).toMatch(/tdsDefaultForPart\(\{ remaining, taxable: quotePreGST, total: expectedAmount, ratePct: tdsRatePct, bookedTds, money: typedMoney \}\)/);
-    expect(src).toMatch(/const typedMoney = amountEdited \? \(Number\(watchedAmount\) \|\| 0\) \+ appliedCreditAmount : null;/);
-    expect(src).toMatch(/\[tdsDeducted, tdsOnly, quotePreGST, tdsRatePct, expectedAmount, quoteTaxRate, remaining, bookedTds, typedMoney\]/);
+  it("passes the typed bank amount (and the advance used) once the bank amount is typed", () => {
+    expect(src).toMatch(/tdsDefaultForPart\(\{ remaining, taxable: quotePreGST, total: expectedAmount, ratePct: tdsRatePct, bookedTds, money: typedMoney, credit: appliedCreditAmount \}\)/);
+    expect(src).toMatch(/const typedMoney = amountEdited \? Number\(watchedAmount\) \|\| 0 : null;/);
+    expect(src).toMatch(/\[tdsDeducted, tdsOnly, quotePreGST, tdsRatePct, expectedAmount, quoteTaxRate, remaining, bookedTds, typedMoney, appliedCreditAmount\]/);
+  });
+  it("on a typed part, Net to your bank is the bank amount typed (not balance − TDS)", () => {
+    expect(src).toMatch(/const tdsOnTypedPart = tdsDeducted && !tdsOnly && amountEdited && settledAgainstQuote < remaining - 1;/);
+    expect(src).toMatch(/rupee\(tdsOnTypedPart \? watchedAmount : Math\.max\(0, remaining - tdsAmount - appliedCreditAmount\)\)/);
   });
   it("a TDS typed by hand is not reset when the bank amount changes", () => {
     expect(src).toMatch(/React\.useEffect\(\(\) => \{ setTypedPartTds\(null\); \}, \[open, tdsDeducted, tdsRatePct\]\);/);
