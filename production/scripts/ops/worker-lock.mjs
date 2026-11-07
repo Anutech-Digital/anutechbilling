@@ -33,7 +33,7 @@
  * typecheck + push. A rebase conflict aborts and stops (exit 2) — never resolved by force.
  *
  * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 5 = push guard test failed
- * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = maxWorkersAt() (2 by day, 3 by night) already
+ * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = maxWorkersAt() (4 by day, 3 by night) already
  * running — R-1973: cards in ci-wait / ci-red (pushed, waiting on CI) do not count, but keep their files.
  * Either way: stop, do not work around it.
  *
@@ -104,13 +104,14 @@ export const MAX_WORKERS = Number(process.env.WORKER_MAX || 4);
 
 /**
  * Pardeep (6 Oct night): the local app crawled while 4 workers type-checked. While he works
- * (09:00–21:59 IST) only 2 workers run; at night 4. WORKER_MAX still overrides.
+ * (09:00–21:59 IST) only 2 workers ran; at night 4. WORKER_MAX still overrides.
  * R-1960 (26 Oct 2026): night cap 4 → 3 — 4 parallel tsc runs took the laptop to ~90 node processes.
+ * 7 Nov 2026 (Pardeep): day cap 2 → 4 for speed (R-2552) — cards waited 10+ min in the slot queue.
  */
 export function maxWorkersAt(date) {
   if (process.env.WORKER_MAX) return Number(process.env.WORKER_MAX);
   const h = Number(new Date(date).toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false })) % 24;
-  return h >= 9 && h < 22 ? 2 : 3;
+  return h >= 9 && h < 22 ? 4 : 3;
 }
 
 /**
@@ -209,7 +210,10 @@ export function readLocks({ now = Date.now() } = {}) {
     const full = path.join(LOCK_DIR, f);
     let l;
     try { l = JSON.parse(fs.readFileSync(full, "utf8")); } catch { continue; }
-    if (!l.worktree || !fs.existsSync(l.worktree)) {
+    /* R-2552: a pushed card (ci-wait / ci-red) keeps its lock when its worktree is cleaned up — the
+       worker hands back right after the push now, and the files stay held until CI says green
+       (`ci-all`/`ci`) or the 120-min quiet rule below releases it. Only a BUILDING lock needs its folder. */
+    if ((!l.worktree || !fs.existsSync(l.worktree)) && countsTowardCap(l)) {
       fs.rmSync(full, { force: true });
       console.log(`(stale lock ${l.card ?? f} removed — its worktree folder is gone)`);
       continue;
@@ -460,7 +464,9 @@ async function pushWithTurn(card, ciFlags = {}) {
       const u = updateLock(card, (l) => lockAfterPush(l, { sha: pushedSha, at: new Date().toISOString() }));
       if (u.found) console.log(`  ${card} ab ci-wait: worker slot khaali (doosra card shuru ho sakta hai), files ka claim CI green/red tak rahega.`);
     } catch {}
-    console.log(`Ab: node scripts/ops/worker-lock.mjs ci ${card}  → jo JSON aaye use card par ciCheck likho.`);
+    /* R-2552 (7 Nov 2026): the worker no longer waits 30–40 min for CI — it writes a pending ciCheck, sets
+       the card to review, cleans up and hands back; the manager runs `ci-all` (or `ci <CARD>`). */
+    console.log(`Ab: card par ciCheck {sha: "${pushedSha ?? "<sha>"}", ci: "pending", at: <date -u>} likho, status review, cleanup ${card}, hand back — CI manager dekhta hai (worker-lock ci-all).`);
   });
 }
 
@@ -782,6 +788,31 @@ export function settleCiWaitLocks(card, mine, locks, { gh, isAncestor, remove, p
 }
 
 /**
+ * R-2552 (7 Nov 2026): workers no longer sit 30–40 min in `ci <CARD>` after a push — they hand back
+ * and the manager watches CI. `ci-all` is one look (no waiting) at every ci-wait lock and settles it
+ * exactly like `ci <CARD>`: green → lock removed (files free), red → ci-red (files kept; the fix
+ * takes the slot back with `claim --fixes-red`), pending/unknown → left as it is. One line per card
+ * plus one JSON line {card, sha, ci, at} (ci = CI + SQL tests together) for the board's `ciCheck`.
+ * `verdict(lock)` and `settle(card, exitCode)` are injected for tests.
+ */
+export function ciAllReport(locks, { verdict, settle, at = new Date().toISOString() }) {
+  const waiting = locks.filter((l) => l.state === LOCK_STATES.ciWait);
+  if (!waiting.length) return { lines: ["Koi card CI ke intezaar (ci-wait) mein nahi."], results: [] };
+  const lines = [], results = [];
+  for (const l of waiting) {
+    const v = verdict(l) ?? "unknown";
+    const sha = String(l.pushedSha ?? "").slice(0, 9);
+    if (v === "green") settle(l.card, CI_EXIT.green);
+    if (v === "red") settle(l.card, CI_EXIT.red);
+    lines.push(`${l.card}  ${sha || "(sha nahi)"}  ${v === "green" ? "CI green — lock hata" : v === "red" ? "CI LAAL — card wala worker theek kare (claim --fixes-red)" : v === "pending" ? "CI abhi chal raha / line mein" : "CI ka pata nahi chala (gh offline?)"}`);
+    const r = { card: l.card, sha: l.pushedSha ?? null, ci: v, at };
+    results.push(r);
+    lines.push(JSON.stringify(r));
+  }
+  return { lines, results };
+}
+
+/**
  * `ci <CARD>`: poll until both gate workflows have a verdict for the sha, or the timeout.
  * deps: gh, git, isAncestor(a, b), now(), sleep(ms), print(line). Returns { code, check, lines }.
  */
@@ -1021,6 +1052,17 @@ function main(argv) {
     for (const l of locks) console.log(`${l.card}  ${l.state ?? LOCK_STATES.working}${countsTowardCap(l) ? "" : " (slot nahi ginta)"}  ${l.claimedAt}  ${[...l.areas, ...(l.files ?? [])].join("  ")}`);
     return;
   }
+  if (cmd === "ci-all") {
+    /* R-2552: the manager's one command for every pushed card's CI (workers no longer wait). */
+    const isAncestor = (a, b) => { try { execFileSync("git", ["merge-base", "--is-ancestor", a, b], { stdio: "ignore" }); return true; } catch { return false; } };
+    const locks = readLocks();
+    if (locks.some((l) => l.state === LOCK_STATES.ciWait)) { try { execFileSync("git", ["fetch", "-q", "anutech"], { stdio: "ignore", timeout: 60_000 }); } catch {} }
+    const at = new Date().toISOString();
+    const settle = (c, code) => { try { updateLock(c, (l) => lockAfterCi(l, code, { at })); } catch {} };
+    const r = ciAllReport(locks, { verdict: (l) => ciWaitVerdict(l, { gh: realGh, isAncestor }), settle, at });
+    for (const l of r.lines) console.log(l);
+    return;
+  }
   if (cmd === "guard-push") {
     /* R-1898: git pre-push hook — the refs come on stdin. */
     const r = guardPush(fs.readFileSync(0, "utf8").split("\n"));
@@ -1154,7 +1196,7 @@ function main(argv) {
     console.log(r.message);
     return;
   }
-  console.error("claim [--wait --priority p0] | beat | check | push | ci | sql-related | wip | resume | tsc | prep | release | cleanup [--worktree <path>] [--dry-run] | list | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
+  console.error("claim [--wait --priority p0] | beat | check | push | ci | ci-all | sql-related | wip | resume | tsc | prep | release | cleanup [--worktree <path>] [--dry-run] | list | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
   process.exit(1);
 }
 

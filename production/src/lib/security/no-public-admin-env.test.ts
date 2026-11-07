@@ -20,7 +20,13 @@ import path from "node:path";
 
 const ROOT = path.resolve(__dirname, "../../..");          // production/
 const SRC = path.join(ROOT, "src");
-const CONFIG_FILES = ["next.config.js", "next.config.mjs", "next.config.ts", ".env.example", "Dockerfile"];
+/* R-2552 (7 Nov 2026): the generated Prisma client (src/server/db/generated, gitignored, ~36 MB of the
+   ~60 MB this scan read) is written by `prisma generate` from prisma/schema.prisma, so the scan reads
+   that one source file instead of its output. Every file is also read ONCE now (it was read twice, once
+   per check). Under push load (several workers' tsc at once) this suite took 83–99 s for a 2.6 s job
+   alone — all file I/O. */
+const GENERATED = path.join(SRC, "server", "db", "generated");
+const CONFIG_FILES = ["next.config.js", "next.config.mjs", "next.config.ts", ".env.example", "Dockerfile", "prisma/schema.prisma"];
 
 const ADMIN_PUBLIC_ENV = /NEXT_PUBLIC_[A-Z0-9_]*(ADMIN|SUPERUSER|SUPER_USER|STAFF|ALLOWLIST|WHITELIST|GOD)[A-Z0-9_]*/;
 
@@ -28,6 +34,7 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     if (e.name === "node_modules" || e.name.startsWith(".")) continue;
     const full = path.join(dir, e.name);
+    if (full === GENERATED) continue;
     if (e.isDirectory()) walk(full, out);
     else if (/\.(ts|tsx|js|jsx|mjs)$/.test(e.name) && !/\.test\.(ts|tsx)$/.test(e.name)) out.push(full);
   }
@@ -43,21 +50,30 @@ function code(src: string): string {
 
 describe("R-730: admin allowlists never go to the browser", () => {
   const files = walk(SRC);
+  const text = new Map(files.map((f) => [f, fs.readFileSync(f, "utf8")] as const));
 
   it("scans a real tree", () => {
     expect(files.length).toBeGreaterThan(500);
+    // R-2552: the generated client is left out; its source (the Prisma schema) is scanned instead.
+    // The folder skipped must be exactly the schema's generator output — if `output` ever moves,
+    // this goes red instead of the skip silently matching nothing (or something else).
+    const schema = fs.readFileSync(path.join(ROOT, "prisma/schema.prisma"), "utf8");
+    const out = schema.match(/^\s*output\s*=\s*"([^"]+)"/m)?.[1];
+    expect(out && path.resolve(ROOT, "prisma", out)).toBe(GENERATED);
   });
 
   it("no source or config file names a NEXT_PUBLIC_ admin/allowlist variable", () => {
     const offenders: string[] = [];
     for (const f of files) {
-      const m = code(fs.readFileSync(f, "utf8")).match(ADMIN_PUBLIC_ENV);
+      const m = code(text.get(f)!).match(ADMIN_PUBLIC_ENV);
       if (m) offenders.push(`${rel(f)}: ${m[0]}`);
     }
     for (const name of CONFIG_FILES) {
       const f = path.join(ROOT, name);
       if (!fs.existsSync(f)) continue;
-      const m = fs.readFileSync(f, "utf8").match(ADMIN_PUBLIC_ENV);
+      const raw = fs.readFileSync(f, "utf8");
+      // The Prisma schema's `//` / `///` comments ship nothing, same as in source files.
+      const m = (name.endsWith(".prisma") ? code(raw) : raw).match(ADMIN_PUBLIC_ENV);
       if (m) offenders.push(`${name}: ${m[0]}`);
     }
     expect(offenders, "Admin lists must be server-only env (e.g. PLATFORM_ADMIN_EMAILS) — see lib/platform.ts").toEqual([]);
@@ -65,7 +81,7 @@ describe("R-730: admin allowlists never go to the browser", () => {
 
   it("no \"use client\" file imports the platform-admin allowlist helpers", () => {
     const offenders = files.filter((f) => {
-      const src = fs.readFileSync(f, "utf8");
+      const src = text.get(f)!;
       if (!/^\s*["']use client["']/.test(src)) return false;
       return /import\s*\{[^}]*\b(isPlatformAdmin|platformAdminEmails)\b[^}]*\}\s*from\s*["']@\/lib\/platform["']/.test(src);
     }).map(rel);

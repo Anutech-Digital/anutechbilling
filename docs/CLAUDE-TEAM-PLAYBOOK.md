@@ -265,3 +265,4 @@ Format: `- <date>: what went wrong → the rule it created (card).`
 - 7 Nov: "Check karo" cards checked by an AI checker had no agreed way to record the result → on PASS
   write the board's Theek fields with `byAccount: "ai-checker"` plus `aiCheck` evidence; on FAIL write
   only `aiCheck` and the owner decides; cards that need live/staging go to their own lane (R-2549).
+- 7 Nov 2026 — CI wait ki galti dohrayi: WORKER-STEPS 5b worker ko CI ka 30-40 min wait karwata tha; ab worker push ke baad hand back karta hai, manager CI dekhta hai (`worker-lock ci-all`); build cache R-2552. Measured: CI build job 11-23 min, of which next build's own type check 6-13 min (a repeat of the typecheck job) — now skipped in CI's build (SKIP_BUILD_TYPECHECK=1, same as Cloud Build since R-182); day worker cap 2 → 4 (Pardeep).
