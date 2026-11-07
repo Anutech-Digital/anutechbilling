@@ -188,6 +188,52 @@
   @page {
     margin: 1cm;
   }
+
+  /* R-2576: paper is always light. Since R-2187 the app follows the OS theme, so on a
+     laptop in dark mode <html> carries `.dark` and every token below flips to light-on-dark
+     — a customer's invoice / quote PDF came out dark (or unreadable once body went white).
+     In print the dark values never apply: every theme token is reset to its LIGHT value
+     (the :root block above — a test keeps the two lists equal) and the page renders as a
+     light page. `:root.dark` (0,2,0) out-specifies `.dark`; `!important` on color-scheme
+     beats the inline `style="color-scheme: dark"` next-themes writes on <html>.
+     On screen nothing changes: this whole block exists only for print. */
+  :root,
+  :root.dark,
+  .dark {
+    color-scheme: light !important;
+
+    --paper:           45 33% 97%;
+    --paper-2:         40 22% 94%;
+    --ink:             24 13% 9%;
+    --ink-2:           28 9% 32%;
+    --ink-3:           33 7% 41%;
+    --ink-4:           35 9% 43%;
+
+    --hairline:        38 25% 87%;
+    --hairline-strong: 38 18% 75%;
+    --input-border:    38 12% 52%;
+
+    --amber:           20 91% 41%;
+    --amber-soft:      28 100% 95%;
+    --amber-ink:       18 87% 33%;
+    --on-primary:      0 0% 100%;
+
+    --emerald:         142 71% 28%;
+    --emerald-soft:    138 50% 92%;
+    --emerald-ink:     142 71% 22%;
+    --rose:            0 76% 50%;
+    --rose-soft:       0 86% 96%;
+    --rose-ink:        0 74% 37%;
+    --indigo:          240 65% 42%;
+    --indigo-soft:     232 100% 95%;
+    --indigo-ink:      244 55% 32%;
+    --slate:           215 25% 35%;
+    --slate-soft:      210 25% 95%;
+
+    --background:      45 33% 97%;
+    --foreground:      24 13% 9%;
+  }
+
   body {
     background: white;
   }
