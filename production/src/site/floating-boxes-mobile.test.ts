@@ -36,7 +36,8 @@ describe("floating boxes on a phone", () => {
     expect(chat).toMatch(/if \(hideFloatingOn\(pathname\)\) return null;/);
     // R-1498: no separate floating WhatsApp pill any more — WhatsApp sits in the launcher menu.
     expect(chrome).not.toMatch(/floating-wa/);
-    expect(chat).toMatch(/floatingLauncher\(\{ pathname, isMobile, avoidOnScreen,/);
+    // R-1495: at every width it steps aside while a marked block is under its corner.
+    expect(chat).toMatch(/floatingLauncher\(\{ pathname, avoidOnScreen,/);
   });
 
   it("the launcher becomes a 48px icon below 980px and keeps its accessible name", () => {
