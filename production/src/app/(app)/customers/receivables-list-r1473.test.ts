@@ -128,4 +128,7 @@ describe("R-2559 the line waits for both halves (no 'Subscription dues ₹0 … 
     expect(collectLineState([failed, loaded])).toBe("failed");
     expect(collectLineState([failed, loading])).toBe("failed");
   });
+  it("stays ready when a background refetch failed but the last good data is still there", () => {
+    expect(collectLineState([{ data: [], isError: true }, loaded])).toBe("ready");
+  });
 });

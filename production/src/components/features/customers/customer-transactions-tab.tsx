@@ -245,8 +245,9 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
     : t.payId ? forInvoicesText(links.forOf[t.payId])
     : t.projInvoiceId !== undefined ? (t.projInvoiceId ?? "Advance") : "—";
 
+  const loadingTxns = <div role="status" aria-label="Loading transactions" className="py-2"><SkeletonText lines={4} /></div>;
   /* R-2559: the reads are still on their way — wait rather than say "No transactions yet" first. */
-  if (!hasTxns && props.linksPending) return <div role="status" aria-label="Loading transactions" className="py-2"><SkeletonText lines={4} /></div>;
+  if (!hasTxns && props.linksPending) return loadingTxns;
   if (!hasTxns) return <EmptyState icon="receipt" title="No transactions yet" body="Quotes, invoices and payments for this customer will appear here." compact />;
   return (
     <>
@@ -278,7 +279,7 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
       {(props.linksPending || billingsQ.isLoading) && txnFilter !== "quotes" ? (
         // Until the subscriptions, their instalment links and the notes are read, a receipt would sit under
         // "Advance" (or say "Advance" in For) for a moment and then jump — so the lists wait.
-        <div role="status" aria-label="Loading transactions" className="py-2"><SkeletonText lines={4} /></div>
+        loadingTxns
       ) : visible.length > 0 ? (
         <RecordTable
           head={showFor ? ["Date", "Type", "Reference", "For", "Amount", "Status", ""] : ["Date", "Type", "Reference", "Amount", "Status", ""]}

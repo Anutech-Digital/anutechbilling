@@ -328,10 +328,12 @@ export default function CustomersPage() {
 
   /* R-1473: the line over "Has receivables" — what the To collect tile is made of, how much is on
      archived companies, and any money the list cannot show (so tile == list, or the line says why). */
-  /* R-2559: both halves of the line (subscription dues + project invoices) and the rows must be in —
-     else it showed "Subscription dues ₹0 …" for a moment. Until then a placeholder holds its place. */
-  const collectParts = collectLineState([outstandingQ, projRecvQ, { data: customers, isError: false }]);
+  /* R-2559: both halves of what is owed (subscription dues + project invoices) must be in — else the
+     line said "Subscription dues ₹0 …" for a moment, and the tile and the Has receivables rows showed
+     part of the money. Until then the line has a placeholder, the tile "…", the unpaid list its skeleton. */
+  const collectParts = collectLineState([outstandingQ, projRecvQ]);
   const collectLineWanted = mode === "full" && view === "unpaid" && !showArchived && !search.trim();
+  const rowsLoading = isLoading || (view === "unpaid" && collectParts === "loading");
   const collectLine = React.useMemo(() => {
     /* A search narrows the rows on purpose — the line speaks for the whole list, so it waits. */
     if (!collectLineWanted || collectParts !== "ready" || !customers || chase.companiesTotal <= 0) return null;
@@ -594,7 +596,7 @@ export default function CustomersPage() {
     }
     stats.push({
       label: "To collect",
-      value: rupee(totalReceivables, { compact: true }),
+      value: collectParts === "loading" ? "…" : rupee(totalReceivables, { compact: true }),
       tone: totalReceivables > 0 ? "rose" : "default",
       // The money-owed number is the action figure — tap it to see who owes.
       ...(totalReceivables > 0 ? { onClick: () => setView("unpaid"), active: view === "unpaid" } : {}),
@@ -838,7 +840,7 @@ export default function CustomersPage() {
       )}
 
       {/* ── Loading ── */}
-      {isLoading && (
+      {rowsLoading && (
         <Card flush>
           <table className="w-full">
             <tbody>
@@ -866,7 +868,7 @@ export default function CustomersPage() {
       )}
 
       {/* ── Mobile card list ── */}
-      {!isLoading && !error && sorted.length > 0 && (
+      {!rowsLoading && !error && sorted.length > 0 && (
         <ul className="md:hidden space-y-2 mb-3">
           {shown.map((c) => {
             const outInfo = outstandingByCustomer.get(c.id);
@@ -966,7 +968,7 @@ export default function CustomersPage() {
       )}
 
       {/* ── Desktop table — full-width (no customer selected) ── */}
-      {!isLoading && !error && sorted.length > 0 && !selectedId && (
+      {!rowsLoading && !error && sorted.length > 0 && !selectedId && (
         <div className="hidden md:block">
           <Card flush>
             <div className="relative">
@@ -1139,7 +1141,7 @@ export default function CustomersPage() {
       )}
 
       {/* ── Search / filter empty ── */}
-      {!isLoading && !error && customers && anyCustomers && filtered.length === 0 && (
+      {!rowsLoading && !error && customers && anyCustomers && filtered.length === 0 && (
         <div className="mt-6">
           <EmptyState
             icon="search"
