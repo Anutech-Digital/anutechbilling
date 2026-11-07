@@ -5,6 +5,7 @@
  *  - its quote made the subscription      → subscriptions.quote_id         = the quote
  *  - its quote renewed the subscription   → subscriptions.renewal_quote_id = the quote
  *  - it is a scheduled instalment         → subscription_billings.invoice_id = the invoice
+ *    (or was one, then credited and raised again → subscription_billings.credited_invoice_ids, R-1717)
  * "The quote" is invoices.quote_id, or the quote whose invoice_id is this invoice (older rows
  * keep only that side). Read under RLS on the browser client, so another tenant's rows never come.
  */
@@ -48,13 +49,18 @@ export async function fetchInvoiceSubscriptions(
   supabase: SupabaseClient<Database>,
   args: { invoiceId: string; quoteIds: ReadonlyArray<string | null | undefined> },
 ): Promise<LinkedSubscriptionRow[]> {
-  const { data: billings, error: bErr } = await supabase
-    .from("subscription_billings")
-    .select("subscription_id")
-    .eq("invoice_id", args.invoiceId)
-    .limit(20);
-  if (bErr) throw bErr;
-  const filter = linkedSubscriptionsFilter(args.quoteIds, (billings ?? []).map((b) => b.subscription_id));
+  /* R-1717: a part invoice that was credited and raised again keeps only its id in the part's
+     credited_invoice_ids (invoice_id moved to the new one) — it is still that subscription's bill. */
+  const [billed, credited] = await Promise.all([
+    supabase.from("subscription_billings").select("subscription_id").eq("invoice_id", args.invoiceId).limit(20),
+    supabase.from("subscription_billings").select("subscription_id").contains("credited_invoice_ids", [args.invoiceId]).limit(20),
+  ]);
+  if (billed.error) throw billed.error;
+  if (credited.error) throw credited.error;
+  const filter = linkedSubscriptionsFilter(
+    args.quoteIds,
+    [...(billed.data ?? []), ...(credited.data ?? [])].map((b) => b.subscription_id),
+  );
   if (!filter) return [];
   const { data, error } = await supabase
     .from("subscriptions")

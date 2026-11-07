@@ -52,11 +52,19 @@ describe("open-link", () => {
 });
 
 describe("fetchInvoiceSubscriptions", () => {
-  function fakeClient(billings: { subscription_id: string }[], subs: LinkedSubscriptionRow[]) {
+  /** `billings` answer the invoice_id = invoice read; `credited` the credited_invoice_ids read (R-1717). */
+  function fakeClient(billings: { subscription_id: string }[], subs: LinkedSubscriptionRow[], credited: { subscription_id: string }[] = []) {
     const orArg: string[] = [];
+    const billingReads: string[] = [];
     const from = vi.fn((table: string) => {
       if (table === "subscription_billings") {
-        const q = { select: () => q, eq: () => q, limit: async () => ({ data: billings, error: null }) };
+        let rows = billings;
+        const q = {
+          select: () => q,
+          eq: (col: string, v: string) => { billingReads.push(`${col}=${v}`); rows = billings; return q; },
+          contains: (col: string, v: string[]) => { billingReads.push(`${col}@>${v.join(",")}`); rows = credited; return q; },
+          limit: async () => ({ data: rows, error: null }),
+        };
         return q;
       }
       const q = {
@@ -67,7 +75,7 @@ describe("fetchInvoiceSubscriptions", () => {
       };
       return q;
     });
-    return { client: { from } as never, from, orArg };
+    return { client: { from } as never, from, orArg, billingReads };
   }
 
   it("instalment invoice with no quote still finds its subscription", async () => {
@@ -80,6 +88,18 @@ describe("fetchInvoiceSubscriptions", () => {
   it("an invoice with no quote and no instalment never queries subscriptions", async () => {
     const f = fakeClient([], []);
     expect(await fetchInvoiceSubscriptions(f.client, { invoiceId: "INV-2", quoteIds: [null, undefined] })).toEqual([]);
-    expect(f.from).toHaveBeenCalledTimes(1);
+    expect(f.from).not.toHaveBeenCalledWith("subscriptions");
+  });
+
+  /* R-1717 (local data, 7 Nov): INV-F588-27-0049 — the Q1 part of two subscriptions, credited and
+     re-raised as INV-F588-27-0050. The part's invoice_id moved to the new invoice and the old one
+     is only in credited_invoice_ids, so the old invoice's page lost its subscription link. */
+  it("a credited (replaced) part invoice still finds its subscriptions", async () => {
+    const S2 = "33333333-3333-4333-8333-333333333333";
+    const f = fakeClient([], [row], [{ subscription_id: S }, { subscription_id: S2 }, { subscription_id: S }]);
+    const out = await fetchInvoiceSubscriptions(f.client, { invoiceId: "INV-F588-27-0049", quoteIds: [null] });
+    expect(out).toEqual([row]);
+    expect(f.billingReads).toEqual(expect.arrayContaining(["invoice_id=INV-F588-27-0049", "credited_invoice_ids@>INV-F588-27-0049"]));
+    expect(f.orArg).toEqual([`id.in.(${S},${S2})`]);
   });
 });
