@@ -46,6 +46,11 @@ export function parseCleanupFlags(args = []) {
 
 export const defaultWorktree = (card, home = os.homedir()) => path.join(home, `reselleros-w-${String(card).toLowerCase()}`);
 export const workerBranch = (card) => `w-${String(card).toLowerCase()}`;
+/** R-2561: w-r-1495, w-r-1495b, w-r-1495-fix are R-1495's worker branches; w-r-14950 and manager-pardeep are not. */
+export const isCardWorkerBranch = (branch, card) => {
+  const b = String(branch ?? "").toLowerCase(), base = workerBranch(card);
+  return b.startsWith(base) && !/^[0-9]/.test(b.slice(base.length));
+};
 
 /**
  * R-2561: the branch checked out in `worktree`, from `git worktree list --porcelain` output — or null
@@ -181,11 +186,15 @@ export function runCleanup(card, opts, deps) {
   /* Step 4: the branch — only when its work is safe elsewhere. */
   const done = () => { if (dryRun) say(`[dry-run] kuch nahi badla.`); return { code: CLEANUP_EXIT.ok, steps }; };
   const g = (args) => { try { return { ok: true, out: deps.git(["-C", mainRepo, ...args]) }; } catch { return { ok: false }; } };
-  if (!branch) { say(`4. is worktree par koi branch nahi mili (detached?) — koi branch nahi hategi (naam se andaza nahi lagate).`); return done(); }
+  if (!branch) { say(`4. is worktree par koi branch nahi mili (detached, ya git worktree list me ye path nahi) — koi branch nahi hategi (naam se andaza nahi lagate).`); return done(); }
+  /* Only this card's worker branch (w-<card>, w-<card>b, …) — never manager-pardeep / preview-* / another card's
+     w-r-NNNN when --worktree points at the wrong folder. */
+  if (!isCardWorkerBranch(branch, card)) { say(`4. branch ${branch} RAKHA: ye ${workerBranch(card)}… worker branch nahi — cleanup sirf is card ki worker branch mitata hai.`); return done(); }
   if (!g(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).ok) { say(`4. branch ${branch} nahi hai — kuch nahi karna.`); return done(); }
   g(["fetch", "-q", "anutech"]);
   const merged = g(["merge-base", "--is-ancestor", branch, "anutech/manager-pardeep"]).ok;
-  const wip = g(["rev-parse", "--verify", "--quiet", `refs/remotes/anutech/wip/${String(card).toLowerCase()}`]).ok;
+  /* wip counts only when it holds the branch tip (commits after the last wip push would be lost). */
+  const wip = g(["merge-base", "--is-ancestor", branch, `refs/remotes/anutech/wip/${String(card).toLowerCase()}`]).ok;
   if (!merged && !wip) {
     say(`4. branch ${branch} RAKHA: na anutech/manager-pardeep me hai, na anutech/wip/${String(card).toLowerCase()} — pehle push/wip karo, phir git branch -D ${branch}.`);
     return done();

@@ -109,3 +109,17 @@ describe("R-2561: ci <CARD> keeps waiting while GitHub has not listed the run (1
     expect(r.check).toMatchObject({ ci: "pending" });
   });
 });
+
+describe("R-2561 review: a finished later run still decides for a young push", () => {
+  it("no own run listed yet, a later manager-pardeep run containing the sha is green 8 min after the push → green", () => {
+    const contains = (a: string, b: string) => a === SHA && b === LATER;
+    expect(ciWaitVerdict(lock, { gh: gh([], [run({ databaseId: 9, headSha: LATER })]), isAncestor: contains, now: at(8) })).toBe("green");
+  });
+
+  it("ci prints 'unknown' in its line too, not 'missing'", async () => {
+    let t = at(20);
+    const r = await runCi("R-1427", { gh: gh([]), git: () => `${SHA}\n`, isAncestor: noAncestor, sha: SHA, timeoutMin: 35, readNote: () => ({ sha: SHA, at: PUSHED }), now: () => t, sleep: async (ms: number) => { t += ms; } });
+    expect(r.lines[0]).toContain("CI … unknown");
+    expect(r.lines.join("\n")).not.toContain("missing");
+  });
+});

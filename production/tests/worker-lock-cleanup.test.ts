@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
-import { runCleanup, parseCleanupFlags, realCleanupDeps, inspectNodeModules, worktreeBranch, CLEANUP_EXIT } from "../scripts/ops/worker-lock-cleanup.mjs";
+import { runCleanup, parseCleanupFlags, realCleanupDeps, inspectNodeModules, worktreeBranch, isCardWorkerBranch, CLEANUP_EXIT } from "../scripts/ops/worker-lock-cleanup.mjs";
 
 /**
  * R-2385 (2 Nov 2026): a worker cleanup deleted files inside the SHARED reselleros-deploy/production/node_modules
@@ -48,7 +48,8 @@ function deps(s: ReturnType<typeof setup>, { merged = true, wip = false, branch 
     ].join("\n");
     if (a.startsWith("worktree remove")) { fs.rmSync(args[4], { recursive: true, force: true }); return ""; }
     if (a.startsWith("rev-parse --verify --quiet refs/heads/")) { if (!branch) throw new Error("no"); return "abc\n"; }
-    if (a.startsWith("rev-parse --verify --quiet refs/remotes/anutech/wip/")) { if (!wip) throw new Error("no"); return "abc\n"; }
+    /* wip holds the branch only when the branch tip is IN anutech/wip/<card> (R-2561 review). */
+    if (a.startsWith("merge-base --is-ancestor") && a.includes("anutech/wip/")) { if (!wip) throw new Error("no"); return ""; }
     if (a.startsWith("merge-base --is-ancestor")) { if (!merged) throw new Error("no"); return ""; }
     return "";
   };
@@ -180,6 +181,28 @@ describe("R-2561: cleanup deletes only the branch of THIS worktree", () => {
     d.git = (args: string[]) => { if (args.includes("list")) { calls.push(args); throw new Error("git broke"); } return git(args); };
     expect(runCleanup("R-2385", { worktree: s.wt }, d).code).toBe(CLEANUP_EXIT.ok);
     expect(deleted(calls)).toEqual([]);
+  });
+
+  it("a branch that is not this card's worker branch is kept (manager-pardeep, another card's w-r-NNNN)", () => {
+    for (const other of ["manager-pardeep", "preview-0210", "w-r-2386", "w-r-23850"]) {
+      const s = setup();
+      const { d, calls, out } = deps(s, { checkedOut: other });
+      expect(runCleanup("R-2385", { worktree: s.wt }, d).code).toBe(CLEANUP_EXIT.ok);
+      expect(deleted(calls)).toEqual([]);
+      expect(out.join("\n")).toMatch(new RegExp(`branch ${other} RAKHA`));
+    }
+    expect(isCardWorkerBranch("w-r-1495b", "R-1495")).toBe(true);
+    expect(isCardWorkerBranch("w-r-1495-fix", "R-1495")).toBe(true);
+    expect(isCardWorkerBranch("W-R-1495", "r-1495")).toBe(true);
+    expect(isCardWorkerBranch("w-r-14950", "R-1495")).toBe(false);
+  });
+
+  it("a wip branch that does NOT contain the branch tip (commits after the last wip push) → branch kept", () => {
+    const s = setup();
+    const { d, calls } = deps(s, { merged: false, wip: false });
+    expect(runCleanup("R-2385", { worktree: s.wt }, d).code).toBe(CLEANUP_EXIT.ok);
+    expect(deleted(calls)).toEqual([]);
+    expect(calls.some((c) => c.join(" ").includes("merge-base --is-ancestor w-r-2385 refs/remotes/anutech/wip/r-2385"))).toBe(true);
   });
 
   it("worktreeBranch: matches the path (case-insensitive on Windows, any slash), detached → null, unlisted → null", () => {

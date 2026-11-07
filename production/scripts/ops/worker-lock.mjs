@@ -793,12 +793,13 @@ export function ciWaitVerdict(lock, { gh, isAncestor, now = Date.now() }) {
   const later = newestFirst(branchRuns).reverse()
     .filter((r) => r.headSha !== full && !shaRuns.some((m) => m.databaseId === r.databaseId))
     .filter((r) => { try { return isAncestor(full, r.headSha); } catch { return false; } });
-  const graceOver = !young;
-  const ci = workflowVerdict("CI", shaRuns, later, { graceOver, ciDone: false });
-  const sql = workflowVerdict("SQL tests", shaRuns, later, { graceOver, ciDone: ci.state === "green" || ci.state === "red" });
+  /* graceOver: true as before (R-2105) so a finished later run that contains the sha still decides at once;
+     only "no run at all" waits 15 min from the push before it is called unknown. */
+  const ci = workflowVerdict("CI", shaRuns, later, { graceOver: true, ciDone: false });
+  const sql = workflowVerdict("SQL tests", shaRuns, later, { graceOver: true, ciDone: ci.state === "green" || ci.state === "red" });
   if (ci.state === "red" || sql.state === "red") return "red";
   if (ci.state === "green" && (sql.state === "green" || sql.state === "skipped")) return "green";
-  if (ci.state === "missing" || sql.state === "missing") return "unknown";
+  if (ci.state === "missing" || sql.state === "missing") return young ? "pending" : "unknown";
   return "pending";
 }
 
@@ -876,7 +877,7 @@ export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DE
         if (ci.via || sql.via) check.via = (ci.via || sql.via);
         const lines = [];
         const icon = (s) => (s === "green" ? "✓" : s === "skipped" ? "–" : s === "red" ? "✗" : "…");
-        lines.push(`${id} @ ${full.slice(0, 8)}: CI ${icon(ci.state)} ${ci.state} · SQL ${icon(sql.state)} ${sql.state}${check.via ? ` (apna run cancel hua; ${check.via.slice(0, 8)} wala run dekha jisme ye sha hai)` : ""}`);
+        lines.push(`${id} @ ${full.slice(0, 8)}: CI ${icon(ci.state)} ${check.ci} · SQL ${icon(sql.state)} ${check.sql}${check.via ? ` (apna run cancel hua; ${check.via.slice(0, 8)} wala run dekha jisme ye sha hai)` : ""}`);
         for (const [wf, v] of [["CI", ci], ["SQL tests", sql]]) {
           if (v.state === "red") { const names = failedTestsOf(gh, v.run); check[wf === "CI" ? "ciFailed" : "sqlFailed"] = names; lines.push(`  ✗ ${wf} laal: ${names.join(", ")}\n    ${v.run.url}`); }
         }
