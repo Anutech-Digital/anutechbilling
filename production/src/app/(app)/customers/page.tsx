@@ -48,6 +48,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { CollapsibleKpiStrip, StripFact } from "@/components/shared/collapsible-kpi-strip";
 import { LoadErrorBanner, loadErrorBody } from "@/components/shared/load-error";
+import { moneyErrorRetry } from "./money-error-retry";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -624,6 +625,19 @@ export default function CustomersPage() {
     else toast.error("Could not export the companies", { description: r.error });
   }
 
+  /* R-2567: one failure, one Try again — the money banner and the Has receivables line used to
+     both show one when the project invoices could not be read. `toolbarShown` gates the toolbar
+     that holds the line (below), so the two cannot drift; the line itself shows when
+     collectLineWanted && owedUnread (collectLine is null whenever owedUnread). */
+  const toolbarShown = !isLoading && !!customers && anyCustomers && !selectedId;
+  const moneyRetry = moneyErrorRetry({
+    failed: moneyFailed.length,
+    owedFailed: [outstandingQ, projRecvQ].filter((q) => q.isError).length,
+    owedLineShown: toolbarShown && collectLineWanted && owedUnread,
+    listFailed: !!error,
+  });
+  const owedRefetching = outstandingQ.isFetching || projRecvQ.isFetching;
+
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
       {/* ── Header ── */}
@@ -666,7 +680,7 @@ export default function CustomersPage() {
 
       {!canWrite && <ViewOnlyNote what="add, import or edit companies" />}
 
-      {!error && moneyFailed.length > 0 && (
+      {moneyRetry.banner && (
         <LoadErrorBanner onRetry={() => moneyFailed.forEach((q) => void q.refetch())} />
       )}
 
@@ -720,7 +734,7 @@ export default function CustomersPage() {
       )}
 
       {/* Sticky Segment chips + search */}
-      {!isLoading && customers && anyCustomers && !selectedId && (
+      {toolbarShown && (
         <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-2.5">
           <div className="flex justify-between items-center gap-3 flex-wrap sm:flex-nowrap">
             <div className="w-full sm:w-64 shrink-0">
@@ -833,7 +847,7 @@ export default function CustomersPage() {
           ) : collectLineWanted && owedUnread ? (
             <p role="alert" className="flex flex-wrap items-center gap-2 text-xs text-rose" data-testid="to-collect-unread">
               {owedUnreadText}
-              <Button size="sm" icon="refresh" loading={outstandingQ.isFetching || projRecvQ.isFetching} onClick={retryOwed}>Try again</Button>
+              {moneyRetry.lineButton && <Button size="sm" icon="refresh" onClick={retryOwed} loading={owedRefetching}>Try again</Button>}
             </p>
           ) : collectLineWanted && collectParts === "loading" ? (
             <p role="status" aria-label="Adding up what is owed" className="text-xs text-ink-3" data-testid="to-collect-breakdown-loading">
