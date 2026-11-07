@@ -64,6 +64,8 @@ describe("R-1678b exchange difference only when it is one", () => {
     state.items = [usdInvoice()];
     pick(12976, "RAZORPAY SOFTWARE PVT LTD SETTLEMENT", "us");
     expect(screen.getByRole("button", { name: /Not exchange — book in ₹/ }).getAttribute("aria-pressed")).toBe("true");
+    /* R-2558: a ₹230 gap is not proven TDS or part — the owner answers it (nothing pre-chosen). */
+    fireEvent.click(screen.getByRole("button", { name: /Part payment/ }));
     fireEvent.click(screen.getByRole("button", { name: "Record ₹12,976 on INV-PEAK & reconcile" }));
     expect(state.split).not.toHaveBeenCalled();
     expect(state.pay.mock.calls[0][0]).toMatchObject({ invoiceId: "INV-PEAK", fx: null });
