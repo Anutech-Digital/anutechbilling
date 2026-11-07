@@ -17,7 +17,6 @@
 
 import * as React from "react";
 import Link from "next/link";
-import type { Route } from "next";
 import { useParams } from "next/navigation";
 import { toast } from "sonner";
 
@@ -43,7 +42,8 @@ import { createLineMemo } from "@/lib/banking/line-memo";
 import type { OldOneOffBooking } from "@/lib/banking/credit-pay-for";
 import { useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
 import { useDrawnBadges, useMountWhenIdle } from "./use-drawn-lines";
-import { bankRowStatusLabel, splitPaymentsTitle, type SplitLinePayment } from "@/lib/banking/bank-row-label";
+import type { SplitLinePayment } from "@/lib/banking/bank-row-label";
+import { BookingParty, LineNotes, MatchedBadge, TxnStatusBadge } from "@/components/features/banking/bank-line-status";
 import { useCustomers } from "@/lib/queries/customers";
 import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { RelinkOneOffDialog } from "@/components/features/banking/old-one-off-bookings";
@@ -776,13 +776,6 @@ function TxnAmount({ txn }: { txn: BankTransactionRow }) {
   return <span className="text-ink-3">—</span>;
 }
 
-/* R-2025 (0): an R-1863 advance reads "Advance", not "Payment" (lib/banking/bank-row-label). */
-function TxnStatusBadge({ txn, isAdvance = false, splitPays, booking }: { txn: BankTransactionRow; isAdvance?: boolean; splitPays?: readonly SplitLinePayment[]; booking?: LineBooking }) {
-  return txn.matched_to_type
-    ? <MatchedBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} booking={booking} />
-    : <Badge kind="warning" size="sm" dot>Unmatched</Badge>;
-}
-
 // ============================================================
 // Row (desktop)
 // ============================================================
@@ -863,7 +856,7 @@ function TransactionRow({
           // plus a quiet way to undo it.
           <div className="flex flex-col items-end gap-0.5">
             <MatchedBadge txn={txn} isAdvance={isAdvance} splitPays={splitPays} booking={booking} />
-            <BookingParty booking={booking} />
+            <BookingParty booking={booking} align="right" />
             <LineNotes notes={notes} align="right" />
             {onRelink && (
               <Button size="sm" variant="default" onClick={onRelink} title="Move this one-off sale onto the renewal, extra seats or quote it paid">
@@ -953,34 +946,4 @@ function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onRe
       </Card>
     </li>
   );
-}
-
-/** R-2361: the reversal pair + the reason / owner note under a reconciled line's badge (full text on hover). */
-function LineNotes({ notes, align }: { notes: LineNoteLines | null; align: "left" | "right" }) {
-  if (!notes) return null;
-  return (
-    <div className={`mt-0.5 min-w-0 max-w-full text-xs leading-snug text-ink-3 ${align === "right" ? "w-full text-right" : ""}`} data-testid="line-notes">
-      {notes.reversal && <div className="text-ink-2">{notes.reversal}</div>}
-      {notes.note && <div className="line-clamp-2 break-words" title={notes.note}>{notes.note}</div>}
-    </div>
-  );
-}
-
-/** R-2378: the party of a booked 'manual' line, linking to the page that holds its booking. */
-function BookingParty({ booking }: { booking?: LineBooking }) {
-  if (!booking) return null;
-  return (
-    <Link href={booking.href as Route} data-testid="line-booking" title={`Open ${booking.hrefLabel}`}
-      className="mt-0.5 block max-w-full truncate text-xs text-ink-2 underline decoration-dotted underline-offset-2 hover:text-ink">
-      {booking.party ?? booking.hrefLabel}
-    </Link>
-  );
-}
-
-/** R-2098: "Payment" / "Advance" — or "N payments" with each receipt in the tooltip. */
-function MatchedBadge({ txn, isAdvance, splitPays, booking }: { txn: BankTransactionRow; isAdvance: boolean; splitPays?: readonly SplitLinePayment[]; booking?: LineBooking }) {
-  const n = splitPays?.length ?? 0;
-  /* R-2378: a booked 'manual' line names its booking ("Loan received"), never the bare "Reconciled". */
-  const badge = <Badge kind="success" size="sm" dot>{booking ? booking.label : bankRowStatusLabel(txn.matched_to_type, isAdvance, n)}</Badge>;
-  return n > 1 && splitPays ? <span title={splitPaymentsTitle(splitPays)}>{badge}</span> : badge;
 }
