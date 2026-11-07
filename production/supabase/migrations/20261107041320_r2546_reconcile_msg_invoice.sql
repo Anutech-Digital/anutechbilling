@@ -6,8 +6,10 @@
 -- the quote id — for a quote-less receipt (a Zoho-imported invoice, R-2466 / R-2542) that is null, so
 -- the owner read "already recorded on <NULL>". Now: the quote, else the invoice.
 --
--- From 20261103200938_r2430_placeholder_ref_bank_line (latest definition) — only that one message
--- changes; same signature, so create or replace (grants re-stated).
+-- From 20261103200938_r2430_placeholder_ref_bank_line (latest definition) — that one message changes,
+-- and the trusted-server check reads public.current_request_role() instead of auth.role() (the R-2487
+-- rule every re-created function follows, as R-2542 did). Same signature: create or replace (grants
+-- re-stated).
 -- Test: supabase/tests/r2546_reconcile_msg_invoice.test.sql (begin … rollback; red without this file).
 
 begin;
@@ -38,9 +40,10 @@ declare
   v_quote_id   text;
 begin
   /* §17c fail-closed + R-718 money roles. R-2044: no whole invoice for a part request.
-     R-2098: the payment itself is bank_credit_pay_item (shared with the split). */
-  v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+     R-2098: the payment itself is bank_credit_pay_item (shared with the split).
+     R-2546: current_request_role() (R-2487 rule — the raw auth.role() list may only shrink). */
+  v_trusted := coalesce(public.current_request_role(), '') = 'service_role'
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   v_caller := public.current_tenant_id();
   if v_caller is null and not v_trusted then
