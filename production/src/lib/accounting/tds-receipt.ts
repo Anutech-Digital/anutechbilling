@@ -56,6 +56,48 @@ export function tdsBase(amountInclGst: number, taxRatePct: number | null | undef
   return Math.round((amountInclGst || 0) * 100 / (100 + r));
 }
 
+/** round(a × b ÷ c) for whole non-negative numbers, half away from zero like SQL's numeric round —
+ *  in BigInt, so crore × crore never drifts. */
+function mulDivRound(a: number, b: number, c: number): number {
+  const A = BigInt(a), B = BigInt(b), C = BigInt(c);
+  return Number((2n * A * B + C) / (2n * C));
+}
+
+/**
+ * R-2551 — the TDS gross of a receipt that may pay only a PART of a document: the twin of R-2538's
+ * SQL helpers bank_credit_tds_part_gross + bank_credit_tds_gross (migration 20261107074500), so the
+ * desk Record payment sheet books what the bank-reconcile path books.
+ * - gross = paid (money + TDS) × taxable ÷ GST-inclusive total, whole rupees, never above the taxable;
+ *   paid ≥ total (or no usable total) → the whole taxable.
+ * - a rate is given and the TDS does not fit it on that part (±₹1 is rounding) — the customer deducted
+ *   on more than this part — → TDS × 100 ÷ rate, never above the taxable (what 26AS shows).
+ * - never null: no taxable value → 0.
+ * Rates are taken to 2 decimals (the sheet's own precision) so the arithmetic stays exact.
+ */
+export function tdsPartGross(i: {
+  paid: number;
+  taxable: number | null | undefined;
+  total: number | null | undefined;
+  tds: number | null | undefined;
+  ratePct: number | null | undefined;
+}): number {
+  const whole = (n: number | null | undefined) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n) : 0);
+  const taxable = whole(i.taxable);
+  const total = whole(i.total);
+  const paid = whole(i.paid);
+  const tds = whole(i.tds);
+  if (taxable <= 0) return 0;
+  let part: number;
+  if (total <= 0 || paid >= total) part = taxable;
+  else if (paid <= 0) part = 0;
+  else part = Math.min(taxable, mulDivRound(paid, taxable, total));
+  const rateH = typeof i.ratePct === "number" && Number.isFinite(i.ratePct) ? Math.round(i.ratePct * 100) : 0; // hundredths of a %
+  if (tds > 0 && rateH > 0 && Math.abs(mulDivRound(part, rateH, 10_000) - tds) > 1) {
+    return Math.min(taxable, mulDivRound(tds, 10_000, rateH));
+  }
+  return part;
+}
+
 /** Sum of TDS per payment id, from tds_receivable rows (one payment can carry more than one). */
 export function tdsByPayment(rows: readonly { payment_id: string | null; tds_amount: number | null }[]): Record<string, number> {
   const out: Record<string, number> = {};
