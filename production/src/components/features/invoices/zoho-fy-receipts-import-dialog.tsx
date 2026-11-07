@@ -54,10 +54,39 @@ async function call<T>(body: Record<string, unknown>): Promise<T> {
 }
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** R-2547 — the Import button's label once a part failed: carry on from that part (1-based). */
+export const carryOnLabel = (part: number) => `Carry on from part ${part + 1}`;
+
+/**
+ * R-2547 — what the owner reads when part `part` (0-based) of `parts` fails: which part, why (the
+ * database's statement time limit in plain words), what the parts before it saved (`saved`; null =
+ * the check, which saves nothing) and how to carry on — payments already recorded count as already.
+ */
+export function partFailedMessage(part: number, parts: number, reason: string,
+  saved: { imported: number; already: number } | null): string {
+  const why = /canceling statement due to statement timeout/i.test(reason)
+    ? "the database took too long on this part"
+    : reason.trim().replace(/\.+$/, "");
+  const head = `Part ${part + 1} of ${parts} stopped: ${why}.`;
+  if (saved === null) return `${head} This was the check — nothing was saved. Press Check first again.`;
+  const kept = part === 0 ? "Nothing from this part was saved."
+    : `${part === 1 ? "Part 1 is" : `Parts 1–${part} are`} done (${saved.imported.toLocaleString("en-IN")} new receipts`
+      + `${saved.already ? `, ${saved.already.toLocaleString("en-IN")} already recorded` : ""}).`;
+  return `${head} ${kept} Press "${carryOnLabel(part)}" — payments already recorded count as already, nothing is booked twice.`;
+}
+
+/** A part failed: the message above + what the parts before it did. */
+class PartFailed extends Error {
+  constructor(message: string, readonly sum: PartResult, readonly part: number) { super(message); }
+}
+
 export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (o: boolean) => void }) {
   const qc = useQueryClient();
   const [busy, setBusy] = React.useState<null | "read" | "preview" | "check" | "import">(null);
   const [error, setError] = React.useState<string | null>(null);
+  /* R-2547: a failed part's message — kept apart from `error`, so the preview refresh after the import does not wipe it. */
+  const [partError, setPartError] = React.useState<string | null>(null);
+  const [resumeAt, setResumeAt] = React.useState<number | null>(null);
   const [read, setRead] = React.useState<{ listed: number; detailed: number; complete: boolean } | null>(null);
   const [preview, setPreview] = React.useState<Preview | null>(null);
   const [accounts, setAccounts] = React.useState<Record<string, string>>({});
@@ -84,7 +113,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
 
   async function readZoho() {
     const again = !!(read?.complete || preview);
-    setBusy("read"); setError(null); setPreview(null); setCheck(null); setDone(null);
+    setBusy("read"); setError(null); setPartError(null); setResumeAt(null); setPreview(null); setCheck(null); setDone(null);
     try {
       if (again) await call({ action: "restart" });
       for (;;) {
@@ -98,28 +127,45 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     await loadPreview(accounts);
   }
 
-  async function runParts(dryRun: boolean): Promise<PartResult> {
+  /** Parts `from`..last, in order; a failed part stops the run with PartFailed (what the earlier parts did + the message). */
+  async function runParts(dryRun: boolean, from = 0): Promise<PartResult> {
     const sum: PartResult = { imported: 0, already: 0, banked: 0, bankLater: 0, skipped: [] };
-    for (let part = 0; part < (preview?.parts ?? 0) && !stop.current; part++) {
-      const r = await call<{ result: { imported: number; already: number; banked: number; bank_later: number; skipped: { number: string; reason: string }[] } }>(
-        { action: "import", part, dryRun, accounts });
-      sum.imported += r.result.imported; sum.already += r.result.already; sum.banked += r.result.banked; sum.bankLater += r.result.bank_later;
-      sum.skipped.push(...r.result.skipped);
+    const parts = preview?.parts ?? 0;
+    for (let part = from; part < parts && !stop.current; part++) {
+      try {
+        const r = await call<{ result: { imported: number; already: number; banked: number; bank_later: number; skipped: { number: string; reason: string }[] } }>(
+          { action: "import", part, dryRun, accounts });
+        sum.imported += r.result.imported; sum.already += r.result.already; sum.banked += r.result.banked; sum.bankLater += r.result.bank_later;
+        sum.skipped.push(...r.result.skipped);
+      } catch (e) {
+        throw new PartFailed(partFailedMessage(part, parts, (e as Error).message, dryRun ? null : sum), sum, part);
+      }
     }
     return sum;
   }
 
   async function dryRun() {
-    setBusy("check"); setError(null);
-    try { setCheck(await runParts(true)); } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
+    setBusy("check"); setError(null); setPartError(null); setResumeAt(null);
+    try { setCheck(await runParts(true)); } catch (e) { setPartError((e as Error).message); } finally { setBusy(null); }
   }
 
+  /* R-2547: a failed part leaves `resumeAt` = that part; the next Import carries on from there (the parts
+     before it are saved — no need to send them again). */
   async function doImport() {
-    setBusy("import"); setError(null);
+    const from = resumeAt ?? 0;
+    setBusy("import"); setError(null); setPartError(null); setDone(null);
+    let failedAt: number | null = null;
     try {
-      setDone(await runParts(false));
-      invalidateMoney();
-    } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
+      setDone(await runParts(false, from));
+    } catch (e) {
+      if (e instanceof PartFailed) {
+        failedAt = e.part;
+        if (e.sum.imported || e.sum.already || e.sum.skipped.length) setDone(e.sum);
+      }
+      setPartError((e as Error).message);
+    } finally { setBusy(null); }
+    setResumeAt(failedAt);
+    invalidateMoney();
     await loadPreview(accounts);
   }
 
@@ -132,6 +178,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
   }
 
   const toBook = (preview?.counts.import ?? 0) + (preview?.counts.alreadyNotBanked ?? 0);
+  const canResume = resumeAt !== null && resumeAt < (preview?.parts ?? 0);
   return (
     <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
       <DialogContent className="max-w-4xl">
@@ -156,6 +203,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
             )}
           </div>
 
+          {partError && <p role="alert" data-testid="fy-receipts-part-error" className="text-xs text-rose-ink">{partError}</p>}
           {error && <p role="alert" className="text-xs text-rose-ink">{error}</p>}
 
           {preview && (
@@ -180,7 +228,11 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
                           id={`acct-${d.zohoAccountId}`}
                           value={accounts[d.zohoAccountId] ?? ""}
                           disabled={!!busy}
-                          onChange={(e) => { const next = { ...accounts, [d.zohoAccountId]: e.target.value }; setAccounts(next); void loadPreview(next); }}
+                          onChange={(e) => {
+                            /* R-2547: another account choice = another plan — the old part message / carry-on point no longer fit. */
+                            const next = { ...accounts, [d.zohoAccountId]: e.target.value };
+                            setAccounts(next); setPartError(null); setResumeAt(null); void loadPreview(next);
+                          }}
                           className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
                         >
                           <option value="">Choose the app account…</option>
@@ -198,8 +250,8 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
               {preview.skipReasons.length > 0 && (
                 <div>
                   <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Left out, and why</p>
-                  <ul className="text-xs text-ink-2 space-y-0.5">
-                    {preview.skipReasons.slice(0, 8).map((r) => <li key={r.reason}><b>{r.count}</b> · {r.reason}</li>)}
+                  <ul className="text-xs text-ink-2 space-y-0.5 max-h-40 overflow-y-auto" data-testid="fy-receipts-skip-reasons">
+                    {preview.skipReasons.map((r) => <li key={r.reason}><b>{r.count}</b> · {r.reason}</li>)}
                   </ul>
                   <details className="mt-1 text-xs">
                     <summary className="cursor-pointer text-ink-3">Show the payments left out</summary>
@@ -230,9 +282,10 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
           {preview && toBook > 0 && (
             <>
               <Button type="button" loading={busy === "check"} disabled={!!busy && busy !== "check"} onClick={dryRun}>Check first (nothing saved)</Button>
-              <Button type="button" variant="primary" loading={busy === "import"} disabled={!check || (!!busy && busy !== "import")} onClick={doImport}
-                title={check ? undefined : "Run the check first"}>
-                {preview.counts.import > 0 ? `Import ${preview.counts.import.toLocaleString("en-IN")} receipts` : "Match bank lines"}
+              <Button type="button" variant="primary" loading={busy === "import"} disabled={!(check || canResume) || (!!busy && busy !== "import")} onClick={doImport}
+                title={check || canResume ? undefined : "Run the check first"}>
+                {canResume ? carryOnLabel(resumeAt!)
+                  : preview.counts.import > 0 ? `Import ${preview.counts.import.toLocaleString("en-IN")} receipts` : "Match bank lines"}
               </Button>
             </>
           )}
