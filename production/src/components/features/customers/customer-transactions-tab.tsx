@@ -98,17 +98,28 @@ const STATUS_TONE: Record<InvoiceStatusView["tone"], string> = {
 export const ADVANCE_GROUP_TITLE = "Advance / not yet against an invoice";
 
 export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
-  const { customerId, linkOpts, canDeletePay, onDeletePayment, invoices, payments, quotes, projects, projPayments,
+  const { customerId, linkOpts, canDeletePay, onDeletePayment, payments, quotes, projects, projPayments,
     invoiceProject, invoicePaidByProject, subs, tdsInfo, txnFilter, setTxnFilter, segments, filteredTxns, hasTxns } = props;
   const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
   const toggleCollapse = (key: string) => setCollapsed((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
 
   const billingsQ = useCustomerInstalmentBillings(subs.map((s) => s.id));
-  const links = React.useMemo(() => {
-    const quoteOfSub = new Map(subs.map((s) => [s.id, s.quote_id] as const));
-    const instalments = (billingsQ.data ?? []).map((b) => ({ invoice_id: b.invoice_id, quote_id: quoteOfSub.get(b.subscription_id) ?? null }));
-    return linkPaymentsToInvoices({ invoices, payments, quotes, instalments });
-  }, [invoices, payments, quotes, subs, billingsQ.data]);
+  // Credit / debit notes change what an invoice can take (R-1709 invoiceMoneyIn).
+  const noteSum = (rows: readonly { invoice_id: string | null; amount: number | null }[]) => {
+    const m = new Map<string, number>();
+    for (const r of rows) if (r.invoice_id) m.set(r.invoice_id, (m.get(r.invoice_id) ?? 0) + (r.amount ?? 0));
+    return m;
+  };
+  const credit = noteSum(props.notes.creditNotes);
+  const debit = noteSum(props.notes.debitNotes);
+  const invoices = props.invoices.map((i) => ({
+    ...i, credit_noted: credit.get(i.id) ?? 0, debit_noted: debit.get(i.id) ?? 0,
+    // A project invoice's money comes from project_payments (R-006); never less than they show.
+    paid_amount: Math.max(i.paid_amount ?? 0, invoicePaidByProject[i.id] ?? 0),
+  }));
+  const quoteOfSub = new Map(subs.map((s) => [s.id, s.quote_id] as const));
+  const instalments = (billingsQ.data ?? []).map((b) => ({ invoice_id: b.invoice_id, quote_id: quoteOfSub.get(b.subscription_id) ?? null }));
+  const links = linkPaymentsToInvoices({ invoices, payments, quotes, instalments });
 
   const today = istToday();
   const payById = new Map(payments.map((p) => [p.id, p]));
@@ -119,7 +130,7 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
     const p = payById.get(s.paymentId)!;
     const refunded = p.status === "refunded";
     const notes = [p.method ? paymentMethodLabel(p.method) : null, s.whole ? null : `part of ${rupee(s.paymentAmount)}`,
-      !s.invoiceId && s.quoteId ? `Quote ${s.quoteId}` : null].filter(Boolean);
+      !s.invoiceId && s.quoteId && !isHolder(s.quoteId) ? `Quote ${s.quoteId}` : null].filter(Boolean);
     return {
       key: `cpay:${p.id}:${s.invoiceId ?? "adv"}`, parentKey, indent,
       date: refunded ? (p.refunded_at ?? p.received_at) : p.received_at, type: refunded ? "Refund" : "Payment",
@@ -128,17 +139,21 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
       href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId }, linkOpts),
     };
   };
+  /** A project milestone receipt (project_payments) — under its invoice, or under the project as an advance. */
+  const projectReceiptRow = (p: ProjPayment, parentKey: string, indent: number): HRow => ({
+    key: `pay:${p.id}`, parentKey, indent, date: p.received_at, type: "Payment",
+    ref: p.reference?.trim() || (p.invoice_id ? "Payment" : "Advance"), amount: p.amount,
+    status: p.bank_txn_id ? "reconciled" : "received",
+    href: txnHref({ kind: "projectPayment", invoiceId: p.invoice_id ?? null, projectId: p.project_id }, linkOpts),
+  });
   const byDate = (a: { date: string }, b: { date: string }) => (a.date ?? "").localeCompare(b.date ?? "");
 
   /** An invoice row and its payments (customer receipts + project receipts), oldest payment first. */
   const invoiceBlock = (i: LinkInvoice, parentKey: string | null, indent: number): HRow[] => {
     const key = `inv:${i.id}`;
-    const pPaid = invoicePaidByProject[i.id] ?? 0;
-    const view = invoiceStatusView(pPaid > (i.paid_amount ?? 0) ? { ...i, paid_amount: pPaid } : i, today);
+    const view = invoiceStatusView(i, today);
     const kids: HRow[] = (links.byInvoice[i.id] ?? []).map((s) => shareRow(s, key, indent + 1));
-    for (const p of projPayments.filter((pp) => pp.invoice_id === i.id)) {
-      kids.push({ key: `pay:${p.id}`, parentKey: key, indent: indent + 1, date: p.received_at, type: "Payment", ref: p.reference?.trim() || "Payment", amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received", href: txnHref({ kind: "projectPayment", invoiceId: i.id, projectId: p.project_id }, linkOpts) });
-    }
+    for (const p of projPayments.filter((pp) => pp.invoice_id === i.id)) kids.push(projectReceiptRow(p, key, indent + 1));
     return [
       { key, parentKey, indent, date: i.invoice_date, type: "Invoice", ref: i.id, amount: i.amount, status: view.label, invoiceStatus: view, href: txnHref({ kind: "invoice", invoiceId: i.id }, linkOpts) },
       ...kids.sort(byDate),
@@ -152,18 +167,18 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
     if (txnFilter === "invoices") {
       for (const i of invoices) blocks.push(invoiceBlock(i, null, 0));
     } else {
+      const shownProjects = new Set(projects.map((pr) => pr.id));
       for (const pr of projects) {
         const projKey = `proj:${pr.id}`;
         const projDue = Math.max(0, (pr.total_amount ?? 0) - (pr.paid ?? 0));
         const block: HRow[] = [{ key: projKey, parentKey: null, indent: 0, date: pr.created_at, type: "Project", ref: pr.title, amount: pr.total_amount, status: projectQuotationView(pr.status, pr.accepted_at ?? null).label + (projDue > 0 ? ` (${rupee(projDue)} due)` : ""), href: txnHref({ kind: "project", projectId: pr.id }, linkOpts) }];
         for (const i of invoices.filter((iv) => invoiceProject[iv.id]?.projectId === pr.id)) block.push(...invoiceBlock(i, projKey, 1));
         // Advance receipts recorded before their milestone was invoiced.
-        for (const p of projPayments.filter((pp) => pp.project_id === pr.id && !pp.invoice_id)) {
-          block.push({ key: `pay:${p.id}`, parentKey: projKey, indent: 1, date: p.received_at, type: "Payment", ref: p.reference?.trim() || "Advance", amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received", href: txnHref({ kind: "projectPayment", invoiceId: null, projectId: pr.id }, linkOpts) });
-        }
+        for (const p of projPayments.filter((pp) => pp.project_id === pr.id && !pp.invoice_id)) block.push(projectReceiptRow(p, projKey, 1));
         blocks.push(block);
       }
-      for (const i of invoices.filter((iv) => !invoiceProject[iv.id])) blocks.push(invoiceBlock(i, null, 0));
+      // Any invoice no project block shows (not a project invoice, or its project is not loaded) stands alone.
+      for (const i of invoices.filter((iv) => !shownProjects.has(invoiceProject[iv.id]?.projectId ?? ""))) blocks.push(invoiceBlock(i, null, 0));
       for (const q of quotes.filter((qq) => !isCustomerAdvanceQuote(qq))) {
         blocks.push([{ key: `q:${q.id}`, parentKey: null, indent: 0, date: q.created_date, type: "Quote", ref: q.id, amount: q.amount, status: q.status, href: txnHref({ kind: "quote", quoteId: q.id }, linkOpts) }]);
       }
@@ -174,17 +189,21 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
     rows = filteredTxns.map((t, n) => ({ key: `flat:${n}`, parentKey: null, indent: 0, ...t }));
   }
 
-  /** The advance group: money not against any invoice. An advance holder (R-1863) is one row, its receipts inside it. */
+  /** The advance group: money not against any invoice. An advance holder (R-1863) is one row with its receipts under it. */
   function advanceGroup(): HRow[] {
     const gKey = "group:advance";
     const kids: HRow[] = links.unlinked.filter((s) => !isHolder(s.quoteId)).map((s) => shareRow(s, gKey, 1));
     for (const q of quotes.filter((qq) => isCustomerAdvanceQuote(qq))) {
       const v = advanceTxnView(q, props.allPayments, props.creditRows);
-      if (v) kids.push({ key: `q:${q.id}`, parentKey: gKey, indent: 1, date: q.created_date, type: "Advance", ref: q.id, amount: v.amount, status: v.status, href: txnHref({ kind: "quote", quoteId: q.id }, linkOpts) });
+      if (!v) continue;
+      const qKey = `q:${q.id}`;
+      kids.push({ key: qKey, parentKey: gKey, indent: 1, date: q.created_date, type: "Advance", ref: q.id, amount: v.amount, status: v.status, href: txnHref({ kind: "quote", quoteId: q.id }, linkOpts) });
+      // Its receipts, right under it (TDS line, delete) — the holder row says what is still available.
+      kids.push(...links.unlinked.filter((s) => s.quoteId === q.id).map((s) => shareRow(s, qKey, 2)).sort(byDate));
     }
     if (kids.length === 0) return [];
-    const total = links.unlinked.filter((s) => s.counted).reduce((t, s) => t + s.amount, 0);
-    return [{ key: gKey, parentKey: null, indent: 0, date: "", type: "Advance", ref: ADVANCE_GROUP_TITLE, amount: total, status: "", href: null, group: true }, ...kids.sort(byDate)];
+    // No total on the heading: an advance may be partly used already — each row says what is left.
+    return [{ key: gKey, parentKey: null, indent: 0, date: "", type: "Advance", ref: ADVANCE_GROUP_TITLE, amount: 0, status: "", href: null, group: true }, ...kids];
   }
 
   const parentOf: Record<string, string | null> = {};

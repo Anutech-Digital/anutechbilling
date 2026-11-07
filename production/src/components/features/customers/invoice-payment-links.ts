@@ -13,12 +13,15 @@
  *      each invoice with the amount that invoice got.
  *
  * When a quote has several invoices the database settles the oldest first; so does this, and no
- * invoice takes more than it shows as paid (invoicePaidAmount). What is left over — money on a quote
+ * invoice takes more than the money it shows in (invoicePaidAmount = invoiceMoneyIn, R-1709: paid_amount
+ * + advances adjusted at issue, capped at the value after credit/debit notes). What is left over — money on a quote
  * not yet invoiced, an advance holder (R-1863), an overpayment kept as credit — is "unlinked": the
  * "Advance / not yet against an invoice" group. Result: the rows under an invoice add up to its
  * paid amount, the same number the invoice page and its status use.
  */
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
+import { invoiceMoneyIn, invoicePaymentState } from "@/lib/invoices/payment-state";
+import { invoiceIsOverdue } from "@/lib/invoices/overdue";
 import { rupee } from "@/lib/utils";
 
 export interface LinkInvoice {
@@ -31,6 +34,11 @@ export interface LinkInvoice {
   written_off_at: string | null;
   invoice_date: string;
   due_date: string | null;
+  /** invoices.adjusted_advances — advances folded in at issue. */
+  adjusted_advances?: unknown;
+  /** Sums of this invoice's credit / debit notes (₹); undefined = not read. */
+  credit_noted?: number | null;
+  debit_noted?: number | null;
 }
 export interface LinkPayment {
   id: string;
@@ -67,14 +75,9 @@ export interface PaymentLinks {
   forOf: Record<string, string[]>;
 }
 
-/** What the invoice shows as paid: the receipts after it was raised plus advances folded into it. */
-export function invoicePaidAmount(inv: Pick<LinkInvoice, "amount" | "net_payable" | "paid_amount" | "status">): number {
-  const status = (inv.status ?? "").toLowerCase();
-  const amount = Math.max(0, inv.amount ?? 0);
-  if (status === "void") return 0;
-  if (status === "paid") return amount;
-  const folded = amount - (inv.net_payable ?? amount);
-  return Math.min(amount, Math.max(0, folded + (inv.paid_amount ?? 0)));
+/** Money in on the invoice — the app's one rule (lib/invoices/payment-state.ts), whole rupees. */
+export function invoicePaidAmount(inv: LinkInvoice): number {
+  return Math.max(0, Math.round(invoiceMoneyIn(inv)));
 }
 
 function payDate(p: LinkPayment): string {
@@ -149,15 +152,17 @@ export interface InvoiceStatusView { label: string; tone: "paid" | "part" | "ove
 
 /** The invoice row's status on Transactions: Paid / Part-paid (₹X due) / Overdue — one place for the due. */
 export function invoiceStatusView(inv: LinkInvoice, todayIst: string): InvoiceStatusView {
-  const status = (inv.status ?? "").toLowerCase();
-  if (status === "void") return { label: "Void", tone: "muted" };
-  if (status === "draft") return { label: "Draft", tone: "muted" };
-  if (inv.written_off_at) return { label: "Written off", tone: "muted" };
+  // State from invoicePaymentState (R-1709), overdue from invoiceIsOverdue, due from invoiceAmountDue —
+  // the same three the Invoices list uses, so the two screens never disagree.
+  const state = invoicePaymentState(inv);
+  if (state === "void") return { label: "Void", tone: "muted" };
+  if (state === "draft") return { label: "Draft", tone: "muted" };
+  if (state === "credited") return { label: "Credited", tone: "muted" };
+  if (state === "written-off") return { label: "Written off", tone: "muted" };
   const due = invoiceAmountDue(inv);
-  if (due <= 0) return { label: "Paid", tone: "paid" };
-  const part = invoicePaidAmount(inv) > 0;
-  const overdue = status === "overdue" || (!!inv.due_date && inv.due_date.slice(0, 10) < todayIst);
-  if (overdue) return { label: part ? `Overdue (${rupee(due)} due)` : "Overdue", tone: "overdue" };
+  if (state === "paid" || due <= 0) return { label: "Paid", tone: "paid" };
+  const part = state === "partial";
+  if (invoiceIsOverdue(inv, todayIst)) return { label: part ? `Overdue (${rupee(due)} due)` : "Overdue", tone: "overdue" };
   if (part) return { label: `Part-paid (${rupee(due)} due)`, tone: "part" };
   return { label: "Unpaid", tone: "open" };
 }

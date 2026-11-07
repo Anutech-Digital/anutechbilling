@@ -94,8 +94,8 @@ describe("R-2544 linkPaymentsToInvoices", () => {
     expect(sum(r.byInvoice["INV/25-26/1913"])).toBe(invoicePaidAmount(invoices[0]));
   });
 
-  it("an advance taken before the invoice and folded into it (net_payable) still counts under that invoice", () => {
-    const invoices = [inv({ id: "INV-1", quote_id: "Q-1", amount: 10000, net_payable: 6000, paid_amount: 2000 })];
+  it("an advance taken before the invoice and folded into it (adjusted_advances) still counts under that invoice", () => {
+    const invoices = [inv({ id: "INV-1", quote_id: "Q-1", amount: 10000, net_payable: 6000, paid_amount: 2000, adjusted_advances: [{ payment_id: "a", amount: 4000 }] })];
     const payments = [
       pay({ id: "a", quote_id: "Q-1", amount: 4000, received_at: "2026-08-01T05:00:00Z" }),
       pay({ id: "b", quote_id: "Q-1", amount: 2000 }),
@@ -111,6 +111,21 @@ describe("R-2544 linkPaymentsToInvoices", () => {
     expect(r.byInvoice["INV-1"]).toEqual([expect.objectContaining({ paymentId: "r", amount: 500, counted: false })]);
     expect(sum(r.byInvoice["INV-1"])).toBe(0);
   });
+
+  it("a credit note: the invoice takes only its value after the note; the rest of a receipt is credit (advance group)", () => {
+    // ₹10,000 invoice, ₹2,000 credit note, ₹10,000 received → ₹8,000 on the invoice, ₹2,000 became credit.
+    const invoices = [inv({ id: "INV-1", quote_id: "Q-1", net_payable: 8000, paid_amount: 10000, status: "paid", credit_noted: 2000 })];
+    const r = linkPaymentsToInvoices({ invoices, payments: [pay({ id: "p", quote_id: "Q-1", amount: 10000 })], quotes: [{ id: "Q-1", invoice_id: "INV-1" }], instalments: [] });
+    expect(sum(r.byInvoice["INV-1"])).toBe(8000);
+    expect(r.unlinked.map((s) => s.amount)).toEqual([2000]);
+  });
+
+  it("a debit note: money for it stays under the invoice", () => {
+    const invoices = [inv({ id: "INV-1", quote_id: "Q-1", amount: 1000, net_payable: 1200, paid_amount: 1200, status: "paid", debit_noted: 200 })];
+    const r = linkPaymentsToInvoices({ invoices, payments: [pay({ id: "p", quote_id: "Q-1", amount: 1200 })], quotes: [{ id: "Q-1", invoice_id: "INV-1" }], instalments: [] });
+    expect(sum(r.byInvoice["INV-1"])).toBe(1200);
+    expect(r.unlinked).toEqual([]);
+  });
 });
 
 describe("R-2544 invoiceStatusView", () => {
@@ -123,6 +138,10 @@ describe("R-2544 invoiceStatusView", () => {
     expect(invoiceStatusView(inv({ id: "e", status: "void" }), today).label).toBe("Void");
     expect(invoiceStatusView(inv({ id: "f" }), today).label).toBe("Unpaid");
     expect(invoiceStatusView(inv({ id: "g", written_off_at: "2026-10-01T00:00:00Z" }), today).label).toBe("Written off");
+    // A credit note closed it, no money came in — not "Paid" (same as the Invoices list, R-1709).
+    expect(invoiceStatusView(inv({ id: "h", status: "paid", net_payable: 0, credit_noted: 10000 }), today).label).toBe("Credited");
+    // A credit note alone is not a payment: still Unpaid on the reduced due.
+    expect(invoiceStatusView(inv({ id: "i", net_payable: 8000, credit_noted: 2000 }), today).label).toBe("Unpaid");
   });
 });
 
