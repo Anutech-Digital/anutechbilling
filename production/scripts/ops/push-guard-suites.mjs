@@ -26,6 +26,15 @@
  * GATE (docs/WORKER-STEPS.md) runs that list by name before push (most of the names do not match
  * the wiring or scan name globs). A file that turned CI red after skipping push (R-1592, R-1973) stays here.
  * Run it: `node scripts/ops/push-guard-suites.mjs --ci-only` prints the paths, one per line.
+ *
+ * R-2564 (7 Nov 2026): every push still took 85–169 s. Cause: ~20 of these files each walked src/
+ * (4,900 files + Prisma's 36 MB generated client) or supabase/migrations (600 files) on their own —
+ * on Windows the file opens are the cost, a dozen times over in the fork pool. Now a repo-wide scan
+ * reads through src/lib/testing/source-cache.ts (`readSource`: size+mtime+ctime checked on EVERY
+ * read, so never stale; one shared cache file per checkout in the OS temp folder) and skips the
+ * generated client (src/lib/testing/prisma-generated.ts, pinned to the schema's output). Same tests,
+ * same strictness. Measured same load, alternating: before 55.1/57.2/48.5 s, after 28.3/27.0/27.7 s
+ * (cold cache 44.6 s). A NEW whole-tree scan: read with readSource(), not readFileSync.
  */
 export const PUSH_GUARD_SUITES = [
   // ── ratchets ──
