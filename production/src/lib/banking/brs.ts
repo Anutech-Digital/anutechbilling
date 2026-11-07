@@ -96,3 +96,23 @@ export function brsRows(b: Brs, accountName: string): (string | number)[][] {
   if (b.importGap !== null) out.push(["", ""], ["Closing balance per bank's statement − imported balance (missing lines)", b.importGap]);
   return out;
 }
+
+/**
+ * R-2566: how many lines a BRS list paints at a time. With 5,000+ bank lines on one account the
+ * page painted ~3,500 "In bank, not in books" rows at once and froze the tab. The counts and ₹
+ * totals above each list still come from EVERY line (buildBrs); only the painting is paged.
+ */
+export const BRS_PAGE_SIZE = 100;
+
+/** The lines a search box keeps: text in the narration, the date (YYYY-MM-DD), or the amount typed (₹ / commas ignored). */
+export function searchBrsLines(rows: readonly BrsLine[], query: string): BrsLine[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return rows as BrsLine[];
+  const digits = q.replace(/[₹,\s]/g, "");
+  const amountQuery = /^\d+(\.\d+)?$/.test(digits) ? digits : null;
+  return rows.filter((l) =>
+    (l.description ?? "").toLowerCase().includes(q) ||
+    l.txn_date.includes(q) ||
+    (amountQuery !== null && (String(l.credit || 0).includes(amountQuery) || String(l.debit || 0).includes(amountQuery))),
+  );
+}
