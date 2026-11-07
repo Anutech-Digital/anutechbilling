@@ -166,9 +166,10 @@ declare v_txn record; v_tenant uuid; v_search_amount integer; v_is_credit boolea
   v_caller uuid; v_trusted boolean; v_known uuid; v_payer_customers uuid[]; v_ref text;
 begin
   /* R-715: a signed-in caller sees suggestions only for their own company's bank line.
+     R-2534: trusted check through public.current_request_role() (R-2487 scan: no new raw auth list).
      No company (null-caller) → refused; another company's line → nothing (as "not found"). */
-  v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+  v_trusted := coalesce(public.current_request_role(), '') = 'service_role'
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   v_caller := public.current_tenant_id();
   if v_caller is null and not v_trusted then
