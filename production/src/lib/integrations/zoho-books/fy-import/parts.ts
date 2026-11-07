@@ -8,6 +8,16 @@
 /** Documents per import part (each kind's SQL import takes at most 500). */
 export const IMPORT_PART = 250;
 
+/**
+ * R-2547 — customer payments per receipts part. Each payment books a receipt (record_multi_invoice_payment:
+ * journal, TDS row, voucher) and looks up its bank line, all in ONE call as the signed-in user, whose
+ * statement_timeout is 8 s. Staging 7 Nov: part 0 of 250 went in, part 1 and every later part was
+ * cancelled ("canceling statement due to statement timeout"). Measured locally: ~8 ms a payment
+ * (250 = 2.2 s, 50 = 0.4 s) — 50 keeps a wide margin on Cloud SQL. Same stable order, so the payments
+ * of an old 250-part come again inside the new parts 0..4 and count as "already" (never booked twice).
+ */
+export const RECEIPTS_IMPORT_PART = 50;
+
 export function partCount(n: number, size = IMPORT_PART): number {
   return Math.ceil(Math.max(0, n) / size);
 }

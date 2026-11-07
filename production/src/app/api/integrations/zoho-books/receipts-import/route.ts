@@ -13,7 +13,8 @@
  *   preview  → the plan from the COMPLETE scan: counts, totals, Zoho deposit accounts with the app
  *              account each goes to (owner's choice, else a suggestion; "none" = Leave these out → its
  *              payments are skipped "Left out by owner."), skip reasons, past batches.
- *   import   → { part, dryRun } — one part through import_zoho_fy_receipts: dryRun true (default)
+ *   import   → { part, dryRun } — one part (RECEIPTS_IMPORT_PART payments, R-2547: under the 8 s
+ *              statement limit) through import_zoho_fy_receipts: dryRun true (default)
  *              writes nothing. The request names only Zoho ids + the app account — every amount
  *              comes from the scan in the database. NO suggestion here (R-2501 fix): only the accounts the
  *              dialog sent (what it showed) are used — a Zoho account it did not send is skipped.
@@ -29,7 +30,7 @@ import { ZohoApiError } from "@/lib/integrations/zoho-books/api";
 import { fyDateRange } from "@/lib/integrations/zoho-books/fy-fetch";
 import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { scanStep } from "@/lib/integrations/zoho-books/fy-import/scan";
-import { partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts";
+import { RECEIPTS_IMPORT_PART, partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts";
 import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb } from "@/lib/integrations/zoho-books/fy-import/store";
 import { zohoReceiptFacts, type ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
 import { RECEIPTS_IMPORT_ROLES, buildReceiptsPlan, toReceiptPick } from "@/lib/integrations/zoho-books/receipts-import/plan";
@@ -116,7 +117,7 @@ export async function POST(req: NextRequest) {
        since / syncs one matched by hand), in the scan's stable order: part N is the same payments on
        every call even after part 0 was booked (review). */
     const picks = plan.rows.filter((r) => r.verdict !== "skip").map(toReceiptPick);
-    const parts = partCount(picks.length);
+    const parts = partCount(picks.length, RECEIPTS_IMPORT_PART);
 
     if (action === "preview") {
       let batches;
@@ -137,7 +138,7 @@ export async function POST(req: NextRequest) {
 
     if (!picks.length) return fail(409, "Nothing to import — choose the app account for each Zoho account (or Leave these out), then check again.");
     const part = Number(body.part ?? 0);
-    const slice = partOf(picks, part);
+    const slice = partOf(picks, part, RECEIPTS_IMPORT_PART);
     if (!slice) return fail(400, "That part does not exist. Preview again.");
     const dryRun = body.dryRun !== false;
     const supabase = createClient();
