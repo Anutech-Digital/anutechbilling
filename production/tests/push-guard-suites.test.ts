@@ -44,7 +44,7 @@ describe("push guard suites (R-385)", () => {
   it("has no duplicates and stays a short list (the push waits for it)", () => {
     expect(new Set(list).size).toBe(list.length);
     expect(list.length).toBeGreaterThan(10);
-    expect(list.length).toBeLessThanOrEqual(80); // R-1973: 74 → 84 with the src/site scans; R-2443: 89 → 80 (+nav-coverage)
+    expect(list.length).toBeLessThanOrEqual(82); // R-1973: 74 → 84 with the src/site scans; R-2443: 89 → 80 (+nav-coverage); R-2564: +2 tiny source-cache guards (~0.1 s)
     expect(PUSH_GUARD_BUDGET_MS).toBe(60_000); // R-2443: 90 → 60 s
   });
 
