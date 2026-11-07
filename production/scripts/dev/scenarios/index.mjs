@@ -352,7 +352,7 @@ export const SCENARIOS = [
              extra: ["c2192000-0000-4000-8000-000000000001", "c2192000-0000-4000-8000-000000000002", "Q-SCN-RG-1", "Q-SCN-RG-2", "INV-SCN-RG-1", "INV-SCN-RG-2"] },
     expect: { ...NO_OLD, txns: 2, ...NO_EXTRA, xCustomers: 2, xQuotes: 2, xInvoices: 2 },
     pages: [
-      { path: "banking", for: "R-2192 the ₹13,105 SCN Round Off Traders line: 'Matches INV-SCN-RG-1 · ₹1 round-off' → Match & record payment → Paid · the ₹49,500 SCN Wire Exports line → This money is for INV-SCN-RG-2 → Bank / SWIFT charge ₹500 → Paid" },
+      { path: "banking", for: "R-2192 the ₹13,105 SCN Round Off Traders line: 'Matches INV-SCN-RG-1 · ₹1 round-off' → Reconcile: INV-SCN-RG-1 ticked, 'Round off ₹1' chosen → Record → Paid in full · the ₹49,500 SCN Wire Exports line → This money is for INV-SCN-RG-2 → Bank / SWIFT charge ₹500 → Paid" },
     ],
   },
 ];
