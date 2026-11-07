@@ -8,7 +8,9 @@
  *   Create quote (don't send)   = the old "Generate": /api/subscriptions/[id]/generate-renewal-quote.
  *   Bill next part              = Generate on a subscription billed in parts (R-2095) — a whole-term
  *                                 renewal quote would bill twice (R-808), so send-now refuses it and
- *                                 the row offers only this.
+ *                                 the row offers only this. R-2548: when that part is part 1 of the
+ *                                 NEXT term it reads "Bill renewal · part 1 of next year / term" with
+ *                                 the line "Renewal for <term> · <seats> × ₹<rate>" (nextPartToBill).
  *   Customer not renewing       = before the renewal date: Won't renew (NonRenewingDialog);
  *                                 after it (expired / in grace / stopped): Cancel subscription
  *                                 (CancelSubscriptionDialog, with a reason).
@@ -19,14 +21,21 @@
  */
 import { renewalRowAction, isSettledRenewed, type RowAction, type RowActionSub } from "@/app/(app)/renewals/row-action";
 import { isSplitBilled } from "@/lib/billing/instalments";
+import { followingTermStart, termAmountOf } from "@/lib/billing/subscription-schedule";
+import { addDaysISO, addMonthsClamped, CYCLE_MONTHS } from "@/lib/billing/schedule";
+import { defaultSeatRate, periodText } from "@/lib/billing/proforma";
 import { effectiveGraceDays } from "@/lib/renewals/cadence";
 import { isFlexNextPart } from "@/lib/renewals/buckets";
+import { rupee } from "@/lib/utils";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 
 export const SEND_RENEWAL_QUOTE = "Send renewal quote";
 export const RESEND_RENEWAL_QUOTE = "Resend renewal quote";
 export const CREATE_QUOTE_NO_SEND = "Create quote (don't send)";
 export const BILL_NEXT_PART = "Bill next part";
+/** R-2548: the next part to bill is part 1 of the NEXT term — the renewal (a 12-month term / any other). */
+export const BILL_RENEWAL_YEAR = "Bill renewal · part 1 of next year";
+export const BILL_RENEWAL_TERM = "Bill renewal · part 1 of next term";
 export const CUSTOMER_NOT_RENEWING = "Customer not renewing";
 export const CANCEL_LABEL = "Cancel";
 
@@ -34,6 +43,61 @@ export interface RenewalActionSub extends RowActionSub {
   id: string;
   billing_cycle?: string | null;
   grace_until?: string | null;
+  /** R-2548: for the renewal line "Renewal for <term> · <seats> × ₹<rate>" (all optional — the line shrinks without them). */
+  start_date?: string | null;
+  seats?: number | null;
+  mrr?: number | null;
+  term_amount?: number | null;
+}
+
+export interface NextPartToBill {
+  /** The button: BILL_NEXT_PART, or BILL_RENEWAL_YEAR / BILL_RENEWAL_TERM when the part starts a new term. */
+  label: string;
+  renewal: boolean;
+  /** The small line under a renewal button; null for a mid-term part. */
+  note: string | null;
+}
+
+/**
+ * R-2548 (Pardeep, 7 Nov 2026): an annual commitment paid half-yearly / quarterly / monthly read
+ * "Bill next part" mid-year AND at the end of the year — but the end-of-year click bills part 1 of
+ * the NEXT term at today's seats × rate: it IS the renewal, so the button says so.
+ *
+ * The next part to bill = the first part of the current term whose start has not passed, else
+ * (every part has started — the billing job billed each on its day, R-2044) part 1 of the
+ * following term; past the renewal date the oldest unbilled part is that same part 1
+ * (billDueTermsOldestFirst rolls one term and bills it). A flex term (1 month billed monthly, one
+ * part a term) keeps "Bill next part" — "part 1 of next term" would say nothing there.
+ *
+ * `daysUntil` = IST days to renewal_date (negative = past), so today = renewal_date − daysUntil.
+ * Pure — the real periods (laid rows, requests, freed parts) are the server's (bill-next.server.ts)
+ * and the Bill next part dialog shows them before anything is made.
+ */
+export function nextPartToBill(sub: RenewalActionSub, daysUntil: number): NextPartToBill {
+  const next: NextPartToBill = { label: BILL_NEXT_PART, renewal: false, note: null };
+  const cycle = (sub.billing_cycle ?? null) as BillingCycle | null;
+  if (!isSplitBilled(cycle) || !cycle || !sub.renewal_date) return next;
+  const termMonths = Math.max(1, sub.term_months ?? 12);
+  const parts = Math.floor(termMonths / CYCLE_MONTHS[cycle]);
+  if (parts <= 1) return next;
+
+  const termStart = followingTermStart({ term_months: termMonths, start_date: sub.start_date ?? null, renewal_date: sub.renewal_date });
+  const today = addDaysISO(sub.renewal_date.slice(0, 10), -daysUntil);
+  for (let k = 1; k < parts; k++) {
+    /* A part of the CURRENT term still ahead (or starting today) → that part, not the renewal. */
+    if (addMonthsClamped(termStart, -k * CYCLE_MONTHS[cycle]) >= today) return next;
+  }
+
+  const termEnd = addDaysISO(addMonthsClamped(termStart, termMonths), -1);
+  const partTaxable = Math.round(termAmountOf({ mrr: sub.mrr ?? 0, term_months: termMonths, term_amount: sub.term_amount ?? null }) / parts);
+  const seats = sub.seats ?? 0;
+  const rate = seats > 0 ? defaultSeatRate({ seats, partTaxable }) : null;
+  const money = rate != null ? ` · ${seats} × ${rupee(rate)}` : partTaxable > 0 ? ` · ${rupee(partTaxable)} + GST` : "";
+  return {
+    label: termMonths === 12 ? BILL_RENEWAL_YEAR : BILL_RENEWAL_TERM,
+    renewal: true,
+    note: `Renewal for ${periodText(termStart, termEnd)}${money}`,
+  };
 }
 
 export type RenewalButtonKind = "send-now" | "generate";
@@ -47,6 +111,8 @@ export interface RenewalActionSet {
   notRenewing: { label: string; dialog: "non-renewing" | "cancel" } | null;
   /** Grace ended unpaid — "Renew anyway" and "Cancel" side by side. */
   graceOver: boolean;
+  /** R-2548: the small line under a "Bill renewal · part 1 of …" button ("Renewal for <term> · <seats> × ₹<rate>"); else null. */
+  note: string | null;
 }
 
 /** Past the renewal date AND past the (company / owner-extended) grace — the owner decides. */
@@ -70,14 +136,19 @@ export function renewalActionSet(
 
   let primary: RenewalActionSet["primary"] = null;
   let secondary: RenewalActionSet["secondary"] = null;
+  let note: string | null = null;
   /* R-2422: a monthly flex part not yet due is raised by the billing job on its date (R-2044) —
      "Bill next part" before then would re-bill the current term, so nothing to bill yet. */
   const flexNotDue = isFlexNextPart(sub, opts.daysUntil);
   if (row.kind === "generate" && flexNotDue) {
     /* no button here — renewalNextStep makes it Follow-up */
   } else if (row.kind === "generate") {
-    if (split) primary = { kind: "generate", label: BILL_NEXT_PART };
-    else {
+    if (split) {
+      /* R-2548: part 1 of the next term is the renewal — the button and its line say so. */
+      const part = nextPartToBill(sub, opts.daysUntil);
+      primary = { kind: "generate", label: part.label };
+      note = part.note;
+    } else {
       primary = { kind: "send-now", label: SEND_RENEWAL_QUOTE };
       secondary = { kind: "generate", label: CREATE_QUOTE_NO_SEND };
     }
@@ -97,7 +168,7 @@ export function renewalActionSet(
       : { label: CUSTOMER_NOT_RENEWING, dialog: "non-renewing" };
   }
 
-  return { row, primary, secondary, notRenewing, graceOver };
+  return { row, primary, secondary, notRenewing, graceOver, note };
 }
 
 // ─── R-2422: one next-step button + a ⋯ menu ─────────────────────────────────

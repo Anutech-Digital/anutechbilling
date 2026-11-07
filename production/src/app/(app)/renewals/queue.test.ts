@@ -126,12 +126,12 @@ describe("R-2403 ONE status per row", () => {
     expect(s).toEqual({ key: "bills-not-raised", label: "Nov bill not raised", tone: "danger", note: null });
   });
 
-  it("…and its action is Bill next part — not 'Renewed — nothing to send'", () => {
+  it("…and its action bills the next part — not 'Renewed — nothing to send' (R-2548: that part is next year's part 1, so the button says Bill renewal)", () => {
     const a = renewalRowAction(ravi, null, TODAY);
     expect(a.kind).toBe("generate");
     expect(a.text).not.toBe("Renewed — nothing to send");
     const set = renewalActionSet(ravi, null, { daysUntil: -2, tenantGraceDays: 1, canEndSubscription: true });
-    expect(set.primary?.label).toBe("Bill next part");
+    expect(set.primary?.label).toBe("Bill renewal · part 1 of next year");
   });
 
   it("billed monthly, two parts behind (REDOQ, 33 days): '2 bills not raised', never 'Expired'", () => {

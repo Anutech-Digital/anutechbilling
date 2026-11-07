@@ -281,11 +281,17 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
             onClick={() => void run(button.kind as RenewalButtonKind)}
             title={button.kind === "send-now"
               ? "Email the customer the renewal quote with its accept / pay link (creates it first if needed)"
-              : "Bill the next part of this subscription (payment request, or the tax invoice when paid)"}
+              : set.note
+                ? "Bill part 1 of the next term — the renewal, at today's seats × rate (you check them first; proforma, then the tax invoice when paid)"
+                : "Bill the next part of this subscription (payment request, or the tax invoice when paid)"}
           >
             <Icon name={button.kind === "send-now" ? "mail" : "plus"} size={12} />
             {button.label}
           </Button>
+        )}
+        {button && button.kind === "generate" && set.note && (
+          /* R-2548: what the renewal click bills — the next term's dates and today's seats × rate. */
+          <p className="basis-full text-2xs text-ink-3 tabular-nums" data-testid="renewal-part-note">{set.note}</p>
         )}
         {menuKeys.length > 0 && (
           <DropdownMenu modal={false}>
