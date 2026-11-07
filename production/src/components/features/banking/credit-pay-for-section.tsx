@@ -45,11 +45,13 @@ import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemKey,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
   paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
-  tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem, saleLinesBelowCost, BANK_SALE_BELOW_COST_TEXT,
+  tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem, saleLinesBelowCost, BANK_SALE_BELOW_COST_TEXT,
   typedPriceCheck, convertTypedPrice, keepTypedPrice, undoTypedConversion,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
-import { tdsSectionGuess, TDS_SECTION_CHOICES } from "@/lib/banking/tds-section";
+import { TDS_SECTION_CHOICES } from "@/lib/banking/tds-section";
+import { bankTdsDefault, bankTdsProblem, customerTdsSection, parseTdsRate, sectionForRate, shortChoiceDefault } from "@/lib/banking/bank-tds-rate";
+import { tdsPartGross } from "@/lib/accounting/tds-receipt";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRelation } from "@/lib/banking/customer-payer";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
@@ -67,7 +69,11 @@ import { ZohoSalesNote } from "./credit-pay-for-zoho-note";
 
 const NEW_CUSTOMER = "__new_customer__";
 
-export interface PayForCustomer { id: string; name: string; country?: string | null; gstin?: string | null; domain?: string | null; gst_treatment?: string | null }
+export interface PayForCustomer {
+  id: string; name: string; country?: string | null; gstin?: string | null; domain?: string | null; gst_treatment?: string | null;
+  /** R-2558: the TDS this customer usually deducts (R-2370) — pre-fills the rate box. */
+  tds_default_section?: string | null; tds_default_rate_pct?: number | string | null;
+}
 
 interface Props {
   transaction: BankTransactionRow;
@@ -296,11 +302,20 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     : mode === "split" ? splitPicked.find((i) => Boolean(i.approval_block)) ?? null : null;
   const approvalBlocked = blockedItem?.approval_block && blockedItem.quote_id
     ? { reason: blockedItem.approval_block, quoteId: blockedItem.quote_id } : null;
-  const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
-  /* TDS pre-chosen when the gap IS a common TDS rate; else part payment. Re-decided per item. */
-  const tdsLikely = check?.kind === "short" && check.tdsRatePct !== null;
+  /* R-2558: the rate + section a "TDS deducted" books — pre-filled only from evidence (a common rate
+     on the part or on the whole sale, or the customer's saved TDS), never TDS ÷ part. */
+  const wholeTaxable = mode === "sale" ? preview.taxable : (picked?.taxable_value ?? null);
+  const tdsDef = check?.kind === "short"
+    ? bankTdsDefault({ shortBy: check.shortBy, partTaxable: taxable, wholeTaxable, partRatePct: check.tdsRatePct, customer })
+    : null;
+  /* R-2558: nothing pre-chosen unless the gap IS TDS at a known rate (or the Suggestion card said so) —
+     the owner answers "why less came in"; it used to default to Part payment. Re-decided per item. */
+  const [shortChoice, setShortChoice] = React.useState<ShortChoice | null>(null);
+  const tdsLikely = Boolean(tdsDef?.likely);
   const cardSaysTds = Boolean(suggested?.tds && suggested.itemKey === pickKey);
-  React.useEffect(() => { setShortChoice(tdsLikely || cardSaysTds ? "tds" : "part"); }, [tdsLikely, cardSaysTds, pickKey, mode]);
+  const shortBy = check?.kind === "short" ? check.shortBy : 0;
+  const shortDefault = shortChoiceDefault(shortBy, due ?? 0, tdsLikely || cardSaysTds);
+  React.useEffect(() => { setShortChoice(shortDefault); }, [shortDefault, pickKey, mode]);
 
   /* ── 4. Save ─────────────────────────────────────────────────────────────────── */
   const payItem = usePayItemFromBankCredit();
@@ -315,13 +330,35 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const saveErrorObj = splitPay.error ?? newSale.error ?? payItem.error ?? advance.error ?? relinkSale.error ?? setLinePayer.error;
   const saveError = saveErrorObj ? (saveErrorObj as { message?: string }).message ?? String(saveErrorObj) : null;
 
-  const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
-  const tdsRate = check ? tdsRateToRecord(check, taxable) : null;
-  /* R-2095: the section follows the rate and the customer's PAN type (lib/banking/tds-section); changeable. */
-  const tdsGuess = tdsSectionGuess(check?.kind === "short" ? check.tdsRatePct : null, customer?.gstin ?? null);
+  const tdsAmount = check && shortChoice ? tdsToRecord(check, shortChoice) : 0;
+  /* R-2558: the rate box (typed, else the default) and the section (picked, else the customer's /
+     the rate's usual one, else none — the owner picks). Reset per item / customer / amount. */
+  const [tdsRateText, setTdsRateText] = React.useState<string | null>(null);
   const [tdsSectionPick, setTdsSectionPick] = React.useState<string | null>(null);
-  React.useEffect(() => { setTdsSectionPick(null); }, [pickKey, mode, customerId]);
-  const tdsSection = tdsSectionPick ?? tdsGuess.section;
+  React.useEffect(() => { setTdsSectionPick(null); setTdsRateText(null); }, [pickKey, mode, customerId]);
+  const tdsRateShown = tdsRateText ?? (tdsDef?.ratePct != null ? String(tdsDef.ratePct) : "");
+  const tdsRateTyped = parseTdsRate(tdsRateShown);
+  /* A typed rate: the customer's saved section only when it goes with that rate (or no rate is saved);
+     else the typed rate's usual section — never 194C @ 10%. */
+  const savedRate = parseTdsRate(customer?.tds_default_rate_pct == null ? "" : String(customer.tds_default_rate_pct));
+  const tdsSection = tdsSectionPick
+    ?? (tdsRateText === null
+      ? tdsDef?.section ?? null
+      : (savedRate === null || savedRate === tdsRateTyped ? customerTdsSection(customer) : null)
+        ?? sectionForRate(tdsRateTyped, customer?.gstin ?? null)?.section)
+    ?? null;
+  /* The gross the server will store for this rate (R-2538's rule, tdsPartGross = the SQL helper) —
+     shown on a new sale, where the sheet knows the whole sale's taxable and total. */
+  const tdsGrossShown = mode === "sale" && shortBy > 0 && tdsRateTyped !== null && due !== null
+    ? tdsPartGross({ paid: due, taxable: preview.taxable, total: preview.total, tds: shortBy, ratePct: tdsRateTyped })
+    : null;
+  /* The default's "why" only while the box still holds the default. */
+  const tdsReasonShown = tdsRateText === null || parseTdsRate(tdsRateText) === tdsDef?.ratePct ? tdsDef?.reason ?? null : null;
+  const tdsRate = tdsAmount > 0 ? tdsRateTyped : null;
+  const tdsOn = tdsAmount > 0 && !itemFx;
+  const tdsProblem = tdsOn ? bankTdsProblem(tdsRateShown, tdsSection) : null;
+  const shortUnanswered = check?.kind === "short" && shortChoice === null
+    ? "Say why less came in — TDS, part payment or round-off." : null;
   const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
   /* R-2440: Find in Zoho left prices in USD (no bank rate fitting Zoho's) — no Save until they are in ₹. */
@@ -332,7 +369,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const zoho = mode === "sale" && !relink && !saleFx ? zohoSheetSales(lines, { payCycle, gstRate, start: subStart || transaction.txn_date, credit }) : null;
   const zohoProblem = zohoSheetProblem(zoho, { tdsAmount, belowCost: saleBelowCost });
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
-    && !approvalBlocked && !fxUnconverted && !itemPlan?.problem && !zohoProblem
+    && !approvalBlocked && !fxUnconverted && !itemPlan?.problem && !zohoProblem && !tdsProblem && !shortUnanswered
     && !(relink && saleBelowCost)   // R-2397: the server refuses a relink to a below-cost sale
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
@@ -437,7 +474,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   useFooterSaveReport(onFooterSave, credit > 0 && !result && customerId
     ? {
         label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: busy,
-        disabledReason: fxUnconverted ?? itemPlan?.problem ?? splitFx ?? zohoProblem ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
+        disabledReason: fxUnconverted ?? itemPlan?.problem ?? splitFx ?? zohoProblem ?? shortUnanswered ?? tdsProblem ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
       }
     : null);
 
@@ -665,7 +702,9 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
           {/* 3. Amount check */}
           {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice}
-            section={tdsSection} sectionReason={tdsSectionPick ? null : tdsGuess.reason} onSection={setTdsSectionPick} noRoundOff={Boolean(relink)} />}
+            section={tdsSection} onSection={setTdsSectionPick} rateText={tdsRateShown} onRate={setTdsRateText}
+            rateReason={tdsReasonShown} problem={tdsProblem}
+            gross={tdsGrossShown} noRoundOff={Boolean(relink)} />}
           {/* R-2466: an export receipt on a foreign invoice / an opening invoice paid over its due. */}
           <ItemPlanNote plan={splitFx ? { fx: null, problem: splitFx } : itemPlan} item={picked} />
           {/* R-1678: what the exchange difference books (one foreign invoice paid in ₹, or several on one credit). */}
@@ -695,9 +734,14 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   );
 }
 
-function AmountCheckBox({ check, credit, due, choice, onChoice, section, sectionReason, onSection, noRoundOff }: {
-  check: AmountCheck; credit: number; due: number; choice: ShortChoice; onChoice: (c: ShortChoice) => void;
-  section: string; sectionReason: string | null; onSection: (s: string) => void; noRoundOff?: boolean;
+function AmountCheckBox({ check, credit, due, choice, onChoice, section, onSection, rateText, onRate, rateReason, problem, gross, noRoundOff }: {
+  check: AmountCheck; credit: number; due: number; choice: ShortChoice | null; onChoice: (c: ShortChoice) => void;
+  /** R-2558: null = not chosen yet (the owner picks; nothing is guessed). */
+  section: string | null; onSection: (s: string) => void;
+  /** R-2558: the rate box — the customer's deduction rate, never TDS ÷ part. */
+  rateText: string; onRate: (t: string) => void; rateReason: string | null; problem: string | null;
+  /** R-2558: the gross the TDS row will carry (the server's R-2538 rule) for the typed rate. */
+  gross: number | null; noRoundOff?: boolean;
 }) {
   const choices = shortChoices(check).filter((c) => !(noRoundOff && c.value === "round_off"));
   if (check.kind === "exact") {
@@ -714,7 +758,6 @@ function AmountCheckBox({ check, credit, due, choice, onChoice, section, section
     <div className="rounded-md border border-hairline bg-paper px-2.5 py-2 space-y-1.5">
       <p className="text-xs text-ink-2">
         {rupee(credit)} received is <b>{rupee(check.shortBy)} less</b> than {rupee(due)} due.
-        {check.tdsRatePct !== null && <> That is {check.tdsRatePct}% TDS on the taxable value.</>}
       </p>
       <div className={`grid grid-cols-1 gap-1.5 ${choices.length > 2 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`} role="group" aria-label="Why less was received">
         {choices.map(({ value: k, label }) => (
@@ -731,15 +774,26 @@ function AmountCheckBox({ check, credit, due, choice, onChoice, section, section
       </div>
       {choice === "tds" && (
         <div className="space-y-1">
-          <label className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
-            <span>TDS section</span>
-            <select value={section} onChange={(e) => onSection(e.target.value)} aria-label="TDS section"
-              className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
-              {TDS_SECTION_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
-          </label>
-          {sectionReason && <p className="text-xs text-ink-3">{sectionReason}</p>}
-          <p className="text-xs text-ink-3">Booked as TDS receivable (section {section}) — collect the customer&apos;s Form 16A.</p>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+            <label className="flex items-center gap-2 text-xs text-ink-2">
+              <span>TDS section</span>
+              <select value={section ?? ""} onChange={(e) => onSection(e.target.value)} aria-label="TDS section"
+                className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
+                {section === null && <option value="" disabled>Choose section</option>}
+                {section !== null && !TDS_SECTION_CHOICES.some((c) => c.value === section) && <option value={section}>{section}</option>}
+                {TDS_SECTION_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-xs text-ink-2">
+              <span>TDS rate %</span>
+              <Input type="number" inputMode="decimal" min={0} max={100} step="0.01" value={rateText}
+                onChange={(e) => onRate(e.target.value)} aria-label="TDS rate %" className="h-7 w-20 text-xs" />
+            </label>
+          </div>
+          {rateReason && <p className="text-xs text-ink-3">{rateReason}</p>}
+          {problem
+            ? <p className="text-xs text-amber-ink">{problem}</p>
+            : <p className="text-xs text-ink-3 tabular-nums">Booked as TDS receivable — {section}{gross !== null ? `, gross ${rupee(gross)}` : ""} @ {rateText}% — collect the customer&apos;s Form 16A.</p>}
         </div>
       )}
     </div>
