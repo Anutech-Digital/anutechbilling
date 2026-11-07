@@ -757,25 +757,48 @@ export function lastPushedSha(card, { git, readNote = () => null } = {}) {
 }
 
 /**
- * R-2105: one look (no waiting) at the CI verdict of a ci-wait lock's pushed sha — or of any later
- * manager-pardeep run whose sha contains it. "green" | "red" | "pending" | null (not a ci-wait lock /
- * no sha / gh failed). Same rules as `ci`, with the grace period already over.
+ * R-2561 (7 Nov 2026): how long after a push "no CI run for this sha" still means "GitHub has not listed
+ * it yet" (pending) rather than "there is no run" (unknown). R-1427's CI ran 11:58–12:07Z; at 12:02Z
+ * ci-all said "unknown" and the manager's watcher stopped early.
  */
-export function ciWaitVerdict(lock, { gh, isAncestor }) {
+export const CI_NO_RUN_GRACE_MS = 15 * 60_000;
+
+/** ms since the lock's push (ciWaitSince, or pushedAt); Infinity when the lock carries no push time. */
+export function pushAgeMs(lock, now = Date.now()) {
+  const t = Date.parse(lock?.ciWaitSince ?? lock?.pushedAt ?? "");
+  return Number.isFinite(t) ? Math.max(0, now - t) : Infinity;
+}
+
+/**
+ * R-2105: one look (no waiting) at the CI verdict of a ci-wait lock's pushed sha — or of any later
+ * manager-pardeep run whose sha contains it. Same rules as `ci`. Returns
+ *   "green" | "red";
+ *   "pending" — a run for the sha (or a later one containing it) is queued / running, OR no run is listed
+ *               yet / gh did not answer while the push is under 15 min old (R-2561);
+ *   "unknown" — no run for the sha nor any later manager-pardeep run containing it, push 15+ min old;
+ *   null      — not a ci-wait lock / no sha, or gh did not answer (twice) for a push 15+ min old.
+ */
+export function ciWaitVerdict(lock, { gh, isAncestor, now = Date.now() }) {
   if (!lock || lock.state !== LOCK_STATES.ciWait || !lock.pushedSha) return null;
   const full = lock.pushedSha;
-  let shaRuns, branchRuns;
-  try {
-    shaRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "--commit", full, "-L", "20", "--json", RUN_FIELDS]));
-    branchRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "-b", CI_BRANCH, "-L", "40", "--json", RUN_FIELDS]));
-  } catch { return null; }
+  const young = pushAgeMs(lock, now) < CI_NO_RUN_GRACE_MS;
+  let shaRuns = null, branchRuns = null;
+  for (let attempt = 0; attempt < 2 && !branchRuns; attempt++) {
+    try {
+      shaRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "--commit", full, "-L", "20", "--json", RUN_FIELDS]));
+      branchRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "-b", CI_BRANCH, "-L", "40", "--json", RUN_FIELDS]));
+    } catch { shaRuns = branchRuns = null; }
+  }
+  if (!Array.isArray(shaRuns) || !Array.isArray(branchRuns)) return young ? "pending" : null;
   const later = newestFirst(branchRuns).reverse()
     .filter((r) => r.headSha !== full && !shaRuns.some((m) => m.databaseId === r.databaseId))
     .filter((r) => { try { return isAncestor(full, r.headSha); } catch { return false; } });
-  const ci = workflowVerdict("CI", shaRuns, later, { graceOver: true, ciDone: false });
-  const sql = workflowVerdict("SQL tests", shaRuns, later, { graceOver: true, ciDone: ci.state === "green" || ci.state === "red" });
+  const graceOver = !young;
+  const ci = workflowVerdict("CI", shaRuns, later, { graceOver, ciDone: false });
+  const sql = workflowVerdict("SQL tests", shaRuns, later, { graceOver, ciDone: ci.state === "green" || ci.state === "red" });
   if (ci.state === "red" || sql.state === "red") return "red";
   if (ci.state === "green" && (sql.state === "green" || sql.state === "skipped")) return "green";
+  if (ci.state === "missing" || sql.state === "missing") return "unknown";
   return "pending";
 }
 
@@ -805,7 +828,7 @@ export function ciAllReport(locks, { verdict, settle, at = new Date().toISOStrin
     const sha = String(l.pushedSha ?? "").slice(0, 9);
     if (v === "green") settle(l.card, CI_EXIT.green);
     if (v === "red") settle(l.card, CI_EXIT.red);
-    lines.push(`${l.card}  ${sha || "(sha nahi)"}  ${v === "green" ? "CI green — lock hata" : v === "red" ? "CI LAAL — card wala worker theek kare (claim --fixes-red)" : v === "pending" ? "CI abhi chal raha / line mein" : "CI ka pata nahi chala (gh offline?)"}`);
+    lines.push(`${l.card}  ${sha || "(sha nahi)"}  ${v === "green" ? "CI green — lock hata" : v === "red" ? "CI LAAL — card wala worker theek kare (claim --fixes-red)" : v === "pending" ? "CI abhi chal raha / line mein (ya GitHub ne abhi run nahi dikhaya) — baad mein dobara ci-all" : "CI ka run nahi mila (push 15+ min purana) ya gh nahi chala — GitHub Actions par dekho"}`);
     const r = { card: l.card, sha: l.pushedSha ?? null, ci: v, at };
     results.push(r);
     lines.push(JSON.stringify(r));
@@ -817,7 +840,7 @@ export function ciAllReport(locks, { verdict, settle, at = new Date().toISOStrin
  * `ci <CARD>`: poll until both gate workflows have a verdict for the sha, or the timeout.
  * deps: gh, git, isAncestor(a, b), now(), sleep(ms), print(line). Returns { code, check, lines }.
  */
-export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DEFAULT_TIMEOUT_MIN, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), print = () => {}, readNote, pollMs = 30_000, graceMs = 3 * 60_000 } = {}) {
+export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DEFAULT_TIMEOUT_MIN, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), print = () => {}, readNote, pollMs = 30_000, graceMs = CI_NO_RUN_GRACE_MS } = {}) {
   const id = String(card).toUpperCase();
   const target = sha || lastPushedSha(id, { git, readNote });
   const finish = (code, check, extra = []) => ({ code, check, lines: extra });
@@ -826,6 +849,9 @@ export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DE
   try { full = git(["rev-parse", target]).trim() || target; } catch {}
   const t0 = now();
   const deadline = t0 + timeoutMin * 60_000;
+  /* R-2561: "no run" counts from the PUSH (push's note), not from when `ci` started — and only after 15 min. */
+  let pushedAt = t0;
+  try { const n = readNote?.(id); const at = Date.parse(n?.at ?? ""); const ns = String(n?.sha ?? ""); if (ns && (full.startsWith(ns) || ns.startsWith(full)) && Number.isFinite(at) && at <= t0) pushedAt = at; } catch {}
   let lastErr = null;
   for (;;) {
     let shaRuns = null, branchRuns = [];
@@ -838,14 +864,15 @@ export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DE
       const later = newestFirst(branchRuns).reverse()
         .filter((r) => r.headSha !== full && !shaRuns.some((m) => m.databaseId === r.databaseId))
         .filter((r) => { try { return isAncestor(full, r.headSha); } catch { return false; } });
-      const graceOver = now() - t0 >= graceMs;
+      const graceOver = now() - pushedAt >= graceMs;
       const ci = workflowVerdict("CI", shaRuns, later, { graceOver, ciDone: false });
       const sql = workflowVerdict("SQL tests", shaRuns, later, { graceOver, ciDone: ci.state === "green" || ci.state === "red" });
       const settled = (v) => v.state !== "pending";
       const timedOut = now() >= deadline;
       if ((settled(ci) && settled(sql)) || timedOut) {
         const runUrls = [ci.run?.url, sql.run?.url].filter(Boolean);
-        const check = { sha: full, ci: ci.state, sql: sql.state, at: new Date(now()).toISOString().replace(/\.\d{3}Z$/, "Z"), runUrls };
+        const shown = (st) => (st === "missing" ? "unknown" : st);
+        const check = { sha: full, ci: shown(ci.state), sql: shown(sql.state), at: new Date(now()).toISOString().replace(/\.\d{3}Z$/, "Z"), runUrls };
         if (ci.via || sql.via) check.via = (ci.via || sql.via);
         const lines = [];
         const icon = (s) => (s === "green" ? "✓" : s === "skipped" ? "–" : s === "red" ? "✗" : "…");
