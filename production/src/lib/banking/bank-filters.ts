@@ -94,10 +94,15 @@ export function lineGroupOf(t: Pick<FilterLine, "id" | "matched_to_type">, booki
   return bookingOf(t, bookings)?.group ?? matchGroupOf(t.matched_to_type);
 }
 
+/** R-2378: "Loan received · Bajaj Finance" — a booking's words with its party (badge link, CSV, search). */
+export function lineBookingText(b: Pick<LineBookingLike, "label" | "party">): string {
+  return b.party ? `${b.label} · ${b.party}` : b.label;
+}
+
 /** R-2378: the Status a line exports — a booked manual line says what it booked ("Loan received · Bajaj Finance"). */
 export function lineStatusText(t: Pick<FilterLine, "id" | "matched_to_type">, bookings?: ReadonlyMap<string, LineBookingLike>): string {
   const b = bookingOf(t, bookings);
-  return b ? (b.party ? `${b.label} · ${b.party}` : b.label) : lineStatusLabel(t.matched_to_type);
+  return b ? lineBookingText(b) : lineStatusLabel(t.matched_to_type);
 }
 
 export const DEFAULT_FILTERS: BankFilters = {
@@ -186,6 +191,8 @@ export function lineStatusLabel(type: string | null): string {
   if (type === "business_loan") return "Loan received";   // R-2377: same word as the row badge
   if (type === "loan_drawdown") return "Credit line drawdown";   // R-2374: same words as the row badge
   if (type === "loan_repayment") return "Loan repayment";
+  if (type === "other_income") return "Other income";   // R-2378: was the bare "Reconciled"
+  if (type === "referral_commission") return "Commission";   // R-2378: was the bare "Reconciled"
   return g === "other" ? "Reconciled" : MATCH_GROUP_LABEL[g];
 }
 
@@ -258,7 +265,8 @@ function lineMatches(
   }
   if (f.imp && !ctx.importLines?.get(f.imp)?.has(t.id)) return false;
   const q = f.q.trim().toLowerCase();
-  if (q && ![t.description, t.reference, String(t.debit ?? ""), String(t.credit ?? "")]
+  const booked = bookingOf(t, ctx.bookings);   // R-2378: "Bajaj" finds a line booked as Loan repaid · Bajaj Finance
+  if (q && ![t.description, t.reference, String(t.debit ?? ""), String(t.credit ?? ""), booked ? lineBookingText(booked) : null]
     .some((v) => (v ?? "").toString().toLowerCase().includes(q))
     && !amountSearchMatches(q, t)) return false;
   return true;

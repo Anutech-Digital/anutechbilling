@@ -6,6 +6,7 @@
  * ADVANCE (R-1863 — same rule as bank_advance_payment() / isCustomerAdvanceQuote) reads "Advance".
  */
 import type { BankTransactionRow } from "@/lib/queries/bank";
+import { lineStatusLabel } from "@/lib/banking/bank-filters";
 import { isCustomerAdvanceQuote, type AdvanceQuoteFields } from "@/lib/quotes/customer-advance";
 import { rupee } from "@/lib/utils";
 
@@ -22,17 +23,10 @@ export function bankRowStatusLabel(t: BankTransactionRow["matched_to_type"], isA
          (t as string | null) === "business_loan" ? "Loan received" :   // R-2377: Business Loans → Add loan linked this imported credit
          (t as string | null) === "loan_drawdown" ? "Credit line drawdown" :   // R-2374: money drawn from an OD / flexi line
          (t as string | null) === "loan_repayment" ? "Loan repayment" :   // R-2374: principal + interest to a lender
-         /* R-2378: every other type the app writes names its booking too — "Reconciled" is left only
-            for 'manual' (the page shows a booked manual line's real kind from bank_line_bookings). */
-         (t as string | null) === "emi" ? "EMI" :
-         (t as string | null) === "other_income" ? "Other income" :
-         t === "statutory"    ? "Tax / statutory" :
-         t === "prepaid"      ? "Prepaid / advance" :
-         t === "project"      ? "Project payment" :
-         t === "salary"       ? "Salary" :
-         t === "vendor_payment" ? "Vendor payment" :
-         t === "referral_commission" ? "Commission" :
-         t                    ? "Reconciled" : "Unmatched";
+         /* R-2378: every other type says the same words as the CSV Status / "Matched to" filter
+            (lineStatusLabel) — "Reconciled" is left only for 'manual' (the page shows a booked manual
+            line's real kind from bank_line_bookings). */
+         t                    ? lineStatusLabel(t) : "Unmatched";
 }
 
 

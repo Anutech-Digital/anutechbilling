@@ -17,7 +17,9 @@ import { useQuery } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/client";
-import type { MatchGroup } from "@/lib/banking/bank-filters";
+import { lineBookingText, type MatchGroup } from "@/lib/banking/bank-filters";
+
+export { lineBookingText };
 
 /** One row of bank_line_bookings(). */
 export interface LineBookingRow {
@@ -59,6 +61,22 @@ export function bsItemParty(label: string | null): string | null {
 
 const clean = (s: string | null | undefined): string | null => (s ?? "").trim() || null;
 
+/**
+ * A typed label (book_bank_credit) that already says the kind is not repeated after it:
+ * "Loan received from HDFC" → "HDFC", "Loan from Pardeep" / "Director's loan from Pardeep" → "Pardeep".
+ * Anything else stays as typed ("HDFC OD").
+ */
+export function typedParty(label: string | null, kind: string): string | null {
+  if (!label) return null;
+  const k = kind.toLowerCase();
+  const l = label.toLowerCase();
+  const rest = l.startsWith(k) ? label.slice(kind.length)
+    : /^(director'?s\s+)?(loan|capital|advance)\b/i.test(label) ? label.replace(/^(director'?s\s+)?(loan|capital|advance)\b/i, "")
+    : null;
+  if (rest === null) return label;
+  return rest.replace(/^[\s·:,-]*((from|to|by)\s+)?/i, "").trim() || null;
+}
+
 const BS = { href: "/accounting/balance-sheet", hrefLabel: "Balance Sheet" };
 const STAFF_LOANS = { href: "/accounting/loans", hrefLabel: "Employee Loans" };
 const ADVANCES = { href: "/accounting/advances", hrefLabel: "Expense Advances" };
@@ -74,15 +92,25 @@ export function lineBookingOf(r: LineBookingRow): LineBooking {
   const party = clean(r.party);
   switch (r.source) {
     case "bs_item": {
-      const p = bsItemParty(r.party);
-      if (r.sub === "liability") return { label: amount < 0 ? "Loan repaid" : "Loan received", party: p, ...BS, group: "loan" };
-      if (r.sub === "asset") return { label: amount < 0 ? "Advance returned" : "Advance given", party: p, ...BS, group: "loan" };
-      if (r.sub === "equity") return { label: amount < 0 ? "Owner's drawings" : "Owner's capital", party: p, ...BS, group: "owner" };
-      return { label: "Balance sheet entry", party: p, ...BS, group: "other" };
+      const p0 = bsItemParty(r.party);
+      const kind = r.sub === "liability" ? (amount < 0 ? "Loan repaid" : "Loan received")
+        : r.sub === "asset" ? (amount < 0 ? "Advance returned" : "Advance given")
+        : r.sub === "equity" ? (amount < 0 ? "Owner's drawings" : "Owner's capital") : "Balance sheet entry";
+      const p = typedParty(p0, kind);
+      if (r.sub === "liability") return { label: kind, party: p, ...BS, group: "loan" };
+      if (r.sub === "asset") return { label: kind, party: p, ...BS, group: "loan" };
+      if (r.sub === "equity") return { label: kind, party: p, ...BS, group: "owner" };
+      return { label: kind, party: p, ...BS, group: "other" };
     }
     case "employee_loan":
       if (r.sub === "expense_advance") return { label: "Expense advance given", party, ...ADVANCES, group: "expense" };
       return { label: r.sub === "salary_advance" ? "Salary advance given" : "Staff loan given", party, ...STAFF_LOANS, group: "loan" };
+    case "employee_loan_reversal":
+      return { label: "Staff loan reversed", party, ...STAFF_LOANS, group: "loan" };
+    case "employee_loan_repayment":
+      return { label: "Staff loan repaid", party, ...STAFF_LOANS, group: "loan" };
+    case "employee_advance_returned":
+      return { label: "Advance returned", party, ...ADVANCES, group: "expense" };
     case "loan_given":
       return { label: "Loan given", party, ...LOANS_GIVEN, group: "loan" };
     case "loan_given_repayment":
@@ -101,7 +129,8 @@ export function lineBookingOf(r: LineBookingRow): LineBooking {
       return { label: "Loan received", party, ...ASSETS, group: "loan" };
     case "staff_advance":
       if (r.sub === "reimburse") return { label: "Reimbursement paid", party, ...REIMBURSEMENTS, group: "expense" };
-      if (r.sub === "owed_back") return { label: "Owed back by staff", party, ...REIMBURSEMENTS, group: "expense" };
+      /* Money in the company owes back to the employee — a payable, not an expense. */
+      if (r.sub === "owed_back") return { label: "Owed back by staff", party, ...REIMBURSEMENTS, group: "other" };
       return { label: r.sub === "return" ? "Advance returned" : "Advance given", party, ...ADVANCES, group: "expense" };
     case "statutory": {
       const k = (r.sub ?? "").toLowerCase();
@@ -111,11 +140,6 @@ export function lineBookingOf(r: LineBookingRow): LineBooking {
     default:
       return { label: "Booked", party, ...BS, group: "other" };
   }
-}
-
-/** "Loan received · Bajaj Finance" — the badge words with the party (the CSV's Status). */
-export function lineBookingText(b: Pick<LineBooking, "label" | "party">): string {
-  return b.party ? `${b.label} · ${b.party}` : b.label;
 }
 
 /** rows → map by line id. */

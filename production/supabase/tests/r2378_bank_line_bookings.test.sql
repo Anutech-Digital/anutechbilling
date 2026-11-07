@@ -26,6 +26,13 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('aaaaaaaa-0000-0000-0000-0000000023d4', 'aaaaaaaa-0000-0000-0000-0000000023a1', 'aaaaaaaa-0000-0000-0000-0000000023c1', '2026-10-07', 'NEFT DIRECTOR', 0, 300000, 'csv_upload'),
   ('aaaaaaaa-0000-0000-0000-0000000023d5', 'aaaaaaaa-0000-0000-0000-0000000023a1', 'aaaaaaaa-0000-0000-0000-0000000023c1', '2026-10-08', 'RTGS FAILED', 0, 7000, 'csv_upload');
 
+-- A staff loan from before R-1873 (no bank_txn_id) and its hand-entered lines, as the old RPCs wrote them.
+insert into public.employee_loans (id, tenant_id, employee_name, principal, disbursed_on, bank_account_id, kind) values
+  ('aaaaaaaa-0000-0000-0000-0000000023e1', 'aaaaaaaa-0000-0000-0000-0000000023a1', 'Asha', 15000, '2026-09-01', 'aaaaaaaa-0000-0000-0000-0000000023c1', 'loan');
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, source, matched_to_type, match_confidence) values
+  ('aaaaaaaa-0000-0000-0000-0000000023d6', 'aaaaaaaa-0000-0000-0000-0000000023a1', 'aaaaaaaa-0000-0000-0000-0000000023c1', '2026-09-01', 'Loan/advance to Asha', 15000, 0, 'manual', 'manual', 'manual'),
+  ('aaaaaaaa-0000-0000-0000-0000000023d7', 'aaaaaaaa-0000-0000-0000-0000000023a1', 'aaaaaaaa-0000-0000-0000-0000000023c1', '2026-09-10', 'Correction: reversed loan/advance to Asha', 0, 15000, 'manual', 'manual', 'manual');
+
 set local role authenticated;
 select set_config('request.jwt.claims', json_build_object('sub', 'aaaaaaaa-0000-0000-0000-0000000023b1', 'role', 'authenticated')::text, true);
 
@@ -38,12 +45,17 @@ begin
   perform public.book_bank_credit('aaaaaaaa-0000-0000-0000-0000000023d4', 'director_loan', 'Loan from Pardeep', null);
   perform public.reconcile_bank_txn_manual('aaaaaaaa-0000-0000-0000-0000000023d5', 'Returned by the bank, no entry');
 
-  if (select count(*) from public.bank_transactions where bank_account_id = 'aaaaaaaa-0000-0000-0000-0000000023c1' and matched_to_type = 'manual') <> 5 then
-    raise exception 'FAIL 0: the five lines should all be manual';
+  if (select count(*) from public.bank_transactions where bank_account_id = 'aaaaaaaa-0000-0000-0000-0000000023c1' and matched_to_type = 'manual') <> 7 then
+    raise exception 'FAIL 0: the seven lines should all be manual';
   end if;
 
   select count(*) into n from public.bank_line_bookings('aaaaaaaa-0000-0000-0000-0000000023c1');
-  if n <> 4 then raise exception 'FAIL 1: expected 4 booked lines, got %', n; end if;
+  if n <> 6 then raise exception 'FAIL 1: expected 6 booked lines, got %', n; end if;
+
+  select * into r from public.bank_line_bookings('aaaaaaaa-0000-0000-0000-0000000023c1') where txn_id = 'aaaaaaaa-0000-0000-0000-0000000023d6';
+  if r.source <> 'employee_loan' or r.party <> 'Asha' then raise exception 'FAIL 8: legacy staff loan line read %', row_to_json(r); end if;
+  select * into r from public.bank_line_bookings('aaaaaaaa-0000-0000-0000-0000000023c1') where txn_id = 'aaaaaaaa-0000-0000-0000-0000000023d7';
+  if r.source <> 'employee_loan_reversal' or r.party <> 'Asha' then raise exception 'FAIL 9: correction line read %', row_to_json(r); end if;
 
   select * into r from public.bank_line_bookings('aaaaaaaa-0000-0000-0000-0000000023c1') where txn_id = 'aaaaaaaa-0000-0000-0000-0000000023d1';
   if r.source <> 'bs_item' or r.sub <> 'liability' or r.party <> 'Loan received · Bajaj Finance' or r.amount <> 500000 then

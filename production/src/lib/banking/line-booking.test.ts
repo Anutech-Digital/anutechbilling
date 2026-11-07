@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 
 vi.mock("@/lib/supabase/client", () => ({ createClient: () => ({}) }));
 
-import { bsItemParty, lineBookingMap, lineBookingOf, lineBookingText, type LineBookingRow } from "./line-booking";
+import { bsItemParty, lineBookingMap, lineBookingOf, lineBookingText, typedParty, type LineBookingRow } from "./line-booking";
 import { applyBankFilters, bankLinesCsv, DEFAULT_FILTERS, facetCounts, lineGroupOf, type FilterLine } from "./bank-filters";
 import { bankRowStatusLabel } from "./bank-row-label";
 
@@ -24,9 +24,16 @@ describe("R-2378 lineBookingOf — the owner's audit lines", () => {
     expect(lineBookingText(lineBookingOf(row({ sub: "asset", party: "Advance/loan returned · Ravi", amount: -10000 })))).toBe("Advance returned · Ravi");
   });
   it("book_bank_credit: director's loan with a typed label, owner's capital with the default label", () => {
-    expect(lineBookingText(lineBookingOf(row({ party: "Loan from Pardeep", amount: 300000 })))).toBe("Loan received · Loan from Pardeep");
+    expect(lineBookingText(lineBookingOf(row({ party: "Loan from Pardeep", amount: 300000 })))).toBe("Loan received · Pardeep");
+    expect(lineBookingText(lineBookingOf(row({ party: "Loan received from HDFC", amount: 300000 })))).toBe("Loan received · HDFC");
+    expect(lineBookingText(lineBookingOf(row({ party: "HDFC OD", amount: 300000 })))).toBe("Loan received · HDFC OD");
     const cap = lineBookingOf(row({ sub: "equity", party: "Owner's capital", amount: 100000 }));
     expect(cap).toMatchObject({ label: "Owner's capital", party: null, group: "owner" });
+  });
+  it("typedParty drops the kind words a typed label repeats", () => {
+    expect(typedParty("Director's loan from Pardeep", "Loan received")).toBe("Pardeep");
+    expect(typedParty("Loan", "Loan received")).toBeNull();
+    expect(typedParty("Bajaj Finance", "Loan received")).toBe("Bajaj Finance");
   });
   it("bsItemParty strips only the RPC's own prefixes", () => {
     expect(bsItemParty("Loan received")).toBeNull();
@@ -48,6 +55,9 @@ describe("R-2378 lineBookingOf — the owner's audit lines", () => {
       [{ source: "emi_down_payment", party: "Thar" }, "Down payment · Thar", "/accounting/assets"],
       [{ source: "emi_loan_received", party: "Bajaj Finance" }, "Loan received · Bajaj Finance", "/accounting/assets"],
       [{ source: "staff_advance", sub: "owed_back", party: "Asha" }, "Owed back by staff · Asha", "/accounting/reimbursements"],
+      [{ source: "employee_loan_reversal", party: "Asha" }, "Staff loan reversed · Asha", "/accounting/loans"],
+      [{ source: "employee_loan_repayment", party: "Asha" }, "Staff loan repaid · Asha", "/accounting/loans"],
+      [{ source: "employee_advance_returned", party: "Asha" }, "Advance returned · Asha", "/accounting/advances"],
       [{ source: "staff_advance", sub: "reimburse", party: "Asha" }, "Reimbursement paid · Asha", "/accounting/reimbursements"],
       [{ source: "statutory", sub: "tds", party: "12345" }, "TDS paid · Challan 12345", "/accounting/salary-register"],
     ];
@@ -77,6 +87,16 @@ describe("R-2378 bank line list — filters, CSV, badge", () => {
     const { rows } = bankLinesCsv(lines, bookings);
     expect(rows.find((r) => r[1] === "NEFT BAJAJ FINANCE")?.[5]).toBe("Loan received · Bajaj Finance");
     expect(rows.find((r) => r[1] === "RTGS FAILED")?.[5]).toBe("Reconciled");
+  });
+  it("search finds a booked line by its party", () => {
+    expect(applyBankFilters(lines, { ...DEFAULT_FILTERS, q: "bajaj fin" }, { bookings }).map((t) => t.id)).toEqual(["bajaj"]);
+    expect(applyBankFilters([{ ...lines[0], description: "ACH DR 0045123" }], { ...DEFAULT_FILTERS, q: "bajaj" }, { bookings }).map((t) => t.id)).toEqual(["bajaj"]);
+  });
+  it("badge and CSV say the same words for every type", () => {
+    for (const t of ["other_income", "referral_commission", "emi", "statutory", "prepaid", "project", "salary", "vendor_payment"]) {
+      const csv = bankLinesCsv([{ ...lines[1], matched_to_type: t }]).rows[0][5];
+      expect(bankRowStatusLabel(t as never, false)).toBe(csv);
+    }
   });
   it("badge words for every type the app writes — only 'manual' falls back to Reconciled", () => {
     const named = ["payment", "expense", "vendor_bill", "transfer", "split", "owner_equity", "customer_refund", "loan_given", "business_loan",

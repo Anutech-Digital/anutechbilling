@@ -31,7 +31,7 @@ set search_path to 'public'
 as $function$
   /* R-2378: what a matched_to_type = 'manual' line really booked. First match per line wins. */
   with lines as (
-    select t.id
+    select t.id, t.source, t.description, t.txn_date, t.debit
       from public.bank_transactions t
      where t.bank_account_id = p_bank_account_id
        and t.matched_to_type = 'manual'
@@ -77,6 +77,24 @@ as $function$
     union all
     select s.bank_txn_id, 12, 'statutory', s.kind, s.challan_no, s.amount::numeric
       from public.statutory_dues_payments s join lines l on l.id = s.bank_txn_id
+    union all
+    /* A staff loan from before R-1873 (no bank_txn_id): its own hand-entered line, found the way
+       employee_loan_legacy_line() finds it. */
+    select l.id, 13, 'employee_loan', e.kind, e.employee_name, e.principal::numeric
+      from lines l join public.employee_loans e
+        on e.bank_txn_id is null and e.bank_account_id = p_bank_account_id
+       and l.source = 'manual' and l.txn_date = e.disbursed_on and l.debit = e.principal
+       and l.description in ('Loan/advance to ' || e.employee_name, 'Expense advance to ' || e.employee_name)
+    union all
+    /* The lines the staff-loan RPCs write with no link at all — their words name the booking. */
+    select l.id, 14, 'employee_loan_reversal', null, substr(l.description, length('Correction: reversed loan/advance to ') + 1), null::numeric
+      from lines l where l.source = 'manual' and l.description like 'Correction: reversed loan/advance to %'
+    union all
+    select l.id, 15, 'employee_loan_repayment', null, substr(l.description, length('Loan repayment — ') + 1), null::numeric
+      from lines l where l.source = 'manual' and l.description like 'Loan repayment — %'
+    union all
+    select l.id, 16, 'employee_advance_returned', null, substr(l.description, length('Advance returned — ') + 1), null::numeric
+      from lines l where l.source = 'manual' and l.description like 'Advance returned — %'
   )
   select distinct on (f.txn_id) f.txn_id, f.source, f.sub, f.party, f.amount
     from found f
