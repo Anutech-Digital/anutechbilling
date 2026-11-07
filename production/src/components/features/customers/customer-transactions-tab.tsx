@@ -24,6 +24,7 @@ import { IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LoadErrorInline } from "@/components/shared/load-error";
+import { SkeletonText } from "@/components/ui/skeleton";
 import { formatDate, rupee, cn } from "@/lib/utils";
 import { txnHref } from "./customer-links";
 import { RecordTable, RowLink } from "./customer-record-table";
@@ -49,6 +50,7 @@ type CustPayment = LinkPayment & { receipt_voucher_no?: string | null; method?: 
 type Quote = { id: string; invoice_id?: string | null; created_date: string; amount: number; status: string; payment_amount?: number | null };
 interface ProjPayment { id: string; project_id: string; invoice_id?: string | null; received_at: string; amount: number; reference?: string | null; bank_txn_id?: string | null }
 interface Project { id: string; title: string; created_at: string; total_amount: number; paid?: number | null; status: string; accepted_at?: string | null }
+interface NoteRow { invoice_id: string | null; amount: number | null }
 
 export interface CustomerTransactionsTabProps {
   customerId: string;
@@ -63,6 +65,8 @@ export interface CustomerTransactionsTabProps {
   invoiceProject: Record<string, { projectId: string }>;
   invoicePaidByProject: Record<string, number>;
   subs: readonly { id: string; quote_id: string | null }[];
+  /** The customer's credit / debit notes (R-1682 useCustomerNotes) — they change what an invoice can take. */
+  notes: { creditNotes: readonly NoteRow[]; debitNotes: readonly NoteRow[] };
   /** For the advance holder's "Available ₹X" (R-2033). */
   allPayments: readonly { id: string; quote_id?: string | null; status?: string | null; amount?: number | null }[];
   creditRows: readonly AdvanceTxnCredit[];
@@ -105,7 +109,7 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
 
   const billingsQ = useCustomerInstalmentBillings(subs.map((s) => s.id));
   // Credit / debit notes change what an invoice can take (R-1709 invoiceMoneyIn).
-  const noteSum = (rows: readonly { invoice_id: string | null; amount: number | null }[]) => {
+  const noteSum = (rows: readonly NoteRow[]) => {
     const m = new Map<string, number>();
     for (const r of rows) if (r.invoice_id) m.set(r.invoice_id, (m.get(r.invoice_id) ?? 0) + (r.amount ?? 0));
     return m;
@@ -244,7 +248,11 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
       {billingsQ.isError && (
         <LoadErrorInline what="Subscription instalments" error={billingsQ.error} onRetry={() => void billingsQ.refetch()} />
       )}
-      {visible.length > 0 ? (
+      {nested && billingsQ.isLoading ? (
+        // Until the instalment links are read, an instalment's receipt would sit under "Advance" for a
+        // moment and then jump — so the nested lists wait (the query runs only when there are subscriptions).
+        <div role="status" aria-label="Loading transactions" className="py-2"><SkeletonText lines={4} /></div>
+      ) : visible.length > 0 ? (
         <RecordTable
           head={showFor ? ["Date", "Type", "Reference", "For", "Amount", "Status", ""] : ["Date", "Type", "Reference", "Amount", "Status", ""]}
           rows={visible.map((t) => {
@@ -275,10 +283,14 @@ export function CustomerTransactionsTab(props: CustomerTransactionsTabProps) {
             ];
             if (showFor) cells.push(<span key="for" className="font-mono text-xs text-ink-2">{forText(t)}</span>);
             cells.push(
-              <span key="a" className="inline-flex flex-col">
-                <span className={cn("tabular-nums", t.indent === 0 ? "font-semibold" : "font-medium text-ink-2")}>{rupee(t.amount)}</span>
-                {t.type === "Payment" && payId && (t.tds ?? true) ? <PaymentTdsLine amount={t.amount} tds={tdsInfo[payId]} /> : null}
-              </span>,
+              // The advance group's heading carries no amount: an advance may be partly used already —
+              // each row under it says what is left.
+              t.group ? <span key="a" /> : (
+                <span key="a" className="inline-flex flex-col">
+                  <span className={cn("tabular-nums", t.indent === 0 ? "font-semibold" : "font-medium text-ink-2")}>{rupee(t.amount)}</span>
+                  {t.type === "Payment" && payId && (t.tds ?? true) ? <PaymentTdsLine amount={t.amount} tds={tdsInfo[payId]} /> : null}
+                </span>
+              ),
               t.invoiceStatus
                 ? <span key="s" className={cn("font-medium", STATUS_TONE[t.invoiceStatus.tone])}>{t.status}</span>
                 : <span key="s" className="text-ink-2 capitalize">{t.status}</span>,

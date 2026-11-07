@@ -645,6 +645,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
               invoiceProject={projPay?.invoiceProject ?? {}}
               invoicePaidByProject={invoicePaid}
               subs={allSubs}
+              notes={{ creditNotes: customerNotes?.creditNotes ?? [], debitNotes: customerNotes?.debitNotes ?? [] }}
               allPayments={allPayments ?? []}
               creditRows={creditRows ?? []}
               tdsInfo={tdsInfoOnPayment}

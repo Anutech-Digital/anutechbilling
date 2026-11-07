@@ -6,8 +6,11 @@ import * as React from "react";
 import { render, cleanup, within } from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+const billingsState = { loading: false };
 vi.mock("@/lib/queries/customer-instalment-links", () => ({
-  useCustomerInstalmentBillings: () => ({ data: [{ invoice_id: "INV-I1", subscription_id: "sub-1" }], isError: false, error: null, refetch: vi.fn() }),
+  useCustomerInstalmentBillings: () => billingsState.loading
+    ? { data: undefined, isLoading: true, isError: false, error: null, refetch: vi.fn() }
+    : { data: [{ invoice_id: "INV-I1", subscription_id: "sub-1" }], isLoading: false, isError: false, error: null, refetch: vi.fn() },
 }));
 
 import { CustomerTransactionsTab, ADVANCE_GROUP_TITLE, type CustomerTransactionsTabProps, type FlatTxn } from "./customer-transactions-tab";
@@ -38,7 +41,7 @@ function props(over: Partial<CustomerTransactionsTabProps> = {}): CustomerTransa
   return {
     customerId: "c1", linkOpts: { canQuotes: true }, canDeletePay: false, onDeletePayment: vi.fn(),
     invoices, payments, quotes, projects: [], projPayments: [], invoiceProject: {}, invoicePaidByProject: {},
-    subs: [{ id: "sub-1", quote_id: "Q-S" }], allPayments: payments, creditRows: [],
+    subs: [{ id: "sub-1", quote_id: "Q-S" }], notes: { creditNotes: [], debitNotes: [] }, allPayments: payments, creditRows: [],
     tdsInfo: { pz: { tds: 1784, section: "194J" } },
     txnFilter: "all", setTxnFilter: vi.fn(),
     segments: [{ id: "all", label: "All", n: 8 }, { id: "invoices", label: "Invoices", n: 3 }, { id: "payments", label: "Payments", n: 5 }],
@@ -87,6 +90,29 @@ describe("R-2544 Customer → Transactions: payments under their invoice", () =>
     expect(rows[g + 1]).toContain("Quote Q-2");
     // ...and not as a loose payment row anywhere else
     expect(rows.filter((r) => r.includes("RV-ADV-1"))).toHaveLength(1);
+    // The heading carries no amount — an advance may be partly used; each row says what is left.
+    expect(rows[g]).not.toContain("₹");
+  });
+
+  it("while the instalment links are still loading, nothing is shown (no receipt flashes under Advance)", () => {
+    billingsState.loading = true;
+    try {
+      const { container } = render(<CustomerTransactionsTab {...props()} />);
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(0);
+      expect(container.querySelector('[role="status"]')).toBeTruthy();
+    } finally { billingsState.loading = false; }
+  });
+
+  it("a credit note lowers what the invoice can take: the rest of the receipt goes to Advance", () => {
+    // INV-A378-27-0100 ₹10,000 paid ₹10,000, credit note ₹3,000 → money in capped at ₹7,000; p2's ₹3,000 is unlinked.
+    const { container } = render(<CustomerTransactionsTab {...props({ notes: { creditNotes: [{ invoice_id: "INV-A378-27-0100", amount: 3000 }], debitNotes: [] } })} />);
+    const rows = rowTexts(container);
+    const inv = indexOf(rows, "INV-A378-27-0100");
+    expect(rows[inv + 2]).toContain("RV-A378-27-0170");
+    expect(rows[inv + 2]).toContain("₹3,000");
+    expect(rows[inv + 2]).toContain("part of ₹6,000");
+    const g = indexOf(rows, ADVANCE_GROUP_TITLE);
+    expect(rows.slice(g).some((r) => r.includes("RV-A378-27-0170") && r.includes("₹3,000"))).toBe(true);
   });
 
   it("top-level rows newest first by date (invoice date / quote date)", () => {
