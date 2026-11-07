@@ -8,6 +8,9 @@
  * issued tax invoice cannot vanish from the series (migration 20260927140000).
  * R-1999: a project-receipt line lists every kist it paid (bank + TDS) and what goes back; the
  * invoices stay, due again (D3). A refusal shows with the page to fix it on.
+ * R-2179: a line booked through "A new sale" offers "Also undo this sale" (ticked) and lists every
+ * thing it takes back — receipt + TDS, invoice (credit note), quote, each subscription — from the
+ * server's preview; when something stops it, says what and links the page, and only the line is freed.
  */
 "use client";
 
@@ -18,8 +21,8 @@ import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import {
-  useUnreconcileImpact, useUnreconcileBankTxn, vendorUndoLegLine, blockHrefLabel, projectUndoRowLine,
-  type VendorUndoPreview, type ProjectUndoPreview,
+  useUnreconcileImpact, useUnreconcileBankTxn, vendorUndoLegLine, blockHrefLabel, projectUndoRowLine, newSaleUndoLines,
+  type VendorUndoPreview, type ProjectUndoPreview, type NewSaleUndoPreview,
 } from "@/lib/queries/unreconcile";
 
 /**
@@ -96,6 +99,53 @@ function ProjectUndoPreviewBlock({ preview }: { preview: ProjectUndoPreview }) {
   );
 }
 
+/**
+ * R-2179: a line booked through "A new sale" — what "Also undo this sale" takes back, each with its
+ * page; or, when the server says it cannot, why and where to fix it (then only the line is freed).
+ */
+function NewSaleUndoBlock({ preview, undoSale, setUndoSale }: {
+  preview: NewSaleUndoPreview; undoSale: boolean; setUndoSale: (v: boolean) => void;
+}) {
+  return (
+    <div className="space-y-3 text-sm text-ink-2">
+      <p>
+        This line was booked as a new sale to <b>{preview.customer_name ?? "a customer"}</b>.
+      </p>
+      {preview.blocked ? (
+        <div role="alert" className="rounded-md border border-amber/50 bg-amber-soft/25 p-3 text-[13px] leading-snug">
+          <b className="block">The sale cannot be undone from here.</b>
+          {preview.block_message}
+          {preview.block_href ? (
+            <> <Link href={preview.block_href as never} className="text-amber-ink underline">{blockHrefLabel(preview.block_href)}</Link></>
+          ) : null}
+          <span className="block text-xs text-ink-3 mt-1">Un-reconcile now frees only the bank line; the sale stays.</span>
+        </div>
+      ) : (
+        <label className="flex items-start gap-2 rounded-md border border-amber/50 bg-amber-soft/25 p-3">
+          <input type="checkbox" checked={undoSale} onChange={(e) => setUndoSale(e.target.checked)} className="mt-1" />
+          <span className="text-[13px] leading-snug">
+            <b>Also undo this sale</b>
+            <ul className="mt-1 space-y-1" aria-label="What the undo takes back">
+              {newSaleUndoLines(preview).map((l) => (
+                <li key={l.text} className="flex items-start gap-2">
+                  <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3" />
+                  <span>
+                    {l.text}
+                    {l.href ? <> · <Link href={l.href as never} className="text-amber-ink underline">view</Link></> : null}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <span className="block text-xs text-ink-3 mt-1">
+              The customer stays. Untick to free only the bank line — then the sale, its invoice and subscriptions stay as they are.
+            </span>
+          </span>
+        </label>
+      )}
+    </div>
+  );
+}
+
 export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | null; onClose: () => void }) {
   const { data: impact, isLoading } = useUnreconcileImpact(txn);
   const unreconcile = useUnreconcileBankTxn();
@@ -105,7 +155,8 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
 
   async function confirm() {
     if (!txn) return;
-    await unreconcile.mutateAsync({ txnId: txn.id, undoSale: impact?.kind === "bank-sale" && undoSale });
+    const canUndo = impact?.kind === "bank-sale" || (impact?.kind === "new-sale" && !impact.preview.blocked);
+    await unreconcile.mutateAsync({ txnId: txn.id, undoSale: canUndo && undoSale });
     onClose();
   }
 
@@ -139,6 +190,8 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
               </span>
             </label>
           </div>
+        ) : impact?.kind === "new-sale" ? (
+          <NewSaleUndoBlock preview={impact.preview} undoSale={undoSale} setUndoSale={setUndoSale} />
         ) : impact?.kind === "advance" ? (
           impact.usedOrRefunded > 0 ? (
             <div className="space-y-2 text-sm text-ink-2">
@@ -185,7 +238,8 @@ export function UnreconcileDialog({ txn, onClose }: { txn: BankTransactionRow | 
             ) : null
           ) : (
             <Button type="button" variant="danger" loading={unreconcile.isPending} disabled={isLoading} onClick={confirm}>
-              Un-reconcile{impact?.kind === "bank-sale" && undoSale ? " & sale palto" : impact?.kind === "advance" ? " & remove advance" : impact?.kind === "vendor-payment" || impact?.kind === "project" ? " & reverse" : ""}
+              Un-reconcile{impact?.kind === "bank-sale" && undoSale ? " & sale palto"
+                : impact?.kind === "new-sale" && !impact.preview.blocked && undoSale ? " & undo sale" : impact?.kind === "advance" ? " & remove advance" : impact?.kind === "vendor-payment" || impact?.kind === "project" ? " & reverse" : ""}
             </Button>
           )}
         </DialogFooter>
