@@ -11,6 +11,8 @@
  * R-2179: a line booked through "A new sale" offers "Also undo this sale" (ticked) and lists every
  * thing it takes back — receipt + TDS, invoice (credit note), quote, each subscription — from the
  * server's preview; when something stops it, says what and links the page, and only the line is freed.
+ * R-2574: a split line (other sales / an advance booked from the same money) is refused — the block lists
+ * this sale and every other receipt on the line, each with the page to take it back on.
  */
 "use client";
 
@@ -21,7 +23,7 @@ import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import {
-  useUnreconcileImpact, useUnreconcileBankTxn, vendorUndoLegLine, blockHrefLabel, projectUndoRowLine, newSaleUndoLines,
+  useUnreconcileImpact, useUnreconcileBankTxn, vendorUndoLegLine, blockHrefLabel, projectUndoRowLine, newSaleUndoLines, newSaleOtherReceiptLines,
   type VendorUndoPreview, type ProjectUndoPreview, type NewSaleUndoPreview,
 } from "@/lib/queries/unreconcile";
 
@@ -106,6 +108,7 @@ function ProjectUndoPreviewBlock({ preview }: { preview: ProjectUndoPreview }) {
 function NewSaleUndoBlock({ preview, undoSale, setUndoSale }: {
   preview: NewSaleUndoPreview; undoSale: boolean; setUndoSale: (v: boolean) => void;
 }) {
+  const others = newSaleOtherReceiptLines(preview);
   return (
     <div className="space-y-3 text-sm text-ink-2">
       <p>
@@ -119,11 +122,27 @@ function NewSaleUndoBlock({ preview, undoSale, setUndoSale }: {
       ) : preview.blocked ? (
         <div role="alert" className="rounded-md border border-amber/50 bg-amber-soft/25 p-3 text-[13px] leading-snug">
           <b className="block">The sale cannot be undone from here.</b>
-          {preview.block_message}
-          {preview.block_href ? (
+          {/* R-2574: a split line — the list below says what the server's message lists, once. */}
+          {others.length > 0 ? "“Undo this sale” takes back one sale only, and this bank line booked more:" : preview.block_message}
+          {others.length > 0 ? (
+            /* R-2574: a split line — this sale and every other receipt it booked, each with its page. */
+            <ul className="mt-1 space-y-1" aria-label="Booked from this bank line">
+              {[{ text: `This sale ${preview.quote_id}${preview.invoice_id ? ` · invoice ${preview.invoice_id}` : ""}: ${rupee(preview.amount)}`,
+                  href: preview.invoice_id ? `/invoices/${preview.invoice_id}` : `/quotes/${preview.quote_id}` }, ...others].map((l, i) => (
+                <li key={i} className="flex items-start gap-2">
+                  <span aria-hidden="true" className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-ink-3" />
+                  <span>{l.text} · <Link href={l.href as never} className="text-amber-ink underline">{blockHrefLabel(l.href)}</Link></span>
+                </li>
+              ))}
+            </ul>
+          ) : preview.block_href ? (
             <> <Link href={preview.block_href as never} className="text-amber-ink underline">{blockHrefLabel(preview.block_href)}</Link></>
           ) : null}
-          <span className="block text-xs text-ink-3 mt-1">Un-reconcile now frees only the bank line; the sale stays.</span>
+          <span className="block text-xs text-ink-3 mt-1">
+            {others.length > 0
+              ? "Un-reconcile now frees only the bank line; all of these stay, on no bank line — then take back each one on its page."
+              : "Un-reconcile now frees only the bank line; the sale stays."}
+          </span>
         </div>
       ) : (
         <label className="flex items-start gap-2 rounded-md border border-amber/50 bg-amber-soft/25 p-3">

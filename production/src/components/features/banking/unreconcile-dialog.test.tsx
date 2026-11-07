@@ -21,7 +21,7 @@ vi.mock("next/link", () => ({
 }));
 
 import { UnreconcileDialog } from "./unreconcile-dialog";
-import { vendorUndoLegLine, projectUndoRowLine, projectUndoneToast, subsCancelledText, newSaleUndoLines } from "@/lib/queries/unreconcile";
+import { vendorUndoLegLine, projectUndoRowLine, projectUndoneToast, subsCancelledText, newSaleUndoLines, newSaleOtherReceiptLines } from "@/lib/queries/unreconcile";
 
 const txn = {
   id: "t1", tenant_id: "x", bank_account_id: "acc-1", txn_date: "2026-10-05", description: "NEFT SHARMA ASSOCIATES",
@@ -232,5 +232,39 @@ describe("R-2179 un-reconcile an 'A new sale' line — undo the sale too", () =>
     expect(subsCancelledText(0)).toBe("");
     expect(subsCancelledText(1)).toBe(", subscription cancelled");
     expect(subsCancelledText(2)).toBe(", 2 subscriptions cancelled");
+  });
+
+  /* R-2574: ₹17,700 line split into sale A ₹11,800 + sale B ₹5,900 (or + an advance) — the undo would take back A only. */
+  it("a split line: blocked, lists this sale and every other receipt with its page; un-reconcile frees only the line", async () => {
+    impact = { kind: "new-sale", preview: sale({
+      amount: 11800, blocked: true, block_href: "/invoices/INV-27-0043",
+      block_message: "This bank line also booked sale Q-27-0043 ₹5,900, an advance of ₹3,200 — \"Undo this sale\" takes back one sale only.",
+      other_receipts: [
+        { payment_id: "p2", kind: "sale", amount: 5900, receipt_voucher_no: "RV-27-0010", quote_id: "Q-27-0043", invoice_id: "INV-27-0043", href: "/invoices/INV-27-0043" },
+        { payment_id: "p3", kind: "advance", amount: 3200, receipt_voucher_no: "RV-27-0011", quote_id: "Q-27-0044", invoice_id: null, href: "/payments" },
+      ],
+    }) };
+    const onClose = vi.fn();
+    render(<UnreconcileDialog txn={saleTxn} onClose={onClose} />);
+    const items = screen.getAllByRole("listitem").map((li) => li.textContent);
+    expect(items).toHaveLength(3);
+    expect(items[0]).toContain("This sale Q-27-0042 · invoice INV-27-0042: ₹11,800");
+    expect(items[1]).toContain("Sale Q-27-0043 · invoice INV-27-0043: ₹5,900 (receipt RV-27-0010)");
+    expect(items[2]).toContain("Advance of ₹3,200 kept for the customer (receipt RV-27-0011)");
+    const hrefs = screen.getAllByRole("link").map((a) => a.getAttribute("href"));
+    expect(hrefs).toEqual(["/invoices/INV-27-0042", "/invoices/INV-27-0043", "/payments"]);
+    expect(screen.getByRole("link", { name: "Open Payments" })).toBeTruthy();
+    expect(screen.getByRole("alert").textContent).toContain("all of these stay, on no bank line");
+    expect(screen.getByRole("alert").textContent, "the server message is not repeated over the list").not.toContain("This bank line also booked");
+    expect(screen.queryByRole("checkbox")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Un-reconcile" }));
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+    expect(mutateAsync).toHaveBeenCalledWith({ txnId: "t1", undoSale: false });
+  });
+
+  it("a payment on an existing invoice reads as a payment", () => {
+    const p = sale({ other_receipts: [{ payment_id: "p4", kind: "payment", amount: 2000, receipt_voucher_no: null, quote_id: null, invoice_id: "INV-27-0007", href: "/invoices/INV-27-0007" }] });
+    expect(newSaleOtherReceiptLines(p)).toEqual([{ text: "Payment of ₹2,000 on INV-27-0007", href: "/invoices/INV-27-0007" }]);
+    expect(newSaleOtherReceiptLines(sale({}))).toEqual([]);
   });
 });

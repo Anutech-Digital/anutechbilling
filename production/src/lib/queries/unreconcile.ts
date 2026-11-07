@@ -69,12 +69,36 @@ export type NewSaleUndoPreview = {
   customer_name: string | null;
   subscriptions: NewSaleUndoSub[];
   tds_amount: number;
+  /** R-2574: every other receipt this line booked (a split line); any → blocked. Absent from an older server. */
+  other_receipts?: NewSaleOtherReceipt[];
   blocked: boolean;
   block_message: string | null;
   block_href: string | null;
   /** Owner / accountant — undoing removes a receipt (unreconcile_bank_receipt's gate). */
   can_undo: boolean;
 };
+
+/** R-2574: another receipt the same bank line booked — "Undo this sale" then takes back one sale only, so it is refused. */
+export type NewSaleOtherReceipt = {
+  payment_id: string;
+  kind: "sale" | "advance" | "payment";
+  amount: number;
+  receipt_voucher_no: string | null;
+  quote_id: string | null;
+  invoice_id: string | null;
+  href: string;
+};
+
+/** R-2574: one plain line per other receipt on the line, with the page to take it back on. */
+export function newSaleOtherReceiptLines(p: NewSaleUndoPreview): { text: string; href: string }[] {
+  return (p.other_receipts ?? []).map((o) => {
+    const rv = o.receipt_voucher_no ? ` (receipt ${o.receipt_voucher_no})` : "";
+    const text = o.kind === "advance" ? `Advance of ${rupee(o.amount)} kept for the customer${rv}`
+      : o.kind === "sale" ? `Sale ${o.quote_id ?? ""}${o.invoice_id ? ` · invoice ${o.invoice_id}` : ""}: ${rupee(o.amount)}${rv}`
+      : `Payment of ${rupee(o.amount)} on ${o.invoice_id ?? o.quote_id ?? "another document"}${rv}`;
+    return { text, href: o.href };
+  });
+}
 
 /**
  * R-2179: one plain line per thing "Undo this sale too" takes back, with the page it is on.
@@ -218,6 +242,7 @@ export function blockHrefLabel(href: string): string {
   if (href.startsWith("/projects")) return "Open project";
   if (href.startsWith("/quotes")) return "Open quote";      // R-2179
   if (href.startsWith("/invoices")) return "Open invoice";  // R-2179
+  if (href.startsWith("/payments")) return "Open Payments"; // R-2574
   return "Open";
 }
 
