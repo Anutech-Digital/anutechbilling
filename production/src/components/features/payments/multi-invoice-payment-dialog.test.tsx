@@ -140,6 +140,41 @@ describe("R-1525 multi-invoice payment sheet", () => {
     expect(document.body.textContent).not.toMatch(/Haan|lagao|karein/);
   });
 
+  /* R-2546 (chk-local3): Apply and TDS typed by hand come back as text — "1080" + "100" was
+     "1080100" → "More than due" and no save. Owner path: type the amount, accept the TDS, type it. */
+  it("R-2546: typed Apply + typed TDS that settle the invoice → no 'More than due', saves numbers", async () => {
+    render(<MultiInvoicePaymentDialog open onOpenChange={() => {}} customerId="c1" customerName="Acme" />);
+    fireEvent.change(document.getElementById("mip_received")!, { target: { value: "1080" } });
+    await waitFor(() => expect(lineValue(0)).toBe("1080"));
+    /* jsdom skips a change to the value already shown — type something else first, as a person does. */
+    fireEvent.change(document.getElementById("mip_line_0")!, { target: { value: "1000" } });
+    fireEvent.change(document.getElementById("mip_line_0")!, { target: { value: "1080" } });
+    fireEvent.click(await screen.findByRole("button", { name: "Yes, TDS was deducted" }));
+    await waitFor(() => expect(document.getElementById("mip_tds_0")).toBeTruthy());
+    fireEvent.change(document.getElementById("mip_tds_0")!, { target: { value: "10" } });
+    fireEvent.change(document.getElementById("mip_tds_0")!, { target: { value: "100" } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("More than due")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+    fireEvent.change(document.getElementById("mip_reference")!, { target: { value: "402312345678" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm payment" }));
+    await waitFor(() => expect(mutate).toHaveBeenCalledTimes(1));
+    const sent = mutate.mock.calls[0][0] as { received: unknown; allocations: Array<Record<string, unknown>> };
+    expect(sent.received).toBe(1080);
+    expect(sent.allocations).toEqual([{ invoice_id: "INV-1", amount: 1080, tds_amount: 100, tds_section: "194J", tds_rate_pct: 10 }]);
+  });
+
+  it("R-2546: Apply typed by hand (no TDS) equal to the due → no false 'More than due'", async () => {
+    render(<MultiInvoicePaymentDialog open onOpenChange={() => {}} customerId="c1" customerName="Acme" />);
+    fireEvent.change(document.getElementById("mip_received")!, { target: { value: "1180" } });
+    await waitFor(() => expect(lineValue(0)).toBe("1180"));
+    fireEvent.change(document.getElementById("mip_line_0")!, { target: { value: "1000" } });
+    fireEvent.change(document.getElementById("mip_line_0")!, { target: { value: "1180" } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(screen.queryByText("More than due")).toBeNull();
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
   it("schema: a typed UPI reference must be 12 digits; any method may be blank (R-1444)", () => {
     const base = { customerId: "c1", received: 100, receivedDate: "2026-10-17", bankAccountId: "", excessToCredit: true, lines: [] };
     expect(multiInvoicePaymentSchema.safeParse({ ...base, method: "upi", reference: "abc" }).success).toBe(false);

@@ -942,8 +942,14 @@ export function resultLines(r: PayForResult): ResultLine[] {
     return out;
   }
 
+  /* R-2546: a quote-less receipt (Zoho-imported invoice, kind "opening") names its invoice — it
+     said "recorded on quote null". The first line then carries the invoice link, so no repeat. */
+  const invoiceOnly = !r.quote_id && !!r.invoice_id && r.kind !== "instalment";
+  const invoiceHref = r.invoice_id ? `/invoices/${encodeURIComponent(r.invoice_id)}` : undefined;
   if (r.already_recorded) {
-    out.push({ text: `This payment was already recorded on ${r.quote_id ?? r.invoice_id} — the bank line is now matched to it.`, href: quoteHref });
+    out.push({ text: `This payment was already recorded on ${r.quote_id ?? r.invoice_id} — the bank line is now matched to it.`, href: quoteHref ?? invoiceHref });
+  } else if (invoiceOnly) {
+    out.push({ text: `${rupee(r.amount)} recorded on invoice ${r.invoice_id}`, href: invoiceHref });
   } else if (r.kind === "renewal") {
     out.push({
       text: r.renewal_rolled_forward && sub?.renewal_date
@@ -970,7 +976,7 @@ export function resultLines(r: PayForResult): ResultLine[] {
 
   if (r.invoice_issued) out.push({ text: `Invoice ${r.invoice_issued} issued`, href: `/invoices/${encodeURIComponent(r.invoice_issued)}` });
   if (r.instalment_error) out.push({ text: `The first bill's invoice was not raised yet (${r.instalment_error}) — the daily billing run raises it.`, tone: "warn" });
-  else if (r.invoice_id && r.kind !== "instalment") out.push({ text: `Invoice ${r.invoice_id}`, href: `/invoices/${encodeURIComponent(r.invoice_id)}` });
+  else if (r.invoice_id && r.kind !== "instalment" && !invoiceOnly) out.push({ text: `Invoice ${r.invoice_id}`, href: `/invoices/${encodeURIComponent(r.invoice_id)}` });
   if (r.tds_amount > 0) out.push({ text: `${rupee(r.tds_amount)} TDS booked as TDS receivable — collect the certificate (Form 16A)` });
   /* R-2026: paid in parts — the rest of the year is not owed today. R-2048: each part is a payment
      request on its date; its invoice is raised when it is paid (R-2044). */
