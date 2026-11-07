@@ -42,22 +42,61 @@ export function ilikeAny(columns: readonly string[], term: string): string {
   return columns.map((c) => `${c}.ilike."%${term}%"`).join(",");
 }
 
+/**
+ * R-2185: a typed number, as a pattern that ignores how it was written. A phone stored as
+ * "+91 98765 00031" does not CONTAIN "9876500031", so `ilike "%9876500031%"` missed it — only
+ * the spaced form worked, word by word. A term made only of digits and + - ( ) with 4+ digits
+ * becomes a regex with any non-digits allowed between its digits ("9[^0-9]*8[^0-9]*7…"), so
+ * digits-only, spaced, dashed and +91 forms all find the same number. More than ten digits
+ * (+91 / 0 prefix typed) → the last ten, so a number stored bare is found too. The pattern is
+ * built from digits only, so nothing typed can become a regex or PostgREST special character.
+ */
+export function digitTermPattern(term: string): string | null {
+  if (!/^[\d+\-()]+$/.test(term)) return null;
+  const digits = term.replace(/\D/g, "");
+  if (digits.length < 4) return null;
+  return (digits.length > 10 ? digits.slice(-10) : digits).split("").join("[^0-9]*");
+}
+
+/**
+ * R-2185: the words for a phone-bearing search (Companies, Contacts). A whole query that is one
+ * phone number written with spaces ("+91 98765 00031") is ONE term — its digits — so the "+91"
+ * piece need not appear on its own in the stored number. Other groups keep paletteTerms.
+ */
+export function palettePhoneTerms(query: string): string[] {
+  const q = query.trim();
+  if (/^[\d\s+\-()]+$/.test(q) && /\s/.test(q)) {
+    const digits = q.replace(/\D/g, "");
+    if (digits.length >= 10) return [digits];
+  }
+  return paletteTerms(query);
+}
+
+/** One or-group for a term: `imatch` with the digit pattern for a typed number, else `ilike`. */
+function termGroup(columns: readonly string[], term: string, digitAware: boolean): string {
+  const pattern = digitAware ? digitTermPattern(term) : null;
+  return pattern ? columns.map((c) => `${c}.imatch."${pattern}"`).join(",") : ilikeAny(columns, term);
+}
+
 /** The filter-builder methods the searches use — real client or a test double. */
 interface Filterable<T> {
   or(filters: string): T;
   eq(column: string, value: string): T;
 }
-function applyTerms<T extends Filterable<T>>(q: T, columns: readonly string[], terms: string[], tenantId?: string | null): T {
+function applyTerms<T extends Filterable<T>>(
+  q: T, columns: readonly string[], terms: string[], tenantId?: string | null, digitAware = false,
+): T {
   let out = q;
   if (tenantId) out = out.eq("tenant_id", tenantId);
-  for (const t of terms) out = out.or(ilikeAny(columns, t));
+  for (const t of terms) out = out.or(termGroup(columns, t, digitAware));
   return out;
 }
 
 // ── Columns: what each row shows, and what each search matches ────────────────────────
 
-export const PALETTE_CUSTOMER_COLUMNS = "id, name, display_name, domain, city, state, contact_name, contact_email, contact_phone, gstin";
-export const PALETTE_CUSTOMER_SEARCH = ["name", "display_name", "domain", "contact_name", "contact_email", "contact_phone", "gstin", "customer_number"] as const;
+/* R-2185: contact_mobile — the company's own mobile is a number the phone rings from too. */
+export const PALETTE_CUSTOMER_COLUMNS = "id, name, display_name, domain, city, state, contact_name, contact_email, contact_phone, contact_mobile, gstin";
+export const PALETTE_CUSTOMER_SEARCH = ["name", "display_name", "domain", "contact_name", "contact_email", "contact_phone", "contact_mobile", "gstin", "customer_number"] as const;
 
 export const PALETTE_QUOTE_COLUMNS = "id, customer_name, amount, status, plan";
 export const PALETTE_QUOTE_SEARCH = ["id", "customer_name", "plan", "domain"] as const;
@@ -80,7 +119,7 @@ export const PALETTE_PAYMENT_SEARCH = ["reference", "receipt_voucher_no", "quote
 export interface PaletteCustomer {
   id: string; name: string; display_name: string | null; domain: string | null;
   city: string | null; state: string | null; contact_name: string | null;
-  contact_email: string | null; contact_phone: string | null; gstin: string | null;
+  contact_email: string | null; contact_phone: string | null; contact_mobile?: string | null; gstin: string | null;
 }
 export interface PaletteQuote { id: string; customer_name: string | null; amount: number | null; status: string | null; plan: string | null }
 export interface PaletteInvoice { id: string; customer_name: string | null; amount: number | null; status: string | null; quote_id?: string | null }
@@ -107,10 +146,10 @@ function quotedIds(ids: readonly (string | null | undefined)[]): string[] {
 export async function searchPaletteCustomers(
   db: Client, query: string, tenantId?: string | null, hideContacts = false,
 ): Promise<PaletteCustomer[]> {
-  const terms = paletteTerms(query);
+  const terms = palettePhoneTerms(query);
   if (terms.length === 0) return [];
   const { data, error } = await applyTerms(
-    db.from("customers").select(PALETTE_CUSTOMER_COLUMNS), searchableColumns(PALETTE_CUSTOMER_SEARCH, hideContacts), terms, tenantId,
+    db.from("customers").select(PALETTE_CUSTOMER_COLUMNS), searchableColumns(PALETTE_CUSTOMER_SEARCH, hideContacts), terms, tenantId, true,
   ).order("name", { ascending: true }).limit(PALETTE_LIMIT);
   if (error) throw error;
   return (data ?? []) as unknown as PaletteCustomer[];
@@ -151,11 +190,11 @@ export async function searchPaletteSubscriptions(db: Client, query: string, tena
 export async function searchPaletteContacts(
   db: Client, query: string, tenantId?: string | null, hideContacts = false,
 ): Promise<PaletteContact[]> {
-  const terms = paletteTerms(query);
+  const terms = palettePhoneTerms(query);
   if (terms.length === 0) return [];
   const { data, error } = await applyTerms(
     db.from("contacts").select(PALETTE_CONTACT_COLUMNS).neq("source", "enquiry"),
-    searchableColumns(PALETTE_CONTACT_SEARCH, hideContacts), terms, tenantId,
+    searchableColumns(PALETTE_CONTACT_SEARCH, hideContacts), terms, tenantId, true,
   ).order("full_name", { ascending: true }).limit(PALETTE_LIMIT);
   if (error) throw error;
   return (data ?? []) as unknown as PaletteContact[];
