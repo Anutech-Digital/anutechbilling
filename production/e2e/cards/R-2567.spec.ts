@@ -11,7 +11,7 @@
  * not touched.
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
-import { onlyInCardTests, openAppPage, pageAs } from "./card-steps";
+import { onlyInCardTests, openAppPage, pageAs, toCollectFigure } from "./card-steps";
 
 async function failProjectReceivables(page: Page): Promise<{ failed: () => number; restore: () => Promise<void> }> {
   let n = 0;
@@ -30,19 +30,6 @@ async function failProjectReceivables(page: Page): Promise<{ failed: () => numbe
   };
   await page.route(match, handler);
   return { failed: () => n, restore: () => page.unroute(match, handler) };
-}
-
-/**
- * The To collect figure on screen, open strip or closed: closed → the strip line's fact
- * "To collect <b>…</b>"; open → the tile (label + value). (R-2562's test looked only for the open
- * tile, so with the strip closed — its default — it read the table's column header instead.)
- */
-async function toCollectFigure(page: Page) {
-  // The open tile's label is a <p> (the table's "To collect" column header is a sort button — not it).
-  const tile = page.locator("p", { hasText: /^To collect$/ }).locator("xpath=..").filter({ visible: true });
-  const fact = page.getByText(/^To collect\s+\S/).filter({ visible: true });
-  await expect(tile.or(fact).first()).toBeVisible({ timeout: 60_000 });
-  return (await fact.count()) > 0 ? fact.first() : tile.first();
 }
 
 test.describe("R-2567 — one Try again for a failed project read; booking never raises an invoice blind", () => {

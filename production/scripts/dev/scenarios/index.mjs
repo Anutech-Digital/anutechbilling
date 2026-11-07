@@ -331,6 +331,18 @@ export const SCENARIOS = [
       { path: "renewals", for: "R-1473 under the title: ₹44,746 unpaid on these renewals · Companies › Has receivables ₹67,855 also has project invoices ₹23,109" },
     ],
   },
+  {
+    name: "renewal-parts",
+    about: "R-2548 card test's own customers, no subscriptions (the test adds them through Subscriptions → Add Subscription): SCN Part Bill Studio (Annual · Half-yearly, renews in 30 days), SCN Part Bill Late Co (Half-yearly, renews in 3 days), SCN Part Bill Yearly (paid Yearly). A reload or --clear also removes the subscriptions added on them.",
+    cards: ["R-2548", "R-2569"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [],
+             extra: ["c2569000-0000-4000-8000-000000000001", "c2569000-0000-4000-8000-000000000002", "c2569000-0000-4000-8000-000000000003"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 3 },
+    pages: [
+      { path: "customers", for: "R-2548 the three SCN Part Bill customers — Subscriptions → Add Subscription → Existing Customer picks them" },
+      { path: "renewals", for: "R-2548 after adding SCN Part Bill Studio's Annual · Half-yearly subscription: 'Bill renewal · part 1 of next year'" },
+    ],
+  },
 ];
 
 export const SCENARIO_NAMES = SCENARIOS.map((s) => s.name);

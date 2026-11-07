@@ -267,3 +267,13 @@ Format: `- <date>: what went wrong → the rule it created (card).`
   only `aiCheck` and the owner decides; cards that need live/staging go to their own lane (R-2549).
 - 7 Nov 2026 — CI wait ki galti dohrayi: WORKER-STEPS 5b worker ko CI ka 30-40 min wait karwata tha; ab worker push ke baad hand back karta hai, manager CI dekhta hai (`worker-lock ci-all`); build cache R-2552. Measured: CI build job 11-23 min, of which next build's own type check 6-13 min (a repeat of the typecheck job) — now skipped in CI's build (SKIP_BUILD_TYPECHECK=1, same as Cloud Build since R-182); day worker cap 2 → 4 (Pardeep).
 - 7 Nov 2026 (R-2564): push guard step 85–169 s — not slow tests but ~20 scan files each opening the same 4,900 src files + 600 migrations (Windows file opens; Prisma's 36 MB generated client too). Fix: shared always-fresh read cache (`readSource`, size+mtime+ctime per read) + generated skip; measure BEFORE and AFTER in the same load window, alternating runs (load swings 25→55 node processes in minutes). Hard links change ctime — don't link repo files in tests.
+- 7 Nov 2026 (R-2569): Turbopack crashes when a dev server runs in a worktree, because the worktree's
+  `production/node_modules` is a junction to the deploy clone's → a second dev server in a worktree
+  starts with `dev-local --webpack` (never the default Turbopack).
+- 7 Nov 2026 (R-2569): a card test (`card-tests.mjs`) run from a worktree needs `production/.env.test`
+  copied in next to `.env.local` — without it the Local test logins / E2E users are missing. Each card
+  spec makes its OWN data (its own `scripts/dev/scenarios/<name>` — two specs reloading one scenario
+  wipe each other's rows, R-2548 vs R-2544) and clears it after its last step.
+- 7 Nov 2026 (R-2566): a long list froze because every row called `toLocaleString(…, options)` (a new
+  Intl formatter per call) → build the `Intl.NumberFormat` / `DateTimeFormat` ONCE (module level) and
+  reuse it for every row.

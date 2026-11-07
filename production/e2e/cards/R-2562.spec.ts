@@ -10,7 +10,7 @@
  * changed for the test — no flag, no test-only route — and the local DB is not touched.
  */
 import { expect, test, type Page, type Route } from "@playwright/test";
-import { onlyInCardTests, openAppPage, pageAs } from "./card-steps";
+import { onlyInCardTests, openAppPage, pageAs, toCollectFigure } from "./card-steps";
 
 /** Fail the project-receivables read until `restore()` is called. Returns how many requests it failed. */
 async function failProjectReceivables(page: Page): Promise<{ failed: () => number; restore: () => Promise<void> }> {
@@ -46,8 +46,9 @@ test.describe("R-2562 — a failed project-receivables read shows an error with 
       await expect(unread).toBeVisible({ timeout: 90_000 });
       await expect(unread).toContainText("Project invoices couldn't be read");
       await expect(unread.getByRole("button", { name: "Try again" })).toBeVisible();
-      // The To collect tile (open strip) or its closed-strip fact says "—", not a ₹ figure.
-      const tile = page.getByText("To collect", { exact: true }).first().locator("xpath=..");
+      // The To collect tile (open strip) or its closed-strip fact says "—", not a ₹ figure
+      // (R-2569: the shared toCollectFigure — never the table's "To collect" sort header).
+      const tile = await toCollectFigure(page);
       await expect(tile).toContainText("—");
       await expect(tile).not.toContainText("₹");
       expect(fail.failed(), "the project read was made to fail").toBeGreaterThan(0);
@@ -56,7 +57,7 @@ test.describe("R-2562 — a failed project-receivables read shows an error with 
       await fail.restore();
       await unread.getByRole("button", { name: "Try again" }).click();
       await expect(page.getByTestId("to-collect-unread")).toHaveCount(0, { timeout: 60_000 });
-      await expect(page.getByText("To collect", { exact: true }).first().locator("xpath=..")).toContainText("₹", { timeout: 60_000 });
+      await expect(await toCollectFigure(page)).toContainText("₹", { timeout: 60_000 });
     } finally {
       await page.context().close();
     }
