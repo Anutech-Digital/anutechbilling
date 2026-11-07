@@ -17,7 +17,7 @@
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { isSplitBilled } from "@/lib/billing/instalments";
-import { subscriptionSchedule, followingTermStart, currentTermStart, previousTermStart } from "@/lib/billing/subscription-schedule";
+import { subscriptionSchedule, followingTermStart, previousTermStart, uncheckedTermStart } from "@/lib/billing/subscription-schedule";
 import { periodLastDay, addDaysISO } from "@/lib/billing/schedule";
 import { daysBetweenDates } from "./proration";
 
@@ -144,10 +144,14 @@ export function seatTermEnd(sub: Pick<SeatWindowSub, "term_months" | "start_date
  * (exclusive term end minus term_months), never the stored start_date. start_date is the
  * day the subscription was first sold and stays put across renewals, so on a row renewed
  * twice it is three years back. Null without a renewal date.
+ *
+ * R-2533: the WHOLE term counted back from the renewal (uncheckedTermStart), not the
+ * start_date-clamped currentTermStart — seats and support plans are priced per term, so a
+ * co-termed yearly sale (10 Jan → 31 Dec) keeps a 365-day pro-rata denominator, not 356.
+ * Effective dates are still bounded by start_date (seatEffectiveBounds).
  */
 export function seatTermStart(sub: Pick<SeatWindowSub, "term_months" | "start_date" | "renewal_date">): string | null {
-  if (!sub.renewal_date) return null;
-  return currentTermStart(sub);
+  return uncheckedTermStart(sub);
 }
 
 /**

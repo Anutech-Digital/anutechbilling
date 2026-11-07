@@ -14,7 +14,7 @@
  *     p_rest 'fx' (one item), the rule of splitFxPlan below; more than FX_INR_GAP_SHARE off is refused.
  *   · R-1678: "Several quotes / invoices" pays several invoices of ONE foreign currency from one credit
  *     the same way (splitFxPlan): each in full, the difference split by each invoice's foreign amount.
- *   · A Zoho opening invoice (R-1739) takes no more than its due — its receipt carries no quote, so
+ *   · A Zoho opening invoice (R-1739) or FY sale (R-2542) takes no more than its due — its receipt carries no quote, so
  *     there is no customer credit on it (bank_credit_pay_item refuses); the extra goes through
  *     "Several quotes / invoices" + advance.
  */
@@ -96,7 +96,7 @@ export function itemPayPlan(item: PlanItem, line: { description: string | null |
   const refuse = (problem: string): ItemPayPlan => ({ fx: null, problem });
   if (cur === "INR") {
     if (item.kind === "opening" && line.credit > item.amount_due) {
-      return refuse(`${id} is last year's invoice from Zoho with ${rupee(item.amount_due)} due — it takes no more. Choose "Several quotes / invoices" and keep the rest as advance.`);
+      return refuse(`${id} is an invoice imported from Zoho with ${rupee(item.amount_due)} due — it takes no more. Choose "Several quotes / invoices" and keep the rest as advance.`);
     }
     return { fx: null, problem: null };
   }

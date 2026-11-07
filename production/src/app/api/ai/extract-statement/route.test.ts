@@ -303,3 +303,16 @@ describe("R-2508 review — one chunk of a longer PDF", () => {
     expect(r.json.rows[1]).toMatchObject({ checkSign: true, reversal: true });
   });
 });
+
+describe("R-2528 — the PDF path keeps the printed paise, like the CSV / Excel parser", () => {
+  it("amount_paise / balance_paise only where the figure has paise", async () => {
+    ai.json.mockResolvedValue({ rows: [
+      { date: "2026-03-31", description: "SMS CHARGES", debit: 17.7, credit: 0, balance: "9,472.30" },
+      { date: "2026-03-31", description: "NEFT IN", debit: 0, credit: 1000, balance: 10472.3 },
+    ] });
+    const r = await call({ fileBase64: PDF, mimeType: "application/pdf" });
+    expect(r.json.rows[0]).toMatchObject({ debit: 18, amount_paise: 1770, balance_after: 9472, balance_paise: 947230 });
+    expect(r.json.rows[1]).toMatchObject({ credit: 1000, balance_after: 10472, balance_paise: 1047230 });
+    expect(r.json.rows[1].amount_paise).toBeUndefined();
+  });
+});

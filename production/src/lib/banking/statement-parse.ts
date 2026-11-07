@@ -14,6 +14,15 @@ export type ParsedRow = {
   credit:        number;       // ₹ integer
   balance_after: number | null;
   reference:     string | null;
+  /** R-2522: the bank's value date (HDFC "Value Dt"), when the file has its own column for it.
+      Sent to the database; the opening move uses it to place a line at the meeting point. */
+  value_date?:   string | null;
+  /** R-2528: the amount in PAISE as printed (always ≥ 0; the side is debit/credit), present only
+      when the printed amount has paise. Sent to the database (net_paise) so the opening move
+      compares the statement in paise and a missing ₹17.70 line is never taken as rounding. */
+  amount_paise?: number;
+  /** R-2528: the running balance in paise as printed, present only when it has paise. */
+  balance_paise?: number;
   /** R-2495: the bank printed this line with a NEGATIVE amount (a reversal — e.g. a failed
       ATM withdrawal shown as debit -20000), so it was read as the opposite side. Preview only. */
   reversal?:     true;
@@ -28,7 +37,7 @@ export type ParseResult = { rows: ParsedRow[]; skipped: number; warnings: string
 // Common header aliases across Indian banks. Each canonical key maps to
 // possible header names we'll match (lowercase, trimmed).
 /** The columns read from a statement (`reversal` is worked out, not a column). */
-type ColumnField = Exclude<keyof ParsedRow, "reversal" | "checkSign">;
+type ColumnField = Exclude<keyof ParsedRow, "reversal" | "checkSign" | "amount_paise" | "balance_paise">;
 
 const HEADER_ALIASES: Record<ColumnField, string[]> = {
   txn_date:      ["date", "txn date", "transaction date", "value date", "post date", "tran date"],
@@ -37,6 +46,7 @@ const HEADER_ALIASES: Record<ColumnField, string[]> = {
   credit:        ["credit", "deposit", "deposit amt", "deposit (cr)", "amount (credit)", "credit (rs.)", "credit amount"],
   balance_after: ["balance", "closing balance", "running balance", "available balance"],
   reference:     ["ref no", "ref no./cheque no", "reference no", "chq./ref. no.", "ref.no./cheque no", "utr no"],
+  value_date:    ["value dt", "value date"],
 };
 
 // ─── CSV parsing ───────────────────────────────────────────────────────────
@@ -122,6 +132,11 @@ function parseDate(input: string, order: "dmy" | "mdy" = "dmy"): string | null {
  * R-2495: a negative is also written "(20,000.00)" or "20,000.00-" by some banks.
  */
 export function parseAmount(input: string | undefined): number {
+  return signedRound(parseAmountExact(input));
+}
+
+/** R-2528: the printed amount as a number (paise kept), sign kept; 0 when unreadable. */
+export function parseAmountExact(input: string | undefined): number {
   if (!input) return 0;
   let cleaned = input.replace(/[₹,\s]/g, "").replace(/[Cc][Rr]$/, "").replace(/[Dd][Rr]$/, "");
   let sign = 1;
@@ -129,7 +144,24 @@ export function parseAmount(input: string | undefined): number {
   if (paren) { cleaned = paren[1]; sign = -1; }
   else if (/^\d[\d.]*-$/.test(cleaned)) { cleaned = cleaned.slice(0, -1); sign = -1; }
   const n = parseFloat(cleaned);
-  return isNaN(n) ? 0 : signedRound(sign * n);
+  return isNaN(n) ? 0 : sign * n;
+}
+
+/**
+ * R-2528: a line's printed paise — kept only where the figure has paise (whole-rupee figures
+ * send nothing; the database then reads rupees × 100). ONE rule for the CSV / Excel parser and
+ * the PDF path. `amountRaw`: the printed debit when it is not ₹0, else the printed credit (the
+ * line's own figure, before any reversal flip — the side comes from debit/credit).
+ */
+export function paiseFields(
+  amountRaw: number, balanceRaw: number | null, debit: number, credit: number, balanceAfter: number | null,
+): { amount_paise?: number; balance_paise?: number } {
+  const amountPaise = Math.abs(signedRound(amountRaw * 100));
+  const balancePaise = balanceAfter === null || balanceRaw === null ? null : signedRound(balanceRaw * 100);
+  return {
+    ...(amountPaise !== (debit + credit) * 100 ? { amount_paise: amountPaise } : {}),
+    ...(balancePaise !== null && balanceAfter !== null && balancePaise !== balanceAfter * 100 ? { balance_paise: balancePaise } : {}),
+  };
 }
 
 /**
@@ -352,6 +384,9 @@ function detectColumns(headerRow: string[]): Record<ColumnField, number> | null 
     credit:        map.credit ?? -1,
     balance_after: map.balance_after ?? -1,
     reference:     map.reference ?? -1,
+    /* R-2522: a separate Value Dt column only — a file whose one date column IS the value date
+       already uses it as txn_date. */
+    value_date:    map.value_date != null && map.value_date !== map.txn_date ? map.value_date : -1,
   };
 }
 
@@ -392,24 +427,29 @@ export function parseStatementRows(raw: string[][]): ParseResult {
     if (!date) { skipped++; continue; }
     // R-2495: a negative amount is a reversal — it moves to the other side. It was clamped to
     // 0 and skipped, which dropped a ₹20,000 ATM reversal and broke the balance check.
-    const { debit, credit, reversal } = signedAmounts(
-      mapping.debit  >= 0 ? parseAmount(r[mapping.debit])  : 0,
-      mapping.credit >= 0 ? parseAmount(r[mapping.credit]) : 0,
-      signed,
-    );
+    /* R-2528: each cell read once — rupees for the line, paise kept beside them. */
+    const dRaw = mapping.debit  >= 0 ? parseAmountExact(r[mapping.debit])  : 0;
+    const cRaw = mapping.credit >= 0 ? parseAmountExact(r[mapping.credit]) : 0;
+    const { debit, credit, reversal } = signedAmounts(signedRound(dRaw), signedRound(cRaw), signed);
     if (debit === 0 && credit === 0) { skipped++; continue; }
     // A bank line is debit XOR credit. If a row genuinely has both populated
     // (a mis-aligned column / reversal line), we can't tell which figure is
     // right — skip it rather than invent a number or fail the whole batch.
     if (debit > 0 && credit > 0) { skipped++; continue; }
     const description = (r[mapping.description] ?? "").trim() || "(no description)";
+    /* R-2522: kept only when it differs from the txn date — the usual same-day value date says nothing. */
+    const valueDate = mapping.value_date >= 0 ? parseDate(r[mapping.value_date] ?? "", order) : null;
     if (reversal) reversals++;
+    const bRaw = mapping.balance_after >= 0 ? parseAmountExact(r[mapping.balance_after]) : null;
+    const balanceAfter = bRaw === null ? null : signedRound(bRaw) || null;
     out.push({
       txn_date:      date,
       description:   reversal ? description + REVERSAL_MARK : description,
       debit, credit,
-      balance_after: mapping.balance_after >= 0 ? parseAmount(r[mapping.balance_after]) || null : null,
+      balance_after: balanceAfter,
       reference:     mapping.reference     >= 0 ? (r[mapping.reference]?.trim() || null)        : null,
+      ...(valueDate && valueDate !== date ? { value_date: valueDate } : {}),
+      ...paiseFields(signedRound(dRaw) !== 0 ? dRaw : cRaw, bRaw, debit, credit, balanceAfter),
       ...(reversal ? { reversal: true as const } : {}),
     });
   }

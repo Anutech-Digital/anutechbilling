@@ -62,6 +62,8 @@ import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
 import { fxDefaultChoice, itemPayPlan, splitFxPlan } from "@/lib/banking/item-fx-pay";
 import { FxSettleNote, type FxChoice } from "./credit-pay-for-fx-note";
 import { ItemPlanNote, OpenItemRow } from "./credit-pay-for-item";
+import { zohoSheetProblem, zohoSheetSales, zohoSplitSales } from "@/lib/banking/zoho-sales-split";
+import { ZohoSalesNote } from "./credit-pay-for-zoho-note";
 
 const NEW_CUSTOMER = "__new_customer__";
 
@@ -326,8 +328,11 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const fxUnconverted = saleShown ? zohoUnconvertedProblem(zohoFill, lines) : null;
   /* R-2427 (3): a Find-in-Zoho USD bill (₹ at the bank's rate) saves IN USD with the narration's figures; not on a relink. */
   const saleFx = mode === "sale" && !relink ? prefillSaleFx(zohoFill, transaction.description, credit) : null;
+  /* R-2518: the receipt paid SEVERAL Zoho invoices (Find in Zoho) — one app sale per Zoho invoice in ONE split call. */
+  const zoho = mode === "sale" && !relink && !saleFx ? zohoSheetSales(lines, { payCycle, gstRate, start: subStart || transaction.txn_date, credit }) : null;
+  const zohoProblem = zohoSheetProblem(zoho, { tdsAmount, belowCost: saleBelowCost });
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
-    && !approvalBlocked && !fxUnconverted && !itemPlan?.problem
+    && !approvalBlocked && !fxUnconverted && !itemPlan?.problem && !zohoProblem
     && !(relink && saleBelowCost)   // R-2397: the server refuses a relink to a below-cost sale
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
@@ -338,6 +343,22 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       subStart: makesSub && createSub ? subStart : null,
       subRenewal: makesSub && createSub ? subRenewal : null,
     };
+    const bookSplit = async (input: Parameters<typeof splitPay.mutateAsync>[0]) => {
+      try {
+        if (payer && payerToRecord) {
+          await setLinePayer.mutateAsync({ transactionId: transaction.id, customerId, payer, relation: payerToRecord.relation, note: payerToRecord.note });
+        }
+        const r = await splitPay.mutateAsync(input);
+        setResult(r);
+        if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
+      } catch { /* the hook toasts */ }
+    };
+    const splitHead = { transactionId: transaction.id, customerId, customerName: customer?.name ?? null };
+    /* R-2518: several Zoho invoices → one sale each, ONE split call (the amounts: zohoSalesPlan). */
+    if (zoho) {
+      return bookSplit({ ...splitHead, items: [], rest: zoho.plan.rest,
+        sale: zohoSplitSales(zoho, { makeSubs: makesSub && createSub, subStart: subArgs.subStart, subRenewal: subArgs.subRenewal }) });
+    }
     /* R-2095: a round-off (≤ ₹50) on one sale / item settles it in full — saved through the split
        RPC, which books the difference (R-2098's rule) in the same transaction. */
     /* R-1678: a foreign invoice paid in ₹ — the same split call, settled in full + the exchange difference. */
@@ -347,12 +368,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       ? roundOffSplit(mode === "sale" ? { mode: "sale", saleTotal: preview.total } : { mode: "item", item: picked! })
       : null;
     if (roundOff) {
-      try {
-        if (payer && payerToRecord) {
-          await setLinePayer.mutateAsync({ transactionId: transaction.id, customerId, payer, relation: payerToRecord.relation, note: payerToRecord.note });
-        }
-        const r = await splitPay.mutateAsync({
-          transactionId: transaction.id, customerId, customerName: customer?.name ?? null,
+      return bookSplit({
+          ...splitHead,
           items: roundOff.items,
           sale: roundOff.saleAmount !== null
             ? { lines: saleLinesPayload(lines), billingCycle: saleCycle, createSubscription: makesSub ? createSub : false,
@@ -361,18 +378,10 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           rest: roundOff.rest,
           externalNumber: zohoNumber,
         });
-        setResult(r);
-        if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
-      } catch { /* the hook toasts */ }
-      return;
     }
     if (mode === "split") {
-      try {
-        if (payer && payerToRecord) {
-          await setLinePayer.mutateAsync({ transactionId: transaction.id, customerId, payer, relation: payerToRecord.relation, note: payerToRecord.note });
-        }
-        const r = await splitPay.mutateAsync({
-          transactionId: transaction.id, customerId, customerName: customer?.name ?? null,
+      return bookSplit({
+          ...splitHead,
           items: splitPicked.map((i) => ({ quote_id: i.quote_id, invoice_id: i.invoice_id, amount: picks[itemKey(i)] })),
           sale: splitSale
             ? { lines: saleLinesPayload(lines), billingCycle: saleCycle, createSubscription: makesSub ? createSub : false,
@@ -381,10 +390,6 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           rest,
           externalNumber: zohoNumber,
         });
-        setResult(r);
-        if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
-      } catch { /* the hook toasts */ }
-      return;
     }
     const target: RelinkTarget = mode === "item" && picked
       ? {
@@ -427,12 +432,12 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     : mode === "split"
       ? `Record on ${splitCount} item${splitCount === 1 ? "" : "s"} & reconcile ${rupee(credit)}`
     : mode === "sale"
-      ? `Record sale & reconcile ${rupee(credit)}`
+      ? (zoho ? `Record ${zoho.sales.length} sales (one per Zoho invoice) & reconcile ${rupee(credit)}` : `Record sale & reconcile ${rupee(credit)}`)   // R-2518
       : `Keep ${rupee(credit)} as advance & reconcile`}`;
   useFooterSaveReport(onFooterSave, credit > 0 && !result && customerId
     ? {
         label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: busy,
-        disabledReason: fxUnconverted ?? itemPlan?.problem ?? splitFx ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
+        disabledReason: fxUnconverted ?? itemPlan?.problem ?? splitFx ?? zohoProblem ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
       }
     : null);
 
@@ -593,6 +598,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
               </ul>
             )
           ) : saleEditorNode}
+
+          {zoho && <ZohoSalesNote zoho={zoho} problem={zohoProblem} />}{/* R-2518 */}
 
           {/* R-2213: a below-cost quote waiting for the owner takes no money — the DB refuses it, so
               Save is locked here with the same reason and the way forward. */}

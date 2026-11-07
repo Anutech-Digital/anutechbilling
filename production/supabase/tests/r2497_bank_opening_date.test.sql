@@ -177,8 +177,9 @@ select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-0000002
 do $$
 declare h record; v bigint;
 begin
+  -- R-2522: accepting a difference needs the owner's reason (the 6-argument call)
   perform public.set_bank_opening_from_statement('bbbbbbbb-0000-0000-0000-000000249702', 60000, '2025-04-01',
-                                                'cccccccc-0000-0000-0000-000000249702', true);
+                                                'cccccccc-0000-0000-0000-000000249702', true, 'Passbook checked');
   select * into h from public.bank_opening_history where bank_account_id = 'bbbbbbbb-0000-0000-0000-000000249702';
   if not h.accepted_difference or h.difference <> -10000 or h.balance_on_old_date <> 90000 then
     raise exception 'FAIL E2: accepted history row % wrong', row_to_json(h);

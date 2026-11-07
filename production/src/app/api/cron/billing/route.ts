@@ -53,7 +53,7 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { fetchAllRows, fetchAllRowsIn, errorMessage } from "@/lib/ops/fetch-all";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { localDateISO } from "@/lib/leads/outcomes";
-import { syncSubscriptionInstalments, layInstalments, quoteSiblings, INSTALMENT_SUB_SELECT } from "@/lib/billing/sync-instalments.server";
+import { syncSubscriptionInstalments, layInstalments, quoteSiblings, billFreedParts, INSTALMENT_SUB_SELECT } from "@/lib/billing/sync-instalments.server";
 import { reportCron } from "@/lib/ops/cron-report";
 import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
@@ -195,6 +195,17 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
   result.errors.push(...laid.errors);
   result.instalments_created  += laid.created;
   result.instalments_resynced += laid.resynced;
+
+  /* R-2519d: parts freed by a cancelled proforma first — the earliest unbilled period goes before
+     each subscription's current term (the term run never reaches an earlier term). */
+  const freed = await billFreedParts(supabase, { todayISO: today, dryRun, allowed: cronTenantAllowed });
+  result.errors.push(...freed.errors);
+  for (const p of freed.parts) {
+    result.invoices_raised += p.result.raised.length + p.result.wouldRaise;
+    result.requests_made   += p.result.requests.length + p.result.wouldRequest;
+    for (const x of p.result.raised) result.raised.push({ subscription_id: p.subscription_id, ...x });
+    for (const x of p.result.requests) result.requests.push({ subscription_id: p.subscription_id, ...x });
+  }
 
   for (const sub of subs) {
     /* R-897 */ if (!cronTenantAllowed(sub.tenant_id)) continue;

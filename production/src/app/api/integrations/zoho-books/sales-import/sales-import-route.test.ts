@@ -115,6 +115,31 @@ describe("R-2499 sales-import route", () => {
     expect((await res.json()).error).toMatch(/owner or an accountant/);
   });
 
+  /* R-2530: same name, another PAN → the owner's "Use this customer anyway" tick travels with
+     preview AND import (the server rebuilds the plan, so part N is the same invoices). */
+  it("R-2530: a name match with another PAN is a choice in the preview; imported only with the tick", async () => {
+    st.facts = [fact({ gstin: "29ZZZZZ9999Z1Z4" })];
+    const pre = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(pre.counts).toMatchObject({ import: 0, skip: 1 });
+    expect(pre.skipped[0].reason).toMatch(/^Name matches "Test Buyer" but the GSTIN differs/);
+    expect(pre.gstinChoices).toEqual([expect.objectContaining({ key: "test buyer|ZZZZZ9999Z", customerId: "cust-1", chosen: false, count: 1 })]);
+    expect((await POST(req({ action: "import", fy: "2025-26", part: 0 }))).status).toBe(409);
+
+    const ticked = await (await POST(req({ action: "preview", fy: "2025-26", useAnyway: { "test buyer|ZZZZZ9999Z": "cust-1" } }))).json();
+    expect(ticked.counts).toMatchObject({ import: 1, skip: 0 });
+    expect(ticked.gstinChoices[0].chosen).toBe(true);
+    await POST(req({ action: "import", fy: "2025-26", part: 0, useAnyway: { "test buyer|ZZZZZ9999Z": "cust-1" } }));
+    expect(st.rpc[0].args.p_picks).toEqual([{ zoho_invoice_id: "z1", customer_id: "cust-1", item_ids: [] }]);
+  });
+
+  it("R-2530: a malformed useAnyway is ignored, never trusted", async () => {
+    st.facts = [fact({ gstin: "29ZZZZZ9999Z1Z4" })];
+    for (const useAnyway of [["cust-1"], "cust-1", { "test buyer": 5 }, { "test buyer": "someone-else" }]) {
+      const body = await (await POST(req({ action: "preview", fy: "2025-26", useAnyway }))).json();
+      expect(body.counts).toMatchObject({ import: 0, skip: 1 });
+    }
+  });
+
   it("undo calls remove_zoho_fy_sales_import with the reason; restart clears the scan", async () => {
     await POST(req({ action: "undo", fy: "2025-26", batchId: "b2499000-0000-0000-0000-0000000000b1", reason: "test batch" }));
     expect(st.rpc[0]).toEqual({ fn: "remove_zoho_fy_sales_import", args: { p_batch_id: "b2499000-0000-0000-0000-0000000000b1", p_reason: "test batch" } });

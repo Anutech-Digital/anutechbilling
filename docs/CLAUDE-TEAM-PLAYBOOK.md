@@ -195,3 +195,47 @@ Format: `- <date>: what went wrong → the rule it created (card).`
 - 5 Nov: the built-in pane was not signed in to staging and a reconcile worker stopped on the login page
   → staging/Zoho browser work in the owner's Chrome profile via Claude in Chrome.
 - 5 Nov: owner asked to be asked less → only yes/no questions with a recommendation, only when blocked.
+- 6 Nov: owner questions got lost in long chat replies → ask only yes/no, only when blocked, with your
+  recommendation, using the AskUserQuestion buttons in chat; also add it to
+  `<home>/Anutech-HQ/workstation.json` `pending` as `{id,q,rec,link?}` so the "Mera Kaam" pane shows
+  Haan/Na buttons. A press arrives as `[id] haan — q`: act on it, then remove the item.
+- 6 Nov: owner-only steps (a login, a click, a document) were buried in chat → put them in
+  workstation.json `tasks` as `{id,title,link}` (link = the exact staging/Zoho page) and open that page in
+  Chrome — the profile whose Claude extension is signed in with the same account as Claude Code (today
+  Profile 20) — one tab per worker, never his net-banking tabs.
+- 6 Nov: the pane's reconcile numbers went stale → update workstation.json `recon` after every reconcile step.
+- 6 Nov: workers handed back "done" with the work built but not pushed → the coordinator checks
+  `git log anutech/manager-pardeep` for the card's SHA and sends the worker back to finish push + `ci`;
+  never trust "done" alone.
+- 6 Nov: `npm run localhost:update` cannot apply a migration that is not pushed yet → prove it with
+  `worker-lock sql-related` plus a migration + test run, and note this on the card.
+- 6 Nov: "duplicate key" failures in `npm run test:sql:local` were local DB leftovers, not the card →
+  run the failing files without your migration first, before blaming the card.
+- 6 Nov: a Claude Code mod passed the npm `claude` 2.1.128 check but that CLI is too old → validate with
+  the desktop engine's own `claude.exe plugin validate` (under `AppData/Local/Claude-Data/.../claude-code/<ver>/`);
+  `/update` is a built-in command name and cannot be reused.
+- 6 Nov: lessons stayed in one laptop's memory → every lesson goes in two places: memory AND this Lessons
+  log through a card push, batched once per day (R-2525).
+- 6 Nov (evening): the auto-mode safety classifier refused an owner-approved staging data repair
+  ("Modify Shared Resources") → never route around a block (no terminal tricks, no mod buttons). Put the
+  exact command in chat as its own `` ```bash `` block, one command per block — the desktop app shows a Run
+  button on it, so the owner clicks once. Make it ONE wrapper script: starts the proxy, runs, stops the
+  proxy, all-or-nothing, safe to run twice (pre-check assertions). Say what success looks like (`exit=0`).
+  Staging migrations (the deploy-db step) are allowed for Claude; staging data repairs are not (R-2539).
+- 6 Nov (evening): a staging data repair needs proof before it is applied → one SQL file with
+  `begin … assertions … rollback` as the dry-run, printing before → after and the totals (GST by month,
+  FY sales) that the assertions check; apply only after the owner's haan by switching the last line to
+  `commit`; write `activity_log` rows with the before-values; for invoice edits use the documented
+  override setting, never disable triggers (R-2539).
+- 6 Nov (evening): Zoho API answered HTTP 429 (daily/minute limit) when several workers read Zoho at once
+  or a full "Read from Zoho again" ran — and "Read again" wipes the stored scan → only one Zoho reader at
+  a time; resume instead of re-reading (R-2539).
+- 6 Nov (evening): saving a customer with no country stored silently changed its GST treatment (R-2537)
+  → after any customer save, check GST treatment and currency (R-2539).
+- 6 Nov (evening): a worker again handed back before push + CI → the coordinator checks
+  `git log anutech/manager-pardeep` for the card's SHA and sends the worker back to finish `push` + `ci`
+  (R-2539).
+- 6 Nov (evening): tsc took over 10 min and guard tests crashed with "Worker exited unexpectedly" under
+  laptop load → lower parallel workers to 4 and retry; never skip the guards (R-2539).
+- 6 Nov (evening): a `run.sh` in the shared scratchpad top folder overwrote another agent's file → keep
+  scratch files in a per-card subfolder of the scratchpad (R-2539).

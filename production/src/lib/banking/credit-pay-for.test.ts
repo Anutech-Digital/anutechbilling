@@ -211,6 +211,17 @@ describe("R-1838 result — what happened, in words", () => {
     expect(warn?.href).toBe("/quotes/Q-NEW2");
     expect(lines.some((l) => l.text.startsWith("Subscription created"))).toBe(false);
   });
+  /* R-2546: a quote-less receipt (Zoho-imported invoice, kind "opening") said "recorded on quote null". */
+  it("R-2546: a quote sale names its quote; a Zoho invoice (no quote) names the invoice", () => {
+    expect(resultLines(result({ amount: 5000, quote_id: "Q-7" }))[0]).toEqual({ text: "₹5,000 recorded on quote Q-7", href: "/quotes/Q-7" });
+    const zoho = resultLines(result({ kind: "opening", amount: 5000, quote_id: null, invoice_id: "SCN-ZB-0042", is_fully_paid: false, outstanding: 1800 }));
+    expect(zoho[0]).toEqual({ text: "₹5,000 recorded on invoice SCN-ZB-0042", href: "/invoices/SCN-ZB-0042" });
+    const all = zoho.map((l) => l.text).join("\n");
+    expect(all).not.toMatch(/null|undefined/);
+    expect(all.match(/SCN-ZB-0042/g)).toHaveLength(1);
+    const replay = resultLines(result({ kind: "opening", quote_id: null, invoice_id: "SCN-ZB-0042", already_recorded: true }));
+    expect(replay[0]).toEqual({ text: "This payment was already recorded on SCN-ZB-0042 — the bank line is now matched to it.", href: "/invoices/SCN-ZB-0042" });
+  });
   it("TDS, part payment and extra credit are each said once", () => {
     const t = resultLines(result({ tds_amount: 200, outstanding: 500, overpaid_credit: 1100 })).map((l) => l.text).join("\n");
     expect(t).toContain("TDS booked as TDS receivable");

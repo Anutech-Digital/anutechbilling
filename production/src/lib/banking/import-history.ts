@@ -11,6 +11,8 @@
  * account's running-balance chain.
  */
 import { checkStatement } from "@/lib/banking/statement-check";
+import { fyLabelOfYear, fyStartYear } from "@/lib/dates/ist";
+import { formatDate } from "@/lib/utils";
 
 export type BankImportSource = "pdf" | "csv" | "xlsx" | "paste" | "image" | "legacy";
 
@@ -132,4 +134,29 @@ export function chainEffect(all: ImportLine[], importLines: ImportLine[], openin
   const rest = all.filter((l) => !drop.has(l.id));
   const after = rest.length ? gapTotal(rest) ?? 0 : 0;
   return { before, after };
+}
+
+/* ── R-2522: which period each statement covers ────────────────────────────────────────────
+   Staging, 6 Nov 2026: the account showed "3 active" imports and the owner read it as the FY
+   2025-26 file imported three times. Each import now says its FY, first – last line date and
+   line count: "FY 2025-26 · 1 Apr 2025 – 31 Mar 2026 · 3,665 lines". */
+
+/** The FY a statement belongs to: its first line's FY. A statement whose last line falls in the
+    first week of the next FY (a year's statement often ends with a line posted on 1 Apr, value
+    date 31 Mar — HDFC 4523) is still that year's; a longer reach names both years. */
+export function statementFyLabel(from: string, to: string | null): string {
+  const startYear = fyStartYear(from);
+  const end = to ?? from;
+  const graceEnd = `${startYear + 1}-04-07`;
+  return end <= graceEnd
+    ? `FY ${fyLabelOfYear(startYear)}`
+    : `FY ${fyLabelOfYear(startYear)} – ${fyLabelOfYear(fyStartYear(end))}`;
+}
+
+/** "FY 2025-26 · 1 Apr 2025 – 31 Mar 2026 · 3,665 lines" (one date when the import is one day). */
+export function statementPeriodLabel(from: string | null, to: string | null, lines: number): string {
+  const count = `${lines.toLocaleString("en-IN")} line${lines === 1 ? "" : "s"}`;
+  if (!from) return count;
+  const dates = !to || to === from ? formatDate(from) : `${formatDate(from)} – ${formatDate(to)}`;
+  return `${statementFyLabel(from, to)} · ${dates} · ${count}`;
 }

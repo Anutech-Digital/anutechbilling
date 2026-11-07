@@ -57,7 +57,7 @@ describe("R-2466 quote-less invoices in 'An open quote / invoice'", () => {
     state.items = [item({ kind: "opening", invoice_id: "INV-OPN-1", amount_due: 11800 })];
     openItems(5000, "NEFT CR-000000000000000-SCN ZERO REF TRADERS-PART 1", "c1");
     expect(screen.queryByText(/has nothing open/)).toBeNull();
-    expect(screen.getByText("Opening invoice (from Zoho)")).toBeTruthy();
+    expect(screen.getByText("Invoice from Zoho")).toBeTruthy();
     fireEvent.click(screen.getByRole("radio", { name: /INV-OPN-1/ }));
     fireEvent.click(screen.getByRole("button", { name: "Record ₹5,000 on INV-OPN-1 & reconcile" }));
     expect(state.pay).toHaveBeenCalledTimes(1);
@@ -68,7 +68,7 @@ describe("R-2466 quote-less invoices in 'An open quote / invoice'", () => {
     state.items = [item({ kind: "opening", invoice_id: "INV-OPN-2", amount_due: 1800 })];
     openItems(5000, "NEFT CR SCN ZERO REF", "c1");
     fireEvent.click(screen.getByRole("radio", { name: /INV-OPN-2/ }));
-    expect(screen.getByText(/INV-OPN-2 is last year's invoice from Zoho with ₹1,800 due — it takes no more/)).toBeTruthy();
+    expect(screen.getByText(/INV-OPN-2 is an invoice imported from Zoho with ₹1,800 due — it takes no more/)).toBeTruthy();
     expect(screen.queryByText(/kept as the customer's advance credit/)).toBeNull();
     expect((screen.getByRole("button", { name: "Record ₹5,000 on INV-OPN-2 & reconcile" }) as HTMLButtonElement).disabled).toBe(true);
   });

@@ -21,7 +21,7 @@ describe("openingMoveCheck (R-2497)", () => {
     });
     expect(c).toEqual({
       kind: "earlier", oldDate: "2026-04-01", oldOpening: 100000,
-      balanceOnOldDate: 100000, difference: 0, matches: true,
+      balanceOnOldDate: 100000, difference: 0, matches: true, linesOnOldDate: 0, roundingDrift: 0,
     });
   });
 

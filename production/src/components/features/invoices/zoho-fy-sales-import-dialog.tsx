@@ -24,7 +24,8 @@ import { Input } from "@/components/ui/input";
 import { formatDate, rupee } from "@/lib/utils";
 import { FY_CALLS_PER_REQUEST } from "@/lib/integrations/zoho-books/config";
 import { ZOHO_CALLS_PER_MIN } from "@/lib/integrations/zoho-books/zoho-pace";
-import type { MonthTotals } from "@/lib/integrations/zoho-books/sales-import/plan";
+import { Checkbox } from "@/components/ui/checkbox";
+import type { GstinChoice, MonthTotals } from "@/lib/integrations/zoho-books/sales-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
 
 const API = "/api/integrations/zoho-books/sales-import";
@@ -40,6 +41,8 @@ interface Preview {
   skipReasons: { reason: string; count: number }[];
   skipped: { number: string; date: string; customer: string; amount: number; reason: string | null }[];
   batches: ImportBatch[];
+  /** R-2530: name matches one customer, but another PAN — the owner ticks "Use this customer anyway". */
+  gstinChoices?: GstinChoice[];
 }
 interface PartResult { imported: number; already: number; skipped: { number: string; reason: string }[] }
 
@@ -60,16 +63,33 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
   const [preview, setPreview] = React.useState<Preview | null>(null);
   const [check, setCheck] = React.useState<PartResult | null>(null);
   const [done, setDone] = React.useState<PartResult | null>(null);
+  /* R-2530: normalised Zoho name → customer id. Sent with preview AND every import part, so the
+     server's plan (and its parts) is the one the owner saw. */
+  const [useAnyway, setUseAnyway] = React.useState<Record<string, string>>({});
   const stop = React.useRef(false);
   /* Set on mount too: React strict mode mounts twice, and a stale `true` would stop every loop. */
   React.useEffect(() => { stop.current = false; return () => { stop.current = true; }; }, []);
 
-  const loadPreview = React.useCallback(async () => {
+  const loadPreview = React.useCallback(async (ticks: Record<string, string> = useAnyway) => {
     setBusy("preview"); setError(null);
-    try { setPreview(await call<Preview>({ action: "preview" })); }
+    try { setPreview(await call<Preview>({ action: "preview", useAnyway: ticks })); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(null); }
-  }, []);
+  }, [useAnyway]);
+
+  /* A tick changes what comes in: the old check no longer matches → preview again, check again. */
+  /* The ticks change only when that preview came back — a failed preview leaves ticks, parts and
+     checkboxes as they were, so the import never sends ticks the parts count was not built with. */
+  async function toggleChoice(c: GstinChoice, on: boolean) {
+    const next = { ...useAnyway };
+    if (on) next[c.key] = c.customerId; else delete next[c.key];
+    setBusy("preview"); setError(null);
+    try {
+      const p = await call<Preview>({ action: "preview", useAnyway: next });
+      setUseAnyway(next); setPreview(p); setCheck(null); setDone(null);
+    } catch (e) { setError((e as Error).message); }
+    finally { setBusy(null); }
+  }
 
   async function readZoho() {
     const again = !!(read?.complete || preview);
@@ -91,7 +111,7 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
   async function runParts(dryRun: boolean): Promise<PartResult> {
     const sum: PartResult = { imported: 0, already: 0, skipped: [] };
     for (let part = 0; part < (preview?.parts ?? 0) && !stop.current; part++) {
-      const r = await call<{ result: { imported: number; already: number; skipped: { number: string; reason: string }[] } }>({ action: "import", part, dryRun });
+      const r = await call<{ result: { imported: number; already: number; skipped: { number: string; reason: string }[] } }>({ action: "import", part, dryRun, useAnyway });
       sum.imported += r.result.imported; sum.already += r.result.already; sum.skipped.push(...r.result.skipped);
     }
     return sum;
@@ -148,6 +168,9 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
                 {preview.counts.skip > 0 && <> · <Badge kind="warning" size="sm">{preview.counts.skip} left out</Badge></>}
               </p>
               <MonthTable preview={preview} />
+              {(preview.gstinChoices?.length ?? 0) > 0 && (
+                <GstinChoices choices={preview.gstinChoices ?? []} disabled={!!busy} onToggle={toggleChoice} />
+              )}
               {preview.skipReasons.length > 0 && (
                 <div>
                   <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Left out, and why</p>
@@ -219,6 +242,37 @@ function MonthTable({ preview }: { preview: Preview }) {
           })}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+/** R-2530: same name as one app customer, another PAN — imported only when the owner ticks it.
+ *  Each invoice keeps its own GSTIN and place of supply either way (GSTR-1 was filed with them). */
+function GstinChoices({ choices, disabled, onToggle }: { choices: GstinChoice[]; disabled: boolean; onToggle: (c: GstinChoice, on: boolean) => void }) {
+  return (
+    <div data-testid="fy-sales-gstin-choices">
+      <p className="text-3xs uppercase tracking-wider text-ink-3 font-semibold mb-1">Same name, different GSTIN — your call</p>
+      <p className="text-xs text-ink-2 mb-1.5">
+        Tick a customer only if it is the same buyer. The invoices keep their own GSTIN and place of supply, as filed in GSTR-1.
+      </p>
+      <ul className="space-y-1.5">
+        {choices.map((c) => {
+          const id = `use-anyway-${c.key.replace(/\s+/g, "-")}`;
+          return (
+            <li key={c.key} className="flex items-start gap-2 rounded-md border border-hairline px-3 py-2 text-xs">
+              <Checkbox id={id} checked={c.chosen} disabled={disabled} onCheckedChange={(v) => onToggle(c, v === true)} className="mt-0.5" />
+              <label htmlFor={id} className="min-w-0 cursor-pointer">
+                <span className="text-ink font-medium">Use this customer anyway: {c.customerName}</span>
+                <span className="block text-ink-2">
+                  {c.count} {c.count === 1 ? "invoice" : "invoices"} · {rupee(c.amount)} · invoice GSTIN{" "}
+                  <span className="font-mono">{c.invoiceGstins.join(", ")}</span> · customer GSTIN <span className="font-mono">{c.customerGstin}</span>
+                  {c.zohoName !== c.customerName && <> · Zoho name {c.zohoName}</>}
+                </span>
+              </label>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

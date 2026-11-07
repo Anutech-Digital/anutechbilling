@@ -15,7 +15,7 @@
  *   - when the subscription is paused for an unpaid request: after the grace, under the company's
  *     own opt-in (tenants.auto_suspend_on_overdue — the same switch as for unpaid invoices).
  */
-import { dunningRank } from "@/lib/invoices/dunning";
+import { dunningRank, PRE_DUE_WINDOW_DAYS } from "@/lib/invoices/dunning";
 import { daysBetweenISO } from "@/lib/dates/ist";
 import { rupee } from "@/lib/utils";
 
@@ -29,7 +29,7 @@ export type BillOutcome =
   | { action: "request_open"; quote_id: string; status: string; gross: number; sale_quote?: boolean }
   /* R-2092: another subscription of the same quote has no parts laid yet — nothing is billed, so
      the quote's period goes on ONE invoice once they are (migration 20261029052411). */
-  | { action: "waiting"; reason: string; subscription_ids: string[] };
+  | { action: "waiting"; reason: string; subscription_ids: string[]; bill_on?: string };
 
 export interface BillTally {
   raised: { period_index: number; invoice_id: string; gross: number }[];
@@ -39,7 +39,7 @@ export interface BillTally {
   requestsOpen: { period_index: number; quote_id: string; status: string }[];
   wouldRequest: number;
   /** R-2092: parts held back until the quote's other subscriptions are laid. */
-  waiting?: { period_index: number; subscription_ids: string[] }[];
+  waiting?: { period_index: number; subscription_ids: string[]; reason?: string; bill_on?: string }[];
 }
 
 /** Adds one part's outcome to the run's tally. Unknown answers throw — never a silent "0". */
@@ -67,7 +67,9 @@ export function applyBillOutcome(out: BillTally, periodIndex: number, data: unkn
       out.requestsOpen.push({ period_index: periodIndex, quote_id: r.quote_id, status: r.status });
       return;
     case "waiting":
-      (out.waiting ??= []).push({ period_index: periodIndex, subscription_ids: r.subscription_ids ?? [] });
+      (out.waiting ??= []).push({ period_index: periodIndex, subscription_ids: r.subscription_ids ?? [],
+        /* R-2519c: only a paid-ahead part carries its reason + date (for the Bill next part message). */
+        ...(r.reason === "paid_ahead" ? { reason: r.reason, ...(r.bill_on ? { bill_on: r.bill_on } : {}) } : {}) });
       return;
     default:
       throw new Error(`bill_subscription_instalment answered "${(r as { action: string }).action}" for part ${periodIndex}`);
@@ -75,7 +77,7 @@ export function applyBillOutcome(out: BillTally, periodIndex: number, data: unkn
 }
 
 /** The steps an unpaid part request is chased with — the dunning ladder's names, so its log ranks the same. */
-export type RequestReminderStep = "reminder" | "retry" | "final";
+export type RequestReminderStep = "pre_due" | "due_today" | "reminder" | "retry" | "final";
 
 /** The company's grace (tenants.grace_period_days); 0 / unset → 7 days (Pardeep, 28 Oct). */
 export const DEFAULT_REQUEST_GRACE_DAYS = 7;
@@ -89,6 +91,12 @@ export function requestGraceDays(tenantGraceDays: number | null | undefined): nu
  * part's bill date and due that day. Inside the grace: Day 1 reminder, Day 3 retry (when the grace
  * is longer), and the FINAL notice on the grace's last day — then the reminders stop. Never repeats
  * a step already sent (dunningRank), never chases a closed or paid request.
+ *
+ * R-2519: a proforma billed AHEAD of its period (Bill next part → next N periods) is mailed before
+ * it is due, so it also gets the invoice-dunning ladder's two pre-due steps — a heads-up within
+ * PRE_DUE_WINDOW_DAYS before the due date and a "due today" on it — each once, and only when the
+ * last mail went out on an EARLIER day (lastSentOn): a request mailed on its due day is not
+ * followed by a second mail the same day.
  */
 export function requestReminderStep(args: {
   dueOn: string;
@@ -97,9 +105,18 @@ export function requestReminderStep(args: {
   open: boolean;
   amountDue: number;
   graceDays: number;
+  /** R-2519: the IST day the last mail for this request went out (request_reminded_at). */
+  lastSentOn?: string | null;
 }): RequestReminderStep | null {
   if (!args.open || args.amountDue <= 0) return null;
   const late = daysBetweenISO(args.dueOn, args.todayISO);
+  if (late <= 0) {
+    const sentEarlier = Boolean(args.lastSentOn) && (args.lastSentOn as string).slice(0, 10) < args.todayISO;
+    if (!sentEarlier) return null;
+    if (late === 0) return dunningRank(args.lastStep) < dunningRank("due_today") ? "due_today" : null;
+    if (-late > PRE_DUE_WINDOW_DAYS) return null;
+    return dunningRank(args.lastStep) < dunningRank("pre_due") ? "pre_due" : null;
+  }
   const grace = requestGraceDays(args.graceDays);
   const ladder: { day: number; step: RequestReminderStep }[] = [
     ...([{ day: 1, step: "reminder" }, { day: 3, step: "retry" }] as const).filter((x) => x.day < grace),
@@ -122,14 +139,22 @@ export function requestReminderText(a: {
   dueOn: string;
   payUrl: string | null;
 }): { subject: string; body: string } {
+  /* R-2519: a PI- number is a Proforma Invoice — Zoho's wording ("Urgent: Service renewal"). */
+  const pi = /^PI-/.test(a.quoteId);
   const lead: Record<RequestReminderStep | "new", string> = {
-    new:           `Here is your payment request: ${a.part}. It is due on ${a.dueOn}.`,
+    new:           pi ? `Here is your proforma invoice ${a.quoteId} for ${a.part}. It is due on ${a.dueOn}.`
+                      : `Here is your payment request: ${a.part}. It is due on ${a.dueOn}.`,
+    pre_due:       `A heads-up: the payment for ${a.part} is due on ${a.dueOn}.`,
+    due_today:     `The payment for ${a.part} is due today (${a.dueOn}).`,
     reminder:      `A reminder: the payment for ${a.part} was due on ${a.dueOn}.`,
     retry:         `We have not yet received the payment for ${a.part}, due on ${a.dueOn}.`,
     final:         `Final notice: the payment for ${a.part} (due ${a.dueOn}) is still open. Please pay to keep the service running.`,
   };
   const subject = a.step === "new"
-    ? `${a.part} — ${a.amount} (${a.quoteId})`
+    ? (pi ? `Proforma Invoice ${a.quoteId} — ${a.amount}` : `${a.part} — ${a.amount} (${a.quoteId})`)
+    : a.step === "pre_due" ? `Renewal due on ${a.dueOn} — ${a.quoteId} (${a.amount})`
+    : a.step === "due_today" ? `Renewal due today — ${a.quoteId} (${a.amount})`
+    : pi ? `Urgent: Service renewal — ${a.quoteId} (${a.amount}) is overdue`
     : `Reminder: payment request ${a.quoteId} — ${a.amount}`;
   const body = [
     `Dear ${a.customerName},`,
@@ -213,8 +238,10 @@ export function showCustomerStopped(q: {
    the Record payment toast read these rules, so they never show the sales-quote flow on it. */
 
 /** True when this quote is the payment request for one part of a subscription billed in parts. */
-export function isPartRequest(q: { subscription_billing_id?: string | null } | null | undefined): boolean {
-  return Boolean(q?.subscription_billing_id);
+export function isPartRequest(q: { subscription_billing_id?: string | null; cancelled_part_billing_id?: string | null } | null | undefined): boolean {
+  /* R-2519b: a CANCELLED proforma let go of its part (cancelled_part_billing_id keeps it) — it is still
+     a part request, never shown as a sales quote. */
+  return Boolean(q?.subscription_billing_id || q?.cancelled_part_billing_id);
 }
 
 /** The badge next to the status on a part request's page. */
@@ -320,4 +347,14 @@ export function partRequestTdsCheck(a: { taxable: number; ratePct: number; tds: 
       ? `TDS ${inr(tds)} is more than ${rate}% of this part's taxable value ${inr(taxable)} (${inr(expected)}). TDS is deducted only on the part paid, not on GST or the full year — the customer may have deducted on the full year. Check with the customer; you can still save.`
       : null,
   };
+}
+
+/**
+ * R-2519c: why a part billed ahead made nothing — the customer's money already covers it
+ * (bill_subscription_instalment → waiting / paid_ahead). Null when no part waits for that reason.
+ */
+export function paidAheadReason(waiting: readonly { reason?: string; bill_on?: string }[] | undefined, formatDay: (iso: string) => string): string | null {
+  const w = (waiting ?? []).find((x) => x.reason === "paid_ahead");
+  if (!w) return null;
+  return `Already paid — the customer's money covers this period, so no proforma was made. Its tax invoice is raised on its date${w.bill_on ? ` (${formatDay(w.bill_on)})` : ""}.`;
 }

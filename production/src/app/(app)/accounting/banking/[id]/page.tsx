@@ -32,15 +32,16 @@ import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import {
   useBankAccount,
   useBankTransactions,
-  useReconcileTransaction,
   useAutoReconcile,
   useOpenInvoicesForCreditMatch,
   type BankTransactionRow,
 } from "@/lib/queries/bank";
-import { certainInvoiceMatches, matchCreditToInvoices, type InvoiceMatch } from "@/lib/banking/invoice-credit-match";
+import { certainOf, invoiceMatchesOfCredits, type InvoiceMatch } from "@/lib/banking/invoice-credit-match";
 import { noCustomerYet } from "@/lib/banking/no-customer-yet";
+import { createLineMemo } from "@/lib/banking/line-memo";
 import type { OldOneOffBooking } from "@/lib/banking/credit-pay-for";
-import { useBankAdvancePaymentIds, useBankSplitLinePayments, useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
+import { useOldOneOffBookings } from "@/lib/queries/bank-credit-pay-for";
+import { useDrawnBadges, useMountWhenIdle } from "./use-drawn-lines";
 import { bankRowStatusLabel, splitPaymentsTitle, type SplitLinePayment } from "@/lib/banking/bank-row-label";
 import { useCustomers } from "@/lib/queries/customers";
 import { usePayerMemory } from "@/lib/queries/customer-payers";
@@ -138,6 +139,8 @@ export default function BankAccountDetailPage() {
   const [salaryOpen,    setSalaryOpen]    = React.useState(false);
   const [aaConnectOpen, setAaConnectOpen] = React.useState(false);
   const [reconcileTxn,  setReconcileTxn]  = React.useState<BankTransactionRow | null>(null);
+  /* R-2524: the Reconcile sheet mounts once the list has drawn and the browser is idle (use-drawn-lines). */
+  const drawerMounted = useMountWhenIdle(Boolean(txnQ.data));
   /* Un-reconcile goes through a confirm that says what the line leaves behind (and can
      undo a sale raised from it) — components/features/banking/unreconcile-dialog.tsx. */
   const [unreconcileTxn, setUnreconcileTxn] = React.useState<BankTransactionRow | null>(null);
@@ -188,35 +191,35 @@ export default function BankAccountDetailPage() {
     if (!z?.available) return null;
     return new Set((transactions ?? []).filter((t) => t.matched_to_type === null && t.credit > 0 && z.ids.has(t.id)).map((t) => t.id));
   }, [zohoQ.data, transactions]);
-  const invoiceChips = React.useMemo(
-    () => certainInvoiceMatches(transactions ?? [], openInvoices ?? []),
-    [transactions, openInvoices],
+  /* R-2524: per-line answers kept across saves — only a line that changed (or a changed customer /
+     invoice / vendor / rule list) is worked out again (lib/banking/line-memo). */
+  const [matchMemo] = React.useState(() => createLineMemo<InvoiceMatch[]>());
+  const [noCustomerMemo] = React.useState(() => createLineMemo<boolean>());
+  const [noVendorMemo] = React.useState(() => createLineMemo<boolean>());
+  /* R-2524: each unmatched credit is matched against the open invoices ONCE — the chip and
+     "no customer yet" below both read this map (it was done twice, ~800 lines × 400 invoices). */
+  const creditMatches = React.useMemo(
+    () => invoiceMatchesOfCredits(transactions ?? [], openInvoices ?? [], matchMemo),
+    [transactions, openInvoices, matchMemo],
   );
+  const invoiceChips = React.useMemo(() => certainOf(creditMatches), [creditMatches]);
 
   /* R-1863: "Money in · no customer yet" — unmatched credits the Reconcile sheet cannot guess a
      customer for (no name in the narration, no certain invoice match). R-2371: same payer memory
      as the sheet, so our own name in a narration is never a customer. */
   const { data: customers } = useCustomers({ enabled: canWrite && hasUnmatchedCredit });
   const payerMemory = usePayerMemory();
-  const noCustomerIds = React.useMemo(() => new Set(noCustomerYet(transactions ?? [], customers ?? [], (t) => matchCreditToInvoices(
-    { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference }, openInvoices ?? [],
-  ), payerMemory).map((t) => t.id)), [transactions, customers, openInvoices, payerMemory]);
+  const noCustomerIds = React.useMemo(() => {
+    noCustomerMemo.reset([customers, openInvoices, payerMemory]);
+    const list = customers ?? [];
+    return new Set((transactions ?? [])
+      .filter((t) => t.matched_to_type === null && t.credit > 0
+        && noCustomerMemo.get(t, () => noCustomerYet([t], list, () => creditMatches.get(t.id) ?? [], payerMemory).length > 0))
+      .map((t) => t.id));
+  }, [transactions, customers, openInvoices, creditMatches, payerMemory, noCustomerMemo]);
   /* R-1863: lines booked before R-1838 as a one-off "bank sale" — each can be relinked. */
   const { data: oldBookings } = useOldOneOffBookings(accountId, canWrite);
   const oldById = React.useMemo(() => new Map((oldBookings ?? []).map((b) => [b.txn_id, b])), [oldBookings]);
-  /* R-2025 (0): lines booked as a customer advance (R-1863) read "Advance", not "Payment". */
-  const paymentIdsOnLines = React.useMemo(
-    () => (transactions ?? []).filter((t) => t.matched_to_type === "payment" && t.credit > 0 && t.matched_to_id).map((t) => String(t.matched_to_id)),
-    [transactions],
-  );
-  const { data: advancePayIds } = useBankAdvancePaymentIds(paymentIdsOnLines);
-  const isAdvanceTxn = (t: BankTransactionRow) => t.matched_to_type === "payment" && Boolean(t.matched_to_id && advancePayIds?.has(String(t.matched_to_id)));
-  /* R-2098: a line that paid several items — "N payments", each listed in the tooltip. */
-  const paymentLineIds = React.useMemo(
-    () => (transactions ?? []).filter((t) => t.matched_to_type === "payment" && t.credit > 0).map((t) => t.id),
-    [transactions],
-  );
-  const { data: splitPays } = useBankSplitLinePayments(paymentLineIds);
   /* R-2361: a reconciled line shows its manual reason / owner booking note and, for a reversal
      pair, the line it reverses — under the Reconciled badge. */
   const { data: ownerNotes } = useOwnerBookingNotes(accountId);
@@ -234,10 +237,12 @@ export default function BankAccountDetailPage() {
     const salaryIds = new Set(salaryLines.map((l) => l.txn.id));
     const vendors = (vendorRows ?? []) as unknown as VendorLite[];
     const extras = { rules: guessRules ?? [], aliases: guessAliases ?? [] };
+    noVendorMemo.reset([vendorRows, guessRules, guessAliases]);
     return new Set((transactions ?? [])
-      .filter((t) => t.matched_to_type === null && t.debit > 0 && !salaryIds.has(t.id) && guessVendor(t, vendors, extras) === null)
+      .filter((t) => t.matched_to_type === null && t.debit > 0 && !salaryIds.has(t.id)
+        && noVendorMemo.get(t, () => guessVendor(t, vendors, extras) === null))
       .map((t) => t.id));
-  }, [transactions, salaryLines, vendorRows, guessRules, guessAliases]);
+  }, [transactions, salaryLines, vendorRows, guessRules, guessAliases, noVendorMemo]);
 
   /* The Imports list (R-1623) — "Statement file" filter: which lines each import brought in. */
   const { data: importRows } = useBankImportHistory(accountId);
@@ -267,7 +272,10 @@ export default function BankAccountDetailPage() {
     [transactions, filters, filterCtx],
   );
   const totals = React.useMemo(() => filterTotals(visibleTxns), [visibleTxns]);
-  const drawnTxns = visibleTxns.slice(0, shownCount);
+  const drawnTxns = React.useMemo(() => visibleTxns.slice(0, shownCount), [visibleTxns, shownCount]);
+
+  /* R-2524: Advance / "N payments" badges — read only for the lines drawn (use-drawn-lines). */
+  const { isAdvanceTxn, splitPays } = useDrawnBadges(drawnTxns);
 
   const tabs: TabBarItem[] = [
     { id: "all",       label: "All",        count: facets.status.all       },
@@ -723,7 +731,9 @@ export default function BankAccountDetailPage() {
         bankAccountId={account.id}
         bankName={account.bank_name}
       />
-      <ReconcileTransactionDialog
+      {/* R-2524: mounted on first Reconcile, not with the page — its ~15 reads (expenses, salaries,
+          customers, employees, rules, …) cost nothing until the sheet is used, then stay for the next line. */}
+      {(drawerMounted || reconcileTxn) && <ReconcileTransactionDialog
         open={Boolean(reconcileTxn)}
         onOpenChange={(o) => {
           if (o) return;
@@ -734,7 +744,7 @@ export default function BankAccountDetailPage() {
           setReconcileTxn((cur) => (cur?.id === reconcileTxn?.id ? null : cur));
         }}
         transaction={reconcileTxn}
-      />
+      />}
       <UnreconcileDialog txn={unreconcileTxn} onClose={() => setUnreconcileTxn(null)} />
       <RelinkOneOffDialog
         txn={relink?.txn ?? null}
@@ -798,7 +808,7 @@ function TransactionRow({
   /** R-1863: an old one-off bank sale — move it onto what it really paid. */
   onRelink?: () => void;
 }) {
-  const reconcile = useReconcileTransaction();
+  /* R-2524: no mutation hook per row — each row's own useReconcileTransaction never ran, so its isPending was always false. */
 
   return (
     <tr data-txn-id={txn.id} aria-current={highlighted ? "true" : undefined}
@@ -850,7 +860,6 @@ function TransactionRow({
                 type="button"
                 onClick={onUnreconcile}
                 className="text-xs text-ink-3 hover:text-rose"
-                disabled={reconcile.isPending}
               >
                 Un-reconcile
               </button>
@@ -858,7 +867,7 @@ function TransactionRow({
           </div>
         ) : onReconcile ? (
           // Unmatched: the button alone conveys the status.
-          <Button size="sm" variant="default" onClick={onReconcile} disabled={reconcile.isPending}>
+          <Button size="sm" variant="default" onClick={onReconcile}>
             Reconcile
           </Button>
         ) : (
@@ -877,7 +886,6 @@ function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onRe
   splitPays?: readonly SplitLinePayment[];
   notes?: LineNoteLines | null;
 }) {
-  const reconcile = useReconcileTransaction();
   return (
     <li data-txn-id={txn.id} aria-current={highlighted ? "true" : undefined}>
       <Card className={`p-3 transition-colors duration-700 ${highlighted ? HIGHLIGHT : ""}`}>
@@ -913,7 +921,6 @@ function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onRe
                 <button
                   type="button"
                   onClick={onUnreconcile}
-                  disabled={reconcile.isPending}
                   className="text-xs text-ink-3 hover:text-rose"
                 >
                   Un-reconcile
@@ -921,7 +928,7 @@ function TransactionCard({ txn, running, highlighted = false, invoiceMatch, onRe
               ) : null}
             </div>
           ) : onReconcile ? (
-            <Button size="sm" variant="default" onClick={onReconcile} disabled={reconcile.isPending}>
+            <Button size="sm" variant="default" onClick={onReconcile}>
               Reconcile
             </Button>
           ) : null}

@@ -25,6 +25,8 @@ vi.mock("@/lib/queries/payments", async (orig) => ({
   useInstalmentLink: (id: string | null | undefined) => ({ data: id ? instalmentLink : null, isLoading: false }),
 }));
 vi.mock("@/lib/queries/projects", () => ({ useProjectPaymentsByInvoice: () => ({ data: [], isLoading: false }) }));
+/* R-2542: the panel also reads an imported Zoho sale's quote-less receipts (none here). */
+vi.mock("@/lib/queries/quoteless-receipts", () => ({ useQuotelessReceipts: () => ({ data: [], isLoading: false }) }));
 vi.mock("@/lib/queries/customers", () => ({ useCustomer: () => ({ data: null }) }));
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: null }) }));
 

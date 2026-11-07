@@ -31,9 +31,17 @@ import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { renewalIsSettled, firstReminderDaysOut } from "@/lib/renewals/cadence";
-import { billDueTermsOldestFirst, termsMessage } from "@/lib/renewals/split-billed-next-part";
+import { billDueTermsOldestFirst, termsMessage, withFreedPart, rolledRenewalDate, type TermsBilled } from "@/lib/renewals/split-billed-next-part";
+import { billFreedPart, emptySyncResult } from "@/lib/billing/sync-instalments.server";
+import { applyBillOutcome, paidAheadReason } from "@/lib/billing/part-requests";
+import { formatDate } from "@/lib/utils";
+import { addDaysISO } from "@/lib/dates/ist";
 import { syncSubscriptionInstalments, readQuotePaymentFacts, INSTALMENT_SUB_SELECT, type InstalmentSub } from "@/lib/billing/sync-instalments.server";
 import { istToday } from "@/lib/dates/ist";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { BillingCycle } from "@/lib/supabase/database.types";
+import { parseBillNextBody } from "@/lib/billing/proforma";
+import { billNextPreview, billThroughDay, firstUnbilledPeriod, type BillNextSub } from "@/lib/renewals/bill-next.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -44,14 +52,23 @@ export const POST = withRoute({
   route: "api/subscriptions/[id]/generate-renewal-quote",
   roles: MONEY_RECORD_ROLES,
   roleHint: "Only an owner, manager, accountant or billing user can create a renewal quote.",
-}, async ({ user, tenantId, params }) => {
+}, async ({ user, tenantId, params, req }) => {
+  /* R-2519: the Bill-next-part preview's choices — N periods, and the seats / ₹ a seat to put on the
+     new proformas. No body (the old callers) = one period at the subscription's own seats. */
+  const rawBody = await req.text().catch(() => "");
+  let bodyJson: unknown = null;
+  try { bodyJson = rawBody.trim() ? JSON.parse(rawBody) : null; } catch {
+    return NextResponse.json({ error: "Could not read the request (invalid JSON)." }, { status: 400 });
+  }
+  const choice = parseBillNextBody(bodyJson);
+  if ("error" in choice) return NextResponse.json({ error: choice.error }, { status: 400 });
   // ── 2. Load subscription + verify tenant scope ──────────────────
   const supabase = createAdminClientFor(user.id);
   const { data: sub, error: subErr } = await supabase
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, item_id, seats, mrr,
-       renewal_date, status, renewal_state, renewal_quote_id, term_months, term_amount, billing_cycle, start_date, auto_renew`
+       renewal_date, status, renewal_state, renewal_quote_id, term_months, term_amount, billing_cycle, start_date, billed_externally_until, auto_renew`
     )
     .eq("id", params.id)
     .single();
@@ -84,8 +101,36 @@ export const POST = withRoute({
        11 Nov in one go and only 11 Oct–10 Nov was billed — 11 Sep–10 Oct never was. The terms
        are now rolled ONE at a time, each billed before the next roll (oldest first, one GST
        document per period); renewal_date moves only with a bill. */
-    const today = istToday();
-    const runTerms = await billDueTermsOldestFirst({
+    /* R-2519: the next N periods — the run bills every period that starts on/before the Nth one's
+       start (oldest first, one proforma a period), so a period not begun yet is billed ahead. */
+    const first = await firstUnbilledPeriod(supabase as unknown as SupabaseClient, sub as BillNextSub);
+    const today = billThroughDay(first.start, sub.billing_cycle as BillingCycle, choice.periods, istToday());
+    /* R-2519b: a laid part with no proforma and no invoice (its proforma was cancelled) is billed on ITS
+       OWN row — the run below bills only the current term and would never reach an earlier one. */
+    /* R-808: an open whole-term renewal quote holds every bill (paying it would bill the term twice). */
+    const held = rolledRenewalDate({
+      billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date,
+      renewal_date: sub.renewal_date, renewal_quote_id: sub.renewal_quote_id,
+    }, today).heldBy;
+    if (held) {
+      return NextResponse.json({ error: `Renewal quote ${held} is still open — paying it would bill the new term twice. Cancel it first, then Generate the next part.`, code: "split_billed" }, { status: 400 });
+    }
+    let freed: TermsBilled["terms"][number] | null = null;
+    if (first.row && first.freed) {
+      /* R-2541: billed at the subscription's current seats × rate (the preview's figure), not the stored one.
+         R-2543: the reprice and the bill are one transaction — a failed bill leaves the old amount. */
+      let fb: unknown;
+      try { fb = (await billFreedPart(supabase, first.row.id, false)).data; } catch (e) {
+        return NextResponse.json({ error: `Could not bill the period from ${first.row.period_start}: ${e instanceof Error ? e.message : String(e)}` }, { status: 400 });
+      }
+      const tally = emptySyncResult();
+      applyBillOutcome(tally, first.row.period_index, fb, false);
+      const aheadFreed = paidAheadReason(tally.waiting, formatDate);
+      if (aheadFreed) return NextResponse.json({ error: aheadFreed, code: "paid_ahead" }, { status: 400 });
+      freed = { periodStart: first.row.period_start, periodEnd: addDaysISO(first.row.period_end, -1),
+        bill: { raised: tally.raised, requests: tally.requests, requestsOpen: tally.requestsOpen, skip: null } };
+    }
+    const runTermsRaw = await billDueTermsOldestFirst({
       sub: {
         billing_cycle: sub.billing_cycle, term_months: sub.term_months ?? 12, start_date: sub.start_date,
         renewal_date: sub.renewal_date, renewal_quote_id: sub.renewal_quote_id,
@@ -104,18 +149,36 @@ export const POST = withRoute({
         if (fErr || !fresh) throw new Error(fErr?.message ?? "subscription not found");
         const facts = fresh.quote_id ? await readQuotePaymentFacts(supabase, fresh.quote_id) : undefined;
         const r = await syncSubscriptionInstalments({ supabase, sub: fresh as InstalmentSub, quote: facts, todayISO: today, rebillCredited: true });
-        return { raised: r.raised, requests: r.requests, requestsOpen: r.requestsOpen, skip: r.skip };
+        /* R-2519c: a part the customer's money already covers waits for its date — say so. */
+        const ahead = paidAheadReason(r.waiting, formatDate);
+        return { raised: r.raised, requests: r.requests, requestsOpen: r.requestsOpen, skip: r.skip ?? (ahead ? { code: "paid_ahead", reason: ahead } : null) };
       },
     });
+    const runTerms = withFreedPart(runTermsRaw, freed);
     if (runTerms.heldBy) {
       return NextResponse.json({ error: `Renewal quote ${runTerms.heldBy} is still open — paying it would bill the new term twice. Cancel it first, then Generate the next part.`, code: "split_billed" }, { status: 400 });
+    }
+    /* R-2519: the preview's seats / rate go on each new or still-open, unpaid proforma of this run. */
+    const termsErrors: string[] = [];
+    if (choice.seats != null && choice.seatRate != null) {
+      const ids = new Set<string>();
+      for (const t of runTerms.terms) {
+        for (const r of t.bill.requests) ids.add(r.quote_id);
+        for (const r of t.bill.requestsOpen) ids.add(r.quote_id);
+      }
+      for (const id of ids) {
+        const { error: tErr } = await (supabase as unknown as SupabaseClient)
+          .rpc("set_part_request_terms", { p_quote_id: id, p_seats: choice.seats, p_seat_rate: choice.seatRate });
+        if (tErr) termsErrors.push(`${id}: ${tErr.message}`);
+      }
     }
     const msg = termsMessage(sub.customer_name, runTerms);
     const { data: after } = await supabase.from("subscriptions").select("renewal_date").eq("id", sub.id).maybeSingle();
     const rolledTo = after?.renewal_date && after.renewal_date !== sub.renewal_date ? after.renewal_date : null;
     return NextResponse.json(
-      { split: true, rolledTo, periods: runTerms.terms.length, message: msg.text, href: msg.href,
-        error: msg.ok ? undefined : msg.text, subscriptionId: sub.id },
+      { split: true, rolledTo, periods: runTerms.terms.length,
+        message: termsErrors.length > 0 ? `${msg.text} Seats / rate not changed on ${termsErrors.join("; ")}` : msg.text,
+        href: msg.href, error: msg.ok ? undefined : msg.text, subscriptionId: sub.id },
       { status: msg.ok ? 200 : 400 },
     );
   }
@@ -190,4 +253,31 @@ export const POST = withRoute({
     amount:          result.amount,
     subscriptionId:  sub.id,
   });
+});
+
+/**
+ * GET /api/subscriptions/[id]/generate-renewal-quote?periods=N — R-2519: the Bill-next-part
+ * PREVIEW for a subscription billed in parts. Writes nothing: the next N periods, seats × ₹ a seat,
+ * GST, and any proforma / invoice a period already has.
+ */
+export const GET = withRoute({
+  route: "api/subscriptions/[id]/generate-renewal-quote#preview",
+  roles: MONEY_RECORD_ROLES,
+  roleHint: "Only an owner, manager, accountant or billing user can bill a subscription.",
+}, async ({ user, tenantId, params, req }) => {
+  const choice = parseBillNextBody({ periods: req.nextUrl.searchParams.get("periods") ?? undefined });
+  if ("error" in choice) return NextResponse.json({ error: choice.error }, { status: 400 });
+  const supabase = createAdminClientFor(user.id);
+  const { data: sub, error } = await supabase
+    .from("subscriptions")
+    .select("id, tenant_id, customer_id, seats, mrr, billing_cycle, term_months, term_amount, start_date, renewal_date, billed_externally_until, status")
+    .eq("id", params.id)
+    .maybeSingle();
+  if (error || !sub) return NextResponse.json({ error: "subscription not found" }, { status: 404 });
+  if (sub.tenant_id !== tenantId) return NextResponse.json({ error: "forbidden" }, { status: 403 });
+  if (!renewalQuoteBlockedReason(sub.billing_cycle)) {
+    return NextResponse.json({ error: "This subscription is billed yearly — use Create quote." }, { status: 400 });
+  }
+  const preview = await billNextPreview(supabase as unknown as SupabaseClient, sub as BillNextSub, choice.periods);
+  return NextResponse.json({ preview });
 });

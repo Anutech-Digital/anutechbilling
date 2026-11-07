@@ -10,6 +10,9 @@
  *   restart  → forgets the scan (read again from the start).
  *   preview  → the plan from the COMPLETE scan: counts, skip reasons, Zoho vs to-import totals per
  *              month, what is already in the app per month, past batches. Nothing written.
+ *              R-2530: also `gstinChoices` — Zoho customers whose name matches one app customer with
+ *              another PAN; preview + import take `useAnyway` {normalised Zoho name: customer id}
+ *              (the owner's "Use this customer anyway" ticks; plan.ts honours only the matched one).
  *   import   → { part, dryRun } — one part (fy-import/parts.ts IMPORT_PART invoices) through import_zoho_fy_sales:
  *              dryRun true (default) writes nothing; false writes one batch (+ activity_log row).
  *              The request names only Zoho ids + the matched customer / items — every amount comes
@@ -40,6 +43,16 @@ const ROLE_MSG = "Only the owner or an accountant can import FY sales from Zoho.
 
 function fail(status: number, error: string) {
   return NextResponse.json({ ok: false, error }, { status });
+}
+
+/** R-2530: the owner's ticks — only string → string pairs, at most 500 (anything else is dropped). */
+function readUseAnyway(v: unknown): Record<string, string> {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return {};
+  const out: Record<string, string> = {};
+  for (const [k, id] of Object.entries(v as Record<string, unknown>).slice(0, 500)) {
+    if (typeof id === "string" && k.length <= 300 && id.length <= 64) out[k] = id;
+  }
+  return out;
 }
 
 export async function POST(req: NextRequest) {
@@ -98,7 +111,7 @@ export async function POST(req: NextRequest) {
         return fail(409, "Read the year from Zoho first (Read from Zoho) — it is not complete yet.");
       }
       const [facts, ctx] = await Promise.all([readScannedFacts<ZohoSaleFacts>(db, caller.tenantId, KIND, fy), readPlanContext(db, caller.tenantId, range)]);
-      plan = buildSalesPlan(facts, ctx);
+      plan = buildSalesPlan(facts, { ...ctx, useAnyway: readUseAnyway(body.useAnyway) });
     } catch {
       return fail(500, "Could not build the preview. Refresh and try again.");
     }
@@ -116,7 +129,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({
         ok: true, fy, scanned: counts.listed, counts: plan.counts, parts,
         zohoByMonth: plan.zohoByMonth, importByMonth: plan.importByMonth, appByMonth,
-        skipReasons: plan.skipReasons, skipped, batches,
+        skipReasons: plan.skipReasons, skipped, batches, gstinChoices: plan.gstinChoices,
       });
     }
 

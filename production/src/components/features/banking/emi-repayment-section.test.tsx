@@ -120,3 +120,52 @@ describe("R-2008 EMI — Save in the sticky footer", () => {
     expect(within(screen.getByTestId("reconcile-footer")).queryAllByRole("button").map((b) => b.textContent)).toEqual(["Close"]);
   });
 });
+
+/* R-2523 — the Thar Roxx case (staging, 6 Nov): first EMI line ₹30,183 vs scheduled ₹27,764 (₹2,419
+   broken-period interest); down payment ₹2,00,000 paid as three HDFC lines + Petty Cash ₹71,906. */
+describe("R-2523 — broken-period interest + a down payment in parts", () => {
+  const thar = (over: Partial<EmiMatch>) => m({ purchase_name: "Thar Roxx", lender: "HDFC BANK", ...over });
+  const tharTxn = (debit: number, description: string) => ({ id: "t1", debit, txn_date: "2026-03-05", bank_account_id: "acc-1", description });
+
+  it("EMI 1 ₹2,419 more: 'Broken-period / extra interest' is offered and picked by default — principal as scheduled", async () => {
+    matches = [thar({ seq: 1, due_on: "2026-03-05", expected: 27764, principal: 14764, interest: 13000, difference: 2419, confidence: "low" })];
+    render(<EmiRepaymentSection transaction={tharTxn(30183, "EMI 168081883 CHQ S16808188312")} onDone={vi.fn()} />);
+    const interest = screen.getByLabelText(/Broken-period \/ extra interest/) as HTMLInputElement;
+    expect(interest.checked).toBe(true);
+    expect(screen.getByLabelText(/Late fee \/ bounce charge/)).toBeTruthy();
+    const split = screen.getByTestId("emi-split").textContent ?? "";
+    expect(split).toContain("₹14,764");
+    expect(split).toContain("₹15,419");
+    expect(split).toContain("incl. ₹2,419 broken-period");
+    fireEvent.click(screen.getByRole("button", { name: /Reconcile as EMI 1/ }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ seq: 1, principal: 14764, interest: 15419, charges: 0, newSchedule: null });
+  });
+
+  it("the same extra can still be called a late fee", async () => {
+    matches = [thar({ seq: 1, due_on: "2026-03-05", expected: 27764, principal: 14764, interest: 13000, difference: 2419, confidence: "low" })];
+    render(<EmiRepaymentSection transaction={tharTxn(30183, "EMI 168081883")} onDone={vi.fn()} />);
+    fireEvent.click(screen.getByLabelText(/Late fee \/ bounce charge/));
+    fireEvent.click(screen.getByRole("button", { name: /Reconcile as EMI 1/ }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ principal: 14764, interest: 13000, charges: 2419 });
+  });
+
+  it("EMI 1 paid by hand (₹27,764): the ₹30,183 line replaces it, the extra as interest — no prepayment option", async () => {
+    matches = [thar({ seq: 1, kind: "paid_by_hand", due_on: "2026-03-05", expected: 27764, principal: 14764, interest: 13000, difference: 2419, confidence: "low" })];
+    render(<EmiRepaymentSection transaction={tharTxn(30183, "EMI 168081883")} onDone={vi.fn()} />);
+    expect(screen.queryByLabelText(/part prepayment/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Reconcile as EMI 1/ }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalled());
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ seq: 1, principal: 14764, interest: 15419, charges: 0 });
+  });
+
+  it("₹21,000 THAR ADVANCE vs ₹2,00,000 still by hand: one part of the down payment (seq 0)", async () => {
+    matches = [thar({ seq: 0, kind: "down_payment", due_on: "2026-02-03", expected: 200000, principal: 0, interest: 0, difference: -179000, confidence: "low" })];
+    render(<EmiRepaymentSection transaction={tharTxn(21000, "THAR ADVANCE SHIVA AUTO CARS")} onDone={vi.fn()} />);
+    expect(screen.getByText(/Part of the down payment · Thar Roxx/)).toBeTruthy();
+    expect(screen.getByText(/goes down to ₹1,79,000/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Match ₹21,000 of the down payment" }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ txnId: "t1", purchaseId: "p1", seq: 0 }));
+  });
+});

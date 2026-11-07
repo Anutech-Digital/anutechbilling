@@ -43,6 +43,8 @@ export function nextPartMessage(customer: string | null, o: NextPartOutcome, ski
   const inv = o.raised[0];
   if (inv) return { ok: true, text: `Tax invoice ${inv.invoice_id} raised for ${who}'s next part (it was paid).`, href: `/invoices/${inv.invoice_id}` };
   const req = o.requests[0];
+  /* R-2519: a PI- number is a Proforma Invoice — made, not emailed (it shows Ready to send). */
+  if (req && /^PI-/.test(req.quote_id)) return { ok: true, text: `Proforma Invoice ${req.quote_id} made for ${who}'s next part — not emailed yet. Its tax invoice is raised when it is paid.`, href: `/quotes/${req.quote_id}` };
   if (req) return { ok: true, text: `Payment request ${req.quote_id} made for ${who}'s next part. Its tax invoice is raised when it is paid.`, href: `/quotes/${req.quote_id}` };
   const open = o.requestsOpen[0];
   if (open) return { ok: true, text: `${who}'s next part already has payment request ${open.quote_id} (${open.status}).`, href: `/quotes/${open.quote_id}` };
@@ -176,4 +178,22 @@ export function partsDue(sub: SplitRenewalFields, todayISO: string): { count: nu
   while (count < 120 && addMonthsClamped(from, count * step) <= todayISO) count++;
   if (count === 0) return null;
   return { count, from, text: `${count} ${count === 1 ? unit[0] : unit[1]} due` };
+}
+
+/**
+ * R-2519b (independent review): a period whose proforma was CANCELLED lies before the term the
+ * billing run works on (the run bills only the CURRENT term), so Bill next part bills that freed part
+ * on its own billing row first (bill_subscription_instalment(row)) and reports it as the oldest
+ * period. Its document is dropped from a later term's entry if the run reported it again.
+ */
+export function withFreedPart(r: TermsBilled, freed: { periodStart: string; periodEnd: string; bill: TermBill } | null): TermsBilled {
+  if (!freed || freed.bill.raised.length + freed.bill.requests.length + freed.bill.requestsOpen.length === 0) return r;
+  const docs = new Set([...freed.bill.raised.map((x) => x.invoice_id), ...freed.bill.requests.map((x) => x.quote_id), ...freed.bill.requestsOpen.map((x) => x.quote_id)]);
+  const rest = r.terms
+    .map((t) => ({ ...t, bill: { ...t.bill,
+      raised: t.bill.raised.filter((x) => !docs.has(x.invoice_id)),
+      requests: t.bill.requests.filter((x) => !docs.has(x.quote_id)),
+      requestsOpen: t.bill.requestsOpen.filter((x) => !docs.has(x.quote_id)) } }))
+    .filter((t) => t.bill.raised.length + t.bill.requests.length + t.bill.requestsOpen.length > 0);
+  return { ...r, terms: [freed, ...rest] };
 }

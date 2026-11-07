@@ -6,7 +6,9 @@
 import { describe, it, expect } from "vitest";
 import type { ZohoFyDocDetail } from "../fy-fetch";
 import { paiseToRupees, zohoSaleFacts } from "./normalise";
-import { buildSalesPlan, toPick, type PlanContext } from "./plan";
+import { buildSalesPlan, gstinChoiceKey, toPick, type PlanContext } from "./plan";
+import { frozenParty } from "@/lib/gst/place-of-supply";
+import { buildGstr1, type Gstr1Doc } from "@/lib/gst/gstr1";
 
 const SELLER = "07"; // Delhi
 
@@ -180,7 +182,7 @@ describe("plan — what comes in", () => {
   it("no customer in the app → skip and report (safe default)", () => {
     const f = zohoSaleFacts(detail({ contactName: "Unknown Buyer", gstNo: "" }), SELLER);
     const plan = buildSalesPlan([f], ctx());
-    expect(plan.rows[0].reason).toMatch(/No customer "Unknown Buyer"/);
+    expect(plan.rows[0].reason).toMatch(/No app customer is named "Unknown Buyer"/);
   });
 
   it("customer by GSTIN first, then by name; catalogue item by line name", () => {
@@ -214,5 +216,192 @@ describe("review fixes", () => {
   it("an app invoice whose number is the Zoho number is caught in the preview, as the SQL does", () => {
     const plan = buildSalesPlan([zohoSaleFacts(detail(), SELLER)], ctx({ invoices: [{ id: "INV/25-26/0001", externalNumber: null, documentKind: "tax_invoice", zohoInvoiceId: null }] }));
     expect(plan.rows[0]).toMatchObject({ verdict: "skip", reason: "INV/25-26/0001 is already on app invoice INV/25-26/0001." });
+  });
+});
+
+/* R-2530 (G-FY2526, found by w-cust-dupes on staging Excel): a Zoho customer whose name matches
+   exactly one app customer but whose GSTIN differs was skipped as "No customer … in the app"
+   (65 FY 25-26 invoices). Same PAN (GSTIN characters 3–12) = the same legal entity at another
+   branch → import; a different PAN → skip with a clear reason unless the owner ticks "Use this
+   customer anyway". The invoice keeps ITS OWN GSTIN and place of supply (GSTR-1 was filed from
+   Zoho with them) — the SQL import writes the scan's gstin / posStateCode / head, never the
+   customer's. Names and GSTINs are made up. */
+describe("R-2530 — name match with a different GSTIN", () => {
+  const SAME_PAN_CUST = { id: "cust-vz", name: "Vizira Media Pvt Ltd", gstin: "07AAFCV5915P1ZP" };   // Delhi
+  const OTHER_PAN_CUST = { id: "cust-ab", name: "Abraf Traders", gstin: "07AAMPB0782G1ZV" };
+  const base = ctx().customers;
+  const c = (over: Partial<PlanContext> = {}) => ctx({ customers: [...base, SAME_PAN_CUST, OTHER_PAN_CUST], ...over });
+  /* Haryana branch (06), IGST — as Zoho issued it. */
+  const hrInvoice = (over: Partial<ZohoFyDocDetail> = {}) => zohoSaleFacts(detail({
+    id: "7001", number: "INV/25-26/0101", contactName: "VIZIRA MEDIA PVT. LTD.", gstNo: "06AAFCV5915P1ZR", placeOfSupply: "HR", ...over,
+  }), SELLER);
+  const abrafInvoice = (over: Partial<ZohoFyDocDetail> = {}) => zohoSaleFacts(intra({
+    id: "7002", number: "INV/25-26/0102", contactName: "Abraf Traders", gstNo: "07AAHCB0569M1ZD", ...over,
+  }), SELLER);
+
+  it("same PAN, another state's GSTIN → imported onto the one customer with that name", () => {
+    const plan = buildSalesPlan([hrInvoice()], c());
+    expect(plan.rows[0]).toMatchObject({ verdict: "import", customerId: "cust-vz", matchedBy: "pan", reason: null });
+    // The invoice's own GSTIN / place of supply / head travel with the scan, not the customer's.
+    expect(plan.rows[0].facts).toMatchObject({ gstin: "06AAFCV5915P1ZR", posStateCode: "06", head: "igst" });
+    expect(toPick(plan.rows[0])).toEqual({ zoho_invoice_id: "7001", customer_id: "cust-vz", item_ids: ["ITEM-CSP"] });
+    expect(plan.gstinChoices).toEqual([]);
+  });
+
+  it("different PAN, not ticked → skipped with 'Name matches … but GSTIN differs', never 'No customer'", () => {
+    const plan = buildSalesPlan([abrafInvoice(), abrafInvoice({ id: "7003", number: "INV/25-26/0103" })], c());
+    expect(plan.rows[0]).toMatchObject({ verdict: "skip", customerId: null });
+    expect(plan.rows[0].reason).toBe('Name matches "Abraf Traders" but the GSTIN differs (invoice "07AAHCB0569M1ZD" vs customer "07AAMPB0782G1ZV") — tick "Use this customer anyway" if it is the same buyer.');
+    expect(plan.rows[0].reason).not.toMatch(/No (app )?customer/);
+    // One choice per Zoho customer, with what the owner needs to decide.
+    expect(plan.gstinChoices).toEqual([{
+      key: gstinChoiceKey("Abraf Traders", "07AAHCB0569M1ZD"), zohoName: "Abraf Traders", customerId: "cust-ab", customerName: "Abraf Traders",
+      customerGstin: "07AAMPB0782G1ZV", invoiceGstins: ["07AAHCB0569M1ZD"], count: 2, amount: 236000, chosen: false,
+    }]);
+    // Both invoices fall under ONE skip reason.
+    expect(plan.skipReasons).toHaveLength(1);
+    expect(plan.skipReasons[0].count).toBe(2);
+  });
+
+  it("different PAN, ticked → imported onto that customer; the invoice keeps its own GSTIN", () => {
+    const plan = buildSalesPlan([abrafInvoice()], c({ useAnyway: { [gstinChoiceKey("Abraf Traders", "07AAHCB0569M1ZD")]: "cust-ab" } }));
+    expect(plan.rows[0]).toMatchObject({ verdict: "import", customerId: "cust-ab", matchedBy: "chosen", reason: null });
+    expect(plan.rows[0].facts.gstin).toBe("07AAHCB0569M1ZD");
+    expect(plan.gstinChoices[0]).toMatchObject({ customerId: "cust-ab", chosen: true, count: 1 });
+  });
+
+  it("a tick naming any other customer is ignored (the browser cannot pick a customer the name did not match)", () => {
+    const plan = buildSalesPlan([abrafInvoice()], c({ useAnyway: { [gstinChoiceKey("Abraf Traders", "07AAHCB0569M1ZD")]: "cust-dl" } }));
+    expect(plan.rows[0]).toMatchObject({ verdict: "skip", customerId: null });
+    expect(plan.gstinChoices[0].chosen).toBe(false);
+  });
+
+  it("a customer GSTIN with a bad checksum never 'shares' a PAN — the owner decides", () => {
+    const typo = { ...SAME_PAN_CUST, gstin: "07AAFCV5915P1ZX" };   // same characters 3–12, invalid GSTIN
+    const plan = buildSalesPlan([hrInvoice()], ctx({ customers: [...base, typo] }));
+    expect(plan.rows[0]).toMatchObject({ verdict: "skip", customerId: null });
+    expect(plan.gstinChoices[0]).toMatchObject({ customerId: "cust-vz", customerGstin: "07AAFCV5915P1ZX" });
+  });
+
+  it("an ARCHIVED customer carrying the invoice's GSTIN loses to the one active customer with that name", () => {
+    const archived = { id: "cust-vz-hr-old", name: "Vizira Media Pvt Ltd", gstin: "06AAFCV5915P1ZR", active: false };
+    const plan = buildSalesPlan([hrInvoice()], ctx({ customers: [...base, SAME_PAN_CUST, archived] }));
+    expect(plan.rows[0]).toMatchObject({ verdict: "import", customerId: "cust-vz", matchedBy: "pan" });
+  });
+
+  it("an inactive duplicate no longer blocks: the one active customer with that name is used", () => {
+    const customers = [...base, SAME_PAN_CUST, { ...SAME_PAN_CUST, id: "cust-vz-old", active: false }];
+    const plan = buildSalesPlan([hrInvoice()], ctx({ customers }));
+    expect(plan.rows[0]).toMatchObject({ verdict: "import", customerId: "cust-vz", matchedBy: "pan" });
+    // Same for a GSTIN shared by an active and an archived customer with different names.
+    const byG = buildSalesPlan([zohoSaleFacts(detail(), SELLER)], ctx({ customers: [...base, { id: "cust-ka-old", name: "Old KA Name", gstin: "29ABCDE1234F1Z5", active: false }] }));
+    expect(byG.rows[0]).toMatchObject({ verdict: "import", customerId: "cust-ka", matchedBy: "gstin" });
+  });
+
+  it("two ACTIVE customers with that name still need the owner (no guess)", () => {
+    const customers = [...base, SAME_PAN_CUST, { ...SAME_PAN_CUST, id: "cust-vz-2" }];
+    const plan = buildSalesPlan([hrInvoice()], ctx({ customers }));
+    expect(plan.rows[0].verdict).toBe("skip");
+    expect(plan.rows[0].reason).toMatch(/2 customers are named "VIZIRA MEDIA PVT. LTD."/);
+  });
+
+  it("no customer by name or GSTIN → the message says both, not a bare 'No customer'", () => {
+    const plan = buildSalesPlan([zohoSaleFacts(detail({ contactName: "Nobody Ltd", gstNo: "27ZZZZZ9999Z1Z5", placeOfSupply: "MH" }), SELLER)], c());
+    expect(plan.rows[0].reason).toBe('No app customer is named "Nobody Ltd" or has GSTIN "27ZZZZZ9999Z1Z5" — import customers from Zoho first, then preview again.');
+  });
+
+  it("GST split follows each invoice's own place of supply: IGST for the Haryana branch, CGST + SGST for Delhi, same customer", () => {
+    const hr = hrInvoice();
+    const dl = zohoSaleFacts(intra({ id: "7004", number: "INV/25-26/0104", contactName: "Vizira Media Pvt Ltd", gstNo: "07AAFCV5915P1ZP" }), SELLER);
+    const plan = buildSalesPlan([hr, dl], c());
+    expect(plan.rows.map((r) => [r.customerId, r.matchedBy, r.facts.head])).toEqual([["cust-vz", "pan", "igst"], ["cust-vz", "gstin", "cgst_sgst"]]);
+    expect(plan.importByMonth).toEqual([{ month: "2025-05", count: 2, taxable: 200000, igst: 18000, cgst: 9000, sgst: 9000, amount: 236000 }]);
+  });
+
+  it("GSTR-1 B2B shows the invoice's GSTIN and place of supply, not the customer's current one", () => {
+    const f = buildSalesPlan([hrInvoice()], c()).rows[0].facts;
+    /* What import_zoho_fy_sales inserts (customer_gstin / pos_state_code from the scan) and the
+       snapshot trigger keeps (coalesce: a value given is never replaced by the customer's). */
+    const row = { customer_gstin: f.gstin, pos_state_code: f.posStateCode, seller_state_code: SELLER, billing_address: null, customer_country: null };
+    const live = { gstin: SAME_PAN_CUST.gstin, stateCode: "07", state: "Delhi", country: "India" };
+    const p = frozenParty(row, live);
+    const doc: Gstr1Doc = {
+      id: f.number, date: f.date, docType: "invoice", customerName: SAME_PAN_CUST.name,
+      customerGstin: p.gstin, customerStateCode: p.stateCode, customerState: p.state, customerCountry: p.country,
+      amount: f.amount, taxableValue: f.taxable, gst: f.tax, taxRate: f.taxRate ?? 0, interState: f.head === "igst",
+    };
+    const g = buildGstr1([doc], { stateCode: SELLER, state: "Delhi" });
+    expect(g.b2b).toHaveLength(1);
+    expect(g.b2b[0]).toMatchObject({ gstin: "06AAFCV5915P1ZR", id: "INV/25-26/0101", taxable: 100000 });
+    expect(g.b2b[0].pos.startsWith("06")).toBe(true);
+    expect(g.b2b[0].heads).toEqual({ igst: 18000, cgst: 0, sgst: 0 });
+  });
+});
+
+/* R-2536 — a Zoho FY sale keeps the buyer facts AS FILED: no GSTIN stays B2C (the SQL side —
+   import_zoho_fy_sales + tg_invoice_snapshot_parties — is supabase/tests/r2536_zoho_import_party_as_filed.test.sql),
+   Zoho's own billing address travels with the scan, and the owner's "Use this customer anyway"
+   tick belongs to one Zoho buyer (name + the invoice's PAN), not to every near-same name. */
+describe("R-2536 — buyer facts as filed", () => {
+  const VZ = { id: "cust-vz", name: "Vizira Media Pvt Ltd", gstin: "07AAFCV5915P1ZP" };   // Delhi, registered
+
+  it("Zoho's billing address and country come with the scan (normalise)", () => {
+    const f = zohoSaleFacts(detail({ rawOver: { billing_address: {
+      attention: "Accounts", address: "Plot 7", street2: "Sector 18", city: "Gurugram", state: "Haryana", zip: "122015", country: "India",
+    } } }), SELLER);
+    expect(f.billingAddress).toBe("Plot 7, Sector 18, Gurugram, Haryana 122015");
+    expect(f.billingCountry).toBe("India");
+    // Outside India the country is part of the printed address (same shape as the customer snapshot).
+    const ex = zohoSaleFacts(detail({ rawOver: { billing_address: { address: "1 Main St", city: "Austin", state: "TX", zip: "78701", country: "U.S.A." } } }), SELLER);
+    expect(ex.billingAddress).toBe("1 Main St, Austin, TX 78701, U.S.A.");
+    // None in Zoho → null (the SQL import then writes none; the trigger decides the fallback).
+    const none = zohoSaleFacts(detail(), SELLER);
+    expect(none.billingAddress).toBeNull();
+    expect(none.billingCountry).toBeNull();
+    const blank = zohoSaleFacts(detail({ rawOver: { billing_address: { address: " ", city: "", country: "" } } }), SELLER);
+    expect(blank.billingAddress).toBeNull();
+    expect(blank.billingCountry).toBeNull();
+  });
+
+  it("GSTR-1: a B2C Zoho invoice on a customer WITH a GSTIN stays B2C (B2CS), never B2B", () => {
+    const f = zohoSaleFacts(detail({ id: "7101", number: "INV/25-26/0201", contactName: VZ.name, gstNo: "", gstTreatment: "consumer", placeOfSupply: "HR",
+      // ₹11,800 — inter-state B2C up to ₹1 lakh is B2CS
+      totalPaise: 11_800_00, taxTotalPaise: 1_800_00, taxes: [{ name: "IGST18", amountPaise: 1_800_00 }],
+      lines: [{ accountId: "a1", accountName: "Sales", description: "", hsnOrSac: "998315", quantity: 10, amountPaise: 10_000_00, taxId: "t1", taxName: "IGST18", taxPercent: 18 }] }), SELLER);
+    const plan = buildSalesPlan([f], ctx({ customers: [...ctx().customers, VZ] }));
+    expect(plan.rows[0]).toMatchObject({ verdict: "import", customerId: "cust-vz", matchedBy: "name" });
+    /* What the import now writes and the trigger keeps (party_from_source): no GSTIN, Zoho's place
+       of supply, the seller's state filled. */
+    const row = { customer_gstin: f.gstin || null, pos_state_code: f.posStateCode, seller_state_code: SELLER, billing_address: null, customer_country: null };
+    const live = { gstin: VZ.gstin, stateCode: "07", state: "Delhi", country: "India" };
+    const p = frozenParty(row, live);
+    expect(p.gstin).toBeNull();
+    const doc: Gstr1Doc = {
+      id: f.number, date: f.date, docType: "invoice", customerName: VZ.name,
+      customerGstin: p.gstin, customerStateCode: p.stateCode, customerState: p.state, customerCountry: p.country,
+      amount: f.amount, taxableValue: f.taxable, gst: f.tax, taxRate: f.taxRate ?? 0, interState: f.head === "igst",
+    };
+    const g = buildGstr1([doc], { stateCode: SELLER, state: "Delhi" });
+    expect(g.b2b).toHaveLength(0);
+    expect(g.b2cs).toHaveLength(1);
+    expect(g.b2cs[0].pos.startsWith("06")).toBe(true);
+  });
+
+  it("the 'Use this customer anyway' tick is per Zoho buyer (name + invoice PAN): a near-same name with another PAN is not ticked with it", () => {
+    const AB = { id: "cust-ab", name: "Abraf Traders", gstin: "07AAMPB0782G1ZV" };
+    const one = zohoSaleFacts(intra({ id: "7201", number: "INV/25-26/0301", contactName: "Abraf Traders", gstNo: "07AAHCB0569M1ZD" }), SELLER);
+    const two = zohoSaleFacts(intra({ id: "7202", number: "INV/25-26/0302", contactName: "ABRAF TRADERS.", gstNo: "07AAACZ1234Q1Z5" }), SELLER);
+    const k1 = gstinChoiceKey("Abraf Traders", "07AAHCB0569M1ZD");
+    const k2 = gstinChoiceKey("ABRAF TRADERS.", "07AAACZ1234Q1Z5");
+    expect(k1).not.toBe(k2);
+    const before = buildSalesPlan([one, two], ctx({ customers: [...ctx().customers, AB] }));
+    expect(before.gstinChoices.map((c) => c.key).sort()).toEqual([k1, k2].sort());
+    const plan = buildSalesPlan([one, two], ctx({ customers: [...ctx().customers, AB], useAnyway: { [k1]: "cust-ab" } }));
+    expect(plan.rows[0]).toMatchObject({ verdict: "import", customerId: "cust-ab", matchedBy: "chosen" });
+    expect(plan.rows[1]).toMatchObject({ verdict: "skip", customerId: null });
+    expect(plan.gstinChoices.find((c) => c.key === k2)).toMatchObject({ chosen: false, invoiceGstins: ["07AAACZ1234Q1Z5"] });
+    // The old name-only key no longer ticks anything.
+    const old = buildSalesPlan([one, two], ctx({ customers: [...ctx().customers, AB], useAnyway: { "abraf traders": "cust-ab" } }));
+    expect(old.rows.map((r) => r.verdict)).toEqual(["skip", "skip"]);
   });
 });

@@ -6,7 +6,7 @@ import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/quer
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { invoicePaymentRoute } from "@/lib/payments/instalment-payment";
 import type { Invoice } from "@/lib/supabase/database.types";
-import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { takesQuotelessReceipt } from "@/lib/payments/quoteless-receipt";
 import { MultiInvoicePaymentDialog } from "@/components/features/payments/multi-invoice-payment-dialog";
 
 /**
@@ -46,8 +46,9 @@ export function RecordSubscriptionPaymentContainer({
   const { data: payments } = usePaymentsByQuote(route.kind === "quote" ? quote?.id : null);
 
   /* R-1739: an invoice imported from Zoho Books has no quote — its payment is recorded on the
-     Several-invoices sheet (record_multi_invoice_payment), opened for its customer. */
-  if (isOpeningInvoice(invoice)) {
+     Several-invoices sheet (record_multi_invoice_payment), opened for its customer.
+     R-2542: so is an FY sale imported from Zoho (zoho_invoice_id) — it said "not linked to a quote". */
+  if (takesQuotelessReceipt(invoice)) {
     return invoice.customer_id ? (
       <MultiInvoicePaymentDialog open={open} onOpenChange={onOpenChange} customerId={invoice.customer_id} customerName={invoice.customer_name} />
     ) : null;

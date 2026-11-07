@@ -8,7 +8,7 @@
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { readBooksStart, type BooksStartDb } from "@/lib/accounting/books-start";
 import { must, type FyImportDb } from "../fy-import/store";
-import type { AppBankAccount, ReceiptsPlanContext } from "./plan";
+import { LEAVE_OUT, type AppBankAccount, type ReceiptsPlanContext } from "./plan";
 
 type Res<T = unknown> = PromiseLike<{ data: T | null; error: { message?: string; code?: string } | null }>;
 
@@ -51,12 +51,13 @@ export async function readReceiptsContext(
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** The browser's "Zoho account → app account" choices, shape-checked (the SQL checks the company). */
+/** The browser's "Zoho account → app account" choices, shape-checked (the SQL checks the company):
+ *  an app account id, LEAVE_OUT ("Leave out"), or "" (chosen: none — no suggestion fills it). */
 export function parseAccountMap(v: unknown): Record<string, string> {
   const out: Record<string, string> = {};
   if (!v || typeof v !== "object" || Array.isArray(v)) return out;
-  for (const [k, id] of Object.entries(v as Record<string, unknown>).slice(0, 100)) {
-    if (k.length <= 40 && typeof id === "string" && UUID.test(id)) out[k] = id;
+  for (const [k, id] of Object.entries(v as Record<string, unknown>).slice(0, 500)) {
+    if (k.length <= 40 && typeof id === "string" && (UUID.test(id) || id === LEAVE_OUT || id === "")) out[k] = id;
   }
   return out;
 }
