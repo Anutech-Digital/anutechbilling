@@ -4,13 +4,13 @@ import { DemoDataButton } from "@/components/layout/demo-data-button";
 import * as React from "react";
 import { Kbd } from "@/components/ui/kbd";
 import { usePathname, useRouter } from "next/navigation";
-import { useTheme } from "next-themes";
+import { ThemeMenu, ThemeMenuItems } from "./theme-menu";
 
 import { Icon } from "@/components/ui/icon";
 import { IconButton } from "@/components/ui/button";
 import { AiHelpButton, openHelpReport } from "@/components/shared/ai-help";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 
 import { CommandPalette, useCommandPalette } from "./command-palette";
 import { NotificationPanel, useNotificationFeed } from "./notification-panel";
@@ -43,7 +43,6 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   // segments, e.g. /quotes/Q-123 or /customers/abc/edit) get a Back chevron so
   // users aren't stranded relying on the OS back gesture.
   const isDetailPage = pathname.split("/").filter(Boolean).length >= 2;
-  const { setTheme, resolvedTheme } = useTheme();
   const cmdk = useCommandPalette();
   const [notifOpen,   setNotifOpen]   = React.useState(false);
   const [actionsOpen, setActionsOpen] = React.useState(false);
@@ -57,10 +56,6 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
   /* R-2300: the Team chat icon (and its 30 s unread poll) only for roles that may open it —
      never the partner agent or the personal login. */
   const showTeamChat = !!me?.role && canOpenRoute(me.role, "/team-chat");
-
-  // Mount-only flag to avoid theme hydration mismatch
-  const [mounted, setMounted] = React.useState(false);
-  React.useEffect(() => setMounted(true), []);
 
   return (
     <header className="sticky top-0 z-30 h-14 border-b border-hairline bg-paper/95 backdrop-blur-sm flex items-center gap-1 sm:gap-2 px-3 md:px-4">
@@ -141,19 +136,8 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
         <Kbd keys={["Ctrl", "K"]} className="hidden sm:inline-flex" />
       </button>
 
-      {/* Theme toggle */}
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <IconButton
-            icon={mounted && resolvedTheme === "dark" ? "sun" : "moon"}
-            aria-label={`Switch to ${resolvedTheme === "dark" ? "light" : "dark"} mode`}
-            onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-            className="hidden sm:inline-flex"
-            data-topbar="theme"
-          />
-        </TooltipTrigger>
-        <TooltipContent>Toggle theme</TooltipContent>
-      </Tooltip>
+      {/* Theme — R-2187: System (follows the OS) / Light / Dark. */}
+      <ThemeMenu className="hidden sm:inline-flex" data-topbar="theme" />
 
       {/* Help (R-158/R-162/R-383) — Ask AI + Report a problem, one small icon, not a floating button over the page. */}
       <AiHelpButton />
@@ -220,13 +204,12 @@ export function TopBar({ onMobileMenuClick, crumb: crumbOverride }: TopBarProps)
           <DropdownMenuItem onSelect={() => setActionsOpen(true)}>
             <Icon name="sparkles" size={14} /> Quick actions
           </DropdownMenuItem>
-          <DropdownMenuItem onSelect={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}>
-            <Icon name={mounted && resolvedTheme === "dark" ? "sun" : "moon"} size={14} />
-            {resolvedTheme === "dark" ? "Light mode" : "Dark mode"}
-          </DropdownMenuItem>
           <DropdownMenuItem onSelect={() => openHelpReport()}>
             <Icon name="bug" size={14} /> Report a problem
           </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          {/* R-2187: the same System / Light / Dark as the desktop button */}
+          <ThemeMenuItems />
         </DropdownMenuContent>
       </DropdownMenu>
 
