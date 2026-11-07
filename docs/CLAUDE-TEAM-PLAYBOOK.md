@@ -239,3 +239,29 @@ Format: `- <date>: what went wrong → the rule it created (card).`
   laptop load → lower parallel workers to 4 and retry; never skip the guards (R-2539).
 - 6 Nov (evening): a `run.sh` in the shared scratchpad top folder overwrote another agent's file → keep
   scratch files in a per-card subfolder of the scratchpad (R-2539).
+- 7 Nov: weekly all-models usage hit 94% with 4 days left before the reset → from 80% on, start every
+  worker, checker and reviewer with `model: "fable"` (Fable has its own weekly quota) and keep the
+  coordinator brief; `get_usage` before any big batch; warn the owner at 90% (R-2549).
+- 7 Nov: a board `liveLog` was overwritten — an ArtifactData `update` with a `liveLog` array replaces
+  the whole array → always `get` the card first, append to its array, then `update` with `if_version`
+  (R-2549).
+- 7 Nov: a worker's "fixed" tab could not be found by another agent → each agent session has its own
+  Chrome tab group, so one agent's tab is invisible to another, and the Chrome extension cannot bring a
+  tab to the front. Localhost checks run in the Claude app's built-in browser (`tabs_select` /
+  foreground); Chrome Profile 20 is only for real-login work (staging Excel, Zoho), in ONE tab that stays
+  open; login is a cookie, so a new tab in that profile is already logged in (R-2549).
+- 7 Nov: localhost took 30–60 s per page because Windows Defender was scanning the repo folders → with
+  Defender folder exclusions for the repo and deploy folders (set by the owner) it is 0.4 s; when
+  localhost is slow, check this first (R-2549).
+- 7 Nov: an owner command written for `bash` failed — his terminal is PowerShell, where `bash` means WSL
+  and cannot see `C:/` paths → give owner commands as `powershell -ExecutionPolicy Bypass -File C:/…/x.ps1`
+  or plain `node …`, each in its own `` ```bash `` block (Run button); before asking him to re-run, check
+  the DB/result yourself — it may already have succeeded (R-2549).
+- 7 Nov: the staging DB step stopped with HTTP 409 — Cloud SQL's automatic backup was running at that
+  moment → wait until `gcloud sql operations list` shows DONE, then re-run; the script applies only the
+  migrations whose peek is false, so a re-run is safe (R-2549).
+- 7 Nov: workers again handed back before the push → every worker prompt says "do not hand back until
+  push + CI green", and the coordinator verifies the card's SHA on `anutech/manager-pardeep` (R-2549).
+- 7 Nov: "Check karo" cards checked by an AI checker had no agreed way to record the result → on PASS
+  write the board's Theek fields with `byAccount: "ai-checker"` plus `aiCheck` evidence; on FAIL write
+  only `aiCheck` and the owner decides; cards that need live/staging go to their own lane (R-2549).
