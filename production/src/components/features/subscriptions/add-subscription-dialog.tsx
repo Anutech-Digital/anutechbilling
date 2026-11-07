@@ -70,7 +70,7 @@ import { findPlanProduct, type LeadPrefill } from "@/lib/subscriptions/lead-pref
    the field cannot disagree with the chip the operator sees a second later. */
 import { paymentDueState, todayIST } from "@/lib/subscriptions/payment-due";
 import { onboardingQuoteLine } from "./onboarding-line";
-import { findDuplicateSubscription, matchCustomers, type ExistingSub } from "./duplicate-subscription";
+import { duplicateSubscriptionText, findDuplicateSubscription, matchCustomers, type ExistingSub } from "./duplicate-subscription";
 import { subscriptionHref, searchFromSubscriptionHref, SUBSCRIPTION_SEARCH_EVENT } from "@/app/(app)/subscriptions/palette-links";
 
 /** GST on SaaS in India — CGST 9% + SGST 9%, or IGST 18%. CLAUDE.md §13. */
@@ -486,14 +486,16 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
     (async () => {
       const { data } = await createClient()
         .from("subscriptions")
-        .select("id, customer_id, domain, plan, item_id, status")
+        .select("id, customer_id, domain, plan, item_id, status, seats, renewal_date")
         .eq("customer_id", selectedCustomerId);
       if (live) setCustomerSubs((data ?? []) as ExistingSub[]);
     })();
     return () => { live = false; };
   }, [selectedCustomerId]);
+  /* R-2179: a row with no domain of its own is on the customer's domain. */
+  const pickedDomain = existingCustomers.find((c) => c.id === selectedCustomerId)?.domain ?? null;
   const liveDuplicate = findDuplicateSubscription(customerSubs, {
-    customerId: selectedCustomerId, domain, itemId, plan,
+    customerId: selectedCustomerId, domain, itemId, plan, customerDomain: pickedDomain,
   });
   /** The subscriptions list filtered to that row (same page: the list listens for the event). */
   const openExistingSubscription = (sub: ExistingSub) => {
@@ -891,16 +893,18 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
       if (existingMatch) {
         const { data: theirSubs, error: subsErr } = await supabase
           .from("subscriptions")
-          .select("id, customer_id, domain, plan, item_id, status")
+          .select("id, customer_id, domain, plan, item_id, status, seats, renewal_date")
           .eq("tenant_id", tenantId)
           .eq("customer_id", existingMatch.id);
         if (subsErr) throw subsErr;
         const dup = findDuplicateSubscription((theirSubs ?? []) as ExistingSub[], {
           customerId: existingMatch.id, domain: cleanDomain, itemId, plan,
+          customerDomain: ("domain" in existingMatch ? existingMatch.domain : null)
+            ?? existingCustomers.find((c) => c.id === existingMatch.id)?.domain ?? null,   // R-2179
         });
         if (dup) {
           toast.error("This subscription already exists — nothing was created", {
-            description: `${cleanCustomerName} already has ${dup.plan ?? plan} on ${cleanDomain}. A second one would renew and bill twice. To add users, open it and use Manage seats.`,
+            description: `${duplicateSubscriptionText(dup, { plan, domain: cleanDomain })} A second one would renew and bill twice.`,
             action: { label: "Open existing subscription", onClick: () => openExistingSubscription(dup) },
             duration: 12000,
           });
@@ -1916,8 +1920,9 @@ function AddSubscriptionForm({ open, onOpenChange, onSuccess, onNeedsPayment, pr
           {liveDuplicate && (
             <div role="alert" className="p-3 rounded-xl border border-rose/40 bg-rose-soft text-xs text-ink flex flex-wrap items-center justify-between gap-2">
               <span>
-                <b>{customerName}</b> already has <b>{liveDuplicate.plan ?? plan}</b> on <b>{liveDuplicate.domain}</b>.
-                {" "}A second one would renew and bill twice — open it and use Manage seats to add users, or pick a different plan or domain.
+                {/* R-2179: product, domain, seats, renewal date and the way on */}
+                <b>{customerName}</b>: {duplicateSubscriptionText(liveDuplicate, { plan, domain })}
+                {" "}A second one would renew and bill twice — or pick a different plan or domain.
               </span>
               <Button type="button" size="sm" variant="outline" onClick={() => openExistingSubscription(liveDuplicate)}>
                 Open existing subscription
