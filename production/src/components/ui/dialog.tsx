@@ -23,6 +23,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { keepOpenForHelp, keepOpenForPopover } from "./help-panel-guard";
+import { ReleaseStaleBodyLock } from "./release-stale-body-lock";
 
 const Dialog = DialogPrimitive.Root;
 const DialogTrigger = DialogPrimitive.Trigger;
@@ -324,6 +325,8 @@ const DialogContent = React.forwardRef<
       />
 
       {children}
+      {/* R-1427: after Close, never leave body at pointer-events:none with no layer open. */}
+      <ReleaseStaleBodyLock />
       {!hideClose && (
         <DialogPrimitive.Close
           className={cn(
