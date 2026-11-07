@@ -18,6 +18,8 @@ const LABEL: Record<TestLoginRole, string> = {
   accountant: "Accountant",
   sales: "Sales",
   owner2: "Owner 2",
+  billing: "Billing",
+  support: "Support",
 };
 
 /** Build-time gate (dev:local sets NEXT_PUBLIC_APP_ENV=local) plus the page's own host. */

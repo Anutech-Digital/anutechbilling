@@ -15,6 +15,7 @@
  * there every card spec skips, because the local test login does not exist there.
  */
 import { expect, test, type Browser, type Page } from "@playwright/test";
+import type { TestLoginRole } from "../../src/app/api/dev/test-login/rules";
 
 /** True only inside `node scripts/ops/card-tests.mjs`. */
 export const CARD_TESTS_ON = process.env.CARD_TESTS === "1";
@@ -25,7 +26,7 @@ export function onlyInCardTests() {
 }
 
 /** The roles the Local test login box offers (src/app/api/dev/test-login/rules.ts). */
-export type LocalRole = "owner" | "manager" | "accountant" | "sales" | "owner2";
+export type LocalRole = TestLoginRole;
 
 /** Sign this page's browser context in as a seeded local test role (cookies land in the context). */
 export async function loginLocal(page: Page, role: LocalRole): Promise<void> {

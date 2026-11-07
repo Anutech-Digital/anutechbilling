@@ -1,5 +1,6 @@
 import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
+import { hashbangCrlfPlugin } from "./src/test/hashbang-crlf";
 
 // Vitest = unit tests only (pure logic under src/). Playwright E2E specs live in
 // e2e/ and run via `npm run test:e2e` — they MUST be excluded here, otherwise
@@ -22,6 +23,8 @@ export default defineConfig({
   // component test fail with "React is not defined" inside shared UI (icon.tsx,
   // card.tsx…). Matching Next here keeps the app code untouched.
   esbuild: { jsx: "automatic" },
+  // R-2553: `#!` ops scripts on a Windows (CRLF) checkout failed at import — see src/test/hashbang-crlf.ts.
+  plugins: [hashbangCrlfPlugin()],
   test: {
     // next-auth imports "next/server" without an extension; let Vite resolve it (5 Oct 2026).
     server: { deps: { inline: ["next-auth", "@auth/core"] } },
