@@ -21,7 +21,7 @@ import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cva, type VariantProps } from "class-variance-authority";
 import { cn } from "@/lib/utils";
-import { keepOpenForHelp } from "./help-panel-guard";
+import { keepOpenForHelp, keepOpenForPopover, keepOpenForToast } from "./help-panel-guard";
 import { ReleaseStaleBodyLock } from "./release-stale-body-lock";
 
 const Sheet = DialogPrimitive.Root;
@@ -84,8 +84,9 @@ const SheetContent = React.forwardRef<
       ref={ref}
       className={cn(sheetVariants({ side }), className)}
       {...props}
-      /* R-827: clicks, focus or Escape inside AI Help never close the sheet. */
-      onInteractOutside={keepOpenForHelp(onInteractOutside)}
+      /* R-827: clicks, focus or Escape inside AI Help never close the sheet. R-2172: nor a click
+         on a toast, nor (same chain as ui/dialog, R-2386) a pick in a portalled Select list. */
+      onInteractOutside={keepOpenForToast(keepOpenForPopover(keepOpenForHelp(onInteractOutside)))}
       onEscapeKeyDown={keepOpenForHelp(onEscapeKeyDown)}
     >
       {children}

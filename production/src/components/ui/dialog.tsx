@@ -22,7 +22,7 @@ import * as React from "react";
 import * as DialogPrimitive from "@radix-ui/react-dialog";
 import { X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { keepOpenForHelp, keepOpenForPopover } from "./help-panel-guard";
+import { keepOpenForHelp, keepOpenForPopover, keepOpenForToast } from "./help-panel-guard";
 import { ReleaseStaleBodyLock } from "./release-stale-body-lock";
 
 const Dialog = DialogPrimitive.Root;
@@ -298,8 +298,8 @@ const DialogContent = React.forwardRef<
       {...props}
       /* R-827: a click, focus or Escape inside AI Help never closes the dialog under it.
          R-2386: nor does a mouse pick in a portalled Select / Popover list (Private Vault
-         "New account" Type closed the whole dialog). */
-      onInteractOutside={keepOpenForPopover(keepOpenForHelp(onInteractOutside))}
+         "New account" Type closed the whole dialog). R-2172: nor a click on a toast. */
+      onInteractOutside={keepOpenForToast(keepOpenForPopover(keepOpenForHelp(onInteractOutside)))}
       onEscapeKeyDown={keepOpenForHelp(onEscapeKeyDown)}
       /* R-1766: the handle overlay is first measured while the dialog is still zooming in
          (scaled 95%), and a size change inside that animation is measured scaled too. Left

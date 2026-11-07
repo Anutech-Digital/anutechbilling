@@ -27,6 +27,13 @@ export function Toaster() {
       position="top-right"
       richColors
       closeButton
+      /* R-2172: an open ui/dialog or ui/sheet (Radix modal) sets body to pointer-events: none,
+         and the toaster sits in <body> outside it — the toast inherited "none", so a click went
+         through it to the modal's overlay (the toast could not be closed or used, and the
+         click shut the dialog). Turn pointer events back on for the toaster itself; it already
+         paints above every layer (sonner's z-index 999999999). ui/dialog + ui/sheet treat a
+         press on a toast as inside (help-panel-guard keepOpenForToast). */
+      style={{ pointerEvents: "auto" }}
       toastOptions={{
         classNames: {
           toast: "border border-hairline shadow-md bg-paper text-ink",
