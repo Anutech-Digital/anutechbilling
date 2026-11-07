@@ -24,7 +24,6 @@ import { expect, test, type Page } from "@playwright/test";
 import { CARD_TESTS_ON, onlyInCardTests, openAppPage, pageAs } from "./card-steps";
 // @ts-expect-error — plain .mjs helpers (no types)
 import { scenarioTargetReason } from "../../scripts/dev/local-guard.mjs";
-// @ts-expect-error — plain .mjs helpers (no types)
 import { E2E_TENANT_EMAIL } from "../fixtures/e2e-roles.mjs";
 
 const PROD = path.resolve(__dirname, "..", "..");
@@ -135,6 +134,8 @@ async function tdsRow(page: Page, name: string): Promise<Record<string, string>>
 
 test.describe("R-2538 — TDS gross on a sale billed in parts = the part paid", () => {
   onlyInCardTests();
+  // A sale through the reconcile sheet can take 2+ min on a busy local dev server (7 Nov: one run hit 180 s).
+  test.setTimeout(300_000);
 
   test.beforeAll(() => {
     if (CARD_TESTS_ON) seedOncePerRun();
