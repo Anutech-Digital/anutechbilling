@@ -22,7 +22,7 @@ import type { Database } from "@/lib/supabase/database.types";
 import { addSeats, type AddSeatsResult, type AddSeatsError } from "./add-seats";
 import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
-import { seatChargePlan, seatChargeParts, seatTermEnd, seatTermDays } from "./seat-charge-window";
+import { seatChargePlan, seatTermEnd, seatTermDays } from "./seat-charge-window";
 import { checkSeatEffectiveDate } from "./seat-effective-date";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { syncSubscriptionInstalments, readQuotePaymentFacts } from "@/lib/billing/sync-instalments.server";
@@ -165,7 +165,7 @@ export async function applySeatIncrease(args: {
     termEnd:        seatTermEnd(sub),
     /* R-2226: the parts this window covers, so the seats are priced at the part's own rate. */
     chargeWindow:   window?.instalmentPeriod
-      ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo, parts: seatChargeParts(sub, today, window.from) }
+      ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo, parts: window.parts ?? null }
       : null,
     effectiveDate:  eff.date,
     effectiveDateSetBy: args.effectiveDateSetBy ?? null,
@@ -173,7 +173,7 @@ export async function applySeatIncrease(args: {
     annualPerSeatOverride: args.annualPerSeatOverride ?? null,
     draftPurchaseOrder: args.draftPurchaseOrder === true,
     previousTerm:   plan?.previous
-      ? { to: plan.previous.to, remainingDays: plan.previous.remainingDays, termDays: plan.previous.termDays }
+      ? { to: plan.previous.to, remainingDays: plan.previous.remainingDays, termDays: plan.previous.termDays, parts: plan.previous.parts ?? null }
       : null,
     currentTermStart: plan?.previous ? plan.current.from : null,
     todayISO:       today,

@@ -18,6 +18,7 @@
  * Pure. seatChargeParts() (seat-charge-window.ts) lays the segments; seatIncreaseCharge() and
  * addSeats() (quote line + vendor cost) price them here, so preview = quote (R-803 rule).
  */
+import { rupee } from "@/lib/utils";
 
 /** One part (instalment) of the term the added seats are charged for. */
 export interface SeatPartSegment {
@@ -32,6 +33,7 @@ export interface SeatPartSegment {
   /** Months the part covers (1 monthly, 3 quarterly, 6 half-yearly; a short tail part fewer). */
   partMonths: number;
 }
+
 
 function gcd(a: bigint, b: bigint): bigint {
   while (b !== 0n) [a, b] = [b, a % b];
@@ -76,9 +78,13 @@ export function partDaysCharged(parts: readonly SeatPartSegment[]): number {
   return parts.reduce((sum, s) => sum + clampDays(s), 0);
 }
 
-/** One part's whole per-seat price, rounded to the rupee — for the formula line only. */
+/**
+ * One part's per-seat price, to the paisa — ₹270 for a month of ₹3,240/yr, ₹270.83 for a month
+ * of ₹3,250/yr. Shown exactly (not rounded to the rupee) so the formula line adds up to the
+ * charge, which is rounded once at the end (partShareOf).
+ */
 export function partRatePerSeat(annualPerSeat: number, partMonths: number): number {
-  return Math.round((annualPerSeat * partMonths) / 12);
+  return Math.round((annualPerSeat * partMonths * 100) / 12) / 100;
 }
 
 /**
@@ -86,8 +92,10 @@ export function partRatePerSeat(annualPerSeat: number, partMonths: number): numb
  *   "Part rate ₹270/seat (1 month of ₹3,240/yr) × 15 of 30 days"
  * one clause per part, joined with " + ".
  */
-export function partFormula(annualPerSeat: number, parts: readonly SeatPartSegment[], fmt: (n: number) => string): string {
-  return parts.map((s) =>
-    `Part rate ${fmt(partRatePerSeat(annualPerSeat, s.partMonths))}/seat (${s.partMonths} month${s.partMonths === 1 ? "" : "s"} of ${fmt(annualPerSeat)}/yr) × ${clampDays(s)} of ${s.partDays} days`,
-  ).join(" + ");
+export function partFormula(annualPerSeat: number, parts: readonly SeatPartSegment[]): string {
+  return parts.map((s) => {
+    const rate = partRatePerSeat(annualPerSeat, s.partMonths);
+    const shown = rupee(rate, Number.isInteger(rate) ? {} : { decimals: 2 });
+    return `Part rate ${shown}/seat (${s.partMonths} month${s.partMonths === 1 ? "" : "s"} of ${rupee(annualPerSeat)}/yr) × ${clampDays(s)} of ${s.partDays} days`;
+  }).join(" + ");
 }

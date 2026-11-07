@@ -153,7 +153,8 @@ export function seatIncreaseCharge(input: SeatIncreaseChargeInput): SeatIncrease
  * addSeats() and the Add seats dialog both call it (R-803 rule: preview = server).
  */
 export interface SeatIncreaseQuoteInput extends Omit<SeatIncreaseChargeInput, "remainingDays" | "termDays"> {
-  previous?: { remainingDays: number; termDays: number } | null;
+  /** R-2226: `parts` = the previous term's parts for a split-billed subscription (part rate). */
+  previous?: { remainingDays: number; termDays: number; parts?: readonly SeatPartSegment[] | null } | null;
   /** R-2226: `parts` = seatChargeParts() for a split-billed subscription (the part's own rate). */
   current: { remainingDays: number; termDays: number; parts?: readonly SeatPartSegment[] | null };
 }
@@ -182,7 +183,7 @@ export function seatIncreaseQuote(input: SeatIncreaseQuoteInput): SeatIncreaseQu
       subtotal: current.subtotal, tax: current.tax, total: current.total, newMrr: current.newMrr,
     };
   }
-  const previous = seatIncreaseCharge({ ...base, remainingDays: prevDays.remainingDays, termDays: prevDays.termDays });
+  const previous = seatIncreaseCharge({ ...base, remainingDays: prevDays.remainingDays, termDays: prevDays.termDays, parts: prevDays.parts ?? null });
   /* R-837: the two line totals (each rate × qty) added; GST once on that subtotal. */
   const subtotal = previous.subtotal + current.subtotal;
   const total    = grossAmount(subtotal, base.taxRatePct);

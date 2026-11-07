@@ -9,7 +9,7 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { partShareOf, partFormula, type SeatPartSegment } from "./seat-part-rate";
-import { seatChargeParts, seatChargePlan, seatChargeWindow } from "./seat-charge-window";
+import { seatChargeParts, seatChargePlan } from "./seat-charge-window";
 import { seatIncreaseCharge, seatIncreaseQuote } from "./seat-increase-charge";
 import { previewCharge } from "./seat-request";
 import { addSeats, type AddSeatsInput } from "./add-seats";
@@ -28,12 +28,13 @@ const HALF = { ...MONTHLY, billing_cycle: "half_yearly" as BillingCycle };
 const QUARTERLY = { ...MONTHLY, billing_cycle: "quarterly" as BillingCycle };
 const YEARLY = { ...MONTHLY, billing_cycle: "yearly" as BillingCycle };
 
+/* The callers' path: seatChargePlan() → plan.current (with its parts) → seatIncreaseCharge. */
 const charge = (sub: typeof MONTHLY, today: string, from?: string) => {
-  const w = seatChargeWindow(sub, today, from)!;
+  const w = seatChargePlan(sub, today, from)!.current;
   return seatIncreaseCharge({
     currentSeats: 10, currentMrr: 2700, additionalSeats: 1, taxRatePct: 18,
     remainingDays: w.remainingDays, termDays: w.termDays,
-    parts: seatChargeParts(sub, today, from),
+    parts: w.parts ?? null,
   });
 };
 
@@ -74,8 +75,25 @@ describe("R-2226: backdated across parts — each part at its own days, rounded 
     const sub = { ...QUARTERLY, start_date: "2025-04-01" };
     const plan = seatChargePlan(sub, "2026-05-10", "2026-03-01")!;
     expect(plan.previous).not.toBeNull();
-    const parts = seatChargeParts(sub, "2026-05-10", plan.current.from)!;
-    expect(parts).toEqual([{ from: "2026-04-01", to: "2026-06-30", days: 91, partDays: 91, partMonths: 3 }]);
+    expect(plan.current.parts).toEqual([{ from: "2026-04-01", to: "2026-06-30", days: 91, partDays: 91, partMonths: 3 }]);
+    expect(seatChargeParts(sub, "2026-05-10", plan.current.from)).toEqual(plan.current.parts);
+  });
+  it("R-543 + monthly: the previous term's March is ₹270 too (not ₹3,240 × 31 ÷ 365 = ₹275)", () => {
+    const sub = { ...MONTHLY, start_date: "2025-04-01" };
+    const plan = seatChargePlan(sub, "2026-05-10", "2026-03-01")!;
+    expect(plan.previous!.parts).toEqual([{ from: "2026-03-01", to: "2026-03-31", days: 31, partDays: 31, partMonths: 1 }]);
+    const q = seatIncreaseQuote({
+      currentSeats: 10, currentMrr: 2700, additionalSeats: 1, taxRatePct: 0,
+      previous: { remainingDays: plan.previous!.remainingDays, termDays: plan.previous!.termDays, parts: plan.previous!.parts },
+      current: { remainingDays: plan.current.remainingDays, termDays: plan.current.termDays, parts: plan.current.parts },
+    });
+    expect(q.previous!.perSeat).toBe(270);
+    expect(q.current.perSeat).toBe(540); // April + May (today's part), each a whole month
+  });
+  it("yearly row: the plan carries no parts (shape unchanged)", () => {
+    const plan = seatChargePlan({ ...YEARLY, start_date: "2025-04-01" }, "2026-05-10", "2026-03-01")!;
+    expect(plan.previous!.parts).toBeUndefined();
+    expect(plan.current.parts).toBeUndefined();
   });
 });
 
@@ -91,16 +109,20 @@ describe("partShareOf — exact integer maths", () => {
     expect(partShareOf(3240, [seg(-3, 30)])).toBe(0);
   });
   it("formula line names the part rate and the days", () => {
-    expect(partFormula(3240, [seg(15, 30)], (n) => `₹${n}`)).toBe("Part rate ₹270/seat (1 month of ₹3240/yr) × 15 of 30 days");
+    expect(partFormula(3240, [seg(15, 30)])).toBe("Part rate ₹270/seat (1 month of ₹3,240/yr) × 15 of 30 days");
+  });
+  it("a part rate that is not whole rupees is shown to the paisa, so the line adds up to the charge", () => {
+    expect(partFormula(3250, [seg(15, 30)])).toBe("Part rate ₹270.83/seat (1 month of ₹3,250/yr) × 15 of 30 days");
+    expect(partShareOf(3250, [seg(15, 30)])).toBe(135); // 270.83 × 15/30 = 135.42
   });
 });
 
 describe("R-2226: preview = quote", () => {
-  it("previewCharge with parts gives the part price", () => {
-    const w = seatChargeWindow(MONTHLY, "2026-07-01")!;
+  it("previewCharge with the plan's parts gives the part price", () => {
+    const w = seatChargePlan(MONTHLY, "2026-07-01")!.current;
     const p = previewCharge({
       currentSeats: 10, currentMrr: 2700, seatsToAdd: 2, remainingDays: w.remainingDays, termDays: w.termDays,
-      taxRatePct: 18, parts: seatChargeParts(MONTHLY, "2026-07-01"),
+      taxRatePct: 18, parts: w.parts ?? null,
     })!;
     expect(p.perSeat).toBe(270);
     expect(p.exGst).toBe(540);
@@ -116,14 +138,13 @@ describe("R-2226: preview = quote", () => {
       }),
       rpc: () => Promise.resolve({ data: "Q-TEST-0001", error: null }),
     } as unknown as AddSeatsInput["supabase"];
-    const w = seatChargeWindow(MONTHLY, "2026-07-01")!;
-    const parts = seatChargeParts(MONTHLY, "2026-07-01")!;
+    const w = seatChargePlan(MONTHLY, "2026-07-01")!.current;
     const r = await addSeats({
       supabase: fake, subscriptionId: "sub-1", tenantId: "t-1", customerId: "c-1", customerName: "Part Co",
       plan: "Business Starter", vendor: "google", itemId: "item-1", domain: null,
       currentSeats: 10, currentMrr: 2700, additionalSeats: 2,
       renewalDate: MONTHLY.renewal_date, termEnd: "2027-04-01", graceDays: 7, taxRatePct: 18, termDays: 365,
-      chargeWindow: { remainingDays: w.remainingDays, chargeTo: w.chargeTo, parts },
+      chargeWindow: { remainingDays: w.remainingDays, chargeTo: w.chargeTo, parts: w.parts ?? null },
       todayISO: "2026-07-01",
     });
     expect(r.ok).toBe(true);
@@ -135,7 +156,7 @@ describe("R-2226: preview = quote", () => {
     expect(line.cost).toBe(120);            // ₹120/seat/month cost × a whole month
     expect(q.total_cost).toBe(240);
     const staff = staffQuoteNotes(String(q.notes));
-    expect(staff).toContain("Part rate ₹270/seat (1 month of ₹3,240/yr) × 31 of 31 days");
+    expect(staff).toContain("Part rate ₹270/seat (1 month of ₹3,240/yr) × 31 of 31 days = ₹270/seat");
     expect(staff).not.toMatch(/of 365 days/);
   });
 
@@ -149,17 +170,22 @@ describe("R-2226: preview = quote", () => {
   });
 });
 
-describe("R-2226 wiring: every caller prices with the parts", () => {
+describe("R-2226 wiring: every caller takes the parts from seatChargePlan", () => {
   const src = (p: string) => readFileSync(join(__dirname, "..", "..", p), "utf8");
-  it("server path (applySeatIncrease) sends the parts in the charge window", () => {
-    expect(src("lib/subscriptions/apply-seat-increase.ts")).toMatch(/seatChargeParts\(/);
+  it("server path (applySeatIncrease) sends both lines' parts from the plan", () => {
+    const s = src("lib/subscriptions/apply-seat-increase.ts");
+    expect(s).toContain("parts: window.parts ?? null");
+    expect(s).toContain("parts: plan.previous.parts ?? null");
   });
-  it("Add seats dialog previews with the parts and shows the formula line", () => {
+  it("Add seats dialog previews with the plan's parts and shows the formula line", () => {
     const s = src("components/features/subscriptions/add-seats-dialog.tsx");
-    expect(s).toMatch(/seatChargeParts\(/);
-    expect(s).toMatch(/partFormula\(/);
+    expect(s).toContain("window?.parts ?? null");
+    expect(s).toContain("prevPart?.parts ?? null");
+    expect(s).toContain("partFormula(");
   });
-  it("seat-request approval card previews with the parts", () => {
-    expect(src("components/features/subscriptions/seat-requests-card.tsx")).toMatch(/seatChargeParts\(/);
+  it("seat-request approval card previews with the plan's parts", () => {
+    const s = src("components/features/subscriptions/seat-requests-card.tsx");
+    expect(s).toContain("seatChargePlan(");
+    expect(s).toContain("parts: window.parts ?? null");
   });
 });

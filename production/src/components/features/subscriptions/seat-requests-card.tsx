@@ -28,7 +28,7 @@ import { cn, rupee, formatDate } from "@/lib/utils";
 import type { SeatRequest, Subscription } from "@/lib/supabase/database.types";
 import { assessRequest, previewCharge, requestBadge } from "@/lib/subscriptions/seat-request";
 import { localDateISO } from "@/lib/leads/outcomes";
-import { seatChargeWindow, seatChargeParts, seatTermEnd } from "@/lib/subscriptions/seat-charge-window";
+import { seatChargePlan, seatTermEnd } from "@/lib/subscriptions/seat-charge-window";
 import { istToday } from "@/lib/dates/ist";
 import { useCustomer } from "@/lib/queries/customers";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -44,7 +44,8 @@ function SeatChargePreview({ sub, seatsToAdd }: { sub: Subscription; seatsToAdd:
   const { data: me } = useCurrentUser();
   /* R-527: the same window the server charges — the current instalment on a split-billed
      subscription, else the rest of the term. Approval charges from today. */
-  const window = sub.renewal_date ? seatChargeWindow(sub, istToday()) : null;
+  /* R-2226: from the plan, so the parts (part rate on a split-billed row) come with it. */
+  const window = sub.renewal_date ? (seatChargePlan(sub, istToday())?.current ?? null) : null;
   if (!window) return null;
   const pos = quotePlaceOfSupply({
     customer: customer ?? null,
@@ -58,7 +59,7 @@ function SeatChargePreview({ sub, seatsToAdd }: { sub: Subscription; seatsToAdd:
     termDays: window.termDays,
     taxRatePct: pos.isExport ? 0 : 18,
     /* R-2226: split-billed → the part's own rate, as the server charges. */
-    parts: window.instalmentPeriod ? seatChargeParts(sub, istToday()) : null,
+    parts: window.parts ?? null,
   });
   if (!preview) return null;
   return (
