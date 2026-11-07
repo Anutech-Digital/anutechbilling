@@ -17,6 +17,14 @@ import { useEffect, useState } from "react";
 /** The site's phone/tablet breakpoint — the same 980px the R-230 rules use. */
 export const FLOATING_MOBILE_QUERY = "(max-width: 979px)";
 
+/**
+ * R-1495 2nd galat (Pawan, 24 Oct): below 1400px the page's content column reaches under the
+ * bottom-right launcher (measured at 1000px: it sat over the plan cards' "Get a GST quote" and
+ * the FAQ rows). From 1400px the side margin keeps it clear of the 1180px content. So below
+ * this width the launcher steps aside while a `data-avoid-floating` block is on screen.
+ */
+export const FLOATING_STEP_ASIDE_QUERY = "(max-width: 1399px)";
+
 /** Mark a page section with this attribute and, on a phone, no floating button covers it. */
 export const AVOID_FLOATING_ATTR = "data-avoid-floating";
 
@@ -27,8 +35,8 @@ export function hideFloatingOn(pathname: string | null | undefined): boolean {
 
 export type FloatingInput = {
   pathname: string | null | undefined;
-  /** Viewport is below 980px. */
-  isMobile: boolean;
+  /** Viewport is below 1400px — the launcher can sit over the page's content there. */
+  narrow: boolean;
   /** An element marked `data-avoid-floating` is (even partly) on screen. */
   avoidOnScreen: boolean;
   /** The launcher's menu or the AI chat panel is open — the launcher then stays, so the
@@ -39,23 +47,32 @@ export type FloatingInput = {
 /** Pure rule: does the ONE floating launcher (AI chat + WhatsApp menu) show? */
 export function floatingLauncher(i: FloatingInput): boolean {
   if (hideFloatingOn(i.pathname)) return false;
-  // On a phone it steps aside while the form / plan cards are on screen (R-464, R-1495).
-  if (i.isMobile) return !i.avoidOnScreen || Boolean(i.chatOpen);
+  // Below 1400px it steps aside while the form / plan cards / FAQ are on screen (R-464, R-1495).
+  if (i.narrow) return !i.avoidOnScreen || Boolean(i.chatOpen);
   return true;
 }
 
 /** True below 980px. False on the server and before mount (desktop = the old behaviour). */
 export function useIsMobile(): boolean {
-  const [mobile, setMobile] = useState(false);
+  return useMedia(FLOATING_MOBILE_QUERY);
+}
+
+/** True below 1400px, where the launcher steps aside for `data-avoid-floating` blocks. */
+export function useLauncherStepsAside(): boolean {
+  return useMedia(FLOATING_STEP_ASIDE_QUERY);
+}
+
+function useMedia(query: string): boolean {
+  const [hit, setHit] = useState(false);
   useEffect(() => {
     if (typeof window === "undefined" || typeof window.matchMedia !== "function") return;
-    const mq = window.matchMedia(FLOATING_MOBILE_QUERY);
-    const sync = () => setMobile(mq.matches);
+    const mq = window.matchMedia(query);
+    const sync = () => setHit(mq.matches);
     sync();
     mq.addEventListener?.("change", sync);
     return () => mq.removeEventListener?.("change", sync);
-  }, []);
-  return mobile;
+  }, [query]);
+  return hit;
 }
 
 /**

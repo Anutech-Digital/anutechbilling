@@ -15,36 +15,63 @@ const root = path.resolve(__dirname, "../../../..");
 const css = readFileSync(path.join(root, "src/site/site.css"), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
 const header = readFileSync(path.join(root, "src/site/components/chrome/Header.tsx"), "utf8");
 
-/** The body of the `@media (min-width: 980px) and (max-width: <maxPx>px)` block. */
-function block(maxPx: number): string {
-  const at = css.search(new RegExp(`@media\\s*\\(min-width:\\s*980px\\)\\s*and\\s*\\(max-width:\\s*${maxPx}px\\)\\s*\\{`));
-  expect(at, `980–${maxPx}px block in site.css`).toBeGreaterThanOrEqual(0);
-  let i = css.indexOf("{", at) + 1;
-  let depth = 1;
-  const start = i;
-  while (depth > 0 && i < css.length) { if (css[i] === "{") depth++; else if (css[i] === "}") depth--; i++; }
-  return css.slice(start, i - 1);
+/** Every @media block whose condition text is exactly `cond` (e.g. "(min-width: 980px) and (max-width: 1199px)"), joined. */
+function block(cond: string): string {
+  const esc = cond.replace(/[()]/g, "\\$&").replace(/\s+/g, "\\s*");
+  const re = new RegExp(`@media\\s*${esc}\\s*\\{`, "g");
+  const bodies: string[] = [];
+  for (let m = re.exec(css); m; m = re.exec(css)) {
+    let i = m.index + m[0].length;
+    let depth = 1;
+    const start = i;
+    while (depth > 0 && i < css.length) { if (css[i] === "{") depth++; else if (css[i] === "}") depth--; i++; }
+    bodies.push(css.slice(start, i - 1));
+  }
+  expect(bodies.length, `@media ${cond} block in site.css`).toBeGreaterThan(0);
+  return bodies.join("\n");
 }
 
 const px = (v: string | undefined): number => Number(/(\d+(?:\.\d+)?)px/.exec(v ?? "")?.[1] ?? NaN);
 const prop = (rule: string, name: string) => new RegExp(`${name}:\\s*([^;!]+)`).exec(rule)?.[1];
+
+const ruleOf = (body: string, sel: string) =>
+  new RegExp(`\\.anutech-site \\.${sel}\\s*\\{([^}]*)\\}`).exec(body)?.[1] ?? "";
+
+const NARROW = "(min-width: 980px) and (max-width: 1199px)";
+const MID = "(min-width: 1200px) and (max-width: 1399px)";
+const WIDE = "(min-width: 1400px)";
 
 describe("site header fits from 980px up (R-1495)", () => {
   it("the header row carries the hdr-row class the rules target", () => {
     expect(header).toMatch(/className="wrap hdr-row"/);
   });
 
-  it("from 980 up to 1299px the row's gaps and side padding shrink", () => {
-    const rule = /\.anutech-site \.hdr-row\s*\{([^}]*)\}/.exec(block(1299))?.[1] ?? "";
-    expect(rule, ".hdr-row rule inside the 980–1299px block").not.toBe("");
-    expect(px(prop(rule, "gap"))).toBeLessThanOrEqual(12);
-    expect(px(prop(rule, "padding-left"))).toBeLessThanOrEqual(24);
-    expect(px(prop(rule, "padding-right"))).toBeLessThanOrEqual(24);
+  it("980–1199px: tight row (gap ≤ 8, side padding ≤ 16) and menu items at 4px / 13px", () => {
+    const row = ruleOf(block(NARROW), "hdr-row");
+    expect(px(prop(row, "gap"))).toBeLessThanOrEqual(8);
+    expect(px(prop(row, "padding-left"))).toBeLessThanOrEqual(16);
+    expect(px(prop(row, "padding-right"))).toBeLessThanOrEqual(16);
+    const item = ruleOf(block(NARROW), "nav-item");
+    expect(px(prop(item, "padding-left"))).toBeLessThanOrEqual(4);
+    expect(px(prop(item, "font-size"))).toBeLessThanOrEqual(13);
+    expect(block(NARROW)).toMatch(/\.nav-why\s*\{\s*display:\s*none/);
   });
 
-  it("below 1200px the menu items tighten to 4px side padding and 13px text", () => {
-    const rule = /\.anutech-site \.nav-item\s*\{([^}]*)\}/.exec(block(1199))?.[1] ?? "";
-    expect(px(prop(rule, "padding-left"))).toBeLessThanOrEqual(4);
-    expect(px(prop(rule, "font-size"))).toBeLessThanOrEqual(13);
+  // 2nd galat (Pawan, 24 Oct): 1000–1280px still cut "Customer login" — the old rule left 0–6px.
+  it("1200–1399px: row gap ≤ 12, padding ≤ 24, items 8px, and Why us hidden (it is in a menu too)", () => {
+    const row = ruleOf(block(MID), "hdr-row");
+    expect(px(prop(row, "gap"))).toBeLessThanOrEqual(12);
+    expect(px(prop(row, "padding-left"))).toBeLessThanOrEqual(24);
+    expect(px(prop(ruleOf(block(MID), "nav-item"), "padding-left"))).toBeLessThanOrEqual(8);
+    expect(block(MID)).toMatch(/\.nav-why\s*\{\s*display:\s*none/);
+  });
+
+  it("1400px up: the header row may use 1300px so all seven items fit with room", () => {
+    expect(px(prop(ruleOf(block(WIDE), "hdr-row"), "max-width"))).toBeGreaterThanOrEqual(1300);
+    expect(px(prop(ruleOf(block(WIDE), "nav-item"), "padding-left"))).toBeLessThanOrEqual(8);
+  });
+
+  it("Cart and Customer login never shrink (they stay whole; the menus give way first)", () => {
+    expect((header.match(/flexShrink: 0/g) ?? []).length).toBeGreaterThanOrEqual(3);
   });
 });

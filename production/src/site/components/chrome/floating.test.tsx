@@ -17,7 +17,7 @@ import { AgentChat } from "@/site/components/agent/AgentChat";
 const LAUNCHER = /^Talk to us/;
 
 describe("floatingLauncher (pure rule)", () => {
-  const base = { pathname: "/", isMobile: false, avoidOnScreen: false };
+  const base = { pathname: "/", narrow: false, avoidOnScreen: false };
 
   it("desktop always shows the one launcher, form or not", () => {
     expect(floatingLauncher(base)).toBe(true);
@@ -25,21 +25,21 @@ describe("floatingLauncher (pure rule)", () => {
   });
 
   it("a phone shows it too", () => {
-    expect(floatingLauncher({ ...base, isMobile: true })).toBe(true);
+    expect(floatingLauncher({ ...base, narrow: true })).toBe(true);
   });
 
   it("on a phone the launcher steps aside while the form is on screen", () => {
-    expect(floatingLauncher({ ...base, isMobile: true, avoidOnScreen: true })).toBe(false);
+    expect(floatingLauncher({ ...base, narrow: true, avoidOnScreen: true })).toBe(false);
   });
 
   it("…but not while its menu or chat panel is open (the visitor must be able to close it)", () => {
-    expect(floatingLauncher({ ...base, isMobile: true, avoidOnScreen: true, chatOpen: true })).toBe(true);
+    expect(floatingLauncher({ ...base, narrow: true, avoidOnScreen: true, chatOpen: true })).toBe(true);
   });
 
   it("nothing floats on /checkout and /done, any width", () => {
-    for (const isMobile of [true, false]) {
-      expect(floatingLauncher({ ...base, isMobile, pathname: "/checkout" })).toBe(false);
-      expect(floatingLauncher({ ...base, isMobile, pathname: "/done" })).toBe(false);
+    for (const narrow of [true, false]) {
+      expect(floatingLauncher({ ...base, narrow, pathname: "/checkout" })).toBe(false);
+      expect(floatingLauncher({ ...base, narrow, pathname: "/done" })).toBe(false);
     }
   });
 });
@@ -51,7 +51,7 @@ let observed: Element[] = [];
 
 function setViewport(mobile: boolean) {
   window.matchMedia = ((q: string) => ({
-    matches: mobile && q.includes("max-width: 979px"),
+    matches: mobile && (q.includes("max-width: 979px") || q.includes("max-width: 1399px")),
     media: q,
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -144,5 +144,36 @@ describe("launcher steps aside for blocks that render after it (R-1495)", () => 
 
     formScrolls(true);
     expect(screen.queryByRole("button", { name: LAUNCHER })).toBeNull();
+  });
+});
+
+/* R-1495 2nd galat (Pawan, 24 Oct): at 1000–1280px (a laptop, not a phone) the "Talk to us"
+   pill sat over the plan cards' "Get a GST quote" and the FAQ "+" rows. Below 1400px the
+   content column reaches under it, so there it steps aside too; from 1400px it stays. */
+describe("launcher steps aside below 1400px, not only on a phone (R-1495)", () => {
+  function at(width: number) {
+    window.matchMedia = ((q: string) => {
+      const max = /max-width:\s*(\d+)px/.exec(q);
+      return { matches: max ? width <= Number(max[1]) : false, media: q, addEventListener: () => {}, removeEventListener: () => {} };
+    }) as unknown as typeof window.matchMedia;
+  }
+
+  it("1000px and 1280px: hides while the plan cards / FAQ are on screen, back when they leave", () => {
+    for (const w of [1000, 1280]) {
+      at(w);
+      const { unmount } = render(<Page />);
+      formScrolls(true);
+      expect(screen.queryByRole("button", { name: LAUNCHER }), `${w}px`).toBeNull();
+      formScrolls(false);
+      expect(screen.getByRole("button", { name: LAUNCHER })).toBeTruthy();
+      unmount();
+    }
+  });
+
+  it("1400px: the side margin holds it clear of the content, so it stays", () => {
+    at(1400);
+    render(<Page />);
+    formScrolls(true);
+    expect(screen.getAllByRole("button", { name: LAUNCHER })).toHaveLength(1);
   });
 });

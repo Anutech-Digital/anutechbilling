@@ -211,7 +211,21 @@
    the 1180px .wrap leaves inside its 48px padding, so below ~1300px "Customer login" ran past the
    screen edge and the page scrolled sideways (measured: +46px at 1000 and 1200, +6px at 1280).
    Up to 1299px the row's gaps and side padding shrink. Measured after: no sideways scroll at
-   980 / 1000 / 1100 / 1199 / 1200 / 1280 / 1440. */
-@media (min-width: 980px) and (max-width: 1299px) {
+   980 / 1000 / 1100 / 1199 / 1200 / 1280 / 1440.
+   R-1495 2nd galat (Pawan, 24 Oct: "1000–1280px par 'Customer login' kat raha hai"): that fix
+   left 0–6px of room, so a slightly wider font render still pushed the button out, and from
+   1300px the row ran 48px past its own box. Now every width keeps real room (measured, local
+   fonts): 980–1199 ~34px, 1200–1399 ~90px, 1400+ ~50px. "Why us" (also in the Custom software
+   menu) shows only from 1400px, where the header row may use 1300px. */
+@media (min-width: 980px) and (max-width: 1199px) {
+  .anutech-site .hdr-row { gap: 8px !important; padding-left: 16px; padding-right: 16px; }
+}
+@media (min-width: 1200px) and (max-width: 1399px) {
   .anutech-site .hdr-row { gap: 12px !important; padding-left: 24px; padding-right: 24px; }
+  .anutech-site .nav-item { padding-left: 8px !important; padding-right: 8px !important; }
+  .anutech-site .nav-why { display: none !important; }
+}
+@media (min-width: 1400px) {
+  .anutech-site .hdr-row { max-width: 1300px; }
+  .anutech-site .nav-item { padding-left: 8px !important; padding-right: 8px !important; }
 }
