@@ -71,7 +71,7 @@ import { Icon } from "@/components/ui/icon";
 import { createClient } from "@/lib/supabase/client";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { rupee, formatDate } from "@/lib/utils";
-import { fiscalYearFromDate, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
+import { fiscalYearFromDate, TDS_REVERSED_STATUS, TDS_SECTIONS } from "@/lib/queries/tds-receivable";
 import { checkTdsRate, tdsDefaultRatePct } from "@/lib/accounting/tds-rates";
 import { paymentOutcome, tdsBase, tdsDefaultForPart, tdsPartGross } from "@/lib/accounting/tds-receipt";
 import { matchTdsShortfall, tdsShortfallLine, type TdsShortfallMatch } from "@/lib/accounting/tds-match";
@@ -537,7 +537,7 @@ export function RecordPaymentDialog({
       let rows: { tds_amount: number | null }[] | null = null;
       if (instalmentInvoiceId) {
         const { data, error } = await supabase.from("tds_receivable").select("tds_amount")
-          .eq("invoice_id", instalmentInvoiceId).neq("status", "reversed");
+          .eq("invoice_id", instalmentInvoiceId).filter("status", "neq", TDS_REVERSED_STATUS);
         rows = error ? null : data ?? [];
       } else {
         const { data: pays, error: pErr } = await supabase.from("payments").select("id").eq("quote_id", quoteId);
@@ -546,7 +546,7 @@ export function RecordPaymentDialog({
         else if (ids.length === 0) rows = [];
         else {
           const { data, error } = await supabase.from("tds_receivable").select("tds_amount")
-            .in("payment_id", ids).neq("status", "reversed");
+            .in("payment_id", ids).filter("status", "neq", TDS_REVERSED_STATUS);
           rows = error ? null : data ?? [];
         }
       }

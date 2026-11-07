@@ -47,6 +47,8 @@ describe("R-2556 desk Record payment sheet — default TDS from the part, not th
     expect(src).toMatch(/tdsOnly\s*\?\s*\{ partTaxable: quotePreGST, tds: computeTds\(expectedAmount, tdsRatePct, quoteTaxRate\)\.tds \}/);
   });
   it("reads the TDS already booked on this document, leaving reversed rows out", () => {
-    expect(src).toMatch(/\.from\("tds_receivable"\)[\s\S]{0,200}\.neq\("status", "reversed"\)|\.from\("tds_receivable"\)[\s\S]{0,200}\.filter\("status", "neq", "reversed"\)/);
+    const reads = src.match(/\.from\("tds_receivable"\)[^;]*;/g) ?? [];
+    expect(reads.length).toBe(2);
+    for (const r of reads) expect(r).toContain('.filter("status", "neq", TDS_REVERSED_STATUS)');
   });
 });
