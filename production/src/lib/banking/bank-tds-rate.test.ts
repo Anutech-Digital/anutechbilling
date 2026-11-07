@@ -2,7 +2,8 @@
    The owner's case (R-2538 card test, 7 Nov): 50 × ₹3,150 M365 Basic, annual, billed half-yearly
    → part 1 taxable ₹78,750, whole year ₹1,57,500. */
 import { describe, expect, it } from "vitest";
-import { bankTdsDefault, bankTdsGrossPreview, bankTdsProblem, parseTdsRate, shortChoiceDefault } from "./bank-tds-rate";
+import { bankTdsDefault, bankTdsProblem, parseTdsRate, shortChoiceDefault } from "./bank-tds-rate";
+import { tdsPartGross } from "@/lib/accounting/tds-receipt";
 
 const PART = 78750;
 const WHOLE = 157500;
@@ -71,12 +72,16 @@ describe("R-2558 rate box", () => {
   });
 });
 
-describe("R-2558 gross preview = the server's R-2538 rule", () => {
+describe("R-2558 the gross shown = the server's R-2538 rule (tdsPartGross)", () => {
   it("rate fits the part → the part's taxable; else TDS × 100 ÷ rate, capped at the whole", () => {
-    expect(bankTdsGrossPreview(1575, 2, PART, WHOLE)).toBe(78750);
-    expect(bankTdsGrossPreview(3150, 2, PART, WHOLE)).toBe(157500);
-    expect(bankTdsGrossPreview(3150, 1, PART, WHOLE)).toBe(157500);
-    expect(bankTdsGrossPreview(3150, null, PART, WHOLE)).toBeNull();
+    const g = (tds: number, ratePct: number) => tdsPartGross({ paid: 92925, taxable: WHOLE, total: 185850, tds, ratePct });
+    expect(g(1575, 2)).toBe(78750);
+    expect(g(3150, 2)).toBe(157500);
+    expect(g(3150, 1)).toBe(157500);
+  });
+  it("a gap ₹2 off a rate is NOT called that rate (the server allows ±₹1)", () => {
+    expect(bankTdsDefault({ shortBy: 1577, partTaxable: PART, wholeTaxable: WHOLE }).ratePct).toBeNull();
+    expect(bankTdsDefault({ shortBy: 1576, partTaxable: PART, wholeTaxable: WHOLE }).ratePct).toBe(2);
   });
 });
 

@@ -50,7 +50,8 @@ import {
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
 import { TDS_SECTION_CHOICES } from "@/lib/banking/tds-section";
-import { bankTdsDefault, bankTdsGrossPreview, bankTdsProblem, parseTdsRate, sectionForRate, shortChoiceDefault } from "@/lib/banking/bank-tds-rate";
+import { bankTdsDefault, bankTdsProblem, customerTdsSection, parseTdsRate, sectionForRate, shortChoiceDefault } from "@/lib/banking/bank-tds-rate";
+import { tdsPartGross } from "@/lib/accounting/tds-receipt";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRelation } from "@/lib/banking/customer-payer";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
@@ -314,7 +315,7 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const cardSaysTds = Boolean(suggested?.tds && suggested.itemKey === pickKey);
   const shortBy = check?.kind === "short" ? check.shortBy : 0;
   const shortDefault = shortChoiceDefault(shortBy, due ?? 0, tdsLikely || cardSaysTds);
-  React.useEffect(() => { setShortChoice(shortDefault); }, [shortDefault, pickKey, mode, shortBy]);
+  React.useEffect(() => { setShortChoice(shortDefault); }, [shortDefault, pickKey, mode]);
 
   /* ── 4. Save ─────────────────────────────────────────────────────────────────── */
   const payItem = usePayItemFromBankCredit();
@@ -334,13 +335,25 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
      the rate's usual one, else none — the owner picks). Reset per item / customer / amount. */
   const [tdsRateText, setTdsRateText] = React.useState<string | null>(null);
   const [tdsSectionPick, setTdsSectionPick] = React.useState<string | null>(null);
-  React.useEffect(() => { setTdsSectionPick(null); setTdsRateText(null); }, [pickKey, mode, customerId, shortBy]);
+  React.useEffect(() => { setTdsSectionPick(null); setTdsRateText(null); }, [pickKey, mode, customerId]);
   const tdsRateShown = tdsRateText ?? (tdsDef?.ratePct != null ? String(tdsDef.ratePct) : "");
   const tdsRateTyped = parseTdsRate(tdsRateShown);
+  /* A typed rate: the customer's saved section only when it goes with that rate (or no rate is saved);
+     else the typed rate's usual section — never 194C @ 10%. */
+  const savedRate = parseTdsRate(customer?.tds_default_rate_pct == null ? "" : String(customer.tds_default_rate_pct));
   const tdsSection = tdsSectionPick
-    ?? (tdsRateText === null ? tdsDef?.section ?? null : (customer?.tds_default_section ?? "").trim().toUpperCase() || null)
-    ?? sectionForRate(tdsRateTyped, customer?.gstin ?? null)?.section
+    ?? (tdsRateText === null
+      ? tdsDef?.section ?? null
+      : (savedRate === null || savedRate === tdsRateTyped ? customerTdsSection(customer) : null)
+        ?? sectionForRate(tdsRateTyped, customer?.gstin ?? null)?.section)
     ?? null;
+  /* The gross the server will store for this rate (R-2538's rule, tdsPartGross = the SQL helper) —
+     shown on a new sale, where the sheet knows the whole sale's taxable and total. */
+  const tdsGrossShown = mode === "sale" && shortBy > 0 && tdsRateTyped !== null && due !== null
+    ? tdsPartGross({ paid: due, taxable: preview.taxable, total: preview.total, tds: shortBy, ratePct: tdsRateTyped })
+    : null;
+  /* The default's "why" only while the box still holds the default. */
+  const tdsReasonShown = tdsRateText === null || parseTdsRate(tdsRateText) === tdsDef?.ratePct ? tdsDef?.reason ?? null : null;
   const tdsRate = tdsAmount > 0 ? tdsRateTyped : null;
   const tdsOn = tdsAmount > 0 && !itemFx;
   const tdsProblem = tdsOn ? bankTdsProblem(tdsRateShown, tdsSection) : null;
@@ -690,8 +703,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           {/* 3. Amount check */}
           {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice}
             section={tdsSection} onSection={setTdsSectionPick} rateText={tdsRateShown} onRate={setTdsRateText}
-            rateReason={tdsDef?.reason ?? null} problem={tdsProblem}
-            gross={bankTdsGrossPreview(shortBy, tdsRateTyped, taxable || null, wholeTaxable)} noRoundOff={Boolean(relink)} />}
+            rateReason={tdsReasonShown} problem={tdsProblem}
+            gross={tdsGrossShown} noRoundOff={Boolean(relink)} />}
           {/* R-2466: an export receipt on a foreign invoice / an opening invoice paid over its due. */}
           <ItemPlanNote plan={splitFx ? { fx: null, problem: splitFx } : itemPlan} item={picked} />
           {/* R-1678: what the exchange difference books (one foreign invoice paid in ₹, or several on one credit). */}

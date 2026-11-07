@@ -90,7 +90,8 @@ export function partInvoiceForPayment(
   const paid = payments
     .filter((p) => p.quote_id === quoteId)
     .slice()
-    .sort((a, b) => cmp(a.received_at ?? a.created_at, b.received_at ?? b.created_at) || cmp(a.created_at, b.created_at) || cmp(a.id, b.id));
+    /* by the day received (received_at is a date, created_at a timestamp — compare the day only), then created_at */
+    .sort((a, b) => cmp(day(a.received_at ?? a.created_at), day(b.received_at ?? b.created_at)) || cmp(a.created_at, b.created_at) || cmp(a.id, b.id));
   const at = paid.findIndex((p) => p.id === paymentId);
   if (at < 0) return null;
   const before = paid.slice(0, at).reduce((s, p) => s + Math.max(0, Number(p.amount) || 0), 0);
@@ -102,6 +103,9 @@ export function partInvoiceForPayment(
   return null;
 }
 
+function day(s: string | null | undefined): string {
+  return (s ?? "").slice(0, 10);
+}
 function cmp(a: string | null | undefined, b: string | null | undefined): number {
   return (a ?? "").localeCompare(b ?? "");
 }

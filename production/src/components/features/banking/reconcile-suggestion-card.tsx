@@ -29,7 +29,8 @@ import { useVendorOpenItems, usePayVendorFromBankDebit, useVendorNarrationAliase
 import { useVendors } from "@/lib/queries/vendors";
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import { matchCreditToInvoices, type OpenInvoice } from "@/lib/banking/invoice-credit-match";
-import { amountCheck, guessCustomer, tdsRateToRecord, type CustomerLite } from "@/lib/banking/credit-pay-for";
+import { guessCustomer, type CustomerLite } from "@/lib/banking/credit-pay-for";
+import { sectionForRate } from "@/lib/banking/bank-tds-rate";
 import { guessVendor, type VendorLite } from "@/lib/banking/debit-pay-for";
 import { payerFromNarration, payerMatchesCustomer } from "@/lib/banking/customer-payer";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
@@ -139,9 +140,10 @@ export function useReconcileSuggestion(input: {
       } else if (s.kind === "item") {
         await payItem.mutateAsync({
           transactionId: txn.id, quoteId: s.item.quote_id, invoiceId: s.item.invoice_id,
-          /* the rate CreditPayForSection stores: the one that explains the gap, else gap ÷ taxable */
+          /* R-2558: the common rate the gap fits (inferTds) and that rate's usual section — never gap ÷ taxable. */
           tdsAmount: s.tds?.amount ?? 0,
-          tdsRatePct: s.tds ? tdsRateToRecord(amountCheck(credit, s.item.amount_due, s.item.taxable_value), s.item.taxable_value) : null,
+          tdsRatePct: s.tds ? s.tds.ratePct : null,
+          tdsSection: s.tds ? sectionForRate(s.tds.ratePct, null)?.section ?? s.tds.section : null,
           createSubscription: null, subStart: null, subRenewal: null,
         });
         toast.success(`${s.customerName}: payment recorded & reconciled`);

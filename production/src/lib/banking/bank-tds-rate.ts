@@ -18,7 +18,7 @@
  * lib/banking/tds-section), else none — the operator picks it.
  */
 import { rupee } from "@/lib/utils";
-import { TDS_RATES_PCT, TDS_TOLERANCE } from "@/lib/banking/invoice-credit-match";
+import { TDS_RATES_PCT } from "@/lib/banking/invoice-credit-match";
 import { tdsSectionGuess } from "@/lib/banking/tds-section";
 
 export interface BankTdsCustomer {
@@ -38,9 +38,13 @@ export interface BankTdsDefault {
   reason: string;
 }
 
+/** ±₹1 — the server's own "the rate fits the TDS on the part" test (bank_credit_tds_gross), so the
+ *  reason shown and the gross stored never disagree. */
+const FIT_TOLERANCE = 1;
+
 function fitRate(tds: number, base: number | null | undefined, rates: readonly number[]): number | null {
   if (!base || base <= 0 || !(tds > 0)) return null;
-  for (const r of rates) if (Math.abs(Math.round((base * r) / 100) - tds) <= TDS_TOLERANCE) return r;
+  for (const r of rates) if (Math.abs(Math.round((base * r) / 100) - tds) <= FIT_TOLERANCE) return r;
   return null;
 }
 
@@ -51,7 +55,8 @@ function customerRate(c: BankTdsCustomer | null | undefined): number | null {
   return Number.isFinite(n) && n > 0 && n <= 100 ? n : null;
 }
 
-function customerSection(c: BankTdsCustomer | null | undefined): string | null {
+/** The customer's saved TDS section (R-2370), upper-cased; null when none. */
+export function customerTdsSection(c: BankTdsCustomer | null | undefined): string | null {
   const s = (c?.tds_default_section ?? "").trim().toUpperCase();
   return s || null;
 }
@@ -77,7 +82,7 @@ export function bankTdsDefault(i: {
 }): BankTdsDefault {
   const tds = Math.round(i.shortBy);
   const cRate = customerRate(i.customer);
-  const cSection = customerSection(i.customer);
+  const cSection = customerTdsSection(i.customer);
   const rates: readonly number[] = TDS_RATES_PCT;
   const part = i.partTaxable && i.partTaxable > 0 ? i.partTaxable : null;
   const whole = i.wholeTaxable && i.wholeTaxable > 0 && (part === null || i.wholeTaxable > part) ? i.wholeTaxable : null;
@@ -86,7 +91,8 @@ export function bankTdsDefault(i: {
   type Fit = { rate: number; base: number; on: "part" | "whole" };
   const cOnPart = cRate !== null && fitRate(tds, part, [cRate]) !== null ? cRate : null;
   const cOnWhole = cRate !== null && fitRate(tds, whole, [cRate]) !== null ? cRate : null;
-  const partFit = fitRate(tds, part, rates) ?? i.partRatePct ?? null;
+  /* the due amount's own rate (GST-inclusive guess) only when no taxable is known */
+  const partFit = part !== null ? fitRate(tds, part, rates) : (i.partRatePct ?? null);
   const wholeFit = fitRate(tds, whole, rates);
   const pick: Fit | null =
     cOnPart !== null ? { rate: cOnPart, base: part ?? 0, on: "part" }
@@ -141,16 +147,6 @@ export function bankTdsProblem(rateText: string | null | undefined, section: str
   return null;
 }
 
-/** The gross the server will store (R-2538's bank_credit_tds_gross), for the line under the boxes:
- *  the part's taxable when the rate fits the TDS on it (±₹1), else TDS × 100 ÷ rate, capped at the whole. */
-export function bankTdsGrossPreview(tds: number, ratePct: number | null, partTaxable: number | null, wholeTaxable: number | null): number | null {
-  if (!(tds > 0) || ratePct === null || ratePct <= 0) return null;
-  const part = partTaxable && partTaxable > 0 ? partTaxable : null;
-  if (part !== null && Math.abs(Math.round((part * ratePct) / 100) - tds) <= 1) return part;
-  const g = Math.round((tds * 100) / ratePct);
-  const cap = wholeTaxable && wholeTaxable > 0 ? wholeTaxable : part;
-  return cap !== null ? Math.min(cap, g) : g;
-}
 
 /** The highest TDS rate a customer may deduct (no PAN → 20%, s.206AA). A bigger gap is never TDS. */
 export const MAX_TDS_RATE_PCT = 20;
