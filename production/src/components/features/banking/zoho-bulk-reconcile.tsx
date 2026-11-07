@@ -27,10 +27,8 @@ import { createClient } from "@/lib/supabase/client";
 import { useCustomers, useCreateCustomer } from "@/lib/queries/customers";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useItems } from "@/lib/queries/items";
-import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
+import { usePayerMemory } from "@/lib/queries/customer-payers";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
-import type { PayForResult } from "@/lib/banking/credit-pay-for";
-import { useNewSaleFromBankCredit, usePayItemFromBankCredit, useSplitFromBankCredit } from "@/lib/queries/bank-credit-pay-for";
 import { istToday } from "@/lib/dates/ist";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
@@ -38,12 +36,14 @@ import { useTenantLuts } from "@/lib/queries/tenant-luts";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
 import {
-  BULK_PAGE, type BulkMatchRow, type PlanContext, type PlanRow,
+  BULK_PAGE, newCustomerKey, rowsToBook, type BulkMatchRow, type PlanContext, type PlanRow,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
+import { bookOnServer, isCleanPair, previewCounts, type RefusedRow } from "@/lib/integrations/zoho-books/bulk-book-run";
 import { planAllWithZohoSales } from "@/lib/integrations/zoho-books/bulk-zoho-sales";
 import { expectedPageCost, paceWaitMs, ZOHO_BUSY_WAIT_MS, type PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
-import { bookRows, ensureOpeningInvoices, newSaleFxArgs, payOpeningInvoice, type BookDeps, type OpeningInvoiceRow, type BookedRow, type BookRun, type NewCustomerPayload, type SubForFix } from "./zoho-bulk-book";
+import { newCustomerPayload, type BookedRow, type BookRun } from "./zoho-bulk-book";
 import { ZohoBulkTable } from "./zoho-bulk-table";
+import { ZohoBulkRunBar, ZohoRefusedList, type BookMode } from "./zoho-bulk-run-bar";
 
 export const ZOHO_BULK_URL = "/api/integrations/zoho-books/bulk-match";
 
@@ -97,10 +97,6 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const lutRows = luts.data;
   const lutError = luts.isError;
   const createCustomer = useCreateCustomer();
-  const setLinePayer = useSetBankLinePayer();
-  const newSale = useNewSaleFromBankCredit();
-  const payItem = usePayItemFromBankCredit();
-  const paySplit = useSplitFromBankCredit();
   const qc = useQueryClient();
 
   const [ids, setIds] = React.useState<string[] | null>(null);
@@ -113,6 +109,12 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const [failure, setFailure] = React.useState<Failure | null>(null);
   const [lastRun, setLastRun] = React.useState<BookRun | null>(null);
   const [bookProgress, setBookProgress] = React.useState<{ at: number; of: number } | null>(null);
+  /* R-2535: the server run — its id, the lines it booked (still booked), the lines it refused. */
+  const [runId, setRunId] = React.useState<string | null>(null);
+  const [runLines, setRunLines] = React.useState<Set<string>>(new Set());
+  const [refused, setRefused] = React.useState<RefusedRow[]>([]);
+  const [undoing, setUndoing] = React.useState(false);
+  const [undoNote, setUndoNote] = React.useState<string | null>(null);
   const stopRef = React.useRef(false);
   const history = React.useRef<PaceEntry[]>([]);
 
@@ -212,88 +214,74 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
     setPhase("idle");
   };
 
-  /* ── 2. Book the ticked rows ───────────────────────────────────────────────────────── */
-  const deps: BookDeps = React.useMemo(() => ({
-    isReconciled: async (txnId) => {
-      const { data, error } = await createClient().from("bank_transactions").select("matched_to_type").eq("id", txnId).maybeSingle();
-      if (error) throw new Error(`Could not check the bank line before booking: ${error.message}`);
-      if (!data) throw new Error("This bank line is no longer in the account (a statement re-import may have replaced it). Reload the page.");
-      return (data as { matched_to_type: string | null }).matched_to_type !== null;
-    },
-    createCustomer: async (p: NewCustomerPayload) => {
-      const created = await createCustomer.mutateAsync(p as Parameters<typeof createCustomer.mutateAsync>[0]);
-      if (!created?.id) throw new Error(`${p.name} was not created — the database gave no id. Nothing was booked for this line.`);
-      return created.id;
-    },
-    setPayer: (a) => setLinePayer.mutateAsync(a),
-    newSale: (i) => newSale.mutateAsync(i),
-    payItem: (i) => payItem.mutateAsync(i),
-    /* R-2425: an export receipt — one atomic call books the sale and stamps its currency + rate. */
-    newSaleFx: async (i, fx) => {
-      const { data, error } = await (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> })
-        .rpc("reconcile_bank_credit_new_sale_fx", newSaleFxArgs(i, fx));
-      if (error) throw error;   // the PostgREST error itself — describeError maps its code
-      if (!data) throw new Error("The sale was not confirmed — refresh the page to see whether it was saved.");
-      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
-      qc.invalidateQueries({ queryKey: ["bank_credit_open_items"] });
-      invalidateReceivables(qc);
-      return data as PayForResult;
-    },
-    /* R-2427: an export receipt paying an invoice in its currency — receipt + Bank Charges / forex lines in one call. */
-    payFxInvoice: async (args) => {
-      const { data, error } = await (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> })
-        .rpc("reconcile_bank_credit_fx_invoice", args);
-      if (error) throw error;
-      if (!data) throw new Error("The payment was not confirmed — refresh the page to see whether it was saved.");
-      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
-      qc.invalidateQueries({ queryKey: ["bank_credit_open_items"] });
-      qc.invalidateQueries({ queryKey: ["expenses"] });
-      invalidateReceivables(qc);
-      return data as PayForResult;
-    },
-    payOpening: (i) => payOpeningInvoice(i, accountId, (fn, args) => (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> }).rpc(fn, args)),
-    saleSubscriptions: async (quoteId) => {
-      const { data, error } = await createClient().from("subscriptions")
-        .select("id, plan, seats, domain, start_date, renewal_date").eq("quote_id", quoteId);
-      if (error) throw new Error(error.message);
-      return (data ?? []) as SubForFix[];
-    },
-    setSubDates: async (subId, start, renewal) => {
-      const { error } = await createClient().from("subscriptions").update({ start_date: start, renewal_date: renewal }).eq("id", subId);
-      if (error) throw new Error(error.message);
-    },
-    /* R-2474: last year's invoice made as an opening invoice from Zoho (import_opening_invoices; the
-       Zoho number is the key, so a re-run uses the same invoice), then paid through R-2466's path. */
-    ensureOpenings: async (customerId, creates) => {
-      const sb = createClient();
-      const ids = await ensureOpeningInvoices(customerId, creates,
-        (fn, args) => (sb as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> }).rpc(fn, args),
-        async (numbers) => {
-          /* Case-insensitive, as the import's own skip (upper(external_number)); exact match is checked after. */
-          const { data, error } = await sb.from("invoices").select("id, external_number, customer_id, document_kind")
-            /* a quote / backslash becomes the one-character wildcard — wider, never narrower; exact match below */
-            .or(numbers.map((n) => `external_number.ilike."${n.replace(/["\\]/g, "_")}"`).join(","));
-          if (error) throw new Error(`Could not read the opening invoices back: ${error.message}`);
-          return (data ?? []) as OpeningInvoiceRow[];
-        });
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["invoice-import-batches"] });
-      return ids;
-    },
-    paySplit: (i) => paySplit.mutateAsync(i),
-  }), [createCustomer, setLinePayer, newSale, payItem, paySplit, accountId, qc]);
-
-  const book = async () => {
-    setPhase("booking"); setFailure(null); setLastRun(null);
-    const queue = plan.filter((r) => ticked.has(r.txnId) && !booked.has(r.txnId));
+  /* ── 2. Book (R-2535: on the server, in runs — the page refreshes ONCE at the end) ───── */
+  const clean = React.useMemo(() => new Set(plan.filter(isCleanPair).map((r) => r.txnId)), [plan]);
+  const book = async (mode: BookMode) => {
+    setPhase("booking"); setFailure(null); setLastRun(null); setRefused([]); setUndoNote(null);
+    const queue = rowsToBook(plan, mode === "clean" ? clean : ticked, new Set(booked.keys()));
     setBookProgress({ at: 0, of: queue.length });
-    const run = await bookRows(plan, ticked, new Set(booked.keys()), deps, (r, i, total) => {
-      setBooked((b) => new Map(b).set(r.txnId, r));
-      setBookProgress({ at: i + 1, of: total });
-      persist({ booked: [...new Set([...(loadProgress(accountId)?.booked ?? []), r.txnId])] });
-    });
-    setLastRun(run);
+    /* Zoho's customers the app does not have: made first, through the customer form's own path (its
+       contact person) — once per company in this run. The server then books against them. */
+    const made = new Map<string, string>();
+    const createdFor = new Set<string>();
+    const rows: PlanRow[] = [];
+    for (const r of queue) {
+      const c = r.customer;
+      if (!c || c.kind === "existing") { rows.push(r); continue; }
+      const key = newCustomerKey(c);
+      try {
+        let id = made.get(key);
+        if (!id) {
+          const created = await createCustomer.mutateAsync(newCustomerPayload(c) as Parameters<typeof createCustomer.mutateAsync>[0]);
+          if (!created?.id) throw new Error(`${c.name} was not created — the database gave no id. Nothing was booked for this line.`);
+          id = created.id;
+          made.set(key, id);
+          createdFor.add(r.txnId);
+        }
+        rows.push({ ...r, customer: { kind: "existing", id, name: c.name, by: "name" } });
+      } catch (e) {
+        setLastRun({ done: [], error: { txnId: r.txnId, txnDate: r.txnDate, credit: r.credit, reason: e instanceof Error ? e.message : String(e) } });
+        setPhase("idle");
+        return;
+      }
+    }
+    const res = await bookOnServer(accountId, rows, null, fetch, (at, of) => setBookProgress({ at, of }));
+    const done = res.done.map((d) => (createdFor.has(d.txnId) ? { ...d, customerCreated: true } : d));
+    setBooked((b) => { const n = new Map(b); for (const d of done) n.set(d.txnId, d); return n; });
+    persist({ booked: [...new Set([...(loadProgress(accountId)?.booked ?? []), ...done.map((d) => d.txnId)])] });
+    if (res.runId) setRunId(res.runId);
+    setRunLines((s) => new Set([...s, ...done.filter((d) => d.outcome === "booked").map((d) => d.txnId)]));
+    setRefused(res.refused);
+    setLastRun({ done, error: res.error });
+    refreshOnce();
     setPhase("idle");
+  };
+
+  /* One refresh for the whole run (R-2524's reads are cheap; never one per row). */
+  const refreshOnce = () => {
+    qc.invalidateQueries({ queryKey: ["bank_transactions"] });
+    qc.invalidateQueries({ queryKey: ["bank_credit_open_items"] });
+    qc.invalidateQueries({ queryKey: ["invoices"] });
+    qc.invalidateQueries({ queryKey: ["customers"] });
+    invalidateReceivables(qc);
+  };
+
+  /* ── 3. Undo this run (undo_bank_recon_run: each new sale reversed through the sheet's own un-reconcile) ── */
+  const undo = async () => {
+    if (!runId) return;
+    setUndoing(true); setUndoNote(null);
+    const { data, error } = await (createClient() as unknown as { rpc: (f: string, a: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }> })
+      .rpc("undo_bank_recon_run", { p_run_id: runId });
+    setUndoing(false);
+    if (error) { setUndoNote(`Nothing was undone: ${error.message}`); return; }
+    const out = (data ?? {}) as { undone?: number; left?: Array<{ txn_id: string; reason: string }> };
+    const left = new Set((out.left ?? []).map((l) => l.txn_id));
+    const gone = [...runLines].filter((id) => !left.has(id));
+    setBooked((b) => { const n = new Map(b); for (const id of gone) n.delete(id); return n; });
+    persist({ booked: (loadProgress(accountId)?.booked ?? []).filter((id) => !gone.includes(id)) });
+    setRunLines(new Set(left));
+    setUndoNote(`Undone: ${out.undone ?? 0} ${out.undone === 1 ? "line" : "lines"} back to unmatched.${left.size ? ` ${left.size} left as they are — ${(out.left ?? []).map((l) => l.reason).filter((v, i, a) => a.indexOf(v) === i).join(" ")}` : ""}`);
+    refreshOnce();
   };
 
   const exportCsv = () => {
@@ -314,6 +302,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const notInZoho = Math.max(0, matches.length - plan.length);
   const toBook = plan.filter((r) => ticked.has(r.txnId) && !booked.has(r.txnId));
   const bookTotal = toBook.reduce((s, r) => s + r.credit, 0);
+  const preview = previewCounts(plan, new Set(booked.keys()));
   const results = [...booked.values()].filter((b) => b.txnDate);
 
   return (
@@ -383,6 +372,9 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
             />
           )}
 
+          <ZohoRefusedList rows={refused} />
+          {undoNote && <p role="status" className="rounded-md border border-hairline bg-paper-2 px-3 py-2 text-xs text-ink">{undoNote}</p>}
+
           {results.length > 0 && (
             <div className="space-y-1.5">
               <p className="text-sm font-semibold text-ink">Booked in this run</p>
@@ -403,24 +395,19 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
           )}
         </div>
 
-        <div className="flex items-center justify-between gap-3 border-t border-hairline px-5 py-3">
-          <span className="text-xs text-ink-2">
-            {phase === "booking" && bookProgress
-              ? `Booking ${Math.min(bookProgress.at + 1, bookProgress.of)} of ${bookProgress.of}…`
-              : `${toBook.length} ticked · ${rupee(bookTotal)}`}
-          </span>
-          <span className="flex gap-2">
-            {(results.length > 0 || plan.length > 0) && <Button variant="default" icon="download" onClick={exportCsv}>Download CSV</Button>}
-            <Button
-              variant="primary"
-              disabled={toBook.length === 0 || reading || phase === "booking" || ctx === null}
-              loading={phase === "booking"}
-              onClick={() => void book()}
-            >
-              {`Book selected (${toBook.length})`}
-            </Button>
-          </span>
-        </div>
+        <ZohoBulkRunBar
+          preview={preview}
+          selected={{ count: toBook.length, total: bookTotal }}
+          progress={bookProgress}
+          disabled={reading || phase === "booking" || ctx === null}
+          booking={phase === "booking"}
+          onBook={(m) => void book(m)}
+          onDownload={results.length > 0 || plan.length > 0 ? exportCsv : null}
+          runId={runId}
+          bookedInRun={runLines.size}
+          undoing={undoing}
+          onUndo={() => void undo()}
+        />
       </SheetContent>
     </Sheet>
   );
