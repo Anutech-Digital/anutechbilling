@@ -84,9 +84,24 @@ export type FilterContext = {
 /** R-2378: the part of lib/banking/line-booking's LineBooking the filters and the CSV read. */
 export type LineBookingLike = { label: string; party: string | null; group: MatchGroup };
 
-/** R-2378: the booking of a line, only when it is a 'manual' line the server found one for. */
+/**
+ * R-2570: the types whose booking bank_line_bookings() reads (keep in step with its `lines` list in
+ * migration 20261107165630): old 'manual' lines (R-2378) and the types the writers now store
+ * themselves — so a line keeps its party ("Loan received · Bajaj Finance") whichever way it was saved.
+ */
+export const BOOKING_LOOKUP_TYPES: ReadonlySet<string> = new Set([
+  "manual", "bs_item", "employee_loan", "reimbursement", "loan_given", "business_loan",
+  "loan_drawdown", "loan_repayment", "emi", "statutory",
+]);
+
+/** R-2570: does this line's booking come from bank_line_bookings()? */
+export function readsLineBooking(type: string | null): boolean {
+  return type !== null && BOOKING_LOOKUP_TYPES.has(type);
+}
+
+/** R-2378: the booking of a line, only when its type is read that way and the server found one. */
 function bookingOf(t: Pick<FilterLine, "id" | "matched_to_type">, bookings?: ReadonlyMap<string, LineBookingLike>): LineBookingLike | undefined {
-  return t.matched_to_type === "manual" ? bookings?.get(t.id) : undefined;
+  return readsLineBooking(t.matched_to_type) ? bookings?.get(t.id) : undefined;
 }
 
 /** The "Matched to" group of a line: a booked manual line's booking group, else its type's. */
@@ -177,6 +192,8 @@ export function matchGroupOf(type: string | null): MatchGroup | null {
     case "loan_given":                              return "loan";       // R-2346 (R-2340's type)
     case "business_loan":                           return "loan";       // R-2377: Add loan linked an imported credit
     case "loan_drawdown": case "loan_repayment":    return "loan";       // R-2374: credit line drawdown / lender repayment
+    case "employee_loan":                           return "loan";       // R-2570: a staff loan's payout / repayment line
+    case "bs_item": case "reimbursement":           return "other";      // R-2570: balance-sheet entry / money owed back (the booking says more)
   }
   if (/loan|emi/.test(type)) return "loan";
   return "other";
@@ -193,6 +210,9 @@ export function lineStatusLabel(type: string | null): string {
   if (type === "loan_repayment") return "Loan repayment";
   if (type === "other_income") return "Other income";   // R-2378: was the bare "Reconciled"
   if (type === "referral_commission") return "Commission";   // R-2378: was the bare "Reconciled"
+  if (type === "bs_item") return "Balance sheet entry";   // R-2570: book_bank_advance / book_bank_credit (the booking names the kind)
+  if (type === "employee_loan") return "Staff loan";   // R-2570
+  if (type === "reimbursement") return "Reimbursement";   // R-2570: owed back to / paid to an employee
   return g === "other" ? "Reconciled" : MATCH_GROUP_LABEL[g];
 }
 

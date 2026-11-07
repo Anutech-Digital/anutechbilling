@@ -10,6 +10,9 @@
  * the words the line shows — "Loan received · Bajaj Finance" — and the page that holds the booking.
  * A 'manual' line with no booking (a real "Mark reconciled manually", with its reason) is not in the
  * map and keeps reading "Reconciled".
+ * R-2570: those flows now store their own type + id (bs_item, employee_loan, reimbursement, loan_given,
+ * business_loan, loan_repayment, emi, statutory); bank_line_bookings() reads those lines too
+ * (BOOKING_LOOKUP_TYPES in bank-filters), so old and new lines show the same words.
  */
 "use client";
 

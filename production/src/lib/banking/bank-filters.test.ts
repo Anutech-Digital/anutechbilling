@@ -15,6 +15,10 @@ import {
   removeFilter,
   panelFilterCount,
   hasAnyFilter,
+  lineGroupOf,
+  lineStatusText,
+  lineStatusLabel,
+  readsLineBooking,
   type BankFilters,
   type FilterLine,
 } from "./bank-filters";
@@ -304,5 +308,33 @@ describe("R-2360 Money in · Zoho has a match", () => {
     expect(ids(applyBankFilters(L, f({ need: "zoho_match", from: "2026-10-01" }), ctx))).toEqual(["in-oct-open"]);
     expect(facetCounts(L, f({}), ctx).need.zoho_match).toBe(2);
     expect(applyBankFilters(L, f({ need: "zoho_match" }))).toHaveLength(0);
+  });
+});
+
+describe("R-2570 — the types the loan / advance / challan flows now store", () => {
+  const booked = new Map([["b1", { label: "Loan received", party: "Bajaj Finance", group: "loan" as const }]]);
+  it("a bs_item line exports and groups by its booking, same as an old 'manual' one", () => {
+    const now = line({ id: "b1", matched_to_type: "bs_item", credit: 500000 });
+    const old = line({ id: "b1", matched_to_type: "manual", credit: 500000 });
+    for (const t of [now, old]) {
+      expect(bankLinesCsv([t], booked).rows[0][5]).toBe("Loan received · Bajaj Finance");
+      expect(lineGroupOf(t, booked)).toBe("loan");
+    }
+  });
+  it("a booked line of a reused type (loan_given, emi, statutory…) keeps its party", () => {
+    expect(lineStatusText(line({ id: "b1", matched_to_type: "loan_given" }), booked)).toBe("Loan received · Bajaj Finance");
+    expect(readsLineBooking("statutory")).toBe(true);
+    expect(readsLineBooking("payment")).toBe(false);
+    expect(readsLineBooking(null)).toBe(false);
+  });
+  it("with no booking (still loading / RLS) the new types still name themselves — never bare 'Reconciled'", () => {
+    expect(lineStatusLabel("bs_item")).toBe("Balance sheet entry");
+    expect(lineStatusLabel("employee_loan")).toBe("Staff loan");
+    expect(lineStatusLabel("reimbursement")).toBe("Reimbursement");
+    expect(matchGroupOf("employee_loan")).toBe("loan");
+    expect(lineStatusLabel("manual")).toBe("Reconciled");
+  });
+  it("a payment line ignores a stray booking for its id", () => {
+    expect(lineStatusText(line({ id: "b1", matched_to_type: "payment" }), booked)).toBe("Customer payment");
   });
 });

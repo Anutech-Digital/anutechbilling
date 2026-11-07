@@ -73,3 +73,16 @@ describe("cash flow by activity (direct method)", () => {
     expect(f.map((g) => [g.activity, g.net])).toEqual([["operating", 70_000], ["investing", -80_000], ["financing", 500_000], ["unreconciled", -590], ["transfer", -10_000]]);
   });
 });
+
+describe("R-2570 — loan / advance types stay in Financing, as their old 'manual' lines were", () => {
+  it("each type the flows now store sits where its 'manual' line sat", async () => {
+    const { activityOf, lineLabel } = await import("./cash-flow-lines");
+    for (const t of ["bs_item", "employee_loan", "loan_given", "business_loan", "loan_drawdown", "loan_repayment", "emi"]) {
+      expect(activityOf({ matched_to_type: t, category: null })).toBe("financing");
+    }
+    expect(activityOf({ matched_to_type: "statutory", category: null })).toBe("operating");
+    expect(activityOf({ matched_to_type: "reimbursement", category: null })).toBe("operating");
+    expect(lineLabel({ matched_to_type: "bs_item", category: null })).toBe("Capital / loans (balance sheet)");
+    expect(lineLabel({ matched_to_type: "employee_loan", category: null })).toBe("Staff loans");
+  });
+});

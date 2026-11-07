@@ -35,6 +35,12 @@ export function lineLabel(t: Pick<CashFlowTxn, "matched_to_type" | "category">):
     case "transfer":    return "Transfer (own accounts)";
     case "manual":      return "Marked reconciled";
     case "owner_equity": return "Owner drawings / capital";
+    /* R-2570: the types the loan / advance / challan flows now store (were all "manual"). */
+    case "bs_item":       return "Capital / loans (balance sheet)";
+    case "employee_loan": return "Staff loans";
+    case "reimbursement": return "Reimbursements";
+    case "loan_given":    return "Loans given";
+    case "business_loan": case "loan_drawdown": case "loan_repayment": case "emi": return "Loans & EMIs";
     default:            return "Other";
   }
 }
@@ -61,6 +67,11 @@ export function activityOf(t: Pick<CashFlowTxn, "matched_to_type" | "category">)
     case "transfer": return "transfer";
     case "manual":   return "financing";
     case "owner_equity": return "financing";   // R-1839: drawings / capital introduced — the owner, not the business
+    /* R-2570: these were stored as 'manual' (→ financing) until their flows wrote their own type;
+       they stay where they were — capital, director / bank loans, staff and given loans, EMIs. */
+    case "bs_item": case "employee_loan": case "loan_given":
+    case "business_loan": case "loan_drawdown": case "loan_repayment": case "emi":
+      return "financing";
     case "expense":  return t.category === "Equipment" ? "investing" : "operating";
     default:         return "operating";
   }
