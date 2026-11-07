@@ -109,6 +109,20 @@ describe("R-2501 receipts-import route", () => {
     expect(st.rpc[0].args).toMatchObject({ p_dry_run: false, p_picks: [{ zoho_payment_id: "p1" }, { zoho_payment_id: "p2" }] });
   });
 
+  it("R-2547: parts of RECEIPTS_IMPORT_PART (50) — 120 payments are 3 parts; part 1 sends payments 51..100 only", async () => {
+    st.facts = Array.from({ length: 120 }, (_, i) => fact({ zohoId: `p${i + 1}`, number: String(1000 + i) }));
+    st.booked = new Map(st.facts.map((f) => [(f as ZohoReceiptFacts).zohoId, { banked: false }]));
+    const accounts = { za: "11111111-1111-4111-8111-111111111111" };
+    expect(await (await POST(req({ action: "preview", fy: "2025-26", accounts }))).json()).toMatchObject({ ok: true, parts: 3 });
+    const body = await (await POST(req({ action: "import", fy: "2025-26", part: 1, dryRun: false, accounts }))).json();
+    expect(body).toMatchObject({ ok: true, part: 1, parts: 3 });
+    const picks = st.rpc[0].args.p_picks as Array<{ zoho_payment_id: string }>;
+    expect(picks).toHaveLength(50);
+    expect(picks[0].zoho_payment_id).toBe("p51");
+    expect(picks[49].zoho_payment_id).toBe("p100");
+    expect((await POST(req({ action: "import", fy: "2025-26", part: 3, accounts }))).status).toBe(400);
+  });
+
   it("R-2501 fix: import maps only what the dialog sent — no suggestion behind the screen; Leave out sends nothing", async () => {
     /* The preview suggests 4523 for Zoho's "HDFC 4523", but an import that did not send it books nothing. */
     expect((await POST(req({ action: "import", fy: "2025-26", part: 0 }))).status).toBe(409);
