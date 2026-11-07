@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* ─────────────────────────────────────────────────────────────────────────────
    No server route may hardcode WHO an email goes to.
@@ -74,7 +75,7 @@ interface Offence {
 }
 
 function scan(file: string): Offence[] {
-  const src = readFileSync(file, "utf8");
+  const src = readSource(file);
   const out: Offence[] = [];
 
   /* Which module-level consts hold a bare address. */

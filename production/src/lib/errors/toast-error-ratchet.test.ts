@@ -19,14 +19,19 @@
 import { describe, it, expect } from "vitest";
 import { join } from "path";
 import { readFileSync } from "fs";
+import { readSource } from "@/lib/testing/source-cache";
+import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
 const { countRaw } = require("../../../scripts/count-raw-toast-errors.cjs");
+/* R-2564: one count per test file, through the shared read cache, without the generated Prisma client. */
+let rawCount: { total: number; raw: number; rawByFile: Map<string, number> } | undefined;
+const countRawSrc = () => (rawCount ??= countRaw(join(process.cwd(), "src"), { read: readSource, skipDir: isPrismaGenerated }));
 
 /** Naapa hua: 1 Sep 2026 — kul 481 me se 450 nange. 6 Oct (R-266): 16 query files toastError par — 403. R-283: agle 8 — 366. R-284: 6 more — 344. R-299: 5 heaviest files — 298. R-304: re-measured 270 (R-300 kept its own test file and never lowered this), then 5 more files — 245. 7 Oct (R-312): re-measured after R-300/R-305/R-308/R-309/R-310/R-311 (each kept its own zero test and never lowered this) — 129. 23 Oct (R-1137): re-measured 79 (later cards fixed 50 without lowering this), then sign-in / forgot-password / sign-up / quote-accept / buy-workspace (14) — 65. */
 const BASELINE = 65;
 
 describe("§24 ratchet — error-toast me 'aage kya' ki disha", () => {
   it(`nange toast.error ${BASELINE} se zyada nahi ho sakte (aaj: dekho fail-message)`, () => {
-    const { total, raw } = countRaw(join(process.cwd(), "src"));
+    const { total, raw } = countRawSrc();
     // Denominator pehle — khaali scan chup-chaap pass na ho (khaali-loop sabak).
     expect(total).toBeGreaterThan(100);
     expect(
@@ -87,7 +92,7 @@ const R299_FILES = [
 ] as const;
 
 describe("R-299 — no bare or raw error toasts in the five heaviest files", () => {
-  const { rawByFile } = countRaw(join(process.cwd(), "src")) as { rawByFile: Map<string, number> };
+  const { rawByFile } = countRawSrc() as { rawByFile: Map<string, number> };
   it.each(R299_FILES)("%s", (file) => {
     const abs = join(process.cwd(), file);
     expect(rawByFile.get(abs) ?? 0, `${file}: bare toast.error (no description/action)`).toBe(0);
@@ -109,7 +114,7 @@ const R304_FILES = [
 ] as const;
 
 describe("R-304 — no bare or raw error toasts in these five files", () => {
-  const { rawByFile } = countRaw(join(process.cwd(), "src")) as { rawByFile: Map<string, number> };
+  const { rawByFile } = countRawSrc() as { rawByFile: Map<string, number> };
   it.each(R304_FILES)("%s", (file) => {
     const abs = join(process.cwd(), file);
     const src = readFileSync(abs, "utf8");

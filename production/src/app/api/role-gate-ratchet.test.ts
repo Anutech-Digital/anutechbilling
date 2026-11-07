@@ -23,6 +23,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const API = path.resolve(__dirname);
 
@@ -138,7 +139,7 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
 };
 
 const routes = walk(API)
-  .map((f) => ({ route: rel(f), src: code(fs.readFileSync(f, "utf8")) }))
+  .map((f) => ({ route: rel(f), src: code(readSource(f)) }))
   .filter((r) => MUTATES.test(r.src))
   .filter((r) => !MACHINE_CALLER.test(r.src))
   .filter((r) => !(r.route in NOT_A_USER_ROUTE));

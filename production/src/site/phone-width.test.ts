@@ -11,11 +11,12 @@
  * Source scan — the browser sweep (375 and 768, server HTML and hydrated) is in the card.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const root = path.join(process.cwd(), "src/site");
-const read = (f: string) => readFileSync(path.join(root, f), "utf8");
+const read = (f: string) => readSource(path.join(root, f));
 const css = read("site.css");
 
 function walk(dir: string): string[] {
@@ -28,7 +29,7 @@ function walk(dir: string): string[] {
 
 /** Components whose layout depends on a width measured after hydration. */
 const widthDriven = walk(path.join(root, "components")).filter((f) =>
-  /const \[w, setW\] = useState\(\d+\)/.test(readFileSync(f, "utf8")),
+  /const \[w, setW\] = useState\(\d+\)/.test(readSource(f)),
 );
 
 /** A JSX line whose grid columns come from the measured width. */
@@ -44,7 +45,7 @@ describe("R-1811 the website's first paint fits a phone", () => {
   it("every width-driven grid carries a data-grid attribute, so the server HTML is already one column on a phone", () => {
     const missing: string[] = [];
     for (const f of widthDriven) {
-      readFileSync(f, "utf8").split("\n").forEach((line, i) => {
+      readSource(f).split("\n").forEach((line, i) => {
         if (WIDTH_GRID.test(line) && /<(div|section)\b/.test(line) && !HAS_PHONE_ATTR.test(line)) {
           missing.push(`${path.relative(root, f)}:${i + 1}`);
         }

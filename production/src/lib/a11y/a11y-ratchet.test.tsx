@@ -18,7 +18,7 @@
  */
 import { describe, it, expect, afterEach } from "vitest";
 import { render, cleanup, screen } from "@testing-library/react";
-import { execFileSync } from "node:child_process";
+import { a11yReport } from "@/lib/testing/a11y-report"; // R-2564: in-process, shared read cache (was a node spawn per file)
 import { join } from "node:path";
 import { FormField } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -27,10 +27,7 @@ type Hit = { file: string; kind: string; lines: number[] };
 type Report = { totals: Record<string, Record<string, number>>; detail: Record<string, Hit[]> };
 
 const report = (): Report =>
-  JSON.parse(execFileSync(process.execPath, [join(process.cwd(), "scripts", "a11y-count.mjs"), "--json"], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  })) as Report;
+  a11yReport() as Report;
 
 /** Measured 6 Oct 2026 after R-271; lowered by R-288 (96/87 → 57/52), R-302 (→ 38/40, and the
  *  last hand-rolled overlay gone: modal-no-trap 0), R-307 (→ 3/11: the real count once R-302 and

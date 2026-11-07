@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* ─────────────────────────────────────────────────────────────────────────────
    HAR IN-APP API ROUTE APNA DARWAZA KHUD BAND KARE.
@@ -48,7 +49,7 @@ function allHandlersWrapped(src: string): boolean {
 const CHECKS_USER = { test: (src: string) => CHECKS_USER_DIRECT.test(src) || allHandlersWrapped(src) };
 
 describe("withRoute() sach me login maangta hai (upar ki chhoot isi par tiki hai)", () => {
-  const wrapper = readFileSync(join(process.cwd(), "src", "lib", "api", "with-route.ts"), "utf8");
+  const wrapper = readSource(join(process.cwd(), "src", "lib", "api", "with-route.ts"));
   it("getUser() karta hai aur user na ho to 401", () => {
     expect(CHECKS_USER_DIRECT.test(wrapper)).toBe(true);
     expect(/if \(!auth\?\.user\) return fail\(401/.test(wrapper)).toBe(true);
@@ -75,7 +76,7 @@ const MACHINE_DOORS = new Set(["attendance/punch/route.ts", "dms/upgrade-request
 
 describe("machine darwaze apni chaabi sach me jaanchte hain", () => {
   it.each(["upgrade-request", "start-trial", "trial-eligibility", "renewal-order"])("dms/%s calls checkPanelKey before anything else", (name) => {
-    const src = readFileSync(join(API_DIR, "dms", name, "route.ts"), "utf8");
+    const src = readSource(join(API_DIR, "dms", name, "route.ts"));
     const post = src.slice(src.indexOf("export async function POST"));
     expect(post.indexOf("checkPanelKey(")).toBeGreaterThan(-1);
     expect(post.indexOf("checkPanelKey(")).toBeLessThan(post.indexOf("createAdminClient("));
@@ -98,7 +99,7 @@ const inApp = walk(API_DIR)
   })
   .map((path) => ({
     name: path.slice(API_DIR.length + 1).replace(/\\/g, "/"),
-    src: readFileSync(path, "utf8"),
+    src: readSource(path),
   }));
 
 describe("in-app API routes jo service_role use karte hain, wo login maangte hain", () => {

@@ -8,17 +8,14 @@
  * (Kept in its own file: R-302 was extending the shared ratchet the same night.)
  */
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
+import { a11yReport } from "@/lib/testing/a11y-report"; // R-2564: in-process, shared read cache (was a node spawn per file)
 import { join } from "node:path";
 
 type Hit = { file: string; kind: string; lines: number[] };
 type Report = { detail: Record<string, Hit[]> };
 
 const report = (): Report =>
-  JSON.parse(execFileSync(process.execPath, [join(process.cwd(), "scripts", "a11y-count.mjs"), "--json"], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  })) as Report;
+  a11yReport() as Report;
 
 const ZERO_FILES = [
   "app/(app)/setup/page.tsx",

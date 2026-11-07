@@ -6,12 +6,12 @@
 const fs = require("fs");
 const path = require("path");
 
-function* walk(dir) {
+function* walk(dir, skipDir) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, e.name);
     if (e.isDirectory()) {
-      if (e.name === "node_modules" || e.name.startsWith(".")) continue;
-      yield* walk(p);
+      if (e.name === "node_modules" || e.name.startsWith(".") || skipDir(p)) continue;
+      yield* walk(p, skipDir);
     } else if (/\.(ts|tsx)$/.test(e.name) && !/\.test\.(ts|tsx)$/.test(e.name)) {
       yield p;
     }
@@ -32,12 +32,16 @@ function callText(src, start) {
   return src.slice(start, start + 400);
 }
 
-function countRaw(root) {
+/**
+ * R-2564 (7 Nov 2026): the guard tests pass `read` (the shared, always-fresh read cache) and
+ * `skipDir` (Prisma's generated client — not our code, 36 MB). The CLI keeps the plain defaults.
+ */
+function countRaw(root, { read = (f) => fs.readFileSync(f, "utf8"), skipDir = () => false } = {}) {
   let total = 0;
   let raw = 0;
   const rawByFile = new Map();
-  for (const f of walk(root)) {
-    const src = fs.readFileSync(f, "utf8");
+  for (const f of walk(root, skipDir)) {
+    const src = read(f);
     let idx = 0;
     for (;;) {
       const at = src.indexOf("toast.error(", idx);

@@ -6,7 +6,7 @@
  * Small text (text-2xs/3xs) is R-087's job, not counted here.
  */
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
+import { a11yReport } from "@/lib/testing/a11y-report"; // R-2564: in-process, shared read cache (was a node spawn per file)
 import { join } from "node:path";
 
 const BILLING = [
@@ -26,8 +26,7 @@ type Hit = { file: string; kind: string; lines: number[] };
 
 describe("billing screens stay accessible (R-022)", () => {
   it("no unnamed inputs, untied labels or trap-less popups", () => {
-    const out = execFileSync(process.execPath, [join(process.cwd(), "scripts", "a11y-count.mjs"), "--json"], { encoding: "utf8" });
-    const detail = (JSON.parse(out) as { detail: Record<string, Hit[]> }).detail;
+    const detail = (a11yReport() as { detail: Record<string, Hit[]> }).detail;
     const hits = Object.values(detail).flat()
       .filter((h) => KINDS.includes(h.kind) && BILLING.some((p) => h.file.startsWith(p)))
       .map((h) => `${h.file}:${h.lines.join(",")} ${h.kind}`);

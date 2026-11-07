@@ -8,19 +8,21 @@
  * another worker extending the shared ratchets the same night.
  */
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
+import { a11yReport } from "@/lib/testing/a11y-report"; // R-2564: in-process, shared read cache (was a node spawn per file)
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
+import { readSource } from "@/lib/testing/source-cache";
+import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
 const { countRaw } = require("../../../scripts/count-raw-toast-errors.cjs");
+/* R-2564: one count per test file, through the shared read cache, without the generated Prisma client. */
+let rawCount: { total: number; raw: number; rawByFile: Map<string, number> } | undefined;
+const countRawSrc = () => (rawCount ??= countRaw(join(process.cwd(), "src"), { read: readSource, skipDir: isPrismaGenerated }));
 
 type Hit = { file: string; kind: string; lines: number[] };
 type Report = { detail: Record<string, Hit[]> };
 
 const report = (): Report =>
-  JSON.parse(execFileSync(process.execPath, [join(process.cwd(), "scripts", "a11y-count.mjs"), "--json"], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  })) as Report;
+  a11yReport() as Report;
 
 const ZERO_FILES = [
   "app/(app)/contacts/page.tsx",
@@ -57,7 +59,7 @@ describe("R-309 — these files have no untied label and no unnamed input", () =
 });
 
 describe("R-309 — Contacts import dialogs: no bare or raw error toasts", () => {
-  const { total, rawByFile } = countRaw(join(process.cwd(), "src")) as {
+  const { total, rawByFile } = countRawSrc() as {
     total: number;
     rawByFile: Map<string, number>;
   };
