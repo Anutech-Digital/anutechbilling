@@ -10,12 +10,14 @@
 import { describe, it, expect } from "vitest";
 import { loadCashFlow } from "./load";
 import { monthRows } from "@/lib/accounting/cash-flow-summary";
+import { cashFlowByActivity } from "@/lib/accounting/cash-flow-lines";
 
 const MAX_ROWS = 1000;
 type Row = Record<string, unknown>;
 
-/** A minimal PostgREST stand-in: from/select/lt/gte/lte/order/range, awaited like supabase-js. */
-function fakeClient(tables: Record<string, Row[]>) {
+/** A minimal PostgREST stand-in: from/select/eq/not-is-null/lt/gte/lte/order/range, awaited like
+ *  supabase-js. A table named in `failing` answers with an error (RLS / network). */
+function fakeClient(tables: Record<string, Row[]>, failing: readonly string[] = []) {
   const calls: { table: string; ranged: boolean }[] = [];
   const client = {
     from(table: string) {
@@ -24,13 +26,19 @@ function fakeClient(tables: Record<string, Row[]>) {
       let range: [number, number] | null = null;
       const b = {
         select: () => b,
+        eq: (c: string, v: string) => { rows = rows.filter((r) => r[c] === v); return b; },
+        not: (c: string, op: string, v: null) => {
+          if (op !== "is" || v !== null) throw new Error(`fake client: not(${op}) unsupported`);
+          rows = rows.filter((r) => r[c] != null); return b;
+        },
         lt: (c: string, v: string) => { rows = rows.filter((r) => String(r[c]) < v); return b; },
         gte: (c: string, v: string) => { rows = rows.filter((r) => String(r[c]) >= v); return b; },
         lte: (c: string, v: string) => { rows = rows.filter((r) => String(r[c]) <= v); return b; },
         order: (c: string) => { orders.push(c); return b; },
         range: (from: number, to: number) => { range = [from, to]; return b; },
-        then<T>(ok: (v: { data: Row[]; error: null }) => T) {
+        then<T>(ok: (v: { data: Row[] | null; error: { message: string } | null }) => T) {
           calls.push({ table, ranged: range !== null });
+          if (failing.includes(table)) return Promise.resolve({ data: null, error: { message: `permission denied for ${table}` } }).then(ok);
           const sorted = orders.length
             ? [...rows].sort((x, y) => {
                 for (const c of orders) {
@@ -139,5 +147,58 @@ describe("Cash Flow respects each account's opening date (R-2497)", () => {
     expect(d.balanceBefore).toBe(100_000);
     expect(d.lines.map((l) => l.id).sort()).toEqual(["fy26-00000", "fy26-00001"]);
     expect(closing(d)).toBe(115_000);   // = bank_account_current_balance after R-2497
+  });
+});
+
+describe("Cash Flow knows which bank lines are money LENT (R-2575)", () => {
+  const line = (id: string, matched_to_type: string | null, debit: number, credit: number): Row => ({
+    id, bank_account_id: "acct-1", txn_date: "2026-05-02", description: null, debit, credit, matched_to_type, category: null,
+  });
+  const tables = {
+    bank_accounts: [{ id: "acct-1", opening_balance: 0 }],
+    bank_transactions: [
+      line("adv-given", "bs_item", 50_000, 0),      // book_bank_advance 'given' → asset row
+      line("dir-loan", "bs_item", 0, 200_000),      // book_bank_credit director loan → liability row
+      line("capital", "bs_item", 0, 100_000),       // owner capital → equity row
+      line("old-adv", "manual", 7_000, 0),          // before R-2570: hand-marked, asset row
+      line("old-loan", "manual", 20_000, 0),        // before R-2570: Give loan payout stored 'manual'
+      line("old-back", "manual", 0, 5_000),         // before R-2570: borrower's repayment stored 'manual'
+      line("new-loan", "loan_given", 30_000, 0),
+      line("sale", "payment", 0, 900),
+    ],
+    balance_sheet_items: [
+      { id: "b1", bank_txn_id: "adv-given", section: "asset" },
+      { id: "b2", bank_txn_id: "dir-loan", section: "liability" },
+      { id: "b3", bank_txn_id: "capital", section: "equity" },
+      { id: "b4", bank_txn_id: "old-adv", section: "asset" },
+      { id: "b5", bank_txn_id: null, section: "asset" },
+    ],
+    loans_given: [{ id: "g1", bank_txn_id: "old-loan" }, { id: "g2", bank_txn_id: "new-loan" }, { id: "g3", bank_txn_id: null }],
+    loan_repayments: [{ id: "r1", bank_txn_id: "old-back" }],
+  };
+
+  it("an asset balance-sheet row, a Loans given payout or a repayment marks the line lent — keyed by bank_txn_id, so old 'manual' lines too", async () => {
+    const { client } = fakeClient(tables);
+    const d = await loadCashFlow(client, "2026-04-01", "2026-10-07");
+    const lent = Object.fromEntries(d.lines.map((l) => [l.id, l.lent]));
+    expect(lent).toEqual({
+      "adv-given": true, "dir-loan": false, capital: false, "old-adv": true,
+      "old-loan": true, "old-back": true, "new-loan": true, sale: false,
+    });
+    const f = cashFlowByActivity(d.lines);
+    expect(Object.fromEntries(f.map((g) => [g.activity, g.net]))).toEqual({
+      operating: 900, investing: -(50_000 + 7_000 + 20_000 + 30_000) + 5_000, financing: 300_000,
+    });
+  });
+
+  it("a failed read of those bookings never fails the page — those lines stay in Financing, as before", async () => {
+    const { client } = fakeClient(tables, ["balance_sheet_items", "loans_given", "loan_repayments"]);
+    const d = await loadCashFlow(client, "2026-04-01", "2026-10-07");
+    expect(d.lines).toHaveLength(8);
+    expect(d.lines.every((l) => l.lent === false)).toBe(true);
+    const f = cashFlowByActivity(d.lines);
+    expect(Object.fromEntries(f.map((g) => [g.activity, g.net]))).toEqual({
+      operating: 900, investing: -30_000, financing: 300_000 - 50_000 - 7_000 - 20_000 + 5_000,
+    });
   });
 });

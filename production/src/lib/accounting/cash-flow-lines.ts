@@ -16,11 +16,24 @@ export type CashFlowTxn = {
   credit: number;
   matched_to_type: string | null;
   category: string | null;
+  /** R-2575: true when this line is money LENT or its repayment — the same bookings
+   *  bank_line_bookings() finds: a balance_sheet_items row in section 'asset' (book_bank_advance
+   *  kind 'given'), a Loans given payout (loans_given.bank_txn_id) or a borrower's repayment
+   *  (loan_repayments.bank_txn_id). Set by cash-flow/load.ts; absent = not known to be lent. */
+  lent?: boolean;
 };
 
-export const NOT_RECONCILED = "Not reconciled";
+/** R-2575: a loan / advance GIVEN, or its repayment — new 'loan_given' lines, and bs_item or old
+ *  hand-marked 'manual' lines whose booking says so. One rule for the label and the activity. */
+const isLending = (t: Pick<CashFlowTxn, "matched_to_type" | "lent">) =>
+  t.matched_to_type === "loan_given"
+  || ((t.matched_to_type === "bs_item" || t.matched_to_type === "manual") && t.lent === true);
 
-export function lineLabel(t: Pick<CashFlowTxn, "matched_to_type" | "category">): string {
+export const NOT_RECONCILED = "Not reconciled";
+export const LENDING_LABEL = "Loans & advances given";
+
+export function lineLabel(t: Pick<CashFlowTxn, "matched_to_type" | "category" | "lent">): string {
+  if (isLending(t)) return LENDING_LABEL;
   switch (t.matched_to_type) {
     case null:          return NOT_RECONCILED;
     case "salary":      return "Salary";
@@ -39,7 +52,6 @@ export function lineLabel(t: Pick<CashFlowTxn, "matched_to_type" | "category">):
     case "bs_item":       return "Capital / loans (balance sheet)";
     case "employee_loan": return "Staff loans";
     case "reimbursement": return "Reimbursements";
-    case "loan_given":    return "Loans given";
     case "business_loan": case "loan_drawdown": case "loan_repayment": case "emi": return "Loans & EMIs";
     default:            return "Other";
   }
@@ -53,28 +65,34 @@ export type LabelTotal = { label: string; amount: number; count: number };
      operating — the business itself: customer receipts, vendor bills, expenses, salaries,
                  statutory, advances to vendors
      investing — buying assets: an expense in the Equipment category (the fixed asset
-                 register takes it from there)
-     financing — money in/out of the owner and lenders: lines marked reconciled by hand are
-                 the capital / director-loan / loan bookings (book_bank_credit, loans), so
-                 they sit here and the label says so
+                 register takes it from there); loans and advances GIVEN to third parties and
+                 their repayments received (AS-3 para 15(e)/(f), R-2575)
+     financing — money in/out of the owner and lenders: capital, drawings, director / owner
+                 loans received, business loans taken, drawdowns, repayments and EMIs
    Transfers between own accounts cancel and are left out; unreconciled lines are shown
    apart, because a statement that quietly guesses them is not a statement. */
 export type Activity = "operating" | "investing" | "financing" | "transfer" | "unreconciled";
 
-export function activityOf(t: Pick<CashFlowTxn, "matched_to_type" | "category">): Activity {
+export function activityOf(t: Pick<CashFlowTxn, "matched_to_type" | "category" | "lent">): Activity {
+  /* R-2575 (AS-3 para 15(e)/(f)): a loan / advance GIVEN to a third party — and the money it
+     brings back — is investing for a non-finance company: Loans given → Give loan and its
+     receipts ('loan_given'), and a bs_item / old hand-marked 'manual' line whose booking is a
+     loan given (see `lent`). */
+  if (isLending(t)) return "investing";
   switch (t.matched_to_type) {
     case null:       return "unreconciled";
     case "transfer": return "transfer";
-    case "manual":   return "financing";
     case "owner_equity": return "financing";   // R-1839: drawings / capital introduced — the owner, not the business
-    /* R-2570: the loan / capital flows stored 'manual' (→ financing) until they wrote their own type;
-       those lines stay in Financing. Statement lines matched to these loan types (R-2340 / R-2374 /
-       R-2377, EMIs) were "operating" by default before — a loan is financing (AS-3), so they move too.
-       A new challan ('statutory') and owed-back money ('reimbursement') are operating; their old
-       'manual' lines stay in Financing until the R-2570 repair retypes the challans. */
-    case "bs_item": case "employee_loan": case "loan_given":
+    /* Loans TAKEN and capital: director / owner loan received and owner capital (bs_item liability /
+       equity), business loans, drawdowns, repayments, EMIs. A bs_item / 'manual' line whose booking
+       could not be read stays financing, as every such line was before R-2575; old 'manual' staff
+       loan / challan / owed-back lines also stay here until the R-2570 repair retypes them. */
+    case "bs_item": case "manual":
     case "business_loan": case "loan_drawdown": case "loan_repayment": case "emi":
       return "financing";
+    /* Staff loans / salary advances: working capital → operating (R-2575 recommendation, the usual
+       Indian practice; recorded as needsDecision on the card for the CA). */
+    case "employee_loan": return "operating";
     case "expense":  return t.category === "Equipment" ? "investing" : "operating";
     default:         return "operating";
   }
@@ -82,7 +100,7 @@ export function activityOf(t: Pick<CashFlowTxn, "matched_to_type" | "category">)
 
 export interface ActivityFlow { activity: Activity; label: string; cashIn: number; cashOut: number; net: number; count: number }
 export const ACTIVITY_LABEL: Record<Activity, string> = {
-  operating: "Operating activities", investing: "Investing activities (assets)", financing: "Financing (capital, loans — hand-marked lines)",
+  operating: "Operating activities", investing: "Investing activities (assets, loans given)", financing: "Financing activities (capital, loans taken)",
   transfer: "Transfers between own accounts (excluded)", unreconciled: "Not reconciled — book these first",
 };
 
