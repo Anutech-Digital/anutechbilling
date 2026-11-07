@@ -107,6 +107,14 @@ export function tdsPartGross(i: {
  * - and never more than the document's TDS at that rate minus the TDS already booked on its earlier
  *   parts (`bookedTds`; null = not known yet → only the part rule), so earlier TDS is never added again.
  * Nothing paid before → remaining = total → rate × the whole taxable, exactly as before.
+ *
+ * R-2560 — `money` = the bank amount the owner TYPED for this payment (`credit` = advance used with it).
+ * When money + credit + TDS does not settle the balance, the TDS part is (money + TDS) — the same part
+ * the saved receipt's TDS gross is taken on (tdsPartGross of bank + TDS) — not the balance:
+ * TDS = rate × taxable share of (money + TDS) — the smallest whole-rupee fixed point, found by stepping up
+ * from ₹0 (each step is monotone and moves less than the rupee it adds, so it settles in a few steps; no
+ * fixed point in the step budget → the balance rule). Settling the balance to within ₹1 (R-2095 paise
+ * rounding) or more → the balance rule above. money absent / ₹0 (a TDS-only receipt) → the balance rule.
  */
 export function tdsDefaultForPart(i: {
   remaining: number;
@@ -114,14 +122,34 @@ export function tdsDefaultForPart(i: {
   total: number | null | undefined;
   ratePct: number | null | undefined;
   bookedTds: number | null | undefined;
+  money?: number | null;
+  credit?: number | null;
 }): { partTaxable: number; tds: number } {
   const remaining = Math.max(0, Math.round(i.remaining || 0));
   const taxable = typeof i.taxable === "number" && Number.isFinite(i.taxable) ? Math.max(0, Math.round(i.taxable)) : 0;
-  const partTaxable = remaining > 0 ? tdsPartGross({ paid: remaining, taxable, total: i.total, tds: 0, ratePct: null }) : 0;
+  const shareOf = (paid: number) => (paid > 0 ? tdsPartGross({ paid, taxable, total: i.total, tds: 0, ratePct: null }) : 0);
+  let partTaxable = shareOf(remaining);
   const rateM = typeof i.ratePct === "number" && Number.isFinite(i.ratePct) && i.ratePct > 0
     ? Math.round(i.ratePct * 1_000_000) : 0;
   if (rateM <= 0 || partTaxable <= 0) return { partTaxable, tds: 0 };
-  let tds = mulDivRound(partTaxable, rateM, 100_000_000);
+  const tdsOn = (part: number) => mulDivRound(part, rateM, 100_000_000);
+  let tds = tdsOn(partTaxable);
+  const money = typeof i.money === "number" && Number.isFinite(i.money) ? Math.round(i.money) : 0;
+  const credit = typeof i.credit === "number" && Number.isFinite(i.credit) ? Math.max(0, Math.round(i.credit)) : 0;
+  const settles = (t: number) => money + credit + t >= remaining - 1;
+  if (money > 0 && !settles(tds)) {
+    let t = 0;
+    let fixed = false;
+    for (let n = 0; n < 10_000 && !settles(t); n++) {
+      const next = tdsOn(shareOf(money + t));
+      if (next === t) { fixed = true; break; }
+      t = next;
+    }
+    if (fixed && !settles(t)) {
+      partTaxable = shareOf(money + t);
+      tds = t;
+    }
+  }
   if (typeof i.bookedTds === "number" && Number.isFinite(i.bookedTds)) {
     const left = mulDivRound(taxable, rateM, 100_000_000) - Math.max(0, Math.round(i.bookedTds));
     tds = Math.max(0, Math.min(tds, left));
