@@ -18,6 +18,12 @@
 --   F. A written-off Zoho sale → not listed, refused, nothing saved.
 --   G. Another company's bank line vs this company's Zoho sale → refused both ways, nothing saved.
 --   H. reconcile_bank_credit_split over two Zoho sales → both paid, two receipts, the line matched.
+--   I. (review) The customer deducted 2% of the WHOLE year (₹3,150) from part 1, rate 2 given → gross
+--      ₹1,57,500 (TDS × 100 ÷ rate, what 26AS shows), not a ₹78,750 row that contradicts its own rate.
+--   J. (review) A Zoho receipt booked with ₹100 TDS, line freed (receipt kept), matched again with the TDS
+--      left empty → the same receipt, not refused.
+--   K. (review) A Zoho sale part-paid, the rest written off, line freed (receipt kept), matched again →
+--      the same receipt; a NEW line on it is still refused.
 
 begin;
 
@@ -69,7 +75,14 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   -- H: split over two Zoho sales (₹5,900 + ₹1,180)
   ('b2538000-0000-0000-0000-0000000000ea', 'b2538000-0000-0000-0000-0000000000f0', 'b2538000-0000-0000-0000-0000000000d1', '2026-01-12', 'NEFT SPLIT', 0, 7080, 'R2538UTRH', 'manual'),
   -- G: the OTHER company's line
-  ('b2538000-0000-0000-0000-0000000000eb', 'b2538000-0000-0000-0000-0000000000f1', 'b2538000-0000-0000-0000-0000000000d2', '2026-01-13', 'NEFT OTHER CO', 0, 5900, 'R2538UTRG', 'manual');
+  ('b2538000-0000-0000-0000-0000000000eb', 'b2538000-0000-0000-0000-0000000000f1', 'b2538000-0000-0000-0000-0000000000d2', '2026-01-13', 'NEFT OTHER CO', 0, 5900, 'R2538UTRG', 'manual'),
+  -- I: H1 of a half-yearly sale, the customer kept 2% of the whole year (₹92,925 − ₹3,150)
+  ('b2538000-0000-0000-0000-0000000000ec', 'b2538000-0000-0000-0000-0000000000f0', 'b2538000-0000-0000-0000-0000000000d1', '2026-06-19', 'NEFT HALF 2538 I', 0, 89775, 'R2538UTRI', 'manual'),
+  -- J: the ₹1,180 Zoho sale paid ₹1,080 + ₹100 TDS
+  ('b2538000-0000-0000-0000-0000000000ed', 'b2538000-0000-0000-0000-0000000000f0', 'b2538000-0000-0000-0000-0000000000d1', '2026-01-14', 'NEFT TDS REPLAY', 0, 1080, 'R2538UTRJ', 'manual'),
+  -- K: the ₹1,180 Zoho sale part-paid ₹1,130 (₹50 written off later); then a new line
+  ('b2538000-0000-0000-0000-0000000000ee', 'b2538000-0000-0000-0000-0000000000f0', 'b2538000-0000-0000-0000-0000000000d1', '2026-01-15', 'NEFT WO REPLAY', 0, 1130, 'R2538UTRK', 'manual'),
+  ('b2538000-0000-0000-0000-0000000000ef', 'b2538000-0000-0000-0000-0000000000f0', 'b2538000-0000-0000-0000-0000000000d1', '2026-01-16', 'NEFT WO NEW', 0, 50, 'R2538UTRK2', 'manual');
 
 -- The Zoho FY sales (R-2499's import): C ₹10,000+1,800; D ₹1,000+180; E ₹5,000+900 (draft); F ₹5,000+900
 -- (written off); H1 ₹5,000+900, H2 ₹1,000+180.
@@ -86,7 +99,9 @@ insert into public.zoho_fy_scan (tenant_id, kind, fy, zoho_id, number, doc_date,
   ('b2538000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'ze', 'INV/25-26/R2538-E', '2025-11-12', 'sent', pg_temp.s('INV/25-26/R2538-E', '2025-11-12', 5000, 900), now()),
   ('b2538000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'zf', 'INV/25-26/R2538-F', '2025-11-13', 'sent', pg_temp.s('INV/25-26/R2538-F', '2025-11-13', 5000, 900), now()),
   ('b2538000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'zh1', 'INV/25-26/R2538-H1', '2025-11-14', 'sent', pg_temp.s('INV/25-26/R2538-H1', '2025-11-14', 5000, 900), now()),
-  ('b2538000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'zh2', 'INV/25-26/R2538-H2', '2025-11-15', 'sent', pg_temp.s('INV/25-26/R2538-H2', '2025-11-15', 1000, 180), now());
+  ('b2538000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'zh2', 'INV/25-26/R2538-H2', '2025-11-15', 'sent', pg_temp.s('INV/25-26/R2538-H2', '2025-11-15', 1000, 180), now()),
+  ('b2538000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'zj', 'INV/25-26/R2538-J', '2025-11-16', 'sent', pg_temp.s('INV/25-26/R2538-J', '2025-11-16', 1000, 180), now()),
+  ('b2538000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'zk', 'INV/25-26/R2538-K', '2025-11-17', 'sent', pg_temp.s('INV/25-26/R2538-K', '2025-11-17', 1000, 180), now());
 
 create function pg_temp.as_user(p uuid) returns void language sql as $f$
   select set_config('request.jwt.claims', json_build_object('sub', p, 'role', 'authenticated')::text, true);
@@ -106,8 +121,8 @@ do $$
 declare r jsonb;
 begin
   r := public.import_zoho_fy_sales('2025-26', (select jsonb_agg(jsonb_build_object('zoho_invoice_id', z, 'customer_id', 'b2538000-0000-0000-0000-0000000000c1'))
-                                               from unnest(array['zc', 'zd', 'ze', 'zf', 'zh1', 'zh2']) z), false);
-  if (r->>'imported')::int <> 6 then raise exception 'SETUP: sales import %', r; end if;
+                                               from unnest(array['zc', 'zd', 'ze', 'zf', 'zh1', 'zh2', 'zj', 'zk']) z), false);
+  if (r->>'imported')::int <> 8 then raise exception 'SETUP: sales import %', r; end if;
 end $$;
 
 -- ── A. half-yearly sale, H1 paid net of 2% TDS → gross = the part's taxable ──────────────────
@@ -279,6 +294,67 @@ begin
   if (select matched_to_type from public.bank_transactions where id = 'b2538000-0000-0000-0000-0000000000ea') is null then
     raise exception 'FAIL H: the split line is not matched'; end if;
   raise notice 'PASS H: split over two Zoho sales → both paid, two receipts';
+end $$;
+
+-- ── I. the customer deducted on the whole year from part 1, rate given ──────────────────────
+do $$
+declare r jsonb; t record;
+begin
+  r := public.reconcile_bank_credit_new_sale('b2538000-0000-0000-0000-0000000000ec', 'b2538000-0000-0000-0000-0000000000c1',
+         '[{"item_id":null,"name":"Microsoft 365 Basic","qty":50,"rate":3150,"cost":0,"commitment":"annual_yearly"}]'::jsonb,
+         true, '2026-06-19', null, 3150, 2, '194C', 'half_yearly');
+  select * into t from public.tds_receivable where payment_id = (r->>'payment_id')::uuid;
+  if not found then raise exception 'FAIL I: no TDS row on the receipt'; end if;
+  if t.gross_amount <> 157500 or t.rate_pct <> 2 or t.tds_amount <> 3150 then
+    raise exception 'FAIL I: gross ₹% rate % TDS ₹% (want ₹1,57,500 / 2 / ₹3,150 — 2%% of the year the customer deducted on)',
+      t.gross_amount, t.rate_pct, t.tds_amount; end if;
+  raise notice 'PASS I: 2%% of the whole year kept from part 1 → gross ₹1,57,500, consistent with its rate';
+end $$;
+
+-- ── J. replay of a receipt booked with TDS, TDS left empty the second time ───────────────────
+do $$
+declare v_inv text := pg_temp.zs('zj'); r jsonb; v_pay text;
+begin
+  r := public.reconcile_bank_credit_to_item('b2538000-0000-0000-0000-0000000000ed', null, v_inv, 100, null, '194J');
+  v_pay := r->>'payment_id';
+  if pg_temp.received(v_inv) <> 1180 then raise exception 'FAIL J setup: ₹% received (want ₹1,180)', pg_temp.received(v_inv); end if;
+  perform public.unreconcile_bank_receipt('b2538000-0000-0000-0000-0000000000ed', false);
+  r := public.reconcile_bank_credit_to_item('b2538000-0000-0000-0000-0000000000ed', null, v_inv);
+  if r->>'payment_id' <> v_pay or pg_temp.received(v_inv) <> 1180
+     or (select count(*) from public.tds_receivable where invoice_id = v_inv) <> 1 then
+    raise exception 'FAIL J: re-match without TDS gave receipt % (want the same %), ₹% received', r->>'payment_id', v_pay, pg_temp.received(v_inv); end if;
+  raise notice 'PASS J: a freed TDS receipt is matched back with the TDS left empty';
+end $$;
+
+-- ── K. written off after a part payment: the kept receipt goes back, new money refused ───────
+do $$
+declare v_inv text := pg_temp.zs('zk'); r jsonb;
+begin
+  r := public.reconcile_bank_credit_to_item('b2538000-0000-0000-0000-0000000000ee', null, v_inv);
+  if pg_temp.received(v_inv) <> 1130 then raise exception 'FAIL K setup: ₹% received (want ₹1,130)', pg_temp.received(v_inv); end if;
+  perform public.unreconcile_bank_receipt('b2538000-0000-0000-0000-0000000000ee', false);
+end $$;
+reset role;
+alter table public.invoices disable trigger user;
+update public.invoices set written_off_at = now() where id = pg_temp.zs('zk');
+alter table public.invoices enable trigger user;
+set local role authenticated;
+do $$
+declare v_inv text := pg_temp.zs('zk'); r jsonb; v_pay uuid;
+begin
+  select id into v_pay from public.payments where invoice_id = v_inv and status = 'received';
+  r := public.reconcile_bank_credit_to_item('b2538000-0000-0000-0000-0000000000ee', null, v_inv);
+  if (r->>'payment_id')::uuid is distinct from v_pay or pg_temp.received(v_inv) <> 1130
+     or pg_temp.matched('b2538000-0000-0000-0000-0000000000ee') is null then
+    raise exception 'FAIL K1: the freed line did not go back to its receipt (% vs %): %', r->>'payment_id', v_pay, r; end if;
+  begin
+    perform public.reconcile_bank_credit_to_item('b2538000-0000-0000-0000-0000000000ef', null, v_inv);
+    raise exception 'FAIL K2: a written-off sale took new money';
+  exception when check_violation then
+    if sqlerrm not ilike '%written off%' then raise exception 'FAIL K2: wrong refusal: %', sqlerrm; end if;
+  end;
+  if pg_temp.received(v_inv) <> 1130 then raise exception 'FAIL K2: something was saved'; end if;
+  raise notice 'PASS K: written-off sale — kept receipt matched back, new money refused';
 end $$;
 
 rollback;

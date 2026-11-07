@@ -1,4 +1,4 @@
--- deploy-peek: to_regprocedure('public.bank_credit_tds_part_gross(integer,integer,integer)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_pay_item(uuid,integer,text,text,text,integer,numeric,text,boolean,date,date)') and prosrc like '%R-2538%')
+-- deploy-peek: to_regprocedure('public.bank_credit_tds_part_gross(integer,integer,integer)') is not null and to_regprocedure('public.bank_credit_tds_gross(integer,integer,integer,integer,numeric)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_pay_item(uuid,integer,text,text,text,integer,numeric,text,boolean,date,date)') and prosrc like '%R-2538%')
 -- deploy-key: r2538tdsgrosspartpaid
 --
 -- R-2538 (7 Nov 2026, p1 money) — staging Excel: TDS-CD79F6A752 on receipt RV-A378-27-0184 (part 1 of the
@@ -12,13 +12,18 @@
 --      never more than the taxable value. A receipt for the whole document still gives the whole taxable.
 --      Was: the whole quote subtotal / the whole invoice taxable — so a sale billed in parts, or a Zoho
 --      sale paid in parts, got one full-gross TDS row per part (R-2542 review #1).
+--      Exception: the operator gives a rate and the TDS does not fit it on the part (the customer deducted
+--      on the whole document from part 1) → gross = TDS × 100 ÷ rate, capped at the taxable — what 26AS shows.
+--      Taxable and total always come from ONE document (an invoice with no taxable → the quote's both).
+--      No taxable at all → gross 0, as before (tds_receivable.gross_amount is NOT NULL).
 --   2. The TDS rate, when the caller gives none, is derived from THAT gross (tds × 100 ÷ gross, 2 dp) on
 --      every path. Was: null on the quote path; on the Zoho path derived from the whole taxable (too low).
 --   3. Zoho / opening replay (the same reference already a receipt on the invoice) is a replay only when
---      the AMOUNT matches too; the same reference with another amount is refused — never silently matched
---      to the old receipt, never a second receipt (R-2542 review #2).
---   4. A written-off invoice is refused on every invoice path (R-2542 review #3); bank_credit_open_items
---      already left it out.
+--      the money matches too (receipt = line + TDS, or receipt − its booked TDS = line); the same reference
+--      with another amount is refused — never silently matched to the old receipt, never a second receipt
+--      (R-2542 review #2).
+--   4. A written-off invoice takes no NEW receipt on every invoice path (R-2542 review #3); a freed line
+--      whose receipt was kept still goes back to it. bank_credit_open_items already left it out.
 --   Not changed: the callers (reconcile_bank_credit_to_item / _split / _new_sale / _fx_invoice),
 --   _record_opening_invoice_payment, record_desk_payment, record_instalment_payment, bank_credit_open_items.
 -- Test: supabase/tests/r2538_tds_gross_part_paid.test.sql (begin … rollback; red without this file).
@@ -46,6 +51,29 @@ revoke all on function public.bank_credit_tds_part_gross(integer, integer, integ
 grant execute on function public.bank_credit_tds_part_gross(integer, integer, integer) to authenticated, service_role;
 comment on function public.bank_credit_tds_part_gross(integer, integer, integer) is
   'R-2538: TDS gross for a receipt that pays a PART of a document = (money + TDS) × taxable ÷ GST-inclusive total, capped at the taxable value.';
+
+-- ── 1b. The gross the customer deducted on (R-2538 review) ───────────────────────────────────────
+-- The part's taxable (above) — unless the operator gave a rate and the TDS does not fit it on that part
+-- (the customer deducted on more than this part, e.g. 2% of the whole year's taxable from part 1): then
+-- the gross is TDS × 100 ÷ rate, as the customer's 26AS shows it, never above the document's taxable.
+-- ±₹1 is TDS rounding. Never null: 0 when the document has no taxable value (R-2542's 0).
+create or replace function public.bank_credit_tds_gross(p_paid integer, p_taxable integer, p_total integer, p_tds integer, p_rate numeric)
+returns integer
+language sql
+immutable
+as $$
+  select case
+           when coalesce(p_tds, 0) > 0 and coalesce(p_rate, 0) > 0 and g.part is not null
+                and abs(round(g.part * p_rate / 100) - p_tds) > 1
+             then least(p_taxable, round(p_tds * 100 / p_rate)::integer)
+           else coalesce(g.part, 0)
+         end
+    from (select public.bank_credit_tds_part_gross(p_paid, p_taxable, p_total) as part) g
+$$;
+revoke all on function public.bank_credit_tds_gross(integer, integer, integer, integer, numeric) from public, anon;
+grant execute on function public.bank_credit_tds_gross(integer, integer, integer, integer, numeric) to authenticated, service_role;
+comment on function public.bank_credit_tds_gross(integer, integer, integer, integer, numeric) is
+  'R-2538: TDS gross for a receipt = the paid part''s taxable; when a given rate does not fit the TDS on that part, TDS × 100 ÷ rate (capped at the taxable). 0 when there is no taxable.';
 
 -- ── 2. bank_credit_pay_item (from 20261106155253_r2542 — its latest body) ──────────────────────
 create or replace function public.bank_credit_pay_item(
@@ -119,8 +147,13 @@ begin
     if not found or v_inv.tenant_id is distinct from v_txn.tenant_id then
       raise exception 'Invoice % not found in your company', p_invoice_id using errcode = 'no_data_found';
     end if;
-    /* R-2538 (R-2542 review #3): a written-off invoice takes no money — reverse the write-off first. */
-    if v_inv.written_off_at is not null then
+    /* R-2538 (R-2542 review #3): a written-off invoice takes no NEW money — reverse the write-off first.
+       A line freed with its receipt kept (this reference already received on the invoice) still goes
+       back to that receipt (the replays below). */
+    if v_inv.written_off_at is not null
+       and not exists (select 1 from public.payments p
+                        where p.tenant_id = v_txn.tenant_id and p.invoice_id = p_invoice_id
+                          and p.reference = p_reference and p.status = 'received') then
       raise exception 'Invoice % was written off on %, so it cannot take a receipt. Reverse the write-off first.',
         p_invoice_id, to_char(v_inv.written_off_at, 'DD Mon YYYY') using errcode = 'check_violation';
     end if;
@@ -148,7 +181,10 @@ begin
       select p.id, p.receipt_voucher_no into v_quote
         from public.payments p
        where p.tenant_id = v_txn.tenant_id and p.invoice_id = p_invoice_id and p.quote_id is null
-         and p.reference = p_reference and p.status = 'received' and p.amount = p_amount + v_tds
+         and p.reference = p_reference and p.status = 'received'
+         and (p.amount = p_amount + v_tds   -- the same money, or the same bank money with the TDS it was booked with
+              or p.amount - coalesce((select sum(t.tds_amount) from public.tds_receivable t
+                                       where t.tenant_id = p.tenant_id and t.payment_id = p.id), 0) = p_amount)
        order by p.received_at limit 1;
       if not found then
         select p.amount, p.receipt_voucher_no into v_prev
@@ -180,7 +216,7 @@ begin
       end if;
 
       /* R-2538: TDS gross = the taxable value of the PART this receipt pays (R-2542 had the whole invoice). */
-      v_gross := public.bank_credit_tds_part_gross(p_amount + v_tds, nullif(v_inv.taxable_value, 0), v_total);
+      v_gross := public.bank_credit_tds_gross(p_amount + v_tds, nullif(v_inv.taxable_value, 0), v_total, v_tds, p_tds_rate_pct);
       v_rate  := case when v_tds > 0 then coalesce(p_tds_rate_pct, round(v_tds * 100.0 / nullif(v_gross, 0), 2)) end;
       v_res := public._record_opening_invoice_payment(
         v_txn.tenant_id, p_invoice_id, p_amount + v_tds, 'bank_transfer', p_reference, v_note,
@@ -232,11 +268,13 @@ begin
                 else 'new' end;
     /* R-2538: the part's taxable, not the whole quote's. v_total: the invoice's total when the money is for
        an invoice, else the quote's — Suresh's half-yearly sale: ₹92,925 of ₹1,85,850 → gross ₹78,750. */
-    v_total := coalesce(v_total, nullif(v_quote.amount, 0));
-    v_gross := public.bank_credit_tds_part_gross(
+    /* Taxable and total from the SAME document: an invoice with no taxable value falls back to the quote's
+       taxable AND the quote's total (never the whole year's taxable against one part's total). */
+    v_total := case when v_inv_taxable is not null then v_total else nullif(v_quote.amount, 0) end;
+    v_gross := public.bank_credit_tds_gross(
       p_amount + v_tds,
       coalesce(v_inv_taxable, nullif(v_quote.subtotal, 0), round(coalesce(v_quote.amount, 0) * 100.0 / (100 + coalesce(v_quote.tax_rate, 18)))::int),
-      v_total);
+      v_total, v_tds, p_tds_rate_pct);
 
     /* A new subscription sale that has filed nothing yet: the operator's subscription choice. */
     v_new_sale := v_kind = 'new'
@@ -277,7 +315,7 @@ begin
       update public.quotes set line_items = v_lines where id = v_quote.id;
     end if;
   else
-    v_gross := public.bank_credit_tds_part_gross(p_amount + v_tds, v_inv_taxable, v_total);   -- R-2538: the part's taxable
+    v_gross := public.bank_credit_tds_gross(p_amount + v_tds, v_inv_taxable, v_total, v_tds, p_tds_rate_pct);   -- R-2538: the part's taxable (0 when none, as R-2542)
   end if;
   v_rate := case when v_tds > 0 then coalesce(p_tds_rate_pct, round(v_tds * 100.0 / nullif(v_gross, 0), 2)) end;   -- R-2538
 
