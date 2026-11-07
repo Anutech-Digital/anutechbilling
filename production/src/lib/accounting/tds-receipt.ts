@@ -99,6 +99,53 @@ export function tdsPartGross(i: {
   return part;
 }
 
+/**
+ * R-2556 — the Record payment sheet's DEFAULT TDS when part of the document may already be paid.
+ * - partTaxable = the taxable share of THIS payment's part (the balance it settles), by the same part
+ *   rule as tdsPartGross (R-2551 / SQL bank_credit_tds_gross): remaining × taxable ÷ GST-inclusive total.
+ * - tds = rate × partTaxable, half away from zero, rate exact to 6 decimals (0.125% stays exact).
+ * - and never more than the document's TDS at that rate minus the TDS already booked on its earlier
+ *   parts (`bookedTds`; null = not known yet → only the part rule), so earlier TDS is never added again.
+ * Nothing paid before → remaining = total → rate × the whole taxable, exactly as before.
+ */
+export function tdsDefaultForPart(i: {
+  remaining: number;
+  taxable: number | null | undefined;
+  total: number | null | undefined;
+  ratePct: number | null | undefined;
+  bookedTds: number | null | undefined;
+}): { partTaxable: number; tds: number } {
+  const remaining = Math.max(0, Math.round(i.remaining || 0));
+  const taxable = typeof i.taxable === "number" && Number.isFinite(i.taxable) ? Math.max(0, Math.round(i.taxable)) : 0;
+  const partTaxable = remaining > 0 ? tdsPartGross({ paid: remaining, taxable, total: i.total, tds: 0, ratePct: null }) : 0;
+  const rateM = typeof i.ratePct === "number" && Number.isFinite(i.ratePct) && i.ratePct > 0
+    ? Math.round(i.ratePct * 1_000_000) : 0;
+  if (rateM <= 0 || partTaxable <= 0) return { partTaxable, tds: 0 };
+  let tds = mulDivRound(partTaxable, rateM, 100_000_000);
+  if (typeof i.bookedTds === "number" && Number.isFinite(i.bookedTds)) {
+    const left = mulDivRound(taxable, rateM, 100_000_000) - Math.max(0, Math.round(i.bookedTds));
+    tds = Math.max(0, Math.min(tds, left));
+  }
+  return { partTaxable, tds };
+}
+
+/** A tds_receivable row as the Record payment sheet reads it (R-2556). */
+export interface BookedTdsRow { tds_amount: number | null; rate_pct: number | string | null }
+
+/**
+ * R-2556 — TDS already booked on a document at THIS rate (rate compared to 6 decimals). TDS booked under
+ * another section/rate (194J 10% earlier, 194C 2% now) does not count: subtracting it would wrongly cap
+ * this part's TDS to ₹0.
+ */
+export function bookedTdsAtRate(rows: readonly BookedTdsRow[], ratePct: number | null | undefined): number {
+  const m = (r: unknown) => {
+    const n = typeof r === "string" ? Number(r) : r;
+    return typeof n === "number" && Number.isFinite(n) ? Math.round(n * 1_000_000) : NaN;
+  };
+  const want = m(ratePct);
+  return rows.reduce((s, r) => (m(r.rate_pct) === want ? s + Math.max(0, Math.round(r.tds_amount ?? 0)) : s), 0);
+}
+
 /** Sum of TDS per payment id, from tds_receivable rows (one payment can carry more than one). */
 export function tdsByPayment(rows: readonly { payment_id: string | null; tds_amount: number | null }[]): Record<string, number> {
   const out: Record<string, number> = {};
