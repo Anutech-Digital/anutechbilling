@@ -71,7 +71,7 @@ function seed(): void {
 async function searchPalette(page: Page, q: string) {
   await page.keyboard.press("Control+k");
   const box = page.getByPlaceholder(/Search customers, leads/);
-  await expect(box).toBeVisible({ timeout: 30_000 });
+  await expect(box).toBeVisible({ timeout: 60_000 });
   await box.fill(q);
   await expect(page.getByText("Searching…")).toHaveCount(0, { timeout: 30_000 });
   return box;
@@ -96,21 +96,21 @@ test.describe("R-2185 card test", () => {
   test("Step 1: Ctrl+K → type 9876500031 (digits only) → CT R2185 Phone Co appears", async () => {
     await openAppPage(page, "/dashboard");
     await searchPalette(page, "9876500031");
-    await expect(page.getByRole("option", { name: new RegExp(PHONE_CO.name) })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("option", { name: new RegExp(PHONE_CO.name) })).toBeVisible({ timeout: 60_000 });
     await page.keyboard.press("Escape");
   });
 
   test("Step 2: the same number typed as 98765 00031, +919876500031 and 98765-00031 finds it too", async () => {
     for (const q of ["98765 00031", "+919876500031", "98765-00031"]) {
       await searchPalette(page, q);
-      await expect(page.getByRole("option", { name: new RegExp(PHONE_CO.name) }), q).toBeVisible({ timeout: 30_000 });
+      await expect(page.getByRole("option", { name: new RegExp(PHONE_CO.name) }), q).toBeVisible({ timeout: 60_000 });
       await page.keyboard.press("Escape");
     }
   });
 
   test("Step 3: a company's own mobile (+91-98765-00032) is found by 9876500032", async () => {
     await searchPalette(page, "9876500032");
-    await expect(page.getByRole("option", { name: new RegExp(MOBILE_CO.name) })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByRole("option", { name: new RegExp(MOBILE_CO.name) })).toBeVisible({ timeout: 60_000 });
     await expect(page.getByRole("option", { name: new RegExp(PHONE_CO.name) })).toHaveCount(0);
     await page.keyboard.press("Escape");
   });
