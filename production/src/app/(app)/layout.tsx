@@ -12,6 +12,7 @@ import { Sidebar, MobileSidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/topbar";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { WorkspaceTabBar } from "@/components/layout/workspace-tab-bar";
+import { NavProgressBar } from "@/components/layout/nav-progress";
 import { GlobalBugReporter } from "@/components/shared/global-bug-reporter";
 import { AiHelp } from "@/components/shared/ai-help";
 import { AttendanceReminder } from "@/components/features/attendance/attendance-reminder";
@@ -44,6 +45,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
          this instead of each guessing (bottom-6 / bottom-20 / pb-16 had drifted apart). */
       style={{ "--bottom-nav-h": "calc(56px + env(safe-area-inset-bottom))" } as React.CSSProperties}
     >
+      {/* R-2186: thin bar along the top while a menu click is opening its page. */}
+      <NavProgressBar />
+
       {/* Desktop sidebar (sticky 240px) */}
       <Sidebar />
 

@@ -29,7 +29,8 @@ vi.mock("next/navigation", () => ({
 }));
 vi.mock("next/link", () => ({
   default: ({ href, children, onClick, ...p }: { href: string; children: React.ReactNode; onClick?: (e: React.MouseEvent) => void }) => (
-    <a href={href} {...p} onClick={(e) => { e.preventDefault(); onClick?.(e); }}>{children}</a>
+    // Like next/link: the caller's onClick runs first, then the link takes over the navigation.
+    <a href={href} {...p} onClick={(e) => { onClick?.(e); e.preventDefault(); }}>{children}</a>
   ),
 }));
 vi.mock("@/lib/hooks/useCurrentUser", () => ({

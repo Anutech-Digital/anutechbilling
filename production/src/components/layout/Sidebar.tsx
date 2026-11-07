@@ -34,9 +34,40 @@ import type { TenantWithParent } from "@/lib/supabase/database.types";
 import { useNavBadges } from "@/lib/hooks/useNavBadges";
 import { shownBadge } from "@/lib/hooks/nav-badge-views";
 import { useCurrentUser, useIdentity } from "@/lib/hooks/useCurrentUser";
-import { roleLabel } from "@/lib/auth/roles";
+import { roleLabel, isUserRole } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
+import { Skeleton } from "@/components/ui/skeleton";
 import { AccountMenuItems } from "./account-menu-items";
+import { pendOnClick, useNavPending } from "./nav-progress";
+
+/* R-2186: the role the menu was last drawn for. The menu is built from the role, and the role
+   comes from the identity query — 5–15 s after a reload in dev, with an EMPTY rail meanwhile.
+   Remembered here, the reload draws the same menu on the first client paint; the query's
+   answer replaces it (a changed role redraws, signed out forgets it). It only picks which rows
+   are DRAWN — every page still checks the role itself (route guard + RLS). */
+const NAV_ROLE_KEY = "ros_nav_role";
+const noSubscribe = () => () => {};
+function readRememberedRole(): UserRole | undefined {
+  try {
+    const v = localStorage.getItem(NAV_ROLE_KEY);
+    return isUserRole(v) ? (v as UserRole) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function useMenuRole(me: { role?: string } | null | undefined): UserRole | undefined {
+  // Server snapshot undefined → the server HTML and hydration match; the client paint right after reads the store.
+  const remembered = React.useSyncExternalStore(noSubscribe, readRememberedRole, () => undefined);
+  const known = me?.role as UserRole | undefined;
+  React.useEffect(() => {
+    try {
+      if (known) localStorage.setItem(NAV_ROLE_KEY, known);
+      else if (me === null) localStorage.removeItem(NAV_ROLE_KEY);
+    } catch {}
+  }, [known, me]);
+  if (me === null) return undefined;
+  return known ?? remembered;
+}
 
 // ============================================================
 // SidebarContent — shared between desktop + mobile
@@ -56,7 +87,10 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
      Settings) that shows only the chosen app's rows, with Today/Dashboard pinned above;
      see lib/nav-apps.ts. The app follows the page you are on; clicking another app peeks
      it until you navigate. A role with a short menu gets every row at once, no switcher. */
-  const role = me?.role as UserRole | undefined;
+  const role = useMenuRole(me);
+  /* R-2186: the row just clicked, until its page starts painting (nav-progress.tsx). */
+  const pendingHref = useNavPending();
+  const pend = (href: string, external?: boolean) => pendOnClick(href, pathname, onNavigate, external);
   /* R-472: Partners only for a distributor tenant — same query (and cache key) as /partners. */
   const { data: hierarchy } = useQuery({
     enabled: Boolean(me?.tenantId),
@@ -102,6 +136,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
   // Reusable link (plain item + accordion children).
   const renderLink = (it: NavItem, child = false) => {
     const isActive = pathname === it.href;
+    const isPending = !isActive && pendingHref === it.href;
     /* R-1541: a live count is its own link — to the filtered view whose rows it counts
        (lib/hooks/nav-badge-views.ts) — with what it means on hover. The row still opens the
        page. A count whose view this role cannot open is not drawn. */
@@ -111,18 +146,21 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
       <Link
         key={it.id}
         href={it.href as any}
-        onClick={onNavigate}
+        onClick={pend(it.href, it.external)}
         target={it.external ? "_blank" : undefined}
         rel={it.external ? "noopener noreferrer" : undefined}
         title={collapsed ? (it.hint ? `${it.label} — ${it.hint}` : it.label) : it.hint}
         className={cn(
           "group relative flex items-center rounded-md text-sm transition-colors",
           collapsed ? "justify-center px-0 py-2" : child ? "gap-2 pl-8 pr-3 py-1.5 text-[13px]" : "gap-2.5 px-3 py-1.5",
-          isActive
+          isActive || isPending
             ? "bg-amber-soft text-amber-ink font-medium"
-            : "text-ink-2 hover:bg-paper-2 hover:text-ink"
+            : "text-ink-2 hover:bg-paper-2 hover:text-ink",
+          isPending && "animate-pulse motion-reduce:animate-none"
         )}
         aria-current={isActive ? "page" : undefined}
+        aria-busy={isPending || undefined}
+        data-pending={isPending || undefined}
       >
         {child && !collapsed
           ? <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", isActive ? "bg-amber" : "bg-ink-3/40")} />
@@ -152,7 +190,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
         {row}
         <Link
           href={live.href as Route}
-          onClick={onNavigate}
+          onClick={pend(live.href)}
           title={live.title}
           aria-label={live.title}
           className={cn(
@@ -198,17 +236,21 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
     }
     if (item.children?.length && !collapsed) {
       const isOpen = openMenus[item.id] ?? (active || item.children.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")));
+      const parentPending = !active && pendingHref === item.href;
       return (
         <div key={item.id}>
           <div className="flex items-center">
             <Link
               href={item.href as any}
-              onClick={onNavigate}
+              onClick={pend(item.href)}
               className={cn(
                 "group flex items-center gap-2.5 rounded-md text-sm transition-colors flex-1 px-3 py-1.5",
-                active ? "bg-amber-soft text-amber-ink font-medium" : "text-ink-2 hover:bg-paper-2 hover:text-ink"
+                active || parentPending ? "bg-amber-soft text-amber-ink font-medium" : "text-ink-2 hover:bg-paper-2 hover:text-ink",
+                parentPending && "animate-pulse motion-reduce:animate-none"
               )}
               aria-current={active ? "page" : undefined}
+              aria-busy={parentPending || undefined}
+              data-pending={parentPending || undefined}
             >
               <Icon name={item.icon} size={15} className={cn("flex-shrink-0", active ? "text-amber" : "text-ink-3 group-hover:text-ink-2")} />
               <span className="flex-1 truncate" title={item.label}>{item.label}</span>
@@ -324,7 +366,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
               <Link
                 key={m.href}
                 href={m.href as never}
-                onClick={onNavigate}
+                onClick={pend(m.href)}
                 className="flex items-center gap-2 rounded-lg border border-hairline bg-amber-soft/40 px-3 py-2.5 text-sm font-semibold text-ink hover:bg-amber-soft active:bg-amber-soft/70"
               >
                 <Icon name={m.icon} size={16} className="text-amber shrink-0" />
@@ -337,6 +379,15 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
             ))}
           </div>
         </div>
+        {/* R-2186: first visit on this browser (no remembered role) — row-shaped placeholders
+            while the identity query answers, never an empty rail. */}
+        {!role && identity.status === "loading" && (
+          <div aria-busy="true" aria-label="Loading menu" className="space-y-1.5 px-1 py-1">
+            {[1, 2, 3, 4, 5, 6, 7, 8].map((i) => (
+              <Skeleton key={i} className={cn("h-7 rounded-md", collapsed ? "w-10 mx-auto" : "w-full")} />
+            ))}
+          </div>
+        )}
         {model.pinned.length > 0 && (
           <div className={cn("space-y-0.5", model.apps.length > 0 && "pb-2 mb-2 border-b border-hairline")}>
             {model.pinned.map((it) => renderLink(it))}
@@ -403,6 +454,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
         {me?.isPlatformAdmin && (
           <Link
             href={"/platform" as never}
+            onClick={pend("/platform")}
             className={cn(
               "group flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors mt-1 border-t border-hairline pt-3",
               pathname.startsWith("/platform")
