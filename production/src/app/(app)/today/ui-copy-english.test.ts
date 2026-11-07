@@ -3,6 +3,12 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { HINGLISH_ALLOWED_BY_DESIGN, hinglishHits, scanHinglish, uiSourceFiles } from "@/lib/ui-copy/hinglish-scan";
 import { HINGLISH_ALLOWLIST } from "@/lib/ui-copy/hinglish-allowlist";
+import { readSource } from "@/lib/testing/source-cache";
+
+/* R-2564: the whole-app scan runs once per file (two describes used to scan it twice), through the
+   shared, always-fresh read cache. */
+let scanned: Map<string, string[]> | undefined;
+const scanAll = () => (scanned ??= scanHinglish(process.cwd(), readSource));
 
 /* R-246 (after R-216): screens that still showed Hinglish labels, toasts and hints
    ("Samajh gaya", "Andaza", "jod me nahi", "Wajah kam se kam…"). App UI copy is short plain
@@ -48,8 +54,7 @@ describe("R-246 UI copy is English", () => {
    card are listed in src/lib/ui-copy/hinglish-allowlist.ts; a listed file with no Hinglish left
    also fails, so that list only shrinks. */
 describe("R-1731 UI copy is English across the whole app", () => {
-  const root = process.cwd();
-  const found = scanHinglish(root);
+  const found = scanAll();
 
   it("no file outside the allow-list shows Hinglish on screen", () => {
     const offenders: Record<string, string[]> = {};
@@ -136,7 +141,7 @@ describe("R-1733 Hinglish guard has no gaps", () => {
     expect(files).toContain("src/site/components/home/HomeV2.tsx");
     expect(files.filter((f) => f.startsWith("src/site/")).length).toBeGreaterThan(60);
     expect(HINGLISH_ALLOWED_BY_DESIGN.some((re) => re.test("src/site/components/lp/lp-copy.ts"))).toBe(false);
-    expect([...scanHinglish(process.cwd()).keys()].filter((f) => f.startsWith("src/site/"))).toEqual([]);
+    expect([...scanAll().keys()].filter((f) => f.startsWith("src/site/"))).toEqual([]);
   });
 
   it("files allowed by design are AI help / prompts / keyword matchers only", () => {

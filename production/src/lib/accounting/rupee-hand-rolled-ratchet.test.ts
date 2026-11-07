@@ -11,9 +11,10 @@
  * lower its number (delete the entry at 0). A new file, or a higher count, fails.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { rupee } from "@/lib/utils";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = join(process.cwd(), "src");
 
@@ -116,7 +117,7 @@ function walk(dir: string, out: string[] = []): string[] {
 function counts(): Record<string, number> {
   const out: Record<string, number> = {};
   for (const p of walk(ROOT)) {
-    const n = readFileSync(p, "utf8").split(/\r?\n/).filter(isHandRolledRupee).length;
+    const n = readSource(p).split(/\r?\n/).filter(isHandRolledRupee).length;
     if (n > 0) out[relative(ROOT, p).replace(/\\/g, "/")] = n;
   }
   return out;
@@ -143,7 +144,7 @@ describe("R-1138 — rupee amounts use rupee(), not a hand-rolled toLocaleString
     for (const f of CONVERTED) {
       expect(actual[f] ?? 0, f).toBe(0);
       expect(KNOWN[f], f).toBeUndefined();
-      expect(readFileSync(join(ROOT, f), "utf8"), f).toMatch(/\brupee\(/);
+      expect(readSource(join(ROOT, f)), f).toMatch(/\brupee\(/);
     }
   });
 

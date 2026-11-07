@@ -7,9 +7,11 @@
  * requests, quote / invoice links and the auth callback redirect.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { allowedHosts, appUrl, isAllowedHost, normalizeHost, trustedOrigin } from "./app-url";
+import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared fresh read cache
 
 function h(init: Record<string, string>): Headers {
   return new Headers(init);
@@ -140,7 +142,7 @@ const ALLOWED_READERS = new Set([
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     const p = join(dir, name);
-    if (statSync(p).isDirectory()) walk(p, out);
+    if (statSync(p).isDirectory()) { if (!isPrismaGenerated(p)) walk(p, out); } // R-2564: the generated Prisma client is not our code (36 MB)
     else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p);
   }
   return out;
@@ -150,7 +152,7 @@ describe("R-723 scan — no new raw-host links", () => {
   it("x-forwarded-host is read only by the allowlisted files", () => {
     const root = process.cwd();
     const offenders = walk(join(root, "src"))
-      .filter((f) => /["']x-forwarded-host["']/i.test(readFileSync(f, "utf8")))
+      .filter((f) => /["']x-forwarded-host["']/i.test(readSource(f)))
       .map((f) => relative(root, f).split("\\").join("/"))
       .filter((f) => !ALLOWED_READERS.has(f));
     expect(offenders).toEqual([]);

@@ -6,15 +6,16 @@
  * migration proves something the database will not do — so the copy is checked here, in the
  * gate that actually runs on a branch.
  */
-import { readFileSync } from "node:fs";
+
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { PEER_SCOPED_ROLES } from "../src/lib/team/visibility";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const SUPA = path.join(process.cwd(), "supabase");
 const S13 = "20260928100000_rls_initplan_wrap.sql";
 const S14 = "20260928101000_hot_tenant_date_indexes.sql";
-const read = (...p: string[]) => readFileSync(path.join(SUPA, ...p), "utf8").replace(/\r\n/g, "\n");
+const read = (...p: string[]) => readSource(path.join(SUPA, ...p)).replace(/\r\n/g, "\n");
 const SQL_TEST = read("tests", "rls_initplan_and_hot_indexes.test.sql");
 
 function inlineCopy(name: string): string | undefined {

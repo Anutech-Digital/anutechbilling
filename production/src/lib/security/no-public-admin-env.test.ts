@@ -17,6 +17,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = path.resolve(__dirname, "../../..");          // production/
 const SRC = path.join(ROOT, "src");
@@ -50,14 +51,14 @@ function code(src: string): string {
 
 describe("R-730: admin allowlists never go to the browser", () => {
   const files = walk(SRC);
-  const text = new Map(files.map((f) => [f, fs.readFileSync(f, "utf8")] as const));
+  const text = new Map(files.map((f) => [f, readSource(f)] as const));
 
   it("scans a real tree", () => {
     expect(files.length).toBeGreaterThan(500);
     // R-2552: the generated client is left out; its source (the Prisma schema) is scanned instead.
     // The folder skipped must be exactly the schema's generator output — if `output` ever moves,
     // this goes red instead of the skip silently matching nothing (or something else).
-    const schema = fs.readFileSync(path.join(ROOT, "prisma/schema.prisma"), "utf8");
+    const schema = readSource(path.join(ROOT, "prisma/schema.prisma"));
     const out = schema.match(/^\s*output\s*=\s*"([^"]+)"/m)?.[1];
     expect(out && path.resolve(ROOT, "prisma", out)).toBe(GENERATED);
   });
@@ -71,7 +72,7 @@ describe("R-730: admin allowlists never go to the browser", () => {
     for (const name of CONFIG_FILES) {
       const f = path.join(ROOT, name);
       if (!fs.existsSync(f)) continue;
-      const raw = fs.readFileSync(f, "utf8");
+      const raw = readSource(f);
       // The Prisma schema's `//` / `///` comments ship nothing, same as in source files.
       const m = (name.endsWith(".prisma") ? code(raw) : raw).match(ADMIN_PUBLIC_ENV);
       if (m) offenders.push(`${name}: ${m[0]}`);
