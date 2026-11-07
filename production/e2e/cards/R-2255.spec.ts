@@ -16,12 +16,12 @@ test.describe("R-2255 credit on a change only up to what was paid", () => {
   onlyInCardTests();
 
   test("Step 1: unpaid ₹2,700 invoice, unused ₹1,829.03 → credit ₹0, the open amount is lowered instead", () => {
-    const unpaid = splitChangeCredit({ unusedPaise: 182903, billedPaise: 270000, receivedPaise: 0, invoiced: true });
+    const unpaid = splitChangeCredit({ unusedPaise: 182903, openDuePaise: 270000, receivedPaise: 0, invoiced: true });
     expect(unpaid.lines.map((l) => l.text)).toEqual([
       "Lowers what they still owe: ₹1,829.03",
       "Credit to customer (from money received): ₹0.00 — nothing received yet",
     ]);
-    const paid = splitChangeCredit({ unusedPaise: 182903, billedPaise: 270000, receivedPaise: 270000, invoiced: true });
+    const paid = splitChangeCredit({ unusedPaise: 182903, openDuePaise: 0, receivedPaise: 270000, invoiced: true });
     expect(paid.creditPaise).toBe(182903);
   });
 

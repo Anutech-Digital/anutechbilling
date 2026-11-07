@@ -5,37 +5,47 @@
  * Why: Zoho's change-plan preview credited the unused part of the old plan (₹1,829.03)
  * against an invoice of ₹2,700 that was never paid — copying that hands out money we never got.
  *
- * The rule, in one line: the unused value first LOWERS WHAT IS STILL OWED on the part's
- * invoice / payment request; only what is left after that is a credit to the customer.
+ * The rule: the unused value first LOWERS WHAT THE PART'S INVOICE / REQUEST STILL ASKS FOR;
+ * only what is left after that becomes a credit, and never more than was received (less any
+ * credit already given back from that money by an earlier change):
  *
- *   due            = billed − received          (received is capped at billed)
- *   lowerOpen      = min(unused, due)
- *   credit         = unused − lowerOpen  =  max(0, received − used)
+ *   lowerOpen = min(unused, openDue)
+ *   credit    = min(unused − lowerOpen, received − alreadyCredited)
+ *   notGiven  = unused − lowerOpen − credit      (normally 0 — shown when it is not)
  *
- * So the credit can never exceed what was received for this part, and the two lines always add
- * up to the unused value. When the part has a tax invoice, ONE credit note for the full unused
- * value is the GST document (CGST s.34 — it reduces the invoice by the value of the supply not
- * made); this split only says how that note's value lands: first against the invoice's open
- * balance, the rest as the customer's credit. With no tax invoice yet (only an open payment
- * request), there is no credit note — the request itself is lowered.
+ * When the part has a tax invoice, the document is ONE credit note for lowerOpen + credit
+ * (CGST s.34 — it reduces the invoice by the value of the supply not made); this split says how
+ * its value lands: first against the open balance, the rest as the customer's credit. With no
+ * tax invoice yet, money received is an advance: giving part of it back is a refund voucher
+ * (CGST rule 51), and an unpaid request is simply lowered.
  *
- * All amounts are integer paise and include GST (pass `prorate(...).totalPaise` as unused).
+ * ⚠ UNITS: everything here is integer PAISE, incl. GST. The DB columns (invoices.amount,
+ * net_payable, paid_amount) are RUPEES — convert with `openDuePaiseOf()` / `rupeesToPaise()`.
+ * `unusedPaise` is the size of the giveback: `prorate(...)` priced with negative seats returns a
+ * negative total — pass it as it is, the sign is ignored.
+ *
+ * The server RPC that books the change (R-2227 / R-2252) must apply the same split — this file is
+ * the preview's and the tests' copy of the rule, like cancel-due.ts is for cancel_subscription().
  */
-import { formatPaise, type Paise } from "./proration";
+import { formatPaise, rupeesToPaise, type Paise } from "./proration";
+import { openInvoiceDue, type SubInvoiceRow } from "./cancel-due";
 
 export interface ChangeCreditInput {
-  /** Value of the unused part being given back (incl. GST), from prorate(). */
+  /** Value of the unused part being given back (incl. GST), e.g. `prorate(...).totalPaise`. Sign ignored. */
   unusedPaise: Paise;
-  /** Total of the part's invoice / payment request (incl. GST). */
-  billedPaise: Paise;
-  /** Money actually received against that invoice / request. */
+  /** What the part's invoice / payment request still asks for NOW (after TDS, earlier credit notes,
+   *  write-off) — `openDuePaiseOf(invoiceRow)` for an invoice. */
+  openDuePaise: Paise;
+  /** Money received for this part (TDS the customer deducted counts as received). */
   receivedPaise: Paise;
-  /** True when a tax invoice exists for the part (then a credit note is the document). */
+  /** Credit already given back from that money by an earlier change on the same part. Default 0. */
+  alreadyCreditedPaise?: Paise;
+  /** True when a tax invoice exists for the part. */
   invoiced: boolean;
 }
 
 export interface ChangeCreditLine {
-  kind: "lower-open" | "credit";
+  kind: "lower-open" | "credit" | "not-given";
   amountPaise: Paise;
   /** Ready-to-show preview text. */
   text: string;
@@ -43,18 +53,20 @@ export interface ChangeCreditLine {
 
 export interface ChangeCreditSplit {
   unusedPaise: Paise;
-  /** Billed − unused: the value of the days/seats actually used. */
-  usedPaise: Paise;
   /** Part of the unused value that lowers the open (unpaid) amount. */
   lowerOpenPaise: Paise;
-  /** Part of the unused value that becomes the customer's credit — never more than received. */
+  /** Part that becomes the customer's credit — never more than received (less earlier credit). */
   creditPaise: Paise;
-  /** What the customer still owes on this part after the change. */
+  /** Part not given back at all (more than is open + received). Normally 0. */
+  notGivenPaise: Paise;
+  /** What the invoice / request still asks for after the change. */
   stillOwedPaise: Paise;
-  /** Credit note value to issue on the invoice (0 when there is no tax invoice yet). */
-  creditNotePaise: Paise;
-  /** The two preview lines, always both, in this order. */
-  lines: [ChangeCreditLine, ChangeCreditLine];
+  /** The document that carries it. */
+  document: "credit-note" | "refund-voucher" | "none";
+  /** Value of that document (credit note = lowerOpen + credit; refund voucher = credit). */
+  documentPaise: Paise;
+  /** Preview lines: always "lower-open" then "credit"; "not-given" only when it is not 0. */
+  lines: ChangeCreditLine[];
 }
 
 function assertPaise(name: string, v: unknown): asserts v is number {
@@ -63,37 +75,62 @@ function assertPaise(name: string, v: unknown): asserts v is number {
   }
 }
 
+/** What an invoice row still asks for, in paise (the DB row is in rupees). */
+export function openDuePaiseOf(row: SubInvoiceRow): Paise {
+  return rupeesToPaise(openInvoiceDue(row));
+}
+
 export function splitChangeCredit(input: ChangeCreditInput): ChangeCreditSplit {
-  const { unusedPaise, billedPaise, invoiced } = input;
-  assertPaise("unusedPaise", unusedPaise);
-  assertPaise("billedPaise", billedPaise);
-  assertPaise("receivedPaise", input.receivedPaise);
-  if (unusedPaise > billedPaise) {
-    throw new Error(
-      `splitChangeCredit: the unused part (${formatPaise(unusedPaise)}) is more than was billed (${formatPaise(billedPaise)})`,
-    );
+  if (typeof input.unusedPaise !== "number" || !Number.isSafeInteger(input.unusedPaise)) {
+    throw new Error(`splitChangeCredit: unusedPaise must be a whole number of paise (got ${String(input.unusedPaise)})`);
+  }
+  const unusedPaise = Math.abs(input.unusedPaise);
+  const { openDuePaise, receivedPaise, invoiced } = input;
+  const alreadyCreditedPaise = input.alreadyCreditedPaise ?? 0;
+  assertPaise("openDuePaise", openDuePaise);
+  assertPaise("receivedPaise", receivedPaise);
+  assertPaise("alreadyCreditedPaise", alreadyCreditedPaise);
+
+  const lowerOpenPaise = Math.min(unusedPaise, openDuePaise);
+  const creditablePaise = Math.max(0, receivedPaise - alreadyCreditedPaise);
+  const creditPaise = Math.min(unusedPaise - lowerOpenPaise, creditablePaise);
+  const notGivenPaise = unusedPaise - lowerOpenPaise - creditPaise;
+
+  let creditReason = "";
+  if (creditPaise === 0 && unusedPaise > 0) {
+    creditReason = creditablePaise === 0 && receivedPaise === 0
+      ? " — nothing received yet"
+      : creditablePaise === 0
+        ? " — what was received is already given back"
+        : " — what was received covers only the part used";
   }
 
-  // Money received beyond this bill belongs elsewhere (advance / another invoice), not to this change.
-  const receivedPaise = Math.min(input.receivedPaise, billedPaise);
-  const duePaise = billedPaise - receivedPaise;
-  const lowerOpenPaise = Math.min(unusedPaise, duePaise);
-  const creditPaise = unusedPaise - lowerOpenPaise;
+  const lines: ChangeCreditLine[] = [
+    { kind: "lower-open", amountPaise: lowerOpenPaise, text: `Lowers what they still owe: ${formatPaise(lowerOpenPaise)}` },
+    { kind: "credit", amountPaise: creditPaise, text: `Credit to customer (from money received): ${formatPaise(creditPaise)}${creditReason}` },
+  ];
+  if (notGivenPaise > 0) {
+    lines.push({
+      kind: "not-given",
+      amountPaise: notGivenPaise,
+      text: `Not given back (more than is owed or was received): ${formatPaise(notGivenPaise)}`,
+    });
+  }
 
-  const creditText =
-    `Credit to customer (from money received): ${formatPaise(creditPaise)}` +
-    (receivedPaise === 0 ? " — nothing received yet" : "");
+  const document: ChangeCreditSplit["document"] = invoiced
+    ? (lowerOpenPaise + creditPaise > 0 ? "credit-note" : "none")
+    : (creditPaise > 0 ? "refund-voucher" : "none");
+  const documentPaise = document === "credit-note" ? lowerOpenPaise + creditPaise
+    : document === "refund-voucher" ? creditPaise : 0;
 
   return {
     unusedPaise,
-    usedPaise: billedPaise - unusedPaise,
     lowerOpenPaise,
     creditPaise,
-    stillOwedPaise: duePaise - lowerOpenPaise,
-    creditNotePaise: invoiced ? unusedPaise : 0,
-    lines: [
-      { kind: "lower-open", amountPaise: lowerOpenPaise, text: `Lowers what they still owe: ${formatPaise(lowerOpenPaise)}` },
-      { kind: "credit", amountPaise: creditPaise, text: creditText },
-    ],
+    notGivenPaise,
+    stillOwedPaise: openDuePaise - lowerOpenPaise,
+    document,
+    documentPaise,
+    lines,
   };
 }
