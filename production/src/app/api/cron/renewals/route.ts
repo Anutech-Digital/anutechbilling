@@ -42,7 +42,7 @@ import { primaryContactEmail } from "@/lib/contacts/primary";
 import { decideCadence, CADENCE_TRIGGERS, reopensForNewTerm, effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";
 import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
 import { renderTemplate } from "@/lib/renewals/templates";
-import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
+import { createOrGetRenewalQuote, isRenewalQuoteHold } from "@/lib/renewals/create-renewal-quote";
 import { flagsForQuoteKind, type QuoteDocumentKind } from "@/lib/pdf/quote-document-kind";
 import { splitBilledRenewalStep } from "@/lib/renewals/split-billed-renewal";
 import { createDomainRenewalQuote } from "@/lib/domains/renewal";
@@ -514,6 +514,16 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
            a yearly figure (the exact case renewalTerm refuses). A reminder with no true
            price and no way to pay is worse than one a day later. Nothing is logged as
            sent, so the step is retried next run; the reason is in errors. */
+        /* R-2618: the link holds a Change-plan quote — not a renewal. It used to go out as the
+           renewal reminder with the plan-change amount. No email; the owner sees why in errors;
+           retried next run (paid → link cleared, new plan priced; expired → R-2590 releases it). */
+        if (quoteResult && isRenewalQuoteHold(quoteResult)) {
+          detail.emailStatus = `(held: plan change quote ${quoteResult.quoteId} pending — renewal quote after it is paid or expires)`;
+          result.emails_skipped += 1;
+          result.errors.push({ subscription_id: sub.id, message: quoteResult.message });
+          result.details.push(detail);
+          return;
+        }
         if (!quoteResult) {
           const why = sub.vendor === "domain" && sub.domain
             ? `No renewal quote for domain ${sub.domain}: the live renewal price could not be read.`

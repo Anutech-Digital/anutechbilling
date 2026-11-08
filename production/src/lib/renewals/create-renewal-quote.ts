@@ -33,6 +33,7 @@ import { renewalCost } from "@/lib/renewals/renewal-cost";
 import { istToday, toIstDate } from "@/lib/dates/ist";
 import { loadScheduledSeatCuts, renewalSeatCut } from "@/lib/renewals/scheduled-seat-cut";
 import { composeQuoteNotes } from "@/lib/quotes/customer-notes";
+import { isPlanChangeQuote } from "@/lib/subscriptions/change-plan";
 
 // The actual typed Supabase client. createAdminClient() returns this shape,
 // so the strict rpc/from overloads stay intact when callers pass it in.
@@ -103,9 +104,27 @@ export interface RenewalQuoteResult {
    quoteDocumentKind needs to tell a support-plan upgrade quote from a renewal. */
 const LINKED_QUOTE_COLUMNS = "id, amount, line_items, subtotal, discount_pct, tax_rate, is_renewal, is_extension, extension_months" as const;
 
+/**
+ * R-2618: the linked quote is a Change-plan quote (R-2227) — NOT a renewal quote. It sits on the
+ * same `renewal_quote_id`, so until it is paid (record_payment applies the new plan and clears the
+ * link) or expires (R-2590 releases the link) there is no renewal quote to send — and one made now
+ * would be priced on the OLD plan. Callers show `message` to the owner and send nothing.
+ */
+export interface RenewalQuoteHold {
+  held:    "plan_change_pending";
+  /** The plan-change quote that holds the link. */
+  quoteId: string;
+  /** Plain words for the owner (cron error line, Send now / Generate renewal quote answer). */
+  message: string;
+}
+
+export function isRenewalQuoteHold(r: RenewalQuoteResult | RenewalQuoteHold | null | undefined): r is RenewalQuoteHold {
+  return !!r && "held" in r;
+}
+
 export async function createOrGetRenewalQuote(
   input: CreateRenewalQuoteInput,
-): Promise<RenewalQuoteResult | null> {
+): Promise<RenewalQuoteResult | RenewalQuoteHold | null> {
   const { supabase, existingQuoteId } = input;
 
   // ── Path 1: subscription already has a renewal quote — load + return ──
@@ -116,6 +135,18 @@ export async function createOrGetRenewalQuote(
       .eq("id", existingQuoteId)
       .single();
     if (q) {
+      /* R-2618: a Change-plan quote renews nothing, yet it went out as the "renewal" with the
+         plan-change amount (R-2590 review). Held whatever its status or validity: paid → the link is
+         cleared and the next run prices the renewal on the NEW plan; expired → R-2590 releases the
+         link. A support-plan upgrade (R-2073) keeps R-2093's labelling below. */
+      if (isPlanChangeQuote(q)) {
+        return {
+          held:    "plan_change_pending",
+          quoteId: q.id as string,
+          message: `Plan change quote ${q.id} is pending on this subscription, so no renewal quote was made and no renewal reminder was sent. ` +
+                   "The renewal quote is made after it is paid or expires (or delete that quote to make it now).",
+        };
+      }
       return {
         quoteId:     q.id as string,
         amount:      (q.amount as number) ?? 0,

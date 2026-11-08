@@ -37,7 +37,7 @@ import {
 import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
 import { formatIstDate } from "@/lib/dates/ist";
 import { renderTemplate } from "@/lib/renewals/templates";
-import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
+import { createOrGetRenewalQuote, isRenewalQuoteHold } from "@/lib/renewals/create-renewal-quote";
 import { flagsForQuoteKind } from "@/lib/pdf/quote-document-kind";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { isEmailConfigured } from "@/lib/email/send";
@@ -216,6 +216,10 @@ export async function POST(req: Request) {
     graceDays,
     existingQuoteId: sub.renewal_quote_id,
   });
+  /* R-2618: a Change-plan quote on the link is not a renewal quote — never send it as one. */
+  if (quoteResult && isRenewalQuoteHold(quoteResult)) {
+    return NextResponse.json({ error: quoteResult.message }, { status: 409 });
+  }
   /* R-1571: no quote → no email. This went out with an amount made up as mrr × 12 (12x
      wrong on a monthly term, 144x where mrr held a yearly figure) and no accept link. */
   if (!quoteResult) {

@@ -28,7 +28,7 @@ import { NextResponse } from "next/server";
 import { createAdminClientFor } from "@/lib/supabase/server";
 import { withRoute } from "@/lib/api/with-route";
 import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
-import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
+import { createOrGetRenewalQuote, isRenewalQuoteHold } from "@/lib/renewals/create-renewal-quote";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { renewalIsSettled, firstReminderDaysOut } from "@/lib/renewals/cadence";
 import { billDueTermsOldestFirst, termsMessage, withFreedPart, rolledRenewalDate, type TermsBilled } from "@/lib/renewals/split-billed-next-part";
@@ -229,6 +229,10 @@ export const POST = withRoute({
       : `Renewal quote (operator-generated) for subscription ${sub.id}`,
   });
 
+  /* R-2618: a Change-plan quote on the link is not a renewal quote — say so, make nothing. */
+  if (result && isRenewalQuoteHold(result)) {
+    return NextResponse.json({ error: result.message }, { status: 409 });
+  }
   if (!result) {
     return NextResponse.json(
       { error: "could not create renewal quote — document numbering may be misconfigured" },
