@@ -66,6 +66,7 @@ import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
+import { releaseExpiredPlanChanges, dropReleasedLinks, tenantsWithLinkedQuote } from "@/lib/renewals/release-expired-plan-change";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -207,6 +208,18 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
   }
   /* R-897 */ allSubs = allSubs.filter((s) => cronTenantAllowed(s.tenant_id));
   result.total_active = allSubs.length;
+
+  /* R-2590 (c): an unpaid Change plan quote whose validity ended lets go of the renewal link
+     FIRST — else the steps below reuse it as this subscription's renewal quote (existingQuoteId)
+     or hold a split-billed roll on it. SQL release_expired_plan_change_quotes. */
+  const planChangeRelease = await releaseExpiredPlanChanges(supabase, tenantsWithLinkedQuote(allSubs));
+  dropReleasedLinks(allSubs, planChangeRelease.released);
+  for (const e of planChangeRelease.errors) {
+    result.errors.push({ subscription_id: "(plan-change-expiry)", message: `Tenant ${e.tenantId}: ${e.message}` });
+  }
+  for (const r of planChangeRelease.released) {
+    result.details.push({ subscription_id: r.subscription_id, customer: "", step: `plan change quote ${r.quote_id} expired unpaid — renewal link freed`, daysUntil: 0 });
+  }
 
   /* ── S22: look-ups fetched ONCE, not three round trips per subscription ──
      This loop used to read the tenant, the tenant's ingest mailboxes and the customer
