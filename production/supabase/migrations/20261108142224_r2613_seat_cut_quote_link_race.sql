@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.create_renewal_quote(uuid,uuid,jsonb)') and prosrc like '%R-2613%') and exists(select 1 from pg_trigger where tgname = 'subscriptions_r2613_quote_link_guard') and exists(select 1 from pg_trigger where tgname = 'subscriptions_r2613_seat_cut_redate')
 -- deploy-key: r2613seatcutquotelinkrace
--- 20261108133000_r2613_seat_cut_quote_link_race.sql
+-- 20261108142224_r2613_seat_cut_quote_link_race.sql
 --
 -- R-2613 (8 Nov 2026, R-2608 independent review follow-ups; money rule N5).
 --

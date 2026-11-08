@@ -1,6 +1,6 @@
 -- R-2613 (R-2608 review follow-ups, money rule N5): a full-seat renewal / extension quote must not
 -- be made or linked once an end-of-term seat cut is scheduled; moving the renewal date earlier
--- moves (or cancels) the cut. Migration 20261108133000_r2613_seat_cut_quote_link_race.
+-- moves (or cancels) the cut. Migration 20261108142224_r2613_seat_cut_quote_link_race.
 -- Own data, ONE transaction, rolled back.
 --
 --   1.  create_renewal_quote priced at 10 seats after a 10 → 7 cut was saved → refused, nothing made.
