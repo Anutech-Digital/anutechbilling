@@ -27,7 +27,7 @@ import { isNonRenewing, nonRenewingLabel, nonRenewingNote, type NonRenewingField
 const DANGER_OUTLINE = "w-full border-rose/60 text-rose hover:bg-rose-soft/40 hover:text-rose-ink";
 
 export function SubDrawerActions({
-  hasCustomer, primary, onManageSeats, onExtend, onOpenCustomer, onStatement, onCorrect, onUpgradePlan, supportPlan = false,
+  hasCustomer, primary, onManageSeats, onExtend, onOpenCustomer, onStatement, onCorrect, onUpgradePlan, onChangePlan, supportPlan = false,
 }: {
   /** R-2087: a support plan (item SUP-…) has no seats — "Manage seats" is hidden and
    *  "Upgrade plan" (when offered) is the primary button. */
@@ -45,6 +45,9 @@ export function SubDrawerActions({
   /** R-2073: set only for an active support plan (SUP-…) with a higher tier, for roles that may
    *  change a subscription's terms — opens the pro-rata upgrade quote dialog. */
   onUpgradePlan?: () => void;
+  /** R-2227: set only for an active licence subscription, for roles that may change a
+   *  subscription's terms — opens Change plan (new plan + seats, net pro-rata quote). */
+  onChangePlan?: () => void;
 }) {
   return (
     <div className="mb-4 pb-4 border-b border-hairline" data-testid="sub-drawer-actions">
@@ -66,6 +69,7 @@ export function SubDrawerActions({
               Manage seats
             </Button>
             {onUpgradePlan && <Button icon="zap" onClick={onUpgradePlan}>Upgrade plan</Button>}
+            {onChangePlan && <Button icon="zap" onClick={onChangePlan}>Change plan</Button>}
           </>
         )}
         <Button icon="clock" onClick={onExtend}>Extend term</Button>
