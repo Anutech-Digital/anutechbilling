@@ -14,6 +14,11 @@
 --   7.  renewal date moved into the past → the cut is cancelled.
 --   7b. renewal date cleared → the cut is cancelled.
 --   8.  control: no cut → create_renewal_quote makes the 10-seat quote.
+--   9.  the other way round: priced WITH a 10 → 7 cut that was removed meanwhile → refused, nothing made.
+--   9b. a 7-seat extension quote linked after its cut was removed → refused.
+--   10. date moved into the past while a 7-seat renewal quote made with the cut is linked → refused,
+--       the cut stays scheduled.
+--   10b. the same subscription, date moved earlier but still ahead → saved, the cut moves with it.
 
 begin;
 select set_config('request.jwt.claims', '{"role":"service_role"}', true);
@@ -55,6 +60,27 @@ insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, su
          ('Q-R2613-PLAN', 'dd261300-0000-4000-8000-00000000a001', 'dd261300-0000-4000-8000-00000000c005', 'R2613 Cust 5',
           11800, 10000, 10, 'sent', 'awaiting',
           '[{"name":"Google Workspace Business Standard","qty":10,"rate":1000,"cost":0,"plan_change":{"from":"Starter"}}]'::jsonb, true, 0);
+
+-- Subs d1..d3 (cases 9, 9b, 10): d1/d2 have a REMOVED 10 → 7 cut; d3 a scheduled one with its 7-seat quote linked.
+insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, status, term_months, renewal_date, renewal_state)
+  select ('dd261300-0000-4000-8000-00000000d00' || n)::uuid, 'dd261300-0000-4000-8000-00000000a001',
+         'dd261300-0000-4000-8000-00000000c001', 'R2613 Cust 1',
+         'Google Workspace Business Starter', 'google', 10, 3000, 'active', 12, current_date + 5, 'reminder_1'
+    from generate_series(1, 3) n;
+insert into public.subscription_seat_reductions
+  (tenant_id, subscription_id, idempotency_key, timing, status, seats_before, seats_removed, seats_after, effective_date, mrr_before)
+  select 'dd261300-0000-4000-8000-00000000a001', ('dd261300-0000-4000-8000-00000000d00' || n)::uuid, 'r2613-cut-d' || n,
+         'end_of_term', case n when 3 then 'scheduled' else 'cancelled' end, 10, 3, 7, current_date + 5, 3000
+    from generate_series(1, 3) n;
+insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, seats, status, payment_status, line_items, is_renewal, extension_months)
+  values ('Q-R2613-D2', 'dd261300-0000-4000-8000-00000000a001', 'dd261300-0000-4000-8000-00000000c001', 'R2613 Cust 1',
+          29736, 25200, 7, 'sent', 'awaiting',
+          '[{"name":"Google Workspace Business Starter · 1-year extension","qty":7,"rate":3600,"cost":1320,"commitment":"annual_yearly"}]'::jsonb, true, 12),
+         ('Q-R2613-D3', 'dd261300-0000-4000-8000-00000000a001', 'dd261300-0000-4000-8000-00000000c001', 'R2613 Cust 1',
+          29736, 25200, 7, 'sent', 'awaiting',
+          '[{"name":"Google Workspace Business Starter","qty":7,"rate":3600,"cost":1320,"commitment":"annual_yearly"}]'::jsonb, true, 12);
+-- d3's cut-seat quote was linked while the cut stood (an insert, so no link trigger runs).
+update public.subscriptions set renewal_quote_id = 'Q-R2613-D3' where id = 'dd261300-0000-4000-8000-00000000d003';
 
 create temp table r2613_fail (msg text) on commit drop;
 
@@ -158,6 +184,45 @@ begin
   exception when others then v_msg := sqlerrm; end;
   if v_msg is not null or (v_r->>'created')::boolean is not true then
     insert into r2613_fail values ('8: control renewal quote: ' || coalesce(v_msg, v_r::text));
+  end if;
+
+  -- 9. priced with a cut that was removed meanwhile → refused, nothing made.
+  v_msg := null; v_r := null;
+  begin
+    v_r := public.create_renewal_quote('dd261300-0000-4000-8000-00000000d001', 'dd261300-0000-4000-8000-00000000a001', v_q7);
+  exception when others then v_msg := sqlerrm; end;
+  select count(*) into v_n from public.quotes where renewal_subscription_id = 'dd261300-0000-4000-8000-00000000d001';
+  if v_msg is null or v_msg not like 'The seat cut to 7 seats for % was removed while this renewal quote was being made%' or v_n <> 0 then
+    insert into r2613_fail values ('9: cut-seat quote after the cut was removed: ' || coalesce(v_msg, 'made ' || v_r::text));
+  end if;
+
+  -- 9b. a 7-seat extension quote linked after the cut was removed → refused.
+  v_msg := null;
+  begin
+    update public.subscriptions set renewal_quote_id = 'Q-R2613-D2' where id = 'dd261300-0000-4000-8000-00000000d002';
+  exception when others then v_msg := sqlerrm; end;
+  if v_msg is null or v_msg not like 'Quote Q-R2613-D2 is for 7 seats, made with a seat cut that was removed%' then
+    insert into r2613_fail values ('9b: cut-seat link after the cut was removed: ' || coalesce(v_msg, 'was linked'));
+  end if;
+
+  -- 10. date into the past while the cut-seat renewal quote is linked → refused, cut stays.
+  v_msg := null;
+  begin
+    update public.subscriptions set renewal_date = current_date - 3 where id = 'dd261300-0000-4000-8000-00000000d003';
+  exception when others then v_msg := sqlerrm; end;
+  select status into v_status from public.subscription_seat_reductions where idempotency_key = 'r2613-cut-d3';
+  if v_msg is null or v_msg not like 'Renewal quote Q-R2613-D3 is made with the seat cut scheduled for %' or v_status <> 'scheduled' then
+    insert into r2613_fail values ('10: date into the past with a cut-seat quote linked: ' || coalesce(v_msg, 'saved') || ' (cut ' || v_status || ')');
+  end if;
+
+  -- 10b. earlier but still ahead → saved, the cut moves with it.
+  v_msg := null;
+  begin
+    update public.subscriptions set renewal_date = current_date + 1 where id = 'dd261300-0000-4000-8000-00000000d003';
+  exception when others then v_msg := sqlerrm; end;
+  select status, effective_date into v_status, v_eff from public.subscription_seat_reductions where idempotency_key = 'r2613-cut-d3';
+  if v_msg is not null or v_status <> 'scheduled' or v_eff is distinct from current_date + 1 then
+    insert into r2613_fail values ('10b: date moved earlier with a cut-seat quote linked: ' || coalesce(v_msg, v_status || ' on ' || v_eff));
   end if;
 end $$;
 

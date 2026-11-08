@@ -137,6 +137,26 @@ export function EditSubscriptionDialog({
     setPaymentDue(sub.payment_due_date ?? ""); setDataFix(false);
   }, [sub]);
 
+  /* R-2613 (rule N5): moving the renewal date earlier (or clearing it) moves a scheduled
+     end-of-term seat cut with it, or removes it when the new date has passed (database trigger
+     subscriptions_r2613_seat_cut_redate). Read the cut only then, so the note names a real one. */
+  const oldRenewal = (sub.renewal_date ?? "").slice(0, 10);
+  const renewalEarlier = oldRenewal !== "" && (renewal === "" || (/^\d{4}-\d{2}-\d{2}$/.test(renewal) && renewal < oldRenewal));
+  const [cutOnOld, setCutOnOld] = React.useState<{ seats_before: number; seats_after: number } | "none" | "unknown" | null>(null);
+  React.useEffect(() => {
+    if (!open || !renewalEarlier) return;
+    let live = true;
+    fetch(`/api/subscriptions/${sub.id}/reduce-seats?seats=1`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j: { scheduled?: { seats_before: number; seats_after: number; effective_date: string } | null }) => {
+        if (!live) return;
+        const s = j?.scheduled;
+        setCutOnOld(s && s.effective_date.slice(0, 10) === oldRenewal ? { seats_before: s.seats_before, seats_after: s.seats_after } : "none");
+      })
+      .catch(() => { if (live) setCutOnOld("unknown"); });
+    return () => { live = false; };
+  }, [open, renewalEarlier, sub.id, oldRenewal]);
+
   /** R-2228: switching Data correction off puts seats / MRR back to the record. */
   const toggleDataFix = (on: boolean) => {
     setDataFix(on);
@@ -544,11 +564,14 @@ export function EditSubscriptionDialog({
               </p>
               {/* R-2613 (rule N5): the database moves a scheduled end-of-term seat cut with an earlier
                   renewal date, or removes it when the new date has passed / is cleared. */}
-              {sub.renewal_date && (renewal === "" || (/^\d{4}-\d{2}-\d{2}$/.test(renewal) && renewal < sub.renewal_date.slice(0, 10))) && (
+              {renewalEarlier && cutOnOld !== null && cutOnOld !== "none" && (
                 <p className="mt-1 text-2xs leading-snug text-ink-2" data-testid="renewal-earlier-seat-cut-note">
+                  {cutOnOld === "unknown"
+                    ? `If a seat cut is scheduled for ${formatDate(oldRenewal)} (Manage seats → At end of term), it `
+                    : `The seat cut ${cutOnOld.seats_before} → ${cutOnOld.seats_after} seats scheduled for ${formatDate(oldRenewal)} `}
                   {renewal === "" || renewal < istToday()
-                    ? `A seat cut scheduled for ${formatDate(sub.renewal_date)} (Manage seats → At end of term) is removed when you save.`
-                    : `A seat cut scheduled for ${formatDate(sub.renewal_date)} (Manage seats → At end of term) moves to ${formatDate(renewal)} when you save.`}
+                    ? "is removed when you save."
+                    : `moves to ${formatDate(renewal)} when you save.`}
                 </p>
               )}
             </FormField>

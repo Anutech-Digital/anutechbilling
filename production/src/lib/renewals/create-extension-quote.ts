@@ -257,14 +257,18 @@ export async function createExtensionQuote(
   const linked = (await input.supabase
     .from("subscriptions")
     .update({ renewal_quote_id: newQuoteId })
-    .eq("id", input.subscriptionId)) as { error?: { message: string } | null } | undefined;
+    .eq("id", input.subscriptionId)) as { error?: { message: string; code?: string } | null } | undefined;
   if (linked?.error) {
-    await input.supabase.from("quotes").delete().eq("id", newQuoteId).eq("tenant_id", input.tenantId);
+    const removed = (await input.supabase.from("quotes").delete().eq("id", newQuoteId).eq("tenant_id", input.tenantId)) as
+      { error?: { message: string } | null } | undefined;
     const msg = linked.error.message;
     return {
       ok: false,
-      code: /^A seat cut to \d+ seats is scheduled/.test(msg) ? "seat_cut_scheduled" : "insert_failed",
-      message: `${msg} (quote ${newQuoteId} was removed).`,
+      /* 23514 = check_violation, what the link guard raises: a refusal (409), not a failure. */
+      code: linked.error.code === "23514" || /^A seat cut to \d+ seats is scheduled/.test(msg) ? "seat_cut_scheduled" : "insert_failed",
+      message: removed?.error
+        ? `${msg} Quote ${newQuoteId} could not be removed (${removed.error.message}) — delete it in Quotes; it is not linked to the subscription.`
+        : `${msg} (quote ${newQuoteId} was removed).`,
     };
   }
 
