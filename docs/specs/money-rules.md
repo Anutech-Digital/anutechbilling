@@ -103,7 +103,7 @@ Who pays the online fee: `razorpay-fee.md`.
 | S2 | ₹1 short on a receipt is booked as a settlement shortfall (Bank Charges); ₹1 over is a round-off gain — never a ₹1 advance on the customer. | R-2192 | SQL `bank_line_receipt_round_off` (`supabase/migrations/20261107205640_r2192_small_receipt_differences.sql:43`); `src/lib/banking/credit-pay-for.ts:342` `overIsRoundOff` | `supabase/tests/r2192_small_receipt_differences.test.sql`, `src/lib/banking/credit-pay-for-r2192.test.ts` |
 | S3 | Bank / SWIFT charge on a wire: every item settled in full; the gap (≤ ₹5,000 and ≤ 10% of what was settled) is ONE Bank Charges expense; refused for an over-payment, a part-paid item or a bigger gap. | R-2192 | SQL `reconcile_bank_credit_split` (`supabase/migrations/20261107221154_r2577_bank_charge_server_guard.sql:31`) | `supabase/tests/r2192_small_receipt_differences.test.sql` |
 | S4 | A bank charge is refused for a customer in India unless the line is an inward remittance whose amount × rate fits the credit (±₹1), and refused when the gap is TDS at a common rate. Server-side, not only on screen. | R-2577 | SQL `reconcile_bank_credit_split` (same file `:410`, `:513`); `src/lib/banking/credit-pay-for.ts:296` `bankChargeWire` | `supabase/tests/r2577_bank_charge_server_guard.test.sql`, `src/lib/banking/credit-pay-for-r2192.test.ts` |
-| S5 | The bank charge expense is booked without input GST (`bill_type 'none'`); the bank's own GST invoice, if any, is a separate bill. | R-2192 | SQL `reconcile_bank_credit_split` (same file `:554`) | **none — gap R-2599** |
+| S5 | The bank charge expense is booked without input GST (`bill_type 'none'`); the bank's own GST invoice, if any, is a separate bill. | R-2192 | SQL `reconcile_bank_credit_split` (same file `:554`) | `supabase/tests/r2192_small_receipt_differences.test.sql` (CHARGE: `bill_type 'none'`, `gst_paid` 0 — R-2599) |
 | S6 | One bank reference (UTR) is counted once: a payment replay is idempotent; the same reference on another quote is refused. | audit #1, R-1676 | `payments_idempotency_uq`; trigger `trg_payments_ref_once` (`supabase/migrations/20261019125620_r1676_payment_ref_once.sql`) | `supabase/tests/record_payment_idempotency.test.sql`, `supabase/tests/r1676_payment_ref_once.test.sql` |
 
 ## Write-offs
@@ -140,5 +140,4 @@ Who pays the online fee: `razorpay-fee.md`.
 
 | Rule | Gap | Card |
 |---|---|---|
-| S5 | No test asserts that the bank / SWIFT charge expense from `reconcile_bank_credit_split` carries no input GST (`bill_type 'none'`, `gst_paid` 0) — a change could start claiming ITC on it unnoticed. | R-2599 |
 | F2 | The online fee always carries 18% GST (`ONLINE_FEE_GST_PCT`), also in the gross-up. On a 0% bill (export / SEZ without payment, G4) the fee is part of a zero-rated supply; nothing passes the bill's rate in and no test covers a 0% bill (razorpay-fee.md rule 3 says it must, before R-2417 charges it). | R-2598 |

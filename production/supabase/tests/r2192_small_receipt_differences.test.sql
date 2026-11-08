@@ -195,6 +195,10 @@ begin
      or v_e.bank_account_id is distinct from 'e2192000-0000-4000-8000-0000000000bb'::uuid then
     insert into r2192_fail values ('CHARGE: no ₹500 Bank Charges expense on the wire line');
   end if;
+  -- R-2599 (money-rules S5): the bank's charge is booked without input GST — no ITC on it.
+  if v_e.bill_type is distinct from 'none' or coalesce(v_e.gst_paid, -1) <> 0 then
+    insert into r2192_fail values ('CHARGE: the bank charge carries input GST (bill_type ' || coalesce(v_e.bill_type, 'null') || ', gst_paid ' || coalesce(v_e.gst_paid::text, 'null') || ') - want none / 0');
+  end if;
   if (select count(*) from public.expenses where tenant_id = 'e2192000-0000-0000-0000-0000000000a0') <> 1 then
     insert into r2192_fail values ('CHARGE: more than one expense booked');
   end if;
