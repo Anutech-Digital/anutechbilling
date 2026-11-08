@@ -118,7 +118,9 @@ test.describe("R-2603 card test", () => {
     await dlg.getByRole("radio", { name: /I am GIVING a loan\/advance/ }).click();
     await dlg.getByLabel("Person's name (e.g. Julie Rawat)").fill(BORROWER);
     await expect(dlg.getByText(/Goes to\s+Accounting → Loans given/)).toBeVisible();
-    await page.getByRole("button", { name: "Book ₹75,000 as a loan given (Loans given)" }).click();
+    const book = page.getByRole("button", { name: "Book ₹75,000 as a loan given (Loans given)" });
+    await expect(book).toBeEnabled({ timeout: 60_000 }); // waits for the role check (owner)
+    await book.click();
     await expect(dlg).toBeHidden({ timeout: 30_000 });
     await expect.poll(loanRow, { timeout: 30_000 }).toEqual([`${BORROWER}|75000|one_shot|loan_given`]);
     expect(psql(container(), `select count(*) from public.balance_sheet_items where bank_txn_id = '${TXN}';`)).toEqual(["0"]);
