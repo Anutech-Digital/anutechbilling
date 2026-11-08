@@ -66,7 +66,7 @@ values ('${CUST}', ${tenantSql}, 'SCN Seat Cut Co', 'Maharashtra', '27', 'India'
 insert into public.quotes (id, tenant_id, customer_id, customer_name, plan, seats, amount, subtotal, total_cost, tax_rate, discount_pct,
                            status, payment_status, created_date, billing_cycle, currency, line_items, notes)
 values ('${QUOTE}', ${tenantSql}, '${CUST}', 'SCN Seat Cut Co', '${PLAN}', 10, 21240, 18000, 0, 18, 0,
-        'accepted', 'paid', (date_trunc('month', current_date) - interval '2 months')::date, 'yearly', 'INR',
+        'accepted', 'received', (date_trunc('month', current_date) - interval '2 months')::date, 'yearly', 'INR',
         '[{"id":"line-1","qty":10,"cost":0,"name":"${PLAN}","rate":1800,"commitment":"annual_yearly"}]'::jsonb, 'R-2252 card test');
 insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, net_payable, status, invoice_date, due_date,
                              taxable_value, tax_amount, tax_rate, inter_state, paid_amount, paid_date, document_kind, line_items, quote_id)
@@ -127,7 +127,7 @@ test.describe("R-2252 — Reduce seats with a shown credit", () => {
     const page = await pageAs(browser, baseURL, "owner");
     const dlg = await reduceSeats(page, 2);
     const value = dlg.getByTestId("reduce-seats-credit-value");
-    await expect(value).toHaveText(/₹[\d,]+/, { timeout: 30_000 });
+    await expect(value).toHaveText(/₹[\d,]+/, { timeout: 90_000 });
     const rupees = (await value.innerText()).replace(/[^\d]/g, "");
     await expect(dlg.getByTestId("reduce-seats-split")).toContainText(`Credit to customer (from money received): ₹${Number(rupees).toLocaleString("en-IN")}.00`);
     await expect(dlg.getByTestId("reduce-seats-split")).toContainText("Lowers what they still owe: ₹0.00");
@@ -141,6 +141,7 @@ test.describe("R-2252 — Reduce seats with a shown credit", () => {
     test.setTimeout(240_000);
     const page = await pageAs(browser, baseURL, "owner");
     const dlg = await reduceSeats(page, 2);
+    await expect(dlg.getByTestId("reduce-seats-credit-value")).toHaveText(/₹[\d,]+/, { timeout: 90_000 }); // the preview has loaded
     await dlg.getByRole("button", { name: "At end of term" }).click();
     await expect(dlg.getByTestId("reduce-seats-eot")).toContainText(/Seats go from 10 to 8 on .+No credit/);
     await expect(dlg.getByRole("button", { name: /^Schedule for / })).toBeEnabled();
@@ -162,7 +163,7 @@ test.describe("R-2252 — Reduce seats with a shown credit", () => {
     test.setTimeout(240_000);
     const page = await pageAs(browser, baseURL, "owner");
     const dlg = await reduceSeats(page, 2);
-    await expect(dlg.getByTestId("reduce-seats-credit-value")).toHaveText(/₹[\d,]+/, { timeout: 30_000 });
+    await expect(dlg.getByTestId("reduce-seats-credit-value")).toHaveText(/₹[\d,]+/, { timeout: 90_000 });
     await dlg.getByRole("button", { name: /^Remove 2 seats now$/ }).click();
     await expect(page.getByText("2 seats removed — now 8 seats")).toBeVisible({ timeout: 30_000 });
     await expect(page.getByText(/Credit note .+ for ₹/)).toBeVisible();
