@@ -32,6 +32,7 @@ import { renewalTerm } from "@/lib/renewals/renewal-term";
 import { renewalCost } from "@/lib/renewals/renewal-cost";
 import { istToday, toIstDate } from "@/lib/dates/ist";
 import { loadScheduledSeatCuts, renewalSeatCut } from "@/lib/renewals/scheduled-seat-cut";
+import { composeQuoteNotes } from "@/lib/quotes/customer-notes";
 
 // The actual typed Supabase client. createAdminClient() returns this shape,
 // so the strict rpc/from overloads stay intact when callers pass it in.
@@ -198,7 +199,7 @@ export async function createOrGetRenewalQuote(
      read makes no quote: one at the old seats would over-bill. See lib/renewals/scheduled-seat-cut.ts. */
   const cutRows = await loadScheduledSeatCuts(supabase, input.tenantId, input.subscriptionId);
   if (cutRows === null) return null;
-  const cut = renewalSeatCut(cutRows, { seats: input.seats, renewalDate: input.renewalDate }, istToday());
+  const cut = renewalSeatCut(cutRows, { seats: input.seats, renewalDate: input.renewalDate });
   const quoteSeats = cut.kind === "apply" ? cut.seats : input.seats;
 
   const perSeatRate  = term.perSeatRate;
@@ -278,10 +279,10 @@ export async function createOrGetRenewalQuote(
          went to 25 Oct 2027 instead of 25 Nov 2026 and the MRR fell 250 → 21.
          `createExtensionQuote` keeps its own 24/36 and is deliberately untouched. */
       extension_months: term.termMonths,
-      notes:            [
-        input.notes ?? `Renewal quote for subscription ${input.subscriptionId}`,
-        cut.kind === "none" ? null : cut.note,   // R-2583
-      ].filter(Boolean).join("\n"),
+      /* R-2583: the cut note is for the owner — after the staff-only marker, never on the customer's PDF. */
+      notes: cut.kind === "none"
+        ? input.notes ?? `Renewal quote for subscription ${input.subscriptionId}`
+        : composeQuoteNotes(input.notes ?? `Renewal quote for subscription ${input.subscriptionId}`, cut.note),
     } as unknown as Json,   // is_renewal / status / discount 0 are set by the RPC itself
   });
   if (rpcErr || !made) {
