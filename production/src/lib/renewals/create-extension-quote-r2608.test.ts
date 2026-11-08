@@ -54,8 +54,14 @@ describe("R-2608 createExtensionQuote with a scheduled seat cut", () => {
   it("the cuts could not be read → refused (never bill seats that may be cut)", async () => {
     const f = fakeSupabase(null);
     const r = await createExtensionQuote({ ...base, supabase: f.supabase, months: 3 });
-    expect(r).toMatchObject({ ok: false, code: "seat_cut_scheduled" });
+    expect(r).toMatchObject({ ok: false, code: "cut_check_failed" });
     expect(f.inserted).toHaveLength(0);
+  });
+
+  it("a cut that no longer applies (seats changed since) → not refused (the renewal does not bill it either)", async () => {
+    const f = fakeSupabase([cut({ seats_before: 12 })]);
+    const r = await createExtensionQuote({ ...base, supabase: f.supabase, months: 3 });
+    expect(r.ok).toBe(true);
   });
 
   it("a row for another term or a 'now' cut → quote made as before", async () => {

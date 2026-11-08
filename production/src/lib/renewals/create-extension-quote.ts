@@ -128,7 +128,7 @@ export interface CreateExtensionQuoteResult {
 
 export interface CreateExtensionQuoteError {
   ok:       false;
-  code:     "already_open" | "no_doc_number" | "insert_failed" | "invalid_years" | "seat_cut_scheduled";
+  code:     "already_open" | "no_doc_number" | "insert_failed" | "invalid_years" | "seat_cut_scheduled" | "cut_check_failed";
   message:  string;
 }
 
@@ -161,14 +161,17 @@ export async function createExtensionQuote(
      this renewal (R-2252 / R-2583). Refuse while one is scheduled; a failed read refuses too. */
   const cutRows = await loadScheduledSeatCuts(input.supabase, input.tenantId, input.subscriptionId);
   const cut = cutRows === null ? null : renewalSeatCut(cutRows, { seats: input.seats, renewalDate: input.renewalDate });
-  if (cutRows === null || (cut && cut.kind !== "none")) {
+  if (cutRows === null) {
+    return { ok: false, code: "cut_check_failed", message: "Could not check for a scheduled seat cut, so no extension quote was made. Try again in a minute." };
+  }
+  /* Only a cut the renewal quote would really bill (kind apply) — a cut that no longer applies
+     (seats changed since) is not billed by the renewal either, so the extension is not refused. */
+  if (cut?.kind === "apply") {
     return {
       ok: false,
       code: "seat_cut_scheduled",
-      message: cut && cut.kind !== "none"
-        ? `A seat cut to ${cut.row.seats_after} seats is scheduled for ${formatIstDate(cut.row.effective_date)} — Extend term would bill all ${input.seats} seats. ` +
-          "Remove the cut in Manage seats first, or let the renewal happen with the cut."
-        : "Could not check for a scheduled seat cut, so no extension quote was made. Try again in a minute.",
+      message: `A seat cut to ${cut.row.seats_after} seats is scheduled for ${formatIstDate(cut.row.effective_date)} — Extend term would bill all ${input.seats} seats. ` +
+        "Remove the cut in Manage seats first, or let the renewal happen with the cut.",
     };
   }
 
