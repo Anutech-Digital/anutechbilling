@@ -53,7 +53,11 @@ export default function ForgotPasswordPage() {
       // R-2600: an allowlisted host (same rule as the server), never just the browser's host.
       redirectTo = authRedirectUrl(`/callback?next=${encodeURIComponent("/reset-password")}`);
     } catch (e) {
-      toast.error((e as Error).message);
+      // §24: what happened, why, and what next.
+      toast.error("Could not send the reset link", {
+        description: (e as Error).message,
+        action: { label: "Back to sign in", onClick: () => { window.location.assign("/login"); } },
+      });
       return;
     }
     const supabase = createClient();
