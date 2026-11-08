@@ -33,6 +33,7 @@ The owner presses "Theek hai".
 
 - [ ] Read the card (`fix`, `doneWhen`), its spec in `docs/specs/` if it has a `goal`, and the diff:
       `git diff <sha>~1 <sha>` (or the range of all its commits) — read the code, not the summary.
+- [ ] Money card → check it against [`docs/specs/money-rules.md`](../../../docs/specs/money-rules.md): money change → names the rules it touches; new rule → added there (R-2593).
 - [ ] Look for: wrong money math / rounding / GST, tenant isolation and RLS gaps, a migration that
       edits an old migration body, a missing `-- deploy-peek:`, tests that pass without the fix,
       another card's work undone.

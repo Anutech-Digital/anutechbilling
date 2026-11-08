@@ -46,6 +46,7 @@ came back (CI wait, board not current, `claimedBy` case, `needsDecision` misuse)
        p0 / train-blocker → claim with `--priority p0`; it pushes first (push + heavy turns go by claim
        priority, R-2591). `worker-lock status` shows the line.
 3. [ ] Tests first: reproduce the owner's real path in a failing test, then fix, then green.
+       Money change → read [`docs/specs/money-rules.md`](../../../docs/specs/money-rules.md), name the rules it touches and run their tests; new rule → add it there (R-2593).
        New SQL → a SQL test on the LOCAL DB in one rolled-back transaction.
        New migration → timestamp newer than every migration on all `anutech/*` branches,
        first line `-- deploy-peek: …`; write `auth.role()` (staging rewrites it to
