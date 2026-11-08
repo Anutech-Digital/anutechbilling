@@ -39,9 +39,44 @@ describe("readSource (shared, always-fresh read cache for scan tests)", () => {
     expect(readSource(f)).toBe("two");
   });
 
+  it("R-2582: a same-size rewrite whose size, mtime AND ctime all stay the same is still seen", () => {
+    // Cloud Build (8 Nov, build 56911293): a rewrite inside one timestamp tick kept every stat field,
+    // so the cache served the old text. Simulate exactly that: the rewritten file stats as before.
+    const f = path.join(dir, "m.ts");
+    fs.writeFileSync(f, "const y = 'safe';");
+    const before = fs.statSync(f);
+    expect(readSource(f)).toBe("const y = 'safe';");
+    fs.writeFileSync(f, "const y = 'BAD!';"); // same length
+    fs.utimesSync(f, before.atime, before.mtime);
+    const realStat = fs.statSync;
+    vi.spyOn(fs, "statSync").mockImplementation(((p: fs.PathLike, o?: fs.StatSyncOptions) =>
+      p === f ? before : realStat(p, o)) as typeof fs.statSync);
+    expect(readSource(f)).toBe("const y = 'BAD!';");
+    // …and after the cache went to disk and came back
+    flushSourceCache();
+    resetSourceCacheForTest(cacheFile);
+    expect(readSource(f)).toBe("const y = 'BAD!';");
+  });
+
+  it("R-2582: a racy entry is re-checked, and trusted again once the file has aged", () => {
+    const f = path.join(dir, "n.ts");
+    fs.writeFileSync(f, "young");
+    const t = Date.now();
+    readSource(f); // cached right after the write → racy
+    const reads = vi.spyOn(fs, "readFileSync");
+    expect(readSource(f)).toBe("young");
+    expect(reads.mock.calls.filter(([p]) => p === f).length).toBe(1); // re-read, not trusted
+    vi.spyOn(Date, "now").mockReturnValue(t + 10_000); // the file is now old
+    expect(readSource(f)).toBe("young"); // one more check stamps it trusted…
+    expect(readSource(f)).toBe("young"); // …so this one is stat-only
+    expect(reads.mock.calls.filter(([p]) => p === f).length).toBe(2);
+  });
+
   it("an unchanged file is served from the cache file, not read again", () => {
     const f = path.join(dir, "d.ts");
     fs.writeFileSync(f, "unchanged");
+    // An old file (written well before it was cached) is trusted on stat alone — the fast path.
+    fs.utimesSync(f, new Date(Date.now() - 3600_000), new Date(Date.now() - 3600_000));
     readSource(f);
     flushSourceCache();
     resetSourceCacheForTest(cacheFile);
@@ -58,6 +93,7 @@ describe("readSource (shared, always-fresh read cache for scan tests)", () => {
     const f = path.join(dir, "h.ts"), g = path.join(dir, "i.ts");
     fs.writeFileSync(f, "from f");
     fs.writeFileSync(g, "from g");
+    for (const p of [f, g]) fs.utimesSync(p, new Date(Date.now() - 3600_000), new Date(Date.now() - 3600_000));
     readSource(f);
     flushSourceCache();
     const theirs = fs.readFileSync(cacheFile); // "another test file" cached f

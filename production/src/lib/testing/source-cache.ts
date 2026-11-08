@@ -9,7 +9,12 @@
  *
  * How: `readSource(file)` stats the file and returns the text from a cache file in the OS temp folder
  * when its size, mtime AND ctime are unchanged since it was cached; otherwise it reads the disk and
- * updates the entry. So a scan always sees what is on disk NOW — an edit, checkout or rebase changes
+ * updates the entry. R-2582 (8 Nov 2026), "racy" entries: a stat is only proof when the file was
+ * already older than RACY_MS when it was cached — a same-size rewrite inside one timestamp tick keeps
+ * size, mtime and ctime (Cloud Build 56911293 served stale text this way). So an entry cached within
+ * RACY_MS of the file's mtime is re-read and its bytes compared before use (git's racy-index rule);
+ * once a re-read happens after the file has aged, the entry is stored as trusted again. Old files —
+ * nearly all of src/ — stay on the stat-only fast path. So a scan always sees what is on disk NOW — an edit, checkout or rebase changes
  * mtime/ctime and that file is read again (ctime also catches a copy that kept the old mtime).
  * The cache is written once per test file (afterAll) via a temp file + rename, so a reader never sees
  * half a file; a failed write only costs speed. Format: one JSON index line, then the texts back to
@@ -25,16 +30,20 @@ import crypto from "node:crypto";
 import { afterAll } from "vitest";
 import { PRODUCTION_ROOT } from "./prisma-generated";
 
-/** s/m/c = size, mtimeMs, ctimeMs at read time; text decoded lazily from `buf`. */
-type Entry = { s: number; m: number; c: number; buf?: Buffer; text?: string };
-type IndexRow = [key: string, s: number, m: number, c: number, offset: number, length: number];
+/** s/m/c = size, mtimeMs, ctimeMs at read time; r = Date.now() just before that read (R-2582);
+    text decoded lazily from `buf`. */
+type Entry = { s: number; m: number; c: number; r: number; buf?: Buffer; text?: string };
+type IndexRow = [key: string, s: number, m: number, c: number, r: number, offset: number, length: number];
 
-const MAGIC = "reselleros-source-cache v2";
+const MAGIC = "reselleros-source-cache v3";
+/** R-2582: an entry read less than this long after the file's mtime may hide a same-tick rewrite. */
+export const RACY_MS = 2000;
+const isRacy = (e: Entry): boolean => e.r - e.m < RACY_MS;
 export const SOURCE_CACHE_DIR = path.join(os.tmpdir(), "reselleros-source-cache");
 /** One cache per checkout (each worktree has its own production/). */
 export const SOURCE_CACHE_FILE = path.join(
   SOURCE_CACHE_DIR,
-  `${crypto.createHash("sha1").update(PRODUCTION_ROOT.toLowerCase()).digest("hex").slice(0, 12)}-v2.bin`,
+  `${crypto.createHash("sha1").update(PRODUCTION_ROOT.toLowerCase()).digest("hex").slice(0, 12)}-v3.bin`,
 );
 
 let cacheFile = SOURCE_CACHE_FILE;
@@ -51,9 +60,9 @@ function readCacheFile(): Map<string, Entry> {
     const head = JSON.parse(all.subarray(0, nl).toString("utf8")) as { magic: string; rows: IndexRow[] };
     if (head.magic !== MAGIC) return out;
     const base = nl + 1;
-    for (const [k, s, m, c, off, len] of head.rows) {
+    for (const [k, s, m, c, r, off, len] of head.rows) {
       if (base + off + len > all.length) return new Map(); // torn → trust nothing
-      out.set(k, { s, m, c, buf: all.subarray(base + off, base + off + len) });
+      out.set(k, { s, m, c, r, buf: all.subarray(base + off, base + off + len) });
     }
   } catch { return new Map(); }
   return out;
@@ -72,20 +81,31 @@ function keyOf(file: string): string {
 
 /**
  * The file's text, exactly as `fs.readFileSync(file, "utf8")` returns it now. Served from the
- * cache only when size + mtime + ctime match the cached entry. A missing file throws, as a read does.
+ * cache only when size + mtime + ctime match the cached entry AND the entry is not racy (R-2582: a
+ * racy entry is re-read and its bytes compared). A missing file throws, as a read does.
  */
 export function readSource(file: string): string {
+  const now = Date.now();
   const st = fs.statSync(file);
   const map = load();
   const key = keyOf(file);
   const e = map.get(key);
-  if (e && e.s === st.size && e.m === st.mtimeMs && e.c === st.ctimeMs) {
+  const sameStat = !!e && e.s === st.size && e.m === st.mtimeMs && e.c === st.ctimeMs;
+  if (e && sameStat && !isRacy(e)) {
     if (e.text === undefined) e.text = e.buf!.toString("utf8");
     return e.text;
   }
   const raw = fs.readFileSync(file);
+  if (e && sameStat && e.buf && raw.equals(e.buf)) {
+    // Racy but unchanged: keep it; it is stored as trusted once a re-read finds the file aged.
+    const next: Entry = { ...e, r: now };
+    map.set(key, next);
+    if (!isRacy(next)) fresh.add(key);
+    if (next.text === undefined) next.text = raw.toString("utf8");
+    return next.text;
+  }
   const text = raw.toString("utf8");
-  map.set(key, { s: st.size, m: st.mtimeMs, c: st.ctimeMs, buf: raw, text });
+  map.set(key, { s: st.size, m: st.mtimeMs, c: st.ctimeMs, r: now, buf: raw, text });
   fresh.add(key);
   return text;
 }
@@ -112,7 +132,7 @@ export function flushSourceCache(): void {
     for (const k of mine) {
       const e = entries.get(k)!;
       const d = merged.get(k);
-      if (d && d.s === e.s && d.m === e.m && d.c === e.c) continue;
+      if (d && sameAs(d, e)) continue;
       merged.set(k, e);
       added++;
     }
@@ -124,7 +144,7 @@ export function flushSourceCache(): void {
     let off = 0;
     for (const [k, e] of merged) {
       const b = e.buf ?? Buffer.from(e.text ?? "", "utf8");
-      rows.push([k, e.s, e.m, e.c, off, b.length]);
+      rows.push([k, e.s, e.m, e.c, e.r, off, b.length]);
       parts.push(b);
       off += b.length;
     }
@@ -133,6 +153,15 @@ export function flushSourceCache(): void {
     try { fs.renameSync(tmp, cacheFile); } catch { fs.rmSync(tmp, { force: true }); }
   } catch { /* cache is only for speed */ }
   finally { fs.rmSync(lock, { force: true }); }
+}
+
+/** The disk entry `d` already says what `e` says: same stat AND same bytes (R-2582: a same-tick
+    rewrite keeps the stat), and `d` is not racier than `e` (a trusted stamp is never lost). */
+function sameAs(d: Entry, e: Entry): boolean {
+  if (d.s !== e.s || d.m !== e.m || d.c !== e.c) return false;
+  if (isRacy(d) && !isRacy(e)) return false;
+  const eb = e.buf ?? Buffer.from(e.text ?? "", "utf8");
+  return !!d.buf && d.buf.equals(eb);
 }
 
 /** Create the lock file; a lock older than 2 minutes is a crashed writer's and is taken over. */
