@@ -17,6 +17,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { reportCron } from "@/lib/ops/cron-report";
+import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { listRequestedReads } from "@/lib/integrations/zoho-books/fy-import/bg-store";
 import { companyReadPass } from "@/lib/integrations/zoho-books/fy-import/read-job.server";
@@ -30,7 +31,13 @@ export const maxDuration = 300;
 const TICK_BUDGET_MS = 240_000;
 const MIN_PASS_MS = 20_000;
 
-async function handle(_req: NextRequest) {
+async function handle(req: NextRequest) {
+  /* Fail closed like the other crons (the gate checks it first too). */
+  const secret = process.env.CRON_SECRET;
+  if (!secret) return NextResponse.json({ error: "cron not configured" }, { status: 503 });
+  if (!timingSafeEqualStr(req.headers.get("authorization") ?? "", `Bearer ${secret}`)) {
+    return NextResponse.json({ error: "unauthorized" }, { status: 401 });
+  }
   const admin = createAdminClient();
   const started = Date.now();
   let reads;
