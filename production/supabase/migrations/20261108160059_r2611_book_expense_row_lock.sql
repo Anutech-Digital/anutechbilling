@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.book_bank_txn_as_expense(uuid,text,text,integer,text)') and prosrc like '%R-2611%')
 -- deploy-key: r2611bookexpenserowlock
--- 20261108135059_r2611_book_expense_row_lock.sql
+-- 20261108160059_r2611_book_expense_row_lock.sql
 --
 -- R-2611 (8 Nov 2026, p1 — independent review BLOCK): bulk "Book selected" on the bank page calls
 -- book_bank_txn_as_expense for up to 100 lines. The function read the bank line WITHOUT a lock and

@@ -1,6 +1,6 @@
 -- R-2611 (8 Nov 2026): bulk "Book selected" + the Reconcile sheet could book ONE bank line twice
 -- (book_bank_txn_as_expense read the line without a lock; its update had no "still unreconciled"
--- condition). Migration: 20261108135059_r2611_book_expense_row_lock.
+-- condition). Migration: 20261108160059_r2611_book_expense_row_lock.
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only.
 --
 -- Proves:
