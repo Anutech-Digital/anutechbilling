@@ -60,7 +60,7 @@ export function BulkExpenseSheet({ open, onOpenChange, accountName, lines }: {
   lines: readonly BankTransactionRow[];
 }) {
   const qc = useQueryClient();
-  const { data: rules } = useTxnCategoryRules();
+  const { data: rules, isLoading: rulesLoading } = useTxnCategoryRules();
   const { data: advances } = usePrepaidAdvances();
   const known = React.useMemo(() => [...new Set((advances ?? []).map((a) => a.vendor_name.trim()))].sort(), [advances]);
 
@@ -154,7 +154,9 @@ export function BulkExpenseSheet({ open, onOpenChange, accountName, lines }: {
             </span>
           </div>
 
-          {rows.length === 0 ? (
+          {rulesLoading ? (
+            <p className="text-sm text-ink-3">Reading your Category Rules…</p>
+          ) : rows.length === 0 ? (
             <p className="text-sm text-ink-3">No money-out lines without a vendor are left ✓</p>
           ) : (
             <table className="w-full table-fixed text-xs">
