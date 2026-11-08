@@ -111,7 +111,7 @@ test.describe("R-2603 card test", () => {
     const dlg = page.getByRole("dialog", { name: "Reconcile transaction" });
     await dlg.getByRole("radio", { name: /^Loan \/ EMI/ }).click();
     await dlg.getByRole("radio", { name: /I am GIVING a loan\/advance/ }).click();
-    await dlg.getByRole("textbox", { name: "Person's name (e.g. Julie Rawat)" }).fill(BORROWER);
+    await dlg.getByLabel("Person's name (e.g. Julie Rawat)").fill(BORROWER);
     await expect(dlg.getByText(/Goes to\s+Accounting → Loans given/)).toBeVisible();
     await page.getByRole("button", { name: "Book ₹75,000 as a loan given (Loans given)" }).click();
     await expect(dlg).toBeHidden({ timeout: 30_000 });
