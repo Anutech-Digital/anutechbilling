@@ -397,15 +397,12 @@ export interface BsLoanMoveGroup {
 export interface BsLoanMovePreview {
   groups: BsLoanMoveGroup[];
   movable_net: number;
-  total_before: number;
-  total_after: number;
+  total_now: number;
 }
 export interface BsLoanMoveResult {
   moved: { name: string; target: "loan_given" | "employee_loan"; loan_id: string; merged: boolean; amount: number }[];
   moved_net: number;
   nothing_to_move: boolean;
-  total_before: number;
-  total_after: number;
 }
 
 /** R-2604: the employee groups the owner left ticked → {key: employee id} for apply_bs_loan_move. */
@@ -445,8 +442,12 @@ export function useApplyBsLoanMove() {
     onSuccess: (r) => {
       invalidate(qc);
       qc.invalidateQueries({ queryKey: ["employee-loans"] });
-      toast.success(r.nothing_to_move ? "Nothing left to move" : `Moved ${rupee(r.moved_net)} — Balance Sheet total unchanged`);
+      toast.success(r.nothing_to_move ? "Nothing left to move" : `Moved ${rupee(r.moved_net)} to loans — Balance Sheet total unchanged`);
     },
-    onError: (err) => toastError(err, { fallback: "Couldn't move the loans", description: "Nothing was moved." }),
+    onError: (err) => {
+      // "Changed since Check first" → the dialog shows a fresh Check first.
+      qc.invalidateQueries({ queryKey: ["balance-sheet", "items", "r2604-move-preview"] });
+      toastError(err, { fallback: "Couldn't move the loans", description: "Nothing was moved." });
+    },
   });
 }

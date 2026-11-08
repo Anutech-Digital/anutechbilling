@@ -13,7 +13,7 @@ const preview = {
     { key: "vinod", name: "VINOD", given: 40000, returned: 0, net: 40000, rows: [{}], lines: 1, first_date: "2026-08-02", target: "loan_given", skip_reason: null, employee: null, merge_loan: { id: "l-9", principal: 10000 } },
     { key: "rajeev", name: "Rajeev", given: 5000, returned: 5000, net: 0, rows: [{}, {}], lines: 0, first_date: "2026-01-01", target: "skip", skip_reason: "Returned is as much as given or more", employee: null, merge_loan: null },
   ],
-  movable_net: 960000, total_before: 1500000, total_after: 1500000,
+  movable_net: 960000, total_now: 1500000,
 };
 
 vi.mock("@/lib/queries/loans-given", async (orig) => {

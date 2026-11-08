@@ -101,8 +101,8 @@ export function MoveBsLoansDialog({ open, onOpenChange }: { open: boolean; onOpe
               </div>
             )}
             <p className="text-xs text-ink-2" data-testid="r2604-move-totals">
-              Moving <b>{rupee(preview.data?.movable_net ?? 0)}</b>. Loans and advances on the Balance Sheet: {rupee(preview.data?.total_before ?? 0)} before
-              → {rupee(preview.data?.total_after ?? 0)} after (unchanged).
+              Moving <b>{rupee(preview.data?.movable_net ?? 0)}</b> from Balance Sheet lines to loans. Loans and advances on the
+              Balance Sheet stay {rupee(preview.data?.total_now ?? 0)} (unchanged) — the move is refused if they would not.
             </p>
           </div>
         )}
