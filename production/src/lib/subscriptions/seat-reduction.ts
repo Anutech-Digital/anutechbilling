@@ -24,6 +24,7 @@ import { seatChargePlan, type SeatWindowSub } from "./seat-charge-window";
 import { seatIncreaseCharge } from "./seat-increase-charge";
 import { rupeesToPaise, formatPaise, type Paise } from "./proration";
 import { splitChangeCredit, type ChangeCreditSplit } from "./change-credit";
+import { isSplitBilled } from "@/lib/billing/instalments";
 
 export type SeatReductionTiming = "now" | "end_of_term";
 
@@ -44,10 +45,10 @@ export const SEAT_CUT_END_OF_TERM_ENABLED = true;
  * reduce_subscription_seats (migration 20261108111500), which refuses the same cases under a row lock.
  */
 export function endOfTermBlockedReason(
-  sub: { billing_cycle: string | null; renewal_quote_id: string | null; seats: number },
+  sub: { billing_cycle: Parameters<typeof isSplitBilled>[0]; renewal_quote_id: string | null; seats: number },
   linkedQuoteSeats: number | null,
 ): string | null {
-  if (sub.billing_cycle === "monthly" || sub.billing_cycle === "quarterly" || sub.billing_cycle === "half_yearly") {
+  if (isSplitBilled(sub.billing_cycle)) {
     return "This subscription is billed in parts — a seat cut at the end of the term is not applied to its parts yet. Reduce the seats now, with credit.";
   }
   if (sub.renewal_quote_id) {

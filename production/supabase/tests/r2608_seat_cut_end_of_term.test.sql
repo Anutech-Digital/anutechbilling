@@ -3,8 +3,8 @@
 --
 --   1. Paying the renewal quote made WITH the cut (10 → 7) marks the scheduled row 'applied'
 --      (mrr_after = the new MRR) — a new cut can be scheduled at once (no "already scheduled").
---   2. A renewal paid at the FULL seats leaves the row alone (not applied).
---   3. Correct details-style date move without a seat change → row not applied.
+--   2. A renewal paid at the FULL seats → the row is 'cancelled' (never billed; no longer blocks).
+--   3. Correct details-style date move without a seat change → 'cancelled', not applied.
 --   4. end_of_term while a renewal quote is already linked → refused, the quote named.
 --   5. end_of_term on a subscription billed in parts → refused.
 --   6. Remove scheduled cut while the linked renewal quote carries the cut → refused inside
@@ -74,15 +74,15 @@ begin
   -- 2. renewal paid at the full seats → row not applied.
   perform public.record_payment('Q-R2608-FULL', 42480, 'razorpay', 'rzp_r2608_full');
   select status into v_status from public.subscription_seat_reductions where idempotency_key = 'r2608-cut-2';
-  if v_status is distinct from 'scheduled' then
-    insert into r2608_fail values ('2: a full-seat renewal marked the cut ' || v_status);
+  if v_status is distinct from 'cancelled' then
+    insert into r2608_fail values ('2: a full-seat renewal left the cut ' || v_status || ' (want cancelled)');
   end if;
 
   -- 3. date moved on without a seat change → not applied.
   update public.subscriptions set renewal_date = renewal_date + 30 where id = 'dd260800-0000-4000-8000-00000000b003';
   select status into v_status from public.subscription_seat_reductions where idempotency_key = 'r2608-cut-3';
-  if v_status is distinct from 'scheduled' then
-    insert into r2608_fail values ('3: a date move without a seat change marked the cut ' || v_status);
+  if v_status is distinct from 'cancelled' then
+    insert into r2608_fail values ('3: a date move without a seat change left the cut ' || v_status || ' (want cancelled)');
   end if;
 
   -- 4. renewal quote already linked → end of term refused, quote named.

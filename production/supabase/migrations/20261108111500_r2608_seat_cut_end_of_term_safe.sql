@@ -14,18 +14,19 @@
 --       it was priced on today's seats and would bill them — the message names the quote. Delete it
 --       and the renewal quote is made again with the cut (R-2583). The row is locked, so no quote
 --       can be linked while this runs (create_renewal_quote locks the same row, R-1574);
---     * the no-invoice message points at "At end of term" again (R-2584 removed it while hidden).
+--     * the no-invoice message points at "At end of term" again (R-2584 removed it while hidden) —
+--       only where it can be saved (not billed in parts, no quote linked), as the app's preview does.
 --   cancel_scheduled_seat_reduction (body = 20261108043428_r2584 + the R-2608 block): locks the
 --     subscription row and refuses while the linked renewal quote was made WITH the cut (renewal,
 --     extension_months > 0, seats = the cut's seats_after < the subscription's seats). Was a route-only
 --     check (R-2583 independent review): a quote made between the route's check and the cancel left a
 --     cut-seat quote with the cut removed. Same words as the route.
---   subscriptions_r2608_seat_cut_applied (new AFTER UPDATE trigger): when a payment rolls the renewal
---     on (renewal_date moves forward) AND the seats go from the cut's seats_before to its seats_after,
---     the scheduled end-of-term row dated the old renewal date becomes 'applied' (mrr_after = the new
---     mrr). Before, it stayed 'scheduled' until its date and blocked every new seat cut. A payment at
---     the full seats (seats unchanged, or changed to another number) leaves the row alone — it goes
---     stale when its date passes (R-2584).
+--   subscriptions_r2608_seat_cut_applied (new AFTER UPDATE trigger): when renewal_date moves forward
+--     AND the seats go from the cut's seats_before to its seats_after (a payment of the cut renewal
+--     quote), the scheduled end-of-term row dated the old renewal date becomes 'applied' (mrr_after = the new
+--     mrr). Before, it stayed 'scheduled' until its date and blocked every new seat cut. Any other
+--     forward move of the renewal date (renewed / extended at other seats, date corrected forward)
+--     sets that row 'cancelled': its term is over and it was never billed (else it blocked new cuts).
 -- public.current_request_role() as in the source bodies. Same signatures, SECURITY DEFINER, search_path.
 -- Stored rows are NOT changed.
 -- Test: supabase/tests/r2608_seat_cut_end_of_term.test.sql (begin … rollback; red without this file).
@@ -225,7 +226,12 @@ begin
   end if;
 
   if v_inv_id is null and v_unused > 0 then
-    raise exception 'This part has no tax invoice yet, so there is no invoice to credit. Choose "At end of term", or reduce the seats after the part is invoiced.'
+    /* R-2608: "At end of term" is the way on only where it can be saved (not billed in parts, no quote linked). */
+    if v_split_billed or v_sub.renewal_quote_id is not null then
+      raise exception 'This part has no tax invoice yet, so there is no invoice to credit. Reduce the seats after the part is invoiced.'
+        using errcode = 'check_violation';
+    end if;
+    raise exception 'This part has no tax invoice yet, so there is no invoice to credit. Choose “At end of term”, or reduce the seats after the part is invoiced.'
       using errcode = 'check_violation';
   end if;
 
@@ -359,12 +365,15 @@ security definer
 set search_path to 'public'
 as $function$
 begin
+  /* The renewal date the cut was for has gone by (the term rolled on, or the date was corrected
+     forward): went to the cut's seats → 'applied'; anything else → 'cancelled' (it was never billed
+     and is for a term that is over — left 'scheduled' it would block every new cut until its date). */
   update public.subscription_seat_reductions r
-     set status = 'applied', mrr_after = new.mrr
+     set status   = case when r.seats_before = old.seats and r.seats_after = new.seats then 'applied' else 'cancelled' end,
+         mrr_after = case when r.seats_before = old.seats and r.seats_after = new.seats then new.mrr else r.mrr_after end
    where r.tenant_id = new.tenant_id and r.subscription_id = new.id
      and r.status = 'scheduled' and r.timing = 'end_of_term'
-     and r.effective_date = old.renewal_date
-     and r.seats_before = old.seats and r.seats_after = new.seats;
+     and r.effective_date = old.renewal_date;
   return null;
 end;
 $function$;
@@ -374,7 +383,7 @@ drop trigger if exists subscriptions_r2608_seat_cut_applied on public.subscripti
 create trigger subscriptions_r2608_seat_cut_applied
   after update of renewal_date, seats on public.subscriptions
   for each row
-  when (new.renewal_date > old.renewal_date and new.seats is distinct from old.seats)
+  when (new.renewal_date > old.renewal_date)
   execute function public.r2608_mark_seat_cut_applied();
 
 commit;

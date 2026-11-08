@@ -116,7 +116,7 @@ describe("R-2608 — end-of-term cut is offered again (renewal quote bills it, R
   });
   it("billed in parts → blocked (its next parts do not read the cut)", () => {
     for (const c of ["monthly", "quarterly", "half_yearly"]) {
-      expect(endOfTermBlockedReason({ billing_cycle: c, renewal_quote_id: null, seats: 10 }, null))
+      expect(endOfTermBlockedReason({ billing_cycle: c as "monthly", renewal_quote_id: null, seats: 10 }, null))
         .toBe("This subscription is billed in parts — a seat cut at the end of the term is not applied to its parts yet. Reduce the seats now, with credit.");
     }
   });
