@@ -1,15 +1,15 @@
--- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)') and prosrc like '%R-2605%') and exists(select 1 from pg_trigger where tgname = 'subscriptions_r2605_plan_change_freeze')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)') and prosrc like '%R-2605%') and exists(select 1 from pg_trigger where tgname = 'subscriptions_r2605_plan_change_freeze') and exists(select 1 from pg_trigger where tgname = 'quotes_r2605_unlink_cancelled_plan_change')
 -- deploy-key: r2605planchangefreeze
--- 20261108174500_r2605_plan_change_freeze.sql
+-- 20261108181100_r2605_plan_change_freeze.sql
 --
 -- R-2605 (8 Nov 2026, R-2589 follow-ups 2-4; money rule C3).
 --
 -- 1. ONE RULE FOR "A PLAN-CHANGE QUOTE IS OPEN": r2605_open_plan_change_quote(tenant, quote id) =
 --    the quote is a plan-change quote (extension_months = 0, first line carries plan_change) AND it
---    is not closed — status 'rejected' (Cancel quote, R-2519) or 'expired' no longer counts. Before,
---    a cancelled plan-change quote still linked through renewal_quote_id blocked every seat cut
---    until it was deleted. A cancel that is undone makes it open again; it is then stale if the
---    subscription changed meanwhile and record_payment (R-2589) refuses it — no double credit.
+--    is not closed — status 'rejected' (Cancel quote, R-2519) or 'expired' by date no longer counts
+--    (expired because combined into another quote, superseded_by set, still counts: the plan change
+--    lives on there). Before, a cancelled plan-change quote still linked through renewal_quote_id
+--    blocked every seat cut until it was deleted.
 --
 -- 2. reduce_subscription_seats (body = the LATEST definition, 20261108111500_r2608_seat_cut_end_of_term_safe,
 --    verbatim; only the R-2589 block now asks r2605_open_plan_change_quote).
@@ -21,6 +21,13 @@
 --    correct_subscription_terms) and any other writer, under the row lock. Paying the quote itself
 --    (record_payment sets the new plan AND clears renewal_quote_id in one update) is not touched:
 --    the trigger fires only when the link stays the same. Other fields (dates, domain, status) are free.
+--    A change made by another trigger (cancelling an unpaid Add seats quote takes its seats back,
+--    R-1705) is let through: the plan-change quote is then stale and refused at payment (R-2589/R-2596).
+--
+-- 4. quotes_r2605_unlink_cancelled_plan_change (new AFTER UPDATE OF status trigger): Cancel quote on a
+--    plan-change quote clears the subscription's renewal_quote_id, so the dead link no longer blocks
+--    Change plan, the renewal quote or "At end of term". An undone cancel does not re-link; record_payment
+--    then refuses it (R-2227 link lost) — make a new plan-change quote.
 -- public.current_request_role() as in the source bodies. Same signatures, SECURITY DEFINER, search_path.
 -- Stored rows are NOT changed.
 -- Test: supabase/tests/r2605_plan_change_freeze.test.sql (begin … rollback; red without this file).
@@ -44,7 +51,10 @@ as $function$
      and coalesce(q.extension_months, -1) = 0
      and jsonb_typeof(q.line_items) = 'array'
      and jsonb_typeof(q.line_items->0->'plan_change') = 'object'
-     and q.status::text not in ('rejected', 'expired');
+     and q.status::text <> 'rejected'
+     /* Expired by date = closed. Expired because it was combined into another quote (superseded_by,
+        R-1527) = the plan change lives on in that quote — still frozen. */
+     and not (q.status::text = 'expired' and q.superseded_by is null);
 $function$;
 revoke all on function public.r2605_open_plan_change_quote(uuid, text) from public, anon, authenticated;
 grant execute on function public.r2605_open_plan_change_quote(uuid, text) to service_role;
@@ -332,6 +342,12 @@ as $function$
 declare
   v_q text;
 begin
+  /* A change made by another trigger is a cascade of something already allowed — e.g. cancelling
+     an unpaid Add seats quote takes its seats back (tg_quotes_add_seats_take_back, R-1705). The
+     plan-change quote is then stale and refused at pay start / record_payment (R-2596 / R-2589). */
+  if pg_trigger_depth() > 1 then
+    return new;
+  end if;
   v_q := public.r2605_open_plan_change_quote(new.tenant_id, old.renewal_quote_id);
   if v_q is not null then
     /* Same words as lib/subscriptions/plan-change-open.ts planChangeFreezeMessage (routes map it to code plan_change_open). */
@@ -352,5 +368,36 @@ create trigger subscriptions_r2605_plan_change_freeze
         and (new.seats is distinct from old.seats or new.mrr is distinct from old.mrr
              or new.item_id is distinct from old.item_id or new.plan is distinct from old.plan))
   execute function public.r2605_plan_change_freeze();
+
+-- ─── a cancelled plan-change quote lets go of its subscription ──────────────────────────────
+create or replace function public.r2605_unlink_cancelled_plan_change()
+returns trigger
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+/* R-2605: Cancel quote (R-2519, stored 'rejected') on a plan-change quote clears the subscription's
+   renewal_quote_id — else the dead link kept blocking Change plan, Upgrade support, the renewal
+   quote and "At end of term". An undone cancel does NOT re-link: record_payment then refuses the
+   quote (R-2227 "link lost") — make a new plan-change quote. */
+begin
+  if coalesce(new.extension_months, -1) = 0
+     and jsonb_typeof(new.line_items) = 'array'
+     and jsonb_typeof(new.line_items->0->'plan_change') = 'object' then
+    update public.subscriptions s
+       set renewal_quote_id = null
+     where s.tenant_id = new.tenant_id and s.renewal_quote_id = new.id;
+  end if;
+  return new;
+end;
+$function$;
+revoke all on function public.r2605_unlink_cancelled_plan_change() from public, anon, authenticated;
+
+drop trigger if exists quotes_r2605_unlink_cancelled_plan_change on public.quotes;
+create trigger quotes_r2605_unlink_cancelled_plan_change
+  after update of status on public.quotes
+  for each row
+  when (new.status = 'rejected' and old.status is distinct from 'rejected')
+  execute function public.r2605_unlink_cancelled_plan_change();
 
 commit;
