@@ -9,6 +9,7 @@
  *   - the subscription is not active                          → R-2589
  *   - from_seats / from_mrr missing, or seats / ₹/month differ → R-2589
  *   - from_plan stored and the plan differs                   → R-2589
+ *   - fewer seats than the subscription, or ₹0/month          → R-2227 (bad line)
  */
 import type { createAdminClient } from "@/lib/supabase/server";
 import { isPlanChangeQuote } from "@/lib/subscriptions/change-plan";
@@ -23,6 +24,8 @@ export interface PlanChangeSubNow {
 
 interface StoredPlanChange {
   subscription_id?: unknown;
+  seats?: unknown;
+  new_mrr?: unknown;
   from_seats?: unknown;
   from_mrr?: unknown;
   from_plan?: unknown;
@@ -51,6 +54,8 @@ export function planChangeStaleReason(lineItems: unknown, sub: PlanChangeSubNow 
   if (fromSeats === null || fromMrr === null) return "changed";
   if (fromSeats !== num(sub.seats) || fromMrr !== num(sub.mrr)) return "changed";
   if ("from_plan" in pc && planText(pc.from_plan) !== planText(sub.plan)) return "changed";
+  /* R-2227's apply step (full payment): fewer seats than the subscription has, or no ₹/month. */
+  if ((num(pc.seats) ?? 0) < (num(sub.seats) ?? 0) || (num(pc.new_mrr) ?? 0) <= 0) return "bad_line";
   return null;
 }
 

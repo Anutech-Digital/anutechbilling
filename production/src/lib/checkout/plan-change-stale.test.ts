@@ -9,7 +9,7 @@ import { startQuotePayment, type QuoteForOrder } from "./quote-order";
 
 const SUB: PlanChangeSubNow = { id: "sub-1", status: "active", seats: 10, mrr: 1000, plan: "Starter" };
 const line = (pc: Record<string, unknown>) => [{ description: "Plan change", plan_change: pc }];
-const PC = { subscription_id: "sub-1", from_seats: 10, from_mrr: 1000, from_plan: "Starter", to_plan: "Business" };
+const PC = { subscription_id: "sub-1", from_seats: 10, from_mrr: 1000, from_plan: "Starter", to_plan: "Business", seats: 10, new_mrr: 1500 };
 
 describe("planChangeStaleReason — the SQL's rules", () => {
   it("still matches → null", () => {
@@ -39,6 +39,10 @@ describe("planChangeStaleReason — the SQL's rules", () => {
   it("no subscription links the quote → link_lost; another subscription → other_subscription", () => {
     expect(planChangeStaleReason(line(PC), null)).toBe("link_lost");
     expect(planChangeStaleReason(line(PC), { ...SUB, id: "sub-2" })).toBe("other_subscription");
+  });
+  it("R-2227 bad line: fewer seats than the subscription, or ₹0/month → bad_line", () => {
+    expect(planChangeStaleReason(line({ ...PC, seats: 8 }), SUB)).toBe("bad_line");
+    expect(planChangeStaleReason(line({ ...PC, new_mrr: 0 }), SUB)).toBe("bad_line");
   });
   it("subscription not active → not_active", () => {
     expect(planChangeStaleReason(line(PC), { ...SUB, status: "cancelled" })).toBe("not_active");
