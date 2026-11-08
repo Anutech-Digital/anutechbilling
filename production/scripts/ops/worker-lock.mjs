@@ -1260,7 +1260,8 @@ const REVIEW_PATHSPEC = [":(top)", ":(top,exclude,glob)production/supabase/cloud
 export function changePatchId(rev, base, git) {
   try {
     const mb = git(["merge-base", base, rev]).trim();
-    const diff = git(["diff", "--no-color", "--no-ext-diff", mb, rev, "--", ...REVIEW_PATHSPEC]);
+    /* --no-renames: a moved-in migration shows as "new file mode", like addedMigrations sees it (R-2615) */
+    const diff = git(["diff", "--no-color", "--no-ext-diff", "--no-renames", mb, rev, "--", ...REVIEW_PATHSPEC]);
     if (!diff.trim()) return null;
     /* R-2614/R-2615: only the card's own new migration versions masked — a rename-only change (file +
        its exact mentions) keeps the review; a change to any other 14-digit number does not. */

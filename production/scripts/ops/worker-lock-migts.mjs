@@ -29,20 +29,15 @@ import { execFileSync, spawnSync } from "node:child_process";
 
 export const MIG_DIR = "production/supabase/migrations"; // repo-root relative, as git sees it
 export const MIG_NAME = /^(\d{14})_([a-z0-9_]+)\.sql$/;
-const STAMP = /(?<!\d)20\d{12}(?!\d)/g;
-export const STAMP_MASK = "YYYYMMDDHHMMSS";
+/* R-2615: R-2614's maskMigrationStamps (every 14-digit 20… number) was removed — it let a code change to
+   any such number keep the SAFE review. Use maskOwnMigrations. */
 
-/** Every 14-digit 20… number masked. R-2614's review mask — too wide (R-2615); kept for old callers, the gate uses maskOwnMigrations. */
-export function maskMigrationStamps(text) {
-  return String(text ?? "").replace(STAMP, STAMP_MASK);
-}
-
-/** R-2615: versions of the migrations a unified diff ADDS under supabase/migrations/ (sorted, unique). */
+/** R-2615: versions of the migrations a unified diff (taken with --no-renames) ADDS in MIG_DIR (sorted, unique). */
 export function ownMigrationVersions(diff) {
   const out = new Set();
   for (const sec of String(diff ?? "").split(/^(?=diff --git )/m)) {
     const head = /^diff --git a\/\S+ b\/(\S+)\r?\n/.exec(sec);
-    if (!head || !/(^|\/)supabase\/migrations\/[^/]+$/.test(head[1])) continue;
+    if (!head || path.posix.dirname(head[1]) !== MIG_DIR) continue;
     const end = sec.search(/^(@@|---|Binary)/m);
     if (!/^new file mode /m.test(end < 0 ? sec : sec.slice(0, end))) continue;
     const v = MIG_NAME.exec(head[1].split("/").pop())?.[1];
@@ -243,14 +238,17 @@ export function otherCardsMigrations(card, locks, { git, days = 3, gitFor = gitA
   try { onBase = new Set(git(["ls-tree", "--name-only", `${base}:${MIG_DIR}`]).split(/\r?\n/)); } catch {}
   /* R-2615: the wip branch still has the OLD name of a migration its card renamed later (auto rename,
      then merged): a newer file with the same name part on base, added by a commit that names the card. */
+  const byPart = new Map();
+  for (const b of onBase) { const n = MIG_NAME.exec(b); if (n) byPart.set(n[2], [...(byPart.get(n[2]) ?? []), n[1]]); }
+  const addedBy = new Map(); // base file → subjects of the commits that added it (one git log per file, cached)
+  const subjects = (b) => {
+    if (!addedBy.has(b)) { let s = ""; try { s = git(["log", base, "--format=%s", "--diff-filter=A", "--", `${MIG_DIR}/${b}`]); } catch {} addedBy.set(b, s); }
+    return addedBy.get(b);
+  };
   const renamedLater = (c, f) => {
     const m = MIG_NAME.exec(f);
-    const cardRe = new RegExp(`(?<![\\w-])${c}(?!\\d)`, "i");
-    return [...onBase].some((b) => {
-      const n = MIG_NAME.exec(b);
-      if (!n || n[2] !== m[2] || n[1] <= m[1]) return false;
-      try { return cardRe.test(git(["log", base, "--format=%s%n%b", "--diff-filter=A", "--", `${MIG_DIR}/${b}`])); } catch { return false; }
-    });
+    const cardRe = new RegExp(`(?<![\\w-])${c}(?!\\d)`, "i"); // in the SUBJECT ("R-7: …"), not a body mention
+    return (byPart.get(m[2]) ?? []).some((v) => v > m[1] && subjects(`${v}_${m[2]}.sql`).split(/\r?\n/).some((s) => cardRe.test(s.split(":")[0])));
   };
   for (const r of refs) {
     const [ref, at] = r.split("\t");
