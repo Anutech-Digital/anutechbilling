@@ -142,6 +142,9 @@ Skills (R-2585, 8 Nov 2026) — load the one that fits instead of re-typing the 
   running card as 'ruka').
 - Claim with `worker-lock claim … --wait --priority <p>`; push **only** via `worker-lock push <CARD>`,
   then `worker-lock ci <CARD>`. Commit WIP and `worker-lock wip <CARD>` (→ `wip/<card>`) at each green step.
+- **p0 / train-blocker → claim with `--priority p0`; it pushes first (R-2591, 8 Nov):** the push turn and the
+  heavy (tsc/guard) turn go by claim priority, then who waited first; a running push is never interrupted.
+  `worker-lock status` shows who holds each turn and the waiting line with priorities.
 - **Every card gets a separate localhost checker** (not the builder), following the card's howToCheck.
 - A checker that needs a **second server with a different env** runs it from ITS OWN worktree
   (`npx prisma generate`, start with `--webpack`, own port) — never from `reselleros-deploy`.

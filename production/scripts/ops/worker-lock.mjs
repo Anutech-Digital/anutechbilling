@@ -63,10 +63,10 @@ import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderG
 import { runRelatedSql } from "./worker-lock-sql.mjs";
 import { stashSnapshot, enforceStash, stashGit } from "./worker-lock-stash.mjs";
 import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
-import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue } from "./worker-lock-queue.mjs";
+import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue, turnGate, turnQueueLines, readTurnWaiters, joinTurnWait, leaveTurnWait } from "./worker-lock-queue.mjs";
 const readQueue = () => readQueueIn(LOCK_DIR);
 const leaveQueue = (c) => leaveQueueIn(LOCK_DIR, c);
-export { PRIORITIES, normPriority, priorityRank, queueOrder, liveQueue, queueTurn, lockActivityAt, isStaleLock, lockBeat, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS, parseQueueFlags, worktreeIndexMtime, readQueue as readQueueDir } from "./worker-lock-queue.mjs";
+export { PRIORITIES, normPriority, priorityRank, queueOrder, liveQueue, queueTurn, lockActivityAt, isStaleLock, lockBeat, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS, parseQueueFlags, worktreeIndexMtime, readQueue as readQueueDir, turnGate, turnQueueLines } from "./worker-lock-queue.mjs";
 export { isDerived, withoutDerived, newestDeployDate, refreshDerived, rebaseResolvingDerived, MIGRATION_DERIVED } from "./worker-lock-derived.mjs";
 export { migrationDefines, relatedSqlTests, deployPeek, sqlTestSafe, relatedTestScript, runRelatedSql } from "./worker-lock-sql.mjs";
 
@@ -290,22 +290,50 @@ export function pushDoneLine(card, plan) {
   return `✓ ${String(card).toUpperCase()} push ho gaya: ${plan.sha} (${plan.count} commit apne)`;
 }
 
-/** Wait for a named turn (one holder at a time across all workers), run fn, release. */
+/** This card's priority as recorded at claim (lock file), else p2. */
+function lockPriority(card) {
+  try { return normPriority(JSON.parse(fs.readFileSync(lockFile(card), "utf8")).priority) ?? DEFAULT_PRIORITY; } catch { return DEFAULT_PRIORITY; }
+}
+
+/** Does `card` hold the push turn right now? (its own heavy step inside the push never queues — R-2591) */
+function holdsPushTurn(card) {
+  try { return JSON.parse(fs.readFileSync(path.join(LOCK_DIR, "_push-turn.json"), "utf8")).card === card; } catch { return false; }
+}
+
+/**
+ * Wait for a named turn (one holder at a time across all workers), run fn, release.
+ * R-2591: waiters stand in a line by claim priority (p0 first, then who waited first) — a free turn goes to
+ * the best live waiter; a held turn is never taken away (see turnGate).
+ */
 async function withTurn(name, card, doing, fn) {
   const turnFile = path.join(LOCK_DIR, `_${name}-turn.json`);
   const waitUntil = Date.now() + 30 * 60 * 1000;
-  for (;;) {
-    let turn = null;
-    try { turn = JSON.parse(fs.readFileSync(turnFile, "utf8")); } catch {}
-    if (turn && turn.card === card) { fs.rmSync(turnFile, { force: true }); turn = null; }
-    if (pushTurnFree(turn, Date.now())) {
-      if (turn) fs.rmSync(turnFile, { force: true });
-      try { fs.writeFileSync(turnFile, JSON.stringify({ card, at: Date.now() }), { flag: "wx" }); break; } catch {}
+  const priority = lockPriority(card);
+  const bypass = name !== "push" && holdsPushTurn(card);
+  const joinedAt = Date.now();
+  const bye = () => leaveTurnWait(LOCK_DIR, name, card);
+  process.on("exit", bye);
+  let lastLine = "";
+  try {
+    for (;;) {
+      let turn = null;
+      try { turn = JSON.parse(fs.readFileSync(turnFile, "utf8")); } catch {}
+      if (turn && turn.card === card) { fs.rmSync(turnFile, { force: true }); turn = null; }
+      if (!bypass) joinTurnWait(LOCK_DIR, name, { card, priority, joinedAt, seenAt: Date.now() });
+      const busy = !pushTurnFree(turn, Date.now());
+      const gate = turnGate(card, { busy, waiters: readTurnWaiters(LOCK_DIR, name), now: Date.now(), bypass });
+      if (gate.go) {
+        if (turn) fs.rmSync(turnFile, { force: true });
+        try { fs.writeFileSync(turnFile, JSON.stringify({ card, priority, at: Date.now() }), { flag: "wx" }); break; } catch {}
+      }
+      if (Date.now() > waitUntil) { console.error(`✗ 30 min se ${name} ki baari nahi aayi (${turn?.card ?? gate.ahead.join(", ")} ${doing}). Owner ko batao.`); process.exit(4); }
+      const line = busy || !gate.ahead.length
+        ? waitLine(name, card, turn?.card, doing)
+        : `… ${card} (${priority}): ${name} ki baari ka intezaar — line me aage: ${gate.ahead.join(", ")} (priority, phir pehle aaya)`;
+      if (line !== lastLine) { console.log(line); lastLine = line; }
+      await new Promise((r) => setTimeout(r, Number(process.env.WORKER_TURN_POLL_MS || 15000)));
     }
-    if (Date.now() > waitUntil) { console.error(`✗ 30 min se ${name} ki baari nahi aayi (${turn?.card} ${doing}). Owner ko batao.`); process.exit(4); }
-    console.log(waitLine(name, card, turn?.card, doing));
-    await new Promise((r) => setTimeout(r, 15000));
-  }
+  } finally { bye(); process.off("exit", bye); }
   try { return await fn(); } finally { fs.rmSync(turnFile, { force: true }); }
 }
 
@@ -1120,6 +1148,20 @@ function main(argv) {
   const { rest, ...cardFlags } = parseCardFlags(scopeRest);
   fs.mkdirSync(LOCK_DIR, { recursive: true });
 
+  if (cmd === "status") {
+    /* R-2591: locks with priority, the slot queue, and who holds / waits for the push and heavy turns. */
+    const locks = readLocks();
+    if (!locks.length) console.log("Koi worker lock nahi.");
+    for (const l of locks) console.log(`${l.card} (${normPriority(l.priority) ?? DEFAULT_PRIORITY})  ${l.state ?? LOCK_STATES.working}${countsTowardCap(l) ? "" : " (slot nahi ginta)"}  ${l.claimedAt}`);
+    for (const line of turnQueueLines("slot", null, readQueue(), Date.now()).slice(1)) console.log(`slot${line.trim().slice(4)}`);
+    for (const name of ["push", "heavy"]) {
+      let turn = null;
+      try { turn = JSON.parse(fs.readFileSync(path.join(LOCK_DIR, `_${name}-turn.json`), "utf8")); } catch {}
+      if (pushTurnFree(turn, Date.now())) turn = null;
+      for (const line of turnQueueLines(name, turn, readTurnWaiters(LOCK_DIR, name), Date.now())) console.log(line);
+    }
+    return;
+  }
   if (cmd === "list") {
     const locks = readLocks();
     if (!locks.length) return console.log("Koi worker lock nahi.");
@@ -1270,7 +1312,7 @@ function main(argv) {
     console.log(r.message);
     return;
   }
-  console.error("claim [--wait --priority p0] | beat | check | push | ci | ci-all | sql-related | wip | resume | tsc | prep | release | cleanup [--worktree <path>] [--dry-run] | list | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
+  console.error("claim [--wait --priority p0] | beat | check | push | ci | ci-all | sql-related | wip | resume | tsc | prep | release | cleanup [--worktree <path>] [--dry-run] | list | status | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
   process.exit(1);
 }
 
