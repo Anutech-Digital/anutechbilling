@@ -18,9 +18,10 @@
  *
  * Who: seats.change (owner / manager / billing — all of them may also issue a credit note).
  * Microsoft NCE: "Now" is refused after the 7-day window (checkNceLock); end of term would be
- * allowed — but R-2584: "end_of_term" is refused while SEAT_CUT_END_OF_TERM_ENABLED is off (renewal
- * does not apply a scheduled cut yet — R-2583), so an NCE-locked subscription has no seat cut in
- * the app until then. A cut scheduled before R-2584 can still be removed (DELETE).
+ * allowed. R-2584 hid "end_of_term" (SEAT_CUT_END_OF_TERM_ENABLED); R-2608 turns it back on and
+ * refuses it (409 end_of_term_blocked, GET endOfTermBlockedReason) on a subscription billed in parts
+ * or with a renewal / extension quote already linked — reduce_subscription_seats refuses the same.
+ * DELETE: cancel_scheduled_seat_reduction repeats the renewal_quote_has_cut guard under a row lock.
  * R-2589: refused (409 plan_change_open, the message names the quote) while a plan-change quote
  * (Change plan, R-2227) is open — once paid it would put back seats this cut already credited.
  */
@@ -29,10 +30,10 @@ import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 import { resolveSeatTax } from "@/lib/subscriptions/apply-seat-increase";
-import { seatReductionValue, seatReductionPreview, planChangeOpenMessage, SEAT_CUT_END_OF_TERM_ENABLED } from "@/lib/subscriptions/seat-reduction";
+import { seatReductionValue, seatReductionPreview, planChangeOpenMessage, endOfTermBlockedReason, SEAT_CUT_END_OF_TERM_ENABLED } from "@/lib/subscriptions/seat-reduction";
 import { checkNceLock } from "@/lib/subscriptions/nce-lock";
 import { istToday } from "@/lib/dates/ist";
-import { REDUCE_SEATS_SELECT, loadPartInvoiceMoney, loadScheduledReduction, loadOpenPlanChangeQuote, loadCutRenewalQuote, type ReduceSeatsSub } from "./load";
+import { REDUCE_SEATS_SELECT, loadPartInvoiceMoney, loadScheduledReduction, loadOpenPlanChangeQuote, loadCutRenewalQuote, loadLinkedQuoteSeats, type ReduceSeatsSub } from "./load";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -76,18 +77,21 @@ async function gate(id: string): Promise<Gate> {
 async function buildPreview(g: Extract<Gate, { ok: true }>, seatsRemoved: number) {
   const today = istToday();
   const { sub, supabase } = g;
-  const [{ taxRatePct, taxLabel }, scheduled, invoice] = await Promise.all([
+  const [{ taxRatePct, taxLabel }, scheduled, invoice, linkedQuoteSeats] = await Promise.all([
     resolveSeatTax(supabase, sub.customer_id, sub.tenant_id),
     loadScheduledReduction(supabase, sub, today),
     loadPartInvoiceMoney(supabase, sub, today),
+    loadLinkedQuoteSeats(supabase, sub),
   ]);
+  /* R-2608: billed in parts, or a renewal / extension quote already linked → no end-of-term cut. */
+  const eotBlocked = SEAT_CUT_END_OF_TERM_ENABLED ? endOfTermBlockedReason(sub, linkedQuoteSeats) : null;
   const value = seatReductionValue({ sub, seatsRemoved, today, taxRatePct });
   const nce = checkNceLock({
     vendor: sub.vendor, startDate: sub.start_date, today, currentSeats: sub.seats,
     nextSeats: sub.seats - seatsRemoved, nextStatus: sub.status,
   });
-  if (!value.ok) return { today, taxLabel, value, preview: null, nce, scheduled };
-  return { today, taxLabel, value, preview: seatReductionPreview(value, invoice), nce, scheduled };
+  if (!value.ok) return { today, taxLabel, value, preview: null, nce, scheduled, eotBlocked };
+  return { today, taxLabel, value, preview: seatReductionPreview(value, invoice, SEAT_CUT_END_OF_TERM_ENABLED && !eotBlocked), nce, scheduled, eotBlocked };
 }
 
 export async function GET(req: Request, props: { params: Promise<{ id: string }> }) {
@@ -111,6 +115,8 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
     nceLocked: p.nce.locked,
     nceReason: p.nce.reason,
     scheduled: p.scheduled,
+    /* R-2608: why "At end of term" cannot be saved here (null = it can). */
+    endOfTermBlockedReason: p.eotBlocked,
   });
 }
 
@@ -143,6 +149,10 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     if (timing === "now" || p.value.code === "invalid_seats" || p.value.code === "too_many") {
       return NextResponse.json({ error: p.value.message, code: p.value.code }, { status: 400 });
     }
+  }
+  /* R-2608: billed in parts / a renewal quote already linked — the SQL refuses the same under a lock. */
+  if (timing === "end_of_term" && p.eotBlocked) {
+    return NextResponse.json({ error: p.eotBlocked, code: "end_of_term_blocked" }, { status: 409 });
   }
   if (timing === "now") {
     if (g.sub.written_off_at) {
@@ -179,6 +189,10 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       if (/^Plan change quote .+ is open for this subscription/.test(error.message)) {
         return NextResponse.json({ error: error.message, code: "plan_change_open" }, { status: 409 });
       }
+      /* R-2608: a renewal quote linked / billed in parts — found under the row lock after the check above. */
+      if (/^Renewal quote .+ is already made for \d+ seats\. /.test(error.message) || /^This subscription is billed in parts/.test(error.message)) {
+        return NextResponse.json({ error: error.message, code: "end_of_term_blocked" }, { status: 409 });
+      }
       return NextResponse.json({ error: error.message, code: "refused" }, { status: 400 });
     }
     console.error("[reduce-seats] reduce_subscription_seats failed:", error);
@@ -210,7 +224,13 @@ export async function DELETE(_req: Request, props: { params: Promise<{ id: strin
   } as never);
   if (error) {
     const code = (error as { code?: string }).code ?? "";
-    if (PLAIN_REFUSALS.has(code)) return NextResponse.json({ error: error.message, code: "refused" }, { status: 400 });
+    if (PLAIN_REFUSALS.has(code)) {
+      /* R-2608: the same guard inside cancel_scheduled_seat_reduction (row locked) — a quote made after the check above. */
+      if (/^Renewal quote .+ is already made for \d+ seats with this cut/.test(error.message)) {
+        return NextResponse.json({ error: error.message, code: "renewal_quote_has_cut" }, { status: 409 });
+      }
+      return NextResponse.json({ error: error.message, code: "refused" }, { status: 400 });
+    }
     console.error("[reduce-seats] cancel_scheduled_seat_reduction failed:", error);
     return NextResponse.json({ error: "The scheduled cut was not removed — try again in a minute; if it still fails, use Report a problem.", code: "failed" }, { status: 500 });
   }

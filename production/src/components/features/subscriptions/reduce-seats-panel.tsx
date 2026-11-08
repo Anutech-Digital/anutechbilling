@@ -10,9 +10,9 @@
  *   · Now          → one credit note on the part's invoice; seats drop today.
  *   · End of term  → scheduled for the renewal date; no money, the seats stay until then.
  *
- * R-2584: "At end of term" is hidden while SEAT_CUT_END_OF_TERM_ENABLED is off — renewal does not
- * apply a scheduled cut yet (R-2583), so it would over-bill. Only "Now, with credit" is offered; a
- * cut scheduled before that still shows, with Remove.
+ * R-2584 hid "At end of term" (SEAT_CUT_END_OF_TERM_ENABLED); R-2608 shows it again — the renewal
+ * quote bills the cut (R-2583). It cannot be saved (note shown, button off) on a subscription billed
+ * in parts or with a renewal / extension quote already made (GET endOfTermBlockedReason).
  */
 "use client";
 
@@ -38,6 +38,8 @@ interface PreviewResponse {
   nceLocked: boolean;
   nceReason: string;
   scheduled: { seats_before: number; seats_after: number; effective_date: string } | null;
+  /** R-2608: why "At end of term" cannot be saved here, or null. */
+  endOfTermBlockedReason?: string | null;
 }
 
 type Timing = "now" | "end_of_term";
@@ -107,7 +109,9 @@ export default function ReduceSeatsPanel({ sub, onCancel, onDone }: Props) {
   const nowBlocked = timing === "now" && (
     !value?.ok || !preview?.canReduceNow || Boolean(data?.nceLocked)
   );
-  const disabled = submitting || seatsRemoved < 1 || !data || Boolean(tooMany) || Boolean(data?.scheduled) || nowBlocked;
+  /* R-2608: billed in parts / a renewal quote already made → the end-of-term cut cannot be saved. */
+  const eotBlocked = timing === "end_of_term" ? data?.endOfTermBlockedReason ?? null : null;
+  const disabled = submitting || seatsRemoved < 1 || !data || Boolean(tooMany) || Boolean(data?.scheduled) || nowBlocked || Boolean(eotBlocked);
 
   const onSubmit = async () => {
     if (!keyRef.current) keyRef.current = newIdempotencyKey();
@@ -231,6 +235,9 @@ export default function ReduceSeatsPanel({ sub, onCancel, onDone }: Props) {
 
         {timing === "now" && preview && !preview.canReduceNow && (
           <p role="status" className="rounded-md border border-amber/30 bg-amber/10 p-3 text-xs text-amber-ink">{preview.blockedReason}</p>
+        )}
+        {eotBlocked && (
+          <p role="status" className="rounded-md border border-amber/30 bg-amber/10 p-3 text-xs text-amber-ink" data-testid="reduce-seats-eot-blocked">{eotBlocked}</p>
         )}
         {timing === "now" && data?.nceLocked && (
           <p role="status" className="rounded-md border border-amber/30 bg-amber/10 p-3 text-xs text-amber-ink">{data.nceReason}</p>
