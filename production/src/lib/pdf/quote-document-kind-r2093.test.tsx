@@ -102,7 +102,8 @@ describe("renewal reminder: the subscription's linked quote may be an upgrade", 
       plan: "p", itemId: null, seats: 1, mrr: 0, termMonths: 12, renewalDate: "2027-01-01", graceDays: 0,
       existingQuoteId: "Q-1",
     } as never);
-    expect(r?.kind).toBe("upgrade");
+    /* R-2618: the helper may also answer a hold (plan-change quote) — a support upgrade is still a result. */
+    expect(r && "kind" in r ? r.kind : null).toBe("upgrade");
     expect(String((select.mock.calls[0] as unknown[])[0])).toMatch(/is_renewal, is_extension, extension_months/);
   });
 });
