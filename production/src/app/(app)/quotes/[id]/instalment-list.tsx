@@ -20,7 +20,7 @@ function stateText(p: PartStatus, lastReceivedOn: string | null, isLastWithMoney
     case "short":    return `Received ${rupee(p.received)}${on} · ${rupee(p.short)} short`;
     case "part":     return `${rupee(p.received)} received${on} · ${rupee(p.short)} still due`;
     case "due":      return `Due since ${formatDate(p.billOn)}`;
-    case "upcoming": return `Due ${formatDate(p.billOn)} · payment request on ${formatDate(p.billOn)}`;
+    case "upcoming": return `Due ${formatDate(p.billOn)} · payment request goes that day`;
   }
 }
 

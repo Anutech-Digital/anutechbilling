@@ -13,12 +13,15 @@
 import type { InstalmentLine, QuoteInstalmentPlan } from "@/lib/billing/instalments";
 
 /** How small a shortfall reads as "received (₹X short)" instead of a part payment: up to 1% of
- *  the part (bank charges, TDS rounding), never less than ₹1. ₹60 on ₹95,993 is 0.06%. */
+ *  the part and never more than ₹500 (bank charges, rounding), at least ₹1. ₹60 on ₹95,993 is
+ *  0.06%. TDS is not this — it is recorded with the payment. The one rule for the quote page,
+ *  paid-to-date.ts (badge, Quotes list) and the money row. */
 export const SMALL_SHORT_PCT = 1;
+export const SMALL_SHORT_MAX = 500;
 
 export function isSmallShort(short: number, gross: number): boolean {
   if (!(short > 0)) return false;
-  return short <= Math.max(1, Math.floor((gross * SMALL_SHORT_PCT) / 100));
+  return short <= Math.max(1, Math.min(SMALL_SHORT_MAX, Math.floor((gross * SMALL_SHORT_PCT) / 100)));
 }
 
 export type PartState =

@@ -128,7 +128,7 @@ test.describe("R-2587 — quote billed in parts: Part 1 received (₹60 short), 
       const list = page.getByTestId("instalment-list");
       await expect(list).toBeVisible();
       await expect(list.locator("li").nth(0)).toContainText(/Part 1 of 4.*₹95,993.*Received ₹95,933 on .* · ₹60 short/);
-      await expect(list.locator("li").nth(1)).toContainText(new RegExp(`Part 2 of 4.*₹95,993.*Due ${DATE} · payment request on ${DATE}`));
+      await expect(list.locator("li").nth(1)).toContainText(new RegExp(`Part 2 of 4.*₹95,993.*Due ${DATE} · payment request goes that day`));
       await expect(list.locator("li").nth(2)).toHaveText(/2 more parts · ₹1,91,986/);
       expect(await page.locator("main").innerText()).not.toMatch(/₹60 due now/);
       /* fits 1280: no sideways scroll */
@@ -151,13 +151,14 @@ test.describe("R-2587 — quote billed in parts: Part 1 received (₹60 short), 
     }
   });
 
-  test("Step 3: the PAID step reads 'Part 1 of 4 paid (₹60 short) · next on <date>'", async ({ browser, baseURL }) => {
+  test("Step 3: the PAID step and the badge read 'Paid to date (Part 1 ₹60 short) — next part ₹95,993 on <date>'", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     try {
       await openAppPage(page, `/quotes/${QUOTE}`);
-      const paidDot = page.locator(`[title^="Part 1 of 4 paid (₹60 short) · next on "]`);
+      const paidDot = page.locator(`[title^="Paid to date (Part 1 ₹60 short) — next part ₹95,993 on "]`);
       await expect(paidDot).toHaveCount(1, { timeout: 60_000 });
-      expect(await paidDot.getAttribute("title")).toMatch(new RegExp(`· next on ${DATE}\\.$`));
+      expect(await paidDot.getAttribute("title")).toMatch(new RegExp(` on ${DATE}\\.$`));
+      expect(await page.locator("main").innerText()).not.toMatch(/Partly paid/);
     } finally {
       await page.context().close();
     }

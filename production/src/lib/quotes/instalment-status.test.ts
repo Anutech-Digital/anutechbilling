@@ -77,10 +77,13 @@ describe("other shapes", () => {
     expect(paidStepText(s, fmt, rupee)).toBe("All 4 parts paid");
   });
 
-  it("small = at most 1% of the part (₹959 on ₹95,993), and at least ₹1", () => {
+  it("small = at most 1% of the part, never over ₹500, at least ₹1", () => {
     expect(isSmallShort(60, 95_993)).toBe(true);
-    expect(isSmallShort(959, 95_993)).toBe(true);
-    expect(isSmallShort(961, 95_993)).toBe(false);
+    expect(isSmallShort(500, 95_993)).toBe(true);
+    expect(isSmallShort(501, 95_993)).toBe(false);
+    expect(isSmallShort(9_990, 10_00_000)).toBe(false);
+    expect(isSmallShort(200, 20_000)).toBe(true);
+    expect(isSmallShort(201, 20_000)).toBe(false);
     expect(isSmallShort(1, 50)).toBe(true);
     expect(isSmallShort(0, 95_993)).toBe(false);
   });

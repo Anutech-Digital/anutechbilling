@@ -273,3 +273,17 @@ describe("R-2587 — a part received with a small difference is not 'due now'", 
     expect(a.recordLabel).toBe("Record instalment payment");
   });
 });
+
+describe("R-2587 — Part 2's payment request is out while Part 1 is ₹60 short", () => {
+  it("one way: open the request, and the note names Part 2 (not Part 1) and the ₹60", () => {
+    const a = quoteMoneyActions(q({
+      status: "accepted", paymentStatus: "partial", total: 383_972, received: 95_933, splitBilledCycle: "quarterly",
+      nextPartRequest: { id: "Q-REQ-2", number: "Q-REQ-2" },
+      splitDue: { dueGross: 191_986, outstanding: 96_053, next: { gross: 95_993, billOn: "1 Nov 2026", index: 1 }, count: 4,
+        smallShort: { index: 1, amount: 60, next: { gross: 95_993, billOn: "1 Feb 2027", index: 2 } } },
+    }), rupee);
+    expect(a.openRequest?.id).toBe("Q-REQ-2");
+    expect(a.canRecordPayment).toBe(false);
+    expect(a.note).toMatch(/^Paid to date \(Part 1 ₹60 short\) — next part ₹95,993 \(2 of 4\) on 1 Feb 2027: payment request Q-REQ-2/);
+  });
+});

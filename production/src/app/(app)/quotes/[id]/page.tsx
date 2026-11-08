@@ -34,7 +34,7 @@ import { issueEinvoiceNotice, isB2B } from "@/lib/compliance/einvoice";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
 import { pagePaidToDate, paidToDateLine, PAID_TO_DATE_LABEL } from "@/lib/quotes/paid-to-date";
-import { instalmentStatus, instalmentHeadline, paidStepText } from "@/lib/quotes/instalment-status";
+import { instalmentStatus, instalmentHeadline } from "@/lib/quotes/instalment-status";
 import { InstalmentList } from "./instalment-list";
 import { useNextPartRequest } from "./next-part-request";
 import { useQuotePartInvoices } from "./part-invoices";
@@ -393,17 +393,6 @@ export default function QuoteDetailPage() {
         hasOpenRequest: Boolean(nextPartRequest),
       })
     : null;
-  /* R-2587: Part 1 received less a small difference (₹95,933 of ₹95,993) is paid for the
-     stepper — "Part 1 of 4 paid (₹60 short) · next on 1 Feb 2027" — until the next part is due. */
-  const shortPaidLine = (() => {
-    if (!quote || paidToDate || partRequest || quote.invoice_id) return null;
-    const plan = planForQuote(quote, (saleSub?.start_date ?? istToday()).slice(0, 10));
-    if (!plan) return null;
-    const st = instalmentStatus(plan, { received: sumReceived(paymentHistory ?? []), todayISO: istToday() });
-    if (!st.smallShort) return null;
-    if (st.next && st.next.billOn <= istToday() && !nextPartRequest) return null;
-    return paidStepText(st, formatDate, rupee);
-  })();
   const lifecycle = quote
     ? quoteLifecycle({
         status: quote.status,
@@ -418,7 +407,7 @@ export default function QuoteDetailPage() {
         paid: quoteIsPaid(quote),
         /* R-1710: what came in and what is left, also once invoiced. */
         money: quotePaymentState(quote),
-        paidToDate: paidToDate ? paidToDateLine(paidToDate, formatDate(paidToDate.next.billOn)) : shortPaidLine,
+        paidToDate: paidToDate ? paidToDateLine(paidToDate, formatDate(paidToDate.next.billOn)) : null,
         partInvoices: partInvoices,
       })
     : null;
@@ -985,7 +974,10 @@ export default function QuoteDetailPage() {
   const partStatus = splitPlan && totalReceivedSoFar > 0
     ? instalmentStatus(splitPlan, { received: totalReceivedSoFar, todayISO: istToday() })
     : null;
-  const partHeadline = partStatus ? instalmentHeadline(partStatus, formatDate, rupee) : null;
+  /* Only a small difference left due → say the part is received, not "₹60 due now". */
+  const partHeadline = partStatus?.smallShort && due && due.outstanding > 0 && due.outstanding <= partStatus.smallShort.amount
+    ? instalmentHeadline(partStatus, formatDate, rupee)
+    : null;
   const money = quoteMoneyActions(
     {
       splitDue: splitPlan && due ? {
@@ -1774,12 +1766,12 @@ export default function QuoteDetailPage() {
                   ₹20,000 UPI payment with its own receipt voucher. Money that has already
                   arrived is stated, in rose, instead of being described as a future
                   possibility. */}
-              {totalReceivedSoFar > 0 ? (
+              {partHeadline ? (
+                <span className="text-ink-2">{partHeadline}.</span> /* R-2587 */
+              ) : totalReceivedSoFar > 0 ? (
                 <span className="font-medium text-rose">
                   {due
-                    ? partStatus?.smallShort && partHeadline && due.outstanding <= partStatus.smallShort.amount
-                      ? <>{partHeadline}.</> /* R-2587 */
-                      : <>{rupee(totalReceivedSoFar)} received · {rupee(due.outstanding)} due now{due.next && due.outstanding === 0 ? <> · next instalment {rupee(due.next.gross)} on {formatDate(due.next.billOn)}</> : null}.</>
+                    ? <>{rupee(totalReceivedSoFar)} received · {rupee(due.outstanding)} due now{due.next && due.outstanding === 0 ? <> · next instalment {rupee(due.next.gross)} on {formatDate(due.next.billOn)}</> : null}.</>
                     : <>{rupee(totalReceivedSoFar)} already received of {rupee(total)} — {rupee(Math.max(0, total - totalReceivedSoFar))} still outstanding.</>}
                 </span>
               ) : (

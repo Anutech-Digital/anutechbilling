@@ -144,20 +144,23 @@ function moneyActionsToday(q: QuoteMoneyInput, rupees: (n: number) => string): M
        "₹7,646 of ₹30,586 received · ₹22,940 still outstanding" the day Q1 was paid. */
     const d = q.splitDue;
     if (d) {
-      const nextPart = d.next ? `next part ${rupees(d.next.gross)} (${d.next.index} of ${d.count}) on ${d.next.billOn}` : "";
+      /* R-2587: with a part received a little short, the next part is the one after it. */
+      const sm = d.smallShort;
+      const nx = sm ? sm.next : d.next;
+      const shortNote = sm ? ` (Part ${sm.index} ${rupees(sm.amount)} short)` : "";
+      const nextPart = nx ? `next part ${rupees(nx.gross)} (${nx.index} of ${d.count}) on ${nx.billOn}` : "";
       /* R-2055: the first part is paid and a later part's request is out — the request owns
          that money. One way: open the request, never a second Record payment here. */
-      if (q.received > 0 && d.next && q.nextPartRequest) {
+      if (q.received > 0 && nx && q.nextPartRequest) {
         return base("partial", 0, {
-          note: `${PAID_TO_DATE_LABEL} — ${nextPart}: payment request ${q.nextPartRequest.number} is out — record that part there. ${each}`,
+          note: `${PAID_TO_DATE_LABEL}${shortNote} — ${nextPart}: payment request ${q.nextPartRequest.number} is out — record that part there. ${each}`,
           openRequest: q.nextPartRequest,
         });
       }
       /* R-2587: Q-A378-27-0021 — Part 1 ₹95,993, ₹95,933 in. "₹60 due now" + a big "Record
          instalment payment" read as if the customer owed money today. */
-      const sm = d.smallShort;
       if (sm && d.outstanding > 0 && d.outstanding <= sm.amount && q.received > 0) {
-        const after = sm.next ? ` · next part ${rupees(sm.next.gross)} (${sm.next.index} of ${d.count}) on ${sm.next.billOn}` : "";
+        const after = nextPart ? ` · ${nextPart}` : "";
         return base("partial", d.outstanding, {
           note: `Part ${sm.index} of ${d.count} received (${rupees(sm.amount)} short)${after}. ${each}`,
           canRecordPayment: true,
