@@ -1,8 +1,9 @@
 -- R-2590 (c): an expired, unpaid Change plan quote lets go of the subscription's renewal link.
 --
---   1. plan-change draft, unpaid, expired yesterday (IST) → status 'expired', renewal_quote_id null.
+--   1. plan-change draft, unpaid, validity ended 3 days ago (IST) → status 'expired', renewal_quote_id null.
 --      1b. same with status 'sent' → released too.
---   2. expires TODAY → untouched (valid through its whole last day).
+--      1c. accepted but never paid → released too (acceptance alone changes nothing).
+--   2. validity ended 2 days ago → untouched (2-day margin for a payment started on the last day).
 --   3. part-paid (payment_status partial) and expired → untouched (money outranks the date).
 --   4. control: an expired R-2073 support upgrade (no plan_change) and an expired renewal quote
 --      (extension_months 12) → untouched.
@@ -45,9 +46,10 @@ select v.id, v.tenant::uuid, v.cust::uuid, 'R2590 Cust', 1180, 1000, 18, v.statu
        else jsonb_build_array(jsonb_build_object('id','line-1','name','y','qty',1,'rate',1000,'cost',0)) end,
        true, v.ext, 'yearly'
   from (values
-    ('Q-R2590-1',  'dd259000-0000-4000-8000-00000000a001', 'dd259000-0000-4000-8000-00000000c001', 'dd259000-0000-4000-8000-00000000b001', 'draft', 'awaiting', -1, true,  0),
+    ('Q-R2590-1',  'dd259000-0000-4000-8000-00000000a001', 'dd259000-0000-4000-8000-00000000c001', 'dd259000-0000-4000-8000-00000000b001', 'draft', 'awaiting', -3, true,  0),
+    ('Q-R2590-1C', 'dd259000-0000-4000-8000-00000000a001', 'dd259000-0000-4000-8000-00000000c001', 'dd259000-0000-4000-8000-00000000b008', 'accepted', 'awaiting', -4, true, 0),
     ('Q-R2590-1B', 'dd259000-0000-4000-8000-00000000a001', 'dd259000-0000-4000-8000-00000000c001', 'dd259000-0000-4000-8000-00000000b002', 'sent',  'awaiting', -5, true,  0),
-    ('Q-R2590-2',  'dd259000-0000-4000-8000-00000000a001', 'dd259000-0000-4000-8000-00000000c001', 'dd259000-0000-4000-8000-00000000b003', 'draft', 'awaiting',  0, true,  0),
+    ('Q-R2590-2',  'dd259000-0000-4000-8000-00000000a001', 'dd259000-0000-4000-8000-00000000c001', 'dd259000-0000-4000-8000-00000000b003', 'draft', 'awaiting', -2, true,  0),
     ('Q-R2590-3',  'dd259000-0000-4000-8000-00000000a001', 'dd259000-0000-4000-8000-00000000c001', 'dd259000-0000-4000-8000-00000000b004', 'sent',  'partial',  -3, true,  0),
     ('Q-R2590-4A', 'dd259000-0000-4000-8000-00000000a001', 'dd259000-0000-4000-8000-00000000c001', 'dd259000-0000-4000-8000-00000000b005', 'draft', 'awaiting', -3, false, 0),
     ('Q-R2590-4B', 'dd259000-0000-4000-8000-00000000a001', 'dd259000-0000-4000-8000-00000000c001', 'dd259000-0000-4000-8000-00000000b006', 'draft', 'awaiting', -3, false, 12),
@@ -60,6 +62,7 @@ update public.subscriptions s set renewal_quote_id = l.q
   from (values
     ('dd259000-0000-4000-8000-00000000b001'::uuid, 'Q-R2590-1'),
     ('dd259000-0000-4000-8000-00000000b002'::uuid, 'Q-R2590-1B'),
+    ('dd259000-0000-4000-8000-00000000b008'::uuid, 'Q-R2590-1C'),
     ('dd259000-0000-4000-8000-00000000b003'::uuid, 'Q-R2590-2'),
     ('dd259000-0000-4000-8000-00000000b004'::uuid, 'Q-R2590-3'),
     ('dd259000-0000-4000-8000-00000000b005'::uuid, 'Q-R2590-4A'),
@@ -83,13 +86,13 @@ begin
   raise notice 'PASS 7b: only service_role can execute';
 
   select count(*) into v_n from public.release_expired_plan_change_quotes('dd259000-0000-4000-8000-00000000a001');
-  if v_n <> 2 then raise exception 'FAIL 1: expected 2 released for tenant 1, got %', v_n; end if;
+  if v_n <> 3 then raise exception 'FAIL 1: expected 3 released for tenant 1, got %', v_n; end if;
 
   select q.status::text, s.renewal_quote_id into v_status, v_link
     from public.quotes q join public.subscriptions s on s.id = 'dd259000-0000-4000-8000-00000000b001'
    where q.id = 'Q-R2590-1';
   if v_status <> 'expired' or v_link is not null then
-    raise exception 'FAIL 1: draft expired yesterday → status % link %', v_status, v_link;
+    raise exception 'FAIL 1: draft ended 3 days ago → status % link %', v_status, v_link;
   end if;
   raise notice 'PASS 1: expired unpaid plan-change draft → expired, link cleared';
 
@@ -101,13 +104,19 @@ begin
   end if;
   raise notice 'PASS 1b: sent + expired → released';
 
+  if (select status::text from public.quotes where id = 'Q-R2590-1C') <> 'expired'
+     or (select renewal_quote_id from public.subscriptions where id = 'dd259000-0000-4000-8000-00000000b008') is not null then
+    raise exception 'FAIL 1c: accepted, never paid, expired → not released';
+  end if;
+  raise notice 'PASS 1c: accepted unpaid → released';
+
   select q.status::text, s.renewal_quote_id into v_status, v_link
     from public.quotes q join public.subscriptions s on s.id = 'dd259000-0000-4000-8000-00000000b003'
    where q.id = 'Q-R2590-2';
   if v_status <> 'draft' or v_link is distinct from 'Q-R2590-2' then
-    raise exception 'FAIL 2: expires today was touched → status % link %', v_status, v_link;
+    raise exception 'FAIL 2: ended 2 days ago was touched → status % link %', v_status, v_link;
   end if;
-  raise notice 'PASS 2: expires today → untouched';
+  raise notice 'PASS 2: ended 2 days ago → untouched (margin)';
 
   select q.status::text, s.renewal_quote_id into v_status, v_link
     from public.quotes q join public.subscriptions s on s.id = 'dd259000-0000-4000-8000-00000000b004'

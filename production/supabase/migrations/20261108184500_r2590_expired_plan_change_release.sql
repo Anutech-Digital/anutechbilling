@@ -13,9 +13,13 @@
 --
 -- New: public.release_expired_plan_change_quotes(p_tenant_id uuid default null) → table(subscription_id, quote_id), one row per quote released.
 -- For every subscription whose LINKED quote is a plan-change quote that
---   - is still waiting (status draft / sent / viewed),
---   - has an expires_date BEFORE today (IST, public.ist_today(): valid through its whole last day),
---   - has no money on it (payment_status none / awaiting, no invoice_id, no payments row),
+--   - is still waiting (status draft / sent / viewed, or accepted with no money — acceptance alone
+--     changes nothing on the subscription),
+--   - has an expires_date more than 2 days before today (IST, public.ist_today()). The 2 days are a
+--     safety margin: a payment started on the last valid day (UPI / Razorpay) can land a little
+--     later, and record_payment refuses a plan-change quote that is no longer linked (R-2227),
+--   - has no money on it (payment_status none / awaiting, no invoice_id, no 'received' payment row;
+--     a refunded row does not hold it),
 -- the link is cleared and the quote's status becomes 'expired' (superseded_by stays null — "expired by
 -- date", R-2605's "closed"). Money outranks the date (R-1679): a part-paid quote stays linked.
 -- Renewal / extension quotes (extension_months > 0) and R-2073 support upgrades (no plan_change) are
@@ -44,11 +48,11 @@ begin
        and coalesce(q.extension_months, -1) = 0
        and jsonb_typeof(q.line_items) = 'array'
        and jsonb_typeof(q.line_items->0->'plan_change') = 'object'
-       and q.status::text in ('draft', 'sent', 'viewed')
-       and q.expires_date is not null and q.expires_date < v_today
+       and q.status::text in ('draft', 'sent', 'viewed', 'accepted')
+       and q.expires_date is not null and q.expires_date < v_today - 2
        and coalesce(q.payment_status::text, 'none') in ('none', 'awaiting')
        and q.invoice_id is null
-       and not exists (select 1 from public.payments p where p.tenant_id = q.tenant_id and p.quote_id = q.id)
+       and not exists (select 1 from public.payments p where p.tenant_id = q.tenant_id and p.quote_id = q.id and p.status::text = 'received')
      for update of s, q skip locked
   loop
     update public.subscriptions
@@ -67,7 +71,7 @@ end;
 $$;
 
 comment on function public.release_expired_plan_change_quotes(uuid) is
-  'R-2590: an unpaid Change plan quote (R-2227) whose validity ended before today (IST) → status expired and the subscription''s renewal_quote_id cleared. Money on it (payment / invoice) keeps it linked. Renewal, extension and support-upgrade quotes untouched. Renewals cron, service role only. Returns one row (subscription_id, quote_id) per quote released.';
+  'R-2590: an unpaid Change plan quote (R-2227) whose validity ended more than 2 days before today (IST) → status expired and the subscription''s renewal_quote_id cleared. Money on it (payment / invoice) keeps it linked. Renewal, extension and support-upgrade quotes untouched. Renewals cron, service role only. Returns one row (subscription_id, quote_id) per quote released.';
 
 revoke all on function public.release_expired_plan_change_quotes(uuid) from public, anon, authenticated;
 grant execute on function public.release_expired_plan_change_quotes(uuid) to service_role;
