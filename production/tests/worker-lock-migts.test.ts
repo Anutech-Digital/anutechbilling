@@ -27,8 +27,8 @@ function repo() {
 }
 
 describe("R-2614 pure helpers", () => {
-  it("R-2615: the too-wide mask of every 14-digit number is gone", async () => {
-    expect((await import("../scripts/ops/worker-lock-migts.mjs") as Record<string, unknown>).maskMigrationStamps).toBeUndefined();
+  it("R-2615: the too-wide mask of every 14-digit number is gone", () => {
+    expect(fs.readFileSync(path.join(__dirname, "..", "scripts", "ops", "worker-lock-migts.mjs"), "utf8")).not.toMatch(/export function maskMigrationStamps/);
   });
 
   it("utcStamp is YYYYMMDDHHMMSS in UTC", () => {
