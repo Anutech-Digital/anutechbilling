@@ -529,6 +529,11 @@ export interface PayInput {
   newBill: (NewBillDraft & { tds: number; tdsSection: string | null; tdsOverride?: string | null }) | null;
   advance: number;
   advanceCategory: string | null;
+  /** R-1916: TDS withheld on the advance (the advance's gross = advance cash + this), its section,
+   *  and the owner's below-threshold reason. 0 / missing = no TDS (the 9-argument call). */
+  advanceTds?: number;
+  advanceTdsSection?: string | null;
+  advanceTdsOverride?: string | null;
   bankCharge: number;
   note: string | null;
   /** R-2338: the owner ticked "Remember for this vendor" — the server saves the section used as the
@@ -587,7 +592,25 @@ export function payArgs(i: PayInput) {
     p_advance_category: i.advance > 0 ? i.advanceCategory : null,
     p_bank_charge: n(i.bankCharge),
     p_note: i.note,
+    /* R-1916: TDS on the advance → the 12-argument form (all three keys, or none). */
+    ...(n(i.advance) > 0 && n(i.advanceTds ?? 0) > 0 ? {
+      p_advance_tds: n(i.advanceTds ?? 0),
+      p_advance_tds_section: i.advanceTdsSection || null,
+      p_advance_tds_override_reason: overrideReason(i.advanceTdsOverride) ?? null,
+    } : {}),
   };
+}
+
+/**
+ * R-1916: TDS on an advance paid from the bank. The bank paid the gross less the TDS, so at the
+ * section's rate r (lib/accounting/tds-rates.ts) the TDS is cash × r / (100 − r) — ₹90,000 paid
+ * under 194J(b) 10% → ₹10,000 (advance ₹1,00,000). The rate is the vendor's (tdsRatePct: 194C 1% for an
+ * individual / HUF, 20% with no PAN — like every other TDS here). null = a section the table does not know.
+ */
+export function advanceTdsFromCash(cash: number, section: string | null | undefined, pan: string | null | undefined): number | null {
+  const r = section ? tdsRatePct(section, pan) : null;
+  if (r === null || r <= 0 || r >= 100) return null;
+  return Math.round((Math.max(0, cash || 0) * r) / (100 - r));
 }
 
 /* ─── After the save ────────────────────────────────────────────────────────────────── */
@@ -606,7 +629,8 @@ export interface VendorPayResult {
   bank_amount: number;
   paid: PaidDoc[];
   new_bill: PaidDoc | null;
-  advance: { id: string; amount: number; category: string } | null;
+  /** R-1916: amount = the advance's gross; with TDS also cash (from the bank) + tds + section. */
+  advance: { id: string; amount: number; category: string; cash?: number; tds?: number; tds_section?: string | null } | null;
   bank_charge: { expense_id: string; amount: number } | null;
   tds_total: number;
   tds_section: string | null;
@@ -642,7 +666,10 @@ export function resultLines(r: VendorPayResult): ResultLine[] {
   if (r.vendor_created) out.push({ text: `New vendor ${r.vendor_name} added`, href: "/accounting/vendors" });
   for (const d of r.paid) out.push(docLine(d, r.vendor_name, false));
   if (r.new_bill) out.push(docLine(r.new_bill, r.vendor_name, true));
-  if (r.advance) out.push({ text: `${rupee(r.advance.amount)} kept as an advance to ${r.vendor_name} (${r.advance.category}) — adjust a later bill on Prepaid`, href: "/accounting/prepaid" });
+  if (r.advance) {
+    const withTds = (r.advance.tds ?? 0) > 0 ? ` (${rupee(r.advance.cash ?? r.advance.amount - (r.advance.tds ?? 0))} paid + TDS ${rupee(r.advance.tds ?? 0)})` : "";
+    out.push({ text: `${rupee(r.advance.amount)} kept as an advance to ${r.vendor_name}${withTds} (${r.advance.category}) — adjust a later bill on Prepaid${(r.advance.tds ?? 0) > 0 ? " (record that bill without TDS — it was taken on this advance)" : ""}`, href: "/accounting/prepaid" });
+  }
   if (r.bank_charge) out.push({ text: `Bank charge ${rupee(r.bank_charge.amount)} booked as an expense`, href: `/accounting/expenses?edit=${encodeURIComponent(r.bank_charge.expense_id)}` });
   if (r.tds_total > 0) out.push({ text: `TDS ${rupee(r.tds_total)} (${tds26qSection(r.tds_section)}) withheld — now in TDS payable and the 26Q list`, href: "/accounting/balance-sheet" });
   out.push({ text: `${r.vendor_name}: see bills and payments`, href: "/accounting/vendors" });

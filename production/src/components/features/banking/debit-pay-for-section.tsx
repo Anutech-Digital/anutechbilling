@@ -36,13 +36,13 @@ import { VENDOR_BILL_CATEGORIES, attachBillFile } from "@/lib/queries/vendor-bil
 import { readBillFile, checkBillFile, type BillRead } from "@/lib/accounting/bill-reader";
 import { buyerWarningText } from "@/app/api/ai/extract-bill/buyer-check";
 import { billVendorCheck, newBillFromRead, newVendorFromRead } from "@/lib/banking/bill-read-new-bill";
-import { TDS_PICK_SECTIONS, normalizeTdsSection, rememberTdsOffer, tds26qSection, tdsSectionOption } from "@/lib/accounting/tds-rates";
+import { TDS_PICK_SECTIONS, checkTdsRate, normalizeTdsSection, rememberTdsOffer, tds26qSection, tdsSectionOption } from "@/lib/accounting/tds-rates";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import { useVendorOpenItems, usePayVendorFromBankDebit, useVendor194q, useSet194qBuyer, useVendorNarrationAliases } from "@/lib/queries/bank-debit-pay-for";
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import {
   allocateOldestFirst, cashDue, guessVendor, isRecorded, itemKey, itemLabel, newBillPay, newBillTds, newBillTotal, pickOldestUpTo, planTds, preselect,
-  resultLines, summarise, tdsMap, vendorPan, wholeRupeeNote, TDS_OVERRIDE_MIN,
+  resultLines, summarise, tdsMap, vendorPan, wholeRupeeNote, TDS_OVERRIDE_MIN, advanceTdsFromCash,
   type NewBillDraft, type VendorLite, type VendorOpenItem, type VendorPayResult,
 } from "@/lib/banking/debit-pay-for";
 import type { VendorFocus } from "@/lib/banking/vendor-line-guard";
@@ -282,7 +282,12 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
   const [charge, setCharge] = React.useState(0);
   const [advEdited, setAdvEdited] = React.useState<number | null>(null);
   const [advCategory, setAdvCategory] = React.useState("");
-  React.useEffect(() => { setCharge(0); setAdvEdited(null); setAdvCategory(""); }, [transaction.id, vendorId]);
+  /* R-1916: TDS withheld on the advance (194C / 194J …) — the advance in the books is cash + TDS.
+     "No TDS" until the owner picks a section; then the vendor's rate on the gross (tdsRatePct —
+     PAN-aware), following the advance until the owner types over it. */
+  const [advTdsSec, setAdvTdsSec] = React.useState("");
+  const [advTdsTyped, setAdvTdsTyped] = React.useState<number | null>(null);
+  React.useEffect(() => { setCharge(0); setAdvEdited(null); setAdvCategory(""); setAdvTdsSec(""); setAdvTdsTyped(null); }, [transaction.id, vendorId]);
 
   /* Allocation: oldest first over what is left after the new bill and the charge; a COGS bill's
      share can be typed over (part payment). */
@@ -297,6 +302,9 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
      the operator picks the bills or types the advance. */
   const autoAdvance = pickedItems.length || showNew || open.length === 0 ? Math.max(0, debit - billsCash - newBillCash - charge) : 0;
   const advance = advEdited ?? autoAdvance;
+  const advTds = advTdsTyped ?? (advTdsSec ? advanceTdsFromCash(advance, advTdsSec, pan) ?? 0 : 0);
+  const advTdsEff = advance > 0 && advTdsSec ? advTds : 0;
+  const advTdsRate = advTdsEff > 0 ? checkTdsRate(advTdsSec, Math.round((advTdsEff * 10000) / (advance + advTdsEff)) / 100) : null;
   const sum = summarise(debit, { bills: billsCash, newBill: newBillCash, advance, charge });
   const starved = pickedItems.filter((i) => cashOf(i) <= 0);
   const tdsTotal = pickedItems.reduce((s, i) => s + (cashOf(i) > 0 ? tdsByKey.get(itemKey(i)) ?? 0 : 0), 0) + (showNew ? billTds.tds : 0);
@@ -332,6 +340,8 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
         newBill: showNew ? { ...bill, pay: billPay, tds: billTds.tds, tdsSection: billTds.section, tdsOverride: billTds.override } : null,
         advance,
         advanceCategory: advance > 0 ? advCat : null,
+        advanceTds: advTdsEff,
+        advanceTdsSection: advTdsEff > 0 ? advTdsSec : null,
         bankCharge: charge,
         note: null,
         rememberSection: offerRemember && remember,
@@ -736,12 +746,32 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                 </select>
               </label>
             )}
+            {/* R-1916: TDS is due on an advance too (credit or payment, whichever is earlier). */}
+            {advance > 0 && (
+              <div className="sm:col-span-2 space-y-1 text-xs text-ink-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span>TDS withheld on the advance</span>
+                  <select aria-label="Advance TDS section" value={advTdsSec}
+                    onChange={(e) => { setAdvTdsSec(e.target.value); setAdvTdsTyped(null); }}
+                    className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink">
+                    <option value="">No TDS</option>
+                    {TDS_SECTIONS.filter((s) => s !== "194Q").map((s) => <option key={s} value={s}>{tdsSectionOption(s)}</option>)}
+                  </select>
+                  {advTdsSec && (
+                    <Input type="number" min={0} className="h-8 w-28" aria-label="TDS on the advance" value={advTds ? String(advTds) : ""}
+                      onChange={(e) => setAdvTdsTyped(Math.max(0, Math.round(Number(e.target.value) || 0)))} />
+                  )}
+                </div>
+                {advTdsEff > 0 && <p>Advance in the books {rupee(advance + advTdsEff)} = {rupee(advance)} paid + TDS {rupee(advTdsEff)} (goes to TDS payable and the 26Q list). When the bill comes, record it without TDS — the TDS was taken here.</p>}
+                {advTdsRate?.message && <p className="text-amber-ink">{advTdsRate.message}</p>}
+              </div>
+            )}
           </div>
 
           {/* 3. The maths */}
           <div className="rounded-md border border-hairline bg-paper px-2.5 py-2 text-xs text-ink-2 tabular-nums space-y-0.5" aria-live="polite">
             {grossBills > 0 && <p>Bills {rupee(grossBills)}{tdsTotal > 0 ? <> − TDS {rupee(tdsTotal)}</> : null} = {rupee(sum.bills + sum.newBill)}</p>}
-            {sum.advance > 0 && <p>+ advance {rupee(sum.advance)}</p>}
+            {sum.advance > 0 && <p>+ advance {rupee(sum.advance)}{advTdsEff > 0 ? <> (after TDS {rupee(advTdsEff)})</> : null}</p>}
             {sum.charge > 0 && <p>+ bank charge {rupee(sum.charge)}</p>}
             {sum.diff === 0
               ? <p className="text-emerald inline-flex items-center gap-1"><Icon name="check" size={12} /> = {rupee(debit)} paid from the bank</p>
