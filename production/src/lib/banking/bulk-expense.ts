@@ -8,8 +8,8 @@
  * or the narration. The owner ticks rows and books them at once; each row is booked by the
  * existing book_bank_txn_as_expense (no new money rule, R-1917's open-bill guard included).
  *
- * Confidence: high = the tenant's own Category Rule, a "director" narration or a ₹1–₹10 test
- * transfer; medium = the import's category or a built-in keyword. "Tick all high-confidence"
+ * Confidence: high = the tenant's own Category Rule or a ₹1–₹10 test
+ * transfer; medium = the import's category, a built-in keyword or a "director" narration (a word, not a rule). "Tick all high-confidence"
  * never ticks a line of ₹1,00,000 or more (AUTO_TICK_MAX) — the owner ticks those by hand.
  * Government challans, loans / EMIs, salary advances are never offered: they have their own tiles.
  */
@@ -38,7 +38,7 @@ export function expenseSuggestion(t: Line, rules: readonly CategoryRule[], keywo
   /* "SALARY TO DIRECTOR": booked as an expense, this is Director's Remuneration —
      never plain Salaries (which belongs to Payroll) and never a guessed category. */
   if (/\bDIRECTORS?\b/i.test(t.description ?? "")) {
-    return { category: "Director's Remuneration", reason: "the word \"director\" in the narration", confidence: "high" };
+    return { category: "Director's Remuneration", reason: "the word \"director\" in the narration", confidence: "medium" };
   }
   if (isBookableCategory(t.category)) return { category: t.category, reason: "set when the statement was imported", confidence: "medium" };
   const s = suggestForLine(t, rules, keywordFn);

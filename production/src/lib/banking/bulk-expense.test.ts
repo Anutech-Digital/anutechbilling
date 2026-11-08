@@ -27,7 +27,7 @@ describe("expenseSuggestion", () => {
     expect(expenseSuggestion(line({ category: "Travel" }), [], kw)).toMatchObject({ category: "Travel", confidence: "medium" });
   });
   it("director narration is Director's Remuneration, never Salaries", () => {
-    expect(expenseSuggestion(line({ description: "SALARY TO DIRECTOR" }), [], kw)?.category).toBe("Director's Remuneration");
+    expect(expenseSuggestion(line({ description: "SALARY TO DIRECTOR" }), [], kw)).toMatchObject({ category: "Director's Remuneration", confidence: "medium" });
   });
   it("a ₹1–₹10 debit with nothing else is a bank charge", () => {
     expect(expenseSuggestion(line({ debit: 1 }), [], kw)).toMatchObject({ category: "Bank Charges", confidence: "high" });

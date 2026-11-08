@@ -18,12 +18,13 @@ import { rupee, formatDate } from "@/lib/utils";
 import { EXPENSE_CATEGORIES, suggestCategory } from "@/lib/queries/expenses";
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
-import { AUTO_TICK_MAX, BULK_MAX, bulkRows, type BulkRow } from "@/lib/banking/bulk-expense";
+import { AUTO_TICK_MAX, BULK_MAX, bulkExcluded, bulkRows, type BulkRow } from "@/lib/banking/bulk-expense";
 import type { BankTransactionRow } from "@/lib/queries/bank";
+import type { BulkExpenseResult } from "@/app/api/banking/bulk-expense/route";
 
 export const BULK_EXPENSE_URL = "/api/banking/bulk-expense";
 
-type Result = { txnId: string; ok: true; expenseId: string } | { txnId: string; ok: false; error: string };
+type Result = BulkExpenseResult;
 
 const CATEGORIES = EXPENSE_CATEGORIES.filter((c) => c !== "Salaries");
 
@@ -35,8 +36,9 @@ export function BulkExpenseButton({ accountName, transactions, ids }: {
   ids: ReadonlySet<string>;
 }) {
   const [open, setOpen] = React.useState(false);
-  const lines = React.useMemo(() => (open ? (transactions ?? []).filter((t) => ids.has(t.id)) : []), [open, transactions, ids]);
-  if (ids.size === 0 && !open) return null;
+  /* The lines the sheet offers: the page's set less challans / loans / salary (they have their own tiles). */
+  const lines = React.useMemo(() => (transactions ?? []).filter((t) => ids.has(t.id) && !bulkExcluded(t)), [transactions, ids]);
+  if (lines.length === 0 && !open) return null;
   return (
     <>
       <Button
@@ -45,15 +47,15 @@ export function BulkExpenseButton({ accountName, transactions, ids }: {
         onClick={() => setOpen(true)}
         title="Book money-out lines with no vendor as expenses in one go — each line shows the suggested category; you tick which to book"
       >
-        {`No-vendor lines (${ids.size})`}
+        {`No-vendor lines (${lines.length})`}
       </Button>
-      {open && <BulkExpenseSheet open={open} onOpenChange={setOpen} accountName={accountName} lines={lines} />}
+      {/* Mounted only while open — closing it forgets ticks and edits. */}
+      {open && <BulkExpenseSheet onOpenChange={setOpen} accountName={accountName} lines={lines} />}
     </>
   );
 }
 
-export function BulkExpenseSheet({ open, onOpenChange, accountName, lines }: {
-  open: boolean;
+export function BulkExpenseSheet({ onOpenChange, accountName, lines }: {
   onOpenChange: (o: boolean) => void;
   accountName: string;
   /** The account's "Money out · no vendor yet" lines. */
@@ -76,7 +78,6 @@ export function BulkExpenseSheet({ open, onOpenChange, accountName, lines }: {
   const [busy, setBusy] = React.useState(false);
   const [results, setResults] = React.useState<Result[] | null>(null);
   const [failure, setFailure] = React.useState<string | null>(null);
-  React.useEffect(() => { if (!open) { setTicked(new Set()); setEdits({}); setResults(null); setFailure(null); } }, [open]);
 
   const catOf = (r: BulkRow) => edits[r.id]?.category ?? r.category;
   const payeeOf = (r: BulkRow) => edits[r.id]?.payee ?? r.payee;
@@ -100,7 +101,7 @@ export function BulkExpenseSheet({ open, onOpenChange, accountName, lines }: {
       setResults(body.results as Result[]);
       setTicked(new Set());
     } catch {
-      setFailure("Could not reach the server — nothing was saved. Try again.");
+      setFailure("No answer from the server — some lines may have been booked. The list refreshes; check it before booking again.");
     } finally {
       setBusy(false);
       qc.invalidateQueries({ queryKey: ["bank_transactions"] });
@@ -114,7 +115,7 @@ export function BulkExpenseSheet({ open, onOpenChange, accountName, lines }: {
   const lineById = new Map(lines.map((l) => [l.id, l]));
 
   return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
+    <Sheet open onOpenChange={onOpenChange}>
       <SheetContent side="right" className="w-full sm:max-w-[1200px] p-0 flex flex-col overflow-x-hidden">
         <SheetHeader>
           <SheetTitle>Book no-vendor lines — {accountName}</SheetTitle>

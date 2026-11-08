@@ -14,6 +14,7 @@
 import { z } from "zod";
 import { withRoute, dbFail } from "@/lib/api/with-route";
 import { BULK_MAX, refuseBulkRow } from "@/lib/banking/bulk-expense";
+import { Sentry } from "@/lib/sentry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -21,8 +22,11 @@ export const dynamic = "force-dynamic";
 const ROLES = ["owner", "manager", "accountant", "billing"] as const;
 const ROLE_HINT = "Only Owner, Manager, Accountant or Billing can reconcile bank lines. Ask one of them.";
 
-/** book_bank_txn_as_expense's own refusals are written for the user. */
-const GUARD_CODES = new Set(["P0001", "42501"]);
+/** book_bank_txn_as_expense's own refusals (raise exception → P0001) are written for the user.
+ *  42501 is also Postgres's own "permission denied" — never shown raw; the role sentence instead. */
+const GUARD_CODES = new Set(["P0001"]);
+/** Rows booked at once. */
+const POOL = 4;
 
 const postSchema = z.object({
   rows: z.array(z.object({
@@ -58,23 +62,28 @@ export const POST = withRoute(
     dbFail(error, "Could not read the bank lines — nothing was booked. Try again.");
     const byId = new Map(((data ?? []) as LineRow[]).map((l) => [l.id, l]));
 
-    const results: BulkExpenseResult[] = [];
-    for (const r of rows) {
+    const bookOne = async (r: (typeof rows)[number]): Promise<BulkExpenseResult> => {
       const line = byId.get(r.txnId);
-      if (!line) { results.push({ txnId: r.txnId, ok: false, error: "Bank line not found — refresh the page." }); continue; }
-      if (line.matched_to_type !== null) { results.push({ txnId: r.txnId, ok: false, error: "This line is already reconciled." }); continue; }
+      if (!line) return { txnId: r.txnId, ok: false, error: "Bank line not found — refresh the page." };
+      if (line.matched_to_type !== null) return { txnId: r.txnId, ok: false, error: "This line is already reconciled." };
       const refused = refuseBulkRow({ description: line.description, debit: Number(line.debit ?? 0) }, r.category);
-      if (refused) { results.push({ txnId: r.txnId, ok: false, error: refused }); continue; }
+      if (refused) return { txnId: r.txnId, ok: false, error: refused };
       const res = await db.rpc("book_bank_txn_as_expense", {
         p_txn_id: r.txnId, p_category: r.category, p_vendor: r.payee || null, p_gst: 0, p_notes: line.description,
       });
-      if (res.error) {
-        const own = res.error.code && GUARD_CODES.has(res.error.code);
-        results.push({ txnId: r.txnId, ok: false, error: own ? res.error.message : "Could not book this line — open it and book it from its Reconcile sheet." });
-        continue;
-      }
-      results.push({ txnId: r.txnId, ok: true, expenseId: String(res.data) });
-    }
+      if (!res.error) return { txnId: r.txnId, ok: true, expenseId: String(res.data) };
+      if (res.error.code && GUARD_CODES.has(res.error.code)) return { txnId: r.txnId, ok: false, error: res.error.message };
+      if (res.error.code === "42501") return { txnId: r.txnId, ok: false, error: ROLE_HINT };
+      Sentry.captureException(new Error(`bulk-expense: ${res.error.code ?? ""} ${res.error.message}`), { tags: { route: "api/banking/bulk-expense" } });
+      return { txnId: r.txnId, ok: false, error: "Could not book this line — open it and book it from its Reconcile sheet." };
+    };
+
+    /* Each row is its own transaction, so a few at once changes nothing but the wait (100 rows one
+       by one took 15–40 s). Results keep the ticked order. */
+    const results: BulkExpenseResult[] = new Array(rows.length);
+    let next = 0;
+    const worker = async () => { while (next < rows.length) { const i = next++; results[i] = await bookOne(rows[i]); } };
+    await Promise.all(Array.from({ length: Math.min(POOL, rows.length) }, worker));
     return { results, booked: results.filter((x) => x.ok).length, refused: results.filter((x) => !x.ok).length };
   },
 );

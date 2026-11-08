@@ -96,6 +96,18 @@ describe("POST /api/banking/bulk-expense", () => {
     expect(state.rpcCalls).toEqual([]);
   });
 
+  it("Postgres's own permission error (42501) is never shown raw", async () => {
+    state.rpcErrors[ID(1)] = { code: "42501", message: "permission denied for table expenses" };
+    const body = await (await post({ rows: [{ txnId: ID(1), category: "Advertising" }] })).json();
+    expect(body.results[0].error).toMatch(/^Only Owner, Manager, Accountant or Billing/);
+  });
+
+  it("results keep the ticked order while rows are booked a few at a time", async () => {
+    const body = await (await post({ rows: [3, 1, 2].map((n) => ({ txnId: ID(n), category: "Hosting" })) })).json();
+    expect(body.results.map((r: { txnId: string }) => r.txnId)).toEqual([ID(3), ID(1), ID(2)]);
+    expect(body.booked).toBe(3);
+  });
+
   it("a repeated id is booked once", async () => {
     const body = await (await post({ rows: [{ txnId: ID(1), category: "Advertising" }, { txnId: ID(1), category: "Advertising" }] })).json();
     expect(body.results).toHaveLength(1);
