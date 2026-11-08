@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 // @ts-expect-error — plain .mjs ops script, no types
-import { maskMigrationStamps, maskOwnMigrations, ownMigrationVersions, utcStamp, orderProblems, ownLateOnly, planRenames, rewriteMentions, autoRenameLateMigrations, migrationClashes, otherCardsMigrations, checkMigrationClash, addedMigrations, clashMessage } from "../scripts/ops/worker-lock-migts.mjs";
+import { maskOwnMigrations, ownMigrationVersions, utcStamp, orderProblems, ownLateOnly, planRenames, rewriteMentions, autoRenameLateMigrations, migrationClashes, otherCardsMigrations, checkMigrationClash, addedMigrations, clashMessage } from "../scripts/ops/worker-lock-migts.mjs";
 
 const MIG = "production/supabase/migrations";
 
@@ -27,8 +27,8 @@ function repo() {
 }
 
 describe("R-2614 pure helpers", () => {
-  it("masks every 14-digit migration timestamp, nothing shorter or longer", () => {
-    expect(maskMigrationStamps("a/20261108133000_x.sql 20261108133000 1234567890123 202611081330001")).toBe("a/YYYYMMDDHHMMSS_x.sql YYYYMMDDHHMMSS 1234567890123 202611081330001");
+  it("R-2615: the too-wide mask of every 14-digit number is gone", async () => {
+    expect((await import("../scripts/ops/worker-lock-migts.mjs") as Record<string, unknown>).maskMigrationStamps).toBeUndefined();
   });
 
   it("utcStamp is YYYYMMDDHHMMSS in UTC", () => {
@@ -142,7 +142,8 @@ describe("R-2614 claim refuses a migration version another card already holds", 
 describe("R-2615 mask only the card's own new migration versions", () => {
   const diff = (files: Array<[string, string, boolean]>) => files.map(([f, body, isNew]) => `diff --git a/${f} b/${f}\n${isNew ? "new file mode 100644\n" : ""}index 0000000..1111111\n--- ${isNew ? "/dev/null" : `a/${f}`}\n+++ b/${f}\n@@ -0,0 +1 @@\n+${body}\n`).join("");
   it("finds the versions of migrations the diff ADDS under supabase/migrations/ only", () => {
-    const d = diff([[`${MIG}/20261108133000_a.sql`, "x", true], [`${MIG}/20261108120000_old.sql`, "edit", false], ["production/src/x.ts", "20261108140000", true], [`${MIG}/README.md`, "y", true]]);
+    const d = diff([[`${MIG}/20261108133000_a.sql`, "x", true], [`${MIG}/20261108120000_old.sql`, "edit", false], ["production/src/x.ts", "20261108140000", true], [`${MIG}/README.md`, "y", true],
+      ["production/tests/fixtures/supabase/migrations/20261108150000_fixture.sql", "z", true], [`${MIG}/sub/20261108160000_deep.sql`, "z", true]]);
     expect(ownMigrationVersions(d)).toEqual(["20261108133000"]);
   });
   it("masks own versions in order, leaves every other 14-digit number alone", () => {
@@ -170,7 +171,7 @@ describe("R-2615 claim: no false clash from my own or an already-renamed card's 
       wip("r-1", "20261108133000_one.sql");     // the claimer's own old wip
       a.g(["checkout", "-q", "main"]);
       a.put(`${MIG}/20261108160000_seven.sql`, "select 7;\n"); a.commit("R-7: rename migration (auto) 20261108133000_seven.sql -> 20261108160000_seven.sql");
-      a.put(`${MIG}/20261108170000_eight.sql`, "select 9;\n"); a.commit("R-9: eight");
+      a.put(`${MIG}/20261108170000_eight.sql`, "select 9;\n"); a.commit("R-9: eight\n\nsame pattern as R-8"); // a body mention is not R-8's rename
       a.g(["branch", "anutech/manager-pardeep"]);
       a.g(["checkout", "-qb", "card"]); a.put(`${MIG}/20261108133000_one.sql`, "select 1;\n"); a.commit("R-1: one");
       const others = otherCardsMigrations("R-1", [], { git: gitFor(a.tmp), gitFor });
