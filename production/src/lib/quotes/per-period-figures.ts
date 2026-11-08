@@ -109,7 +109,8 @@ export function quotePerPeriodFigures(i: PerPeriodInput): PerPeriodFigures {
    stored figures are MONTH 1 — seats + domain, ₹4,531 incl GST — and every later month bills
    the seats only (raise_subscription_billing adds quote_one_time_lines once). The preview and
    the PDF printed ₹4,531 "/month" and ₹54,372 a year. Split it the way the bills are raised:
-   the one-time taxable is Σ round(qty × rate × (100 − discount%) / 100) over the lines that are
+   the one-time taxable is each line's qty × rate after the quote discount (taxableAfterDiscount;
+   quote_one_time_lines rounds the same figure in one step — at most ₹1 apart on a .5) over the lines that are
    not subscriptions (quote_line_is_subscription / lineIsSubscription — the SQL rule, R-2095),
    the month is the rest. Null when there is nothing to split (not flex, or no one-time line,
    or no recurring line). A foreign quote's figures are in its own currency: there the one-time
@@ -150,7 +151,7 @@ export function flexOneTimeFigures(i: {
     if (lineIsSubscription(line)) recurringSub += amt;
     else {
       onceSub += amt;
-      onceTaxableInr += Math.round((amt * (100 - i.discountPct)) / 100);
+      onceTaxableInr += taxableAfterDiscount(amt, i.discountPct);
     }
   }
   if (!(onceSub > 0) || !(recurringSub > 0)) return null;
