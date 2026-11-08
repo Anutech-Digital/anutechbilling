@@ -98,7 +98,10 @@ Checklist with the exact commands: skill `staging-train` (`.claude/skills/stagin
    unless Pardeep himself asks for a train. Don't propose small trains; say the count ("train: 12/20").
    Work merged from another person must be run on localhost first.
 2. **Independent read-only review** per money/security card (a separate reviewer, never the builder):
-   verdict SAFE or BLOCK. BLOCK → its commits stay out until the fix card is pushed.
+   verdict SAFE or BLOCK. Money/p0 cards are reviewed BEFORE their push since R-2592 (`worker-lock push`
+   exit 11 without SAFE on that sha) — so the train only checks every money/p0 card has
+   `independentReview.verdict: SAFE`; a `--no-review` push (see `_ci-gate.log`) gets its review now.
+   BLOCK → its commits stay out until the fix card is pushed.
 3. **CI + SQL green** on the commit you pin.
 4. `node scripts/ops/staging-train.mjs --sha <commit> --dry-run` — read the DB step it prints.
 5. **Claude runs the STAGING deploy-db script itself** (Pardeep, 5 Nov) from a temp worktree pinned to
@@ -145,6 +148,10 @@ Skills (R-2585, 8 Nov 2026) — load the one that fits instead of re-typing the 
 - **p0 / train-blocker → claim with `--priority p0`; it pushes first (R-2591, 8 Nov):** the push turn and the
   heavy (tsc/guard) turn go by claim priority (`--train-blocker` = p0), then who waited first; a turn already held is
   never taken away. `worker-lock status` shows who holds each turn and the waiting line with priorities.
+- **Money / p0 card: review BEFORE push (R-2592, 8 Nov).** The worker pushes `wip/<card>` and asks for a
+  checker; the coordinator spawns `independent-check` on that sha at once (it counts on the board via
+  `checkRunning`). SAFE {verdict, sha} on the card → the worker pushes; without it `worker-lock push` stops
+  (exit 11). `--no-review "<reason>"` only on Pardeep's word — logged to `_ci-gate.log`.
 - **Every card gets a separate localhost checker** (not the builder), following the card's howToCheck.
 - A checker that needs a **second server with a different env** runs it from ITS OWN worktree
   (`npx prisma generate`, start with `--webpack`, own port) — never from `reselleros-deploy`.
