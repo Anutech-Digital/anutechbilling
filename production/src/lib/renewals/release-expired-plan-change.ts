@@ -19,7 +19,7 @@ export interface ReleaseResult {
   errors: { tenantId: string; message: string }[];
 }
 
-type RpcClient = {
+export type RpcClient = {
   rpc: (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
 };
 
