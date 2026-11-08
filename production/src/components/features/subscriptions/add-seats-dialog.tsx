@@ -43,6 +43,7 @@ import { istToday } from "@/lib/dates/ist";
 import { seatEffectiveBounds, checkSeatEffectiveDate } from "@/lib/subscriptions/seat-effective-date";
 import { parseTypedSeatRate, seatRateWarning, seatRateSourceText } from "@/lib/subscriptions/seat-rate-check";
 import { useExpectedSeatRate } from "./use-expected-seat-rate";
+import ReduceSeatsPanel from "./reduce-seats-panel";
 
 interface Props {
   sub:          Subscription;
@@ -82,6 +83,9 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       setDraftPo(false);
     }
   }, [open, initialSeats, sub.id]);
+  /* R-2252: Manage seats also REDUCES — same dialog, a second mode with its own credit preview. */
+  const [mode, setMode] = React.useState<"add" | "reduce">("add");
+  React.useEffect(() => { if (open) setMode("add"); }, [open, sub.id]);
   const [submitting, setSubmitting] = React.useState(false);
   /* R-450: a failed add used to show only a toast, easy to miss behind the open dialog
      ("nothing happens"). The reason now also stays in the dialog, next to the button,
@@ -228,23 +232,44 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
     }
   };
 
+  /* The header and the Add / Reduce switch — shared by both modes. */
+  const top = (
+    <>
+      <header className="border-b border-hairline pb-3 mb-4">
+        <p className="text-3xs uppercase tracking-wider font-semibold text-amber-ink mb-1">
+          {mode === "reduce" ? "Subscription · Reduce seats" : "Subscription · Add seats"}
+        </p>
+        <h2 className="font-serif text-2xl text-ink">{sub.customer_name}</h2>
+        {sub.domain && (
+          <p className="text-xs font-mono text-ink-3 mt-0.5">{sub.domain}</p>
+        )}
+        <p className="text-xs text-ink-2 mt-1">
+          {sub.plan} · {sub.seats} seats · renews {renewal ? formatDate(renewal.toISOString()) : "—"}
+        </p>
+      </header>
+      <div className="grid grid-cols-2 gap-2 mb-4" role="group" aria-label="Add or reduce seats">
+        <Button variant={mode === "add" ? "primary" : "ghost"} size="sm" aria-pressed={mode === "add"} onClick={() => setMode("add")}>
+          Add seats
+        </Button>
+        <Button variant={mode === "reduce" ? "primary" : "ghost"} size="sm" aria-pressed={mode === "reduce"} onClick={() => setMode("reduce")}>
+          Reduce seats
+        </Button>
+      </div>
+    </>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg flex flex-col gap-0 overflow-hidden p-0 pt-3 md:p-0">
         {/* R-2268: the body scrolls; the footer (Cancel + primary) stays on screen below it. */}
+        {mode === "reduce" ? (
+          <>
+            <div className="shrink-0 px-5 pt-2 md:px-6 md:pt-6">{top}</div>
+            <ReduceSeatsPanel sub={sub} onCancel={() => onOpenChange(false)} onDone={() => onOpenChange(false)} />
+          </>
+        ) : (<>
         <div className="flex-1 min-h-0 overflow-y-auto grid gap-4 [&>*]:min-w-0 px-5 pt-2 pb-5 md:p-6" data-testid="dialog-scroll-body">
-        <header className="border-b border-hairline pb-3 mb-4">
-          <p className="text-3xs uppercase tracking-wider font-semibold text-amber-ink mb-1">
-            Subscription · Add seats
-          </p>
-          <h2 className="font-serif text-2xl text-ink">{sub.customer_name}</h2>
-          {sub.domain && (
-            <p className="text-xs font-mono text-ink-3 mt-0.5">{sub.domain}</p>
-          )}
-          <p className="text-xs text-ink-2 mt-1">
-            {sub.plan} · {sub.seats} seats · renews {renewal ? formatDate(renewal.toISOString()) : "—"}
-          </p>
-        </header>
+        {top}
 
         {isTermEnded ? (
           <div className="bg-rose/10 border border-rose/30 rounded-md p-3 text-sm text-rose mb-4">
@@ -457,6 +482,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
             </Button>
           )}
         </DialogFooter>
+        </>)}
       </DialogContent>
     </Dialog>
   );
