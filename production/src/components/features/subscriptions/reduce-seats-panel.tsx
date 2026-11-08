@@ -58,8 +58,11 @@ export default function ReduceSeatsPanel({ sub, onCancel, onDone }: Props) {
   const keyRef = React.useRef<string | null>(null);
   React.useEffect(() => { keyRef.current = null; setSubmitError(null); }, [sub.id, seatsRemoved, timing]);
 
+  const [reloadTick, setReloadTick] = React.useState(0);
   React.useEffect(() => {
-    if (seatsRemoved < 1) { setData(null); return; }
+    /* A new count → the old preview goes at once, so the button never books figures not on screen. */
+    setData(null);
+    if (seatsRemoved < 1) return;
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
@@ -70,11 +73,27 @@ export default function ReduceSeatsPanel({ sub, onCancel, onDone }: Props) {
         setLoadError(null);
         setData(json);
       } catch {
-        if (!cancelled) setLoadError("Could not reach the server to work out the credit. Check your connection.");
+        if (!cancelled) { setData(null); setLoadError("Could not reach the server to work out the credit. Check your connection."); }
       }
     }, 250);
     return () => { cancelled = true; clearTimeout(t); };
-  }, [sub.id, seatsRemoved]);
+  }, [sub.id, seatsRemoved, reloadTick]);
+
+  const [removing, setRemoving] = React.useState(false);
+  const removeScheduled = async () => {
+    setRemoving(true);
+    try {
+      const res = await fetch(`/api/subscriptions/${sub.id}/reduce-seats`, { method: "DELETE" });
+      const json = (await res.json().catch(() => null)) as { error?: string } | null;
+      if (!res.ok) { toast.error(json?.error ?? "The scheduled cut was not removed — try again."); return; }
+      toast.success("Scheduled seat cut removed");
+      setReloadTick((t) => t + 1);
+    } catch (err) {
+      toastError(err, { fallback: "Could not remove the scheduled cut.", description: "Check your connection, then try again." });
+    } finally {
+      setRemoving(false);
+    }
+  };
 
   const value = data?.value ?? null;
   const preview = data?.preview ?? null;
@@ -159,7 +178,10 @@ export default function ReduceSeatsPanel({ sub, onCancel, onDone }: Props) {
 
         {data?.scheduled && (
           <p role="status" className="rounded-md border border-amber/30 bg-amber/10 p-3 text-xs text-amber-ink">
-            A seat cut is already scheduled: {data.scheduled.seats_before} → {data.scheduled.seats_after} seats on {formatDate(data.scheduled.effective_date)}. Another cut can be made after it.
+            A seat cut is already scheduled: {data.scheduled.seats_before} → {data.scheduled.seats_after} seats on {formatDate(data.scheduled.effective_date)}. Remove it to make a different cut.
+            <Button variant="ghost" size="sm" className="mt-2" onClick={removeScheduled} disabled={removing}>
+              {removing ? "Removing…" : "Remove scheduled cut"}
+            </Button>
           </p>
         )}
 

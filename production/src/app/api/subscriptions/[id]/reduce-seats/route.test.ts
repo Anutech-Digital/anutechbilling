@@ -34,7 +34,7 @@ vi.mock("@/lib/supabase/server", () => {
   return { createClient: () => userClient, createAdminClientFor: () => admin };
 });
 
-import { GET, POST } from "./route";
+import { GET, POST, DELETE } from "./route";
 
 const params = { params: Promise.resolve({ id: "s-1" }) };
 const post = (body: unknown) => POST(new Request("http://x/api/subscriptions/s-1/reduce-seats", { method: "POST", body: JSON.stringify(body) }), params);
@@ -77,7 +77,7 @@ describe("POST (R-2252)", () => {
   it("books NOW with the server's own unused value and new mrr", async () => {
     const res = await post({ seats_removed: 2, timing: "now", idempotency_key: "key-12345678", p_unused_gross: 999999 });
     expect(res.status).toBe(200);
-    expect(state.rpcArgs).toMatchObject({ p_seats_removed: 2, p_timing: "now", p_unused_gross: 1676, p_new_mrr: 1200, p_tenant_id: "t-1", p_actor: "u-1" });
+    expect(state.rpcArgs).toMatchObject({ p_seats_removed: 2, p_timing: "now", p_unused_gross: 1676, p_new_mrr: 1200, p_tenant_id: "t-1", p_actor: "u-1", p_seats_before: 10 });
   });
   it("END OF TERM moves no money", async () => {
     const res = await post({ seats_removed: 3, timing: "end_of_term", idempotency_key: "key-12345678" });
@@ -111,6 +111,17 @@ describe("POST (R-2252)", () => {
     res = await post({ seats_removed: 2, timing: "now", idempotency_key: "key-12345678" });
     expect(res.status).toBe(500);
     expect((await res.json()).error).not.toMatch(/foo/);
+  });
+  it("a written-off subscription gets no credit (NOW refused)", async () => {
+    state.sub = { ...state.sub, written_off_at: "2026-10-01T00:00:00Z" };
+    const res = await post({ seats_removed: 2, timing: "now", idempotency_key: "key-12345678" });
+    expect(res.status).toBe(409);
+    expect(state.rpcArgs).toBeNull();
+  });
+  it("DELETE takes back the scheduled cut", async () => {
+    const res = await DELETE(new Request("http://x/api/subscriptions/s-1/reduce-seats", { method: "DELETE" }), params);
+    expect(res.status).toBe(200);
+    expect(state.rpcArgs).toEqual({ p_tenant_id: "t-1", p_subscription_id: "s-1" });
   });
   it("a body without a key is refused", async () => {
     expect((await post({ seats_removed: 2, timing: "now" })).status).toBe(400);

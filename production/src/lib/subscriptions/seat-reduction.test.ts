@@ -3,7 +3,7 @@
  * Owner's path: Manage seats → Reduce → 2 of 10 seats → "credit ₹x (+GST)" → Now.
  */
 import { describe, it, expect } from "vitest";
-import { seatReductionValue, seatReductionPreview, scheduledReductionText, type SeatReductionSub, type SeatReductionValueOk } from "./seat-reduction";
+import { seatReductionValue, seatReductionPreview, type SeatReductionSub, type SeatReductionValueOk } from "./seat-reduction";
 import { seatIncreaseCharge } from "./seat-increase-charge";
 
 /* 10 seats × ₹1,800/seat/year = mrr ₹1,500, yearly, term 1 Apr 2026 → renews 1 Apr 2027. */
@@ -46,6 +46,11 @@ describe("seatReductionValue (R-2252)", () => {
 
   it("an ended term has no unused days to credit", () => {
     expect(seatReductionValue({ sub: YEARLY, seatsRemoved: 1, today: "2027-04-05", taxRatePct: 18 })).toMatchObject({ ok: false, code: "term_ended" });
+  });
+
+  it("renewed early (renewal_date already past the next term): not priced — no whole-next-term credit", () => {
+    const early: SeatReductionSub = { ...YEARLY, renewal_date: "2028-04-01" };
+    expect(seatReductionValue({ sub: early, seatsRemoved: 1, today: TODAY, taxRatePct: 18 })).toMatchObject({ ok: false, code: "renewed_early" });
   });
 
   it("billed quarterly: only the CURRENT quarter's unused days, at the quarter's own rate", () => {
@@ -98,9 +103,4 @@ describe("seatReductionPreview (R-2252 + R-2255 split)", () => {
     expect(p.blockedReason).toMatch(/end of term/i);
   });
 
-  it("scheduled text says the seats, the date and that no credit is given", () => {
-    expect(scheduledReductionText({ seats_before: 10, seats_after: 8, effective_date: "2027-04-01" }, (d) => d)).toBe(
-      "Seats go from 10 to 8 on 2027-04-01 (end of term) — no credit; the customer keeps the seats until then.",
-    );
-  });
 });

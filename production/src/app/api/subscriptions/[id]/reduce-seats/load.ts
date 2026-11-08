@@ -18,7 +18,7 @@ import type { Subscription } from "@/lib/supabase/database.types";
 type Admin = ReturnType<typeof createAdminClientFor>;
 
 export const REDUCE_SEATS_SELECT =
-  "id, tenant_id, customer_id, customer_name, plan, vendor, domain, seats, mrr, start_date, renewal_date, status, billing_cycle, term_months, quote_id, renewal_quote_id" as const;
+  "id, tenant_id, customer_id, customer_name, plan, vendor, domain, seats, mrr, start_date, renewal_date, status, billing_cycle, term_months, quote_id, renewal_quote_id, written_off_at" as const;
 
 export interface ReduceSeatsSub {
   id: string;
@@ -34,6 +34,7 @@ export interface ReduceSeatsSub {
   term_months: Subscription["term_months"];
   quote_id: string | null;
   renewal_quote_id: string | null;
+  written_off_at: string | null;
 }
 
 export interface ScheduledReduction {
@@ -67,17 +68,35 @@ async function partInvoiceId(supabase: Admin, sub: ReduceSeatsSub, today: string
     ...((renewals ?? []) as Array<{ id: string }>).map((q) => q.id).filter((id) => id !== sub.renewal_quote_id),
   ].filter((id): id is string => Boolean(id));
   if (quoteIds.length === 0) return null;
-  const { data } = await supabase
+  /* It must be THIS term's bill: raised no earlier than a month before the term began (as the SQL). */
+  let query = supabase
     .from("invoices")
     .select("id")
     .eq("tenant_id", sub.tenant_id)
     .in("quote_id", quoteIds)
-    .not("status", "in", "(draft,void)")
+    .not("status", "in", "(draft,void)");
+  const termFrom = termStartFloor(sub);
+  if (termFrom) query = query.gte("invoice_date", termFrom);
+  const { data } = await query
     .order("invoice_date", { ascending: false })
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();
   return (data as { id: string } | null)?.id ?? null;
+}
+
+/** renewal_date − term months − 31 days (the SQL's floor), YYYY-MM-DD; null without a renewal date. */
+export function termStartFloor(sub: Pick<ReduceSeatsSub, "renewal_date" | "term_months">): string | null {
+  if (!sub.renewal_date) return null;
+  const d = new Date(`${sub.renewal_date.slice(0, 10)}T00:00:00Z`);
+  const months = Math.max(1, sub.term_months ?? 12);
+  const day = d.getUTCDate();
+  d.setUTCDate(1);
+  d.setUTCMonth(d.getUTCMonth() - months);
+  const last = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate();
+  d.setUTCDate(Math.min(day, last));
+  d.setUTCDate(d.getUTCDate() - 31);
+  return d.toISOString().slice(0, 10);
 }
 
 const sum = (rows: unknown, key = "amount") =>
@@ -121,6 +140,7 @@ export async function loadPartInvoiceMoney(supabase: Admin, sub: ReduceSeatsSub,
     received,
     alreadyCredited: sum(credits.data),
     creditable: Math.max(0, (row.amount ?? 0) - cnSum),
+    writtenOff: Boolean(row.written_off_at),
   };
 }
 

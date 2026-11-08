@@ -58,7 +58,7 @@ export interface SeatReductionValueOk {
 
 export type SeatReductionValue =
   | SeatReductionValueOk
-  | { ok: false; code: "invalid_seats" | "too_many" | "no_renewal_date" | "term_ended"; message: string };
+  | { ok: false; code: "invalid_seats" | "too_many" | "no_renewal_date" | "term_ended" | "renewed_early"; message: string };
 
 /**
  * The value of the removed seats' unused days in the current part — the credit before the
@@ -85,6 +85,11 @@ export function seatReductionValue(input: {
     return { ok: false, code: "no_renewal_date", message: "This subscription has no renewal date, so the unused days cannot be worked out. Add the renewal date in Correct details first." };
   }
   const plan = seatChargePlan(sub, today, today);
+  /* Renewed early: today is still in the OLD term while renewal_date already points past the next
+     one — the plan's "current" would be the whole next term. Not priced here. */
+  if (plan?.previous) {
+    return { ok: false, code: "renewed_early", message: "This subscription is already renewed for its next term, so today's unused days cannot be worked out here. Reduce the seats on the next term's quote, or at the next renewal." };
+  }
   const window = plan?.current ?? null;
   if (!window || window.remainingDays <= 0) {
     return { ok: false, code: "term_ended", message: "This term has ended — there are no unused days to credit. Renew or extend it first, or reduce the seats at the next renewal." };
@@ -127,6 +132,8 @@ export interface ReductionInvoiceMoney {
   alreadyCredited: number;
   /** What a further credit note may still take off it (amount − earlier credit notes). */
   creditable: number;
+  /** Written off — no credit note on it (it would contradict the write-off). */
+  writtenOff?: boolean;
 }
 
 export interface SeatReductionPreview {
@@ -167,19 +174,17 @@ export function seatReductionPreview(value: SeatReductionValueOk, invoice: Reduc
         ],
       }
     : split;
-  const blocked = invoice === null && value.unusedPaise > 0;
+  const noInvoice = invoice === null && value.unusedPaise > 0;
+  const writtenOff = Boolean(invoice?.writtenOff) && value.unusedPaise > 0;
   return {
     value,
     invoice,
     split: fullSplit,
-    canReduceNow: !blocked,
-    blockedReason: blocked
+    canReduceNow: !noInvoice && !writtenOff,
+    blockedReason: noInvoice
       ? "This part has no tax invoice yet, so there is no invoice to credit. Choose “At end of term”, or reduce the seats after the part is invoiced."
-      : "",
+      : writtenOff
+        ? `Invoice ${invoice?.id} is written off — a credit note on it would contradict the write-off. Use Correct details instead.`
+        : "",
   };
-}
-
-/** The scheduled row's one-line description for the subscription screens. */
-export function scheduledReductionText(r: { seats_before: number; seats_after: number; effective_date: string }, fmt: (iso: string) => string): string {
-  return `Seats go from ${r.seats_before} to ${r.seats_after} on ${fmt(r.effective_date)} (end of term) — no credit; the customer keeps the seats until then.`;
 }

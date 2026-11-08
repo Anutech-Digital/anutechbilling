@@ -12,6 +12,8 @@
  *   of term, a scheduled row only. The unused value is worked out HERE with the same pricing as the
  *   preview (never taken from the browser); the function bounds it and repeats the split on the
  *   locked invoice row.
+ * DELETE /api/subscriptions/[id]/reduce-seats
+ *   Takes back a cut scheduled for the end of the term (cancel_scheduled_seat_reduction).
  *
  * Who: seats.change (owner / manager / billing — all of them may also issue a credit note).
  * Microsoft NCE: "Now" is refused after the 7-day window (checkNceLock); end of term is allowed.
@@ -68,15 +70,17 @@ async function gate(id: string): Promise<Gate> {
 async function buildPreview(g: Extract<Gate, { ok: true }>, seatsRemoved: number) {
   const today = istToday();
   const { sub, supabase } = g;
-  const { taxRatePct, taxLabel } = await resolveSeatTax(supabase, sub.customer_id, sub.tenant_id);
+  const [{ taxRatePct, taxLabel }, scheduled, invoice] = await Promise.all([
+    resolveSeatTax(supabase, sub.customer_id, sub.tenant_id),
+    loadScheduledReduction(supabase, sub),
+    loadPartInvoiceMoney(supabase, sub, today),
+  ]);
   const value = seatReductionValue({ sub, seatsRemoved, today, taxRatePct });
   const nce = checkNceLock({
     vendor: sub.vendor, startDate: sub.start_date, today, currentSeats: sub.seats,
     nextSeats: sub.seats - seatsRemoved, nextStatus: sub.status,
   });
-  const scheduled = await loadScheduledReduction(supabase, sub);
   if (!value.ok) return { today, taxLabel, value, preview: null, nce, scheduled };
-  const invoice = await loadPartInvoiceMoney(supabase, sub, today);
   return { today, taxLabel, value, preview: seatReductionPreview(value, invoice), nce, scheduled };
 }
 
@@ -118,6 +122,9 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     }
   }
   if (timing === "now") {
+    if (g.sub.written_off_at) {
+      return NextResponse.json({ error: "This subscription's dues are written off — a seat cut with credit would contradict the write-off. Use Correct details instead.", code: "written_off" }, { status: 409 });
+    }
     if (p.nce.locked) return NextResponse.json({ error: p.nce.reason, code: "nce_locked" }, { status: 409 });
     if (p.preview && !p.preview.canReduceNow) {
       return NextResponse.json({ error: p.preview.blockedReason, code: "no_invoice" }, { status: 409 });
@@ -135,6 +142,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     p_new_mrr: newMrr,
     p_idempotency_key: key,
     p_actor: g.userId,
+    p_seats_before: g.sub.seats,
   } as never);
   if (error) {
     const code = (error as { code?: string }).code ?? "";
@@ -148,6 +156,23 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     }
     console.error("[reduce-seats] reduce_subscription_seats failed:", error);
     return NextResponse.json({ error: "Seats not reduced — the server could not save this change. Nothing was changed. Try again in a minute; if it still fails, use Report a problem.", code: "failed" }, { status: 500 });
+  }
+  return NextResponse.json(data);
+}
+
+export async function DELETE(_req: Request, props: { params: Promise<{ id: string }> }) {
+  const { id } = await props.params;
+  const g = await gate(id);
+  if (!g.ok) return g.res;
+  const { data, error } = await g.supabase.rpc("cancel_scheduled_seat_reduction" as never, {
+    p_tenant_id: g.sub.tenant_id,
+    p_subscription_id: g.sub.id,
+  } as never);
+  if (error) {
+    const code = (error as { code?: string }).code ?? "";
+    if (PLAIN_REFUSALS.has(code)) return NextResponse.json({ error: error.message, code: "refused" }, { status: 400 });
+    console.error("[reduce-seats] cancel_scheduled_seat_reduction failed:", error);
+    return NextResponse.json({ error: "The scheduled cut was not removed — try again in a minute; if it still fails, use Report a problem.", code: "failed" }, { status: 500 });
   }
   return NextResponse.json(data);
 }
