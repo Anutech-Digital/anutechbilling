@@ -348,6 +348,7 @@ node scripts/ops/r909-live-cutover.mjs scheduler-pause --run
 ✔ `gcloud scheduler jobs list --location=asia-southeast1 --project=resellsubsos-prod` → 15 × PAUSED.
 ↩ `node scripts/ops/r909-live-cutover.mjs scheduler-resume --run` (the 9 internal jobs), then only the customer-mail jobs
 that were ENABLED before 8.1: `node scripts/ops/r909-live-cutover.mjs scheduler-resume-customer <those jobs> --run`
+(before 8.1, write down each job's state from `r909-live-cutover.mjs check --run` — `scheduler-pause` keeps no record).
 
 ### 8.2 Live DB: backup + roles + migrations — Pardeep ki haan (Pardeep's terminal)
 ```bash

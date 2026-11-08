@@ -189,7 +189,7 @@ const STEPS = {
     about: `resume the ${INTERNAL_JOBS.length} Anutech-internal cron jobs only (the ${CUSTOMER_MAIL_JOBS.length} customer-mail jobs stay paused)`,
     run() {
       for (const j of INTERNAL_JOBS) gcloud(["scheduler", "jobs", "resume", j, `--project=${P}`, `--location=${R}`]);
-      console.log(`  still PAUSED (customer mail — client owner's yes per job, then scheduler-resume-customer <job>): ${CUSTOMER_MAIL_JOBS.join(" ")}`);
+      console.log(`  NOT resumed here (customer mail — client owner's yes per job, then scheduler-resume-customer <job>; real state: the check step): ${CUSTOMER_MAIL_JOBS.join(" ")}`);
     },
   },
   "scheduler-resume-customer": {
@@ -199,7 +199,7 @@ const STEPS = {
       try { jobs = customerJobsFromArgs(names); } catch (e) { console.log(`  REFUSED: ${e.message}`); process.exitCode = 1; return; }
       for (const j of jobs) gcloud(["scheduler", "jobs", "resume", j, `--project=${P}`, `--location=${R}`]);
       const left = CUSTOMER_MAIL_JOBS.filter((j) => !jobs.includes(j));
-      if (left.length) console.log(`  still PAUSED: ${left.join(" ")}`);
+      if (left.length) console.log(`  not resumed by this call (real state: the check step): ${left.join(" ")}`);
     },
   },
   "run-env": {
@@ -266,6 +266,12 @@ function main() {
     console.log("\nOrder and checks: docs/R-909-LIVE-CUTOVER.md");
     if (step) process.exit(1);
     return;
+  }
+  // R-2597: only scheduler-resume-customer takes names; extra words on any other step (e.g. a mixed-up
+  // "scheduler-resume renewals") are refused before anything runs.
+  if (words.length > 1 && step !== "scheduler-resume-customer") {
+    console.log(`REFUSED: step "${step}" takes no names (got: ${words.slice(1).join(" ")}). Customer-mail jobs: scheduler-resume-customer <job>...`);
+    process.exit(1);
   }
   console.log(`== R-909 step "${step}" — ${RUN ? "RUNNING" : "DRY RUN (nothing changes; add --run)"}\n   ${STEPS[step].about}`);
   STEPS[step].run(words.slice(1));

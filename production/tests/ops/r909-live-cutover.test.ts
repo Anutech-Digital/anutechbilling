@@ -43,15 +43,22 @@ describe("dry-run output", () => {
     expect(code).toBe(0);
     expect(resumed).toEqual(INTERNAL_JOBS);
     for (const j of CUSTOMER) expect(resumed).not.toContain(j);
-    expect(out).toMatch(/still PAUSED/);
+    expect(out).toMatch(/NOT resumed here/);
     expect(out).toMatch(/dry run only/);
+  });
+
+  it("a step that takes no names refuses extra words (mixed-up 'scheduler-resume renewals')", () => {
+    const { code, resumed, out } = dry("scheduler-resume", "renewals");
+    expect(code).toBe(1);
+    expect(resumed).toEqual([]);
+    expect(out).toMatch(/REFUSED/);
   });
 
   it("scheduler-resume-customer resumes only the named customer jobs", () => {
     const { code, resumed, out } = dry("scheduler-resume-customer", "renewals", "billing");
     expect(code).toBe(0);
     expect(resumed).toEqual(["resellersos-renewals", "resellersos-billing"]);
-    expect(out).toMatch(/still PAUSED: .*resellersos-invoice-dunning/);
+    expect(out).toMatch(/not resumed by this call .*resellersos-invoice-dunning/);
   });
 
   it("scheduler-resume-customer refuses an internal job, a typo and no names — and resumes nothing", () => {
