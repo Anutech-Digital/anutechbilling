@@ -16,9 +16,10 @@
  *   Takes back a cut scheduled for the end of the term (cancel_scheduled_seat_reduction).
  *
  * Who: seats.change (owner / manager / billing — all of them may also issue a credit note).
- * Microsoft NCE: "Now" is refused after the 7-day window (checkNceLock); end of term is allowed.
- * R-2584: "end_of_term" is refused while SEAT_CUT_END_OF_TERM_ENABLED is off (renewal does not
- * apply a scheduled cut yet — R-2583); one scheduled before that can still be removed (DELETE).
+ * Microsoft NCE: "Now" is refused after the 7-day window (checkNceLock); end of term would be
+ * allowed — but R-2584: "end_of_term" is refused while SEAT_CUT_END_OF_TERM_ENABLED is off (renewal
+ * does not apply a scheduled cut yet — R-2583), so an NCE-locked subscription has no seat cut in
+ * the app until then. A cut scheduled before R-2584 can still be removed (DELETE).
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";

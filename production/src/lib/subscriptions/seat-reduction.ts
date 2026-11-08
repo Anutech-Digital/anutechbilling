@@ -36,15 +36,6 @@ export type SeatReductionTiming = "now" | "end_of_term";
  */
 export const SEAT_CUT_END_OF_TERM_ENABLED = false;
 
-/**
- * R-2584 — a scheduled cut whose date is before today (IST) is stale: its renewal went by without
- * it being applied. It no longer shows as pending nor blocks a new cut (the SQL function
- * reduce_subscription_seats, migration 20261108033033, checks the same).
- */
-export function isScheduledCutLive(row: { effective_date: string }, today: string): boolean {
-  return row.effective_date.slice(0, 10) >= today.slice(0, 10);
-}
-
 export interface SeatReductionSub extends SeatWindowSub {
   seats: number;
 }

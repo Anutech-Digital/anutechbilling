@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)') and prosrc like '%R-2584%')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)') and prosrc like '%R-2584%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.cancel_scheduled_seat_reduction(uuid,uuid)') and prosrc like '%R-2584%')
 -- deploy-key: r2584seatcutignorepastschedules
 -- 20261108033033_r2584_seat_cut_ignore_past_schedules.sql
 --
@@ -11,7 +11,10 @@
 -- no longer points the owner at it.
 --
 -- Redefines reduce_subscription_seats from its only (latest) definition, 20261108013626 (R-2252);
--- same signature, grants repeated. cancel_scheduled_seat_reduction is unchanged.
+-- same signature, grants repeated. cancel_scheduled_seat_reduction (same file) is redefined too: a
+-- stale row no longer blocks, so a subscription can hold a stale row AND a live one — its old
+-- "update … returning into" (exactly one row) would then fail; it now cancels every scheduled row
+-- of the subscription (stale ones too) and returns the latest-dated one.
 -- Test: supabase/tests/r2584_seat_cut_past_schedule.test.sql (begin … rollback; red without this file).
 begin;
 
@@ -251,5 +254,34 @@ comment on function public.reduce_subscription_seats(uuid, uuid, integer, text, 
 
 revoke all on function public.reduce_subscription_seats(uuid, uuid, integer, text, integer, integer, text, uuid, integer) from public, anon, authenticated;
 grant execute on function public.reduce_subscription_seats(uuid, uuid, integer, text, integer, integer, text, uuid, integer) to service_role;
+
+/* R-2252 + R-2584: take back the scheduled cut(s) — every scheduled row of the subscription, stale ones too. */
+create or replace function public.cancel_scheduled_seat_reduction(p_tenant_id uuid, p_subscription_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare v_out jsonb;
+begin
+  if public.current_request_role() is distinct from 'service_role' then
+    raise exception 'cancel_scheduled_seat_reduction is server-only — use Manage seats' using errcode = '42501';
+  end if;
+  /* R-2584: more than one row can be scheduled (a stale one + a live one) — cancel them all. */
+  with c as (
+    update public.subscription_seat_reductions r
+       set status = 'cancelled'
+     where r.tenant_id = p_tenant_id and r.subscription_id = p_subscription_id and r.status = 'scheduled'
+    returning r.*
+  )
+  select to_jsonb(c) into v_out from c order by c.effective_date desc, c.created_at desc limit 1;
+  if v_out is null then
+    raise exception 'No seat cut is scheduled on this subscription' using errcode = 'no_data_found';
+  end if;
+  return v_out;
+end;
+$function$;
+revoke all on function public.cancel_scheduled_seat_reduction(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.cancel_scheduled_seat_reduction(uuid, uuid) to service_role;
 
 commit;

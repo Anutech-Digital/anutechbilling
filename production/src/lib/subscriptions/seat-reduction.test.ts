@@ -3,7 +3,7 @@
  * Owner's path: Manage seats → Reduce → 2 of 10 seats → "credit ₹x (+GST)" → Now.
  */
 import { describe, it, expect } from "vitest";
-import { seatReductionValue, seatReductionPreview, isScheduledCutLive, SEAT_CUT_END_OF_TERM_ENABLED, type SeatReductionSub, type SeatReductionValueOk } from "./seat-reduction";
+import { seatReductionValue, seatReductionPreview, SEAT_CUT_END_OF_TERM_ENABLED, type SeatReductionSub, type SeatReductionValueOk } from "./seat-reduction";
 import { seatIncreaseCharge } from "./seat-increase-charge";
 
 /* 10 seats × ₹1,800/seat/year = mrr ₹1,500, yearly, term 1 Apr 2026 → renews 1 Apr 2027. */
@@ -109,14 +109,5 @@ describe("seatReductionPreview (R-2252 + R-2255 split)", () => {
 describe("R-2584 — end-of-term cut stays hidden until renewal applies it (R-2583)", () => {
   it("the end-of-term choice is OFF: a scheduled cut is never applied at renewal yet, so it would over-bill", () => {
     expect(SEAT_CUT_END_OF_TERM_ENABLED).toBe(false);
-  });
-});
-
-describe("isScheduledCutLive (R-2584) — a scheduled cut dated before today (IST) is stale", () => {
-  it("today or later is live; yesterday is stale and blocks nothing", () => {
-    expect(isScheduledCutLive({ effective_date: "2026-11-08" }, TODAY)).toBe(true);
-    expect(isScheduledCutLive({ effective_date: "2027-04-01" }, TODAY)).toBe(true);
-    expect(isScheduledCutLive({ effective_date: "2026-11-07" }, TODAY)).toBe(false);
-    expect(isScheduledCutLive({ effective_date: "2026-04-01T00:00:00Z" }, TODAY)).toBe(false);
   });
 });

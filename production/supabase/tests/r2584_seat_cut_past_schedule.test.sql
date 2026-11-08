@@ -7,6 +7,7 @@
 --
 --   A. stale scheduled row (yesterday) → a "now" cut goes through (seats 10 → 8, one credit note).
 --   B. scheduled row for a future date → the next cut is still refused ("already scheduled").
+--   C. Remove scheduled cut with a stale + a live row → both cancelled (no "more than one row").
 
 begin;
 
@@ -112,6 +113,28 @@ begin
   if v_msg is null or v_msg not like '%already scheduled%' then
     insert into r2584_fail values ('B: a cut while a future one is scheduled was not refused: ' || coalesce(v_msg, 'ran'));
   end if;
+end $$;
+reset role;
+select set_config('request.jwt.claims', '', true);
+
+-- C. Remove scheduled cut with a stale AND a live row: both cancelled, the live one is returned
+--    (the old "update … returning into" failed with more than one row).
+do $$
+declare v_r jsonb; v_msg text; v_n int;
+begin
+  set local role service_role;
+  perform set_config('request.jwt.claims', json_build_object('role', 'service_role')::text, true);
+  begin
+    v_r := public.cancel_scheduled_seat_reduction('e2584000-0000-0000-0000-0000000000a0', (select v::uuid from r2584_ids where k = 'sub'));
+  exception when others then v_msg := sqlerrm; end;
+  if v_msg is not null then
+    insert into r2584_fail values ('C: Remove scheduled cut failed with a stale + a live row: ' || v_msg);
+  elsif v_r->>'idempotency_key' <> 'r2584-future-1' or v_r->>'status' <> 'cancelled' then
+    insert into r2584_fail values ('C: cancel returned ' || v_r::text || ' (want the future row, cancelled)');
+  end if;
+  select count(*) into v_n from public.subscription_seat_reductions
+   where subscription_id = (select v::uuid from r2584_ids where k = 'sub') and status = 'scheduled';
+  if v_n <> 0 then insert into r2584_fail values ('C: ' || v_n || ' rows still scheduled after Remove (want 0)'); end if;
 end $$;
 reset role;
 select set_config('request.jwt.claims', '', true);

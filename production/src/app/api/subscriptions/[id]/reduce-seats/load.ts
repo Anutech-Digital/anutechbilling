@@ -12,7 +12,7 @@
 import type { createAdminClientFor } from "@/lib/supabase/server";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { openInvoiceDue } from "@/lib/subscriptions/cancel-due";
-import { isScheduledCutLive, type ReductionInvoiceMoney } from "@/lib/subscriptions/seat-reduction";
+import type { ReductionInvoiceMoney } from "@/lib/subscriptions/seat-reduction";
 import type { Subscription } from "@/lib/supabase/database.types";
 
 type Admin = ReturnType<typeof createAdminClientFor>;
@@ -160,6 +160,5 @@ export async function loadScheduledReduction(supabase: Admin, sub: ReduceSeatsSu
     .order("effective_date", { ascending: true })
     .limit(1)
     .maybeSingle();
-  const row = (data as ScheduledReduction | null) ?? null;
-  return row && isScheduledCutLive(row, today) ? row : null;
+  return (data as ScheduledReduction | null) ?? null;
 }

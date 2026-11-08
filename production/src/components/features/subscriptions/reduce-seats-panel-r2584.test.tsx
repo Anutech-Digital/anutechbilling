@@ -43,6 +43,8 @@ describe("Reduce seats panel (R-2584)", () => {
   it("a cut already scheduled still shows, with Remove", async () => {
     renderPanel(preview({ seats_before: 10, seats_after: 8, effective_date: "2027-04-01" }));
     await waitFor(() => expect(screen.getByText(/A seat cut is already scheduled/)).toBeTruthy());
+    /* It must not read as a promise: renewal does not apply it yet. */
+    expect(screen.getByText(/renewal does not apply it yet/)).toBeTruthy();
     expect(screen.getByRole("button", { name: "Remove scheduled cut" })).toBeTruthy();
   });
 });

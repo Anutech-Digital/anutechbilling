@@ -185,7 +185,10 @@ export default function ReduceSeatsPanel({ sub, onCancel, onDone }: Props) {
 
         {data?.scheduled && (
           <p role="status" className="rounded-md border border-amber/30 bg-amber/10 p-3 text-xs text-amber-ink">
-            A seat cut is already scheduled: {data.scheduled.seats_before} → {data.scheduled.seats_after} seats on {formatDate(data.scheduled.effective_date)}. Remove it to make a different cut.
+            A seat cut is already scheduled: {data.scheduled.seats_before} → {data.scheduled.seats_after} seats on {formatDate(data.scheduled.effective_date)}.{" "}
+            {SEAT_CUT_END_OF_TERM_ENABLED
+              ? "Remove it to make a different cut."
+              : "The renewal does not apply it yet, so it will still bill the old seats — remove it and reduce the seats now, with credit."}
             <Button variant="ghost" size="sm" className="mt-2" onClick={removeScheduled} disabled={removing}>
               {removing ? "Removing…" : "Remove scheduled cut"}
             </Button>
