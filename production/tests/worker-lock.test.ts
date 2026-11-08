@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 // @ts-expect-error — plain .mjs ops script, no types
 import { migrationOrderGate, normaliseClaimAreas } from "../scripts/ops/worker-lock-guards.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript, needsIndependentReview, parseReviewFlags, checkReviewGate } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -597,5 +597,83 @@ describe("R-2106: claim paths are normalised (29 Oct: R-2102/R-2104/R-2098 own f
   });
   it("leaves plain paths alone", () => {
     expect(normaliseClaimAreas(["src/lib/x.ts", "../docs/A.md"], "C:/w")).toEqual(["src/lib/x.ts", "../docs/A.md"]);
+  });
+});
+
+describe("R-2592: push refuses a money / p0 card without an independent SAFE review of the same code", () => {
+  const money = { id: "R-600", title: "x", kind: "bug", category: "paisa", priority: "p1", doneWhen: "credit once", howToCheck: "1. /invoices" };
+  // a → b → c (head); base = a (manager-pardeep)
+  const chain = ["aaa", "bbb", "ccc"];
+  const isAncestor = (x: string, y: string) => chain.indexOf(x) >= 0 && chain.indexOf(y) >= 0 && chain.indexOf(x) <= chain.indexOf(y);
+  const opts = { head: "ccc", base: "aaa", isAncestor };
+
+  it("which cards: category money/paisa (any case) or p0; others pass untouched", () => {
+    expect(needsIndependentReview({ category: "paisa" })).toBe(true);
+    expect(needsIndependentReview({ category: "Money" })).toBe(true);
+    expect(needsIndependentReview({ category: "process", priority: "P0" })).toBe(true);
+    expect(needsIndependentReview({ category: "process", priority: "p1" })).toBe(false);
+    expect(needsIndependentReview(null)).toBe(false);
+    const r = checkReviewGate("R-600", { ...money, category: "process" }, opts);
+    expect(r.ok).toBe(true);
+  });
+
+  it("no independentReview → refused, saying wip + checker first", () => {
+    const r = checkReviewGate("R-600", money, opts);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("independentReview nahi");
+    expect(r.message).toContain("worker-lock wip R-600");
+    expect(r.message).toContain("independent-check");
+  });
+
+  it("BLOCK verdict → refused", () => {
+    const r = checkReviewGate("R-600", { ...money, independentReview: { verdict: "BLOCK", sha: "ccc" } }, opts);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain('verdict "BLOCK"');
+  });
+
+  it("SAFE without sha → refused", () => {
+    expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE" } }, opts).ok).toBe(false);
+  });
+
+  it("SAFE on the head, or on an ancestor of it (fix commits after review) → ok", () => {
+    expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "ccc" } }, opts).ok).toBe(true);
+    expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "bbb" } }, opts).ok).toBe(true);
+  });
+
+  it("SAFE on a sha the push is not built on (rebased / other code) → refused", () => {
+    const r = checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "zzz" } }, opts);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("Naye sha ka review chahiye");
+  });
+
+  it("SAFE on a sha already on manager-pardeep reviewed none of this push → refused", () => {
+    const r = checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "aaa" } }, opts);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("pehle se manager-pardeep par");
+  });
+
+  it("--no-review needs a reason; with one it passes and logs it", () => {
+    expect(parseReviewFlags(["--card", "c.json", "--no-review", "owner said", "--fixes-red"])).toEqual({ rest: ["--card", "c.json", "--fixes-red"], noReview: "owner said" });
+    expect(parseReviewFlags(["--no-review=hotfix"]).noReview).toBe("hotfix");
+    expect(parseReviewFlags(["--no-review", "--fixes-red"])).toEqual({ rest: ["--fixes-red"], noReview: "" });
+    expect(parseReviewFlags(["x"]).noReview).toBeNull();
+    expect(checkReviewGate("R-600", money, { ...opts, noReview: "  " }).ok).toBe(false);
+    const lines: string[] = [];
+    const r = checkReviewGate("R-600", money, { ...opts, noReview: "owner said", log: (l: string) => lines.push(l), now: () => "2026-11-08T07:00:00Z" });
+    expect(r.ok).toBe(true);
+    expect(JSON.parse(lines[0])).toEqual({ at: "2026-11-08T07:00:00Z", card: "R-600", how: "--no-review", reason: "owner said", head: "ccc" });
+  });
+
+  it("CLI: push of an unreviewed money card stops with exit 11 before anything else runs", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2592-"));
+    try {
+      const cardFile = path.join(tmp, "R-600.json");
+      fs.writeFileSync(cardFile, JSON.stringify({ id: "R-600", data: money }));
+      const script = path.resolve("scripts/ops/worker-lock.mjs");
+      const r = spawnSync(process.execPath, [script, "push", "R-600", "--card", cardFile], { encoding: "utf8", env: { ...process.env, WORKER_LOCK_DIR: path.join(tmp, "locks") } });
+      expect(r.status).toBe(11);
+      expect(`${r.stdout}${r.stderr}`).toContain("independentReview nahi");
+      expect(fs.existsSync(path.join(tmp, "locks", "_push-turn.json"))).toBe(false);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 });
