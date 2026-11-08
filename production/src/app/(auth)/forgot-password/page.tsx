@@ -25,6 +25,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
+import { authRedirectUrl } from "@/lib/app-url";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -49,7 +50,8 @@ export default function ForgotPasswordPage() {
   async function onSubmit(values: FormData) {
     const supabase = createClient();
     const { error } = await supabase.auth.resetPasswordForEmail(values.email, {
-      redirectTo: `${window.location.origin}/callback?next=${encodeURIComponent("/reset-password")}`,
+      // R-2600: the app URL, never the browser's host (the mailed link must not follow it).
+      redirectTo: authRedirectUrl(`/callback?next=${encodeURIComponent("/reset-password")}`),
     });
 
     /* Supabase does not say whether the address exists, and neither do we. Telling an

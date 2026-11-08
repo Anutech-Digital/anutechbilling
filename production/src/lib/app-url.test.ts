@@ -9,7 +9,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { allowedHosts, appUrl, isAllowedHost, normalizeHost, trustedOrigin } from "./app-url";
+import { allowedHosts, appUrl, authRedirectUrl, isAllowedHost, normalizeHost, trustedOrigin } from "./app-url";
 import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
 import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared fresh read cache
 
@@ -155,6 +155,67 @@ describe("R-723 scan — no new raw-host links", () => {
       .filter((f) => /["']x-forwarded-host["']/i.test(readSource(f)))
       .map((f) => relative(root, f).split("\\").join("/"))
       .filter((f) => !ALLOWED_READERS.has(f));
+    expect(offenders).toEqual([]);
+  });
+});
+
+/**
+ * R-2600 — emailed auth links built in the BROWSER (GoTrue resetPasswordForEmail redirectTo)
+ * used `window.location.origin`: whoever opened the page on another host (R-723 browser check:
+ * http://[::1]:3001) got that host baked into the reset mail. They now come from the app URL.
+ */
+describe("R-2600 authRedirectUrl — never the browser's host", () => {
+  it("uses NEXT_PUBLIC_APP_URL even when the page was opened on an evil host", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://reselleros.anutech.in/");
+    vi.stubGlobal("window", { location: { origin: "https://evil.tld", host: "evil.tld" } });
+    try {
+      const url = authRedirectUrl(`/callback?next=${encodeURIComponent("/reset-password")}`);
+      expect(url).toBe("https://reselleros.anutech.in/callback?next=%2Freset-password");
+      expect(url).not.toContain("evil.tld");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("adds the leading slash and fails closed in production without an app URL", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3001");
+    expect(authRedirectUrl("callback")).toBe("http://localhost:3001/callback");
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
+    expect(() => authRedirectUrl("/callback")).toThrow(/NEXT_PUBLIC_APP_URL/);
+  });
+});
+
+/**
+ * Scan (R-2600): an auth redirect handed to the auth server (`redirectTo` / `emailRedirectTo`)
+ * may not be built from `window.location.origin`. The only exceptions are OAuth sign-ins: that
+ * round trip happens in the user's own browser (nothing is mailed), and the PKCE verifier
+ * cookie lives on the current origin, so it must come back to the same host.
+ */
+const OAUTH_BROWSER_ORIGIN = new Set([
+  "src/components/features/auth/google-button.tsx",                     // signInWithOAuth
+  "src/components/features/contacts/google-contacts-import-dialog.tsx", // signInWithOAuth (contacts scope)
+]);
+
+describe("R-2600 scan — no auth redirect from window.location.origin", () => {
+  it("redirectTo / emailRedirectTo never use the browser's origin (OAuth listed only)", () => {
+    const root = process.cwd();
+    const pattern = /(?:emailRedirectTo|redirectTo)\s*:\s*`?\$?\{?\s*window\.location\.origin/;
+    const offenders = walk(join(root, "src"))
+      .filter((f) => pattern.test(readSource(f)))
+      .map((f) => relative(root, f).split("\\").join("/"))
+      .filter((f) => !OAUTH_BROWSER_ORIGIN.has(f));
+    expect(offenders).toEqual([]);
+  });
+
+  it("files that ask for a reset / signup mail never read window.location.origin at all", () => {
+    const root = process.cwd();
+    const offenders = walk(join(root, "src"))
+      .filter((f) => {
+        const src = readSource(f);
+        return /resetPasswordForEmail\(|emailRedirectTo/.test(src) && /window\.location\.origin/.test(src);
+      })
+      .map((f) => relative(root, f).split("\\").join("/"));
     expect(offenders).toEqual([]);
   });
 });
