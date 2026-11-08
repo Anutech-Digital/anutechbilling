@@ -171,6 +171,24 @@ begin
     insert into r2589_fail values ('D: refusal message: ' || v_msg);
   end if;
 
+  -- F. the same quote, now with matching from_*, on a CANCELLED subscription (cancel credits the
+  --    unused term) → refused even for a part payment; nothing recorded.
+  update public.quotes
+     set line_items = jsonb_set(line_items, '{0,plan_change}', line_items->0->'plan_change'
+                                || jsonb_build_object('from_seats', 10, 'from_mrr', 1500,
+                                     'from_plan', (select plan from public.subscriptions where id = v_sub_b)))
+   where id = 'Q-R2589-PC-LEGACY';
+  update public.subscriptions set status = 'cancelled' where id = v_sub_b;
+  v_msg := null;
+  begin
+    perform public.record_payment('Q-R2589-PC-LEGACY', 5000, 'bank_transfer', 'r2589-pc-cancelled');
+  exception when others then v_msg := sqlerrm; end;
+  if v_msg is null or v_msg not like '%no longer active%' then
+    insert into r2589_fail values ('F: plan-change part payment on a cancelled subscription: ' || coalesce(v_msg, 'recorded'));
+  end if;
+  select count(*) into v_n from public.payments where quote_id = 'Q-R2589-PC-LEGACY';
+  if v_n <> 0 then insert into r2589_fail values ('F: ' || v_n || ' payment(s) recorded'); end if;
+
   -- E. no plan-change quote open → Reduce seats still works (sub A is now Standard, 10 seats, unlinked).
   begin
     v_r := public.reduce_subscription_seats(c_t, v_sub_a, 1, 'end_of_term', 0, 0, 'r2589-key-a-2', c_a, 10);

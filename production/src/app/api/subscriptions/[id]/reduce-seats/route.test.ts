@@ -135,6 +135,18 @@ describe("POST (R-2252)", () => {
     expect(j.error).toBe("Plan change quote QT-2026-0042 is open for this subscription — it was priced on today's seats. Delete that quote (or record its payment) first, then reduce seats.");
     expect(state.rpcArgs).toBeNull();
   });
+  it("R-2589: GET says so before Confirm", async () => {
+    state.planChangeQuote = "QT-2026-0042";
+    const j = await (await GET(new Request("http://x/api/subscriptions/s-1/reduce-seats?seats=2"), params)).json();
+    expect(j.planChangeQuoteId).toBe("QT-2026-0042");
+    expect(j.planChangeBlockedReason).toMatch(/^Plan change quote QT-2026-0042 is open/);
+  });
+  it("R-2589: the database refusal (quote linked after the route checked) keeps the same code", async () => {
+    state.rpcResult = { data: null, error: { code: "23514", message: "Plan change quote QT-7 is open for this subscription — it was priced on today's seats. Delete that quote (or record its payment) first, then reduce seats." } };
+    const res = await post({ seats_removed: 2, timing: "now", idempotency_key: "key-12345678" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("plan_change_open");
+  });
   it("R-2589: no plan-change quote open → the cut goes through as before", async () => {
     state.planChangeQuote = null;
     expect((await post({ seats_removed: 3, timing: "now", idempotency_key: "key-12345678" })).status).toBe(200);

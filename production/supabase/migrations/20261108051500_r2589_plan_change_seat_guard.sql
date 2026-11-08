@@ -247,12 +247,20 @@ begin
      seats, Add seats, Correct details), its price is wrong; and a seat cut already credited the
      removed seats, so letting the quote put its seat count back would credit those seats twice.
      Refused on every payment (part or full); a quote without from_seats / from_mrr was made before
-     this check and is refused the same way — the owner makes a new plan-change quote. */
+     this check and is refused the same way — the owner makes a new plan-change quote. A quote naming
+     another subscription (R-2227's own message) and a subscription no longer active (cancelled with
+     credit, paused, expired) are refused here too, so not even a part payment is taken. */
   if v_is_renewal_quote and coalesce(v_quote.extension_months, -1) = 0
      and jsonb_typeof(v_quote.line_items) = 'array'
-     and jsonb_typeof(v_quote.line_items->0->'plan_change') = 'object'
-     /* a quote naming another subscription is refused by R-2227 below, with its own message */
-     and (v_quote.line_items->0->'plan_change'->>'subscription_id') is not distinct from v_renewal_sub.id::text then
+     and jsonb_typeof(v_quote.line_items->0->'plan_change') = 'object' then
+    if (v_quote.line_items->0->'plan_change'->>'subscription_id') is distinct from v_renewal_sub.id::text then
+      raise exception 'R-2227: plan change quote % was made for another subscription. Nothing was recorded.',
+        p_quote_id using errcode = 'P0001';
+    end if;
+    if (select s.status::text from public.subscriptions s where s.id = v_renewal_sub.id) is distinct from 'active' then
+      raise exception 'R-2589: plan change quote % is for a subscription that is no longer active (%). Nothing was recorded. Delete this quote; a plan can be changed only on an active subscription.',
+        p_quote_id, (select s.status::text from public.subscriptions s where s.id = v_renewal_sub.id) using errcode = 'P0001';
+    end if;
     if (v_quote.line_items->0->'plan_change'->>'from_seats') is null
        or (v_quote.line_items->0->'plan_change'->>'from_mrr') is null
        or (v_quote.line_items->0->'plan_change'->>'from_seats')::numeric is distinct from v_renewal_sub.seats::numeric
@@ -1027,8 +1035,9 @@ begin
           and coalesce(q.extension_months, -1) = 0
           and jsonb_typeof(q.line_items) = 'array'
           and jsonb_typeof(q.line_items->0->'plan_change') = 'object') then
-    raise exception 'Plan change quote % is open for this subscription — it was priced on today''s % seats. Delete that quote (or record its payment) first, then reduce seats.',
-      v_sub.renewal_quote_id, v_sub.seats using errcode = 'check_violation';
+    /* Same words as lib/subscriptions/seat-reduction.ts planChangeOpenMessage (the route maps it to code plan_change_open). */
+    raise exception 'Plan change quote % is open for this subscription — it was priced on today''s seats. Delete that quote (or record its payment) first, then reduce seats.',
+      v_sub.renewal_quote_id using errcode = 'check_violation';
   end if;
   /* The route priced the cut from the seats it read; a change in between (Add seats) → price again. */
   if p_seats_before is distinct from v_sub.seats then

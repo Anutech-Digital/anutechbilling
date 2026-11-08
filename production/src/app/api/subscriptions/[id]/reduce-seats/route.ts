@@ -94,8 +94,14 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
   const g = await gate(id);
   if (!g.ok) return g.res;
   const seats = Number(new URL(req.url).searchParams.get("seats") ?? "1");
-  const p = await buildPreview(g, Number.isFinite(seats) ? Math.trunc(seats) : 0);
+  const [p, planChangeQuoteId] = await Promise.all([
+    buildPreview(g, Number.isFinite(seats) ? Math.trunc(seats) : 0),
+    loadOpenPlanChangeQuote(g.supabase, g.sub),
+  ]);
   return NextResponse.json({
+    /* R-2589: an open plan-change quote blocks any seat cut — the dialog can say so before Confirm. */
+    planChangeQuoteId,
+    planChangeBlockedReason: planChangeQuoteId ? planChangeOpenMessage(planChangeQuoteId) : null,
     seats: g.sub.seats,
     renewalDate: g.sub.renewal_date,
     taxLabel: p.taxLabel,
@@ -168,6 +174,10 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     }
     /* The function's own refusals are written for the owner (§24); anything else stays in the log. */
     if (PLAIN_REFUSALS.has(code)) {
+      /* R-2589: a plan-change quote linked after the check above — same words, same code. */
+      if (/^Plan change quote .+ is open for this subscription/.test(error.message)) {
+        return NextResponse.json({ error: error.message, code: "plan_change_open" }, { status: 409 });
+      }
       return NextResponse.json({ error: error.message, code: "refused" }, { status: 400 });
     }
     console.error("[reduce-seats] reduce_subscription_seats failed:", error);
