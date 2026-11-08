@@ -248,6 +248,33 @@ export async function settleStaleRenewal(
 }
 
 /**
+ * R-2596: record_payment's refusals of a PLAN-CHANGE quote — the subscription's seats / ₹/month /
+ * plan changed since the quote was priced or it is no longer active (R-2589), or the quote lost its
+ * link to the subscription or names another one (R-2227). Not R-2073 (plan dropped from the
+ * catalogue): the owner can add it back, so a Razorpay retry can still book it.
+ */
+export const PLAN_CHANGE_REFUSED_RE = /^R-(?:2227|2589): plan[ /]/i;
+
+/**
+ * R-2596: a Razorpay payment on a plan-change quote that record_payment refuses. Booking it on that
+ * quote would apply a plan change priced on seats the subscription no longer has (a seat cut in
+ * between would be credited twice), and no other quote is "the" plan change — so nothing is recorded
+ * on any quote. 200 (a retry gets the same refusal), the owner told once per payment id with every
+ * detail, and the next step: refund, or book it as the customer's advance when the money reaches
+ * the bank, or a new plan-change quote paid with it.
+ */
+export function settleRefusedPlanChange(
+  admin: ReturnType<typeof createAdminClient>,
+  args: LateArgs,
+): Promise<NextResponse> {
+  const ref = args.payment.id;
+  return reportUnapplied(admin, args,
+    "is a plan-change quote that no longer matches its subscription (seats, ₹/month or plan changed since it was made, the subscription is no longer active, or the quote lost its link)",
+    `Refund the customer (Razorpay dashboard), or keep it: when Razorpay settles it to the bank, reconcile that bank line as this customer's advance (customer credit), ` +
+    `or make a new plan-change quote from the subscription (Change plan) and record this payment on it (reference ${ref}). Then delete the old quote ${args.quote.id}.`);
+}
+
+/**
  * Money with nowhere honest to be recorded: the owner is told, with every detail needed to
  * refund it or book it by hand, once per Razorpay payment id (the notification row is the
  * fact), plus a note on the lead. 200 — a retry cannot change the answer.
