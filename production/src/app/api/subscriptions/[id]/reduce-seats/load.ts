@@ -12,7 +12,7 @@
 import type { createAdminClientFor } from "@/lib/supabase/server";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { openInvoiceDue } from "@/lib/subscriptions/cancel-due";
-import { isPlanChangeQuote } from "@/lib/subscriptions/change-plan";
+import { loadOpenPlanChangeQuoteId } from "@/lib/subscriptions/plan-change-open";
 import type { ReductionInvoiceMoney } from "@/lib/subscriptions/seat-reduction";
 import type { Subscription } from "@/lib/supabase/database.types";
 
@@ -204,13 +204,6 @@ export async function loadLinkedQuoteSeats(supabase: Admin, sub: ReduceSeatsSub)
  * twice. reduce_subscription_seats (migration 20261108051500) refuses the same case.
  */
 export async function loadOpenPlanChangeQuote(supabase: Admin, sub: ReduceSeatsSub): Promise<string | null> {
-  if (!sub.renewal_quote_id) return null;
-  const { data } = await supabase
-    .from("quotes")
-    .select("id, extension_months, line_items")
-    .eq("id", sub.renewal_quote_id)
-    .eq("tenant_id", sub.tenant_id)
-    .maybeSingle();
-  const q = data as { id: string; extension_months: number | null; line_items: unknown } | null;
-  return q && isPlanChangeQuote(q) ? q.id : null;
+  /* R-2605: a rejected (cancelled) or expired plan-change quote is closed — it no longer blocks. */
+  return loadOpenPlanChangeQuoteId(supabase, sub);
 }
