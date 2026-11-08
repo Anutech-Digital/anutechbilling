@@ -466,7 +466,7 @@ MIGS=(
   "r2192smallreceiptdiffs|20261107205640_r2192_small_receipt_differences.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and (prosrc like '%R-2192%' or prosrc like '%R-2577%')) and exists(select 1 from pg_proc where oid = to_regprocedure('public.suggest_bank_transaction_matches(uuid)') and prosrc like '%R-2192%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.auto_reconcile_bank_account(uuid,uuid,integer)') and prosrc like '%R-2192%') and to_regprocedure('public.bank_line_receipt_round_off(uuid)') is not null"
   "r2574splitlinesaleundo|20261107212458_r2574_split_line_sale_undo.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public._bank_sale_undo_scope(uuid)') and prosrc like '%R-2574%')"
   "r2577bankchargeguard|20261107221154_r2577_bank_charge_server_guard.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2577%')"
-  "r2193flexwithonetime|20261107233022_r2193_flex_with_one_time.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_line_terms_mixed(jsonb)') and prosrc like '%R-2193%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2193%')"
+  "r2193flexwithonetime|20261107233022_r2193_flex_with_one_time.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_line_terms_mixed(jsonb)') and prosrc like '%R-2193%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2193%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_split_due(text,date,date)') and prosrc like '%R-2193%')"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER
@@ -495,7 +495,7 @@ SUPS=(
   "tbslice2|r1565creditnotcash r1576billitc r1612bsadvances r1578capitalised r1563bscncredit r1614bssplit r1580commissiontds r1739zohoopening r1645cogsbycategory r1891cogsbill194q r1849partnerappropriation r1913applyvendoradvance r1915expensepartpayment r1952vendorbillstilldue r1992bsprojecttdsadvance r2098bankcreditsplit r2323emiloansetup r2373bankoverdraftbs r2497bankopeningdate|exists(select 1 from pg_proc where proname='report_balance_sheet' and pronamespace='public'::regnamespace and true) and exists(select 1 from pg_proc where proname='set_opening_balances' and pronamespace='public'::regnamespace)"
   "hierarchysvc|r1401leads|"
   "attendancecorrections|salaryrules|"
-  "splitbilledoutstanding|r715definers r2044partpaymentrequests r2092quoteperiodoneinvoice|"
+  "splitbilledoutstanding|r715definers r2044partpaymentrequests r2092quoteperiodoneinvoice r2193flexwithonetime|"
   "attendancepiningestlock|attendancechangelog|"
   "loansgiven|r2340loangivenbank r2346loanrepaymentinterest r2570banklineowntype|"
   "extmonths|extplan r829linedomain r718money r1574renewalquote r1573dnpaid r1688onetimeline r1703renewalpriordues r1816moneyrpcsisttoday r2073supportupgrade r2073rolledforwardflag r2097openingsubyearlyprice|exists(select 1 from pg_proc where oid = to_regprocedure('public.record_payment(text,integer,text,text,text)') and true)"

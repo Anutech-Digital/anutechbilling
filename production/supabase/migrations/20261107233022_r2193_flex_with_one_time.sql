@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_line_terms_mixed(jsonb)') and prosrc like '%R-2193%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2193%')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_line_terms_mixed(jsonb)') and prosrc like '%R-2193%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2193%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_split_due(text,date,date)') and prosrc like '%R-2193%')
 -- deploy-key: r2193flexwithonetime
 -- 20261107233022_r2193_flex_with_one_time.sql
 --
@@ -16,7 +16,11 @@
 --   2. bank_credit_new_sale_quote (latest body 20261105190824_r2515_sez_zero_rated) stores the
 --      recurring lines BEFORE the one-time lines: every screen reads the quote's term off line 1
 --      (quote_split_due, instalments.ts firstLineCommitment, the quote page / PDF), so a domain typed
---      first must not make a Monthly flex sale look like a 12-part annual one. The only change in its body.
+--      first must not make a Monthly flex sale look like a 12-part annual one - only on a sale WITH
+--      Monthly flex lines; any other sale keeps the typed order (Zoho mirrors). Also the rate check's
+--      dot is literal now. No other change in its body.
+--   3. quote_split_due reads the term off the first RECURRING line (one-time lines skipped), so a flex
+--      quote saved with its one-time line first (builder / API / combine) is still never split.
 -- Test: supabase/tests/r2193_flex_with_one_time.test.sql (begin ... rollback; red without this file).
 
 begin;
@@ -38,7 +42,7 @@ as $$
      and exists (select 1 from jsonb_array_elements(p_lines) e
                   where jsonb_typeof(e) = 'object'
                     and coalesce(e->>'commitment', 'annual_yearly') not in ('monthly', 'one_time')
-                    and coalesce(e->>'one_time', '') <> 'true')
+                    and lower(coalesce(e->>'one_time', '')) <> 'true')
   end;
 $$;
 
@@ -100,7 +104,7 @@ begin
               where jsonb_typeof(li) <> 'object'
                  or nullif(btrim(coalesce(li->>'name', '')), '') is null
                  or coalesce(li->>'qty', '') !~ '^[0-9]+$' or (li->>'qty')::int <= 0
-                 or coalesce(li->>'rate', '') !~ '^[0-9]+(.[0-9]{1,2})?$'
+                 or coalesce(li->>'rate', '') !~ '^[0-9]+([.][0-9]{1,2})?$'   -- R-2193: a literal dot ("12x5" got the raw numeric error)
                  or coalesce(li->>'commitment', 'one_time') not in ('annual_yearly', 'monthly', 'one_time')) then
     raise exception 'Every line needs a product, seats / quantity of at least 1 and a unit price (paise allowed, two decimals at most).' using errcode = '22023';
   end if;
@@ -161,7 +165,8 @@ begin
              'one_time',   case when coalesce(li->>'commitment', 'one_time') = 'one_time' then true end,
              'domain',     case when li->>'commitment' in ('annual_yearly', 'monthly')
                                 then nullif(lower(btrim(coalesce(li->>'domain', ''))), '') end))
-           order by (coalesce(li->>'commitment', 'one_time') = 'one_time'), ord)   -- R-2193: recurring first
+           -- R-2193: on a Monthly flex sale the recurring lines go first; any other sale keeps the typed order
+           order by (v_monthly and coalesce(li->>'commitment', 'one_time') = 'one_time'), ord)
     into v_lines
     from jsonb_array_elements(p_lines) with ordinality as t(li, ord);
 
@@ -190,6 +195,80 @@ end;
 $$;
 
 revoke all on function public.bank_credit_new_sale_quote(uuid, uuid, jsonb, text) from public, anon, authenticated;
+
+-- -- 3. quote_split_due: the term is read off the first RECURRING line ------------------------------
+-- Body from 20261009235800_split_billed_outstanding (the only definition; r715 changed grants only).
+-- A Monthly flex quote is never split (its stored figures are one month); before, only line 1 was
+-- read, so a one-time line saved first (any writer other than the bank sale) made a flex quote look
+-- like an annual one billed monthly - 12 parts of the total. TS twin: instalments.ts firstLineCommitment.
+create or replace function public.quote_split_due(p_quote_id text, p_term_start date, p_as_of date)
+returns integer
+language plpgsql
+stable
+security definer
+set search_path = public
+as $$
+declare
+  v_q         record;
+  v_months    integer;
+  v_count     integer;
+  v_taxable   integer;
+  v_per       integer;
+  v_rem       integer;
+  v_t         integer;
+  v_due       integer := 0;
+  v_rate      integer;
+  i           integer;
+begin
+  select q.tenant_id, q.subtotal, q.discount_pct, q.tax_rate, q.amount, q.billing_cycle, q.line_items
+    into v_q
+    from public.quotes q
+   where q.id = p_quote_id;
+  if not found then return null; end if;
+
+  if public.current_tenant_id() is not null and v_q.tenant_id is distinct from public.current_tenant_id() then
+    return null;
+  end if;
+
+  -- flex term line: stored figures are already one month, nothing to split.
+  -- R-2193: the first line that is not one-time (one_time: true / commitment 'one_time') sets the term.
+  if jsonb_typeof(v_q.line_items) = 'array'
+     and (select e->>'commitment'
+            from jsonb_array_elements(v_q.line_items) with ordinality t(e, ord)
+           where jsonb_typeof(e) = 'object'
+             and coalesce(e->>'commitment', '') <> 'one_time'
+             and lower(coalesce(e->>'one_time', '')) <> 'true'
+           order by ord limit 1) = 'monthly' then
+    return null;
+  end if;
+
+  v_months := case v_q.billing_cycle
+                when 'monthly' then 1 when 'quarterly' then 3 when 'half_yearly' then 6
+                else null end;
+  if v_months is null then return null; end if;
+  if coalesce(v_q.amount, 0) <= 0 then return null; end if;
+
+  v_taxable := round(coalesce(v_q.subtotal, 0))::int;
+  v_taxable := v_taxable - round(v_taxable * coalesce(v_q.discount_pct, 0) / 100.0)::int;
+  if v_taxable <= 0 then return null; end if;
+
+  v_count := ceil(12.0 / v_months)::int;
+  if v_count <= 1 then return null; end if;
+  v_per  := floor(v_taxable::numeric / v_count)::int;
+  v_rem  := v_taxable - v_per * v_count;
+  v_rate := coalesce(v_q.tax_rate, 18);
+
+  for i in 0 .. v_count - 1 loop
+    exit when i > 0 and (p_term_start + make_interval(months => i * v_months))::date > p_as_of;
+    v_t   := v_per + case when i = v_count - 1 then v_rem else 0 end;
+    v_due := v_due + v_t + round(v_t * v_rate / 100.0)::int;
+  end loop;
+  return v_due;
+end;
+$$;
+-- Grants as 20261011072600_r715_definers_tenant (service_role only); restated for a fresh DB.
+revoke execute on function public.quote_split_due(text, date, date) from public, anon, authenticated;
+grant execute on function public.quote_split_due(text, date, date) to service_role;
 
 do $$
 begin

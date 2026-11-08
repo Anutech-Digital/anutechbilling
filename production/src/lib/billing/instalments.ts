@@ -360,7 +360,7 @@ export function firstLineCommitment(lineItems: unknown): string | null {
   if (!Array.isArray(lineItems) || lineItems.length === 0) return null;
   const isOnce = (l: unknown) => {
     const o = l as { one_time?: unknown; commitment?: unknown } | null;
-    return o?.one_time === true || o?.commitment === "one_time";
+    return o?.one_time === true || String(o?.one_time ?? "").toLowerCase() === "true" || o?.commitment === "one_time";
   };
   const line = lineItems.find((l) => !isOnce(l)) ?? lineItems[0];
   const c = (line as { commitment?: unknown } | null)?.commitment;

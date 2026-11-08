@@ -11,6 +11,9 @@
 --   C. Annual + Monthly flex on one sale is still refused, with the one-term message.
 --   D. quote_line_terms_mixed: flex + one-time = not mixed; flex + annual (or a line with no
 --      commitment, the old default) = mixed.
+--   E. A flex + one-time quote saved with the one-time line first (signed-in insert) is let in by the
+--      R-381 trigger and quote_split_due does not split it into 12 parts.
+--   F. An annual sale with a setup line keeps the typed order (only flex sales are reordered).
 
 begin;
 
@@ -38,7 +41,8 @@ insert into public.bank_accounts (id, tenant_id, name, bank_name) values
   ('bbbbbbbb-0000-0000-0000-000000219301','dddddddd-0000-0000-0000-000000219301','HDFC Current','HDFC');
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, reference, source) values
   ('11111111-0000-0000-0000-000000219301','dddddddd-0000-0000-0000-000000219301','bbbbbbbb-0000-0000-0000-000000219301','2026-10-01','NEFT FLEX 2193',0,4531,'UTR2193A','manual'),
-  ('11111111-0000-0000-0000-000000219302','dddddddd-0000-0000-0000-000000219301','bbbbbbbb-0000-0000-0000-000000219301','2026-10-02','NEFT FLEX 2193 C',0,20000,'UTR2193C','manual');
+  ('11111111-0000-0000-0000-000000219302','dddddddd-0000-0000-0000-000000219301','bbbbbbbb-0000-0000-0000-000000219301','2026-10-02','NEFT FLEX 2193 C',0,20000,'UTR2193C','manual'),
+  ('11111111-0000-0000-0000-000000219303','dddddddd-0000-0000-0000-000000219301','bbbbbbbb-0000-0000-0000-000000219301','2026-10-03','NEFT FLEX 2193 F',0,19765,'UTR2193F','manual');
 
 select set_config('request.jwt.claims',
   '{"sub":"aaaaaaaa-0000-0000-0000-000000219301","role":"authenticated"}', true);
@@ -120,6 +124,28 @@ begin
     raise exception 'FAIL D: Monthly flex + annual (or a line with no commitment) no longer counted as mixed';
   end if;
   raise notice 'D PASS: helper';
+
+  -- E. a flex + one-time quote saved by a signed-in user with the one-time line FIRST (not the bank
+  --    sale, which orders the lines): the R-381 trigger lets it in, and quote_split_due never splits it
+  insert into public.quotes (id, tenant_id, customer_id, customer_name, tax_rate, amount, subtotal, billing_cycle, status, is_one_off, line_items)
+  values ('TESTQ-R2193-E', 'dddddddd-0000-0000-0000-000000219301', 'cccccccc-0000-0000-0000-000000219301', 'Flex 2193', 18, 4531, 3840,
+          'monthly', 'accepted', false,
+          '[{"name":"Domain flex2193.in","qty":1,"rate":1200,"one_time":true},{"name":"Starter","qty":10,"rate":264,"commitment":"monthly"}]'::jsonb);
+  if public.quote_split_due('TESTQ-R2193-E', '2026-10-01', '2027-09-30') is not null then
+    raise exception 'FAIL E: a flex quote with its one-time line first was split into parts (Rs %)',
+      public.quote_split_due('TESTQ-R2193-E', '2026-10-01', '2027-09-30');
+  end if;
+  raise notice 'E PASS: one-time line first - flex quote not split';
+
+  -- F. an annual sale with a setup line keeps the typed order (Zoho mirrors print as typed)
+  r := public.reconcile_bank_credit_new_sale('11111111-0000-0000-0000-000000219303', 'cccccccc-0000-0000-0000-000000219301',
+         '[{"item_id":null,"name":"Setup fee","qty":1,"rate":1000,"cost":0,"commitment":"one_time"},
+           {"item_id":null,"name":"Microsoft 365 Basic","qty":5,"rate":3150,"cost":0,"commitment":"annual_yearly"}]'::jsonb,
+         true, '2026-10-03', null, 0, null, null, 'yearly');
+  if (select line_items->0->>'name' from public.quotes where id = r->>'quote_id') is distinct from 'Setup fee' then
+    raise exception 'FAIL F: an annual sale''s lines were reordered: %', (select line_items from public.quotes where id = r->>'quote_id');
+  end if;
+  raise notice 'F PASS: annual + setup keeps the typed order';
 end $$;
 
 select 'R-2193 Monthly flex + one-time on one sale: ALL PASS' as result;

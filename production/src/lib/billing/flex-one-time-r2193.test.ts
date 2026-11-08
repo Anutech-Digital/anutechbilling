@@ -19,6 +19,8 @@ describe("R-2193: Monthly flex + one-time on one quote", () => {
     expect(firstLineCommitment([{ name: "Domain", one_time: true }, { name: "Seats", commitment: "monthly" }])).toBe("monthly");
     expect(firstLineCommitment([{ name: "Setup", commitment: "one_time" }, { name: "Seats", commitment: "annual_yearly" }])).toBe("annual_yearly");
     expect(firstLineCommitment([{ name: "Seats", commitment: "monthly" }, { name: "Domain", one_time: true }])).toBe("monthly");
+    // The SQL twin (quote_split_due) reads the marker as text — "true" counts too.
+    expect(firstLineCommitment([{ name: "Domain", one_time: "true" }, { name: "Seats", commitment: "monthly" }])).toBe("monthly");
   });
 
   it("a one-time-only quote keeps the old answer (first line's commitment, none here)", () => {
