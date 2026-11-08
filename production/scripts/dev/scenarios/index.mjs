@@ -344,6 +344,16 @@ export const SCENARIOS = [
     ],
   },
   {
+    name: "seat-parts",
+    about: "R-2226 card test's own customer SCN Seat Parts Co with two Google Workspace subscriptions, 10 seats × ₹3,240/yr (mrr ₹2,700), annual term from the 1st two months ago: SCN Seat Parts Monthly (billed monthly — a whole month's seat is ₹270, the part's own rate) and SCN Seat Parts Yearly (paid yearly — annual × days ÷ 365, unchanged). The test only reads the Manage seats preview; a reload or --clear removes both subscriptions.",
+    cards: ["R-2226"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: ["c2226000-0000-4000-8000-000000000001"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1 },
+    pages: [
+      { path: "subscriptions", for: "R-2226 SCN Seat Parts Monthly → Manage seats → effective date = 1st of this month → 'Part rate ₹270/seat (1 month of ₹3,240/yr)', ₹270 per seat; SCN Seat Parts Yearly → Pro-rata factor as before" },
+    ],
+  },
+  {
     name: "receipt-gaps",
     about: "R-2192 small receipt differences: SCN Round Off Traders INV-SCN-RG-1 ₹13,106 + a ₹13,105 NEFT line (₹1 short → round-off); SCN Wire Exports INV-SCN-RG-2 ₹50,000 + a ₹49,500 RTGS wire (₹500 kept by the bank → Bank / SWIFT charge).",
     cards: ["R-2192"],

@@ -9,17 +9,19 @@
  * the whole year. Those later quarters already carry the new seats: the billing run re-syncs
  * every un-invoiced instalment to the new MRR (lib/billing/sync-instalments.server.ts).
  *
- * So for a split-billed subscription the charge runs to the end of the current period, at
- * the same annual per-seat rate: annual × days-left-in-period / days-in-term. prorate()
- * takes exactly that shape (remainingDays over termDays), so nothing else changes.
+ * So for a split-billed subscription the charge runs to the end of the current period.
+ * R-2226: priced at the PART's own rate — seatChargeParts() below lays the parts, and
+ * seat-part-rate.ts charges part rate × days ÷ days in the part. The window here still gives
+ * the days (remainingDays over the whole term's termDays) for the yearly rule and the notes.
  *
  * Pure: the add-seats route, the customer-request approval and both previews call it.
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { subscriptionSchedule, followingTermStart, previousTermStart, uncheckedTermStart } from "@/lib/billing/subscription-schedule";
-import { periodLastDay, addDaysISO } from "@/lib/billing/schedule";
+import { periodLastDay, addDaysISO, CYCLE_MONTHS, buildBillingSchedule, type BillingPeriod } from "@/lib/billing/schedule";
 import { daysBetweenDates } from "./proration";
+import type { SeatPartSegment } from "./seat-part-rate";
 
 export interface SeatWindowSub {
   mrr: number;
@@ -72,8 +74,72 @@ export function seatChargeWindow(sub: SeatWindowSub, todayISO: string, effective
 }
 
 /**
+ * R-2226 (G-ZOHO Billing A2) — the parts (instalments) a split-billed seat increase is charged
+ * for, each with its own length, so the charge is the PART's rate (annual × part months ÷ 12)
+ * × days ÷ days in the part (seat-part-rate.ts) — a whole month costs one month's price, not
+ * annual × 30 or 31 ÷ 365. Same window as seatChargeWindow(): today decides the current part,
+ * the days run from the effective date, so a backdated date also covers the earlier parts of
+ * this term it reaches. Null for a yearly-paid subscription (annual × days ÷ term days stays)
+ * or when there is no current part (short term, ended term).
+ *
+ * Callers take it from seatChargePlan() (plan.current.parts / plan.previous.parts), so the
+ * dialog, the request card and the server read ONE set of parts for the same dates. It is not a
+ * field of SeatChargeWindow itself so the window keeps the shape its many tests pin.
+ */
+export function seatChargeParts(sub: SeatWindowSub, todayISO: string, effectiveISO?: string): SeatPartSegment[] | null {
+  if (!sub.renewal_date || !sub.billing_cycle || !isSplitBilled(sub.billing_cycle)) return null;
+  const today = todayISO.slice(0, 10);
+  const schedule = subscriptionSchedule(sub);
+  const current = schedule.find((p) => p.periodStart <= today && today < p.periodEnd);
+  if (!current) return null;
+  return partSegments(schedule, (effectiveISO ?? todayISO).slice(0, 10), current.periodEnd, sub.billing_cycle, sub.term_months);
+}
+
+/**
+ * The parts of `periods` that overlap [from, until) — each from max(from, part start) to
+ * min(part end, until), with the part's own length and months (buildBillingSchedule's rule:
+ * every part is one cycle long, a tail part the months left).
+ */
+function partSegments(
+  periods: readonly BillingPeriod[], from: string, until: string,
+  cycle: NonNullable<SeatWindowSub["billing_cycle"]>, termMonthsRaw: SeatWindowSub["term_months"],
+): SeatPartSegment[] | null {
+  const termMonths = Math.max(1, termMonthsRaw ?? 12);
+  const perPart = Math.min(CYCLE_MONTHS[cycle], termMonths);
+  const parts: SeatPartSegment[] = [];
+  for (const p of periods) {
+    if (p.periodStart >= until) break;
+    if (p.periodEnd <= from) continue;
+    const start = from > p.periodStart ? from : p.periodStart;
+    const end = p.periodEnd < until ? p.periodEnd : until;
+    const days = daysBetweenDates(start, end);
+    if (days <= 0) continue;
+    parts.push({
+      from: start,
+      to: periodLastDay(end),
+      days,
+      partDays: Math.max(1, daysBetweenDates(p.periodStart, p.periodEnd)),
+      partMonths: Math.max(1, Math.min(perPart, termMonths - (p.index - 1) * perPart)),
+    });
+  }
+  return parts.length > 0 ? parts : null;
+}
+
+/**
+ * R-2226: the PREVIOUS term's parts a backdated date reaches (R-543), for a split-billed row —
+ * the previous term laid with the same cycle from its own start, cut at the current term start.
+ */
+function previousTermParts(sub: SeatWindowSub, prevStart: string, termStart: string, from: string): SeatPartSegment[] | null {
+  if (!sub.billing_cycle || !isSplitBilled(sub.billing_cycle)) return null;
+  const termMonths = Math.max(1, sub.term_months ?? 12);
+  const periods = buildBillingSchedule({ startDate: prevStart, termMonths, cycle: sub.billing_cycle, termAmount: 0 });
+  return partSegments(periods, from, termStart, sub.billing_cycle, sub.term_months);
+}
+
+/**
  * R-543 — the part of a backdated seat increase that falls in the PREVIOUS term.
- * Same rate rules as the current term: annual × days ÷ the previous term's own length.
+ * Same rate rules as the current term: annual × days ÷ the previous term's own length — or,
+ * billed in parts (R-2226), each part of it at the part's own rate (`parts`).
  */
 export interface SeatPreviousTermPart {
   /** The effective date — first day charged. */
@@ -84,13 +150,21 @@ export interface SeatPreviousTermPart {
   remainingDays: number;
   /** Length of the whole previous term in days. */
   termDays: number;
+  /** R-2226: billed in parts → the previous term's parts charged (absent for a yearly-paid row). */
+  parts?: SeatPartSegment[];
 }
 
 export interface SeatChargePlan {
   /** Null when the effective date is in the current term — the pre-R-543 shape. */
   previous: SeatPreviousTermPart | null;
-  /** The current-term charge. From the effective date, or from the term start when backdated past it. */
-  current: SeatChargeWindow & { from: string };
+  /** The current-term charge. From the effective date, or from the term start when backdated past it.
+   *  R-2226: `parts` = seatChargeParts() for a split-billed row (absent for a yearly-paid row). */
+  current: SeatChargeWindow & { from: string; parts?: SeatPartSegment[] };
+}
+
+/** R-2226: `parts` only when there are some, so a yearly row's plan keeps its pre-R-2226 shape. */
+function withParts<T extends object>(o: T, parts: SeatPartSegment[] | null): T & { parts?: SeatPartSegment[] } {
+  return parts ? { ...o, parts } : o;
 }
 
 /**
@@ -101,6 +175,7 @@ export interface SeatChargePlan {
  *      date ON the term start (the whole term; the current instalment for a split-billed row).
  * An effective date in the current term returns { previous: null, current: seatChargeWindow(...) }
  * — unchanged. Callers validate the date first (checkSeatEffectiveDate).
+ * R-2226: a split-billed row also carries the parts each line is priced by (part rate).
  */
 export function seatChargePlan(sub: SeatWindowSub, todayISO: string, effectiveISO?: string): SeatChargePlan | null {
   if (!sub.renewal_date) return null;
@@ -109,18 +184,18 @@ export function seatChargePlan(sub: SeatWindowSub, todayISO: string, effectiveIS
   const prevStart = previousTermStart(sub);
   if (!termStart || !prevStart || from >= termStart) {
     const w = seatChargeWindow(sub, todayISO, from);
-    return w ? { previous: null, current: { ...w, from } } : null;
+    return w ? { previous: null, current: withParts({ ...w, from }, w.instalmentPeriod ? seatChargeParts(sub, todayISO, from) : null) } : null;
   }
   const w = seatChargeWindow(sub, todayISO, termStart);
   if (!w) return null;
   return {
-    previous: {
+    previous: withParts({
       from,
       to: addDaysISO(termStart, -1),
       remainingDays: daysBetweenDates(from, termStart),
       termDays: Math.max(1, daysBetweenDates(prevStart, termStart)),
-    },
-    current: { ...w, from: termStart },
+    }, previousTermParts(sub, prevStart, termStart, from)),
+    current: withParts({ ...w, from: termStart }, w.instalmentPeriod ? seatChargeParts(sub, todayISO, termStart) : null),
   };
 }
 

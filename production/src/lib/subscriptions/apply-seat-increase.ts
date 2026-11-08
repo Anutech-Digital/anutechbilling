@@ -163,14 +163,17 @@ export async function applySeatIncrease(args: {
     taxLabel,
     termDays,
     termEnd:        seatTermEnd(sub),
-    chargeWindow:   window?.instalmentPeriod ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo } : null,
+    /* R-2226: the parts this window covers, so the seats are priced at the part's own rate. */
+    chargeWindow:   window?.instalmentPeriod
+      ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo, parts: window.parts ?? null }
+      : null,
     effectiveDate:  eff.date,
     effectiveDateSetBy: args.effectiveDateSetBy ?? null,
     requestedBy:    args.requestedBy ?? null,
     annualPerSeatOverride: args.annualPerSeatOverride ?? null,
     draftPurchaseOrder: args.draftPurchaseOrder === true,
     previousTerm:   plan?.previous
-      ? { to: plan.previous.to, remainingDays: plan.previous.remainingDays, termDays: plan.previous.termDays }
+      ? { to: plan.previous.to, remainingDays: plan.previous.remainingDays, termDays: plan.previous.termDays, parts: plan.previous.parts ?? null }
       : null,
     currentTermStart: plan?.previous ? plan.current.from : null,
     todayISO:       today,

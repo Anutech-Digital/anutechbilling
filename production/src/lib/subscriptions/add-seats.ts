@@ -27,6 +27,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, QuoteLineItem } from "@/lib/supabase/database.types";
 import { prorate, rupeesToPaise, paiseToRupees, daysBetweenDates } from "./proration";
 import { seatIncreaseQuote } from "./seat-increase-charge";
+import { partShareOf, partFormula, type SeatPartSegment } from "./seat-part-rate";
 import { buildPlanIndex, matchPlan, type PlanIndex, type CatalogRow } from "./plan-match";
 import { istToday } from "@/lib/dates/ist";
 import { addSeatsQuoteExpiry } from "@/lib/quotes/quote-validity";
@@ -185,7 +186,10 @@ export interface AddSeatsInput {
    * window.ts). Absent = charge to the renewal date, exactly as before. The draft PO still
    * runs to renewal: the vendor commitment for the seats is the whole remaining term.
    */
-  chargeWindow?:      { remainingDays: number; chargeTo: string } | null;
+  /** R-2226: `parts` = seatChargePlan().current.parts — the seats are priced at the PART's own
+   *  rate (part price × days ÷ days in the part), and the quote line's cost the same way.
+   *  Required (null only when there are none), so no caller can drop it and fall back silently. */
+  chargeWindow?:      { remainingDays: number; chargeTo: string; parts: readonly SeatPartSegment[] | null } | null;
   /**
    * R-800: the date the seats were actually provisioned (YYYY-MM-DD), already validated by
    * checkSeatEffectiveDate — never in the future, never before the term start. Absent =
@@ -204,7 +208,8 @@ export interface AddSeatsInput {
    * the current term from `currentTermStart`. With a chargeWindow, the caller has measured its
    * remainingDays from `currentTermStart`. Absent = one line, as before.
    */
-  previousTerm?:      { to: string; remainingDays: number; termDays: number } | null;
+  /** R-2226: `parts` = seatChargePlan().previous.parts on a split-billed row (part rate). */
+  previousTerm?:      { to: string; remainingDays: number; termDays: number; parts?: readonly SeatPartSegment[] | null } | null;
   /** R-543: first day of the current term — required with previousTerm. */
   currentTermStart?:  string | null;
   /** Today (IST, YYYY-MM-DD). Injected for tests; defaults to istToday(). */
@@ -286,6 +291,9 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
      (R-543: from the current term start when the date is in the previous term). */
   const chargeDays = input.chargeWindow ? Math.max(1, input.chargeWindow.remainingDays) : daysBetweenDates(currentFrom, termEnd);
   const chargeTo   = input.chargeWindow?.chargeTo ?? input.renewalDate;
+  /* R-2226: split-billed → the part's own rate (seat-part-rate.ts). */
+  const parts = input.chargeWindow?.parts && input.chargeWindow.parts.length > 0 ? input.chargeWindow.parts : null;
+  const prevParts = input.previousTerm?.parts && input.previousTerm.parts.length > 0 ? input.previousTerm.parts : null;
 
   /* R-803: the charge comes from seatIncreaseCharge() — the same function every preview
      (Add seats dialog, seat-requests card) calls, so a preview cannot disagree with this
@@ -299,8 +307,8 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     additionalSeats: input.additionalSeats,
     taxRatePct:      input.taxRatePct,
     annualPerSeatOverride: typedRate,
-    previous:        prev ? { remainingDays: prev.remainingDays, termDays: prev.termDays } : null,
-    current:         { remainingDays: chargeDays, termDays: input.termDays },
+    previous:        prev ? { remainingDays: prev.remainingDays, termDays: prev.termDays, parts: prevParts } : null,
+    current:         { remainingDays: chargeDays, termDays: input.termDays, parts },
   });
   const priced        = quoted.current;
   const annualPerSeat = quoted.annualPerSeat;
@@ -317,8 +325,8 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
     currentMrr:      input.currentMrr,
     additionalSeats: input.additionalSeats,
     taxRatePct:      input.taxRatePct,
-    previous:        prev ? { remainingDays: prev.remainingDays, termDays: prev.termDays } : null,
-    current:         { remainingDays: chargeDays, termDays: input.termDays },
+    previous:        prev ? { remainingDays: prev.remainingDays, termDays: prev.termDays, parts: prevParts } : null,
+    current:         { remainingDays: chargeDays, termDays: input.termDays, parts },
   }) : null;
   const listRate = (perSeat: number | undefined) => (storedQuote && perSeat !== undefined ? { list_rate: perSeat } : {});
 
@@ -344,9 +352,11 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
       taxRatePct:         0,
     }).subtotalPaise,
   );
-  const wholesalePerSeat = costFor(chargeDays, input.termDays);
+  /* R-2226: on a split-billed subscription the cost follows the same part rule as the charge. */
+  const partCost = (segs: readonly SeatPartSegment[]) => paiseToRupees(partShareOf(rupeesToPaise(seatCost.costPerSeatMonth * 12), segs));
+  const wholesalePerSeat = parts ? partCost(parts) : costFor(chargeDays, input.termDays);
   /* R-543: the previous-term line carries the cost of its own days. */
-  const prevWholesalePerSeat = prev ? costFor(prev.remainingDays, prev.termDays) : 0;
+  const prevWholesalePerSeat = prev ? (prevParts ? partCost(prevParts) : costFor(prev.remainingDays, prev.termDays)) : 0;
 
   // Allocate quote number
   const { data: nextNumber, error: numErr } = await input.supabase.rpc("next_document_number", {
@@ -436,9 +446,14 @@ export async function addSeats(input: AddSeatsInput): Promise<AddSeatsResult | A
       effective < today ? ` (backdated${input.effectiveDateSetBy ? ` by ${input.effectiveDateSetBy}` : ""} on ${today})` : ""
     }${
       prev && quoted.previous
-        ? `. Crosses a term: ${quoted.previous.proration.chargedDays} of ${prev.termDays} days of the previous term (to ${prev.to}) + current term from ${currentFrom}`
+        ? `. Crosses a term: ${prevParts ? `${partFormula(annualPerSeat, prevParts)} = ${rupee(quoted.previous.perSeat)}/seat` : `${quoted.previous.proration.chargedDays} of ${prev.termDays} days`} of the previous term (to ${prev.to}) + current term from ${currentFrom}`
         : ""
-    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${charge.chargedDays} of ${input.termDays} days ${prev ? "of the current term" : "remaining"} (factor ${(charge.factorPpm / 10_000).toFixed(4)}%). ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.${
+    }${input.chargeWindow ? ` (this instalment, to ${chargeTo}; later instalments carry the new seats)` : ""}. ${
+      /* R-2226: a split-billed charge names the part rate and the part's days — the formula the preview shows. */
+      parts
+        ? `${partFormula(annualPerSeat, parts)} = ${rupee(proRataPerSeat)}/seat`
+        : `${charge.chargedDays} of ${input.termDays} days ${prev ? "of the current term" : "remaining"} (factor ${(charge.factorPpm / 10_000).toFixed(4)}%)`
+    }. ${input.taxLabel ?? `GST ${input.taxRatePct}%`}.${
       typedRate !== null ? ` Rate ${rupee(typedRate)}/seat/yr typed for this quote (subscription rate ${rupee(quoted.storedAnnualPerSeat)}/seat/yr unchanged).` : ""
     }`),
   });
