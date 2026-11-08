@@ -39,6 +39,7 @@ export const JOB_CRON: Record<AutomationJob, string> = {
   "mrr-snapshot":         "30 0 1 * *",
   "backup":               "0 0 * * *",
   "demo-reset":           "30 2 * * *",
+  "zoho-fy-read":         "* * * * *",
 };
 
 const DAYS: Record<string, string> = { "1-5": "Monday to Friday", "1-6": "Monday to Saturday" };

@@ -9,7 +9,7 @@ import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/re
 
 vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({ invalidateQueries: vi.fn() }) }));
 
-import { ZohoFyReceiptsImportDialog, partFailedMessage } from "./zoho-fy-receipts-import-dialog";
+import { ZohoFyReceiptsImportDialog, partFailedMessage, readStatusText } from "./zoho-fy-receipts-import-dialog";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -111,5 +111,55 @@ describe("R-2565 FY receipts dialog — Razorpay fee shown apart", () => {
     render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
     await screen.findByTestId("fy-receipts-summary");
     expect(screen.queryByTestId("fy-receipts-fee")).toBeNull();
+  });
+});
+
+/* R-2607 — the read runs on the server: the dialog only starts it and shows progress; reopened, it
+   picks up where the server is; closing while it reads is allowed. */
+describe("R-2607 FY receipts dialog — server read", () => {
+  it("progress line: on the server, can close; stopped; complete", () => {
+    expect(readStatusText({ listed: 2576, detailed: 87, complete: false, running: true })).toBe("Read 87 of 2,576 — on the server; you can close this window and come back.");
+    expect(readStatusText({ listed: 0, detailed: 0, complete: false, running: true })).toMatch(/^Reading the list from Zoho — on the server/);
+    expect(readStatusText({ listed: 2576, detailed: 900, complete: false, running: false })).toBe("Read 900 of 2,576 — stopped.");
+    expect(readStatusText({ listed: 2576, detailed: 2576, complete: true })).toBe("Read all 2,576 payments.");
+  });
+
+  it("opened while the server reads: follows it with server passes (never the old read loop), then shows the preview", async () => {
+    const actions: string[] = [];
+    let steps = 0;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      const b = JSON.parse(init.body) as Record<string, unknown>;
+      actions.push(String(b.action));
+      if (b.action === "status") return { ok: true, json: async () => ({ ok: true, listed: 2576, detailed: 87, complete: false, running: true, error: null }) } as Response;
+      if (b.action === "step") {
+        steps += 1;
+        const done = steps >= 2;
+        return { ok: true, json: async () => ({ ok: true, listed: 2576, detailed: done ? 2576 : 1200, complete: done, running: !done, error: null }) } as Response;
+      }
+      if (b.action === "preview") return { ok: true, json: async () => preview } as Response;
+      return { ok: false, json: async () => ({ ok: false, error: "unexpected" }) } as Response;
+    }));
+    const closed = vi.fn();
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={closed} />);
+    expect(await screen.findByText(/^Read (87|1,200) of 2,576 — on the server; you can close this window/)).toBeTruthy();
+    /* closing while it reads is allowed — the server carries on */
+    const closeBtn = screen.getAllByRole("button", { name: "Close" }).find((x) => x.textContent === "Close")!;
+    expect(closeBtn.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(closeBtn);
+    expect(closed).toHaveBeenCalledWith(false);
+    await screen.findByText("Read all 2,576 payments.", undefined, { timeout: 12_000 });
+    await waitFor(() => expect(actions).toContain("preview"));
+    expect(actions.filter((a) => a === "read")).toEqual([]);
+    expect(actions.slice(0, 3)).toEqual(["status", "step", "step"]);
+  }, 20_000);
+
+  it("a read the server stopped shows why (e.g. reconnect Zoho)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      const b = JSON.parse(init.body) as Record<string, unknown>;
+      if (b.action === "status") return { ok: true, json: async () => ({ ok: true, listed: 2576, detailed: 900, complete: false, running: false, error: "Zoho Books did not let ResellerOS read customer payments — Reconnect." }) } as Response;
+      return { ok: false, json: async () => ({ ok: false, error: "Read the year from Zoho first (Read from Zoho) — it is not complete yet." }) } as Response;
+    }));
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    expect(await screen.findByText("Read 900 of 2,576 — stopped.")).toBeTruthy();
   });
 });

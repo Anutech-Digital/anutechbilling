@@ -10,11 +10,13 @@ const state = vi.hoisted(() => ({
   invoice: null as Record<string, unknown> | null,
   scheduled: null as Record<string, unknown> | null,
   planChangeQuote: null as string | null,
+  cutQuote: null as { id: string; seats: number } | null,
+  linkedQuoteSeats: null as number | null,
   rpcArgs: null as Record<string, unknown> | null,
   rpcResult: { data: { status: "done" } as unknown, error: null as { code?: string; message: string } | null },
 }));
 
-vi.mock("@/lib/dates/ist", () => ({ istToday: () => "2026-11-08" }));
+vi.mock("@/lib/dates/ist", async (orig) => ({ ...(await orig<typeof import("@/lib/dates/ist")>()), istToday: () => "2026-11-08" }));
 vi.mock("@/lib/subscriptions/apply-seat-increase", () => ({
   resolveSeatTax: async () => ({ taxRatePct: 18, taxLabel: "IGST 18%" }),
 }));
@@ -23,6 +25,8 @@ vi.mock("./load", () => ({
   loadPartInvoiceMoney: async () => state.invoice,
   loadScheduledReduction: async () => state.scheduled,
   loadOpenPlanChangeQuote: async () => state.planChangeQuote,
+  loadCutRenewalQuote: async () => state.cutQuote,
+  loadLinkedQuoteSeats: async () => state.linkedQuoteSeats,
 }));
 vi.mock("@/lib/supabase/server", () => {
   const userClient = {
@@ -51,6 +55,8 @@ beforeEach(() => {
   state.invoice = PAID;
   state.scheduled = null;
   state.planChangeQuote = null;
+  state.cutQuote = null;
+  state.linkedQuoteSeats = null;
   state.rpcArgs = null;
   state.rpcResult = { data: { status: "done" }, error: null };
 });
@@ -82,11 +88,50 @@ describe("POST (R-2252)", () => {
     expect(res.status).toBe(200);
     expect(state.rpcArgs).toMatchObject({ p_seats_removed: 2, p_timing: "now", p_unused_gross: 1676, p_new_mrr: 1200, p_tenant_id: "t-1", p_actor: "u-1", p_seats_before: 10 });
   });
-  it("END OF TERM is refused while it is switched off (R-2584: renewal does not apply it yet — R-2583)", async () => {
+  it("R-2608: END OF TERM is on again — a yearly subscription with no renewal quote is scheduled (no money)", async () => {
+    state.rpcResult = { data: { status: "scheduled" }, error: null };
     const res = await post({ seats_removed: 3, timing: "end_of_term", idempotency_key: "key-12345678" });
-    expect(res.status).toBe(400);
-    expect((await res.json()).code).toBe("end_of_term_off");
+    expect(res.status).toBe(200);
+    expect(state.rpcArgs).toMatchObject({ p_seats_removed: 3, p_timing: "end_of_term", p_unused_gross: 0, p_new_mrr: 0 });
+  });
+  it("R-2608: END OF TERM refused while a renewal quote is already linked — the quote named, nothing booked", async () => {
+    state.sub = { ...state.sub, renewal_quote_id: "QT-2026-0100" };
+    state.linkedQuoteSeats = 10;
+    const res = await post({ seats_removed: 3, timing: "end_of_term", idempotency_key: "key-12345678" });
+    expect(res.status).toBe(409);
+    const j = await res.json();
+    expect(j.code).toBe("end_of_term_blocked");
+    expect(j.error).toBe("Renewal quote QT-2026-0100 is already made for 10 seats. Delete that quote first, then schedule the cut — the renewal quote is made again with the cut.");
     expect(state.rpcArgs).toBeNull();
+  });
+  it("R-2608: END OF TERM refused on a subscription billed in parts", async () => {
+    state.sub = { ...state.sub, billing_cycle: "quarterly" };
+    const res = await post({ seats_removed: 3, timing: "end_of_term", idempotency_key: "key-12345678" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toMatch(/^This subscription is billed in parts/);
+    expect(state.rpcArgs).toBeNull();
+  });
+  it("R-2608: GET says so before Confirm when a renewal quote is linked", async () => {
+    state.sub = { ...state.sub, renewal_quote_id: "QT-2026-0100" };
+    state.linkedQuoteSeats = 10;
+    const g = await (await GET(new Request("http://x/api/subscriptions/s-1/reduce-seats?seats=2"), params)).json();
+    expect(g.endOfTermBlockedReason).toMatch(/^Renewal quote QT-2026-0100 is already made for 10 seats./);
+  });
+  it("R-2608: the same refusal from the database (quote linked after the check) keeps code end_of_term_blocked", async () => {
+    state.rpcResult = { data: null, error: { code: "23514", message: "Renewal quote QT-9 is already made for 10 seats. Delete that quote first, then schedule the cut — the renewal quote is made again with the cut." } };
+    const res = await post({ seats_removed: 3, timing: "end_of_term", idempotency_key: "key-12345678" });
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("end_of_term_blocked");
+  });
+  it("R-2608: GET with no blocker → endOfTermBlockedReason null", async () => {
+    const g = await (await GET(new Request("http://x/api/subscriptions/s-1/reduce-seats?seats=2"), params)).json();
+    expect(g.endOfTermBlockedReason).toBeNull();
+  });
+  it("R-2608: DELETE — the cancel function's own guard (quote made after the route checked) keeps code renewal_quote_has_cut", async () => {
+    state.rpcResult = { data: null, error: { code: "23514", message: "Renewal quote QT-8 is already made for 7 seats with this cut. Delete that quote first (it is made again at the current seats), then remove the scheduled cut." } };
+    const res = await DELETE(new Request("http://x/api/subscriptions/s-1/reduce-seats", { method: "DELETE" }), params);
+    expect(res.status).toBe(409);
+    expect((await res.json()).code).toBe("renewal_quote_has_cut");
   });
   it("NOW with no tax invoice for the part is refused before the database", async () => {
     state.invoice = null;
@@ -125,6 +170,15 @@ describe("POST (R-2252)", () => {
     const res = await DELETE(new Request("http://x/api/subscriptions/s-1/reduce-seats", { method: "DELETE" }), params);
     expect(res.status).toBe(200);
     expect(state.rpcArgs).toEqual({ p_tenant_id: "t-1", p_subscription_id: "s-1" });
+  });
+  it("R-2583: DELETE refused while the renewal quote was already made at the cut seats — the message names it", async () => {
+    state.cutQuote = { id: "QT-2026-0099", seats: 7 };
+    const res = await DELETE(new Request("http://x/api/subscriptions/s-1/reduce-seats", { method: "DELETE" }), params);
+    expect(res.status).toBe(409);
+    const j = await res.json();
+    expect(j.code).toBe("renewal_quote_has_cut");
+    expect(j.error).toBe("Renewal quote QT-2026-0099 is already made for 7 seats with this cut. Delete that quote first (it is made again at the current seats), then remove the scheduled cut.");
+    expect(state.rpcArgs).toBeNull();
   });
   it("R-2589: refused while a plan-change quote is open — the message names the quote, nothing booked", async () => {
     state.planChangeQuote = "QT-2026-0042";

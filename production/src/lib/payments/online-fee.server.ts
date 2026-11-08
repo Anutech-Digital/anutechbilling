@@ -18,6 +18,8 @@ import {
   BILL_ONLINE_FEE_COLUMNS,
   CUSTOMER_ONLINE_FEE_COLUMNS,
   TENANT_ONLINE_FEE_COLUMNS,
+  billGstColumns,
+  billOnlineFeeGstPct,
   isOnlineFeeColumnMissing,
   onlineFeeFor,
   parseOnlineFeeCustomer,
@@ -38,7 +40,7 @@ export async function onlineFeeForQuote(
   const db = admin as unknown as SupabaseClient;
   const [tenantRes, quoteRes] = (await Promise.all([
     db.from("tenants").select(TENANT_ONLINE_FEE_COLUMNS).eq("id", tenantId).maybeSingle(),
-    db.from("quotes").select(`amount, customer_id, invoice_id, ${BILL_ONLINE_FEE_COLUMNS}`)
+    db.from("quotes").select(`amount, customer_id, invoice_id, ${BILL_ONLINE_FEE_COLUMNS}, ${billGstColumns("quote")}`)
       .eq("id", quoteId).eq("tenant_id", tenantId).maybeSingle(),
   ])) as [Res, Res];
   if (isOnlineFeeColumnMissing(tenantRes.error) || isOnlineFeeColumnMissing(quoteRes.error)) return null;
@@ -68,7 +70,8 @@ export async function onlineFeeForQuote(
   }
 
   return onlineFeeFor(
-    { billTotal: Number(quote.amount) || 0, waived, waiveReason },
+    // R-2598: the quote's own GST rate — the same answer the quote page shows (0% bill → no fee GST).
+    { billTotal: Number(quote.amount) || 0, gstPct: billOnlineFeeGstPct(quote), waived, waiveReason },
     parseOnlineFeeCustomer(customer),
     parseOnlineFeeSettings(tenantRes.data),
   );

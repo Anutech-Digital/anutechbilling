@@ -52,6 +52,7 @@ import { RemittanceText } from "@/components/features/banking/remittance-text";
 import { rupee, formatDate } from "@/lib/utils";
 import { ImportStatementDialog } from "@/components/features/banking/import-statement-dialog";
 import { SalaryLinesDialog, salaryLinesOf } from "@/components/features/banking/salary-lines-dialog";
+import { BulkExpenseButton } from "@/components/features/banking/bulk-expense-sheet";
 import { StatementCheckCard } from "@/components/features/banking/statement-check-card";
 import { AutoReconcileResult } from "@/components/features/banking/auto-reconcile-result";
 import { BankImportsSection } from "@/components/features/banking/bank-imports-section";
@@ -565,6 +566,8 @@ export default function BankAccountDetailPage() {
                 {`Salary lines (${salaryLineCount})`}
               </Button>
             )}
+            {/* R-2611: the "Money out · no vendor yet" lines in one table — tick and book them at once. */}
+            <BulkExpenseButton accountName={account.name} transactions={transactions} ids={noVendorIds} />
             {/* R-2402: bulk "Reconcile from Zoho" — owner / accountant, when Zoho has payments for these lines. */}
             {zohoIds && zohoIds.size > 0 && (role === "owner" || role === "accountant") && <ZohoBulkReconcileButton accountId={account.id} accountName={account.name} count={zohoIds.size} />}
             <Button

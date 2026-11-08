@@ -165,6 +165,39 @@ export async function loadScheduledReduction(supabase: Admin, sub: ReduceSeatsSu
 }
 
 /**
+ * R-2583 — the linked renewal quote that was already made WITH the scheduled cut (lib/renewals/
+ * create-renewal-quote.ts bills a scheduled cut): a renewal quote (buys time) for exactly the cut's
+ * seats. Removing the cut must not leave that quote at the lower seats — DELETE refuses until the
+ * quote is deleted (then it is made again at the current seats).
+ */
+export async function loadCutRenewalQuote(
+  supabase: Admin, sub: ReduceSeatsSub, scheduled: ScheduledReduction | null,
+): Promise<{ id: string; seats: number } | null> {
+  if (!sub.renewal_quote_id || !scheduled) return null;
+  const { data } = await supabase
+    .from("quotes")
+    .select("id, seats, is_renewal, extension_months")
+    .eq("id", sub.renewal_quote_id)
+    .eq("tenant_id", sub.tenant_id)
+    .maybeSingle();
+  const q = data as { id: string; seats: number | null; is_renewal: boolean | null; extension_months: number | null } | null;
+  if (!q || !q.is_renewal || (q.extension_months ?? 0) <= 0) return null;
+  return q.seats === scheduled.seats_after && scheduled.seats_after < sub.seats ? { id: q.id, seats: q.seats } : null;
+}
+
+/** R-2608 — the seats on the linked renewal / extension quote (null: none linked or not read). */
+export async function loadLinkedQuoteSeats(supabase: Admin, sub: ReduceSeatsSub): Promise<number | null> {
+  if (!sub.renewal_quote_id) return null;
+  const { data } = await supabase
+    .from("quotes")
+    .select("seats")
+    .eq("id", sub.renewal_quote_id)
+    .eq("tenant_id", sub.tenant_id)
+    .maybeSingle();
+  return (data as { seats: number | null } | null)?.seats ?? null;
+}
+
+/**
  * R-2589 — the open plan-change quote of this subscription (Change plan, R-2227), if any: linked
  * through renewal_quote_id, extension_months 0, first line plan_change. It was priced on today's
  * seats and, once paid, sets its own seat count — so a seat cut while it is open would be credited

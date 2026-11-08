@@ -19,23 +19,23 @@ describe("worker-lock ci-all (R-2552)", () => {
     expect(lockAfterCi(l, CI_EXIT.red, { at: "2026-11-07T10:00:00Z" })?.state).toBe(LOCK_STATES.ciRed);
   });
 
-  it("looks only at ci-wait locks; green is freed, red → ci-red, pending / unknown stay", () => {
+  it("looks at ci-wait and ci-red locks (R-2612); green is freed, red → ci-red, pending / unknown stay", () => {
     const locks = [
       lk("R-1", LOCK_STATES.ciWait, "aaaaaaaaaaaa"),
       lk("R-2", LOCK_STATES.ciWait, "bbbbbbbbbbbb"),
       lk("R-3", LOCK_STATES.ciWait, "cccccccccccc"),
       lk("R-4", LOCK_STATES.ciWait, "dddddddddddd"),
       lk("R-5"), // building — not asked
-      lk("R-6", LOCK_STATES.ciRed, "eeeeeeeeeeee"), // already red — its worker owns the fix
+      lk("R-6", LOCK_STATES.ciRed, "eeeeeeeeeeee"), // already red, still red — left as it is (R-2612: asked again)
     ];
-    const verdicts: Record<string, string | null> = { "R-1": "green", "R-2": "red", "R-3": "pending", "R-4": null };
+    const verdicts: Record<string, string | null> = { "R-1": "green", "R-2": "red", "R-3": "pending", "R-4": null, "R-6": "red" };
     const asked: string[] = [], settled: [string, number][] = [];
     const r = ciAllReport(locks, {
       verdict: (l: Lock) => { asked.push(l.card); return verdicts[l.card]; },
       settle: (c: string, code: number) => settled.push([c, code]),
       at: "2026-11-07T10:00:00Z",
     });
-    expect(asked).toEqual(["R-1", "R-2", "R-3", "R-4"]);
+    expect(asked).toEqual(["R-1", "R-2", "R-3", "R-4", "R-6"]);
     // green → lock removed (exit 0), red → ci-red (exit 7) — exactly what `ci <CARD>` does.
     expect(settled).toEqual([["R-1", CI_EXIT.green], ["R-2", CI_EXIT.red]]);
     expect(r.results).toEqual([
@@ -43,6 +43,7 @@ describe("worker-lock ci-all (R-2552)", () => {
       { card: "R-2", sha: "bbbbbbbbbbbb", ci: "red", at: "2026-11-07T10:00:00Z" },
       { card: "R-3", sha: "cccccccccccc", ci: "pending", at: "2026-11-07T10:00:00Z" },
       { card: "R-4", sha: "dddddddddddd", ci: "unknown", at: "2026-11-07T10:00:00Z" },
+      { card: "R-6", sha: "eeeeeeeeeeee", ci: "red", at: "2026-11-07T10:00:00Z" },
     ]);
     expect(r.lines.join("\n")).toContain("R-2  bbbbbbbbb  CI LAAL");
   });

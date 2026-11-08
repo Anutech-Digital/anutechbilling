@@ -34,6 +34,12 @@ The owner presses "Theek hai".
 
 ## 3. Review (p0, category paisa, security — R-2420)
 
+- [ ] **Money / p0 card: read the card's `edgeCases` FIRST (R-2594)** — before the diff. Check each line:
+      it must end in a named test (find it in the diff and confirm it fails without the fix) or a
+      `refused` line (find the guard + its message in the code). Add any cross-feature case the list
+      missed (seats, plan change, parts, renewal, credit note, TDS months deposited, un-reconcile; see
+      `docs/specs/money-rules.md`). No `edgeCases` on a money/p0 card, an untested line, or an unguarded
+      `refused` line = BLOCK.
 - [ ] Read the card (`fix`, `doneWhen`), its spec in `docs/specs/` if it has a `goal`, and the diff:
       `git diff <sha>~1 <sha>` (or the range of all its commits; before push:
       `git diff anutech/manager-pardeep...<sha>`) — read the code, not the summary.

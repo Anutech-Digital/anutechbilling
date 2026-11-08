@@ -51,6 +51,31 @@ vi.mock("@/lib/supabase/server", () => ({
   createClient: () => ({ rpc: async (fn: string, args: Record<string, unknown>) => { st.rpc.push({ fn, args }); return st.rpcResult; } }),
 }));
 
+/* R-2607: the server read — background state + one pass, mocked (the pass itself: background-read.test.ts). */
+const bgst = vi.hoisted(() => ({
+  state: null as null | { requestedAt: string | null; leaseUntil: string | null; error: string | null; finishedAt: string | null; lastStepAt: string | null },
+  requests: [] as Array<{ fy: string; userId: string }>,
+  passes: [] as Array<{ tenantId: string; kind: string; fy: string; opts: unknown }>,
+  tenantSeen: [] as string[],
+}));
+vi.mock("@/lib/integrations/zoho-books/fy-import/bg-store", () => ({
+  supabaseBgStore: (_db: unknown, tenantId: string, kind: string) => {
+    bgst.tenantSeen.push(`${tenantId}:${kind}`);
+    return {
+      request: async (fy: string, userId: string) => { bgst.requests.push({ fy, userId }); bgst.state = { requestedAt: "2026-11-08T10:00:00Z", leaseUntil: null, error: null, finishedAt: null, lastStepAt: null }; },
+      readBg: async () => bgst.state,
+      takeLease: async (_fy: string, until: number, now: number) => {
+        if (bgst.state?.leaseUntil && Date.parse(bgst.state.leaseUntil) >= now) return false;
+        if (bgst.state) bgst.state.leaseUntil = new Date(until).toISOString();
+        return true;
+      },
+    };
+  },
+}));
+vi.mock("@/lib/integrations/zoho-books/fy-import/read-job.server", () => ({
+  companyReadPass: async (_admin: unknown, tenantId: string, kind: string, fy: string, opts: unknown) => { bgst.passes.push({ tenantId, kind, fy, opts }); return null; },
+}));
+
 import { POST } from "./route";
 
 const fact = (over: Partial<ZohoReceiptFacts>): ZohoReceiptFacts => ({
@@ -162,5 +187,51 @@ describe("R-2501 receipts-import route", () => {
     expect((await res.json()).error).toMatch(/owner or an accountant/);
     await POST(req({ action: "restart", fy: "2025-26" }));
     expect(st.resets).toBe(1);
+  });
+});
+
+describe("R-2607 the read runs on the server", () => {
+  beforeEach(() => { bgst.state = null; bgst.requests = []; bgst.passes = []; bgst.tenantSeen = []; });
+
+  it("start asks the server for the caller's own company and returns progress; no Zoho pass, no import", async () => {
+    st.run = { nextPage: 2, listDone: false }; st.counts = { listed: 60, detailed: 0 };
+    const body = await (await POST(req({ action: "start", fy: "2025-26", tenantId: "someone-else" }))).json();
+    expect(body).toMatchObject({ ok: true, listed: 60, detailed: 0, complete: false, running: true, error: null });
+    expect(bgst.requests).toEqual([{ fy: "2025-26", userId: "u1" }]);
+    expect(bgst.tenantSeen.every((t) => t === "t1:customerpayments")).toBe(true);
+    expect(bgst.passes).toEqual([]);
+    expect(st.rpc).toEqual([]);
+  });
+
+  it("step runs one server pass (≤ 40 s, only when asked for) for the caller's company; start/step never call import_zoho_fy_receipts", async () => {
+    bgst.state = { requestedAt: "2026-11-08T10:00:00Z", leaseUntil: null, error: null, finishedAt: null, lastStepAt: null };
+    await POST(req({ action: "step", fy: "2025-26" }));
+    expect(bgst.passes).toEqual([{ tenantId: "t1", kind: "customerpayments", fy: "2025-26", opts: { budgetMs: 40_000, requireRequest: true } }]);
+    expect(st.rpc).toEqual([]);
+  });
+
+  it("status: complete only when the list is done, every payment detailed and the read is no longer asked for; shows why it stopped", async () => {
+    st.run = { nextPage: 9, listDone: true }; st.counts = { listed: 5, detailed: 5 };
+    bgst.state = { requestedAt: null, leaseUntil: null, error: null, finishedAt: "2026-11-08T10:05:00Z", lastStepAt: null };
+    expect(await (await POST(req({ action: "status", fy: "2025-26" }))).json()).toMatchObject({ complete: true, running: false });
+    st.counts = { listed: 5, detailed: 2 };
+    bgst.state = { requestedAt: null, leaseUntil: null, error: "Zoho Books is not connected.", finishedAt: "2026-11-08T10:05:00Z", lastStepAt: null };
+    expect(await (await POST(req({ action: "status", fy: "2025-26" }))).json()).toMatchObject({ complete: false, running: false, error: "Zoho Books is not connected." });
+  });
+
+  it("restart is refused while a server pass holds the read (it would save its old page over the fresh start)", async () => {
+    bgst.state = { requestedAt: "2026-11-08T10:00:00Z", leaseUntil: new Date(Date.now() + 60_000).toISOString(), error: null, finishedAt: null, lastStepAt: null };
+    const res = await POST(req({ action: "restart", fy: "2025-26" }));
+    expect(res.status).toBe(409);
+    expect(st.resets).toBe(0);
+    bgst.state.leaseUntil = new Date(Date.now() - 1_000).toISOString();
+    expect((await POST(req({ action: "restart", fy: "2025-26" }))).status).toBe(200);
+    expect(st.resets).toBe(1);
+  });
+
+  it("a manager cannot start the read", async () => {
+    st.role = "manager";
+    expect((await POST(req({ action: "start", fy: "2025-26" }))).status).toBe(403);
+    expect(bgst.requests).toEqual([]);
   });
 });

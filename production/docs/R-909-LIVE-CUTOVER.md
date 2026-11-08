@@ -275,7 +275,9 @@ minute)**, billing, attendance-retention, invoice-dunning, ai-reply-retry (every
 ai-reflection, attendance-reminders, compliance-reminders, trial-expiry, backup, google-contacts-sync.
 
 - The URL is the run.app URL of the same service → it keeps working after the switch. `CRON_SECRET` is unchanged → no edit.
-- **Pause all 15 for the cutover window** (`r909-live-cutover.mjs scheduler-pause`) and resume after step 8.9.
+- **Pause all 15 for the cutover window** (`r909-live-cutover.mjs scheduler-pause`) and resume after step 8.9 in two steps
+  (R-2597): `scheduler-resume` = the 9 Anutech-internal jobs only; `scheduler-resume-customer <job>...` = only the named
+  customer-mail jobs (any other name is refused).
 - 15 more jobs with the same names exist in **asia-south1**, all PAUSED, pointing at old asia-south1 URLs — leftovers;
   delete after 20 Oct (separate card), do not resume them.
 - Cron routes in code with **no** Scheduler job (live or staging): ads-sync, ai-sales-loop, ai-support-sla,
@@ -344,7 +346,9 @@ substitutions; 15 jobs ENABLED; rehearsal report (4.4) says SAME SCHEMA; staging
 node scripts/ops/r909-live-cutover.mjs scheduler-pause --run
 ```
 ✔ `gcloud scheduler jobs list --location=asia-southeast1 --project=resellsubsos-prod` → 15 × PAUSED.
-↩ `node scripts/ops/r909-live-cutover.mjs scheduler-resume --run`
+↩ `node scripts/ops/r909-live-cutover.mjs scheduler-resume --run` (the 9 internal jobs), then only the customer-mail jobs
+that were ENABLED before 8.1: `node scripts/ops/r909-live-cutover.mjs scheduler-resume-customer <those jobs> --run`
+(before 8.1, write down each job's state from `r909-live-cutover.mjs check --run` — `scheduler-pause` keeps no record).
 
 ### 8.2 Live DB: backup + roles + migrations — Pardeep ki haan (Pardeep's terminal)
 ```bash
@@ -426,12 +430,21 @@ node scripts/ops/r909-live-cutover.mjs traffic --run
 needs the stopped VM, so "rollback" = live back to today's unused state; the real fix is forward.
 
 ### 8.10 Crons chalu — Pardeep ki haan
+Step 1 — Anutech-internal jobs only (health-digest, gmail-inbox, attendance-retention, ai-reply-retry, mrr-snapshot,
+ai-reflection, attendance-reminders, backup, google-contacts-sync). The six customer-mail jobs stay PAUSED:
 ```bash
+node scripts/ops/r909-live-cutover.mjs scheduler-resume            # dry run: read the 9 lines first
 node scripts/ops/r909-live-cutover.mjs scheduler-resume --run
 gcloud scheduler jobs run resellersos-health-digest --location=asia-southeast1 --project=resellsubsos-prod
 ```
-✔ Resume in two steps (section 6.5): Anutech-internal jobs first; the six customer-mailing jobs (renewals, invoice-dunning, billing, birthday-greetings, trial-expiry, compliance-reminders) only with the client owner's yes for each.
-✔ 15 × ENABLED; Cloud Run logs show `/api/cron/health-digest` 200 within a minute; gmail-inbox 200 on the next minute.
+Step 2 — customer-mail jobs, ONE BY ONE, each only after the client owner's yes for that job (section 6.5). Name only
+the jobs that got a yes. Any name other than renewals, invoice-dunning, billing, birthday-greetings, trial-expiry,
+compliance-reminders is refused and nothing is resumed:
+```bash
+node scripts/ops/r909-live-cutover.mjs scheduler-resume-customer renewals            # dry run
+node scripts/ops/r909-live-cutover.mjs scheduler-resume-customer renewals --run
+```
+✔ After step 1: 9 × ENABLED, 6 × PAUSED. After step 2: the jobs that got a yes ENABLED, the rest still PAUSED; Cloud Run logs show `/api/cron/health-digest` 200 within a minute; gmail-inbox 200 on the next minute.
 ↩ `scheduler-pause --run` again.
 
 ### 8.11 Likh do

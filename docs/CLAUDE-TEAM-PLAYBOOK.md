@@ -347,3 +347,4 @@ Format: `- <date>: what went wrong → the rule it created (card).`
   a CA `step` showed as "ruka") → before telling a worker count, compute it the way the board does:
   `status: doing` (always running, even with a human `step` on it — board v108) + `review` cards with
   `checkRunning: true`; never count from your own spawn list (skill `status-update`).
+- 8 Nov 2026 (R-2594): the day's review BLOCKs (R-2227 x R-2252 plan change + seat cut = double credit; R-1916 undo after TDS was deposited) were cross-feature cases an edge-case list would have caught → money / paisa / p0 cards get `edgeCases` on the card before coding (each a test or a `refused` line); the checker reads it first.

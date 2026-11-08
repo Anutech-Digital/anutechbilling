@@ -3,7 +3,7 @@
  * Owner's path: Manage seats → Reduce → 2 of 10 seats → "credit ₹x (+GST)" → Now.
  */
 import { describe, it, expect } from "vitest";
-import { seatReductionValue, seatReductionPreview, SEAT_CUT_END_OF_TERM_ENABLED, type SeatReductionSub, type SeatReductionValueOk } from "./seat-reduction";
+import { seatReductionValue, seatReductionPreview, endOfTermBlockedReason, SEAT_CUT_END_OF_TERM_ENABLED, type SeatReductionSub, type SeatReductionValueOk } from "./seat-reduction";
 import { seatIncreaseCharge } from "./seat-increase-charge";
 
 /* 10 seats × ₹1,800/seat/year = mrr ₹1,500, yearly, term 1 Apr 2026 → renews 1 Apr 2027. */
@@ -97,17 +97,36 @@ describe("seatReductionPreview (R-2252 + R-2255 split)", () => {
     expect(p.split.lines.at(-1)?.kind).toBe("not-given");
   });
 
-  it("no tax invoice for the part yet: Now is blocked with the way forward (R-2584: never points at the hidden end-of-term choice)", () => {
+  it("no tax invoice for the part yet: Now is blocked with the way forward — R-2608: points at At end of term again", () => {
     const p = seatReductionPreview(v, null);
     expect(p.canReduceNow).toBe(false);
+    expect(p.blockedReason).toBe("This part has no tax invoice yet, so there is no invoice to credit. Choose “At end of term”, or reduce the seats after the part is invoiced.");
+  });
+  it("R-2608: where At end of term cannot be saved, the no-invoice text does not point at it", () => {
+    const p = seatReductionPreview(v, null, false);
     expect(p.blockedReason).toMatch(/after the part is invoiced/i);
     expect(p.blockedReason).not.toMatch(/end of term/i);
   });
 
 });
 
-describe("R-2584 — end-of-term cut stays hidden until renewal applies it (R-2583)", () => {
-  it("the end-of-term choice is OFF: a scheduled cut is never applied at renewal yet, so it would over-bill", () => {
-    expect(SEAT_CUT_END_OF_TERM_ENABLED).toBe(false);
+describe("R-2608 — end-of-term cut is offered again (renewal quote bills it, R-2583)", () => {
+  it("the end-of-term choice is ON", () => {
+    expect(SEAT_CUT_END_OF_TERM_ENABLED).toBe(true);
+  });
+  it("billed in parts → blocked (its next parts do not read the cut)", () => {
+    for (const c of ["monthly", "quarterly", "half_yearly"]) {
+      expect(endOfTermBlockedReason({ billing_cycle: c as "monthly", renewal_quote_id: null, seats: 10 }, null))
+        .toBe("This subscription is billed in parts — a seat cut at the end of the term is not applied to its parts yet. Reduce the seats now, with credit.");
+    }
+  });
+  it("a renewal / extension quote already linked → blocked, the quote and its seats named", () => {
+    expect(endOfTermBlockedReason({ billing_cycle: "yearly", renewal_quote_id: "QT-1", seats: 10 }, 12))
+      .toBe("Renewal quote QT-1 is already made for 12 seats. Delete that quote first, then schedule the cut — the renewal quote is made again with the cut.");
+    expect(endOfTermBlockedReason({ billing_cycle: "yearly", renewal_quote_id: "QT-1", seats: 10 }, null)).toMatch(/for 10 seats/);
+  });
+  it("yearly / multi-year with no quote → allowed", () => {
+    expect(endOfTermBlockedReason({ billing_cycle: "yearly", renewal_quote_id: null, seats: 10 }, null)).toBeNull();
+    expect(endOfTermBlockedReason({ billing_cycle: null, renewal_quote_id: null, seats: 10 }, null)).toBeNull();
   });
 });

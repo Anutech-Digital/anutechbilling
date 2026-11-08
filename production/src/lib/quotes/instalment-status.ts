@@ -15,7 +15,8 @@ import type { InstalmentLine, QuoteInstalmentPlan } from "@/lib/billing/instalme
 /** How small a shortfall reads as "received (₹X short)" instead of a part payment: up to 1% of
  *  the part and never more than ₹500 (bank charges, rounding), at least ₹1. ₹60 on ₹95,993 is
  *  0.06%. TDS is not this — it is recorded with the payment. The one rule for the quote page,
- *  paid-to-date.ts (badge, Quotes list) and the money row. */
+ *  paid-to-date.ts (badge, Quotes list) and the money row. R-2595: the SQL settle_quote_part_short
+ *  (migration 20261108092350) uses the same limit — change both together. */
 export const SMALL_SHORT_PCT = 1;
 export const SMALL_SHORT_MAX = 500;
 

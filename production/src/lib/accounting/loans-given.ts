@@ -353,3 +353,56 @@ export function loanGivenSetupPayload(i: LoanGivenSetupInput, reconcileTxnId: st
     reconcile_txn_id: reconcileTxnId,
   };
 }
+
+/* ══ R-2603: Banking → Reconcile money-out → "I am GIVING a loan" = a Loans given row ══════════
+ * record_loan_given_from_bank_out (migration 20261108080000) reuses the spelling already on Loans
+ * given when the same borrower is typed in another case / with extra spaces — this is the same key. */
+
+/** One person, one key: trimmed, inner spaces collapsed, lower case (same rule as the RPC). */
+export function borrowerKey(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** Borrower names for the picker: one per person (first spelling wins), sorted, blanks dropped. */
+export function distinctBorrowers(names: readonly (string | null | undefined)[]): string[] {
+  const byKey = new Map<string, string>();
+  for (const n of names) {
+    const clean = (n ?? "").trim().replace(/\s+/g, " ");
+    if (!clean) continue;
+    const k = borrowerKey(clean);
+    if (!byKey.has(k)) byKey.set(k, clean);
+  }
+  return [...byKey.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/** Label book_bank_advance gave a loan/advance GIVEN from a money-out line (before R-2603). */
+export const OLD_ADVANCE_GIVEN_LABEL = "Advance/loan given";
+
+/** …and the label it gave money coming back on one (a negative asset line). */
+export const OLD_ADVANCE_RETURNED_LABEL = "Advance/loan returned";
+
+/** Balance Sheet lines that are really loans given (booked before R-2603), netted per person with
+ *  their "returned" lines: only people who still owe count — given lines, what is still owed, names. */
+export function oldAdvanceGivenLines(items: readonly { section: string; label: string; amount: number }[]): {
+  count: number; total: number; borrowers: string[];
+} {
+  const byKey = new Map<string, { name: string; owed: number; lines: number }>();
+  for (const i of items) {
+    if (i.section !== "asset") continue;
+    const label = i.label.trim();
+    const given = label.startsWith(OLD_ADVANCE_GIVEN_LABEL);
+    if (!given && !label.startsWith(OLD_ADVANCE_RETURNED_LABEL)) continue;
+    const name = label.split("·").slice(1).join("·").trim().replace(/\s+/g, " ");
+    const k = borrowerKey(name);
+    const e = byKey.get(k) ?? { name, owed: 0, lines: 0 };
+    e.owed += Number(i.amount || 0);
+    if (given) e.lines += 1;
+    byKey.set(k, e);
+  }
+  const open = [...byKey.values()].filter((e) => e.owed > 0);
+  return {
+    count: open.reduce((s, e) => s + e.lines, 0),
+    total: open.reduce((s, e) => s + e.owed, 0),
+    borrowers: distinctBorrowers(open.map((e) => e.name)),
+  };
+}

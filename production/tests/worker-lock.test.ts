@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 // @ts-expect-error — plain .mjs ops script, no types
 import { migrationOrderGate, normaliseClaimAreas } from "../scripts/ops/worker-lock-guards.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript, needsIndependentReview, parseReviewFlags, checkReviewGate, changePatchId } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript, needsIndependentReview, parseReviewFlags, checkReviewGate, changePatchId, ciWaitVerdict, ciAllReport, LOCK_STATES, lockAfterCi, lockAfterCiAll } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -696,5 +696,81 @@ describe("R-2592: push refuses a money / p0 card without an independent SAFE rev
       expect(`${r.stdout}${r.stderr}`).toContain("independentReview nahi");
       expect(fs.existsSync(path.join(tmp, "locks", "_push-turn.json"))).toBe(false);
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+});
+
+/* R-2612 (8 Nov 2026): R-2594/2596/2597/2600/2603 had no SQL run of their own. The first later SQL run
+   that contained their sha (42466580532 on dba71dc4c) failed at 'Run supabase/setup-cli' (504) and its
+   re-runs kept failing on the old workflow file, while the NEWER SQL run on 7c6127015 (a descendant) was
+   green — yet the oldest-first loop let the old red decide, the five cards stayed ci-red and held their
+   files. Now a green later run that contains the sha wins over an older red one, and `ci-all` / `ci <CARD>`
+   look at ci-red locks again and free them when the verdict has turned green. */
+describe("R-2612: a newer green run on a descendant clears a card stuck red by an older infra-failed run", () => {
+  const SHA = "b".repeat(40), OLD = "d".repeat(40), NEW = "7".repeat(40);
+  const isAncestor = (a: string, b: string) => a === SHA && (b === OLD || b === NEW);
+  const own = [run({ databaseId: 10, headSha: SHA, url: "u-ci" })]; // own CI green, no own SQL run
+  const oldRed = run({ databaseId: 20, workflowName: "SQL tests", headSha: OLD, conclusion: "failure", url: "u-old", createdAt: "2026-11-08T09:40:00Z" });
+  const newGreen = run({ databaseId: 30, workflowName: "SQL tests", headSha: NEW, url: "u-new", createdAt: "2026-11-08T10:33:00Z" });
+  const lock = (state: string) => ({ card: "R-2594", areas: ["src/lib/x"], state, pushedSha: SHA, ciWaitSince: "2026-11-08T09:30:00Z" });
+  const now = Date.parse("2026-11-08T11:00:00Z");
+
+  it("ci <CARD>: older red later SQL run + newer green descendant run → green, via the newer run", async () => {
+    const { gh } = fakeGh({ sha: own, branch: [newGreen, oldRed] });
+    const r = await runCi("R-2594", { gh, git: () => `${SHA}\n`, isAncestor, sha: SHA, timeoutMin: 5, readNote: () => ({ sha: SHA, at: "2026-11-08T09:30:00Z" }), now: () => now, sleep: async () => {} });
+    expect(r.code).toBe(CI_EXIT.green);
+    expect(r.check).toMatchObject({ ci: "green", sql: "green", via: NEW });
+    expect(r.check?.runUrls).toEqual(["u-ci", "u-new"]);
+  });
+
+  it("ciWaitVerdict: same runs → green for a ci-wait lock AND for a ci-red lock (re-evaluated)", () => {
+    const { gh } = fakeGh({ sha: own, branch: [oldRed, newGreen] });
+    expect(ciWaitVerdict(lock(LOCK_STATES.ciWait), { gh, isAncestor, now })).toBe("green");
+    expect(ciWaitVerdict(lock(LOCK_STATES.ciRed), { gh, isAncestor, now })).toBe("green");
+  });
+
+  it("an older green later run is not overturned by a newer red one (the sha was already proven green)", () => {
+    const oldGreen = { ...oldRed, conclusion: "success" };
+    const newRed = { ...newGreen, conclusion: "failure" };
+    const { gh } = fakeGh({ sha: own, branch: [oldGreen, newRed] });
+    expect(ciWaitVerdict(lock(LOCK_STATES.ciWait), { gh, isAncestor, now })).toBe("green");
+  });
+
+  it("older red + newer still running → pending (wait for the newer run), not red", () => {
+    const going = { ...newGreen, status: "in_progress", conclusion: "" };
+    const { gh } = fakeGh({ sha: own, branch: [oldRed, going] });
+    expect(ciWaitVerdict(lock(LOCK_STATES.ciWait), { gh, isAncestor, now })).toBe("pending");
+  });
+
+  it("only red later runs → still red", () => {
+    const { gh } = fakeGh({ sha: own, branch: [oldRed] });
+    expect(ciWaitVerdict(lock(LOCK_STATES.ciWait), { gh, isAncestor, now })).toBe("red");
+  });
+
+  it("a working lock is still not looked at", () => {
+    const { gh } = fakeGh({ sha: own, branch: [newGreen] });
+    expect(ciWaitVerdict(lock(LOCK_STATES.working), { gh, isAncestor, now })).toBeNull();
+  });
+
+  it("ci-all: a ci-red lock now green is freed; still red is left alone (no new ciRedAt); pending stays", () => {
+    const locks = [lock(LOCK_STATES.ciRed), { ...lock(LOCK_STATES.ciRed), card: "R-2596" }, { ...lock(LOCK_STATES.ciRed), card: "R-2597" }];
+    const v: Record<string, string> = { "R-2594": "green", "R-2596": "red", "R-2597": "pending" };
+    const settled: [string, number][] = [];
+    const r = ciAllReport(locks, { verdict: (l: { card: string }) => v[l.card], settle: (c: string, code: number) => settled.push([c, code]), at: "2026-11-08T11:00:00Z" });
+    expect(settled).toEqual([["R-2594", CI_EXIT.green]]);
+    expect(r.results.map((x: { card: string; ci: string }) => `${x.card}:${x.ci}`)).toEqual(["R-2594:green", "R-2596:red", "R-2597:pending"]);
+    expect(r.lines.join("\n")).toContain("R-2594");
+  });
+
+  it("ci <CARD> on a ci-red lock: green removes it (files free)", () => {
+    expect(lockAfterCi(lock(LOCK_STATES.ciRed), CI_EXIT.green, { at: "2026-11-08T11:00:00Z" })).toBeNull();
+  });
+
+  it("ci-all settle: a lock taken back meanwhile (claim --fixes-red → working) is left alone", () => {
+    const at = { at: "2026-11-08T11:00:00Z" };
+    const working = lock(LOCK_STATES.working);
+    expect(lockAfterCiAll(working, CI_EXIT.green, at)).toBe(working);
+    expect(lockAfterCiAll(lock(LOCK_STATES.ciRed), CI_EXIT.green, at)).toBeNull();
+    expect(lockAfterCiAll(lock(LOCK_STATES.ciWait), CI_EXIT.red, at)?.state).toBe(LOCK_STATES.ciRed);
+    expect(lockAfterCiAll(null, CI_EXIT.green, at)).toBeNull();
   });
 });

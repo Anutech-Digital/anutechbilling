@@ -47,6 +47,14 @@ came back (CI wait, board not current, `claimedBy` case, `needsDecision` misuse)
        (each path its own argument; long timeout). Root files (`.claude/…`, `docs/…`) as `../<path>`.
        p0 / train-blocker → claim with `--priority p0`; it pushes first (push + heavy turns go by claim
        priority, R-2591). `worker-lock status` shows the line.
+2b. [ ] **Money (category money/paisa) or p0 card — grill the card first (R-2594):** before any test or
+       code, write `edgeCases` on the card (5-10 lines, `get` first, `if_version`) and liveLog it. Cover:
+       zero / negative / rounding; partial payment and overpayment; repeat click / retry / webhook twice;
+       undo / un-reconcile and what built on it; and EVERY other feature that changes the same
+       subscription / invoice / bank line / advance — seats, plan change, billing parts, renewals, credit
+       notes, TDS months already deposited. Read `docs/specs/money-rules.md` for related rules and name them.
+       Each line ends `-> test: <name>` or `-> refused: <user message>`; no line stays open. Owner
+       decisions only (price, policy) go to `needsDecision` (haan/na). The checker reads this list first.
 3. [ ] Tests first: reproduce the owner's real path in a failing test, then fix, then green.
        Money change → read [`docs/specs/money-rules.md`](../../../docs/specs/money-rules.md), name the rules it touches and run their tests; new rule → add it there (R-2593).
        New SQL → a SQL test on the LOCAL DB in one rolled-back transaction.

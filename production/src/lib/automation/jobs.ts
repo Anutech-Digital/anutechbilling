@@ -27,8 +27,11 @@ export const CUSTOMER_MESSAGES = "customer_messages" as const;
  * switch only delays a deletion, while a wrong default would delete.
  * The SQL automation_state() does not know this list; the gate (cron-gate.ts) and the
  * /automation page do — nothing else asks about these jobs.
+ * zoho-fy-read (R-2607, 8 Nov 2026) is here too: it reads Zoho ONLY for a read an owner /
+ * accountant pressed "Read from Zoho" for, sends nothing and imports nothing; off by default the
+ * asked-for read would sit at 87 of 2,576 with nobody knowing why.
  */
-export const SAFETY_JOBS_DEFAULT_ON = ["backup"] as const;
+export const SAFETY_JOBS_DEFAULT_ON = ["backup", "zoho-fy-read"] as const;
 
 export interface AutomationJobSpec {
   label: string;
@@ -72,6 +75,7 @@ export const AUTOMATION_JOBS = {
   "mrr-snapshot":         { label: "Monthly revenue snapshot", what: "Saves each customer's monthly revenue for the reports.", customerFacing: false, scope: "tenant", dryRun: true },
   "backup":               { label: "Nightly backup", what: "Saves a restore point of every company's data each night. On unless you turn it off.", customerFacing: false, scope: "platform", dryRun: false },
   "demo-reset":           { label: "Demo reset", what: "Resets the public \"Try the demo\" workspace each night.", customerFacing: false, scope: "platform", dryRun: false },
+  "zoho-fy-read":         { label: "Zoho year read (FY import)", what: "Reads a financial year from Zoho Books on the server after you press Read from Zoho, so the window can be closed. Only reads Zoho; imports nothing.", customerFacing: false, scope: "platform", dryRun: false },
 } as const satisfies Record<string, AutomationJobSpec>;
 
 export type AutomationJob = keyof typeof AUTOMATION_JOBS;

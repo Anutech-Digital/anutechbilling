@@ -138,14 +138,17 @@ test.describe("R-2252 — Reduce seats with a shown credit", () => {
   });
 
   /* R-2584: "At end of term" is hidden until renewal applies a scheduled cut (R-2583) — it only saved a row and the renewal over-billed. */
-  test("Step 2: only 'Now, with credit' is offered — no 'At end of term', no 'Schedule for …'", async ({ browser, baseURL }) => {
+  /* R-2608: offered again (the renewal quote bills the cut, R-2583). Not saved here — a scheduled cut would block Step 4's "now" cut. */
+  test("Step 2: 'At end of term' → 'Seats go from 10 to 8 on <renewal>', no credit, 'Schedule for …' button on", async ({ browser, baseURL }) => {
     test.setTimeout(240_000);
     const page = await pageAs(browser, baseURL, "owner");
     const dlg = await reduceSeats(page, 2);
     await expect(dlg.getByTestId("reduce-seats-credit-value")).toHaveText(/₹[\d,]+/, { timeout: 90_000 }); // the preview has loaded
     await expect(dlg.getByRole("button", { name: "Now, with credit" })).toBeVisible();
-    await expect(dlg.getByRole("button", { name: "At end of term" })).toHaveCount(0);
-    await expect(dlg.getByRole("button", { name: /^Schedule for / })).toHaveCount(0);
+    await dlg.getByRole("button", { name: "At end of term" }).click();
+    await expect(dlg.getByTestId("reduce-seats-eot")).toContainText(/Seats go from 10 to 8 on .+No credit/);
+    await expect(dlg.getByTestId("reduce-seats-eot-blocked")).toHaveCount(0);
+    await expect(dlg.getByRole("button", { name: /^Schedule for / })).toBeEnabled();
     await dlg.getByRole("button", { name: /^Cancel$/ }).click();
     await page.context().close();
   });

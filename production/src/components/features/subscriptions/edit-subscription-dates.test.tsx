@@ -14,7 +14,7 @@
 // dialog that promises "corrects the record only — it doesn't re-bill". So the term is
 // read off the record's own start→renewal gap, and that is what the last case pins.
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, cleanup, fireEvent } from "@testing-library/react";
+import { render, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { EditSubscriptionDialog } from "./edit-subscription-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
 
@@ -118,5 +118,58 @@ describe("Correct subscription — the renewal date follows the start date", () 
   it("says what it will do, next to the field", () => {
     open(sub());
     expect(document.body.textContent).toContain("keeping the term 12 months long");
+  });
+});
+
+/* R-2613 (rule N5): moving the renewal date EARLIER moves a scheduled end-of-term seat cut with it
+   (the database trigger subscriptions_r2613_seat_cut_redate) — the owner is told before saving,
+   only when a cut really is scheduled for the old date (read from GET reduce-seats). */
+describe("R-2613 renewal date moved earlier — seat cut note", () => {
+  const note = () => document.querySelector("[data-testid='renewal-earlier-seat-cut-note']")?.textContent ?? null;
+  const stubCut = (scheduled: unknown, ok = true) =>
+    vi.stubGlobal("fetch", vi.fn(async () => ({ ok, status: ok ? 200 : 500, json: async () => ({ scheduled }) })));
+  const cut = { seats_before: 10, seats_after: 7, effective_date: "2099-01-10" };
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("no note while the date is unchanged or moved later", async () => {
+    stubCut(cut);
+    const { renew } = open(sub({ start_date: "2026-01-10", renewal_date: "2099-01-10" }));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(note()).toBeNull();
+    fireEvent.change(renew, { target: { value: "2099-02-10" } });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(note()).toBeNull();
+  });
+
+  it("earlier but still ahead, a cut scheduled → the cut moves to the new date", async () => {
+    stubCut(cut);
+    const { renew } = open(sub({ start_date: "2026-01-10", renewal_date: "2099-01-10" }));
+    fireEvent.change(renew, { target: { value: "2098-12-01" } });
+    await waitFor(() => expect(note()).toContain("The seat cut 10 → 7 seats scheduled for"));
+    expect(note()).toContain("moves to");
+  });
+
+  it("moved into the past or cleared → the cut is removed", async () => {
+    stubCut(cut);
+    const { renew } = open(sub({ start_date: "2026-01-10", renewal_date: "2099-01-10" }));
+    fireEvent.change(renew, { target: { value: "2020-01-01" } });
+    await waitFor(() => expect(note()).toContain("is removed when you save"));
+    fireEvent.change(renew, { target: { value: "" } });
+    await waitFor(() => expect(note()).toContain("is removed when you save"));
+  });
+
+  it("no cut scheduled (or one for another date) → no note", async () => {
+    stubCut({ ...cut, effective_date: "2098-06-01" });
+    const { renew } = open(sub({ start_date: "2026-01-10", renewal_date: "2099-01-10" }));
+    fireEvent.change(renew, { target: { value: "2098-12-01" } });
+    await new Promise((r) => setTimeout(r, 10));
+    expect(note()).toBeNull();
+  });
+
+  it("the cut could not be read → a conditional note", async () => {
+    stubCut(null, false);
+    const { renew } = open(sub({ start_date: "2026-01-10", renewal_date: "2099-01-10" }));
+    fireEvent.change(renew, { target: { value: "2098-12-01" } });
+    await waitFor(() => expect(note()).toContain("If a seat cut is scheduled for"));
   });
 });

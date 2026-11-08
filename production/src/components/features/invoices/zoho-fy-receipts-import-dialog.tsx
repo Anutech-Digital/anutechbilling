@@ -6,6 +6,9 @@
  * statement is in. Owner / accountant only. Zoho is only read.
  *
  *   1. Read from Zoho   — the server reads the year's payments (list + each detail), paced, resumable.
+ *                         R-2607: it runs ON THE SERVER (cron zoho-fy-read + this dialog's own
+ *                         pass while it is open) — the window can be closed; reopening shows where
+ *                         it stands. Before, the loop lived in this tab and stopped when it froze.
  *   2. Preview          — counts, money / TDS / advance totals, which app account each Zoho deposit
  *                         account goes to (suggested, changeable, or "Leave out" — its payments are
  *                         then skipped "Left out by owner."), why the rest is left out. The import
@@ -24,14 +27,26 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { formatDate, rupee } from "@/lib/utils";
-import { FY_CALLS_PER_REQUEST } from "@/lib/integrations/zoho-books/config";
-import { ZOHO_CALLS_PER_MIN } from "@/lib/integrations/zoho-books/zoho-pace";
 import { LEAVE_OUT, type ZohoDeposit } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
 
 const API = "/api/integrations/zoho-books/receipts-import";
 const FY = "2025-26";
-const READ_GAP_MS = Math.ceil((FY_CALLS_PER_REQUEST / ZOHO_CALLS_PER_MIN) * 60_000);
+/** R-2607: between two server passes of the open dialog (each pass reads up to ~40 s itself). */
+const STEP_GAP_MS = 5_000;
+/** R-2607: the server's read — progress, whether it is still asked for, why it stopped. */
+interface ReadState { listed: number; detailed: number; complete: boolean; running?: boolean; error?: string | null }
+
+/** R-2607 — the read's progress line. */
+export function readStatusText(r: ReadState): string {
+  const n = (x: number) => x.toLocaleString("en-IN");
+  if (r.complete) return `Read all ${n(r.listed)} payments.`;
+  if (r.running) {
+    const where = r.listed ? `Read ${n(r.detailed)} of ${n(r.listed)}` : "Reading the list from Zoho";
+    return `${where} — on the server; you can close this window and come back.`;
+  }
+  return r.listed ? `Read ${n(r.detailed)} of ${n(r.listed)} — stopped.` : "Not read yet.";
+}
 
 interface Preview {
   /* R-2565: withFee / fee — Razorpay payments whose fee Zoho took off (optional: an older server sends none). */
@@ -95,7 +110,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
   /* R-2547: a failed part's message — kept apart from `error`, so the preview refresh after the import does not wipe it. */
   const [partError, setPartError] = React.useState<string | null>(null);
   const [resumeAt, setResumeAt] = React.useState<number | null>(null);
-  const [read, setRead] = React.useState<{ listed: number; detailed: number; complete: boolean } | null>(null);
+  const [read, setRead] = React.useState<ReadState | null>(null);
   const [preview, setPreview] = React.useState<Preview | null>(null);
   const [accounts, setAccounts] = React.useState<Record<string, string>>({});
   const [check, setCheck] = React.useState<PartResult | null>(null);
@@ -119,20 +134,32 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
   }, []);
 
+  /* R-2607: follow the server's read while this window is open — each "step" is one server pass
+     (the cron does the same with the window closed; the lease keeps it to one at a time). */
+  const followRead = React.useCallback(async (map: Record<string, string>) => {
+    setBusy("read");
+    let last: ReadState | null = null;
+    try {
+      for (;;) {
+        last = await call<ReadState>({ action: "step" });
+        setRead(last);
+        if (last.complete || !last.running || stop.current) break;
+        await sleep(STEP_GAP_MS);
+      }
+    } catch (e) { setError((e as Error).message); setBusy(null); return; }
+    setBusy(null);
+    if (last?.error) setError(last.error);
+    if (last?.complete && !stop.current) await loadPreview(map);
+  }, [loadPreview]);
+
   async function readZoho() {
     const again = !!(read?.complete || preview);
     setBusy("read"); setError(null); setPartError(null); setResumeAt(null); setPreview(null); setCheck(null); setDone(null);
     try {
       if (again) await call({ action: "restart" });
-      for (;;) {
-        const r = await call<{ listed: number; detailed: number; complete: boolean; busy: boolean }>({ action: "read" });
-        setRead(r);
-        if (r.complete || stop.current) break;
-        await sleep(r.busy ? 60_000 : READ_GAP_MS);
-      }
+      setRead(await call<ReadState>({ action: "start" }));
     } catch (e) { setError((e as Error).message); setBusy(null); return; }
-    setBusy(null);
-    await loadPreview(accounts);
+    await followRead(accounts);
   }
 
   /** Parts `from`..last, in order; a failed part stops the run with PartFailed (what the earlier parts did + the message). */
@@ -178,7 +205,19 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     await loadPreview(accounts);
   }
 
-  React.useEffect(() => { if (open && !preview && !read) void loadPreview({}).catch(() => {}); }, [open, preview, read, loadPreview]);
+  /* On open: where the server's read stands (R-2607) — still running → follow it; else the preview. */
+  React.useEffect(() => {
+    if (!open || preview || read) return;
+    void (async () => {
+      try {
+        const s = await call<ReadState>({ action: "status" });
+        setRead(s);
+        if (s.running) { await followRead({}); return; }
+        if (s.error) setError(s.error);
+      } catch { /* the preview below says what is wrong */ }
+      await loadPreview({});
+    })();
+  }, [open, preview, read, loadPreview, followRead]);
 
   /* After Remove import: the same screens as after Import show the receipts gone (review). */
   async function afterRemove() {
@@ -189,8 +228,9 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
   const toBook = (preview?.counts.import ?? 0) + (preview?.counts.alreadyNotBanked ?? 0);
   const feeText = razorpayFeeText(preview?.counts.withFee ?? 0, preview?.totals.fee ?? 0);
   const canResume = resumeAt !== null && resumeAt < (preview?.parts ?? 0);
+  /* R-2607: closing while it reads is fine — the server carries on. */
   return (
-    <Dialog open={open} onOpenChange={(o) => { if (!busy) onOpenChange(o); }}>
+    <Dialog open={open} onOpenChange={(o) => { if (!busy || busy === "read") onOpenChange(o); }}>
       <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>FY {FY} receipts from Zoho</DialogTitle>
@@ -208,7 +248,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
             </Button>
             {read && (
               <span className="text-xs text-ink-2" role="status">
-                {read.complete ? `Read all ${read.listed.toLocaleString("en-IN")} payments.` : `Read ${read.detailed.toLocaleString("en-IN")} of ${read.listed.toLocaleString("en-IN")}${busy === "read" ? " — keep this open" : ""}`}
+                {readStatusText(read)}
               </span>
             )}
           </div>
@@ -289,7 +329,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
         </div>
 
         <DialogFooter>
-          <Button type="button" variant="ghost" disabled={!!busy} onClick={() => onOpenChange(false)}>Close</Button>
+          <Button type="button" variant="ghost" disabled={!!busy && busy !== "read"} onClick={() => onOpenChange(false)}>Close</Button>
           {preview && toBook > 0 && (
             <>
               <Button type="button" loading={busy === "check"} disabled={!!busy && busy !== "check"} onClick={dryRun}>Check first (nothing saved)</Button>

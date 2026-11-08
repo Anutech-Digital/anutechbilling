@@ -21,12 +21,20 @@
  *   total = fee + gst (the extra); payable = B + fee + gst (what the customer pays online).
  *   Example: B ₹11,800 → fee ₹242 (241.70), GST ₹44 (43.56), total ₹286, payable ₹12,086.
  * Worked in paise × basis points: fee = bp·paise / (1,000,000 − 118·bp).
+ *
+ * R-2598 (money-rules F2, razorpay-fee.md rule 3): the fee is an incidental charge of the SAME
+ * supply, so it carries the BILL's GST rate — 18 above is only the default. A 0% bill (export /
+ * SEZ without payment, money-rules G4) → fee GST 0 and the gross-up uses 1.00:
+ *   fee = r·B / (1 − r), e.g. B ₹11,800 at 0% → fee ₹241 (240.82), GST ₹0, payable ₹12,041.
+ * The rate comes from the bill's own stored tax_rate (quotes / invoices); unknown → 18 (never
+ * zero-rated by guess). General form: fee = bp·paise / (1,000,000 − (100 + g)·bp).
  */
 import { rupee } from "@/lib/utils";
 
 export type OnlineFeeBearer = "customer" | "business";
 
-/** GST on the fee we recover (18%, SAC to be confirmed by the CA — plan.md "For Hitesh"). */
+/** Default GST on the fee we recover (18% — our bills' rate; SAC to be confirmed by the CA — plan.md
+ *  "For Hitesh"). A bill at another rate passes its own (R-2598, onlineFeeGstPct). */
 export const ONLINE_FEE_GST_PCT = 18;
 export const ONLINE_FEE_DEFAULT_RATE_PCT = 2;
 /** Same bounds as the tenants_online_fee_rate_check constraint. */
@@ -59,6 +67,9 @@ export interface OnlineFeeCustomer {
 export interface OnlineFeeBill {
   /** The bill total in rupees, GST included. */
   billTotal: number;
+  /** R-2598: the bill's GST rate % (its stored tax_rate) — the fee carries the same rate. 0 = a
+   *  zero-rated bill (export / SEZ without payment). Missing → ONLINE_FEE_GST_PCT (18). */
+  gstPct?: number | null;
   waived?: boolean | null;
   waiveReason?: string | null;
 }
@@ -84,15 +95,29 @@ function cleanNote(v: string | null | undefined): string | null {
   return t ? t : null;
 }
 
-/** The fee on a bill, whole rupees, grossed up (see the header for the formula and rounding). */
-export function onlineFeeAmounts(billTotal: number, ratePct: number): { fee: number; gst: number; total: number; payable: number } {
+/** R-2598 — the GST % the fee carries, from the bill's stored tax_rate. 0 stays 0 (zero-rated
+ *  bill); a usable rate (0–28) is kept; anything unknown → 18, so a bill is never zero-rated by guess. */
+export function onlineFeeGstPct(billTaxRate: unknown): number {
+  if (billTaxRate === null || billTaxRate === undefined || billTaxRate === "") return ONLINE_FEE_GST_PCT;
+  const n = Number(billTaxRate);
+  return Number.isFinite(n) && n >= 0 && n <= 28 ? n : ONLINE_FEE_GST_PCT;
+}
+
+/** The fee on a bill, whole rupees, grossed up (see the header for the formula and rounding).
+ *  gstPct = the bill's GST rate (R-2598); default 18. */
+export function onlineFeeAmounts(
+  billTotal: number,
+  ratePct: number,
+  gstPct: number = ONLINE_FEE_GST_PCT,
+): { fee: number; gst: number; total: number; payable: number } {
+  const g = onlineFeeGstPct(gstPct);
   const bill = Number.isFinite(billTotal) && billTotal > 0 ? billTotal : 0;
   if (bill === 0 || !Number.isFinite(ratePct) || ratePct <= 0) return { fee: 0, gst: 0, total: 0, payable: bill };
   const paise = Math.round(bill * 100);
   const bp = Math.round(ratePct * 100); // 2% → 200 basis points
-  // r·B / (1 − 1.18·r) with r = bp/10000 and B = paise/100  →  bp·paise / (1,000,000 − 118·bp) rupees.
-  const fee = Math.round((bp * paise) / (1_000_000 - (100 + ONLINE_FEE_GST_PCT) * bp));
-  const gst = Math.round((fee * ONLINE_FEE_GST_PCT) / 100);
+  // r·B / (1 − (1+g)·r) with r = bp/10000 and B = paise/100  →  bp·paise / (1,000,000 − (100+g)·bp) rupees.
+  const fee = Math.round((bp * paise) / (1_000_000 - (100 + g) * bp));
+  const gst = Math.round((fee * g) / 100);
   return { fee, gst, total: fee + gst, payable: bill + fee + gst };
 }
 
@@ -109,7 +134,7 @@ export function onlineFeeFor(
   customer: OnlineFeeCustomer | null | undefined,
   settings: OnlineFeeSettings,
 ): OnlineFeeResult {
-  const amounts = onlineFeeAmounts(bill.billTotal, settings.ratePct);
+  const amounts = onlineFeeAmounts(bill.billTotal, settings.ratePct, onlineFeeGstPct(bill.gstPct));
   const business = (reason: OnlineFeeReason, note: string | null = null): OnlineFeeResult =>
     ({ bearer: "business", ...amounts, reason, note });
 
@@ -127,7 +152,9 @@ export function onlineFeeLine(r: OnlineFeeResult, settings?: Pick<OnlineFeeSetti
   const why = r.note ? ` — ${r.note}` : "";
   switch (r.reason) {
     case "customer_pays":
-      return `Online fee: customer pays ${rupee(r.total)} (${rupee(r.fee)} + ${rupee(r.gst)} GST) if paid online — ${rupee(r.payable)} in all. Bank transfer is free.`;
+      return r.gst === 0 && r.fee > 0
+        ? `Online fee: customer pays ${rupee(r.total)} (no GST — 0% bill) if paid online — ${rupee(r.payable)} in all. Bank transfer is free.`
+        : `Online fee: customer pays ${rupee(r.total)} (${rupee(r.fee)} + ${rupee(r.gst)} GST) if paid online — ${rupee(r.payable)} in all. Bank transfer is free.`;
     case "bill_waived":
       return `Online fee: waived for this bill${why}`;
     case "customer_absorbs":
@@ -165,6 +192,20 @@ export function parseOnlineFeeCustomer(row: Record<string, unknown> | null | und
 export const TENANT_ONLINE_FEE_COLUMNS = "online_fee_bearer, online_fee_rate_pct, online_fee_waive_above, online_fee_line_text";
 export const CUSTOMER_ONLINE_FEE_COLUMNS = "online_fee_override, online_fee_override_reason";
 export const BILL_ONLINE_FEE_COLUMNS = "online_fee_waived, online_fee_waive_reason";
+/** R-2598: the bill's GST rate — the fee carries the same rate. quotes have tax_rate; invoices
+ *  also have tax_amount (an export invoice can keep tax_rate 18 with ₹0 tax — the invoice page
+ *  already shows that as 0%). */
+export function billGstColumns(kind: "quote" | "invoice"): string {
+  return kind === "invoice" ? "tax_rate, tax_amount" : "tax_rate";
+}
+
+/** R-2598: a quote / invoice row (with billGstColumns) → the GST % its online fee carries.
+ *  A stored tax of exactly ₹0 is a 0% bill whatever tax_rate says; a missing tax_amount is not. */
+export function billOnlineFeeGstPct(row: Record<string, unknown> | null | undefined): number {
+  const tax = row?.tax_amount;
+  if (tax !== null && tax !== undefined && tax !== "" && Number(tax) === 0) return 0;
+  return onlineFeeGstPct(row?.tax_rate);
+}
 
 /** Before the migration: the column is not there (Postgres 42703 / PostgREST PGRST204 or a schema-cache miss). */
 export function isOnlineFeeColumnMissing(err: { code?: string; message?: string } | null | undefined): boolean {
