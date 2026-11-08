@@ -99,6 +99,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   cancel_subscription: "R-1711: what one subscription's open invoices still ask for, so a cancel never clears it (no money column changes on invoices)",
   write_off_subscription: "R-1635: stamps one subscription's open invoices written off (no money column changes)",
   write_off_small_invoice_balance: "R-2410: stamps ONE invoice (balance ₹1–₹500) written off + an audit row (no money column changes) — not GST or revenue",
+  settle_quote_part_short: "R-2595: reads ONE part invoice of a split-billed quote (its balance) and records the small rest via record_instalment_payment — not GST or revenue",
   sync_project_invoice_paid: "project receipts",
   tg_payment_followups_same_tenant: "tenant check",
   tg_quotes_add_seats_take_back: "per quote",
