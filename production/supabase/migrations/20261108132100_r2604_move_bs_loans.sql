@@ -3,7 +3,7 @@
 --
 -- R-2604 (8 Nov 2026): before R-2603, Reconcile → "I am GIVING a loan/advance" (book_bank_advance) wrote a
 -- Balance Sheet line "Advance/loan given · <name>" (and "Advance/loan returned · <name>" for money back)
--- instead of a Loans given row. Staging Excel Technologies has 7 such lines (₹37,84,500), names typed by
+-- instead of a Loans given row. One staging company has 7 such lines (₹37,84,500), names typed by
 -- hand (Aakash Deep / aakash deep). This is the owner's tool to move them — one store for one thing.
 --
 --   preview_bs_loan_move()  — "Check first": read only. Groups the tenant's asset rows labelled
