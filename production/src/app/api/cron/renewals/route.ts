@@ -66,7 +66,7 @@ import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
-import { releaseExpiredPlanChanges, dropReleasedLinks, tenantsWithLinkedQuote } from "@/lib/renewals/release-expired-plan-change";
+import { releaseExpiredPlanChanges, dropReleasedLinks, tenantsWithLinkedQuote, type RpcClient } from "@/lib/renewals/release-expired-plan-change";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -210,9 +210,10 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
   result.total_active = allSubs.length;
 
   /* R-2590 (c): an unpaid Change plan quote whose validity ended lets go of the renewal link
+     (the function is not in the generated Database types yet — hence the RpcClient cast)
      FIRST — else the steps below reuse it as this subscription's renewal quote (existingQuoteId)
      or hold a split-billed roll on it. SQL release_expired_plan_change_quotes. */
-  const planChangeRelease = await releaseExpiredPlanChanges(supabase, tenantsWithLinkedQuote(allSubs));
+  const planChangeRelease = await releaseExpiredPlanChanges(supabase as unknown as RpcClient, tenantsWithLinkedQuote(allSubs));
   dropReleasedLinks(allSubs, planChangeRelease.released);
   for (const e of planChangeRelease.errors) {
     result.errors.push({ subscription_id: "(plan-change-expiry)", message: `Tenant ${e.tenantId}: ${e.message}` });
