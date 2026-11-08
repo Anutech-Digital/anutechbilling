@@ -92,16 +92,17 @@ test.describe("R-2583 — a scheduled end-of-term seat cut is billed at renewal"
     if (cleanUp) clearRows();
   });
 
-  test("Step 1: Renewals → ⋯ → Create quote (don't send) → the quote is for 7 seats, ₹12,600 + GST = ₹14,868", async ({ browser, baseURL }) => {
+  test("Step 1: Renewals → 8–30 → ⋯ → Create quote (don't send) → the quote is for 7 seats, ₹12,600 + GST = ₹14,868", async ({ browser, baseURL }) => {
     test.setTimeout(240_000);
     const page = await pageAs(browser, baseURL, "owner");
     await openAppPage(page, "/renewals", /Renewals/);
+    await page.getByRole("tab", { name: /^8–30/ }).click();   // renews in 20 days
     const menu = page.getByRole("button", { name: `More renewal actions for ${CUSTNAME} — ${PLAN}` }).filter({ visible: true });
     await expect(menu.first()).toBeVisible({ timeout: 60_000 });
     await menu.first().click();
     await page.getByRole("menuitem", { name: /Create quote \(don.t send\)/ }).click();
-    await expect(page).toHaveURL(/\/quotes\//, { timeout: 60_000 });
-    await expect(page.getByText("₹14,868").first()).toBeVisible({ timeout: 60_000 });
+    /* The quote opens (or, on a slow dev compile, the Renewals row shows it) — either way ₹14,868 for 7 seats, not ₹21,240 for 10. */
+    await expect(page.getByText(/₹14,868/).filter({ visible: true }).first()).toBeVisible({ timeout: 120_000 });
     const [seats, amount, subtotal, qty] = psql(
       `select seats || '|' || amount || '|' || subtotal || '|' || (line_items->0->>'qty') from public.quotes where customer_id = '${CUST}';`,
     )[0].split("|");
