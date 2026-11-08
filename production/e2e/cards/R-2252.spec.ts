@@ -137,8 +137,8 @@ test.describe("R-2252 — Reduce seats with a shown credit", () => {
     await page.context().close();
   });
 
-  /* R-2584 hid "At end of term"; R-2608 offers it again (the renewal quote bills the cut, R-2583). Not saved
-     here — a scheduled cut would block Step 4's "now" cut. */
+  /* R-2584: "At end of term" is hidden until renewal applies a scheduled cut (R-2583) — it only saved a row and the renewal over-billed. */
+  /* R-2608: offered again (the renewal quote bills the cut, R-2583). Not saved here — a scheduled cut would block Step 4's "now" cut. */
   test("Step 2: 'At end of term' → 'Seats go from 10 to 8 on <renewal>', no credit, 'Schedule for …' button on", async ({ browser, baseURL }) => {
     test.setTimeout(240_000);
     const page = await pageAs(browser, baseURL, "owner");
