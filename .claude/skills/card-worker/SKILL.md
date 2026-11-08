@@ -30,6 +30,8 @@ came back (CI wait, board not current, `claimedBy` case, `needsDecision` misuse)
 - [ ] Card marked `doing` on the board the moment the worker is spawned (playbook d).
 - [ ] A p0/p1 money card with calc + review fixes + card test → split into ≤45-min cards first.
 - [ ] Brief says: card id, priority, "follow the card-worker skill", hand back after push.
+- [ ] Money / p0 card: when the worker asks (step 8a), spawn the `independent-check` checker on its
+      wip sha at once — the push waits for that SAFE (R-2592).
 
 ## Steps
 
@@ -61,20 +63,22 @@ came back (CI wait, board not current, `claimedBy` case, `needsDecision` misuse)
        SQL changed → `npm run test:sql:local` (first line must say target local). No full `npm run test`.
 6. [ ] Review: Skill `code-review` with args `high` on `git diff anutech/manager-pardeep...HEAD`;
        money/migration/auth/RLS → also Skill `security-review`. Card field `review` {at, findings, fixed, left}.
-6b. [ ] **Money card (category money/paisa) or p0 — independent review BEFORE push (R-2592):** commit,
-       `node scripts/ops/worker-lock.mjs wip <CARD>`, liveLog "wip <sha> — checker chahiye", and ask the
-       coordinator (SendMessage to the session that started you) for the independent checker on that sha.
-       Wait for `independentReview` {verdict: "SAFE", sha} on the card. BLOCK → fix on this card, `wip`
-       again, ask for a re-review. Then re-save the card file. `push` without it stops with exit 11;
-       `--no-review "<reason>"` only when Pardeep says so (logged).
 7. [ ] `howToCheck`: 2–3 plain Hinglish steps on localhost with data that exists in E2E Test Co;
        check with `npm run card:check -- <CARD> --card <cardfile>`. Machine-checkable → write
        `production/e2e/cards/<CARD>.spec.ts` and run `node scripts/ops/card-tests.mjs <CARD>`.
        Save the card file again after writing howToCheck.
-8. [ ] Commit `<CARD>: <what changed>` + `Co-Authored-By` line. Push ONLY:
+8. [ ] Commit `<CARD>: <what changed>` + `Co-Authored-By` line.
+8a. [ ] **Money card (category money/paisa) or p0 — independent review BEFORE push (R-2592):**
+       `node scripts/ops/worker-lock.mjs wip <CARD>`, liveLog "wip <sha> — checker chahiye", and ask the
+       coordinator (SendMessage to the session that started you) for the independent checker on that sha.
+       Wait for `independentReview` {verdict: "SAFE", sha} on the card. BLOCK → fix on this card, commit,
+       `wip` again, ask for a re-review. Then re-save the card file. `push` stops with exit 13 unless the
+       reviewed sha has the same code as HEAD (a rebase/squash is fine, any new code is not);
+       `--no-review "<reason>"` only when Pardeep says so (logged).
+8b. [ ] Push ONLY:
        `WORKER_MAX=<n> node scripts/ops/worker-lock.mjs push <CARD> --card <cardfile>`.
        Never plain `git push`, never remote `origin`. Exit 7 (CI red) / 9 (outside claim) /
-       10 (stash) / 11 (money/p0 card without SAFE review of this code) → read the message, fix,
+       10 (stash) / 13 (money/p0 card without SAFE review of this code) → read the message, fix,
        don't route around it.
 9. [ ] Board: `status: review`, `commits`, `checked` (one line), `finishedAt` (`date -u`),
        `howToCheck`, `ciCheck` {sha, ci: "pending", at}; delete `nowDoing`.
