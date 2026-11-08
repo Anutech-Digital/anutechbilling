@@ -11,6 +11,7 @@
  *   node scripts/ops/r909-live-cutover.mjs                       # list the steps
  *   node scripts/ops/r909-live-cutover.mjs <step>                # print what <step> would run
  *   node scripts/ops/r909-live-cutover.mjs <step> --run          # do it (Pardeep's haan first)
+ *   node scripts/ops/r909-live-cutover.mjs scheduler-resume-customer renewals billing --run   # R-2597: per-job, client owner's yes
  *
  * Cloud Run is changed ONLY with --update-env-vars / --update-secrets / --remove-env-vars, never
  * --set-env-vars / --set-secrets (those replace the whole set and would drop the live-only keys).
@@ -43,11 +44,34 @@ export const URL_SECRET = {
   jobs: ["JOBS_DATABASE_URL", "live-jobs-database-url"],
 };
 // 15 jobs in asia-southeast1 pointing at the live run.app URL (gcloud scheduler jobs list, 10 Oct).
-export const CRON_JOBS = [
-  "renewals", "health-digest", "gmail-inbox", "billing", "attendance-retention", "invoice-dunning",
-  "ai-reply-retry", "birthday-greetings", "mrr-snapshot", "ai-reflection", "attendance-reminders",
-  "compliance-reminders", "trial-expiry", "backup", "google-contacts-sync",
+// R-2597: split in two. CUSTOMER_MAIL_JOBS mail a client tenant's customers, so after the cutover they are
+// resumed one by one with `scheduler-resume-customer <job>...` — only after the client owner's yes for each
+// (runbook 6.5 / 8.10). INTERNAL_JOBS are Anutech-internal and `scheduler-resume` resumes only these.
+export const INTERNAL_JOBS = [
+  "health-digest", "gmail-inbox", "attendance-retention", "ai-reply-retry", "mrr-snapshot", "ai-reflection",
+  "attendance-reminders", "backup", "google-contacts-sync",
 ].map((j) => `resellersos-${j}`);
+export const CUSTOMER_MAIL_JOBS = [
+  "renewals", "invoice-dunning", "billing", "birthday-greetings", "trial-expiry", "compliance-reminders",
+].map((j) => `resellersos-${j}`);
+export const CRON_JOBS = [...INTERNAL_JOBS, ...CUSTOMER_MAIL_JOBS];
+
+/**
+ * Names given to `scheduler-resume-customer` → full job names. Accepts "renewals" or "resellersos-renewals".
+ * Throws on an empty list or any name that is not a customer-mail job (an internal job, a typo).
+ */
+export function customerJobsFromArgs(names) {
+  if (!names.length) throw new Error(`name at least one customer-mail job: ${CUSTOMER_MAIL_JOBS.join(", ")}`);
+  const out = [];
+  for (const n of names) {
+    const full = n.startsWith("resellersos-") ? n : `resellersos-${n}`;
+    if (!CUSTOMER_MAIL_JOBS.includes(full)) {
+      throw new Error(`"${n}" is not a customer-mail job — allowed: ${CUSTOMER_MAIL_JOBS.join(", ")}${INTERNAL_JOBS.includes(full) ? " (internal jobs resume with scheduler-resume)" : ""}`);
+    }
+    if (!out.includes(full)) out.push(full);
+  }
+  return out;
+}
 
 export const ENV_UPDATES = {
   DATA_GATEWAY: "1",
@@ -162,8 +186,21 @@ const STEPS = {
     run() { for (const j of CRON_JOBS) gcloud(["scheduler", "jobs", "pause", j, `--project=${P}`, `--location=${R}`]); },
   },
   "scheduler-resume": {
-    about: "resume the 15 live cron jobs (after the app is verified)",
-    run() { for (const j of CRON_JOBS) gcloud(["scheduler", "jobs", "resume", j, `--project=${P}`, `--location=${R}`]); },
+    about: `resume the ${INTERNAL_JOBS.length} Anutech-internal cron jobs only (the ${CUSTOMER_MAIL_JOBS.length} customer-mail jobs stay paused)`,
+    run() {
+      for (const j of INTERNAL_JOBS) gcloud(["scheduler", "jobs", "resume", j, `--project=${P}`, `--location=${R}`]);
+      console.log(`  still PAUSED (customer mail — client owner's yes per job, then scheduler-resume-customer <job>): ${CUSTOMER_MAIL_JOBS.join(" ")}`);
+    },
+  },
+  "scheduler-resume-customer": {
+    about: `resume ONLY the named customer-mail jobs, after the client owner's yes for each: ${CUSTOMER_MAIL_JOBS.map((j) => j.replace("resellersos-", "")).join(", ")}`,
+    run(names = []) {
+      let jobs;
+      try { jobs = customerJobsFromArgs(names); } catch (e) { console.log(`  REFUSED: ${e.message}`); process.exitCode = 1; return; }
+      for (const j of jobs) gcloud(["scheduler", "jobs", "resume", j, `--project=${P}`, `--location=${R}`]);
+      const left = CUSTOMER_MAIL_JOBS.filter((j) => !jobs.includes(j));
+      if (left.length) console.log(`  still PAUSED: ${left.join(" ")}`);
+    },
   },
   "run-env": {
     about: "Cloud Run live: new env + secrets + 1Gi on a NO-TRAFFIC revision tagged r909 (old image, so nothing changes for users)",
@@ -221,16 +258,18 @@ const STEPS = {
 };
 
 function main() {
-  const step = process.argv.slice(2).find((a) => !a.startsWith("--"));
+  const words = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+  const step = words[0];
   if (!step || !STEPS[step]) {
     console.log("R-909 live cutover helper — dry run unless --run.\n");
-    for (const [k, s] of Object.entries(STEPS)) console.log(`  ${k.padEnd(18)} ${s.about}`);
+    for (const [k, s] of Object.entries(STEPS)) console.log(`  ${k.padEnd(26)} ${s.about}`);
     console.log("\nOrder and checks: docs/R-909-LIVE-CUTOVER.md");
     if (step) process.exit(1);
     return;
   }
   console.log(`== R-909 step "${step}" — ${RUN ? "RUNNING" : "DRY RUN (nothing changes; add --run)"}\n   ${STEPS[step].about}`);
-  STEPS[step].run();
+  STEPS[step].run(words.slice(1));
+  if (process.exitCode) return;
   console.log(RUN ? `\n== "${step}" done.` : "\n== dry run only.");
 }
 
