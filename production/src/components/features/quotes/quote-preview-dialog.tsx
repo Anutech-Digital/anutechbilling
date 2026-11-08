@@ -31,8 +31,7 @@ import {
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
 import { quoteInstalmentPlan, firstLineCommitment } from "@/lib/billing/instalments";
-import { flexOneTimeFigures, FLEX_FIRST_INVOICE, FLEX_THEN_MONTHLY, FLEX_ONCE } from "@/lib/quotes/per-period-figures";
-import { lineIsSubscription } from "@/lib/quotes/optional-line";
+import { flexOneTimeFigures, lineChargedOnce, FLEX_FIRST_INVOICE, FLEX_THEN_MONTHLY, FLEX_ONCE } from "@/lib/quotes/per-period-figures";
 import { ONE_TIME_SCHEDULE, type LinePeriodContext } from "@/lib/quotes/service-period";
 import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
@@ -418,7 +417,7 @@ export function QuotePreviewDialog({
                   const lineDiv  = perInvoiceDivisor(billingN, line.commitment);
                   const lineUnit = billingUnit;
                   /* R-2580: on a flex sale a one-time line is charged once — no "/mo". */
-                  const showPer  = lineN > 1 && !(flexOnce && !lineIsSubscription(line));
+                  const showPer  = lineN > 1 && !(flexOnce && lineChargedOnce(line));
                   const rate     = showPer ? Math.round(line.rate / lineDiv) : line.rate;
                   const amount   = line.qty * rate;
                   /* R-495: list price, discount (₹ and %) and final rate, in the same unit as
@@ -455,7 +454,7 @@ export function QuotePreviewDialog({
                       </td>
                       <td className="py-3 pl-2 text-right text-sm tabular-nums font-medium">
                         <div>{ff && !showPer ? fgn(ff.lines[li].gross) : money(amount)}{showPer ? lineUnit : ""}</div>
-                        {showPer && (
+                        {showPer && !flexOnce && (
                           <div className="text-3xs font-normal text-ink-3">
                             = {money(line.qty * line.rate * (lineN / lineDiv))}/yr
                           </div>

@@ -127,6 +127,18 @@ export const FLEX_FIRST_INVOICE = "First invoice (incl. one-time)";
 export const FLEX_THEN_MONTHLY = "Then each month";
 export const FLEX_ONCE = "One-time, billed once with the first invoice";
 
+/** Is this stored line charged once (not a subscription)? lineIsSubscription's rule, reading the
+ *  one_time marker the way SQL does (true or the text "true") — one test for the totals AND the
+ *  line rows, so a line can never be once in one and "/mo" in the other. */
+export function lineChargedOnce(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const l = raw as { commitment?: unknown; one_time?: unknown };
+  return !lineIsSubscription({
+    commitment: (typeof l.commitment === "string" ? l.commitment : undefined) as QuoteLineItem["commitment"],
+    one_time: l.one_time === true || String(l.one_time ?? "").toLowerCase() === "true",
+  });
+}
+
 export function flexOneTimeFigures(i: {
   lines: unknown;
   discountPct: number;
@@ -143,12 +155,11 @@ export function flexOneTimeFigures(i: {
   let onceSub = 0, recurringSub = 0, onceTaxableInr = 0;
   for (const raw of i.lines as Array<Record<string, unknown> | null>) {
     if (!raw || typeof raw !== "object") continue;
-    const amt = num(raw.qty, 1) * num(raw.rate, 0);
-    const line = {
-      commitment: raw.commitment as QuoteLineItem["commitment"],
-      one_time: raw.one_time === true || String(raw.one_time ?? "").toLowerCase() === "true",
-    };
-    if (lineIsSubscription(line)) recurringSub += amt;
+    /* An optional line the customer has not ticked is not in the stored totals (configure.ts). */
+    if (raw.optional === true && raw.included_by_default !== true) continue;
+    /* A legacy per-line discount is already inside the stored subtotal (QuotePDF netAnnual). */
+    const amt = num(raw.qty, 1) * num(raw.rate, 0) * (1 - num(raw.discount_pct, 0) / 100);
+    if (!lineChargedOnce(raw)) recurringSub += amt;
     else {
       onceSub += amt;
       onceTaxableInr += taxableAfterDiscount(amt, i.discountPct);

@@ -74,6 +74,16 @@ describe("R-2580: the figures", () => {
     expect(flexOneTimeFigures({ ...base, lines: [SEATS] })).toBeNull();
     expect(flexOneTimeFigures({ ...base, lines: [{ ...SEATS, commitment: "annual_yearly" }, DOMAIN] })).toBeNull();
     expect(flexOneTimeFigures({ ...base, lines: [DOMAIN] })).toBeNull();
+    // An optional domain the customer has not ticked is not in the stored totals.
+    expect(flexOneTimeFigures({ ...base, lines: [SEATS, { ...DOMAIN, optional: true }] })).toBeNull();
+  });
+
+  it("the text marker one_time: \"true\" counts, as in SQL", () => {
+    const f = flexOneTimeFigures({
+      lines: [SEATS, { ...DOMAIN, one_time: "true" as unknown as boolean }],
+      discountPct: 0, subtotal: 3840, taxable: 3840, total: 4531, taxRate: 18,
+    })!;
+    expect(f.monthly.gross).toBe(3115);
   });
 });
 
@@ -111,6 +121,7 @@ describe("R-2580: the staff preview", () => {
       expect(body.textContent).not.toContain("₹100/mo");
       expect(body.textContent).not.toMatch(/54,372|Annual contract value/);
       expect(body.textContent).toContain("₹2,640/mo"); // the seats line, a month
+      expect(body.textContent).not.toContain("31,680"); // no year nobody committed to
     });
   }
 });

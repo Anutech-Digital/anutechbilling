@@ -40,10 +40,9 @@ import {
 } from "@/lib/quotes/billing";
 import { lineIsPerInvoice, perInvoiceDivisor } from "./invoice-divisor";
 import {
-  quotePerPeriodFigures, flexOneTimeFigures, FLEX_FIRST_INVOICE, FLEX_THEN_MONTHLY, FLEX_ONCE,
+  quotePerPeriodFigures, flexOneTimeFigures, lineChargedOnce, FLEX_FIRST_INVOICE, FLEX_THEN_MONTHLY, FLEX_ONCE,
 } from "@/lib/quotes/per-period-figures";
 import { firstLineCommitment } from "@/lib/billing/instalments";
-import { lineIsSubscription } from "@/lib/quotes/optional-line";
 import { isRenderableLogo } from "./logo";
 import { quoteDocumentLabel } from "./quote-document-kind";
 import { PROFORMA_NOTICE, PROFORMA_TITLE, type QuoteTemplate, type ProformaBank } from "./quote-template";
@@ -705,7 +704,7 @@ export function QuotePDF(props: QuotePDFProps) {
               const grossAnnual = dRound(line.qty * unit);
               const netAnnual   = dRound(grossAnnual * (1 - lineDiscountPct / 100));
               /* R-2580: on a flex sale a one-time line is charged once — no "/mo", no year. */
-              const chargedOnce = flexOnce !== null && !lineIsSubscription(line);
+              const chargedOnce = flexOnce !== null && lineChargedOnce(line);
               const fmtLine     = chargedOnce ? fmtC : fmtInv;
               /* R-495: list price, discount (₹ and %) and final rate — only when the line
                  carries a list price above its rate; never invented. */
