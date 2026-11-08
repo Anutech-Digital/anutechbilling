@@ -18,6 +18,10 @@
 --   TDS-LIKE   ₹50 short on a ₹5,900 part (1% of ₹5,000 taxable) → refused as TDS
 --   NOT EXACT  ₹60 short, but the bank line is ₹1 less than the receipt → refused (the ₹1 stays in P&L)
 --   LATER PART Part 1 ₹60 short, Part 2 already paid → refused (the latest receipt is not Part 1's)
+--   CREDIT NOTE / WRITE-OFF on the part invoice → refused (refuses_credit_note)
+--   SPLIT LINE the receipt already on a split line / its line already has a round-off → refused (refuses_split_line)
+--   TDS        the receipt carries a TDS row → refused (refuses_when_tds_on_receipt)
+--   every refused case writes nothing (no BANKCHG receipt, no round-off, no bank_txn_id change, invoice unchanged)
 
 begin;
 select set_config('request.jwt.claims', '', true);
@@ -59,6 +63,9 @@ insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, su
   ('Q-R2595-3', 'e2595000-0000-0000-0000-0000000000a0', 'e2595000-0000-4000-8000-0000000000c1', 'R2595 Cust', 23600, 20000, 18, 'accepted', 'none', 'quarterly', '[]'::jsonb),
   ('Q-R2595-4', 'e2595000-0000-0000-0000-0000000000a0', 'e2595000-0000-4000-8000-0000000000c1', 'R2595 Cust', 383972, 325400, 18, 'accepted', 'none', 'quarterly', '[]'::jsonb),
   ('Q-R2595-5', 'e2595000-0000-0000-0000-0000000000a0', 'e2595000-0000-4000-8000-0000000000c1', 'R2595 Cust', 383972, 325400, 18, 'accepted', 'none', 'quarterly', '[]'::jsonb);
+insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, billing_cycle, line_items)
+select 'Q-R2595-' || k, 'e2595000-0000-0000-0000-0000000000a0', 'e2595000-0000-4000-8000-0000000000c1', 'R2595 Cust', 383972, 325400, 18, 'accepted', 'none', 'quarterly', '[]'::jsonb
+  from generate_series(6, 10) k;
 insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, billing_cycle, quote_id)
 select v.id::uuid, 'e2595000-0000-0000-0000-0000000000a0', 'e2595000-0000-4000-8000-0000000000c1', 'R2595 Cust',
        'Workspace Business', 'google'::vendor, 10, 1000, 'quarterly'::billing_cycle, v.q
@@ -66,12 +73,17 @@ select v.id::uuid, 'e2595000-0000-0000-0000-0000000000a0', 'e2595000-0000-4000-8
                ('e2595000-0000-4000-8000-0000000000e2', 'Q-R2595-2'),
                ('e2595000-0000-4000-8000-0000000000e3', 'Q-R2595-3'),
                ('e2595000-0000-4000-8000-0000000000e4', 'Q-R2595-4'),
-               ('e2595000-0000-4000-8000-0000000000e5', 'Q-R2595-5')) v(id, q);
+               ('e2595000-0000-4000-8000-0000000000e5', 'Q-R2595-5'),
+               ('e2595000-0000-4000-8000-0000000000e6', 'Q-R2595-6'),
+               ('e2595000-0000-4000-8000-0000000000e7', 'Q-R2595-7'),
+               ('e2595000-0000-4000-8000-0000000000e8', 'Q-R2595-8'),
+               ('e2595000-0000-4000-8000-0000000000e9', 'Q-R2595-9'),
+               ('e2595000-0000-4000-8000-0000000000ea', 'Q-R2595-10')) v(id, q);
 insert into public.subscription_billings (id, tenant_id, subscription_id, term_start, period_index, bill_on, period_start, period_end, taxable_amount, tax_rate)
-select ('e2595000-0000-4000-8000-000000000' || s || lpad(n::text, 2, '0'))::uuid, 'e2595000-0000-0000-0000-0000000000a0',
-       ('e2595000-0000-4000-8000-0000000000e' || s)::uuid, date '2026-08-01', n, date '2026-08-01' + (n - 1) * 90,
+select ('e2595000-0000-4000-8000-00000000' || lpad(s::text, 2, '0') || lpad(n::text, 2, '0'))::uuid, 'e2595000-0000-0000-0000-0000000000a0',
+       ('e2595000-0000-4000-8000-0000000000e' || case when s = 10 then 'a' else s::text end)::uuid, date '2026-08-01', n, date '2026-08-01' + (n - 1) * 90,
        date '2026-08-01' + (n - 1) * 90, date '2026-08-01' + n * 90 - 1, case when s = 3 then 5000 else 81350 end, 18
-  from generate_series(1, 5) s, generate_series(1, 4) n;
+  from generate_series(1, 10) s, generate_series(1, 4) n;
 
 create temp table r2595_inv (k text primary key, id text) on commit drop;
 grant all on r2595_inv to authenticated;
@@ -83,6 +95,8 @@ insert into r2595_inv select 'Q3-P1', invoice_id from public.raise_subscription_
 insert into r2595_inv select 'Q4-P1', invoice_id from public.raise_subscription_billing('e2595000-0000-4000-8000-000000000401');
 insert into r2595_inv select 'Q5-P1', invoice_id from public.raise_subscription_billing('e2595000-0000-4000-8000-000000000501');
 insert into r2595_inv select 'Q5-P2', invoice_id from public.raise_subscription_billing('e2595000-0000-4000-8000-000000000502');
+insert into r2595_inv select 'Q' || k || '-P1', r.invoice_id from generate_series(6, 10) k,
+  lateral public.raise_subscription_billing(('e2595000-0000-4000-8000-00000000' || lpad(k::text, 2, '0') || '01')::uuid) r;
 create function pg_temp.inv(p_k text) returns text language sql stable as $f$ select id from r2595_inv where k = p_k $f$;
 grant execute on function pg_temp.inv(text) to authenticated;
 
@@ -93,7 +107,13 @@ select public.record_instalment_payment(pg_temp.inv('Q3-P1'), 5850, 'bank_transf
 select public.record_instalment_payment(pg_temp.inv('Q4-P1'), 95933, 'bank_transfer', 'UTR2595FOUR', 'R2595', null, 0, date '2026-08-05', 'e2595000-0000-4000-8000-0000000000ba');
 select public.record_instalment_payment(pg_temp.inv('Q5-P1'), 95933, 'bank_transfer', 'UTR2595FIVEA', 'R2595', null, 0, date '2026-08-05', 'e2595000-0000-4000-8000-0000000000ba');
 select public.record_instalment_payment(pg_temp.inv('Q5-P2'), 95993, 'bank_transfer', 'UTR2595FIVEB', 'R2595', null, 0, date '2026-08-06', 'e2595000-0000-4000-8000-0000000000ba');
+select public.record_instalment_payment(pg_temp.inv('Q' || k || '-P1'), 95933, 'bank_transfer', 'UTR2595N' || k, 'R2595', null, 0, date '2026-08-05', 'e2595000-0000-4000-8000-0000000000ba')
+  from generate_series(6, 10) k;
 select set_config('request.jwt.claims', '', true);
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, reference, credit, debit, source)
+select ('e2595000-0000-4000-8000-0000000000' || to_hex(k + 224))::uuid, 'e2595000-0000-0000-0000-0000000000a0', 'e2595000-0000-4000-8000-0000000000ba',
+       '2026-08-05', 'NEFT R2595 N' || k, 'UTR2595N' || k, 95933, 0, 'manual'
+  from generate_series(6, 10) k;   -- lines ...e6 .. ...ea
 insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, reference, credit, debit, source) values
   ('e2595000-0000-4000-8000-0000000000d1', 'e2595000-0000-0000-0000-0000000000a0', 'e2595000-0000-4000-8000-0000000000ba', '2026-08-05', 'NEFT R2595 ONE', 'UTR2595ONE', 95933, 0, 'manual'),
   ('e2595000-0000-4000-8000-0000000000d2', 'e2595000-0000-0000-0000-0000000000a0', 'e2595000-0000-4000-8000-0000000000ba', '2026-08-05', 'NEFT R2595 TWO', 'UTR2595TWO', 94993, 0, 'manual'),
@@ -130,6 +150,18 @@ begin
   perform pg_temp.match('e2595000-0000-4000-8000-0000000000d3', 'Q-R2595-3');
   perform pg_temp.match('e2595000-0000-4000-8000-0000000000d4', 'Q-R2595-4');
   perform pg_temp.match('e2595000-0000-4000-8000-0000000000d5', 'Q-R2595-5');
+  perform pg_temp.match(('e2595000-0000-4000-8000-0000000000' || to_hex(k + 224))::uuid, 'Q-R2595-' || k) from generate_series(6, 10) k;
+  -- Q6: a credit note on the part invoice. Q7: a write-off on it. Q8: the receipt already on a split line.
+  -- Q9: the line already has a round-off. Q10: the receipt carries TDS.
+  insert into public.credit_notes (id, tenant_id, invoice_id, amount, taxable_value, tax_amount, tax_rate)
+  values ('CN-R2595-6', 'e2595000-0000-0000-0000-0000000000a0', pg_temp.inv('Q6-P1'), 118, 100, 18, 18);
+  update public.invoices set written_off_at = now(), write_off_reason = 'R2595 test' where id = pg_temp.inv('Q7-P1');
+  update public.payments set bank_txn_id = 'e2595000-0000-4000-8000-0000000000e8' where quote_id = 'Q-R2595-8';
+  insert into public.bank_receipt_round_offs (tenant_id, bank_txn_id, amount) values
+    ('e2595000-0000-0000-0000-0000000000a0', 'e2595000-0000-4000-8000-0000000000e9', 1);
+  insert into public.tds_receivable (id, tenant_id, customer_name, section, rate_pct, gross_amount, tds_amount, net_paid, fiscal_year, payment_received_date, payment_id)
+  select 'TDS-R2595-10', 'e2595000-0000-0000-0000-0000000000a0', 'R2595 Cust', '194J', 2, 81350, 1627, 95933, '2026-27', date '2026-08-05', p.id
+    from public.payments p where p.quote_id = 'Q-R2595-10';
 
   -- ROLE.
   set local role authenticated;
@@ -152,11 +184,23 @@ begin
   v_err := pg_temp.try('Q-R2595-5');
   if v_err is null or v_err not like '%later part%' then insert into r2595_fail values ('LATER PART: got ' || coalesce(v_err, 'success')); end if;
 
+  -- refuses_credit_note / refuses_split_line / refuses_when_tds_on_receipt.
+  v_err := pg_temp.try('Q-R2595-6');
+  if v_err is null or v_err not like '%credit note or a write-off%' then insert into r2595_fail values ('CREDIT NOTE: got ' || coalesce(v_err, 'success')); end if;
+  v_err := pg_temp.try('Q-R2595-7');
+  if v_err is null or v_err not like '%credit note or a write-off%' then insert into r2595_fail values ('WRITE-OFF: got ' || coalesce(v_err, 'success')); end if;
+  v_err := pg_temp.try('Q-R2595-8');
+  if v_err is null or v_err not like '%already pays several items or has a round-off%' then insert into r2595_fail values ('SPLIT LINE: got ' || coalesce(v_err, 'success')); end if;
+  v_err := pg_temp.try('Q-R2595-9');
+  if v_err is null or v_err not like '%already pays several items or has a round-off%' then insert into r2595_fail values ('ROUND-OFF LINE: got ' || coalesce(v_err, 'success')); end if;
+  v_err := pg_temp.try('Q-R2595-10');
+  if v_err is null or v_err not like '%This receipt has TDS%' then insert into r2595_fail values ('TDS RECEIPT: got ' || coalesce(v_err, 'success')); end if;
+
   -- SETTLE.
   v_res := public.settle_quote_part_short('Q-R2595-1', 'Bank kept ₹60');
   if (v_res->>'amount')::int is distinct from 60 then insert into r2595_fail values ('SETTLE: result ' || v_res::text); end if;
   select coalesce(sum(r.amount), 0) into v_short from public.report_settlement_shortfalls('2026-08-01', '2026-08-31') r;
-  if v_short <> 61 then insert into r2595_fail values ('SETTLE: P&L settlement shortfall ₹' || v_short || ' (want ₹61: the ₹60 once + Q4''s ₹1)'); end if;
+  if v_short <> 62 then insert into r2595_fail values ('SETTLE: P&L settlement shortfall ₹' || v_short || ' (want ₹62: the ₹60 once + Q4''s ₹1 + Q9''s earlier ₹1 round-off)'); end if;
 
   -- TWICE.
   v_err := pg_temp.try('Q-R2595-1');
@@ -184,7 +228,10 @@ begin
   if (select status::text || '|' || coalesce(paid_amount, 0) from public.invoices where id = pg_temp.inv('Q1-P2')) is distinct from 'pending|0' then
     insert into r2595_fail values ('NEXT PART: Part 2 invoice changed: ' || (select status::text || '|' || coalesce(paid_amount, 0) from public.invoices where id = pg_temp.inv('Q1-P2')));
   end if;
-  if exists (select 1 from public.payments where quote_id in ('Q-R2595-2', 'Q-R2595-3', 'Q-R2595-4', 'Q-R2595-5') and reference like 'BANKCHG-%')
+  if exists (select 1 from public.payments where quote_id like 'Q-R2595-%' and quote_id <> 'Q-R2595-1' and reference like 'BANKCHG-%')
+     or (select count(*) from public.payments where quote_id like 'Q-R2595-%' and quote_id not in ('Q-R2595-1', 'Q-R2595-8') and bank_txn_id is not null) <> 0
+     or (select count(*) from public.bank_receipt_round_offs where tenant_id = 'e2595000-0000-0000-0000-0000000000a0') <> 2
+     or exists (select 1 from public.invoices where id in (pg_temp.inv('Q6-P1'), pg_temp.inv('Q7-P1'), pg_temp.inv('Q8-P1'), pg_temp.inv('Q9-P1'), pg_temp.inv('Q10-P1')) and coalesce(paid_amount, 0) <> 95933)
      or exists (select 1 from public.bank_receipt_round_offs where bank_txn_id in ('e2595000-0000-4000-8000-0000000000d2', 'e2595000-0000-4000-8000-0000000000d3', 'e2595000-0000-4000-8000-0000000000d4', 'e2595000-0000-4000-8000-0000000000d5')) then
     insert into r2595_fail values ('a refused call wrote something');
   end if;
