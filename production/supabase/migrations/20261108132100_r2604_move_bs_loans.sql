@@ -58,6 +58,8 @@ alter table public.bs_loan_moves enable row level security;
 drop policy if exists bs_loan_moves_read on public.bs_loan_moves;
 create policy bs_loan_moves_read on public.bs_loan_moves for select to authenticated
   using (tenant_id = public.current_tenant_id() and public.current_user_has_role('owner', 'accountant'));
+drop policy if exists zzz_service_role_all on public.bs_loan_moves;
+create policy zzz_service_role_all on public.bs_loan_moves as permissive for all to service_role using (true) with check (true);
 revoke all on public.bs_loan_moves from anon;
 revoke insert, update, delete on public.bs_loan_moves from authenticated;
 grant select on public.bs_loan_moves to authenticated;

@@ -13,6 +13,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
+import { LoadErrorInline } from "@/components/shared/load-error";
 import { rupee } from "@/lib/utils";
 import {
   useBsLoanMovePreview, useApplyBsLoanMove, employeeLinks, type BsLoanMoveGroup,
@@ -61,7 +62,7 @@ export function MoveBsLoansDialog({ open, onOpenChange }: { open: boolean; onOpe
         {preview.isLoading ? (
           <Skeleton className="h-32 w-full" />
         ) : preview.isError ? (
-          <p className="text-sm text-rose" role="alert">{(preview.error as Error).message}</p>
+          <LoadErrorInline what="Check first" onRetry={() => void preview.refetch()} error={preview.error} />
         ) : movable.length === 0 ? (
           <p className="text-sm text-ink-2">Nothing to move — no “Advance/loan given” line with money still owed.</p>
         ) : (
