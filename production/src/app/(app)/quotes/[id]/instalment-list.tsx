@@ -6,12 +6,11 @@
  */
 import type { InstalmentStatus, PartStatus } from "@/lib/quotes/instalment-status";
 import { rupee, formatDate } from "@/lib/utils";
+import { addDaysISO } from "@/lib/dates/ist";
 
 /** periodEnd is exclusive — the last day shown is the day before. */
 function lastDay(isoExclusive: string): string {
-  const d = new Date(`${isoExclusive.slice(0, 10)}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() - 1);
-  return d.toISOString().slice(0, 10);
+  return addDaysISO(isoExclusive.slice(0, 10), -1);
 }
 
 function stateText(p: PartStatus, lastReceivedOn: string | null, isLastWithMoney: boolean): string {
