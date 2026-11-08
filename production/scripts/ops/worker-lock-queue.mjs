@@ -149,7 +149,7 @@ export function readQueue(dir) {
 export function joinQueue(dir, entry) { try { fs.writeFileSync(queueFile(dir, entry.card), JSON.stringify(entry)); } catch {} }
 export function leaveQueue(dir, card) { try { fs.rmSync(queueFile(dir, card), { force: true }); } catch {} }
 
-/** --wait, --priority p0, --wait-min 240 out of the args. */
+/** --wait, --priority p0 (or --train-blocker), --wait-min 240 out of the args. */
 export function parseQueueFlags(args) {
   const rest = []; const o = { wait: false, priority: null, waitMin: 240 };
   for (let i = 0; i < args.length; i++) {
@@ -157,6 +157,7 @@ export function parseQueueFlags(args) {
     if (a === "--wait") o.wait = true;
     else if (a === "--priority") o.priority = args[++i] ?? null;
     else if (a.startsWith("--priority=")) o.priority = a.slice(11);
+    else if (a === "--train-blocker") o.priority = "p0"; // R-2591: a staging-train blocker = p0
     else if (a === "--wait-min") o.waitMin = Number(args[++i]);
     else if (a.startsWith("--wait-min=")) o.waitMin = Number(a.slice(11));
     else rest.push(a);

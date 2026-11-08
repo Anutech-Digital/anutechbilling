@@ -169,6 +169,10 @@ describe("R-2591 push turn by priority", () => {
     ]);
     expect(turnQueueLines("heavy", null, [], NOW)).toEqual(["heavy turn: khaali"]);
   });
+
+  it("--train-blocker claims as p0", () => {
+    expect(parseQueueFlags(["wt", "--wait", "--train-blocker"]).priority).toBe("p0");
+  });
 });
 
 describe("R-2591 status on a real lock folder", () => {

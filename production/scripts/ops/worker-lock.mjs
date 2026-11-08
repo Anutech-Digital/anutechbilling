@@ -1158,6 +1158,8 @@ function main(argv) {
       let turn = null;
       try { turn = JSON.parse(fs.readFileSync(path.join(LOCK_DIR, `_${name}-turn.json`), "utf8")); } catch {}
       if (pushTurnFree(turn, Date.now())) turn = null;
+      /* a turn file from an older script has no priority — show the holder lock's */
+      if (turn && !turn.priority) turn = { ...turn, priority: locks.find((l) => l.card === turn.card)?.priority };
       for (const line of turnQueueLines(name, turn, readTurnWaiters(LOCK_DIR, name), Date.now())) console.log(line);
     }
     return;
