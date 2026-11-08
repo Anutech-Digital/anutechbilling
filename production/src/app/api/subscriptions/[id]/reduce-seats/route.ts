@@ -14,6 +14,7 @@
  *   locked invoice row.
  * DELETE /api/subscriptions/[id]/reduce-seats
  *   Takes back a cut scheduled for the end of the term (cancel_scheduled_seat_reduction).
+ *   R-2583: refused (409 renewal_quote_has_cut) once the renewal quote was made at the cut seats.
  *
  * Who: seats.change (owner / manager / billing — all of them may also issue a credit note).
  * Microsoft NCE: "Now" is refused after the 7-day window (checkNceLock); end of term would be
@@ -31,7 +32,7 @@ import { resolveSeatTax } from "@/lib/subscriptions/apply-seat-increase";
 import { seatReductionValue, seatReductionPreview, planChangeOpenMessage, SEAT_CUT_END_OF_TERM_ENABLED } from "@/lib/subscriptions/seat-reduction";
 import { checkNceLock } from "@/lib/subscriptions/nce-lock";
 import { istToday } from "@/lib/dates/ist";
-import { REDUCE_SEATS_SELECT, loadPartInvoiceMoney, loadScheduledReduction, loadOpenPlanChangeQuote, type ReduceSeatsSub } from "./load";
+import { REDUCE_SEATS_SELECT, loadPartInvoiceMoney, loadScheduledReduction, loadOpenPlanChangeQuote, loadCutRenewalQuote, type ReduceSeatsSub } from "./load";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -190,6 +191,16 @@ export async function DELETE(_req: Request, props: { params: Promise<{ id: strin
   const { id } = await props.params;
   const g = await gate(id);
   if (!g.ok) return g.res;
+  /* R-2583: the renewal quote bills a scheduled cut — once it was made at the cut seats, removing the
+     cut would leave the customer quoted for fewer seats than they keep. Delete the quote first. */
+  const scheduled = await loadScheduledReduction(g.supabase, g.sub, istToday());
+  const cutQuote = await loadCutRenewalQuote(g.supabase, g.sub, scheduled);
+  if (cutQuote) {
+    return NextResponse.json({
+      error: `Renewal quote ${cutQuote.id} is already made for ${cutQuote.seats} seats with this cut. Delete that quote first (it is made again at the current seats), then remove the scheduled cut.`,
+      code: "renewal_quote_has_cut",
+    }, { status: 409 });
+  }
   const { data, error } = await g.supabase.rpc("cancel_scheduled_seat_reduction" as never, {
     p_tenant_id: g.sub.tenant_id,
     p_subscription_id: g.sub.id,
