@@ -50,7 +50,7 @@ import { useFooterSaveReport, type FooterSave } from "@/components/features/bank
 import { newVendorFromNarration, tailMismatch, type NewVendorField } from "@/lib/banking/narration-bank-details";
 import { checkBankDetails } from "@/lib/banking/bank-details";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
-import { advanceHeadDefault, advanceToApply, vendorAdvanceLeft } from "@/lib/accounting/vendor-account";
+import { advanceHeadDefault, advanceToApply, advanceToApplyWithTds, vendorAdvanceLeft } from "@/lib/accounting/vendor-account";
 import { useApplyVendorAdvance } from "@/lib/queries/vendor-advance";
 
 const NEW_VENDOR = "__new_vendor__";
@@ -137,6 +137,10 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
      the bank line pays only the rest. */
   const { data: advanceRows } = usePrepaidAdvances();
   const advLeft = vendor ? vendorAdvanceLeft(advanceRows ?? [], vendor.id, vendor.name) : 0;
+  /* R-2588: an expense bill with TDS takes the advance's TDS as a credit — same sum as apply_vendor_advance. */
+  const advanceFor = (i: VendorOpenItem): number => i.source === "expense" && (i.tds_amount ?? 0) > 0 && vendor
+    ? advanceToApplyWithTds(advanceRows ?? [], vendor.id, vendor.name, cashDue(i, i.tds_amount), i.tds_amount ?? 0)
+    : advanceToApply(advLeft, cashDue(i, i.tds_amount));
   const applyAdv = useApplyVendorAdvance();
 
   /* TDS — the vendor's usual section, else the one already on its bills. R-2338: an old plain
@@ -538,12 +542,12 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                     </label>
                     {/* R-1913: the vendor's advance first — the bank line then pays only the rest.
                         R-1914: a COGS bill takes it too (Google's / AWS's advance). */}
-                    {(i.source === "expense" || i.source === "vendor_bill") && !i.in_run && advLeft > 0 && advanceToApply(advLeft, cashDue(i, i.tds_amount)) > 0 && (
+                    {(i.source === "expense" || i.source === "vendor_bill") && !i.in_run && advLeft > 0 && advanceFor(i) > 0 && (
                       <div className="mt-1.5 pl-6 flex flex-wrap items-center gap-2 text-xs text-ink-2">
                         <span>Advance with vendor {rupee(advLeft)}</span>
                         <Button size="sm" variant="default" loading={applyAdv.isPending}
                           onClick={() => applyAdv.mutate(i.source === "vendor_bill" ? { billId: i.doc_id } : { expenseId: i.doc_id })}>
-                          Apply {rupee(advanceToApply(advLeft, cashDue(i, i.tds_amount)))} to this bill
+                          Apply {rupee(advanceFor(i))} to this bill
                         </Button>
                       </div>
                     )}
@@ -762,7 +766,7 @@ export function DebitPayForSection({ transaction, onSaved, onDone, onVendorChang
                       onChange={(e) => setAdvTdsTyped(Math.max(0, Math.round(Number(e.target.value) || 0)))} />
                   )}
                 </div>
-                {advTdsEff > 0 && <p>Advance in the books {rupee(advance + advTdsEff)} = {rupee(advance)} paid + TDS {rupee(advTdsEff)} (goes to TDS payable and the 26Q list). When the bill comes, record it without TDS — the TDS was taken here.</p>}
+                {advTdsEff > 0 && <p>Advance in the books {rupee(advance + advTdsEff)} = {rupee(advance)} paid + TDS {rupee(advTdsEff)} (goes to TDS payable and the 26Q list). When the bill comes, record it on Expenses and press Apply advance — the TDS taken here is credited on the bill, never taken twice (on Prepaid → Book invoice, leave TDS empty).</p>}
                 {advTdsRate?.message && <p className="text-amber-ink">{advTdsRate.message}</p>}
               </div>
             )}

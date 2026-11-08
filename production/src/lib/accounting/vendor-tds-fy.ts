@@ -11,6 +11,10 @@
  * A row counts when it carries no TDS section, or one with the same yearly limit (R-2338: 194J(a) /
  * 194J(b) / royalty share 194J's). A COGS bill's TDS lives on bank_vendor_payment_lines (R-1891 /
  * R-2320 / R-2335) — a bill whose TDS is of another family (194Q on goods) is left out.
+ *
+ * R-2588: an expense bill settled from a vendor advance that carried TDS (R-1916) has its own TDS
+ * moved onto the advance (vendor_advance_applications.tds_credit) — its tds_amount can be 0, yet
+ * TDS WAS deducted on it, so it never counts as "paid without TDS" (no catch-up on it).
  */
 import { sameTdsThreshold } from "@/lib/accounting/tds-rates";
 
@@ -21,6 +25,7 @@ export interface FyCogsBillRow {
   id: string; subtotal: number | null; paid_amount: number | null; currency?: string | null; fx_rate?: number | null;
 }
 export interface FyCogsTdsRow { vendor_bill_id: string | null; tds_amount: number | null; tds_section: string | null }
+export interface FyAdvanceTdsCreditRow { expense_id: string | null; tds_credit: number | null }
 export interface VendorFyTds { base: number; baseWithoutTds: number }
 
 export function vendorFyTdsTotal(i: {
@@ -32,15 +37,19 @@ export function vendorFyTdsTotal(i: {
   excludeId?: string | null;
   /** COGS bills being paid now. */
   excludeBillIds?: readonly string[] | null;
+  /** R-2588: TDS credited onto expense bills from vendor advances. */
+  advanceTdsCredits?: readonly FyAdvanceTdsCreditRow[] | null;
 }): VendorFyTds {
   const sec = i.section.trim();
   let base = 0;
   let baseWithoutTds = 0;
+  const credited = new Set<string>();
+  for (const c of i.advanceTdsCredits ?? []) if (c.expense_id && (c.tds_credit ?? 0) > 0) credited.add(c.expense_id);
   for (const r of i.expenses) {
     if (r.id === i.excludeId || (r.tds_section && !sameTdsThreshold(r.tds_section, sec))) continue;
     const b = Math.max(0, (r.amount ?? 0) - (r.gst_paid ?? 0));
     base += b;
-    if (!(r.tds_amount && r.tds_amount > 0)) baseWithoutTds += b;
+    if (!(r.tds_amount && r.tds_amount > 0) && !credited.has(r.id)) baseWithoutTds += b;
   }
   const tdsSecs = new Map<string, string[]>();
   for (const t of i.cogsTds) {

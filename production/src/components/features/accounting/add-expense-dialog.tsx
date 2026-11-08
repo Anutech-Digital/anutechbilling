@@ -620,7 +620,10 @@ export function AddExpenseDialog({
      threshold against what this payee got this FY, the rate from the vendor's PAN (1% for
      an individual contractor, 20% with no PAN), 194Q only above ₹50L — until the operator
      types an amount; an existing entry's recorded TDS is never overwritten on open. */
-  const [tdsEdited, setTdsEdited] = React.useState<boolean>(Boolean(expense && (expense.tds_amount ?? 0) > 0));
+  /* R-2588: a bill with a vendor advance applied keeps its TDS as it is — a TDS-carrying advance may
+     have credited it to ₹0 (the TDS sits on the advance); a fresh suggestion would count it twice. */
+  const [tdsEdited, setTdsEdited] = React.useState<boolean>(Boolean(expense && ((expense.tds_amount ?? 0) > 0
+    || ((expense as { advance_applied?: number | null }).advance_applied ?? 0) > 0)));
   const tdsSectionNow = watch("tds_section") || "";
   const tdsBaseNow = tdsBase(Number(watch("amount")) || 0, isGstBill ? Number(watch("gst_paid")) || 0 : 0);
   const tdsRate = TDS_SECTION_RATES[tdsSectionNow] ?? null;
