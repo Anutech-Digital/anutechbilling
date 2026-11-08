@@ -8,6 +8,8 @@ import { cleanup, render } from "@testing-library/react";
 import type { FooterSave } from "./reconcile-who-tiles";
 
 const loanOut = vi.fn(() => Promise.resolve("loan-1"));
+let role = "owner";
+vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { role }, isLoading: false }) }));
 vi.mock("@/lib/queries/loans-given", () => ({
   useLoanGivenFromBankLine: () => ({ mutateAsync: loanOut, isPending: false }),
   useLoanBorrowerNames: () => ({ data: ["Julie Rawat", "Vinod Hem Raj"] }),
@@ -15,7 +17,7 @@ vi.mock("@/lib/queries/loans-given", () => ({
 
 import { LoanGivenOutFields, LOAN_GIVEN_BORROWERS_LIST_ID } from "./loan-given-out-fields";
 
-afterEach(() => { cleanup(); loanOut.mockClear(); });
+afterEach(() => { cleanup(); loanOut.mockClear(); role = "owner"; });
 
 function renderWith(borrower: string) {
   let last: FooterSave | null = null;
@@ -41,6 +43,25 @@ describe("R-2603 LoanGivenOutFields", () => {
     expect(save()?.disabledReason).toBeNull();
     save()?.onSave();
     expect(loanOut).toHaveBeenCalledWith({ txnId: "t1", borrower: "Julie Rawat", notes: "IMPS DR JULIE" });
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
+  });
+
+  it("a manager is told before clicking — only the owner or the accountant records a loan given", () => {
+    role = "manager";
+    const { save } = renderWith("Julie Rawat");
+    expect(save()?.disabledReason).toMatch(/^Only the owner or the accountant/);
+    save()?.onSave();
+    expect(loanOut).not.toHaveBeenCalled();
+  });
+
+  it("a double click books once", async () => {
+    let resolve: (v: string) => void = () => {};
+    loanOut.mockImplementationOnce(() => new Promise<string>((r) => { resolve = r; }));
+    const { save, onDone } = renderWith("Julie Rawat");
+    save()?.onSave();
+    save()?.onSave();
+    expect(loanOut).toHaveBeenCalledTimes(1);
+    resolve("loan-1");
     await vi.waitFor(() => expect(onDone).toHaveBeenCalledTimes(1));
   });
 

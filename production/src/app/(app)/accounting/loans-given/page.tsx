@@ -30,10 +30,9 @@ import { useBankAccounts } from "@/lib/queries/bank";
 import { useCustomers } from "@/lib/queries/customers";
 import { useVendors } from "@/lib/queries/vendors";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { canUseLoansGiven, splitRepayment, oldAdvanceGivenLines, type RepaymentPlan, type ScheduleState } from "@/lib/accounting/loans-given";
-import { useBalanceSheetItems } from "@/lib/queries/balance-sheet";
+import { canUseLoansGiven, splitRepayment, type RepaymentPlan, type ScheduleState } from "@/lib/accounting/loans-given";
 import {
-  useLoansGiven, useGiveLoan, useGiveDirectorLoan, useRecordLoanRepayment, useDeleteLoanGiven,
+  useLoansGiven, useOldAdvanceGivenLines, useGiveLoan, useGiveDirectorLoan, useRecordLoanRepayment, useDeleteLoanGiven,
   MODE_LABEL, type LoanGiven, type RepaymentMode,
 } from "@/lib/queries/loans-given";
 import { istToday } from "@/lib/dates/ist";
@@ -56,8 +55,7 @@ export default function LoansGivenPage() {
   const q = useLoansGiven(allowed);
   /* R-2603: loans given from Banking before R-2603 were booked as Balance Sheet lines
      ("Advance/loan given · <name>") — say so here, or the page looks empty while money is out. */
-  const bsItems = useBalanceSheetItems();
-  const oldLines = React.useMemo(() => oldAdvanceGivenLines(bsItems.data ?? []), [bsItems.data]);
+  const oldLines = useOldAdvanceGivenLines(allowed).data ?? { count: 0, total: 0, borrowers: [] };
   const [giveOpen, setGiveOpen] = React.useState(false);
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [repayId, setRepayId] = React.useState<string | null>(null);

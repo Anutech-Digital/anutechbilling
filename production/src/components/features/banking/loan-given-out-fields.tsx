@@ -10,6 +10,8 @@
 import * as React from "react";
 import { rupee } from "@/lib/utils";
 import { useLoanGivenFromBankLine, useLoanBorrowerNames } from "@/lib/queries/loans-given";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { canUseLoansGiven } from "@/lib/accounting/loans-given";
 import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 
 export const LOAN_GIVEN_BORROWERS_LIST_ID = "r2603-borrowers";
@@ -22,18 +24,29 @@ export function LoanGivenOutFields({ txnId, amount, borrower, notes, onDone, onF
   onDone: () => void;
   onFooterSave?: (save: FooterSave | null) => void;
 }) {
+  const me = useCurrentUser();
+  /* Loans given is the owner's / accountant's (RLS + the RPC) — others are told before they click. */
+  const allowed = canUseLoansGiven(me.data?.role);
   const loanOut = useLoanGivenFromBankLine();
-  const { data: names } = useLoanBorrowerNames();
+  const { data: names } = useLoanBorrowerNames(allowed);
   const name = borrower.trim();
+  /* one click, one call — a double click before "loading" reaches the footer is ignored */
+  const busy = React.useRef(false);
 
   useFooterSaveReport(onFooterSave, {
     label: `Book ${rupee(amount)} as a loan given (Loans given)`,
     onSave: () => {
-      if (!name) return;
-      void loanOut.mutateAsync({ txnId, borrower: name, notes }).then(onDone).catch(() => { /* the hook toasts the error */ });
+      if (!name || !allowed || busy.current) return;
+      busy.current = true;
+      void loanOut.mutateAsync({ txnId, borrower: name, notes })
+        .then(onDone)
+        .catch(() => { /* the hook toasts the error */ })
+        .finally(() => { busy.current = false; });
     },
     loading: loanOut.isPending,
-    disabledReason: !name ? "Enter the person's name." : null,
+    disabledReason: me.isLoading ? "Checking your role…"
+      : !allowed ? "Only the owner or the accountant can record a loan given — ask your owner."
+      : !name ? "Enter the person's name." : null,
   });
 
   return (

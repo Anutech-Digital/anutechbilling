@@ -21,8 +21,14 @@ describe("R-2603 old Balance Sheet loan lines", () => {
     { section: "liability", label: "Loan received · Bank", amount: 90000 },
     { section: "asset", label: "Security deposit", amount: 7000 },
   ];
-  it("counts only money-out 'Advance/loan given' asset lines", () => {
-    expect(oldAdvanceGivenLines(items)).toEqual({ count: 3, total: 152500, borrowers: ["Julie Rawat"] });
+  it("counts 'Advance/loan given' lines, netted per person with their 'returned' lines", () => {
+    expect(oldAdvanceGivenLines(items)).toEqual({ count: 3, total: 132500, borrowers: ["Julie Rawat"] });
+  });
+  it("a person who paid it all back is not counted", () => {
+    expect(oldAdvanceGivenLines([
+      { section: "asset", label: "Advance/loan given · Ravi", amount: 10000 },
+      { section: "asset", label: "Advance/loan returned · RAVI", amount: -10000 },
+    ])).toEqual({ count: 0, total: 0, borrowers: [] });
   });
   it("none → zero", () => {
     expect(oldAdvanceGivenLines([])).toEqual({ count: 0, total: 0, borrowers: [] });
