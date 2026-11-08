@@ -2,7 +2,7 @@
 -- the subscription's seats / monthly amount / plan cannot change; a rejected (cancelled) or expired
 -- plan-change quote is no longer "open".
 --
--- Migration 20261108174500_r2605_plan_change_freeze:
+-- Migration 20261108181100_r2605_plan_change_freeze:
 --   A. open plan-change quote linked → a seat change (Add seats writes seats + mrr), Correct details
 --      (correct_subscription_data) and a plan change by hand are refused, naming the quote; nothing
 --      changes. Dates still change (B).
@@ -166,6 +166,11 @@ begin
 
   -- D. the plan-change quote is cancelled (stored 'rejected') but still linked → not open.
   update public.quotes set status = 'rejected' where id = 'Q-R2605-PC-D';
+  if (select renewal_quote_id from public.subscriptions where id = v_sub_d) is not null then
+    insert into r2605_fail values ('D0: cancelling the plan-change quote left it linked to the subscription');
+  end if;
+  -- a row cancelled BEFORE this migration stays linked — it must not block either.
+  update public.subscriptions set renewal_quote_id = 'Q-R2605-PC-D' where id = v_sub_d;
   begin
     v_r := public.reduce_subscription_seats(c_t, v_sub_d, 3, 'now', 6000, 1050, 'r2605-key-d-1', c_a, 10);
   exception when others then
@@ -184,15 +189,48 @@ begin
   exception when others then v_msg := sqlerrm; end;
   if v_msg is null then insert into r2605_fail values ('D3: a stale plan-change quote was paid after the cancel was undone'); end if;
 
-  -- E. expired → not open; a renewal quote is not a plan-change quote; another company's quote → null.
+  -- E. expired by date → not open; expired because combined into another quote → still open;
+  --    a renewal quote is not a plan-change quote; another company's quote → null.
   update public.quotes set status = 'expired' where id = 'Q-R2605-PC-D';
   if public.r2605_open_plan_change_quote(c_t, 'Q-R2605-PC-D') is not null then insert into r2605_fail values ('E1: expired quote counted as open'); end if;
+  update public.quotes set superseded_by = 'Q-R2605-RENEW' where id = 'Q-R2605-PC-D';
+  if public.r2605_open_plan_change_quote(c_t, 'Q-R2605-PC-D') is null then insert into r2605_fail values ('E1b: a plan-change quote combined into another (superseded) counted as closed'); end if;
   if public.r2605_open_plan_change_quote(c_t, 'Q-R2605-RENEW') is not null then insert into r2605_fail values ('E2: renewal quote counted as a plan change'); end if;
   if public.r2605_open_plan_change_quote('e2605000-0000-0000-0000-0000000000ff', 'Q-R2605-PC-D') is not null then insert into r2605_fail values ('E3: other company'); end if;
   update public.subscriptions set renewal_quote_id = 'Q-R2605-RENEW' where id = v_sub_d;
   begin
     update public.subscriptions set mrr = 1150 where id = v_sub_d;
   exception when others then insert into r2605_fail values ('E4: mrr change refused with a renewal quote linked: ' || sqlerrm); end;
+end $$;
+
+-- F. a seat change made BY ANOTHER TRIGGER (as tg_quotes_add_seats_take_back does when an unpaid Add
+--    seats quote is cancelled) goes through; the plan-change quote is then stale (refused at payment).
+create function pg_temp.r2605_take_back() returns trigger language plpgsql as $f$
+begin
+  update public.subscriptions set seats = seats - 1, mrr = mrr - 150 where renewal_quote_id = 'Q-R2605-PC-F';
+  return new;
+end $f$;
+do $$
+declare v_sub uuid := (select v::uuid from r2605_ids where k = 'sub_a');
+begin
+  insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
+                             line_items, is_renewal, extension_months, billing_cycle)
+  select 'Q-R2605-PC-F', tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, 'sent', 'awaiting',
+         line_items, true, 0, 'yearly'
+    from public.quotes where id = 'Q-R2605-PC-A';
+  update public.subscriptions set renewal_quote_id = 'Q-R2605-PC-F' where id = v_sub;
+end $$;
+create trigger zz_r2605_take_back after update of notes on public.quotes
+  for each row when (new.id = 'Q-R2605-PC-F') execute function pg_temp.r2605_take_back();
+do $$
+declare v_before int := (select seats from public.subscriptions where id = (select v::uuid from r2605_ids where k = 'sub_a'));
+begin
+  begin
+    update public.quotes set notes = 'r2605 cascade' where id = 'Q-R2605-PC-F';
+  exception when others then insert into r2605_fail values ('F: a seat change made by another trigger was refused: ' || sqlerrm); end;
+  if (select seats from public.subscriptions where id = (select v::uuid from r2605_ids where k = 'sub_a')) <> v_before - 1 then
+    insert into r2605_fail values ('F: the cascaded seat change did not land');
+  end if;
 end $$;
 
 do $$
