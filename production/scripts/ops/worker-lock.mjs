@@ -807,6 +807,10 @@ export function checkRedGate(card, { gh, fixesRed = false, ownerOverride = false
 /**
  * Verdict for one workflow from the runs for this sha. `later` = newer runs on the branch whose sha
  * CONTAINS ours (oldest first): when our run was cancelled by the next push, that run decides.
+ * R-2612 (8 Nov 2026): among several later runs of the workflow, any green one decides green (it ran
+ * with our sha inside) — a newer green run on a descendant supersedes an older red one (a setup-cli 504
+ * whose re-runs keep failing on the old workflow file). Red only when no later run is green and none is
+ * still running; an older red with a newer run still going → pending.
  * Returns { state: green|red|pending|skipped|missing, run? , via? }.
  */
 export function workflowVerdict(wf, shaRuns, later, { graceOver, ciDone }) {
@@ -814,7 +818,10 @@ export function workflowVerdict(wf, shaRuns, later, { graceOver, ciDone }) {
   const pick = (r) => (r.status !== "completed" ? "pending" : RED_CONCLUSIONS.includes(r.conclusion) ? "red" : r.conclusion === "success" ? "green" : null);
   for (const r of mine) { const s = pick(r); if (s) return { state: s, run: r }; }
   if (mine.length || graceOver) {
-    for (const r of later.filter((x) => x.workflowName === wf)) { const s = pick(r); if (s) return { state: s, run: r, via: r.headSha }; }
+    const decided = newestFirst(later.filter((x) => x.workflowName === wf)).map((r) => ({ s: pick(r), r })).filter((x) => x.s);
+    const by = (st) => decided.find((x) => x.s === st);
+    const hit = by("green") ?? by("pending") ?? by("red");
+    if (hit) return { state: hit.s, run: hit.r, via: hit.r.headSha };
   }
   if (!mine.length) {
     /* SQL tests run only when production/supabase/** changed — none for this sha = nothing to test. */
@@ -855,10 +862,11 @@ export function pushAgeMs(lock, now = Date.now()) {
  *   "pending" — a run for the sha (or a later one containing it) is queued / running, OR no run is listed
  *               yet / gh did not answer while the push is under 15 min old (R-2561);
  *   "unknown" — no run for the sha nor any later manager-pardeep run containing it, push 15+ min old;
- *   null      — not a ci-wait lock / no sha, or gh did not answer (twice) for a push 15+ min old.
+ *   null      — not a ci-wait / ci-red lock / no sha, or gh did not answer (twice) for a push 15+ min old.
+ * R-2612: a ci-red lock is looked at again too — a newer green run may have cleared it.
  */
 export function ciWaitVerdict(lock, { gh, isAncestor, now = Date.now() }) {
-  if (!lock || lock.state !== LOCK_STATES.ciWait || !lock.pushedSha) return null;
+  if (!lock || (lock.state !== LOCK_STATES.ciWait && lock.state !== LOCK_STATES.ciRed) || !lock.pushedSha) return null;
   const full = lock.pushedSha;
   const young = pushAgeMs(lock, now) < CI_NO_RUN_GRACE_MS;
   let shaRuns = null, branchRuns = null;
@@ -898,16 +906,18 @@ export function settleCiWaitLocks(card, mine, locks, { gh, isAncestor, remove, p
  * takes the slot back with `claim --fixes-red`), pending/unknown → left as it is. One line per card
  * plus one JSON line {card, sha, ci, at} (ci = CI + SQL tests together) for the board's `ciCheck`.
  * `verdict(lock)` and `settle(card, exitCode)` are injected for tests.
+ * R-2612: ci-red locks are looked at again too — green (a newer run containing the sha passed) frees
+ * them; still red is left as it is (no new ciRedAt).
  */
 export function ciAllReport(locks, { verdict, settle, at = new Date().toISOString() }) {
-  const waiting = locks.filter((l) => l.state === LOCK_STATES.ciWait);
+  const waiting = locks.filter((l) => l.state === LOCK_STATES.ciWait || l.state === LOCK_STATES.ciRed);
   if (!waiting.length) return { lines: ["Koi card CI ke intezaar (ci-wait) mein nahi."], results: [] };
   const lines = [], results = [];
   for (const l of waiting) {
     const v = verdict(l) ?? "unknown";
     const sha = String(l.pushedSha ?? "").slice(0, 9);
     if (v === "green") settle(l.card, CI_EXIT.green);
-    if (v === "red") settle(l.card, CI_EXIT.red);
+    if (v === "red" && l.state === LOCK_STATES.ciWait) settle(l.card, CI_EXIT.red);
     lines.push(`${l.card}  ${sha || "(sha nahi)"}  ${v === "green" ? "CI green — lock hata" : v === "red" ? "CI LAAL — card wala worker theek kare (claim --fixes-red)" : v === "pending" ? "CI abhi chal raha / line mein (ya GitHub ne abhi run nahi dikhaya) — baad mein dobara ci-all" : "CI ka run nahi mila (push 15+ min purana) ya gh nahi chala — GitHub Actions par dekho"}`);
     const r = { card: l.card, sha: l.pushedSha ?? null, ci: v, at };
     results.push(r);
@@ -1284,7 +1294,7 @@ function main(argv) {
     /* R-2552: the manager's one command for every pushed card's CI (workers no longer wait). */
     const isAncestor = (a, b) => { try { execFileSync("git", ["merge-base", "--is-ancestor", a, b], { stdio: "ignore" }); return true; } catch { return false; } };
     const locks = readLocks();
-    if (locks.some((l) => l.state === LOCK_STATES.ciWait)) { try { execFileSync("git", ["fetch", "-q", "anutech"], { stdio: "ignore", timeout: 60_000 }); } catch {} }
+    if (locks.some((l) => l.state === LOCK_STATES.ciWait || l.state === LOCK_STATES.ciRed)) { try { execFileSync("git", ["fetch", "-q", "anutech"], { stdio: "ignore", timeout: 60_000 }); } catch {} }
     const at = new Date().toISOString();
     const settle = (c, code) => { try { updateLock(c, (l) => lockAfterCi(l, code, { at })); } catch {} };
     const r = ciAllReport(locks, { verdict: (l) => ciWaitVerdict(l, { gh: realGh, isAncestor }), settle, at });
