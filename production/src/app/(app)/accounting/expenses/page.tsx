@@ -50,6 +50,7 @@ import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { billAdvanceView } from "@/lib/accounting/vendor-account";
 import { AdvanceAppliedLine, ApplyAdvanceButton } from "./advance-on-bill";
 import { ZohoPurchaseImportDialog } from "@/components/features/accounting/zoho-purchase-import-dialog";
+import { ImportAmazonDialog } from "./import-amazon-dialog";
 import { canImportFyPurchases } from "@/lib/integrations/zoho-books/purchase-import/plan";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 
@@ -122,6 +123,7 @@ export default function ExpensesPage() {
   const { data: me } = useCurrentUser();
   const canImportFy = canImportFyPurchases(me?.role);
   const [fyOpen, setFyOpen] = React.useState(false);
+  const [amazonOpen, setAmazonOpen] = React.useState(false); // R-2602
   const [editing, setEditing] = React.useState<Expense | null>(null);
   /* ?edit=<expense id> — Payments Made opens a paid expense straight into its edit form
      (2 Oct 2026). Fetched by id: the list here is date-range limited, the expense may be older. */
@@ -823,6 +825,7 @@ export default function ExpensesPage() {
       <FAB icon="plus" label="Expense" onClick={() => setAddOpen(true)} ariaLabel="Add Expense" />
       {addOpen && <AddExpenseDialog onClose={() => setAddOpen(false)} />}
       {fyOpen && <ZohoPurchaseImportDialog open={fyOpen} onOpenChange={setFyOpen} />}
+      {amazonOpen && <ImportAmazonDialog open={amazonOpen} onOpenChange={setAmazonOpen} />}
       {editing && <AddExpenseDialog expense={editing} onClose={() => setEditing(null)} />}
       {detail && (
         <ExpenseDetailDialog
