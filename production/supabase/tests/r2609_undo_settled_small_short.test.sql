@@ -1,6 +1,6 @@
 \set ON_ERROR_STOP on
 -- R-2609: un-reconciling a bank line that carries an R-2595 settled small difference takes it back.
--- Migration: 20261108133000_r2609_undo_settled_small_short.sql (on top of 20261108092350 R-2595).
+-- Migration: 20261108145951_r2609_undo_settled_small_short.sql (on top of 20261108092350 R-2595).
 -- Self-asserting, ONE transaction, rolled back — run on the LOCAL DB only:
 --
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -d postgres -v ON_ERROR_STOP=1 < supabase/tests/r2609_undo_settled_small_short.test.sql
