@@ -72,9 +72,39 @@ jobs:
           node-version: "20"
 
       # The scripts below use only Node built-ins + the `supabase` CLI + docker — no npm ci.
-      - uses: supabase/setup-cli@v1
+      # R-2610 (8 Nov 2026): `version: latest` + one download died 4 times today with
+      # "Unexpected HTTP response: 504" (run 42466580532) — a CLI download hiccup, not a test, yet
+      # it turned every pending card's CI red. So: pin the version every green run used
+      # (v3.0.0, latest since 2 Nov) — no "latest" lookup — and if the action still fails, install
+      # the same release with curl's own retries, then fall back to npm. A real failure of all
+      # three still stops the job at "Check the Supabase CLI".
+      - name: Install Supabase CLI (setup-cli)
+        id: setup_cli
+        continue-on-error: true
+        uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 3.0.0
+
+      - name: Install Supabase CLI (retry if setup-cli failed)
+        if: steps.setup_cli.outcome != 'success'
+        env:
+          SUPABASE_CLI_VERSION: 3.0.0
+        run: |
+          set -euo pipefail
+          echo "::warning::setup-cli failed (download hiccup) — installing supabase v${SUPABASE_CLI_VERSION} with retries"
+          DEST="$RUNNER_TEMP/supabase-cli"
+          mkdir -p "$DEST"
+          URL="https://github.com/supabase/cli/releases/download/v${SUPABASE_CLI_VERSION}/supabase_linux_amd64.tar.gz"
+          if curl -fsSL --retry 5 --retry-all-errors --retry-delay 5 --connect-timeout 20 -o "$DEST/cli.tgz" "$URL" \
+             && tar xzf "$DEST/cli.tgz" -C "$DEST" supabase; then
+            echo "$DEST" >> "$GITHUB_PATH"
+          else
+            echo "::warning::release download failed too — trying npm"
+            npm i -g "supabase@${SUPABASE_CLI_VERSION}"
+          fi
+
+      - name: Check the Supabase CLI
+        run: supabase --version
 
       - name: Start local Supabase (schema-less — migrations moved aside)
         run: |
