@@ -192,9 +192,11 @@ export interface AmazonOrderRow {
   paymentDate: string | null;
   poNumber: string;
   lines: AmazonOrderLine[];
-  /** Whole rupees — sum of the rows' Net total (GST inside, ITC off). */
+  /** Whole rupees — round(sum of the rows' RAW Net total): what Amazon charged for the order (GST inside, ITC off). */
   total: number;
-  /** Whole rupees — sum of Total tax amount (noted, not claimed). */
+  /** Rupees with paise — the raw sum, so an expected debit over several orders rounds ONCE. */
+  rawTotal: number;
+  /** Whole rupees — round(sum of the rows' raw Total tax amount) (noted, not claimed). */
   taxTotal: number;
   /** The one tax rate of the order's rows, else null (mixed rates are noted). */
   taxRatePct: number | null;
@@ -276,8 +278,12 @@ export function buildAmazonImportPreview(lines: readonly AmazonLine[], existing:
       asin: l.asin, title: l.title, qty: l.qty ?? 1, unitPrice: l.unitPrice,
       amount: R(l.netTotal ?? 0), taxAmount: R(l.taxAmount ?? 0), fileLine: l.line,
     }));
-    const total = orderLines.reduce((s, l) => s + l.amount, 0);
-    const taxTotal = orderLines.reduce((s, l) => s + l.taxAmount, 0);
+    /* Rounding happens ONCE, at the order (review BLOCK on afbc32b3d): 10.49 + 10.49 = 20.98 → ₹21, what
+       Amazon charged — never ₹10 + ₹10 = ₹20. The line amounts are rounded for display only. */
+    const rawTotal = live.reduce((s, l) => s + (l.netTotal ?? 0), 0);
+    const total = R(rawTotal);
+    const taxTotal = R(live.reduce((s, l) => s + (l.taxAmount ?? 0), 0));
+    if (!problem && live.length > 1 && orderLines.reduce((s, l) => s + l.amount, 0) !== total) notes.push("The item amounts shown are rounded each; the order total is rounded once on the exact sum.");
     const rates = [...new Set(live.map((l) => l.taxRatePct).filter((r): r is number => r !== null))];
     const taxRatePct = rates.length === 1 ? rates[0] : null;
     if (rates.length > 1) notes.push(`Rows at different tax rates (${rates.map((r) => `${r}%`).join(", ")}) — check the invoice.`);
@@ -310,7 +316,7 @@ export function buildAmazonImportPreview(lines: readonly AmazonLine[], existing:
 
     rows.push({
       orderId, orderDate: first.orderDate, paymentRef, paymentDate, poNumber: first.poNumber,
-      lines: orderLines, total, taxTotal, taxRatePct, category, isPrime,
+      lines: orderLines, total, rawTotal, taxTotal, taxRatePct, category, isPrime,
       fileLines: all.map((l) => l.line), verdict, message, notes,
     });
   }
@@ -328,9 +334,11 @@ export function buildAmazonImportPreview(lines: readonly AmazonLine[], existing:
     if (!r.paymentRef) { noPaymentRef.push(r.orderId); continue; }
     const k = `${r.paymentRef}|${r.paymentDate ?? ""}`;
     const d = debits.get(k) ?? { paymentRef: r.paymentRef, paymentDate: r.paymentDate, amount: 0, orderIds: [] };
-    d.amount += r.total; d.orderIds.push(r.orderId);
+    d.amount += r.rawTotal; d.orderIds.push(r.orderId);
     debits.set(k, d);
   }
+  /* The bank debit is one amount: round the exact sum of the orders once. */
+  for (const d of debits.values()) d.amount = R(d.amount);
   return {
     rows, toImport, expectedDebits: [...debits.values()], noPaymentRef,
     totalAmount: toImport.reduce((s, r) => s + r.total, 0), counts,

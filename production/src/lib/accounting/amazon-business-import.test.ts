@@ -192,3 +192,32 @@ describe("sample file", () => {
     expect(p.expectedDebits.length).toBeGreaterThanOrEqual(1);
   });
 });
+
+describe("rounding happens once, at the order and at the bank debit (review BLOCK on afbc32b3d)", () => {
+  const twoHalves = (id: string, ref: string) => [
+    row({ date: "23/08/2026", id, ref, payDate: "23/08/2026", qty: "1", sub: "10.49", tax: "1.60", net: "10.49", asin: "T0HALF0001", title: "T-Half A", unit: "8.89" }),
+    row({ date: "23/08/2026", id, ref, payDate: "23/08/2026", qty: "1", sub: "10.49", tax: "1.60", net: "10.49", asin: "T0HALF0002", title: "T-Half B", unit: "8.89" }),
+  ];
+  it("10.49 + 10.49 = 20.98 → ₹21 for the order (not ₹10 + ₹10 = ₹20); tax 1.60 + 1.60 → ₹3", () => {
+    const p = preview([HEADER, ...twoHalves("260-2602020-0000020", REF_A)].join("\n"));
+    const o = p.rows[0];
+    expect(o.verdict).toBe("import");
+    expect(o.total).toBe(21);
+    expect(o.taxTotal).toBe(3);
+    expect(o.lines.map((l) => l.amount)).toEqual([10, 10]); // display only
+    expect(o.notes.join(" ")).toMatch(/rounded once/);
+    const ins = toAmazonExpenseInserts([o], { fileName: "t.csv", stamp: "X" });
+    expect(ins[0].amount).toBe(21);
+    expect(p.totalAmount).toBe(21);
+  });
+  it("the expected bank debit rounds the exact sum of its orders once: 20.98 + 20.98 = 41.96 → ₹42", () => {
+    const p = preview([HEADER, ...twoHalves("260-2602021-0000021", REF_A), ...twoHalves("260-2602022-0000022", REF_A)].join("\n"));
+    expect(p.rows.map((r) => r.total)).toEqual([21, 21]);
+    expect(p.expectedDebits).toEqual([{ paymentRef: REF_A, paymentDate: "2026-08-23", amount: 42, orderIds: ["260-2602021-0000021", "260-2602022-0000022"] }]);
+  });
+  it("0.50 + 0.50 across two orders on one payment: orders ₹1 + ₹1 but the debit is the exact ₹1", () => {
+    const one = (id: string, asin: string) => row({ date: "23/08/2026", id, ref: REF_B, payDate: "23/08/2026", qty: "1", sub: "0.50", tax: "0.08", net: "0.50", asin, title: "T-Tiny", unit: "0.42" });
+    const p = preview([HEADER, one("260-2602023-0000023", "T0TINY0001"), one("260-2602024-0000024", "T0TINY0002")].join("\n"));
+    expect(p.expectedDebits[0].amount).toBe(1);
+  });
+});
