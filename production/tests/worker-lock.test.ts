@@ -660,9 +660,10 @@ describe("R-2592: push refuses a money / p0 card without an independent SAFE rev
 
   it("changePatchId (real git): same after a rebase, different with one more commit, null once merged; generated files ignored", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2592-git-"));
-    const g = (a: string[], input?: string) => execFileSync("git", a, { cwd: tmp, encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"] });
+    // self-contained: CI runners have no global git identity, so rebase/merge (which write commits) need one here
+    const g = (a: string[], input?: string) => execFileSync("git", ["-c", "user.email=t@example.test", "-c", "user.name=t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", ...a], { cwd: tmp, encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"] });
     const put = (f: string, s: string) => { fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true }); fs.writeFileSync(path.join(tmp, f), s); };
-    const commit = (m: string) => { g(["add", "-A"]); g(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", m]); return g(["rev-parse", "HEAD"]).trim(); };
+    const commit = (m: string) => { g(["add", "-A"]); g(["commit", "-qm", m]); return g(["rev-parse", "HEAD"]).trim(); };
     try {
       g(["init", "-q", "-b", "main"]);
       put("production/a.ts", "1\n"); put("production/b.ts", "x\n"); commit("base");
