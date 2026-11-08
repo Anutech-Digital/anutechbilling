@@ -374,3 +374,79 @@ export function useOldAdvanceGivenLines(enabled: boolean) {
     },
   });
 }
+
+/* ══ R-2604: move old Balance Sheet "Advance/loan given · <name>" lines here (owner tool) ═════════
+ * preview_bs_loan_move() = "Check first" (read only); apply_bs_loan_move(links, expected net) moves
+ * them in one transaction (migration 20261108093000_r2604_move_bs_loans.sql, newer than the generated
+ * types → untyped client). Employee groups move to Employee loans only when the owner ticks them. */
+
+export interface BsLoanMoveGroup {
+  key: string;
+  name: string;
+  given: number;
+  returned: number;
+  net: number;
+  rows: { id: string; label: string; amount: number; bank_txn_id: string | null; date: string }[];
+  lines: number;
+  first_date: string;
+  target: "loan_given" | "employee" | "skip";
+  skip_reason: string | null;
+  employee: { id: string; name: string } | null;
+  merge_loan: { id: string; principal: number } | null;
+}
+export interface BsLoanMovePreview {
+  groups: BsLoanMoveGroup[];
+  movable_net: number;
+  total_before: number;
+  total_after: number;
+}
+export interface BsLoanMoveResult {
+  moved: { name: string; target: "loan_given" | "employee_loan"; loan_id: string; merged: boolean; amount: number }[];
+  moved_net: number;
+  nothing_to_move: boolean;
+  total_before: number;
+  total_after: number;
+}
+
+/** R-2604: the employee groups the owner left ticked → {key: employee id} for apply_bs_loan_move. */
+export function employeeLinks(groups: BsLoanMoveGroup[], unticked: ReadonlySet<string>): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const g of groups) {
+    if (g.target === "employee" && g.employee && !unticked.has(g.key)) out[g.key] = g.employee.id;
+  }
+  return out;
+}
+
+export function useBsLoanMovePreview(enabled: boolean) {
+  return useQuery({
+    queryKey: ["balance-sheet", "items", "r2604-move-preview"],
+    enabled,
+    staleTime: 0,
+    queryFn: async (): Promise<BsLoanMovePreview> => {
+      const supabase = createClient() as unknown as SupabaseClient;
+      const { data, error } = await supabase.rpc("preview_bs_loan_move");
+      if (error) throw new Error(error.message);
+      return data as BsLoanMovePreview;
+    },
+  });
+}
+
+export function useApplyBsLoanMove() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { links: Record<string, string>; expectedNet: number }): Promise<BsLoanMoveResult> => {
+      const supabase = createClient() as unknown as SupabaseClient;
+      const { data, error } = await supabase.rpc("apply_bs_loan_move", {
+        p_employee_links: input.links, p_expected_net: input.expectedNet,
+      });
+      if (error) throw new Error(error.message);
+      return data as BsLoanMoveResult;
+    },
+    onSuccess: (r) => {
+      invalidate(qc);
+      qc.invalidateQueries({ queryKey: ["employee-loans"] });
+      toast.success(r.nothing_to_move ? "Nothing left to move" : `Moved ${rupee(r.moved_net)} — Balance Sheet total unchanged`);
+    },
+    onError: (err) => toastError(err, { fallback: "Couldn't move the loans", description: "Nothing was moved." }),
+  });
+}
