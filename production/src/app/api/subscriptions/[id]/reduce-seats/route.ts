@@ -20,16 +20,18 @@
  * allowed — but R-2584: "end_of_term" is refused while SEAT_CUT_END_OF_TERM_ENABLED is off (renewal
  * does not apply a scheduled cut yet — R-2583), so an NCE-locked subscription has no seat cut in
  * the app until then. A cut scheduled before R-2584 can still be removed (DELETE).
+ * R-2589: refused (409 plan_change_open, the message names the quote) while a plan-change quote
+ * (Change plan, R-2227) is open — once paid it would put back seats this cut already credited.
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 import { resolveSeatTax } from "@/lib/subscriptions/apply-seat-increase";
-import { seatReductionValue, seatReductionPreview, SEAT_CUT_END_OF_TERM_ENABLED } from "@/lib/subscriptions/seat-reduction";
+import { seatReductionValue, seatReductionPreview, planChangeOpenMessage, SEAT_CUT_END_OF_TERM_ENABLED } from "@/lib/subscriptions/seat-reduction";
 import { checkNceLock } from "@/lib/subscriptions/nce-lock";
 import { istToday } from "@/lib/dates/ist";
-import { REDUCE_SEATS_SELECT, loadPartInvoiceMoney, loadScheduledReduction, type ReduceSeatsSub } from "./load";
+import { REDUCE_SEATS_SELECT, loadPartInvoiceMoney, loadScheduledReduction, loadOpenPlanChangeQuote, type ReduceSeatsSub } from "./load";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -92,8 +94,14 @@ export async function GET(req: Request, props: { params: Promise<{ id: string }>
   const g = await gate(id);
   if (!g.ok) return g.res;
   const seats = Number(new URL(req.url).searchParams.get("seats") ?? "1");
-  const p = await buildPreview(g, Number.isFinite(seats) ? Math.trunc(seats) : 0);
+  const [p, planChangeQuoteId] = await Promise.all([
+    buildPreview(g, Number.isFinite(seats) ? Math.trunc(seats) : 0),
+    loadOpenPlanChangeQuote(g.supabase, g.sub),
+  ]);
   return NextResponse.json({
+    /* R-2589: an open plan-change quote blocks any seat cut — the dialog can say so before Confirm. */
+    planChangeQuoteId,
+    planChangeBlockedReason: planChangeQuoteId ? planChangeOpenMessage(planChangeQuoteId) : null,
     seats: g.sub.seats,
     renewalDate: g.sub.renewal_date,
     taxLabel: p.taxLabel,
@@ -119,6 +127,13 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   /* R-2584: renewal does not apply a scheduled cut yet (R-2583) — the renewal would still bill the old seats. */
   if (timing === "end_of_term" && !SEAT_CUT_END_OF_TERM_ENABLED) {
     return NextResponse.json({ error: "Reducing seats at the end of the term is not available yet — reduce them now, with credit.", code: "end_of_term_off" }, { status: 400 });
+  }
+
+  /* R-2589: an open plan-change quote was priced on today's seats and sets its own seat count when
+     paid — a cut now would be credited here and put back by that payment (double credit). */
+  const planChangeQuoteId = await loadOpenPlanChangeQuote(g.supabase, g.sub);
+  if (planChangeQuoteId) {
+    return NextResponse.json({ error: planChangeOpenMessage(planChangeQuoteId), code: "plan_change_open" }, { status: 409 });
   }
 
   const p = await buildPreview(g, seatsRemoved);
@@ -159,6 +174,10 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
     }
     /* The function's own refusals are written for the owner (§24); anything else stays in the log. */
     if (PLAIN_REFUSALS.has(code)) {
+      /* R-2589: a plan-change quote linked after the check above — same words, same code. */
+      if (/^Plan change quote .+ is open for this subscription/.test(error.message)) {
+        return NextResponse.json({ error: error.message, code: "plan_change_open" }, { status: 409 });
+      }
       return NextResponse.json({ error: error.message, code: "refused" }, { status: 400 });
     }
     console.error("[reduce-seats] reduce_subscription_seats failed:", error);

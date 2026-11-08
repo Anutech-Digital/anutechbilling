@@ -77,6 +77,10 @@ export interface PlanChangeMeta {
   subscription_id: string;
   from_item_id: string | null;
   from_plan: string | null;
+  /** R-2589: seats + ₹/month the subscription had when this quote was priced. record_payment refuses
+   *  the quote once the subscription no longer matches (a seat cut in between would be credited twice). */
+  from_seats: number;
+  from_mrr: number;
   to_item_id: string;
   to_plan: string;
   /** Seats after the change. */
@@ -264,6 +268,8 @@ export function buildPlanChange(args: {
       subscription_id: sub.id,
       from_item_id: sub.item_id,
       from_plan: sub.plan,
+      from_seats: sub.seats,
+      from_mrr: sub.mrr,
       to_item_id: target.id,
       to_plan: target.name,
       seats: newSeats,

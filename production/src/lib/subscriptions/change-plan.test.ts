@@ -47,6 +47,8 @@ describe("R-2227 buildPlanChange — yearly-paid", () => {
     expect(r.plan.line.plan_change).toMatchObject({
       subscription_id: "sub-1", to_item_id: "GW-STD", seats: 10, new_mrr: 8640, cost_per_seat_month: 720,
       credit: 16160, not_given_paise: 0,
+      // R-2589: what it was priced on — record_payment refuses it once the subscription differs
+      from_seats: 10, from_mrr: 2700, from_plan: "Google Workspace Business Starter",
     });
     expect(r.plan.line.name).toMatch(/pro-rata from 2026-10-01 to /);
     expect(isPlanChangeQuote({ extension_months: 0, line_items: [r.plan.line] })).toBe(true);

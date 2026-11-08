@@ -199,3 +199,9 @@ export function seatReductionPreview(value: SeatReductionValueOk, invoice: Reduc
         : "",
   };
 }
+
+/** R-2589: why a seat cut is refused while a plan-change quote is open. reduce_subscription_seats
+ *  (migration 20261108051500) raises the SAME words; the route maps either to code plan_change_open. */
+export function planChangeOpenMessage(quoteId: string): string {
+  return `Plan change quote ${quoteId} is open for this subscription — it was priced on today's seats. Delete that quote (or record its payment) first, then reduce seats.`;
+}
