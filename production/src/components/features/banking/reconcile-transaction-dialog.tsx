@@ -72,6 +72,7 @@ import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { LoanGivenReceiptSection } from "@/components/features/banking/loan-given-receipt-section";
+import { LoanGivenOutFields, LOAN_GIVEN_BORROWERS_LIST_ID } from "@/components/features/banking/loan-given-out-fields";
 import { CreditLineSection } from "@/components/features/banking/credit-line-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
 import { CustomerRefundSection } from "@/components/features/banking/customer-refund-section";
@@ -147,6 +148,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const [transferSave, setTransferSave] = React.useState<FooterSave | null>(null);
   const [otherIncomeSave, setOtherIncomeSave] = React.useState<FooterSave | null>(null);
   const [loanReceiptSave, setLoanReceiptSave] = React.useState<FooterSave | null>(null);
+  /* R-2603: money-out "I am GIVING a loan" — a Loans given row, saved by LoanGivenOutFields. */
+  const [loanOutSave, setLoanOutSave] = React.useState<FooterSave | null>(null);
   /* R-2374: a drawdown / repayment on a credit line or business loan (Loan / EMI tile). */
   const [creditLineSave, setCreditLineSave] = React.useState<FooterSave | null>(null);
   const [razorpaySave, setRazorpaySave] = React.useState<FooterSave | null>(null);
@@ -648,7 +651,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     onSave: handleBookCredit,
     loading: bookCredit.isPending,
   };
-  const advanceSave: FooterSave = {
+  /* R-2603: money out + "I am GIVING" saves ONLY through LoanGivenOutFields (a Loans given row) —
+     until it reports, the footer is off, never the old Balance Sheet booking. */
+  const advanceSave: FooterSave = !isCredit && advanceKind === "given" ? (loanOutSave ?? {
+    label: `Book ${rupee(amount)} as a loan given (Loans given)`, onSave: () => {}, disabled: true,
+  }) : {
     label: `Book ${rupee(amount)} as ${advanceKind === "given"
       ? (isCredit ? "an advance returned to you (asset)" : "a loan/advance you gave (asset)")
       : (isCredit ? "a loan received (liability)" : "a loan you repaid (liability)")}`,
@@ -912,6 +919,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
 
   /* Loan / advance between you and a person — BOTH sides. Not income, not expense: books a
      balance-sheet ASSET (you lent) or LIABILITY (you borrowed). Saved from the footer. */
+  const loanGivenOut = !isCredit && advanceKind === "given";
   const advanceBox = (
     <div className="rounded-md border border-indigo/40 bg-indigo-soft/25 p-3">
       <p className="text-xs font-semibold text-ink-2 mb-1">Loan / advance with a person?</p>
@@ -942,7 +950,12 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         value={advanceParty}
         onChange={(e) => setAdvanceParty(e.target.value)}
         placeholder="Person's name (e.g. Julie Rawat)"
+        list={loanGivenOut ? LOAN_GIVEN_BORROWERS_LIST_ID : undefined}
       />
+      {loanGivenOut && transaction && (
+        <LoanGivenOutFields txnId={transaction.id} amount={amount} borrower={advanceParty} notes={transaction.description}
+          onDone={() => onOpenChange(false)} onFooterSave={setLoanOutSave} />
+      )}
     </div>
   );
 

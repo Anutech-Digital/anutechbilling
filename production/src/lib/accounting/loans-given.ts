@@ -353,3 +353,39 @@ export function loanGivenSetupPayload(i: LoanGivenSetupInput, reconcileTxnId: st
     reconcile_txn_id: reconcileTxnId,
   };
 }
+
+/* ══ R-2603: Banking → Reconcile money-out → "I am GIVING a loan" = a Loans given row ══════════
+ * record_loan_given_from_bank_out (migration 20261108080000) reuses the spelling already on Loans
+ * given when the same borrower is typed in another case / with extra spaces — this is the same key. */
+
+/** One person, one key: trimmed, inner spaces collapsed, lower case (same rule as the RPC). */
+export function borrowerKey(name: string): string {
+  return name.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/** Borrower names for the picker: one per person (first spelling wins), sorted, blanks dropped. */
+export function distinctBorrowers(names: readonly (string | null | undefined)[]): string[] {
+  const byKey = new Map<string, string>();
+  for (const n of names) {
+    const clean = (n ?? "").trim().replace(/\s+/g, " ");
+    if (!clean) continue;
+    const k = borrowerKey(clean);
+    if (!byKey.has(k)) byKey.set(k, clean);
+  }
+  return [...byKey.values()].sort((a, b) => a.localeCompare(b));
+}
+
+/** Label book_bank_advance gave a loan/advance GIVEN from a money-out line (before R-2603). */
+export const OLD_ADVANCE_GIVEN_LABEL = "Advance/loan given";
+
+/** Balance Sheet lines that are really loans given (booked before R-2603) — count, total, people. */
+export function oldAdvanceGivenLines(items: readonly { section: string; label: string; amount: number }[]): {
+  count: number; total: number; borrowers: string[];
+} {
+  const rows = items.filter((i) => i.section === "asset" && i.label.trim().startsWith(OLD_ADVANCE_GIVEN_LABEL));
+  return {
+    count: rows.length,
+    total: rows.reduce((s, i) => s + Number(i.amount || 0), 0),
+    borrowers: distinctBorrowers(rows.map((i) => i.label.split("·").slice(1).join("·"))),
+  };
+}

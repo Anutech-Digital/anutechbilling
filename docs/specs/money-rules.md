@@ -121,6 +121,12 @@ Who pays the online fee: `razorpay-fee.md`.
 | X2 | A partial refund of credit-note credit: up to the open credit-note credit on that invoice and never more than the payment's cash. | R-1682 | SQL `refund_credit_note_credit` (`supabase/migrations/20261101013533_r2322_bank_customer_refund.sql:502`) | `supabase/tests/r1682_partial_credit_refund.test.sql` |
 | X3 | Refunding / deleting a payment also reverses the advance credit it opened (incl. credit already spent) and its TDS receivable; the receipt voucher number is never reused. | R-1567, R-1568 | SQL `refund_payment` (`supabase/migrations/20261101013533_r2322_bank_customer_refund.sql:141`) | `supabase/tests/r1567_refund_delete_payment_credit.test.sql`, `supabase/tests/refund_payment.test.sql` |
 
+## Loans given
+
+| # | Rule | Card | Enforced by | Proved by |
+|---|---|---|---|---|
+| L1 | Money the business lends is ONE store: `loans_given` (Accounting → Loans given, Balance Sheet "Loans given"). A money-out bank line reconciled as "I am GIVING a loan" becomes one loans_given row on that line (matched `loan_given` + loan id) — never a `balance_sheet_items` "Advance/loan given" line; booked once (an already reconciled line is refused); Un-reconcile removes the loan (refused while a receipt is on the books). The same borrower in another case / spacing keeps the spelling already on Loans given. | R-2603 | SQL `record_loan_given_from_bank_out` (`supabase/migrations/20261108080000_r2603_reconcile_loan_given.sql`); undo `tg_loan_given_line_unmatched` (`supabase/migrations/20261107165630_r2570_bank_line_own_type.sql`); `src/components/features/banking/loan-given-out-fields.tsx` | `supabase/tests/r2603_reconcile_loan_given.test.sql`, `src/components/features/banking/loan-given-out-fields-r2603.test.tsx`, `src/lib/accounting/loans-given-r2603.test.ts` |
+
 ## Renewals
 
 | # | Rule | Card | Enforced by | Proved by |
