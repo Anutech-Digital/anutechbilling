@@ -102,7 +102,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'e2252000-0000-4000-8000-0000000000a2', 'role', 'authenticated')::text, true);
   begin
     perform public.reduce_subscription_seats('e2252000-0000-0000-0000-0000000000a0', (select v::uuid from r2252_ids where k = 'sub_paid'),
-      2, 'now', 4000, 1200, 'r2252-key-direct', 'e2252000-0000-4000-8000-0000000000a2');
+      2, 'now', 4000, 1200, 'r2252-key-direct', 'e2252000-0000-4000-8000-0000000000a2', 10);
   exception when others then v_msg := sqlerrm; end;
   if v_msg is null then insert into r2252_fail values ('F1: a signed-in user ran reduce_subscription_seats directly'); end if;
 end $$;
@@ -120,7 +120,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('role', 'service_role')::text, true);
 
   -- A. paid invoice, now.
-  v_r := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_paid'), 2, 'now', 4000, 1200, 'r2252-key-paid-1', c_a);
+  v_r := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_paid'), 2, 'now', 4000, 1200, 'r2252-key-paid-1', c_a, 10);
   select seats, mrr into v_sub from public.subscriptions where id = (select v::uuid from r2252_ids where k = 'sub_paid');
   if v_sub.seats <> 8 or v_sub.mrr <> 1200 then
     insert into r2252_fail values ('A: seats/mrr after the cut ' || to_jsonb(v_sub) || ' (want 8 / 1200)');
@@ -138,7 +138,7 @@ begin
   end if;
 
   -- B. replay.
-  v_r2 := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_paid'), 2, 'now', 4000, 1200, 'r2252-key-paid-1', c_a);
+  v_r2 := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_paid'), 2, 'now', 4000, 1200, 'r2252-key-paid-1', c_a, 10);
   if (v_r2->>'replayed')::boolean is not true or v_r2->>'credit_note_id' <> v_r->>'credit_note_id' then
     insert into r2252_fail values ('B: replay gave ' || v_r2::text);
   end if;
@@ -150,7 +150,7 @@ begin
 
   -- C. unpaid invoice: the unused value only lowers what they owe.
   select coalesce(net_payable, amount) - paid_amount as open into v_inv from public.invoices where id = (select v from r2252_ids where k = 'inv_open');
-  v_r := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_open'), 2, 'now', 4000, 1200, 'r2252-key-open-1', c_a);
+  v_r := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_open'), 2, 'now', 4000, 1200, 'r2252-key-open-1', c_a, 10);
   if (v_r->>'lower_open_amount')::int <> 4000 or (v_r->>'credit_amount')::int <> 0 then
     insert into r2252_fail values ('C: result ' || v_r::text || ' (want lower 4,000, credit 0)');
   end if;
@@ -162,7 +162,7 @@ begin
   end if;
 
   -- D. part paid: ₹3,000 open, ₹4,000 unused → lower 3,000, credit 1,000 (from money received).
-  v_r := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_part'), 2, 'now', 4000, 1200, 'r2252-key-part-1', c_a);
+  v_r := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_part'), 2, 'now', 4000, 1200, 'r2252-key-part-1', c_a, 10);
   if (v_r->>'lower_open_amount')::int <> 3000 or (v_r->>'credit_amount')::int <> 1000 or (v_r->>'not_given_amount')::int <> 0 then
     insert into r2252_fail values ('D: result ' || v_r::text || ' (want lower 3,000, credit 1,000)');
   end if;
@@ -171,7 +171,7 @@ begin
   if v_credit <> 1000 then insert into r2252_fail values ('D: customer credit ₹' || v_credit || ' (want ₹1,000)'); end if;
 
   -- E. end of term: scheduled, nothing else.
-  v_r := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_paid'), 3, 'end_of_term', 0, 0, 'r2252-key-eot-1', c_a);
+  v_r := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_paid'), 3, 'end_of_term', 0, 0, 'r2252-key-eot-1', c_a, 8);
   if v_r->>'status' <> 'scheduled' or (v_r->>'seats_after')::int <> 5
      or (v_r->>'effective_date')::date is distinct from (select renewal_date from public.subscriptions where id = (select v::uuid from r2252_ids where k = 'sub_paid')) then
     insert into r2252_fail values ('E: scheduled row ' || v_r::text);
@@ -181,7 +181,7 @@ begin
   end if;
   v_msg := null;
   begin
-    perform public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_paid'), 1, 'now', 500, 1050, 'r2252-key-eot-2', c_a);
+    perform public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_paid'), 1, 'now', 500, 1050, 'r2252-key-eot-2', c_a, 8);
   exception when others then v_msg := sqlerrm; end;
   if v_msg is null or v_msg not like '%already scheduled%' then
     insert into r2252_fail values ('E: a cut while one is scheduled was not refused: ' || coalesce(v_msg, 'ran'));
@@ -190,7 +190,7 @@ begin
   -- F2. every seat.
   v_msg := null;
   begin
-    perform public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_open'), 8, 'now', 0, 0, 'r2252-key-all-1', c_a);
+    perform public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_open'), 8, 'now', 0, 0, 'r2252-key-all-1', c_a, 8);
   exception when others then v_msg := sqlerrm; end;
   if v_msg is null or v_msg not like '%At least 1 seat must stay%' then
     insert into r2252_fail values ('F2: removing every seat not refused: ' || coalesce(v_msg, 'ran'));
@@ -199,11 +199,26 @@ begin
   -- F3. unused value above the seats' whole-term cost (1 seat × 1,800 × 1.18 ≈ 2,124).
   v_msg := null;
   begin
-    perform public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_open'), 1, 'now', 99999, 1050, 'r2252-key-cap-1', c_a);
+    perform public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_open'), 1, 'now', 99999, 1050, 'r2252-key-cap-1', c_a, 8);
   exception when others then v_msg := sqlerrm; end;
   if v_msg is null or v_msg not like '%more than the removed seats cost%' then
     insert into r2252_fail values ('F3: an inflated unused value was not refused: ' || coalesce(v_msg, 'ran'));
   end if;
+
+  -- H. the seats changed after the route priced the cut (Add seats in between) → refused, price again.
+  v_msg := null;
+  begin
+    perform public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_part'), 1, 'now', 500, 1050, 'r2252-key-stale-1', c_a, 10);
+  exception when others then v_msg := sqlerrm; end;
+  if v_msg is null or v_msg not like '%seats changed%' then
+    insert into r2252_fail values ('H: a cut priced on stale seats was not refused: ' || coalesce(v_msg, 'ran'));
+  end if;
+
+  -- I. the scheduled cut can be taken back; then a new cut is allowed again.
+  v_r := public.cancel_scheduled_seat_reduction(c_t, (select v::uuid from r2252_ids where k = 'sub_paid'));
+  if v_r->>'status' <> 'cancelled' then insert into r2252_fail values ('I: cancel gave ' || v_r::text); end if;
+  v_r := public.reduce_subscription_seats(c_t, (select v::uuid from r2252_ids where k = 'sub_paid'), 1, 'end_of_term', 0, 0, 'r2252-key-eot-3', c_a, 8);
+  if v_r->>'status' <> 'scheduled' then insert into r2252_fail values ('I: a new cut after cancelling was refused: ' || v_r::text); end if;
 end $$;
 reset role;
 select set_config('request.jwt.claims', '', true);
@@ -219,7 +234,7 @@ begin
   set local role service_role;
   perform set_config('request.jwt.claims', json_build_object('role', 'service_role')::text, true);
   begin
-    perform public.reduce_subscription_seats('e2252000-0000-0000-0000-0000000000a0', v_sub, 1, 'now', 1500, 600, 'r2252-key-noinv-1', 'e2252000-0000-4000-8000-0000000000a2');
+    perform public.reduce_subscription_seats('e2252000-0000-0000-0000-0000000000a0', v_sub, 1, 'now', 1500, 600, 'r2252-key-noinv-1', 'e2252000-0000-4000-8000-0000000000a2', 5);
   exception when others then v_msg := sqlerrm; end;
   if v_msg is null or v_msg not like '%no tax invoice%' then
     insert into r2252_fail values ('F4: a cut with no invoice to credit was not refused: ' || coalesce(v_msg, 'ran'));
@@ -234,8 +249,9 @@ select set_config('request.jwt.claims', '', true);
 -- G. grants: server-only function, read-only table.
 do $$
 begin
-  if has_function_privilege('authenticated', 'public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid)', 'execute')
-     or has_function_privilege('anon', 'public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid)', 'execute') then
+  if has_function_privilege('authenticated', 'public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)', 'execute')
+     or has_function_privilege('anon', 'public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)', 'execute')
+     or has_function_privilege('authenticated', 'public.cancel_scheduled_seat_reduction(uuid,uuid)', 'execute') then
     insert into r2252_fail values ('G: reduce_subscription_seats is executable by anon/authenticated');
   end if;
   if has_table_privilege('authenticated', 'public.subscription_seat_reductions', 'insert')

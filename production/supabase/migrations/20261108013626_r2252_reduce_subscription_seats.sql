@@ -1,4 +1,4 @@
--- deploy-peek: to_regclass('public.subscription_seat_reductions') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid)') and prosrc like '%R-2252%')
+-- deploy-peek: to_regclass('public.subscription_seat_reductions') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)') and prosrc like '%R-2252%') and to_regprocedure('public.cancel_scheduled_seat_reduction(uuid,uuid)') is not null
 -- deploy-key: r2252reducesubscriptionseats
 -- 20261108013626_r2252_reduce_subscription_seats.sql
 --
@@ -45,6 +45,13 @@
 --   not credit more than the seats ever cost; the credit note itself is still capped by the core at
 --   what the invoice has left to credit.
 --
+--   cancel_scheduled_seat_reduction(tenant, subscription) — takes a scheduled cut back (server-only).
+--   NOT YET: applying a scheduled cut at renewal (the renewal quote / seats) — follow-up card; until
+--   then the scheduled row is the record and the owner reduces the renewal quote's seats.
+--   Guards (review, 8 Nov): the seats the route priced must still be the seats (p_seats_before); a
+--   written-off subscription / invoice gets no credit; a yearly bill must be THIS term's (raised no
+--   earlier than a month before the term began); end of term never on a renewal date already past;
+--   the row stores the customer credit the core really booked.
 -- Test: supabase/tests/r2252_reduce_seats.test.sql (begin … rollback; red without this file).
 begin;
 
@@ -91,7 +98,8 @@ create or replace function public.reduce_subscription_seats(
   p_unused_gross     integer,
   p_new_mrr          integer,
   p_idempotency_key  text,
-  p_actor            uuid
+  p_actor            uuid,
+  p_seats_before     integer
 )
 returns jsonb
 language plpgsql
@@ -155,6 +163,15 @@ begin
   if v_sub.status <> 'active' then
     raise exception 'Seats can only be reduced on an active subscription (this one is %)', v_sub.status using errcode = 'check_violation';
   end if;
+  /* The route priced the cut from the seats it read; a change in between (Add seats) → price again. */
+  if p_seats_before is distinct from v_sub.seats then
+    raise exception 'The seats changed to % while this was open — close Manage seats and open it again', v_sub.seats
+      using errcode = 'check_violation';
+  end if;
+  if v_sub.written_off_at is not null then
+    raise exception 'This subscription''s dues are written off — a seat cut with credit would contradict the write-off. Use Correct details instead.'
+      using errcode = 'check_violation';
+  end if;
   if p_seats_removed >= coalesce(v_sub.seats, 0) then
     raise exception 'At least 1 seat must stay — this subscription has %. To stop every seat, cancel the subscription instead.', v_sub.seats
       using errcode = 'check_violation';
@@ -169,6 +186,10 @@ begin
     v_eff := v_sub.renewal_date;
     if v_eff is null then
       raise exception 'This subscription has no renewal date to schedule the cut on' using errcode = 'check_violation';
+    end if;
+    if v_eff < v_today then
+      raise exception 'The renewal date % has already passed — renew or correct the subscription first', to_char(v_eff, 'DD Mon YYYY')
+        using errcode = 'check_violation';
     end if;
     insert into public.subscription_seat_reductions
       (tenant_id, subscription_id, idempotency_key, timing, status, seats_before, seats_removed, seats_after,
@@ -212,6 +233,8 @@ begin
             or i.quote_id in (select q.id from public.quotes q
                                where q.tenant_id = p_tenant_id and q.renewal_subscription_id = v_sub.id
                                  and q.id is distinct from v_sub.renewal_quote_id))
+       /* It must be THIS term's bill: raised no earlier than a month before the term began. */
+       and i.invoice_date >= (v_sub.renewal_date - make_interval(months => greatest(1, coalesce(v_sub.term_months, 12))))::date - 31
      order by i.invoice_date desc, i.created_at desc limit 1;
   end if;
 
@@ -221,6 +244,11 @@ begin
     if not found or v_inv.status in ('draft', 'void') then
       v_inv_id := null;
     end if;
+  end if;
+
+  if v_inv_id is not null and v_inv.written_off_at is not null and v_unused > 0 then
+    raise exception 'Invoice % is written off — a credit note on it would contradict the write-off. Use Correct details instead.', v_inv_id
+      using errcode = 'check_violation';
   end if;
 
   if v_inv_id is null and v_unused > 0 then
@@ -265,6 +293,9 @@ begin
         format('R-2252 Reduce seats: unused value ₹%s — lowers what is owed ₹%s, credit ₹%s', v_unused, v_lower, v_credit),
         true);
       v_cn_id := v_cn->>'credit_note_id';
+      /* Store what the core really booked as the customer's credit (its own settled rule). */
+      v_credit := least(v_cn_amt, greatest(0, coalesce((v_cn->>'customer_credit')::int, 0)));
+      v_lower  := v_cn_amt - v_credit;
       perform public.sync_invoice_subscription_outstanding(v_inv_id);
     end if;
   end if;
@@ -288,10 +319,35 @@ begin
 end;
 $function$;
 
-comment on function public.reduce_subscription_seats(uuid, uuid, integer, text, integer, integer, text, uuid) is
+comment on function public.reduce_subscription_seats(uuid, uuid, integer, text, integer, integer, text, uuid, integer) is
   'R-2252: seat cut from Manage seats. end_of_term → scheduled row only. now → one credit note on the part''s tax invoice for min(unused, open) + min(rest, received − already credited) (R-2255 split), seats + mrr lowered, balance re-synced (R-2178). Server-only.';
 
-revoke all on function public.reduce_subscription_seats(uuid, uuid, integer, text, integer, integer, text, uuid) from public, anon, authenticated;
-grant execute on function public.reduce_subscription_seats(uuid, uuid, integer, text, integer, integer, text, uuid) to service_role;
+revoke all on function public.reduce_subscription_seats(uuid, uuid, integer, text, integer, integer, text, uuid, integer) from public, anon, authenticated;
+grant execute on function public.reduce_subscription_seats(uuid, uuid, integer, text, integer, integer, text, uuid, integer) to service_role;
+
+/* R-2252: take back a scheduled end-of-term cut (Manage seats → Reduce seats → Remove scheduled cut). */
+create or replace function public.cancel_scheduled_seat_reduction(p_tenant_id uuid, p_subscription_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare v_row public.subscription_seat_reductions%rowtype;
+begin
+  if public.current_request_role() is distinct from 'service_role' then
+    raise exception 'cancel_scheduled_seat_reduction is server-only — use Manage seats' using errcode = '42501';
+  end if;
+  update public.subscription_seat_reductions r
+     set status = 'cancelled'
+   where r.tenant_id = p_tenant_id and r.subscription_id = p_subscription_id and r.status = 'scheduled'
+  returning r.* into v_row;
+  if not found then
+    raise exception 'No seat cut is scheduled on this subscription' using errcode = 'no_data_found';
+  end if;
+  return to_jsonb(v_row);
+end;
+$function$;
+revoke all on function public.cancel_scheduled_seat_reduction(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.cancel_scheduled_seat_reduction(uuid, uuid) to service_role;
 
 commit;
