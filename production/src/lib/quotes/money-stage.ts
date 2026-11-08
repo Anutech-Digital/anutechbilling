@@ -56,6 +56,9 @@ export interface QuoteMoneyInput {
     /** The first instalment not yet covered, with its date. */
     next: { gross: number; billOn: string; index: number } | null;
     count: number;
+    /** R-2587: the part received less a small difference (instalment-status.ts) and the part
+     *  after it. Only that difference left due → "Part 1 of 4 received (₹60 short)", not "due now". */
+    smallShort?: { index: number; amount: number; next: { gross: number; billOn: string; index: number } | null } | null;
   } | null;
   /** R-2054: a part payment request (R-2044, quotes.subscription_billing_id set). It has no
    *  accept step, so the "before they formally accept" sentence is not shown on it. */
@@ -105,6 +108,9 @@ export interface MoneyActions {
   openRequest?: { id: string; number: string } | null;
   /** R-2334: offer "Open approval" — the quote waits for the owner before any money. */
   openApproval?: boolean;
+  /** R-2587: only a small difference is left on a received part — Record stays, but it is not
+   *  the page's main step (primary-action.ts). */
+  smallShort?: boolean;
 }
 
 export function quoteMoneyActions(q: QuoteMoneyInput, rupees: (n: number) => string): MoneyActions {
@@ -145,6 +151,18 @@ function moneyActionsToday(q: QuoteMoneyInput, rupees: (n: number) => string): M
         return base("partial", 0, {
           note: `${PAID_TO_DATE_LABEL} — ${nextPart}: payment request ${q.nextPartRequest.number} is out — record that part there. ${each}`,
           openRequest: q.nextPartRequest,
+        });
+      }
+      /* R-2587: Q-A378-27-0021 — Part 1 ₹95,993, ₹95,933 in. "₹60 due now" + a big "Record
+         instalment payment" read as if the customer owed money today. */
+      const sm = d.smallShort;
+      if (sm && d.outstanding > 0 && d.outstanding <= sm.amount && q.received > 0) {
+        const after = sm.next ? ` · next part ${rupees(sm.next.gross)} (${sm.next.index} of ${d.count}) on ${sm.next.billOn}` : "";
+        return base("partial", d.outstanding, {
+          note: `Part ${sm.index} of ${d.count} received (${rupees(sm.amount)} short)${after}. ${each}`,
+          canRecordPayment: true,
+          recordLabel: `Record ${rupees(sm.amount)} balance`,
+          smallShort: true,
         });
       }
       if (d.outstanding > 0) {
