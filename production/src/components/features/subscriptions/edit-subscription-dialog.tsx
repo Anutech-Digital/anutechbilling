@@ -542,6 +542,15 @@ export function EditSubscriptionDialog({
                 {/^\d{4}-\d{2}-\d{2}$/.test(renewal) ? `The next term starts on this date; this term ends ${formatDate(addDaysISO(renewal, -1))}. ` : ""}
                 Override it if the real term differs.
               </p>
+              {/* R-2613 (rule N5): the database moves a scheduled end-of-term seat cut with an earlier
+                  renewal date, or removes it when the new date has passed / is cleared. */}
+              {sub.renewal_date && (renewal === "" || (/^\d{4}-\d{2}-\d{2}$/.test(renewal) && renewal < sub.renewal_date.slice(0, 10))) && (
+                <p className="mt-1 text-2xs leading-snug text-ink-2" data-testid="renewal-earlier-seat-cut-note">
+                  {renewal === "" || renewal < istToday()
+                    ? `A seat cut scheduled for ${formatDate(sub.renewal_date)} (Manage seats → At end of term) is removed when you save.`
+                    : `A seat cut scheduled for ${formatDate(sub.renewal_date)} (Manage seats → At end of term) moves to ${formatDate(renewal)} when you save.`}
+                </p>
+              )}
             </FormField>
           </div>
 

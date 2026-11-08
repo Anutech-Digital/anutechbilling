@@ -251,11 +251,22 @@ export async function createExtensionQuote(
     return { ok: false, code: "insert_failed", message: insertErr.message };
   }
 
-  // Link back so record_payment finds it
-  await input.supabase
+  /* Link back so record_payment finds it. R-2613: the link can be refused — a seat cut scheduled
+     after the check above (trigger subscriptions_r2613_quote_link_guard, rule N5). An unlinked
+     extension quote must not stay: paid, it is not recognised as this subscription's renewal. */
+  const linked = (await input.supabase
     .from("subscriptions")
     .update({ renewal_quote_id: newQuoteId })
-    .eq("id", input.subscriptionId);
+    .eq("id", input.subscriptionId)) as { error?: { message: string } | null } | undefined;
+  if (linked?.error) {
+    await input.supabase.from("quotes").delete().eq("id", newQuoteId).eq("tenant_id", input.tenantId);
+    const msg = linked.error.message;
+    return {
+      ok: false,
+      code: /^A seat cut to \d+ seats is scheduled/.test(msg) ? "seat_cut_scheduled" : "insert_failed",
+      message: `${msg} (quote ${newQuoteId} was removed).`,
+    };
+  }
 
   return { ok: true, quoteId: newQuoteId, amount: grossAnnual, years: len.unit === "years" ? len.count : null, months };
 }
