@@ -34,6 +34,8 @@ import { issueEinvoiceNotice, isB2B } from "@/lib/compliance/einvoice";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
 import { pagePaidToDate, paidToDateLine, PAID_TO_DATE_LABEL } from "@/lib/quotes/paid-to-date";
+import { instalmentStatus, instalmentHeadline, paidStepText } from "@/lib/quotes/instalment-status";
+import { InstalmentList } from "./instalment-list";
 import { useNextPartRequest } from "./next-part-request";
 import { useQuotePartInvoices } from "./part-invoices";
 import { PaymentHistoryCard } from "./payment-history-card";
@@ -391,6 +393,17 @@ export default function QuoteDetailPage() {
         hasOpenRequest: Boolean(nextPartRequest),
       })
     : null;
+  /* R-2587: Part 1 received less a small difference (₹95,933 of ₹95,993) is paid for the
+     stepper — "Part 1 of 4 paid (₹60 short) · next on 1 Feb 2027" — until the next part is due. */
+  const shortPaidLine = (() => {
+    if (!quote || paidToDate || partRequest || quote.invoice_id) return null;
+    const plan = planForQuote(quote, (saleSub?.start_date ?? istToday()).slice(0, 10));
+    if (!plan) return null;
+    const st = instalmentStatus(plan, { received: sumReceived(paymentHistory ?? []), todayISO: istToday() });
+    if (!st.smallShort) return null;
+    if (st.next && st.next.billOn <= istToday() && !nextPartRequest) return null;
+    return paidStepText(st, formatDate, rupee);
+  })();
   const lifecycle = quote
     ? quoteLifecycle({
         status: quote.status,
@@ -405,7 +418,7 @@ export default function QuoteDetailPage() {
         paid: quoteIsPaid(quote),
         /* R-1710: what came in and what is left, also once invoiced. */
         money: quotePaymentState(quote),
-        paidToDate: paidToDate ? paidToDateLine(paidToDate, formatDate(paidToDate.next.billOn)) : null,
+        paidToDate: paidToDate ? paidToDateLine(paidToDate, formatDate(paidToDate.next.billOn)) : shortPaidLine,
         partInvoices: partInvoices,
       })
     : null;
@@ -968,6 +981,11 @@ export default function QuoteDetailPage() {
     ? planForQuote(quote, (firstQuoteSub?.start_date ?? istToday()).slice(0, 10))
     : null;
   const due = splitPlan ? splitDue(splitPlan, { todayISO: istToday(), received: totalReceivedSoFar }) : null;
+  /* R-2587: each part with what came in — the list under the money row and its headline. */
+  const partStatus = splitPlan && totalReceivedSoFar > 0
+    ? instalmentStatus(splitPlan, { received: totalReceivedSoFar, todayISO: istToday() })
+    : null;
+  const partHeadline = partStatus ? instalmentHeadline(partStatus, formatDate, rupee) : null;
   const money = quoteMoneyActions(
     {
       splitDue: splitPlan && due ? {
@@ -975,6 +993,10 @@ export default function QuoteDetailPage() {
         outstanding: due.outstanding,
         count: splitPlan.count,
         next: due.next ? { gross: due.next.gross, billOn: formatDate(due.next.billOn), index: due.next.index } : null,
+        smallShort: partStatus?.smallShort ? {
+          ...partStatus.smallShort,
+          next: partStatus.next ? { gross: partStatus.next.gross, billOn: formatDate(partStatus.next.billOn), index: partStatus.next.index } : null,
+        } : null,
       } : null,
       status:        quote.status,
       paymentStatus: quote.payment_status,
@@ -1755,7 +1777,9 @@ export default function QuoteDetailPage() {
               {totalReceivedSoFar > 0 ? (
                 <span className="font-medium text-rose">
                   {due
-                    ? <>{rupee(totalReceivedSoFar)} received · {rupee(due.outstanding)} due now{due.next && due.outstanding === 0 ? <> · next instalment {rupee(due.next.gross)} on {formatDate(due.next.billOn)}</> : null}.</>
+                    ? partStatus?.smallShort && partHeadline && due.outstanding <= partStatus.smallShort.amount
+                      ? <>{partHeadline}.</> /* R-2587 */
+                      : <>{rupee(totalReceivedSoFar)} received · {rupee(due.outstanding)} due now{due.next && due.outstanding === 0 ? <> · next instalment {rupee(due.next.gross)} on {formatDate(due.next.billOn)}</> : null}.</>
                     : <>{rupee(totalReceivedSoFar)} already received of {rupee(total)} — {rupee(Math.max(0, total - totalReceivedSoFar))} still outstanding.</>}
                 </span>
               ) : (
@@ -1918,7 +1942,10 @@ export default function QuoteDetailPage() {
 
         {money.stage !== "closed" && (money.canRecordPayment || money.canGenerateInvoice || money.note) && (
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="text-sm text-ink-2">{money.note}</div>
+            <div className="text-sm text-ink-2">
+              {money.note}
+              {partStatus && <InstalmentList status={partStatus} lastReceivedOn={receivedPayments[receivedPayments.length - 1]?.received_at ?? null} />}
+            </div>
             <div className="flex gap-2 flex-wrap">
               {/* Reopen stays available while no money has moved — undoing an
                   accidental accept must not need a database. */}
