@@ -61,7 +61,7 @@ import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites, slowestSuites } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderGate } from "./worker-lock-guards.mjs";
 import { runRelatedSql } from "./worker-lock-sql.mjs";
-import { maskMigrationStamps, autoRenameLateMigrations, realAutoRenameDeps, checkMigrationClash } from "./worker-lock-migts.mjs";
+import { maskOwnMigrations, autoRenameLateMigrations, realAutoRenameDeps, checkMigrationClash } from "./worker-lock-migts.mjs";
 import { stashSnapshot, enforceStash, stashGit } from "./worker-lock-stash.mjs";
 import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
 import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue, turnGate, turnQueueLines, readTurnWaiters, joinTurnWait, leaveTurnWait, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
@@ -1262,8 +1262,9 @@ export function changePatchId(rev, base, git) {
     const mb = git(["merge-base", base, rev]).trim();
     const diff = git(["diff", "--no-color", "--no-ext-diff", mb, rev, "--", ...REVIEW_PATHSPEC]);
     if (!diff.trim()) return null;
-    /* R-2614: migration timestamps masked — a rename-only change (file + its mentions) keeps the review. */
-    return git(["patch-id", "--stable"], maskMigrationStamps(diff)).trim().split(/\s+/)[0] || null;
+    /* R-2614/R-2615: only the card's own new migration versions masked — a rename-only change (file +
+       its exact mentions) keeps the review; a change to any other 14-digit number does not. */
+    return git(["patch-id", "--stable"], maskOwnMigrations(diff)).trim().split(/\s+/)[0] || null;
   } catch { return null; }
 }
 

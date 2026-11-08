@@ -10,11 +10,15 @@
  *            renames them itself to the current UTC time (all of the card's new migrations, order
  *            kept), rewrites the old name in the card's own changed files, regenerates deploy-db +
  *            peeks, commits "<CARD>: rename migration (auto)" and goes on with the push.
- *   review — the patch-id the review gate compares is taken with every 14-digit migration timestamp
- *            (20YYMMDDHHMMSS) masked, and docs/API.md left out like the other generated files, so a
- *            rename-only or regen-only change keeps the SAFE review. Any other code change still does not.
+ *   review — the patch-id the review gate compares is taken with the card's OWN new migration versions
+ *            masked (R-2615: only versions of files the diff ADDS under supabase/migrations/, and their
+ *            exact mentions — never any other 14-digit number), and docs/API.md left out like the other
+ *            generated files, so a rename-only or regen-only change keeps the SAFE review. Any other code
+ *            change — including one that only changes some other 20YYMMDDHHMMSS-looking number — does not.
  *   claim / check — refuse when another active lock's worktree, or a recent anutech wip/<card> branch,
- *            holds a new migration with the same timestamp as one of this card's.
+ *            holds a new migration with the same timestamp as one of this card's. R-2615: never my own
+ *            wip branch, and not a wip migration that the same card renamed later (a newer file with the
+ *            same name part on manager-pardeep, added by a commit naming that card).
  *
  * `git` is injected ((args, input?) => stdout, run at the repo top; throws on non-zero) so tests drive
  * this with a real throwaway repo.
@@ -28,9 +32,34 @@ export const MIG_NAME = /^(\d{14})_([a-z0-9_]+)\.sql$/;
 const STAMP = /(?<!\d)20\d{12}(?!\d)/g;
 export const STAMP_MASK = "YYYYMMDDHHMMSS";
 
-/** Every 14-digit migration timestamp masked — used on the diff before `git patch-id`. */
+/** Every 14-digit 20… number masked. R-2614's review mask — too wide (R-2615); kept for old callers, the gate uses maskOwnMigrations. */
 export function maskMigrationStamps(text) {
   return String(text ?? "").replace(STAMP, STAMP_MASK);
+}
+
+/** R-2615: versions of the migrations a unified diff ADDS under supabase/migrations/ (sorted, unique). */
+export function ownMigrationVersions(diff) {
+  const out = new Set();
+  for (const sec of String(diff ?? "").split(/^(?=diff --git )/m)) {
+    const head = /^diff --git a\/\S+ b\/(\S+)\r?\n/.exec(sec);
+    if (!head || !/(^|\/)supabase\/migrations\/[^/]+$/.test(head[1])) continue;
+    const end = sec.search(/^(@@|---|Binary)/m);
+    if (!/^new file mode /m.test(end < 0 ? sec : sec.slice(0, end))) continue;
+    const v = MIG_NAME.exec(head[1].split("/").pop())?.[1];
+    if (v) out.add(v);
+  }
+  return [...out].sort();
+}
+
+/**
+ * R-2615: the review gate's mask — each of the card's OWN new migration versions (ownMigrationVersions)
+ * becomes MIGRATION_<i> (i = its place among them, so a rename that keeps their order is invisible),
+ * wherever that exact version appears. Every other number stays as it is.
+ */
+export function maskOwnMigrations(diff) {
+  let s = String(diff ?? "");
+  ownMigrationVersions(s).forEach((v, i) => { s = s.replace(new RegExp(`(?<!\\d)${v}(?!\\d)`, "g"), `MIGRATION_${i}`); });
+  return s;
 }
 
 /** Current UTC time as YYYYMMDDHHMMSS. */
@@ -212,6 +241,17 @@ export function otherCardsMigrations(card, locks, { git, days = 3, gitFor = gitA
   const since = Date.now() / 1000 - days * 86400;
   let onBase = new Set();
   try { onBase = new Set(git(["ls-tree", "--name-only", `${base}:${MIG_DIR}`]).split(/\r?\n/)); } catch {}
+  /* R-2615: the wip branch still has the OLD name of a migration its card renamed later (auto rename,
+     then merged): a newer file with the same name part on base, added by a commit that names the card. */
+  const renamedLater = (c, f) => {
+    const m = MIG_NAME.exec(f);
+    const cardRe = new RegExp(`(?<![\\w-])${c}(?!\\d)`, "i");
+    return [...onBase].some((b) => {
+      const n = MIG_NAME.exec(b);
+      if (!n || n[2] !== m[2] || n[1] <= m[1]) return false;
+      try { return cardRe.test(git(["log", base, "--format=%s%n%b", "--diff-filter=A", "--", `${MIG_DIR}/${b}`])); } catch { return false; }
+    });
+  };
   for (const r of refs) {
     const [ref, at] = r.split("\t");
     const c = /wip\/(r-\d+)$/i.exec(ref)?.[1]?.toUpperCase();
@@ -219,7 +259,7 @@ export function otherCardsMigrations(card, locks, { git, days = 3, gitFor = gitA
     seen.add(c);
     try {
       const files = git(["diff", "--name-only", "--no-renames", "--diff-filter=A", `${base}...${ref}`, "--", MIG_DIR]).split(/\r?\n/)
-        .map((f) => f.split("/").pop()).filter((f) => f && MIG_NAME.test(f) && !onBase.has(f));
+        .map((f) => f.split("/").pop()).filter((f) => f && MIG_NAME.test(f) && !onBase.has(f) && !renamedLater(c, f));
       out.push({ card: c, files });
     } catch {}
   }

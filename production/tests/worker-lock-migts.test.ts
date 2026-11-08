@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFileSync, spawnSync } from "node:child_process";
 // @ts-expect-error — plain .mjs ops script, no types
-import { maskMigrationStamps, utcStamp, orderProblems, ownLateOnly, planRenames, rewriteMentions, autoRenameLateMigrations, migrationClashes, otherCardsMigrations, checkMigrationClash, addedMigrations, clashMessage } from "../scripts/ops/worker-lock-migts.mjs";
+import { maskMigrationStamps, maskOwnMigrations, ownMigrationVersions, utcStamp, orderProblems, ownLateOnly, planRenames, rewriteMentions, autoRenameLateMigrations, migrationClashes, otherCardsMigrations, checkMigrationClash, addedMigrations, clashMessage } from "../scripts/ops/worker-lock-migts.mjs";
 
 const MIG = "production/supabase/migrations";
 
@@ -134,5 +134,52 @@ describe("R-2614 claim refuses a migration version another card already holds", 
       expect(checkMigrationClash("R-1", a.tmp, locks, { gitFor }).ok).toBe(true);
       expect(checkMigrationClash("R-1", path.join(a.tmp, "nope"), locks, { gitFor }).ok).toBe(true);
     } finally { a.done(); b.done(); }
+  });
+});
+
+/* R-2615 (8 Nov 2026): the review mask touches only the card's own new migrations; an old wip branch of a
+   card whose migration was renamed later (and merged) no longer refuses a claim. */
+describe("R-2615 mask only the card's own new migration versions", () => {
+  const diff = (files: Array<[string, string, boolean]>) => files.map(([f, body, isNew]) => `diff --git a/${f} b/${f}\n${isNew ? "new file mode 100644\n" : ""}index 0000000..1111111\n--- ${isNew ? "/dev/null" : `a/${f}`}\n+++ b/${f}\n@@ -0,0 +1 @@\n+${body}\n`).join("");
+  it("finds the versions of migrations the diff ADDS under supabase/migrations/ only", () => {
+    const d = diff([[`${MIG}/20261108133000_a.sql`, "x", true], [`${MIG}/20261108120000_old.sql`, "edit", false], ["production/src/x.ts", "20261108140000", true], [`${MIG}/README.md`, "y", true]]);
+    expect(ownMigrationVersions(d)).toEqual(["20261108133000"]);
+  });
+  it("masks own versions in order, leaves every other 14-digit number alone", () => {
+    const d = diff([[`${MIG}/20261108190000_b.sql`, "b", true], [`${MIG}/20261108133000_a.sql`, "a", true], ["production/src/x.ts", "n = 20261108140000; v = '20261108133000'; w = 202611081330001", false]]);
+    const m = maskOwnMigrations(d);
+    expect(m).toContain(`${MIG}/MIGRATION_0_a.sql`);
+    expect(m).toContain(`${MIG}/MIGRATION_1_b.sql`);
+    expect(m).toContain("n = 20261108140000; v = 'MIGRATION_0'; w = 202611081330001");
+    expect(maskOwnMigrations("no migrations 20261108140000")).toBe("no migrations 20261108140000");
+  });
+});
+
+describe("R-2615 claim: no false clash from my own or an already-renamed card's old wip branch", () => {
+  it("wip of the claimer is ignored; wip whose migration that SAME card later renamed on base is ignored; another card's still clashes", () => {
+    const a = repo();
+    const gitFor = (dir: string) => (args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    try {
+      const wip = (card: string, file: string) => {
+        a.g(["checkout", "-q", "-b", `src-${card}`, "main"]); a.put(`${MIG}/${file}`, "select 7;\n");
+        const sha = a.commit(`${card.toUpperCase()}: ${file}`);
+        a.g(["update-ref", `refs/remotes/anutech/wip/${card}`, sha]);
+      };
+      wip("r-7", "20261108133000_seven.sql");   // R-7 later renamed its migration and merged
+      wip("r-8", "20261108133000_eight.sql");   // R-8's wip: base has an 'eight' migration, but added by R-9
+      wip("r-1", "20261108133000_one.sql");     // the claimer's own old wip
+      a.g(["checkout", "-q", "main"]);
+      a.put(`${MIG}/20261108160000_seven.sql`, "select 7;\n"); a.commit("R-7: rename migration (auto) 20261108133000_seven.sql -> 20261108160000_seven.sql");
+      a.put(`${MIG}/20261108170000_eight.sql`, "select 9;\n"); a.commit("R-9: eight");
+      a.g(["branch", "anutech/manager-pardeep"]);
+      a.g(["checkout", "-qb", "card"]); a.put(`${MIG}/20261108133000_one.sql`, "select 1;\n"); a.commit("R-1: one");
+      const others = otherCardsMigrations("R-1", [], { git: gitFor(a.tmp), gitFor });
+      expect(others.find((o: { card: string }) => o.card === "R-1")).toBeUndefined();
+      expect(others.find((o: { card: string }) => o.card === "R-7")?.files ?? []).toEqual([]);
+      expect(others.find((o: { card: string }) => o.card === "R-8")?.files).toEqual(["20261108133000_eight.sql"]);
+      const res = checkMigrationClash("R-1", a.tmp, [], { gitFor });
+      expect(res.ok).toBe(false);
+      expect(res.clashes.map((c: { card: string }) => c.card)).toEqual(["R-8"]);
+    } finally { a.done(); }
   });
 });
