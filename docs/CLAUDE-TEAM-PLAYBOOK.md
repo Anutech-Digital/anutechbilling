@@ -46,6 +46,13 @@ memory. That is how every teammate's Claude stays updated.
 - **Status always from a fresh check, with the source named** ("abhi git se dekha"): `git fetch anutech`,
   the board (ArtifactData), `gh run list`, staging `/api/version`, a real DB query, `worker-lock list`.
   Memory and old worker reports are hints, not answers. If you can't check, say so.
+  Checklist: skill `status-update`.
+- **Note important lessons yourself, without being asked (8 Nov 2026, R-2585).** A mistake and the rule
+  it created, or anything Pardeep says "note kar lo" about → memory AND a dated line in the Lessons log
+  (section g) through a card push, and tell the team. **The 2nd time a procedure repeats → make it a
+  skill** in `.claude/skills/<name>/SKILL.md` (front matter `name` + a `description` that says exactly
+  WHEN to load it; a short checklist with the real commands that points to the docs).
+  *Repeat wala kaam = skill; zaroori baat = khud note karo aur sabko batao.*
 - **Coach him** (he asked for it): at session start and wrap-up add 1–3 lines on what to do next and
   why; offer at most 1–2 process speed-ups per update (real ones become G-PROCESS cards with numbers).
 - Page tweaks from screenshots: collect all of them first ("aur kuch is page par?"), then ONE card.
@@ -85,11 +92,16 @@ memory. That is how every teammate's Claude stays updated.
 
 *Train 20 card ke baad hi; live kabhi nahi.*
 
+Checklist with the exact commands: skill `staging-train` (`.claude/skills/staging-train/SKILL.md`).
+
 1. **≥ 20 ready cards** (pushed to manager-pardeep, CI green, money/customer cards checked on localhost),
    unless Pardeep himself asks for a train. Don't propose small trains; say the count ("train: 12/20").
    Work merged from another person must be run on localhost first.
 2. **Independent read-only review** per money/security card (a separate reviewer, never the builder):
-   verdict SAFE or BLOCK. BLOCK → its commits stay out until the fix card is pushed.
+   verdict SAFE or BLOCK. Money/p0 cards are reviewed BEFORE their push since R-2592 (`worker-lock push`
+   exit 13 without SAFE on the same code) — so the train only checks every money/p0 card has
+   `independentReview.verdict: SAFE`; a `--no-review` push (see `_ci-gate.log`) gets its review now.
+   BLOCK → its commits stay out until the fix card is pushed.
 3. **CI + SQL green** on the commit you pin.
 4. `node scripts/ops/staging-train.mjs --sha <commit> --dry-run` — read the DB step it prints.
 5. **Claude runs the STAGING deploy-db script itself** (Pardeep, 5 Nov) from a temp worktree pinned to
@@ -100,7 +112,10 @@ memory. That is how every teammate's Claude stays updated.
 7. Wait for Cloud Build to finish.
 8. `node scripts/ops/staging-smoke.mjs --expect-sha <commit>` → must say GREEN.
 9. Update the board: cards in the train, train note, the next train count.
-10. List the **post-train owner steps** (reconnects, approvals, data repairs) in one short message.
+   If the staging Cloud Build fails after `--push`, the DB is already updated: fix card first, then train
+   again at the fix sha with `--db-done` (no new migrations, so no DB step again).
+10. **"Read from Zoho again" on staging is pressed by Claude itself** after the train (Pardeep, 8 Nov:
+    "tum khud daba sakte ho") — not an owner step. Then list the **post-train owner steps** (reconnects, approvals, data repairs) in one short message.
 
 **Never live.** Live DB, live deploy and live secrets are Pardeep's steps.
 
@@ -108,11 +123,35 @@ memory. That is how every teammate's Claude stays updated.
 
 *Do card ek saath; har card ka apna checker.*
 
+Skills (R-2585, 8 Nov 2026) — load the one that fits instead of re-typing the brief:
+- `card-worker` — build one card end to end (board fields, claim, tests, gate, push, cleanup, hand back).
+- `independent-check` — a separate reviewer/checker: diff + card test on the final sha, SAFE / BLOCK.
+- `status-update` — answer "kya update hai" / worker count from a fresh check; count = board count.
+- `staging-train` — the train checklist (section c); coordinator only.
+
 - **Slots:** at most 2 cards being built by day; `worker-lock` enforces 2 by day / 3 by night. After
   22:00 IST Pardeep allows up to 4 worker agents in total (3 Nov) — count running workers before every
   spawn and queue the rest. CI-wait does not use a slot.
+- **Train chal rahi ho (DB step → push → smoke):** max 2 building workers, naya spawn nahi; smoke ke
+  turant baad 4–6 tak bharo (8 Nov, R-2581).
+- **p0/p1 paise wala card** jisme calc + review fixes + card test ho → spawn se pehle ≤45 min ke
+  tukdon (alag cards) mein baanto. Card 60 min se lamba ho gaya → board par likho time kahan gaya
+  (tsc / push / test).
+- **Board = truth for counts (8 Nov, Pardeep):** every running worker is visible on the board before anyone is told a
+  count — builders via `status: doing`; checkers/reviewers via `checkRunning: true` + `checkStartedAt` + `checkNow` on the
+  card (updated every ≤10 min; cleared when done). The count we tell the owner = the count the board shows.
+- **Board fields:** `claimedBy` = lowercase person key (pardeep/hitesh/abhishek/pawan). `needsDecision` only when
+  the card truly waits on the owner; non-blocking recommendations go in `followUps` (needsDecision shows a
+  running card as 'ruka').
 - Claim with `worker-lock claim … --wait --priority <p>`; push **only** via `worker-lock push <CARD>`,
   then `worker-lock ci <CARD>`. Commit WIP and `worker-lock wip <CARD>` (→ `wip/<card>`) at each green step.
+- **p0 / train-blocker → claim with `--priority p0`; it pushes first (R-2591, 8 Nov):** the push turn and the
+  heavy (tsc/guard) turn go by claim priority (`--train-blocker` = p0), then who waited first; a turn already held is
+  never taken away. `worker-lock status` shows who holds each turn and the waiting line with priorities.
+- **Money / p0 card: review BEFORE push (R-2592, 8 Nov).** The worker pushes `wip/<card>` and asks for a
+  checker; the coordinator spawns `independent-check` on that sha at once (it counts on the board via
+  `checkRunning`). SAFE {verdict, sha} on the card → the worker pushes; without it `worker-lock push` stops
+  (exit 13; same code = that sha or the same change after a rebase/squash). `--no-review "<reason>"` only on Pardeep's word — logged to `_ci-gate.log`.
 - **Every card gets a separate localhost checker** (not the builder), following the card's howToCheck.
 - A checker that needs a **second server with a different env** runs it from ITS OWN worktree
   (`npx prisma generate`, start with `--webpack`, own port) — never from `reselleros-deploy`.
@@ -293,3 +332,18 @@ Format: `- <date>: what went wrong → the rule it created (card).`
 - 7 Nov 2026 (R-2573): Pardeep went to sleep and said "jisme mere bina kaam nahi chal sakta use pending
   kaam me daal dena aur aage badte rahna" → owner out/asleep = keep working; owner-only items go to
   the pending list + card `needsDecision`, never a chat question that stops the work (section a).
+- 8 Nov 2026 (R-2581): train + 3 bhaari workers ek saath chale → R-2580 ka push 20 min atka, R-2252 /
+  R-2227 85+ min chale. Pardeep: "ise note bhi kar lo aur sabko bata bhi dena". Rule: train ke waqt max
+  2 building workers, paise wale p0/p1 card ≤45 min ke tukdon mein, 60 min+ card par time ka hisaab
+  (section d); staging "Read from Zoho again" Claude khud dabata hai (section c, step 10).
+- 8 Nov 2026 (R-2581): Pardeep: "board par latest updated information dikhni chahiye ise note bhi aur sabko bata bhi do" →
+  every running worker (builder/checker/reviewer) shows on the board first; the count told to the owner = the board's count (section d).
+- 8 Nov 2026 (R-2585): every train, worker brief, check and status update was re-typed by hand, and the
+  same mistakes came back (worker waiting for CI, board not current, `claimedBy` case, `needsDecision`
+  misuse). Pardeep: "important baate apne aap hi note kar liye kro … jo repetitive kaam hote hai unki
+  skill bana liya karo" → lessons are noted without being asked (memory + this log); the 2nd repeat of a
+  procedure becomes a skill. New skills: `staging-train`, `card-worker`, `independent-check`,
+  `status-update` (section a, c, d). Same day the board showed 4 workers while 5 were `doing` (a card with
+  a CA `step` showed as "ruka") → before telling a worker count, compute it the way the board does:
+  `status: doing` (always running, even with a human `step` on it — board v108) + `review` cards with
+  `checkRunning: true`; never count from your own spawn list (skill `status-update`).

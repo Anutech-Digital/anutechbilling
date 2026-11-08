@@ -244,3 +244,46 @@ describe("R-2054: no 'formally accept' sentence on a part payment request", () =
     }
   });
 });
+
+/** R-2587 (8 Nov 2026): staging Q-A378-27-0021 — Part 1 ₹95,993, ₹95,933 received. */
+describe("R-2587 — a part received with a small difference is not 'due now'", () => {
+  const split = (smallShort: { index: number; amount: number; next: { gross: number; billOn: string; index: number } | null } | null, outstanding = 60) => q({
+    status: "accepted", paymentStatus: "partial", total: 383_972, received: 95_933, splitBilledCycle: "quarterly",
+    splitDue: { dueGross: 95_993, outstanding, next: { gross: 95_993, billOn: "1 Nov 2026", index: 1 }, count: 4, smallShort },
+  });
+
+  it("says Part 1 received (₹60 short) and Part 2's date — never '₹60 due now'", () => {
+    const a = quoteMoneyActions(split({ index: 1, amount: 60, next: { gross: 95_993, billOn: "1 Feb 2027", index: 2 } }), rupee);
+    expect(a.note).toMatch(/^Part 1 of 4 received \(₹60 short\) · next part ₹95,993 \(2 of 4\) on 1 Feb 2027\./);
+    expect(a.note).not.toMatch(/due now/);
+    expect(a.recordLabel).toBe("Record ₹60 balance");
+    expect(a.smallShort).toBe(true);
+    expect(a.outstanding).toBe(60);
+  });
+
+  it("a later part also due today keeps the ordinary 'due now' line", () => {
+    const a = quoteMoneyActions(split({ index: 1, amount: 60, next: { gross: 95_993, billOn: "1 Feb 2027", index: 2 } }, 96_053), rupee);
+    expect(a.note).toMatch(/due now/);
+    expect(a.smallShort).toBeFalsy();
+  });
+
+  it("no small difference → unchanged", () => {
+    const a = quoteMoneyActions(split(null), rupee);
+    expect(a.note).toMatch(/₹60 due now/);
+    expect(a.recordLabel).toBe("Record instalment payment");
+  });
+});
+
+describe("R-2587 — Part 2's payment request is out while Part 1 is ₹60 short", () => {
+  it("one way: open the request, and the note names Part 2 (not Part 1) and the ₹60", () => {
+    const a = quoteMoneyActions(q({
+      status: "accepted", paymentStatus: "partial", total: 383_972, received: 95_933, splitBilledCycle: "quarterly",
+      nextPartRequest: { id: "Q-REQ-2", number: "Q-REQ-2" },
+      splitDue: { dueGross: 191_986, outstanding: 96_053, next: { gross: 95_993, billOn: "1 Nov 2026", index: 1 }, count: 4,
+        smallShort: { index: 1, amount: 60, next: { gross: 95_993, billOn: "1 Feb 2027", index: 2 } } },
+    }), rupee);
+    expect(a.openRequest?.id).toBe("Q-REQ-2");
+    expect(a.canRecordPayment).toBe(false);
+    expect(a.note).toMatch(/^Paid to date \(Part 1 ₹60 short\) — next part ₹95,993 \(2 of 4\) on 1 Feb 2027: payment request Q-REQ-2/);
+  });
+});

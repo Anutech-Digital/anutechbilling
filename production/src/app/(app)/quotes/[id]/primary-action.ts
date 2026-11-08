@@ -42,7 +42,7 @@ export interface QuotePrimaryInput {
   invoiceId?: string | null;
   paymentStatus?: string | null;
   /** quoteMoneyActions(...) — what the money row offers. */
-  money: { stage: string; canRecordPayment: boolean; canGenerateInvoice: boolean };
+  money: { stage: string; canRecordPayment: boolean; canGenerateInvoice: boolean; smallShort?: boolean };
   /** ₹ still owed against the invoice (invoiced quotes) — total − received. */
   invoiceBalance: number;
   /** At least one RECEIVED payment exists (a receipt can be sent). */
@@ -76,7 +76,9 @@ export function quotePrimaryAction(q: QuotePrimaryInput): QuotePrimaryAction {
     return q.customerCopyBlocked ? null : "send_whatsapp";
   }
 
-  if (q.mayRecordMoney && q.money.canRecordPayment) return "record_payment";
+  /* R-2587: only a small difference left on a received part — recording it is possible, not the
+     next step (Q-A378-27-0021: a big "Record instalment payment" for ₹60). */
+  if (q.mayRecordMoney && q.money.canRecordPayment && !q.money.smallShort) return "record_payment";
   if (q.mayRecordMoney && q.money.canGenerateInvoice) return q.gstBlocked ? "fix_gst" : "generate_invoice";
 
   if (q.status === "sent" || q.status === "viewed") return "mark_accepted";

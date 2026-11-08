@@ -14,6 +14,7 @@
  */
 import type { Quote } from "@/lib/supabase/database.types";
 import { isSupportUpgradeQuote } from "@/lib/support/upgrade-quote";
+import { isPlanChangeQuote } from "@/lib/subscriptions/change-plan";
 
 /**
  * Is the money IN, so nothing is owed on this document?
@@ -67,6 +68,8 @@ export type QuoteKindFacts = Parameters<typeof isSupportUpgradeQuote>[0];
 
 export function quoteDocumentKind(q: QuoteKindFacts): QuoteDocumentKind {
   if (isSupportUpgradeQuote(q)) return "upgrade";
+  /* R-2227: a licence plan change (Starter → Standard) renews nothing either — "Upgrade" too. */
+  if (isPlanChangeQuote(q)) return "upgrade";
   return q.is_renewal === true ? "renewal" : "quote";
 }
 

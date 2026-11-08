@@ -30,7 +30,8 @@ import {
 } from "@/lib/quotes/billing";
 import { includedSupportLine } from "@/lib/pdf/quote-support-line";
 import { perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
-import { quoteInstalmentPlan } from "@/lib/billing/instalments";
+import { quoteInstalmentPlan, firstLineCommitment } from "@/lib/billing/instalments";
+import { flexOneTimeFigures, lineChargedOnce, FLEX_FIRST_INVOICE, FLEX_THEN_MONTHLY, FLEX_ONCE } from "@/lib/quotes/per-period-figures";
 import { ONE_TIME_SCHEDULE, type LinePeriodContext } from "@/lib/quotes/service-period";
 import { lineDetailNotes } from "@/lib/pdf/invoice-display";
 import { customerQuoteNotes } from "@/lib/quotes/customer-notes";
@@ -174,7 +175,8 @@ export function QuotePreviewDialog({
 
   // Billing frequency is a single quote-level value (migration 0161). Fall back
   // to the legacy per-line commitment for quotes written before the split.
-  const firstCommitment: LineCommitment | undefined = lineItems[0]?.commitment;
+  /* R-2580: the term is the first RECURRING line's (a domain typed before flex seats has none). */
+  const firstCommitment = (firstLineCommitment(lineItems) ?? undefined) as LineCommitment | undefined;
   const effectiveCycle: BillingCycle = billingCycle ?? cycleFromLegacyCommitment(firstCommitment);
   const billingN     = cycleInvoicesPerYear(effectiveCycle);
   const billingUnit  = cycleUnitLabel(effectiveCycle);
@@ -187,18 +189,31 @@ export function QuotePreviewDialog({
   const fxRate       = exchangeRate ?? 1;
   const money        = (n: number) =>
     isForeign ? formatForeign(foreignEquivalent(n, fxRate), currency ?? "") : rupee(n);
-  const fmt          = (n: number) =>
-    perInvoice ? `${money(Math.round(n / totalsDiv))}${billingUnit}` : money(n);
   /* R-1677: a foreign quote is totalled the one way the accept page, PDF, builder and invoice
      total it (lib/quotes/foreign-totals) — per-unit to the cent, lines summed. Converting each
      ₹ figure on its own printed $338.39 beside the customer's $338.40. */
   const ff           = isForeign
     ? foreignQuoteFigures({ lines: lineItems, fx: fxRate, discountPct, taxRate: isExport ? 0 : taxRate })
     : null;
+  /* R-2580: Monthly flex + a one-time line — the stored totals are MONTH 1 (seats + one-time),
+     later months bill the seats only. The totals read as the first invoice (no "/mo"), then
+     "Then each month" and the one-time part — the PDF's words (per-period-figures). */
+  const flexOnce     = perInvoice && !oneTime
+    ? flexOneTimeFigures({
+        lines: lineItems, discountPct,
+        subtotal: ff ? ff.subtotal : subtotal, taxable: ff ? ff.taxable : taxable, total: ff ? ff.total : total,
+        taxRate: isExport ? 0 : taxRate, foreign: isForeign,
+      })
+    : null;
+  const perPeriodTotals = perInvoice && !flexOnce;
+  const fmt          = (n: number) =>
+    perPeriodTotals ? `${money(Math.round(n / totalsDiv))}${billingUnit}` : money(n);
   const fgn          = (v: number) => formatForeign(v, currency ?? "");
+  /* A flexOnce figure is already in the display currency (ff's on a foreign quote). */
+  const showFlex     = (v: number) => (ff ? fgn(v) : rupee(v));
   const fmtF         = (inr: number, foreign: number | undefined) =>
     ff && foreign !== undefined
-      ? (perInvoice ? `${fgn(cents(foreign / totalsDiv))}${billingUnit}` : fgn(foreign))
+      ? (perPeriodTotals ? `${fgn(cents(foreign / totalsDiv))}${billingUnit}` : fgn(foreign))
       : fmt(inr);
 
   // R-212: the same CGST/SGST split the email and the PDF print (lib/gst/tax-split).
@@ -401,7 +416,8 @@ export function QuotePreviewDialog({
                   const lineN    = billingN;
                   const lineDiv  = perInvoiceDivisor(billingN, line.commitment);
                   const lineUnit = billingUnit;
-                  const showPer  = lineN > 1;
+                  /* R-2580: on a flex sale a one-time line is charged once — no "/mo". */
+                  const showPer  = lineN > 1 && !(flexOnce && lineChargedOnce(line));
                   const rate     = showPer ? Math.round(line.rate / lineDiv) : line.rate;
                   const amount   = line.qty * rate;
                   /* R-495: list price, discount (₹ and %) and final rate, in the same unit as
@@ -438,7 +454,7 @@ export function QuotePreviewDialog({
                       </td>
                       <td className="py-3 pl-2 text-right text-sm tabular-nums font-medium">
                         <div>{ff && !showPer ? fgn(ff.lines[li].gross) : money(amount)}{showPer ? lineUnit : ""}</div>
-                        {showPer && (
+                        {showPer && !flexOnce && (
                           <div className="text-3xs font-normal text-ink-3">
                             = {money(line.qty * line.rate * (lineN / lineDiv))}/yr
                           </div>
@@ -457,7 +473,7 @@ export function QuotePreviewDialog({
             <div className="flex justify-end mb-6">
               <div className="w-full max-w-xs space-y-2 text-sm">
                 <Row
-                  label={perInvoice ? `Subtotal (per invoice)` : "Subtotal"}
+                  label={perPeriodTotals ? `Subtotal (per invoice)` : "Subtotal"}
                   value={fmtF(subtotal, ff?.subtotal)}
                 />
                 {discountPct > 0 && (
@@ -483,23 +499,35 @@ export function QuotePreviewDialog({
                 <div className="border-t-2 border-ink pt-2 mt-2">
                   <div className="flex justify-between items-baseline">
                     <span className="text-2xs uppercase tracking-widest font-semibold">
-                      {perInvoice ? `Per invoice (${billingN}/yr)` : "Grand total"}
+                      {flexOnce ? FLEX_FIRST_INVOICE : perInvoice ? `Per invoice (${billingN}/yr)` : "Grand total"}
                     </span>
                     <span className="font-serif text-2xl tabular-nums">
                       {firstInst
                         ? fmtInst(firstInst.gross)
                         : ff
                         ? fmtF(total, ff.total)
-                        : perInvoice
+                        : perPeriodTotals
                         ? `${money(Math.round(total / totalsDiv))}${billingUnit}`
                         : money(total)}
                     </span>
                   </div>
-                  {perInvoice && (
+                  {perInvoice && !flexOnce && (
                     <div className="flex justify-between items-baseline mt-1.5 text-ink-3">
                       <span className="text-2xs">Annual contract value</span>
                       <span className="text-sm tabular-nums">{splitPlan ? money(splitPlan.instalmentsGross) : money(annualContractValue(total, billingN, firstCommitment))}/yr</span>
                     </div>
+                  )}
+                  {flexOnce && (
+                    <>
+                      <div className="flex justify-between items-baseline mt-1.5 text-ink-2" data-testid="preview-flex-monthly">
+                        <span className="text-2xs">{FLEX_THEN_MONTHLY}</span>
+                        <span className="text-sm tabular-nums">{showFlex(flexOnce.monthly.gross)}{billingUnit}</span>
+                      </div>
+                      <div className="flex justify-between items-baseline mt-1.5 text-ink-3" data-testid="preview-flex-once">
+                        <span className="text-2xs">{FLEX_ONCE}</span>
+                        <span className="text-sm tabular-nums">{showFlex(flexOnce.once.gross)}</span>
+                      </div>
+                    </>
                   )}
                   {isForeign && (
                     <div className="flex justify-between items-baseline mt-1.5 text-ink-3">

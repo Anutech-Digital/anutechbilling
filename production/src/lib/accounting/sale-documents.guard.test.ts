@@ -31,6 +31,7 @@ const SQL_SALE = new Set([
   "get_partner_metrics",   // invoiced this month (reseller children)
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  reduce_subscription_seats: "R-2252: the ONE invoice of a subscription part (by its quote / billing row) a seat cut credits — its open and settled amounts for the split, then issue_credit_note_core; no list or total",
   cancel_quote: "R-2519: only checks whether a quote already has a live (non-void) invoice, to refuse cancelling it — no amounts, lists or totals",
   tg_tenants_lut_to_fy: "R-2444: checks only whether 0% export Tax Invoices of one FY exist, so an old writer of tenants.lut_number never drops the LUT they rely on; no amounts or totals",
   delete_tenant_lut: "R-2444: counts the company's 0% export Tax Invoices of one FY (document_kind 'tax_invoice' — never an opening invoice) only to refuse deleting the LUT they rely on; no amounts or totals",
@@ -174,6 +175,7 @@ const TS_SALE = new Set([
   "src/components/features/collections/owner-report.tsx",        // R-2414: invoiced in the last 30 days, for DSO / CEI
 ]);
 const TS_NOT_SALE: Record<string, string> = {
+  "src/app/api/subscriptions/[id]/reduce-seats/load.ts": "R-2252: the ONE invoice of a subscription part a seat cut credits (same lookup as reduce_subscription_seats) and its open / settled amounts for the preview — not a list or a total",
   "src/lib/integrations/zoho-books/receipts-import/store.ts": "R-2501: invoices that came from Zoho (Zoho id / number, customer, what is still due) to place FY receipts on them — not a revenue or GST report",
   "src/lib/integrations/zoho-books/sales-import/store.ts": "R-2499: every invoice's number / Zoho number / Zoho id (skip what is already in the books) and the per-month recount of what came in from Zoho — not a revenue or GST report",
   "src/lib/payments/payment-link.server.ts": "R-2415: the open invoices (by id) a Send-reminder pay link may carry, and their due for the stale-link sweep — not a list or a total",
@@ -223,6 +225,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/lib/queries/palette-search.ts": "Ctrl+K lookup by number or name (R-1121) — imported ones are findable too",
   "src/lib/queries/payments.ts": "open invoices to pay",
   "src/lib/queries/subscriptions.ts": "a subscription's invoice status",
+  "src/lib/subscriptions/change-plan-money.server.ts": "R-2227: what this subscription's current term / part was billed and paid (opening invoices count — they are money for the term), to cap a plan-change credit — not GST or revenue",
   "src/lib/queries/tds-receivable.ts": "R-1670: the invoice number raised from a TDS entry's quote (a label on the row) — not GST or revenue",
   "src/lib/import/zoho-opening-invoices.queries.ts": "Zoho numbers already imported",
   "src/components/features/invoices/opening-invoice-dues-card.tsx": "balances on imported Zoho invoices (dues)",

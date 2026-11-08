@@ -34,6 +34,8 @@ import { issueEinvoiceNotice, isB2B } from "@/lib/compliance/einvoice";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
 import { pagePaidToDate, paidToDateLine, PAID_TO_DATE_LABEL } from "@/lib/quotes/paid-to-date";
+import { instalmentStatus, instalmentHeadline } from "@/lib/quotes/instalment-status";
+import { InstalmentList } from "./instalment-list";
 import { useNextPartRequest } from "./next-part-request";
 import { useQuotePartInvoices } from "./part-invoices";
 import { PaymentHistoryCard } from "./payment-history-card";
@@ -968,6 +970,14 @@ export default function QuoteDetailPage() {
     ? planForQuote(quote, (firstQuoteSub?.start_date ?? istToday()).slice(0, 10))
     : null;
   const due = splitPlan ? splitDue(splitPlan, { todayISO: istToday(), received: totalReceivedSoFar }) : null;
+  /* R-2587: each part with what came in — the list under the money row and its headline. */
+  const partStatus = splitPlan && totalReceivedSoFar > 0
+    ? instalmentStatus(splitPlan, { received: totalReceivedSoFar, todayISO: istToday() })
+    : null;
+  /* Only a small difference left due → say the part is received, not "₹60 due now". */
+  const partHeadline = partStatus?.smallShort && due && due.outstanding > 0 && due.outstanding <= partStatus.smallShort.amount
+    ? instalmentHeadline(partStatus, formatDate, rupee)
+    : null;
   const money = quoteMoneyActions(
     {
       splitDue: splitPlan && due ? {
@@ -975,6 +985,10 @@ export default function QuoteDetailPage() {
         outstanding: due.outstanding,
         count: splitPlan.count,
         next: due.next ? { gross: due.next.gross, billOn: formatDate(due.next.billOn), index: due.next.index } : null,
+        smallShort: partStatus?.smallShort ? {
+          ...partStatus.smallShort,
+          next: partStatus.next ? { gross: partStatus.next.gross, billOn: formatDate(partStatus.next.billOn), index: partStatus.next.index } : null,
+        } : null,
       } : null,
       status:        quote.status,
       paymentStatus: quote.payment_status,
@@ -1752,7 +1766,9 @@ export default function QuoteDetailPage() {
                   ₹20,000 UPI payment with its own receipt voucher. Money that has already
                   arrived is stated, in rose, instead of being described as a future
                   possibility. */}
-              {totalReceivedSoFar > 0 ? (
+              {partHeadline ? (
+                <span className="text-ink-2">{partHeadline}.</span> /* R-2587 */
+              ) : totalReceivedSoFar > 0 ? (
                 <span className="font-medium text-rose">
                   {due
                     ? <>{rupee(totalReceivedSoFar)} received · {rupee(due.outstanding)} due now{due.next && due.outstanding === 0 ? <> · next instalment {rupee(due.next.gross)} on {formatDate(due.next.billOn)}</> : null}.</>
@@ -1918,7 +1934,10 @@ export default function QuoteDetailPage() {
 
         {money.stage !== "closed" && (money.canRecordPayment || money.canGenerateInvoice || money.note) && (
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="text-sm text-ink-2">{money.note}</div>
+            <div className="text-sm text-ink-2">
+              {money.note}
+              {partStatus && <InstalmentList status={partStatus} lastReceivedOn={receivedPayments[receivedPayments.length - 1]?.received_at ?? null} />}
+            </div>
             <div className="flex gap-2 flex-wrap">
               {/* Reopen stays available while no money has moved — undoing an
                   accidental accept must not need a database. */}

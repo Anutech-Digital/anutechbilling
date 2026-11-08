@@ -27,7 +27,7 @@ import { isSplitBilled } from "@/lib/billing/instalments";
 import { termAmountOf } from "@/lib/billing/subscription-schedule";
 import { nonRenewingLabel } from "@/lib/subscriptions/non-renewing";
 import { rupee, formatDate } from "@/lib/utils";
-import { RENEWAL_URGENT_DAYS, RENEWAL_UPCOMING_DAYS, RENEWAL_FUTURE_DAYS } from "@/lib/renewals/buckets";
+import { RENEWAL_URGENT_DAYS, RENEWAL_UPCOMING_DAYS, RENEWAL_FUTURE_DAYS, RENEWAL_EXCLUDED_STATUS } from "@/lib/renewals/buckets";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { expiredGraceText, isStopped, type RenewalGroups } from "./classify";
 import { isSettledRenewed } from "./row-action";
@@ -35,9 +35,19 @@ import { renewalActionSet, type RenewalActionSub } from "@/components/features/r
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────
 
-/** The five time windows. Order = the tab order. */
-export const QUEUE_TABS = ["overdue", "due7", "d30", "d60", "d90"] as const;
+/**
+ * The time windows. Order = the tab order. R-2586 (Pardeep, 8 Nov 2026: "annual commitment ka
+ * koi bhi renewal show nahi kar raha hai"): "later" lists every renewal past 90 days — an annual
+ * subscription renewing next year was on no tab while a flex sub's next monthly part always was.
+ */
+export const QUEUE_TABS = ["overdue", "due7", "d30", "d60", "d90", "later"] as const;
 export type QueueTab = (typeof QUEUE_TABS)[number];
+
+/**
+ * R-2586: the tabs the tiles add up — the 90-day work window. Later is a look-ahead list only:
+ * tiles, the forecast and the sidebar badge keep the 90-day rule.
+ */
+export const TILE_TABS = ["overdue", "due7", "d30", "d60", "d90"] as const satisfies readonly QueueTab[];
 
 /** 31–60 / 61–90 split of the Future window (lib/renewals/buckets.ts keeps 31–90 as one). */
 export const RENEWAL_D60_DAYS = 60;
@@ -48,16 +58,28 @@ export const QUEUE_TAB_LABEL: Record<QueueTab, string> = {
   d30: "8–30",
   d60: "31–60",
   d90: "61–90",
+  later: "Later (91+ days)",
 };
 
 /** The tab for a row that is due (not overdue): by IST days to the renewal date. */
-export function windowTab(daysUntil: number): QueueTab | null {
+export function windowTab(daysUntil: number): QueueTab {
   if (daysUntil < 0) return "overdue";
   if (daysUntil <= RENEWAL_URGENT_DAYS) return "due7";
   if (daysUntil <= RENEWAL_UPCOMING_DAYS) return "d30";
   if (daysUntil <= RENEWAL_D60_DAYS) return "d60";
   if (daysUntil <= RENEWAL_FUTURE_DAYS) return "d90";
-  return null;
+  return "later";
+}
+
+/**
+ * R-2586: subscriptions the queue cannot place — no renewal_date (and not cancelled). They were
+ * dropped from Renewals with no word; the page now names them, by customer, to be fixed.
+ */
+export function noRenewalDate<T extends { status: string; renewal_date: string | null; customer_name: string }>(subs: readonly T[]): T[] {
+  return subs
+    /* an ended (expired) subscription needs no renewal date — only live ones are work to fix */
+    .filter((s) => s.renewal_date === null && s.status !== RENEWAL_EXCLUDED_STATUS && s.status !== "expired")
+    .sort((a, b) => a.customer_name.localeCompare(b.customer_name));
 }
 
 /**
@@ -67,11 +89,12 @@ export function windowTab(daysUntil: number): QueueTab | null {
  * subscription is a renewal like any other (R-2232's exclusion reversed by the owner, 3 Nov).
  */
 export function queueTabs<T extends { daysUntil: number }>(g: RenewalGroups<T>): Record<QueueTab, T[]> {
-  const out: Record<QueueTab, T[]> = { overdue: [], due7: [], d30: [], d60: [], d90: [] };
+  const out: Record<QueueTab, T[]> = { overdue: [], due7: [], d30: [], d60: [], d90: [], later: [] };
   out.overdue.push(...g.expired, ...g.stopped);
-  for (const r of [...g.due7, ...g.upcoming, ...g.future, ...g.nonRenewing]) {
+  /* R-2586: g.later = chased renewals past 90 days (classify.ts); a far Won't renew row lands in later too. */
+  for (const r of [...g.due7, ...g.upcoming, ...g.future, ...g.later, ...g.nonRenewing]) {
     const t = windowTab(r.daysUntil);
-    if (t && t !== "overdue") out[t].push(r);
+    if (t !== "overdue") out[t].push(r);
   }
   return out;
 }
@@ -307,6 +330,9 @@ export function filterOptions(values: readonly (string | null | undefined)[]): s
 
 // ─── Bulk: Send renewal quote ───────────────────────────────────────────────
 
+/** R-2586: why bulk Send renewal quote skips a Later row — named in its confirm. */
+export const LATER_SKIP_REASON = "renews in 91+ days — too early to send";
+
 /**
  * Which selected rows "Send renewal quote" can email: those whose own row button is the
  * send-now action (renewal-actions-rules.ts) — never a renewed, Won't-renew or stopped row, and
@@ -324,6 +350,8 @@ export function bulkQuoteTargets<T extends { sub: RenewalActionSub & { customer_
     const set = renewalActionSet(r.sub, quoteStatus(r.sub.renewal_quote_id), {
       daysUntil: r.daysUntil, tenantGraceDays, canEndSubscription: false,
     });
+    /* R-2586: a Later row (91+ days) is a look-ahead — a bulk renewal quote that early is never sent. */
+    if (set.primary?.kind === "send-now" && r.daysUntil > RENEWAL_FUTURE_DAYS) { skipped.push({ row: r, reason: LATER_SKIP_REASON }); continue; }
     if (set.primary?.kind === "send-now") { send.push(r); continue; }
     const reason = set.primary?.kind === "generate"
       ? `billed in parts — use ${set.primary.label}` /* R-2548: the row's own button name */

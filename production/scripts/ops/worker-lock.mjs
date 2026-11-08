@@ -35,7 +35,7 @@
  * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 5 = push guard test failed
  * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = maxWorkersAt() (4 by day, 6 by night) already
  * running — R-1973: cards in ci-wait / ci-red (pushed, waiting on CI) do not count, but keep their files.
- * Either way: stop, do not work around it.
+ * Either way: stop, do not work around it. Exit 13 (R-2592) = money/p0 card without a SAFE independent review of this code.
  *
  * R-842 (11 Oct) — board v76 card contract, enforced here instead of by cleanup (400+ cards lacked fields).
  * The script cannot read the board (claude.ai artifact DB), so the caller saves the card first with
@@ -63,10 +63,10 @@ import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderG
 import { runRelatedSql } from "./worker-lock-sql.mjs";
 import { stashSnapshot, enforceStash, stashGit } from "./worker-lock-stash.mjs";
 import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
-import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue } from "./worker-lock-queue.mjs";
+import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue, turnGate, turnQueueLines, readTurnWaiters, joinTurnWait, leaveTurnWait, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
 const readQueue = () => readQueueIn(LOCK_DIR);
 const leaveQueue = (c) => leaveQueueIn(LOCK_DIR, c);
-export { PRIORITIES, normPriority, priorityRank, queueOrder, liveQueue, queueTurn, lockActivityAt, isStaleLock, lockBeat, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS, parseQueueFlags, worktreeIndexMtime, readQueue as readQueueDir } from "./worker-lock-queue.mjs";
+export { PRIORITIES, normPriority, priorityRank, queueOrder, liveQueue, queueTurn, lockActivityAt, isStaleLock, lockBeat, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS, parseQueueFlags, worktreeIndexMtime, readQueue as readQueueDir, turnGate, turnQueueLines, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
 export { isDerived, withoutDerived, newestDeployDate, refreshDerived, rebaseResolvingDerived, MIGRATION_DERIVED } from "./worker-lock-derived.mjs";
 export { migrationDefines, relatedSqlTests, deployPeek, sqlTestSafe, relatedTestScript, runRelatedSql } from "./worker-lock-sql.mjs";
 
@@ -290,22 +290,56 @@ export function pushDoneLine(card, plan) {
   return `✓ ${String(card).toUpperCase()} push ho gaya: ${plan.sha} (${plan.count} commit apne)`;
 }
 
-/** Wait for a named turn (one holder at a time across all workers), run fn, release. */
+/** This card's priority as recorded at claim (lock file), else p2. */
+function lockPriority(card) {
+  try { return normPriority(JSON.parse(fs.readFileSync(lockFile(card), "utf8")).priority) ?? DEFAULT_PRIORITY; } catch { return DEFAULT_PRIORITY; }
+}
+
+/** Does `card` hold the push turn right now? (its own heavy step inside the push never queues — R-2591) */
+function holdsPushTurn(card) {
+  try { return JSON.parse(fs.readFileSync(path.join(LOCK_DIR, "_push-turn.json"), "utf8")).card === card; } catch { return false; }
+}
+
+/**
+ * Wait for a named turn (one holder at a time across all workers), run fn, release.
+ * R-2591: waiters stand in a line by claim priority (p0 first, then who waited first) — a free turn goes to
+ * the best live waiter; a held turn is never taken away (see turnGate).
+ */
 async function withTurn(name, card, doing, fn) {
   const turnFile = path.join(LOCK_DIR, `_${name}-turn.json`);
   const waitUntil = Date.now() + 30 * 60 * 1000;
-  for (;;) {
-    let turn = null;
-    try { turn = JSON.parse(fs.readFileSync(turnFile, "utf8")); } catch {}
-    if (turn && turn.card === card) { fs.rmSync(turnFile, { force: true }); turn = null; }
-    if (pushTurnFree(turn, Date.now())) {
-      if (turn) fs.rmSync(turnFile, { force: true });
-      try { fs.writeFileSync(turnFile, JSON.stringify({ card, at: Date.now() }), { flag: "wx" }); break; } catch {}
+  const priority = lockPriority(card);
+  const bypass = name !== "push" && holdsPushTurn(card);
+  const joinedAt = Date.now();
+  const bye = () => leaveTurnWait(LOCK_DIR, name, card);
+  /* a waiter stopped by Ctrl-C / TaskStop must not stay at the head of the line (else 2 min till stale) */
+  const onSig = () => { bye(); process.exit(130); };
+  process.on("exit", bye);
+  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, onSig);
+  let lastLine = "";
+  try {
+    for (;;) {
+      let turn = null;
+      try { turn = JSON.parse(fs.readFileSync(turnFile, "utf8")); } catch {}
+      if (turn && turn.card === card) { fs.rmSync(turnFile, { force: true }); turn = null; }
+      joinTurnWait(LOCK_DIR, name, bypass ? pushHolderEntry(card, Date.now()) : { card, priority, joinedAt, seenAt: Date.now() });
+      const busy = !pushTurnFree(turn, Date.now());
+      const gate = turnGate(card, { busy, waiters: readTurnWaiters(LOCK_DIR, name), now: Date.now(), bypass });
+      if (gate.go) {
+        if (turn) fs.rmSync(turnFile, { force: true });
+        try { fs.writeFileSync(turnFile, JSON.stringify({ card, priority, at: Date.now() }), { flag: "wx" }); break; } catch {}
+      }
+      if (Date.now() > waitUntil) {
+        const why = busy ? `${turn?.card} ${doing}` : `line me aage: ${gate.ahead.join(", ")}`;
+        console.error(`✗ 30 min se ${name} ki baari nahi aayi (${why}). Owner ko batao.`); process.exit(4);
+      }
+      const line = busy || !gate.ahead.length
+        ? waitLine(name, card, turn?.card, doing)
+        : `… ${card} (${priority}): ${name} ki baari ka intezaar — line me aage: ${gate.ahead.join(", ")} (priority, phir pehle aaya)`;
+      if (line !== lastLine) { console.log(line); lastLine = line; }
+      await new Promise((r) => setTimeout(r, Number(process.env.WORKER_TURN_POLL_MS || 15000)));
     }
-    if (Date.now() > waitUntil) { console.error(`✗ 30 min se ${name} ki baari nahi aayi (${turn?.card} ${doing}). Owner ko batao.`); process.exit(4); }
-    console.log(waitLine(name, card, turn?.card, doing));
-    await new Promise((r) => setTimeout(r, 15000));
-  }
+  } finally { bye(); process.off("exit", bye); for (const sig of ["SIGINT", "SIGTERM"]) process.off(sig, onSig); }
   try { return await fn(); } finally { fs.rmSync(turnFile, { force: true }); }
 }
 
@@ -646,7 +680,7 @@ export function guardPush(lines, env = process.env) {
  *           failing test names, and a one-line JSON the worker writes as `ciCheck` on the card.
  *           Exit 0 green, 7 red, 8 timeout / could not tell.
  *
- *   node scripts/ops/worker-lock.mjs push R-197 --card c.json [--fixes-red | --owner-override] [--skip-related-sql]
+ *   node scripts/ops/worker-lock.mjs push R-197 --card c.json [--fixes-red | --owner-override] [--skip-related-sql] [--no-review "<reason>"]
  *   node scripts/ops/worker-lock.mjs ci   R-197 [--sha <sha>] [--timeout-min 35]   (default CI_DEFAULT_TIMEOUT_MIN)
  *   node scripts/ops/worker-lock.mjs sql-related R-197
  *
@@ -1113,6 +1147,109 @@ function enforceCard(card, stage, flags) {
   console.log(r.message);
 }
 
+/**
+ * R-2592 (8 Nov 2026) — independent review BEFORE push for money cards. R-2252 and R-2227 were
+ * reviewed only after merging; the reviewer's BLOCK findings (over-billing at renewal, double credit)
+ * then held a 47-card staging train. Now `push` refuses (exit 13) a card whose card file (the --card
+ * JSON) has category money/paisa or priority p0 unless `independentReview.verdict === "SAFE"` and
+ * `independentReview.sha` carries the SAME code as the HEAD being pushed: the sha itself, or a commit
+ * whose change against manager-pardeep has the same `git patch-id --stable` (so the push's own rebase,
+ * a retry after a failed push, or squashing the WIP commits keep the review; one more commit of code
+ * does not — an early WIP review never covers later code, and a reviewed sha already merged has an
+ * empty change). Generated deploy-db/peeks files are left out of the comparison (push regenerates
+ * them). Way in: the worker runs `wip <CARD>` on its final commit, the coordinator starts the
+ * independent-check skill on that sha, the checker writes {verdict, sha}, the worker re-saves the card
+ * file and pushes. Escape hatch: `--no-review "<reason>"` — logged to the gate log (_ci-gate.log).
+ */
+export const REVIEW_CATEGORIES = ["money", "paisa"];
+/** 11 is cleanup's "node_modules is a real folder" refusal; 12 unused but kept free. */
+export const REVIEW_EXIT = 13;
+
+/** Does this card need an independent SAFE review before push? category money/paisa or priority p0. */
+export function needsIndependentReview(card) {
+  const c = card && typeof card === "object" ? card : {};
+  return REVIEW_CATEGORIES.includes(String(c.category ?? "").trim().toLowerCase()) || normPriority(c.priority) === "p0";
+}
+
+/** Pull --no-review <reason> / --no-review=<reason> out of the args. noReview: null = not given, "" = given without a reason. */
+export function parseReviewFlags(args) {
+  const rest = []; let noReview = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--no-review") {
+      const next = args[i + 1];
+      if (next != null && !String(next).startsWith("--")) { noReview = String(next); i++; } else noReview = "";
+    } else if (a.startsWith("--no-review=")) noReview = a.slice("--no-review=".length);
+    else rest.push(a);
+  }
+  return { rest, noReview };
+}
+
+/**
+ * The review gate inside `push`, pure: { ok, message, logged? }. `sameCode(sha, head)` = the reviewed
+ * sha carries exactly the change being pushed (see above); `head` = the commit being pushed;
+ * `cardUnreadable` = a --card file was given but could not be read (fail closed); `log(line)` records
+ * a --no-review pass.
+ */
+export function checkReviewGate(cardId, card, { head, sameCode, noReview = null, cardUnreadable = false, log = () => {}, now = () => new Date().toISOString() } = {}) {
+  const id = String(cardId).toUpperCase();
+  if (cardUnreadable) return { ok: false, message: `✗ ${id}: card file padh nahi paaya — paise/p0 review gate bina card ke nahi chalta. Card dobara save karo.` };
+  if (!needsIndependentReview(card)) return { ok: true, message: `(${id}: paise/p0 card nahi — independent review gate laagu nahi)` };
+  const why = `${id} paise/p0 card hai (category ${card?.category ?? "-"}, ${card?.priority ?? "-"})`;
+  if (noReview != null) {
+    const reason = String(noReview).trim();
+    if (!reason) return { ok: false, message: `✗ ${id}: --no-review ke saath wajah do: --no-review "<kyun bina review push>" (gate log me likhi jaati hai).` };
+    const line = JSON.stringify({ at: now(), card: id, how: "--no-review", reason, headBeforePush: head ?? null });
+    try { log(line); } catch {}
+    return { ok: true, logged: line, message: `⚠ ${why} — BINA independent review push (--no-review: "${reason}"), gate log me likha. Card ke liveLog me bhi likho.` };
+  }
+  const how = `\n   Karo: commit → "worker-lock wip ${id}" → coordinator se checker maango (skill independent-check, us sha par) → checker card par independentReview {verdict: "SAFE", sha} likhe → card file dobara save (ArtifactData get out_dir) → push.`;
+  const rev = card?.independentReview;
+  if (!rev || rev.verdict !== "SAFE") {
+    const got = rev?.verdict ? `verdict "${rev.verdict}"` : "independentReview nahi";
+    return { ok: false, message: `✗ ${why} — push se PEHLE alag reviewer ka SAFE chahiye (${got}).` + how };
+  }
+  const sha = String(rev.sha ?? "").trim();
+  if (!sha) return { ok: false, message: `✗ ${why} — independentReview SAFE hai par sha nahi likha; kaunsa code dekha pata nahi.` + how };
+  if (!head || !sameCode(sha, head)) {
+    return { ok: false, message: `✗ ${why} — review ${sha.slice(0, 10)} par hua, par push ho raha code (${String(head ?? "?").slice(0, 10)}) wahi nahi hai (review ke baad naya code, ya review wala code pehle se manager-pardeep par, ya sha fetch nahi hua: git fetch anutech wip/${id.toLowerCase()}). Is HEAD ka review chahiye.` + how };
+  }
+  return { ok: true, message: `✓ ${id}: independent review SAFE (${sha.slice(0, 10)} — push me wahi code hai).` };
+}
+
+/** Repo-root pathspecs for the reviewed change: everything except the files push regenerates (R-2105). */
+const REVIEW_PATHSPEC = [":(top)", ":(top,exclude,glob)production/supabase/cloudsql/*/deploy-db-*.sh", ":(top,exclude)production/src/server/migrations-health/peeks.generated.ts"];
+
+/** patch-id of `rev`'s change against `base` (from their merge-base), or null (no change / unknown sha). */
+export function changePatchId(rev, base, git) {
+  try {
+    const mb = git(["merge-base", base, rev]).trim();
+    const diff = git(["diff", "--no-color", "--no-ext-diff", mb, rev, "--", ...REVIEW_PATHSPEC]);
+    if (!diff.trim()) return null;
+    return git(["patch-id", "--stable"], diff).trim().split(/\s+/)[0] || null;
+  } catch { return null; }
+}
+
+function enforceReview(card, cardPath, noReview) {
+  let c = null; let cardUnreadable = false;
+  if (cardPath) { try { c = cardFromJson(JSON.parse(fs.readFileSync(cardPath, "utf8"))); } catch { cardUnreadable = true; } }
+  const git = (a, input) => execFileSync("git", a, { encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"], maxBuffer: 256 * 1024 * 1024 });
+  let head = null;
+  try { head = git(["rev-parse", "HEAD"]).trim(); } catch {}
+  const base = "anutech/manager-pardeep";
+  const sameCode = (sha, h) => {
+    try { git(["fetch", "-q", "anutech"]); } catch {} // a stale base would compare against the wrong fork point
+    let full = null; try { full = git(["rev-parse", "--verify", "-q", `${sha}^{commit}`]).trim(); } catch {}
+    if (!full) return false;
+    if (full === h) return true;
+    const a = changePatchId(full, base, git);
+    return a != null && a === changePatchId(h, base, git);
+  };
+  const r = checkReviewGate(card, c, { head, sameCode, noReview, cardUnreadable, log: appendCiLog });
+  if (!r.ok) { console.error(r.message); process.exit(REVIEW_EXIT); }
+  console.log(r.message);
+}
+
 function main(argv) {
   const [cmd, rawCard, ...args] = argv;
   const card = rawCard?.toUpperCase();
@@ -1120,6 +1257,23 @@ function main(argv) {
   const { rest, ...cardFlags } = parseCardFlags(scopeRest);
   fs.mkdirSync(LOCK_DIR, { recursive: true });
 
+  if (cmd === "status") {
+    /* R-2591: locks with priority, the slot queue, and who holds / waits for the push and heavy turns. */
+    const locks = readLocks();
+    if (!locks.length) console.log("Koi worker lock nahi.");
+    for (const l of locks) console.log(`${l.card} (${normPriority(l.priority) ?? DEFAULT_PRIORITY})  ${l.state ?? LOCK_STATES.working}${countsTowardCap(l) ? "" : " (slot nahi ginta)"}  ${l.claimedAt}`);
+    const slotLine = lineOf(readQueue().filter((e) => e.waitingFor !== "files"), Date.now());
+    if (slotLine) console.log(`slot line: ${slotLine}`);
+    for (const name of ["push", "heavy"]) {
+      let turn = null;
+      try { turn = JSON.parse(fs.readFileSync(path.join(LOCK_DIR, `_${name}-turn.json`), "utf8")); } catch {}
+      if (pushTurnFree(turn, Date.now())) turn = null;
+      /* a turn file from an older script has no priority — show the holder lock's */
+      if (turn && !turn.priority) turn = { ...turn, priority: locks.find((l) => l.card === turn.card)?.priority };
+      for (const line of turnQueueLines(name, turn, readTurnWaiters(LOCK_DIR, name), Date.now())) console.log(line);
+    }
+    return;
+  }
   if (cmd === "list") {
     const locks = readLocks();
     if (!locks.length) return console.log("Koi worker lock nahi.");
@@ -1223,9 +1377,12 @@ function main(argv) {
     return;
   }
   if (cmd === "push") {
-    const ciFlags = parseCiFlags(rest);
+    const { rest: pushRest, noReview } = parseReviewFlags(rest);
+    const ciFlags = parseCiFlags(pushRest);
     enforceCard(card, "push", cardFlags);
-    return pushWithTurn(card, { ...ciFlags, fullTsc: parseTscFlags(rest).full, allowOutside, cardPath: cardFlags.cardPath });
+    /* R-2592: money / p0 card → SAFE independent review of this HEAD first (before the rebase rewrites shas). */
+    enforceReview(card, cardFlags.cardPath, noReview);
+    return pushWithTurn(card, { ...ciFlags, fullTsc: parseTscFlags(pushRest).full, allowOutside, cardPath: cardFlags.cardPath });
   }
   if (cmd === "ci") {
     /* R-1936: wait for this card's CI + SQL tests runs; exit 0 green, 7 red, 8 timeout. */
@@ -1270,7 +1427,7 @@ function main(argv) {
     console.log(r.message);
     return;
   }
-  console.error("claim [--wait --priority p0] | beat | check | push | ci | ci-all | sql-related | wip | resume | tsc | prep | release | cleanup [--worktree <path>] [--dry-run] | list | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
+  console.error("claim [--wait --priority p0 | --train-blocker] | beat | check | push | ci | ci-all | sql-related | wip | resume | tsc | prep | release | cleanup [--worktree <path>] [--dry-run] | list | status | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
   process.exit(1);
 }
 

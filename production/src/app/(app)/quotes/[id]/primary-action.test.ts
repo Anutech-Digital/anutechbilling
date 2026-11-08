@@ -110,3 +110,13 @@ describe("quote page wiring", () => {
     expect(page).toMatch(/setReceiptPayment\(receiptTarget\)/);
   });
 });
+
+describe("R-2587 — a small difference left on a received part", () => {
+  it("Record ₹60 balance is not the orange button; the receipt is", () => {
+    expect(quotePrimaryAction(q({
+      status: "accepted", paymentStatus: "partial",
+      money: { stage: "partial", canRecordPayment: true, canGenerateInvoice: false, smallShort: true },
+      hasReceivedPayment: true,
+    }))).toBe("send_receipt");
+  });
+});

@@ -149,19 +149,74 @@ export function readQueue(dir) {
 export function joinQueue(dir, entry) { try { fs.writeFileSync(queueFile(dir, entry.card), JSON.stringify(entry)); } catch {} }
 export function leaveQueue(dir, card) { try { fs.rmSync(queueFile(dir, card), { force: true }); } catch {} }
 
-/** --wait, --priority p0, --wait-min 240 out of the args. */
+/** --wait, --priority p0 (or --train-blocker), --wait-min 240 out of the args. */
 export function parseQueueFlags(args) {
   const rest = []; const o = { wait: false, priority: null, waitMin: 240 };
+  let trainBlocker = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (a === "--wait") o.wait = true;
     else if (a === "--priority") o.priority = args[++i] ?? null;
     else if (a.startsWith("--priority=")) o.priority = a.slice(11);
+    else if (a === "--train-blocker") trainBlocker = true;
     else if (a === "--wait-min") o.waitMin = Number(args[++i]);
     else if (a.startsWith("--wait-min=")) o.waitMin = Number(a.slice(11));
     else rest.push(a);
   }
+  /* R-2591: a staging-train blocker is p0 whatever else was passed, in any order. */
+  if (trainBlocker) o.priority = "p0";
   if (!Number.isFinite(o.waitMin) || o.waitMin <= 0) o.waitMin = 240;
   return { rest, ...o };
 }
 
+
+/*
+ * R-2591 (8 Nov 2026) — a line for the push turn and the heavy (tsc / guard tests) turn. Before, a free
+ * `_<turn>-turn.json` went to whoever polled first: p0 train-blocker R-2582 waited 2 h behind p1 pushes.
+ * Now each waiter keeps `_<turn>-wait-<CARD>.json` {card, priority (from its claim), joinedAt, seenAt}
+ * fresh, and a FREE turn goes to the best live waiter (queueOrder: p0 > p1 > p2, then first come). A turn
+ * that is held is never taken away. An entry without priority (older script) counts as p2. An older
+ * script that writes no wait file can still grab a free turn — it just does not get a place in the line.
+ */
+/** May `card` take the turn now? busy = someone holds it; bypass = this card already holds the push turn. */
+export function turnGate(card, { busy, waiters, now, bypass = false }) {
+  if (busy) return { go: false, ahead: [] };
+  if (bypass) return { go: true, ahead: [] };
+  const q = queueTurn(card, waiters, now);
+  return { go: q.turn, ahead: q.ahead };
+}
+
+const prio = (p) => normPriority(p) ?? DEFAULT_PRIORITY;
+
+/** "1. R-20 (p0)  2. R-10 (p1)" — live entries in turn order ("" when none). */
+export function lineOf(entries, now) {
+  return queueOrder(liveQueue(entries, now)).map((e, i) => `${i + 1}. ${e.card} (${prio(e.priority)})`).join("  ");
+}
+
+/** `worker-lock status` lines for one turn: holder, then the live line in turn order. */
+export function turnQueueLines(name, turn, waiters, now) {
+  const head = turn?.card
+    ? `${name} turn: ${turn.card} (${prio(turn.priority)}) — ${Math.max(0, Math.round((now - Number(turn.at ?? now)) / 60000))} min se`
+    : `${name} turn: khaali`;
+  const line = lineOf(waiters.filter((e) => e.card !== turn?.card), now);
+  return line ? [head, `  line: ${line}`] : [head];
+}
+
+/**
+ * The push holder's own heavy step (tsc / guard tests inside `push`) is not queued behind anyone, and it
+ * must also not lose the free heavy turn to the head of the line — so it stands at the very front.
+ */
+export const pushHolderEntry = (card, at) => ({ card, priority: "p0", joinedAt: 0, seenAt: at, pushHolder: true });
+
+const turnWaitFile = (dir, name, card) => path.join(dir, `_${name}-wait-${String(card).toUpperCase()}.json`);
+export function readTurnWaiters(dir, name) {
+  if (!fs.existsSync(dir)) return [];
+  const prefix = `_${name}-wait-`;
+  const out = [];
+  for (const n of fs.readdirSync(dir).filter((x) => x.startsWith(prefix) && /^R-\d+\.json$/.test(x.slice(prefix.length)))) {
+    try { out.push(JSON.parse(fs.readFileSync(path.join(dir, n), "utf8"))); } catch {}
+  }
+  return out;
+}
+export function joinTurnWait(dir, name, entry) { try { fs.writeFileSync(turnWaitFile(dir, name, entry.card), JSON.stringify(entry)); } catch {} }
+export function leaveTurnWait(dir, name, card) { try { fs.rmSync(turnWaitFile(dir, name, card), { force: true }); } catch {} }

@@ -18,14 +18,15 @@
  *     lib/billing/instalments (taxable + round(taxable × GST%) — the instalment invoice's own
  *     rounding, R-527); a foreign quote has no plan and divides by invoices-per-year at 2dp.
  */
-import type { BillingCycle } from "@/lib/supabase/database.types";
+import type { BillingCycle, QuoteLineItem } from "@/lib/supabase/database.types";
+import { lineIsSubscription } from "@/lib/quotes/optional-line";
 import { cycleInvoicesPerYear, cycleFromLegacyCommitment } from "@/lib/quotes/billing";
 import { rupee } from "@/lib/utils";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { taxableAfterDiscount } from "@/lib/quotes/amounts";
 import { isOneTimeQuote } from "@/lib/quotes/service-period";
 import { lineIsPerInvoice, perInvoiceDivisor, annualContractValue } from "@/lib/pdf/invoice-divisor";
-import { quoteInstalmentPlan, type QuoteInstalmentPlan } from "@/lib/billing/instalments";
+import { quoteInstalmentPlan, firstLineCommitment, type QuoteInstalmentPlan } from "@/lib/billing/instalments";
 import { splitIntraStateTax } from "@/lib/gst/tax-split";
 
 export interface PerPeriodInput {
@@ -100,6 +101,82 @@ export function quotePerPeriodFigures(i: PerPeriodInput): PerPeriodFigures {
     gross:    first ? first.gross   : div(i.total),
     yearTotal: plan ? plan.instalmentsGross : annualContractValue(i.total, n, i.lineCommitment),
     plan,
+  };
+}
+
+/* ── R-2580: a Monthly flex sale that also carries a one-time line ──────────────────────
+   R-2193 lets one sale hold flex seats (10 × ₹264/month) and a domain (₹1,200 once). The
+   stored figures are MONTH 1 — seats + domain, ₹4,531 incl GST — and every later month bills
+   the seats only (raise_subscription_billing adds quote_one_time_lines once). The preview and
+   the PDF printed ₹4,531 "/month" and ₹54,372 a year. Split it the way the bills are raised:
+   the one-time taxable is each line's qty × rate after the quote discount (taxableAfterDiscount;
+   quote_one_time_lines rounds the same figure in one step — at most ₹1 apart on a .5) over the lines that are
+   not subscriptions (quote_line_is_subscription / lineIsSubscription — the SQL rule, R-2095),
+   the month is the rest. Null when there is nothing to split (not flex, or no one-time line,
+   or no recurring line). A foreign quote's figures are in its own currency: there the one-time
+   share is taken by the lines' ₹ weight, at 2dp. */
+export interface FlexOneTimeFigures {
+  /** Every month after the first: the recurring lines only. */
+  monthly: { subtotal: number; discount: number; taxable: number; tax: number; gross: number };
+  /** The one-time lines, billed once with the first invoice. */
+  once: { taxable: number; tax: number; gross: number };
+}
+
+/** The words the preview and the PDF print for such a sale (one place, so they cannot differ). */
+export const FLEX_FIRST_INVOICE = "First invoice (incl. one-time)";
+export const FLEX_THEN_MONTHLY = "Then each month";
+export const FLEX_ONCE = "One-time, billed once with the first invoice";
+
+/** Is this stored line charged once (not a subscription)? lineIsSubscription's rule, reading the
+ *  one_time marker the way SQL does (true or the text "true") — one test for the totals AND the
+ *  line rows, so a line can never be once in one and "/mo" in the other. */
+export function lineChargedOnce(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object") return false;
+  const l = raw as { commitment?: unknown; one_time?: unknown };
+  return !lineIsSubscription({
+    commitment: (typeof l.commitment === "string" ? l.commitment : undefined) as QuoteLineItem["commitment"],
+    one_time: l.one_time === true || String(l.one_time ?? "").toLowerCase() === "true",
+  });
+}
+
+export function flexOneTimeFigures(i: {
+  lines: unknown;
+  discountPct: number;
+  /** The stored (month 1) figures, in the display currency. */
+  subtotal: number;
+  taxable: number;
+  total: number;
+  taxRate: number;
+  foreign?: boolean;
+}): FlexOneTimeFigures | null {
+  if (!Array.isArray(i.lines) || firstLineCommitment(i.lines) !== "monthly") return null;
+  const dRound = (v: number) => (i.foreign ? Math.round(v * 100) / 100 : Math.round(v));
+  const num = (v: unknown, dflt: number) => (typeof v === "number" && Number.isFinite(v) ? v : dflt);
+  let onceSub = 0, recurringSub = 0, onceTaxableInr = 0;
+  for (const raw of i.lines as Array<Record<string, unknown> | null>) {
+    if (!raw || typeof raw !== "object") continue;
+    /* An optional line the customer has not ticked is not in the stored totals (configure.ts). */
+    if (raw.optional === true && raw.included_by_default !== true) continue;
+    /* A legacy per-line discount is already inside the stored subtotal (QuotePDF netAnnual). */
+    const amt = num(raw.qty, 1) * num(raw.rate, 0) * (1 - num(raw.discount_pct, 0) / 100);
+    if (!lineChargedOnce(raw)) recurringSub += amt;
+    else {
+      onceSub += amt;
+      onceTaxableInr += taxableAfterDiscount(amt, i.discountPct);
+    }
+  }
+  if (!(onceSub > 0) || !(recurringSub > 0)) return null;
+  const share = onceSub / (onceSub + recurringSub);
+  const onceTaxable = i.foreign ? dRound(i.taxable * share) : onceTaxableInr;
+  const onceSubtotal = i.foreign ? dRound(i.subtotal * share) : Math.round(onceSub);
+  const mTaxable = dRound(i.taxable - onceTaxable);
+  const mSubtotal = dRound(i.subtotal - onceSubtotal);
+  const mTax = dRound((mTaxable * i.taxRate) / 100);
+  const mGross = dRound(mTaxable + mTax);
+  const onceGross = dRound(i.total - mGross);
+  return {
+    monthly: { subtotal: mSubtotal, discount: dRound(mSubtotal - mTaxable), taxable: mTaxable, tax: mTax, gross: mGross },
+    once: { taxable: onceTaxable, tax: dRound(onceGross - onceTaxable), gross: onceGross },
   };
 }
 

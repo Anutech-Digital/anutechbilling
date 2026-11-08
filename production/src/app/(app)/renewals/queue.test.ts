@@ -12,6 +12,7 @@ import {
   QUEUE_TABS, queueTabs, windowTab, resolveBucket, renewalRowStatus, billsNotRaised,
   renewalAmount, termSuffix, isPaidRenewalQuote, sortQueue, filterQueue, filterOptions,
   bulkQuoteTargets, bulkQuoteConfirm, NO_FILTERS, type QueueRow,
+  QUEUE_TAB_LABEL, TILE_TABS, noRenewalDate, LATER_SKIP_REASON,
 } from "./queue";
 import { renewalActionSet } from "@/components/features/renewals/renewal-actions-rules";
 
@@ -61,25 +62,25 @@ describe("R-2403 tabs: Overdue · ≤7 days · 8–30 · 31–60 · 61–90 — 
     expect(ids("d90")).toEqual(["d61", "d90"]);
   });
 
-  it("no row appears in two tabs; past 90 days is not listed; flex IS listed (R-2422)", () => {
+  it("no row appears in two tabs; past 90 days goes to Later (R-2586); flex IS listed (R-2422)", () => {
     const all = QUEUE_TABS.flatMap((t) => ids(t));
     expect(new Set(all).size).toBe(all.length);
-    expect(all).not.toContain("far");
+    expect(ids("later")).toEqual(["far"]);
     expect(all).toContain("flex");
   });
 
   it("the At risk tab is gone: at-risk rows are a filter on these tabs, not a second list", () => {
-    expect(QUEUE_TABS).toEqual(["overdue", "due7", "d30", "d60", "d90"]);
+    expect(QUEUE_TABS).toEqual(["overdue", "due7", "d30", "d60", "d90", "later"]);
     expect(QUEUE_TABS as readonly string[]).not.toContain("risk");
   });
 
   it("windowTab edges", () => {
     expect([-1, 0, 7, 8, 30, 31, 60, 61, 90, 91].map(windowTab)).toEqual(
-      ["overdue", "due7", "due7", "d30", "d30", "d60", "d60", "d90", "d90", null]);
+      ["overdue", "due7", "due7", "d30", "d30", "d60", "d60", "d90", "d90", "later"]);
   });
 
   it("old ?bucket= links still open the right place (sidebar badge = Overdue + ≤7 days)", () => {
-    const counts = { overdue: 2, due7: 2, d30: 3, d60: 2, d90: 2 };
+    const counts = { overdue: 2, due7: 2, d30: 3, d60: 2, d90: 2, later: 4 };
     expect(resolveBucket("urgent", counts)).toEqual({ tab: "overdue", atRisk: false });
     expect(resolveBucket("urgent", { ...counts, overdue: 0 })).toEqual({ tab: "due7", atRisk: false });
     expect(resolveBucket("upcoming", counts)).toEqual({ tab: "d30", atRisk: false });
@@ -287,5 +288,76 @@ describe("R-2403 the page wires the one queue", () => {
     expect(page).toContain("bulkQuoteTargets(selectedRows,");
     expect(page).toContain("bulkReminderPlan(selectedRows, today, graceDays)");   // R-2431: send + named skips
     expect(page.match(/"\/api\/renewals\/send-now"/g)?.length).toBe(1);   // the existing route, one call site
+  });
+});
+
+/**
+ * R-2586 (Pardeep, 8 Nov 2026: "annual commitment ka koi bhi renewal show nahi kar raha hai, kewal
+ * monthly"). Renewals listed only renewal_date ≤ 90 days, so an annual subscription renewing in
+ * 2027 was on no tab (101 of 106 local annual subs), while a flex sub's next monthly part always
+ * was. And an active subscription with no renewal_date vanished with no word.
+ */
+describe("R-2586 Later (91+ days) tab + subscriptions with no renewal date", () => {
+  const rows: Row[] = [
+    row("annual150", 150, { renewal_date: "2027-04-02" }),
+    row("annual120", 120, { renewal_date: "2027-03-03" }),
+    row("d90", 90, { renewal_date: "2027-02-01" }),
+    row("leaverFar", 200, { auto_renew: false, renewal_date: "2027-05-22" }),
+  ];
+  const tabs = queueTabs(classifyRenewals(rows, () => false, TODAY));
+
+  it("an annual subscription 150 days out is in the Later tab (was on no tab)", () => {
+    expect(windowTab(150)).toBe("later");
+    expect(tabs.later.map((r) => r.sub.id)).toContain("annual150");
+    expect(tabs.d90.map((r) => r.sub.id)).toEqual(["d90"]);
+  });
+
+  it("a Won't renew subscription far out is listed in Later too (its Non-renewing chip says so)", () => {
+    expect(tabs.later.map((r) => r.sub.id)).toContain("leaverFar");
+  });
+
+  it("Later sorts by renewal date, soonest first", () => {
+    const q = (r: Row): QueueRow => ({ id: r.sub.id, daysUntil: r.daysUntil, amount: 0, plan: null, vendor: null, statusKey: "due", atRisk: false, customer: r.sub.customer_name });
+    expect(sortQueue(tabs.later.map(q), "date").map((r) => r.id)).toEqual(["annual120", "annual150", "leaverFar"]);
+  });
+
+  it("the tab label is English and says where it starts", () => {
+    expect(QUEUE_TAB_LABEL.later).toBe("Later (91+ days)");
+  });
+
+  it("tiles stay on the 90-day rule: Later is not a tile tab", () => {
+    expect(TILE_TABS).toEqual(["overdue", "due7", "d30", "d60", "d90"]);
+  });
+
+  it("no renewal date: listed by name (not cancelled), never silently dropped", () => {
+    const subs = [
+      { id: "a", customer_name: "Zeta", status: "active", renewal_date: null },
+      { id: "b", customer_name: "Alpha", status: "active", renewal_date: null },
+      { id: "c", customer_name: "Gone", status: "cancelled", renewal_date: null },
+      { id: "d", customer_name: "Dated", status: "active", renewal_date: "2027-01-01" },
+      { id: "e", customer_name: "Ended", status: "expired", renewal_date: null },
+    ];
+    expect(noRenewalDate(subs).map((s) => s.id)).toEqual(["b", "a"]);
+  });
+
+  it("bulk Send renewal quote never sends to a Later row — named as skipped", () => {
+    const t = bulkQuoteTargets([row("far150", 150, { renewal_date: "2027-04-02" })], () => null, 0);
+    expect(t.send).toEqual([]);
+    expect(t.skipped.map((s) => s.reason)).toEqual([LATER_SKIP_REASON]);
+  });
+
+  it("a pressed tile skips Later rows (no tile row for them) instead of crashing", () => {
+    const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
+    expect(page).not.toContain("tileRowOf.get(i.sub.id)!");
+    expect(page).toContain("return !!tr && tileMatches(tile, tr, month, paidSubs);");
+  });
+
+  it("the page lists every dated row (no 90-day cut before the queue) and keeps tiles on 90 days", () => {
+    const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
+    expect(page).not.toMatch(/daysUntilRenewal\(s\.renewal_date!\)\s*<=\s*RENEWAL_FUTURE_DAYS/);
+    expect(page).toContain("TILE_TABS.flatMap((t) => items[t].map(");
+    expect(page).toContain("noRenewalDate(all)");
+    expect(page).toContain("<NoRenewalDateCard subs={noRenewalDate(all)} />");
+    expect(readFileSync("src/app/(app)/renewals/no-date-card.tsx", "utf8")).toContain("href={subscriptionOpenHref(s) as never}");
   });
 });
