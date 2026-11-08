@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 // @ts-expect-error — plain .mjs ops script, no types
 import { migrationOrderGate, normaliseClaimAreas } from "../scripts/ops/worker-lock-guards.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript, needsIndependentReview, parseReviewFlags, checkReviewGate, changePatchId, ciWaitVerdict, ciAllReport, LOCK_STATES, lockAfterCi } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript, needsIndependentReview, parseReviewFlags, checkReviewGate, changePatchId, ciWaitVerdict, ciAllReport, LOCK_STATES, lockAfterCi, lockAfterCiAll } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -763,5 +763,14 @@ describe("R-2612: a newer green run on a descendant clears a card stuck red by a
 
   it("ci <CARD> on a ci-red lock: green removes it (files free)", () => {
     expect(lockAfterCi(lock(LOCK_STATES.ciRed), CI_EXIT.green, { at: "2026-11-08T11:00:00Z" })).toBeNull();
+  });
+
+  it("ci-all settle: a lock taken back meanwhile (claim --fixes-red → working) is left alone", () => {
+    const at = { at: "2026-11-08T11:00:00Z" };
+    const working = lock(LOCK_STATES.working);
+    expect(lockAfterCiAll(working, CI_EXIT.green, at)).toBe(working);
+    expect(lockAfterCiAll(lock(LOCK_STATES.ciRed), CI_EXIT.green, at)).toBeNull();
+    expect(lockAfterCiAll(lock(LOCK_STATES.ciWait), CI_EXIT.red, at)?.state).toBe(LOCK_STATES.ciRed);
+    expect(lockAfterCiAll(null, CI_EXIT.green, at)).toBeNull();
   });
 });

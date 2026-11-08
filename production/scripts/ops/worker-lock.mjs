@@ -154,6 +154,15 @@ export function lockAfterCi(lock, code, { at }) {
   return lock;
 }
 
+/**
+ * R-2612: ci-all settles from a list read a moment earlier — if the card was taken back meanwhile
+ * (claim --fixes-red → working), its lock is left alone; only ci-wait / ci-red locks are settled.
+ */
+export function lockAfterCiAll(lock, code, { at }) {
+  if (!lock || (lock.state !== LOCK_STATES.ciWait && lock.state !== LOCK_STATES.ciRed)) return lock;
+  return lockAfterCi(lock, code, { at });
+}
+
 /** The lock while the card is being built again (re-claim or a new push): back in a slot. */
 export function lockWorking(lock) {
   const { ciWaitSince: _a, ciRedAt: _b, ...rest } = lock;
@@ -1296,7 +1305,7 @@ function main(argv) {
     const locks = readLocks();
     if (locks.some((l) => l.state === LOCK_STATES.ciWait || l.state === LOCK_STATES.ciRed)) { try { execFileSync("git", ["fetch", "-q", "anutech"], { stdio: "ignore", timeout: 60_000 }); } catch {} }
     const at = new Date().toISOString();
-    const settle = (c, code) => { try { updateLock(c, (l) => lockAfterCi(l, code, { at })); } catch {} };
+    const settle = (c, code) => { try { updateLock(c, (l) => lockAfterCiAll(l, code, { at })); } catch {} };
     const r = ciAllReport(locks, { verdict: (l) => ciWaitVerdict(l, { gh: realGh, isAncestor }), settle, at });
     for (const l of r.lines) console.log(l);
     return;
