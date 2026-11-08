@@ -39,6 +39,7 @@ function memoryBg(requested = true) {
     },
     async touch(_fy, now) { s.lastStepAt = new Date(now).toISOString(); },
     async release(_fy, end) {
+      if (s.leaseUntil !== new Date(end.leaseUntilMs).toISOString()) return; /* not our lease any more */
       s.leaseUntil = null; s.error = end.error;
       if (end.finished) { s.requestedAt = null; s.finishedAt = new Date(end.nowMs).toISOString(); }
     },
@@ -212,5 +213,19 @@ describe("R-2607 background FY read", () => {
     expect(new Set(z.orgs.slice(0, n / 2))).toEqual(new Set(["org-A"]));
     expect(new Set(z.orgs.slice(n / 2))).toEqual(new Set(["org-B"]));
     expect(a.scan.rows).not.toBe(b.scan.rows);
+  });
+});
+
+describe("R-2607 lease handover", () => {
+  it("a slow pass whose lease ran out and was taken over writes nothing on release", async () => {
+    const x = deps();
+    let hijack = true;
+    const store = { ...x.scan.store, saveDetail: async (fy: string, id: string, f: ScanFacts) => {
+      if (hijack) { hijack = false; x.b.s.leaseUntil = "2026-11-08T11:00:00.000Z"; } /* another pass took over */
+      return x.scan.store.saveDetail(fy, id, f);
+    } };
+    await runBackgroundRead({ ...x.d, store });
+    expect(x.b.s.leaseUntil).toBe("2026-11-08T11:00:00.000Z");
+    expect(x.b.s.requestedAt).not.toBeNull();
   });
 });

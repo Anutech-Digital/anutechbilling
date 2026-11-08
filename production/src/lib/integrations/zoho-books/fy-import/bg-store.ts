@@ -46,7 +46,7 @@ export function supabaseBgStore(db: FyImportDb, tenantId: string, kind: FyReadKi
     async release(fy, end) {
       const patch: Record<string, unknown> = { bg_lease_until: null, bg_error: end.error };
       if (end.finished) { patch.bg_requested_at = null; patch.bg_finished_at = iso(end.nowMs); }
-      const r = await (mine(runs().update(patch), fy) as Res);
+      const r = await (mine(runs().update(patch), fy).eq("bg_lease_until", iso(end.leaseUntilMs)) as Res);
       if (r.error) throw new Error("Could not save the Zoho read.");
     },
   };

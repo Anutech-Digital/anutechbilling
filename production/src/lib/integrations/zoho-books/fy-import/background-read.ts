@@ -47,8 +47,8 @@ export interface BgStore {
   takeLease(fy: string, untilMs: number, nowMs: number): Promise<boolean>;
   /** The pass moved (lastStepAt) — called after each scanStep. */
   touch(fy: string, nowMs: number): Promise<void>;
-  /** Let go of the lease. finished → the request ends (complete or stopped with `error`). */
-  release(fy: string, end: { finished: boolean; error: string | null; nowMs: number }): Promise<void>;
+  /** Let go of OUR lease (leaseUntilMs = what takeLease set; a pass whose lease was taken over writes nothing). finished → the request ends. */
+  release(fy: string, end: { finished: boolean; error: string | null; nowMs: number; leaseUntilMs: number }): Promise<void>;
 }
 
 /** What a pass needs to reach Zoho for this company. `error` = not connected / no org (the owner must act). */
@@ -89,7 +89,8 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
   }
   const start = now();
   const deadline = start + Math.max(1_000, d.budgetMs);
-  if (!(await d.bg.takeLease(d.fy, deadline + LEASE_EXTRA_MS, start))) return empty("locked");
+  const leaseUntilMs = deadline + LEASE_EXTRA_MS;
+  if (!(await d.bg.takeLease(d.fy, leaseUntilMs, start))) return empty("locked");
 
   let calls = 0;
   let outcome: PassOutcome = "time";
@@ -135,7 +136,7 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
       error = "The read paused on a server error; it carries on by itself in a minute.";
     }
   } finally {
-    await d.bg.release(d.fy, { finished, error, nowMs: now() });
+    await d.bg.release(d.fy, { finished, error, nowMs: now(), leaseUntilMs });
   }
   const c = await d.store.counts(d.fy);
   return { outcome, ...c, calls, error };
