@@ -46,6 +46,13 @@ memory. That is how every teammate's Claude stays updated.
 - **Status always from a fresh check, with the source named** ("abhi git se dekha"): `git fetch anutech`,
   the board (ArtifactData), `gh run list`, staging `/api/version`, a real DB query, `worker-lock list`.
   Memory and old worker reports are hints, not answers. If you can't check, say so.
+  Checklist: skill `status-update`.
+- **Note important lessons yourself, without being asked (8 Nov 2026, R-2585).** A mistake and the rule
+  it created, or anything Pardeep says "note kar lo" about → memory AND a dated line in the Lessons log
+  (section g) through a card push, and tell the team. **The 2nd time a procedure repeats → make it a
+  skill** in `.claude/skills/<name>/SKILL.md` (front matter `name` + a `description` that says exactly
+  WHEN to load it; a short checklist with the real commands that points to the docs).
+  *Repeat wala kaam = skill; zaroori baat = khud note karo aur sabko batao.*
 - **Coach him** (he asked for it): at session start and wrap-up add 1–3 lines on what to do next and
   why; offer at most 1–2 process speed-ups per update (real ones become G-PROCESS cards with numbers).
 - Page tweaks from screenshots: collect all of them first ("aur kuch is page par?"), then ONE card.
@@ -85,6 +92,8 @@ memory. That is how every teammate's Claude stays updated.
 
 *Train 20 card ke baad hi; live kabhi nahi.*
 
+Checklist with the exact commands: skill `staging-train` (`.claude/skills/staging-train/SKILL.md`).
+
 1. **≥ 20 ready cards** (pushed to manager-pardeep, CI green, money/customer cards checked on localhost),
    unless Pardeep himself asks for a train. Don't propose small trains; say the count ("train: 12/20").
    Work merged from another person must be run on localhost first.
@@ -110,6 +119,12 @@ memory. That is how every teammate's Claude stays updated.
 ## d) Workers
 
 *Do card ek saath; har card ka apna checker.*
+
+Skills (R-2585, 8 Nov 2026) — load the one that fits instead of re-typing the brief:
+- `card-worker` — build one card end to end (board fields, claim, tests, gate, push, cleanup, hand back).
+- `independent-check` — a separate reviewer/checker: diff + card test on the final sha, SAFE / BLOCK.
+- `status-update` — answer "kya update hai" / worker count from a fresh check; count = board count.
+- `staging-train` — the train checklist (section c); coordinator only.
 
 - **Slots:** at most 2 cards being built by day; `worker-lock` enforces 2 by day / 3 by night. After
   22:00 IST Pardeep allows up to 4 worker agents in total (3 Nov) — count running workers before every
@@ -313,3 +328,12 @@ Format: `- <date>: what went wrong → the rule it created (card).`
   (section d); staging "Read from Zoho again" Claude khud dabata hai (section c, step 10).
 - 8 Nov 2026 (R-2581): Pardeep: "board par latest updated information dikhni chahiye ise note bhi aur sabko bata bhi do" →
   every running worker (builder/checker/reviewer) shows on the board first; the count told to the owner = the board's count (section d).
+- 8 Nov 2026 (R-2585): every train, worker brief, check and status update was re-typed by hand, and the
+  same mistakes came back (worker waiting for CI, board not current, `claimedBy` case, `needsDecision`
+  misuse). Pardeep: "important baate apne aap hi note kar liye kro … jo repetitive kaam hote hai unki
+  skill bana liya karo" → lessons are noted without being asked (memory + this log); the 2nd repeat of a
+  procedure becomes a skill. New skills: `staging-train`, `card-worker`, `independent-check`,
+  `status-update` (section a, c, d). Same day the board showed 4 workers while 5 were `doing` (a card with
+  a CA `step` showed as "ruka") → before telling a worker count, compute it the way the board does:
+  `status: doing` (always running, even with a human `step` on it — board v108) + `review` cards with
+  `checkRunning: true`; never count from your own spawn list (skill `status-update`).
