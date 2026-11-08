@@ -161,61 +161,76 @@ describe("R-723 scan — no new raw-host links", () => {
 
 /**
  * R-2600 — emailed auth links built in the BROWSER (GoTrue resetPasswordForEmail redirectTo)
- * used `window.location.origin`: whoever opened the page on another host (R-723 browser check:
- * http://[::1]:3001) got that host baked into the reset mail. They now come from the app URL.
+ * used `window.location.origin` as-is: whatever host the page was opened on went into the
+ * reset mail. Now the same rule as trustedOrigin(): allowlisted host kept, anything else → app URL.
  */
-describe("R-2600 authRedirectUrl — never the browser's host", () => {
-  it("uses NEXT_PUBLIC_APP_URL even when the page was opened on an evil host", () => {
+function onPage(origin: string) {
+  const u = new URL(origin);
+  vi.stubGlobal("window", { location: { origin: u.origin, host: u.host, protocol: u.protocol } });
+}
+const NEXT = `/callback?next=${encodeURIComponent("/reset-password")}`;
+
+describe("R-2600 authRedirectUrl — never an untrusted browser host", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("page opened on an evil host → the app URL", () => {
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://reselleros.anutech.in/");
-    vi.stubGlobal("window", { location: { origin: "https://evil.tld", host: "evil.tld" } });
-    try {
-      const url = authRedirectUrl(`/callback?next=${encodeURIComponent("/reset-password")}`);
-      expect(url).toBe("https://reselleros.anutech.in/callback?next=%2Freset-password");
-      expect(url).not.toContain("evil.tld");
-    } finally {
-      vi.unstubAllGlobals();
-    }
+    onPage("https://evil.tld");
+    const url = authRedirectUrl(NEXT);
+    expect(url).toBe("https://reselleros.anutech.in/callback?next=%2Freset-password");
+    expect(url).not.toContain("evil.tld");
   });
 
-  it("adds the leading slash and fails closed in production without an app URL", () => {
+  it("page opened on a LAN IP / http downgrade → the app URL", () => {
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3001");
-    expect(authRedirectUrl("callback")).toBe("http://localhost:3001/callback");
+    onPage("http://192.168.1.20:3001");
+    expect(authRedirectUrl(NEXT)).toBe(`http://localhost:3001${NEXT}`);
+  });
+
+  it("in production even [::1] / localhost is not trusted → the app URL", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://reselleros.anutech.in");
+    onPage("http://[::1]:3001");
+    expect(authRedirectUrl(NEXT)).toBe(`https://reselleros.anutech.in${NEXT}`);
+  });
+
+  it("the app's own host is kept (PKCE cookie lives there); local hosts only outside production", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://reselleros.anutech.in");
+    onPage("https://reselleros.anutech.in");
+    expect(authRedirectUrl("callback")).toBe("https://reselleros.anutech.in/callback");
+    onPage("http://[::1]:3001");
+    expect(authRedirectUrl("/callback")).toBe("http://[::1]:3001/callback");
+  });
+
+  it("production without an app URL → plain-English error, not the developer text", () => {
     vi.stubEnv("NODE_ENV", "production");
     vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
-    expect(() => authRedirectUrl("/callback")).toThrow(/NEXT_PUBLIC_APP_URL/);
+    onPage("https://evil.tld");
+    expect(() => authRedirectUrl(NEXT)).toThrow(/not set up on this server/);
+    expect(() => authRedirectUrl(NEXT)).not.toThrow(/NEXT_PUBLIC_APP_URL/);
   });
 });
 
 /**
  * Scan (R-2600): an auth redirect handed to the auth server (`redirectTo` / `emailRedirectTo`)
- * may not be built from `window.location.origin`. The only exceptions are OAuth sign-ins: that
- * round trip happens in the user's own browser (nothing is mailed), and the PKCE verifier
- * cookie lives on the current origin, so it must come back to the same host.
+ * may not be built from the browser's origin (`window.` / `globalThis.` / `document.` /
+ * bare `location.origin`). Use authRedirectUrl(). The only exceptions are OAuth sign-ins: that
+ * round trip happens in the user's own browser (nothing is mailed) and must come back to the
+ * same host for its PKCE cookie.
  */
 const OAUTH_BROWSER_ORIGIN = new Set([
   "src/components/features/auth/google-button.tsx",                     // signInWithOAuth
   "src/components/features/contacts/google-contacts-import-dialog.tsx", // signInWithOAuth (contacts scope)
 ]);
 
-describe("R-2600 scan — no auth redirect from window.location.origin", () => {
-  it("redirectTo / emailRedirectTo never use the browser's origin (OAuth listed only)", () => {
+describe("R-2600 scan — no auth redirect from the browser's origin", () => {
+  it("redirectTo / emailRedirectTo values never read location.origin (OAuth listed only)", () => {
     const root = process.cwd();
-    const pattern = /(?:emailRedirectTo|redirectTo)\s*:\s*`?\$?\{?\s*window\.location\.origin/;
+    const pattern = /(?:emailRedirectTo|redirectTo)\s*:[^\n]*\blocation\.origin/;
     const offenders = walk(join(root, "src"))
       .filter((f) => pattern.test(readSource(f)))
       .map((f) => relative(root, f).split("\\").join("/"))
       .filter((f) => !OAUTH_BROWSER_ORIGIN.has(f));
-    expect(offenders).toEqual([]);
-  });
-
-  it("files that ask for a reset / signup mail never read window.location.origin at all", () => {
-    const root = process.cwd();
-    const offenders = walk(join(root, "src"))
-      .filter((f) => {
-        const src = readSource(f);
-        return /resetPasswordForEmail\(|emailRedirectTo/.test(src) && /window\.location\.origin/.test(src);
-      })
-      .map((f) => relative(root, f).split("\\").join("/"));
     expect(offenders).toEqual([]);
   });
 });

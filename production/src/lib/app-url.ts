@@ -60,13 +60,33 @@ export function appUrl(): string {
 
 /**
  * R-2600 — the redirect for an emailed auth link built in the BROWSER (GoTrue
- * resetPasswordForEmail `redirectTo`). Always the app URL, never `window.location.origin`:
- * the page's own host is whatever the visitor (or an attacker's link) opened it on — the R-723
- * browser check got `http://[::1]:3001` in the reset mail. Works on the client because
- * NEXT_PUBLIC_APP_URL is inlined at build time.
+ * resetPasswordForEmail `redirectTo`). Same rule as the server's trustedOrigin(): the page's
+ * host is kept only when it is allowlisted (the app's own host, the two public site hosts, and
+ * localhost/127.0.0.1/[::1] outside production); any other host gets NEXT_PUBLIC_APP_URL
+ * (inlined at build time). Before, it was `window.location.origin` as-is, so a page opened on
+ * any host baked that host into the reset mail.
+ *
+ * Why not ALWAYS the app URL: Supabase's browser client uses PKCE — the code verifier is a
+ * cookie on the page's own host, so the link must come back to that host or /callback cannot
+ * exchange the code. An untrusted host therefore gets the app URL and a link that does not
+ * work there; that is the point.
+ *
+ * Never throws a developer message: production without an app URL → a plain-English error.
  */
 export function authRedirectUrl(path: string): string {
-  return `${appUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+  const rel = path.startsWith("/") ? path : `/${path}`;
+  const loc = typeof window !== "undefined" ? window.location : undefined;
+  try {
+    const origin = loc
+      ? trustedOrigin({
+          get: (name: string) =>
+            name === "host" ? loc.host : name === "x-forwarded-proto" ? loc.protocol.replace(/:$/, "") : null,
+        })
+      : appUrl();
+    return `${origin}${rel}`;
+  } catch {
+    throw new Error("Password reset is not set up on this server yet — please contact support.");
+  }
 }
 
 /** Normalise a raw Host / X-Forwarded-Host value: first entry, trimmed, lower-case. */

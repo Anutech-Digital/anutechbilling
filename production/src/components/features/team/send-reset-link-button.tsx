@@ -36,7 +36,7 @@ export function SendResetLinkButton({ email }: { email: string | null }) {
         /* Through /callback, the same path the login flow uses: it exchanges the code for a
            session server-side and, for an existing user, redirects straight to ?next=. One
            code-exchange path in the app instead of two that can drift. */
-        // R-2600: the app URL, never the browser's host (the mailed link must not follow it).
+        // R-2600: an allowlisted host (same rule as the server), never just the browser's host.
         redirectTo: authRedirectUrl(`/callback?next=${encodeURIComponent("/reset-password")}`),
       });
       if (error) throw new Error(error.message);

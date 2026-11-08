@@ -48,11 +48,16 @@ export default function ForgotPasswordPage() {
   } = useForm<FormData>({ resolver: zodResolver(schema) });
 
   async function onSubmit(values: FormData) {
+    let redirectTo: string;
+    try {
+      // R-2600: an allowlisted host (same rule as the server), never just the browser's host.
+      redirectTo = authRedirectUrl(`/callback?next=${encodeURIComponent("/reset-password")}`);
+    } catch (e) {
+      toast.error((e as Error).message);
+      return;
+    }
     const supabase = createClient();
-    const { error } = await supabase.auth.resetPasswordForEmail(values.email, {
-      // R-2600: the app URL, never the browser's host (the mailed link must not follow it).
-      redirectTo: authRedirectUrl(`/callback?next=${encodeURIComponent("/reset-password")}`),
-    });
+    const { error } = await supabase.auth.resetPasswordForEmail(values.email, { redirectTo });
 
     /* Supabase does not say whether the address exists, and neither do we. Telling an
        anonymous visitor "no account with that email" turns this box into a way to find out
