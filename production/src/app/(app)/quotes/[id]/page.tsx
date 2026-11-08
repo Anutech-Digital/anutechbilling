@@ -36,6 +36,8 @@ import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage"
 import { pagePaidToDate, paidToDateLine, PAID_TO_DATE_LABEL } from "@/lib/quotes/paid-to-date";
 import { instalmentStatus, instalmentHeadline } from "@/lib/quotes/instalment-status";
 import { InstalmentList } from "./instalment-list";
+import { SettleShortDialog } from "./settle-short-dialog";
+import { maySettleSmallShort, settleShortLabel } from "@/lib/quotes/settle-small-short";
 import { useNextPartRequest } from "./next-part-request";
 import { useQuotePartInvoices } from "./part-invoices";
 import { PaymentHistoryCard } from "./payment-history-card";
@@ -721,6 +723,32 @@ export default function QuoteDetailPage() {
       toast.success(input.undo ? `${params.id} is open again` : `${params.id} cancelled — kept on record`);
     },
     onError: (e) => toastError(e, { fallback: "Could not change the quote" }),
+  });
+  /* R-2606: a part received a little short (P7) → "Settle ₹X as round-off" (R-2595's
+     settle_quote_part_short). The refusal stays in the dialog so the owner reads what to do. */
+  const [settleOpen, setSettleOpen] = React.useState(false);
+  const [settleError, setSettleError] = React.useState<string | null>(null);
+  const settleShort = useMutation({
+    mutationFn: async (reason: string | null) => {
+      const res = await fetch(`/api/quotes/${encodeURIComponent(params.id)}/settle-short`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string; amount?: number };
+      if (!res.ok) throw new Error(json.error ?? `Could not settle the difference (${res.status})`);
+      return json;
+    },
+    onMutate: () => setSettleError(null),
+    onSuccess: (r) => {
+      setSettleOpen(false);
+      void qc.invalidateQueries({ queryKey: ["payments"] });
+      void qc.invalidateQueries({ queryKey: ["quotes"] });
+      void qc.invalidateQueries({ queryKey: ["quote-part-invoices"] });
+      invalidateReceivables(qc);
+      toast.success(`₹${Number(r.amount ?? 0).toLocaleString("en-IN")} settled as round-off — the part is fully received`);
+    },
+    onError: (e) => setSettleError(e instanceof Error ? e.message : "Could not settle the difference"),
   });
   /* R-1807: a failed (or unanswered) read is not "no other open quote" — the Lost offer waits
      for the list; on isError the dialog says the lead stays as it is. */
@@ -2018,6 +2046,13 @@ export default function QuoteDetailPage() {
                 </Button>
               )}
 
+              {/* R-2606: the small difference closed as a round-off (owner / accountant, P7). */}
+              {money.smallShort && partStatus?.smallShort && maySettleSmallShort(me?.role) && (
+                <Button variant="default" icon="check_circle" onClick={() => { setSettleError(null); setSettleOpen(true); }}>
+                  {settleShortLabel(partStatus.smallShort.amount, rupee)}
+                </Button>
+              )}
+
               {/* R-1726: paid with nothing left to do here (per-period billing) — the receipt.
                   Once an invoice exists the invoice row below carries this button instead. */}
               {primary === "send_receipt" && receiptTarget && money.stage !== "invoiced" && (
@@ -2589,6 +2624,20 @@ export default function QuoteDetailPage() {
         pending={cancelQuote.isPending}
         onConfirm={(reason) => cancelQuote.mutate({ undo: false, reason })}
       />
+
+      {partStatus?.smallShort && splitPlan && (
+        <SettleShortDialog
+          open={settleOpen}
+          onOpenChange={setSettleOpen}
+          amount={partStatus.smallShort.amount}
+          partIndex={partStatus.smallShort.index}
+          partCount={splitPlan.count}
+          bankLine={receiptTarget ? { amount: Number(receiptTarget.amount ?? 0), on: formatDate(receiptTarget.received_at) } : null}
+          pending={settleShort.isPending}
+          error={settleError}
+          onConfirm={(reason) => settleShort.mutate(reason)}
+        />
+      )}
 
       <CustomerStoppedDialog
         open={stoppedOpen}
