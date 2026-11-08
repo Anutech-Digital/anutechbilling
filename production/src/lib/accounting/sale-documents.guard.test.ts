@@ -176,6 +176,7 @@ const TS_SALE = new Set([
   "src/components/features/collections/owner-report.tsx",        // R-2414: invoiced in the last 30 days, for DSO / CEI
 ]);
 const TS_NOT_SALE: Record<string, string> = {
+  "src/lib/quotes/settle-small-short.ts": "R-2606: the ONE open part invoice of a split-billed quote (same pick as settle_quote_part_short) and its balance, for the Settle dialog's preview — not a list, GST or revenue",
   "src/app/api/subscriptions/[id]/reduce-seats/load.ts": "R-2252: the ONE invoice of a subscription part a seat cut credits (same lookup as reduce_subscription_seats) and its open / settled amounts for the preview — not a list or a total",
   "src/lib/integrations/zoho-books/receipts-import/store.ts": "R-2501: invoices that came from Zoho (Zoho id / number, customer, what is still due) to place FY receipts on them — not a revenue or GST report",
   "src/lib/integrations/zoho-books/sales-import/store.ts": "R-2499: every invoice's number / Zoho number / Zoho id (skip what is already in the books) and the per-month recount of what came in from Zoho — not a revenue or GST report",

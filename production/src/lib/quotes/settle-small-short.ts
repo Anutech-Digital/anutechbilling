@@ -10,11 +10,13 @@
  * keep "Record ₹X balance".
  */
 
-export const SETTLE_SHORT_ROLES = ["owner", "accountant"] as const;
-
+/* The RPC allows owner / accountant (current_user_has_role) — the same set as MONEY_DELETE_ROLES
+   (W2 write-off roles); one list, not a third copy. Unknown role → NOT allowed (fail-closed). */
 export function maySettleSmallShort(role: string | null | undefined): boolean {
-  return !!role && (SETTLE_SHORT_ROLES as readonly string[]).includes(role);
+  return !!role && (MONEY_DELETE_ROLES as readonly string[]).includes(role);
 }
+
+import { MONEY_DELETE_ROLES } from "@/lib/auth/roles";
 
 /** The ledger the difference lands on (report_settlement_shortfalls → P&L). */
 export const SETTLE_SHORT_LEDGER = "P&L → Bank Charges · Settlement short of receipt";

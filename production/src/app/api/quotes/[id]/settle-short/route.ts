@@ -14,8 +14,10 @@
 import { NextResponse } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { MONEY_DELETE_ROLES } from "@/lib/auth/roles";
+import { rupee } from "@/lib/utils";
 import {
-  maySettleSmallShort, settleShortPreview, settleShortReason, settleShortRefusal, SETTLE_SHORT_FORBIDDEN, SETTLE_SHORT_GENERIC,
+  settleShortPreview, settleShortReason, settleShortRefusal, SETTLE_SHORT_FORBIDDEN, SETTLE_SHORT_GENERIC,
 } from "@/lib/quotes/settle-small-short";
 
 export const dynamic = "force-dynamic";
@@ -29,7 +31,9 @@ async function gate(): Promise<Gate> {
   if (!user) return { ok: false, res: NextResponse.json({ error: "Please sign in again." }, { status: 401 }) };
   const { data: me } = await supabase.from("users").select("tenant_id, role").eq("id", user.id).maybeSingle();
   if (!me?.tenant_id) return { ok: false, res: NextResponse.json({ error: "Your account is not linked to a workspace yet." }, { status: 403 }) };
-  if (!maySettleSmallShort((me as { role?: string | null }).role)) {
+  /* Owner / accountant (MONEY_DELETE_ROLES) — the roles settle_quote_part_short allows. */
+  const role = (me as { role?: string | null }).role ?? "";
+  if (!(MONEY_DELETE_ROLES as readonly string[]).includes(role)) {
     return { ok: false, res: NextResponse.json({ error: SETTLE_SHORT_FORBIDDEN }, { status: 403 }) };
   }
   return { ok: true, supabase };
@@ -71,7 +75,7 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   /* No open part with a difference → the RPC says why in its own words. */
   if (preview && preview.amount !== Math.round(expected)) {
     return NextResponse.json({
-      error: `The difference on this part is now ₹${preview.amount.toLocaleString("en-IN")}, not ₹${Math.round(expected).toLocaleString("en-IN")} — refresh the page before settling.`,
+      error: `The difference on this part is now ${rupee(preview.amount)}, not ${rupee(Math.round(expected))} — refresh the page before settling.`,
     }, { status: 409 });
   }
 
