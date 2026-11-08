@@ -377,7 +377,7 @@ export function useOldAdvanceGivenLines(enabled: boolean) {
 
 /* ══ R-2604: move old Balance Sheet "Advance/loan given · <name>" lines here (owner tool) ═════════
  * preview_bs_loan_move() = "Check first" (read only); apply_bs_loan_move(links, expected net) moves
- * them in one transaction (migration 20261108155800_r2604_move_bs_loans.sql, newer than the generated
+ * them in one transaction (migration 20261108162600_r2604_move_bs_loans.sql, newer than the generated
  * types → untyped client). Employee groups move to Employee loans only when the owner ticks them. */
 
 export interface BsLoanMoveGroup {

@@ -1,6 +1,6 @@
 -- R-2604 (8 Nov 2026): owner tool that moves old Balance Sheet "Advance/loan given|returned · <name>" rows
 -- into Accounting → Loans given (or Employee loans for an employee the owner confirms).
--- Migration 20261108155800_r2604_move_bs_loans (on R-2603, R-2570, R-2340, R-1873).
+-- Migration 20261108162600_r2604_move_bs_loans (on R-2603, R-2570, R-2340, R-1873).
 -- Self-asserting, ONE transaction, rolled back. Local/test DB only:
 --   begin; <migration without begin/commit>; <this file without begin/rollback>; rollback;
 --
