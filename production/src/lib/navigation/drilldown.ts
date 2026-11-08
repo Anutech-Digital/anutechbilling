@@ -24,7 +24,7 @@ export const INVOICE_TABS = ["all", "paid", "credited", "partial", "pending", "o
 export const SUBSCRIPTION_TABS = ["all", "active", "expiring", "suspended", "ended", "trials"] as const;
 export const TASK_TABS = ["today", "overdue", "upcoming", "done", "all"] as const;
 /** R-2403: the queue tabs (renewals/queue.ts QUEUE_TABS) + the old values, which still open the right tab. */
-export const RENEWAL_BUCKETS = ["overdue", "due7", "d30", "d60", "d90", "urgent", "upcoming", "future", "risk"] as const;
+export const RENEWAL_BUCKETS = ["overdue", "due7", "d30", "d60", "d90", "later", "urgent", "upcoming", "future", "risk"] as const;
 export const CUSTOMER_VIEWS = ["all", "unpaid", "subscribed", "projects", "nosub", "credit", "received"] as const;
 export const PAYMENT_TABS = ["all", "received", "refunded"] as const;
 /** /accounting/aging ?bucket= ("" = every customer owing). */

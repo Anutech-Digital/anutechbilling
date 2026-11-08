@@ -59,6 +59,8 @@ export interface RenewalGroups<T> {
   due7:     T[];
   upcoming: T[];
   future:   T[];
+  /** R-2586: chased renewals past 90 days — the Later tab only (no tile or badge; not At risk by date). */
+  later:    T[];
   stopped:  T[];
   /** R-2225: Won't renew, still running (renewal date today or later). */
   nonRenewing: T[];
@@ -91,7 +93,7 @@ export function classifyRenewals<T extends ClassifyRow>(
   isPaid: (row: T) => boolean = () => false,
 ): RenewalGroups<T> {
   const g: RenewalGroups<T> = {
-    expired: [], due7: [], upcoming: [], future: [], stopped: [], nonRenewing: [], renewedPaid: [], urgentTab: [], atRisk: [], atRiskArr: 0,
+    expired: [], due7: [], upcoming: [], future: [], later: [], stopped: [], nonRenewing: [], renewedPaid: [], urgentTab: [], atRisk: [], atRiskArr: 0,
   };
   for (const r of rows) {
     if (!chasedRenewal(r.sub)) {
@@ -109,6 +111,7 @@ export function classifyRenewals<T extends ClassifyRow>(
       if (b === "urgent") g.due7.push(r);
       else if (b === "upcoming") g.upcoming.push(r);
       else if (b === "future") g.future.push(r);
+      else g.later.push(r);
     }
   }
   g.urgentTab = [...g.expired, ...g.due7, ...g.stopped];
