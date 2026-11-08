@@ -467,7 +467,8 @@ MIGS=(
   "r2574splitlinesaleundo|20261107212458_r2574_split_line_sale_undo.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public._bank_sale_undo_scope(uuid)') and prosrc like '%R-2574%')"
   "r2577bankchargeguard|20261107221154_r2577_bank_charge_server_guard.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2577%')"
   "r2193flexwithonetime|20261107233022_r2193_flex_with_one_time.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_line_terms_mixed(jsonb)') and prosrc like '%R-2193%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2193%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.quote_split_due(text,date,date)') and prosrc like '%R-2193%')"
-  "r2252reducesubscriptionseats|20261108013626_r2252_reduce_subscription_seats.sql|resellersos_migration|to_regclass('public.subscription_seat_reductions') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)') and prosrc like '%R-2252%') and to_regprocedure('public.cancel_scheduled_seat_reduction(uuid,uuid)') is not null"
+  "r2252reducesubscriptionseats|20261108013626_r2252_reduce_subscription_seats.sql|resellersos_migration|to_regclass('public.subscription_seat_reductions') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)') and (prosrc like '%R-2252%' or prosrc like '%R-2584%')) and to_regprocedure('public.cancel_scheduled_seat_reduction(uuid,uuid)') is not null"
+  "r2584seatcutignorepastschedules|20261108033033_r2584_seat_cut_ignore_past_schedules.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)') and prosrc like '%R-2584%')"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER
@@ -707,6 +708,7 @@ SUPS=(
   "r2570banklineowntype|r2570bcurrentrequestrole|"
   "r2179reconcilegaps|r2574splitlinesaleundo|"
   "r2192smallreceiptdiffs|r2577bankchargeguard|exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and true) and exists(select 1 from pg_proc where oid = to_regprocedure('public.suggest_bank_transaction_matches(uuid)') and prosrc like '%R-2192%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.auto_reconcile_bank_account(uuid,uuid,integer)') and prosrc like '%R-2192%') and to_regprocedure('public.bank_line_receipt_round_off(uuid)') is not null"
+  "r2252reducesubscriptionseats|r2584seatcutignorepastschedules|to_regclass('public.subscription_seat_reductions') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)') and true) and to_regprocedure('public.cancel_scheduled_seat_reduction(uuid,uuid)') is not null"
 )
 
 # R-545 (10 Oct): the staging branch (R-161) moves applied migrations to prisma/migrations/<name>/migration.sql,
