@@ -80,6 +80,8 @@ JOBS=(
   "resellersos-ads-sync|0 3 * * *|/api/cron/ads-sync|Google Ads + Meta Ads daily spend sync"
   # R-524: "Try the demo" sample workspace — fresh sample rows nightly. Does nothing while DEMO_ENABLED is off.
   "resellersos-demo-reset|30 2 * * *|/api/cron/demo-reset|Reset the read-only demo workspace sample data"
+  # R-2607: the FY read from Zoho an owner asked for (Invoices → FY receipts from Zoho). Does nothing when nobody asked.
+  "resellersos-zoho-fy-read|* * * * *|/api/cron/zoho-fy-read|Server-side FY read from Zoho Books (only reads asked for in the app)"
   "resellersos-lead-finder|30 3 * * *|/api/cron/lead-finder|AI Lead Finder — nightly prospect discovery"
   "resellersos-cold-calls|*/2 9-19 * * 1-5|/api/cron/cold-calls|AI Cold Calling — one call at a time, checked every 2 min, 9:00-19:59 IST Mon-Fri (each campaign keeps its own window)"
   # S34. Every 15 min, 08:00–21:45 IST — IndiaMART asks for >= 5 min between calls per key,

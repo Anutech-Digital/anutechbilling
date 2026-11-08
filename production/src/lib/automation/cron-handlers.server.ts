@@ -46,6 +46,7 @@ export const CRON_ROUTES: Record<AutomationJob, Loader> = {
   "mrr-snapshot":         () => import("@/app/api/cron/mrr-snapshot/route"),
   "backup":               () => import("@/app/api/cron/backup/route"),
   "demo-reset":           () => import("@/app/api/cron/demo-reset/route"),
+  "zoho-fy-read":         () => import("@/app/api/cron/zoho-fy-read/route"),
 };
 
 /** The job's GET handler (the gated one), or null when the module has none. */

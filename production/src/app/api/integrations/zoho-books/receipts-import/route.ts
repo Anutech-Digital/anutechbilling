@@ -6,10 +6,12 @@
  * "customerpayments".
  *
  * Body { action, fy: "2025-26", accounts?: { <Zoho account id>: <app bank account id> | "leave-out" | "" }, … }:
- *   read     → the next piece of the FY from Zoho into the server's scan (list, then each payment's
- *              detail; READ only; at most FY_CALLS_PER_REQUEST Zoho calls — call again after a wait
- *              until `complete`).
- *   restart  → forgets the scan.
+ *   start    → R-2607: asks the SERVER to read the FY from Zoho into its scan (list, then each
+ *              payment's detail; READ only). The cron zoho-fy-read reads it to the end with the
+ *              browser closed; progress is saved after every Zoho call, so it resumes.
+ *   step     → R-2607: the open dialog runs one server pass too (same lease — never two at once).
+ *   status   → R-2607: progress { listed, detailed, complete, running, error } — no Zoho call.
+ *   restart  → forgets the scan (refused while a server pass runs).
  *   preview  → the plan from the COMPLETE scan: counts, totals, Zoho deposit accounts with the app
  *              account each goes to (owner's choice, else a suggestion; "none" = Leave these out → its
  *              payments are skipped "Left out by owner."), skip reasons, past batches.
@@ -24,15 +26,13 @@
  * Zoho is never written to.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { NOT_CONFIGURED_MESSAGE, FY_CALLS_PER_REQUEST, zohoBooksCreds } from "@/lib/integrations/zoho-books/config";
-import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
-import { ZohoApiError } from "@/lib/integrations/zoho-books/api";
+import { resolveZohoCaller } from "@/lib/integrations/zoho-books/store";
 import { fyDateRange } from "@/lib/integrations/zoho-books/fy-fetch";
-import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
-import { scanStep } from "@/lib/integrations/zoho-books/fy-import/scan";
+import { supabaseBgStore } from "@/lib/integrations/zoho-books/fy-import/bg-store";
+import { companyReadPass } from "@/lib/integrations/zoho-books/fy-import/read-job.server";
 import { RECEIPTS_IMPORT_PART, partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts";
 import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb } from "@/lib/integrations/zoho-books/fy-import/store";
-import { zohoReceiptFacts, type ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
+import type { ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
 import { RECEIPTS_IMPORT_ROLES, buildReceiptsPlan, toReceiptPick } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import { parseAccountMap, readReceiptsContext } from "@/lib/integrations/zoho-books/receipts-import/store";
 import { depositAccountLabel, depositAccounts } from "@/lib/payments/deposit-accounts";
@@ -44,6 +44,9 @@ export const maxDuration = 60;
 
 const KIND = "customerpayments" as const;
 const ROLE_MSG = "Only the owner or an accountant can import FY receipts from Zoho.";
+/** R-2607: the dialog's own server pass — under maxDuration (60 s) with room for the counts. */
+const STEP_BUDGET_MS = 40_000;
+const READING_MSG = "The server is reading Zoho right now — wait until it says it has read all payments, then read again.";
 
 function fail(status: number, error: string) {
   return NextResponse.json({ ok: false, error }, { status });
@@ -62,37 +65,33 @@ export async function POST(req: NextRequest) {
   const db = caller.admin as unknown as FyImportDb;
   const store = supabaseScanStore<ZohoReceiptFacts>(db, caller.tenantId, KIND);
 
+  const bg = supabaseBgStore(db, caller.tenantId, KIND);
+
   if (action === "restart") {
-    try { await store.reset(fy); } catch { return fail(500, "Could not clear the Zoho read. Try again."); }
-    return NextResponse.json({ ok: true, fy, listed: 0, detailed: 0, complete: false });
+    /* R-2607: never under a running pass — it would save its old page over the fresh start. */
+    try {
+      const s = await bg.readBg(fy);
+      if (s?.leaseUntil && Date.parse(s.leaseUntil) > Date.now()) return fail(409, READING_MSG);
+      await store.reset(fy);
+    } catch { return fail(500, "Could not clear the Zoho read. Try again."); }
+    return NextResponse.json({ ok: true, fy, listed: 0, detailed: 0, complete: false, running: false, error: null });
   }
 
-  if (action === "read") {
-    const creds = zohoBooksCreds();
-    if (!creds) return fail(503, NOT_CONFIGURED_MESSAGE);
-    let conn;
-    try { conn = await readConnection(caller.admin, caller.tenantId); }
-    catch { return fail(500, "Could not read the Zoho Books connection. Refresh the page."); }
-    if (!conn.refreshToken) return fail(409, "Zoho Books is not connected. Settings → Integrations → Zoho Books → Connect.");
-    if (!conn.orgId) return fail(409, "Choose your Zoho Books organization first.");
-    const history: PaceEntry[] = [];
-    const used = () => history.reduce((s, h) => s + h.calls, 0);
+  /* R-2607: the read runs on the SERVER. start = ask for it (keeps what is read — resumes);
+     step = the open dialog lends a hand: one server pass (≤ STEP_BUDGET_MS) under the same lease
+     as the cron zoho-fy-read, which carries on with the window closed; status = progress only. */
+  if (action === "start" || action === "step" || action === "status") {
     try {
-      const run = async () => scanStep(store, KIND, zohoReceiptFacts, conn.orgId!, await zohoAccessToken(caller, conn.refreshToken!, creds), fy,
-        { history, maxCalls: Math.max(1, FY_CALLS_PER_REQUEST - used()) });
-      let result;
-      try { result = await run(); } catch (e) {
-        if (!(e instanceof ZohoApiError && e.status === 401)) throw e;
-        await dropZohoAccessToken(caller);
-        result = await run();
-      }
-      return NextResponse.json({ ok: true, fy, ...result, calls: used() });
-    } catch (e) {
-      if (e instanceof ZohoApiError) {
-        if (e.status === 401 || e.code === "reconnect") return fail(502, "Zoho Books did not let ResellerOS read customer payments — Settings → Integrations → Zoho Books → Reconnect, then Allow.");
-        return fail(502, e.message);
-      }
-      return fail(502, "Could not read from Zoho Books. Try again.");
+      if (action === "start") await bg.request(fy, caller.userId);
+      if (action === "step") await companyReadPass(caller.admin, caller.tenantId, KIND, fy, { budgetMs: STEP_BUDGET_MS, requireRequest: true });
+      const [c, run, s] = await Promise.all([store.counts(fy), store.readRun(fy), bg.readBg(fy)]);
+      return NextResponse.json({
+        ok: true, fy, ...c,
+        complete: !!run?.listDone && c.detailed >= c.listed && !s?.requestedAt,
+        running: !!s?.requestedAt, error: s?.error ?? null, finishedAt: s?.finishedAt ?? null, lastStepAt: s?.lastStepAt ?? null,
+      });
+    } catch {
+      return fail(500, "Could not reach the Zoho read. Try again.");
     }
   }
 
