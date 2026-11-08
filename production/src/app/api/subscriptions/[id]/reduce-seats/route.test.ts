@@ -9,6 +9,7 @@ const state = vi.hoisted(() => ({
   sub: null as Record<string, unknown> | null,
   invoice: null as Record<string, unknown> | null,
   scheduled: null as Record<string, unknown> | null,
+  planChangeQuote: null as string | null,
   rpcArgs: null as Record<string, unknown> | null,
   rpcResult: { data: { status: "done" } as unknown, error: null as { code?: string; message: string } | null },
 }));
@@ -21,6 +22,7 @@ vi.mock("./load", () => ({
   REDUCE_SEATS_SELECT: "id",
   loadPartInvoiceMoney: async () => state.invoice,
   loadScheduledReduction: async () => state.scheduled,
+  loadOpenPlanChangeQuote: async () => state.planChangeQuote,
 }));
 vi.mock("@/lib/supabase/server", () => {
   const userClient = {
@@ -48,6 +50,7 @@ beforeEach(() => {
   };
   state.invoice = PAID;
   state.scheduled = null;
+  state.planChangeQuote = null;
   state.rpcArgs = null;
   state.rpcResult = { data: { status: "done" }, error: null };
 });
@@ -122,6 +125,20 @@ describe("POST (R-2252)", () => {
     const res = await DELETE(new Request("http://x/api/subscriptions/s-1/reduce-seats", { method: "DELETE" }), params);
     expect(res.status).toBe(200);
     expect(state.rpcArgs).toEqual({ p_tenant_id: "t-1", p_subscription_id: "s-1" });
+  });
+  it("R-2589: refused while a plan-change quote is open — the message names the quote, nothing booked", async () => {
+    state.planChangeQuote = "QT-2026-0042";
+    const res = await post({ seats_removed: 3, timing: "now", idempotency_key: "key-12345678" });
+    expect(res.status).toBe(409);
+    const j = await res.json();
+    expect(j.code).toBe("plan_change_open");
+    expect(j.error).toBe("Plan change quote QT-2026-0042 is open for this subscription — it was priced on today's seats. Delete that quote (or record its payment) first, then reduce seats.");
+    expect(state.rpcArgs).toBeNull();
+  });
+  it("R-2589: no plan-change quote open → the cut goes through as before", async () => {
+    state.planChangeQuote = null;
+    expect((await post({ seats_removed: 3, timing: "now", idempotency_key: "key-12345678" })).status).toBe(200);
+    expect(state.rpcArgs).toMatchObject({ p_seats_removed: 3 });
   });
   it("a body without a key is refused", async () => {
     expect((await post({ seats_removed: 2, timing: "now" })).status).toBe(400);

@@ -12,6 +12,7 @@
 import type { createAdminClientFor } from "@/lib/supabase/server";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { openInvoiceDue } from "@/lib/subscriptions/cancel-due";
+import { isPlanChangeQuote } from "@/lib/subscriptions/change-plan";
 import type { ReductionInvoiceMoney } from "@/lib/subscriptions/seat-reduction";
 import type { Subscription } from "@/lib/supabase/database.types";
 
@@ -161,4 +162,22 @@ export async function loadScheduledReduction(supabase: Admin, sub: ReduceSeatsSu
     .limit(1)
     .maybeSingle();
   return (data as ScheduledReduction | null) ?? null;
+}
+
+/**
+ * R-2589 — the open plan-change quote of this subscription (Change plan, R-2227), if any: linked
+ * through renewal_quote_id, extension_months 0, first line plan_change. It was priced on today's
+ * seats and, once paid, sets its own seat count — so a seat cut while it is open would be credited
+ * twice. reduce_subscription_seats (migration 20261108051500) refuses the same case.
+ */
+export async function loadOpenPlanChangeQuote(supabase: Admin, sub: ReduceSeatsSub): Promise<string | null> {
+  if (!sub.renewal_quote_id) return null;
+  const { data } = await supabase
+    .from("quotes")
+    .select("id, extension_months, line_items")
+    .eq("id", sub.renewal_quote_id)
+    .eq("tenant_id", sub.tenant_id)
+    .maybeSingle();
+  const q = data as { id: string; extension_months: number | null; line_items: unknown } | null;
+  return q && isPlanChangeQuote(q) ? q.id : null;
 }
