@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { queueOrder, queueTurn, liveQueue, lockActivityAt, isStaleLock, normPriority, parseQueueFlags, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS } from "../scripts/ops/worker-lock.mjs";
+import { queueOrder, queueTurn, turnGate, turnQueueLines, liveQueue, lockActivityAt, isStaleLock, normPriority, parseQueueFlags, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS } from "../scripts/ops/worker-lock.mjs";
 
 /*
  * R-2105 (29 Oct 2026): a refused claim used to mean "retry every 5 min, give up after 30", in no order;
@@ -123,4 +123,68 @@ describe("R-2105 on a real lock folder", () => {
     expect(JSON.parse(fs.readFileSync(lockPath("R-2"), "utf8"))).toMatchObject({ state: "working", priority: "p1" });
     expect(fs.existsSync(path.join(dir, "_queue-R-2.json"))).toBe(false);
   }, 20_000);
+});
+
+/*
+ * R-2591 (8 Nov 2026): the push turn (and the heavy tsc/guard turn) had no line — whoever grabbed the
+ * free `_push-turn.json` first went. A p0 train-blocker (R-2582) waited 2 h behind p1 pushes. Now every
+ * waiter writes `_<turn>-wait-<CARD>.json` with the priority from its claim, and a free turn goes to the
+ * best waiter (p0 > p1 > p2, then who waited first). A turn already held is never taken away. Entries
+ * from an older script have no priority → p2, first come first served among equals.
+ */
+describe("R-2591 push turn by priority", () => {
+  const w = (card: string, priority: string | undefined, joinedAt: number) => ({ card, ...(priority ? { priority } : {}), joinedAt, seenAt: NOW });
+
+  it("a free turn waits for an earlier-or-better waiter: a p0 that came later goes before a p1", () => {
+    const waiters = [w("R-10", "p1", 1), w("R-20", "p0", 5)];
+    expect(turnGate("R-10", { busy: false, waiters, now: NOW })).toEqual({ go: false, ahead: ["R-20"] });
+    expect(turnGate("R-20", { busy: false, waiters, now: NOW })).toEqual({ go: true, ahead: [] });
+  });
+
+  it("among equals first come first served; no priority (old script) counts as p2", () => {
+    const waiters = [w("R-1", "p1", 2), w("R-2", "p1", 1), w("R-3", undefined, 0)];
+    expect(turnGate("R-2", { busy: false, waiters, now: NOW }).go).toBe(true);
+    expect(turnGate("R-1", { busy: false, waiters, now: NOW }).ahead).toEqual(["R-2"]);
+    expect(turnGate("R-3", { busy: false, waiters, now: NOW }).ahead).toEqual(["R-2", "R-1"]);
+  });
+
+  it("a held turn is never taken: even a p0 waits while someone pushes", () => {
+    expect(turnGate("R-20", { busy: true, waiters: [w("R-20", "p0", 1)], now: NOW }).go).toBe(false);
+  });
+
+  it("a waiter that stopped refreshing is skipped", () => {
+    const waiters = [{ ...w("R-20", "p0", 1), seenAt: NOW - QUEUE_STALE_MS - 1 }, w("R-10", "p2", 2)];
+    expect(turnGate("R-10", { busy: false, waiters, now: NOW }).go).toBe(true);
+  });
+
+  it("the card holding the push turn takes its own heavy step without queueing", () => {
+    expect(turnGate("R-10", { busy: false, waiters: [w("R-20", "p0", 1), w("R-10", "p2", 2)], now: NOW, bypass: true }).go).toBe(true);
+  });
+
+  it("status lines: holder, then waiters in turn order with priorities", () => {
+    const lines = turnQueueLines("push", { card: "R-5", priority: "p1", at: NOW - 120_000 }, [w("R-10", "p1", 1), w("R-20", "p0", 5), w("R-30", undefined, 0)], NOW);
+    expect(lines).toEqual([
+      "push turn: R-5 (p1) — 2 min se",
+      "  line: 1. R-20 (p0)  2. R-10 (p1)  3. R-30 (p2)",
+    ]);
+    expect(turnQueueLines("heavy", null, [], NOW)).toEqual(["heavy turn: khaali"]);
+  });
+});
+
+describe("R-2591 status on a real lock folder", () => {
+  let dir: string;
+  beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), "r2591-locks-")); });
+  afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  it("status shows the push turn and its waiting line with priorities", () => {
+    const now = Date.now();
+    fs.writeFileSync(path.join(dir, "_push-turn.json"), JSON.stringify({ card: "R-5", at: now }));
+    fs.writeFileSync(path.join(dir, "_push-wait-R-10.json"), JSON.stringify({ card: "R-10", priority: "p1", joinedAt: now - 5000, seenAt: now }));
+    fs.writeFileSync(path.join(dir, "_push-wait-R-20.json"), JSON.stringify({ card: "R-20", priority: "p0", joinedAt: now, seenAt: now }));
+    const r = spawnSync(process.execPath, [script, "status"], { cwd: root, env: { ...process.env, WORKER_LOCK_DIR: dir }, encoding: "utf8" });
+    expect(r.status, r.stderr).toBe(0);
+    expect(r.stdout).toContain("push turn: R-5 (p2)");
+    expect(r.stdout).toContain("1. R-20 (p0)  2. R-10 (p1)");
+    expect(r.stdout).toContain("heavy turn: khaali");
+  });
 });

@@ -43,6 +43,8 @@ came back (CI wait, board not current, `claimedBy` case, `needsDecision` misuse)
        `<worktree>/production`:
        `WORKER_MAX=<n> node scripts/ops/worker-lock.mjs claim <CARD> <worktree> <path> <path> … --card <cardfile> --wait --priority <p0|p1|p2>`
        (each path its own argument; long timeout). Root files (`.claude/…`, `docs/…`) as `../<path>`.
+       p0 / train-blocker → claim with `--priority p0`; it pushes first (push + heavy turns go by claim
+       priority, R-2591). `worker-lock status` shows the line.
 3. [ ] Tests first: reproduce the owner's real path in a failing test, then fix, then green.
        New SQL → a SQL test on the LOCAL DB in one rolled-back transaction.
        New migration → timestamp newer than every migration on all `anutech/*` branches,
