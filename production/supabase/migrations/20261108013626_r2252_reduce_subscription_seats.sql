@@ -80,7 +80,7 @@ create policy subscription_seat_reductions_read on public.subscription_seat_redu
   using (tenant_id = public.current_tenant_id());
 drop policy if exists zzz_service_role_all on public.subscription_seat_reductions;
 create policy zzz_service_role_all on public.subscription_seat_reductions as permissive for all to service_role using (true) with check (true);
-revoke all on public.subscription_seat_reductions from public, anon;
+revoke all on public.subscription_seat_reductions from public, anon, authenticated;
 grant select on public.subscription_seat_reductions to authenticated, service_role;
 
 create or replace function public.reduce_subscription_seats(
