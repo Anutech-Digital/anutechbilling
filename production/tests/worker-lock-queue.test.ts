@@ -4,7 +4,7 @@ import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { queueOrder, queueTurn, turnGate, turnQueueLines, liveQueue, lockActivityAt, isStaleLock, normPriority, parseQueueFlags, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS } from "../scripts/ops/worker-lock.mjs";
+import { queueOrder, queueTurn, turnGate, turnQueueLines, pushHolderEntry, liveQueue, lockActivityAt, isStaleLock, normPriority, parseQueueFlags, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS } from "../scripts/ops/worker-lock.mjs";
 
 /*
  * R-2105 (29 Oct 2026): a refused claim used to mean "retry every 5 min, give up after 30", in no order;
@@ -157,8 +157,10 @@ describe("R-2591 push turn by priority", () => {
     expect(turnGate("R-10", { busy: false, waiters, now: NOW }).go).toBe(true);
   });
 
-  it("the card holding the push turn takes its own heavy step without queueing", () => {
-    expect(turnGate("R-10", { busy: false, waiters: [w("R-20", "p0", 1), w("R-10", "p2", 2)], now: NOW, bypass: true }).go).toBe(true);
+  it("the card holding the push turn takes its own heavy step without queueing, and nobody jumps it", () => {
+    const waiters = [w("R-20", "p0", 1), pushHolderEntry("R-10", NOW)];
+    expect(turnGate("R-10", { busy: false, waiters, now: NOW, bypass: true }).go).toBe(true);
+    expect(turnGate("R-20", { busy: false, waiters, now: NOW })).toEqual({ go: false, ahead: ["R-10"] });
   });
 
   it("status lines: holder, then waiters in turn order with priorities", () => {
@@ -172,6 +174,7 @@ describe("R-2591 push turn by priority", () => {
 
   it("--train-blocker claims as p0", () => {
     expect(parseQueueFlags(["wt", "--wait", "--train-blocker"]).priority).toBe("p0");
+    expect(parseQueueFlags(["--train-blocker", "--priority", "p1"]).priority).toBe("p0");
   });
 });
 
