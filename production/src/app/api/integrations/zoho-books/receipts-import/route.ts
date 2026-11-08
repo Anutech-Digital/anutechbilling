@@ -40,7 +40,8 @@ import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
-export const maxDuration = 60;
+/* R-2607: a "step" is one server pass (STEP_BUDGET_MS of new steps + the last one finishing). */
+export const maxDuration = 120;
 
 const KIND = "customerpayments" as const;
 const ROLE_MSG = "Only the owner or an accountant can import FY receipts from Zoho.";
@@ -68,10 +69,11 @@ export async function POST(req: NextRequest) {
   const bg = supabaseBgStore(db, caller.tenantId, KIND);
 
   if (action === "restart") {
-    /* R-2607: never under a running pass — it would save its old page over the fresh start. */
+    /* R-2607: never under a running pass — it would save its old page over the fresh start. The
+       restart TAKES the lease itself first (no pass can start in between), then forgets the run. */
     try {
       const s = await bg.readBg(fy);
-      if (s?.leaseUntil && Date.parse(s.leaseUntil) > Date.now()) return fail(409, READING_MSG);
+      if (s && !(await bg.takeLease(fy, Date.now() + 60_000, Date.now()))) return fail(409, READING_MSG);
       await store.reset(fy);
     } catch { return fail(500, "Could not clear the Zoho read. Try again."); }
     return NextResponse.json({ ok: true, fy, listed: 0, detailed: 0, complete: false, running: false, error: null });

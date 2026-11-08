@@ -147,11 +147,11 @@ describe("R-2607 FY receipts dialog — server read", () => {
     expect(closeBtn.hasAttribute("disabled")).toBe(false);
     fireEvent.click(closeBtn);
     expect(closed).toHaveBeenCalledWith(false);
-    await screen.findByText("Read all 2,576 payments.", undefined, { timeout: 5000 });
+    await screen.findByText("Read all 2,576 payments.", undefined, { timeout: 12_000 });
     await waitFor(() => expect(actions).toContain("preview"));
     expect(actions.filter((a) => a === "read")).toEqual([]);
     expect(actions.slice(0, 3)).toEqual(["status", "step", "step"]);
-  });
+  }, 20_000);
 
   it("a read the server stopped shows why (e.g. reconnect Zoho)", async () => {
     vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {

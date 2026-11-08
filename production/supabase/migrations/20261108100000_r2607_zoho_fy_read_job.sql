@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'zoho_fy_scan_runs' and column_name = 'bg_requested_at') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'zoho_fy_scan_runs' and column_name = 'bg_lease_until')
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'zoho_fy_scan_runs' and column_name = 'bg_requested_at') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'zoho_fy_scan_runs' and column_name = 'bg_lease_until') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'zoho_fy_scan_runs' and column_name = 'bg_pace')
 -- deploy-key: r2607zohofyreadjob
 --
 -- R-2607 (8 Nov 2026): Invoices → "FY 2025-26 receipts from Zoho" → "Read from Zoho again" read the
@@ -17,6 +17,7 @@
 --                                       year; a crashed pass's lease runs out and the next carries on).
 --   bg_error / bg_finished_at / bg_last_step_at — what the dialog shows (why it stopped, when done,
 --                                       when it last moved).
+--   bg_pace                           — the last minute's Zoho calls, so the pace holds across passes.
 -- Zoho is only read. Nothing is imported: Check + Import stay the owner's buttons (R-2501).
 -- Plain columns, no function; rollback = drop the columns.
 
@@ -26,7 +27,11 @@ alter table public.zoho_fy_scan_runs
   add column if not exists bg_lease_until  timestamptz,
   add column if not exists bg_error        text check (bg_error is null or char_length(bg_error) <= 500),
   add column if not exists bg_finished_at  timestamptz,
-  add column if not exists bg_last_step_at timestamptz;
+  add column if not exists bg_last_step_at timestamptz,
+  add column if not exists bg_pace         jsonb;
+
+comment on column public.zoho_fy_scan_runs.bg_pace is
+  'R-2607: the last minute''s Zoho calls of this read [{at, calls}] — the next pass keeps Zoho''s 80 calls / min across passes.';
 
 comment on column public.zoho_fy_scan_runs.bg_requested_at is
   'R-2607: the read was asked for (dialog); the server job reads until complete. Null = not asked / finished.';

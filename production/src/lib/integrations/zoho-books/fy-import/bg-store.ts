@@ -5,6 +5,7 @@
  * (dialog) or from the run row itself (cron) — never from a browser.
  */
 import type { FyReadKind } from "../fy-fetch";
+import type { PaceEntry } from "../zoho-pace";
 import type { BgState, BgStore } from "./background-read";
 import { must, type FyImportDb } from "./store";
 
@@ -24,12 +25,12 @@ export function supabaseBgStore(db: FyImportDb, tenantId: string, kind: FyReadKi
       if (r.error) throw new Error("Could not start the Zoho read.");
     },
     async readBg(fy) {
-      const r = await (mine(runs().select("bg_requested_at, bg_lease_until, bg_error, bg_finished_at, bg_last_step_at"), fy).limit(1) as Res<Array<Record<string, string | null>>>);
+      const r = await (mine(runs().select("bg_requested_at, bg_lease_until, bg_error, bg_finished_at, bg_last_step_at, bg_pace"), fy).limit(1) as Res<Array<Record<string, string | null> & { bg_pace?: PaceEntry[] | null }>>);
       const row = must(r, "the Zoho read")[0];
       if (!row) return null;
       return {
         requestedAt: row.bg_requested_at ?? null, leaseUntil: row.bg_lease_until ?? null, error: row.bg_error ?? null,
-        finishedAt: row.bg_finished_at ?? null, lastStepAt: row.bg_last_step_at ?? null,
+        finishedAt: row.bg_finished_at ?? null, lastStepAt: row.bg_last_step_at ?? null, pace: row.bg_pace ?? null,
       } satisfies BgState;
     },
     async takeLease(fy, untilMs, nowMs) {
@@ -40,11 +41,14 @@ export function supabaseBgStore(db: FyImportDb, tenantId: string, kind: FyReadKi
         .select("tenant_id") as Res<Array<{ tenant_id: string }>>);
       return must(r, "the Zoho read").length === 1;
     },
-    async touch(fy, nowMs) {
-      await (mine(runs().update({ bg_last_step_at: iso(nowMs) }), fy) as Res);
+    async touch(fy, step) {
+      /* Renew only OUR lease (same value we set): 0 rows back = another pass holds it now. */
+      const r = await (mine(runs().update({ bg_last_step_at: iso(step.nowMs), bg_pace: step.pace, bg_lease_until: iso(step.toMs) }), fy)
+        .eq("bg_lease_until", iso(step.fromMs)).select("tenant_id") as Res<Array<{ tenant_id: string }>>);
+      return must(r, "the Zoho read").length === 1;
     },
     async release(fy, end) {
-      const patch: Record<string, unknown> = { bg_lease_until: null, bg_error: end.error };
+      const patch: Record<string, unknown> = { bg_lease_until: null, bg_error: end.error, bg_pace: end.pace };
       if (end.finished) { patch.bg_requested_at = null; patch.bg_finished_at = iso(end.nowMs); }
       const r = await (mine(runs().update(patch), fy).eq("bg_lease_until", iso(end.leaseUntilMs)) as Res);
       if (r.error) throw new Error("Could not save the Zoho read.");

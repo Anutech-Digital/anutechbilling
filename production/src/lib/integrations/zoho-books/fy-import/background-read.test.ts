@@ -6,7 +6,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { ZohoApiError } from "../api";
-import { runBackgroundRead, LEASE_EXTRA_MS, RECONNECT_MESSAGE, type BgState, type BgStore, type ZohoAccess } from "./background-read";
+import { runBackgroundRead, LEASE_EXTRA_MS, RECONNECT_MESSAGE, STUCK_MS, type BgState, type BgStore, type ZohoAccess } from "./background-read";
 import type { ScanRun, ScanStore, ListedRow, ScanFacts } from "./scan";
 import { zohoReceiptFacts } from "../receipts-import/normalise";
 
@@ -37,10 +37,14 @@ function memoryBg(requested = true) {
       if (s.leaseUntil && Date.parse(s.leaseUntil) >= now) return false;
       s.leaseUntil = new Date(until).toISOString(); return true;
     },
-    async touch(_fy, now) { s.lastStepAt = new Date(now).toISOString(); },
+    async touch(_fy, step) {
+      if (s.leaseUntil !== new Date(step.fromMs).toISOString()) return false; /* not our lease any more */
+      s.lastStepAt = new Date(step.nowMs).toISOString(); s.pace = step.pace; s.leaseUntil = new Date(step.toMs).toISOString();
+      return true;
+    },
     async release(_fy, end) {
       if (s.leaseUntil !== new Date(end.leaseUntilMs).toISOString()) return; /* not our lease any more */
-      s.leaseUntil = null; s.error = end.error;
+      s.leaseUntil = null; s.error = end.error; s.pace = end.pace;
       if (end.finished) { s.requestedAt = null; s.finishedAt = new Date(end.nowMs).toISOString(); }
     },
   };
@@ -101,7 +105,7 @@ const deps = (over: Partial<Parameters<typeof runBackgroundRead<Facts>>[0]> = {}
   return {
     scan, b, c, z,
     d: { store: scan.store, bg: b.bg, kind: "customerpayments" as const, toFacts: zohoReceiptFacts, fy: "2025-26",
-      access: access().a, budgetMs: 600_000, now: c.now, sleep: c.sleep, fetch: z.f, ...over },
+      access: access().a, budgetMs: 600_000, now: c.now, sleep: c.sleep, fetch: z.f, log: () => {}, ...over },
   };
 };
 
@@ -227,5 +231,46 @@ describe("R-2607 lease handover", () => {
     await runBackgroundRead({ ...x.d, store });
     expect(x.b.s.leaseUntil).toBe("2026-11-08T11:00:00.000Z");
     expect(x.b.s.requestedAt).not.toBeNull();
+  });
+});
+
+describe("R-2607 review fixes", () => {
+  it("Zoho down (503) or a network failure keeps the request (retried next minute), never stops the read", async () => {
+    const z = fakeZoho(7, 3, (n) => (n === 2 ? j({ code: 5, message: "Service unavailable" }, 503) : null));
+    const x = deps({ fetch: z.f });
+    const r = await runBackgroundRead(x.d);
+    expect(r.outcome).toBe("retry");
+    expect(x.b.s.requestedAt).not.toBeNull();
+    expect((await runBackgroundRead(x.d)).outcome).toBe("complete");
+  });
+
+  it("a read stuck on the same server error for 30 minutes stops with the reason (no endless silent loop); the error is logged", async () => {
+    const x = deps();
+    const logs: string[] = [];
+    x.b.s.lastStepAt = new Date(x.c.get() - STUCK_MS - 60_000).toISOString();
+    const broken = { ...x.scan.store, saveDetail: async () => { throw new Error("value too long for type character varying(60)"); } };
+    const r = await runBackgroundRead({ ...x.d, store: broken, log: (m) => logs.push(m) });
+    expect(r.outcome).toBe("stopped");
+    expect(r.error).toMatch(/no progress for 30 minutes \(value too long/);
+    expect(x.b.s.requestedAt).toBeNull();
+    expect(logs.join("\n")).toMatch(/value too long/);
+  });
+
+  it("Zoho's pace holds across passes: after a 429 the next pass waits out a full minute before calling Zoho", async () => {
+    const z = fakeZoho(7, 3, (n) => (n === 2 ? j({ code: 44, message: "Too many requests" }, 429) : null));
+    const x = deps({ fetch: z.f });
+    expect((await runBackgroundRead(x.d)).outcome).toBe("busy");
+    expect((x.b.s.pace ?? []).reduce((s, p) => s + p.calls, 0)).toBeGreaterThanOrEqual(80);
+    const waits: number[] = [];
+    const sleep = async (ms: number) => { waits.push(ms); await x.c.sleep(ms); };
+    expect((await runBackgroundRead({ ...x.d, sleep })).outcome).toBe("complete");
+    expect(Math.max(...waits)).toBeGreaterThan(50_000);
+  });
+
+  it("a pass saves the last minute's calls with the run, so the dialog's next pass does not start a fresh 80", async () => {
+    const x = deps();
+    await runBackgroundRead({ ...x.d, budgetMs: 1_500 });
+    const saved = (x.b.s.pace ?? []).reduce((s, p) => s + p.calls, 0);
+    expect(saved).toBeGreaterThan(0);
   });
 });
