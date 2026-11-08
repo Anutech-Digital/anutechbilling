@@ -260,7 +260,7 @@ begin
 
     if v_cn_amt > 0 then
       v_cn := public.issue_credit_note_core(
-        v_inv_id, v_cn_amt, 'seat_reduction',
+        v_inv_id, v_cn_amt, 'seats_reduced',
         format('Seats reduced from %s to %s on %s', v_sub.seats, v_sub.seats - p_seats_removed, to_char(v_today, 'DD Mon YYYY')),
         format('R-2252 Reduce seats: unused value ₹%s — lowers what is owed ₹%s, credit ₹%s', v_unused, v_lower, v_credit),
         true);
