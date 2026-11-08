@@ -31,6 +31,7 @@ import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { renewalTerm } from "@/lib/renewals/renewal-term";
 import { renewalCost } from "@/lib/renewals/renewal-cost";
 import { istToday, toIstDate } from "@/lib/dates/ist";
+import { loadScheduledSeatCuts, renewalSeatCut } from "@/lib/renewals/scheduled-seat-cut";
 
 // The actual typed Supabase client. createAdminClient() returns this shape,
 // so the strict rpc/from overloads stay intact when callers pass it in.
@@ -191,9 +192,18 @@ export async function createOrGetRenewalQuote(
     return null;
   }
 
-  const annualAmount = term.subtotal;                                  // ex-GST subtotal for the term
-  const grossAnnual  = grossAmount(annualAmount, renewalTaxRate);      // GST-inclusive payable (or ex-GST for export)
+  /* R-2583: a seat cut scheduled "At end of term" (R-2252) for THIS renewal date is billed here —
+     the quote is for the cut seats at the full subscription's per-seat rate (rate × qty = subtotal,
+     R-837). Paying it sets the subscription's seats and MRR (record_payment, rule N1). A failed
+     read makes no quote: one at the old seats would over-bill. See lib/renewals/scheduled-seat-cut.ts. */
+  const cutRows = await loadScheduledSeatCuts(supabase, input.tenantId, input.subscriptionId);
+  if (cutRows === null) return null;
+  const cut = renewalSeatCut(cutRows, { seats: input.seats, renewalDate: input.renewalDate }, istToday());
+  const quoteSeats = cut.kind === "apply" ? cut.seats : input.seats;
+
   const perSeatRate  = term.perSeatRate;
+  const annualAmount = perSeatRate * quoteSeats;                       // ex-GST subtotal for the term (= term.subtotal without a cut)
+  const grossAnnual  = grossAmount(annualAmount, renewalTaxRate);      // GST-inclusive payable (or ex-GST for export)
 
   /* R-012 (Pawan, 26 Sep 2026). This was `annualAmount * 0.83` — a hardcoded 17% margin
      standing in for the vendor's real price, so every renewal quote reported a 17%
@@ -203,7 +213,7 @@ export async function createOrGetRenewalQuote(
   const cost = renewalCost({
     wholesalePerSeatMonth: (catalogItem as { wholesale?: number | null } | null)?.wholesale ?? null,
     termMonths:            term.termMonths,
-    seats:                 input.seats,
+    seats:                 quoteSeats,   // R-2583
   });
   if (!cost.known) {
     /* Not fatal — a bespoke plan legitimately has no catalogue row, and the customer
@@ -220,7 +230,7 @@ export async function createOrGetRenewalQuote(
   const lineItems: QuoteLineItem[] = [{
     id:         "renewal-1",
     name:       catalogPlanName(input.plan),   // R-2095
-    qty:        input.seats,
+    qty:        quoteSeats,   // R-2583: the scheduled cut's seats
     rate:       perSeatRate,
     cost:       perSeatCost,
     /* From the term, not hardcoded: record_payment reads this to decide what
@@ -247,7 +257,7 @@ export async function createOrGetRenewalQuote(
     p_quote: {
       customer_name:  input.customerName,
       plan:           input.plan,
-      seats:          input.seats,
+      seats:          quoteSeats,   // R-2583
       amount:         grossAnnual,
       /* R-012, third item. These were `new Date().toISOString().slice(0, 10)`, which is
          UTC — so between midnight and 05:30 IST every renewal quote was stamped with
@@ -268,8 +278,10 @@ export async function createOrGetRenewalQuote(
          went to 25 Oct 2027 instead of 25 Nov 2026 and the MRR fell 250 → 21.
          `createExtensionQuote` keeps its own 24/36 and is deliberately untouched. */
       extension_months: term.termMonths,
-      notes:            input.notes
-        ?? `Renewal quote for subscription ${input.subscriptionId}`,
+      notes:            [
+        input.notes ?? `Renewal quote for subscription ${input.subscriptionId}`,
+        cut.kind === "none" ? null : cut.note,   // R-2583
+      ].filter(Boolean).join("\n"),
     } as unknown as Json,   // is_renewal / status / discount 0 are set by the RPC itself
   });
   if (rpcErr || !made) {
