@@ -37,16 +37,94 @@
 
 set -euo pipefail
 
+# ─── --env staging|live  and  --dry-run  (R-2616, 8 Nov 2026) ────────────────
+# Staging had NO scheduler jobs, and this script could not make one safely: the names
+# were fixed (resellersos-*), so SERVICE_NAME=resellersos-staging would have created
+# "resellersos-zoho-fy-read" — the LIVE job's name — pointed at staging, and live's next
+# run would have skipped it as "already exists".
+#
+#   --env live     (default — exactly the old behaviour): jobs resellersos-*, live service,
+#                  CRON_SECRET from your shell (cron-preflight.sh supplies it).
+#   --env staging  jobs resellersos-staging-* ONLY, aimed at the resellersos-staging URL,
+#                  secret = STAGING_CRON_SECRET, else read off the resellersos-staging service
+#                  itself (never the CRON_SECRET in your shell, which is the live one).
+#                  Default ONLY=zoho-fy-read; other jobs are opt-in (ONLY=a,b or ONLY=all).
+#                  It can never describe, create or update a resellersos-* live job.
+#   --dry-run      print the plan (names, schedules, URLs) and stop — no gcloud call, no
+#                  secret needed. DRY_RUN=1 does the same.
+#
+#   bash scripts/setup-cloud-scheduler.sh --env staging --dry-run
+#   bash scripts/setup-cloud-scheduler.sh --env staging            # coordinator, gcloud login
+ENV_NAME="${SCHEDULER_ENV:-live}"
+DRY_RUN="${DRY_RUN:-0}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --env)
+      [[ $# -ge 2 ]] || { echo "--env needs staging|live" >&2; exit 64; }
+      ENV_NAME="$2"; shift 2 ;;
+    --env=*) ENV_NAME="${1#*=}"; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    -h|--help)
+      echo "usage: $0 [--env live|staging] [--dry-run]   (env: ONLY=a,b|all  UPDATE_EXISTING=1  CRON_SECRET / STAGING_CRON_SECRET)"
+      exit 0 ;;
+    *) echo "Unknown argument: $1 (use --env staging|live, --dry-run)" >&2; exit 64 ;;
+  esac
+done
+
+STAGING_SERVICE="resellersos-staging"
+# Same value as production/scripts/ops/live-env-map.json envs.staging.appUrl (a test keeps them equal).
+STAGING_URL_DEFAULT="https://resellersos-staging-njvk4nxhdq-as.a.run.app"
+LIVE_PREFIX="resellersos-"
+STAGING_PREFIX="resellersos-staging-"
+
 # Singapore since 5 Sep 2026 (cloudbuild.yaml _REGION). The Mumbai URL that used to sit
 # here as the default pointed every job at the OLD service after the move — jobs that
 # looked scheduled and ran old code (or got 403). The URL is now read from the live
 # service, so it cannot go stale again.
 REGION="${REGION:-asia-southeast1}"
-SERVICE_NAME="${SERVICE_NAME:-resellersos}"
-SERVICE_URL="${SERVICE_URL:-$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')}"
+
+case "$ENV_NAME" in
+  live)
+    SERVICE_NAME="${SERVICE_NAME:-resellersos}"
+    if [[ "$SERVICE_NAME" == *staging* ]]; then
+      echo "SERVICE_NAME=$SERVICE_NAME with --env live would create LIVE job names pointed at staging. Use --env staging." >&2
+      exit 65
+    fi
+    JOB_PREFIX="$LIVE_PREFIX"
+    ;;
+  staging)
+    if [[ -n "${SERVICE_NAME:-}" && "$SERVICE_NAME" != "$STAGING_SERVICE" ]]; then
+      echo "--env staging always targets $STAGING_SERVICE (SERVICE_NAME=$SERVICE_NAME refused)." >&2
+      exit 65
+    fi
+    SERVICE_NAME="$STAGING_SERVICE"
+    SERVICE_URL="${SERVICE_URL:-$STAGING_URL_DEFAULT}"
+    if [[ "$SERVICE_URL" != https://resellersos-staging-* ]]; then
+      echo "--env staging refuses SERVICE_URL=$SERVICE_URL (must be the resellersos-staging run.app URL)." >&2
+      exit 65
+    fi
+    JOB_PREFIX="$STAGING_PREFIX"
+    ONLY="${ONLY:-zoho-fy-read}"
+    ;;
+  *)
+    echo "--env must be staging or live (got '${ENV_NAME}')." >&2
+    exit 64
+    ;;
+esac
+
+if [[ "$DRY_RUN" == "1" ]]; then
+  SERVICE_URL="${SERVICE_URL:-<url of Cloud Run service $SERVICE_NAME, read at run time>}"
+else
+  SERVICE_URL="${SERVICE_URL:-$(gcloud run services describe "$SERVICE_NAME" --region "$REGION" --format='value(status.url)')}"
+fi
 if [[ -z "$SERVICE_URL" ]]; then
   echo "Could not resolve the Cloud Run URL for $SERVICE_NAME in $REGION — set SERVICE_URL explicitly." >&2
   exit 1
+fi
+if [[ "$DRY_RUN" == "1" ]]; then
+  echo "Environment: $ENV_NAME  (DRY RUN — nothing is created, no gcloud call)"
+else
+  echo "Environment: $ENV_NAME"
 fi
 echo "Scheduling against $SERVICE_URL"
 # Schedules are written in IST. Cloud Scheduler does the UTC conversion, and
@@ -54,7 +132,33 @@ echo "Scheduling against $SERVICE_URL"
 # which UTC cron expressions do not.
 TZ_NAME="${TZ_NAME:-Asia/Kolkata}"
 
-if [[ -z "${CRON_SECRET:-}" ]]; then
+if [[ "$DRY_RUN" == "1" ]]; then
+  CRON_SECRET="<not-needed-for-a-dry-run>"
+elif [[ "$ENV_NAME" == "staging" ]]; then
+  # Never the shell's CRON_SECRET here: that is the live value, and a staging job carrying it
+  # would 401 (or prove the two environments share a secret).
+  CRON_SECRET="${STAGING_CRON_SECRET:-}"
+  if [[ -z "$CRON_SECRET" ]]; then
+    # A literal env value on the staging service, else the Secret Manager secret it references.
+    # Neither is ever printed.
+    CRON_SECRET="$(gcloud run services describe "$STAGING_SERVICE" --region="$REGION" \
+      --format='value(spec.template.spec.containers[0].env.filter("name:CRON_SECRET").extract("value"))' \
+      2>/dev/null | tr -d "\r[]\"'" | head -1 || true)"
+    if [[ -z "$CRON_SECRET" ]]; then
+      STAGING_SECRET_NAME="$(gcloud run services describe "$STAGING_SERVICE" --region="$REGION" \
+        --format='value(spec.template.spec.containers[0].env.filter("name:CRON_SECRET").extract("valueFrom.secretKeyRef.name"))' \
+        2>/dev/null | tr -d "\r[]\"'" | head -1 || true)"
+      if [[ -n "$STAGING_SECRET_NAME" ]]; then
+        CRON_SECRET="$(gcloud secrets versions access latest --secret="$STAGING_SECRET_NAME" 2>/dev/null || true)"
+      fi
+    fi
+  fi
+  if [[ -z "$CRON_SECRET" ]]; then
+    echo "Could not read CRON_SECRET off $STAGING_SERVICE (no literal value, no readable secret)." >&2
+    echo "Set STAGING_CRON_SECRET to the value the staging service runs with and re-run." >&2
+    exit 2
+  fi
+elif [[ -z "${CRON_SECRET:-}" ]]; then
   echo "CRON_SECRET is not set. Export the same value the Cloud Run service uses:" >&2
   echo "  CRON_SECRET='…' $0" >&2
   exit 2
@@ -187,12 +291,39 @@ echo "Service: $SERVICE_URL"
 echo "Zone:    $TZ_NAME"
 echo
 
+# ONLY entries may be written short ("zoho-fy-read") or full ("resellersos-zoho-fy-read",
+# "resellersos-staging-zoho-fy-read"); all are compared on the short name. ONLY=all = every job.
+ONLY_SHORT=""
+if [[ -n "${ONLY:-}" && "${ONLY}" != "all" ]]; then
+  IFS=',' read -r -a ONLY_LIST <<< "$ONLY"
+  for o in "${ONLY_LIST[@]}"; do
+    o="${o// /}"; o="${o#"$STAGING_PREFIX"}"; o="${o#"$LIVE_PREFIX"}"
+    [[ -n "$o" ]] && ONLY_SHORT="${ONLY_SHORT},${o}"
+  done
+  ONLY_SHORT="${ONLY_SHORT},"
+fi
+
 for row in "${JOBS[@]}"; do
   IFS='|' read -r NAME SCHEDULE PATH_ DESC <<< "$row"
+  SHORT="${NAME#"$LIVE_PREFIX"}"
 
   # ONLY="job-a,job-b" — touch just these (2 Oct 2026 go-live: 4 of the 11 missing jobs were
-  # wanted; the rest wait for DMS / ad keys). Unset = every job, as before.
-  if [[ -n "${ONLY:-}" && ",${ONLY}," != *",${NAME},"* ]]; then
+  # wanted; the rest wait for DMS / ad keys). Unset = every job, as before (live only —
+  # staging defaults to zoho-fy-read).
+  if [[ -n "$ONLY_SHORT" && "$ONLY_SHORT" != *",${SHORT},"* ]]; then
+    continue
+  fi
+
+  NAME="${JOB_PREFIX}${SHORT}"
+  # Belt and braces: a staging run may only ever name a staging job and the staging URL.
+  if [[ "$ENV_NAME" == "staging" && ( "$NAME" != "$STAGING_PREFIX"* || "$SERVICE_URL" != https://resellersos-staging-* ) ]]; then
+    echo "Refusing $NAME → $SERVICE_URL: --env staging touches only ${STAGING_PREFIX}* on the staging URL." >&2
+    exit 65
+  fi
+
+  if [[ "$DRY_RUN" == "1" ]]; then
+    echo "==> plan:   $NAME  ($SCHEDULE $TZ_NAME)  ${SERVICE_URL}${PATH_}"
+    echo "            gcloud scheduler jobs create http $NAME --location=$REGION --schedule=\"$SCHEDULE\" --time-zone=$TZ_NAME --uri=${SERVICE_URL}${PATH_} --http-method=GET --headers=\"Authorization=Bearer <redacted>\" --attempt-deadline=540s   (skipped if it exists)"
     continue
   fi
 
@@ -249,6 +380,12 @@ for row in "${JOBS[@]}"; do
     echo "    ^ failed — see the message above (secret redacted)." >&2
   fi
 done
+
+if [[ "$DRY_RUN" == "1" ]]; then
+  echo
+  echo "Dry run — nothing was created or changed. Drop --dry-run to apply (needs a gcloud login)."
+  exit 0
+fi
 
 cat <<'DONE'
 
