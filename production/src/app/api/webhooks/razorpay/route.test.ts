@@ -657,6 +657,7 @@ describe("R-1569 — a payment that arrives after the quote is settled or replac
     ["R-2589 subscription not active", `R-2589: plan change quote ${QUOTE} is for a subscription that is no longer active (cancelled). Nothing was recorded. Delete this quote; a plan can be changed only on an active subscription.`],
     ["R-2227 link lost", `R-2227: plan change quote ${QUOTE} is no longer linked to its subscription, so this payment would change nothing. Nothing was recorded. Delete the quote and make it again from the subscription (Change plan).`],
     ["R-2227 another subscription", `R-2227: plan change quote ${QUOTE} was made for another subscription. Nothing was recorded.`],
+    ["R-2227 bad quote line", `R-2227: plan change quote ${QUOTE} has seats or a monthly amount that cannot be right (seats 3, monthly 0). Nothing was recorded. Delete the quote and make it again from Change plan.`],
   ])("R-2596 %s → 200 (no Razorpay retry loop), nothing booked, owner told once with the payment id", async (_label, message) => {
     planChangeRefusal(message);
     const res = await POST(signed(captured()));
@@ -669,6 +670,8 @@ describe("R-1569 — a payment that arrives after the quote is settled or replac
     expect(a).toHaveLength(1);
     expect(String(a[0].body)).toContain("pay_AITEST1");
     expect(String(a[0].body)).toMatch(/plan.change/i);
+    expect(String(a[0].body)).toContain(message.split(" Nothing was recorded")[0]); // the real reason, not a guess
+    expect(String(a[0].body)).toMatch(/First delete the old quote/);
     expect(String(a[0].body)).toMatch(/refund/i);
     expect(String(a[0].body)).toMatch(/advance|credit/i);
     expect(leadNotes().some((n) => n.includes("pay_AITEST1"))).toBe(true);

@@ -519,7 +519,7 @@ export async function settleCapturedPayment(
        not active; R-2227: link lost, or another subscription) — the same 500 loop. Nothing is
        recorded on any quote; the owner is told once (refund, or book it as the customer's advance). */
     if (payment?.id && PLAN_CHANGE_REFUSED_RE.test(rpcErr.message ?? "")) {
-      return settleRefusedPlanChange(admin, lateArgs(payment));
+      return settleRefusedPlanChange(admin, lateArgs(payment), rpcErr.message ?? "");
     }
     return NextResponse.json(
       { error: safeDbMessage(rpcErr, "Payment processing failed") },
