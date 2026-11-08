@@ -19,6 +19,10 @@
 --        same check on EVERY link of a renewal / extension quote (is_renewal, extension_months > 0),
 --        whoever links it — createExtensionQuote links with a plain client update, not an RPC.
 --        Plan-change and support-upgrade quotes (extension_months = 0) are not renewals: untouched.
+--      * The other way round: a quote priced WITH the cut, linked after the cut was removed
+--        (cancel_scheduled_seat_reduction ran in between) would bill fewer seats than the customer
+--        keeps — refused too (r2613_removed_seat_cut: a cancelled cut for this renewal date, from
+--        today's seats to the quote's seats).
 --    Lock order: reduce_subscription_seats, create_renewal_quote and the link UPDATE all take the
 --    subscription row lock first. Whoever comes second waits for the first to commit and then
 --    reads it (READ COMMITTED: each statement in a plpgsql function / trigger takes a new snapshot
@@ -35,7 +39,8 @@
 --    blocked new cuts until then. subscriptions_r2613_seat_cut_redate (AFTER UPDATE OF renewal_date):
 --    new date today (IST) or later → the cut moves to the new date (it is still "the end of this
 --    term"); new date in the past or cleared → the cut is cancelled (never applied retroactively,
---    R-2584). Moving the date FORWARD stays with R-2608's trigger (cut cancelled). The Correct
+--    R-2584) — refused while a renewal quote made WITH the cut is linked (it would still bill the
+--    cut seats). Moving the date FORWARD stays with R-2608's trigger (cut cancelled). The Correct
 --    details dialog tells the owner when the date is moved earlier.
 --
 -- Same signature, SECURITY DEFINER, search_path, grants. Stored rows are NOT changed.
@@ -54,23 +59,20 @@ security definer
 set search_path to 'public'
 as $function$
 declare
-  v_n   integer;
   v_row public.subscription_seat_reductions%rowtype;
 begin
   if p_renewal_date is null or p_seats is null then
     return null;
   end if;
-  select count(*) into v_n
-    from public.subscription_seat_reductions r
-   where r.tenant_id = p_tenant_id and r.subscription_id = p_subscription_id
-     and r.status = 'scheduled' and r.timing = 'end_of_term' and r.effective_date = p_renewal_date;
-  if v_n <> 1 then
+  /* One scan: exactly one live row, else none applies (two rows → the quote keeps today's seats). */
+  begin
+    select * into strict v_row
+      from public.subscription_seat_reductions r
+     where r.tenant_id = p_tenant_id and r.subscription_id = p_subscription_id
+       and r.status = 'scheduled' and r.timing = 'end_of_term' and r.effective_date = p_renewal_date;
+  exception when no_data_found or too_many_rows then
     return null;
-  end if;
-  select * into v_row
-    from public.subscription_seat_reductions r
-   where r.tenant_id = p_tenant_id and r.subscription_id = p_subscription_id
-     and r.status = 'scheduled' and r.timing = 'end_of_term' and r.effective_date = p_renewal_date;
+  end;
   if v_row.seats_before is distinct from p_seats or v_row.seats_after >= p_seats or v_row.seats_after < 1 then
     return null;
   end if;
@@ -79,6 +81,27 @@ end;
 $function$;
 revoke all on function public.r2613_applying_seat_cut(uuid, uuid, integer, date) from public, anon, authenticated;
 grant execute on function public.r2613_applying_seat_cut(uuid, uuid, integer, date) to service_role;
+
+/* R-2613: a quote for p_quote_seats (fewer than the subscription has) matches a cut for this
+   renewal that was REMOVED — it was priced with the cut before Remove ran. */
+create or replace function public.r2613_removed_seat_cut(
+  p_tenant_id uuid, p_subscription_id uuid, p_seats integer, p_renewal_date date, p_quote_seats integer
+)
+returns boolean
+language sql
+stable
+security definer
+set search_path to 'public'
+as $function$
+  select p_quote_seats is not null and p_seats is not null and p_quote_seats < p_seats
+     and exists (select 1 from public.subscription_seat_reductions r
+                  where r.tenant_id = p_tenant_id and r.subscription_id = p_subscription_id
+                    and r.status = 'cancelled' and r.timing = 'end_of_term'
+                    and r.effective_date = p_renewal_date
+                    and r.seats_before = p_seats and r.seats_after = p_quote_seats);
+$function$;
+revoke all on function public.r2613_removed_seat_cut(uuid, uuid, integer, date, integer) from public, anon, authenticated;
+grant execute on function public.r2613_removed_seat_cut(uuid, uuid, integer, date, integer) to service_role;
 
 -- ─── create_renewal_quote ───────────────────────────────────────────────────
 create or replace function public.create_renewal_quote(
@@ -192,6 +215,13 @@ begin
       v_cut.seats_after, to_char(v_cut.effective_date, 'DD Mon YYYY'), coalesce(v_seats::text, 'unknown')
       using errcode = 'check_violation';
   end if;
+  /* R-2613 (the other way round): priced WITH a cut that was removed meanwhile → it would bill
+     fewer seats than the customer keeps, and paying it would drop the seats (rule N1). */
+  if v_cut.id is null and public.r2613_removed_seat_cut(v_sub.tenant_id, v_sub.id, v_sub.seats, v_sub.renewal_date, v_seats) then
+    raise exception 'The seat cut to % seats for % was removed while this renewal quote was being made, so it was not made. Generate the renewal quote again — it is made for % seats.',
+      v_seats, to_char(v_sub.renewal_date, 'DD Mon YYYY'), v_sub.seats
+      using errcode = 'check_violation';
+  end if;
 
   v_id := public.next_document_number('quote', v_sub.tenant_id);
   if v_id is null then
@@ -251,14 +281,22 @@ declare
   v_cut public.subscription_seat_reductions%rowtype;
   v_q   record;
 begin
-  v_cut := public.r2613_applying_seat_cut(new.tenant_id, new.id, new.seats, new.renewal_date);
-  if v_cut.id is null then
-    return new;
-  end if;
   select q.id, q.seats, q.is_renewal, q.extension_months into v_q
     from public.quotes q where q.id = new.renewal_quote_id and q.tenant_id = new.tenant_id;
-  if found and coalesce(v_q.is_renewal, false) and coalesce(v_q.extension_months, 0) > 0
-     and v_q.seats is distinct from v_cut.seats_after then
+  if not found or not coalesce(v_q.is_renewal, false) or coalesce(v_q.extension_months, 0) <= 0 then
+    return new;   -- not a renewal / extension (plan change, support upgrade: extension_months 0)
+  end if;
+  v_cut := public.r2613_applying_seat_cut(new.tenant_id, new.id, new.seats, new.renewal_date);
+  if v_cut.id is null then
+    /* The other way round: a quote made WITH a cut that has since been removed. */
+    if public.r2613_removed_seat_cut(new.tenant_id, new.id, new.seats, new.renewal_date, v_q.seats) then
+      raise exception 'Quote % is for % seats, made with a seat cut that was removed — so it was not linked to the subscription (it has % seats). Delete that quote and make the renewal quote again.',
+        v_q.id, v_q.seats, new.seats
+        using errcode = 'check_violation';
+    end if;
+    return new;
+  end if;
+  if v_q.seats is distinct from v_cut.seats_after then
     raise exception 'A seat cut to % seats is scheduled for % — quote % is for % seats, so it was not linked to the subscription. Remove the cut in Manage seats first, or let the renewal happen with the cut.',
       v_cut.seats_after, to_char(v_cut.effective_date, 'DD Mon YYYY'), v_q.id, coalesce(v_q.seats::text, 'unknown')
       using errcode = 'check_violation';
@@ -284,7 +322,8 @@ set search_path to 'public'
 as $function$
 /* R-2613: Correct details moved the renewal date EARLIER (or cleared it). The cut scheduled for
    the old date is "the end of this term": today or later → it moves to the new date; in the past
-   or cleared → cancelled (never applied retroactively, R-2584). Forward moves: R-2608's trigger. */
+   or cleared → cancelled (never applied retroactively, R-2584) — refused while a renewal quote made
+   WITH the cut is linked. Forward moves: R-2608's trigger. */
 begin
   if new.renewal_date is not null and new.renewal_date >= public.ist_today() then
     update public.subscription_seat_reductions r
@@ -293,6 +332,19 @@ begin
        and r.status = 'scheduled' and r.timing = 'end_of_term'
        and r.effective_date = old.renewal_date;
   else
+    /* A renewal quote already made WITH the cut would still bill the cut seats once the cut is
+       gone — refuse; the owner deletes that quote first. */
+    if exists (select 1 from public.quotes q
+                join public.subscription_seat_reductions r
+                  on r.tenant_id = new.tenant_id and r.subscription_id = new.id
+                 and r.status = 'scheduled' and r.timing = 'end_of_term' and r.effective_date = old.renewal_date
+               where q.id = new.renewal_quote_id and q.tenant_id = new.tenant_id
+                 and coalesce(q.is_renewal, false) and coalesce(q.extension_months, 0) > 0
+                 and q.seats = r.seats_after and r.seats_after < new.seats) then
+      raise exception 'Renewal quote % is made with the seat cut scheduled for % — delete that quote first, then change the renewal date (the seat cut is removed with it).',
+        new.renewal_quote_id, to_char(old.renewal_date, 'DD Mon YYYY')
+        using errcode = 'check_violation';
+    end if;
     update public.subscription_seat_reductions r
        set status = 'cancelled'
      where r.tenant_id = new.tenant_id and r.subscription_id = new.id

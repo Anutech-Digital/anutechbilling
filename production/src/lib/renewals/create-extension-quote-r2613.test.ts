@@ -9,7 +9,7 @@ import { createExtensionQuote } from "./create-extension-quote";
 
 type Row = Record<string, unknown>;
 
-function fakeSupabase(linkError: string | null) {
+function fakeSupabase(linkError: string | null, deleteError: string | null = null) {
   const inserted: Row[] = [];
   const deleted: string[] = [];
   const supabase = {
@@ -28,7 +28,10 @@ function fakeSupabase(linkError: string | null) {
         if (table === "subscriptions" && mode === "update") {
           return res({ error: linkError ? { message: linkError } : null });
         }
-        if (table === "quotes" && mode === "delete") deleted.push(String(filters.id));
+        if (table === "quotes" && mode === "delete") {
+          if (deleteError) return res({ error: { message: deleteError } });
+          deleted.push(String(filters.id));
+        }
         return res({ error: null });
       };
       return q;
@@ -61,6 +64,14 @@ describe("R-2613 createExtensionQuote when the link is refused", () => {
     const r = await createExtensionQuote({ ...base, supabase: f.supabase, months: 3 });
     expect(r).toMatchObject({ ok: false, code: "insert_failed" });
     expect(f.deleted).toEqual(["Q-T1-0001"]);
+  });
+
+  it("the delete fails too → the message says so (never 'was removed')", async () => {
+    const f = fakeSupabase("A seat cut to 7 seats is scheduled for 01 Dec 2026 — quote Q-T1-0001 is for 10 seats, so it was not linked to the subscription.", "blocked");
+    const r = await createExtensionQuote({ ...base, supabase: f.supabase, months: 3 });
+    expect(r).toMatchObject({ ok: false, code: "seat_cut_scheduled" });
+    expect(r.ok ? "" : r.message).toContain("Quote Q-T1-0001 could not be removed (blocked) — delete it in Quotes");
+    expect(r.ok ? "" : r.message).not.toContain("was removed");
   });
 
   it("link accepted → quote made, nothing deleted", async () => {
