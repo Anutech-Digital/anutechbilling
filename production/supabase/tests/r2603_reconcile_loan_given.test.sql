@@ -6,13 +6,15 @@
 --   begin; <migration without begin/commit>; <this file without begin/rollback>; rollback;
 --
 -- Proves:
---   A. Refusals write nothing: sales user, money-in line, another company's line, no name.
+--   A. Refusals write nothing: sales user, money-in line, another company's line, a hand-typed line, no name.
 --   B. ₹1,00,000 money-out line → ONE loans_given row (one_shot, 0%, given_on = line date, principal =
 --      line, bank_txn_id = line, account = line's); line matched loan_given + loan id; NO
 --      balance_sheet_items row; no new bank line; Loans given asset ₹1,00,000.
 --   C. The same line again (repeat click) → refused, still one loan; a line already booked by another
 --      option (book_bank_advance) → refused, no loan.
 --   D. Same borrower typed " julie   RAWAT " → second loan keeps the first spelling "Julie Rawat".
+--   D2. Money back (money-in, "I GAVE has come back") from a borrower with an OPEN loan → refused by
+--      book_bank_advance (it is a receipt on the loan); a name with no loan still books as before.
 --   E. Partial repayment (money-in ₹40,000 via R-2340's receipt) → asset ₹1,60,000 − ₹40,000, loan open;
 --      un-reconciling the money lent is refused while that receipt is on the books.
 --   F. Undo: receipt un-reconciled, then the money-out line → loan gone, line free, asset back down.
@@ -48,7 +50,9 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('22222222-0000-0000-0000-000000260302','dddddddd-0000-0000-0000-000000260301','bbbbbbbb-0000-0000-0000-000000260301','2026-10-20','IMPS DR JULIE',60000,0,'L2','csv_upload'),
   ('22222222-0000-0000-0000-000000260303','dddddddd-0000-0000-0000-000000260301','bbbbbbbb-0000-0000-0000-000000260301','2026-10-25','NEFT CR JULIE',0,40000,'R1','csv_upload'),
   ('22222222-0000-0000-0000-000000260304','dddddddd-0000-0000-0000-000000260301','bbbbbbbb-0000-0000-0000-000000260301','2026-10-06','IMPS DR SOMEONE',1000,0,'P1','csv_upload'),
-  ('22222222-0000-0000-0000-000000260305','dddddddd-0000-0000-0000-000000260302','bbbbbbbb-0000-0000-0000-000000260302','2026-10-05','IMPS DR OTHER',100000,0,'Z1','csv_upload');
+  ('22222222-0000-0000-0000-000000260305','dddddddd-0000-0000-0000-000000260302','bbbbbbbb-0000-0000-0000-000000260302','2026-10-05','IMPS DR OTHER',100000,0,'Z1','csv_upload'),
+  ('22222222-0000-0000-0000-000000260306','dddddddd-0000-0000-0000-000000260301','bbbbbbbb-0000-0000-0000-000000260301','2026-10-07','Cash to Julie',5000,0,null,'manual'),
+  ('22222222-0000-0000-0000-000000260307','dddddddd-0000-0000-0000-000000260301','bbbbbbbb-0000-0000-0000-000000260301','2026-10-22','NEFT CR JULIE BACK',0,10000,'R2','csv_upload');
 
 create temp table r2603_ids (k text primary key, v uuid);
 grant all on r2603_ids to public;
@@ -63,6 +67,7 @@ begin
     select * from (values
       ('money-in',      '22222222-0000-0000-0000-000000260303'::uuid, 'Julie Rawat', 'Only a money-out line%'),
       ('other company', '22222222-0000-0000-0000-000000260305'::uuid, 'Julie Rawat', 'Bank line not found in your company%'),
+      ('hand-typed',    '22222222-0000-0000-0000-000000260306'::uuid, 'Julie Rawat', 'This line was typed in by hand%'),
       ('no name',       '22222222-0000-0000-0000-000000260301'::uuid, '   ',         'Enter the borrower%')
     ) as c(name, txn, who, msg)
   loop
@@ -121,7 +126,7 @@ begin
   if exists (select 1 from public.balance_sheet_items where tenant_id = 'dddddddd-0000-0000-0000-000000260301' and bank_txn_id = '22222222-0000-0000-0000-000000260301') then
     raise exception 'FAIL B: a Balance Sheet line was also written (two stores)';
   end if;
-  if (select count(*) from public.bank_transactions where tenant_id = 'dddddddd-0000-0000-0000-000000260301') <> 4 then
+  if (select count(*) from public.bank_transactions where tenant_id = 'dddddddd-0000-0000-0000-000000260301') <> 6 then
     raise exception 'FAIL B: a new bank line was added';
   end if;
   if public.loans_given_asset() <> 100000 then
@@ -164,6 +169,26 @@ begin
     raise exception 'FAIL D: borrower spelt %', (select borrower_name from public.loans_given where id = (select v from r2603_ids where k = 'loan2'));
   end if;
   if public.loans_given_asset() <> 160000 then raise exception 'FAIL D: asset % not 160000', public.loans_given_asset(); end if;
+end $$;
+
+-- ── D2. Money back from a borrower with an OPEN loan is not a Balance Sheet "returned" line ──
+do $$
+begin
+  begin
+    perform public.book_bank_advance('22222222-0000-0000-0000-000000260307', ' JULIE  rawat', 'given', null);
+    raise exception 'FAIL D2: money back booked as a Balance Sheet line';
+  exception when others then
+    if sqlerrm like 'FAIL%' then raise; end if;
+    if sqlerrm not like '% has an open loan on Accounting → Loans given%' then raise exception 'FAIL D2: wrong refusal: %', sqlerrm; end if;
+  end;
+  if (select matched_to_type from public.bank_transactions where id = '22222222-0000-0000-0000-000000260307') is not null then
+    raise exception 'FAIL D2: line matched';
+  end if;
+  -- someone with no loan on Loans given (an old Balance Sheet advance) still books as before
+  perform public.book_bank_advance('22222222-0000-0000-0000-000000260307', 'Old Friend', 'given', null);
+  if (select matched_to_type from public.bank_transactions where id = '22222222-0000-0000-0000-000000260307') is distinct from 'bs_item' then
+    raise exception 'FAIL D2: old advance return not booked';
+  end if;
 end $$;
 
 -- ── E. Partial repayment (R-2340 receipt) ────────────────────────────────────────────────

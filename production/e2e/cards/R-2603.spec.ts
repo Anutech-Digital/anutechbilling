@@ -53,25 +53,30 @@ function psql(c: string, sql: string): string[] {
   return (r.stdout ?? "").split(/\r?\n/).filter(Boolean);
 }
 
-const CLEAN = `
-  delete from public.loan_repayments where loan_id in (select id from public.loans_given where bank_txn_id = '${TXN}' or borrower_name ilike 'CT R2603%');
-  delete from public.loans_given where bank_txn_id = '${TXN}' or borrower_name ilike 'CT R2603%';
+const CLEAN = (tenant: string) => `
+  delete from public.loan_repayments where loan_id in (select id from public.loans_given where tenant_id = '${tenant}' and (bank_txn_id = '${TXN}' or borrower_name ilike 'CT R2603%'));
+  delete from public.loans_given where tenant_id = '${tenant}' and (bank_txn_id = '${TXN}' or borrower_name ilike 'CT R2603%');
   delete from public.balance_sheet_items where id = '${BS_ITEM}' or bank_txn_id = '${TXN}';
   delete from public.bank_transactions where bank_account_id = '${ACCT}';
   delete from public.bank_accounts where id = '${ACCT}';`;
 
+function e2eTenant(c: string): string {
+  const tenants = psql(c, `select id from public.tenants where email = '${E2E_TENANT_EMAIL}';`);
+  if (tenants.length !== 1) throw new Error(`E2E Test Co: expected 1 company, found ${tenants.length}`);
+  return tenants[0].trim();
+}
+
 function clean(): void {
-  psql(container(), `begin; ${CLEAN} commit;`);
+  const c = container();
+  psql(c, `begin; ${CLEAN(e2eTenant(c))} commit;`);
 }
 
 function seed(): void {
   const c = container();
-  const tenants = psql(c, `select id from public.tenants where email = '${E2E_TENANT_EMAIL}';`);
-  if (tenants.length !== 1) throw new Error(`E2E Test Co: expected 1 company, found ${tenants.length}`);
-  const tenant = tenants[0].trim();
+  const tenant = e2eTenant(c);
   psql(c, `
     begin;
-    ${CLEAN}
+    ${CLEAN(tenant)}
     insert into public.bank_accounts (id, tenant_id, name, bank_name, account_number_last4, opening_balance, opening_balance_date)
       values ('${ACCT}', '${tenant}', 'CT R2603 Current', 'HDFC Bank', '2603', 0, current_date - 30);
     insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, source) values

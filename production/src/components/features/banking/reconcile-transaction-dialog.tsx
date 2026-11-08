@@ -952,6 +952,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         placeholder="Person's name (e.g. Julie Rawat)"
         list={loanGivenOut ? LOAN_GIVEN_BORROWERS_LIST_ID : undefined}
       />
+      {isCredit && advanceKind === "given" && (
+        <p className="text-xs text-ink-3 mt-1.5 leading-relaxed">
+          Money back on a loan listed on <b>Accounting → Loans given</b>? Use “A receipt on a loan you gave?” above — this box is for older advances on the Balance Sheet.
+        </p>
+      )}
       {loanGivenOut && transaction && (
         <LoanGivenOutFields txnId={transaction.id} amount={amount} borrower={advanceParty} notes={transaction.description}
           onDone={() => onOpenChange(false)} onFooterSave={setLoanOutSave} />

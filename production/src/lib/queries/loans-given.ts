@@ -19,7 +19,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Tables } from "@/lib/supabase/database.generated";
 import {
-  loanPosition, loanSchedule, nextDue, overdueAmount, distinctBorrowers,
+  loanPosition, loanSchedule, nextDue, overdueAmount, distinctBorrowers, oldAdvanceGivenLines,
   type LoanTerms, type LoanPosition, type RepaymentPart, type RepaymentPlan, type ScheduleRow,
 } from "@/lib/accounting/loans-given";
 import { istToday } from "@/lib/dates/ist";
@@ -354,6 +354,23 @@ export function useLoanBorrowerNames(enabled = true) {
       const rows = await fetchAllRows<{ borrower_name: string }>((from, to) => createClient()
         .from("loans_given").select("borrower_name").order("created_at").order("id").range(from, to));
       return distinctBorrowers(rows.map((r) => r.borrower_name));
+    },
+  });
+}
+
+/** R-2603: Balance Sheet lines that are loans given booked before R-2603 ("Advance/loan given · …" and
+ *  their "Advance/loan returned · …"), for the note on Loans given. Only when the page is allowed. */
+export function useOldAdvanceGivenLines(enabled: boolean) {
+  return useQuery({
+    queryKey: ["balance-sheet", "items", "old-advance-given"],
+    enabled,
+    staleTime: 30_000,
+    queryFn: async () => {
+      const rows = await fetchAllRows<{ section: string; label: string; amount: number }>((from, to) => createClient()
+        .from("balance_sheet_items").select("section, label, amount")
+        .eq("section", "asset").ilike("label", "Advance/loan %")
+        .order("id").range(from, to));
+      return oldAdvanceGivenLines(rows);
     },
   });
 }

@@ -378,14 +378,31 @@ export function distinctBorrowers(names: readonly (string | null | undefined)[])
 /** Label book_bank_advance gave a loan/advance GIVEN from a money-out line (before R-2603). */
 export const OLD_ADVANCE_GIVEN_LABEL = "Advance/loan given";
 
-/** Balance Sheet lines that are really loans given (booked before R-2603) — count, total, people. */
+/** …and the label it gave money coming back on one (a negative asset line). */
+export const OLD_ADVANCE_RETURNED_LABEL = "Advance/loan returned";
+
+/** Balance Sheet lines that are really loans given (booked before R-2603), netted per person with
+ *  their "returned" lines: only people who still owe count — given lines, what is still owed, names. */
 export function oldAdvanceGivenLines(items: readonly { section: string; label: string; amount: number }[]): {
   count: number; total: number; borrowers: string[];
 } {
-  const rows = items.filter((i) => i.section === "asset" && i.label.trim().startsWith(OLD_ADVANCE_GIVEN_LABEL));
+  const byKey = new Map<string, { name: string; owed: number; lines: number }>();
+  for (const i of items) {
+    if (i.section !== "asset") continue;
+    const label = i.label.trim();
+    const given = label.startsWith(OLD_ADVANCE_GIVEN_LABEL);
+    if (!given && !label.startsWith(OLD_ADVANCE_RETURNED_LABEL)) continue;
+    const name = label.split("·").slice(1).join("·").trim().replace(/\s+/g, " ");
+    const k = borrowerKey(name);
+    const e = byKey.get(k) ?? { name, owed: 0, lines: 0 };
+    e.owed += Number(i.amount || 0);
+    if (given) e.lines += 1;
+    byKey.set(k, e);
+  }
+  const open = [...byKey.values()].filter((e) => e.owed > 0);
   return {
-    count: rows.length,
-    total: rows.reduce((s, i) => s + Number(i.amount || 0), 0),
-    borrowers: distinctBorrowers(rows.map((i) => i.label.split("·").slice(1).join("·"))),
+    count: open.reduce((s, e) => s + e.lines, 0),
+    total: open.reduce((s, e) => s + e.owed, 0),
+    borrowers: distinctBorrowers(open.map((e) => e.name)),
   };
 }
