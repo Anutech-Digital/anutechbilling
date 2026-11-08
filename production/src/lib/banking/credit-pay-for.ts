@@ -828,13 +828,17 @@ export function saleLinesPayload(lines: readonly SaleLine[]) {
   }));
 }
 
-/** Monthly flex beside ANY other line (annual or one-time) is refused by the server — R-381's
- *  trigger (quote_line_terms_mixed) counts a line without a monthly commitment as annual. R-2095
- *  (staging, 30 Oct): Monthly flex + one-time passed this check, the save got a 400 and the
- *  drawer said nothing. One quote = one billing term. */
+/** Monthly flex beside an ANNUAL line is refused by the server (R-381's trigger,
+ *  quote_line_terms_mixed): a flex rate is per month, an annual rate per year. One quote = one
+ *  billing term. R-2193 (G-ZOHO): a one-time line (domain, setup) has no term, so it may sit beside
+ *  Monthly flex — billed once on month 1 (R-2095's first-part rule); later months carry the seats only. */
 export function saleTermsMixed(lines: readonly SaleLine[]): boolean {
-  return lines.some((l) => l.cycle === "monthly") && lines.some((l) => l.cycle !== "monthly");
+  return lines.some((l) => l.cycle === "monthly") && lines.some((l) => l.cycle === "annual_yearly");
 }
+
+/** What the drawer says while saleTermsMixed is true (Save stays disabled). */
+export const SALE_TERMS_MIXED_MESSAGE =
+  "Flexible (monthly) cannot be on one sale with Annual-commitment products — record them as separate sales, or make them all one commitment. One-time products (domain, setup) can go with either.";
 
 /* ─── Subscription dates ─────────────────────────────────────────────────────────────── */
 

@@ -173,8 +173,10 @@ describe("R-1838 new sale — seats × unit price", () => {
   });
   it("monthly + annual on one sale is flagged before the server refuses it", () => {
     expect(saleTermsMixed([saleLineFromItem(GWS, "monthly"), saleLineFromItem(GWS, "annual_yearly")])).toBe(true);
-    /* R-2095: Monthly flex + one-time is refused by the server too (R-381 trigger) — say it first. */
-    expect(saleTermsMixed([saleLineFromItem(GWS, "monthly"), saleLineFromItem(SETUP)])).toBe(true);
+    /* R-2193 (G-ZOHO): Monthly flex + one-time (domain, setup) is ONE sale — the one-time line is
+       billed once on month 1 (migration 20261107233022; supabase/tests/r2193_flex_with_one_time). */
+    expect(saleTermsMixed([saleLineFromItem(GWS, "monthly"), saleLineFromItem(SETUP)])).toBe(false);
+    expect(saleTermsMixed([saleLineFromItem(SETUP), saleLineFromItem(GWS, "monthly"), saleLineFromItem(GWS, "annual_yearly")])).toBe(true);
     expect(saleTermsMixed([saleLineFromItem(GWS, "annual_yearly"), saleLineFromItem(SETUP)])).toBe(false);
     expect(saleTermsMixed([saleLineFromItem(GWS, "monthly"), saleLineFromItem(GWS, "monthly")])).toBe(false);
   });
