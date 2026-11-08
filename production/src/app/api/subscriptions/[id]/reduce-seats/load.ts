@@ -12,7 +12,7 @@
 import type { createAdminClientFor } from "@/lib/supabase/server";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { openInvoiceDue } from "@/lib/subscriptions/cancel-due";
-import type { ReductionInvoiceMoney } from "@/lib/subscriptions/seat-reduction";
+import { isScheduledCutLive, type ReductionInvoiceMoney } from "@/lib/subscriptions/seat-reduction";
 import type { Subscription } from "@/lib/supabase/database.types";
 
 type Admin = ReturnType<typeof createAdminClientFor>;
@@ -144,15 +144,22 @@ export async function loadPartInvoiceMoney(supabase: Admin, sub: ReduceSeatsSub,
   };
 }
 
-/** A seat cut already scheduled for the end of the term, if any. */
-export async function loadScheduledReduction(supabase: Admin, sub: ReduceSeatsSub): Promise<ScheduledReduction | null> {
+/**
+ * A seat cut already scheduled for the end of the term, if any. R-2584: one dated before today
+ * (IST) is stale — its renewal passed without it being applied — so it is not returned and blocks
+ * nothing (reduce_subscription_seats, migration 20261108033033, skips it the same way).
+ */
+export async function loadScheduledReduction(supabase: Admin, sub: ReduceSeatsSub, today: string): Promise<ScheduledReduction | null> {
   const { data } = await supabase
     .from("subscription_seat_reductions" as never)
     .select("id, seats_before, seats_after, effective_date")
     .eq("subscription_id", sub.id)
     .eq("tenant_id", sub.tenant_id)
     .eq("status", "scheduled")
+    .gte("effective_date", today)
+    .order("effective_date", { ascending: true })
     .limit(1)
     .maybeSingle();
-  return (data as ScheduledReduction | null) ?? null;
+  const row = (data as ScheduledReduction | null) ?? null;
+  return row && isScheduledCutLive(row, today) ? row : null;
 }

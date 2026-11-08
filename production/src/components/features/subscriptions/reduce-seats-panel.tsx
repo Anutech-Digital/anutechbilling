@@ -9,6 +9,10 @@
  * the save uses — so the preview is what gets booked.
  *   · Now          → one credit note on the part's invoice; seats drop today.
  *   · End of term  → scheduled for the renewal date; no money, the seats stay until then.
+ *
+ * R-2584: "At end of term" is hidden while SEAT_CUT_END_OF_TERM_ENABLED is off — renewal does not
+ * apply a scheduled cut yet (R-2583), so it would over-bill. Only "Now, with credit" is offered; a
+ * cut scheduled before that still shows, with Remove.
  */
 "use client";
 
@@ -23,7 +27,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { formatPaise } from "@/lib/subscriptions/proration";
 import { newIdempotencyKey } from "@/lib/ops/idempotency-key";
 import type { Subscription } from "@/lib/supabase/database.types";
-import type { SeatReductionValue, SeatReductionPreview } from "@/lib/subscriptions/seat-reduction";
+import { SEAT_CUT_END_OF_TERM_ENABLED, type SeatReductionValue, type SeatReductionPreview } from "@/lib/subscriptions/seat-reduction";
 
 interface PreviewResponse {
   seats: number;
@@ -166,13 +170,16 @@ export default function ReduceSeatsPanel({ sub, onCancel, onDone }: Props) {
 
         <fieldset>
           <legend className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-2">When</legend>
-          <div className="grid grid-cols-2 gap-2">
+          <div className={SEAT_CUT_END_OF_TERM_ENABLED ? "grid grid-cols-2 gap-2" : "grid grid-cols-1 gap-2"}>
             <Button variant={timing === "now" ? "primary" : "ghost"} size="sm" aria-pressed={timing === "now"} onClick={() => setTiming("now")}>
               Now, with credit
             </Button>
-            <Button variant={timing === "end_of_term" ? "primary" : "ghost"} size="sm" aria-pressed={timing === "end_of_term"} onClick={() => setTiming("end_of_term")}>
-              At end of term
-            </Button>
+            {/* R-2584: hidden until renewal applies a scheduled cut (R-2583). */}
+            {SEAT_CUT_END_OF_TERM_ENABLED && (
+              <Button variant={timing === "end_of_term" ? "primary" : "ghost"} size="sm" aria-pressed={timing === "end_of_term"} onClick={() => setTiming("end_of_term")}>
+                At end of term
+              </Button>
+            )}
           </div>
         </fieldset>
 

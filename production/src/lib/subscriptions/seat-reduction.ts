@@ -27,6 +27,24 @@ import { splitChangeCredit, type ChangeCreditSplit } from "./change-credit";
 
 export type SeatReductionTiming = "now" | "end_of_term";
 
+/**
+ * R-2584 — "At end of term" is OFF. It only saves a scheduled row: the renewal quote, Renewals and
+ * the renewal cron never apply it, so the renewal would still bill the old seats (over-billing).
+ * R-2583 turns this on in the same change that makes renewal apply the cut. While off, Reduce
+ * seats offers only "Now, with credit" and POST refuses timing "end_of_term"; a cut that is
+ * already scheduled still shows, with Remove.
+ */
+export const SEAT_CUT_END_OF_TERM_ENABLED = false;
+
+/**
+ * R-2584 — a scheduled cut whose date is before today (IST) is stale: its renewal went by without
+ * it being applied. It no longer shows as pending nor blocks a new cut (the SQL function
+ * reduce_subscription_seats, migration 20261108033033, checks the same).
+ */
+export function isScheduledCutLive(row: { effective_date: string }, today: string): boolean {
+  return row.effective_date.slice(0, 10) >= today.slice(0, 10);
+}
+
 export interface SeatReductionSub extends SeatWindowSub {
   seats: number;
 }
@@ -182,7 +200,9 @@ export function seatReductionPreview(value: SeatReductionValueOk, invoice: Reduc
     split: fullSplit,
     canReduceNow: !noInvoice && !writtenOff,
     blockedReason: noInvoice
-      ? "This part has no tax invoice yet, so there is no invoice to credit. Choose “At end of term”, or reduce the seats after the part is invoiced."
+      ? SEAT_CUT_END_OF_TERM_ENABLED
+        ? "This part has no tax invoice yet, so there is no invoice to credit. Choose “At end of term”, or reduce the seats after the part is invoiced."
+        : "This part has no tax invoice yet, so there is no invoice to credit. Reduce the seats after the part is invoiced."
       : writtenOff
         ? `Invoice ${invoice?.id} is written off — a credit note on it would contradict the write-off. Use Correct details instead.`
         : "",

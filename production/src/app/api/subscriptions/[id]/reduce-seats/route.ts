@@ -17,13 +17,15 @@
  *
  * Who: seats.change (owner / manager / billing — all of them may also issue a credit note).
  * Microsoft NCE: "Now" is refused after the 7-day window (checkNceLock); end of term is allowed.
+ * R-2584: "end_of_term" is refused while SEAT_CUT_END_OF_TERM_ENABLED is off (renewal does not
+ * apply a scheduled cut yet — R-2583); one scheduled before that can still be removed (DELETE).
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayDo, forbiddenMessage } from "@/lib/auth/action-roles";
 import { resolveSeatTax } from "@/lib/subscriptions/apply-seat-increase";
-import { seatReductionValue, seatReductionPreview } from "@/lib/subscriptions/seat-reduction";
+import { seatReductionValue, seatReductionPreview, SEAT_CUT_END_OF_TERM_ENABLED } from "@/lib/subscriptions/seat-reduction";
 import { checkNceLock } from "@/lib/subscriptions/nce-lock";
 import { istToday } from "@/lib/dates/ist";
 import { REDUCE_SEATS_SELECT, loadPartInvoiceMoney, loadScheduledReduction, type ReduceSeatsSub } from "./load";
@@ -72,7 +74,7 @@ async function buildPreview(g: Extract<Gate, { ok: true }>, seatsRemoved: number
   const { sub, supabase } = g;
   const [{ taxRatePct, taxLabel }, scheduled, invoice] = await Promise.all([
     resolveSeatTax(supabase, sub.customer_id, sub.tenant_id),
-    loadScheduledReduction(supabase, sub),
+    loadScheduledReduction(supabase, sub, today),
     loadPartInvoiceMoney(supabase, sub, today),
   ]);
   const value = seatReductionValue({ sub, seatsRemoved, today, taxRatePct });
@@ -113,6 +115,10 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
   const g = await gate(id);
   if (!g.ok) return g.res;
   const { seats_removed: seatsRemoved, timing, idempotency_key: key } = parsed.data;
+  /* R-2584: renewal does not apply a scheduled cut yet (R-2583) — the renewal would still bill the old seats. */
+  if (timing === "end_of_term" && !SEAT_CUT_END_OF_TERM_ENABLED) {
+    return NextResponse.json({ error: "Reducing seats at the end of the term is not available yet — reduce them now, with credit.", code: "end_of_term_off" }, { status: 400 });
+  }
 
   const p = await buildPreview(g, seatsRemoved);
   if (!p.value.ok) {
