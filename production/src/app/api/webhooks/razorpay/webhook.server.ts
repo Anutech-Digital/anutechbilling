@@ -64,6 +64,7 @@ import { bookGatewayFeeExpense } from "@/lib/razorpay/fee-expense.server";
 import { recordFeeBearer } from "@/lib/payments/online-fee.server";
 import {
   receivedOnQuote, settleLatePayment, settleOnReplacedQuote, settleStaleRenewal, STALE_RENEWAL_RE, type LateArgs,
+  PLAN_CHANGE_REFUSED_RE, settleRefusedPlanChange,
 } from "./late-payment.server";
 import { domainItemIdsForQuote, vendorForQuote } from "./quote-vendor.server";
 import { captureMismatch, flagPaymentForReview, flagUnderpaid } from "./review.server";
@@ -513,6 +514,12 @@ export async function settleCapturedPayment(
        the subscription's CURRENT renewal quote, or — if there is none — the owner is told. */
     if (payment?.id && STALE_RENEWAL_RE.test(rpcErr.message ?? "")) {
       return settleStaleRenewal(admin, lateArgs(payment));
+    }
+    /* R-2596: a plan-change quote refused (R-2589: subscription changed since it was priced, or
+       not active; R-2227: link lost, or another subscription) — the same 500 loop. Nothing is
+       recorded on any quote; the owner is told once (refund, or book it as the customer's advance). */
+    if (payment?.id && PLAN_CHANGE_REFUSED_RE.test(rpcErr.message ?? "")) {
+      return settleRefusedPlanChange(admin, lateArgs(payment));
     }
     return NextResponse.json(
       { error: safeDbMessage(rpcErr, "Payment processing failed") },
