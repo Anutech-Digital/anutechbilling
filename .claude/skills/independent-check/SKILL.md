@@ -1,6 +1,6 @@
 ---
 name: independent-check
-description: How a separate reviewer/checker (never the builder) checks a pushed card — read the spec + the pushed diff on the final sha, run the card test on localhost, show the check live on the board (checkRunning/checkStartedAt/checkNow), and write a SAFE or BLOCK verdict with fix steps. Load when you are spawned as a reviewer or checker for a card, for every p0 / category paisa / security card before a staging train, and for "<id> jaanch karo". Not for building a card (skill card-worker).
+description: How a separate reviewer/checker (never the builder) checks a pushed card — read the spec + the pushed diff on the final sha, run the card test on localhost, show the check live on the board (checkRunning/checkStartedAt/checkNow), and write a SAFE or BLOCK verdict with fix steps. Load when you are spawned as a reviewer or checker for a card, for every p0 / category money-paisa card before its push (R-2592, on the wip sha), every security card before a staging train, and for "<id> jaanch karo". Not for building a card (skill card-worker).
 ---
 
 # independent-check
@@ -22,9 +22,12 @@ The owner presses "Theek hai".
       Update `checkNow` at each step, at least every 10 min — a running checker counts in the
       board's worker count (playbook d).
 
-## 2. Find the final sha
+## 2. Find the sha
 
-- [ ] `git fetch anutech`; the card's `commits` / `ciCheck.sha` must be on
+- [ ] **Money (category money/paisa) / p0 card — BEFORE its push (R-2592):** the sha is the worker's
+      `anutech/wip/<card>` tip (`git fetch anutech wip/<card>`; the coordinator's brief names it).
+      Review exactly that sha — it is what `independentReview.sha` must say.
+- [ ] Any other card (after its push): `git fetch anutech`; the card's `commits` / `ciCheck.sha` must be on
       `anutech/manager-pardeep` (`git merge-base --is-ancestor <sha> anutech/manager-pardeep`).
       Not there → verdict BLOCK "not pushed".
 - [ ] Later fix cards (`fixesFor: <this card>`) → review up to the newest of them.
@@ -32,7 +35,8 @@ The owner presses "Theek hai".
 ## 3. Review (p0, category paisa, security — R-2420)
 
 - [ ] Read the card (`fix`, `doneWhen`), its spec in `docs/specs/` if it has a `goal`, and the diff:
-      `git diff <sha>~1 <sha>` (or the range of all its commits) — read the code, not the summary.
+      `git diff <sha>~1 <sha>` (or the range of all its commits; before push:
+      `git diff anutech/manager-pardeep...<sha>`) — read the code, not the summary.
 - [ ] Look for: wrong money math / rounding / GST, tenant isolation and RLS gaps, a migration that
       edits an old migration body, a missing `-- deploy-peek:`, tests that pass without the fix,
       another card's work undone.
@@ -53,9 +57,14 @@ The owner presses "Theek hai".
 
 - [ ] **SAFE** — nothing real found; or **BLOCK** — each finding with file:line, why it is wrong,
       and the fix steps.
-- [ ] Review → `independentReview` {at, by, findings, fixCards}. Each real finding becomes a fix
-      card (`fixesFor: <reviewed card>`, NOT `dependsOn`). BLOCK → the card stays in `review` and its
-      commits stay out of the next staging train until the fix cards are pushed.
+- [ ] Review → `independentReview` {at, by, verdict: "SAFE"|"BLOCK", sha (the full sha you read),
+      findings, fixCards}. `worker-lock push` lets a money/p0 card through only with verdict exactly
+      "SAFE" on that sha (or an ancestor of what is pushed) — R-2592; never write SAFE for a sha you did
+      not read.
+- [ ] Before push (wip sha): BLOCK → findings go to the worker (same card, fix + re-review); no fix
+      card needed. After push: each real finding becomes a fix card (`fixesFor: <reviewed card>`, NOT
+      `dependsOn`); BLOCK → the card stays in `review` and its commits stay out of the next staging
+      train until the fix cards are pushed.
 - [ ] "jaanch karo" → `aiResult` ("✓ …what you saw" or "⚠ …what was different"), `aiResultAt`.
 - [ ] Clear: `checkRunning: false`, `checkRequested: false`, delete `checkNow`.
 - [ ] Hand back in ≤5 lines: verdict, card test result, fix cards made.
