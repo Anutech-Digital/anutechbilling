@@ -35,23 +35,39 @@ export type RenewalSeatCut =
 
 const day = (d: string | null | undefined) => (d ?? "").slice(0, 10);
 
-/** Which scheduled cut (if any) the renewal quote for `renewalDate` must bill. Pure. */
+/**
+ * Which scheduled cut (if any) the renewal quote for the subscription's CURRENT renewal date must
+ * bill. Pure. Matched on that date, not on today: a row from an earlier term never matches (paying a
+ * renewal moves renewal_date on — R-2584's stale rows), while a renewal still in its grace days
+ * (date passed, not yet paid) does keep its cut.
+ */
 export function renewalSeatCut(
   rows: readonly ScheduledSeatCutRow[],
   sub: { seats: number; renewalDate: string },
-  today: string,
 ): RenewalSeatCut {
   const renewal = day(sub.renewalDate);
   const live = rows.filter(
-    (r) => r.status === "scheduled" && r.timing === "end_of_term"
-      && day(r.effective_date) === renewal && day(r.effective_date) >= day(today),
+    (r) => r.status === "scheduled" && r.timing === "end_of_term" && renewal !== "" && day(r.effective_date) === renewal,
   );
-  if (live.length !== 1) {
-    if (live.length > 1) console.error(`[renewals] ${live.length} scheduled seat cuts for one renewal date — none applied`);
-    return { kind: "none" };
-  }
+  if (live.length === 0) return { kind: "none" };
   const row = live[0];
-  if (row.seats_before !== sub.seats || row.seats_after < 1 || row.seats_after >= sub.seats) {
+  if (live.length > 1) {
+    return {
+      kind: "seats_changed",
+      row,
+      note: `${live.length} seat cuts are scheduled for this renewal, so none was applied and this quote keeps ${sub.seats} seats. ` +
+        "Check Manage seats, remove the extra cut, then lower the seats on this quote if a cut still stands.",
+    };
+  }
+  if (row.seats_after >= sub.seats) {
+    return {
+      kind: "seats_changed",
+      row,
+      note: `A seat cut ${row.seats_before} → ${row.seats_after} was scheduled for this renewal, but the subscription already has ` +
+        `${sub.seats} seats, so the cut no longer applies and this quote is for ${sub.seats}.`,
+    };
+  }
+  if (row.seats_before !== sub.seats || row.seats_after < 1) {
     return {
       kind: "seats_changed",
       row,

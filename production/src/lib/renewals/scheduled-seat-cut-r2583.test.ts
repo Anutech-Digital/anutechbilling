@@ -5,7 +5,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { createOrGetRenewalQuote, type CreateRenewalQuoteInput } from "./create-renewal-quote";
 import { renewalSeatCut, type ScheduledSeatCutRow } from "./scheduled-seat-cut";
-import { istToday } from "@/lib/dates/ist";
 
 interface Quote { amount: number; subtotal: number; seats: number; line_items: Array<{ qty: number; rate: number; cost: number }>; notes: string }
 
@@ -72,9 +71,12 @@ describe("R-2583: renewal quote bills the scheduled end-of-term seat cut", () =>
     expect(quotes[0]).toMatchObject({ seats: 10, subtotal: 36000, amount: 42480 });
   });
 
-  it("3. a past-dated row is never applied (R-2584)", () => {
-    expect(renewalSeatCut([row({ effective_date: "2020-01-01" })], { seats: 10, renewalDate: "2020-01-01" }, istToday()))
-      .toEqual({ kind: "none" });
+  it("3. a row from an earlier term (renewal date moved on) is never applied (R-2584)", () => {
+    expect(renewalSeatCut([row({ effective_date: "2020-01-01" })], { seats: 10, renewalDate: "2021-01-01" })).toEqual({ kind: "none" });
+  });
+
+  it("3b. still in grace (renewal date passed, not paid) → the cut still applies to this renewal", () => {
+    expect(renewalSeatCut([row({ effective_date: "2020-01-01" })], { seats: 10, renewalDate: "2020-01-01" })).toMatchObject({ kind: "apply", seats: 7 });
   });
 
   it("4. a row for another term's date is not applied", async () => {
@@ -86,9 +88,11 @@ describe("R-2583: renewal quote bills the scheduled end-of-term seat cut", () =>
   it("5. only scheduled end-of-term rows count", () => {
     const sub = { seats: 10, renewalDate };
     for (const r of [row({ status: "cancelled" }), row({ status: "applied" }), row({ timing: "now", status: "done" })]) {
-      expect(renewalSeatCut([r], sub, "2099-01-01")).toEqual({ kind: "none" });
+      expect(renewalSeatCut([r], sub)).toEqual({ kind: "none" });
     }
-    expect(renewalSeatCut([row(), row({ id: "cut-2" })], sub, "2099-01-01")).toEqual({ kind: "none" });
+    const two = renewalSeatCut([row(), row({ id: "cut-2" })], sub);
+    expect(two.kind).toBe("seats_changed");
+    expect(two.kind !== "none" && two.note).toMatch(/2 seat cuts are scheduled .* keeps 10 seats/);
   });
 
   it("6. seats changed since scheduling (Add seats 10 → 12) → not applied, the quote says why", async () => {
@@ -96,6 +100,19 @@ describe("R-2583: renewal quote bills the scheduled end-of-term seat cut", () =>
     await createOrGetRenewalQuote(input(db, { seats: 12, mrr: 3600 }));
     expect(quotes[0].seats).toBe(12);
     expect(quotes[0].notes).toMatch(/seat cut 10 → 7 was scheduled .* now has 12 seats/);
+  });
+
+  it("6b. seats already at or below the cut (Correct details 10 → 6) → the cut no longer applies, no 'lower it' advice", () => {
+    const r = renewalSeatCut([row()], { seats: 6, renewalDate });
+    expect(r.kind).toBe("seats_changed");
+    expect(r.kind !== "none" && r.note).toMatch(/already has 6 seats, so the cut no longer applies/);
+    expect(r.kind !== "none" && r.note).not.toMatch(/Lower the seats/);
+  });
+
+  it("the cut note is staff-only — after the marker, never on the customer's quote", async () => {
+    const { db, quotes } = fakeDb([row()]);
+    await createOrGetRenewalQuote(input(db));
+    expect(quotes[0].notes).toBe("Renewal quote for subscription sub-1\n\nStaff only (not shown to the customer):\nSeats 10 → 7: the seat cut scheduled for the end of the term.");
   });
 
   it("7. a linked quote comes back unchanged — never re-priced, never a second quote", async () => {

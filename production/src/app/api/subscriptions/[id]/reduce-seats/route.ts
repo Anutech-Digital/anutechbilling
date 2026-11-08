@@ -193,7 +193,10 @@ export async function DELETE(_req: Request, props: { params: Promise<{ id: strin
   if (!g.ok) return g.res;
   /* R-2583: the renewal quote bills a scheduled cut — once it was made at the cut seats, removing the
      cut would leave the customer quoted for fewer seats than they keep. Delete the quote first. */
-  const scheduled = await loadScheduledReduction(g.supabase, g.sub, istToday());
+  const today = istToday();
+  /* In grace days (renewal date passed, not yet paid) the cut still belongs to this renewal. */
+  const from = g.sub.renewal_date && g.sub.renewal_date.slice(0, 10) < today ? g.sub.renewal_date.slice(0, 10) : today;
+  const scheduled = await loadScheduledReduction(g.supabase, g.sub, from);
   const cutQuote = await loadCutRenewalQuote(g.supabase, g.sub, scheduled);
   if (cutQuote) {
     return NextResponse.json({
