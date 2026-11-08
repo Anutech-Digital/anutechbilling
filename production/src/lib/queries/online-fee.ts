@@ -20,6 +20,9 @@ import {
   BILL_ONLINE_FEE_COLUMNS,
   CUSTOMER_ONLINE_FEE_COLUMNS,
   DEFAULT_ONLINE_FEE_SETTINGS,
+  ONLINE_FEE_GST_PCT,
+  billGstColumns,
+  billOnlineFeeGstPct,
   TENANT_ONLINE_FEE_COLUMNS,
   isOnlineFeeColumnMissing,
   parseOnlineFeeCustomer,
@@ -117,13 +120,19 @@ export function useBillOnlineFee(kind: OnlineFeeBillKind, id: string | null | un
   return useQuery({
     queryKey: [KEY, kind, id],
     enabled: Boolean(id),
-    queryFn: async (): Promise<{ ready: boolean; waived: boolean; reason: string | null }> => {
+    queryFn: async (): Promise<{ ready: boolean; waived: boolean; reason: string | null; gstPct: number }> => {
+      /* R-2598: the bill's own GST rate rides along — the fee carries the same rate (0% bill → no GST). */
       const { data, error } = await untyped().from(kind === "quote" ? "quotes" : "invoices")
-        .select(BILL_ONLINE_FEE_COLUMNS).eq("id", id as string).maybeSingle();
-      if (isOnlineFeeColumnMissing(error)) return { ready: false, waived: false, reason: null };
+        .select(`${BILL_ONLINE_FEE_COLUMNS}, ${billGstColumns(kind)}`).eq("id", id as string).maybeSingle();
+      if (isOnlineFeeColumnMissing(error)) return { ready: false, waived: false, reason: null, gstPct: ONLINE_FEE_GST_PCT };
       if (error) throw new Error(error.message);
       const row = (data ?? {}) as { online_fee_waived?: boolean | null; online_fee_waive_reason?: string | null };
-      return { ready: true, waived: row.online_fee_waived === true, reason: row.online_fee_waive_reason ?? null };
+      return {
+        ready: true,
+        waived: row.online_fee_waived === true,
+        reason: row.online_fee_waive_reason ?? null,
+        gstPct: billOnlineFeeGstPct(row as Record<string, unknown>),
+      };
     },
   });
 }

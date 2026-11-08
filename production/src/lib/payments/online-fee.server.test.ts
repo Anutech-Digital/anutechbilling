@@ -67,6 +67,19 @@ describe("recordFeeBearer (R-2416)", () => {
     expect(await onlineFeeForQuote(admin, "t1", "Q-1")).toMatchObject({ bearer: "business", reason: "bill_waived", note: "Promised on call" });
   });
 
+  it("R-2598: capture reads the quote's tax_rate — a 0% (export / SEZ) quote's fee has no GST, an 18% quote's is unchanged", async () => {
+    const zero = fakeAdmin({
+      tenants: tenant,
+      quotes: { amount: 11800, customer_id: null, invoice_id: null, online_fee_waived: false, tax_rate: 0 },
+    });
+    expect(await onlineFeeForQuote(zero.admin, "t1", "Q-1")).toMatchObject({ fee: 241, gst: 0, total: 241, payable: 12041 });
+    const full = fakeAdmin({
+      tenants: tenant,
+      quotes: { amount: 11800, customer_id: null, invoice_id: null, online_fee_waived: false, tax_rate: 18 },
+    });
+    expect(await onlineFeeForQuote(full.admin, "t1", "Q-1")).toMatchObject({ fee: 242, gst: 44, total: 286, payable: 12086 });
+  });
+
   it("before the migration (columns missing) → no write, no throw", async () => {
     const { admin, updates } = fakeAdmin({}, true);
     await recordFeeBearer(admin, "t1", "Q-1", "pay_1");

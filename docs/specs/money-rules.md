@@ -51,7 +51,7 @@ Who pays the online fee: `razorpay-fee.md`.
 | # | Rule | Card | Enforced by | Proved by |
 |---|---|---|---|---|
 | F1 | Who bears the fee, first match wins: bill waiver > customer absorbs > company default "We pay" > "we pay above ₹X" > customer pays. | R-2416 | `src/lib/payments/online-fee.ts:107` `onlineFeeFor` | `src/lib/payments/online-fee.test.ts` |
-| F2 | The recovered fee is grossed up (f = r·B ÷ (1 − r·1.18)) and carries 18% GST as an incidental charge of the same supply. | R-2416 | `src/lib/payments/online-fee.ts:88` `onlineFeeAmounts`, `:30` `ONLINE_FEE_GST_PCT` | `src/lib/payments/online-fee.test.ts`, `supabase/tests/r2416_online_fee.test.sql` (18% bill only — 0% bill: gap R-2598) |
+| F2 | The recovered fee is grossed up (f = r·B ÷ (1 − r·(1 + g))) and carries the BILL's GST rate g as an incidental charge of the same supply: 18% bill → 18% on the fee (₹11,800 → ₹242 + ₹44); 0% bill (export / SEZ without payment, G4) → no GST and gross-up 1.00 (₹11,800 → ₹241). g = the quote's / invoice's stored `tax_rate`; unknown → 18 (never zero-rated by guess). | R-2416, R-2598 | `src/lib/payments/online-fee.ts:108` `onlineFeeAmounts`, `:100` `onlineFeeGstPct`, `:204` `billOnlineFeeGstPct`, `:38` `ONLINE_FEE_GST_PCT` (default); callers `src/lib/queries/online-fee.ts` `useBillOnlineFee` (quote / invoice page), `src/lib/payments/online-fee.server.ts` `onlineFeeForQuote` (webhook capture) | `src/lib/payments/online-fee.test.ts` ("the fee carries the BILL's GST rate"), `src/lib/payments/online-fee.server.test.ts` (R-2598 capture), `supabase/tests/r2416_online_fee.test.sql` |
 | F3 | A receipt's expected bank cash = amount − advance used − TDS − Razorpay fee; the fee is booked separately (gross, never net), also for Zoho-imported receipts. | R-2565, R-045 | SQL `supabase/migrations/20261107134000_r2565_razorpay_fee_receipts.sql`; `src/lib/integrations/zoho-books/receipts-import/plan.ts` | `supabase/tests/r2565_razorpay_fee_receipts.test.sql`, `src/lib/integrations/zoho-books/receipts-import/razorpay-fee.test.ts` |
 
 ## TDS
@@ -141,4 +141,3 @@ Who pays the online fee: `razorpay-fee.md`.
 | Rule | Gap | Card |
 |---|---|---|
 | S5 | No test asserts that the bank / SWIFT charge expense from `reconcile_bank_credit_split` carries no input GST (`bill_type 'none'`, `gst_paid` 0) — a change could start claiming ITC on it unnoticed. | R-2599 |
-| F2 | The online fee always carries 18% GST (`ONLINE_FEE_GST_PCT`), also in the gross-up. On a 0% bill (export / SEZ without payment, G4) the fee is part of a zero-rated supply; nothing passes the bill's rate in and no test covers a 0% bill (razorpay-fee.md rule 3 says it must, before R-2417 charges it). | R-2598 |
