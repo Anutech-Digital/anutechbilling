@@ -7,7 +7,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 // @ts-expect-error — plain .mjs ops script, no types
 import { migrationOrderGate, normaliseClaimAreas } from "../scripts/ops/worker-lock-guards.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript, needsIndependentReview, parseReviewFlags, checkReviewGate } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript, needsIndependentReview, parseReviewFlags, checkReviewGate, changePatchId } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -602,10 +602,10 @@ describe("R-2106: claim paths are normalised (29 Oct: R-2102/R-2104/R-2098 own f
 
 describe("R-2592: push refuses a money / p0 card without an independent SAFE review of the same code", () => {
   const money = { id: "R-600", title: "x", kind: "bug", category: "paisa", priority: "p1", doneWhen: "credit once", howToCheck: "1. /invoices" };
-  // a → b → c (head); base = a (manager-pardeep)
-  const chain = ["aaa", "bbb", "ccc"];
-  const isAncestor = (x: string, y: string) => chain.indexOf(x) >= 0 && chain.indexOf(y) >= 0 && chain.indexOf(x) <= chain.indexOf(y);
-  const opts = { head: "ccc", base: "aaa", isAncestor };
+  // "ccc" = HEAD; "ccc-rebased" carries the same change; "bbb" = an earlier WIP; "aaa" = already merged
+  const same = new Set(["ccc", "ccc-rebased"]);
+  const sameCode = (sha: string, head: string) => head === "ccc" && same.has(sha);
+  const opts = { head: "ccc", sameCode };
 
   it("which cards: category money/paisa (any case) or p0; others pass untouched", () => {
     expect(needsIndependentReview({ category: "paisa" })).toBe(true);
@@ -613,8 +613,7 @@ describe("R-2592: push refuses a money / p0 card without an independent SAFE rev
     expect(needsIndependentReview({ category: "process", priority: "P0" })).toBe(true);
     expect(needsIndependentReview({ category: "process", priority: "p1" })).toBe(false);
     expect(needsIndependentReview(null)).toBe(false);
-    const r = checkReviewGate("R-600", { ...money, category: "process" }, opts);
-    expect(r.ok).toBe(true);
+    expect(checkReviewGate("R-600", { ...money, category: "process" }, opts).ok).toBe(true);
   });
 
   it("no independentReview → refused, saying wip + checker first", () => {
@@ -625,31 +624,26 @@ describe("R-2592: push refuses a money / p0 card without an independent SAFE rev
     expect(r.message).toContain("independent-check");
   });
 
-  it("BLOCK verdict → refused", () => {
-    const r = checkReviewGate("R-600", { ...money, independentReview: { verdict: "BLOCK", sha: "ccc" } }, opts);
-    expect(r.ok).toBe(false);
-    expect(r.message).toContain('verdict "BLOCK"');
-  });
-
-  it("SAFE without sha → refused", () => {
+  it("BLOCK verdict, or SAFE without sha → refused", () => {
+    expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "BLOCK", sha: "ccc" } }, opts).message).toContain('verdict "BLOCK"');
     expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE" } }, opts).ok).toBe(false);
   });
 
-  it("SAFE on the head, or on an ancestor of it (fix commits after review) → ok", () => {
+  it("SAFE on the head, or on a commit with the same change (rebased / squashed / retry) → ok", () => {
     expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "ccc" } }, opts).ok).toBe(true);
-    expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "bbb" } }, opts).ok).toBe(true);
+    expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "ccc-rebased" } }, opts).ok).toBe(true);
   });
 
-  it("SAFE on a sha the push is not built on (rebased / other code) → refused", () => {
-    const r = checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "zzz" } }, opts);
-    expect(r.ok).toBe(false);
-    expect(r.message).toContain("Naye sha ka review chahiye");
+  it("SAFE on an earlier WIP (code added after review) or on merged code → refused", () => {
+    for (const sha of ["bbb", "aaa"]) {
+      const r = checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha } }, opts);
+      expect(r.ok).toBe(false);
+      expect(r.message).toContain("Is HEAD ka review chahiye");
+    }
   });
 
-  it("SAFE on a sha already on manager-pardeep reviewed none of this push → refused", () => {
-    const r = checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "aaa" } }, opts);
-    expect(r.ok).toBe(false);
-    expect(r.message).toContain("pehle se manager-pardeep par");
+  it("a --card file that cannot be read fails closed", () => {
+    expect(checkReviewGate("R-600", null, { ...opts, cardUnreadable: true }).ok).toBe(false);
   });
 
   it("--no-review needs a reason; with one it passes and logs it", () => {
@@ -661,17 +655,43 @@ describe("R-2592: push refuses a money / p0 card without an independent SAFE rev
     const lines: string[] = [];
     const r = checkReviewGate("R-600", money, { ...opts, noReview: "owner said", log: (l: string) => lines.push(l), now: () => "2026-11-08T07:00:00Z" });
     expect(r.ok).toBe(true);
-    expect(JSON.parse(lines[0])).toEqual({ at: "2026-11-08T07:00:00Z", card: "R-600", how: "--no-review", reason: "owner said", head: "ccc" });
+    expect(JSON.parse(lines[0])).toEqual({ at: "2026-11-08T07:00:00Z", card: "R-600", how: "--no-review", reason: "owner said", headBeforePush: "ccc" });
   });
 
-  it("CLI: push of an unreviewed money card stops with exit 11 before anything else runs", () => {
+  it("changePatchId (real git): same after a rebase, different with one more commit, null once merged; generated files ignored", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2592-git-"));
+    const g = (a: string[], input?: string) => execFileSync("git", a, { cwd: tmp, encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"] });
+    const put = (f: string, s: string) => { fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true }); fs.writeFileSync(path.join(tmp, f), s); };
+    const commit = (m: string) => { g(["add", "-A"]); g(["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", m]); return g(["rev-parse", "HEAD"]).trim(); };
+    try {
+      g(["init", "-q", "-b", "main"]);
+      put("production/a.ts", "1\n"); put("production/b.ts", "x\n"); commit("base");
+      g(["checkout", "-qb", "card"]);
+      put("production/a.ts", "1\n2\n"); const reviewed = commit("card");
+      g(["checkout", "-q", "main"]); put("production/b.ts", "x\ny\n"); commit("other card");
+      g(["checkout", "-q", "card"]); g(["rebase", "-q", "main"]); const rebased = g(["rev-parse", "HEAD"]).trim();
+      expect(rebased).not.toBe(reviewed);
+      const pid = changePatchId(reviewed, "main", g);
+      expect(pid).toBeTruthy();
+      expect(changePatchId(rebased, "main", g)).toBe(pid);
+      put("production/supabase/cloudsql/staging/deploy-db-2026-11-08.sh", "regen\n"); const regen = commit("regen");
+      expect(changePatchId(regen, "main", g)).toBe(pid);
+      put("production/a.ts", "1\n2\n3\n"); const more = commit("more code");
+      expect(changePatchId(more, "main", g)).not.toBe(pid);
+      g(["checkout", "-q", "main"]); g(["merge", "-q", "--ff-only", "card"]);
+      expect(changePatchId(more, "main", g)).toBeNull();
+      expect(changePatchId("deadbeef", "main", g)).toBeNull();
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it("CLI: push of an unreviewed money card stops with exit 13 before anything else runs", () => {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2592-"));
     try {
       const cardFile = path.join(tmp, "R-600.json");
       fs.writeFileSync(cardFile, JSON.stringify({ id: "R-600", data: money }));
       const script = path.resolve("scripts/ops/worker-lock.mjs");
       const r = spawnSync(process.execPath, [script, "push", "R-600", "--card", cardFile], { encoding: "utf8", env: { ...process.env, WORKER_LOCK_DIR: path.join(tmp, "locks") } });
-      expect(r.status).toBe(11);
+      expect(r.status).toBe(13);
       expect(`${r.stdout}${r.stderr}`).toContain("independentReview nahi");
       expect(fs.existsSync(path.join(tmp, "locks", "_push-turn.json"))).toBe(false);
     } finally { fs.rmSync(tmp, { recursive: true, force: true }); }

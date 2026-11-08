@@ -35,7 +35,7 @@
  * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 5 = push guard test failed
  * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = maxWorkersAt() (4 by day, 6 by night) already
  * running — R-1973: cards in ci-wait / ci-red (pushed, waiting on CI) do not count, but keep their files.
- * Either way: stop, do not work around it. Exit 11 (R-2592) = money/p0 card without a SAFE independent review of this code.
+ * Either way: stop, do not work around it. Exit 13 (R-2592) = money/p0 card without a SAFE independent review of this code.
  *
  * R-842 (11 Oct) — board v76 card contract, enforced here instead of by cleanup (400+ cards lacked fields).
  * The script cannot read the board (claude.ai artifact DB), so the caller saves the card first with
@@ -1150,16 +1150,20 @@ function enforceCard(card, stage, flags) {
 /**
  * R-2592 (8 Nov 2026) — independent review BEFORE push for money cards. R-2252 and R-2227 were
  * reviewed only after merging; the reviewer's BLOCK findings (over-billing at renewal, double credit)
- * then held a 47-card staging train. Now `push` refuses (exit 11) a card whose card file (the --card
+ * then held a 47-card staging train. Now `push` refuses (exit 13) a card whose card file (the --card
  * JSON) has category money/paisa or priority p0 unless `independentReview.verdict === "SAFE"` and
- * `independentReview.sha` is an ancestor-or-equal of the HEAD being pushed (checked BEFORE the push's
- * own rebase — a rebase rewrites the shas) and is not already on manager-pardeep (then it reviewed none
- * of this push's commits). Way in: the worker runs `wip <CARD>`, the coordinator starts the
+ * `independentReview.sha` carries the SAME code as the HEAD being pushed: the sha itself, or a commit
+ * whose change against manager-pardeep has the same `git patch-id --stable` (so the push's own rebase,
+ * a retry after a failed push, or squashing the WIP commits keep the review; one more commit of code
+ * does not — an early WIP review never covers later code, and a reviewed sha already merged has an
+ * empty change). Generated deploy-db/peeks files are left out of the comparison (push regenerates
+ * them). Way in: the worker runs `wip <CARD>` on its final commit, the coordinator starts the
  * independent-check skill on that sha, the checker writes {verdict, sha}, the worker re-saves the card
  * file and pushes. Escape hatch: `--no-review "<reason>"` — logged to the gate log (_ci-gate.log).
  */
 export const REVIEW_CATEGORIES = ["money", "paisa"];
-export const REVIEW_EXIT = 11;
+/** 11 is cleanup's "node_modules is a real folder" refusal; 12 unused but kept free. */
+export const REVIEW_EXIT = 13;
 
 /** Does this card need an independent SAFE review before push? category money/paisa or priority p0. */
 export function needsIndependentReview(card) {
@@ -1182,18 +1186,20 @@ export function parseReviewFlags(args) {
 }
 
 /**
- * The review gate inside `push`, pure: { ok, message, logged? }. `isAncestor(a, b)` = a is b or an
- * ancestor of b (git merge-base --is-ancestor); `head` = the commit being pushed (before the rebase);
- * `base` = anutech/manager-pardeep; `log(line)` records a --no-review pass.
+ * The review gate inside `push`, pure: { ok, message, logged? }. `sameCode(sha, head)` = the reviewed
+ * sha carries exactly the change being pushed (see above); `head` = the commit being pushed;
+ * `cardUnreadable` = a --card file was given but could not be read (fail closed); `log(line)` records
+ * a --no-review pass.
  */
-export function checkReviewGate(cardId, card, { head, base, isAncestor, noReview = null, log = () => {}, now = () => new Date().toISOString() } = {}) {
+export function checkReviewGate(cardId, card, { head, sameCode, noReview = null, cardUnreadable = false, log = () => {}, now = () => new Date().toISOString() } = {}) {
   const id = String(cardId).toUpperCase();
+  if (cardUnreadable) return { ok: false, message: `✗ ${id}: card file padh nahi paaya — paise/p0 review gate bina card ke nahi chalta. Card dobara save karo.` };
   if (!needsIndependentReview(card)) return { ok: true, message: `(${id}: paise/p0 card nahi — independent review gate laagu nahi)` };
   const why = `${id} paise/p0 card hai (category ${card?.category ?? "-"}, ${card?.priority ?? "-"})`;
   if (noReview != null) {
     const reason = String(noReview).trim();
     if (!reason) return { ok: false, message: `✗ ${id}: --no-review ke saath wajah do: --no-review "<kyun bina review push>" (gate log me likhi jaati hai).` };
-    const line = JSON.stringify({ at: now(), card: id, how: "--no-review", reason, head: head ?? null });
+    const line = JSON.stringify({ at: now(), card: id, how: "--no-review", reason, headBeforePush: head ?? null });
     try { log(line); } catch {}
     return { ok: true, logged: line, message: `⚠ ${why} — BINA independent review push (--no-review: "${reason}"), gate log me likha. Card ke liveLog me bhi likho.` };
   }
@@ -1205,22 +1211,41 @@ export function checkReviewGate(cardId, card, { head, base, isAncestor, noReview
   }
   const sha = String(rev.sha ?? "").trim();
   if (!sha) return { ok: false, message: `✗ ${why} — independentReview SAFE hai par sha nahi likha; kaunsa code dekha pata nahi.` + how };
-  if (!head || !isAncestor(sha, head)) {
-    return { ok: false, message: `✗ ${why} — review ${sha.slice(0, 10)} par hua, par push ho raha code (${String(head ?? "?").slice(0, 10)}) us par nahi bana (review ke baad rebase/badla, ya sha fetch nahi hua: git fetch anutech). Naye sha ka review chahiye.` + how };
+  if (!head || !sameCode(sha, head)) {
+    return { ok: false, message: `✗ ${why} — review ${sha.slice(0, 10)} par hua, par push ho raha code (${String(head ?? "?").slice(0, 10)}) wahi nahi hai (review ke baad naya code, ya review wala code pehle se manager-pardeep par, ya sha fetch nahi hua: git fetch anutech wip/${id.toLowerCase()}). Is HEAD ka review chahiye.` + how };
   }
-  if (base && isAncestor(sha, base)) {
-    return { ok: false, message: `✗ ${why} — review wala sha ${sha.slice(0, 10)} pehle se manager-pardeep par hai, is push ke naye commit kisi ne nahi dekhe. Naye sha ka review chahiye.` + how };
-  }
-  return { ok: true, message: `✓ ${id}: independent review SAFE (${sha.slice(0, 10)} — push ka code isi par bana).` };
+  return { ok: true, message: `✓ ${id}: independent review SAFE (${sha.slice(0, 10)} — push me wahi code hai).` };
+}
+
+/** Repo-root pathspecs for the reviewed change: everything except the files push regenerates (R-2105). */
+const REVIEW_PATHSPEC = [":(top)", ":(top,exclude,glob)production/supabase/cloudsql/*/deploy-db-*.sh", ":(top,exclude)production/src/server/migrations-health/peeks.generated.ts"];
+
+/** patch-id of `rev`'s change against `base` (from their merge-base), or null (no change / unknown sha). */
+export function changePatchId(rev, base, git) {
+  try {
+    const mb = git(["merge-base", base, rev]).trim();
+    const diff = git(["diff", "--no-color", "--no-ext-diff", mb, rev, "--", ...REVIEW_PATHSPEC]);
+    if (!diff.trim()) return null;
+    return git(["patch-id", "--stable"], diff).trim().split(/\s+/)[0] || null;
+  } catch { return null; }
 }
 
 function enforceReview(card, cardPath, noReview) {
-  let c = null;
-  if (cardPath) { try { c = cardFromJson(JSON.parse(fs.readFileSync(cardPath, "utf8"))); } catch {} }
-  const isAncestor = (a, b) => { try { execFileSync("git", ["merge-base", "--is-ancestor", a, b], { stdio: "ignore" }); return true; } catch { return false; } };
+  let c = null; let cardUnreadable = false;
+  if (cardPath) { try { c = cardFromJson(JSON.parse(fs.readFileSync(cardPath, "utf8"))); } catch { cardUnreadable = true; } }
+  const git = (a, input) => execFileSync("git", a, { encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"], maxBuffer: 256 * 1024 * 1024 });
   let head = null;
-  try { head = execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim(); } catch {}
-  const r = checkReviewGate(card, c, { head, base: "anutech/manager-pardeep", isAncestor, noReview, log: appendCiLog });
+  try { head = git(["rev-parse", "HEAD"]).trim(); } catch {}
+  const base = "anutech/manager-pardeep";
+  const sameCode = (sha, h) => {
+    try { git(["fetch", "-q", "anutech"]); } catch {} // a stale base would compare against the wrong fork point
+    let full = null; try { full = git(["rev-parse", "--verify", "-q", `${sha}^{commit}`]).trim(); } catch {}
+    if (!full) return false;
+    if (full === h) return true;
+    const a = changePatchId(full, base, git);
+    return a != null && a === changePatchId(h, base, git);
+  };
+  const r = checkReviewGate(card, c, { head, sameCode, noReview, cardUnreadable, log: appendCiLog });
   if (!r.ok) { console.error(r.message); process.exit(REVIEW_EXIT); }
   console.log(r.message);
 }

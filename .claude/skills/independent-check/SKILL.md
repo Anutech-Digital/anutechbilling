@@ -60,7 +60,8 @@ The owner presses "Theek hai".
       and the fix steps.
 - [ ] Review → `independentReview` {at, by, verdict: "SAFE"|"BLOCK", sha (the full sha you read),
       findings, fixCards}. `worker-lock push` lets a money/p0 card through only with verdict exactly
-      "SAFE" on that sha (or an ancestor of what is pushed) — R-2592; never write SAFE for a sha you did
+      "SAFE" on that sha, or a commit with the same change after a rebase/squash (exit 13 otherwise) —
+      R-2592; any code added after your review needs a new review. Never write SAFE for a sha you did
       not read.
 - [ ] Before push (wip sha): BLOCK → findings go to the worker (same card, fix + re-review); no fix
       card needed. After push: each real finding becomes a fix card (`fixesFor: <reviewed card>`, NOT
