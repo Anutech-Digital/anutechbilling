@@ -120,3 +120,31 @@ describe("Correct subscription — the renewal date follows the start date", () 
     expect(document.body.textContent).toContain("keeping the term 12 months long");
   });
 });
+
+/* R-2613 (rule N5): moving the renewal date EARLIER moves a scheduled end-of-term seat cut with it
+   (the database trigger subscriptions_r2613_seat_cut_redate) — the owner is told before saving. */
+describe("R-2613 renewal date moved earlier — seat cut note", () => {
+  const note = () => document.querySelector("[data-testid='renewal-earlier-seat-cut-note']")?.textContent ?? null;
+
+  it("no note while the date is unchanged or moved later", () => {
+    const { renew } = open(sub({ start_date: "2026-01-10", renewal_date: "2099-01-10" }));
+    expect(note()).toBeNull();
+    fireEvent.change(renew, { target: { value: "2099-02-10" } });
+    expect(note()).toBeNull();
+  });
+
+  it("earlier but still ahead → the cut moves to the new date", () => {
+    const { renew } = open(sub({ start_date: "2026-01-10", renewal_date: "2099-01-10" }));
+    fireEvent.change(renew, { target: { value: "2098-12-01" } });
+    expect(note()).toContain("moves to");
+    expect(note()).toContain("At end of term");
+  });
+
+  it("moved into the past or cleared → the cut is removed", () => {
+    const { renew } = open(sub({ start_date: "2026-01-10", renewal_date: "2099-01-10" }));
+    fireEvent.change(renew, { target: { value: "2020-01-01" } });
+    expect(note()).toContain("is removed when you save");
+    fireEvent.change(renew, { target: { value: "" } });
+    expect(note()).toContain("is removed when you save");
+  });
+});
