@@ -512,6 +512,8 @@ export default function ExpensesPage() {
           {canImportFy && (
             <Button variant="outline" icon="download" onClick={() => setFyOpen(true)}>FY 2025-26 from Zoho</Button>
           )}
+          {/* R-2602: Amazon Business "Reconciliation by shipment level" CSV → one draft expense per order. */}
+          <Button variant="outline" icon="upload" onClick={() => setAmazonOpen(true)}>Import Amazon report</Button>
           <Button variant="primary" icon="plus" onClick={() => setAddOpen(true)}>
             Add Expense
           </Button>
