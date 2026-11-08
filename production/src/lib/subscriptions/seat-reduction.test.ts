@@ -3,7 +3,7 @@
  * Owner's path: Manage seats → Reduce → 2 of 10 seats → "credit ₹x (+GST)" → Now.
  */
 import { describe, it, expect } from "vitest";
-import { seatReductionValue, seatReductionPreview, type SeatReductionSub, type SeatReductionValueOk } from "./seat-reduction";
+import { seatReductionValue, seatReductionPreview, SEAT_CUT_END_OF_TERM_ENABLED, type SeatReductionSub, type SeatReductionValueOk } from "./seat-reduction";
 import { seatIncreaseCharge } from "./seat-increase-charge";
 
 /* 10 seats × ₹1,800/seat/year = mrr ₹1,500, yearly, term 1 Apr 2026 → renews 1 Apr 2027. */
@@ -97,10 +97,17 @@ describe("seatReductionPreview (R-2252 + R-2255 split)", () => {
     expect(p.split.lines.at(-1)?.kind).toBe("not-given");
   });
 
-  it("no tax invoice for the part yet: Now is blocked with the way forward (end of term)", () => {
+  it("no tax invoice for the part yet: Now is blocked with the way forward (R-2584: never points at the hidden end-of-term choice)", () => {
     const p = seatReductionPreview(v, null);
     expect(p.canReduceNow).toBe(false);
-    expect(p.blockedReason).toMatch(/end of term/i);
+    expect(p.blockedReason).toMatch(/after the part is invoiced/i);
+    expect(p.blockedReason).not.toMatch(/end of term/i);
   });
 
+});
+
+describe("R-2584 — end-of-term cut stays hidden until renewal applies it (R-2583)", () => {
+  it("the end-of-term choice is OFF: a scheduled cut is never applied at renewal yet, so it would over-bill", () => {
+    expect(SEAT_CUT_END_OF_TERM_ENABLED).toBe(false);
+  });
 });

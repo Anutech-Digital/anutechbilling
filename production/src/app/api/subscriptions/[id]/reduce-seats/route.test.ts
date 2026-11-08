@@ -79,10 +79,11 @@ describe("POST (R-2252)", () => {
     expect(res.status).toBe(200);
     expect(state.rpcArgs).toMatchObject({ p_seats_removed: 2, p_timing: "now", p_unused_gross: 1676, p_new_mrr: 1200, p_tenant_id: "t-1", p_actor: "u-1", p_seats_before: 10 });
   });
-  it("END OF TERM moves no money", async () => {
+  it("END OF TERM is refused while it is switched off (R-2584: renewal does not apply it yet — R-2583)", async () => {
     const res = await post({ seats_removed: 3, timing: "end_of_term", idempotency_key: "key-12345678" });
-    expect(res.status).toBe(200);
-    expect(state.rpcArgs).toMatchObject({ p_timing: "end_of_term", p_unused_gross: 0, p_new_mrr: 0 });
+    expect(res.status).toBe(400);
+    expect((await res.json()).code).toBe("end_of_term_off");
+    expect(state.rpcArgs).toBeNull();
   });
   it("NOW with no tax invoice for the part is refused before the database", async () => {
     state.invoice = null;
@@ -91,14 +92,13 @@ describe("POST (R-2252)", () => {
     expect((await res.json()).code).toBe("no_invoice");
     expect(state.rpcArgs).toBeNull();
   });
-  it("Microsoft NCE after the 7-day window: NOW refused, end of term allowed", async () => {
+  it("Microsoft NCE after the 7-day window: NOW refused", async () => {
     state.sub = { ...state.sub, vendor: "microsoft" };
     expect((await post({ seats_removed: 2, timing: "now", idempotency_key: "key-12345678" })).status).toBe(409);
     expect(state.rpcArgs).toBeNull();
-    expect((await post({ seats_removed: 2, timing: "end_of_term", idempotency_key: "key-12345678" })).status).toBe(200);
   });
   it("removing every seat is refused", async () => {
-    const res = await post({ seats_removed: 10, timing: "end_of_term", idempotency_key: "key-12345678" });
+    const res = await post({ seats_removed: 10, timing: "now", idempotency_key: "key-12345678" });
     expect(res.status).toBe(400);
     expect(state.rpcArgs).toBeNull();
   });
