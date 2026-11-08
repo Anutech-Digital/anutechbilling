@@ -58,6 +58,17 @@ export function appUrl(): string {
   return DEV_FALLBACK;
 }
 
+/**
+ * R-2600 — the redirect for an emailed auth link built in the BROWSER (GoTrue
+ * resetPasswordForEmail `redirectTo`). Always the app URL, never `window.location.origin`:
+ * the page's own host is whatever the visitor (or an attacker's link) opened it on — the R-723
+ * browser check got `http://[::1]:3001` in the reset mail. Works on the client because
+ * NEXT_PUBLIC_APP_URL is inlined at build time.
+ */
+export function authRedirectUrl(path: string): string {
+  return `${appUrl()}${path.startsWith("/") ? path : `/${path}`}`;
+}
+
 /** Normalise a raw Host / X-Forwarded-Host value: first entry, trimmed, lower-case. */
 export function normalizeHost(raw: string | null | undefined): string | null {
   const host = (raw ?? "").split(",")[0].trim().toLowerCase();
