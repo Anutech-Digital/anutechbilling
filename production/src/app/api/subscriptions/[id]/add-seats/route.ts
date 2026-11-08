@@ -79,7 +79,7 @@ const UNIQUE_VIOLATION = "23505";
  * so the claim is kept as `failed` and a replay reports the half-done state instead of
  * raising a second quote on top of the first.
  */
-const WROTE_NOTHING = new Set(["invalid_seats", "invalid_rate", "invalid_effective_date", "no_renewal_date", "term_ended", "no_doc_number", "insert_failed"]);
+const WROTE_NOTHING = new Set(["invalid_seats", "invalid_rate", "invalid_effective_date", "no_renewal_date", "term_ended", "no_doc_number", "insert_failed", "plan_change_open"]);
 
 export async function POST(req: Request, props: { params: Promise<{ id: string }> }) {
   const params = await props.params;
@@ -247,7 +247,8 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
         })
         .eq("id", claim.id);
     }
-    const status = result.code === "term_ended" ? 409 : 400;
+    /* R-2605: plan_change_open — an open plan-change quote freezes seats (same 409 code as Reduce seats). */
+    const status = result.code === "term_ended" || result.code === "plan_change_open" ? 409 : 400;
     return NextResponse.json({ error: result.message, code: result.code }, { status });
   }
 

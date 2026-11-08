@@ -13,10 +13,13 @@
  * R-2584 hid "At end of term" (SEAT_CUT_END_OF_TERM_ENABLED); R-2608 shows it again — the renewal
  * quote bills the cut (R-2583). It cannot be saved (note shown, button off) on a subscription billed
  * in parts or with a renewal / extension quote already made (GET endOfTermBlockedReason).
+ * R-2605: an open plan-change quote (GET planChangeBlockedReason) is named with a link BEFORE
+ * Confirm, and the button stays off — no cut is saved while it is open (R-2589).
  */
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { toastError } from "@/lib/errors/toast-error";
@@ -40,6 +43,9 @@ interface PreviewResponse {
   scheduled: { seats_before: number; seats_after: number; effective_date: string } | null;
   /** R-2608: why "At end of term" cannot be saved here, or null. */
   endOfTermBlockedReason?: string | null;
+  /** R-2589 / R-2605: an open plan-change quote blocks any seat cut — shown before Confirm. */
+  planChangeQuoteId?: string | null;
+  planChangeBlockedReason?: string | null;
 }
 
 type Timing = "now" | "end_of_term";
@@ -111,7 +117,9 @@ export default function ReduceSeatsPanel({ sub, onCancel, onDone }: Props) {
   );
   /* R-2608: billed in parts / a renewal quote already made → the end-of-term cut cannot be saved. */
   const eotBlocked = timing === "end_of_term" ? data?.endOfTermBlockedReason ?? null : null;
-  const disabled = submitting || seatsRemoved < 1 || !data || Boolean(tooMany) || Boolean(data?.scheduled) || nowBlocked || Boolean(eotBlocked);
+  /* R-2605: an open plan-change quote → neither timing can be saved (the POST answers 409 plan_change_open). */
+  const planChangeBlocked = data?.planChangeBlockedReason ?? null;
+  const disabled = submitting || seatsRemoved < 1 || !data || Boolean(tooMany) || Boolean(data?.scheduled) || nowBlocked || Boolean(eotBlocked) || Boolean(planChangeBlocked);
 
   const onSubmit = async () => {
     if (!keyRef.current) keyRef.current = newIdempotencyKey();
@@ -233,6 +241,19 @@ export default function ReduceSeatsPanel({ sub, onCancel, onDone }: Props) {
           <p className="text-xs text-ink-3">Working out the credit…</p>
         ) : null}
 
+        {planChangeBlocked && (
+          <p role="status" className="rounded-md border border-amber/30 bg-amber/10 p-3 text-xs text-amber-ink" data-testid="reduce-seats-plan-change-blocked">
+            {planChangeBlocked}
+            {data?.planChangeQuoteId && (
+              <>
+                {" "}
+                <Link href={`/quotes/${encodeURIComponent(data.planChangeQuoteId)}` as never} className="font-medium underline hover:no-underline">
+                  Open quote {data.planChangeQuoteId}
+                </Link>
+              </>
+            )}
+          </p>
+        )}
         {timing === "now" && preview && !preview.canReduceNow && (
           <p role="status" className="rounded-md border border-amber/30 bg-amber/10 p-3 text-xs text-amber-ink">{preview.blockedReason}</p>
         )}

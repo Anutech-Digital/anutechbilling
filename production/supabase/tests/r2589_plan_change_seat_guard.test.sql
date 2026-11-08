@@ -144,7 +144,11 @@ begin
   end if;
 
   -- B. the subscription changed after the draft (here: a seat cut made another way, 10 → 7).
+  --    R-2605 now refuses that change while the quote is linked, so unlink → change → link again
+  --    (a change made before the quote was linked).
+  update public.subscriptions set renewal_quote_id = null where id = v_sub_b;
   update public.subscriptions set seats = 7, mrr = 1050 where id = v_sub_b;
+  update public.subscriptions set renewal_quote_id = 'Q-R2589-PC-B' where id = v_sub_b;
   v_msg := null;
   begin
     perform public.record_payment('Q-R2589-PC-B', 11800, 'bank_transfer', 'r2589-pc-b');
