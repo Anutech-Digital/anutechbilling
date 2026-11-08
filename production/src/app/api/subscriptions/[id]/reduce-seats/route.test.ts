@@ -10,6 +10,7 @@ const state = vi.hoisted(() => ({
   invoice: null as Record<string, unknown> | null,
   scheduled: null as Record<string, unknown> | null,
   planChangeQuote: null as string | null,
+  cutQuote: null as { id: string; seats: number } | null,
   rpcArgs: null as Record<string, unknown> | null,
   rpcResult: { data: { status: "done" } as unknown, error: null as { code?: string; message: string } | null },
 }));
@@ -23,6 +24,7 @@ vi.mock("./load", () => ({
   loadPartInvoiceMoney: async () => state.invoice,
   loadScheduledReduction: async () => state.scheduled,
   loadOpenPlanChangeQuote: async () => state.planChangeQuote,
+  loadCutRenewalQuote: async () => state.cutQuote,
 }));
 vi.mock("@/lib/supabase/server", () => {
   const userClient = {
@@ -51,6 +53,7 @@ beforeEach(() => {
   state.invoice = PAID;
   state.scheduled = null;
   state.planChangeQuote = null;
+  state.cutQuote = null;
   state.rpcArgs = null;
   state.rpcResult = { data: { status: "done" }, error: null };
 });
@@ -125,6 +128,15 @@ describe("POST (R-2252)", () => {
     const res = await DELETE(new Request("http://x/api/subscriptions/s-1/reduce-seats", { method: "DELETE" }), params);
     expect(res.status).toBe(200);
     expect(state.rpcArgs).toEqual({ p_tenant_id: "t-1", p_subscription_id: "s-1" });
+  });
+  it("R-2583: DELETE refused while the renewal quote was already made at the cut seats — the message names it", async () => {
+    state.cutQuote = { id: "QT-2026-0099", seats: 7 };
+    const res = await DELETE(new Request("http://x/api/subscriptions/s-1/reduce-seats", { method: "DELETE" }), params);
+    expect(res.status).toBe(409);
+    const j = await res.json();
+    expect(j.code).toBe("renewal_quote_has_cut");
+    expect(j.error).toBe("Renewal quote QT-2026-0099 is already made for 7 seats with this cut. Delete that quote first (it is made again at the current seats), then remove the scheduled cut.");
+    expect(state.rpcArgs).toBeNull();
   });
   it("R-2589: refused while a plan-change quote is open — the message names the quote, nothing booked", async () => {
     state.planChangeQuote = "QT-2026-0042";
