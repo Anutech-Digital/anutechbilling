@@ -28,13 +28,33 @@ import { splitChangeCredit, type ChangeCreditSplit } from "./change-credit";
 export type SeatReductionTiming = "now" | "end_of_term";
 
 /**
- * R-2584 — "At end of term" is OFF. It only saves a scheduled row: the renewal quote, Renewals and
- * the renewal cron never apply it, so the renewal would still bill the old seats (over-billing).
- * R-2583 turns this on in the same change that makes renewal apply the cut. While off, Reduce
- * seats offers only "Now, with credit" and POST refuses timing "end_of_term"; a cut that is
- * already scheduled still shows, with Remove.
+ * R-2584 hid "At end of term": it only saved a scheduled row and the renewal still billed the old
+ * seats. R-2608 turns it back ON now that it is safe end to end:
+ *   - R-2583: the renewal quote (cron / Generate / Send now) is made at the cut's seats;
+ *   - R-2608: paying that quote marks the row 'applied' (trigger), so it no longer blocks new cuts;
+ *     scheduling is refused while a renewal / extension quote is already linked (it bills today's
+ *     seats) and on a subscription billed in parts (its next parts do not read the cut); Extend
+ *     term is refused while a cut is scheduled; Remove is refused in SQL once the renewal quote
+ *     carries the cut. Set false again only together with POST refusing end_of_term (route).
  */
-export const SEAT_CUT_END_OF_TERM_ENABLED = false;
+export const SEAT_CUT_END_OF_TERM_ENABLED = true;
+
+/**
+ * R-2608 — why "At end of term" cannot be saved on this subscription, or null. The SAME words as
+ * reduce_subscription_seats (migration 20261108111500), which refuses the same cases under a row lock.
+ */
+export function endOfTermBlockedReason(
+  sub: { billing_cycle: string | null; renewal_quote_id: string | null; seats: number },
+  linkedQuoteSeats: number | null,
+): string | null {
+  if (sub.billing_cycle === "monthly" || sub.billing_cycle === "quarterly" || sub.billing_cycle === "half_yearly") {
+    return "This subscription is billed in parts — a seat cut at the end of the term is not applied to its parts yet. Reduce the seats now, with credit.";
+  }
+  if (sub.renewal_quote_id) {
+    return `Renewal quote ${sub.renewal_quote_id} is already made for ${linkedQuoteSeats ?? sub.seats} seats. Delete that quote first, then schedule the cut — the renewal quote is made again with the cut.`;
+  }
+  return null;
+}
 
 export interface SeatReductionSub extends SeatWindowSub {
   seats: number;
@@ -160,7 +180,12 @@ export interface SeatReductionPreview {
  * R-2255's split on the part's invoice (rupees in, paise inside). The credit note may never take
  * more than the invoice still has (creditable) — the server caps it the same way.
  */
-export function seatReductionPreview(value: SeatReductionValueOk, invoice: ReductionInvoiceMoney | null): SeatReductionPreview {
+export function seatReductionPreview(
+  value: SeatReductionValueOk,
+  invoice: ReductionInvoiceMoney | null,
+  /** R-2608: false when "At end of term" cannot be saved here (billed in parts, quote linked) — the no-invoice text then does not point at it. */
+  endOfTermOffered: boolean = SEAT_CUT_END_OF_TERM_ENABLED,
+): SeatReductionPreview {
   const unused = invoice ? Math.min(value.unusedPaise, rupeesToPaise(Math.max(0, invoice.creditable))) : value.unusedPaise;
   const split = splitChangeCredit({
     unusedPaise: unused,
@@ -191,7 +216,7 @@ export function seatReductionPreview(value: SeatReductionValueOk, invoice: Reduc
     split: fullSplit,
     canReduceNow: !noInvoice && !writtenOff,
     blockedReason: noInvoice
-      ? SEAT_CUT_END_OF_TERM_ENABLED
+      ? endOfTermOffered
         ? "This part has no tax invoice yet, so there is no invoice to credit. Choose “At end of term”, or reduce the seats after the part is invoiced."
         : "This part has no tax invoice yet, so there is no invoice to credit. Reduce the seats after the part is invoiced."
       : writtenOff
