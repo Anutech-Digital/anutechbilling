@@ -22,7 +22,7 @@ that is the manager's deploy step (docs/LIVE-OPERATIONS.md).
 
 | Script | What it does |
 |---|---|
-| `setup-cloud-scheduler.sh` | Creates/updates the Cloud Scheduler job for every cron route (crons live here, not in vercel.json). |
+| `setup-cloud-scheduler.sh` | Creates/updates the Cloud Scheduler job for every cron route (crons live here, not in vercel.json). `--env live` (default) or `--env staging` (only `resellersos-staging-*` jobs on the staging URL, default just zoho-fy-read; R-2616); `--dry-run` prints the plan with no gcloud call. |
 | `cron-preflight.sh` | Preflight checks, then runs setup-cloud-scheduler.sh. |
 | `rotate-cron-secret.sh` | Rotates CRON_SECRET on the Cloud Run service and every Scheduler job together. |
 | `setup-uptime-checks.sh` | Cloud Monitoring uptime check + alerts. |
