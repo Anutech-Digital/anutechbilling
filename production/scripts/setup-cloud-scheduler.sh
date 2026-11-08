@@ -56,7 +56,8 @@ set -euo pipefail
 #   bash scripts/setup-cloud-scheduler.sh --env staging --dry-run
 #   bash scripts/setup-cloud-scheduler.sh --env staging            # coordinator, gcloud login
 ENV_NAME="${SCHEDULER_ENV:-live}"
-DRY_RUN="${DRY_RUN:-0}"
+case "${DRY_RUN:-0}" in 1|true|TRUE|yes|YES) DRY_RUN=1 ;; 0|false|FALSE|no|NO|"") DRY_RUN=0 ;;
+  *) echo "DRY_RUN must be 1 or 0 (got '${DRY_RUN}')." >&2; exit 64 ;; esac
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --env)
@@ -99,10 +100,6 @@ case "$ENV_NAME" in
     fi
     SERVICE_NAME="$STAGING_SERVICE"
     SERVICE_URL="${SERVICE_URL:-$STAGING_URL_DEFAULT}"
-    if [[ "$SERVICE_URL" != https://resellersos-staging-* ]]; then
-      echo "--env staging refuses SERVICE_URL=$SERVICE_URL (must be the resellersos-staging run.app URL)." >&2
-      exit 65
-    fi
     JOB_PREFIX="$STAGING_PREFIX"
     ONLY="${ONLY:-zoho-fy-read}"
     ;;
@@ -121,6 +118,18 @@ if [[ -z "$SERVICE_URL" ]]; then
   echo "Could not resolve the Cloud Run URL for $SERVICE_NAME in $REGION — set SERVICE_URL explicitly." >&2
   exit 1
 fi
+# One URL-vs-environment check for both modes: staging jobs only on the staging run.app host,
+# live jobs never on it (a live run with SERVICE_URL=<staging> would re-point every live job).
+STAGING_URL_RE='^https://resellersos-staging-[a-z0-9-]+\.a\.run\.app/?$'
+if [[ "$ENV_NAME" == "staging" && ! "$SERVICE_URL" =~ $STAGING_URL_RE ]]; then
+  echo "--env staging refuses SERVICE_URL=$SERVICE_URL (must be the resellersos-staging run.app URL)." >&2
+  exit 65
+fi
+if [[ "$ENV_NAME" == "live" && "$SERVICE_URL" == *resellersos-staging* ]]; then
+  echo "--env live refuses SERVICE_URL=$SERVICE_URL (a staging URL). Use --env staging." >&2
+  exit 65
+fi
+SERVICE_URL="${SERVICE_URL%/}"
 if [[ "$DRY_RUN" == "1" ]]; then
   echo "Environment: $ENV_NAME  (DRY RUN — nothing is created, no gcloud call)"
 else
@@ -139,17 +148,28 @@ elif [[ "$ENV_NAME" == "staging" ]]; then
   # would 401 (or prove the two environments share a secret).
   CRON_SECRET="${STAGING_CRON_SECRET:-}"
   if [[ -z "$CRON_SECRET" ]]; then
-    # A literal env value on the staging service, else the Secret Manager secret it references.
-    # Neither is ever printed.
-    CRON_SECRET="$(gcloud run services describe "$STAGING_SERVICE" --region="$REGION" \
-      --format='value(spec.template.spec.containers[0].env.filter("name:CRON_SECRET").extract("value"))' \
-      2>/dev/null | tr -d "\r[]\"'" | head -1 || true)"
+    # An expired session makes gcloud wait for a browser reauth that never comes (cron-preflight.sh
+    # step 2) — fail fast with the real reason instead.
+    if ! CLOUDSDK_CORE_DISABLE_PROMPTS=1 timeout 25 gcloud auth print-access-token >/dev/null 2>&1; then
+      echo "gcloud needs a fresh login (its session has expired). Run:  gcloud auth login" >&2
+      exit 2
+    fi
+    # A literal env value on the staging service, else the Secret Manager secret (and the version
+    # the service pins) it references. Neither is ever printed. gcloud wraps an extracted list
+    # value as ['…'] — only that outer formatting is stripped, never characters inside the value.
+    unwrap() { tr -d '\r' | head -1 | sed -e "s/^\[//" -e "s/\]$//" -e "s/^'\(.*\)'$/\1/" -e 's/^"\(.*\)"$/\1/'; }
+    svc_env() {
+      CLOUDSDK_CORE_DISABLE_PROMPTS=1 timeout 25 gcloud run services describe "$STAGING_SERVICE" --region="$REGION" \
+        --format="value(spec.template.spec.containers[0].env.filter(\"name:CRON_SECRET\").extract(\"$1\"))" \
+        2>/dev/null | unwrap || true
+    }
+    CRON_SECRET="$(svc_env value)"
     if [[ -z "$CRON_SECRET" ]]; then
-      STAGING_SECRET_NAME="$(gcloud run services describe "$STAGING_SERVICE" --region="$REGION" \
-        --format='value(spec.template.spec.containers[0].env.filter("name:CRON_SECRET").extract("valueFrom.secretKeyRef.name"))' \
-        2>/dev/null | tr -d "\r[]\"'" | head -1 || true)"
+      STAGING_SECRET_NAME="$(svc_env valueFrom.secretKeyRef.name)"
+      STAGING_SECRET_VERSION="$(svc_env valueFrom.secretKeyRef.key)"
       if [[ -n "$STAGING_SECRET_NAME" ]]; then
-        CRON_SECRET="$(gcloud secrets versions access latest --secret="$STAGING_SECRET_NAME" 2>/dev/null || true)"
+        CRON_SECRET="$(CLOUDSDK_CORE_DISABLE_PROMPTS=1 timeout 25 gcloud secrets versions access \
+          "${STAGING_SECRET_VERSION:-latest}" --secret="$STAGING_SECRET_NAME" 2>/dev/null || true)"
       fi
     fi
   fi
@@ -297,7 +317,12 @@ ONLY_SHORT=""
 if [[ -n "${ONLY:-}" && "${ONLY}" != "all" ]]; then
   IFS=',' read -r -a ONLY_LIST <<< "$ONLY"
   for o in "${ONLY_LIST[@]}"; do
-    o="${o// /}"; o="${o#"$STAGING_PREFIX"}"; o="${o#"$LIVE_PREFIX"}"
+    o="${o// /}"
+    if [[ "$ENV_NAME" == "live" && "$o" == "$STAGING_PREFIX"* ]]; then
+      echo "ONLY=$o is a staging job name — add --env staging (live mode would pick the LIVE job)." >&2
+      exit 65
+    fi
+    o="${o#"$STAGING_PREFIX"}"; o="${o#"$LIVE_PREFIX"}"
     [[ -n "$o" ]] && ONLY_SHORT="${ONLY_SHORT},${o}"
   done
   ONLY_SHORT="${ONLY_SHORT},"
@@ -315,15 +340,15 @@ for row in "${JOBS[@]}"; do
   fi
 
   NAME="${JOB_PREFIX}${SHORT}"
-  # Belt and braces: a staging run may only ever name a staging job and the staging URL.
-  if [[ "$ENV_NAME" == "staging" && ( "$NAME" != "$STAGING_PREFIX"* || "$SERVICE_URL" != https://resellersos-staging-* ) ]]; then
-    echo "Refusing $NAME → $SERVICE_URL: --env staging touches only ${STAGING_PREFIX}* on the staging URL." >&2
-    exit 65
-  fi
 
   if [[ "$DRY_RUN" == "1" ]]; then
+    if [[ "${UPDATE_EXISTING:-0}" == "1" ]]; then
+      WHEN="(UPDATE_EXISTING=1: an existing job is OVERWRITTEN with jobs update ... --update-headers)"
+    else
+      WHEN="(skipped if it exists)"
+    fi
     echo "==> plan:   $NAME  ($SCHEDULE $TZ_NAME)  ${SERVICE_URL}${PATH_}"
-    echo "            gcloud scheduler jobs create http $NAME --location=$REGION --schedule=\"$SCHEDULE\" --time-zone=$TZ_NAME --uri=${SERVICE_URL}${PATH_} --http-method=GET --headers=\"Authorization=Bearer <redacted>\" --attempt-deadline=540s   (skipped if it exists)"
+    echo "            gcloud scheduler jobs create http $NAME --location=$REGION --schedule=\"$SCHEDULE\" --time-zone=$TZ_NAME --uri=${SERVICE_URL}${PATH_} --http-method=GET --headers=\"Authorization=Bearer <redacted>\" --attempt-deadline=540s   $WHEN"
     continue
   fi
 
