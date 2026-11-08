@@ -39,7 +39,11 @@ import {
   cycleInvoicesPerYear, cycleUnitLabel, cycleScheduleLabel, cycleFromLegacyCommitment,
 } from "@/lib/quotes/billing";
 import { lineIsPerInvoice, perInvoiceDivisor } from "./invoice-divisor";
-import { quotePerPeriodFigures } from "@/lib/quotes/per-period-figures";
+import {
+  quotePerPeriodFigures, flexOneTimeFigures, FLEX_FIRST_INVOICE, FLEX_THEN_MONTHLY, FLEX_ONCE,
+} from "@/lib/quotes/per-period-figures";
+import { firstLineCommitment } from "@/lib/billing/instalments";
+import { lineIsSubscription } from "@/lib/quotes/optional-line";
 import { isRenderableLogo } from "./logo";
 import { quoteDocumentLabel } from "./quote-document-kind";
 import { PROFORMA_NOTICE, PROFORMA_TITLE, type QuoteTemplate, type ProformaBank } from "./quote-template";
@@ -491,7 +495,8 @@ export function QuotePDF(props: QuotePDFProps) {
 
   // Detect shared billing cycle to render "per invoice" totals if all lines agree
   // Billing frequency is a single quote-level value (0161); legacy fallback.
-  const firstCommitment = lineItems[0]?.commitment;
+  /* R-2580: the term is the first RECURRING line's (a domain typed before flex seats has none). */
+  const firstCommitment = (firstLineCommitment(lineItems) ?? undefined) as LineCommitment | undefined;
   const effectiveCycle: BillingCycle = billingCycle ?? cycleFromLegacyCommitment(firstCommitment);
   const billingN    = cycleInvoicesPerYear(effectiveCycle);
   const billingUnit = cycleUnitLabel(effectiveCycle);
@@ -559,7 +564,16 @@ export function QuotePDF(props: QuotePDFProps) {
     subtotal: dSubtotal, discount: dDiscount, taxable: dTaxable, tax: dTax, total: dTotal,
     taxRate: isExport ? 0 : taxRate, foreign: isForeign,
   });
-  const fmtPer = (v: number) => (perInvoice ? `${fmtC(v)}${billingUnit}` : fmtC(v));
+  /* R-2580: Monthly flex + a one-time line — the stored figures are MONTH 1 (seats + one-time),
+     later months bill the seats only. The totals then read as the first invoice, followed by
+     "Then each month" and the one-time part, never the month-1 total as "/mo". */
+  const flexOnce = perInvoice && !oneTime
+    ? flexOneTimeFigures({
+        lines: lineItems, discountPct, subtotal: dSubtotal, taxable: dTaxable, total: dTotal,
+        taxRate: isExport ? 0 : taxRate, foreign: isForeign,
+      })
+    : null;
+  const fmtPer = (v: number) => (perInvoice && !flexOnce ? `${fmtC(v)}${billingUnit}` : fmtC(v));
 
   return (
     <Document
@@ -690,6 +704,9 @@ export function QuotePDF(props: QuotePDFProps) {
               const unit        = toDisp(line.rate);            // per seat / year
               const grossAnnual = dRound(line.qty * unit);
               const netAnnual   = dRound(grossAnnual * (1 - lineDiscountPct / 100));
+              /* R-2580: on a flex sale a one-time line is charged once — no "/mo", no year. */
+              const chargedOnce = flexOnce !== null && !lineIsSubscription(line);
+              const fmtLine     = chargedOnce ? fmtC : fmtInv;
               /* R-495: list price, discount (₹ and %) and final rate — only when the line
                  carries a list price above its rate; never invented. */
               const breakdown   = linePriceBreakdown(line, toDisp);
@@ -713,7 +730,7 @@ export function QuotePDF(props: QuotePDFProps) {
                     </Text>
                     )}
                     {breakdown && (
-                      <Text style={s.lineMeta}>{linePriceBreakdownText(breakdown, fmtInv)}</Text>
+                      <Text style={s.lineMeta}>{linePriceBreakdownText(breakdown, fmtLine)}</Text>
                     )}
                     {lineDiscountPct > 0 && (
                       <Text style={s.lineMeta}>
@@ -728,9 +745,9 @@ export function QuotePDF(props: QuotePDFProps) {
                     )}
                   </View>
                   <Text style={s.tdQty}>{line.qty}</Text>
-                  <Text style={s.tdRate}>{fmtInv(unit)}</Text>
+                  <Text style={s.tdRate}>{fmtLine(unit)}</Text>
                   <View style={s.tdAmount}>
-                    <Text style={s.lineAmount}>{fmtInv(netAnnual)}</Text>
+                    <Text style={s.lineAmount}>{fmtLine(netAnnual)}</Text>
                     {perInvoice && (
                       /* On flex the stored figure IS one month, so "= X/yr" would print a
                          month's number under a year's label. Drop the projection; keep the
@@ -753,7 +770,7 @@ export function QuotePDF(props: QuotePDFProps) {
             <View style={s.totalsBox}>
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>
-                  {perInvoice ? "Subtotal (per invoice)" : "Subtotal"}
+                  {perInvoice && !flexOnce ? "Subtotal (per invoice)" : "Subtotal"}
                 </Text>
                 <Text style={s.totalValue}>{fmtPer(pp.subtotal)}</Text>
               </View>
@@ -796,7 +813,9 @@ export function QuotePDF(props: QuotePDFProps) {
               <View style={s.grandTotalDivider}>
                 <View style={s.totalRow}>
                   <Text style={s.grandLabel}>
-                    {perInvoice
+                    {flexOnce
+                      ? FLEX_FIRST_INVOICE
+                      : perInvoice
                       ? noYearlyCommitment ? "Per invoice" : `Per invoice (${billingN}/yr)`
                       : "Grand total"}
                   </Text>
@@ -804,6 +823,19 @@ export function QuotePDF(props: QuotePDFProps) {
                     {fmtPer(pp.gross)}
                   </Text>
                 </View>
+                {flexOnce && (
+                  /* R-2580: what every later month asks for, and the one-time part. */
+                  <>
+                    <View style={s.perInvoiceRow}>
+                      <Text>{FLEX_THEN_MONTHLY}</Text>
+                      <Text>{fmtC(flexOnce.monthly.gross)}{billingUnit}</Text>
+                    </View>
+                    <View style={s.perInvoiceRow}>
+                      <Text>{FLEX_ONCE}</Text>
+                      <Text>{fmtC(flexOnce.once.gross)}</Text>
+                    </View>
+                  </>
+                )}
                 {perInvoice && (
                   noYearlyCommitment ? (
                     /* ── A YEAR'S VALUE THE CUSTOMER NEVER PROMISED ──────────────────
