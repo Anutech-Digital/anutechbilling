@@ -5,7 +5,6 @@
  * the stores are memory. Names and numbers are made up.
  */
 import { describe, it, expect } from "vitest";
-import { ZohoApiError } from "../api";
 import { runBackgroundRead, LEASE_EXTRA_MS, RECONNECT_MESSAGE, STUCK_MS, type BgState, type BgStore, type ZohoAccess } from "./background-read";
 import type { ScanRun, ScanStore, ListedRow, ScanFacts } from "./scan";
 import { zohoReceiptFacts } from "../receipts-import/normalise";
