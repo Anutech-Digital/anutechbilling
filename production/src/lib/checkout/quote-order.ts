@@ -19,10 +19,11 @@ import { isQuoteAmountConsistent } from "@/lib/quotes/amounts";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { platformEnvRazorpayKeys } from "./platform-razorpay";
 import { liveKeyCheckoutRefusal } from "./live-guards";
+import { planChangePayRefusal } from "./plan-change-stale";
 
 /** The quote columns this needs — the pay route's select. */
 export const QUOTE_ORDER_COLUMNS =
-  "id, status, payment_status, expires_date, amount, currency, customer_name, tenant_id, public_token, invoice_id, billing_cycle, subtotal, discount_pct, tax_rate, created_date, line_items, superseded_by";
+  "id, status, payment_status, expires_date, amount, currency, customer_name, tenant_id, public_token, invoice_id, billing_cycle, subtotal, discount_pct, tax_rate, created_date, line_items, superseded_by, extension_months";
 
 export interface QuoteForOrder {
   id: string;
@@ -41,6 +42,8 @@ export interface QuoteForOrder {
   line_items: unknown;
   /** R-1569/R-1575: set when the quote was revised or combined into another. */
   superseded_by?: string | null;
+  /** R-2596: 0 on a plan-change quote (it buys no time) — with a `plan_change` line. */
+  extension_months?: number | null;
 }
 
 /**
@@ -131,6 +134,11 @@ export async function startQuotePayment(
   if (isQuoteExpired(quote.expires_date)) {
     return { status: 400, body: { error: "This quote has expired — ask the reseller for a fresh one." } };
   }
+  /* R-2596: a plan-change quote whose subscription changed since it was priced (seats cut or
+     added, ₹/month corrected, plan changed, no longer active, link lost) — record_payment would
+     refuse the money (R-2589 / R-2227). Refuse here, before the customer is charged. */
+  const planChangeRefusal = await planChangePayRefusal(admin, quote);
+  if (planChangeRefusal) return planChangeRefusal;
   // ── 2a. Refuse a quote whose own total disagrees with its own GST ──────────
   // Everything below charges from `quote.amount` and then invoices it. One production
   // quote stores ₹45,360 where its 18% rate says ₹53,525 (Q-2026-9776 — migration
