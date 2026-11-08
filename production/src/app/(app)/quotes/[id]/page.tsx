@@ -7,7 +7,7 @@ import * as React from "react";
 import { isAnnualTier } from "@/lib/quotes/commitment-rate";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { QuoteSendRefusedError, refusedFrom } from "@/lib/quotes/send-quote-email";
@@ -37,7 +37,8 @@ import { pagePaidToDate, paidToDateLine, PAID_TO_DATE_LABEL } from "@/lib/quotes
 import { instalmentStatus, instalmentHeadline } from "@/lib/quotes/instalment-status";
 import { InstalmentList } from "./instalment-list";
 import { SettleShortDialog } from "./settle-short-dialog";
-import { maySettleSmallShort, settleShortLabel } from "@/lib/quotes/settle-small-short";
+import { maySettleSmallShort, settleShortLabel, isRoundOffReceipt, type SettleShortPreview } from "@/lib/quotes/settle-small-short";
+import { queryKeys } from "@/lib/queries/keys";
 import { useNextPartRequest } from "./next-part-request";
 import { useQuotePartInvoices } from "./part-invoices";
 import { PaymentHistoryCard } from "./payment-history-card";
@@ -728,12 +729,24 @@ export default function QuoteDetailPage() {
      settle_quote_part_short). The refusal stays in the dialog so the owner reads what to do. */
   const [settleOpen, setSettleOpen] = React.useState(false);
   const [settleError, setSettleError] = React.useState<string | null>(null);
+  /* What the RPC would settle (amount + the real bank line), read when the dialog opens. */
+  const settlePreview = useQuery({
+    queryKey: ["settle-short", params.id],
+    enabled: settleOpen,
+    staleTime: 0,
+    queryFn: async (): Promise<SettleShortPreview | null> => {
+      const res = await fetch(`/api/quotes/${encodeURIComponent(params.id)}/settle-short`);
+      const json = (await res.json().catch(() => ({}))) as { error?: string; preview?: SettleShortPreview | null };
+      if (!res.ok) throw new Error(json.error ?? `Could not read the difference (${res.status})`);
+      return json.preview ?? null;
+    },
+  });
   const settleShort = useMutation({
-    mutationFn: async (reason: string | null) => {
+    mutationFn: async (input: { reason: string | null; expected: number }) => {
       const res = await fetch(`/api/quotes/${encodeURIComponent(params.id)}/settle-short`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason }),
+        body: JSON.stringify(input),
       });
       const json = (await res.json().catch(() => ({}))) as { error?: string; amount?: number };
       if (!res.ok) throw new Error(json.error ?? `Could not settle the difference (${res.status})`);
@@ -742,11 +755,10 @@ export default function QuoteDetailPage() {
     onMutate: () => setSettleError(null),
     onSuccess: (r) => {
       setSettleOpen(false);
-      void qc.invalidateQueries({ queryKey: ["payments"] });
-      void qc.invalidateQueries({ queryKey: ["quotes"] });
+      invalidateReceivables(qc);   // payments, quotes, invoices … (R-1634)
       void qc.invalidateQueries({ queryKey: ["quote-part-invoices"] });
-      invalidateReceivables(qc);
-      toast.success(`₹${Number(r.amount ?? 0).toLocaleString("en-IN")} settled as round-off — the part is fully received`);
+      void qc.invalidateQueries({ queryKey: queryKeys.bankTransactions() }); // the line now has a round-off
+      toast.success(`${rupee(Number(r.amount ?? 0))} settled as round-off — the part is fully received`);
     },
     onError: (e) => setSettleError(e instanceof Error ? e.message : "Could not settle the difference"),
   });
@@ -1070,7 +1082,8 @@ export default function QuoteDetailPage() {
   /* R-1726 (+R-1724): ONE orange button — the right next step for this state. Every button
      below takes its variant from this; see ./primary-action.ts for the table. */
   const closedQuote = isClosedForSending({ status: shownStatus, supersededBy: quote.superseded_by });
-  const receiptTarget = receivedPayments[receivedPayments.length - 1] ?? null;
+  /* R-2606: never the BANKCHG round-off receipt — the customer did not pay that ₹X. */
+  const receiptTarget = [...receivedPayments].reverse().find((p) => !isRoundOffReceipt(p)) ?? null;
   const primary = quotePrimaryAction({
     status: shownStatus,
     supersededBy: quote.superseded_by,
@@ -2629,13 +2642,13 @@ export default function QuoteDetailPage() {
         <SettleShortDialog
           open={settleOpen}
           onOpenChange={setSettleOpen}
-          amount={partStatus.smallShort.amount}
+          rowAmount={partStatus.smallShort.amount}
           partIndex={partStatus.smallShort.index}
           partCount={splitPlan.count}
-          bankLine={receiptTarget ? { amount: Number(receiptTarget.amount ?? 0), on: formatDate(receiptTarget.received_at) } : null}
+          preview={settlePreview.isSuccess && !settlePreview.isFetching ? settlePreview.data : undefined}
           pending={settleShort.isPending}
-          error={settleError}
-          onConfirm={(reason) => settleShort.mutate(reason)}
+          error={settleError ?? (settlePreview.error instanceof Error ? settlePreview.error.message : null)}
+          onConfirm={(reason, expected) => settleShort.mutate({ reason, expected })}
         />
       )}
 

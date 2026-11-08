@@ -156,11 +156,14 @@ test.describe("R-2606 — Settle ₹60 as round-off on a quote billed in parts",
       await page.setViewportSize({ width: 1280, height: 800 });
       await openAppPage(page, `/quotes/${QUOTE}`);
       await expect(page.getByText(/Part 1 of 4 received \(₹60 short\)/).first()).toBeVisible({ timeout: 60_000 });
-      await page.getByRole("button", { name: "Settle ₹60 as round-off" }).click();
+      /* the button waits for the signed-in role (owner / accountant) */
+      const settle = page.getByRole("button", { name: "Settle ₹60 as round-off" });
+      await expect(settle).toBeVisible({ timeout: 60_000 });
+      await settle.click();
       const dlg = page.getByRole("dialog");
       await expect(dlg).toContainText("Settle ₹60 as round-off?");
       await expect(dlg).toContainText("Bank Charges · Settlement short of receipt");
-      await expect(dlg).toContainText(/₹95,933 received on/);
+      await expect(dlg).toContainText(/₹95,933 credited on/, { timeout: 30_000 });
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
       await dlg.getByRole("button", { name: "Settle ₹60" }).click();
       await expect(page.getByText(/₹60 settled as round-off/).first()).toBeVisible({ timeout: 30_000 });
