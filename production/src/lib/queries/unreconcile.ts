@@ -214,7 +214,12 @@ const STATUS_LABEL: Record<string, string> = { unpaid: "Unpaid", partial: "Part 
 export function vendorUndoLegLine(leg: VendorUndoLeg): string {
   const doc = `${leg.doc_type === "vendor_bill" ? "Bill" : "Expense bill"} ${leg.doc_no ?? leg.doc_id}`;
   const tds = leg.tds_amount > 0 ? `; TDS ${rupee(leg.tds_amount)}${leg.tds_section ? ` (${tds26qSection(leg.tds_section)})` : ""} taken off` : "";
-  if (leg.kind === "advance") return `Advance of ${rupee(leg.cash)} to the vendor is removed`;
+  /* R-2588: an advance with TDS (R-1916) — name the gross and the TDS that leaves TDS payable / 26Q. */
+  if (leg.kind === "advance") {
+    return leg.tds_amount > 0
+      ? `Advance of ${rupee(leg.cash + leg.tds_amount)} to the vendor (${rupee(leg.cash)} paid + TDS ${rupee(leg.tds_amount)}) is removed${tds}`
+      : `Advance of ${rupee(leg.cash)} to the vendor is removed`;
+  }
   if (leg.kind === "bank_charge") return `Bank charge of ${rupee(leg.cash)} is removed`;
   if (leg.kind === "recorded_payment") return `${doc}: the payment recorded earlier comes back, waiting for its bank line`;
   const created = leg.kind === "new_bill" || leg.kind === "new_expense";

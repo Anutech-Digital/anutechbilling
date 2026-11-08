@@ -24,14 +24,17 @@ const rpc = (fn: string, args: Record<string, unknown>) => (createClient() as un
 export interface ApplyAdvanceResult {
   expense_id: string; bill_no: string | null; vendor_name: string;
   applied: number; still_due: number; settled: boolean; advance_left: number;
+  /** R-2588: TDS already deducted on the advance, credited on the bill (its own TDS went down by this). */
+  tds_credit?: number;
 }
 
 /** The toast sentence after Apply advance. */
 export function applyAdvanceWords(r: ApplyAdvanceResult): string {
   const bill = r.bill_no ? `bill ${r.bill_no}` : "the bill";
+  const tds = (r.tds_credit ?? 0) > 0 ? ` TDS ${rupee(r.tds_credit ?? 0)} was already deducted on the advance — not taken again on ${bill}.` : "";
   return r.settled
-    ? `${rupee(r.applied)} of ${r.vendor_name}'s advance applied — ${bill} is paid.${r.advance_left > 0 ? ` ${rupee(r.advance_left)} advance left.` : ""}`
-    : `${rupee(r.applied)} of ${r.vendor_name}'s advance applied — ${rupee(r.still_due)} still due on ${bill}.`;
+    ? `${rupee(r.applied)} of ${r.vendor_name}'s advance applied — ${bill} is paid.${tds}${r.advance_left > 0 ? ` ${rupee(r.advance_left)} advance left.` : ""}`
+    : `${rupee(r.applied)} of ${r.vendor_name}'s advance applied — ${rupee(r.still_due)} still due on ${bill}.${tds}`;
 }
 
 function useInvalidateMoney() {
@@ -55,6 +58,7 @@ export function useApplyVendorAdvance() {
       return {
         expense_id: String(r.expense_id ?? r.doc_id), bill_no: (r.bill_no as string | null) ?? null, vendor_name: String(r.vendor_name ?? ""),
         applied: Number(r.applied) || 0, still_due: Number(r.still_due) || 0, settled: Boolean(r.settled), advance_left: Number(r.advance_left) || 0,
+        tds_credit: Number(r.tds_credit) || 0,
       };
     },
     onSuccess: (r) => { invalidate(); toast.success(applyAdvanceWords(r)); },

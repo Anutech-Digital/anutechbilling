@@ -668,7 +668,7 @@ export function resultLines(r: VendorPayResult): ResultLine[] {
   if (r.new_bill) out.push(docLine(r.new_bill, r.vendor_name, true));
   if (r.advance) {
     const withTds = (r.advance.tds ?? 0) > 0 ? ` (${rupee(r.advance.cash ?? r.advance.amount - (r.advance.tds ?? 0))} paid + TDS ${rupee(r.advance.tds ?? 0)})` : "";
-    out.push({ text: `${rupee(r.advance.amount)} kept as an advance to ${r.vendor_name}${withTds} (${r.advance.category}) — adjust a later bill on Prepaid${(r.advance.tds ?? 0) > 0 ? " (record that bill without TDS — it was taken on this advance)" : ""}`, href: "/accounting/prepaid" });
+    out.push({ text: `${rupee(r.advance.amount)} kept as an advance to ${r.vendor_name}${withTds} (${r.advance.category}) — adjust a later bill on Prepaid${(r.advance.tds ?? 0) > 0 ? " (record the bill on Expenses and press Apply advance — this TDS is credited, not taken twice; on Book invoice leave TDS empty)" : ""}`, href: "/accounting/prepaid" });
   }
   if (r.bank_charge) out.push({ text: `Bank charge ${rupee(r.bank_charge.amount)} booked as an expense`, href: `/accounting/expenses?edit=${encodeURIComponent(r.bank_charge.expense_id)}` });
   if (r.tds_total > 0) out.push({ text: `TDS ${rupee(r.tds_total)} (${tds26qSection(r.tds_section)}) withheld — now in TDS payable and the 26Q list`, href: "/accounting/balance-sheet" });
