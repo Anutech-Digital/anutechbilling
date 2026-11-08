@@ -37,6 +37,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
 import { addSeatsErrorMessage, type AddSeatsOk } from "./add-seats-error";
 import { seatChargeWindow, seatChargePlan } from "@/lib/subscriptions/seat-charge-window";
+import { partFormula } from "@/lib/subscriptions/seat-part-rate";
 import { seatIncreaseQuote } from "@/lib/subscriptions/seat-increase-charge";
 import { istToday } from "@/lib/dates/ist";
 import { seatEffectiveBounds, checkSeatEffectiveDate } from "@/lib/subscriptions/seat-effective-date";
@@ -124,6 +125,10 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   const daysRemaining = window ? Math.max(0, window.remainingDays) : 0;
   const termDaysForPreview = window?.termDays ?? 365;
   const factor = termDaysForPreview > 0 ? daysRemaining / termDaysForPreview : 0;
+  /* R-2226: billed in parts → the seats are priced at the PART's own rate (the server passes the
+     same parts — applySeatIncrease), so a whole month costs one month's price. */
+  const parts = window?.parts ?? null;
+  const prevParts = prevPart?.parts ?? null;
 
   /* R-389 (F9): name the head the invoice will use — "IGST 18%" for an inter-state customer,
      "CGST 9% + SGST 9%" within the state — and zero-rate an export, the same rule the server
@@ -147,8 +152,8 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   const quoted           = seatIncreaseQuote({
     currentSeats: sub.seats, currentMrr: sub.mrr, additionalSeats, taxRatePct,
     annualPerSeatOverride: typedRate,
-    previous: prevPart ? { remainingDays: prevPart.remainingDays, termDays: prevPart.termDays } : null,
-    current: { remainingDays: daysRemaining, termDays: termDaysForPreview },
+    previous: prevPart ? { remainingDays: prevPart.remainingDays, termDays: prevPart.termDays, parts: prevParts } : null,
+    current: { remainingDays: daysRemaining, termDays: termDaysForPreview, parts },
   });
   const charge           = quoted.current;
   const annualPerSeat    = quoted.annualPerSeat;
@@ -156,6 +161,9 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   const gstAmt           = quoted.tax;
   const totalIncl        = quoted.total;
   const proRataPerSeat   = charge.perSeat;
+  /* R-2226: the formula the server charges, worked out once per render. */
+  const partLine         = parts ? partFormula(annualPerSeat, parts) : null;
+  const prevPartLine     = prevParts ? partFormula(annualPerSeat, prevParts) : null;
   const newSeats         = sub.seats + additionalSeats;
   const newMrr           = quoted.newMrr;
   /* R-2292: compare the rate this quote uses with the last GST invoice line for the item. */
@@ -332,14 +340,14 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
                   <div className="flex justify-between gap-3 mb-1 pt-2 border-t border-hairline">
                     <span className="text-ink-3">
                       Previous term, {formatDate(prevPart.from)} to {formatDate(prevPart.to)}
-                      <span className="block text-2xs">{prevPart.remainingDays} of {prevPart.termDays} days · {additionalSeats} × {rupee(quoted.previous.perSeat)}</span>
+                      <span className="block text-2xs">{prevPartLine ?? `${prevPart.remainingDays} of ${prevPart.termDays} days`} · {additionalSeats} × {rupee(quoted.previous.perSeat)}</span>
                     </span>
                     <span className="tabular-nums text-ink-2">{rupee(quoted.previous.subtotal)}</span>
                   </div>
                   <div className="flex justify-between gap-3 mb-1">
                     <span className="text-ink-3">
                       Current term, {formatDate(window.from)} to {formatDate(window.chargeTo)}
-                      <span className="block text-2xs">{daysRemaining} of {termDaysForPreview} days · {additionalSeats} × {rupee(proRataPerSeat)}</span>
+                      <span className="block text-2xs" data-testid="add-seats-current-formula">{partLine ?? `${daysRemaining} of ${termDaysForPreview} days`} · {additionalSeats} × {rupee(proRataPerSeat)}</span>
                     </span>
                     <span className="tabular-nums text-ink-2">{rupee(charge.subtotal)}</span>
                   </div>
@@ -354,10 +362,15 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
                     <span className="text-ink-3">{window?.instalmentPeriod ? `Days charged in this instalment (to ${formatDate(window.chargeTo)})` : "Days charged (to renewal)"}</span>
                     <span className="tabular-nums text-ink-2">{daysRemaining} days</span>
                   </div>
-                  <div className="flex justify-between mb-1">
-                    <span className="text-ink-3">Pro-rata factor</span>
-                    <span className="tabular-nums text-ink-2">{factor.toFixed(3)} ({Math.round(factor * 100)}%)</span>
-                  </div>
+                  {partLine ? (
+                    /* R-2226: the part's own rate, shown as the formula the server charges. */
+                    <p className="text-2xs text-ink-3 mb-1" data-testid="add-seats-part-formula">{partLine}</p>
+                  ) : (
+                    <div className="flex justify-between mb-1">
+                      <span className="text-ink-3">Pro-rata factor</span>
+                      <span className="tabular-nums text-ink-2">{factor.toFixed(3)} ({Math.round(factor * 100)}%)</span>
+                    </div>
+                  )}
                   <div className="flex justify-between mb-1">
                     <span className="text-ink-3">Pro-rata per seat</span>
                     <span className="tabular-nums text-ink-2">{rupee(proRataPerSeat)}</span>

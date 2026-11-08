@@ -4,7 +4,7 @@
  * WhatsApp instead. Starter and Standard keep their prices; the app keeps every price.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { publicWorkspaceCatalog } from "@/lib/catalog/public-workspace";
 import { CONTACT_FOR_PRICING, isPublicPriceHidden } from "@/lib/catalog/public-price-policy";
@@ -12,6 +12,7 @@ import { mergeEditions, suitePriceRows, type LiveWorkspaceItem } from "@/site/li
 import { EDITION_MATRICES, LICENCE_EDITIONS } from "@/site/lib/data/catalog";
 import { QUOTE_PRODUCTS, withLiveEditions } from "@/site/lib/data/quote-catalog";
 import { buildFacts } from "@/lib/ai/public-sales-chat";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROWS = [
   { name: "Google Workspace Business Starter", msrp: 270, prices: { monthly: { msrp: 325 } }, vendor: "google" },
@@ -80,7 +81,7 @@ describe("R-328 — no Business Plus price reaches a website visitor", () => {
         const p = join(dir, n);
         if (statSync(p).isDirectory()) { walk(p); continue; }
         if (!/\.(ts|tsx)$/.test(n) || /\.test\.tsx?$/.test(n)) continue;
-        if (/1,380|\b1380\b|16,560|\b16560\b|1,620|\b1620\b/.test(readFileSync(p, "utf8"))) hits.push(relative(join(__dirname, ".."), p));
+        if (/1,380|\b1380\b|16,560|\b16560\b|1,620|\b1620\b/.test(readSource(p))) hits.push(relative(join(__dirname, ".."), p));
       }
     };
     roots.forEach(walk);

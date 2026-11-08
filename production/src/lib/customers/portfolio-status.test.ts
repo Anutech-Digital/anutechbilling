@@ -46,7 +46,7 @@ describe("customerPortfolioStatus", () => {
 
   it("archived beats everything — it is a statement about the record", () => {
     expect(customerPortfolioStatus({ projects: [ACTIVE_ERP], hasActiveSub: true, archived: true }))
-      .toMatchObject({ label: "Inactive" });
+      .toMatchObject({ label: "Archived" }); // R-2559: the app's one word (Archived switch, Archive button)
   });
 });
 

@@ -71,6 +71,9 @@ describe("pickLoginRole", () => {
     expect(pickLoginRole(["login → Sales"])).toBe("sales");
     expect(pickLoginRole(["Doosra owner (Owner 2) se login karo aur approve dabao"])).toBe("owner2");
     expect(pickLoginRole(["as manager open Tasks"])).toBe("manager");
+    // R-2553: the Billing / Support Local test logins.
+    expect(pickLoginRole(["Billing login: Payroll / Loans menu me nahi hain"])).toBe("billing");
+    expect(pickLoginRole(["Support test login se /attendance/me kholo"])).toBe("support");
   });
 });
 

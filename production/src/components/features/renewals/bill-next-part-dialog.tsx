@@ -23,8 +23,10 @@ import { istToday } from "@/lib/dates/ist";
 
 export interface BillNextChoice { periods: number; seats: number | null; seatRate: number | null }
 
-export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy }: {
+export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, titleFor }: {
   sub: { id: string; customer_name: string; plan: string | null };
+  /** R-2548: the title from the preview's first period — "Bill renewal · part 1 of next year" when the server bills the renewal. */
+  titleFor?: (previewFirstStart: string | null) => string;
   open: boolean;
   onOpenChange: (v: boolean) => void;
   onConfirm: (choice: BillNextChoice) => void;
@@ -72,7 +74,7 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy }:
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg">
-        <DialogTitle className="font-serif text-xl text-ink">Bill next part — proforma</DialogTitle>
+        <DialogTitle className="font-serif text-xl text-ink">{titleFor ? titleFor(preview?.firstStart ?? null) : "Bill next part"} — proforma</DialogTitle>
         <DialogDescription className="text-sm text-ink-2">
           {sub.customer_name}{sub.plan ? ` · ${sub.plan}` : ""}. Check the seats and the rate before the proforma is made.
           Nothing is emailed now.

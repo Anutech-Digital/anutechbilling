@@ -12,6 +12,8 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared fresh read cache
 
 const SEED_TENANT = "11111111-1111-1111-1111-111111111111";
 
@@ -33,14 +35,16 @@ function walk(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
     if (entry === "node_modules" || entry === ".next") continue;
     const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
+    if (statSync(full).isDirectory()) { if (!isPrismaGenerated(full)) walk(full, out); } // R-2564: the generated Prisma client is not our code (36 MB)
     else if (/\.(ts|tsx)$/.test(entry)) out.push(full);
   }
   return out;
 }
 
 describe("the seed tenant is never a fallback", () => {
-  const files = walk("src");
+  /* R-2564: the generated Prisma client is skipped, so its source is scanned instead — a schema
+     default (`@default("1111…")`) used to reach the scan through the generated client's inline schema. */
+  const files = [...walk("src"), "prisma/schema.prisma"];
 
   it("scanned a believable number of files", () => {
     // A guard that silently scanned nothing passes forever. L23.
@@ -51,7 +55,7 @@ describe("the seed tenant is never a fallback", () => {
     const offenders = files
       .map((f) => f.split("\\").join("/"))
       .filter((f) => !ALLOWED.has(f))
-      .filter((f) => readFileSync(f, "utf8").includes(SEED_TENANT));
+      .filter((f) => readSource(f).includes(SEED_TENANT));
     expect(offenders).toEqual([]);
   });
 

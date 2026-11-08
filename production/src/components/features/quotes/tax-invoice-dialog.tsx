@@ -340,7 +340,8 @@ export function TaxInvoiceDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[92vh] overflow-y-auto p-0">
+      {/* R-2578: print-target — printing while this is open prints only the invoice (globals.css). */}
+      <DialogContent className="print-target max-w-4xl max-h-[92vh] overflow-y-auto p-0">
         <DialogTitle className="sr-only">{docTitle} · {invoice.id}</DialogTitle>
 
         {/* Toolbar */}

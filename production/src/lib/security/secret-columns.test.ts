@@ -25,7 +25,9 @@
  * still true after 09 runs again) is supabase/tests/secret_columns_hidden.test.sql.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564/R-2571: shared, always-fresh read cache
+import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
 
 const NINE = "supabase/cloudsql/09-grant-what-policies-allow.sql";
 const SQL_TEST = "supabase/tests/secret_columns_hidden.test.sql";
@@ -90,7 +92,7 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
 const SECRET_NAME = /(secret|token|password|passcode|_hash$|api_key|ingest_key|private_key|credential)/i;
 const BROWSER_ROLES = ["authenticated", "anon"];
 
-const read = (p: string) => readFileSync(p, "utf8").replace(/\r\n/g, "\n");
+const read = (p: string) => readSource(p).replace(/\r\n/g, "\n");
 const migrations = () =>
   readdirSync(MIG_DIR).filter((f) => /^\d{14}_.+\.sql$/.test(f)).sort();
 /** Baseline first, then migrations in file order — the order CI and deploy apply them. */
@@ -210,7 +212,7 @@ describe("R-833 secret columns", () => {
     const walk = (dir: string) => {
       for (const e of readdirSync(dir, { withFileTypes: true })) {
         const p = `${dir}/${e.name}`;
-        if (e.isDirectory()) walk(p);
+        if (e.isDirectory()) { if (!isPrismaGenerated(p)) walk(p); } // R-2571: skip Prisma's 36 MB generated client
         else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name) && !/database\.(generated|types)\.ts$/.test(e.name)) files.push(p);
       }
     };

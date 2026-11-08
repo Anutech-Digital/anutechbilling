@@ -110,6 +110,29 @@ export function num(n: number | null | undefined): string {
 const DATE_ONLY_RE = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 /**
+ * R-2566: each Intl.DateTimeFormat is built ONCE. `d.toLocaleString(locale, options)` builds a
+ * new formatter on every call; the BRS page called formatDate 3,770 times and that alone held
+ * the tab for 6.8 s (of 26 s, measured 7 Nov). `fmt.format(d)` gives exactly the text
+ * `d.toLocaleString("en-IN", sameOptions)` gives — proven for every month/hour in utils tests.
+ */
+const DTF = new Map<string, Intl.DateTimeFormat>();
+function enIn(key: "monUtc" | "dayIst" | "monIst" | "yearIst" | "timeIst"): Intl.DateTimeFormat {
+  let f = DTF.get(key);
+  if (!f) {
+    f = new Intl.DateTimeFormat("en-IN", FORMAT_OPTIONS[key]);
+    DTF.set(key, f);
+  }
+  return f;
+}
+const FORMAT_OPTIONS = {
+  monUtc: { month: "short", timeZone: "UTC" },
+  dayIst: { day: "numeric", timeZone: "Asia/Kolkata" },
+  monIst: { month: "short", timeZone: "Asia/Kolkata" },
+  yearIst: { year: "numeric", timeZone: "Asia/Kolkata" },
+  timeIst: { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata", hour12: true },
+} as const satisfies Record<string, Intl.DateTimeFormatOptions>;
+
+/**
  * Format a date in IST as "DD MMM YYYY" (e.g., "15 May 2026").
  *
  * "long" adds the IST time ("10 Oct 2026 · 02:47 pm") — but ONLY for a real timestamp.
@@ -126,7 +149,7 @@ export function formatDate(
   if (dateOnly && format !== "relative") {
     const cal = new Date(Date.UTC(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])));
     if (isNaN(cal.getTime())) return "—";
-    const mon = cal.toLocaleString("en-IN", { month: "short", timeZone: "UTC" });
+    const mon = enIn("monUtc").format(cal);
     return `${cal.getUTCDate()} ${mon} ${cal.getUTCFullYear()}`;
   }
   const d = typeof input === "string" || typeof input === "number" ? new Date(input) : input;
@@ -143,11 +166,11 @@ export function formatDate(
 
   // Day + year in IST as well — they used the machine's zone while the month used IST,
   // so a non-IST server or browser could print a mixed-up date near midnight.
-  const day = Number(d.toLocaleString("en-IN", { day: "numeric", timeZone: "Asia/Kolkata" }));
-  const month = d.toLocaleString("en-IN", { month: "short", timeZone: "Asia/Kolkata" });
-  const year = Number(d.toLocaleString("en-IN", { year: "numeric", timeZone: "Asia/Kolkata" }));
+  const day = Number(enIn("dayIst").format(d));
+  const month = enIn("monIst").format(d);
+  const year = Number(enIn("yearIst").format(d));
   if (format === "long") {
-    const time = d.toLocaleString("en-IN", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Kolkata", hour12: true });
+    const time = enIn("timeIst").format(d);
     return `${day} ${month} ${year} · ${time}`;
   }
   return `${day} ${month} ${year}`;

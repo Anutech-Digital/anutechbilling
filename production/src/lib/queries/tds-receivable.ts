@@ -11,7 +11,7 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
-import { fillTdsInvoiceIds, paymentIdsMissingInvoice } from "@/lib/accounting/tds-invoice-link";
+import { fillTdsInvoiceIds, fillTdsPartInvoiceIds, paymentIdsMissingInvoice } from "@/lib/accounting/tds-invoice-link";
 import { tdsByPayment } from "@/lib/accounting/tds-receipt";
 import type { Database, TdsReceivableRow, TdsStatus } from "@/lib/supabase/database.types";
 import { TDS_RATE_VARIANTS, TDS_SECTION_RATES } from "@/lib/accounting/tds-rates";
@@ -120,7 +120,58 @@ async function linkTdsInvoices(supabase: ReturnType<typeof createClient>, rows: 
     const quoteIds = payments.map((p) => p.quote_id);
     const invoices = await fetchAllRowsIn<{ id: string; quote_id: string | null; status: string | null }, string>(quoteIds, (ids, from, to) =>
       supabase.from("invoices").select("id, quote_id, status").in("quote_id", ids).order("id", { ascending: true }).range(from, to));
-    return fillTdsInvoiceIds(rows, payments, invoices);
+    const filled = fillTdsInvoiceIds(rows, payments, invoices);
+    return await linkTdsPartInvoices(supabase, filled, payments);
+  } catch {
+    return rows;
+  }
+}
+
+/**
+ * R-2558: a sale billed in parts — the part's invoice has no quote_id (the link is on
+ * subscription_billings), so the lookup above finds nothing. The quote's receipts pay its part
+ * invoices in order (lib/accounting/tds-invoice-link#partInvoiceForPayment). Runs only for rows
+ * still blank; a failed lookup keeps what the first step found.
+ */
+async function linkTdsPartInvoices(
+  supabase: ReturnType<typeof createClient>,
+  rows: TdsReceivable[],
+  payments: ReadonlyArray<{ id: string; quote_id: string | null }>,
+): Promise<TdsReceivable[]> {
+  const quoteOfPayment = new Map<string, string>();
+  for (const p of payments) if (p.quote_id) quoteOfPayment.set(p.id, p.quote_id);
+  const quoteIds = Array.from(new Set(paymentIdsMissingInvoice(rows).map((id) => quoteOfPayment.get(id)).filter((q): q is string => !!q)));
+  if (quoteIds.length === 0) return rows;
+  try {
+    const [subs, quotePays] = await Promise.all([
+      fetchAllRowsIn<{ id: string; quote_id: string | null }, string>(quoteIds, (ids, from, to) =>
+        supabase.from("subscriptions").select("id, quote_id").in("quote_id", ids).order("id", { ascending: true }).range(from, to)),
+      fetchAllRowsIn<{ id: string; quote_id: string | null; amount: number | null; received_at: string | null; created_at: string | null }, string>(
+        quoteIds, (ids, from, to) =>
+          supabase.from("payments").select("id, quote_id, amount, received_at, created_at")
+            .in("quote_id", ids).eq("status", "received").order("id", { ascending: true }).range(from, to)),
+    ]);
+    if (subs.length === 0) return rows;
+    const quoteOfSub = new Map(subs.filter((s) => s.quote_id).map((s) => [s.id, s.quote_id as string]));
+    const billings = await fetchAllRowsIn<{ id: string; subscription_id: string; term_start: string | null; period_index: number; invoice_id: string | null }, string>(
+      [...quoteOfSub.keys()], (ids, from, to) =>
+        supabase.from("subscription_billings").select("id, subscription_id, term_start, period_index, invoice_id")
+          .in("subscription_id", ids).not("invoice_id", "is", null).order("id", { ascending: true }).range(from, to));
+    if (billings.length === 0) return rows;
+    const invs = await fetchAllRowsIn<{ id: string; net_payable: number | null; amount: number | null; status: string | null }, string>(
+      billings.map((b) => b.invoice_id), (ids, from, to) =>
+        supabase.from("invoices").select("id, net_payable, amount, status").in("id", ids).order("id", { ascending: true }).range(from, to));
+    const invById = new Map(invs.map((i) => [i.id, i]));
+    const parts = billings.flatMap((b) => {
+      const inv = b.invoice_id ? invById.get(b.invoice_id) : undefined;
+      const quoteId = quoteOfSub.get(b.subscription_id);
+      return inv && quoteId ? [{
+        quote_id: quoteId, invoice_id: inv.id, term_start: b.term_start, period_index: b.period_index,
+        amount: Number(inv.net_payable ?? inv.amount ?? 0), status: inv.status,
+      }] : [];
+    });
+    return fillTdsPartInvoiceIds(rows, quoteOfPayment, parts,
+      quotePays.flatMap((p) => p.quote_id ? [{ id: p.id, quote_id: p.quote_id, amount: Number(p.amount ?? 0), received_at: p.received_at, created_at: p.created_at }] : []));
   } catch {
     return rows;
   }

@@ -25,7 +25,7 @@ export async function loadCashFlow(supabase: Client, from: string | null, to: st
      month ends on the bank's own balance.
      R-2497: a line dated before its account's opening date is inside that opening — it is left
      out of both the starting balance and the months, as bank_account_current_balance() does. */
-  const [accts, before, data] = await Promise.all([
+  const [accts, before, data, lent] = await Promise.all([
     fetchAllRows((a, b) =>
       supabase.from("bank_accounts").select("id, opening_balance, opening_balance_date").order("id").range(a, b)),
     from
@@ -43,6 +43,7 @@ export async function loadCashFlow(supabase: Client, from: string | null, to: st
       if (to)   q = q.lte("txn_date", to);
       return q.order("txn_date").order("id").range(a, b);
     }),
+    lentTxnIds(supabase),
   ]);
 
   const openedOn = new Map(accts.map((a) => [a.id, (a as { opening_balance_date?: string | null }).opening_balance_date ?? null]));
@@ -61,6 +62,33 @@ export async function loadCashFlow(supabase: Client, from: string | null, to: st
     credit: t.credit ?? 0,
     matched_to_type: t.matched_to_type ?? null,
     category: t.category ?? null,
+    lent: lent.has(t.id),
   }));
   return { lines, balanceBefore };
+}
+
+/**
+ * R-2575: the bank lines that are money LENT or its repayment — the bookings bank_line_bookings()
+ * finds for them: a balance-sheet ASSET row (book_bank_advance kind 'given'; liability / equity
+ * rows are loans / capital received = financing), a Loans given payout and a borrower's repayment.
+ * Keyed by bank_txn_id, so lines stored as 'manual' before R-2570 are known too.
+ *
+ * Never fatal: a failed read leaves those lines in Financing (where they all were before R-2575)
+ * instead of failing the whole Cash Flow page.
+ */
+async function lentTxnIds(supabase: Client): Promise<Set<string>> {
+  const ids = (rows: { bank_txn_id: string | null }[]) => rows.flatMap((r) => (r.bank_txn_id ? [r.bank_txn_id] : []));
+  const read = async (q: Promise<{ bank_txn_id: string | null }[]>) => {
+    try { return ids(await q); } catch { return []; }
+  };
+  const parts = await Promise.all([
+    read(fetchAllRows((a, b) =>
+      supabase.from("balance_sheet_items").select("id, bank_txn_id").eq("section", "asset")
+        .not("bank_txn_id", "is", null).order("id").range(a, b))),
+    read(fetchAllRows((a, b) =>
+      supabase.from("loans_given").select("id, bank_txn_id").not("bank_txn_id", "is", null).order("id").range(a, b))),
+    read(fetchAllRows((a, b) =>
+      supabase.from("loan_repayments").select("id, bank_txn_id").not("bank_txn_id", "is", null).order("id").range(a, b))),
+  ]);
+  return new Set(parts.flat());
 }

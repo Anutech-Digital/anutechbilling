@@ -24,9 +24,10 @@
  * writing the rule against the words rather than against the href.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
@@ -54,7 +55,7 @@ function stripComments(src: string): string {
     .replace(/^[ \t]*\/\/.*$/gm, "");
 }
 
-const files = tsxFiles(SRC).map((file) => ({ file, src: stripComments(readFileSync(file, "utf8")) }));
+const files = tsxFiles(SRC).map((file) => ({ file, src: stripComments(readSource(file)) }));
 
 /* R-218 (after R-086): one invoice has its own page, /invoices/<id>, built by invoiceHref()
    (invoices/invoice-href.ts, which also encodes ids with a "/"). The old `/invoices?open=`
@@ -105,11 +106,11 @@ describe("R-218: in-app invoice links go straight to /invoices/<id>", () => {
   ];
 
   it.each(FIXED)("%s has no ?open= invoice link left", (rel) => {
-    const src = stripComments(readFileSync(join(SRC, rel), "utf8"));
+    const src = stripComments(readSource(join(SRC, rel)));
     expect(src).not.toMatch(/invoices\?open=/);
   });
 
   it.each(FIXED)("%s builds the address with invoiceHref", (rel) => {
-    expect(readFileSync(join(SRC, rel), "utf8")).toMatch(/invoiceHref/);
+    expect(readSource(join(SRC, rel))).toMatch(/invoiceHref/);
   });
 });

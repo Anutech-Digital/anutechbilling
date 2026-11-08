@@ -110,24 +110,32 @@ describe("secret-scan rules (R-1430)", () => {
     expect(parseDiff(diff)).toEqual({ "src/a.ts": [{ n: 4, text: "added one" }, { n: 5, text: "added two" }, { n: 12, text: "new" }] });
   });
 
+  /* R-2568 (7 Nov 2026): this case was 4.9 s alone and 14.9 s in the push's guard step under load —
+     15 git processes (init, 2× config, add, 2× commit, 2× rev-parse + run()'s own 3 per scan, twice),
+     ~0.3–1 s each on Windows. The repo is now written by ONE `git fast-import` (two real commits; the
+     marks file gives both shas), so 2 spawns + run()'s 6 — run() itself, the code the push calls,
+     is untouched and still reads a real repo with real git. Every other case tests pure functions. */
   it("--diff mode in a real git repo: refuses an added secret, prints no value, exit 1", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ss-git-"));
-    const g = (...a: string[]) => execFileSync("git", a, { cwd: dir, stdio: "pipe" }).toString().trim();
-    g("init", "-q"); g("config", "user.email", "t@example.test"); g("config", "user.name", "t");
-    fs.writeFileSync(path.join(dir, "a.ts"), "export const a = 1;\n");
-    g("add", "."); g("commit", "-qm", "base");
-    const base = g("rev-parse", "HEAD");
-    const value = `GOC${"SPX"}-${rnd(28)}`;
-    fs.writeFileSync(path.join(dir, "a.ts"), `export const a = 1;\nexport const s = "${value}";\n`);
-    g("commit", "-qam", "leak");
-    const out: string[] = [];
-    const env = { SECRET_SCAN_ALLOW: path.join(dir, "none.json"), SECRET_SCAN_DENY_FILE: "/nonexistent" };
-    const code = run(["--diff", base], { cwd: dir, env, log: (s: string) => out.push(s), err: (s: string) => out.push(s) });
-    expect(code).toBe(1);
-    expect(out.join("\n")).toContain("a.ts:2  oauth-client-secret");
-    expect(out.join("\n")).not.toContain(value);
-    out.length = 0;
-    expect(run(["--diff", g("rev-parse", "HEAD")], { cwd: dir, env, log: (s: string) => out.push(s), err: (s: string) => out.push(s) })).toBe(0);
-    fs.rmSync(dir, { recursive: true, force: true });
+    try {
+      const value = `GOC${"SPX"}-${rnd(28)}`;
+      const blob = (mark: number, text: string) => `blob\nmark :${mark}\ndata ${Buffer.byteLength(text)}\n${text}\n`;
+      const commit = (mark: number, msg: string, file: number, from?: number) =>
+        `commit refs/heads/main\nmark :${mark}\ncommitter t <t@example.test> 1700000000 +0000\ndata ${Buffer.byteLength(msg)}\n${msg}\n${from ? `from :${from}\n` : ""}M 100644 :${file} a.ts\n\n`;
+      const stream = blob(1, "export const a = 1;\n") + commit(2, "base", 1)
+        + blob(3, `export const a = 1;\nexport const s = "${value}";\n`) + commit(4, "leak", 3, 2);
+      const marks = path.join(dir, "marks.txt");
+      execFileSync("git", ["init", "-q", "-b", "main", dir], { stdio: "pipe" });
+      execFileSync("git", ["fast-import", "--quiet", `--export-marks=${marks}`], { cwd: dir, input: stream, stdio: ["pipe", "pipe", "pipe"] });
+      const sha = Object.fromEntries(fs.readFileSync(marks, "utf8").trim().split("\n").map((l) => l.split(" ")));
+      const out: string[] = [];
+      const env = { SECRET_SCAN_ALLOW: path.join(dir, "none.json"), SECRET_SCAN_DENY_FILE: "/nonexistent" };
+      const code = run(["--diff", sha[":2"]], { cwd: dir, env, log: (s: string) => out.push(s), err: (s: string) => out.push(s) });
+      expect(code).toBe(1);
+      expect(out.join("\n")).toContain("a.ts:2  oauth-client-secret");
+      expect(out.join("\n")).not.toContain(value);
+      out.length = 0;
+      expect(run(["--diff", sha[":4"]], { cwd: dir, env, log: (s: string) => out.push(s), err: (s: string) => out.push(s) })).toBe(0);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 });

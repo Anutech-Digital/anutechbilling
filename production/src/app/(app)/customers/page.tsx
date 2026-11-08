@@ -22,7 +22,7 @@ import { useProjectReceivablesByCustomer, useProjectSales, useReceivedThisFyByCu
 import { customerPortfolioStatus, countsAsNoBusiness, projectValue, type ProjectLike } from "@/lib/customers/portfolio-status";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
 import { useOutstandingReceivables } from "@/lib/queries/payments";
-import { toChaseSummary } from "@/lib/accounting/receivables-due";
+import { toChaseSummary, toCollectBreakdown, PROJECT_INVOICES_UNREAD, SUBSCRIPTION_DUES_UNREAD } from "@/lib/accounting/receivables-due";
 import { ImportCustomersDialog } from "@/components/features/customers/import-customers-dialog";
 import { ImportDomainsDialog } from "@/components/features/customers/import-domains-dialog";
 import { CustomerProfile } from "@/components/features/customers/customer-profile";
@@ -33,7 +33,7 @@ import {
   useOpenCreditsByCustomer, useDeleteCustomer, useSetCustomerActive,
 } from "@/lib/queries/customers";
 import {
-  customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, customerSearchFromUrl, type ViewCtx,
+  customerViewCounts, customerMoneyTotals, contactMatchedCustomerIds, customerListMode, customerSearchFromUrl, customerInList, collectLineState, type ViewCtx,
 } from "./server-list";
 import { useContactSearchIndex } from "@/lib/queries/contacts";
 import { customerMatchesContact } from "@/lib/contacts/search-index";
@@ -48,6 +48,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { StatStrip } from "@/components/shared/stat-strip";
 import { CollapsibleKpiStrip, StripFact } from "@/components/shared/collapsible-kpi-strip";
 import { LoadErrorBanner, loadErrorBody } from "@/components/shared/load-error";
+import { moneyErrorRetry } from "./money-error-retry";
 import { Avatar } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -159,6 +160,7 @@ export default function CustomersPage() {
   /* R-1473: amounts from toChaseSummary — the dashboard Collections card's rule. This map
      kept only ONE subscription's due per company (the oldest), so a company with two unpaid
      subscriptions showed one; now every due is added. Days = the oldest due's age. */
+  const chase = React.useMemo(() => toChaseSummary(outstanding ?? [], projRecv), [outstanding, projRecv]);
   const outstandingByCustomer = React.useMemo(() => {
     const days = new Map<string, number>();
     for (const o of outstanding ?? []) {
@@ -166,11 +168,11 @@ export default function CustomersPage() {
       days.set(o.customer_id, Math.max(days.get(o.customer_id) ?? 0, o.days_outstanding));
     }
     const map = new Map<string, { days: number; amount: number }>();
-    for (const [custId, amount] of toChaseSummary(outstanding ?? [], projRecv).byCustomer) {
+    for (const [custId, amount] of chase.byCustomer) {
       map.set(custId, { days: days.get(custId) ?? 0, amount });
     }
     return map;
-  }, [outstanding, projRecv]);
+  }, [outstanding, chase]);
 
   const router = useRouter();
   const goAdd = () => router.push("/customers/new" as never);
@@ -325,12 +327,42 @@ export default function CustomersPage() {
     [listCounts.data, facts],
   );
 
+  /* R-1473: the line over "Has receivables" — what the To collect tile is made of, how much is on
+     archived companies, and any money the list cannot show (so tile == list, or the line says why). */
+  /* R-2559: both halves of what is owed (subscription dues + project invoices) must be in — else the
+     line said "Subscription dues ₹0 …" for a moment, and the tile and the Has receivables rows showed
+     part of the money. Until then the line has a placeholder, the tile "…", the unpaid list its skeleton. */
+  const collectParts = collectLineState([outstandingQ, projRecvQ]);
+  /* R-2562: a failed read of what is owed — the tile, the Has receivables chip and every row say "—"
+     (never ₹0, or a figure short by the unread part) and the Has receivables line names what could
+     not be read, with Try again. */
+  const owedUnread = collectParts === "failed";
+  const owedUnreadText = [
+    outstandingQ.isError && outstandingQ.data === undefined ? SUBSCRIPTION_DUES_UNREAD : null,
+    projRecvQ.isError && projRecvQ.data === undefined ? PROJECT_INVOICES_UNREAD : null,
+  ].filter(Boolean).join(" · ");
+  const retryOwed = () => { for (const q of [outstandingQ, projRecvQ]) if (q.isError) void q.refetch(); };
+  const collectLineWanted = mode === "full" && view === "unpaid" && !showArchived && !search.trim();
+  const rowsLoading = isLoading || (view === "unpaid" && collectParts === "loading");
+  const collectLine = React.useMemo(() => {
+    /* A search narrows the rows on purpose — the line speaks for the whole list, so it waits. */
+    if (!collectLineWanted || collectParts !== "ready" || !customers || chase.companiesTotal <= 0) return null;
+    const listed = new Set<string>();
+    const archived = new Set<string>();
+    for (const c of customers) {
+      listed.add(c.id);
+      if (c.is_active === false) archived.add(c.id);
+    }
+    return toCollectBreakdown(chase, listed, archived);
+  }, [collectLineWanted, collectParts, customers, chase]);
+
   // Filter — segment then free-text. In server mode the server already did both.
   const archivedCount = listCounts.data?.archived ?? 0;
   const filtered = mode === "server" ? customersByWorkspace : customersByWorkspace.filter((c) => {
-    // Active by default; the Archived toggle swaps to show only inactive ones.
-    if ((c.is_active === false) !== showArchived) return false;
     const out = outstandingByCustomer.get(c.id);
+    // Active by default; the Archived toggle swaps to show only inactive ones. R-1473: in
+    // "Has receivables" an archived company that still owes stays listed (the tile counts it).
+    if (!customerInList(c.is_active, { showArchived, viewId: view, owes: out?.amount ?? 0 })) return false;
     const ctx: ViewCtx = { amount: out?.amount ?? 0, credit: creditsByCustomer[c.id] ?? 0, hasSub: subsByCustomer.has(c.id), projects: projectsByCustomer.get(c.id) ?? NO_PROJECTS, received: receivedBy[c.id]?.total ?? 0, noState: missingInvoiceState(c) };
     if (!activeView.test(ctx)) return false;
     if (!search.trim()) return true;
@@ -574,8 +606,8 @@ export default function CustomersPage() {
     }
     stats.push({
       label: "To collect",
-      value: rupee(totalReceivables, { compact: true }),
-      tone: totalReceivables > 0 ? "rose" : "default",
+      value: collectParts === "loading" ? "…" : owedUnread ? "—" : rupee(totalReceivables, { compact: true }),
+      tone: totalReceivables > 0 && !owedUnread ? "rose" : "default",
       // The money-owed number is the action figure — tap it to see who owes.
       ...(totalReceivables > 0 ? { onClick: () => setView("unpaid"), active: view === "unpaid" } : {}),
     });
@@ -592,6 +624,19 @@ export default function CustomersPage() {
     if (r.ok) toast.success(`Exported ${r.rows} compan${r.rows === 1 ? "y" : "ies"} to CSV`);
     else toast.error("Could not export the companies", { description: r.error });
   }
+
+  /* R-2567: one failure, one Try again — the money banner and the Has receivables line used to
+     both show one when the project invoices could not be read. `toolbarShown` gates the toolbar
+     that holds the line (below), so the two cannot drift; the line itself shows when
+     collectLineWanted && owedUnread (collectLine is null whenever owedUnread). */
+  const toolbarShown = !isLoading && !!customers && anyCustomers && !selectedId;
+  const moneyRetry = moneyErrorRetry({
+    failed: moneyFailed.length,
+    owedFailed: [outstandingQ, projRecvQ].filter((q) => q.isError).length,
+    owedLineShown: toolbarShown && collectLineWanted && owedUnread,
+    listFailed: !!error,
+  });
+  const owedRefetching = outstandingQ.isFetching || projRecvQ.isFetching;
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1800px] mx-auto">
@@ -635,7 +680,7 @@ export default function CustomersPage() {
 
       {!canWrite && <ViewOnlyNote what="add, import or edit companies" />}
 
-      {!error && moneyFailed.length > 0 && (
+      {moneyRetry.banner && (
         <LoadErrorBanner onRetry={() => moneyFailed.forEach((q) => void q.refetch())} />
       )}
 
@@ -689,7 +734,7 @@ export default function CustomersPage() {
       )}
 
       {/* Sticky Segment chips + search */}
-      {!isLoading && customers && anyCustomers && !selectedId && (
+      {toolbarShown && (
         <div className="sticky top-[56px] z-20 bg-paper/95 backdrop-blur-md py-3 -mx-4 px-4 md:-mx-6 md:px-6 lg:-mx-8 lg:px-8 mb-4 border-b border-hairline transition-all space-y-2.5">
           <div className="flex justify-between items-center gap-3 flex-wrap sm:flex-nowrap">
             <div className="w-full sm:w-64 shrink-0">
@@ -721,9 +766,9 @@ export default function CustomersPage() {
                     <span className={cn(
                       "rounded-full px-1.5 tabular-nums text-2xs",
                       active ? "bg-amber/25 text-amber-ink"
-                        : isDebt && viewCounts[v.id] > 0 ? "bg-rose-soft text-rose-ink"
+                        : isDebt && viewCounts[v.id] > 0 && !owedUnread ? "bg-rose-soft text-rose-ink"
                         : "bg-paper-2 text-ink-3",
-                    )}>{viewCounts[v.id]}</span>
+                    )}>{isDebt && owedUnread ? "—" : viewCounts[v.id]}</span>
                   </button>
                 );
               })}
@@ -797,6 +842,18 @@ export default function CustomersPage() {
               🔤 Name A-Z {sort.key === "name" ? (sort.dir === "asc" ? "↓" : "↑") : ""}
             </button>
           </div>
+          {collectLine ? (
+            <p className="text-xs text-ink-3" data-testid="to-collect-breakdown">{collectLine}</p>
+          ) : collectLineWanted && owedUnread ? (
+            <p role="alert" className="flex flex-wrap items-center gap-2 text-xs text-rose" data-testid="to-collect-unread">
+              {owedUnreadText}
+              {moneyRetry.lineButton && <Button size="sm" icon="refresh" onClick={retryOwed} loading={owedRefetching}>Try again</Button>}
+            </p>
+          ) : collectLineWanted && collectParts === "loading" ? (
+            <p role="status" aria-label="Adding up what is owed" className="text-xs text-ink-3" data-testid="to-collect-breakdown-loading">
+              Adding up what is owed…
+            </p>
+          ) : null}
         </div>
       )}
 
@@ -811,7 +868,7 @@ export default function CustomersPage() {
       )}
 
       {/* ── Loading ── */}
-      {isLoading && (
+      {rowsLoading && (
         <Card flush>
           <table className="w-full">
             <tbody>
@@ -839,7 +896,7 @@ export default function CustomersPage() {
       )}
 
       {/* ── Mobile card list ── */}
-      {!isLoading && !error && sorted.length > 0 && (
+      {!rowsLoading && !error && sorted.length > 0 && (
         <ul className="md:hidden space-y-2 mb-3">
           {shown.map((c) => {
             const outInfo = outstandingByCustomer.get(c.id);
@@ -898,7 +955,7 @@ export default function CustomersPage() {
                   </div>
                   <div className="flex items-center justify-between gap-3 pt-2 mt-2 border-t border-hairline/60 text-xs">
                     <span className="text-ink-3">
-                      To collect <b className={receivable > 0 ? "text-rose" : "text-ink-2"}>{rupee(receivable)}</b>
+                      To collect <b className={receivable > 0 && !owedUnread ? "text-rose" : "text-ink-2"} title={owedUnread ? owedUnreadText : undefined}>{owedUnread ? "—" : rupee(receivable)}</b>
                       {receivable > 0 && days > 0 && <span className={days > 45 ? "text-rose" : "text-ink-3"}> · {days}d overdue</span>}
                       {(receivedBy[c.id]?.total ?? 0) > 0 && (
                         <span> · Received <b className="text-emerald">{rupee(receivedBy[c.id]!.total, { compact: true })}</b></span>
@@ -939,7 +996,7 @@ export default function CustomersPage() {
       )}
 
       {/* ── Desktop table — full-width (no customer selected) ── */}
-      {!isLoading && !error && sorted.length > 0 && !selectedId && (
+      {!rowsLoading && !error && sorted.length > 0 && !selectedId && (
         <div className="hidden md:block">
           <Card flush>
             <div className="relative">
@@ -1066,7 +1123,9 @@ export default function CustomersPage() {
                           ) : <span className="text-sm text-ink-3">{rupee(0)}</span>}
                         </td>
                         <td className="px-3 py-2.5 text-right tabular-nums">
-                          {receivable > 0 ? (
+                          {owedUnread ? (
+                            <span className="text-sm text-ink-3" title={owedUnreadText}>—</span>
+                          ) : receivable > 0 ? (
                             <div>
                               <div className="text-sm font-semibold text-rose">{rupee(receivable)}</div>
                               {days > 0 && (
@@ -1112,7 +1171,7 @@ export default function CustomersPage() {
       )}
 
       {/* ── Search / filter empty ── */}
-      {!isLoading && !error && customers && anyCustomers && filtered.length === 0 && (
+      {!rowsLoading && !error && customers && anyCustomers && filtered.length === 0 && (
         <div className="mt-6">
           <EmptyState
             icon="search"
@@ -1165,7 +1224,7 @@ export default function CustomersPage() {
                       <div className="font-medium text-sm text-ink truncate">{cleanDisplayName(c.display_name || c.name)}</div>
                       <div className="flex items-center justify-between gap-2 text-2xs mt-0.5">
                         <span className="truncate text-ink-3">{c.domain || c.contact_email || "—"}</span>
-                        {receivable > 0
+                        {receivable > 0 && !owedUnread
                           ? <span className="tabular-nums flex-shrink-0 text-rose font-medium">{rupee(receivable, { compact: true })}</span>
                           : sub ? <span className="tabular-nums flex-shrink-0 text-ink-3">{rupee(sub.mrr, { compact: true })}/mo</span> : null}
                       </div>

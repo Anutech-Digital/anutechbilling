@@ -326,7 +326,12 @@ function InvoicesPageInner() {
   /* R-060: bucket, not raw status (an unpaid invoice past due is Overdue). R-063: one
      invoice, one chip — invoiceChip — so the chips add up to All, Void included.
      R-1709: chip, row badge and "Paid this month" read one money state (lib/invoices/payment-state.ts). */
-  const counts = React.useMemo(() => invoiceChipCounts(viewInvoices, undefined, noteTotals), [viewInvoices, noteTotals]);
+  /* R-2566: the IST day is an input of every overdue / "this month" answer below (chips, list,
+     KPIs), passed explicitly so the memos re-run when the day changes. todayAt = noon IST of
+     today, for the helpers that take a Date: same IST day and month as "now", stable all day. */
+  const today = istToday();
+  const todayAt = React.useMemo(() => new Date(`${today}T12:00:00+05:30`), [today]);
+  const counts = React.useMemo(() => invoiceChipCounts(viewInvoices, today, noteTotals), [viewInvoices, noteTotals, today]);
 
   const tabs: TabBarItem[] = [
     { id: "all",     label: "All",     count: counts.all ?? 0 },
@@ -344,11 +349,13 @@ function InvoicesPageInner() {
   // Filter — status tab (Partial/Pending both derive from status='pending',
   // split by whether advances were applied) + free-text search on invoice #,
   // customer, or status.
-  const rows = dateFilteredInvoices.filter((i) => {
+  /* R-2566: memoised — with 2,000+ invoices this ran invoiceChip on every one at EVERY render
+     (a row tick, a menu open). Same predicate, same inputs (the IST day included, above). */
+  const rows = React.useMemo(() => dateFilteredInvoices.filter((i) => {
     // Tile focus (R-118) — the same predicate the tile summed
-    if (focus && !invoiceInFocus(i, focus, undefined, noteTotals)) return false;
+    if (focus && !invoiceInFocus(i, focus, todayAt, noteTotals)) return false;
     // Status tab
-    if (tab !== "all" && invoiceChip(i, undefined, noteTotals) !== tab) return false;   // same function the counts use
+    if (tab !== "all" && invoiceChip(i, today, noteTotals) !== tab) return false;   // same function the counts use
     // Search
     if (search.trim()) {
       const s = search.toLowerCase();
@@ -356,17 +363,18 @@ function InvoicesPageInner() {
         i.id.toLowerCase().includes(s) ||
         (i.customer_name?.toLowerCase().includes(s) ?? false) ||
         // The bucket, so typing "overdue" finds the invoices the tab shows (R-060).
-        invoiceBucket(i).toLowerCase().includes(s);
+        invoiceBucket(i, today).toLowerCase().includes(s);
       if (!hit) return false;
     }
     return true;
-  });
+  }), [dateFilteredInvoices, focus, tab, search, noteTotals, today, todayAt]);
 
   /* KPIs (R-062): lib/invoices/kpis.ts. Outstanding = what is still owed on pending /
      overdue invoices (net of advances and receipts) — void and draft owe nothing.
      "Paid this month" = invoices fully paid in this IST month, by paid date; the
      /payments page's "Collected MTD" is money RECEIVED (incl. part payments and TDS). */
-  const { outstanding, overdueTotal, paidThisMonth: collectedMTD, paidThisMonthCount, outstandingCount } = invoiceKpis(invoices ?? [], undefined, noteTotals);
+  const { outstanding, overdueTotal, paidThisMonth: collectedMTD, paidThisMonthCount, outstandingCount } = React.useMemo(
+    () => invoiceKpis(invoices ?? [], todayAt, noteTotals), [invoices, noteTotals, todayAt]);   // R-2566: once per data / IST day, not per render
   /* A tile opens its exact set over EVERY invoice, as the tile counted it: no tab, date or
      type narrowing left over from before the click. */
   const focusOn = (f: InvoiceFocus) => { setView("all"); setDateRange("all"); setTab("all"); setFocus(f); };
@@ -1325,7 +1333,10 @@ function InvoiceRow({
           );
         })()}
 
-        <DeleteInvoiceDialog
+        {/* R-2566: these three dialogs mount only while open — each of the 50 painted rows used
+            to mount all three with their queries / mutations (~450 ms of render measured on
+            2,000 invoices). Same pattern as RecordSubscriptionPaymentContainer below. */}
+        {delOpen && <DeleteInvoiceDialog
           open={delOpen}
           onOpenChange={setDelOpen}
           invoiceId={inv.id}
@@ -1336,7 +1347,7 @@ function InvoiceRow({
               onSuccess: () => setDelOpen(false),
             });
           }}
-        />
+        />}
         {isProject && payMilestone && (
           <RecordProjectPaymentDialog
             open={payOpen}
@@ -1352,7 +1363,7 @@ function InvoiceRow({
             onOpenChange={setSubPayOpen}
           />
         )}
-        <IssueCreditNoteDialog
+        {cnOpen && <IssueCreditNoteDialog
           open={cnOpen}
           onOpenChange={setCnOpen}
           invoiceId={inv.id}
@@ -1362,8 +1373,8 @@ function InvoiceRow({
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
           invoiceDate={inv.invoice_date}
-        />
-        <IssueCreditNoteDialog
+        />}
+        {dnOpen && <IssueCreditNoteDialog
           open={dnOpen}
           onOpenChange={setDnOpen}
           mode="debit"
@@ -1373,7 +1384,7 @@ function InvoiceRow({
           taxRate={inv.tax_rate}
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
-        />
+        />}
       </td>
     </tr>
     {expanded && (

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* ─────────────────────────────────────────────────────────────────────────────
    A CSS Grid trap that renders columns at ZERO WIDTH, reported from /leads on
@@ -69,7 +70,7 @@ describe("grid-flow-col must not sit on top of an unreset numbered grid-cols", (
     /* The board left (app)/leads/page.tsx for its own file in S35 (28 Sep 2026). */
     const board = files.find((f) => f.replace(/\\/g, "/").endsWith("features/leads/leads-kanban-board.tsx"));
     expect(board, "leads-kanban-board.tsx should exist — it owns the board this test exists for").toBeTruthy();
-    const lists = classLists(readFileSync(board!, "utf8"));
+    const lists = classLists(readSource(board!));
     expect(lists.length, "leads-kanban-board.tsx should still use grid-flow-col").toBeGreaterThan(0);
   });
 
@@ -77,7 +78,7 @@ describe("grid-flow-col must not sit on top of an unreset numbered grid-cols", (
     const offenders: string[] = [];
 
     for (const file of files) {
-      for (const list of classLists(readFileSync(file, "utf8"))) {
+      for (const list of classLists(readSource(file))) {
         if (!NUMBERED_COLS.test(list)) continue;      // no explicit template — nothing to reset
         if (HAS_RESET.test(list)) continue;           // reset present — the tracks are implicit
         offenders.push(`${file.replace(process.cwd(), "").replace(/\\/g, "/")}\n    ${list.trim()}`);

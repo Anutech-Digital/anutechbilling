@@ -16,7 +16,7 @@
  *     `text-ink-4` fails this test.
  */
 import { describe, it, expect } from "vitest";
-import { execFileSync } from "node:child_process";
+import { a11yReport } from "@/lib/testing/a11y-report"; // R-2564: in-process, shared read cache (was a node spawn per file)
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -26,10 +26,7 @@ const INK4_BODY_BASELINE = 0;
 type Report = { totals: Record<string, Record<string, number>> };
 
 const report = (): Report =>
-  JSON.parse(execFileSync(process.execPath, [join(process.cwd(), "scripts", "a11y-count.mjs"), "--json"], {
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  })) as Report;
+  a11yReport() as Report;
 
 // ── contrast maths (WCAG 2.1 relative luminance) ──
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {

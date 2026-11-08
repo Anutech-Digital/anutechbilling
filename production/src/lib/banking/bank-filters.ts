@@ -76,7 +76,49 @@ export type FilterContext = {
   /** R-2400: each line's place in statement order (lib/banking/running-balance seq) — the
       same-day tie-break of the sorts, so the running Balance reads down the list. */
   order?: ReadonlyMap<string, number>;
+  /** R-2378: the real booking of a matched_to_type = 'manual' line (lib/banking/line-booking) — its group
+      (a loan booked through "Loan / advance with a person" is a Loan, not Other). */
+  bookings?: ReadonlyMap<string, LineBookingLike>;
 };
+
+/** R-2378: the part of lib/banking/line-booking's LineBooking the filters and the CSV read. */
+export type LineBookingLike = { label: string; party: string | null; group: MatchGroup };
+
+/**
+ * R-2570: the types whose booking bank_line_bookings() reads (keep in step with its `lines` list in
+ * migration 20261107165630): old 'manual' lines (R-2378) and the types the writers now store
+ * themselves — so a line keeps its party ("Loan received · Bajaj Finance") whichever way it was saved.
+ */
+export const BOOKING_LOOKUP_TYPES: ReadonlySet<string> = new Set([
+  "manual", "bs_item", "employee_loan", "reimbursement", "loan_given", "business_loan",
+  "loan_drawdown", "loan_repayment", "emi", "statutory",
+]);
+
+/** R-2570: does this line's booking come from bank_line_bookings()? */
+export function readsLineBooking(type: string | null): boolean {
+  return type !== null && BOOKING_LOOKUP_TYPES.has(type);
+}
+
+/** R-2378: the booking of a line, only when its type is read that way and the server found one. */
+function bookingOf(t: Pick<FilterLine, "id" | "matched_to_type">, bookings?: ReadonlyMap<string, LineBookingLike>): LineBookingLike | undefined {
+  return readsLineBooking(t.matched_to_type) ? bookings?.get(t.id) : undefined;
+}
+
+/** The "Matched to" group of a line: a booked manual line's booking group, else its type's. */
+export function lineGroupOf(t: Pick<FilterLine, "id" | "matched_to_type">, bookings?: ReadonlyMap<string, LineBookingLike>): MatchGroup | null {
+  return bookingOf(t, bookings)?.group ?? matchGroupOf(t.matched_to_type);
+}
+
+/** R-2378: "Loan received · Bajaj Finance" — a booking's words with its party (badge link, CSV, search). */
+export function lineBookingText(b: Pick<LineBookingLike, "label" | "party">): string {
+  return b.party ? `${b.label} · ${b.party}` : b.label;
+}
+
+/** R-2378: the Status a line exports — a booked manual line says what it booked ("Loan received · Bajaj Finance"). */
+export function lineStatusText(t: Pick<FilterLine, "id" | "matched_to_type">, bookings?: ReadonlyMap<string, LineBookingLike>): string {
+  const b = bookingOf(t, bookings);
+  return b ? lineBookingText(b) : lineStatusLabel(t.matched_to_type);
+}
 
 export const DEFAULT_FILTERS: BankFilters = {
   status: "all", dir: "all", from: null, to: null, min: null, max: null, exact: null,
@@ -150,6 +192,7 @@ export function matchGroupOf(type: string | null): MatchGroup | null {
     case "loan_given":                              return "loan";       // R-2346 (R-2340's type)
     case "business_loan":                           return "loan";       // R-2377: Add loan linked an imported credit
     case "loan_drawdown": case "loan_repayment":    return "loan";       // R-2374: credit line drawdown / lender repayment
+    case "employee_loan":                           return "loan";       // R-2570: a staff loan's payout / repayment line
   }
   if (/loan|emi/.test(type)) return "loan";
   return "other";
@@ -164,6 +207,11 @@ export function lineStatusLabel(type: string | null): string {
   if (type === "business_loan") return "Loan received";   // R-2377: same word as the row badge
   if (type === "loan_drawdown") return "Credit line drawdown";   // R-2374: same words as the row badge
   if (type === "loan_repayment") return "Loan repayment";
+  if (type === "other_income") return "Other income";   // R-2378: was the bare "Reconciled"
+  if (type === "referral_commission") return "Commission";   // R-2378: was the bare "Reconciled"
+  if (type === "bs_item") return "Balance sheet entry";   // R-2570: book_bank_advance / book_bank_credit (the booking names the kind)
+  if (type === "employee_loan") return "Staff loan";   // R-2570
+  if (type === "reimbursement") return "Reimbursement";   // R-2570: owed back to / paid to an employee
   return g === "other" ? "Reconciled" : MATCH_GROUP_LABEL[g];
 }
 
@@ -226,7 +274,7 @@ function lineMatches(
     if (f.max !== null && amt > f.max) return false;
   }
   if (skip !== "types" && f.types.length > 0) {
-    const g = matchGroupOf(t.matched_to_type);
+    const g = lineGroupOf(t, ctx.bookings);
     if (g === null || !f.types.includes(g)) return false;
   }
   if (f.need) {
@@ -236,7 +284,8 @@ function lineMatches(
   }
   if (f.imp && !ctx.importLines?.get(f.imp)?.has(t.id)) return false;
   const q = f.q.trim().toLowerCase();
-  if (q && ![t.description, t.reference, String(t.debit ?? ""), String(t.credit ?? "")]
+  const booked = bookingOf(t, ctx.bookings);   // R-2378: "Bajaj" finds a line booked as Loan repaid · Bajaj Finance
+  if (q && ![t.description, t.reference, String(t.debit ?? ""), String(t.credit ?? ""), booked ? lineBookingText(booked) : null]
     .some((v) => (v ?? "").toString().toLowerCase().includes(q))
     && !amountSearchMatches(q, t)) return false;
   return true;
@@ -318,7 +367,7 @@ export function facetCounts(lines: readonly FilterLine[], f: BankFilters, ctx: F
       if ((t.debit ?? 0) > 0) c.dir.out += 1;
     }
     if (lineMatches(t, f, ctx, dupes, "types")) {
-      const g = matchGroupOf(t.matched_to_type);
+      const g = lineGroupOf(t, ctx.bookings);
       if (g) c.types[g] += 1;
     }
     if (lineMatches(t, noNeed, ctx, dupes, null)) {
@@ -478,7 +527,7 @@ export function hasAnyFilter(f: BankFilters): boolean {
 // ─── CSV ───────────────────────────────────────────────────────────────────
 
 /** Export CSV of exactly the filtered lines (lib/csv downloadCSV writes it). Amounts raw, whole ₹. */
-export function bankLinesCsv(lines: readonly FilterLine[]): { headers: string[]; rows: (string | number)[][] } {
+export function bankLinesCsv(lines: readonly FilterLine[], bookings?: ReadonlyMap<string, LineBookingLike>): { headers: string[]; rows: (string | number)[][] } {
   return {
     headers: ["Date", "Description", "Reference", "Money out", "Money in", "Status", "Balance after"],
     rows: lines.map((t) => [
@@ -487,7 +536,7 @@ export function bankLinesCsv(lines: readonly FilterLine[]): { headers: string[];
       t.reference ?? "",
       (t.debit ?? 0) > 0 ? t.debit : "",
       (t.credit ?? 0) > 0 ? t.credit : "",
-      lineStatusLabel(t.matched_to_type),
+      lineStatusText(t, bookings),
       t.balance_after ?? "",
     ]),
   };

@@ -230,7 +230,8 @@ export function QuotePreviewDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto p-0">
+      {/* R-2578: print-target — Print / Save as PDF prints only this document (globals.css). */}
+      <DialogContent className="print-target max-w-4xl max-h-[90vh] overflow-y-auto p-0">
         <DialogTitle className="sr-only">Quote preview · {quoteId}</DialogTitle>
 
         {/* Toolbar (hidden when printing) */}

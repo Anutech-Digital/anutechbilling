@@ -29,6 +29,10 @@ import { enquiryStateName } from "@/app/(public)/enquiry/enquiry-outcome";
 import { websiteTenantId, websiteTenantMissingBody } from "@/lib/website-tenant";
 import { readFormConsent } from "@/lib/consent/data-notice";
 import { recordFormConsent } from "@/lib/consent/marketing-consent.server";
+import { signReplaceToken, verifyReplaceTokens } from "@/lib/leads/replace-trial-request";
+
+/** replace_trial_request (R-2563) is newer than database.generated.ts. */
+type ReplaceRpc = { rpc: (fn: "replace_trial_request", args: Record<string, unknown>) => PromiseLike<{ error: { message?: string } | null }> };
 
 const FROM_EMAIL = process.env.RESEND_FROM_DEFAULT?.trim() || "ResellerOS <onboarding@resend.dev>";
 const APP_URL    = process.env.NEXT_PUBLIC_APP_URL?.trim() || "https://resellersos.web.app";
@@ -60,6 +64,8 @@ const enquirySchema = z.object({
   message:     z.string().min(5, "Please describe what you need").max(2000),
   /** A free-trial request from the site's trial form: no owner alert (owner, 30 Sep 2026). */
   trial:       z.boolean().optional(),
+  /** R-2563: the trial form's signed replace token(s) of its earlier request(s) — checked, never trusted. */
+  replaces:    z.array(z.string().max(120)).max(5).optional(),
 });
 
 export async function POST(request: NextRequest) {
@@ -80,7 +86,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { fullName, companyName, email, phone, product, seats, subscriptionType, stateCode, message, trial } = parsed.data;
+    const { fullName, companyName, email, phone, product, seats, subscriptionType, stateCode, message, trial, replaces } = parsed.data;
     const stateName = enquiryStateName(stateCode);
 
     const admin = createAdminClient();
@@ -125,6 +131,19 @@ export async function POST(request: NextRequest) {
         { error: "Could not save your enquiry. Please try again or call us." },
         { status: 500 },
       );
+    }
+
+    /* R-2563: "← Change the request" on /trial — a signed token of the SAME contact's earlier trial
+       request closes it (replace_trial_request). Best-effort; a trial gets its own token back. */
+    let replaceToken: string | null = null;
+    if (trial) {
+      for (const oldLead of verifyReplaceTokens(replaces, { tenantId, contact: { email, phone } })) {
+        const { error: replaceErr } = await (admin as unknown as ReplaceRpc).rpc("replace_trial_request", {
+          p_tenant: tenantId, p_new_lead: leadId, p_new_quote: null, p_old_lead: oldLead, p_email: email, p_phone: phone,
+        });
+        if (replaceErr) console.error("[enquiry/general] replace_trial_request failed:", replaceErr.message);
+      }
+      replaceToken = signReplaceToken({ tenantId, leadId, contact: { email, phone } });
     }
 
     /* R-2011: the notice they saw + the marketing opt-in (yes/no), recorded for this lead. */
@@ -217,7 +236,7 @@ ${voice ? voice.signOff : `— Team${tenant?.name ? ` ${tenant.name}` : ""}`}`,
     const ack = settled[1];
     const ackSent = ack.status === "fulfilled" && ack.value.status === "sent";
 
-    return NextResponse.json({ success: true, leadId, ackSent });
+    return NextResponse.json({ success: true, leadId, replaceToken, ackSent });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[/api/public/enquiry/general] crashed:", message);

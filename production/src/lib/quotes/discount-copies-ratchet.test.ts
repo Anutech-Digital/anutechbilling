@@ -17,9 +17,11 @@
  * Line-level discounts (l./it./line.discount_pct — per-line, before the subtotal) are a
  * different number and not counted.
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const BASELINE: Readonly<Record<string, number>> = {
   "src/app/(app)/quotes/page.tsx": 2,
@@ -55,7 +57,7 @@ function discountCopyHits(source: string): number {
 function* walk(dir: string): Generator<string> {
   for (const e of readdirSync(dir, { withFileTypes: true })) {
     const p = join(dir, e.name);
-    if (e.isDirectory()) { if (e.name !== "node_modules") yield* walk(p); }
+    if (e.isDirectory()) { if (e.name !== "node_modules" && !isPrismaGenerated(p)) yield* walk(p); } // R-2564: not the generated Prisma client
     else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) yield p;
   }
 }
@@ -66,7 +68,7 @@ describe("R-1133 discount copies ratchet", () => {
   for (const abs of walk(join(root, "src"))) {
     const rel = relative(root, abs).split("\\").join("/");
     if (rel === HOME) continue;
-    const n = discountCopyHits(readFileSync(abs, "utf8"));
+    const n = discountCopyHits(readSource(abs));
     if (n > 0) found[rel] = n;
   }
 

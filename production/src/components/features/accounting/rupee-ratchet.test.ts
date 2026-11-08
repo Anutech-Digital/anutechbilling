@@ -12,8 +12,9 @@
  *  - the vendor-bill FX note: that string is STORED in notes, so its format must not move.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = process.cwd();
 const FOLDERS = [
@@ -51,7 +52,7 @@ function offenders(): string[] {
   const hits: string[] = [];
   for (const folder of FOLDERS) {
     for (const f of files(join(ROOT, folder))) {
-      readFileSync(f, "utf8").split(/\r?\n/).forEach((line, i) => {
+      readSource(f).split(/\r?\n/).forEach((line, i) => {
         if (!HAND_BUILT.test(line)) return;
         HAND_BUILT.lastIndex = 0;
         if (ALLOW.some((a) => a.test(line))) return;
@@ -79,7 +80,7 @@ describe("R-274 accounting rupee ratchet", () => {
   });
 
   it("every allowlist entry still matches a real line (no stale exemptions)", () => {
-    const all = FOLDERS.flatMap((d) => files(join(ROOT, d))).map((f) => readFileSync(f, "utf8")).join("\n");
+    const all = FOLDERS.flatMap((d) => files(join(ROOT, d))).map((f) => readSource(f)).join("\n");
     for (const a of ALLOW) expect(a.test(all), String(a)).toBe(true);
   });
 });

@@ -1,0 +1,188 @@
+// @vitest-environment jsdom
+/* R-2544 (Pardeep, 6 Nov): Customer → Transactions shows each payment under the invoice it paid;
+   money not against an invoice sits in "Advance / not yet against an invoice"; Payments has "For". */
+import { describe, it, expect, afterEach, vi } from "vitest";
+import * as React from "react";
+import { render, cleanup, within } from "@testing-library/react";
+
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
+const billingsState = { loading: false };
+vi.mock("@/lib/queries/customer-instalment-links", () => ({
+  useCustomerInstalmentBillings: () => billingsState.loading
+    ? { data: undefined, isLoading: true, isError: false, error: null, refetch: vi.fn() }
+    : { data: [{ invoice_id: "INV-I1", subscription_id: "sub-1" }], isLoading: false, isError: false, error: null, refetch: vi.fn() },
+}));
+
+import { CustomerTransactionsTab, ADVANCE_GROUP_TITLE, paymentReference, type CustomerTransactionsTabProps, type FlatTxn } from "./customer-transactions-tab";
+
+afterEach(cleanup);
+
+const baseInv = { net_payable: null, written_off_at: null, due_date: null };
+const invoices = [
+  { ...baseInv, id: "INV-A378-27-0100", quote_id: "Q-1", amount: 10000, paid_amount: 10000, status: "paid", invoice_date: "2026-09-01" },
+  { ...baseInv, id: "INV/25-26/1913", quote_id: null, amount: 89208, paid_amount: 89208, status: "paid", invoice_date: "2026-01-05" },
+  { ...baseInv, id: "INV-I1", quote_id: null, amount: 3000, paid_amount: 1000, status: "pending", invoice_date: "2026-10-01" },
+];
+const p = (o: Record<string, unknown>) => ({ quote_id: null, invoice_id: null, status: "received", refunded_at: null, reference: null, method: "bank_transfer", receipt_voucher_no: null, ...o }) as CustomerTransactionsTabProps["payments"][number];
+const payments = [
+  p({ id: "p1", quote_id: "Q-1", amount: 4000, received_at: "2026-09-05T05:00:00Z", receipt_voucher_no: "RV-A378-27-0168" }),
+  p({ id: "p2", quote_id: "Q-1", amount: 6000, received_at: "2026-09-19T05:00:00Z", receipt_voucher_no: "RV-A378-27-0170" }),
+  p({ id: "pz", invoice_id: "INV/25-26/1913", amount: 89208, received_at: "2026-01-05T05:00:00Z", receipt_voucher_no: "RV-Z-7097" }),
+  p({ id: "ps", quote_id: "Q-S", amount: 1000, received_at: "2026-10-05T05:00:00Z", receipt_voucher_no: "RV-S-1" }),
+  p({ id: "padv", quote_id: "Q-2", amount: 2500, received_at: "2026-10-20T05:00:00Z", receipt_voucher_no: "RV-ADV-1" }),
+];
+const quotes = [
+  { id: "Q-1", invoice_id: "INV-A378-27-0100", created_date: "2026-08-20", amount: 10000, status: "accepted" },
+  { id: "Q-2", invoice_id: null, created_date: "2026-10-18", amount: 9000, status: "accepted" },
+  { id: "Q-S", invoice_id: null, created_date: "2026-06-01", amount: 36000, status: "accepted" },
+];
+
+function props(over: Partial<CustomerTransactionsTabProps> = {}): CustomerTransactionsTabProps {
+  return {
+    customerId: "c1", linkOpts: { canQuotes: true }, canDeletePay: false, onDeletePayment: vi.fn(),
+    invoices, payments, quotes, projects: [], projPayments: [], invoiceProject: {}, invoicePaidByProject: {},
+    subs: [{ id: "sub-1", quote_id: "Q-S" }], notes: { creditNotes: [], debitNotes: [] }, allPayments: payments, creditRows: [],
+    tdsInfo: { pz: { tds: 1784, section: "194J" } },
+    txnFilter: "all", setTxnFilter: vi.fn(),
+    segments: [{ id: "all", label: "All", n: 8 }, { id: "invoices", label: "Invoices", n: 3 }, { id: "payments", label: "Payments", n: 5 }],
+    filteredTxns: [], hasTxns: true, ...over,
+  };
+}
+
+/** Desktop table rows' text, in order. */
+const rowTexts = (c: HTMLElement) => [...c.querySelectorAll("tbody tr")].map((tr) => tr.textContent ?? "");
+const indexOf = (rows: string[], s: string) => rows.findIndex((r) => r.includes(s));
+
+describe("R-2544 Customer → Transactions: payments under their invoice", () => {
+  it("All: an invoice with 2 payments has both right under it, oldest first; status Paid", () => {
+    const { container } = render(<CustomerTransactionsTab {...props()} />);
+    const rows = rowTexts(container);
+    const inv = indexOf(rows, "INV-A378-27-0100");
+    expect(rows[inv]).toContain("Paid");
+    expect(rows[inv + 1]).toContain("RV-A378-27-0168");
+    expect(rows[inv + 1]).toContain("Bank transfer");
+    expect(rows[inv + 1]).toContain("₹4,000");
+    expect(rows[inv + 2]).toContain("RV-A378-27-0170");
+  });
+
+  it("the Zoho-imported invoice's receipt (R-2542 path) is nested with its TDS line", () => {
+    const { container } = render(<CustomerTransactionsTab {...props()} />);
+    const rows = rowTexts(container);
+    const inv = indexOf(rows, "INV/25-26/1913");
+    expect(rows[inv + 1]).toContain("RV-Z-7097");
+    expect(rows[inv + 1]).toContain("Received ₹87,424 + TDS ₹1,784");
+  });
+
+  it("a subscription instalment shows its receipt and says Part-paid (₹X due) once", () => {
+    const { container } = render(<CustomerTransactionsTab {...props()} />);
+    const rows = rowTexts(container);
+    const inv = indexOf(rows, "INV-I1");
+    expect(rows[inv]).toContain("Part-paid (₹2,000 due)");
+    expect(rows[inv + 1]).toContain("RV-S-1");
+  });
+
+  it("an advance goes to its own group at the end, with its quote", () => {
+    const { container } = render(<CustomerTransactionsTab {...props()} />);
+    const rows = rowTexts(container);
+    const g = indexOf(rows, ADVANCE_GROUP_TITLE);
+    expect(g).toBe(rows.length - 2);
+    expect(rows[g + 1]).toContain("RV-ADV-1");
+    expect(rows[g + 1]).toContain("Quote Q-2");
+    // ...and not as a loose payment row anywhere else
+    expect(rows.filter((r) => r.includes("RV-ADV-1"))).toHaveLength(1);
+    // The heading carries no amount — an advance may be partly used; each row says what is left.
+    expect(rows[g]).not.toContain("₹");
+  });
+
+  it("while the instalment links are still loading, nothing is shown (no receipt flashes under Advance)", () => {
+    billingsState.loading = true;
+    try {
+      const { container } = render(<CustomerTransactionsTab {...props()} />);
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(0);
+      expect(container.querySelector('[role="status"]')).toBeTruthy();
+    } finally { billingsState.loading = false; }
+  });
+
+  it("a credit note lowers what the invoice can take: the rest of the receipt goes to Advance", () => {
+    // INV-A378-27-0100 ₹10,000 paid ₹10,000, credit note ₹3,000 → money in capped at ₹7,000; p2's ₹3,000 is unlinked.
+    const { container } = render(<CustomerTransactionsTab {...props({ notes: { creditNotes: [{ invoice_id: "INV-A378-27-0100", amount: 3000 }], debitNotes: [] } })} />);
+    const rows = rowTexts(container);
+    const inv = indexOf(rows, "INV-A378-27-0100");
+    expect(rows[inv + 2]).toContain("RV-A378-27-0170");
+    expect(rows[inv + 2]).toContain("₹3,000");
+    expect(rows[inv + 2]).toContain("part of ₹6,000");
+    const g = indexOf(rows, ADVANCE_GROUP_TITLE);
+    expect(rows.slice(g).some((r) => r.includes("RV-A378-27-0170") && r.includes("₹3,000"))).toBe(true);
+  });
+
+  it("while the subscriptions or notes are still being read, the lists wait too (Payments' For included)", () => {
+    for (const txnFilter of ["all", "payments"] as const) {
+      const { container } = render(<CustomerTransactionsTab {...props({ linksPending: true, txnFilter })} />);
+      expect(container.querySelectorAll("tbody tr")).toHaveLength(0);
+      expect(container.querySelector('[role="status"]')).toBeTruthy();
+      cleanup();
+    }
+  });
+
+  it("a notes read that failed is said, with Try again", () => {
+    const retry = vi.fn();
+    const { getByText } = render(<CustomerTransactionsTab {...props({ notesError: { error: new Error("boom"), retry } })} />);
+    expect(getByText(/Credit \/ debit notes/)).toBeTruthy();
+  });
+
+  it("delete sits only on a row showing the whole receipt — never on a 'part of ₹X' row; the split's first row keeps the TDS line", () => {
+    const { container } = render(<CustomerTransactionsTab {...props({
+      canDeletePay: true,
+      notes: { creditNotes: [{ invoice_id: "INV-A378-27-0100", amount: 3000 }], debitNotes: [] },
+      tdsInfo: { p2: { tds: 600, section: "194J" } },
+    })} />);
+    const trs = [...container.querySelectorAll("tbody tr")];
+    const parts = trs.filter((tr) => (tr.textContent ?? "").includes("part of ₹6,000"));
+    expect(parts).toHaveLength(2);
+    for (const tr of parts) expect(tr.querySelector('[aria-label="Delete payment"]')).toBeNull();
+    expect(parts.filter((tr) => tr.querySelector('[data-testid="payment-tds-line"]'))).toHaveLength(1);
+    expect(parts[0].textContent).toContain("Received ₹5,400 + TDS ₹600");
+    const whole = trs.find((tr) => (tr.textContent ?? "").includes("RV-A378-27-0168"))!;
+    expect(whole.querySelector('[aria-label="Delete payment"]')).toBeTruthy();
+  });
+
+  it("top-level rows newest first by date (invoice date / quote date)", () => {
+    const { container } = render(<CustomerTransactionsTab {...props()} />);
+    const rows = rowTexts(container);
+    expect(indexOf(rows, "INV-I1")).toBeLessThan(indexOf(rows, "INV-A378-27-0100"));
+    expect(indexOf(rows, "INV-A378-27-0100")).toBeLessThan(indexOf(rows, "INV/25-26/1913"));
+  });
+
+  it("Invoices tab: invoices with their payments, no advance group", () => {
+    const { container } = render(<CustomerTransactionsTab {...props({ txnFilter: "invoices" })} />);
+    const rows = rowTexts(container);
+    expect(rows.some((r) => r.includes(ADVANCE_GROUP_TITLE))).toBe(false);
+    expect(rows[indexOf(rows, "INV-A378-27-0100") + 1]).toContain("RV-A378-27-0168");
+  });
+
+  it("Payments tab: flat list with a For column (invoice number or Advance)", () => {
+    const flat: FlatTxn[] = [
+      { date: "2026-10-20", type: "Payment", ref: "RV-ADV-1", amount: 2500, status: "received", href: null, payId: "padv" },
+      { date: "2026-09-05", type: "Payment", ref: "RV-A378-27-0168", amount: 4000, status: "received", href: null, payId: "p1" },
+    ];
+    const { container } = render(<CustomerTransactionsTab {...props({ txnFilter: "payments", filteredTxns: flat })} />);
+    const head = [...container.querySelectorAll("thead th")].map((th) => th.textContent);
+    expect(head).toContain("For");
+    const body = container.querySelector("tbody")!;
+    const rows = [...body.querySelectorAll("tr")];
+    expect(within(rows[0]).getByText("Advance")).toBeTruthy();
+    expect(within(rows[1]).getByText("INV-A378-27-0100")).toBeTruthy();
+  });
+it("R-2559: while the reads are still coming in and no row is known yet, it waits — never 'No transactions yet' first", () => {
+    const { container, queryByText } = render(<CustomerTransactionsTab {...props({ linksPending: true, hasTxns: false })} />);
+    expect(queryByText("No transactions yet")).toBeNull();
+    expect(container.querySelector('[role="status"][aria-label="Loading transactions"]')).toBeTruthy();
+  });
+
+  it("R-2559: a receipt's Reference is its receipt number, else the UTR / reference typed, else the fallback (never the id first)", () => {
+    expect(paymentReference({ id: "p-uuid", receipt_voucher_no: "RV-1", reference: "UTR9" }, "p-uuid")).toBe("RV-1");
+    expect(paymentReference({ id: "p-uuid", receipt_voucher_no: null, reference: " SCNUTR2458054 " }, "p-uuid")).toBe("SCNUTR2458054");
+    expect(paymentReference({ id: "p-uuid", receipt_voucher_no: null, reference: "  " }, "p-uuid")).toBe("p-uuid");
+    expect(paymentReference({ id: "p-uuid" }, "Receipt")).toBe("Receipt");
+  });
+});

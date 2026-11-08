@@ -326,7 +326,7 @@ export function bulkQuoteTargets<T extends { sub: RenewalActionSub & { customer_
     });
     if (set.primary?.kind === "send-now") { send.push(r); continue; }
     const reason = set.primary?.kind === "generate"
-      ? "billed in parts — use Bill next part"
+      ? `billed in parts — use ${set.primary.label}` /* R-2548: the row's own button name */
       : set.row.text ?? (r.sub.auto_renew === false ? "won't renew" : "nothing to send");
     skipped.push({ row: r, reason });
   }

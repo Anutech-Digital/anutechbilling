@@ -39,6 +39,7 @@ vi.mock("@/lib/queries/txn-category-rules", async (orig) => ({ ...(await orig<ob
 vi.mock("@/lib/queries/bank-debit-pay-for", async (orig) => ({ ...(await orig<object>()), useVendorNarrationAliases: noData }));
 vi.mock("@/lib/queries/bank-aa", async (orig) => ({ ...(await orig<object>()), useBankAaConnection: noData, useFetchAaNow: mutation }));
 vi.mock("@/lib/banking/manual-reconcile", async (orig) => ({ ...(await orig<object>()), useOwnerBookingNotes: noData }));
+vi.mock("@/lib/banking/line-booking", async (orig) => ({ ...(await orig<object>()), useLineBookings: noData }));   // R-2378
 vi.mock("@/components/features/banking/use-zoho-match-count", async (orig) => ({ ...(await orig<object>()), useZohoMatchSet: noData }));
 vi.mock("@/components/features/banking/salary-lines-dialog", async (orig) => ({ ...(await orig<object>()), SalaryLinesDialog: () => null }));
 vi.mock("@/components/features/banking/import-statement-dialog", () => ({ ImportStatementDialog: () => null }));

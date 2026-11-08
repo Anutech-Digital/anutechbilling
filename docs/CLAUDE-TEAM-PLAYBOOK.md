@@ -50,6 +50,19 @@ memory. That is how every teammate's Claude stays updated.
   why; offer at most 1–2 process speed-ups per update (real ones become G-PROCESS cards with numbers).
 - Page tweaks from screenshots: collect all of them first ("aur kuch is page par?"), then ONE card.
 
+### Owner bahar / so raha hai (7 Nov 2026, Pardeep — R-2573)
+
+*"jisme mere bina kaam nahi chal sakta use pending kaam me daal dena aur aage badte rahna"* — Pardeep,
+7 Nov raat. Same for every teammate's Claude whenever he is out or asleep.
+
+1. **Keep working, don't stop.** Workers stay full (4 by day, 6 by night), make cards, push, watch CI,
+   run card tests, keep the board current.
+2. **Owner-only items go to the pending list, not to chat** (money/GST/price decision, data repair,
+   login/password, a classifier-blocked command): write them in
+   `Anutech-HQ/drafts/PARDEEP-PENDING-<date>.md` + `workstation.json` `pending`, and on the card
+   `needsDecision` with your recommendation. Don't ask in chat, don't wait — take the next card.
+3. **When he is back:** give a short "aapke liye pending" list (one line each, with your recommendation).
+
 ## b) Logins and browser
 
 *Login: command hum chalate hain, Pardeep sirf Allow dabata hai.*
@@ -239,3 +252,44 @@ Format: `- <date>: what went wrong → the rule it created (card).`
   laptop load → lower parallel workers to 4 and retry; never skip the guards (R-2539).
 - 6 Nov (evening): a `run.sh` in the shared scratchpad top folder overwrote another agent's file → keep
   scratch files in a per-card subfolder of the scratchpad (R-2539).
+- 7 Nov: weekly all-models usage hit 94% with 4 days left before the reset → from 80% on, start every
+  worker, checker and reviewer with `model: "fable"` (Fable has its own weekly quota) and keep the
+  coordinator brief; `get_usage` before any big batch; warn the owner at 90% (R-2549).
+- 7 Nov: a board `liveLog` was overwritten — an ArtifactData `update` with a `liveLog` array replaces
+  the whole array → always `get` the card first, append to its array, then `update` with `if_version`
+  (R-2549).
+- 7 Nov: a worker's "fixed" tab could not be found by another agent → each agent session has its own
+  Chrome tab group, so one agent's tab is invisible to another, and the Chrome extension cannot bring a
+  tab to the front. Localhost checks run in the Claude app's built-in browser (`tabs_select` /
+  foreground); Chrome Profile 20 is only for real-login work (staging Excel, Zoho), in ONE tab that stays
+  open; login is a cookie, so a new tab in that profile is already logged in (R-2549).
+- 7 Nov: localhost took 30–60 s per page because Windows Defender was scanning the repo folders → with
+  Defender folder exclusions for the repo and deploy folders (set by the owner) it is 0.4 s; when
+  localhost is slow, check this first (R-2549).
+- 7 Nov: an owner command written for `bash` failed — his terminal is PowerShell, where `bash` means WSL
+  and cannot see `C:/` paths → give owner commands as `powershell -ExecutionPolicy Bypass -File C:/…/x.ps1`
+  or plain `node …`, each in its own `` ```bash `` block (Run button); before asking him to re-run, check
+  the DB/result yourself — it may already have succeeded (R-2549).
+- 7 Nov: the staging DB step stopped with HTTP 409 — Cloud SQL's automatic backup was running at that
+  moment → wait until `gcloud sql operations list` shows DONE, then re-run; the script applies only the
+  migrations whose peek is false, so a re-run is safe (R-2549).
+- 7 Nov: workers again handed back before the push → every worker prompt says "do not hand back until
+  push + CI green", and the coordinator verifies the card's SHA on `anutech/manager-pardeep` (R-2549).
+- 7 Nov: "Check karo" cards checked by an AI checker had no agreed way to record the result → on PASS
+  write the board's Theek fields with `byAccount: "ai-checker"` plus `aiCheck` evidence; on FAIL write
+  only `aiCheck` and the owner decides; cards that need live/staging go to their own lane (R-2549).
+- 7 Nov 2026 — CI wait ki galti dohrayi: WORKER-STEPS 5b worker ko CI ka 30-40 min wait karwata tha; ab worker push ke baad hand back karta hai, manager CI dekhta hai (`worker-lock ci-all`); build cache R-2552. Measured: CI build job 11-23 min, of which next build's own type check 6-13 min (a repeat of the typecheck job) — now skipped in CI's build (SKIP_BUILD_TYPECHECK=1, same as Cloud Build since R-182); day worker cap 2 → 4 (Pardeep).
+- 7 Nov 2026 (R-2564): push guard step 85–169 s — not slow tests but ~20 scan files each opening the same 4,900 src files + 600 migrations (Windows file opens; Prisma's 36 MB generated client too). Fix: shared always-fresh read cache (`readSource`, size+mtime+ctime per read) + generated skip; measure BEFORE and AFTER in the same load window, alternating runs (load swings 25→55 node processes in minutes). Hard links change ctime — don't link repo files in tests.
+- 7 Nov 2026 (R-2569): Turbopack crashes when a dev server runs in a worktree, because the worktree's
+  `production/node_modules` is a junction to the deploy clone's → a second dev server in a worktree
+  starts with `dev-local --webpack` (never the default Turbopack).
+- 7 Nov 2026 (R-2569): a card test (`card-tests.mjs`) run from a worktree needs `production/.env.test`
+  copied in next to `.env.local` — without it the Local test logins / E2E users are missing. Each card
+  spec makes its OWN data (its own `scripts/dev/scenarios/<name>` — two specs reloading one scenario
+  wipe each other's rows, R-2548 vs R-2544) and clears it after its last step.
+- 7 Nov 2026 (R-2566): a long list froze because every row called `toLocaleString(…, options)` (a new
+  Intl formatter per call) → build the `Intl.NumberFormat` / `DateTimeFormat` ONCE (module level) and
+  reuse it for every row.
+- 7 Nov 2026 (R-2573): Pardeep went to sleep and said "jisme mere bina kaam nahi chal sakta use pending
+  kaam me daal dena aur aage badte rahna" → owner out/asleep = keep working; owner-only items go to
+  the pending list + card `needsDecision`, never a chat question that stops the work (section a).

@@ -49,7 +49,7 @@ describe("topbar on a 375px phone", () => {
     const body = menu.slice(0, end);
     expect(body).toMatch(/openHelpReport\(\)/);
     expect(body).toMatch(/setActionsOpen\(true\)/);
-    expect(body).toMatch(/setTheme\(/);
+    expect(body).toMatch(/<ThemeMenuItems \/>/); // R-2187: System / Light / Dark
   });
 
   it("R-383: one Help button — no separate Report Bug button or dialog in the header", () => {

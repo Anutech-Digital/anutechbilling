@@ -23,6 +23,7 @@ import {
   getCrumb, groupDirectory, sectionCrumb, type NavItem, type UserRole,
 } from "./nav";
 import { USER_ROLES } from "./auth/roles";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /**
  * Removed from the nav ON PURPOSE after S30, each with its reason. Anything else missing is
@@ -413,7 +414,7 @@ describe("2. structure", () => {
     expect(withDir.map((i) => i.href).sort()).toEqual(["/marketing", "/reports"]);
     for (const i of withDir) {
       const file = path.join(APP_DIR, i.href, "page.tsx");
-      const src = fs.readFileSync(file, "utf8");
+      const src = readSource(file);
       expect(src, `${i.href}/page.tsx must render <NavDirectory parentId="${i.id}" />`).toContain(`<NavDirectory parentId="${i.id}"`);
     }
   });

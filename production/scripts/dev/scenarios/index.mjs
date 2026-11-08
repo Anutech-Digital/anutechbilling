@@ -317,6 +317,54 @@ export const SCENARIOS = [
       { path: "renewals", for: "R-2519 SCN Bit Labs → ⋯ → Bill next part… → preview 17 × ₹300 → Seats 18, Periods 2 → Create 2 proformas (PI-…)" },
     ],
   },
+  {
+    name: "money-owed-archived",
+    about: "R-1473 Pawan's staging case: SCN Kochi Hosting owes ₹25,488 on its subscription; SCN Delhi Traders (ARCHIVED) owes ₹19,258 on its subscription + ₹23,109 on project invoice INV-SCN-MO-1. Dashboard 'to collect', Companies › Has receivables and its line all say ₹67,855 (subscriptions ₹44,746 + project ₹23,109); Renewals says ₹44,746 on these renewals + the project money.",
+    cards: ["R-1473"],
+    // customers + project, like project-receipts: their subscriptions and invoices go with them (_common.sql scn_project_clear)
+    scope: { vendors: [], txns: [], docs: [x(301), x(302), x(321)], names: [], upis: [] },
+    expect: { vendors: 0, expenses: 0, bills: 0, txns: 0, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES,
+              customers: 2, projects: 1, milestones: 2, projectPayments: 0, projectInvoices: 1, tdsRows: 0, ...NO_EXTRA },
+    pages: [
+      { path: "dashboard", for: "R-1473 Collections card: ₹67,855 to collect (Subscription dues ₹44.7K + project invoices ₹23.1K)" },
+      { path: "customers?view=unpaid", for: "R-1473 Has receivables lists SCN Kochi Hosting ₹25,488 and SCN Delhi Traders ₹42,367 (Archived badge); line over the list: … = ₹67,855 to collect · includes 1 archived company" },
+      { path: "renewals", for: "R-1473 under the title: ₹44,746 unpaid on these renewals · Companies › Has receivables ₹67,855 also has project invoices ₹23,109" },
+    ],
+  },
+  {
+    name: "renewal-parts",
+    about: "R-2548 card test's own customers, no subscriptions (the test adds them through Subscriptions → Add Subscription): SCN Part Bill Studio (Annual · Half-yearly, renews in 30 days), SCN Part Bill Late Co (Half-yearly, renews in 3 days), SCN Part Bill Yearly (paid Yearly). A reload or --clear also removes the subscriptions added on them.",
+    cards: ["R-2548", "R-2569"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [],
+             extra: ["c2569000-0000-4000-8000-000000000001", "c2569000-0000-4000-8000-000000000002", "c2569000-0000-4000-8000-000000000003"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 3 },
+    pages: [
+      { path: "customers", for: "R-2548 the three SCN Part Bill customers — Subscriptions → Add Subscription → Existing Customer picks them" },
+      { path: "renewals", for: "R-2548 after adding SCN Part Bill Studio's Annual · Half-yearly subscription: 'Bill renewal · part 1 of next year'" },
+    ],
+  },
+  {
+    name: "seat-parts",
+    about: "R-2226 card test's own customer SCN Seat Parts Co with two Google Workspace subscriptions, 10 seats × ₹3,240/yr (mrr ₹2,700), annual term from the 1st two months ago: SCN Seat Parts Monthly (billed monthly — a whole month's seat is ₹270, the part's own rate) and SCN Seat Parts Yearly (paid yearly — annual × days ÷ 365, unchanged). The test only reads the Manage seats preview; a reload or --clear removes both subscriptions.",
+    cards: ["R-2226"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: ["c2226000-0000-4000-8000-000000000001"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1 },
+    pages: [
+      { path: "subscriptions", for: "R-2226 SCN Seat Parts Monthly → Manage seats → effective date = 1st of this month → 'Part rate ₹270/seat (1 month of ₹3,240/yr)', ₹270 per seat; SCN Seat Parts Yearly → Pro-rata factor as before" },
+    ],
+  },
+  {
+    name: "receipt-gaps",
+    about: "R-2192 small receipt differences: SCN Round Off Traders INV-SCN-RG-1 ₹13,106 + a ₹13,105 NEFT line (₹1 short → round-off); SCN Wire Exports INV-SCN-RG-2 ₹50,000 + a ₹49,500 RTGS wire (₹500 kept by the bank → Bank / SWIFT charge).",
+    cards: ["R-2192"],
+    needs: { sql: "exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2192%')", what: "bank charge on a receipt (migration R-2192)" },
+    scope: { vendors: [], txns: ["c2192000-0000-4000-8000-000000000003", "c2192000-0000-4000-8000-000000000004"], docs: [], names: [], upis: [],
+             extra: ["c2192000-0000-4000-8000-000000000001", "c2192000-0000-4000-8000-000000000002", "Q-SCN-RG-1", "Q-SCN-RG-2", "INV-SCN-RG-1", "INV-SCN-RG-2"] },
+    expect: { ...NO_OLD, txns: 2, ...NO_EXTRA, xCustomers: 2, xQuotes: 2, xInvoices: 2 },
+    pages: [
+      { path: "banking", for: "R-2192 the ₹13,105 SCN Round Off Traders line: 'Matches INV-SCN-RG-1 · ₹1 round-off' → Reconcile: INV-SCN-RG-1 ticked, 'Round off ₹1' chosen → Record → Paid in full · the ₹49,500 SCN Wire Exports line → This money is for INV-SCN-RG-2 → Bank / SWIFT charge ₹500 → Paid" },
+    ],
+  },
 ];
 
 export const SCENARIO_NAMES = SCENARIOS.map((s) => s.name);

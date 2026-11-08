@@ -138,6 +138,31 @@ export function smallTextSites(raw) {
   return out;
 }
 
+/** Per-owner totals + hits for [rel, read] sources; `all` keeps every owner's hits (the --json shape). */
+function tally(sources, { want = null, all = false } = {}) {
+  const totals = {};
+  const detail = {};
+  for (const [rel, read] of sources) {
+    const owner = ownerOf(rel);
+    const hits = scan(read(), rel);
+    totals[owner] ??= {};
+    for (const [k, lines] of Object.entries(hits)) {
+      totals[owner][k] = (totals[owner][k] ?? 0) + lines.length;
+      if (lines.length && (owner === want || all)) (detail[owner] ??= []).push({ file: rel, kind: k, lines });
+    }
+  }
+  return { totals, detail };
+}
+
+/**
+ * R-2564 (7 Nov 2026): the `--json` report of the working tree, in-process. Five push guards each
+ * spawned `node a11y-count.mjs --json` (a fresh node + a walk of every .tsx) — the same report five
+ * times. They call this instead with the shared read cache (`read`). Same walk, same scan, same shape.
+ */
+export function a11yReportJson({ read = (f) => readFileSync(f, "utf8") } = {}) {
+  return tally(walk(join(APP, "src")).map((f) => [relative(REPO, f).replace(/\\/g, "/"), () => read(f)]), { all: true });
+}
+
 const isMain = process.argv[1] && fileURLToPath(import.meta.url).replace(/\\/g, "/") === process.argv[1].replace(/\\/g, "/");
 if (isMain) {
   const args = process.argv.slice(2);
@@ -150,17 +175,7 @@ if (isMain) {
         .filter((p) => p.endsWith(".tsx") && !p.endsWith(".test.tsx"))
         .map((rel) => [rel, () => git(`show "${ref}:${rel}"`)])
     : walk(join(APP, "src")).map((f) => [relative(REPO, f).replace(/\\/g, "/"), () => readFileSync(f, "utf8")]);
-  const totals = {};
-  const detail = {};
-  for (const [rel, read] of sources) {
-    const owner = ownerOf(rel);
-    const hits = scan(read(), rel);
-    totals[owner] ??= {};
-    for (const [k, lines] of Object.entries(hits)) {
-      totals[owner][k] = (totals[owner][k] ?? 0) + lines.length;
-      if (lines.length && (owner === want || args.includes("--json"))) (detail[owner] ??= []).push({ file: rel, kind: k, lines });
-    }
-  }
+  const { totals, detail } = tally(sources, { want, all: args.includes("--json") });
   if (args.includes("--json")) console.log(JSON.stringify({ totals, detail }, null, 2));
   else {
     console.table(totals);

@@ -10,7 +10,8 @@
  */
 import { describe, it, expect } from "vitest";
 import { join, relative } from "path";
-import { readdirSync, readFileSync } from "fs";
+import { readdirSync } from "fs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /** `{x.message}` where x's name says it is an error — but not `${…}` inside a template string. */
 const RAW_RENDER = /(?<!\$)\{\s*\(?\s*[\w.?!]*(?:error|err|Error|Err)\b[\w.?!]*\s*(?:as\s+(?:Error|any)\s*)?\)?\s*\??!?\.message\s*\}/g;
@@ -30,7 +31,7 @@ function scan(root: string): { files: number; perFile: Record<string, number>; t
       if (e.isDirectory()) walk(p);
       else if (e.name.endsWith(".tsx") && !/\.test\./.test(e.name)) {
         files++;
-        const n = countRawRenders(readFileSync(p, "utf8"));
+        const n = countRawRenders(readSource(p));
         if (n) { perFile[relative(root, p).replace(/\\/g, "/")] = n; total += n; }
       }
     }

@@ -13,9 +13,10 @@
  *     the rule) or to NOT_SALE (with the reason it is not GST / revenue);
  *   - a SALE reader that no longer uses the rule.
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = join(__dirname, "..", "..", "..");
 
@@ -123,7 +124,7 @@ function latestSqlFunctions(): Map<string, { file: string; body: string }> {
   }
   const latest = new Map<string, { file: string; body: string }>();
   for (const file of sources) {
-    const s = readFileSync(file, "utf8");
+    const s = readSource(file);
     const re = /create\s+(?:or\s+replace\s+)?function\s+(?:"?public"?\.)"?([a-z0-9_]+)"?\s*\(/gi;
     let m: RegExpExecArray | null;
     while ((m = re.exec(s))) {
@@ -243,7 +244,7 @@ const SALE_RULE_TS = /onlySaleInvoices\(|invoiceIsSale\(|isTaxInvoiceRow|\.eq\("
 
 describe("R-1739: TypeScript readers of invoices", () => {
   const files = walk(join(ROOT, "src")).map((p) => relative(ROOT, p).replace(/\\/g, "/"));
-  const readers = files.filter((f) => READS_INVOICES_TS.test(readFileSync(join(ROOT, f), "utf8"))).sort();
+  const readers = files.filter((f) => READS_INVOICES_TS.test(readSource(join(ROOT, f)))).sort();
 
   it("every file that reads invoices is classified (sale or not)", () => {
     const unknown = readers.filter((f) => !TS_SALE.has(f) && !(f in TS_NOT_SALE));
@@ -251,7 +252,7 @@ describe("R-1739: TypeScript readers of invoices", () => {
   });
 
   it("every SALE file applies the sales-only rule", () => {
-    const missing = [...TS_SALE].filter((f) => !SALE_RULE_TS.test(readFileSync(join(ROOT, f), "utf8")));
+    const missing = [...TS_SALE].filter((f) => !SALE_RULE_TS.test(readSource(join(ROOT, f))));
     expect(missing).toEqual([]);
   });
 

@@ -24,10 +24,13 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
-import { RENEWAL_BUCKETS } from "@/lib/navigation/drilldown";
+import { RENEWAL_BUCKETS, drillHref } from "@/lib/navigation/drilldown";
+import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSubscriptions, useOpenRenewalQuotes } from "@/lib/queries/subscriptions";
+import { useProjectReceivablesByCustomer } from "@/lib/queries/projects";
+import { toChaseSummary, subscriptionDuesLine, subscriptionDue } from "@/lib/accounting/receivables-due";
 import { renewalForecast } from "@/lib/renewals/forecast";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -510,6 +513,19 @@ export default function RenewalsPage() {
   const openRenewalMap = React.useMemo(() => openRenewalQuoteMap(openRenewals ?? []), [openRenewals]);
   const quoteStatusMap = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
   const { data: me } = useCurrentUser();
+  /* R-1473 (7 Nov 2026, Pawan's ✗ Galat): the rows' "Unpaid balance" badges add up to subscription
+     dues only; the dashboard and Companies "To collect" also count project invoices. One line under
+     the title says both figures, from the same rule (lib/accounting/receivables-due). */
+  const projRecvQ = useProjectReceivablesByCustomer();
+  /* R-2562: "unread" = failed with nothing to show — a failed background refetch keeps the last good
+     figure, as on Companies (collectLineState) and the dashboard (loadView). */
+  const projectsUnread = projRecvQ.isError && projRecvQ.data === undefined;
+  const duesLine = React.useMemo(() => {
+    if (!subs || projRecvQ.isPending) return null;
+    // The page's own rows (onRenewalsPage) — what their "Unpaid balance" badges add up to.
+    const renewalDues = subs.filter(onRenewalsPage).reduce((t, s) => t + subscriptionDue(s), 0);
+    return subscriptionDuesLine(toChaseSummary(subs, projRecvQ.data ?? {}), renewalDues, projectsUnread);
+  }, [subs, projRecvQ.data, projRecvQ.isPending, projectsUnread]);
   const qc = useQueryClient();
   const router = useRouter();
   /* R-118 / R-2403: ?bucket= holds the tab; the old values (urgent / upcoming / future / risk —
@@ -914,6 +930,23 @@ export default function RenewalsPage() {
           <h1 className="font-serif text-3xl text-ink">Renewals</h1>
           <p className="mt-1 text-sm text-ink-3">
             {activeSubs} active subscription{activeSubs !== 1 ? "s" : ""}
+            {duesLine && (
+              <>
+                {" · "}
+                <Link href={drillHref("customersUnpaid") as Route} className="text-rose hover:underline" data-testid="renewals-dues-line">
+                  {duesLine}
+                </Link>
+                {/* R-2562: the project read failed — the line says so; this retries just that read. */}
+                {projectsUnread && (
+                  <>
+                    {" "}
+                    <Button size="sm" variant="ghost" icon="refresh" className="align-middle" loading={projRecvQ.isFetching} onClick={() => void projRecvQ.refetch()}>
+                      Try again
+                    </Button>
+                  </>
+                )}
+              </>
+            )}
             {/* R-2266: the at-risk ARR figure lived here AND in the strip — it is only on the
                 strip line now, and the At risk chip below filters the list. */}
           </p>

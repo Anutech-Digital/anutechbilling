@@ -44,7 +44,7 @@ import { useCustomerInvoices, useCustomerQuotes } from "@/lib/queries/invoices";
 import { useCustomerPayments, useDeletePayment } from "@/lib/queries/payments";
 import { useTdsReceivables } from "@/lib/queries/tds-receivable";
 import { receiptSplitLine, tdsByPayment } from "@/lib/accounting/tds-receipt";
-import { PaymentTdsLine, tdsInfoByPayment } from "./payment-tds-line";
+import { tdsInfoByPayment } from "./payment-tds-line";
 import { useCustomerProjects, useCustomerProjectPayments } from "@/lib/queries/projects";
 import { CreateProjectQuoteDialog } from "@/components/features/projects/create-project-quote-dialog";
 import { Card } from "@/components/ui/card";
@@ -89,6 +89,7 @@ import { RecordTable, RowLink } from "@/components/features/customers/customer-r
 import { isCustomerAdvanceQuote } from "@/lib/quotes/customer-advance";
 import { subscriptionReceivable } from "@/lib/payments/receivables";
 import { advanceTxnView, isPaymentTxn } from "@/components/features/customers/advance-txn";
+import { CustomerTransactionsTab, paymentReference, type TxnFilter } from "@/components/features/customers/customer-transactions-tab";
 
 export interface CustomerProfileProps {
   customerId: string;
@@ -131,7 +132,8 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const { data: openCredit } = useCustomerOpenCredit(params.id);
   const { data: creditRows } = useCustomerCreditRows(params.id);   // R-2023: the RVs behind it
   /* R-1682: credit / debit notes belong on the Statement. */
-  const { data: customerNotes } = useCustomerNotes(params.id);
+  const notesQ = useCustomerNotes(params.id);
+  const { data: customerNotes } = notesQ;
   /* R-1121: this customer's payments only (theirs, or on their quotes) — not every payment. */
   const paymentsQ = useCustomerPayments(params.id, quotesPending ? undefined : (quotes ?? []).map((q) => q.id as string));
   const { data: allPayments } = paymentsQ;
@@ -160,10 +162,7 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
   const [mainTab, setMainTab] = React.useState<"overview" | "transactions" | "statement">("overview");
   // Segment filter inside the Transactions tab so quotes / invoices / payments
   // can each be viewed on their own (not just the combined feed).
-  const [txnFilter, setTxnFilter] = React.useState<"all" | "invoices" | "quotes" | "payments" | "projects">("all");
-  // Collapsed parent keys in the hierarchical "All" view (default: all expanded).
-  const [collapsed, setCollapsed] = React.useState<Set<string>>(new Set());
-  const toggleCollapse = (key: string) => setCollapsed((prev) => { const n = new Set(prev); if (n.has(key)) n.delete(key); else n.add(key); return n; });
+  const [txnFilter, setTxnFilter] = React.useState<TxnFilter>("all");
   const [svcView, setSvcView] = React.useState<"subscription" | "project">("subscription");
   const [projQuoteOpen, setProjQuoteOpen] = React.useState(false);
   const [referralOpen, setReferralOpen] = React.useState(false);
@@ -270,9 +269,9 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
       const status = pPaid <= 0 ? i.status : pPaid >= i.amount ? "paid" : "partially paid";
       return { date: i.invoice_date, type: "Invoice" as const, ref: i.id, amount: i.amount, status, href: txnHref({ kind: "invoice", invoiceId: i.id }, linkOpts) };
     }),
-    ...customerPayments.map((p) => ({ date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? ("Refund" as const) : ("Payment" as const), ref: p.receipt_voucher_no ?? p.id, amount: p.amount, status: p.status, href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId: params.id }, linkOpts), payId: p.id })),
+    ...customerPayments.map((p) => ({ date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? ("Refund" as const) : ("Payment" as const), ref: paymentReference(p, p.id), amount: p.amount, status: p.status, href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId: params.id }, linkOpts), payId: p.id })),
     // Project milestone receipts — show as Payment rows so they're not invisible.
-    ...projPayments.map((p) => ({ date: p.received_at, type: "Payment" as const, ref: p.reference?.trim() || p.project_title, amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received", href: txnHref({ kind: "projectPayment", invoiceId: p.invoice_id ?? null, projectId: p.project_id }, linkOpts) })),
+    ...projPayments.map((p) => ({ date: p.received_at, type: "Payment" as const, ref: p.reference?.trim() || p.project_title, amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received", href: txnHref({ kind: "projectPayment", invoiceId: p.invoice_id ?? null, projectId: p.project_id }, linkOpts), projInvoiceId: p.invoice_id ?? null })),
     /* R-2033: an R-1863 advance holder is the customer's advance, not a ₹0 quote. */
     ...allQuotes.map((q) => ({ date: q.created_date, type: "Quote" as "Quote" | "Advance", ref: q.id, amount: q.amount, status: q.status, href: txnHref({ kind: "quote", quoteId: q.id }, linkOpts), ...advanceTxnView(q, allPayments ?? [], creditRows ?? []) })),
     /* R-006: the status reads in QUOTE language ("Quotation" / "Accepted" / "Declined")
@@ -280,57 +279,6 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
        `quoted` / `active` wording made no sense under a Quotes heading. */
     ...allProjects.map((p) => ({ date: p.created_at, type: "Project" as const, ref: p.title, amount: p.total_amount, status: projectQuotationView(p.status, p.accepted_at).label, href: txnHref({ kind: "project", projectId: p.id }, linkOpts) })),
   ].sort((a, b) => (b.date ?? "").localeCompare(a.date ?? ""));
-
-  // Hierarchical view (the "All" tab): Project → its invoices → their receipts,
-  // so the relationship is obvious. Standalone invoices / subscription payments /
-  // quotes sit at the top level. indent drives the left-inset in the render.
-  const invoiceProject = projPay?.invoiceProject ?? {};
-  type HRow = {
-    key: string; parentKey: string | null; indent: number;
-    date: string; type: "Invoice" | "Payment" | "Refund" | "Quote" | "Advance" | "Project";
-    ref: string; amount: number; status: string; due?: number;
-    /** R-1521: where this row's document lives (null = nothing this role can open). */
-    href: string | null;
-    /** Set only on rows from the `payments` table → enables the delete action. */
-    payId?: string;
-  };
-  const hierRows: HRow[] = [];
-  const usedInv = new Set<string>();
-  const usedPay = new Set<string>();
-  for (const pr of allProjects) {
-    const projKey = `proj:${pr.id}`;
-    const projDue = Math.max(0, (pr.total_amount ?? 0) - (pr.paid ?? 0));
-    hierRows.push({ key: projKey, parentKey: null, indent: 0, date: pr.created_at, type: "Project", ref: pr.title, amount: pr.total_amount, status: projectQuotationView(pr.status, pr.accepted_at).label, due: projDue > 0 ? projDue : undefined, href: txnHref({ kind: "project", projectId: pr.id }, linkOpts) });
-    for (const i of allInvoices.filter((iv) => invoiceProject[iv.id]?.projectId === pr.id)) {
-      usedInv.add(i.id);
-      const pPaid = invoicePaid[i.id] ?? 0;
-      const st = pPaid <= 0 ? i.status : pPaid >= i.amount ? "paid" : "partially paid";
-      const invKey = `inv:${i.id}`;
-      hierRows.push({ key: invKey, parentKey: projKey, indent: 1, date: i.invoice_date, type: "Invoice", ref: i.id, amount: i.amount, status: st, due: pPaid > 0 && pPaid < i.amount ? i.amount - pPaid : undefined, href: txnHref({ kind: "invoice", invoiceId: i.id }, linkOpts) });
-      for (const p of projPayments.filter((pp) => pp.invoice_id === i.id)) {
-        usedPay.add(p.id);
-        hierRows.push({ key: `pay:${p.id}`, parentKey: invKey, indent: 2, date: p.received_at, type: "Payment", ref: p.reference?.trim() || "Payment", amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received", href: txnHref({ kind: "projectPayment", invoiceId: i.id, projectId: pr.id }, linkOpts) });
-      }
-    }
-    // Advance receipts recorded before their milestone was invoiced.
-    for (const p of projPayments.filter((pp) => pp.project_id === pr.id && !pp.invoice_id && !usedPay.has(pp.id))) {
-      usedPay.add(p.id);
-      hierRows.push({ key: `pay:${p.id}`, parentKey: projKey, indent: 1, date: p.received_at, type: "Payment", ref: p.reference?.trim() || "Advance", amount: p.amount, status: p.bank_txn_id ? "reconciled" : "received", href: txnHref({ kind: "projectPayment", invoiceId: null, projectId: pr.id }, linkOpts) });
-    }
-  }
-  for (const i of allInvoices.filter((iv) => !usedInv.has(iv.id))) {
-    hierRows.push({ key: `inv:${i.id}`, parentKey: null, indent: 0, date: i.invoice_date, type: "Invoice", ref: i.id, amount: i.amount, status: i.status, href: txnHref({ kind: "invoice", invoiceId: i.id }, linkOpts) });
-  }
-  for (const p of customerPayments) {
-    hierRows.push({ key: `cpay:${p.id}`, parentKey: null, indent: 0, date: p.status === "refunded" ? (p.refunded_at ?? p.received_at) : p.received_at, type: p.status === "refunded" ? "Refund" : "Payment", ref: p.receipt_voucher_no ?? p.id, amount: p.amount, status: p.status, payId: p.id, href: txnHref({ kind: "payment", quoteId: p.quote_id, customerId: params.id }, linkOpts) });
-  }
-  for (const q of allQuotes) {
-    hierRows.push({ key: `q:${q.id}`, parentKey: null, indent: 0, date: q.created_date, type: "Quote", ref: q.id, amount: q.amount, status: q.status, href: txnHref({ kind: "quote", quoteId: q.id }, linkOpts), ...advanceTxnView(q, allPayments ?? [], creditRows ?? []) });
-  }
-  // Which rows are parents (have children) + parent lookup for the collapse walk.
-  const parentOf: Record<string, string | null> = {};
-  const hasKids = new Set<string>();
-  for (const r of hierRows) { parentOf[r.key] = r.parentKey; if (r.parentKey) hasKids.add(r.parentKey); }
 
   // Running-balance ledger (Zoho "Statement" tab). R-1682: built by buildCustomerStatement —
   // invoices + debit notes − payments − credit notes + refunds, the same entries as the books'
@@ -402,10 +350,6 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
     tenureDays >= 365 ? `${Math.floor(tenureDays / 365)}y ${Math.floor((tenureDays % 365) / 30)}mo`
     : tenureDays >= 30 ? `${Math.floor(tenureDays / 30)}mo`
     : `${Math.max(tenureDays, 0)}d`;
-
-  const TXN_BADGE: Record<string, "info" | "success" | "danger" | "muted" | "warning"> = {
-    Invoice: "info", Payment: "success", Refund: "danger", Quote: "muted", Advance: "success", Project: "warning",
-  };
 
   /* Transactions segment filter — invoices / quotes / payments each on their own.
      R-006: "Quotes" counts PROJECT rows too. A project's quotation lives on
@@ -688,97 +632,34 @@ export function CustomerProfile({ customerId, variant = "page", onClose }: Custo
       {mainTab === "transactions" && (
         <Card flush>
           <div className="p-4">
-            {txns.length > 0 ? (
-              <>
-                {/* Segment filter — invoices / quotes / payments each on their own. */}
-                <div className="flex flex-wrap gap-2 mb-4">
-                  {txnSegments.map((s) => (
-                    <button
-                      key={s.id}
-                      type="button"
-                      aria-pressed={txnFilter === s.id}
-                      onClick={() => setTxnFilter(s.id)}
-                      className={cn(
-                        "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors",
-                        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber",
-                        txnFilter === s.id
-                          ? "border-amber bg-amber-soft text-amber-ink"
-                          : "border-hairline text-ink-3 hover:text-ink hover:bg-paper-2",
-                      )}
-                    >
-                      {s.label}
-                      <span className={cn("tabular-nums", txnFilter === s.id ? "text-amber-ink" : "text-ink-3")}>{s.n}</span>
-                    </button>
-                  ))}
-                </div>
-                {filteredTxns.length > 0 ? (
-                  <RecordTable
-                    head={["Date", "Type", "Reference", "Amount", "Status", ""]}
-                    rows={(txnFilter === "all"
-                      // Hierarchical: hide a row if any ancestor is collapsed.
-                      ? hierRows.filter((r) => {
-                          let pk = r.parentKey;
-                          while (pk) { if (collapsed.has(pk)) return false; pk = parentOf[pk] ?? null; }
-                          return true;
-                        })
-                      : filteredTxns.map((t) => ({ key: "", parentKey: null, indent: 0, due: undefined as number | undefined, ...t }))
-                    ).map((t) => {
-                      const canExpand = txnFilter === "all" && hasKids.has(t.key);
-                      const isCollapsed = collapsed.has(t.key);
-                      const payId = (t as { payId?: string }).payId;
-                      return {
-                      href: t.href,
-                      label: `Open ${t.type.toLowerCase()} ${t.ref}`,
-                      cells: [
-                        formatDate(t.date),
-                        <Badge key="ty" kind={TXN_BADGE[t.type]} dot>{t.type}</Badge>,
-                        // Indent children with a tree connector; parents get a
-                        // chevron to expand/collapse their nested rows inline.
-                        <span key="r" className="font-mono text-xs inline-flex items-center" style={{ paddingLeft: t.indent * 18 }}>
-                          {canExpand ? (
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); toggleCollapse(t.key); }}
-                              className="mr-1 -ml-1 p-0.5 rounded hover:bg-paper-2 text-ink-3"
-                              aria-label={isCollapsed ? "Expand" : "Collapse"}
-                            >
-                              <Icon name={isCollapsed ? "chevron_right" : "chevron_down"} size={13} />
-                            </button>
-                          ) : t.indent > 0 ? (
-                            <span aria-hidden className="text-ink-3 mr-1">└</span>
-                          ) : null}
-                          <RowLink href={t.href}>{t.ref}</RowLink>
-                        </span>,
-                        <span key="a" className="inline-flex flex-col">
-                          <span className={cn("tabular-nums", t.indent === 0 ? "font-semibold" : "font-medium text-ink-2")}>{rupee(t.amount)}</span>
-                          {t.due != null && t.due > 0 && (
-                            <span className="text-3xs text-amber-ink tabular-nums">{rupee(t.due)} due</span>
-                          )}
-                          {t.type === "Payment" && payId ? <PaymentTdsLine amount={t.amount} tds={tdsInfoOnPayment[payId]} /> : null}
-                        </span>,
-                        <span key="s" className="text-ink-2 capitalize">{t.status}</span>,
-                        // Delete — only on payments from the `payments` table.
-                        payId && canDeletePay ? (
-                          <IconButton
-                            key="del"
-                            icon="trash"
-                            size="sm"
-                            variant="ghost"
-                            aria-label="Delete payment"
-                            title="Delete this payment"
-                            onClick={(e) => { e.stopPropagation(); handleDeletePayment(payId); }}
-                          />
-                        ) : <span key="del" />,
-                      ],
-                    };})}
-                  />
-                ) : (
-                  <EmptyState icon="receipt" title="Nothing here" body="No records of this type for this customer." compact />
-                )}
-              </>
-            ) : (
-              <EmptyState icon="receipt" title="No transactions yet" body="Quotes, invoices and payments for this customer will appear here." compact />
-            )}
+            {/* R-2544: each payment under the invoice it paid — customer-transactions-tab.tsx. */}
+            <CustomerTransactionsTab
+              customerId={params.id}
+              linkOpts={linkOpts}
+              canDeletePay={canDeletePay}
+              onDeletePayment={handleDeletePayment}
+              invoices={allInvoices}
+              payments={customerPayments}
+              quotes={allQuotes}
+              projects={allProjects}
+              projPayments={projPayments}
+              invoiceProject={projPay?.invoiceProject ?? {}}
+              invoicePaidByProject={invoicePaid}
+              subs={allSubs}
+              notes={{ creditNotes: customerNotes?.creditNotes ?? [], debitNotes: customerNotes?.debitNotes ?? [] }}
+              /* R-2559: every read the grouping needs — with invoices, quotes or payments still on their way a
+                 receipt sat under "Advance" for a moment and then jumped under its invoice. */
+              linksPending={[subsQ, notesQ, invoicesQ, quotesQ, paymentsQ, projectsQ, projPayQ].some((q) => q.isPending)}
+              notesError={notesQ.isError ? { error: notesQ.error, retry: () => void notesQ.refetch() } : null}
+              allPayments={allPayments ?? []}
+              creditRows={creditRows ?? []}
+              tdsInfo={tdsInfoOnPayment}
+              txnFilter={txnFilter}
+              setTxnFilter={setTxnFilter}
+              segments={txnSegments}
+              filteredTxns={filteredTxns}
+              hasTxns={txns.length > 0}
+            />
           </div>
         </Card>
       )}

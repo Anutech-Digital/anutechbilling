@@ -20,6 +20,8 @@
  */
 import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-match";
 import { tdsRateFor } from "@/lib/banking/invoice-credit-match";
+import { parseInwardRemittance, remittanceFitsCredit } from "@/lib/banking/inward-remittance";
+import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { billingUnitOf, defaultQtyForUnit, isPerSeat, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { headlinePrice } from "@/lib/catalog/headline-price";
 import { catalogLineListRate } from "@/lib/quotes/catalog-line";
@@ -27,7 +29,8 @@ import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { BILLING_CYCLE_OPTIONS, cycleScheduleLabel } from "@/lib/quotes/billing";
 import { COMMIT_CHOICES, type CommitChoice } from "@/lib/quotes/line-commit-choice";
 import { isSplitBilled, quoteInstalmentPlan } from "@/lib/billing/instalments";
-import { ROUND_OFF_LIMIT } from "@/lib/banking/credit-pay-for-multi";
+import { ROUND_OFF_LIMIT, bankChargeAllowed } from "@/lib/banking/credit-pay-for-multi";
+import { ROUND_OFF_AUTO, sameMoney } from "@/lib/banking/same-money";
 import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { rupee, formatDate } from "@/lib/utils";
 import { knownPayerCustomer, notPayerNames, payerFromNarration, type KnownPayer } from "@/lib/banking/customer-payer";
@@ -260,50 +263,95 @@ export function guessCustomer(
 /* ─── Pre-selection + amount check ────────────────────────────────────────────────────── */
 
 /**
- * The item to tick for the operator: the ONE whose due equals the credit to the rupee, else the
- * ONE that the credit pays less a common TDS rate. Two candidates → none (the operator picks).
+ * The item to tick for the operator: the ONE whose due equals the credit to the rupee, else
+ * (R-2192) the ONE within ₹1 of it (the ₹1 is a round-off), else the ONE that the credit pays less a
+ * common TDS rate. Two candidates → none (the operator picks).
  */
 export function preselectItem(items: readonly OpenItem[], credit: number): OpenItem | null {
   const exact = items.filter((i) => i.amount_due === credit);
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) return null;
+  const near = items.filter((i) => sameMoney(credit, i.amount_due));
+  if (near.length === 1) return near[0];
+  if (near.length > 1) return null;
   const tds = items.filter((i) => tdsRateFor(credit, i.amount_due, i.taxable_value || null) !== null);
   return tds.length === 1 ? tds[0] : null;
 }
 
 export type AmountCheck =
   | { kind: "exact" }
-  /** Credit is less than due. `tdsRatePct` when the gap looks like TDS on the taxable value. */
-  | { kind: "short"; shortBy: number; tdsRatePct: number | null }
+  /** Credit is less than due. `tdsRatePct` when the gap looks like TDS on the taxable value.
+   *  R-2577: `bankChargeOk` — the gap may be the bank's / SWIFT charge (bankChargeWire); absent = no. */
+  | { kind: "short"; shortBy: number; tdsRatePct: number | null; bankChargeOk?: boolean }
   /** Credit is more than due — record_payment keeps the extra as customer credit. */
   | { kind: "over"; overBy: number };
 
-export function amountCheck(credit: number, due: number, taxable: number | null): AmountCheck {
-  if (credit === due) return { kind: "exact" };
-  if (credit > due) return { kind: "over", overBy: credit - due };
-  return { kind: "short", shortBy: due - credit, tdsRatePct: tdsRateFor(credit, due, taxable && taxable > 0 ? taxable : null) };
+/** R-2577 (independent review of R-2192) — may a gap on this line be the bank's / SWIFT charge? The
+ *  server (reconcile_bank_credit_split, migration 20261107221154) refuses the same cases:
+ *   - a customer in India (empty country = India, isExportSupply) on a line that is not an inward
+ *     remittance of THIS credit (amount × rate ±₹1, remittanceFitsCredit) — an Indian NEFT / RTGS / IMPS
+ *     has no bank deduction; the gap is TDS, a short payment or a discount;
+ *   - a customer in India whose gap is TDS at a common rate (TDS receivable, never an expense).
+ *  A customer outside India deducts no Indian TDS: a round SWIFT charge (₹500 on ₹50,000) stays allowed. */
+export function bankChargeWire(
+  country: string | null | undefined, narration: string | null | undefined, credit: number, tdsRatePct: number | null,
+): boolean {
+  if (isExportSupply(country)) return true;
+  const r = parseInwardRemittance(narration);
+  return r !== null && remittanceFitsCredit(r, credit) && tdsRatePct === null;
 }
 
-/** What the operator decided about a short payment. R-2095: or a round-off (≤ ROUND_OFF_LIMIT). */
-export type ShortChoice = "tds" | "part" | "round_off";
+/** R-2577: `payer` (the customer's country + the line's narration) decides bankChargeOk; left out → no bank charge. */
+export function amountCheck(
+  credit: number, due: number, taxable: number | null,
+  payer?: { country: string | null | undefined; narration: string | null | undefined },
+): AmountCheck {
+  if (credit === due) return { kind: "exact" };
+  if (credit > due) return { kind: "over", overBy: credit - due };
+  const tdsRatePct = tdsRateFor(credit, due, taxable && taxable > 0 ? taxable : null);
+  return { kind: "short", shortBy: due - credit, tdsRatePct, ...(payer ? { bankChargeOk: bankChargeWire(payer.country, payer.narration, credit, tdsRatePct) } : {}) };
+}
 
-/** R-2095 (Sept reconcile): the answers to "why less came in" — round-off only up to ₹50 (R-2098). */
-export function shortChoices(check: AmountCheck): Array<{ value: ShortChoice; label: string }> {
+/** What the operator decided about a short payment. R-2095: or a round-off (≤ ROUND_OFF_LIMIT).
+ *  R-2192: or the bank's / SWIFT charge (bankChargeAllowed) — settled in full, Bank Charges expense. */
+export type ShortChoice = "tds" | "part" | "round_off" | "bank_charge";
+
+/** R-2095 (Sept reconcile): the answers to "why less came in" — round-off only up to ₹50 (R-2098).
+ *  R-2192: with the item's `due`, also "Bank / SWIFT charge" (a wire the bank kept a fee from). */
+export function shortChoices(check: AmountCheck, due?: number): Array<{ value: ShortChoice; label: string }> {
   if (check.kind !== "short") return [];
   const out: Array<{ value: ShortChoice; label: string }> = [
     { value: "tds", label: `TDS deducted (${rupee(check.shortBy)})` },
     { value: "part", label: `Part payment — ${rupee(check.shortBy)} stays due` },
   ];
   if (check.shortBy <= ROUND_OFF_LIMIT) out.push({ value: "round_off", label: `Round off ${rupee(check.shortBy)} — settled in full` });
+  /* R-2577: only on a wire that may carry one (bankChargeWire: not an Indian transfer, not TDS of an
+     Indian customer) — the server refuses the rest. */
+  if (due !== undefined && check.bankChargeOk === true && bankChargeAllowed(check.shortBy, due)) {
+    out.push({ value: "bank_charge", label: `Bank / SWIFT charge ${rupee(check.shortBy)} — settled in full` });
+  }
   return out;
 }
 
-/** R-2095: a round-off on ONE sale / item is saved through the split (R-2098: it settles in full). */
-export function roundOffSplit(a: { mode: "sale"; saleTotal: number } | { mode: "item"; item: Pick<OpenItem, "quote_id" | "invoice_id" | "amount_due"> }):
-  { items: Array<{ quote_id: string | null; invoice_id: string | null; amount: number }>; saleAmount: number | null; rest: "round_off" } {
+/** R-2192: up to ₹1 short is a round-off — chosen for the operator, nothing to answer. */
+export function autoShortChoice(check: AmountCheck): ShortChoice | null {
+  return check.kind === "short" && check.shortBy <= ROUND_OFF_AUTO ? "round_off" : null;
+}
+
+/** R-2192: up to ₹1 more than due is a round-off gain — never a ₹1 advance on the customer. */
+export function overIsRoundOff(check: AmountCheck): boolean {
+  return check.kind === "over" && check.overBy <= ROUND_OFF_AUTO;
+}
+
+/** R-2095: a round-off on ONE sale / item is saved through the split (R-2098: it settles in full).
+ *  R-2192: the same call books a bank / SWIFT charge (rest "bank_charge"). */
+export function roundOffSplit<R extends "round_off" | "bank_charge" = "round_off">(
+  a: { mode: "sale"; saleTotal: number } | { mode: "item"; item: Pick<OpenItem, "quote_id" | "invoice_id" | "amount_due"> },
+  rest: R = "round_off" as R,
+): { items: Array<{ quote_id: string | null; invoice_id: string | null; amount: number }>; saleAmount: number | null; rest: R } {
   return a.mode === "sale"
-    ? { items: [], saleAmount: a.saleTotal, rest: "round_off" }
-    : { items: [{ quote_id: a.item.quote_id, invoice_id: a.item.invoice_id, amount: a.item.amount_due }], saleAmount: null, rest: "round_off" };
+    ? { items: [], saleAmount: a.saleTotal, rest }
+    : { items: [{ quote_id: a.item.quote_id, invoice_id: a.item.invoice_id, amount: a.item.amount_due }], saleAmount: null, rest };
 }
 
 /** The TDS amount to send: the whole shortfall when the operator says it was TDS, else 0. */
@@ -780,13 +828,17 @@ export function saleLinesPayload(lines: readonly SaleLine[]) {
   }));
 }
 
-/** Monthly flex beside ANY other line (annual or one-time) is refused by the server — R-381's
- *  trigger (quote_line_terms_mixed) counts a line without a monthly commitment as annual. R-2095
- *  (staging, 30 Oct): Monthly flex + one-time passed this check, the save got a 400 and the
- *  drawer said nothing. One quote = one billing term. */
+/** Monthly flex beside an ANNUAL line is refused by the server (R-381's trigger,
+ *  quote_line_terms_mixed): a flex rate is per month, an annual rate per year. One quote = one
+ *  billing term. R-2193 (G-ZOHO): a one-time line (domain, setup) has no term, so it may sit beside
+ *  Monthly flex — billed once on month 1 (R-2095's first-part rule); later months carry the seats only. */
 export function saleTermsMixed(lines: readonly SaleLine[]): boolean {
-  return lines.some((l) => l.cycle === "monthly") && lines.some((l) => l.cycle !== "monthly");
+  return lines.some((l) => l.cycle === "monthly") && lines.some((l) => l.cycle === "annual_yearly");
 }
+
+/** What the drawer says while saleTermsMixed is true (Save stays disabled). */
+export const SALE_TERMS_MIXED_MESSAGE =
+  "Flexible (monthly) cannot be on one sale with Annual-commitment products — record them as separate sales, or make them all one commitment. One-time products (domain, setup) can go with either.";
 
 /* ─── Subscription dates ─────────────────────────────────────────────────────────────── */
 
@@ -851,6 +903,8 @@ export interface PayForResult {
   parts?: PayForResult[];
   allocated?: number;
   round_off?: number;
+  /** R-2192: the bank's / SWIFT charge booked as Bank Charges (rest "bank_charge"). */
+  bank_charge?: number;
   advance_receipt_voucher_no?: string | null;
   /* R-2397: a new sale priced below cost — NOT booked. Its quote waits in Needs approval and the
      bank line stays unmatched (bank_sale_park_for_approval). */
@@ -914,6 +968,8 @@ export function resultLines(r: PayForResult): ResultLine[] {
     const ro = r.round_off ?? 0;
     if (ro > 0) out.push({ text: `${rupee(ro)} less came in — written off as round-off (Bank Charges)` });
     else if (ro < 0) out.push({ text: `${rupee(-ro)} more came in — written off as round-off (Bank Charges)` });
+    const bc = r.bank_charge ?? 0;
+    if (bc > 0) out.push({ text: `${rupee(bc)} bank / SWIFT charge booked as Bank Charges — invoice settled in full` });
     return out;
   }
   const subs = r.subscriptions ?? [];

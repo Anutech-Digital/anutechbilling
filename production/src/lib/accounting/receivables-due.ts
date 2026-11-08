@@ -97,16 +97,90 @@ export function toChaseSummary(
 }
 
 /**
+ * "Subscription dues X + project invoices Y" — the parts of a "to chase" figure, written one way
+ * for every screen (dashboard note, Companies line). `linkedOnly` leaves out dues on subscriptions
+ * with no company (they can never be on the Companies list), so the parts add up to companiesTotal.
+ */
+function chaseParts(s: ToChaseSummary, opts: { compact: boolean; linkedOnly: boolean }): string {
+  const subDues = opts.linkedOnly ? s.subscriptionDues - s.unlinked.value : s.subscriptionDues;
+  const parts = [`Subscription dues ${rupee(subDues, { compact: opts.compact })}`];
+  if (s.projectInvoices > 0) parts.push(`project invoices ${rupee(s.projectInvoices, { compact: opts.compact })}`);
+  return parts.join(" + ");
+}
+
+function unlinkedText(s: ToChaseSummary, compact: boolean): string {
+  const n = s.unlinked.count;
+  return `${rupee(s.unlinked.value, { compact })} on ${n} subscription${n === 1 ? "" : "s"} with no company linked`;
+}
+
+/**
  * The line under a "to chase" figure: what it is made of and how it differs from
  * "Still owed" (billed invoices). Every tile that shows `total` uses this text.
  */
 export function chaseNote(s: ToChaseSummary): string {
-  const parts = [`Subscription dues ${rupee(s.subscriptionDues, { compact: true })}`];
-  if (s.projectInvoices > 0) parts.push(`project invoices ${rupee(s.projectInvoices, { compact: true })}`);
-  let note = parts.join(" + ");
-  if (s.unlinked.value > 0) {
-    const n = s.unlinked.count;
-    note += ` · ${rupee(s.unlinked.value, { compact: true })} on ${n} subscription${n === 1 ? "" : "s"} with no company linked`;
-  }
+  let note = chaseParts(s, { compact: true, linkedOnly: false });
+  if (s.unlinked.value > 0) note += ` · ${unlinkedText(s, true)}`;
   return `${note} · may not be invoiced yet, so "Still owed" (invoices) can be lower`;
 }
+
+/**
+ * R-1473 (7 Nov 2026, Pawan's ✗ Galat): the line over Companies › Has receivables. The list adds
+ * up to the "To collect" tile — this says what it is made of, how much of it sits on ARCHIVED
+ * companies (still owed, so still listed), and names any money the list cannot show: a company
+ * not in the loaded list (`listedIds`), or a due on a subscription with no company. Whole rupees.
+ */
+export function toCollectBreakdown(
+  s: ToChaseSummary,
+  listedIds: ReadonlySet<string>,
+  archivedIds: ReadonlySet<string>,
+): string {
+  let line = `${chaseParts(s, { compact: false, linkedOnly: true })} = ${rupee(s.companiesTotal)} to collect`;
+  let archived = 0;
+  let notListed = 0;
+  let notListedValue = 0;
+  for (const [id, amount] of s.byCustomer) {
+    if (!listedIds.has(id)) { notListed++; notListedValue += amount; continue; }
+    if (archivedIds.has(id)) archived++;
+  }
+  if (archived > 0) line += ` · includes ${archived} archived compan${archived === 1 ? "y" : "ies"}`;
+  if (notListed > 0) {
+    line += ` · ${rupee(notListedValue)} on ${notListed} compan${notListed === 1 ? "y" : "ies"} not in this list`;
+  }
+  if (s.unlinked.value > 0) line += ` · + ${unlinkedText(s, false)} (in the dashboard figure)`;
+  return line;
+}
+
+/**
+ * R-1473 (7 Nov 2026): Renewals shows subscription dues only — a project invoice is not a renewal.
+ * Pawan added up the Renewals rows (₹44,746) against the dashboard (₹67,855) and could not find
+ * the ₹23,109 project money. This line, under the Renewals title, gives the dues on the renewals
+ * listed (`renewalDues` = subscriptionDue of the page's own rows) and, when Companies › Has
+ * receivables (`all.companiesTotal`) is more, what makes up the rest. null = nothing to say.
+ * `projectsUnread`: the project read failed — say so rather than silently leave it out.
+ * R-2562: then the Companies › Has receivables figure is NOT named — without the project invoices
+ * it is short by them, a wrong total that looks right. The page puts a Try again button after it.
+ */
+export function subscriptionDuesLine(
+  all: ToChaseSummary,
+  renewalDues: number,
+  projectsUnread = false,
+): string | null {
+  const other = all.subscriptionDues - all.unlinked.value - renewalDues;
+  if (renewalDues <= 0 && all.companiesTotal <= 0 && !projectsUnread) return null;
+  let line = renewalDues > 0 ? `${rupee(renewalDues)} unpaid on these renewals` : "No renewal unpaid";
+  if (projectsUnread) {
+    // The subscription part was read fine — still name it; only the Companies total is left out.
+    if (other > 0) line += ` · ${rupee(other)} on subscriptions not listed here`;
+    return `${line} · ${PROJECT_INVOICES_UNREAD}`;
+  }
+  const rest: string[] = [];
+  if (all.projectInvoices > 0) rest.push(`project invoices ${rupee(all.projectInvoices)}`);
+  if (other > 0) rest.push(`${rupee(other)} on subscriptions not listed here`);
+  if (rest.length > 0) line += ` · Companies › Has receivables ${rupee(all.companiesTotal)} also has ${rest.join(" + ")}`;
+  return line;
+}
+
+/** R-2562: one wording wherever the project-receivables read failed (Renewals, Companies). */
+export const PROJECT_INVOICES_UNREAD = "Project invoices couldn't be read";
+/** R-2562: the same for the subscription-dues read on Companies › Has receivables. */
+export const SUBSCRIPTION_DUES_UNREAD = "Subscription dues couldn't be read";

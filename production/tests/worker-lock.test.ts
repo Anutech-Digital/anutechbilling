@@ -85,11 +85,31 @@ describe("worker locks (two workers must never build in the same files)", () => 
     expect(lockAreaFor("src/components/layout/topbar.tsx")).toBe("src/components/layout/topbar.tsx");
   });
 
-  it("2 workers while Pardeep works (09:00–21:59 IST), 4 at night", () => {
-    expect(maxWorkersAt("2026-10-07T03:30:00Z")).toBe(2); // 09:00 IST
-    expect(maxWorkersAt("2026-10-07T16:29:00Z")).toBe(2); // 21:59 IST
-    expect(maxWorkersAt("2026-10-07T16:30:00Z")).toBe(3); // 22:00 IST (R-1960: night cap 3)
-    expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(3); // 02:30 IST
+  it("4 workers by day (09:00–21:59 IST), 6 at night", () => {
+    // 7 Nov 2026 (Pardeep): day cap 2 → 4 for speed (R-2552); night cap 3 → 6 (R-2557).
+    // Workers run worker-lock (and its push guard tests) with WORKER_MAX=4 set — clear it here.
+    const old = process.env.WORKER_MAX;
+    delete process.env.WORKER_MAX;
+    try {
+      expect(maxWorkersAt("2026-10-07T03:30:00Z")).toBe(4); // 09:00 IST
+      expect(maxWorkersAt("2026-10-07T16:29:00Z")).toBe(4); // 21:59 IST
+      expect(maxWorkersAt("2026-10-07T16:30:00Z")).toBe(6); // 22:00 IST (R-2557: night cap 6)
+      expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(6); // 02:30 IST
+      expect(maxWorkersAt("2026-10-07T03:29:00Z")).toBe(6); // 08:59 IST — still night
+    } finally {
+      if (old !== undefined) process.env.WORKER_MAX = old;
+    }
+  });
+
+  it("WORKER_MAX still overrides day and night caps", () => {
+    const old = process.env.WORKER_MAX;
+    process.env.WORKER_MAX = "2";
+    try {
+      expect(maxWorkersAt("2026-10-07T03:30:00Z")).toBe(2); // day
+      expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(2); // night
+    } finally {
+      if (old === undefined) delete process.env.WORKER_MAX; else process.env.WORKER_MAX = old;
+    }
   });
 });
 

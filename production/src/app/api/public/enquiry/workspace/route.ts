@@ -61,6 +61,10 @@ import { WORKSPACE_TRIAL_DAYS } from "@/lib/trials/trial-days";
 import { buyIntentNote } from "@/app/api/public/checkout/workspace/buy-intent";
 import { buyIntentFields } from "@/app/api/public/checkout/workspace/buy-intent-schema";
 import { draftLeadRow, isDraftRequest, parseDraft } from "./draft-lead";
+import { signReplaceToken, verifyReplaceTokens } from "@/lib/leads/replace-trial-request";
+
+/** replace_trial_request (R-2563) is newer than database.generated.ts. */
+type ReplaceRpc = { rpc: (fn: "replace_trial_request", args: Record<string, unknown>) => PromiseLike<{ error: { message?: string } | null }> };
 
 /* The owner inbox used to be hardcoded here, with the comment "Hardcoded for v1
    (single tenant); resolve per-tenant once we go multi-tenant." That TODO came due
@@ -98,6 +102,8 @@ const enquirySchema = z.object({
   trial:       z.boolean().optional(),
   /** R-157: the visitor took the "30+ users, ₹1,650 first year" Starter offer (ad page). */
   offer:       z.enum(["starter-30"]).optional(),
+  /** R-2563: the trial form's signed replace token(s) of its earlier request(s) — checked, never trusted. */
+  replaces:    z.array(z.string().max(120)).max(5).optional(),
   /** R-2021: the phone flow's intent / domainMode / migrationSource — optional, notes only. */
   ...buyIntentFields,
 });
@@ -142,7 +148,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { fullName, companyName, email, phone, seats, tierId, billing, message, stateCode, state, trial, offer } = parsed.data;
+    const { fullName, companyName, email, phone, seats, tierId, billing, message, stateCode, state, trial, offer, replaces } = parsed.data;
 
     const admin = createAdminClient();
 
@@ -303,6 +309,20 @@ export async function POST(request: NextRequest) {
           })
           .eq("id", leadId);
       }
+    }
+
+    /* R-2563: "← Change the request" on /trial — a signed token of the SAME contact's earlier trial
+       request closes it (replace_trial_request: untouched lead, never-sent draft quote). Best-effort;
+       every trial request gets its own token back for the next change. */
+    let replaceToken: string | null = null;
+    if (trial) {
+      for (const oldLead of verifyReplaceTokens(replaces, { tenantId, contact: { email, phone } })) {
+        const { error: replaceErr } = await (admin as unknown as ReplaceRpc).rpc("replace_trial_request", {
+          p_tenant: tenantId, p_new_lead: leadId, p_new_quote: draftQuoteId, p_old_lead: oldLead, p_email: email, p_phone: phone,
+        });
+        if (replaceErr) console.error("[enquiry/workspace] replace_trial_request failed:", replaceErr.message);
+      }
+      replaceToken = signReplaceToken({ tenantId, leadId, contact: { email, phone } });
     }
 
     // ── Fire two notification emails (best-effort, don't block response) ──
@@ -508,7 +528,7 @@ ${voice ? voice.signOff : `— ${ownerName || ownerTenant?.name?.trim() || "Your
 
     /* autoSent, taki website ka confirmation sach bole — "emailed with the PDF" sirf
        tab jab sach me gaya ho, warna "drafted, review ke baad". */
-    return NextResponse.json({ success: true, leadId, draftQuoteId, autoSent, ackSent });
+    return NextResponse.json({ success: true, leadId, draftQuoteId, autoSent, replaceToken, ackSent });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     console.error("[/api/public/enquiry/workspace] crashed:", message);
