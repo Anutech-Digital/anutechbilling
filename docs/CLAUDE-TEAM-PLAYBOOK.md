@@ -119,6 +119,9 @@ memory. That is how every teammate's Claude stays updated.
 - **p0/p1 paise wala card** jisme calc + review fixes + card test ho → spawn se pehle ≤45 min ke
   tukdon (alag cards) mein baanto. Card 60 min se lamba ho gaya → board par likho time kahan gaya
   (tsc / push / test).
+- **Board fields:** `claimedBy` = lowercase person key (pardeep/hitesh/abhishek/pawan). `needsDecision` only when
+  the card truly waits on the owner; non-blocking recommendations go in `followUps` (needsDecision shows a
+  running card as 'ruka').
 - Claim with `worker-lock claim … --wait --priority <p>`; push **only** via `worker-lock push <CARD>`,
   then `worker-lock ci <CARD>`. Commit WIP and `worker-lock wip <CARD>` (→ `wip/<card>`) at each green step.
 - **Every card gets a separate localhost checker** (not the builder), following the card's howToCheck.
