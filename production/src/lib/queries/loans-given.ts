@@ -19,7 +19,7 @@ import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { Tables } from "@/lib/supabase/database.generated";
 import {
-  loanPosition, loanSchedule, nextDue, overdueAmount,
+  loanPosition, loanSchedule, nextDue, overdueAmount, distinctBorrowers,
   type LoanTerms, type LoanPosition, type RepaymentPart, type RepaymentPlan, type ScheduleRow,
 } from "@/lib/accounting/loans-given";
 import { istToday } from "@/lib/dates/ist";
@@ -317,4 +317,43 @@ export async function fetchLoansGivenAsset(): Promise<number> {
   const { data, error } = await supabase.rpc("loans_given_asset");
   if (error) throw error;
   return Math.max(0, Number(data ?? 0));
+}
+
+/* ══ R-2603: Banking → Reconcile a money-OUT line → "I am GIVING a loan/advance" ════════════════
+ * record_loan_given_from_bank_out (migration 20261108080000_r2603_reconcile_loan_given.sql, newer
+ * than the generated types → untyped client): ONE loans_given row on this line (one_shot, 0% — terms
+ * can be set on Loans given), line matched loan_given. Undo = Un-reconcile the line. */
+
+export function useLoanGivenFromBankLine() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: { txnId: string; borrower: string; notes: string | null }): Promise<string> => {
+      const supabase = createClient() as unknown as SupabaseClient;
+      const { data, error } = await supabase.rpc("record_loan_given_from_bank_out", {
+        p_txn_id: input.txnId, p_borrower: input.borrower, p_notes: input.notes,
+      });
+      if (error) throw new Error(error.message);
+      if (!data) throw new Error("The loan was not confirmed — refresh Loans given to see whether it was saved.");
+      return data as string;
+    },
+    onSuccess: () => {
+      invalidate(qc);
+      toast.success("Booked as a loan given & reconciled — it is on Accounting → Loans given");
+    },
+    onError: (err) => toastError(err, { fallback: "Couldn't book the loan", description: "Nothing was saved." }),
+  });
+}
+
+/** R-2603: borrower names already on Loans given — the reconcile picker offers them (one per person). */
+export function useLoanBorrowerNames(enabled = true) {
+  return useQuery({
+    queryKey: ["loans-given", "borrowers"],
+    enabled,
+    staleTime: 30_000,
+    queryFn: async (): Promise<string[]> => {
+      const rows = await fetchAllRows<{ borrower_name: string }>((from, to) => createClient()
+        .from("loans_given").select("borrower_name").order("created_at").order("id").range(from, to));
+      return distinctBorrowers(rows.map((r) => r.borrower_name));
+    },
+  });
 }

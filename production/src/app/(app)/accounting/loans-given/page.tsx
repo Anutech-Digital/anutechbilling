@@ -30,7 +30,8 @@ import { useBankAccounts } from "@/lib/queries/bank";
 import { useCustomers } from "@/lib/queries/customers";
 import { useVendors } from "@/lib/queries/vendors";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { canUseLoansGiven, splitRepayment, type RepaymentPlan, type ScheduleState } from "@/lib/accounting/loans-given";
+import { canUseLoansGiven, splitRepayment, oldAdvanceGivenLines, type RepaymentPlan, type ScheduleState } from "@/lib/accounting/loans-given";
+import { useBalanceSheetItems } from "@/lib/queries/balance-sheet";
 import {
   useLoansGiven, useGiveLoan, useGiveDirectorLoan, useRecordLoanRepayment, useDeleteLoanGiven,
   MODE_LABEL, type LoanGiven, type RepaymentMode,
@@ -53,6 +54,10 @@ export default function LoansGivenPage() {
   const me = useCurrentUser();
   const allowed = canUseLoansGiven(me.data?.role);
   const q = useLoansGiven(allowed);
+  /* R-2603: loans given from Banking before R-2603 were booked as Balance Sheet lines
+     ("Advance/loan given · <name>") — say so here, or the page looks empty while money is out. */
+  const bsItems = useBalanceSheetItems();
+  const oldLines = React.useMemo(() => oldAdvanceGivenLines(bsItems.data ?? []), [bsItems.data]);
   const [giveOpen, setGiveOpen] = React.useState(false);
   const [openId, setOpenId] = React.useState<string | null>(null);
   const [repayId, setRepayId] = React.useState<string | null>(null);
@@ -113,6 +118,16 @@ export default function LoansGivenPage() {
           <KPI label="Open loans" value={String(open.length)} />
           <KPI label="Overdue" value={overdueCount > 0 ? `${rupee(totalOverdue)} · ${overdueCount}` : "None"} tone={overdueCount > 0 ? "rose" : undefined} />
           <KPI label="Interest received" value={rupee(interestIn)} tone="emerald" />
+        </div>
+      )}
+
+      {oldLines.count > 0 && (
+        <div role="note" data-testid="r2603-old-bs-loans" className="mb-4 rounded-md border border-amber/40 bg-amber-soft/25 px-3 py-2.5 text-sm text-ink-2 leading-relaxed">
+          <b>{oldLines.count === 1 ? "1 loan" : `${oldLines.count} loans`} you gave ({rupee(oldLines.total)})</b>{" "}
+          {oldLines.count === 1 ? "is" : "are"} still a Balance Sheet line “Advance/loan given”
+          {oldLines.borrowers.length > 0 && <> — {oldLines.borrowers.join(", ")}</>}, so {oldLines.count === 1 ? "it is" : "they are"} not listed here.
+          New loans from Banking → Reconcile → “I am GIVING a loan” come here.{" "}
+          <Link href="/accounting/balance-sheet" className="text-amber underline">See them on the Balance Sheet</Link>
         </div>
       )}
 
