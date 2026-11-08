@@ -100,7 +100,10 @@ memory. That is how every teammate's Claude stays updated.
 7. Wait for Cloud Build to finish.
 8. `node scripts/ops/staging-smoke.mjs --expect-sha <commit>` → must say GREEN.
 9. Update the board: cards in the train, train note, the next train count.
-10. List the **post-train owner steps** (reconnects, approvals, data repairs) in one short message.
+   If the staging Cloud Build fails after `--push`, the DB is already updated: fix card first, then train
+   again at the fix sha with `--db-done` (no new migrations, so no DB step again).
+10. **"Read from Zoho again" on staging is pressed by Claude itself** after the train (Pardeep, 8 Nov:
+    "tum khud daba sakte ho") — not an owner step. Then list the **post-train owner steps** (reconnects, approvals, data repairs) in one short message.
 
 **Never live.** Live DB, live deploy and live secrets are Pardeep's steps.
 
@@ -111,6 +114,11 @@ memory. That is how every teammate's Claude stays updated.
 - **Slots:** at most 2 cards being built by day; `worker-lock` enforces 2 by day / 3 by night. After
   22:00 IST Pardeep allows up to 4 worker agents in total (3 Nov) — count running workers before every
   spawn and queue the rest. CI-wait does not use a slot.
+- **Train chal rahi ho (DB step → push → smoke):** max 2 building workers, naya spawn nahi; smoke ke
+  turant baad 4–6 tak bharo (8 Nov, R-2581).
+- **p0/p1 paise wala card** jisme calc + review fixes + card test ho → spawn se pehle ≤45 min ke
+  tukdon (alag cards) mein baanto. Card 60 min se lamba ho gaya → board par likho time kahan gaya
+  (tsc / push / test).
 - Claim with `worker-lock claim … --wait --priority <p>`; push **only** via `worker-lock push <CARD>`,
   then `worker-lock ci <CARD>`. Commit WIP and `worker-lock wip <CARD>` (→ `wip/<card>`) at each green step.
 - **Every card gets a separate localhost checker** (not the builder), following the card's howToCheck.
@@ -293,3 +301,7 @@ Format: `- <date>: what went wrong → the rule it created (card).`
 - 7 Nov 2026 (R-2573): Pardeep went to sleep and said "jisme mere bina kaam nahi chal sakta use pending
   kaam me daal dena aur aage badte rahna" → owner out/asleep = keep working; owner-only items go to
   the pending list + card `needsDecision`, never a chat question that stops the work (section a).
+- 8 Nov 2026 (R-2581): train + 3 bhaari workers ek saath chale → R-2580 ka push 20 min atka, R-2252 /
+  R-2227 85+ min chale. Pardeep: "ise note bhi kar lo aur sabko bata bhi dena". Rule: train ke waqt max
+  2 building workers, paise wale p0/p1 card ≤45 min ke tukdon mein, 60 min+ card par time ka hisaab
+  (section d); staging "Read from Zoho again" Claude khud dabata hai (section c, step 10).
