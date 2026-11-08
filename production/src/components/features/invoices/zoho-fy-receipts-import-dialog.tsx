@@ -33,7 +33,7 @@ import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store"
 const API = "/api/integrations/zoho-books/receipts-import";
 const FY = "2025-26";
 /** R-2607: between two server passes of the open dialog (each pass reads up to ~40 s itself). */
-const STEP_GAP_MS = 2_000;
+const STEP_GAP_MS = 5_000;
 /** R-2607: the server's read — progress, whether it is still asked for, why it stopped. */
 interface ReadState { listed: number; detailed: number; complete: boolean; running?: boolean; error?: string | null }
 

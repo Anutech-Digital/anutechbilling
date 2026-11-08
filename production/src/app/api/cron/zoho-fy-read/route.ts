@@ -11,7 +11,8 @@
  *
  * Default ON (jobs.ts SAFETY_JOBS_DEFAULT_ON, R-2607): the owner's button is the ask; a switch
  * that is off by default would leave the read stuck with nobody knowing why. It can still be
- * turned off on /automation (then the dialog's own pass reads while it is open, as before).
+ * turned off on /automation by the platform company (scope "platform": one switch for the app; then
+ * only the dialog's own pass reads, while it is open).
  */
 import { NextResponse, type NextRequest } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";

@@ -64,6 +64,11 @@ vi.mock("@/lib/integrations/zoho-books/fy-import/bg-store", () => ({
     return {
       request: async (fy: string, userId: string) => { bgst.requests.push({ fy, userId }); bgst.state = { requestedAt: "2026-11-08T10:00:00Z", leaseUntil: null, error: null, finishedAt: null, lastStepAt: null }; },
       readBg: async () => bgst.state,
+      takeLease: async (_fy: string, until: number, now: number) => {
+        if (bgst.state?.leaseUntil && Date.parse(bgst.state.leaseUntil) >= now) return false;
+        if (bgst.state) bgst.state.leaseUntil = new Date(until).toISOString();
+        return true;
+      },
     };
   },
 }));
