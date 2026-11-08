@@ -27,6 +27,31 @@ type Result = { txnId: string; ok: true; expenseId: string } | { txnId: string; 
 
 const CATEGORIES = EXPENSE_CATEGORIES.filter((c) => c !== "Salaries");
 
+/** The bank page's "No-vendor lines (N)" button + its sheet (mounted only while open). */
+export function BulkExpenseButton({ accountName, transactions, ids }: {
+  accountName: string;
+  transactions: readonly BankTransactionRow[] | undefined;
+  /** The page's "Money out · no vendor yet" set. */
+  ids: ReadonlySet<string>;
+}) {
+  const [open, setOpen] = React.useState(false);
+  const lines = React.useMemo(() => (open ? (transactions ?? []).filter((t) => ids.has(t.id)) : []), [open, transactions, ids]);
+  if (ids.size === 0 && !open) return null;
+  return (
+    <>
+      <Button
+        icon="receipt"
+        variant="default"
+        onClick={() => setOpen(true)}
+        title="Book money-out lines with no vendor as expenses in one go — each line shows the suggested category; you tick which to book"
+      >
+        {`No-vendor lines (${ids.size})`}
+      </Button>
+      {open && <BulkExpenseSheet open={open} onOpenChange={setOpen} accountName={accountName} lines={lines} />}
+    </>
+  );
+}
+
 export function BulkExpenseSheet({ open, onOpenChange, accountName, lines }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
