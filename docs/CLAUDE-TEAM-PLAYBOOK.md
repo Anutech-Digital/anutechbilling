@@ -119,6 +119,9 @@ memory. That is how every teammate's Claude stays updated.
 - **p0/p1 paise wala card** jisme calc + review fixes + card test ho → spawn se pehle ≤45 min ke
   tukdon (alag cards) mein baanto. Card 60 min se lamba ho gaya → board par likho time kahan gaya
   (tsc / push / test).
+- **Board = truth for counts (8 Nov, Pardeep):** every running worker is visible on the board before anyone is told a
+  count — builders via `status: doing`; checkers/reviewers via `checkRunning: true` + `checkStartedAt` + `checkNow` on the
+  card (updated every ≤10 min; cleared when done). The count we tell the owner = the count the board shows.
 - **Board fields:** `claimedBy` = lowercase person key (pardeep/hitesh/abhishek/pawan). `needsDecision` only when
   the card truly waits on the owner; non-blocking recommendations go in `followUps` (needsDecision shows a
   running card as 'ruka').
@@ -308,3 +311,5 @@ Format: `- <date>: what went wrong → the rule it created (card).`
   R-2227 85+ min chale. Pardeep: "ise note bhi kar lo aur sabko bata bhi dena". Rule: train ke waqt max
   2 building workers, paise wale p0/p1 card ≤45 min ke tukdon mein, 60 min+ card par time ka hisaab
   (section d); staging "Read from Zoho again" Claude khud dabata hai (section c, step 10).
+- 8 Nov 2026 (R-2581): Pardeep: "board par latest updated information dikhni chahiye ise note bhi aur sabko bata bhi do" →
+  every running worker (builder/checker/reviewer) shows on the board first; the count told to the owner = the board's count (section d).
