@@ -97,16 +97,27 @@ export function BulkExpenseSheet({ onOpenChange, accountName, lines }: {
         body: JSON.stringify({ rows: picked.map((r) => ({ txnId: r.id, category: catOf(r), payee: payeeOf(r).trim() || null })) }),
       });
       const body = await res.json().catch(() => ({}));
-      if (!res.ok) { setFailure(body?.error ?? "Could not book — nothing was saved. Try again."); return; }
+      if (!res.ok) {
+        /* A 504 / proxy cut can come after some rows were booked — same as no answer. */
+        setFailure(body?.error ?? "No clear answer from the server — some lines may have been booked. Check the refreshed list before booking again.");
+        setTicked(new Set());
+        return;
+      }
       setResults(body.results as Result[]);
       setTicked(new Set());
     } catch {
-      setFailure("No answer from the server — some lines may have been booked. The list refreshes; check it before booking again.");
+      /* R-2611 review: the request may have booked lines before the answer was lost — clear the
+         ticks so the same lines are not sent again from memory. */
+      setTicked(new Set());
+      setFailure("No answer from the server — some lines may have been booked. Check the refreshed list before booking again.");
     } finally {
+      /* Book selected stays disabled until the list has really refreshed (booked lines gone). */
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ["bank_transactions"] }),
+        qc.invalidateQueries({ queryKey: ["expenses"] }),
+        qc.invalidateQueries({ queryKey: ["balance-sheet"] }),
+      ]).catch(() => undefined);
       setBusy(false);
-      qc.invalidateQueries({ queryKey: ["bank_transactions"] });
-      qc.invalidateQueries({ queryKey: ["expenses"] });
-      qc.invalidateQueries({ queryKey: ["balance-sheet"] });
     }
   };
 
