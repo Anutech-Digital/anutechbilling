@@ -454,4 +454,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2611bookexpenserowlock", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.book_bank_txn_as_expense(uuid,text,text,integer,text)') and prosrc like '%R-2611%')" },
   { key: "r2604movebsloans", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.apply_bs_loan_move(jsonb,bigint)') and prosrc like '%R-2604%') and to_regclass('public.bs_loan_moves') is not null" },
   { key: "r2609undosettledsmallshort", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_bank_split_line_unmatched()') and prosrc like '%R-2609%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.settle_quote_part_short(text,text)') and prosrc like '%R-2609%') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bank_receipt_round_offs' and column_name = 'invoice_id')" },
+  { key: "r2590expiredplanchangerelease", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.release_expired_plan_change_quotes(uuid)') and prosrc like '%R-2590%')" },
 ];

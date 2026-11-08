@@ -482,6 +482,7 @@ MIGS=(
   "r2611bookexpenserowlock|20261108160059_r2611_book_expense_row_lock.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.book_bank_txn_as_expense(uuid,text,text,integer,text)') and prosrc like '%R-2611%')"
   "r2604movebsloans|20261108162600_r2604_move_bs_loans.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.apply_bs_loan_move(jsonb,bigint)') and prosrc like '%R-2604%') and to_regclass('public.bs_loan_moves') is not null"
   "r2609undosettledsmallshort|20261108163500_r2609_undo_settled_small_short.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.tg_bank_split_line_unmatched()') and prosrc like '%R-2609%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.settle_quote_part_short(text,text)') and prosrc like '%R-2609%') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'bank_receipt_round_offs' and column_name = 'invoice_id')"
+  "r2590expiredplanchangerelease|20261108184500_r2590_expired_plan_change_release.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.release_expired_plan_change_quotes(uuid)') and prosrc like '%R-2590%')"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER
