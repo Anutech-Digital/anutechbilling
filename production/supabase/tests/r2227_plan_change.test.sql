@@ -8,7 +8,8 @@
 --      720; renewal date, renewal state, reminders, status unchanged; no PO; plan_change = true,
 --      support_upgrade = false, renewal_rolled_forward = false.
 --   2. Refused: plan_change naming ANOTHER subscription → exception, nothing changed.
---   3. Refused: plan_change with fewer seats than today → exception.
+--   3. Refused: plan_change with fewer seats than today → exception (R-2589: no from_seats is refused first).
+--   (R-2589: case 1 carries from_seats / from_mrr / from_plan, as Change plan writes them now.)
 --   4. Control — R-2073 support upgrade still works and says support_upgrade = true, plan_change = false.
 --   5. A plan-change quote with no link (renewal_quote_id not set) → refused, no new subscription.
 --
@@ -50,7 +51,7 @@ insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, su
   values ('Q-R2227-A', 'dd222700-0000-4000-8000-00000000a001', 'dd222700-0000-4000-8000-00000000c001',
           'R2227 Cust A', 54136, 45878, 18, 'draft', 'awaiting',
           '[{"id":"plan-change-1","item_id":"GW-STD-r2227","name":"R2227 Business Standard · change from R2227 Business Starter","qty":1,"rate":45878,"cost":0,"commitment":"annual_yearly",
-             "plan_change":{"subscription_id":"dd222700-0000-4000-8000-00000000b001","to_item_id":"GW-STD-r2227","seats":12,"new_mrr":10368,"cost_per_seat_month":720}}]'::jsonb,
+             "plan_change":{"subscription_id":"dd222700-0000-4000-8000-00000000b001","from_seats":10,"from_mrr":2700,"from_plan":"R2227 Business Starter","to_item_id":"GW-STD-r2227","seats":12,"new_mrr":10368,"cost_per_seat_month":720}}]'::jsonb,
           true, 0, 'yearly');
 
 -- ── 2. plan_change names another subscription ─────────────────────────────
@@ -78,7 +79,7 @@ insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, su
   values ('Q-R2227-C', 'dd222700-0000-4000-8000-00000000a001', 'dd222700-0000-4000-8000-00000000c003',
           'R2227 Cust C', 1180, 1000, 18, 'draft', 'awaiting',
           '[{"id":"plan-change-1","item_id":"GW-STD-r2227","name":"x","qty":1,"rate":1000,"cost":0,
-             "plan_change":{"subscription_id":"dd222700-0000-4000-8000-00000000b003","seats":4,"new_mrr":3456}}]'::jsonb,
+             "plan_change":{"subscription_id":"dd222700-0000-4000-8000-00000000b003","from_seats":5,"from_mrr":1350,"from_plan":"R2227 Business Starter","seats":4,"new_mrr":3456}}]'::jsonb,
           true, 0, 'yearly');
 
 -- ── 4. control: R-2073 support upgrade ────────────────────────────────────
