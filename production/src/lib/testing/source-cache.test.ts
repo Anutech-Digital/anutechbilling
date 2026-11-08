@@ -12,6 +12,13 @@ const cacheFile = path.join(dir, "cache.json");
    flush writes nothing (it would recreate the temp folder just removed). */
 afterAll(() => { resetSourceCacheForTest(); fs.rmSync(dir, { recursive: true, force: true }); });
 beforeEach(() => { fs.rmSync(cacheFile, { force: true }); resetSourceCacheForTest(cacheFile); vi.restoreAllMocks(); });
+/** Make files "old" (R-2582: not racy): mtime an hour back, and the clock 10 s on — ctime cannot be
+    set back, so the clock moves instead, as it has for a file checked out minutes before a scan. */
+function ageFiles(...files: string[]): void {
+  const old = new Date(Date.now() - 3600_000);
+  for (const f of files) fs.utimesSync(f, old, old);
+  vi.spyOn(Date, "now").mockReturnValue(Date.now() + 10_000);
+}
 
 describe("readSource (shared, always-fresh read cache for scan tests)", () => {
   it("returns what readFileSync returns", () => {
@@ -39,9 +46,50 @@ describe("readSource (shared, always-fresh read cache for scan tests)", () => {
     expect(readSource(f)).toBe("two");
   });
 
+  it("R-2582: a same-size rewrite whose size, mtime AND ctime all stay the same is still seen", () => {
+    // Cloud Build (8 Nov, build 56911293): a rewrite inside one timestamp tick kept every stat field,
+    // so the cache served the old text. Simulate exactly that: the rewritten file stats as before.
+    const f = path.join(dir, "m.ts");
+    fs.writeFileSync(f, "const y = 'safe';");
+    const before = fs.statSync(f);
+    expect(readSource(f)).toBe("const y = 'safe';");
+    fs.writeFileSync(f, "const y = 'BAD!';"); // same length
+    fs.utimesSync(f, before.atime, before.mtime);
+    const realStat = fs.statSync;
+    vi.spyOn(fs, "statSync").mockImplementation(((p: fs.PathLike, o?: fs.StatSyncOptions) =>
+      p === f ? before : realStat(p, o)) as typeof fs.statSync);
+    expect(readSource(f)).toBe("const y = 'BAD!';");
+    // …and after the cache went to disk and came back
+    flushSourceCache();
+    resetSourceCacheForTest(cacheFile);
+    expect(readSource(f)).toBe("const y = 'BAD!';");
+  });
+
+  it("R-2582: a racy entry is re-checked, and trusted again once the file has aged", () => {
+    const f = path.join(dir, "n.ts");
+    fs.writeFileSync(f, "young");
+    const t = Date.now();
+    vi.spyOn(Date, "now").mockReturnValue(fs.statSync(f).mtimeMs + 100); // pinned: cached 0.1 s after the write
+    readSource(f); // → racy
+    flushSourceCache(); // the racy entry goes to disk as racy
+    resetSourceCacheForTest(cacheFile);
+    const reads = vi.spyOn(fs, "readFileSync");
+    const readsOfF = () => reads.mock.calls.filter(([p]) => p === f).length;
+    expect(readSource(f)).toBe("young");
+    expect(readsOfF()).toBe(1); // the next process re-checks it, not trusted on stat
+    expect(readSource(f)).toBe("young");
+    expect(readsOfF()).toBe(2); // still racy → checked again
+    vi.spyOn(Date, "now").mockReturnValue(t + 10_000); // the file is now old
+    expect(readSource(f)).toBe("young"); // one more check stamps it trusted…
+    expect(readSource(f)).toBe("young"); // …so this one is stat-only
+    expect(readsOfF()).toBe(3);
+  });
+
   it("an unchanged file is served from the cache file, not read again", () => {
     const f = path.join(dir, "d.ts");
     fs.writeFileSync(f, "unchanged");
+    // An old file (written well before it was cached) is trusted on stat alone — the fast path.
+    ageFiles(f);
     readSource(f);
     flushSourceCache();
     resetSourceCacheForTest(cacheFile);
@@ -58,6 +106,7 @@ describe("readSource (shared, always-fresh read cache for scan tests)", () => {
     const f = path.join(dir, "h.ts"), g = path.join(dir, "i.ts");
     fs.writeFileSync(f, "from f");
     fs.writeFileSync(g, "from g");
+    ageFiles(f, g);
     readSource(f);
     flushSourceCache();
     const theirs = fs.readFileSync(cacheFile); // "another test file" cached f
