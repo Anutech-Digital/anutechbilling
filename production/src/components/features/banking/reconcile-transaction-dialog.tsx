@@ -51,7 +51,7 @@ import {
 } from "@/lib/queries/bank";
 import { EXPENSE_CATEGORIES, useUnreconciledExpenses, suggestCategory } from "@/lib/queries/expenses";
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
-import { suggestForLine, categoriseByRules } from "@/lib/banking/categorise";
+import { expenseSuggestion as expenseSuggestionOf, suggestedPayee } from "@/lib/banking/bulk-expense";
 import { useUnreconciledSalaries, useEmployees } from "@/lib/queries/payroll";
 import { useCustomers } from "@/lib/queries/customers";
 import { rupee, formatDate } from "@/lib/utils";
@@ -60,7 +60,6 @@ import { fyLabel, fyStartYearOf } from "@/lib/accounting/tax-payments";
 import { previousPeriod, titleCaseName, parseSalaryNarration, matchEmployee } from "@/lib/banking/salary-lines";
 import { useBookSalaryLines } from "@/lib/queries/salary-from-bank";
 import { detectGovtPayment } from "@/lib/banking/govt-payment";
-import { payeeFromNarration, TEST_TRANSFER_MAX } from "@/lib/banking/narration";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
@@ -234,26 +233,12 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      keywords. Only an expense category counts — Salaries belong to Payroll. It PREFILLS
      the expense form and moves it to the top; nothing is booked until the click. */
   const { data: categoryRules } = useTxnCategoryRules();
-  const expenseSuggestion = React.useMemo((): { category: string; reason: string } | null => {
-    if (!transaction || transaction.debit <= 0) return null;
-    const isExpenseCat = (c: string | null | undefined): c is string =>
-      !!c && c !== "Salaries" && (EXPENSE_CATEGORIES as readonly string[]).includes(c);
-    /* "SALARY TO DIRECTOR": booked as an expense, this is Director's Remuneration —
-       never plain Salaries (which belongs to Payroll) and never a guessed category. */
-    if (/\bDIRECTORS?\b/i.test(transaction.description ?? "")) {
-      return { category: "Director's Remuneration", reason: "the word \"director\" in the narration" };
-    }
-    if (isExpenseCat(transaction.category)) return { category: transaction.category, reason: "set when the statement was imported" };
-    const s = suggestForLine(transaction, categoryRules ?? [], suggestCategory);
-    if (s && isExpenseCat(s.category)) return { category: s.category, reason: s.reason };
-    /* Last layer: a ₹1–₹10 debit with nothing else to say about it is a test /
-       account-verification ("penny drop") transfer. Real money left the bank, so it is
-       booked — as a bank charge — rather than waved through as "reconciled". */
-    if (transaction.debit <= TEST_TRANSFER_MAX) {
-      return { category: "Bank Charges", reason: `a ₹${transaction.debit} debit — usually a test / account-verification transfer` };
-    }
-    return null;
-  }, [transaction, categoryRules]);
+  /* R-2611: one place for this suggestion (lib/banking/bulk-expense) — the bulk "no vendor yet"
+     sheet reads the same layers: director → import → Category Rule → keyword → ₹1–₹10 test transfer. */
+  const expenseSuggestion = React.useMemo(
+    () => (transaction ? expenseSuggestionOf(transaction, categoryRules ?? [], suggestCategory) : null),
+    [transaction, categoryRules],
+  );
 
   React.useEffect(() => {
     setBookCategory(expenseSuggestion?.category ?? ""); setBookGst("");
@@ -271,14 +256,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      parsed from the category's reason, which says "set at import" when the category
      came from the statement. A name already used for advances wins ("FACEBK" →
      the existing "Facebook"), so one vendor's top-ups stay one vendor. */
-  const suggestedVendor = React.useMemo(() => {
-    if (!transaction || transaction.debit <= 0) return "";
-    const pattern = categoriseByRules(transaction, categoryRules ?? [])?.rule.pattern.trim() ?? "";
-    /* No rule: the payee slot of an IMPS / NEFT / UPI narration, else blank. */
-    if (!pattern) return payeeFromNarration(transaction.description) ?? "";
-    const key = pattern.toUpperCase().slice(0, 5);
-    return prepaidVendorNames.find((v) => v.toUpperCase().startsWith(key)) ?? titleCaseName(pattern);
-  }, [transaction, categoryRules, prepaidVendorNames]);
+  /* No rule: the payee slot of an IMPS / NEFT / UPI narration, else blank (R-2611: shared lib). */
+  const suggestedVendor = React.useMemo(
+    () => (transaction ? suggestedPayee(transaction, categoryRules ?? [], prepaidVendorNames) : ""),
+    [transaction, categoryRules, prepaidVendorNames],
+  );
 
   /* R-1917 (R-1906 audit B8): the vendor the "Paying a vendor?" section is on (guessed from the
      narration or picked) and its open items. With a vendor, that section is the ONE way: it is the

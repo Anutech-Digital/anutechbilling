@@ -52,6 +52,7 @@ import { RemittanceText } from "@/components/features/banking/remittance-text";
 import { rupee, formatDate } from "@/lib/utils";
 import { ImportStatementDialog } from "@/components/features/banking/import-statement-dialog";
 import { SalaryLinesDialog, salaryLinesOf } from "@/components/features/banking/salary-lines-dialog";
+import { BulkExpenseSheet } from "@/components/features/banking/bulk-expense-sheet";
 import { StatementCheckCard } from "@/components/features/banking/statement-check-card";
 import { AutoReconcileResult } from "@/components/features/banking/auto-reconcile-result";
 import { BankImportsSection } from "@/components/features/banking/bank-imports-section";
@@ -140,6 +141,7 @@ export default function BankAccountDetailPage() {
   const setStatus = (status: StatusFilter) => setFilters({ ...filters, status });
   const [importOpen,    setImportOpen]    = React.useState(false);
   const [salaryOpen,    setSalaryOpen]    = React.useState(false);
+  const [bulkExpOpen,   setBulkExpOpen]   = React.useState(false);
   const [aaConnectOpen, setAaConnectOpen] = React.useState(false);
   const [reconcileTxn,  setReconcileTxn]  = React.useState<BankTransactionRow | null>(null);
   /* R-2524: the Reconcile sheet mounts once the list has drawn and the browser is idle (use-drawn-lines). */
@@ -565,6 +567,17 @@ export default function BankAccountDetailPage() {
                 {`Salary lines (${salaryLineCount})`}
               </Button>
             )}
+            {/* R-2611: the "Money out · no vendor yet" lines in one table — tick and book them at once. */}
+            {noVendorIds.size > 0 && (
+              <Button
+                icon="receipt"
+                variant="default"
+                onClick={() => setBulkExpOpen(true)}
+                title="Book money-out lines with no vendor as expenses in one go — each line shows the suggested category; you tick which to book"
+              >
+                {`No-vendor lines (${noVendorIds.size})`}
+              </Button>
+            )}
             {/* R-2402: bulk "Reconcile from Zoho" — owner / accountant, when Zoho has payments for these lines. */}
             {zohoIds && zohoIds.size > 0 && (role === "owner" || role === "accountant") && <ZohoBulkReconcileButton accountId={account.id} accountName={account.name} count={zohoIds.size} />}
             <Button
@@ -737,6 +750,14 @@ export default function BankAccountDetailPage() {
 
       <ImportStatementDialog open={importOpen} onOpenChange={setImportOpen} accountId={account.id} />
       <SalaryLinesDialog open={salaryOpen} onOpenChange={setSalaryOpen} accountId={account.id} transactions={allTxns} />
+      {bulkExpOpen && (
+        <BulkExpenseSheet
+          open={bulkExpOpen}
+          onOpenChange={setBulkExpOpen}
+          accountName={account.name}
+          lines={(transactions ?? []).filter((t) => noVendorIds.has(t.id))}
+        />
+      )}
       <ConnectAaDialog
         open={aaConnectOpen}
         onOpenChange={setAaConnectOpen}
