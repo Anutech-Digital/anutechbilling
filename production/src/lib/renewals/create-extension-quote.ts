@@ -38,6 +38,7 @@ import {
   extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
   type ExtensionLength,
 } from "./extension-term";
+import { loadScheduledSeatCuts, renewalSeatCut } from "./scheduled-seat-cut";
 
 type SupabaseAdmin = SupabaseClient<Database>;
 
@@ -127,7 +128,7 @@ export interface CreateExtensionQuoteResult {
 
 export interface CreateExtensionQuoteError {
   ok:       false;
-  code:     "already_open" | "no_doc_number" | "insert_failed" | "invalid_years";
+  code:     "already_open" | "no_doc_number" | "insert_failed" | "invalid_years" | "seat_cut_scheduled";
   message:  string;
 }
 
@@ -153,6 +154,21 @@ export async function createExtensionQuote(
       ok: false,
       code: "already_open",
       message: `Subscription already has an open renewal/extension quote (${sub.renewal_quote_id}). Finalize or delete it first.`,
+    };
+  }
+
+  /* R-2608: an extension quote bills every current seat — it does not read a seat cut scheduled for
+     this renewal (R-2252 / R-2583). Refuse while one is scheduled; a failed read refuses too. */
+  const cutRows = await loadScheduledSeatCuts(input.supabase, input.tenantId, input.subscriptionId);
+  const cut = cutRows === null ? null : renewalSeatCut(cutRows, { seats: input.seats, renewalDate: input.renewalDate });
+  if (cutRows === null || (cut && cut.kind !== "none")) {
+    return {
+      ok: false,
+      code: "seat_cut_scheduled",
+      message: cut && cut.kind !== "none"
+        ? `A seat cut to ${cut.row.seats_after} seats is scheduled for ${formatIstDate(cut.row.effective_date)} — Extend term would bill all ${input.seats} seats. ` +
+          "Remove the cut in Manage seats first, or let the renewal happen with the cut."
+        : "Could not check for a scheduled seat cut, so no extension quote was made. Try again in a minute.",
     };
   }
 
