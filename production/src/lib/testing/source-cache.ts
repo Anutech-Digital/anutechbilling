@@ -9,13 +9,14 @@
  *
  * How: `readSource(file)` stats the file and returns the text from a cache file in the OS temp folder
  * when its size, mtime AND ctime are unchanged since it was cached; otherwise it reads the disk and
- * updates the entry. R-2582 (8 Nov 2026), "racy" entries: a stat is only proof when the file was
- * already older than RACY_MS when it was cached — a same-size rewrite inside one timestamp tick keeps
- * size, mtime and ctime (Cloud Build 56911293 served stale text this way). So an entry cached within
- * RACY_MS of the file's mtime is re-read and its bytes compared before use (git's racy-index rule);
- * once a re-read happens after the file has aged, the entry is stored as trusted again. Old files —
- * nearly all of src/ — stay on the stat-only fast path. So a scan always sees what is on disk NOW — an edit, checkout or rebase changes
- * mtime/ctime and that file is read again (ctime also catches a copy that kept the old mtime).
+ * updates the entry. An edit, checkout or rebase changes mtime/ctime and that file is read again
+ * (ctime also catches a copy that kept the old mtime).
+ * R-2582 (8 Nov 2026), "racy" entries: a stat is only proof when the file was already older than
+ * RACY_MS when it was cached — a same-size rewrite inside one timestamp tick keeps size, mtime and
+ * ctime (Cloud Build 56911293 served stale text this way). So an entry cached within RACY_MS of the
+ * file's mtime/ctime is re-read and its bytes compared before use (git's racy-index rule); a later
+ * re-read after the file has aged trusts it again for the rest of that process. Old files — nearly all
+ * of src/ — stay on the stat-only fast path, so a scan always sees what is on disk NOW.
  * The cache is written once per test file (afterAll) via a temp file + rename, so a reader never sees
  * half a file; a failed write only costs speed. Format: one JSON index line, then the texts back to
  * back — a test reads one Buffer and decodes only the files it asks for (a 50 MB JSON.parse took
@@ -38,7 +39,7 @@ type IndexRow = [key: string, s: number, m: number, c: number, r: number, offset
 const MAGIC = "reselleros-source-cache v3";
 /** R-2582: an entry read less than this long after the file's mtime may hide a same-tick rewrite. */
 export const RACY_MS = 2000;
-const isRacy = (e: Entry): boolean => e.r - e.m < RACY_MS;
+const isRacy = (e: Entry): boolean => e.r - Math.max(e.m, e.c) < RACY_MS;
 export const SOURCE_CACHE_DIR = path.join(os.tmpdir(), "reselleros-source-cache");
 /** One cache per checkout (each worktree has its own production/). */
 export const SOURCE_CACHE_FILE = path.join(
@@ -97,10 +98,10 @@ export function readSource(file: string): string {
   }
   const raw = fs.readFileSync(file);
   if (e && sameStat && e.buf && raw.equals(e.buf)) {
-    // Racy but unchanged: keep it; it is stored as trusted once a re-read finds the file aged.
+    // Racy but unchanged: trusted in memory once a re-read finds the file aged. Not added to `fresh`:
+    // persisting a promotion would rewrite the whole ~50 MB cache file to save one small re-read.
     const next: Entry = { ...e, r: now };
     map.set(key, next);
-    if (!isRacy(next)) fresh.add(key);
     if (next.text === undefined) next.text = raw.toString("utf8");
     return next.text;
   }
@@ -155,10 +156,11 @@ export function flushSourceCache(): void {
   finally { fs.rmSync(lock, { force: true }); }
 }
 
-/** The disk entry `d` already says what `e` says: same stat AND same bytes (R-2582: a same-tick
-    rewrite keeps the stat), and `d` is not racier than `e` (a trusted stamp is never lost). */
+/** The disk entry `d` already says what `e` says: same stat, and — when either is racy (R-2582: a
+    same-tick rewrite keeps the stat) — same bytes too. A trusted `e` never loses to a racy `d`. */
 function sameAs(d: Entry, e: Entry): boolean {
   if (d.s !== e.s || d.m !== e.m || d.c !== e.c) return false;
+  if (!isRacy(d) && !isRacy(e)) return true;
   if (isRacy(d) && !isRacy(e)) return false;
   const eb = e.buf ?? Buffer.from(e.text ?? "", "utf8");
   return !!d.buf && d.buf.equals(eb);
@@ -181,9 +183,11 @@ function takeLock(lock: string): boolean {
 function pruneOldCaches(): void {
   try {
     const cutoff = Date.now() - 3 * 24 * 3600 * 1000;
+    /* R-2582: this checkout's old-format (-v2) cache can never be read again — drop it at once. */
+    const oldFormat = path.basename(cacheFile).replace(/-v3\.bin$/, "-v2.bin");
     for (const n of fs.readdirSync(path.dirname(cacheFile))) {
       const p = path.join(path.dirname(cacheFile), n);
-      if (p !== cacheFile && !p.endsWith(".lock") && fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { force: true });
+      if (p !== cacheFile && !p.endsWith(".lock") && (n === oldFormat || fs.statSync(p).mtimeMs < cutoff)) fs.rmSync(p, { force: true });
     }
   } catch { /* best effort */ }
 }
