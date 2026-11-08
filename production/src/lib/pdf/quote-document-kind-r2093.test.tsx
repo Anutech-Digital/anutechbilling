@@ -140,7 +140,7 @@ describe("record-payment toast", () => {
   });
   it("full payment on an upgrade quote says the plan is upgraded", () => {
     expect(paymentToast({ ...base, isUpgradeQuote: true, isFullyPaid: true, outstanding: 0 }).title)
-      .toBe("Paid in full · support plan upgraded");
+      .toBe("Paid in full · plan upgraded");
   });
   it("a real renewal keeps its wording", () => {
     expect(paymentToast(base).title).toMatch(/^Partial renewal payment recorded/);

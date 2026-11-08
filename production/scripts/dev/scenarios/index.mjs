@@ -354,6 +354,16 @@ export const SCENARIOS = [
     ],
   },
   {
+    name: "plan-change",
+    about: "R-2227 card test's own customer SCN Plan Change Co: Google Workspace Business Starter (subscription 'SCN Plan Change Starter'), 10 seats × ₹3,240/yr paid yearly, annual term from the 1st two months ago, its invoice INV-SCN-PC-1 ₹38,232 paid in full. Change plan → E2E Google Workspace Business Standard credits the whole unused Starter value. A reload or --clear removes the customer, its subscription, quotes and invoices.",
+    cards: ["R-2227"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: ["c2227000-0000-4000-8000-000000000001", "INV-SCN-PC-1"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1, xQuotes: 1, xInvoices: 1 },
+    pages: [
+      { path: "subscriptions", for: "R-2227 SCN Plan Change Starter → Change plan → E2E Google Workspace Business Standard, 10 seats → new plan for the days left, less unused Starter, net to pay → Create plan change quote" },
+    ],
+  },
+  {
     name: "receipt-gaps",
     about: "R-2192 small receipt differences: SCN Round Off Traders INV-SCN-RG-1 ₹13,106 + a ₹13,105 NEFT line (₹1 short → round-off); SCN Wire Exports INV-SCN-RG-2 ₹50,000 + a ₹49,500 RTGS wire (₹500 kept by the bank → Bank / SWIFT charge).",
     cards: ["R-2192"],
