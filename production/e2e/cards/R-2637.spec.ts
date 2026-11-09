@@ -40,7 +40,10 @@ test.describe("R-2637 — USD → ₹: the line total is converted, not a rounde
     await openAppPage(page, `/quotes/new?customer=${CUSTOMER_ID}`);
     /* An export customer defaults to USD and fetches today's rate — wait for it, then type ours. */
     await expect(page.locator("#billingCurrency")).toHaveValue("USD", { timeout: 60_000 });
-    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {});
+    /* networkidle came BEFORE the auto-fetch started, so the fetched rate (e.g. 94.8755) landed after our
+       95.10 and replaced it (10 Nov: dialog said ₹189.75/unit). Wait until the box leaves the "1" placeholder
+       (fetch done); offline it stays 1 — then we just type after the wait. */
+    await expect(page.locator("#billingRate")).not.toHaveValue("1", { timeout: 30_000 }).catch(() => {});
     await page.locator("#billingRate").fill("95.10");
     await expect(page.locator("#billingRate")).toHaveValue("95.1");
 

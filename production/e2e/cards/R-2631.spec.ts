@@ -52,10 +52,13 @@ function psql(sql: string): string[] {
 
 const T = `(select t.id from public.tenants t where t.email = '${E2E_TENANT_EMAIL}')`;
 
-/** Removes this test's rows (an invoice it raised goes too — it is a local test invoice). */
+/** Removes this test's rows (an invoice it raised goes too — it is a local test invoice). Step 3's invoice is
+    PAID (the planted receipt settles it), so tg_invoices_block_delete_issued refuses a plain delete; the trigger's
+    own named way past it (app.invoice_amend_reason, transaction-local) is used — local docker DB only (psql()). */
 function unplant(): void {
   psql(`
 begin;
+set local app.invoice_amend_reason = 'R-2631 card test cleanup (local test invoice)';
 update public.quotes set invoice_id = null, payment_status = 'awaiting' where id = '${QUOTE}';
 delete from public.invoices where quote_id = '${QUOTE}' and tenant_id = ${T};
 delete from public.payments where id = '${PAYMENT_ID}';
