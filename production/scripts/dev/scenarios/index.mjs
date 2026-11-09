@@ -387,6 +387,18 @@ export const SCENARIOS = [
       { path: "invoices", for: "R-2540 ZB-SCN-AF-1 → Tax invoice: no buyer GSTIN (B2C as filed) · ZB-SCN-AF-2 → GSTIN 29AAHCS1234K1Z1, MG Road Bengaluru address, State: Karnataka — not the Pune address" },
     ],
   },
+  {
+    name: "gst-filed",
+    about: "R-2621: SCN Filed Month Traders (Delhi) with FY sale ZB-SCN-GF-1 ₹11,800 imported from Zoho (10 Sep 2026); money-in lines on SCN HDFC Current ··7788: 15 Sep 2026 ₹11,800 (pays ZB-SCN-GF-1), 20 Sep 2026 ₹5,900 (a new sale is refused once GST is filed up to Sep 2026), 5 Oct 2026 ₹5,900 (open month — new sale as before).",
+    cards: ["R-2621"],
+    scope: { vendors: [], txns: ["c2621000-0000-4000-8000-000000000011", "c2621000-0000-4000-8000-000000000012", "c2621000-0000-4000-8000-000000000013"],
+             docs: [], names: [], upis: [],
+             extra: ["c2621000-0000-4000-8000-000000000001", "ZB-SCN-GF-1"] },
+    expect: { ...NO_OLD, txns: 3, ...NO_EXTRA, xCustomers: 1, xInvoices: 1 },
+    pages: [
+      { path: "banking", for: "R-2621 first Accounting → Overview → 'GST returns filed up to' → September 2026 → Save (Clear it when done) · 20 Sep ₹5,900 line → Reconcile → SCN Filed Month Traders → New sale → 'GST for Sep 2026 is already filed' · 15 Sep ₹11,800 line → An open quote / invoice → ZB-SCN-GF-1 → paid · 5 Oct ₹5,900 line → new sale books" },
+    ],
+  },
 ];
 
 export const SCENARIO_NAMES = SCENARIOS.map((s) => s.name);
