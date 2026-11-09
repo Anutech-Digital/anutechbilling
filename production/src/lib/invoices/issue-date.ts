@@ -39,8 +39,7 @@ export function invoiceDateWhy(a: { date: string; receiptDay: string | null; tod
 
 /**
  * The invoice date generate_invoice will use, from invoice_date_for_receipt. While loading, or if the
- * call fails, the client's own reading (receipt day, not after today) — the lock is then unknown, and
- * `fromServer` is false.
+ * call fails, `date` is null — the confirm then says nothing about the date rather than guess.
  */
 export function useInvoiceIssueDate(args: { tenantId: string | null | undefined; receiptDay: string | null; enabled: boolean }) {
   const today = istToday();
@@ -56,7 +55,6 @@ export function useInvoiceIssueDate(args: { tenantId: string | null | undefined;
       return typeof data === "string" ? data.slice(0, 10) : null;
     },
   });
-  const guess = args.receiptDay && args.receiptDay < today ? args.receiptDay : today;
-  const date = q.data ?? guess;
-  return { date, why: invoiceDateWhy({ date, receiptDay: args.receiptDay, today }), fromServer: Boolean(q.data) };
+  const date = q.data ?? null;
+  return { date, why: date ? invoiceDateWhy({ date, receiptDay: args.receiptDay, today }) : undefined };
 }

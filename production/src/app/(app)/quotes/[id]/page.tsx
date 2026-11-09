@@ -2693,7 +2693,9 @@ export default function QuoteDetailPage() {
             paymentTermsDays: quote.payment_terms_days ?? null,
             /* undefined (no customer linked / not loaded) says nothing; null warns B2C. */
             customerGstin: customer ? (customer.gstin ?? null) : undefined,
-            invoiceDate: issueDate.date,
+            /* Only the server's date (books lock included) — while it loads or if it fails, no date
+               line and no LUT judgement rather than a guess. */
+            invoiceDate: issueDate.date ?? undefined,
             invoiceDateWhy: issueDate.why,
             customerCountry: customer ? (customer.country ?? null) : undefined,
             customerTreatment: customer?.gst_treatment ?? null,
