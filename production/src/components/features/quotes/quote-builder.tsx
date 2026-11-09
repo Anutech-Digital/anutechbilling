@@ -1309,6 +1309,20 @@ function QuoteBuilderBody() {
               };
             }
           }
+          /* R-2638: a quote that bills on the item's USD price (International basis) keeps that
+             price for the new commitment. The ₹ tier below put the ₹ catalogue on a USD line
+             (rate AND list), so typing the USD price back read as a 65% "discount" and asked the
+             owner to approve it. Same pricing as adding the item (catalogLineListRate). */
+          const usdTier = item && !l.bulk ? usdFor(item) : null;
+          if (item && usdTier && unitYearMultiplier(billingUnitOf(item)) === 12) {
+            const p = catalogLineListRate(item, commitment, usdTier);
+            if (p.rate > 0) {
+              return {
+                ...l, commitment, rate: p.rate, list_rate: p.rate,
+                cost: costTypedRef.current.has(l.id) || p.cost <= 0 ? l.cost : p.cost,
+              };
+            }
+          }
           // Map line commitment → underlying item price tier
           // "monthly" = monthly flex tier · others = annual tier (same price, only billing differs)
           const tierKey = commitment === "monthly" ? "monthly" : "annual";
