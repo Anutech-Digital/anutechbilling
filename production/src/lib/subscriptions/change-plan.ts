@@ -70,7 +70,7 @@ export interface LaterBilledPart {
  * plan's rate (under-bill). Charging its difference on this quote would be charged again once the
  * part is freed and billed at the new rate (credit note → R-2095 Generate, Cancel proforma → R-2541),
  * so the change is REFUSED while one exists — R-2589 / R-2617 style. Same rule and words as the SQL
- * trigger subscriptions_r2626_plan_change_vs_later_part (migration 20261109064000). `chargeTo` = the
+ * trigger subscriptions_r2626_plan_change_vs_later_part (migration 20261109085322). `chargeTo` = the
  * plan change's last day (inclusive); only parts starting after it count.
  * An invoiced part (paid ahead) names the LATEST one — the change waits until that part starts. With
  * proformas only, all are named: cancel_quote frees only the latest billed period (R-2519b), so the

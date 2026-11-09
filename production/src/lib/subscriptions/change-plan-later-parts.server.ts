@@ -5,7 +5,7 @@
  * (line billing_id, R-2092: the group links only its first part) — that was not spent on an invoice
  * credit notes cancelled (R-2095). Any status, like bill_subscription_instalment: a cancelled proforma
  * is unlinked by cancel_quote, so a request still linked is still that part's request.
- * Same rows the SQL trigger subscriptions_r2626_plan_change_vs_later_part reads (migration 20261109064000).
+ * Same rows the SQL trigger subscriptions_r2626_plan_change_vs_later_part reads (migration 20261109085322).
  *
  * Read by the Change plan route (preview + save) and the online pay start of a plan-change quote.
  * Throws on a failed read — the caller refuses (500) rather than price a change it could not check.

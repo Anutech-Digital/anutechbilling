@@ -4,7 +4,7 @@
 -- old plan's rate: under-billed. So paying the plan-change quote is refused while a later part is
 -- billed; the owner cancels that proforma (or changes the plan once the part starts).
 --
--- Migration 20261109064000_r2626_plan_change_vs_later_part (trigger subscriptions_r2626_plan_change_vs_later_part):
+-- Migration 20261109085322_r2626_plan_change_vs_later_part (trigger subscriptions_r2626_plan_change_vs_later_part):
 --   1.  the real path: record_payment of a plan-change quote while Q3 has a live tax invoice
 --       → refused 'R-2626: plan change refused — Q3 (…) is already invoiced (INV…)…', nothing booked,
 --       subscription unchanged.

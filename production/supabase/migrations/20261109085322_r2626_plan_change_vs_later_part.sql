@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_trigger where tgname = 'subscriptions_r2626_plan_change_vs_later_part')
 -- deploy-key: r2626planchangevslaterpart
--- 20261109064000_r2626_plan_change_vs_later_part.sql
+-- 20261109085322_r2626_plan_change_vs_later_part.sql
 --
 -- R-2626 (9 Nov 2026, split from R-2617 b — R-2590 / R-2227 review low; money rule family N5 / C3).
 --
