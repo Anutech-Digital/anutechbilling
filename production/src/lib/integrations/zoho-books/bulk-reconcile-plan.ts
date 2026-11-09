@@ -60,6 +60,9 @@ import { lutFor } from "@/lib/gst/export-lut";
 import { formatForeign } from "@/lib/currency";
 import type { FindZohoResult, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 import { fmtDay, openingParts, type OpeningPart } from "./opening-from-zoho";
+import { fyInNumber, fyOf, isLastYearInvoice, oldNumberSeries } from "./zoho-fy";
+import { r2621NewSaleCheck, type R2621PlanFacts, type R2621RowFacts } from "./zoho-sale-filed";
+export { fyInNumber, fyOf, isLastYearInvoice, oldNumberSeries } from "./zoho-fy";
 
 export { openingFromZoho, openingParts, type OpeningCreate, type OpeningPart } from "./opening-from-zoho";
 import { mapZohoCustomer, normCompanyName, zohoSaleLine, zohoSaleNumber } from "./payment-prefill";
@@ -89,29 +92,13 @@ export interface BulkLine {
  *  app customer Zoho's customer maps to (null: a customer new from Zoho); `booksStart` = the
  *  company's books start (R-2496 readBooksStart: the owner's setting, else the day after the opening
  *  balances date; null: none set). Absent = read before R-2419. */
-export interface BulkMatchRow {
+/** R-2621: + gstFiled / zohoSales (zoho-sale-filed.ts R2621RowFacts). */
+export interface BulkMatchRow extends R2621RowFacts {
   line: BulkLine;
   result: FindZohoResult;
   contact: ZohoContactInfo | null;
   facts?: CustomerFacts | null;
   booksStart?: string | null;
-  /** R-2621: which of this row's days (bank date, Zoho invoice dates) are GST-filed — SQL
-   *  gst_filed_days (setting "GST returns filed up to", books lock, GSTR-1 marked filed). Absent = not read. */
-  gstFiled?: string[] | null;
-  /** R-2621: the row's Zoho invoices that are already in the app (imported FY sales, by Zoho number). */
-  zohoSales?: ZohoAppSale[];
-}
-
-/** R-2621: an app invoice carrying a Zoho invoice's number (an imported FY sale). */
-export interface ZohoAppSale {
-  /** Zoho's invoice number (invoices.external_number). */
-  number: string;
-  invoiceId: string;
-  customerId: string | null;
-  date: string | null;
-  /** Whole rupees still owed. */
-  due: number;
-  taxable: number;
 }
 
 /** R-2419 (e): one open quote / unpaid invoice of the customer (bank_credit_open_items). */
@@ -480,40 +467,6 @@ function prevDay(iso: string): string {
 }
 const normNo = (s: string | null | undefined) => (s ?? "").trim().toUpperCase().replace(/\s+/g, "");
 
-/** The financial year (the calendar year of its April) a date falls in. */
-export function fyOf(iso: string): number {
-  const y = Number(iso.slice(0, 4));
-  return Number(iso.slice(5, 7)) >= 4 ? y : y - 1;
-}
-
-/** The financial year printed in an invoice number ("INV/25-26/0412" → 2025); null = none. */
-export function fyInNumber(no: string): number | null {
-  const m = /(?:^|[^0-9])(\d{2})-(\d{2})(?:[^0-9]|$)/.exec(no);
-  if (!m) return null;
-  const a = Number(m[1]);
-  return (a + 1) % 100 === Number(m[2]) ? 2000 + a : null;
-}
-
-/** (a) A Zoho invoice from before the app's books — its money settles the opening receivable.
- *  R-2494: the invoice's DATE decides, never its number (Zoho kept INV/25-26/… for a day or two
- *  after 1 Apr): dated before the books' start → opening. R-2496: the books' start is the company's
- *  ONE setting (lib/accounting/books-start.ts — Accounting → Overview → Books start, else the
- *  opening balances date + 1). No books' start → an earlier financial year than the bank line (the
- *  plan then refuses an opening invoice anyway). The number's year is used only when Zoho gives no
- *  date. Works for any books' start (1 Apr 2025, 1 Apr 2026, …). */
-export function isLastYearInvoice(inv: { number: string; date: string | null }, lineDate: string, booksStart: string | null): boolean {
-  const d = inv.date?.slice(0, 10);
-  if (d) return booksStart ? d < booksStart : fyOf(d) < fyOf(lineDate);
-  return (fyInNumber(inv.number) ?? Infinity) < fyOf(booksStart ?? lineDate); /* no number year → false */
-}
-
-/** R-2494: the number says an earlier financial year than the invoice's own date ("INV/25-26/0999"
- *  dated 2 Apr 2026) — Zoho kept the old number series after the year turned. */
-export function oldNumberSeries(inv: { number: string; date: string | null }): boolean {
-  const fy = fyInNumber(inv.number), d = inv.date?.slice(0, 10);
-  return fy !== null && !!d && fy < fyOf(d);
-}
-
 /** (d) The TDS % (1 / 2 / 10) the withheld amount is of the taxable value, within ₹2; null = none. */
 export function tdsPctWithin(tds: number, taxable: number): 1 | 2 | 10 | null {
   if (!(tds > 0) || !(taxable > 0)) return null;
@@ -536,7 +489,8 @@ const shortByText = (tds: number, taxable: number) =>
   `Short by ${rupees(tds)}: Zoho records it as TDS, but it is not 1%, 2% or 10% of the taxable ${rupees(taxable)}. Check the payment in Zoho, or reconcile this line by hand.`;
 
 /** Options of one row's plan. */
-export interface PlanOptions {
+/** R-2621: + gstFiled / zohoSales (zoho-sale-filed.ts R2621PlanFacts). */
+export interface PlanOptions extends R2621PlanFacts {
   /** What the app already has for the customer (route); undefined = not read. */
   facts?: CustomerFacts | null;
   booksStart?: string | null;
@@ -544,16 +498,6 @@ export interface PlanOptions {
   requireFacts?: boolean;
   /** (b) line index → the newest line of the same customer + domain + product in this run. */
   chargeOnNew?: ReadonlyMap<number, { label: string; date: string }>;
-  /** R-2621: GST-filed days among the row's dates (null/undefined = not read; the server still refuses). */
-  gstFiled?: ReadonlySet<string> | null;
-  /** R-2621: the row's Zoho invoices already in the app. */
-  zohoSales?: readonly ZohoAppSale[];
-}
-
-/** R-2621: "Dec 2025" for a YYYY-MM-DD day. */
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-function monthLabel(iso: string): string {
-  return `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
 }
 
 // ── The plan for one line ────────────────────────────────────────────────────────────────
@@ -969,52 +913,11 @@ export function planRow(
     }
   }
 
-  /* R-2621 (a): a Zoho invoice already in the app (an imported FY sale, by its Zoho number) is PAID —
-     never sold a second time, in any month. */
-  if (kind === "new_sale" && !noBook && match.invoices.length > 0) {
-    const inApp = match.invoices.map((i) => ({ inv: i, app: (opts.zohoSales ?? []).find((s) => normNo(s.number) === normNo(i.number)) ?? null }))
-      .filter((x): x is { inv: (typeof match.invoices)[number]; app: ZohoAppSale } => !!x.app);
-    if (inApp.length > 0) {
-      const { inv, app } = inApp[0];
-      const where = `Zoho's invoice ${inv.number} is in the app as ${app.invoiceId}`;
-      if (match.invoices.length > 1 || match.moreInvoices.length > 0) {
-        pathProblems.push(`The Zoho payment settles several invoices (${invoiceNumbers.join(", ")}) and ${inApp.map((x) => x.inv.number).join(", ")} ${inApp.length > 1 ? "are" : "is"} already in the app — record it in Record payment across those invoices, then match the line by hand.`);
-        noBook = true;
-      } else if (!isExisting || (app.customerId !== null && app.customerId !== customer.id)) {
-        pathProblems.push(`${where}, but it is in the app under another customer than ${customer.name} — check the customer, then reconcile this line by hand.`);
-        noBook = true;
-      } else if (app.due <= 0) {
-        pathProblems.push(`${where} and ${app.invoiceId} is already paid in the app — match this line to its receipt by hand.`);
-        noBook = true;
-      } else if (money > app.due + MATCH_SLACK) {
-        pathProblems.push(`${where}, which has only ${rupees(app.due)} due, but the bank line${tds ? " + TDS" : ""} is ${rupees(money)}. Reconcile this line by hand.`);
-        noBook = true;
-      } else {
-        payItem({ kind: "opening", quoteId: null, invoiceId: app.invoiceId, docDate: app.date, due: app.due, taxable: app.taxable, makesSubscription: false, approvalBlock: null });
-        summary = `Pays Zoho's invoice ${inv.number} (in the app as ${app.invoiceId}, ${rupees(app.due)} due) — no new sale`;
-        if (money < app.due - MATCH_SLACK) notes.push(`Part payment: ${rupees(app.due - money)} stays due on ${app.invoiceId}.`);
-      }
-    }
-  }
-
-  /* R-2621 (b): a NEW sale is never booked on a GST-filed day (the bank line's, or its Zoho invoice's) —
-     the sale is already in a filed return (G-FY2526 D2 + D7). Import Zoho's invoice, then the line pays it. */
-  if (kind === "new_sale" && !noBook && opts.gstFiled) {
-    const filed = opts.gstFiled;
-    const nos = invoiceNumbers.join(", ");
-    const next = nos
-      ? ` Import Zoho's invoice${invoiceNumbers.length > 1 ? "s" : ""} ${nos} first (Invoices → FY sales from Zoho), then run this again — the line then pays ${invoiceNumbers.length > 1 ? "them" : "it"}.`
-      : " Reconcile this line by hand.";
-    const invFiled = match.invoices.find((i) => !!i.date && filed.has(i.date.slice(0, 10)));
-    if (filed.has(line.txnDate)) {
-      pathProblems.push(`GST for ${monthLabel(line.txnDate)} is already filed — a new sale on ${fmtDay(line.txnDate)} would change a filed return${nos ? ` and count ${nos} twice` : ""}.${next}`);
-      noBook = true;
-    } else if (invFiled) {
-      const d = invFiled.date!.slice(0, 10);
-      pathProblems.push(`Zoho's invoice ${invFiled.number} is dated ${fmtDay(d)} — GST for ${monthLabel(d)} is already filed, so it is in a filed return; a new sale on ${fmtDay(line.txnDate)} would count it twice.${next}`);
-      noBook = true;
-    }
-  }
+  /* R-2621 (zoho-sale-filed.ts): Zoho's invoice already in the app is PAID, never sold twice; no new sale
+     on a GST-filed day (the line's or its Zoho invoice's) — import Zoho's invoice first. */
+  const r2621 = kind === "new_sale" && !noBook ? r2621NewSaleCheck({ match, opts, customer, money, tds, lineDate: line.txnDate, invoiceNumbers, slack: MATCH_SLACK }) : null;
+  if (r2621?.pay) { payItem(r2621.pay.item); summary = r2621.pay.summary; if (r2621.pay.note) notes.push(r2621.pay.note); }
+  if (r2621?.problem) { pathProblems.push(r2621.problem); noBook = true; }
 
   /* R-2494: an invoice inside the app's books but of an EARLIER financial year than the bank line
      (books from 1 Apr 2025, invoice Feb 2026, money May 2026) is never a new sale on the bank date —
@@ -1096,10 +999,7 @@ export function planFromResult(
  */
 export function planAll(rows: readonly BulkMatchRow[], ctx: PlanContext): PlanRow[] {
   const opt = (r: BulkMatchRow, chargeOnNew?: ReadonlyMap<number, { label: string; date: string }>): PlanOptions =>
-    ({
-      facts: r.facts, booksStart: r.booksStart ?? null, requireFacts: true, chargeOnNew,
-      gstFiled: r.gstFiled ? new Set(r.gstFiled) : null, zohoSales: r.zohoSales ?? [], // R-2621
-    });
+    ({ facts: r.facts, booksStart: r.booksStart ?? null, requireFacts: true, chargeOnNew, gstFiled: r.gstFiled ? new Set(r.gstFiled) : null, zohoSales: r.zohoSales ?? [] });
   const plans = rows.map((r) => planFromResult(r.line, r.result, r.contact, ctx, opt(r)));
 
   type Cand = { row: number; idx: number; when: string; txn: string; label: string };

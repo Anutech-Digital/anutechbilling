@@ -8,8 +8,9 @@
 import { describe, it, expect } from "vitest";
 import {
   planAll,
-  type BulkLine, type BulkMatchRow, type CustomerFacts, type PlanContext, type ZohoAppSale,
+  type BulkLine, type BulkMatchRow, type CustomerFacts, type PlanContext,
 } from "./bulk-reconcile-plan";
+import type { ZohoAppSale } from "./zoho-sale-filed";
 import type { ZohoInvoiceHistory, ZohoMatchInvoice, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 
 const ctx: PlanContext = {

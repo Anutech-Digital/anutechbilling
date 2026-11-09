@@ -19,8 +19,9 @@ import type { ZohoCaller } from "@/lib/integrations/zoho-books/store";
 import { mapZohoCustomer } from "@/lib/integrations/zoho-books/payment-prefill";
 import { paymentApprovalBlock } from "@/lib/quotes/payment-approval";
 import {
-  DOUBLE_DAYS, type BulkMatchRow, type CustomerFacts, type OpenItemFact, type ZohoAppSale,
+  DOUBLE_DAYS, type BulkMatchRow, type CustomerFacts, type OpenItemFact,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
+import type { ZohoAppSale } from "@/lib/integrations/zoho-books/zoho-sale-filed";
 import { BooksStartReadError, readBooksStart, type BooksStartDb } from "@/lib/accounting/books-start";
 
 export class FactsReadError extends Error {}
