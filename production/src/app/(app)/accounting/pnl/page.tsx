@@ -136,7 +136,9 @@ export default function PnLPage() {
   const basis = basisPick ?? defaultPnlBasis(me.data?.role);
   /* Wait for the role before the first fetch — no GST fetch + flash, then a Management refetch. */
   const roleReady = basisPick !== null || !me.isLoading;
-  const { data, isLoading, isError, refetch } = usePnL(range, roleReady, basis);
+  /* R-2625: one "today" for the statement, the compare period, the trend and the drill. */
+  const today = React.useMemo(() => yyyymmdd(istToday()), []);
+  const { data, isLoading, isError, refetch } = usePnL(range, roleReady, basis, today);
   /* An older database without the matched report: the GST numbers are shown and the page says so. */
   const shownBasis: PnlBasis = data?.managementUnavailable ? "gst" : basis;
   /* R-2181: what was clicked — the line, its sub-row filter and the amount shown on it. */
@@ -153,7 +155,7 @@ export default function PnLPage() {
      pnl-compare.ts. */
   const [compareMode, setCompareMode] = React.useState<CompareMode>("none");
   const cmpRange = React.useMemo(() => compareRange(range, compareMode), [range, compareMode]);
-  const { data: cmpData, isError: cmpError } = usePnL(cmpRange ?? range, cmpRange !== null, basis);
+  const { data: cmpData, isError: cmpError } = usePnL(cmpRange ?? range, cmpRange !== null, basis, today);
   /* undefined while loading; null when comparison is off. */
   const prev = cmpRange ? cmpData : null;
   const cmpName = cmpRange ? periodName(cmpRange) : "";
@@ -162,7 +164,6 @@ export default function PnLPage() {
   const [showAll, setShowAll] = React.useState<Record<string, boolean>>({});
   const toggleAll = (k: string) => setShowAll((s) => ({ ...s, [k]: !s[k] }));
 
-  const today = React.useMemo(() => yyyymmdd(istToday()), []);
   const running = runningNote(range, today);
 
   const [vendorTab, setVendorTab] = React.useState<string | "all">("all");
@@ -925,6 +926,7 @@ export default function PnLPage() {
         basis={shownBasis}
         revenueSpread={!!data?.revenueSpread}
         earnedTo={data?.revenueEarnedTo}
+        today={today}
       />
     </div>
   );

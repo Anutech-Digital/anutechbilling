@@ -65,8 +65,10 @@ interface Props {
   basis?: PnlBasis;
   /** R-2624: the Management card's revenue is spread over its service months (title + note say so). */
   revenueSpread?: boolean;
-  /** R-2625: the Management card counts revenue only up to this day (the range runs past today). */
+  /** R-2625: the Management card counts revenue only up to this day (the end of this month). */
   earnedTo?: string;
+  /** R-2625: the page's today — the drill cuts Management revenue at the same month as the card. */
+  today?: string;
 }
 
 /** R-2622: the cogs drill on the Management (matched) view. */
@@ -108,10 +110,10 @@ const META: Record<PnLDrillKind, { title: string; desc: string; href: string; hr
   },
 };
 
-function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: string }, enabled: boolean, basis: PnlBasis) {
+function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: string }, enabled: boolean, basis: PnlBasis, today?: string) {
   const kind = target?.kind ?? null;
   return useQuery({
-    queryKey: ["accounting", "pnl-drill", kind, range, basis, target?.families ?? null, target?.excludeFamilies ?? null,
+    queryKey: ["accounting", "pnl-drill", kind, range, basis, today ?? null, target?.families ?? null, target?.excludeFamilies ?? null,
                target?.vendors ?? null, target?.estimates ?? null, target?.projectCost ?? null, target?.category ?? null],
     enabled:  enabled && !!kind,
     queryFn: async (): Promise<DrillRow[]> => {
@@ -121,7 +123,7 @@ function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: 
         /* R-2181: the same rows report_pnl_revenue_by_product adds up (ex-GST, net of notes,
            sales only — R-1739), only the families of the row clicked. R-2624: on Management the
            spread rows (report_pnl_revenue_matched_lines) the card was added up from. */
-        const lines = await fetchRevenueDrillLines(supabase, range, target?.families ?? null, basis);
+        const lines = await fetchRevenueDrillLines(supabase, range, target?.families ?? null, basis, today);
         return revenueDrillRows(lines, target ?? {});
       }
 
@@ -182,18 +184,18 @@ function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: 
   });
 }
 
-export function PnLDrilldownDialog({ open, onOpenChange, target, range, cogsEstimate, basis = "gst", revenueSpread = false, earnedTo }: Props) {
+export function PnLDrilldownDialog({ open, onOpenChange, target, range, cogsEstimate, basis = "gst", revenueSpread = false, earnedTo, today }: Props) {
   const kind = target?.kind ?? null;
   const expenseCategory = target?.category ?? null;
   /* The estimate's working only on a drill that lists an estimated part. */
   const estimate = kind === "cogs" && (target?.vendors === undefined || (target?.estimates?.length ?? 0) > 0) ? cogsEstimate ?? null : null;
   /* R-2625: a Management card whose revenue is not spread (older database) lists the GST rows it shows. */
   const drillBasis: PnlBasis = kind === "revenue" && !revenueSpread ? "gst" : basis;
-  const { data: rows, isLoading, isError } = useDrilldown(target, range, open, drillBasis);
+  const { data: rows, isLoading, isError } = useDrilldown(target, range, open, drillBasis, today);
   const meta = !kind ? null
     : kind === "cogs" && basis === "management" ? { ...META.cogs, ...COGS_MATCHED_META }
     : kind === "revenue" && basis === "management" && revenueSpread
-      ? { ...META.revenue, ...REVENUE_MATCHED_META, ...(earnedTo ? { desc: `${REVENUE_MATCHED_META.desc} Counted only up to today (${formatDate(earnedTo)}) — what is already invoiced for the later days is not earned yet.` } : {}) }
+      ? { ...META.revenue, ...REVENUE_MATCHED_META, ...(earnedTo ? { desc: `${REVENUE_MATCHED_META.desc} Counted only up to the end of this month (${formatDate(earnedTo)}) — what is already invoiced for later months is not earned yet.` } : {}) }
     : META[kind];
   const amountColor = meta?.tone === "rose" ? "text-rose" : "text-ink";
   /* A sub-row (a product, a vendor, a category) is named in the title. */

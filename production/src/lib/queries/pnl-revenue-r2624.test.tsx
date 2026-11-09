@@ -94,7 +94,7 @@ describe("R-2624 usePnL revenue spread", () => {
 
   it("months use the spread too on Management — ONE months call, not one per month (checker BLOCK)", async () => {
     const { Wrapper } = wrap();
-    const { result } = renderHook(() => usePnLMonths(2026, "2026-05-31", true, "management")   /* R-2625: both months over (a current month is read to today on its own) */, { wrapper: Wrapper });
+    const { result } = renderHook(() => usePnLMonths(2026, "2026-05-15", true, "management"), { wrapper: Wrapper });
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(state.calls.filter((c) => c === "report_pnl_revenue_matched_months")).toHaveLength(1);
     expect(state.calls).not.toContain("report_pnl_revenue_matched");

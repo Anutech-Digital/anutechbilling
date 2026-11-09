@@ -45,14 +45,14 @@ export function AdvanceBillingCard({
       <p className="text-xs text-ink-3 mt-2 leading-relaxed">
         The Balance Sheet above is the statutory (GST) one, as your CA files it. In the management view
         (P&amp;L &ldquo;Management (matched)&rdquo;) a prepaid invoice is earned month by month, so the part not
-        earned by {formatDate(asOf)} is shown here.
+        earned by {formatDate(asOf)} is shown here. Only the timing of revenue is adjusted — vendor bills stay as on the sheet above.
       </p>
       <div className="space-y-1 mt-3">
         <BSLine
           label={owed ? "Advance billing (unearned revenue)" : "Revenue earned, not yet invoiced"}
           hint={owed
             ? `invoiced ${fmtBS(data.invoiced)} − earned ${fmtBS(data.earned)} to date, before GST — service still owed on prepaid terms`
-            : `earned ${fmtBS(data.earned)} − invoiced ${fmtBS(data.invoiced)} to date, before GST — invoices dated later for months already passed`}
+            : `earned ${fmtBS(data.earned)} − invoiced ${fmtBS(data.invoiced)} to date, before GST — more earned than invoiced so far (e.g. an invoice dated later for months already passed, or a credit note counted from its own month)`}
           amount={Math.abs(data.advance)}
           kind="auto"
           source="P&L (Management)"

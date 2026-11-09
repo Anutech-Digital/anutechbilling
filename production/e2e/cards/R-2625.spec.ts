@@ -1,6 +1,6 @@
 /**
- * Card test — R-2625 "Balance Sheet (management view): Advance billing" + "P&L Management revenue
- * earned only up to today".
+ * Card test — R-2625 "Balance Sheet (management view): Advance billing" + "P&L Management: no revenue
+ * for months that have not happened".
  *
  * One test per howToCheck step, on the LOCAL app (E2E Test Co) through the Local test login.
  * Run: `node scripts/ops/card-tests.mjs R-2625`.
@@ -16,7 +16,7 @@ import { CARD_TESTS_ON, onlyInCardTests, pageAs } from "./card-steps";
 
 const PROD = path.resolve(__dirname, "..", "..");
 
-test.describe("R-2625 Advance billing + earned only up to today", () => {
+test.describe("R-2625 Advance billing + no revenue for months not yet happened", () => {
   onlyInCardTests();
   test.beforeAll(() => {
     if (!CARD_TESTS_ON) return;
@@ -41,7 +41,7 @@ test.describe("R-2625 Advance billing + earned only up to today", () => {
     await page.context().close();
   });
 
-  test("Step 2: P&L This FY — Management says revenue is counted only up to today; As invoiced (GST) has no such note", async ({ browser, baseURL }) => {
+  test("Step 2: P&L This FY — Management says revenue is counted only up to the end of this month; As invoiced (GST) has no such note", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.goto("/accounting/pnl");
     await expect(page.getByRole("heading", { name: /P&L Report/ })).toBeVisible({ timeout: 60_000 });
@@ -49,8 +49,8 @@ test.describe("R-2625 Advance billing + earned only up to today", () => {
     const mgmt = page.getByRole("group", { name: "View" }).getByRole("button", { name: "Management (matched)" });
     await mgmt.click();
     await expect(mgmt).toHaveAttribute("aria-pressed", "true");
-    await expect(page.getByTestId("pnl-not-yet-earned")).toContainText(/Management revenue is counted only up to today/, { timeout: 60_000 });
-    await expect(page.getByTestId("pnl-not-yet-earned")).toContainText(/not earned yet — the Balance Sheet shows it as Advance billing/);
+    await expect(page.getByTestId("pnl-not-yet-earned")).toContainText(/Management revenue is counted only up to the end of this month/, { timeout: 60_000 });
+    await expect(page.getByTestId("pnl-not-yet-earned")).toContainText(/not earned yet — it is part of the Advance billing on the Balance Sheet/);
     const gst = page.getByRole("group", { name: "View" }).getByRole("button", { name: "As invoiced (GST)" });
     await gst.click();
     await expect(gst).toHaveAttribute("aria-pressed", "true");

@@ -228,7 +228,7 @@ export async function fetchRevenueDrillLines(
   range: { from: string; to: string },
   families: string[] | null,
   basis: PnlBasis,
-  /** R-2625: Management lists only what is earned up to this day (the card's own cut). */
+  /** R-2625: Management lists only months up to the current one (the card's own cut). */
   today: string = istToday(),
 ): Promise<RevenueLineRow[]> {
   const rpc = supabase.rpc as RevenueLinesRpc;
@@ -293,23 +293,34 @@ export async function fetchMatchedRevenueMonths(
   return out;
 }
 
-// ─── R-2625: revenue is EARNED only up to today ───────────────────────────────────────
+// ─── R-2625: no revenue for months that have not happened ──────────────────────────────
 
 /**
- * R-2625 (R-2624 checker: "This FY" on Management counted Dec..Mar parts of yearly invoices as
- * earned in November). Management revenue counts only the days that have happened: the range is
- * cut at today. Null = the whole range is after today — nothing earned yet.
+ * R-2625 (R-2624 checker: in November "This FY" on Management counted the Dec..Mar parts of yearly
+ * invoices as earned). Management revenue counts only months that have happened or are happening:
+ * the range is cut at the end of the current month (`today`'s month). Whole months, so "This
+ * month" stays the whole month on BOTH sides (revenue and the matched cost of goods) and the FY
+ * trend (months up to the current one) is untouched. Null = the whole range is after this month.
  */
 export function earnedRange(range: { from: string; to: string }, today: string): { from: string; to: string } | null {
-  if (range.from > today) return null;
-  return { from: range.from, to: range.to < today ? range.to : today };
+  const cut = monthEndOf(today);
+  if (range.from > cut) return null;
+  return { from: range.from, to: range.to < cut ? range.to : cut };
 }
 
-/** R-2625: the part of the range after today (its revenue is invoiced but not earned yet); null when none. */
+/** R-2625: the part of the range after this month (invoiced, not earned yet); null when none. */
 export function notYetEarnedRange(range: { from: string; to: string }, today: string): { from: string; to: string } | null {
-  if (range.to <= today) return null;
-  const next = addDaysISO(today, 1);
+  const cut = monthEndOf(today);
+  if (range.to <= cut) return null;
+  const next = addDaysISO(cut, 1);
   return { from: range.from > next ? range.from : next, to: range.to };
+}
+
+/** Last day of the month of an ISO date (YYYY-MM-DD) — calendar arithmetic, no time zone. */
+export function monthEndOf(iso: string): string {
+  const [y, m] = iso.slice(0, 7).split("-").map(Number);
+  const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return `${iso.slice(0, 7)}-${String(last).padStart(2, "0")}`;
 }
 
 /** Revenue of a row the way the P&L adds it: invoices − credit notes + debit notes (before GST). */
@@ -318,9 +329,10 @@ export function netRevenueOf(r: Pick<MatchedRevenueRow, "inv_taxable" | "cn_taxa
 }
 
 /**
- * R-2625: the note on a Management P&L whose range runs past today — revenue is counted up to
- * today; what is already invoiced for the later days is not earned yet (the Balance Sheet's
- * Advance billing). Null when the range has nothing after today.
+ * R-2625: the note on a Management P&L whose range runs past this month — revenue is counted up to
+ * the end of this month; what is already invoiced for the later months is not earned yet (part of
+ * the Balance Sheet's Advance billing, which also holds what is unearned beyond this range). Null
+ * when the range has nothing after this month.
  */
 export function notYetEarnedNote(
   d: { revenueEarnedTo?: string; revenueNotYetEarned?: number },
@@ -328,8 +340,8 @@ export function notYetEarnedNote(
 ): string | null {
   if (!d.revenueEarnedTo) return null;
   const later = d.revenueNotYetEarned ?? 0;
-  const head = `Management revenue is counted only up to today (${date(d.revenueEarnedTo)}).`;
-  if (later === 0) return `${head} Nothing invoiced so far falls in the rest of this period.`;
-  if (later < 0) return `${head} Credit notes of ${money(-later)} for the rest of this period will count when those days come.`;
-  return `${head} ${money(later)} already invoiced for the rest of this period is not earned yet — the Balance Sheet shows it as Advance billing.`;
+  const head = `Management revenue is counted only up to the end of this month (${date(d.revenueEarnedTo)}) — later months have not happened yet.`;
+  if (later === 0) return `${head} Nothing invoiced so far falls in those months.`;
+  if (later < 0) return `${head} Credit notes of ${money(-later)} for those months will count when they come.`;
+  return `${head} ${money(later)} already invoiced for them is not earned yet — it is part of the Advance billing on the Balance Sheet.`;
 }

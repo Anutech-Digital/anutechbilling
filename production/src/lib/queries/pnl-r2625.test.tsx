@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 /**
- * R-2625 — the hooks behind "earned only up to today" and the Balance Sheet's Advance billing.
- *   usePnL Management, This FY in November: revenue from report_pnl_revenue_matched(1 Apr, today);
- *     the later days' part read separately (note only, not in any total).
- *   A range wholly after today: ₹0 earned, no earned call.
+ * R-2625 — the hooks behind "no revenue for months that have not happened" and the Balance Sheet's
+ * Advance billing.
+ *   usePnL Management, This FY in November: revenue from report_pnl_revenue_matched(1 Apr, 30 Nov);
+ *     the later months' part read separately (note only, not in any total).
+ *   This month: one call, whole month (revenue and cost of goods on the same days, as R-2624).
+ *   A range wholly after this month: ₹0, no counted call.
  *   GST view: no cap, no matched call, the old query key (Balance Sheet / Trial Balance share it).
- *   usePnLMonths: the months already over in ONE call; the current month to today.
- *   useAdvanceBilling: report_pnl and report_pnl_revenue_matched over the SAME dates; invoiced − earned.
+ *   usePnLMonths: unchanged — ONE months call (R-2624), no per-month calls.
+ *   useAdvanceBilling: report_pnl and report_pnl_revenue_matched over the SAME dates; invoiced − earned to TODAY.
  */
 import * as React from "react";
 import { describe, it, expect, beforeEach, vi } from "vitest";
@@ -44,8 +46,9 @@ vi.mock("@/lib/supabase/client", () => {
         }
         if (fn === "report_pnl_revenue_matched") {
           if (state.revenueError) return Promise.resolve({ data: null, error: state.revenueError });
-          // earned part to today = 1,300 (Oct 1,000 + 9 days of Nov); the later days = 4,700
-          return Promise.resolve({ data: [rev(args.p_from === "2026-11-10" ? 4_700 : 1_300)], error: null });
+          // later months (Dec..Mar) = 4,000; to 30 Nov = 2,000; to today (9 Nov, the Balance Sheet) = 1,300
+          const n = args.p_from === "2026-12-01" || args.p_from === "2027-03-01" ? 4_000 : args.p_to === "2026-11-09" ? 1_300 : 2_000;
+          return Promise.resolve({ data: [rev(n)], error: null });
         }
         return Promise.resolve({ data: [], error: null });
       },
@@ -68,22 +71,32 @@ const matchedCalls = () => state.calls.filter((c) => c.fn === "report_pnl_revenu
 
 beforeEach(() => { state.calls = []; state.revenueError = null; });
 
-describe("R-2625 usePnL — Management revenue is earned only up to today", () => {
-  it("This FY in November: revenue to today; the rest is 'not earned yet', not in revenue", async () => {
+describe("R-2625 usePnL — no Management revenue for months that have not happened", () => {
+  it("This FY in November: revenue to 30 Nov; Dec..Mar is 'not earned yet', not in revenue", async () => {
     const { Wrapper } = wrap();
     const { result } = renderHook(() => usePnL(FY, true, "management", TODAY), { wrapper: Wrapper });
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(matchedCalls()).toEqual(expect.arrayContaining([
-      { p_from: "2026-04-01", p_to: "2026-11-09" },
-      { p_from: "2026-11-10", p_to: "2027-03-31" },
+      { p_from: "2026-04-01", p_to: "2026-11-30" },
+      { p_from: "2026-12-01", p_to: "2027-03-31" },
     ]));
+    expect(matchedCalls()).toHaveLength(2);
     const d = result.current.data!;
-    expect(d.revenue).toBe(1_300);
-    expect(d.revenueEarnedTo).toBe(TODAY);
-    expect(d.revenueNotYetEarned).toBe(4_700);
+    expect(d.revenue).toBe(2_000);
+    expect(d.revenueEarnedTo).toBe("2026-11-30");
+    expect(d.revenueNotYetEarned).toBe(4_000);
   });
 
-  it("a month wholly after today: ₹0 earned, only the not-yet call", async () => {
+  it("This month (November) mid-month: ONE call for the whole month, no note — same days as cost of goods", async () => {
+    const { Wrapper } = wrap();
+    const { result } = renderHook(() => usePnL({ from: "2026-11-01", to: "2026-11-30" }, true, "management", TODAY), { wrapper: Wrapper });
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(matchedCalls()).toEqual([{ p_from: "2026-11-01", p_to: "2026-11-30" }]);
+    expect(state.calls.find((c) => c.fn === "report_pnl_cogs_matched")!.args).toEqual({ p_from: "2026-11-01", p_to: "2026-11-30" });
+    expect(result.current.data!.revenueEarnedTo).toBeUndefined();
+  });
+
+  it("a month wholly after this month: ₹0, only the not-yet call", async () => {
     const { Wrapper } = wrap();
     const { result } = renderHook(() => usePnL({ from: "2027-03-01", to: "2027-03-31" }, true, "management", TODAY), { wrapper: Wrapper });
     await waitFor(() => expect(result.current.data).toBeDefined());
@@ -120,15 +133,14 @@ describe("R-2625 usePnL — Management revenue is earned only up to today", () =
   });
 });
 
-describe("R-2625 usePnLMonths — the current month to today", () => {
-  it("months over in ONE call; the current month (Nov) earned to 9 Nov", async () => {
+describe("R-2625 usePnLMonths — unchanged: ONE months call up to the current month", () => {
+  it("mid-month: one months call Apr..Nov, no per-month revenue calls", async () => {
     const { Wrapper } = wrap();
     const { result } = renderHook(() => usePnLMonths(2026, TODAY, true, "management"), { wrapper: Wrapper });
     await waitFor(() => expect(result.current.data).toBeDefined());
     const months = state.calls.filter((c) => c.fn === "report_pnl_revenue_matched_months").map((c) => c.args);
-    expect(months).toEqual([{ p_from: "2026-04-01", p_to: "2026-10-31" }]);
-    expect(matchedCalls()).toEqual(expect.arrayContaining([{ p_from: "2026-11-01", p_to: "2026-11-09" }]));
-    expect(result.current.data!.get("2026-11")!.revenue).toBe(1_300);
+    expect(months).toEqual([{ p_from: "2026-04-01", p_to: "2026-11-30" }]);
+    expect(matchedCalls()).toEqual([]);
     expect(result.current.data!.get("2026-04")!.revenue).toBe(1_000);
   });
 });

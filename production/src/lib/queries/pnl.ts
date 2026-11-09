@@ -29,7 +29,7 @@ import { fyMonthsSoFar, monthRange } from "@/lib/accounting/pnl-charts";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
 import {
   fetchMatchedCogs, fetchMatchedRevenue, fetchMatchedRevenueMonths, NO_MATCHED_REVENUE, withMatchedCogs, withMatchedRevenue,
-  earnedRange, notYetEarnedRange, netRevenueOf,
+  earnedRange, notYetEarnedRange, netRevenueOf, monthEndOf,
   type PnlBasis, type MatchedCogsRow, type MatchedRevenueRow,
 } from "@/lib/accounting/pnl-basis";
 import { istToday } from "@/lib/dates/ist";
@@ -133,7 +133,7 @@ async function matchedCogs(supabase: Client, range: Range, basis: PnlBasis): Pro
   return fetchMatchedCogs(supabase, range);
 }
 
-/** R-2625: a Management range that runs past today — revenue earned up to `earnedTo`, the rest not yet. */
+/** R-2625: a Management range that runs past this month — revenue counted up to `earnedTo` (this month's end), the rest not yet. */
 export interface RevenueCap { earnedTo: string; notYetEarned: number }
 type EarnedRevenue = { earned: MatchedRevenueRow | null; cap?: RevenueCap };
 
@@ -141,8 +141,9 @@ type EarnedRevenue = { earned: MatchedRevenueRow | null; cap?: RevenueCap };
  * R-2624: the Management view's revenue — each invoice spread over the months it pays for
  * (report_pnl_revenue_matched). Only asked for on the Management view; null on a database without
  * the function (revenue then stays as invoiced, marked); any other failure throws.
- * R-2625: EARNED revenue only — the range is cut at today (a range wholly after today earns ₹0);
- * the spread revenue of the later days is read too, for the "not earned yet" note (not a total).
+ * R-2625: no revenue for months that have not happened — the range is cut at the end of this
+ * month (a range wholly after it earns ₹0); the spread revenue of the later months is read too,
+ * for the "not earned yet" note (not in any total).
  */
 async function matchedRevenue(
   supabase: Client, range: Range, basis: PnlBasis, today: string,
@@ -156,7 +157,7 @@ async function matchedRevenue(
   ]);
   /* a database without the function: either call says so (null) → revenue as invoiced, marked */
   if (e === null || l === null) return { earned: null };
-  return { earned: e, cap: l === undefined ? undefined : { earnedTo: today, notYetEarned: netRevenueOf(l) } };
+  return { earned: e, cap: l === undefined ? undefined : { earnedTo: monthEndOf(today), notYetEarned: netRevenueOf(l) } };
 }
 
 /**
@@ -166,7 +167,7 @@ async function matchedRevenue(
 export function onBasis(
   range: Range, row: PnlRpcRow, m: PnlMasters, basis: PnlBasis,
   matched: MatchedCogsRow | null | undefined, revenue?: MatchedRevenueRow | null,
-  /** R-2625: the range runs past today — revenue above is earned up to today only. */
+  /** R-2625: the range runs past this month — revenue above is counted up to this month's end only. */
   cap?: RevenueCap,
 ): PnLNumbers {
   if (basis !== "management") return assemblePnl(range, row, m);
@@ -178,8 +179,8 @@ export function onBasis(
 }
 
 /** GST keeps the query key it always had (Balance Sheet / Trial Balance share that cache);
-    Management's earned revenue depends on the day (R-2625). */
-const basisKey = (basis: PnlBasis, today: string) => (basis === "gst" ? [] : [basis, today]);
+    Management's revenue depends on the current month (R-2625). */
+const basisKey = (basis: PnlBasis, today: string) => (basis === "gst" ? [] : [basis, today.slice(0, 7)]);
 
 type OtherIncomeRpc = (
   fn: "report_pnl_other_income", args: { p_from: string; p_to: string },
@@ -226,7 +227,7 @@ export function usePnL(range: Range, enabled = true, basis: PnlBasis = "gst", to
         revenueByProductRows(supabase, range),
         otherIncomeRows(supabase, range),   // R-2095
         matchedCogs(supabase, range, basis),   // R-2622
-        matchedRevenue(supabase, range, basis, today),   // R-2624, R-2625 (earned to today)
+        matchedRevenue(supabase, range, basis, today),   // R-2624, R-2625 (no months after this one)
       ]);
       const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
       return onBasis(range, { ...row, revenue_by_product: byProduct, other_income: other }, masters(range), basis, matched, revenue?.earned, revenue?.cap);
@@ -247,16 +248,14 @@ export function usePnLMonths(fyStartYear: number, today: string, enabled = true,
     queryFn: async (): Promise<Map<string, PnLNumbers>> => {
       const supabase = createClient();
       const months = fyMonthsSoFar(fyStartYear, today);
-      /* R-2624: on Management every month's spread revenue comes from ONE SQL call, not one per month.
-         R-2625: only the months already over; the current month is earned up to today (its own call). */
-      const over = months.filter((m) => monthRange(m.key).to <= today);
-      const span = over.length > 0 ? { from: monthRange(over[0].key).from, to: monthRange(over[over.length - 1].key).to } : null;
+      /* R-2624: on Management every month's spread revenue comes from ONE SQL call, not one per month. */
+      const span = months.length > 0 ? { from: monthRange(months[0].key).from, to: monthRange(months[months.length - 1].key).to } : null;
       const [masters, byMonth] = await Promise.all([
         fetchPnlMasters(supabase),
         basis === "management" && span ? fetchMatchedRevenueMonths(supabase, span) : Promise.resolve(undefined),
       ]);
       const revenueOf = (key: string): MatchedRevenueRow | null | undefined =>
-        byMonth === undefined || monthRange(key).to > today ? undefined : byMonth === null ? null : (byMonth.get(key) ?? NO_MATCHED_REVENUE);
+        byMonth === undefined ? undefined : byMonth === null ? null : (byMonth.get(key) ?? NO_MATCHED_REVENUE);
       const rows = await Promise.all(months.map((m) => pnlFor(supabase, monthRange(m.key), masters, basis, revenueOf(m.key), today)));
       return new Map(months.map((m, i) => [m.key, rows[i]]));
     },

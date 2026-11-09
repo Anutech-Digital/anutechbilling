@@ -74,13 +74,13 @@ test.describe("R-2624 P&L Management revenue spread", () => {
     await page.context().close();
   });
 
-  /* R-2625: Management counts revenue only up to today — March 2027 has not happened, so the
+  /* R-2625: Management shows no revenue for months that have not happened — March 2027 is later, so the
      invoice's ₹1,000 for March is "not earned yet" (Advance billing), not March revenue. */
   test("Step 3: Management (matched), March 2027 — not earned yet (R-2625): the page says so and the drill has no R2624-YEARLY; GST view has nothing from it either", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await openPnl(page, "2027-03-01", "2027-03-31");
     await view(page, "Management (matched)");
-    await expect(page.getByTestId("pnl-not-yet-earned")).toContainText(/already invoiced for the rest of this period is not earned yet/, { timeout: 60_000 });
+    await expect(page.getByTestId("pnl-not-yet-earned")).toContainText(/already invoiced for them is not earned yet/, { timeout: 60_000 });
     const d = await revenueDrill(page);
     await expect(d).not.toContainText(INV);
     await page.keyboard.press("Escape");
