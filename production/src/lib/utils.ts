@@ -1,5 +1,6 @@
 import { type ClassValue, clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
+import { phoneDigitsForCountry } from "@/lib/phone";
 
 /**
  * Compute the penalty to apply to a customer's health based on how long
@@ -177,18 +178,15 @@ export function formatDate(
 }
 
 /**
- * Normalise an Indian phone to bare E.164 digits (no `+`, no spaces).
+ * A phone as bare E.164 digits (no `+`, no spaces) for WhatsApp / tel links.
  * Accepts free-form input ("+91 98765 43210", "9876543210", "098765 43210").
- * A bare 10-digit number is assumed Indian and prefixed with 91.
+ * R-2639: pass the customer's country — a bare national number gets THAT country's code
+ * (a US "5551234567" → 15551234567); with no country it is taken as Indian (91), and a number
+ * written with its code ("+44 …") is never given a second one. See `@/lib/phone`.
  * Returns null when there aren't enough digits to be a real number.
  */
-export function toWhatsAppDigits(phone: string | null | undefined): string | null {
-  if (!phone) return null;
-  let d = phone.replace(/\D/g, "");
-  if (d.startsWith("0")) d = d.replace(/^0+/, "");     // strip STD leading zeros
-  if (d.length === 10) d = "91" + d;                    // bare Indian mobile → add country code
-  if (d.length < 10) return null;
-  return d;
+export function toWhatsAppDigits(phone: string | null | undefined, country?: string | null): string | null {
+  return phoneDigitsForCountry(phone, country);
 }
 
 /**
