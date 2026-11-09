@@ -173,7 +173,7 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
               {(preview.staleAddress?.count ?? 0) > 0 && (
                 /* R-2540: an old scan has no Zoho billing address — a branch invoice would come in with none. */
                 <p className="text-xs text-amber-ink" role="status" data-testid="fy-sales-stale-address">
-                  {preview.staleAddress!.count.toLocaleString("en-IN")} invoices were read from Zoho before addresses were kept
+                  {preview.staleAddress!.count === 1 ? "1 invoice was" : `${preview.staleAddress!.count.toLocaleString("en-IN")} invoices were`} read from Zoho before addresses were kept
                   {preview.staleAddress!.branch > 0 && <> ({preview.staleAddress!.branch.toLocaleString("en-IN")} for another branch would get no address)</>}.
                   Press <b>Read from Zoho again</b> before importing.
                 </p>
