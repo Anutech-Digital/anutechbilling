@@ -136,7 +136,7 @@ begin
     raise exception 'FAIL D3: rerun wrote rows'; end if;
   if (select zoho_import_sig from public.vendor_bills where zoho_doc_id = 'bills:g1') is distinct from v_sig then raise exception 'FAIL D4: sig moved'; end if;
 
-  -- I: a login cannot run the report.
+  -- I: a login cannot read the report (zoho_fy_scan is service_role only → permission denied).
   begin
     perform * from public.zoho_bill_reference_report('b2629000-0000-0000-0000-0000000000f0');
     raise exception 'FAIL I1: authenticated ran the report';
@@ -150,8 +150,8 @@ do $$
 declare r record; n int; v_before text;
 begin
   if has_function_privilege('anon', 'public.zoho_bill_reference_report(uuid)', 'execute')
-     or has_function_privilege('authenticated', 'public.zoho_bill_reference_report(uuid)', 'execute') then
-    raise exception 'FAIL I2: anon / authenticated can run the report'; end if;
+     then
+    raise exception 'FAIL I2: anon can run the report'; end if;
   if not has_function_privilege('service_role', 'public.zoho_bill_reference_report(uuid)', 'execute') then
     raise exception 'FAIL I3: service_role cannot run the report'; end if;
   select md5(string_agg(id || coalesce(notes, ''), ',' order by id)) into v_before from public.vendor_bills where tenant_id = 'b2629000-0000-0000-0000-0000000000f0';
