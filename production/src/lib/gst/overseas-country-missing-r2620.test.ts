@@ -59,3 +59,23 @@ describe("R-2620 quote place of supply line", () => {
     expect(pos.label).toMatch(/^Export · United States/);
   });
 });
+
+describe("R-2620 customer copy gate (send / PDF link / mark sent)", () => {
+  it("holds the copy for Overseas with no country, with the country fix — not the state fix", async () => {
+    const { supplyCopyBlock } = await import("@/lib/quotes/customer-copy-gate");
+    const block = supplyCopyBlock(
+      { status: "draft", line_items: [], customer_id: "c1", customer_name: "Design Studio" } as never,
+      { customer: { name: "Design Studio", state_code: "27", gstin: null, country: "", gst_treatment: "overseas" }, seller: { state_code: "07" } },
+    );
+    expect(block?.kind).toBe("customer_country");
+    expect(block?.message).toMatch(/^Design Studio is marked Overseas but has no country\./);
+    expect(block?.action).toEqual({ label: "Pick the customer's country", href: "/customers/c1" });
+  });
+  it("lets the copy go once the country is set", async () => {
+    const { supplyCopyBlock } = await import("@/lib/quotes/customer-copy-gate");
+    expect(supplyCopyBlock(
+      { status: "draft", line_items: [], customer_id: "c1" } as never,
+      { customer: { name: "Design Studio", state_code: null, gstin: null, country: "United States", gst_treatment: "overseas" }, seller: { state_code: "07" } },
+    )).toBeNull();
+  });
+});

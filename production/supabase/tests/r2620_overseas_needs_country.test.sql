@@ -6,14 +6,16 @@
 --   A. Draft quote for the Overseas + no-country customer → allowed (a draft may wait).
 --   B. Quote inserted as sent → refused "… marked Overseas but has no country on record … quote …".
 --   C. A draft flipped to sent → refused the same way.
---   D. A quote sent earlier (while the country was set) → accepted later → not stopped.
+--   D. A quote sent earlier (while the country was set) → accepted later → not stopped; money recorded on
+--      a DRAFT (record_payment: draft → accepted) → not stopped (its invoice is held by E).
 --   E. Quote → invoice (generate_invoice) for that customer → refused "… this invoice …"; no invoice row.
 --   F. Overseas + country India → refused "its country is India".
 --   G. Overseas + United States → sent and invoiced at 0% under the LUT (export path unchanged).
 --   H. Domestic customer with an empty country → sent and invoiced at 18% (empty = India is right here).
---   I. Zoho FY sales import session (app.zoho_sale_import = on) → the same customer's quote / invoice
+--   I. Zoho FY sales import session (app.zoho_sale_import = on) → the same customer's sent quote / invoice
 --      is not refused (it records a sale already filed).
 --   J. overseas_country_missing() truth table.
+--   K. A Bill of Supply business (gst_registration unregistered) → its quote is sent (no GST head).
 
 begin;
 
@@ -47,6 +49,14 @@ insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, su
   ('Q-R2620-ACC',  'dddddddd-0000-0000-0000-000000262001','cccccccc-0000-0000-0000-000000262001','R2620 Design Studio', 50000, 50000, 0, 'accepted', 'received', '[]'::jsonb),
   ('Q-R2620-ZOHO', 'dddddddd-0000-0000-0000-000000262001','cccccccc-0000-0000-0000-000000262001','R2620 Design Studio', 50000, 50000, 0, 'accepted', 'received', '[]'::jsonb);
 update public.customers set country = '' where id = 'cccccccc-0000-0000-0000-000000262001';
+-- K. A Bill of Supply business (not GST-registered): no GST head, so its quote is not held.
+insert into public.tenants (id, name, email, state_code, doc_code, gst_registration) values
+  ('dddddddd-0000-0000-0000-000000262002','R2620 BoS Co','r2620b@example.in','07','B620','unregistered');
+insert into public.customers (id, tenant_id, name, country, customer_type, gst_treatment, domain) values
+  ('cccccccc-0000-0000-0000-000000262005','dddddddd-0000-0000-0000-000000262002','R2620 BoS Overseas','','business','overseas','b2620.example');
+insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, line_items) values
+  ('Q-R2620-K', 'dddddddd-0000-0000-0000-000000262002','cccccccc-0000-0000-0000-000000262005','R2620 BoS Overseas', 50000, 50000, 0, 'sent', '[]'::jsonb);
+select 'K PASS: Bill of Supply business sends its quote' as k;
 
 do $$
 declare
@@ -58,6 +68,8 @@ begin
   -- A. draft allowed
   insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, line_items)
   values ('Q-R2620-DRAFT', c_t, 'cccccccc-0000-0000-0000-000000262001', 'R2620 Design Studio', 59000, 50000, 18, 'draft', '[]'::jsonb);
+  insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, line_items)
+  values ('Q-R2620-DRAFT2', c_t, 'cccccccc-0000-0000-0000-000000262001', 'R2620 Design Studio', 59000, 50000, 18, 'draft', '[]'::jsonb);
   raise notice 'A PASS: draft quote for Overseas + no country saved';
 
   -- B. inserted as sent → refused
@@ -86,7 +98,9 @@ begin
 
   -- D. sent earlier → accepted later: not stopped
   update public.quotes set status = 'accepted' where id = 'Q-R2620-SENT';
-  raise notice 'D PASS: a quote already sent can still be accepted';
+  -- money received on a DRAFT (record_payment flips draft → accepted): never stopped by the quote trigger
+  update public.quotes set status = 'accepted' where id = 'Q-R2620-DRAFT2';
+  raise notice 'D PASS: a sent quote can still be accepted; money on a draft can still be booked';
 
   -- E. quote → invoice refused, nothing issued
   ok := false;
@@ -136,7 +150,7 @@ begin
   -- I. Zoho FY sales import session: not refused
   perform set_config('app.zoho_sale_import', 'on', true);
   insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items)
-  values ('Q-R2620-I', c_t, 'cccccccc-0000-0000-0000-000000262001', 'R2620 Design Studio', 50000, 50000, 0, 'accepted', 'received', '[]'::jsonb);
+  values ('Q-R2620-I', c_t, 'cccccccc-0000-0000-0000-000000262001', 'R2620 Design Studio', 50000, 50000, 0, 'sent', 'none', '[]'::jsonb);
   ok := true;
   begin
     perform public.generate_invoice('Q-R2620-ZOHO');

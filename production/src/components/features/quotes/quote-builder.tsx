@@ -1484,7 +1484,7 @@ function QuoteBuilderBody() {
     }
     /* R-2620: Overseas with no country reads as India (G5) — 18% on what may be a 0% export. The
        database refuses the send too; this says why before the click, with the fix one tap away. */
-    if (status === "sent" && customerId && gstHead.kind === "buyer_country_missing") {
+    if (status === "sent" && customerId && !bosStatus && gstHead.kind === "buyer_country_missing") {
       toast.error(`${customer?.name ?? "This customer"} is marked Overseas but has no country`, {
         description: `${OVERSEAS_NO_COUNTRY_FIX} You can still save this as a draft.`,
         duration: 15000,

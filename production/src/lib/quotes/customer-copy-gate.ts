@@ -28,7 +28,7 @@
 import type { Quote } from "@/lib/supabase/database.types";
 import { canSend, requiredApproval } from "./approval";
 import { quoteApprovalRecord, quoteEconomics } from "./approval-economics";
-import { quotePlaceOfSupply, type BuyerPlace } from "./quote-place-of-supply";
+import { OVERSEAS_NO_COUNTRY_FIX, quotePlaceOfSupply, type BuyerPlace } from "./quote-place-of-supply";
 import { supplyStateMissing } from "./quote-assist";
 import { companyStateFixFor } from "@/lib/onboarding/setup-links";
 import { canReviseQuote } from "./revise";
@@ -64,7 +64,7 @@ export interface CustomerCopyNextStep {
 
 export interface CustomerCopyBlock {
   /** Which rule refused: discount / margin approval, the company's state, or the buyer's state. */
-  kind: "approval" | "company_state" | "customer_state";
+  kind: "approval" | "company_state" | "customer_country" | "customer_state";
   reason: string;
   nextStep: string;
   /** The whole refusal in one line, no closing full stop (a toast adds its own tail). */
@@ -130,8 +130,18 @@ export function supplyCopyBlock(quote: CustomerCopyQuote, parties: CustomerCopyP
       : "Only the owner can set it — ask the owner to set the company state in Settings → Company first";
     return { kind: "company_state", reason, nextStep, message: `${reason} ${nextStep}`, action: fix.action };
   }
-  if (!supplyStateMissing({ isExport: pos.isExport, buyerStateCode: pos.posCode })) return null;
   const name = parties.customer?.name || quote.customer_name || "This customer";
+  /* R-2620: Overseas with no country reads as India — the copy would carry 18% on what may be a 0%
+     export (the database refuses the send too, after the mail would have gone). */
+  if (pos.head.kind === "buyer_country_missing" && quote.customer_id) {
+    const reason = `${name} is marked Overseas but has no country. ${OVERSEAS_NO_COUNTRY_FIX}`;
+    const nextStep = "Pick its country on the customer page first";
+    return {
+      kind: "customer_country", reason, nextStep, message: `${reason} ${nextStep}`,
+      action: { label: "Pick the customer's country", href: `/customers/${quote.customer_id}` },
+    };
+  }
+  if (!supplyStateMissing({ isExport: pos.isExport, buyerStateCode: pos.posCode })) return null;
   /* R-2459: a typed prospect's state lives on the quote itself, and only a DRAFT opens in the
      editor — a sent quote's /edit says "can't be edited" (dead end, Chrome check 4 Nov,
      Q-F588-27-0008). Past draft the way to a state is Revise: a draft copy where it is picked,

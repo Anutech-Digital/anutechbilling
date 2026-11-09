@@ -538,7 +538,7 @@ export default function QuoteDetailPage() {
           label: companyStateFixFor(me.role).action.label,
         }
       /* R-2620: Overseas with no country reads as India — neither 0% export nor CGST/IGST is known. */
-      : pos.head.kind === "buyer_country_missing" && quote.customer_id
+      : pos.head.kind === "buyer_country_missing" && quote.customer_id && !billOfSupply
         ? { title: `${quote.customer_name ?? "This customer"} is marked Overseas but has no country`, body: OVERSEAS_NO_COUNTRY_FIX, href: `/customers/${quote.customer_id}`, label: "Open customer" }
       : pos.head.kind === "buyer_state_missing" && quote.customer_id
         ? { title: `${quote.customer_name ?? "This customer"} has no state on record`, body: "The customer's state decides CGST + SGST or IGST. Add it on the customer, then issue the GST invoice.", href: `/customers/${quote.customer_id}`, label: "Open customer" }

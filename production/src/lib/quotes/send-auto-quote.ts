@@ -593,6 +593,7 @@ quoteEmailBody({
 export function autoQuoteHoldTitle(block: Pick<CustomerCopyBlock, "kind">): string {
   if (block.kind === "company_state") return "Auto-quote not sent — set the company state";
   if (block.kind === "customer_state") return "Auto-quote not sent — set the state";
+  if (block.kind === "customer_country") return "Auto-quote not sent — set the customer's country";
   return "Auto-quote not sent — needs approval";
 }
 
