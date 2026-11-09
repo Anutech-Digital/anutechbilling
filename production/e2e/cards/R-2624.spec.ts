@@ -32,7 +32,11 @@ async function view(page: Page, name: "Management (matched)" | "As invoiced (GST
 
 /** Open the Revenue drill and return it once its tie line is shown (total = card). */
 async function revenueDrill(page: Page) {
-  await page.getByRole("button", { name: /invoiced − |earned this period/ }).first().click();
+  /* The first Management load reads the spread revenue + matched COGS — give the statement time to
+     render before clicking (10 s default was too short on a cold localhost, 9 Nov). */
+  const hint = page.getByRole("button", { name: /invoiced − |earned this period/ }).first();
+  await expect(hint).toBeVisible({ timeout: 60_000 });
+  await hint.click();
   const d = page.getByRole("dialog");
   const tie = d.getByTestId("pnl-drill-tie");
   await expect(tie).toBeVisible({ timeout: 60_000 });

@@ -10,7 +10,7 @@
  * GST ₹2,160 — the owner's case (a whole year billed in October).
  *   As invoiced (GST): October revenue includes ₹12,000.
  *   Management (matched): ₹1,000 in each month Oct 2026..Sep 2027 ("for Oct 2026 – Sep 2027").
- * Idempotent: the invoice is matched by its id and replaced on every run.
+ * Re-runnable: an identical row is reused; a changed one (or --clear) is removed locally (see below).
  */
 import { spawnSync } from "node:child_process";
 import { readFileSync, existsSync } from "node:fs";
@@ -52,11 +52,29 @@ if (tenants.length !== 1) die(`expected one "${E2E_TENANT_NAME}", found ${tenant
 const tenant = tenants[0].trim();
 if (!/^[0-9a-f-]{36}$/i.test(tenant)) die("tenant id is not a uuid");
 
-const del = `delete from public.invoices where tenant_id = '${tenant}' and id = 'R2624-YEARLY';`;
+/* Re-runnable (coordinator 9 Nov: the second run hit "Invoice R2624-YEARLY is pending and cannot be
+   deleted … raise a credit note"). An issued invoice is protected by the delete guard on purpose, so:
+   - a row that is already exactly the fixture is REUSED (nothing written — the usual re-run);
+   - a changed row, or --clear, is removed with the invoices table's user triggers off inside this
+     one transaction and on again before commit — the scenario scripts' local-only pattern
+     (scripts/dev/scenarios/_common.sql, r2626-later-part.mjs); the guard itself is untouched and
+     this file refuses anything but the local docker DB (scenarioTargetReason above). */
+const LINES = '[{"id":"l1","name":"Google Workspace Business Starter (12 months)","qty":1,"rate":12000,"commitment":"annual_yearly"}]';
+const same = psql(`select count(*) from public.invoices
+  where tenant_id = '${tenant}' and id = 'R2624-YEARLY' and taxable_value = 12000 and tax_amount = 2160 and amount = 14160
+    and invoice_date = date '2026-10-01' and status in ('pending', 'paid', 'overdue') and document_kind = 'tax_invoice'
+    and line_items = '${LINES}'::jsonb;`);
+if (!clear && same.at(-1) === "1") {
+  console.log(`✓ R-2624: yearly invoice R2624-YEARLY (1 Oct 2026, ₹12,000 + GST ₹2,160) already in ${E2E_TENANT_NAME} — reused.`);
+  process.exit(0);
+}
+const del = `alter table public.invoices disable trigger user;
+delete from public.invoices where tenant_id = '${tenant}' and id = 'R2624-YEARLY';
+alter table public.invoices enable trigger user;`;
 const add = `insert into public.invoices
   (id, tenant_id, customer_name, amount, taxable_value, tax_amount, tax_rate, status, invoice_date, due_date, document_kind, line_items)
 values ('R2624-YEARLY', '${tenant}', 'R2624 Yearly Customer', 14160, 12000, 2160, 18, 'pending', date '2026-10-01', date '2026-10-31', 'tax_invoice',
-        '[{"id":"l1","name":"Google Workspace Business Starter (12 months)","qty":1,"rate":12000,"commitment":"annual_yearly"}]'::jsonb);`;
+        '${LINES}'::jsonb);`;
 const out = psql(`begin;\n${del}\n${clear ? "" : add}\ncommit;\nselect count(*) from public.invoices where tenant_id = '${tenant}' and id = 'R2624-YEARLY';`);
 console.log(clear
   ? `✓ R-2624 invoice removed (${out.at(-1)} left).`
