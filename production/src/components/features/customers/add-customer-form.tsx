@@ -58,7 +58,7 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated, initi
     verification, setVerification, watchedGstin,
     isForeign, foreignStates, country, onCountryPick, submit,
     gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
-    gstTreatmentSaved, regionMissing,
+    gstTreatmentSaved, regionMissingNote,
     contactMissing, saveWithoutContact, applySeed,
   } = useCustomerForm({
     customer,
@@ -130,12 +130,8 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated, initi
               state code, 6-digit PIN); anything else = export flow (no GST). */}
           <FormField label="Country" htmlFor="country">
             <CountryCombobox id="country" value={country} onChange={onCountryPick} />
-            {regionMissing && (
-              <p className="mt-1 text-2xs leading-snug text-amber-ink">
-                No region saved for this customer. Pick the country if you know it — leaving it empty keeps the customer as it is.
-              </p>
-            )}
-            {isForeign && !regionMissing && (
+            {regionMissingNote && <p className="mt-1 text-2xs leading-snug text-amber-ink">{regionMissingNote}</p>}
+            {isForeign && (
               <p className="mt-1 flex items-start gap-1 text-2xs leading-snug text-indigo-ink">
                 <span>🌍</span>
                 <span>

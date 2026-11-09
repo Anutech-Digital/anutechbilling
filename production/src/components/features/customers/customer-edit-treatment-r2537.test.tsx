@@ -5,7 +5,9 @@
 // touching the GST treatment — turned it into "Unregistered Business" (and the country into India,
 // so its invoices left USD for INR). Now: the stored treatment is kept until the user changes the
 // region / GSTIN / customer type in THIS edit, a blank country stays blank (shown as empty, not
-// India), and a change of treatment is said on the form before Save.
+// India) and is not rewritten, a change of treatment is said on the form before Save, and a saved
+// treatment that contradicts its facts (Overseas with no country = India everywhere) is refused
+// with the reason — the user picks the country — never changed silently.
 import { describe, it, expect, vi, afterEach, beforeAll, beforeEach } from "vitest";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 
@@ -46,17 +48,38 @@ type Patch = { id: string; patch: Record<string, unknown> };
 const lastPatch = () => (updated.mock.calls.at(-1)![0] as Patch).patch;
 
 describe("R-2537 — editing a customer never changes its GST treatment by itself", () => {
-  it("untouched save: Overseas with no country stays Overseas, country is not rewritten", async () => {
+  it("untouched save: Overseas with no country is never saved as Unregistered — the save asks for the country", async () => {
     render(<AddCustomerForm open onOpenChange={() => {}} customer={DNB} />);
     await waitFor(() => expect(treatment()).toBe("overseas"));
     expect(region()).not.toMatch(/India/);
     expect(screen.getByText(/No region saved for this customer/)).toBeTruthy();
     submit();
-    await waitFor(() => expect(updated).toHaveBeenCalledTimes(1));
-    const patch = lastPatch();
-    expect(patch.gst_treatment).toBe("overseas");
-    expect("country" in patch).toBe(false);
+    // Refused with the reason (an empty country reads as India everywhere — invoices too), not changed.
+    await waitFor(() => expect(screen.getAllByText(/Overseas is only for a customer outside India/).length).toBeGreaterThan(0));
+    expect(updated).not.toHaveBeenCalled();
+    expect(treatment()).toBe("overseas");
     expect(screen.queryByText(/GST treatment changes from/)).toBeNull();
+  });
+
+  it("Overseas with no country: picking its country saves Overseas + that country, no change notice", async () => {
+    render(<AddCustomerForm open onOpenChange={() => {}} customer={DNB} />);
+    await waitFor(() => expect(treatment()).toBe("overseas"));
+    pickCountry("United Arab Emirates");
+    await waitFor(() => expect(region()).toBe("United Arab Emirates"));
+    expect(treatment()).toBe("overseas");
+    expect(screen.queryByText(/GST treatment changes from/)).toBeNull();
+    submit();
+    await waitFor(() => expect(updated).toHaveBeenCalledTimes(1));
+    expect(lastPatch()).toMatchObject({ gst_treatment: "overseas", country: "United Arab Emirates", gstin: null });
+  });
+
+  it("a saved SEZ pick survives a GSTIN edit (the mount run does not clear the hand pick)", async () => {
+    const c = { ...DNB, id: "c-sez", name: "SEZ Unit", country: "India", gst_treatment: "sez_without_payment", gstin: DELHI_GSTIN, state: "Delhi", state_code: "07" } as unknown as Customer;
+    render(<AddCustomerForm open onOpenChange={() => {}} customer={c} />);
+    await waitFor(() => expect(treatment()).toBe("sez_without_payment"));
+    fireEvent.change(document.getElementById("gstin")!, { target: { value: "27AAPFU0939F1ZV" } });
+    await waitFor(() => expect((document.getElementById("gstin") as HTMLInputElement).value).toBe("27AAPFU0939F1ZV"));
+    expect(treatment()).toBe("sez_without_payment");
   });
 
   it("domestic blank country: region empty, saved without a country, treatment unchanged", async () => {
@@ -74,8 +97,11 @@ describe("R-2537 — editing a customer never changes its GST treatment by itsel
     const c = { ...DNB, id: "c-od", name: "Odd Overseas", country: "India", gst_treatment: "overseas" } as unknown as Customer;
     render(<AddCustomerForm open onOpenChange={() => {}} customer={c} />);
     await waitFor(() => expect(region()).toBe("India"));
-    // Opening alone never flips it.
+    // Opening alone never flips it; saving is refused with the reason instead of a silent change.
     expect(treatment()).toBe("overseas");
+    submit();
+    await waitFor(() => expect(screen.getAllByText(/Overseas is only for a customer outside India/).length).toBeGreaterThan(0));
+    expect(updated).not.toHaveBeenCalled();
   });
 
   it("region change shows the treatment change before save", async () => {

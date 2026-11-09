@@ -37,16 +37,6 @@ import {
   customerTdsPrefill, customerTdsRateProblem, customerTdsPayload,
 } from "@/lib/accounting/customer-tds-default";
 
-/**
- * R-2537 (staging, 6 Nov 2026): a customer brought over with NO country but saved as Overseas
- * (D N B DESIGNS). Its region is not known, yet it is abroad — the form treats it as foreign (no
- * GSTIN / Indian state) and keeps it Overseas until the user picks a country. An empty country
- * with any other treatment keeps the old reading: India.
- */
-export function regionUnknownAbroad(country: string | null | undefined, treatment: string | null | undefined): boolean {
-  return !(country ?? "").trim() && treatment === "overseas";
-}
-
 // Schema — GSTIN optional but checksum-validated when present. State code stays
 // in the schema (needed for GST math) but has no visible input; we auto-derive
 // it from the GSTIN, same pattern as Settings.
@@ -119,8 +109,7 @@ export const customerSchema = z.object({
 }).superRefine((data, ctx) => {
   // Indian customers keep the strict 6-digit PIN guard; export customers don't
   // (their postal codes aren't 6 digits). Country drives the difference.
-  const abroadUnknown = regionUnknownAbroad(data.country, data.gst_treatment);
-  const foreign = isExportSupply(data.country) || abroadUnknown;
+  const foreign = isExportSupply(data.country);
   const pin = (data.pin_code ?? "").trim();
   if (pin && !foreign && !/^\d{6}$/.test(pin)) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["pin_code"], message: "6-digit PIN (or blank)" });
@@ -130,11 +119,10 @@ export const customerSchema = z.object({
   /* R-2370: a picked TDS section needs a rate (0–100). */
   const tdsProblem = customerTdsRateProblem({ section: data.tds_section ?? "", ratePct: data.tds_rate_pct ?? "" });
   if (tdsProblem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["tds_rate_pct"], message: tdsProblem });
-  const stateMsg = abroadUnknown ? null : stateRequiredMessage(data);
+  const stateMsg = stateRequiredMessage(data);
   if (stateMsg) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["state"], message: stateMsg });
-  /* R-1736: a treatment the facts contradict (Overseas in India, Regular with no GSTIN).
-     R-2537: Overseas with no country stored is no contradiction — the region is just unknown. */
-  if (data.gst_treatment && !abroadUnknown) {
+  /* R-1736: a treatment the facts contradict (Overseas in India, Regular with no GSTIN). */
+  if (data.gst_treatment) {
     const problem = gstTreatmentProblem({ treatment: data.gst_treatment, country: data.country, gstin: foreign ? "" : data.gstin });
     if (problem) ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["gst_treatment"], message: problem });
   }
@@ -153,11 +141,15 @@ export const customerSchema = z.object({
 
 export type CustomerFormData = z.infer<typeof customerSchema>;
 
-/** R-2537: the facts the GST treatment follows, as one comparable value (GSTIN only in India). */
-function factsKey(country: string | null | undefined, gstin: string | null | undefined, type: string | null | undefined, treatment: string | null | undefined): string {
-  const foreign = isExportSupply(country) || regionUnknownAbroad(country, treatment);
-  return [(country ?? "").trim(), foreign ? "" : (gstin ?? "").trim().toUpperCase(), type ?? "business"].join("|");
+/** R-2537: the facts the GST treatment follows (country | GSTIN | type), as one comparable value.
+ *  The GSTIN counts only in India — the same reading as the auto-pick below. */
+function treatmentFacts(country: string | null | undefined, gstin: string | null | undefined, type: string | null | undefined): string {
+  return [(country ?? "").trim(), isExportSupply(country) ? "" : (gstin ?? "").trim().toUpperCase(), type || "business"].join("|");
 }
+
+/** R-2537: said on both views when an edited customer has no country stored. */
+export const REGION_MISSING_NOTE =
+  "No region saved for this customer. Pick the country if you know it — leaving it empty keeps the country as it is. An Overseas customer needs its country before it can be saved.";
 
 /** R-2360 / R-2363: what a NEW customer can start with (Find in Zoho: Zoho's contact). */
 export interface CustomerSeed {
@@ -201,10 +193,11 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
   /* R-1736: true once the user picks a GST treatment by hand (or the saved one differs from
      what the facts suggest) — from then on the auto-pick leaves it alone (nextGstTreatment). */
   const treatmentManual = React.useRef(false);
-  /* R-2537: on an edit, the facts the treatment follows (country | GSTIN | type) as saved. While
-     they are unchanged the SAVED treatment stays — opening and saving never recomputes it. */
+  /* R-2537 (staging, 6 Nov 2026 — D N B DESIGNS, Overseas with no country, was saved as
+     Unregistered without anyone touching the treatment): on an edit, the facts as SAVED. While the
+     form's facts equal them the saved treatment stays — opening and saving never recomputes it. */
   const loadedFacts = React.useRef<string | null>(null);
-  /* R-2537: the user picked a treatment by hand in THIS edit (not just "saved one differs"). */
+  /* R-2537: the user picked a treatment by hand in THIS edit. */
   const pickedThisEdit = React.useRef(false);
   const { register, handleSubmit, reset, watch, setValue, control, formState } = form;
   const { fields: contactPersonFields, append: appendContactPerson, remove: removeContactPerson } =
@@ -240,12 +233,11 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       }
       const suggested = suggestGstTreatment({ country: customer.country, gstin: customer.gstin, customerType: customer.customer_type });
       treatmentManual.current = !!customer.gst_treatment && customer.gst_treatment !== suggested;
-      /* R-2537: a customer saved with no country opens with an EMPTY region (not India). */
+      /* R-2537: a customer saved with no country opens with an EMPTY region, not a guessed India. */
       const savedCountry = normalizeCountry(customer.country);
-      const storedTreatment = customer.gst_treatment ?? suggested;
-      loadedFacts.current = factsKey(savedCountry, customer.gstin, customer.customer_type ?? "business", storedTreatment);
+      loadedFacts.current = treatmentFacts(savedCountry, customer.gstin, customer.customer_type ?? "business");
       reset({
-        gst_treatment: storedTreatment,
+        gst_treatment: customer.gst_treatment ?? suggested,
         pan:           customer.pan ?? "",
         customer_type: customer.customer_type ?? "business",
         name:          customer.name ?? "",
@@ -262,7 +254,7 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
         state_code:    customer.state_code ?? "",
         /* R-2180: an old short form ("USA") opens as its list name ("United States") — the
            picker shows it and the treatment rules read the same value.
-           R-2537: none stored → empty, never a guessed "India" (the save leaves it untouched). */
+           R-2537: none stored → empty (every rule still reads empty as India; the save leaves it). */
         country:       savedCountry,
         address:       customer.address ?? "",
         city:          customer.city ?? "",
@@ -313,16 +305,24 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
   const watchedCountry  = watch("country");
   const watchedType     = watch("customer_type");
   const watchedTreatment = watch("gst_treatment");
-  const abroadUnknown = regionUnknownAbroad(watchedCountry, watchedTreatment);
-  const formForeign = isExportSupply(watchedCountry) || abroadUnknown;
-  const suggestedTreatment = abroadUnknown ? "overseas" : suggestGstTreatment({
+  const formForeign = isExportSupply(watchedCountry);
+  const suggestedTreatment = suggestGstTreatment({
     country: watchedCountry, gstin: formForeign ? "" : watchedGstin, customerType: watchedType,
   });
-  const savedTreatment = isEdit ? (customer?.gst_treatment ?? null) : null;
-  const currentFacts = factsKey(watchedCountry, watchedGstin, watchedType, watchedTreatment);
+  /* R-2537: the treatment as saved (edit only); a NULL one reads as what the saved facts suggest. */
+  const savedTreatment: CustomerGstTreatment | null = isEdit && customer
+    ? (customer.gst_treatment as CustomerGstTreatment | null)
+      ?? suggestGstTreatment({ country: customer.country, gstin: customer.gstin, customerType: customer.customer_type })
+    : null;
+  const currentFacts = treatmentFacts(watchedCountry, watchedGstin, watchedType);
   React.useEffect(() => {
-    /* R-2537: an edit whose country / GSTIN / type are as saved keeps the SAVED treatment (or the
-       one the user picked in this edit) — changing them back undoes the auto-change too. */
+    /* R-2537: the first run after reset() still sees the old render's values — skip it, or it would
+       clear treatmentManual from stale defaults (then a saved SEZ pick lost to the next GSTIN edit). */
+    const live = form.getValues();
+    if (treatmentFacts(live.country, live.gstin, live.customer_type) !== currentFacts || live.gst_treatment !== watchedTreatment) return;
+    /* R-2537: facts as saved → the saved treatment (or this edit's hand pick) stays; changing them
+       back also undoes an auto-change. A saved treatment that contradicts its facts is NOT fixed
+       here — the save refuses it with the reason (gstTreatmentProblem), never a silent change. */
     if (loadedFacts.current !== null && loadedFacts.current === currentFacts) {
       if (!pickedThisEdit.current && savedTreatment && watchedTreatment !== savedTreatment) {
         setValue("gst_treatment", savedTreatment, { shouldDirty: true, shouldValidate: !!formState.isSubmitted });
@@ -332,7 +332,7 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     const next = nextGstTreatment({ current: watchedTreatment, manual: treatmentManual.current, suggestion: suggestedTreatment });
     if (next !== watchedTreatment) setValue("gst_treatment", next, { shouldDirty: true, shouldValidate: !!formState.isSubmitted });
     if (next === suggestedTreatment) treatmentManual.current = false;
-  }, [suggestedTreatment, watchedTreatment, currentFacts, savedTreatment, setValue, formState.isSubmitted]);
+  }, [suggestedTreatment, watchedTreatment, currentFacts, savedTreatment, form, setValue, formState.isSubmitted]);
   const onTreatmentChange = (value: CustomerGstTreatment) => {
     pickedThisEdit.current = true;
     treatmentManual.current = value !== suggestedTreatment;
@@ -363,7 +363,7 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
   const onSubmit = async (data: CustomerFormData) => {
     // Export (non-India) customers have no GSTIN / Indian state code — never
     // persist a stale one if the user typed then switched country.
-    const foreign = isExportSupply(data.country) || regionUnknownAbroad(data.country, data.gst_treatment);
+    const foreign = isExportSupply(data.country);
     /* R-2363: "Not known yet" is ignored when a valid GSTIN proves the state — then that state is saved. */
     const gstinCode = data.state === STATE_NOT_KNOWN && !foreign ? stateCodeFromGstin(data.gstin) : null;
     const stateNotKnown = data.state === STATE_NOT_KNOWN;
@@ -458,8 +458,7 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       contact_persons:    cleanPersons,
       payment_terms_days: termsDays,
       shipping_address:   shipping,
-      /* R-2537: no region picked on an edit → the saved (empty) country is left as it is — the
-         invoice currency and export reading follow it, so nothing changes behind the user. */
+      /* R-2537: no region picked on an edit → the saved (empty) country is not rewritten to India. */
       ...(isEdit && !data.country?.trim() ? {} : { country: data.country?.trim() || "India" }),
     };
     // Only stamp verification when newly verified this session — so editing an
@@ -487,7 +486,7 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
 
   // Country decides the whole shape of the form: an export (non-India) customer
   // has no GSTIN, no Indian state code, and an alphanumeric postal code.
-  const isForeign = formForeign;
+  const isForeign = isExportSupply(watch("country"));
   // For an export country we know the states/emirates of, offer a dropdown
   // instead of free text (stops "california" being saved for a Kuwait customer).
   const foreignStates = isForeign ? getStatesForCountry(watch("country")) : null;
@@ -550,10 +549,10 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     gstTreatment: watchedTreatment ?? suggestedTreatment,
     gstTreatmentAuto: (watchedTreatment ?? suggestedTreatment) === suggestedTreatment,
     gstTreatmentMeaning: gstTreatmentOption(watchedTreatment ?? suggestedTreatment)?.meaning ?? "",
-    /* R-2537: the treatment as saved (edit only) — the select says when Save will change it. */
+    /* R-2537: the select says when Save would change the saved treatment. */
     gstTreatmentSaved: savedTreatment,
-    /* R-2537: an edit of a customer with no country stored — the form says so instead of "India". */
-    regionMissing: isEdit && !(watchedCountry ?? "").trim(),
+    /* R-2537: an edit of a customer with no country stored → REGION_MISSING_NOTE instead of "India". */
+    regionMissingNote: isEdit && !(watchedCountry ?? "").trim() ? REGION_MISSING_NOTE : null,
     onTreatmentChange,
     panLocked: !!panFromForm,
     onSubmit,
