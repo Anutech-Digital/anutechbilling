@@ -113,6 +113,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
     verification, setVerification, watchedGstin,
     isForeign, foreignStates, country, onCountryPick, submit,
     gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
+    gstTreatmentSaved, regionMissing,
   } = useCustomerForm({
     customer,
     /* R-2108: "?return=" (e.g. Hosting & Domains → Add email) goes back there after Save. */
@@ -309,7 +310,15 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
             </div>
           </div>
           <div className="mt-3 md:pl-[210px]">
-            {isForeign ? (
+            {regionMissing ? (
+              <p className="flex items-start gap-2 text-[12px] leading-snug text-amber-ink">
+                <Icon name="info" size={14} className="mt-0.5 flex-shrink-0" />
+                <span>
+                  <b>No region saved for this customer.</b> Pick the country if you know it — leaving it
+                  empty keeps the customer as it is (GST treatment and invoice currency unchanged).
+                </span>
+              </p>
+            ) : isForeign ? (
               <p className="flex items-start gap-2 text-[12px] leading-snug text-indigo-ink">
                 <Icon name="globe" size={14} className="mt-0.5 flex-shrink-0" />
                 <span>
@@ -401,6 +410,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               auto={gstTreatmentAuto}
               meaning={gstTreatmentMeaning}
               foreign={isForeign}
+              savedValue={gstTreatmentSaved}
               error={errors.gst_treatment?.message}
             />
           </Row>
