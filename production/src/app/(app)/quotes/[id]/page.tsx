@@ -50,7 +50,7 @@ import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-qu
 import { addSeatsCount } from "@/lib/subscriptions/seat-quotes-pending";
 import { renewalSubOfQuote, priorTermDueText } from "@/app/(app)/renewals/prior-due";
 import { useQuoteSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
-import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { OVERSEAS_NO_COUNTRY_FIX, quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
 import { quotePaymentBadge } from "@/lib/quotes/status-badge";
 import { shownQuoteStatus, expiredByDate, validityDaysLeft } from "@/lib/quotes/quote-expiry";
@@ -537,6 +537,9 @@ export default function QuoteDetailPage() {
           href: companyStateFixFor(me.role).action.href,
           label: companyStateFixFor(me.role).action.label,
         }
+      /* R-2620: Overseas with no country reads as India — neither 0% export nor CGST/IGST is known. */
+      : pos.head.kind === "buyer_country_missing" && quote.customer_id
+        ? { title: `${quote.customer_name ?? "This customer"} is marked Overseas but has no country`, body: OVERSEAS_NO_COUNTRY_FIX, href: `/customers/${quote.customer_id}`, label: "Open customer" }
       : pos.head.kind === "buyer_state_missing" && quote.customer_id
         ? { title: `${quote.customer_name ?? "This customer"} has no state on record`, body: "The customer's state decides CGST + SGST or IGST. Add it on the customer, then issue the GST invoice.", href: `/customers/${quote.customer_id}`, label: "Open customer" }
         : null;

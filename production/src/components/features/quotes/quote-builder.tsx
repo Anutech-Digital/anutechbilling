@@ -93,6 +93,7 @@ import { lineFromCatalog, catalogYearlyPrice, catalogLineListRate } from "@/lib/
 import { foreignQuoteFigures } from "@/lib/quotes/foreign-totals";
 import { billingUnitOf, lineRateSuffix, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/lib/quotes/quote-assist";
+import { OVERSEAS_NO_COUNTRY_FIX, OVERSEAS_NO_COUNTRY_LABEL } from "@/lib/quotes/quote-place-of-supply";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { rupee, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -976,6 +977,7 @@ function QuoteBuilderBody() {
   const sellerStateMissing = !!currentUser && gstHead.kind === "seller_state_missing";
   const placeOfSupply     = sellerStateMissing
     ? `${buyerStateCode && GST_STATE_BY_CODE[buyerStateCode] ? `${GST_STATE_BY_CODE[buyerStateCode]} (${buyerStateCode}) · ` : ""}GST head pending (company state not set)`
+    : gstHead.kind === "buyer_country_missing" ? OVERSEAS_NO_COUNTRY_LABEL
     : placeOfSupplyLabel({ posCode: buyerStateCode, interState, isExport });
 
   // Foreign (export) customer on a NEW quote → default the billing currency to
@@ -1478,6 +1480,16 @@ function QuoteBuilderBody() {
         description: "The state decides CGST+SGST or IGST. You can still save this as a draft without it.",
       });
       document.getElementById(isLeadMode ? "leadState" : "state")?.focus();
+      return;
+    }
+    /* R-2620: Overseas with no country reads as India (G5) — 18% on what may be a 0% export. The
+       database refuses the send too; this says why before the click, with the fix one tap away. */
+    if (status === "sent" && customerId && gstHead.kind === "buyer_country_missing") {
+      toast.error(`${customer?.name ?? "This customer"} is marked Overseas but has no country`, {
+        description: `${OVERSEAS_NO_COUNTRY_FIX} You can still save this as a draft.`,
+        duration: 15000,
+        action: { label: "Open customer", onClick: () => router.push(`/customers/${customerId}` as never) },
+      });
       return;
     }
     /* R-431: an existing customer with no state (and no GSTIN to prove one) is the same

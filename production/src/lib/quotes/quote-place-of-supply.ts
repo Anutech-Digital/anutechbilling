@@ -40,6 +40,12 @@ export interface QuotePlace {
   head: SupplyHead;
 }
 
+/** R-2620: the place-of-supply line while an Overseas customer has no country (never "Intra-state"). */
+export const OVERSEAS_NO_COUNTRY_LABEL = "GST head pending (customer is Overseas but has no country)";
+/** R-2620: why the quote / invoice is held, and the one fix — same reason the database gives. */
+export const OVERSEAS_NO_COUNTRY_FIX =
+  "With no country it reads as India, so it would be taxed as an Indian sale instead of a 0% export. Open the customer, pick its country, then send or issue.";
+
 export function quotePlaceOfSupply(a: {
   customer?: BuyerPlace | null;
   lead?: BuyerPlace | null;
@@ -66,7 +72,9 @@ export function quotePlaceOfSupply(a: {
   const posName = posCode ? GST_STATE_BY_CODE[posCode] : undefined;
   const label = head.kind === "seller_state_missing"
     ? `${posName ? `${posName} (${posCode}) · ` : ""}GST head pending (company state not set)`
-    : placeOfSupplyLabel({ posCode, interState, isExport, country: buyer?.country });
+    : head.kind === "buyer_country_missing"
+      ? OVERSEAS_NO_COUNTRY_LABEL
+      : placeOfSupplyLabel({ posCode, interState, isExport, country: buyer?.country });
   return { posCode, interState, isExport, label, head };
 }
 
