@@ -120,8 +120,10 @@ describe("R-2635 the date the invoice will really carry", () => {
     expect(t).toMatch(/money came in/);
   });
 
-  it("dated on the first open day after locked books says so", () => {
-    expect(text({ ...PEAK, invoiceDate: "2026-09-01", invoiceDateWhy: "books_lock" })).toMatch(/Dated 1 Sept? 2026 — the first day after your locked books/);
+  it("dated on the first open day (R-2631: GST filed / books locked before it) says so", () => {
+    const t = text({ ...PEAK, invoiceDate: "2026-10-01", invoiceDateWhy: "first_open" });
+    expect(t).toMatch(/Dated 1 Oct 2026 — the first open day: GST for the days before it is already filed or the books are locked/);
+    expect(t).not.toMatch(/\(today\)/);
   });
 
   it("no why given → '(today)' as before", () => {
@@ -141,10 +143,12 @@ describe("R-2635 latestReceiptIstDay / invoiceDateWhy (twin of generate_invoice'
     expect(latestReceiptIstDay([])).toBeNull();
     expect(latestReceiptIstDay(null)).toBeNull();
   });
-  it("why: today / receipt / books_lock", () => {
+  it("why: today / receipt / first_open (R-2631)", () => {
     expect(invoiceDateWhy({ date: "2026-11-09", receiptDay: null, today: "2026-11-09" })).toBe("today");
     expect(invoiceDateWhy({ date: "2026-08-26", receiptDay: "2026-08-26", today: "2026-11-09" })).toBe("receipt");
     expect(invoiceDateWhy({ date: "2026-11-09", receiptDay: "2026-11-09", today: "2026-11-09" })).toBe("today");
-    expect(invoiceDateWhy({ date: "2026-09-01", receiptDay: "2026-08-26", today: "2026-11-09" })).toBe("books_lock");
+    expect(invoiceDateWhy({ date: "2026-09-01", receiptDay: "2026-08-26", today: "2026-11-09" })).toBe("first_open");
+    /* R-2631: a 23 Sep receipt with GST filed up to Sep → the server says 1 Oct. */
+    expect(invoiceDateWhy({ date: "2026-10-01", receiptDay: "2026-09-23", today: "2026-11-09" })).toBe("first_open");
   });
 });

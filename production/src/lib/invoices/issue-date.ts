@@ -5,7 +5,7 @@
  * payment's IST day, clamped by invoice_date_for_receipt: never after today, never on or before
  * the books lock. The confirm used to say "Dated <today> (today)" — wrong for a quote paid weeks ago
  * (Peak Performance, paid 26 Aug, invoiced in Oct). The hook asks the SAME SQL function, so the
- * dialog follows the server if that rule changes (e.g. R-2631, GST-filed months).
+ * dialog follows the server: since R-2631 that date also skips GST-filed months (the first open day).
  */
 "use client";
 
@@ -15,7 +15,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 import { istToday, toIstDate } from "@/lib/dates/ist";
 
-export type InvoiceDateWhy = "today" | "receipt" | "books_lock";
+/** R-2631: "first_open" = moved past locked books or a GST-filed month (invoice_date_for_receipt). */
+export type InvoiceDateWhy = "today" | "receipt" | "first_open";
 
 /** The IST day of the latest payment with status "received" (what generate_invoice reads), else null. */
 export function latestReceiptIstDay(
@@ -34,7 +35,7 @@ export function latestReceiptIstDay(
 export function invoiceDateWhy(a: { date: string; receiptDay: string | null; today: string }): InvoiceDateWhy {
   if (a.date === a.today) return "today";
   if (a.receiptDay && a.date === a.receiptDay) return "receipt";
-  return "books_lock";
+  return "first_open";
 }
 
 /**

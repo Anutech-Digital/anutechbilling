@@ -56,8 +56,10 @@ begin
     raise exception 'A FAIL: invoice for a 15 Apr 2026 receipt dated % (want 2026-04-15): %', v_date, r;
   end if;
 
-  /* B. the payment itself cannot be dated inside locked books; a part's bill date can (the clamp). */
-  v_date := public.invoice_date_for_receipt('dddddddd-0000-0000-0000-000000209572', '2026-05-20');
+  /* B. the payment itself cannot be dated inside locked books; a part's bill date can (the clamp).
+     R-2631: a login may ask only about its own company now — B asks about the Lock Co as the server. */
+  perform set_config('request.jwt.claims', '', true);
+  v_date :=public.invoice_date_for_receipt('dddddddd-0000-0000-0000-000000209572', '2026-05-20');
   if v_date is distinct from '2026-07-01' then
     raise exception 'B FAIL: books locked to 30 Jun, 20 May dated % (want 2026-07-01)', v_date;
   end if;

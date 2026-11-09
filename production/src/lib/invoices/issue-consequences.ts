@@ -131,8 +131,9 @@ export function issueConsequences(args: {
        books — the confirm said "(today)" for a quote paid weeks ago. */
     const why = quote.invoiceDateWhy === "receipt"
       ? " — the day the money came in (the latest receipt), not today"
-      : quote.invoiceDateWhy === "books_lock"
-        ? " — the first day after your locked books"
+      : quote.invoiceDateWhy === "first_open"
+        /* R-2631: a new invoice is never dated in a GST-filed month or inside locked books. */
+        ? " — the first open day: GST for the days before it is already filed or the books are locked"
         : " (today)";
     out.push({
       tone: "fact",
