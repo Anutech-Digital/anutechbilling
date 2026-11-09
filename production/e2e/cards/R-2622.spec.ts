@@ -20,18 +20,39 @@ async function openPnl(page: Page, from: string, to: string) {
   await page.goto("/accounting/pnl");
   await expect(page).not.toHaveURL(/\/login/);
   await expect(page.getByRole("heading", { name: /P&L Report/ })).toBeVisible({ timeout: 60_000 });
-  await page.locator("#pnl-from").fill(from);
-  await page.locator("#pnl-to").fill(to);
+  /* Let the first load (this month) finish before typing: on 9 Nov a From typed during hydration was
+     lost, leaving From 1 Nov / To 31 Oct, and report_pnl refuses a reversed range ("didn't load"). */
+  await loaded(page);
+  /* Both moves go back in time from "this month": From first keeps From <= To at every step. */
+  const fromBox = page.locator("#pnl-from");
+  const toBox = page.locator("#pnl-to");
+  await fromBox.fill(from);
+  await expect(fromBox).toHaveValue(from);
+  await toBox.fill(to);
+  await expect(toBox).toHaveValue(to);
+  await loaded(page);
+}
+
+/**
+ * Wait until the P&L for the range on screen has loaded: the statement heading names the range and
+ * the Cost of goods card (shown only with data) is there. On the local dev server the first P&L load
+ * (masters + report + role) takes well over the 10 s click timeout — 9 Nov the first run failed there.
+ */
+async function loaded(page: Page) {
+  await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => { /* polling page */ });
+  await expect(page.getByRole("button", { name: /cost of goods/i }).first()).toBeVisible({ timeout: 90_000 });
 }
 
 async function view(page: Page, name: "Management (matched)" | "As invoiced (GST)") {
   const btn = page.getByRole("group", { name: "View" }).getByRole("button", { name });
   await btn.click();
   await expect(btn).toHaveAttribute("aria-pressed", "true");
+  await loaded(page);
 }
 
 /** Open the Cost of goods drill and return it once its tie line is shown. */
 async function cogsDrill(page: Page) {
+  await loaded(page);
   await page.getByRole("button", { name: /cost of goods/i }).first().click();
   const d = page.getByRole("dialog");
   const tie = d.getByTestId("pnl-drill-tie");
