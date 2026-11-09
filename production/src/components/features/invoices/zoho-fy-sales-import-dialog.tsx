@@ -27,6 +27,7 @@ import { ZOHO_CALLS_PER_MIN } from "@/lib/integrations/zoho-books/zoho-pace";
 import { Checkbox } from "@/components/ui/checkbox";
 import type { GstinChoice, MonthTotals } from "@/lib/integrations/zoho-books/sales-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
+import type { StaleAddress } from "@/lib/integrations/zoho-books/sales-import/stale-address";
 
 const API = "/api/integrations/zoho-books/sales-import";
 const FY = "2025-26";
@@ -43,6 +44,8 @@ interface Preview {
   batches: ImportBatch[];
   /** R-2530: name matches one customer, but another PAN — the owner ticks "Use this customer anyway". */
   gstinChoices?: GstinChoice[];
+  /** R-2540: to-import invoices read before Zoho's billing address was kept (R-2536). */
+  staleAddress?: StaleAddress;
 }
 interface PartResult { imported: number; already: number; skipped: { number: string; reason: string }[] }
 
@@ -63,7 +66,7 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
   const [preview, setPreview] = React.useState<Preview | null>(null);
   const [check, setCheck] = React.useState<PartResult | null>(null);
   const [done, setDone] = React.useState<PartResult | null>(null);
-  /* R-2530: normalised Zoho name → customer id. Sent with preview AND every import part, so the
+  /* R-2530: gstinChoiceKey(Zoho name, invoice PAN) (R-2536) → customer id. Sent with preview AND every import part, so the
      server's plan (and its parts) is the one the owner saw. */
   const [useAnyway, setUseAnyway] = React.useState<Record<string, string>>({});
   const stop = React.useRef(false);
@@ -167,6 +170,14 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
                 {preview.counts.already > 0 && <> · <Badge kind="muted" size="sm">{preview.counts.already} already in the app</Badge></>}
                 {preview.counts.skip > 0 && <> · <Badge kind="warning" size="sm">{preview.counts.skip} left out</Badge></>}
               </p>
+              {(preview.staleAddress?.count ?? 0) > 0 && (
+                /* R-2540: an old scan has no Zoho billing address — a branch invoice would come in with none. */
+                <p className="text-xs text-amber-ink" role="status" data-testid="fy-sales-stale-address">
+                  {preview.staleAddress!.count.toLocaleString("en-IN")} invoices were read from Zoho before addresses were kept
+                  {preview.staleAddress!.branch > 0 && <> ({preview.staleAddress!.branch.toLocaleString("en-IN")} for another branch would get no address)</>}.
+                  Press <b>Read from Zoho again</b> before importing.
+                </p>
+              )}
               <MonthTable preview={preview} />
               {(preview.gstinChoices?.length ?? 0) > 0 && (
                 <GstinChoices choices={preview.gstinChoices ?? []} disabled={!!busy} onToggle={toggleChoice} />

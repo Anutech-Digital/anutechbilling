@@ -11,8 +11,11 @@
  *   preview  → the plan from the COMPLETE scan: counts, skip reasons, Zoho vs to-import totals per
  *              month, what is already in the app per month, past batches. Nothing written.
  *              R-2530: also `gstinChoices` — Zoho customers whose name matches one app customer with
- *              another PAN; preview + import take `useAnyway` {normalised Zoho name: customer id}
- *              (the owner's "Use this customer anyway" ticks; plan.ts honours only the matched one).
+ *              another PAN; preview + import take `useAnyway` {gstinChoiceKey(Zoho name, invoice PAN)
+ *              (plan.ts, R-2536): customer id} (the owner's "Use this customer anyway" ticks; plan.ts
+ *              honours only the matched one).
+ *              R-2540: also `staleAddress` — to-import invoices whose scan was read before Zoho's billing
+ *              address was kept (R-2536); the dialog asks to Read from Zoho again.
  *   import   → { part, dryRun } — one part (fy-import/parts.ts IMPORT_PART invoices) through import_zoho_fy_sales:
  *              dryRun true (default) writes nothing; false writes one batch (+ activity_log row).
  *              The request names only Zoho ids + the matched customer / items — every amount comes
@@ -32,6 +35,7 @@ import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb
 import { zohoSaleFacts, type ZohoSaleFacts } from "@/lib/integrations/zoho-books/sales-import/normalise";
 import { SALES_IMPORT_ROLES, buildSalesPlan, toPick } from "@/lib/integrations/zoho-books/sales-import/plan";
 import { readImportedByMonth, readPlanContext, readSellerState } from "@/lib/integrations/zoho-books/sales-import/store";
+import { staleAddressCount } from "@/lib/integrations/zoho-books/sales-import/stale-address";
 import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
@@ -130,6 +134,7 @@ export async function POST(req: NextRequest) {
         ok: true, fy, scanned: counts.listed, counts: plan.counts, parts,
         zohoByMonth: plan.zohoByMonth, importByMonth: plan.importByMonth, appByMonth,
         skipReasons: plan.skipReasons, skipped, batches, gstinChoices: plan.gstinChoices,
+        staleAddress: staleAddressCount(plan.rows),
       });
     }
 
