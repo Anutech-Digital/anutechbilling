@@ -80,8 +80,8 @@ as $$
    (gst_filed_why: GST filed up to / books lock / GSTR-1 of the month or FY quarter marked filed). */
 declare
   v_caller  uuid := public.current_tenant_id();
-  v_trusted boolean := coalesce(auth.role(), '') = 'service_role'
-                       or (auth.role() is null
+  v_trusted boolean := coalesce(public.current_request_role(), '') = 'service_role'
+                       or (public.current_request_role() is null
                            and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   v_t       record;
   v_day     date;
