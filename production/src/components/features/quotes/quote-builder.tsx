@@ -90,7 +90,7 @@ import { BILLING_CURRENCIES, isForeignCurrency, formatForeign } from "@/lib/curr
 import { fxStampFromQuote, manualFxStamp, type FxStamp } from "@/lib/fx/rate-source";
 import { addOrMergeLine } from "@/lib/quotes/line-items";
 import { lineFromCatalog, catalogYearlyPrice, catalogLineListRate } from "@/lib/quotes/catalog-line";
-import { foreignQuoteFigures } from "@/lib/quotes/foreign-totals";
+import { foreignQuoteFigures, foreignUnit, inrRateFromForeign, linesInrSubtotal } from "@/lib/quotes/foreign-totals";
 import { billingUnitOf, lineRateSuffix, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/lib/quotes/quote-assist";
 import { OVERSEAS_NO_COUNTRY_FIX, OVERSEAS_NO_COUNTRY_LABEL } from "@/lib/quotes/quote-place-of-supply";
@@ -599,7 +599,8 @@ function QuoteBuilderBody() {
          currency switch must move the list price, not erase the discount (2 Oct 2026). */
       const listBefore = l.list_rate ?? l.rate;
       const ratio = listBefore > 0 && l.rate < listBefore ? l.rate / listBefore : 1;
-      const rate = Math.round(annualRate * ratio);
+      /* R-2637: a USD price keeps its paise in ₹ — the line total is rounded once, not each unit. */
+      const rate = useUsd ? inrRateFromForeign(annualRate * ratio, 1) : Math.round(annualRate * ratio);
       /* R-388: a cost the user TYPED is theirs — a catalogue (re)load or a background
          refetch must not replace it. And a catalogue that cannot answer (wholesale 0 /
          missing) never wipes a cost the line already knows: 0 there means "unknown",
@@ -933,10 +934,10 @@ function QuoteBuilderBody() {
 
   // Selling gross = the (negotiated) rate × qty. This is the actual revenue and
   // what gets billed / drives MRR — so it stays the subtotal.
-  const grossSubtotal     = lineItems.reduce((s, it) => s + it.qty * it.rate, 0);
+  /* R-2637: each line ₹ total = round(qty × rate) — rounded ONCE, at the line (a USD line keeps
+     a paise ₹ rate: 10 × $2 @ 95.10 = ₹1,902, not 10 × ₹190). Whole-rupee (INR) rates: unchanged. */
   // Legacy per-line discount (UI removed; still honoured for old/imported quotes).
-  const lineDiscountTotal = lineItems.reduce((s, it) => s + Math.round(it.qty * it.rate * ((it.discount_pct ?? 0) / 100)), 0);
-  const subtotal          = grossSubtotal - lineDiscountTotal;
+  const subtotal          = linesInrSubtotal(lineItems);
   const totalCost         = lineItems.reduce((s, it) => s + it.qty * it.cost, 0);
   /* Lines that are actually being SOLD but whose cost nobody knows. A ₹0 line is
      excluded — a free line legitimately costs nothing, and flagging it would train
@@ -1345,12 +1346,12 @@ function QuoteBuilderBody() {
            catalogue path above is preferred and untouched. Right unit beats twelve times
            wrong. */
         const conv = convertRateForCommitment({
-          rate: l.rate, cost: l.cost, from: l.commitment, to: commitment,
+          rate: l.rate, cost: l.cost, from: l.commitment, to: commitment, keepPaise: isUsdBill,   // R-2637
         });
         /* The frozen list price is in the same unit as the rate (R-369) — convert it too,
            or a ₹3,240/yr list beside a ₹270/month rate reads as a ₹2,970 "discount". */
         const listConv = l.list_rate == null ? null : convertRateForCommitment({
-          rate: l.list_rate, cost: 0, from: l.commitment, to: commitment,
+          rate: l.list_rate, cost: 0, from: l.commitment, to: commitment, keepPaise: isUsdBill,
         });
         return {
           ...l, commitment, rate: conv.rate, cost: conv.cost,
@@ -2529,9 +2530,9 @@ function QuoteBuilderBody() {
                       <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Rate {isUsdBill ? "$" : "₹"}{unitLabel}</span>
                       <input
                         type="number" min={0} step={isUsdBill ? "0.01" : "1"}
-                        value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate)}
+                        value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? foreignUnit(line.rate / lineDiv, fxRate) : displayRate)}
                         aria-invalid={!!lineDrafts[`${line.id}:rate`]}
-                        onChange={(e) => onRateInput(line.id, e.target.value, (v) => updateRate(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv))}
+                        onChange={(e) => onRateInput(line.id, e.target.value, (v) => updateRate(line.id, isUsdBill ? inrRateFromForeign(v * lineDiv, fxRate) : Math.round(v) * lineDiv))}
                         className={cn(
                           "mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
                           lineDrafts[`${line.id}:rate`] ? "border-rose" : "border-hairline",
@@ -2806,9 +2807,9 @@ function QuoteBuilderBody() {
                           type="number"
                           min={0}
                           step={isUsdBill ? "0.01" : "1"}
-                          value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate)}
+                          value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? foreignUnit(line.rate / lineDiv, fxRate) : displayRate)}
                           aria-invalid={!!lineDrafts[`${line.id}:rate`]}
-                          onChange={(e) => onRateInput(line.id, e.target.value, (v) => handleRateChange(isUsdBill ? Math.round(v * fxRate) : Math.round(v)))}
+                          onChange={(e) => onRateInput(line.id, e.target.value, (v) => (isUsdBill ? updateRate(line.id, inrRateFromForeign(v * lineDiv, fxRate)) : handleRateChange(Math.round(v))))}
                           className={cn(
                             "w-24 px-2 py-1 text-sm text-right tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
                             lineDrafts[`${line.id}:rate`] ? "border-rose" : "border-hairline",

@@ -35,6 +35,7 @@ import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { rupee } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { formatForeign } from "@/lib/currency";
+import { inrRateFromForeign } from "@/lib/quotes/foreign-totals";
 import {
   COMMIT_CHOICES,
   COMMIT_CHOICE_HINT,
@@ -159,7 +160,8 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
       // round-trips back to the real USD price the customer was quoted.
       const rate = exchangeRate && exchangeRate > 0 ? exchangeRate : 1;
       const mult = unitYearMultiplier(unit);
-      msrpPerYear      = Math.round(usdTier.msrp * mult * rate);
+      /* R-2637: the ₹ unit price keeps its paise; the line total is rounded once. */
+      msrpPerYear      = inrRateFromForeign(usdTier.msrp * mult, rate);
       wholesalePerYear = Math.round(usdTier.wholesale * mult * rate);
     } else {
       // Domestic (or no USD price) → the ₹ catalog price, shared with the quote's
@@ -188,7 +190,8 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
   const addCustom = (data: CustomData) => {
     // Books are always ₹: a USD entry converts at the exchange rate, a ₹ entry
     // just rounds to an integer. QuoteLineItem.rate/cost are canonical ₹/seat/year.
-    const rateInr = usdEntry ? Math.round(data.rate * fx!) : Math.round(data.rate);
+    /* R-2637: a USD price keeps its paise in ₹ ($2 @ 95.10 = ₹190.20) — the line total is rounded once. */
+    const rateInr = usdEntry ? inrRateFromForeign(data.rate, fx!) : Math.round(data.rate);
     const costInr = usdEntry ? Math.round(data.cost * fx!) : Math.round(data.cost);
     // R-1963: the picked term rides on the line like a catalogue line's (R-369: the typed rate
     // is per month for Monthly flex, per year for Annual, once for One-time — stored as typed).
@@ -205,6 +208,8 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
   };
 
   const customRate = watch("rate") || 0;
+  /* R-2637: what the books record per unit for a USD price — paise kept. */
+  const booksRate = inrRateFromForeign(customRate, fx ?? 1);
   const customCost = watch("cost") || 0;
   const customMargin = customRate - customCost;
   const customMarginPct = customRate > 0 ? Math.round((customMargin / customRate) * 100) : 0;
@@ -427,7 +432,7 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
             {usdEntry && customRate > 0 && (
               <p className="text-2xs text-ink-3">
                 Billed in {entryCur} · recorded in books as{" "}
-                <span className="font-medium text-ink-2">{rupee(Math.round(customRate * (fx ?? 1)))}</span>/unit at ₹{fx}/{entryCur}.
+                <span className="font-medium text-ink-2">{rupee(booksRate, { decimals: Number.isInteger(booksRate) ? 0 : 2 })}</span>/unit at ₹{fx}/{entryCur}.
               </p>
             )}
 

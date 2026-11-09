@@ -82,16 +82,21 @@ export function foreignDocConverter(args: {
 }): (inr: number) => number {
   const fx = args.fx > 0 ? args.fx : 1;
   const known = new Map<number, number>();
-  const linesInr = args.lines.reduce((s, l) => {
+  const oldLinesInr = args.lines.reduce((s, l) => {
     const gross = l.qty * l.rate;
     return s + Math.round(gross - gross * ((l.discount_pct ?? 0) / 100));
   }, 0);
-  const taxableInr = linesInr - Math.round(linesInr * ((args.discountPct ?? 0) / 100));
-  if (args.lines.length > 0 && taxableInr === args.inr.taxable) {
+  /* R-2637: the whole-rupee line totals the builder saves (rounded once per line). The old
+     sum is still accepted so a document saved before R-2637 maps exactly as it did. */
+  const taxableOf = (linesInr: number) => linesInr - Math.round(linesInr * ((args.discountPct ?? 0) / 100));
+  const covers = taxableOf(linesInrSubtotal(args.lines)) === args.inr.taxable
+    || taxableOf(oldLinesInr) === args.inr.taxable;
+  if (args.lines.length > 0 && covers) {
     const f = foreignQuoteFigures({ lines: args.lines, fx, discountPct: args.discountPct, taxRate: args.taxRate });
     args.lines.forEach((l, i) => {
       known.set(l.rate, f.lines[i].unit);
       known.set(l.qty * l.rate, f.lines[i].gross);
+      known.set(lineInr(l), f.lines[i].gross);
     });
     known.set(args.inr.subtotal, f.subtotal);
     known.set(args.inr.taxable, f.taxable);
@@ -99,4 +104,41 @@ export function foreignDocConverter(args: {
     known.set(args.inr.total, f.total);
   }
   return (inr: number) => known.get(inr) ?? cents(inr / fx);
+}
+
+/* ── R-2637: a foreign price → the ₹ books, rounded ONCE at the line total ─────────────────
+   The builder used to store each line's ₹ unit rate as Math.round(usd × fx): 10 seats × $2 @
+   95.10 became 10 × ₹190 = ₹1,900, while the customer paid $20 = ₹1,902 (bank / FIRA). Now the
+   ₹ unit rate keeps the exact product (USD has cents, the rate ≤ 4 decimals → ≤ 6 decimals),
+   and the ₹ LINE total is round(qty × rate) — the same per-line round() the SQL readers use
+   (combine_quotes, quote_one_time_lines). Whole-rupee rates (every INR quote) are unchanged. */
+
+/** Round to 6 decimals — removes float noise (5 × 190.1 = 950.4999…) before a rupee round. */
+function r6(v: number): number {
+  return Math.round(v * 1e6) / 1e6;
+}
+
+/** Half away from zero, like SQL round() on numeric. */
+function roundRupee(v: number): number {
+  const x = r6(v);
+  return Math.sign(x) * Math.round(Math.abs(x));
+}
+
+/** ₹ per unit from a price in the customer's currency — NOT rounded to whole rupees. */
+export function inrRateFromForeign(foreign: number, fx: number): number {
+  if (!Number.isFinite(foreign) || !Number.isFinite(fx)) return 0;
+  return r6(foreign * fx) || 0;
+}
+
+/** The line's ₹ total (before its own legacy discount_pct): round(qty × rate), once. */
+export function lineInr(l: { qty: number; rate: number }): number {
+  return roundRupee(l.qty * l.rate) || 0;
+}
+
+/** Σ line ₹ totals less each line's legacy discount_pct — the quote's whole-rupee subtotal. */
+export function linesInrSubtotal(lines: readonly ForeignLineIn[]): number {
+  return lines.reduce(
+    (s, l) => s + lineInr(l) - (roundRupee(l.qty * l.rate * ((l.discount_pct ?? 0) / 100)) || 0),
+    0,
+  );
 }

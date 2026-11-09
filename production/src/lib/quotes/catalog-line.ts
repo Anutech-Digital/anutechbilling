@@ -18,6 +18,8 @@ import { billingUnitOf, defaultQtyForUnit, unitYearMultiplier, type BillingUnit 
 import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { headlinePrice } from "@/lib/catalog/headline-price";
 import { storedLineRate } from "./line-rate-unit";
+import { isAnnualTier } from "./commitment-rate";
+import { inrRateFromForeign } from "./foreign-totals";
 import type { Item, QuoteLineItem } from "@/lib/supabase/database.types";
 
 type PriceTier = { msrp?: number; wholesale?: number } | undefined;
@@ -104,14 +106,16 @@ export function catalogLineListRate(
      a seat, and every catalogue reload put the ×12 back. */
   if (!commitment) {
     if (usd && usd.msrp > 0) {
-      return { rate: Math.round(usd.msrp * usd.fx), cost: Math.round(usd.wholesale * usd.fx) };
+      /* R-2637: the ₹ unit rate keeps paise — the line total is rounded once (lineInr). */
+      return { rate: inrRateFromForeign(usd.msrp, usd.fx), cost: Math.round(usd.wholesale * usd.fx) };
     }
     return catalogOncePrice(it);
   }
   const lineCommitment = commitment;
   if (usd && usd.msrp > 0) {
     return {
-      rate: storedLineRate(usd.msrp * usd.fx, lineCommitment),
+      /* R-2637: price not rounded per unit (cost, our own figure, stays whole ₹). */
+      rate: inrRateFromForeign(usd.msrp * (isAnnualTier(lineCommitment) ? 12 : 1), usd.fx),
       cost: storedLineRate(usd.wholesale * usd.fx, lineCommitment),
     };
   }
