@@ -517,7 +517,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         /* R-2618: the link holds a Change-plan quote — not a renewal. It used to go out as the
            renewal reminder with the plan-change amount. No email; the owner sees why in errors;
            retried next run (paid → link cleared, new plan priced; expired → R-2590 releases it). */
-        if (quoteResult && isRenewalQuoteHold(quoteResult)) {
+        if (isRenewalQuoteHold(quoteResult)) {
           detail.emailStatus = `(held: plan change quote ${quoteResult.quoteId} pending — renewal quote after it is paid or expires)`;
           result.emails_skipped += 1;
           result.errors.push({ subscription_id: sub.id, message: quoteResult.message });

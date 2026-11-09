@@ -97,7 +97,11 @@ describe("R-1574: no renewal-quote path links a subscription by a separate updat
       expect(code).toContain('rpc("create_renewal_quote"');
       expect(code).not.toContain('rpc("next_document_number"');
       expect(code).not.toMatch(/from\("quotes"\)\s*\.insert/);
-      expect(code).not.toMatch(/renewal_quote_id:\s*\w/);
+      /* Never LINKS by a separate update. R-2618: letting go of a closed plan-change quote
+         (renewal_quote_id: null, guarded on that same link) is allowed — exactly once, and only that. */
+      expect(code).not.toMatch(/renewal_quote_id:\s*(?!null\b)\w/);
+      expect((code.match(/renewal_quote_id:\s*null\b/g) ?? []).length).toBeLessThanOrEqual(1);
+      if (/renewal_quote_id:\s*null\b/.test(code)) expect(code).toMatch(/\.eq\("renewal_quote_id", q\.id as string\)/);
     });
   }
 });

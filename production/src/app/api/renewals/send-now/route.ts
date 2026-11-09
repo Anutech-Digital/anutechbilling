@@ -217,7 +217,7 @@ export async function POST(req: Request) {
     existingQuoteId: sub.renewal_quote_id,
   });
   /* R-2618: a Change-plan quote on the link is not a renewal quote — never send it as one. */
-  if (quoteResult && isRenewalQuoteHold(quoteResult)) {
+  if (isRenewalQuoteHold(quoteResult)) {
     return NextResponse.json({ error: quoteResult.message }, { status: 409 });
   }
   /* R-1571: no quote → no email. This went out with an amount made up as mrr × 12 (12x

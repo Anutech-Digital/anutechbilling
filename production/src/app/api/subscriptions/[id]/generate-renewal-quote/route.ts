@@ -230,7 +230,7 @@ export const POST = withRoute({
   });
 
   /* R-2618: a Change-plan quote on the link is not a renewal quote — say so, make nothing. */
-  if (result && isRenewalQuoteHold(result)) {
+  if (isRenewalQuoteHold(result)) {
     return NextResponse.json({ error: result.message }, { status: 409 });
   }
   if (!result) {

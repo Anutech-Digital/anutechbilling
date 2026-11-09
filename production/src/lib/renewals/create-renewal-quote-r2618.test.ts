@@ -15,20 +15,24 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { createOrGetRenewalQuote, isRenewalQuoteHold, type CreateRenewalQuoteInput } from "./create-renewal-quote";
 
-function fakeDb(linked?: Record<string, unknown> | null) {
+function fakeDb(linked?: Record<string, unknown> | null, opts: { updateError?: string } = {}) {
   const updates: unknown[] = [];
+  /** Every UPDATE as {table, row, filters} — the unlink must be guarded on the same link. */
+  const writes: { table: string; row: unknown; filters: [string, unknown][] }[] = [];
   const from = (table: string) => {
     const chain: Record<string, unknown> = {};
     const self = () => chain;
+    let write: { table: string; row: unknown; filters: [string, unknown][] } | null = null;
     Object.assign(chain, {
-      select: self, eq: self,
-      then: (ok: (v: unknown) => unknown) => ok({ data: [], error: null }),
+      select: self,
+      eq: (col: string, val: unknown) => { write?.filters.push([col, val]); return chain; },
+      then: (ok: (v: unknown) => unknown) => ok({ data: [], error: write && opts.updateError ? { message: opts.updateError } : null }),
       maybeSingle: async () => ({
         data: table === "customers" ? { country: "India" } : table === "items" ? { msrp: 300, wholesale: 110 } : null,
         error: null,
       }),
       single: async () => ({ data: table === "quotes" ? linked ?? null : null, error: null }),
-      update: (row: unknown) => { updates.push(row); return chain; },
+      update: (row: unknown) => { updates.push(row); write = { table, row, filters: [] }; writes.push(write); return chain; },
     });
     return chain;
   };
@@ -37,7 +41,7 @@ function fakeDb(linked?: Record<string, unknown> | null) {
     const p = args.p_quote;
     return { data: { quote_id: "Q-NEW", created: true, amount: p.amount, subtotal: p.subtotal, discount_pct: 0, tax_rate: 18, line_items: p.line_items }, error: null };
   });
-  return { db: { from, rpc } as unknown as CreateRenewalQuoteInput["supabase"], rpc, updates };
+  return { db: { from, rpc } as unknown as CreateRenewalQuoteInput["supabase"], rpc, updates, writes };
 }
 
 const input = (db: CreateRenewalQuoteInput["supabase"], over: Partial<CreateRenewalQuoteInput> = {}): CreateRenewalQuoteInput => ({
@@ -84,13 +88,51 @@ describe("R-2618: a linked plan-change quote is never the renewal quote", () => 
     expect(rpc).not.toHaveBeenCalled();
   });
 
-  it("4. the plan-change quote's status or validity does not matter — expired-but-still-linked is held too (R-2590 releases the link)", async () => {
-    for (const status of ["draft", "sent", "accepted", "expired"]) {
-      const { db, rpc } = fakeDb(planChangeQuote({ status, expires_date: "2020-01-01" }));
+  it("4. an OPEN plan-change quote is held whatever its validity — lapsed-but-unpaid within R-2590's 2-day margin, or combined into another quote", async () => {
+    const open = [
+      ...["draft", "sent", "viewed", "accepted"].map((status) => ({ status, expires_date: "2020-01-01", superseded_by: null })),
+      { status: "expired", superseded_by: "Q-COMBINED" },          // R-1527: the plan change lives on in the combined quote
+    ];
+    for (const over of open) {
+      const { db, rpc, updates } = fakeDb(planChangeQuote(over));
       const r = await createOrGetRenewalQuote(input(db));
       expect(r).toMatchObject({ held: "plan_change_pending", quoteId: "Q-LINKED" });
       expect(rpc).not.toHaveBeenCalled();
+      expect(updates).toHaveLength(0);
     }
+  });
+
+  it("6. a CLOSED plan-change quote (cancelled, or expired by date) with no money → link let go (guarded on that link), real renewal quote made", async () => {
+    for (const over of [{ status: "rejected" }, { status: "expired", superseded_by: null }]) {
+      const { db, rpc, writes } = fakeDb(planChangeQuote({ ...over, payment_status: "none", invoice_id: null }));
+      const r = await createOrGetRenewalQuote(input(db));
+      expect(r).toMatchObject({ quoteId: "Q-NEW", created: true, kind: "renewal" });
+      expect(rpc).toHaveBeenCalledTimes(1);
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toMatchObject({ table: "subscriptions", row: { renewal_quote_id: null } });
+      expect(writes[0].filters).toEqual(expect.arrayContaining([["id", "sub-1"], ["tenant_id", "ten-1"], ["renewal_quote_id", "Q-LINKED"]]));
+      // the renewal is priced on the subscription (old plan, 10 seats) — never the plan-change amount
+      expect(r && !isRenewalQuoteHold(r) ? r.amount : 0).not.toBe(5900);
+    }
+  });
+
+  it("7. a closed plan-change quote with money on it (part paid / invoiced) → held, never let go silently", async () => {
+    for (const over of [{ status: "expired", payment_status: "partial" }, { status: "rejected", invoice_id: "INV-1" }]) {
+      const { db, rpc, writes } = fakeDb(planChangeQuote(over));
+      const r = await createOrGetRenewalQuote(input(db));
+      expect(r).toMatchObject({ held: "plan_change_pending", quoteId: "Q-LINKED" });
+      expect(isRenewalQuoteHold(r) && r.message).toMatch(/payment or invoice/);
+      expect(rpc).not.toHaveBeenCalled();
+      expect(writes).toHaveLength(0);
+    }
+  });
+
+  it("8. the unlink fails → held with the reason, no renewal quote made (retried next run)", async () => {
+    const { db, rpc } = fakeDb(planChangeQuote({ status: "rejected" }), { updateError: "boom" });
+    const r = await createOrGetRenewalQuote(input(db));
+    expect(r).toMatchObject({ held: "plan_change_pending", quoteId: "Q-LINKED" });
+    expect(isRenewalQuoteHold(r) && r.message).toMatch(/could not be unlinked \(boom\)/);
+    expect(rpc).not.toHaveBeenCalled();
   });
 
   it("5. the linked row is gone → path 2 makes the renewal quote as before", async () => {
