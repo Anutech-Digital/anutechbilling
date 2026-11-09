@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach, afterAll, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { readSource, flushSourceCache, resetSourceCacheForTest } from "./source-cache";
+import { readSource, flushSourceCache, resetSourceCacheForTest, bucketOf, bucketFile, BUCKETS } from "./source-cache";
+import { PRODUCTION_ROOT } from "./prisma-generated";
 
 /* R-2564: the shared read cache of the whole-src scans must never serve old text — a guard that
    reads yesterday's file passes on today's bug. Every test points the cache at a temp folder. */
@@ -11,7 +12,11 @@ const cacheFile = path.join(dir, "cache.json");
 /* Hooks run in reverse: this runs BEFORE the module's own afterAll flush — clear the fresh set so that
    flush writes nothing (it would recreate the temp folder just removed). */
 afterAll(() => { resetSourceCacheForTest(); fs.rmSync(dir, { recursive: true, force: true }); });
-beforeEach(() => { fs.rmSync(cacheFile, { force: true }); resetSourceCacheForTest(cacheFile); vi.restoreAllMocks(); });
+beforeEach(() => {
+  for (const b of BUCKETS) fs.rmSync(bucketFile(b, cacheFile), { force: true });
+  resetSourceCacheForTest(cacheFile);
+  vi.restoreAllMocks();
+});
 /** Make files "old" (R-2582: not racy): mtime an hour back, and the clock 10 s on — ctime cannot be
     set back, so the clock moves instead, as it has for a file checked out minutes before a scan. */
 function ageFiles(...files: string[]): void {
@@ -172,6 +177,30 @@ describe("readSource (shared, always-fresh read cache for scan tests)", () => {
     const spy = vi.spyOn(fs, "readFileSync");
     expect(readSource(f)).toBe("x".repeat(5000));
     expect(spy.mock.calls.some(([p]) => p === f)).toBe(true); // read from disk again
+  });
+
+  it("R-2630: each source area has its own cache file, loaded only when one of its files is read", () => {
+    expect(bucketOf("src/server/db/generated/models/tenants.ts")).toBe("gen");
+    expect(bucketOf("src/lib/nav.ts")).toBe("src");
+    expect(bucketOf("supabase/migrations/20261109000000_x.sql")).toBe("sql");
+    expect(bucketOf("tests/secret-scan.test.ts")).toBe("");
+    expect(bucketOf("../docs/worker-steps.md")).toBe("");
+    // real repo files (keys inside production/), the cache pointed at the temp folder
+    const sqlFile = path.join(PRODUCTION_ROOT, "supabase", "baseline.sql");
+    const srcFile = path.join(PRODUCTION_ROOT, "src", "lib", "testing", "prisma-generated.ts");
+    readSource(sqlFile);
+    readSource(srcFile);
+    flushSourceCache();
+    expect(fs.existsSync(bucketFile("sql", cacheFile))).toBe(true);
+    expect(fs.existsSync(bucketFile("src", cacheFile))).toBe(true);
+    expect(fs.readFileSync(bucketFile("sql", cacheFile)).includes(Buffer.from("prisma-generated.ts"))).toBe(false);
+    resetSourceCacheForTest(cacheFile);
+    const reads = vi.spyOn(fs, "readFileSync");
+    const cacheReads = () => reads.mock.calls.map(([p]) => String(p)).filter((p) => p.startsWith(cacheFile));
+    expect(readSource(sqlFile)).toBe(fs.readFileSync(sqlFile, "utf8"));
+    expect(cacheReads()).toEqual([bucketFile("sql", cacheFile)]); // a migration scan never loads the src/ bucket
+    expect(readSource(srcFile)).toBe(fs.readFileSync(srcFile, "utf8"));
+    expect(cacheReads()).toEqual([bucketFile("sql", cacheFile), bucketFile("src", cacheFile)]);
   });
 
   it("a broken cache file is ignored, not trusted", () => {

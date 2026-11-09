@@ -25,7 +25,7 @@ import { rupee, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { useBalanceSheetAuto, useBalanceSheetItems, useCreateBalanceSheetItem, useDeleteBalanceSheetItem, useOpeningBalances, type BalanceSheetItem, type OpeningBalances } from "@/lib/queries/balance-sheet";
 import type { BalanceSheetSection } from "@/lib/supabase/database.types";
-import { usePnL } from "@/lib/queries/pnl";
+import { usePnL, useAdvanceBilling } from "@/lib/queries/pnl";
 import { openingDateMismatch, reportStart } from "@/lib/accounting/books-start";
 import { useBooksStart } from "@/components/features/accounting/books-start-card";
 import { balanceSheetTotals, retainedProfitRange, licenceProvisionOf } from "@/lib/accounting/balance-sheet-totals";
@@ -54,6 +54,7 @@ import { SectionTitle, Ratio, BSLine, ManualLines, TotalLine, equityCsvRows } fr
 import { StatementRow } from "@/components/ui/statement-row";
 import { OpeningBalancesCard } from "./opening-balances-card";
 import { EditLineDialog, AddLineDialog } from "./line-dialogs";
+import { AdvanceBillingCard } from "./advance-billing-card";
 
 export default function BalanceSheetPage() {
   const { data: auto, isLoading: autoLoading, isError: autoFailed, refetch: refetchAuto } = useBalanceSheetAuto();
@@ -165,6 +166,9 @@ export default function BalanceSheetPage() {
     : !profitRange.open ? 0
     : cumulative.data ? reportProfit(cumulative.data) : null;
   const licenceProvision = !profitRange.open ? 0 : licenceProvisionOf(cumulative.data);
+  /* R-2625: Advance billing (invoiced − earned to today) for the Management view card below the
+     sheet — read on its own; nothing in the statutory sheet above uses it. */
+  const advanceQ = useAdvanceBilling(today);
   /* Totals + solvency ratios ek tested pure function me (lib/accounting/balance-sheet-totals.ts).
      R-179: "Received, not yet in bank" bhi asset hai, Cash & bank ke saath — warna bina bank
      account wale workspace me mila hua paisa sirf liability (advance) me dikhta tha. */
@@ -585,6 +589,8 @@ export default function BalanceSheetPage() {
               </div>
             </Card>
           </div>
+
+          <AdvanceBillingCard data={advanceQ.data} failed={advanceQ.isError} asOf={today} totals={{ totalAssets, totalLiab, netWorth }} />
 
           <OpeningBalancesCard capitalLabel={profile.capitalLabel} opening={opening} loading={openingQ.isLoading} failed={openingQ.isError} fyStart={books?.setting ?? `${fyOf(today)}-04-01`} today={today} />
 

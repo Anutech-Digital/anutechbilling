@@ -33,6 +33,8 @@ import { renewalCost } from "@/lib/renewals/renewal-cost";
 import { istToday, toIstDate } from "@/lib/dates/ist";
 import { loadScheduledSeatCuts, renewalSeatCut } from "@/lib/renewals/scheduled-seat-cut";
 import { composeQuoteNotes } from "@/lib/quotes/customer-notes";
+import { isPlanChangeQuote } from "@/lib/subscriptions/change-plan";
+import { isOpenPlanChangeQuote } from "@/lib/subscriptions/plan-change-open";
 
 // The actual typed Supabase client. createAdminClient() returns this shape,
 // so the strict rpc/from overloads stay intact when callers pass it in.
@@ -101,11 +103,29 @@ export interface RenewalQuoteResult {
 
 /* R-2093: what path 1 reads — the stored figures as they are, plus the three columns
    quoteDocumentKind needs to tell a support-plan upgrade quote from a renewal. */
-const LINKED_QUOTE_COLUMNS = "id, amount, line_items, subtotal, discount_pct, tax_rate, is_renewal, is_extension, extension_months" as const;
+const LINKED_QUOTE_COLUMNS = "id, amount, line_items, subtotal, discount_pct, tax_rate, is_renewal, is_extension, extension_months, status, superseded_by, payment_status, invoice_id" as const;
+
+/**
+ * R-2618: the linked quote is a Change-plan quote (R-2227) — NOT a renewal quote. It sits on the
+ * same `renewal_quote_id`, so until it is paid (record_payment applies the new plan and clears the
+ * link) or expires (R-2590 releases the link) there is no renewal quote to send — and one made now
+ * would be priced on the OLD plan. Callers show `message` to the owner and send nothing.
+ */
+export interface RenewalQuoteHold {
+  held:    "plan_change_pending";
+  /** The plan-change quote that holds the link. */
+  quoteId: string;
+  /** Plain words for the owner (cron error line, Send now / Generate renewal quote answer). */
+  message: string;
+}
+
+export function isRenewalQuoteHold(r: object | null | undefined): r is RenewalQuoteHold {
+  return !!r && "held" in r;
+}
 
 export async function createOrGetRenewalQuote(
   input: CreateRenewalQuoteInput,
-): Promise<RenewalQuoteResult | null> {
+): Promise<RenewalQuoteResult | RenewalQuoteHold | null> {
   const { supabase, existingQuoteId } = input;
 
   // ── Path 1: subscription already has a renewal quote — load + return ──
@@ -116,16 +136,71 @@ export async function createOrGetRenewalQuote(
       .eq("id", existingQuoteId)
       .single();
     if (q) {
-      return {
-        quoteId:     q.id as string,
-        amount:      (q.amount as number) ?? 0,
-        subtotal:    (q.subtotal as number) ?? 0,
-        discountPct: (q.discount_pct as number) ?? 0,
-        taxRate:     (q.tax_rate as number) ?? 18,
-        lineItems:   ((q.line_items ?? []) as QuoteLineItem[]),
-        created:     false,
-        kind:        quoteDocumentKind(q as never),
-      };
+      /* R-2618: a Change-plan quote renews nothing, yet it went out as the "renewal" with the
+         plan-change amount (R-2590 review). While it is OPEN (R-2605's rule, the same one Add seats /
+         Correct details use) → held: paid → record_payment clears the link and the next run prices the
+         renewal on the NEW plan; lapsed unpaid → R-2590 releases it after its 2-day payment margin.
+         A CLOSED one (cancelled 'rejected', or stored 'expired' and not combined into another quote)
+         can never be paid any more — a dead link (rows from before R-2605's unlink trigger) would hold
+         the renewal for ever, so it is let go here (guarded on the same link) and path 2 makes the
+         real renewal quote. A support-plan upgrade (R-2073) keeps R-2093's labelling below. */
+      if (isPlanChangeQuote(q)) {
+        if (isOpenPlanChangeQuote(q as never)) return planChangePending(q.id as string);
+        /* Money outranks the date (R-1679, as R-2590): a closed quote with a payment or invoice on it
+           stays linked for the owner to sort out — never silently let go. R-2619: "as R-2590" includes
+           its third test — a 'received' payments row on the quote (release_expired_plan_change_quotes),
+           tenant-scoped; a failed read holds (never let go on an unknown). */
+        let moneyOnIt = !!q.invoice_id || !["none", "awaiting", null, undefined].includes(q.payment_status as string | null | undefined);
+        if (!moneyOnIt) {
+          const { data: paid, error: payErr } = await supabase
+            .from("payments")
+            .select("id")
+            .eq("tenant_id", input.tenantId)
+            .eq("quote_id", q.id as string)
+            .eq("status", "received")
+            .limit(1);
+          if (payErr) {
+            return {
+              held:    "plan_change_pending",
+              quoteId: q.id as string,
+              message: `Plan change quote ${q.id} is closed but still linked to this subscription, and its payments could not be read (${payErr.message}), so no renewal quote was made. Retried next run.`,
+            };
+          }
+          moneyOnIt = (paid ?? []).length > 0;
+        }
+        if (moneyOnIt) {
+          return {
+            held:    "plan_change_pending",
+            quoteId: q.id as string,
+            message: `Plan change quote ${q.id} is closed but has a payment or invoice on it and is still linked to this subscription, so no renewal quote was made. Settle or refund that quote first.`,
+          };
+        }
+        const { error: unlinkErr } = await supabase
+          .from("subscriptions")
+          .update({ renewal_quote_id: null })
+          .eq("id", input.subscriptionId)
+          .eq("tenant_id", input.tenantId)
+          .eq("renewal_quote_id", q.id as string);
+        if (unlinkErr) {
+          return {
+            held:    "plan_change_pending",
+            quoteId: q.id as string,
+            message: `Plan change quote ${q.id} is closed but still linked to this subscription and could not be unlinked (${unlinkErr.message}), so no renewal quote was made. Retried next run.`,
+          };
+        }
+        // closed and unlinked → path 2 makes the real renewal quote
+      } else {
+        return {
+          quoteId:     q.id as string,
+          amount:      (q.amount as number) ?? 0,
+          subtotal:    (q.subtotal as number) ?? 0,
+          discountPct: (q.discount_pct as number) ?? 0,
+          taxRate:     (q.tax_rate as number) ?? 18,
+          lineItems:   ((q.line_items ?? []) as QuoteLineItem[]),
+          created:     false,
+          kind:        quoteDocumentKind(q as never),
+        };
+      }
     }
     // If the linked quote was deleted somehow, fall through and create fresh
   }
@@ -294,6 +369,35 @@ export async function createOrGetRenewalQuote(
     return null;
   }
 
+  /* R-2619: created:false = the RPC handed back a quote already linked (step 1) or made for this term
+     (step 2) — NOT the one priced here. Step 1 returns ANY linked quote: a Change plan pressed between
+     path 1's read (or its unlink) and this call links a plan-change quote, which must never go out as
+     the renewal. Re-read it and label it by its own row; unreadable → nothing is sent (retried). */
+  let kind: QuoteDocumentKind = "renewal";
+  if (!made.created) {
+    const { data: got, error: getErr } = await supabase
+      .from("quotes")
+      .select(LINKED_QUOTE_COLUMNS)
+      .eq("id", made.quote_id)
+      .eq("tenant_id", input.tenantId)
+      .maybeSingle();
+    if (getErr || !got) {
+      console.error(
+        `[renewals] subscription ${input.subscriptionId}: quote ${made.quote_id} came back from create_renewal_quote but could not be checked — ${getErr?.message ?? "row not found"}; nothing sent`,
+      );
+      return null;
+    }
+    if (isPlanChangeQuote(got)) {
+      if (isOpenPlanChangeQuote(got as never)) return planChangePending(got.id as string);
+      return {
+        held:    "plan_change_pending",
+        quoteId: got.id as string,
+        message: `Plan change quote ${got.id} is closed but still linked to this subscription, so no renewal quote was made this time. Retried next run (it is unlinked then if nothing was paid on it).`,
+      };
+    }
+    kind = quoteDocumentKind(got as never);
+  }
+
   return {
     quoteId:     made.quote_id,
     amount:      made.amount ?? 0,
@@ -303,6 +407,16 @@ export async function createOrGetRenewalQuote(
     lineItems:   made.line_items ?? [],
     /* False when another run made (or linked) it first — its quote, not the one priced here. */
     created:     made.created,
-    kind:        "renewal",
+    kind,
+  };
+}
+
+/** R-2618: the owner's answer while an OPEN plan-change quote holds the link (path 1, and R-2619's RPC re-check). */
+function planChangePending(quoteId: string): RenewalQuoteHold {
+  return {
+    held:    "plan_change_pending",
+    quoteId,
+    message: `Plan change quote ${quoteId} is pending on this subscription, so no renewal quote was made and no renewal reminder was sent. ` +
+             "The renewal quote is made after it is paid or expires (or cancel that quote to make it now).",
   };
 }

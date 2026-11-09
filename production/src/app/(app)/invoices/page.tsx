@@ -61,6 +61,7 @@ import { issueConsequences, bulkIssueConsequences } from "@/lib/invoices/issue-c
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { issueEinvoiceNotice, irnAgeingInvoices, irnAgeingNotice, isB2B } from "@/lib/compliance/einvoice";
+import { invoiceIrnGstin } from "@/lib/invoices/invoice-buyer";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { useCustomers } from "@/lib/queries/customers";
 import { invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
@@ -134,11 +135,13 @@ function InvoicesPageInner() {
   const bracket = turnover?.bracket ?? null;
   const irnAgeing = React.useMemo(() => {
     if (!invoices || !bracket) return null;
-    /* Older invoices may not carry customer_gstin — fall back to the customer's GSTIN. */
+    /* R-2540: only an older invoice with NO buyer snapshot falls back to the customer's GSTIN. Once
+       the invoice carries its snapshot (or is a Zoho sale kept as filed), a NULL GSTIN is a B2C
+       supply — no IRN is due, whatever the customer's GSTIN is today. */
     const gstinById = new Map((customers ?? []).map((c) => [c.id, c.gstin ?? null] as const));
     const rows = invoices.map((i) => ({
       ...i,
-      customer_gstin: i.customer_gstin ?? (i.customer_id ? gstinById.get(i.customer_id) ?? null : null),
+      customer_gstin: invoiceIrnGstin(i, i.customer_id ? gstinById.get(i.customer_id) ?? null : null),
     }));
     const { ageing, pastLimit } = irnAgeingInvoices(bracket, rows);
     return irnAgeingNotice(ageing.length, pastLimit);

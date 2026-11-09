@@ -13,6 +13,8 @@
  *                   is paid in full. The renewal date does not move.
  * Preview and save run the SAME buildPlanChange() on the same server-read inputs (R-803 rule).
  *
+ * R-2626: refused (preview + save) while a LATER part is already billed at the old rate.
+ *
  * Roles: ACTION_ROLES["seats.change"] (owner / manager / billing) — the Extend / Add seats gate.
  */
 import { NextResponse } from "next/server";
@@ -29,6 +31,8 @@ import { composeQuoteNotes } from "@/lib/quotes/customer-notes";
 import { subscriptionProducts } from "@/lib/subscriptions/catalog-options";
 import { buildPlanChange } from "@/lib/subscriptions/change-plan";
 import { readPlanChangeMoney } from "@/lib/subscriptions/change-plan-money.server";
+import { loadScheduledSeatCuts } from "@/lib/renewals/scheduled-seat-cut";
+import { readLaterBilledParts } from "@/lib/subscriptions/change-plan-later-parts.server";
 import type { Item } from "@/lib/supabase/database.types";
 
 export const dynamic = "force-dynamic";
@@ -67,6 +71,18 @@ export const POST = withRoute(
     if (!target) return NextResponse.json({ error: "That plan is not in your catalogue." }, { status: 400 });
 
     const today = istToday();
+    /* R-2617: a seat cut scheduled "At end of term" is billed by the renewal quote on today's seats —
+       a plan change under it would leave it stale, so buildPlanChange refuses while one is scheduled.
+       Read alongside the money; not readable → 500 cut_check_failed, nothing saved. The SQL trigger
+       subscriptions_r2617_plan_change_vs_seat_cut guards the same under the row lock. */
+    const seatCutsP = loadScheduledSeatCuts(supabase, tenantId, sub.id).catch(() => null);
+    /* R-2626: a LATER part already billed (proforma raised ahead / its invoice) keeps the old rate —
+       buildPlanChange refuses while one exists. Not readable → 500 parts_check_failed, nothing saved.
+       The SQL trigger subscriptions_r2626_plan_change_vs_later_part guards the payment the same way. */
+    const laterPartsP = readLaterBilledParts(supabase, tenantId, sub.id, today).catch((e: unknown) => {
+      console.error(`[change-plan] ${sub.id}: billing parts read failed: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    });
     let money;
     try {
       money = await readPlanChangeMoney(supabase, tenantId, sub, today);
@@ -79,7 +95,21 @@ export const POST = withRoute(
         .from("customers").select("country, gst_treatment").eq("id", sub.customer_id).eq("tenant_id", tenantId).maybeSingle();
       if (isZeroRatedSupply({ country: cust?.country, treatment: cust?.gst_treatment })) taxRatePct = 0; // R-2515: export / SEZ
     }
-    const built = buildPlanChange({ sub, target, newSeats: input.seats, today, taxRatePct, money });
+    const seatCuts = await seatCutsP;
+    if (seatCuts == null) {
+      return NextResponse.json({
+        error: "Could not read this subscription's scheduled seat cuts, so the plan was not changed. Try again.",
+        code: "cut_check_failed",
+      }, { status: 500 });
+    }
+    const laterParts = await laterPartsP;
+    if (laterParts == null) {
+      return NextResponse.json({
+        error: "Could not read this subscription's billing parts, so the plan was not changed. Try again.",
+        code: "parts_check_failed",
+      }, { status: 500 });
+    }
+    const built = buildPlanChange({ sub, target, newSeats: input.seats, today, taxRatePct, money, seatCuts, laterParts });
     if (!built.ok) return NextResponse.json({ error: built.reason }, { status: 400 });
     const { plan } = built;
 

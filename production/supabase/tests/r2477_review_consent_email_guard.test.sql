@@ -10,7 +10,7 @@
 --       sign-in address.
 --   R2. Consent: invite_existing_login writes a membership_invites row (the typed address only);
 --       another owner / the invitee cannot read the table directly; another login cannot accept it;
---       an expired invite cannot be accepted; accepting twice is harmless.
+--       an expired invite cannot be accepted; R-2517: accept needs the emailed token, single use.
 --   R3. A workspace the login OWNS is never moved or deleted: a blank solo workspace owner accepts B's
 --       invite → B becomes the selected company, the blank workspace and her owner membership stay;
 --       a trusted (server) Claim of a blank-workspace OWNER adds a membership, never 'moved'.
@@ -67,7 +67,7 @@ do $$
 declare v text; v_n int; v_msg text; v_state text; v_inv uuid; j jsonb;
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
-  v := public.invite_existing_login('R2477R-Olga@Example.test', 'sales');
+  v := public.invite_existing_login('R2477R-Olga@Example.test', 'sales', encode(sha256(convert_to('r2477r-olga_tokentokentokentokentokentok', 'UTF8')), 'hex'));  -- R-2517: emailed link's token hash
   if v <> 'invited' then raise exception 'FAIL R2: invite said %', v; end if;
   v := public.invite_existing_login('r2477r-nobody@example.test', 'sales');
   if v <> 'plain' then raise exception 'FAIL R2: unknown address said %', v; end if;
@@ -85,22 +85,24 @@ begin
   select i.invite_id into v_inv from public.my_company_invites() i where i.company_name = 'R2477R Beta Co';
   if v_inv is null then raise exception 'FAIL R2: Olga does not see B''s invite'; end if;
 
-  -- B's sales (another login) cannot accept Olga's invite
+  -- B's sales (another login) cannot accept Olga's invite, not even with her emailed token (R-2517)
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000b2', 'role', 'authenticated')::text, true);
-  begin perform public.accept_company_invite(v_inv);
+  begin perform public.accept_company_invite_by_token('r2477r-olga_tokentokentokentokentokentok');
   exception when others then get stacked diagnostics v_state = returned_sqlstate; end;
-  if v_state is distinct from 'P0002' then raise exception 'FAIL R2: another login accepted Olga''s invite (%)', v_state; end if;
+  if v_state is distinct from '42501' then raise exception 'FAIL R2: another login accepted Olga''s invite (%)', v_state; end if;
 
-  -- Olga accepts; A stays selected (A is real); twice is harmless
+  -- Olga accepts with the emailed token; A stays selected (A is real); the link is single-use (R-2517)
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000a1', 'role', 'authenticated')::text, true);
-  j := public.accept_company_invite(v_inv);
+  j := public.accept_company_invite_by_token('r2477r-olga_tokentokentokentokentokentok');
   if (j->>'selected')::boolean or j->>'company_name' <> 'R2477R Beta Co' then raise exception 'FAIL R2: accept answered %', j; end if;
-  j := public.accept_company_invite(v_inv);
-  if not (j->>'already')::boolean then raise exception 'FAIL R2: second accept answered %', j; end if;
+  v_state := null;
+  begin perform public.accept_company_invite_by_token('r2477r-olga_tokentokentokentokentokentok');
+  exception when others then get stacked diagnostics v_state = returned_sqlstate, v_msg = message_text; end;
+  if v_state is distinct from '42501' or v_msg not ilike '%already used%' then raise exception 'FAIL R2: second accept answered % %', v_state, v_msg; end if;
   if public.current_tenant_id() is distinct from 'c2478000-0000-0000-0000-0000000000f1'::uuid then
     raise exception 'FAIL R2: accepting moved Olga away from A';
   end if;
-  raise notice 'PASS R2: membership invite (typed address only), RLS, only the invitee accepts, idempotent';
+  raise notice 'PASS R2: membership invite (typed address only), RLS, only the invitee accepts (with the emailed token), single use';
 end $$;
 
 reset role;
@@ -186,10 +188,10 @@ do $$
 declare v text; j jsonb;
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
-  v := public.invite_existing_login('r2477r-solo@example.test', 'support');
+  v := public.invite_existing_login('r2477r-solo@example.test', 'support', encode(sha256(convert_to('r2477r-solo_tokentokentokentokentokentok', 'UTF8')), 'hex'));
   if v <> 'invited' then raise exception 'FAIL R3: invite of a blank-workspace owner said %', v; end if;
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000c1', 'role', 'authenticated')::text, true);
-  j := public.accept_company_invite((select i.invite_id from public.my_company_invites() i));
+  j := public.accept_company_invite_by_token('r2477r-solo_tokentokentokentokentokentok');
   if not (j->>'selected')::boolean then raise exception 'FAIL R3: blank own workspace — B not selected after accept: %', j; end if;
   if public.current_tenant_id() is distinct from 'c2478000-0000-0000-0000-0000000000f2'::uuid then
     raise exception 'FAIL R3: solo is not in B after accepting';
@@ -268,7 +270,7 @@ declare v text; v_msg text; v_state text; v_n int; v_inv uuid; j jsonb;
 begin
   -- B's owner B2 invites Dana (works only in E); E's owner then tries to change Dana's email
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000b3', 'role', 'authenticated')::text, true);
-  v := public.invite_existing_login('r2477r-dana@example.test', 'owner');
+  v := public.invite_existing_login('r2477r-dana@example.test', 'owner', encode(sha256(convert_to('r2477r-dana1_tokentokentokentokentokentok', 'UTF8')), 'hex'));
   if v <> 'invited' then raise exception 'FAIL R6: invite of Dana said %', v; end if;
   begin perform public.invite_existing_login('r2477r-dana@example.test', 'personal');
   exception when others then get stacked diagnostics v_state = returned_sqlstate; end;
@@ -291,13 +293,13 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000d1', 'role', 'authenticated')::text, true);
   select i.invite_id into v_inv from public.my_company_invites() i where i.company_name = 'R2477R Beta Co';
   v_msg := null;
-  begin perform public.accept_company_invite(v_inv);
+  begin perform public.accept_company_invite_by_token('r2477r-dana1_tokentokentokentokentokentok');
   exception when insufficient_privilege then get stacked diagnostics v_msg = message_text; end;
   if v_msg is null or v_msg not ilike '%no longer an owner%' then raise exception 'FAIL R6: accepted an invite whose sender was demoted: %', v_msg; end if;
 
   -- B's owner re-invites Dana (sales); her sign-in address changes before she accepts → refused
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
-  v := public.invite_existing_login('r2477r-dana@example.test', 'sales');
+  v := public.invite_existing_login('r2477r-dana@example.test', 'sales', encode(sha256(convert_to('r2477r-dana2_tokentokentokentokentokentok', 'UTF8')), 'hex'));
   if v <> 'invited' then raise exception 'FAIL R6: re-invite of Dana said %', v; end if;
 end $$;
 
@@ -309,7 +311,7 @@ declare v_msg text; v_inv uuid;
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000d1', 'role', 'authenticated')::text, true);
   select i.invite_id into v_inv from public.my_company_invites() i where i.company_name = 'R2477R Beta Co';
-  begin perform public.accept_company_invite(v_inv);
+  begin perform public.accept_company_invite_by_token('r2477r-dana2_tokentokentokentokentokentok');
   exception when insufficient_privilege then get stacked diagnostics v_msg = message_text; end;
   if v_msg is null or v_msg not ilike '%another email address%' then raise exception 'FAIL R6: accepted an invite sent to an old address: %', v_msg; end if;
   raise notice 'PASS R6: open invites block email changes; invitable roles only; stale sender / changed address refused';
@@ -327,10 +329,10 @@ begin
   j := public.merge_stranded_user_into_tenant('r2477r-joiner@example.test', 'c2478000-0000-0000-0000-0000000000f2', 'sales');
   if j->>'action' <> 'added' then raise exception 'FAIL R7: claim of a join requester answered %', j; end if;
 
-  v := public.invite_existing_login('r2477r-pers@example.test', 'support');
+  v := public.invite_existing_login('r2477r-pers@example.test', 'support', encode(sha256(convert_to('r2477r-pers_tokentokentokentokentokentok', 'UTF8')), 'hex'));
   if v <> 'invited' then raise exception 'FAIL R7: invite of a personal account said %', v; end if;
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000d2', 'role', 'authenticated')::text, true);
-  j := public.accept_company_invite((select i.invite_id from public.my_company_invites() i));
+  j := public.accept_company_invite_by_token('r2477r-pers_tokentokentokentokentokentok');
   if not (j->>'selected')::boolean then raise exception 'FAIL R7: personal account not moved into the business on accept: %', j; end if;
   if not public.current_user_has_role('support') then raise exception 'FAIL R7: personal account has no business role after accept'; end if;
   raise notice 'PASS R7: join request counts as agreement; personal account accepting works in the business';
@@ -364,7 +366,7 @@ begin
 
   -- B invites Tina's real address
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
-  v := public.invite_existing_login('r2477r-tina@example.test', 'manager');
+  v := public.invite_existing_login('r2477r-tina@example.test', 'manager', encode(sha256(convert_to('r2477r-tina_tokentokentokentokentokentok', 'UTF8')), 'hex'));
   if v <> 'invited' then raise exception 'FAIL R8: invite of Tina said %', v; end if;
   -- uniform answers: an unknown address and a login in no company look the same
   v := public.invite_existing_login('r2477r-nobody-at-all@example.test', 'sales');
@@ -373,7 +375,7 @@ begin
   -- whoever holds Tina's login now (E's owner via the re-pointed address) tries to accept
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2478000-0000-0000-0000-0000000000e2', 'role', 'authenticated')::text, true);
   select i.invite_id into v_inv from public.my_company_invites() i where i.company_name = 'R2477R Beta Co';
-  begin perform public.accept_company_invite(v_inv);
+  begin perform public.accept_company_invite_by_token('r2477r-tina_tokentokentokentokentokentok');
   exception when insufficient_privilege then get stacked diagnostics v_msg = message_text; end;
   if v_msg is null or v_msg not ilike '%profile email is not the address you sign in with%' then
     raise exception 'FAIL R8: accepted while the profile email was re-pointed: %', v_msg;

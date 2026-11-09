@@ -32,16 +32,24 @@ function walk(dir: string, out: string[] = []): string[] {
   return out;
 }
 
+/* R-2630 (9 Nov 2026): every page re-walked its whole import closure, and every import probed up to
+   five paths with existsSync + statSync — the same shared components thousands of times (~20 s
+   alone, the heaviest file of the push guard step). Each import is now resolved once per run and
+   each file's import list worked out once; the pages, closures and ids are exactly the same. */
+const resolved = new Map<string, string | null>();
 function resolveImport(from: string, spec: string): string | null {
   let base: string;
   if (spec.startsWith("@/")) base = join(SRC, spec.slice(2));
   else if (spec.startsWith(".")) base = resolve(dirname(from), spec);
   else return null;
+  if (resolved.has(base)) return resolved.get(base)!;
+  let hit: string | null = null;
   for (const ext of ["", ".tsx", ".ts", "/index.tsx", "/index.ts"]) {
     const p = base + ext;
-    if (existsSync(p) && statSync(p).isFile()) return p;
+    if (statSync(p, { throwIfNoEntry: false })?.isFile()) { hit = p; break; }
   }
-  return null;
+  resolved.set(base, hit);
+  return hit;
 }
 
 const srcCache = new Map<string, string>();
@@ -58,20 +66,38 @@ function closure(entries: string[]): Set<string> {
     const f = stack.pop()!;
     if (seen.has(f)) continue;
     seen.add(f);
-    for (const m of read(f).matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
-      const r = resolveImport(f, m[1]);
-      if (r && /\.(tsx?|jsx?)$/.test(r) && !/\.test\./.test(r)) stack.push(r);
-    }
+    for (const r of importsOf(f)) if (!seen.has(r)) stack.push(r);
   }
   return seen;
 }
 
+const importLists = new Map<string, string[]>();
+/** The source files `f` imports (resolved, tests left out) — worked out once per file. */
+function importsOf(f: string): string[] {
+  let list = importLists.get(f);
+  if (!list) {
+    list = [];
+    for (const m of read(f).matchAll(/(?:from|import)\s*\(?\s*["']([^"']+)["']/g)) {
+      const r = resolveImport(f, m[1]);
+      if (r && /\.(tsx?|jsx?)$/.test(r) && !/\.test\./.test(r)) list.push(r);
+    }
+    importLists.set(f, list);
+  }
+  return list;
+}
+
 type Page = { route: string; files: Set<string>; ids: Set<string> };
 
+const fileIds = new Map<string, string[]>();
 function idsIn(files: Set<string>): Set<string> {
   const ids = new Set<string>();
   for (const f of files) {
-    for (const m of read(f).matchAll(/\bid\s*[=:]\s*\{?\s*["'`]([A-Za-z][\w-]*)["'`]/g)) ids.add(m[1]);
+    let own = fileIds.get(f); // R-2630: each file's ids found once, not once per page that renders it
+    if (!own) {
+      own = [...read(f).matchAll(/\bid\s*[=:]\s*\{?\s*["'`]([A-Za-z][\w-]*)["'`]/g)].map((m) => m[1]);
+      fileIds.set(f, own);
+    }
+    for (const id of own) ids.add(id);
   }
   return ids;
 }

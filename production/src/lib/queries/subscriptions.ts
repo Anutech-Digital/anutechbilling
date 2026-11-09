@@ -138,125 +138,75 @@ export function useSetSubscriptionDomain() {
   });
 }
 
-/**
- * Correct a subscription's details (data-entry fix). Touches only the
- * subscription record's own fields — it does NOT re-bill or alter the linked
- * payment/quote/invoice (those are separate money artifacts). Use it to fix a
- * mis-typed vendor / domain / dates on a manual or imported sub.
- *
- * R-2228: seats, MRR and status are NOT in this patch any more — seats through Manage seats (bills
- * or credits), status through Suspend / Cancel / Won't renew, and a wrong seats/MRR record through
- * the owner's Data correction (useCorrectSubscriptionData).
+/*
+ * R-2545: the four step-by-step savers that were here (useUpdateSubscription, useCorrectSubscriptionData,
+ * useCorrectSubscriptionTerms, useCorrectSubscriptionCommitment) are gone: each committed on its own, so a
+ * refused later step left the earlier ones saved. Correct details saves through useCorrectSubscriptionDetails.
  */
-export function useUpdateSubscription() {
+
+/** R-2545: what the Correct details dialog saves — every part in ONE request. */
+export interface CorrectSubscriptionDetailsInput {
+  id: string;
+  reason: string;
+  /** Owner's Data correction of seats / MRR (correct_subscription_data). Omit = not changed. */
+  data?: { seats: number; mrr: number };
+  /** The plan (correct_subscription_terms). Omit = not changed. */
+  plan?: { itemId: string; seats: number; mrr: number };
+  /** Commitment / payment frequency (correct_subscription_commitment). Omit = not changed. */
+  commitment?: { termMonths: number; billingCycle: BillingCycle; renewalDate: string | null };
+  /** The record's own fields. Blank dates clear; a blank domain keeps the recorded one. */
+  patch: {
+    vendor: Subscription["vendor"];
+    domain: string | null;
+    start_date: string | null;
+    renewal_date: string | null;
+    payment_due_date: string | null;
+  };
+}
+
+/** R-2545: the named arguments of correct_subscription_details (migration 20261109034726). */
+export function correctDetailsArgs(input: CorrectSubscriptionDetailsInput) {
+  return {
+    p_subscription_id: input.id,
+    p_reason: input.reason,
+    p_vendor: input.patch.vendor,
+    p_domain: input.patch.domain,
+    p_start_date: input.patch.start_date,
+    p_renewal_date: input.patch.renewal_date,
+    p_payment_due_date: input.patch.payment_due_date,
+    p_data_seats: input.data?.seats ?? null,
+    p_data_mrr: input.data?.mrr ?? null,
+    p_item_id: input.plan?.itemId ?? null,
+    p_seats: input.plan?.seats ?? null,
+    p_mrr: input.plan?.mrr ?? null,
+    p_term_months: input.commitment?.termMonths ?? null,
+    p_billing_cycle: input.commitment?.billingCycle ?? null,
+    p_commitment_renewal: input.commitment?.renewalDate ?? null,
+  };
+}
+
+/**
+ * R-2545: "Correct details" is ONE save. correct_subscription_details runs the data fix, the plan,
+ * the commitment and the record's own fields in one transaction — any refusal (role, reason, the
+ * R-2533 renewal-date guard, a plan-change freeze) saves nothing. Before, four requests ran one
+ * after another and a refused date left the payment frequency already changed.
+ */
+export function useCorrectSubscriptionDetails() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: {
-      id: string;
-      patch: {
-        vendor?: Subscription["vendor"];
-        start_date?: string | null;
-        renewal_date?: string | null;
-        /** Postpaid credit clock (migration 20260910060000). Null clears it, which means
-         *  "no agreed date" and shows no countdown — see the edit dialog. */
-        payment_due_date?: string | null;
-        /** R-2095: correct a mistyped domain (Correct details). */
-        domain?: string | null;
-      };
-    }) => {
+    mutationFn: async (input: CorrectSubscriptionDetailsInput) => {
       const supabase = createClient();
-      const { error } = await supabase.from("subscriptions").update(input.patch).eq("id", input.id);
-      if (error) throw error;
+      const rpc = supabase.rpc as unknown as (
+        fn: "correct_subscription_details",
+        args: ReturnType<typeof correctDetailsArgs>,
+      ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
+      const { error } = await rpc.call(supabase, "correct_subscription_details", correctDetailsArgs(input));
+      if (error) throw new Error(error.message);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
       qc.invalidateQueries({ queryKey: ["customers"] });
       toast.success("Subscription corrected");
-    },
-    onError: (err) => toastError(err),
-  });
-}
-
-/**
- * R-1684: seats / plan / price go through correct_subscription_terms — reason required (kept on
- * the change history), seat cut / plan change owner or manager only, plan = a catalog row.
- * No toast here: the edit dialog saves the rest of the record after it and toasts once.
- */
-export function useCorrectSubscriptionTerms() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { id: string; itemId: string | null; seats: number; mrr: number; reason: string }) => {
-      const supabase = createClient();
-      const { error } = await supabase.rpc("correct_subscription_terms", {
-        p_subscription_id: input.id,
-        p_item_id: input.itemId,
-        p_seats: input.seats,
-        p_mrr: input.mrr,
-        p_reason: input.reason,
-      });
-      if (error) throw new Error(error.message);
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-    },
-    onError: (err) => toastError(err),
-  });
-}
-
-/**
- * R-2228: the owner's Data correction of seats / MRR (correct_subscription_data, migration
- * 20261101145415) — owner only, reason of 10+ characters, one activity_log row old → new. A record
- * fix: nothing is billed or credited. No toast here (the edit dialog toasts once).
- */
-export function useCorrectSubscriptionData() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { id: string; seats: number; mrr: number; reason: string }) => {
-      const supabase = createClient();
-      const rpc = supabase.rpc as unknown as (
-        fn: "correct_subscription_data",
-        args: { p_subscription_id: string; p_seats: number; p_mrr: number; p_reason: string },
-      ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-      const { error } = await rpc.call(supabase, "correct_subscription_data", {
-        p_subscription_id: input.id,
-        p_seats: input.seats,
-        p_mrr: input.mrr,
-        p_reason: input.reason,
-      });
-      if (error) throw new Error(error.message);
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
-    },
-    onError: (err) => toastError(err),
-  });
-}
-
-/**
- * R-2095: change an existing subscription's COMMITMENT (term_months: 1 Flexible / 12 Annual / 36) and
- * PAYMENT FREQUENCY (billing_cycle) through correct_subscription_commitment — reason, role, no annual
- * reduction mid-term, licence cost from the catalogue tier, change history (migration 20261030164727).
- */
-export function useCorrectSubscriptionCommitment() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: async (input: { id: string; termMonths: number; billingCycle: BillingCycle; renewalDate: string | null; reason: string }) => {
-      const supabase = createClient();
-      const rpc = supabase.rpc as unknown as (
-        fn: "correct_subscription_commitment",
-        args: { p_subscription_id: string; p_term_months: number; p_billing_cycle: BillingCycle; p_renewal_date: string | null; p_reason: string },
-      ) => PromiseLike<{ data: unknown; error: { message: string } | null }>;
-      const { error } = await rpc.call(supabase, "correct_subscription_commitment", {
-        p_subscription_id: input.id,
-        p_term_months: input.termMonths,
-        p_billing_cycle: input.billingCycle,
-        p_renewal_date: input.renewalDate,
-        p_reason: input.reason,
-      });
-      if (error) throw new Error(error.message);
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["subscriptions"] });
     },
     onError: (err) => toastError(err),
   });

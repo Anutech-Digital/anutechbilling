@@ -125,7 +125,7 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000b1', 'role', 'authenticated')::text, true);
   v := public.release_stale_team_invite('r2477-pratik@example.test');
   if v <> 'member_elsewhere' then raise exception 'FAIL 2: release said % (expected member_elsewhere)', v; end if;
-  v := public.invite_existing_login('  R2477-Pratik@Example.test ', 'sales');
+  v := public.invite_existing_login('  R2477-Pratik@Example.test ', 'sales', encode(sha256(convert_to('r2477-pratikB_tokentokentokentokentoken1', 'UTF8')), 'hex'));  -- R-2517: emailed link's token hash
   if v <> 'invited' then raise exception 'FAIL 2: invite_existing_login said % (expected invited)', v; end if;
 
   -- A's owner: already a member there
@@ -203,7 +203,7 @@ begin
   select i.invite_id into v_inv from public.my_company_invites() i
    where i.company_name = 'R2477 Excel Co' and i.role = 'sales';
   if v_inv is null then raise exception 'FAIL 3: pratik does not see B''s invite'; end if;
-  v := public.accept_company_invite(v_inv);
+  v := public.accept_company_invite_by_token('r2477-pratikB_tokentokentokentokentoken1');  -- R-2517: with the emailed token
   if (v->>'selected')::boolean then raise exception 'FAIL 3: accepting moved his selected company away from A: %', v; end if;
   select count(*) into v_n from public.my_company_invites();
   if v_n <> 0 then raise exception 'FAIL 3: the accepted invite is still listed'; end if;
@@ -496,7 +496,7 @@ declare v text; j jsonb;
 begin
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000a1', 'role', 'authenticated')::text, true);
   -- pratik works in B now: a membership invite he accepts; solo works nowhere: invite + Claim
-  v := public.invite_existing_login('r2477-pratik@example.test', 'sales');
+  v := public.invite_existing_login('r2477-pratik@example.test', 'sales', encode(sha256(convert_to('r2477-pratikA_tokentokentokentokentoken2', 'UTF8')), 'hex'));
   if v <> 'invited' then raise exception 'FAIL 10: re-invite of pratik said %', v; end if;
   v := public.invite_existing_login('r2477-solo@example.test', 'support');
   if v <> 'plain' then raise exception 'FAIL 11: re-invite of solo said % (expected plain — works in no company)', v; end if;
@@ -520,7 +520,7 @@ begin
   if v_n <> 0 then raise exception 'FAIL 10: pratik (works in B) listed for Claim'; end if;
 
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000c1', 'role', 'authenticated')::text, true);
-  j := public.accept_company_invite((select i.invite_id from public.my_company_invites() i where i.company_name = 'R2477 Anu Co'));
+  j := public.accept_company_invite_by_token('r2477-pratikA_tokentokentokentokentoken2');  -- R-2517
   if (j->>'selected')::boolean then raise exception 'FAIL 10: accepting A moved him away from B'; end if;
 
   perform set_config('request.jwt.claims', json_build_object('sub', 'c2477000-0000-0000-0000-0000000000a1', 'role', 'authenticated')::text, true);

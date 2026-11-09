@@ -281,7 +281,7 @@ export interface BuildPromptArgs {
 
 /** R-2460: what the prompt needs to know about a held draft — structurally a SendAutoQuoteHeld. */
 export interface HeldQuoteBrief {
-  kind: "approval" | "company_state" | "customer_state";
+  kind: "approval" | "company_state" | "customer_country" | "customer_state";
   /** The held draft's figures (rounded rupees) — never to be stated while it is held. */
   totals: readonly number[];
 }

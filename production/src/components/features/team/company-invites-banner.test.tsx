@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
 /**
- * R-2477 review: the "Invite from <company>" banner. Pinned: nothing for a login without invites;
- * one row per invite with company + role and "You keep your current company"; Accept posts to the
- * accept route and says what happened with the next step; an accept that switched company loads the
- * app fresh; "Not now" hides it without accepting; a refusal is shown in the server's words.
+ * R-2477 review + R-2517: the "Invite from <company>" banner. Pinned: nothing for a login without
+ * invites; one row per invite with company + role, "open the link we emailed to <address>" and
+ * "You keep your current company"; NO Accept button and nothing is posted (R-2517 — only the emailed
+ * link accepts); an invite without a link says to ask again; "Not now" hides it.
  */
 import * as React from "react";
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
@@ -11,11 +11,8 @@ import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/re
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 const st = vi.hoisted(() => ({
-  rows: [] as Array<{ invite_id: string; tenant_id: string; company_name: string; role: string }>,
+  rows: [] as Array<{ invite_id: string; tenant_id: string; company_name: string; role: string; email?: string; has_link?: boolean }>,
   posts: [] as string[],
-  answer: { status: 200, body: { ok: true, companyName: "Beta Traders", role: "sales", selected: false } as Record<string, unknown> },
-  toasts: [] as Array<{ kind: string; text: string }>,
-  went: [] as string[],
 }));
 
 vi.mock("@/lib/supabase/client", () => ({
@@ -24,14 +21,8 @@ vi.mock("@/lib/supabase/client", () => ({
 vi.mock("@/lib/hooks/useCurrentUser", () => ({
   useCurrentUser: () => ({ data: { userId: "u1", role: "owner", tenantId: "t1" } }),
 }));
-vi.mock("sonner", () => ({
-  toast: {
-    success: (t: string) => st.toasts.push({ kind: "success", text: t }),
-    error: (t: string) => st.toasts.push({ kind: "error", text: t }),
-  },
-}));
 
-import { CompanyInvitesBanner, invitesNav } from "./company-invites-banner";
+import { CompanyInvitesBanner } from "./company-invites-banner";
 
 function renderBanner() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -39,60 +30,46 @@ function renderBanner() {
 }
 
 beforeEach(() => {
-  st.rows = [{ invite_id: "i1", tenant_id: "t2", company_name: "Beta Traders", role: "sales" }];
-  st.posts = []; st.toasts = []; st.went = [];
-  st.answer = { status: 200, body: { ok: true, companyName: "Beta Traders", role: "sales", selected: false } };
+  st.rows = [{ invite_id: "i1", tenant_id: "t2", company_name: "Beta Traders", role: "sales", email: "ravi@x.test", has_link: true }];
+  st.posts = [];
   window.sessionStorage.clear();
-  vi.spyOn(invitesNav, "go").mockImplementation((h: string) => { st.went.push(h); });
-  vi.stubGlobal("fetch", vi.fn(async (url: string) => {
-    st.posts.push(url);
-    return new Response(JSON.stringify(st.answer.body), { status: st.answer.status });
-  }));
+  vi.stubGlobal("fetch", vi.fn(async (url: string) => { st.posts.push(url); return new Response("{}"); }));
 });
 afterEach(() => { cleanup(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
-describe("CompanyInvitesBanner (R-2477)", () => {
+describe("CompanyInvitesBanner (R-2477 + R-2517)", () => {
   it("renders nothing without invites", async () => {
     st.rows = [];
     const { container } = renderBanner();
     await waitFor(() => expect(container.textContent).toBe(""));
   });
 
-  it("shows the company, the role and that they keep their company", async () => {
+  it("shows the company, the role, the emailed link as the way to accept, and that they keep their company", async () => {
     renderBanner();
     await screen.findByText("Beta Traders");
     expect(screen.getByRole("region", { name: /Invites from other companies/ }).textContent)
-      .toMatch(/Invite from Beta Traders to join as Sales\..*You keep your current company/);
+      .toMatch(/Invite from Beta Traders to join as Sales. To accept, open the link we emailed to ravi@x.test..*You keep your current company/);
   });
 
-  it("Accept posts to the accept route and says where to find the company", async () => {
+  it("R-2517: there is no Accept button and nothing is posted", async () => {
     renderBanner();
-    fireEvent.click(await screen.findByRole("button", { name: "Accept the invite from Beta Traders" }));
-    await waitFor(() => expect(st.toasts).toHaveLength(1));
-    expect(st.posts).toEqual(["/api/team/invites/i1/accept"]);
-    expect(st.toasts[0]).toEqual({ kind: "success", text: "You joined Beta Traders as Sales. Switch to it from the company switcher in the top bar." });
-    expect(st.went).toEqual([]);
+    await screen.findByText("Beta Traders");
+    expect(screen.queryByRole("button", { name: /accept/i })).toBeNull();
+    expect(screen.getAllByRole("button")).toHaveLength(1);
+    expect(st.posts).toEqual([]);
   });
 
-  it("an accept that switched company loads the app fresh", async () => {
-    st.answer = { status: 200, body: { ok: true, companyName: "Beta Traders", role: "sales", selected: true } };
+  it("an invite without a link says to ask the company again", async () => {
+    st.rows = [{ invite_id: "i1", tenant_id: "t2", company_name: "Beta Traders", role: "sales", email: "ravi@x.test", has_link: false }];
     renderBanner();
-    fireEvent.click(await screen.findByRole("button", { name: "Accept the invite from Beta Traders" }));
-    await waitFor(() => expect(st.went).toHaveLength(1));
+    await screen.findByText("Beta Traders");
+    expect(screen.getByRole("region").textContent).toMatch(/Ask Beta Traders to invite you again/);
   });
 
-  it("Not now hides it without accepting", async () => {
+  it("Not now hides it", async () => {
     renderBanner();
     fireEvent.click(await screen.findByRole("button", { name: /Not now/ }));
     await waitFor(() => expect(screen.queryByText("Beta Traders")).toBeNull());
     expect(st.posts).toEqual([]);
-  });
-
-  it("a refusal is shown in the server's words", async () => {
-    st.answer = { status: 403, body: { error: "This invite from Beta Traders has expired. Ask them to invite you again." } };
-    renderBanner();
-    fireEvent.click(await screen.findByRole("button", { name: "Accept the invite from Beta Traders" }));
-    await waitFor(() => expect(st.toasts).toHaveLength(1));
-    expect(st.toasts[0]).toEqual({ kind: "error", text: "This invite from Beta Traders has expired. Ask them to invite you again." });
   });
 });

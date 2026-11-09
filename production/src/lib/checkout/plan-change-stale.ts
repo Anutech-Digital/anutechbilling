@@ -10,9 +10,23 @@
  *   - from_seats / from_mrr missing, or seats / ₹/month differ → R-2589
  *   - from_plan stored and the plan differs                   → R-2589
  *   - fewer seats than the subscription, or ₹0/month          → R-2227 (bad line)
+ *   - an end-of-term seat cut scheduled for this renewal       → R-2617 (trigger
+ *     subscriptions_r2617_plan_change_vs_seat_cut refuses the plan change while it is scheduled)
+ *   - a part AFTER the quote's period already billed (a proforma raised ahead, or its invoice)
+ *                                                              → R-2626 (trigger
+ *     subscriptions_r2626_plan_change_vs_later_part) — read separately (planChangePayRefusal)
  */
 import type { createAdminClient } from "@/lib/supabase/server";
-import { isPlanChangeQuote } from "@/lib/subscriptions/change-plan";
+import { isPlanChangeQuote, planChangeLaterPartBlock } from "@/lib/subscriptions/change-plan";
+import { readLaterBilledParts } from "@/lib/subscriptions/change-plan-later-parts.server";
+import { istToday } from "@/lib/dates/ist";
+
+/** R-2626: the plan change's last day (plan_change.period_to) — the SQL trigger's rule: today when not stored. */
+function planChangePeriodTo(lineItems: unknown): string {
+  const first = Array.isArray(lineItems) ? (lineItems[0] as { plan_change?: { period_to?: unknown } } | undefined) : undefined;
+  const to = first?.plan_change?.period_to;
+  return typeof to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : istToday();
+}
 
 export interface PlanChangeSubNow {
   id: string;
@@ -20,6 +34,18 @@ export interface PlanChangeSubNow {
   seats: number | null;
   mrr: number | null;
   plan: string | null;
+  /** R-2617: read with the subscription (one query, PostgREST embed on the FK). */
+  renewal_date?: string | null;
+  subscription_seat_reductions?: { status: string | null; timing: string | null; effective_date: string | null }[] | null;
+}
+
+/** R-2617: a scheduled end-of-term seat cut dated this renewal — the same rows the SQL trigger refuses on. */
+function seatCutScheduled(sub: PlanChangeSubNow): boolean {
+  const renewal = (sub.renewal_date ?? "").slice(0, 10);
+  if (!renewal) return false;
+  return (sub.subscription_seat_reductions ?? []).some(
+    (r) => r.status === "scheduled" && r.timing === "end_of_term" && (r.effective_date ?? "").slice(0, 10) === renewal,
+  );
 }
 
 interface StoredPlanChange {
@@ -56,6 +82,7 @@ export function planChangeStaleReason(lineItems: unknown, sub: PlanChangeSubNow 
   if ("from_plan" in pc && planText(pc.from_plan) !== planText(sub.plan)) return "changed";
   /* R-2227's apply step (full payment): fewer seats than the subscription has, or no ₹/month. */
   if ((num(pc.seats) ?? 0) < (num(sub.seats) ?? 0) || (num(pc.new_mrr) ?? 0) <= 0) return "bad_line";
+  if (seatCutScheduled(sub)) return "seat_cut_scheduled";
   return null;
 }
 
@@ -70,7 +97,7 @@ export async function planChangePayRefusal(
   if (!isPlanChangeQuote(quote)) return null;
   const { data, error } = await admin
     .from("subscriptions")
-    .select("id, status, seats, mrr, plan")
+    .select("id, status, seats, mrr, plan, renewal_date, subscription_seat_reductions(status, timing, effective_date)")
     .eq("tenant_id", quote.tenant_id)
     .eq("renewal_quote_id", quote.id)
     .limit(1)
@@ -79,8 +106,41 @@ export async function planChangePayRefusal(
     console.error(`[plan-change-stale] ${quote.id}: subscription read failed: ${error.message}`);
     return { status: 500, body: { error: "Could not start payment. Please retry." } };
   }
-  const reason = planChangeStaleReason(quote.line_items, (data as PlanChangeSubNow | null) ?? null);
+  const sub = (data as PlanChangeSubNow | null) ?? null;
+  const reason = planChangeStaleReason(quote.line_items, sub);
+  if (!reason && sub) {
+    /* R-2626: a later part already billed at the old rate — record_payment's trigger would refuse. */
+    const periodTo = planChangePeriodTo(quote.line_items);
+    let later;
+    try {
+      later = await readLaterBilledParts(admin, quote.tenant_id, sub.id, periodTo);
+    } catch (e) {
+      console.error(`[plan-change-stale] ${quote.id}: billing parts read failed: ${e instanceof Error ? e.message : e}`);
+      return { status: 500, body: { error: "Could not start payment. Please retry." } };
+    }
+    if (planChangeLaterPartBlock(later, periodTo, null)) {
+      return {
+        status: 409,
+        body: {
+          error: "This plan change can't be paid right now — a later billing part of this subscription is already billed at the old plan's rate.",
+          nextStep: "Please ask the reseller to sort out that part's bill first. Nothing has been charged.",
+          planChangeStale: "later_part_billed",
+        },
+      };
+    }
+    return null;
+  }
   if (!reason) return null;
+  if (reason === "seat_cut_scheduled") {
+    return {
+      status: 409,
+      body: {
+        error: "This plan change can't be paid right now — a seat reduction is scheduled on this subscription for its renewal.",
+        nextStep: "Please ask the reseller to sort out the scheduled seat reduction first. Nothing has been charged.",
+        planChangeStale: reason,
+      },
+    };
+  }
   return {
     status: 409,
     body: {

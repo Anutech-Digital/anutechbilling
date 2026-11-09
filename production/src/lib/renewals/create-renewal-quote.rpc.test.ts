@@ -23,7 +23,9 @@ function fakeDb(made?: { data: unknown; error: { message: string } | null }) {
     Object.assign(chain, {
       select: self, eq: self,
       maybeSingle: async () => ({
-        data: table === "customers" ? { country: "India" } : table === "items" ? { msrp: 300, wholesale: 110 } : null,
+        /* R-2619: a created:false answer is re-read — here it is a real renewal quote. */
+        data: table === "customers" ? { country: "India" } : table === "items" ? { msrp: 300, wholesale: 110 }
+            : table === "quotes" ? { id: "Q-T-27-0000", is_renewal: true, extension_months: 12, line_items: [] } : null,
         error: null,
       }),
       insert: async (row: unknown) => { calls.inserts.push(row); return { error: null }; },
@@ -97,7 +99,11 @@ describe("R-1574: no renewal-quote path links a subscription by a separate updat
       expect(code).toContain('rpc("create_renewal_quote"');
       expect(code).not.toContain('rpc("next_document_number"');
       expect(code).not.toMatch(/from\("quotes"\)\s*\.insert/);
-      expect(code).not.toMatch(/renewal_quote_id:\s*\w/);
+      /* Never LINKS by a separate update. R-2618: letting go of a closed plan-change quote
+         (renewal_quote_id: null, guarded on that same link) is allowed — exactly once, and only that. */
+      expect(code).not.toMatch(/renewal_quote_id:\s*(?!null\b)\w/);
+      expect((code.match(/renewal_quote_id:\s*null\b/g) ?? []).length).toBeLessThanOrEqual(1);
+      if (/renewal_quote_id:\s*null\b/.test(code)) expect(code).toMatch(/\.eq\("renewal_quote_id", q\.id as string\)/);
     });
   }
 });

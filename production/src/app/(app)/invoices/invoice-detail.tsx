@@ -23,6 +23,7 @@ import { SAAS_HSN } from "@/lib/gst/hsn";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/queries/payments";
 import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
+import { CorrectInvoiceDateButton } from "@/components/features/invoices/correct-invoice-date-dialog";
 import { invoiceReceiptsQuote, invoiceTdsMoney } from "./invoice-receipts";
 import { takesQuotelessReceipt } from "@/lib/payments/quoteless-receipt";
 import { useQuotelessReceipts } from "@/lib/queries/quoteless-receipts";
@@ -56,6 +57,7 @@ import { openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { invoiceLineItemsView } from "./invoice-line-items";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { invoiceEinvoiceNotice } from "@/lib/compliance/einvoice";
+import { invoiceBuyer, invoiceIrnGstin } from "@/lib/invoices/invoice-buyer";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { InvoiceLateCharges } from "@/components/features/late-charges/invoice-late-charges";
 import { OnlineFeeBillCard } from "@/components/features/payments/online-fee-bill-card";
@@ -123,8 +125,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   /* R-337: over ₹5 Cr turnover, a B2B invoice with no gst_irn gets a reminder. A warning
      only — the app does not generate IRNs yet (R-044). Unknown turnover shows nothing. */
   const { data: turnover } = useTurnoverBracket();
+  /* R-2540: the buyer as on the invoice (snapshot / Zoho sale as filed) — a B2C sale on a registered
+     customer is no "B2B without IRN", and the dialog + receipt print the invoice's own buyer. */
+  const buyer = invoiceBuyer(invoice, customer);
   const einvoiceNotice = invoiceEinvoiceNotice(turnover?.bracket ?? null, {
-    customerGstin: invoice.customer_gstin ?? customer?.gstin ?? null,
+    customerGstin: invoiceIrnGstin(invoice, customer?.gstin),
     gstIrn: invoice.gst_irn,
     status: invoice.status,
     invoiceDate: invoice.invoice_date,
@@ -298,6 +303,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   Credit note
                 </Button>
               )}
+              {/* R-2173: owner/accountant correct the date while GST for the month is not filed. */}
+              <CorrectInvoiceDateButton invoice={invoice} role={me?.role} facts={{
+                hasNotes: (creditNotesForBadge?.length ?? 0) + (debitNotesForBadge?.length ?? 0) > 0,
+                onNetwork: (network.data ?? []).some((d) => d.sellerInvoiceId === invoice.id && d.status !== "cancelled"),
+              }} />
               {canWrite && (
                 <Button
                   size="sm"
@@ -537,11 +547,12 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           total={total}
           receivedPayments={receivedPayments}
           interState={interState}
-          customerGstin={customer?.gstin}
+          customerGstin={buyer.gstin}
           customerEmail={customer?.contact_email}
           customerPhone={customer?.contact_phone}
-          customerState={customer?.state}
-          customerCountry={customer?.country}
+          customerAddress={buyer.address}
+          customerState={buyer.state}
+          customerCountry={buyer.country}
           currency={quote?.currency}
           exchangeRate={quote?.exchange_rate}
           tenantName={supplier.name}
@@ -711,7 +722,9 @@ export function InvoicePaymentsAccordion({
   const [receiptPayment, setReceiptPayment] = React.useState<Payment | null>(null);
 
   const received = (payments ?? []).filter((p) => p.status === "received");
-  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin, treatment: inv.gst_treatment ?? customer?.gst_treatment });
+  /* R-2540: the receipt names the invoice's own buyer and keeps the invoice's frozen GST head. */
+  const buyer = invoiceBuyer(inv, customer);
+  const interState = inv.inter_state ?? isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin, treatment: inv.gst_treatment ?? customer?.gst_treatment });
 
   if (isLoading || projLoading) return <div className="text-xs text-ink-3 italic">Loading receipts…</div>;
 
@@ -796,9 +809,9 @@ export function InvoicePaymentsAccordion({
           onOpenChange={(o) => { if (!o) setReceiptPayment(null); }}
           payment={receiptPayment}
           customerName={inv.customer_name}
-          customerGstin={customer?.gstin}
+          customerGstin={buyer.gstin}
           customerEmail={customer?.contact_email}
-          customerAddress={customer?.address}
+          customerAddress={buyer.address}
           tenantName={me.tenantName}
           tenantGstin={me.tenantGstin}
           tenantEmail={me.tenantEmail}

@@ -38,12 +38,15 @@ import { rupee, formatDate, foreignAmount } from "@/lib/utils";
 import {
   useVendorBills,
   useVendorBillsTotals,
+  useVendorBillServicePeriods,
+  type BillServicePeriod,
   useDeleteVendorBill,
   usePayVendorBill,
   getBillAttachmentUrl,
   type VendorBill,
 } from "@/lib/queries/vendor-bills";
 import { useBankAccounts } from "@/lib/queries/bank";
+import { servicePeriodLabel, servicePeriodShowsInList } from "@/lib/accounting/bill-service-period";
 import { AddVendorBillDialog, type VendorBillPrefill } from "@/components/features/accounting/add-vendor-bill-dialog";
 import { useVendors } from "@/lib/queries/vendors";
 import { useVendorTdsThisFy } from "@/lib/queries/expenses";
@@ -115,6 +118,9 @@ export default function VendorBillsPage() {
   const confirm = useConfirm();
 
   const bills    = React.useMemo(() => billsQ.data ?? [], [billsQ.data]);
+  /* R-2623: each bill's service period (one SQL rule) for the "for <month>" line under the date. */
+  const billIds  = React.useMemo(() => bills.map((b) => b.id), [bills]);
+  const { data: periods } = useVendorBillServicePeriods(billIds);
   const isLoading = billsQ.isLoading;
   const totals   = totalsQ.data;
 
@@ -141,7 +147,7 @@ export default function VendorBillsPage() {
       id: "bill_no", header: "Bill #", width: "14%", sortValue: BILL_SORT.bill_no,
       cell: (b) => <div className="font-mono text-xs text-ink-2 truncate" title={b.bill_no || undefined}>{b.bill_no || "—"}</div>,
     },
-    { id: "date", header: "Date", width: "13%", sortValue: BILL_SORT.date, cell: (b) => <DateCell bill={b} /> },
+    { id: "date", header: "Date", width: "13%", sortValue: BILL_SORT.date, cell: (b) => <DateCell bill={b} period={periods?.get(b.id)} /> },
     { id: "amount", header: "Amount", width: "15%", align: "right", sortValue: BILL_SORT.amount, cell: (b) => <AmountCell bill={b} /> },
     {
       id: "status", header: "Status", width: "11%", sortValue: BILL_SORT.status,
@@ -155,7 +161,7 @@ export default function VendorBillsPage() {
         </div>
       ),
     },
-  ], [deleteBill]);
+  ], [deleteBill, periods]);
 
   const toolbar = (
     <>
@@ -333,13 +339,19 @@ function VendorCell({ bill: b }: { bill: VendorBill }) {
   );
 }
 
-/** Date + payment-due aging (unpaid only). */
-function DateCell({ bill: b }: { bill: VendorBill }) {
+/** Date + the month(s) the bill is for (R-2623, when not its own month) + payment-due aging (unpaid only). */
+function DateCell({ bill: b, period }: { bill: VendorBill; period?: BillServicePeriod }) {
   const dueDays = b.due_date ? Math.ceil((new Date(`${b.due_date}T00:00:00`).getTime() - Date.now()) / 86400000) : null;
   const showAging = b.status !== "paid" && dueDays !== null && (dueDays < 0 || dueDays <= 15);
+  const showFor = period && servicePeriodShowsInList(b.bill_date, period.service_from, period.service_to);
   return (
     <div className="whitespace-nowrap">
       <div className="text-ink-2">{formatDate(b.bill_date)}</div>
+      {showFor && (
+        <div className="text-xs text-ink-3" title={period.basis === "set" ? "Service period set by you" : "Service period worked out from the bill — open the bill to change it"}>
+          for {servicePeriodLabel(period.service_from, period.service_to)}
+        </div>
+      )}
       {b.due_date && <div className="text-xs text-ink-3">due {formatDate(b.due_date)}</div>}
       {showAging && dueDays !== null && (
         <div className="mt-0.5">

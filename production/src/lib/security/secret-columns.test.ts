@@ -60,6 +60,7 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
   "ai_usage_monthly.output_tokens": "R-1877 AI usage counter — integer count of model output tokens, no secret",
   "user_google_tokens.token_expiry": "an expiry time, not the token",
   "api_keys.key_hash": "SHA-256 of a random API key; owner-only by RLS; a hash cannot be used as the key",
+  "membership_invites.token_hash": "R-2517 SHA-256 of a single-use 256-bit invite-link token (the token is never stored); only the inviting company's owners can read it (RLS); a hash cannot be used as the link",
   "assessments.public_token": "share-link token the team sends to the customer",
   "quotes.public_token": "share-link token the team sends to the customer",
   "project_sales.public_token": "share-link token the team sends to the customer",

@@ -4,6 +4,10 @@
  * quote's shape (one line with plan_change, extension_months 0, billing yearly, linked through
  * renewal_quote_id), money comes from the server helper (not the body), and a lost link race
  * deletes the draft and answers 409.
+ * R-2617: a scheduled end-of-term seat cut refuses preview AND save (400, nothing saved); cuts not
+ * readable → 500 cut_check_failed, nothing saved.
+ * R-2626: a LATER part already billed (billed in parts) refuses preview AND save (400); parts not
+ * readable → 500 parts_check_failed, nothing saved.
  */
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
@@ -16,6 +20,11 @@ const state = vi.hoisted(() => ({
   inserted: [] as Row[],
   deleted: [] as Row[],
   linkRows: [{ id: "S1" }] as Row[],
+  cuts: [] as Row[],
+  cutsError: null as { message: string } | null,
+  laterParts: [] as Row[],
+  laterPartsError: false,
+  laterPartsArgs: [] as unknown[],
   money: { billed: true, openDuePaise: 0, receivedPaise: 3_823_200, alreadyCreditedPaise: 0, invoiced: true },
 }));
 
@@ -25,6 +34,14 @@ vi.mock("@/lib/dates/ist", async (orig) => ({
 }));
 vi.mock("@/lib/compliance/gst-registration-server", () => ({ readTenantGstRegistration: async () => null }));
 vi.mock("@/lib/subscriptions/change-plan-money.server", () => ({ readPlanChangeMoney: async () => state.money }));
+/* R-2626: the later-parts reader (its own queries are pinned in change-plan-later-parts.server.test). */
+vi.mock("@/lib/subscriptions/change-plan-later-parts.server", () => ({
+  readLaterBilledParts: async (_s: unknown, tenantId: string, subId: string, after: string) => {
+    state.laterPartsArgs = [tenantId, subId, after];
+    if (state.laterPartsError) throw new Error("boom");
+    return state.laterParts;
+  },
+}));
 
 vi.mock("@/lib/supabase/server", () => {
   /* ₹1,080/seat/month = the R-205 Workspace floor for Business Standard (floorWorkspaceRow), so the catalogue price is used as it is. */
@@ -40,6 +57,9 @@ vi.mock("@/lib/supabase/server", () => {
         if (ctx.op === "update") return { data: state.linkRows, error: null };
         const hidden = !state.sub || ("tenant_id" in ctx.filters && ctx.filters.tenant_id !== state.sub.tenant_id);
         return { data: hidden ? null : state.sub, error: null };
+      }
+      if (table === "subscription_seat_reductions") {
+        return state.cutsError ? { data: null, error: state.cutsError } : { data: state.cuts.filter((r) => r.status === ctx.filters.status), error: null };
       }
       if (table === "items") return { data: items.filter((i) => i.id === ctx.filters.id), error: null };
       if (table === "quotes") {
@@ -85,6 +105,8 @@ beforeEach(() => {
   state.inserted = [];
   state.deleted = [];
   state.linkRows = [{ id: "S1" }];
+  state.cuts = [];
+  state.cutsError = null;
   state.money = { billed: true, openDuePaise: 0, receivedPaise: 3_823_200, alreadyCreditedPaise: 0, invoiced: true };
   state.sub = {
     id: "S1", tenant_id: "T1", customer_id: "C1", customer_name: "Acme", plan: "Google Workspace Business Starter",
@@ -143,5 +165,65 @@ describe("R-2227 change-plan route", () => {
     const res = await post({ to_item_id: "GW-STD", seats: 10 });
     expect(res.status).toBe(409);
     expect(state.deleted[0]).toMatchObject({ id: "Q-ANUT-27-0099", status: "draft" });
+  });
+
+  describe("R-2617 scheduled seat cut", () => {
+    const cut = { id: "R1", timing: "end_of_term", status: "scheduled", seats_before: 10, seats_after: 7, effective_date: "2027-04-01" };
+
+    it.each([true, false])("preview=%s: refused 400 with the next step, nothing saved", async (preview) => {
+      state.cuts = [cut];
+      const res = await post({ to_item_id: "GW-STD", seats: 12, preview });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(/A seat cut 10 → 7 is scheduled for the end of this term \(1 Apr 2027\)\. Remove the scheduled seat cut in Manage seats first/);
+      expect(state.inserted).toHaveLength(0);
+    });
+
+    it("a stale cut from an earlier term (R-2584) does not block", async () => {
+      state.cuts = [{ ...cut, effective_date: "2026-04-01" }];
+      const res = await post({ to_item_id: "GW-STD", seats: 10, preview: true });
+      expect(res.status).toBe(200);
+    });
+
+    it("cuts not readable → 500 cut_check_failed, nothing saved", async () => {
+      state.cutsError = { message: "boom" };
+      const res = await post({ to_item_id: "GW-STD", seats: 10 });
+      expect(res.status).toBe(500);
+      expect(await res.json()).toMatchObject({ code: "cut_check_failed" });
+      expect(state.inserted).toHaveLength(0);
+    });
+  });
+
+  describe("R-2626 later part already billed", () => {
+    beforeEach(() => {
+      /* Quarterly from 1 Apr 2026: today 1 Oct = first day of Q3; Q4 starts 1 Jan 2027. */
+      state.sub = { ...state.sub!, billing_cycle: "quarterly" };
+      state.laterParts = [];
+      state.laterPartsError = false;
+    });
+    const q4 = { periodIndex: 4, periodStart: "2027-01-01", periodEnd: "2027-04-01", invoiceId: null, requestId: "PI-ANUT-27-0007" };
+
+    it.each([true, false])("preview=%s: Q4 proforma open → 400 with the next step, nothing saved", async (preview) => {
+      state.laterParts = [q4];
+      const res = await post({ to_item_id: "GW-STD", seats: 10, preview });
+      expect(res.status).toBe(400);
+      expect((await res.json()).error).toMatch(
+        /^Q4 \(1 Jan 2027 – 31 Mar 2027\) already has proforma PI-ANUT-27-0007 at the current plan's rate\. Cancel that proforma first/);
+      expect(state.inserted).toHaveLength(0);
+      expect(state.laterPartsArgs).toEqual(["T1", "S1", "2026-10-01"]);
+    });
+
+    it("Q4 laid without a bill → priced as before", async () => {
+      state.laterParts = [{ ...q4, requestId: null }];
+      const res = await post({ to_item_id: "GW-STD", seats: 10, preview: true });
+      expect(res.status).toBe(200);
+    });
+
+    it("parts not readable → 500 parts_check_failed, nothing saved", async () => {
+      state.laterPartsError = true;
+      const res = await post({ to_item_id: "GW-STD", seats: 10 });
+      expect(res.status).toBe(500);
+      expect(await res.json()).toMatchObject({ code: "parts_check_failed" });
+      expect(state.inserted).toHaveLength(0);
+    });
   });
 });

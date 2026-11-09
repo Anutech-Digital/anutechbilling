@@ -35,7 +35,9 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
-import { useCreateVendorBill, useOwnStateCode, uploadBillAttachment, VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
+import { useAutoServicePeriod, useCreateVendorBill, useOwnStateCode, uploadBillAttachment, VENDOR_BILL_CATEGORIES } from "@/lib/queries/vendor-bills";
+import { monthsToPeriod } from "@/lib/accounting/bill-service-period";
+import { ServicePeriodField, type ServicePeriodMonths } from "@/app/(app)/accounting/bills/service-period-field";
 import { BILL_DOCUMENT_TYPES, BILL_DOCUMENT_TYPE_LABEL, billItcEligibility, isBillDocumentType, type BillDocumentType } from "@/lib/gst/bill-itc";
 import { useVendors, ensureVendor } from "@/lib/queries/vendors";
 import { istToday } from "@/lib/dates/ist";
@@ -352,6 +354,23 @@ export function AddVendorBillDialog({
   /* Any change to what decides the credit asks again. */
   React.useEffect(() => { setNoCreditOk(false); }, [docType, vendorGstinNow, categoryNow, cgst, sgst, igst]);
 
+  /* R-2623: the month(s) this bill is FOR (management P&L). Auto = the database's rule on what is
+     typed (month on the bill, Google/Microsoft month before, else bill month); null = keep auto. */
+  const [servicePeriod, setServicePeriod] = React.useState<ServicePeriodMonths>(null);
+  /* Bill # and notes are read 400 ms after typing stops (one call, not one per key). */
+  const billNoNow = watch("bill_no") ?? "";
+  const notesNow = watch("notes") ?? "";
+  const [periodText, setPeriodText] = React.useState({ billNo: billNoNow, notes: notesNow });
+  React.useEffect(() => {
+    const t = setTimeout(() => setPeriodText({ billNo: billNoNow, notes: notesNow }), 400);
+    return () => clearTimeout(t);
+  }, [billNoNow, notesNow]);
+  const billDateOk = /^[0-9]{4}-[0-9]{2}-[0-9]{2}$/.test(billDateNow ?? "");
+  const autoPeriodQ = useAutoServicePeriod({
+    billDate: billDateNow ?? "", category: categoryNow ?? "", billNo: periodText.billNo, notes: periodText.notes,
+  });
+  const autoPeriod = autoPeriodQ.isError || !billDateOk ? null : (autoPeriodQ.data ?? null);
+
   // Quick-fill: pretend the user typed only subtotal — auto-derive intra/inter
   function applyGST18Intra() {
     const half = Math.round(subtotal * 0.09);
@@ -378,6 +397,9 @@ export function AddVendorBillDialog({
       return;
     }
     setFxError(null);
+    /* R-2623: a period the owner set must be whole months, in order, ≤ 36 (the field shows why). */
+    const period = servicePeriod ? monthsToPeriod(servicePeriod.from, servicePeriod.to) : null;
+    if (period && !period.ok) return;
     /* R-1576: GST that gives no credit becomes cost — ask once, plainly, before saving. */
     if (noCredit && !noCreditOk) { setNoCreditOk(true); return; }
     /* R-1767: another company's bill never enters our books without a clear yes — the yes is
@@ -458,6 +480,9 @@ export function AddVendorBillDialog({
       status:       "unpaid",
       document_type: docType,
       line_items,
+      /* R-2623: null = auto (worked out from the bill each time). */
+      service_from: period?.ok ? period.service_from : null,
+      service_to:   period?.ok ? period.service_to : null,
     });
     // Told AFTER the write succeeded, so a caller linking its own record to this
     // bill can never point at one that was never saved.
@@ -608,6 +633,21 @@ export function AddVendorBillDialog({
             <FormField label="Due date (optional)" htmlFor="due_date">
               <Input id="due_date" type="date" {...register("due_date")} />
             </FormField>
+          </div>
+
+          {/* R-2623: right under the bill date — the month(s) this bill is for. */}
+          <div className="rounded-lg border border-hairline bg-paper-2/30 p-3">
+            <p className="mb-1.5 text-3xs uppercase tracking-wider text-ink-3 font-semibold">Service period</p>
+            <ServicePeriodField
+              idPrefix="add-bill-service"
+              current={billDateOk && autoPeriodQ.isLoading ? undefined : autoPeriod}
+              auto={autoPeriod}
+              autoError={billDateOk && autoPeriodQ.isError}
+              fallbackMonth={billDateOk ? (billDateNow ?? "").slice(0, 7) : undefined}
+              value={servicePeriod}
+              onChange={setServicePeriod}
+            />
+            <p className="mt-1.5 text-xs text-ink-3">The month(s) this bill is for. The management P&amp;L shows the cost there; GST reports use the bill date.</p>
           </div>
 
           <FormField label="Category" required htmlFor="category">

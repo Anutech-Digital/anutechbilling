@@ -144,3 +144,20 @@ describe("review fixes — rounding and RCM", () => {
     expect(f.lines[0].tax).toBe(180);
   });
 });
+
+describe("zohoPurchaseFacts — the Zoho reference number (R-2629)", () => {
+  it("keeps the bill's reference_number (the month the bill is for, e.g. Google's 'Aug 2026')", () => {
+    const f = zohoPurchaseFacts(detail({ raw: { ...detail().raw, reference_number: "  Google Portal Bill (Aug 2026) " } }));
+    expect(f.reference).toBe("Google Portal Bill (Aug 2026)");
+  });
+
+  it("no reference in Zoho → empty, never 'undefined' / 'null'", () => {
+    expect(zohoPurchaseFacts(detail()).reference).toBe("");
+    expect(zohoPurchaseFacts(detail({ raw: { ...detail().raw, reference_number: null } })).reference).toBe("");
+  });
+
+  it("an expense keeps its reference too; a very long one is cut at 200 characters", () => {
+    const f = zohoPurchaseFacts(detail({ kind: "expenses", raw: { ...detail().raw, reference_number: "R".repeat(500) } }));
+    expect(f.reference).toHaveLength(200);
+  });
+});

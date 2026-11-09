@@ -21,6 +21,7 @@ import { paymentApprovalBlock } from "@/lib/quotes/payment-approval";
 import {
   DOUBLE_DAYS, type BulkMatchRow, type CustomerFacts, type OpenItemFact,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
+import { normNo, type ZohoAppSale } from "@/lib/integrations/zoho-books/zoho-sale-filed";
 import { BooksStartReadError, readBooksStart, type BooksStartDb } from "@/lib/accounting/books-start";
 
 export class FactsReadError extends Error {}
@@ -51,6 +52,11 @@ export async function attachCustomerFacts(
   const { admin, tenantId } = caller;
   const custOf = (r: BulkMatchRow) => (r.result.kind === "match" ? mapZohoCustomer(r.result.match.customer, appCustomers)?.id ?? null : null);
 
+  /* R-2621: GST-filed days among the page's dates + the page's Zoho invoices already in the app —
+     read alongside the books start (independent reads). */
+  const gstRead = gstFacts(rows, caller);
+  gstRead.catch(() => {}); // awaited below; never an unhandled rejection meanwhile
+
   /* R-2496: the company's ONE books start (owner's setting, else opening balances date + 1). */
   let booksStart: string | null;
   try {
@@ -60,8 +66,11 @@ export async function attachCustomerFacts(
     throw e;
   }
 
+  const gst = await gstRead;
+  const withGst = (r: BulkMatchRow) => ({ ...r, ...gst(r) });
+
   const ids = [...new Set(rows.map(custOf).filter((x): x is string => !!x))];
-  if (ids.length === 0) return rows.map((r) => ({ ...r, facts: null, booksStart }));
+  if (ids.length === 0) return rows.map((r) => ({ ...withGst(r), facts: null, booksStart }));
 
   const dates = rows.map((r) => r.line.txnDate).sort();
   const from = shiftDays(dates[0], -DOUBLE_DAYS);
@@ -158,6 +167,59 @@ export async function attachCustomerFacts(
   }
   return rows.map((r) => {
     const id = custOf(r);
-    return { ...r, facts: id ? facts.get(id) ?? null : null, booksStart };
+    return { ...withGst(r), facts: id ? facts.get(id) ?? null : null, booksStart };
   });
+}
+
+/**
+ * R-2621 — for each row: which of its days (bank date, Zoho invoice dates) are GST-filed (SQL
+ * gst_filed_days — the one rule: "GST returns filed up to", books lock, GSTR-1 marked filed), and its
+ * Zoho invoices already in the app (an imported FY sale carries Zoho's number in external_number).
+ * Own tenant only (admin client). A failed read refuses the page (FactsReadError).
+ */
+async function gstFacts(
+  rows: readonly BulkMatchRow[],
+  caller: Pick<ZohoCaller, "admin" | "tenantId">,
+): Promise<(r: BulkMatchRow) => Pick<BulkMatchRow, "gstFiled" | "zohoSales">> {
+  const { admin, tenantId } = caller;
+  const invOf = (r: BulkMatchRow) => (r.result.kind === "match" ? r.result.match.invoices : []);
+  const numsOf = (r: BulkMatchRow) => (r.result.kind === "match" ? [...r.result.match.invoices.map((i) => i.number), ...r.result.match.moreInvoices] : []);
+  const daysOf = (r: BulkMatchRow) => [r.line.txnDate, ...invOf(r).map((i) => (i.date ? i.date.slice(0, 10) : "")).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d))];
+
+  const days = [...new Set(rows.flatMap(daysOf))].sort();
+  const filed = new Set<string>();
+  if (days.length > 0) {
+    const g = await (admin as unknown as RpcClient).rpc("gst_filed_days", { p_tenant_id: tenantId, p_days: days });
+    if (g.error) throw new FactsReadError("the months whose GST is already filed");
+    for (const d of (g.data ?? []) as unknown[]) if (typeof d === "string") filed.add(d.slice(0, 10));
+  }
+
+  /* Zoho's number as Zoho gives it and in capitals (an import keeps Zoho's text; the R-2360 server guard
+     also refuses a new sale whose Zoho number is in the app in any case). */
+  const nums = [...new Set(rows.flatMap(numsOf).map((n) => n.trim()).filter(Boolean).flatMap((n) => [n, n.toUpperCase()]))];
+  const sales: ZohoAppSale[] = [];
+  if (nums.length > 0) {
+    const s = await admin.from("invoices")
+      .select("id, customer_id, external_number, invoice_date, amount, net_payable, paid_amount, taxable_value, status, document_kind")
+      .eq("tenant_id", tenantId).in("external_number", nums);
+    if (s.error) throw new FactsReadError("the Zoho invoices already in the app");
+    for (const r of (s.data ?? []) as Array<{ id: string; customer_id: string | null; external_number: string | null; invoice_date: string | null; amount: number | null; net_payable: number | null; paid_amount: number | null; taxable_value: number | null; status: string | null; document_kind: string | null }>) {
+      /* only an issued invoice can be paid (bank_credit_pay_item: pending / overdue; paid = nothing due);
+         a draft or void one is no sale, an opening invoice is last year's (the plan's opening path) */
+      if (!r.external_number || !["pending", "overdue", "paid"].includes(r.status ?? "") || r.document_kind === "opening_invoice") continue;
+      sales.push({
+        number: r.external_number, invoiceId: r.id, customerId: r.customer_id,
+        date: r.invoice_date ? String(r.invoice_date).slice(0, 10) : null,
+        due: r.status === "paid" ? 0 : Math.max(0, num(r.net_payable ?? r.amount) - num(r.paid_amount)),
+        taxable: num(r.taxable_value),
+      });
+    }
+  }
+  return (r) => {
+    const mine = new Set(numsOf(r).map(normNo));
+    return {
+      gstFiled: daysOf(r).filter((d) => filed.has(d)),
+      zohoSales: sales.filter((s) => mine.has(normNo(s.number))),
+    };
+  };
 }

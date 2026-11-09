@@ -165,9 +165,10 @@ begin
   end if;
   begin
     perform set_config('request.jwt.claims', format('{"sub":"%s","role":"authenticated"}', a), true);
-    perform public.invite_existing_login('r2469-ravi@example.test', 'sales');
+    /* R-2517: the invite carries the emailed link's token hash; Ravi accepts with the token */
+    perform public.invite_existing_login('r2469-ravi@example.test', 'sales', encode(sha256(convert_to('r2469-ravi_tokentokentokentokentokentok', 'UTF8')), 'hex'));
     perform set_config('request.jwt.claims', '{"sub":"e2469000-0000-4000-8000-0000000000b1","role":"authenticated"}', true);
-    perform public.accept_company_invite((select i.invite_id from public.my_company_invites() i where i.tenant_id = ta));
+    perform public.accept_company_invite_by_token('r2469-ravi_tokentokentokentokentokentok');
     msg := null;
   exception when others then
     msg := sqlerrm;

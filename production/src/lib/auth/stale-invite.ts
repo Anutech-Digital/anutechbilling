@@ -69,20 +69,25 @@ export function alreadyMemberMessage(email: string): string {
 export function existingLoginInvitedNote(email: string): string {
   return (
     `${email} already uses ResellerOS with another company — they keep it. ` +
-    "Next step: they see your invite at the top of their app and accept it themselves; then they appear in your Team list. You can withdraw it from Pending invites."
+    /* R-2517: only the emailed link accepts it (proof of their mailbox) */
+    "Next step: they open the link we emailed to that address and accept it themselves; then they appear in your Team list. You can withdraw it from Pending invites, or invite again to send a fresh link."
   );
 }
 
 /** The email such a person gets: no signup link (they have a login), and what happens next. */
-export function existingLoginInviteEmail(p: { workspace: string; roleName: string; email: string; loginUrl: string }): string {
+export function existingLoginInviteEmail(p: { workspace: string; roleName: string; email: string; acceptUrl: string }): string {
+  /* R-2517: the link carries a single-use token — opening it from this mailbox is the proof that
+     the invite reached its owner. It is the only way to accept (no Accept button in the app). */
   return `Hello,
 
 ${p.workspace} has invited you to join them on ResellerOS as ${p.roleName}.
 
-You already have a ResellerOS login with this address (${p.email}) — you keep your current company. Sign in here, the way you always do:
-${p.loginUrl}
+You already have a ResellerOS login with this address (${p.email}) — you keep your current company. To accept, open this link and sign in the way you always do, with ${p.email}:
+${p.acceptUrl}
 
-At the top of the app you will see "Invite from ${p.workspace}" — press Accept to join. Nothing changes until you accept. After that you can switch between your companies from the top bar.
+Then press Accept. The link works once and for 7 days, only for ${p.email}. Nothing changes until you accept. After that you can switch between your companies from the top bar.
+
+Did not expect this? Ignore this email — nothing happens.
 
 — ${p.workspace} (via ResellerOS)`;
 }

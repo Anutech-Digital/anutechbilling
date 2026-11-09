@@ -170,6 +170,35 @@ export const CI_ONLY_GUARD_SUITES = [
 /** Soft budget: the push prints a warning above this so the list gets trimmed, not ignored. R-2443: 90 → 60 s. */
 export const PUSH_GUARD_BUDGET_MS = 60_000;
 
+/**
+ * R-2630 (9 Nov 2026): per-test (and hook) timeout for the push's guard run only. 9 Nov the step
+ * took 66–102 s and once went red on a TIMEOUT (tests/secret-scan.test.ts, R-2622 pushed twice).
+ * Measured the same day, same 88 files, one file at a time: ~45 s of work in all on a quiet laptop,
+ * 135–169 s with 4 workers + checkers running — every file 3–8x slower, so a 1-s scan crosses
+ * vitest's 5 s default and the push goes red on load, not on a bug. The heaviest real work was cut
+ * (anchor-links re-resolved every import per page, scope-gate imported make-call's unreached AI side,
+ * every fork loaded the whole 89 MB source cache — now buckets); this keeps a slow-but-green scan from
+ * failing the push. A real hang still stops at 30 s; CI keeps vitest's default.
+ */
+export const PUSH_GUARD_TEST_TIMEOUT_MS = 30_000;
+/** R-2630: the whole guard vitest run is killed after this (→ the push is refused, "vitest fail") so a
+    hang never holds the shared heavy turn for ever. Loaded laptop, 9 Nov: the run took up to ~102 s. */
+export const PUSH_GUARD_RUN_TIMEOUT_MS = 300_000;
+/** CI runs vitest with its default per-test timeout (vitest.config.ts sets none). */
+export const CI_TEST_TIMEOUT_MS = 5_000;
+
+/** R-2630: single tests that took longer than CI's timeout in a vitest json result, slowest first —
+    the push allows 30 s, so these are named (not failed) for a look on a quiet laptop. */
+export function testsOverCiTimeout(json, root, limitMs = CI_TEST_TIMEOUT_MS) {
+  const out = [];
+  for (const f of json?.testResults ?? []) {
+    for (const a of f.assertionResults ?? []) {
+      if (Number(a.duration) > limitMs) out.push({ file: relToRoot(f.name, root), test: a.title ?? a.fullName ?? "?", ms: Number(a.duration) });
+    }
+  }
+  return out.sort((a, b) => b.ms - a.ms);
+}
+
 /** A vitest json `name` (absolute path) relative to production/ (`root`), forward slashes. */
 function relToRoot(name, root) {
   const norm = (p) => String(p).replace(/\\/g, "/");
