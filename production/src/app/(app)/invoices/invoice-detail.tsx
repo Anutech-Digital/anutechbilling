@@ -23,6 +23,7 @@ import { SAAS_HSN } from "@/lib/gst/hsn";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/queries/payments";
 import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
+import { CorrectInvoiceDateButton } from "@/components/features/invoices/correct-invoice-date-dialog";
 import { invoiceReceiptsQuote, invoiceTdsMoney } from "./invoice-receipts";
 import { takesQuotelessReceipt } from "@/lib/payments/quoteless-receipt";
 import { useQuotelessReceipts } from "@/lib/queries/quoteless-receipts";
@@ -302,6 +303,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   Credit note
                 </Button>
               )}
+              {/* R-2173: owner/accountant correct the date while GST for the month is not filed. */}
+              <CorrectInvoiceDateButton invoice={invoice} role={me?.role} />
               {canWrite && (
                 <Button
                   size="sm"
