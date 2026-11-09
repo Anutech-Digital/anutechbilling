@@ -274,6 +274,14 @@ export function settleRefusedPlanChange(
 ): Promise<NextResponse> {
   const ref = args.payment.id;
   const reason = refusal.replace(/\s*Nothing was recorded\..*$/s, "").trim();
+  if (/^R-2617:/.test(refusal)) {
+    /* R-2617: the quote itself is still right — only a scheduled end-of-term seat cut stands in the way.
+       Deleting the quote (the generic step) would throw away a payable quote. */
+    return reportUnapplied(admin, args,
+      `is a plan-change quote refused because a seat cut is scheduled (${reason.replace(/^R-2617:\s*/, "")})`,
+      `If the plan change should go ahead: remove the scheduled seat cut in Manage seats, then record this payment on quote ${args.quote.id} (Record payment, reference ${ref}). ` +
+      `If the seat cut should stay: refund the customer (Razorpay dashboard), or when Razorpay settles it to the bank, reconcile that bank line as this customer's advance (customer credit).`);
+  }
   return reportUnapplied(admin, args,
     `is a plan-change quote the plan-change check refused (${reason})`,
     `First delete the old quote ${args.quote.id} (Change plan stays blocked while it is linked). Then either refund the customer (Razorpay dashboard), ` +
