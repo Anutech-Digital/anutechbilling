@@ -7,7 +7,7 @@
  * expect a 403 BEFORE the database is touched; a wiring test makes a future route that forgets
  * the gate fail here instead of in production.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { NextRequest } from "next/server";
 import { readdirSync, statSync } from "fs";
 import { join, relative } from "path";
@@ -15,6 +15,7 @@ import { join, relative } from "path";
 const state = vi.hoisted(() => ({
   scopes: [] as string[],
   dbTouched: 0,
+  aiReached: 0,
 }));
 
 vi.mock("@/lib/api-keys/auth", () => ({
@@ -36,6 +37,17 @@ vi.mock("@/lib/supabase/server", () => ({
   },
   createClient: () => ({ auth: { getUser: async () => ({ data: { user: null } }) } }),
 }));
+/* R-2630 (9 Nov 2026): make-call's AI side (sales catalogue + telecall dispatcher) is never reached
+   here — every call stops at the scope gate, the rate limit or the missing lead — but importing it
+   pulled in the Gemini / autonomy / DNS graph: 13–16 s of the push guard step for this one file
+   (1.6–2 s without). Stubs that count a call; afterAll below fails the file if one is ever reached. */
+vi.mock("@/lib/ai/sales-agent.server", () => ({
+  loadSalesCatalog: () => { state.aiReached += 1; throw new Error("scope-gate test reached loadSalesCatalog"); },
+}));
+vi.mock("@/lib/ai/actions/telecall-dispatcher", () => ({
+  dispatchTelecall: () => { state.aiReached += 1; throw new Error("scope-gate test reached dispatchTelecall"); },
+}));
+afterAll(() => expect(state.aiReached, "a test went past the gate into the AI side — the stubs above no longer fit").toBe(0));
 
 import { GET as customers } from "./customers/route";
 import { GET as customer } from "./customers/[id]/route";
