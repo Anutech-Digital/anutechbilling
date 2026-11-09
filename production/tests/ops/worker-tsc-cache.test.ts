@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
-import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, cacheFile, pruneCache, parseTscFlags, BUILD_INFO, TSC_FULL_STEP } from "../../scripts/ops/worker-tsc-cache.mjs";
+import { restoreBuildInfo, restoreLine, buildInfoDistance, saveBuildInfo, dropBuildInfo, cacheFile, pruneCache, parseTscFlags, BUILD_INFO, TSC_FULL_STEP } from "../../scripts/ops/worker-tsc-cache.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
 import { tscStepsFor, TSC_STEPS } from "../../scripts/ops/worker-lock.mjs";
 
@@ -101,12 +101,90 @@ describe("R-1960 shared tsc build info", () => {
     expect(fs.readFileSync(cacheFile(wt, cache), "utf8")).toBe(before);
   });
 
-  it("the worktree's own build info wins over the shared one; drop removes it", () => {
+  it("an unreadable own build info loses to the shared one (R-2634); drop removes it", () => {
     const wt = worktree("wt-own");
     fs.writeFileSync(path.join(wt, BUILD_INFO), "{}");
-    expect(restoreBuildInfo(wt, { dir: cache })).toEqual({ restored: false, reason: "own" });
+    const r = restoreBuildInfo(wt, { dir: cache });
+    expect(r.restored).toBe(true);
+    expect(r.own).toBeNull();
+    expect(r.shared).toMatchObject({ changed: 0, global: 0 });
     dropBuildInfo(wt);
     expect(fs.existsSync(path.join(wt, BUILD_INFO))).toBe(false);
+  });
+});
+
+/* R-2634 (9 Nov 2026): inside `push` the worktree is rebased onto the newest manager-pardeep, but its
+   own build info is from the card's OLD base. R-1960 always kept the own one, so every file merged
+   since the base was re-checked (and a route added since then = full re-check). Now restore measures
+   both against the files on disk and starts from the closer one. Safety is unchanged: these runs use
+   the real tsc and still catch an error in a changed file and in an unchanged importer. */
+describe("R-2634 own vs shared build info — the closer one wins", () => {
+  const tsc = (wt: string) => spawnSync(process.execPath, [TSC, "--noEmit", "-p", "."], { cwd: wt, encoding: "utf8" });
+
+  /** A worktree that ran tsc green on an OLD base (own build info), then got "rebased": files changed. */
+  function staleWorktree(name: string) {
+    const wt = worktree(name);
+    fs.writeFileSync(path.join(wt, "a.ts"), "export function price(amount: number): number { return amount * 3; }\n");
+    fs.writeFileSync(path.join(wt, "c.ts"), C + "export const old = 1;\n");
+    expect(tsc(wt).status).toBe(0);
+    expect(fs.existsSync(path.join(wt, BUILD_INFO))).toBe(true);
+    /* rebase: back to the new base = what the shared cache was saved from */
+    fs.writeFileSync(path.join(wt, "a.ts"), A_OK);
+    fs.writeFileSync(path.join(wt, "c.ts"), C);
+    return wt;
+  }
+
+  it("buildInfoDistance counts project files whose text differs from the build info", () => {
+    const wt = staleWorktree("wt-dist");
+    expect(buildInfoDistance(wt, path.join(wt, BUILD_INFO))).toMatchObject({ changed: 2, global: 0, project: 3 });
+    expect(buildInfoDistance(wt, cacheFile(wt, cache))).toMatchObject({ changed: 0, global: 0, project: 3 });
+    expect(buildInfoDistance(wt, path.join(wt, "missing.tsbuildinfo"))).toBeNull();
+  });
+
+  it("after a rebase the shared build info (new base) replaces the own one (old base)", () => {
+    const wt = staleWorktree("wt-rebased");
+    const r = restoreBuildInfo(wt, { dir: cache });
+    expect(r).toMatchObject({ restored: true, reason: "shared", own: { changed: 2 }, shared: { changed: 0 } });
+    expect(fs.readFileSync(path.join(wt, BUILD_INFO), "utf8")).toBe(fs.readFileSync(cacheFile(wt, cache), "utf8"));
+    expect(restoreLine(r)).toMatch(/shared cache se shuru .*apni: 2 file badli; shared: 0 file badli/);
+  });
+
+  it("the own build info stays when it is the closer one", () => {
+    const wt = worktree("wt-own-closer");
+    fs.writeFileSync(path.join(wt, "b.ts"), B + "export const extra = 2;\n");
+    expect(tsc(wt).status).toBe(0);
+    const before = fs.readFileSync(path.join(wt, BUILD_INFO), "utf8");
+    const r = restoreBuildInfo(wt, { dir: cache });
+    expect(r).toMatchObject({ restored: false, reason: "own", own: { changed: 0 }, shared: { changed: 1 } });
+    expect(fs.readFileSync(path.join(wt, BUILD_INFO), "utf8")).toBe(before);
+  });
+
+  it("a changed GLOBAL file (no import/export, like routes.d.ts) is flagged — it means a full re-check", () => {
+    const wt = worktree("wt-global");
+    fs.writeFileSync(path.join(wt, "g.ts"), "declare var routeCount: number;\n");
+    expect(tsc(wt).status).toBe(0);
+    fs.writeFileSync(path.join(wt, "g.ts"), "declare var routeCount: number;\ndeclare var routeCount2: number;\n");
+    expect(buildInfoDistance(wt, path.join(wt, BUILD_INFO))).toMatchObject({ changed: 1, global: 1 });
+  });
+
+  it("a type error in an UNCHANGED importer is still caught after switching to the shared build info", () => {
+    const wt = staleWorktree("wt-switch-err");
+    fs.writeFileSync(path.join(wt, "a.ts"), "export function price(amount: number): string { return String(amount); }\n");
+    const g = gate(wt);
+    expect(g.restored.reason).toBe("shared");
+    expect(g.green).toBe(false);
+    expect(g.out).toMatch(/b\.ts\(2,\d+\): error TS2322/);
+  });
+
+  it("a type error in the changed file is caught when the own build info is kept", () => {
+    const wt = worktree("wt-own-err");
+    fs.writeFileSync(path.join(wt, "b.ts"), B + "export const extra = 2;\n");
+    expect(tsc(wt).status).toBe(0);
+    fs.writeFileSync(path.join(wt, "b.ts"), B + 'export const extra: number = "2";\n');
+    const g = gate(wt);
+    expect(g.restored.reason).toBe("own");
+    expect(g.green).toBe(false);
+    expect(g.out).toMatch(/b\.ts\(3,\d+\): error TS2322/);
   });
 });
 
@@ -151,7 +229,7 @@ describe("R-1960 cache key follows the generated route types", () => {
   it("worker-lock restores only after `next typegen` (the key needs the fresh route types)", () => {
     const src = fs.readFileSync(path.resolve("scripts/ops/worker-lock.mjs"), "utf8");
     const body = src.slice(src.indexOf("function tscWithTurn"), src.indexOf("function tscWithTurn") + 2000);
-    expect(body).toMatch(/if \(!full && step === TSC_STEPS\[TSC_STEPS\.length - 1\]\) \{\s*const r = restoreBuildInfo\(root\)/);
+    expect(body).toMatch(/if \(!full && step === TSC_STEPS\[TSC_STEPS\.length - 1\]\) \{[^}]*restoreBuildInfo\(root\)/);
     expect(body.indexOf("saveBuildInfo(root)")).toBeGreaterThan(body.indexOf("sh(step, tscEnv())"));
   });
 });

@@ -40,6 +40,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { createRequire } from "node:module";
 
 export const TSC_CACHE_DIR = process.env.WORKER_TSC_CACHE_DIR || path.join(os.homedir(), ".claude", "worker-tsc-cache");
 export const BUILD_INFO = "tsconfig.tsbuildinfo";
@@ -78,16 +79,86 @@ export function cacheFile(root, dir = TSC_CACHE_DIR) {
 }
 
 /**
- * After typegen, before tsc. The worktree's own build info (an earlier run on this card) is closer to
- * its code than the shared one, so it is kept. Returns what happened, for the gate's log line.
+ * tsc's own file version: the same hash it stores in the build info (TypeScript's
+ * getSourceFileVersionAsHashFromText = sha256 of the text, minus a trailing sourceMappingURL line).
+ * Falls back to plain sha256 if this TypeScript does not expose it.
  */
-export function restoreBuildInfo(root, { dir = TSC_CACHE_DIR } = {}) {
+function versionHasher(root) {
+  try {
+    const ts = createRequire(path.join(root, "package.json"))("typescript");
+    if (typeof ts.getSourceFileVersionAsHashFromText === "function" && ts.sys?.createHash) {
+      const host = { createHash: (s) => ts.sys.createHash(s) };
+      return (text) => ts.getSourceFileVersionAsHashFromText(host, text);
+    }
+  } catch {}
+  return (text) => crypto.createHash("sha256").update(text).digest("hex");
+}
+
+/**
+ * R-2634 (9 Nov 2026): how far a build info is from the worktree's files right now — how many of
+ * its project files (outside node_modules, which every worktree shares through the junction) have
+ * another text today or are gone, and whether one of them is a GLOBAL file (affectsGlobalScope,
+ * e.g. .next/types/routes.d.ts): a changed global file makes tsc re-check EVERY file.
+ * null = unreadable (tsc would ignore it and run cold).
+ */
+export function buildInfoDistance(root, file, hash = versionHasher(root)) {
+  let info;
+  try { info = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
+  if (!Array.isArray(info?.fileNames) || !Array.isArray(info?.fileInfos)) return null;
+  let changed = 0, global = 0, project = 0;
+  info.fileNames.forEach((name, i) => {
+    if (/(^|\/)node_modules\//.test(name)) return;
+    project++;
+    const fi = info.fileInfos[i];
+    const version = typeof fi === "string" ? fi : fi?.version;
+    let text = null;
+    try { text = fs.readFileSync(path.resolve(root, name), "utf8"); } catch {}
+    if (text !== null && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    if (text !== null && hash(text) === version) return;
+    changed++;
+    if (typeof fi === "object" && fi?.affectsGlobalScope) global++;
+  });
+  return { changed, global, project };
+}
+
+/** Lower = less for tsc to re-check. A changed global file means a full re-check. */
+function distanceScore(d) {
+  if (!d) return Number.POSITIVE_INFINITY;
+  return d.global ? 1e9 + d.changed : d.changed;
+}
+
+/**
+ * After typegen, before tsc. R-1960 kept the worktree's own build info whenever it had one; R-2634
+ * found that wrong exactly where it costs most — inside `push`, after the rebase: the own build info
+ * is from the card's OLD base (everything merged since then counts as changed, and a route added
+ * since then is a global change = full re-check, 445–1063 s measured 9 Nov), while the shared one for
+ * the same route types was saved by the last push on the NEW base. Now both are measured against
+ * the files on disk (buildInfoDistance) and the closer one is used; a tie keeps the own one.
+ * Either choice is only a starting point — tsc still hashes every file and re-checks what changed.
+ */
+export function restoreBuildInfo(root, { dir = TSC_CACHE_DIR, hash } = {}) {
   const own = path.join(root, BUILD_INFO);
-  if (fs.existsSync(own)) return { restored: false, reason: "own" };
   const src = cacheFile(root, dir);
-  if (!fs.existsSync(src)) return { restored: false, reason: "empty" };
-  try { fs.copyFileSync(src, own); return { restored: true, reason: "shared", from: src }; }
+  const hasOwn = fs.existsSync(own), hasShared = fs.existsSync(src);
+  if (!hasShared) return hasOwn ? { restored: false, reason: "own" } : { restored: false, reason: "empty" };
+  let ownDist = null, sharedDist = null;
+  if (hasOwn) {
+    const h = hash ?? versionHasher(root);
+    ownDist = buildInfoDistance(root, own, h);
+    sharedDist = buildInfoDistance(root, src, h);
+    if (distanceScore(ownDist) <= distanceScore(sharedDist)) return { restored: false, reason: "own", own: ownDist, shared: sharedDist };
+  }
+  try { fs.copyFileSync(src, own); return { restored: true, reason: "shared", from: src, ...(hasOwn ? { own: ownDist, shared: sharedDist } : {}) }; }
   catch (e) { return { restored: false, reason: `copy failed: ${e.message}` }; }
+}
+
+/** One line for the gate's log: which build info tsc starts from and how far it is. */
+export function restoreLine(r) {
+  const d = (x) => (x ? `${x.changed} file badli${x.global ? `, ${x.global} global — poora re-check` : ""}` : "padhi nahi gayi");
+  const both = r.own !== undefined || r.shared !== undefined ? ` [apni: ${d(r.own)}; shared: ${d(r.shared)}]` : "";
+  if (r.restored) return `  tsc: incremental — shared cache se shuru (${r.from})${both}`;
+  if (r.reason === "own") return `  tsc: incremental — is worktree ki apni build info${both}`;
+  return `  tsc: incremental — in route types ka shared cache nahi (${r.reason}), is baar poora chalega`;
 }
 
 /** After a green tsc: this worktree's build info becomes the shared one for its key (atomic replace). */

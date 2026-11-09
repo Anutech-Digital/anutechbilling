@@ -55,7 +55,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL_STEP } from "./worker-tsc-cache.mjs";
+import { restoreBuildInfo, restoreLine, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL_STEP } from "./worker-tsc-cache.mjs";
 import { execSync, execFileSync, spawnSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, PUSH_GUARD_TEST_TIMEOUT_MS, PUSH_GUARD_RUN_TIMEOUT_MS, failedSuites, slowestSuites, testsOverCiTimeout } from "./push-guard-suites.mjs";
@@ -405,9 +405,8 @@ function tscWithTurn(card, { full = false } = {}) {
     for (const step of tscStepsFor({ full })) {
       /* The cache key includes the route types, so restore only after `next typegen` wrote them. */
       if (!full && step === TSC_STEPS[TSC_STEPS.length - 1]) {
-        const r = restoreBuildInfo(root);
-        console.log(r.restored ? `  tsc: incremental — shared cache se shuru (${r.from})`
-          : `  tsc: incremental — ${r.reason === "own" ? "is worktree ki apni build info" : `in route types ka shared cache nahi (${r.reason}), is baar poora chalega`}`);
+        /* R-2634: own vs shared build info — whichever is closer to the (rebased) files wins. */
+        console.log(restoreLine(restoreBuildInfo(root)));
       }
       const t0 = Date.now();
       try { sh(step, tscEnv()); }
