@@ -68,6 +68,11 @@ export const POST = withRoute(
     if (!target) return NextResponse.json({ error: "That plan is not in your catalogue." }, { status: 400 });
 
     const today = istToday();
+    /* R-2617: a seat cut scheduled "At end of term" is billed by the renewal quote on today's seats —
+       a plan change under it would leave it stale, so buildPlanChange refuses while one is scheduled.
+       Read alongside the money; not readable → 500 cut_check_failed, nothing saved. The SQL trigger
+       subscriptions_r2617_plan_change_vs_seat_cut guards the same under the row lock. */
+    const seatCutsP = loadScheduledSeatCuts(supabase, tenantId, sub.id).catch(() => null);
     let money;
     try {
       money = await readPlanChangeMoney(supabase, tenantId, sub, today);
@@ -80,15 +85,15 @@ export const POST = withRoute(
         .from("customers").select("country, gst_treatment").eq("id", sub.customer_id).eq("tenant_id", tenantId).maybeSingle();
       if (isZeroRatedSupply({ country: cust?.country, treatment: cust?.gst_treatment })) taxRatePct = 0; // R-2515: export / SEZ
     }
-    /* R-2617: a seat cut scheduled "At end of term" is billed by the renewal quote on today's seats —
-       a plan change under it would leave it stale, so buildPlanChange refuses while one is scheduled.
-       Not readable → 500, nothing saved; the SQL trigger guards the same under the row lock. */
-    const seatCuts = await loadScheduledSeatCuts(supabase, tenantId, sub.id);
-    const built = buildPlanChange({ sub, target, newSeats: input.seats, today, taxRatePct, money, seatCuts });
-    if (!built.ok) {
-      if (seatCuts == null) return NextResponse.json({ error: built.reason, code: "cut_check_failed" }, { status: 500 });
-      return NextResponse.json({ error: built.reason }, { status: 400 });
+    const seatCuts = await seatCutsP;
+    if (seatCuts == null) {
+      return NextResponse.json({
+        error: "Could not read this subscription's scheduled seat cuts, so the plan was not changed. Try again.",
+        code: "cut_check_failed",
+      }, { status: 500 });
     }
+    const built = buildPlanChange({ sub, target, newSeats: input.seats, today, taxRatePct, money, seatCuts });
+    if (!built.ok) return NextResponse.json({ error: built.reason }, { status: 400 });
     const { plan } = built;
 
     if (input.preview) {
