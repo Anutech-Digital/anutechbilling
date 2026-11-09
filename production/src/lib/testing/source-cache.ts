@@ -21,6 +21,13 @@
  * half a file; a failed write only costs speed. Format: one JSON index line, then the texts back to
  * back — a test reads one Buffer and decodes only the files it asks for (a 50 MB JSON.parse took
  * ~1 s per test file). Delete the folder any time: `<tmp>/reselleros-source-cache`.
+ * R-2630 (9 Nov 2026), buckets: the one cache file had grown to ~89 MB (36 MB of it Prisma's generated
+ * client) and EVERY guard file that read even one migration loaded all of it — ~70 forks × 89 MB, with
+ * 22 forks at once on a laptop already running other workers' tsc. Now the entries live in four files
+ * by where the source is (BUCKETS: src/, Prisma's generated client, supabase/, everything else), and a
+ * bucket file is loaded only when a key of that bucket is first asked for. A migration scan loads
+ * ~12 MB, a src/ scan ~20 MB, the generated client only by a scan that really follows imports into it.
+ * Same stat/racy checks per entry; each bucket file is written, locked and pruned like the old one.
  *
  * Test-only: imported by *.test.ts files (and test-only scanners), never by app code.
  */
@@ -36,7 +43,7 @@ import { PRODUCTION_ROOT } from "./prisma-generated";
 type Entry = { s: number; m: number; c: number; r: number; buf?: Buffer; text?: string };
 type IndexRow = [key: string, s: number, m: number, c: number, r: number, offset: number, length: number];
 
-const MAGIC = "reselleros-source-cache v3";
+const MAGIC = "reselleros-source-cache v4";
 /** R-2582: an entry read less than this long after the file's mtime may hide a same-tick rewrite. */
 export const RACY_MS = 2000;
 const isRacy = (e: Entry): boolean => e.r - Math.max(e.m, e.c) < RACY_MS;
@@ -44,19 +51,34 @@ export const SOURCE_CACHE_DIR = path.join(os.tmpdir(), "reselleros-source-cache"
 /** One cache per checkout (each worktree has its own production/). */
 export const SOURCE_CACHE_FILE = path.join(
   SOURCE_CACHE_DIR,
-  `${crypto.createHash("sha1").update(PRODUCTION_ROOT.toLowerCase()).digest("hex").slice(0, 12)}-v3.bin`,
+  `${crypto.createHash("sha1").update(PRODUCTION_ROOT.toLowerCase()).digest("hex").slice(0, 12)}-v4.bin`,
 );
 
+/** R-2630: a key's bucket — which cache file holds it ("" = the base file, for everything not below). */
+export const BUCKETS = ["", "src", "gen", "sql"] as const;
+export type Bucket = (typeof BUCKETS)[number];
+export function bucketOf(key: string): Bucket {
+  if (key.startsWith("src/server/db/generated/")) return "gen";
+  if (key.startsWith("src/")) return "src";
+  if (key.startsWith("supabase/")) return "sql";
+  return "";
+}
+
 let cacheFile = SOURCE_CACHE_FILE;
-let entries: Map<string, Entry> | null = null;
+/** The file a bucket lives in: the base file itself for "", `<base>.<bucket>` for the others. */
+export function bucketFile(b: Bucket, base: string = cacheFile): string {
+  return b ? `${base}.${b}` : base;
+}
+/** Loaded buckets only — a bucket's file is read the first time one of its keys is asked for. */
+let entries = new Map<Bucket, Map<string, Entry>>();
 /** Keys this process read from disk (new or changed) — the only ones a flush has to add. */
 let fresh = new Set<string>();
 
-/** The cache file as entries; empty when missing, unreadable, another format or cut short. */
-function readCacheFile(): Map<string, Entry> {
+/** A cache file as entries; empty when missing, unreadable, another format or cut short. */
+function readCacheFile(file: string): Map<string, Entry> {
   const out = new Map<string, Entry>();
   try {
-    const all = fs.readFileSync(cacheFile);
+    const all = fs.readFileSync(file);
     const nl = all.indexOf(10);
     const head = JSON.parse(all.subarray(0, nl).toString("utf8")) as { magic: string; rows: IndexRow[] };
     if (head.magic !== MAGIC) return out;
@@ -69,9 +91,10 @@ function readCacheFile(): Map<string, Entry> {
   return out;
 }
 
-function load(): Map<string, Entry> {
-  if (!entries) entries = readCacheFile();
-  return entries;
+function load(b: Bucket): Map<string, Entry> {
+  let map = entries.get(b);
+  if (!map) { map = readCacheFile(bucketFile(b)); entries.set(b, map); }
+  return map;
 }
 
 /** Key: path relative to production/, forward slashes, lower case on Windows (case-insensitive FS). */
@@ -88,8 +111,8 @@ function keyOf(file: string): string {
 export function readSource(file: string): string {
   const now = Date.now();
   const st = fs.statSync(file);
-  const map = load();
   const key = keyOf(file);
+  const map = load(bucketOf(key));
   const e = map.get(key);
   const sameStat = !!e && e.s === st.size && e.m === st.mtimeMs && e.c === st.ctimeMs;
   if (e && sameStat && !isRacy(e)) {
@@ -119,19 +142,33 @@ export function readSource(file: string): string {
  * so a dozen test files finishing a cold run (or a run after a rebase) write once, not ~50 MB each.
  */
 export function flushSourceCache(): void {
-  if (!entries || !fresh.size) return;
+  if (!fresh.size) return;
   const mine = fresh;
   fresh = new Set();
-  const lock = `${cacheFile}.lock`;
+  /* R-2630: each bucket that got fresh entries is merged into its own file, under its own lock. */
+  const byBucket = new Map<Bucket, Set<string>>();
+  for (const k of mine) {
+    const b = bucketOf(k);
+    if (!byBucket.has(b)) byBucket.set(b, new Set());
+    byBucket.get(b)!.add(k);
+  }
+  for (const [b, keys] of byBucket) flushBucket(b, keys);
+}
+
+function flushBucket(b: Bucket, mine: Set<string>): void {
+  const map = entries.get(b);
+  if (!map) return;
+  const file = bucketFile(b);
+  const lock = `${file}.lock`;
   try {
-    fs.mkdirSync(path.dirname(cacheFile), { recursive: true });
+    fs.mkdirSync(path.dirname(file), { recursive: true });
     if (!takeLock(lock)) return;
   } catch { return; }
   try {
-    const merged = readCacheFile();
+    const merged = readCacheFile(file);
     let added = 0;
     for (const k of mine) {
-      const e = entries.get(k)!;
+      const e = map.get(k)!;
       const d = merged.get(k);
       if (d && sameAs(d, e)) continue;
       merged.set(k, e);
@@ -149,9 +186,9 @@ export function flushSourceCache(): void {
       parts.push(b);
       off += b.length;
     }
-    const tmp = `${cacheFile}.${process.pid}.${Date.now()}.tmp`;
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
     fs.writeFileSync(tmp, Buffer.concat([Buffer.from(JSON.stringify({ magic: MAGIC, rows }) + "\n", "utf8"), ...parts]));
-    try { fs.renameSync(tmp, cacheFile); } catch { fs.rmSync(tmp, { force: true }); }
+    try { fs.renameSync(tmp, file); } catch { fs.rmSync(tmp, { force: true }); }
   } catch { /* cache is only for speed */ }
   finally { fs.rmSync(lock, { force: true }); }
 }
@@ -183,11 +220,14 @@ function takeLock(lock: string): boolean {
 function pruneOldCaches(): void {
   try {
     const cutoff = Date.now() - 3 * 24 * 3600 * 1000;
-    /* R-2582: this checkout's old-format (-v2) cache can never be read again — drop it at once. */
-    const oldFormat = path.basename(cacheFile).replace(/-v3\.bin$/, "-v2.bin");
+    /* R-2582 / R-2630: this checkout's old-format (-v2, -v3) caches can never be read again — drop them
+       at once. Its own bucket files (<base>, <base>.src, …) are kept. */
+    const own = path.basename(cacheFile);
+    const oldFormat = /-v4\.bin$/.test(own) ? [own.replace(/-v4\.bin$/, "-v2.bin"), own.replace(/-v4\.bin$/, "-v3.bin")] : [];
     for (const n of fs.readdirSync(path.dirname(cacheFile))) {
       const p = path.join(path.dirname(cacheFile), n);
-      if (p !== cacheFile && !p.endsWith(".lock") && (n === oldFormat || fs.statSync(p).mtimeMs < cutoff)) fs.rmSync(p, { force: true });
+      if (n.startsWith(own) || n.endsWith(".lock")) continue;
+      if (oldFormat.includes(n) || fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { force: true });
     }
   } catch { /* best effort */ }
 }
@@ -199,7 +239,7 @@ try { afterAll(() => flushSourceCache()); } catch { /* not inside a test file */
 /** Test hook: forget the in-memory copy (the next read loads the cache file again); `file` points
     the cache somewhere else (a temp folder) so a test never touches the shared one. */
 export function resetSourceCacheForTest(file?: string): void {
-  entries = null;
+  entries = new Map();
   fresh = new Set();
   if (file) cacheFile = file;
 }
