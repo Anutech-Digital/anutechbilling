@@ -3,7 +3,7 @@
  * never after today). The server (correct_invoice_date, SQL test r2173) decides the rest.
  */
 import { describe, expect, it } from "vitest";
-import { canCorrectInvoiceDate, correctDateBounds, type CorrectableInvoice } from "./correct-invoice-date-dialog";
+import { canCorrectInvoiceDate, correctDateBounds, correctDateHint, type CorrectableInvoice } from "./correct-invoice-date-dialog";
 
 const inv = (over: Partial<CorrectableInvoice> = {}): CorrectableInvoice => ({
   id: "INV-T-2026-27-0001", invoice_date: "2026-10-30", status: "pending", document_kind: "tax_invoice",
@@ -45,5 +45,22 @@ describe("R-2173 correctDateBounds", () => {
   });
   it("1 Apr belongs to the new FY", () => {
     expect(correctDateBounds("2026-04-01", "2026-04-20")).toEqual({ min: "2026-04-01", max: "2026-04-20" });
+  });
+});
+
+describe("R-2173 review: notes / network / hint", () => {
+  it("hidden when the invoice has a credit/debit note or a live network copy, or came from the Zoho FY import", () => {
+    expect(canCorrectInvoiceDate(inv(), "owner", { hasNotes: true })).toBe(false);
+    expect(canCorrectInvoiceDate(inv(), "owner", { onNetwork: true })).toBe(false);
+    expect(canCorrectInvoiceDate(inv({ sale_import_batch_id: "b1" }), "owner")).toBe(false);
+    expect(canCorrectInvoiceDate(inv(), "owner", { hasNotes: false, onNetwork: false })).toBe(true);
+  });
+  it("Save says what is missing", () => {
+    const b = { min: "2026-04-01", max: "2026-11-09" };
+    expect(correctDateHint("2026-10-30", "2026-10-30", "Money came earlier", b)).toMatch(/different/);
+    expect(correctDateHint("2026-10-30", "2026-03-30", "Money came earlier", b)).toMatch(/between 1 Apr 2026 and 9 Nov 2026/);
+    expect(correctDateHint("2026-10-30", "2026-09-15", "late", b)).toMatch(/at least 5 characters/);
+    expect(correctDateHint("2026-10-30", "", "Money came earlier", b)).toMatch(/Pick the correct date/);
+    expect(correctDateHint("2026-10-30", "2026-09-15", "Money came earlier", b)).toBeNull();
   });
 });

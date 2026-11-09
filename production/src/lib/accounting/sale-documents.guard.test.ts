@@ -29,6 +29,7 @@ const SQL_SALE = new Set([
   "report_day_book",       // Sales vouchers
   "report_party_ledger",   // 'Opening balance' for opening_balance, not a Sales voucher
   "get_partner_metrics",   // invoiced this month (reseller children)
+  "correct_invoice_date",  // R-2173: re-dates one issued sale of ours - an opening balance (not a sale) is refused
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
   reduce_subscription_seats: "R-2252: the ONE invoice of a subscription part (by its quote / billing row) a seat cut credits — its open and settled amounts for the split, then issue_credit_note_core; no list or total",

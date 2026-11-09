@@ -304,7 +304,10 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 </Button>
               )}
               {/* R-2173: owner/accountant correct the date while GST for the month is not filed. */}
-              <CorrectInvoiceDateButton invoice={invoice} role={me?.role} />
+              <CorrectInvoiceDateButton invoice={invoice} role={me?.role} facts={{
+                hasNotes: (creditNotesForBadge?.length ?? 0) + (debitNotesForBadge?.length ?? 0) > 0,
+                onNetwork: (network.data ?? []).some((d) => d.sellerInvoiceId === invoice.id && d.status !== "cancelled"),
+              }} />
               {canWrite && (
                 <Button
                   size="sm"

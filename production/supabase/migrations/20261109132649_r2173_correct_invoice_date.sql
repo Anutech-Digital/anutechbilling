@@ -18,9 +18,13 @@
 --     * the new date is in the future, the same as now, or in another financial year - the number series is
 --       per FY and the number is the invoice id (R-2632 builds the cross-FY move);
 --     * no reason (5+ characters).
---   Then invoice_date and due_date move by the same number of days (same payment terms) under a
+--     * the supplier's GST status on the new day differs from the document's (tax invoice vs bill of supply);
+--     * the new date is LATER and after money already received against it (that receipt would be an advance).
+--   Then invoice_date and due_date move by the same number of days (same payment terms; an unpaid invoice moved
+--   earlier keeps at least its old due date - no sudden overdue reminder) under a
 --   transaction-local app.invoice_amend_reason (the freeze trigger's reviewed-override path), and ONE
---   activity_log row 'invoice.date_corrected' keeps old -> new and the reason. Receipts, TDS rows and bank
+--   activity_log row 'invoice.date_corrected' keeps old -> new and the reason. A post-check proves no other
+--   column moved under the override. Signed-in owner/accountant only (no service_role grant). Receipts, TDS rows and bank
 --   links keep their own dates. A login still cannot UPDATE invoice_date directly (freeze trigger unchanged).
 -- Test: supabase/tests/r2173_correct_invoice_date.test.sql
 
@@ -42,6 +46,9 @@ declare
   v_new_due date;
   v_old_fy  text;
   v_new_fy  text;
+  v_money   date;
+  v_after   jsonb;
+  v_before  jsonb;
 begin
   if v_tenant is null then
     raise exception 'Sign in to your company to correct an invoice date.' using errcode = '28000';
@@ -126,8 +133,46 @@ begin
       using errcode = '22023';
   end if;
 
+  /* The supplier's GST status on the new day must be the one the document was issued under (a tax
+     invoice cannot move to a day the business was not registered, nor a bill of supply into a registered one). */
+  if v_inv.supplier_gst_status is not null
+     and public.supplier_gst_status(v_tenant, p_new_date) is distinct from v_inv.supplier_gst_status then
+    raise exception 'On % your business''s GST status was % - invoice % was issued as %, so it cannot be dated then. Issue a credit note and a fresh document instead.',
+      to_char(p_new_date, 'FMDD Mon YYYY'), coalesce(public.supplier_gst_status(v_tenant, p_new_date), 'not known'), v_inv.id, v_inv.supplier_gst_status
+      using errcode = '22023';
+  end if;
+
+  /* Moving LATER must not pass money already received against it - that receipt would become an
+     un-taxed advance (GSTR-1 11A). Earliest of: paid date, first advance adjusted, receipts on the
+     invoice or its quote (refunded ones ignored). Moving earlier (towards the receipt) is the usual fix. */
+  if p_new_date > v_inv.invoice_date then
+    select min(d) into v_money from (
+      select v_inv.paid_date as d
+      union all select (v_inv.first_advance_at at time zone 'Asia/Kolkata')::date
+      union all select (p.received_at at time zone 'Asia/Kolkata')::date
+        from public.payments p
+       where p.tenant_id = v_tenant and coalesce(p.status, 'received') <> 'refunded'
+         and (p.invoice_id = v_inv.id or (v_inv.quote_id is not null and p.quote_id = v_inv.quote_id))
+    ) m;
+    if v_money is not null and p_new_date > v_money then
+      raise exception 'Money against invoice % was received on %, so the invoice cannot be dated after it (%). Pick % or earlier.',
+        v_inv.id, to_char(v_money, 'FMDD Mon YYYY'), to_char(p_new_date, 'FMDD Mon YYYY'), to_char(greatest(v_money, v_inv.invoice_date), 'FMDD Mon YYYY')
+        using errcode = '22023';
+    end if;
+  end if;
+
+  /* Same payment terms: the due date moves by the same days. But an UNPAID invoice moved earlier never
+     gets a due date earlier than it had (no sudden "overdue" reminder for a customer who was never late). */
   v_new_due := case when v_inv.due_date is null then null
                     else v_inv.due_date + (p_new_date - v_inv.invoice_date) end;
+  if v_new_due is not null and v_inv.status <> 'paid' and v_new_due < v_inv.due_date then
+    v_new_due := greatest(v_inv.due_date, p_new_date);
+  end if;
+  if v_new_due is not null and v_new_due < p_new_date then
+    v_new_due := p_new_date;
+  end if;
+
+  v_before := to_jsonb(v_inv) - array['invoice_date', 'due_date', 'updated_at'];
 
   perform set_config('app.invoice_amend_reason', 'R-2173 correct_invoice_date: ' || v_reason, true);
   update public.invoices
@@ -135,6 +180,15 @@ begin
          due_date     = v_new_due
    where id = v_inv.id and tenant_id = v_tenant;
   perform set_config('app.invoice_amend_reason', '', true);
+
+  /* The amend override is the freeze trigger's general one, so prove only the two dates moved: any other
+     column a BEFORE UPDATE trigger might have changed under it undoes the whole call. */
+  select to_jsonb(i) - array['invoice_date', 'due_date', 'updated_at'] into v_after from public.invoices i where i.id = v_inv.id;
+  if v_after is distinct from v_before then
+    raise exception 'Correcting the date of invoice % would also change other fields (%) - nothing was saved.', v_inv.id,
+      (select string_agg(k, ', ') from jsonb_object_keys(v_after) k where v_after->k is distinct from v_before->k)
+      using errcode = '22023';
+  end if;
 
   insert into public.activity_log (tenant_id, user_id, action, entity, entity_id, label, changes)
   values (v_tenant, auth.uid(), 'invoice.date_corrected', 'invoice', v_inv.id,
@@ -153,6 +207,6 @@ comment on function public.correct_invoice_date(text, date, text) is
   'R-2173: owner/accountant corrects an issued tax invoice''s date (and due date by the same days) inside the same FY while neither month is GST-filed (gst_filed_why); refuses IRN, Zoho-imported, foreign currency, credit/debit noted, network-sent invoices; logs invoice.date_corrected with the reason.';
 
 revoke all on function public.correct_invoice_date(text, date, text) from public, anon;
-grant execute on function public.correct_invoice_date(text, date, text) to authenticated, service_role;
+grant execute on function public.correct_invoice_date(text, date, text) to authenticated;
 
 commit;
