@@ -118,7 +118,7 @@ export interface RenewalQuoteHold {
   message: string;
 }
 
-export function isRenewalQuoteHold(r: RenewalQuoteResult | RenewalQuoteHold | null | undefined): r is RenewalQuoteHold {
+export function isRenewalQuoteHold(r: object | null | undefined): r is RenewalQuoteHold {
   return !!r && "held" in r;
 }
 
