@@ -8,8 +8,8 @@
 // `rate` with its own `list_rate`, both stored ₹. So the bug is any path that leaves those two on
 // DIFFERENT price lists: list_rate = the ₹ catalogue while the rate is the USD price × rate.
 // Reproduced: a Commitment switch (Annual ⇄ Monthly) on a catalogue line of a USD quote re-priced
-// the line from the item's ₹ tier (rate AND list ₹1,000/seat/month), and typing the item's real
-// USD price ($4) back then read as a 62% discount against the ₹ list → owner approval.
+// the line from the item's ₹ tier (rate AND list ₹1,100/seat/month flex), and typing the item's real
+// USD price ($4) back then read as a 65% discount against the ₹ list → owner approval.
 import { describe, it, expect, vi, afterEach } from "vitest";
 import * as React from "react";
 import { createRoot, type Root } from "react-dom/client";
@@ -19,6 +19,7 @@ import { lineEconomics } from "./approval-economics";
 import { requiredApproval, discountBps } from "./approval";
 import { catalogLineListRate } from "./catalog-line";
 import { inrRateFromForeign } from "./foreign-totals";
+import { usdCommitmentReprice } from "./usd-commitment";
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 
 let search = "";
@@ -133,7 +134,7 @@ describe("R-2638: the builder keeps a USD line on the USD price list", () => {
     expect(c.textContent ?? "").not.toContain("Quote discount");
   });
 
-  it("…and typing the USD price back after the switch is NOT a discount (the false '62% discount' approval)", async () => {
+  it("…and typing the USD price back after the switch is NOT a discount (the false '65% discount' approval)", async () => {
     const c = await open(quote(yearUsd.rate, yearUsd.rate));
     await act(async () => { fireEvent.change(commitSelect(c), { target: { value: "monthly" } }); });
     await act(async () => { fireEvent.change(rateBox(c), { target: { value: "4" } }); });
@@ -154,6 +155,51 @@ describe("R-2638: the builder keeps a USD line on the USD price list", () => {
     const c = await open(quote(yearUsd.rate, yearUsd.rate));
     await act(async () => { fireEvent.change(commitSelect(c), { target: { value: "monthly" } }); });
     await act(async () => { fireEvent.change(rateBox(c), { target: { value: "2.8" } }); });
+    expect(c.textContent ?? "").toContain("Quote discount (30%)");
+  });
+});
+
+/* Review (code-review high): the cases the first fix got wrong. */
+
+describe("R-2638: usdCommitmentReprice", () => {
+  const base: QuoteLineItem = { id: "a", item_id: ITEM.id, name: ITEM.name, qty: 10, rate: yearUsd.rate, list_rate: yearUsd.rate, cost: yearUsd.cost, commitment: "annual_yearly" };
+  const monthUsd = catalogLineListRate(ITEM, "monthly", usd);   // $4 × 95.10 = ₹380.40
+
+  it("a line on the USD list → the USD price for the new commitment (list too)", () => {
+    const out = usdCommitmentReprice({ line: base, item: ITEM, commitment: "monthly", usd, costTyped: false })!;
+    expect(out.rate).toBe(monthUsd.rate);
+    expect(out.list_rate).toBe(monthUsd.rate);
+    expect(out.cost).toBe(monthUsd.cost);
+  });
+
+  it("keeps a real discount: 30% off on Annual is still 30% off on Monthly", () => {
+    const line = { ...base, rate: inrRateFromForeign(2.8 * 12, FX) };
+    const out = usdCommitmentReprice({ line, item: ITEM, commitment: "monthly", usd, costTyped: false })!;
+    expect(out.list_rate).toBe(monthUsd.rate);
+    expect(discountBps(lineEconomics([out]))).toBe(3000);
+  });
+
+  it("a typed cost moves to the new unit (₹2,853/yr → ₹238/mo), never left yearly on a monthly line", () => {
+    const out = usdCommitmentReprice({ line: { ...base, cost: 2853 }, item: ITEM, commitment: "monthly", usd, costTyped: true })!;
+    expect(out.cost).toBe(238);
+  });
+
+  it("a reopened 'India rate → USD' line (list = the ₹ price) is not on the USD list → null, ₹ path as before", () => {
+    const line = { ...base, rate: 12000, list_rate: 12000 };
+    expect(usdCommitmentReprice({ line, item: ITEM, commitment: "monthly", usd, costTyped: false })).toBeNull();
+  });
+
+  it("no USD basis (INR quote / India basis / no USD tier) → null", () => {
+    expect(usdCommitmentReprice({ line: base, item: ITEM, commitment: "monthly", usd: null, costTyped: false })).toBeNull();
+  });
+});
+
+describe("R-2638: builder, discounted USD line across a Commitment switch", () => {
+  it("$2.80 on the $4 list (30%) stays 30% after Annual → Monthly — the price is not reset to list", async () => {
+    const c = await open(quote(inrRateFromForeign(2.8 * 12, FX), yearUsd.rate));
+    expect(c.textContent ?? "").toContain("Quote discount (30%)");
+    await act(async () => { fireEvent.change(commitSelect(c), { target: { value: "monthly" } }); });
+    expect(rateBox(c).value).toBe("2.8");
     expect(c.textContent ?? "").toContain("Quote discount (30%)");
   });
 });
