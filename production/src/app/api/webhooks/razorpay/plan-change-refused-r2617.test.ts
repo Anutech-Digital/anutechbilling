@@ -46,8 +46,8 @@ describe("R-2617 settleRefusedPlanChange — next step for a scheduled seat cut"
       "R-2617: plan change refused — a seat cut 10 → 7 is scheduled for the end of this term (1 Apr 2027). Remove the scheduled seat cut in Manage seats first, then change the plan.");
     expect(res.status).toBe(200);
     const body = notified[0]?.body ?? "";
-    expect(body).toMatch(/refused because a seat cut is scheduled (plan change refused — a seat cut 10 → 7/);
-    expect(body).toMatch(/remove the scheduled seat cut in Manage seats, then record this payment on quote Q-PC-1 (Record payment, reference pay_R2617)/);
+    expect(body).toContain("refused because a seat cut is scheduled (plan change refused — a seat cut 10 → 7");
+    expect(body).toContain("remove the scheduled seat cut in Manage seats, then record this payment on quote Q-PC-1 (Record payment, reference pay_R2617)");
     expect(body).not.toMatch(/delete the old quote/i);
   });
 
