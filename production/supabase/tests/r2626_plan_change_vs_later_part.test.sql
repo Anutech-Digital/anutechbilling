@@ -9,14 +9,16 @@
 --       → refused 'R-2626: plan change refused — Q3 (…) is already invoiced (INV…)…', nothing booked,
 --       subscription unchanged.
 --   2.  Q3 has an open proforma (status sent, linked by subscription_billing_id) → refused, names it.
---   3.  Q3 freed by credit notes (invoice_id null, credited_invoice_ids) and its proforma cancelled
---       (rejected) → goes through.
+--   3.  Q3 freed by credit notes (invoice_id null, credited_invoice_ids), the request spent on that
+--       invoice, and a cancelled proforma (cancel_quote unlinks it) → goes through.
 --   4.  Q3 laid but not billed → goes through (the billing run re-prices it).
 --   5.  only the CURRENT part (Q2) and an earlier part (Q1) invoiced → goes through.
 --   6.  Correct details (item_id changes, no plan-change quote linked) with Q3 invoiced → not this guard.
 --   7.  R-2073-style upgrade (linked quote, extension_months 0, NO plan_change line) → not this guard.
 --   8.  a renewal (renewal date moves on) with a new plan → not this guard.
 --   9.  the plan-change quote of case 2 paid after its proforma was cancelled → goes through.
+--   10. Q3 on a GROUP request (R-2092, only a line billing_id names it) + Q4's own request expired by
+--       date but still linked → refused, both named, the latest first to cancel.
 -- Self-asserting, ONE transaction, rolled back. Run on a local/test DB only.
 
 begin;
@@ -47,14 +49,14 @@ insert into public.items (id, tenant_id, name, vendor, msrp, wholesale, item_typ
   ('SUP-STD-r2626', 'dd262600-0000-4000-8000-00000000a001', 'R2626 Support Standard', 'google', 500, 0, 'subscription',
    '{"annual":{"msrp":500,"wholesale":0}}');
 
--- subs 1..8: Starter, 10 seats, billed QUARTERLY, started 100 days ago → Q2 is the current part.
+-- subs 1..9: Starter, 10 seats, billed QUARTERLY, started 100 days ago → Q2 is the current part.
 insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, item_id, vendor, seats, mrr, status,
                                   billing_cycle, term_months, start_date, renewal_date, renewal_state)
   select ('dd262600-0000-4000-8000-00000000b00' || n)::uuid, 'dd262600-0000-4000-8000-00000000a001',
          'dd262600-0000-4000-8000-00000000c001', 'R2626 Cust',
          'R2626 Business Starter', 'GW-START-r2626', 'google', 10, 2700, 'active',
          'quarterly', 12, current_date - 100, (current_date - 100 + interval '1 year')::date, 'pending'
-    from generate_series(1, 8) n;
+    from generate_series(1, 9) n;
 
 -- Q1..Q4 of every sub, laid, no bill yet (8100 = 2700 × 3).
 insert into public.subscription_billings (id, tenant_id, subscription_id, term_start, period_index, bill_on,
@@ -64,7 +66,7 @@ insert into public.subscription_billings (id, tenant_id, subscription_id, term_s
          (s.start_date + make_interval(months => 3 * (k - 1)))::date,
          (s.start_date + make_interval(months => 3 * k))::date,
          8100, 18
-    from generate_series(1, 8) n
+    from generate_series(1, 9) n
     cross join generate_series(1, 4) k
     join public.subscriptions s on s.id = ('dd262600-0000-4000-8000-00000000b00' || n)::uuid;
 
@@ -81,18 +83,40 @@ update public.subscription_billings b set invoice_id = 'INV-R2626-' || v.n || '-
 update public.subscription_billings set credited_invoice_ids = array['INV-R2626-OLD-3']
  where id = 'dd262600-0000-4000-8000-000000030300';
 
--- Proformas (payment requests) for Q3: sub 2 open (sent), sub 3 cancelled (rejected).
+-- The invoice credit notes cancelled (sub 3's old Q3 invoice).
+insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date)
+values ('INV-R2626-OLD-3', 'dd262600-0000-4000-8000-00000000a001', 'dd262600-0000-4000-8000-00000000c001',
+        'R2626 Cust', 9558, 'pending', current_date);
+
+-- Proformas (payment requests):
+--   sub 2 Q3 open (sent);
+--   sub 3 Q3: one cancelled (cancel_quote unlinks it: rejected, cancelled_part_billing_id) and one spent on the
+--     invoice credit notes cancelled (R-2095) — neither is Q3's request any more;
+--   sub 9 Q3: a GROUP request (R-2092) linked through sub 6's Q4 row, naming sub 9's Q3 in a line billing_id;
+--   sub 9 Q4: its own request, expired by date but still linked (the billing job still treats it as Q4's request).
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
-                           line_items, billing_cycle, subscription_billing_id)
+                           line_items, billing_cycle, subscription_billing_id, invoice_id)
 values
   ('PI-R2626-2', 'dd262600-0000-4000-8000-00000000a001', 'dd262600-0000-4000-8000-00000000c001', 'R2626 Cust',
    9558, 8100, 18, 'sent', 'awaiting', '[{"name":"R2626 Business Starter Q3","qty":10,"rate":810}]', 'quarterly',
-   'dd262600-0000-4000-8000-000000020300'),
-  ('PI-R2626-3', 'dd262600-0000-4000-8000-00000000a001', 'dd262600-0000-4000-8000-00000000c001', 'R2626 Cust',
-   9558, 8100, 18, 'rejected', 'none', '[{"name":"R2626 Business Starter Q3","qty":10,"rate":810}]', 'quarterly',
-   'dd262600-0000-4000-8000-000000030300');
+   'dd262600-0000-4000-8000-000000020300', null),
+  ('PI-R2626-3B', 'dd262600-0000-4000-8000-00000000a001', 'dd262600-0000-4000-8000-00000000c001', 'R2626 Cust',
+   9558, 8100, 18, 'accepted', 'received', '[{"name":"R2626 Business Starter Q3","qty":10,"rate":810}]', 'quarterly',
+   'dd262600-0000-4000-8000-000000030300', 'INV-R2626-OLD-3'),
+  ('PI-R2626-G9', 'dd262600-0000-4000-8000-00000000a001', 'dd262600-0000-4000-8000-00000000c001', 'R2626 Cust',
+   19116, 16200, 18, 'sent', 'awaiting',
+   '[{"name":"Lead Q4","qty":10,"rate":810,"billing_id":"dd262600-0000-4000-8000-000000060400"},{"name":"Sub 9 Q3","qty":10,"rate":810,"billing_id":"dd262600-0000-4000-8000-000000090300"}]',
+   'quarterly', 'dd262600-0000-4000-8000-000000060400', null),
+  ('PI-R2626-9-4', 'dd262600-0000-4000-8000-00000000a001', 'dd262600-0000-4000-8000-00000000c001', 'R2626 Cust',
+   9558, 8100, 18, 'expired', 'awaiting', '[{"name":"R2626 Business Starter Q4","qty":10,"rate":810}]', 'quarterly',
+   'dd262600-0000-4000-8000-000000090400', null);
+insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
+                           line_items, billing_cycle, cancelled_part_billing_id)
+values ('PI-R2626-3', 'dd262600-0000-4000-8000-00000000a001', 'dd262600-0000-4000-8000-00000000c001', 'R2626 Cust',
+        9558, 8100, 18, 'rejected', 'none', '[{"name":"R2626 Business Starter Q3","qty":10,"rate":810}]', 'quarterly',
+        'dd262600-0000-4000-8000-000000030300');
 
--- Plan-change quotes as Change plan writes them (period = the rest of Q2), linked; subs 1..5.
+-- Plan-change quotes as Change plan writes them (period = the rest of Q2), linked; subs 1..5 and 9.
 -- Sub 7: an R-2073-style upgrade (no plan_change line). Sub 6, 8: nothing linked.
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
                            line_items, is_renewal, extension_months, billing_cycle)
@@ -108,14 +132,14 @@ insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, su
                                              'period_from', to_char(current_date, 'YYYY-MM-DD'),
                                              'period_to', to_char((current_date - 100 + interval '6 months')::date - 1, 'YYYY-MM-DD')))),
          true, 0, 'yearly'
-    from generate_series(1, 5) n;
+    from (select n from generate_series(1, 5) n union all select 9) s(n);
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
                            line_items, is_renewal, extension_months, billing_cycle)
 values ('Q-R2626-UP7', 'dd262600-0000-4000-8000-00000000a001', 'dd262600-0000-4000-8000-00000000c001', 'R2626 Cust',
         590, 500, 18, 'draft', 'awaiting',
         '[{"id":"up-1","item_id":"SUP-STD-r2626","name":"R2626 Support Standard","qty":1,"rate":500}]', true, 0, 'yearly');
 update public.subscriptions set renewal_quote_id = 'Q-R2626-PC' || right(id::text, 1)
- where id in (select ('dd262600-0000-4000-8000-00000000b00' || n)::uuid from generate_series(1, 5) n);
+ where id in (select ('dd262600-0000-4000-8000-00000000b00' || n)::uuid from (select n from generate_series(1, 5) n union all select 9) s(n));
 update public.subscriptions set renewal_quote_id = 'Q-R2626-UP7' where id = 'dd262600-0000-4000-8000-00000000b007';
 
 create temp table r2626_fail (msg text) on commit drop;
@@ -208,6 +232,20 @@ begin
   exception when others then insert into r2626_fail values ('9: payment refused after the proforma was cancelled: ' || sqlerrm); end;
   if (select item_id from public.subscriptions where id = v_s2) <> 'GW-STD-r2626' then
     insert into r2626_fail values ('9: plan not changed after the proforma was cancelled');
+  end if;
+
+  -- 10. group request names sub 9's Q3; Q4's expired-but-linked request → refused, both named.
+  v_msg := null;
+  begin
+    perform public.record_payment('Q-R2626-PC9', 11800, 'bank_transfer', 'r2626-pc9');
+  exception when others then v_msg := sqlerrm; end;
+  if v_msg is null then
+    insert into r2626_fail values ('10: plan-change quote paid while Q3 (group request) and Q4 are billed');
+  elsif v_msg not like 'R-2626: plan change refused — Q3 (%) and Q4 (%) already have proformas PI-R2626-G9, PI-R2626-9-4 at the current plan''s rate. Cancel them first, the latest first%' then
+    insert into r2626_fail values ('10: refusal message: ' || v_msg);
+  end if;
+  if (select item_id from public.subscriptions where id = 'dd262600-0000-4000-8000-00000000b009') <> 'GW-START-r2626' then
+    insert into r2626_fail values ('10: plan changed');
   end if;
 end $$;
 

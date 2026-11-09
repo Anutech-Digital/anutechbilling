@@ -79,7 +79,10 @@ export const POST = withRoute(
     /* R-2626: a LATER part already billed (proforma raised ahead / its invoice) keeps the old rate —
        buildPlanChange refuses while one exists. Not readable → 500 parts_check_failed, nothing saved.
        The SQL trigger subscriptions_r2626_plan_change_vs_later_part guards the payment the same way. */
-    const laterPartsP = readLaterBilledParts(supabase, tenantId, sub.id, today).catch(() => null);
+    const laterPartsP = readLaterBilledParts(supabase, tenantId, sub.id, today).catch((e: unknown) => {
+      console.error(`[change-plan] ${sub.id}: billing parts read failed: ${e instanceof Error ? e.message : String(e)}`);
+      return null;
+    });
     let money;
     try {
       money = await readPlanChangeMoney(supabase, tenantId, sub, today);

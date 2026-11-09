@@ -289,11 +289,11 @@ export function settleRefusedPlanChange(
        paid; a part already invoiced (paid ahead) blocks this quote for good — its period is over by the
        time that part starts, so the money goes back or becomes advance. */
     const why = reason.replace(/^R-2626:\s*/, "");
-    const proforma = /already has proforma/.test(refusal);
+    const proforma = /already (?:has proforma|have proformas)/.test(refusal);
     return reportUnapplied(admin, args,
       `is a plan-change quote refused because a later billing part is already billed at the old rate (${why})`,
       proforma
-        ? `If the plan change should go ahead: open that proforma and Cancel proforma, then record this payment on quote ${args.quote.id} (Record payment, reference ${ref}). ` +
+        ? `If the plan change should go ahead: cancel the proforma(s) named above, the latest first (open each → Cancel proforma), then record this payment on quote ${args.quote.id} (Record payment, reference ${ref}). ` +
           `Otherwise refund the customer (Razorpay dashboard), or when Razorpay settles it to the bank, reconcile that bank line as this customer's advance (customer credit).`
         : `This quote cannot be paid while that part is invoiced. Delete quote ${args.quote.id}, then refund the customer (Razorpay dashboard), ` +
           `or when Razorpay settles it to the bank, reconcile that bank line as this customer's advance (customer credit) and use it on a new plan-change quote once that part starts.`);
