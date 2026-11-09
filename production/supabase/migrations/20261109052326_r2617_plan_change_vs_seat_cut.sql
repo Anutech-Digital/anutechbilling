@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_trigger where tgname = 'subscriptions_r2617_plan_change_vs_seat_cut')
 -- deploy-key: r2617planchangevsseatcut
--- 20261108194500_r2617_plan_change_vs_seat_cut.sql
+-- 20261109052326_r2617_plan_change_vs_seat_cut.sql
 --
 -- R-2617 (8 Nov 2026, split from R-2590 — R-2227 review low (a); money rule N5 / C3 family).
 --

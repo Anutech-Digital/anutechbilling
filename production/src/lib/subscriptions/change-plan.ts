@@ -50,7 +50,7 @@ import type { ScheduledSeatCutRow } from "@/lib/renewals/scheduled-seat-cut";
  * still sees it scheduled, the renewal silently keeps the new seats and the row is cancelled at
  * roll. We cannot tell whether the owner meant "N fewer" or "down to M", so — like R-2589/R-2605 —
  * the plan change is REFUSED until the cut is removed. Same rule in SQL: trigger
- * subscriptions_r2617_plan_change_vs_seat_cut (migration 20261108194500). Returns the message, or
+ * subscriptions_r2617_plan_change_vs_seat_cut (migration 20261109052326). Returns the message, or
  * null when nothing is scheduled for this term (a stale row from an earlier term, R-2584, or a
  * cancelled / applied / done row never blocks).
  */

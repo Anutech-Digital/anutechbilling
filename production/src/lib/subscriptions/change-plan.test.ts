@@ -2,7 +2,7 @@
  * R-2227 — mid-term plan change (Starter → Standard): one calculation for preview and quote.
  */
 import { describe, expect, it } from "vitest";
-import { buildPlanChange, isPlanChangeQuote, planChangeTargets, type ChangePlanMoney, type ChangePlanSub } from "./change-plan";
+import { buildPlanChange, isPlanChangeQuote, planChangeSeatCutBlock, planChangeTargets, type ChangePlanMoney, type ChangePlanSub } from "./change-plan";
 import type { CatalogProduct } from "./catalog-options";
 
 const starter: CatalogProduct = {
@@ -160,5 +160,41 @@ describe("R-2227 — a plan change quote reads as an upgrade, never a renewal", 
     expect(quoteDocumentKind(q)).toBe("upgrade");
     expect(acceptHint({ ...q, customer_id: "C1", lead_id: null })).toMatch(/plan and seats change when the payment is recorded/);
     expect(quoteDocumentKind({ ...q, extension_months: 12 })).toBe("renewal");
+  });
+});
+
+describe("R-2617 — a scheduled end-of-term seat cut refuses the plan change", () => {
+  const cut = { id: "R1", timing: "end_of_term", status: "scheduled", seats_before: 10, seats_after: 8, effective_date: "2027-04-01" };
+  const run = (seatCuts: Parameters<typeof buildPlanChange>[0]["seatCuts"]) =>
+    buildPlanChange({ sub: yearly, target: standard, newSeats: 12, today, taxRatePct: 18, seatCuts, money: paid });
+
+  it("cut dated this renewal → refused, names the cut and the next step", () => {
+    const r = run([cut]);
+    expect(!r.ok && r.reason).toBe(
+      "A seat cut 10 → 8 is scheduled for the end of this term (2027-04-01). " +
+      "Remove the scheduled seat cut in Manage seats first, then change the plan — or put the new plan on the renewal quote with the cut.",
+    );
+  });
+
+  it("a cut whose seats no longer match (still scheduled) → refused too", () => {
+    expect(run([{ ...cut, seats_before: 9, seats_after: 6 }]).ok).toBe(false);
+  });
+
+  it.each([
+    ["dated an earlier term (R-2584)", { ...cut, effective_date: "2026-04-01" }],
+    ["cancelled", { ...cut, status: "cancelled" }],
+    ["applied", { ...cut, status: "applied" }],
+    ["a 'now' cut (done)", { ...cut, timing: "now", status: "done" }],
+  ])("%s → does not block", (_n, row) => {
+    expect(run([row]).ok).toBe(true);
+    expect(planChangeSeatCutBlock([row], yearly)).toBeNull();
+  });
+
+  it("cuts not readable (null) → refused, nothing priced", () => {
+    expect(!run(null).ok && (run(null) as { reason: string }).reason).toMatch(/Could not read this subscription's scheduled seat cuts/);
+  });
+
+  it("no renewal date → nothing to block", () => {
+    expect(planChangeSeatCutBlock([cut], { renewal_date: null })).toBeNull();
   });
 });
