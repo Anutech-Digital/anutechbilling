@@ -375,6 +375,18 @@ export const SCENARIOS = [
       { path: "banking", for: "R-2192 the ₹13,105 SCN Round Off Traders line: 'Matches INV-SCN-RG-1 · ₹1 round-off' → Reconcile: INV-SCN-RG-1 ticked, 'Round off ₹1' chosen → Record → Paid in full · the ₹49,500 SCN Wire Exports line → This money is for INV-SCN-RG-2 → Bank / SWIFT charge ₹500 → Paid" },
     ],
   },
+  {
+    name: "zoho-as-filed",
+    about: "R-2540: SCN As Filed Traders (Maharashtra, GSTIN 27AAHCS1234K1Z5, Baner Road, Pune) with two FY sales kept as filed in Zoho: ZB-SCN-AF-1 ₹11,800 filed as B2C (no GSTIN) and ZB-SCN-AF-2 ₹23,600 for its Karnataka branch (GSTIN 29AAHCS1234K1Z1, 5th Floor, MG Road, Bengaluru).",
+    cards: ["R-2540"],
+    needs: { sql: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'invoices' and column_name = 'party_from_source')", what: "Zoho sale kept as filed (migration R-2536)" },
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [],
+             extra: ["c2540000-0000-4000-8000-000000000001", "ZB-SCN-AF-1", "ZB-SCN-AF-2"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1, xInvoices: 2 },
+    pages: [
+      { path: "invoices", for: "R-2540 ZB-SCN-AF-1 → Tax invoice: no buyer GSTIN (B2C as filed) · ZB-SCN-AF-2 → GSTIN 29AAHCS1234K1Z1, MG Road Bengaluru address, State: Karnataka — not the Pune address" },
+    ],
+  },
 ];
 
 export const SCENARIO_NAMES = SCENARIOS.map((s) => s.name);
