@@ -63,6 +63,8 @@ export interface PurchaseFacts extends ScanFacts {
   lines: PurchaseLineFacts[];
   /** Expenses: the account it was paid from in Zoho. */
   paidThrough: string;
+  /** R-2629: Zoho's reference_number (often the month the bill is for, e.g. "Google Portal Bill (Aug 2026)"); "" when none, at most 200 characters. The import keeps it in the notes. */
+  reference: string;
   problems: string[];
 }
 
@@ -250,6 +252,7 @@ export function zohoPurchaseFacts(d: ZohoFyDocDetail): PurchaseFacts {
     tdsSection,
     lines,
     paidThrough: str(raw.paid_through_account_name),
+    reference: str(raw.reference_number).slice(0, 200),
     problems,
   };
 }
