@@ -42,6 +42,29 @@ import { annualPerSeatFromMrr } from "./seat-increase-charge";
 import { seatChargePlan, type SeatWindowSub } from "./seat-charge-window";
 import { partShareOf, type SeatPartSegment } from "./seat-part-rate";
 import type { CatalogProduct } from "./catalog-options";
+import type { ScheduledSeatCutRow } from "@/lib/renewals/scheduled-seat-cut";
+
+/**
+ * R-2617: a seat cut scheduled "At end of term" (R-2252) is billed by the renewal quote on the seats
+ * it was made on (R-2583, rule N5). A plan change under it would leave the cut stale: the owner
+ * still sees it scheduled, the renewal silently keeps the new seats and the row is cancelled at
+ * roll. We cannot tell whether the owner meant "N fewer" or "down to M", so — like R-2589/R-2605 —
+ * the plan change is REFUSED until the cut is removed. Same rule in SQL: trigger
+ * subscriptions_r2617_plan_change_vs_seat_cut (migration 20261108194500). Returns the message, or
+ * null when nothing is scheduled for this term (a stale row from an earlier term, R-2584, or a
+ * cancelled / applied / done row never blocks).
+ */
+export function planChangeSeatCutBlock(
+  cuts: readonly ScheduledSeatCutRow[],
+  sub: Pick<ChangePlanSub, "renewal_date">,
+): string | null {
+  const renewal = (sub.renewal_date ?? "").slice(0, 10);
+  if (!renewal) return null;
+  const live = cuts.find((r) => r.status === "scheduled" && r.timing === "end_of_term" && (r.effective_date ?? "").slice(0, 10) === renewal);
+  if (!live) return null;
+  return `A seat cut ${live.seats_before} → ${live.seats_after} is scheduled for the end of this term (${renewal}). ` +
+    "Remove the scheduled seat cut in Manage seats first, then change the plan — or put the new plan on the renewal quote with the cut.";
+}
 
 export interface ChangePlanSub {
   id: string;
@@ -176,14 +199,22 @@ export function buildPlanChange(args: {
   today: string;
   taxRatePct: number;
   money: ChangePlanMoney | null;
+  /** R-2617: the subscription's scheduled seat cuts (loadScheduledSeatCuts); null = not readable → refused. */
+  seatCuts: readonly ScheduledSeatCutRow[] | null;
 }): PlanChangeResult {
-  const { sub, target, today, taxRatePct, money } = args;
+  const { sub, target, today, taxRatePct, money, seatCuts } = args;
   const newSeats = args.newSeats;
   if (sub.status !== "active") return { ok: false, reason: `This subscription is ${sub.status}. Only an active plan can be changed.` };
   if (isSupportSkuId(sub.item_id)) return { ok: false, reason: "A support plan is changed with Upgrade plan." };
   if (sub.renewal_quote_id) {
     return { ok: false, reason: `This subscription already has an open quote (${sub.renewal_quote_id}). Finish or delete it first.` };
   }
+  /* R-2617: a scheduled end-of-term seat cut would be left stale by this change — remove it first. */
+  if (seatCuts == null) {
+    return { ok: false, reason: "Could not read this subscription's scheduled seat cuts, so the plan was not changed. Try again." };
+  }
+  const cutBlock = planChangeSeatCutBlock(seatCuts, sub);
+  if (cutBlock) return { ok: false, reason: cutBlock };
   if (target.id === sub.item_id) return { ok: false, reason: "Pick a different plan." };
   if (isSupportSkuId(target.id)) return { ok: false, reason: "A licence cannot be changed into a support plan." };
   if (sub.vendor && target.vendor !== sub.vendor) return { ok: false, reason: "The new plan must be from the same vendor." };

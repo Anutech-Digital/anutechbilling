@@ -29,6 +29,7 @@ import { composeQuoteNotes } from "@/lib/quotes/customer-notes";
 import { subscriptionProducts } from "@/lib/subscriptions/catalog-options";
 import { buildPlanChange } from "@/lib/subscriptions/change-plan";
 import { readPlanChangeMoney } from "@/lib/subscriptions/change-plan-money.server";
+import { loadScheduledSeatCuts } from "@/lib/renewals/scheduled-seat-cut";
 import type { Item } from "@/lib/supabase/database.types";
 
 export const dynamic = "force-dynamic";
@@ -79,8 +80,15 @@ export const POST = withRoute(
         .from("customers").select("country, gst_treatment").eq("id", sub.customer_id).eq("tenant_id", tenantId).maybeSingle();
       if (isZeroRatedSupply({ country: cust?.country, treatment: cust?.gst_treatment })) taxRatePct = 0; // R-2515: export / SEZ
     }
-    const built = buildPlanChange({ sub, target, newSeats: input.seats, today, taxRatePct, money });
-    if (!built.ok) return NextResponse.json({ error: built.reason }, { status: 400 });
+    /* R-2617: a seat cut scheduled "At end of term" is billed by the renewal quote on today's seats —
+       a plan change under it would leave it stale, so buildPlanChange refuses while one is scheduled.
+       Not readable → 500, nothing saved; the SQL trigger guards the same under the row lock. */
+    const seatCuts = await loadScheduledSeatCuts(supabase, tenantId, sub.id);
+    const built = buildPlanChange({ sub, target, newSeats: input.seats, today, taxRatePct, money, seatCuts });
+    if (!built.ok) {
+      if (seatCuts == null) return NextResponse.json({ error: built.reason, code: "cut_check_failed" }, { status: 500 });
+      return NextResponse.json({ error: built.reason }, { status: 400 });
+    }
     const { plan } = built;
 
     if (input.preview) {
