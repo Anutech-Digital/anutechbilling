@@ -114,3 +114,31 @@ describe("startQuotePayment — R-2596 stale plan-change quote", () => {
     expect(a.from.mock.calls.map((c) => c[0])).not.toContain("subscriptions");
   });
 });
+
+describe("R-2617 — scheduled end-of-term seat cut refuses the pay start", () => {
+  const cut = { status: "scheduled", timing: "end_of_term", effective_date: "2027-04-01" };
+  const withCuts = (rows: PlanChangeSubNow["subscription_seat_reductions"]): PlanChangeSubNow =>
+    ({ ...SUB, renewal_date: "2027-04-01", subscription_seat_reductions: rows });
+
+  it("cut dated this renewal → seat_cut_scheduled", () => {
+    expect(planChangeStaleReason(line(PC), withCuts([cut]))).toBe("seat_cut_scheduled");
+  });
+  it.each([
+    ["earlier term (R-2584)", { ...cut, effective_date: "2026-04-01" }],
+    ["cancelled", { ...cut, status: "cancelled" }],
+    ["applied", { ...cut, status: "applied" }],
+    ["now cut", { ...cut, timing: "now", status: "done" }],
+  ])("%s → still payable", (_n, row) => {
+    expect(planChangeStaleReason(line(PC), withCuts([row]))).toBeNull();
+  });
+
+  it("startQuotePayment → 409 with its own message, no order", async () => {
+    const a = admin({ ...withCuts([cut]), renewal_quote_id: "Q-PC-1", tenant_id: "t-1" } as PlanChangeSubNow);
+    const r = await startQuotePayment(a.client, QUOTE, OPTS);
+    expect(r.status).toBe(409);
+    expect(r.body.planChangeStale).toBe("seat_cut_scheduled");
+    expect(String(r.body.error)).toMatch(/seat reduction is scheduled/);
+    expect(String(r.body.nextStep)).toMatch(/Nothing has been charged/);
+    expect(a.from.mock.calls.map((c) => c[0])).toEqual(["subscriptions"]);
+  });
+});
