@@ -5,6 +5,7 @@
 --   1.  scheduled 10 → 7 cut dated the renewal; the plan (item_id) changes, renewal date stays
 --       → refused, names the cut (10 → 7) and the next step; nothing changed.
 --   1b. Correct details (correct_subscription_terms) changing the plan → same refusal.
+--   1c. plan AND renewal date moved BACK in one statement → still refused (R-2608 only handles forward).
 --   2.  a renewal paid with a new plan (item_id changes AND renewal_date moves on) → not this guard
 --       (R-2608's trigger owns the cut then).
 --   3.  cut cancelled → plan change goes through; cut 'applied' → goes through.
@@ -112,6 +113,17 @@ begin
     insert into r2617_fail values ('1b: Correct details changed the plan while a cut is scheduled');
   elsif v_msg not like 'R-2617: plan change refused%' then
     insert into r2617_fail values ('1b: refusal message: ' || v_msg);
+  end if;
+
+  -- 1c. plan + renewal date moved back in one statement.
+  v_msg := null;
+  begin
+    update public.subscriptions
+       set item_id = 'GW-STD-r2617', plan = 'R2617 Business Standard', renewal_date = renewal_date - 30
+     where id = v_s1;
+  exception when others then v_msg := sqlerrm; end;
+  if v_msg is null or v_msg not like 'R-2617: plan change refused%' then
+    insert into r2617_fail values ('1c: plan + earlier renewal date in one update not refused: ' || coalesce(v_msg, 'went through'));
   end if;
 
   -- 2. renewal paid with a new plan: item_id changes AND the renewal date moves on → not this guard.

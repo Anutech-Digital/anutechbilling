@@ -42,7 +42,8 @@ import { annualPerSeatFromMrr } from "./seat-increase-charge";
 import { seatChargePlan, type SeatWindowSub } from "./seat-charge-window";
 import { partShareOf, type SeatPartSegment } from "./seat-part-rate";
 import type { CatalogProduct } from "./catalog-options";
-import type { ScheduledSeatCutRow } from "@/lib/renewals/scheduled-seat-cut";
+import { renewalSeatCut, type ScheduledSeatCutRow } from "@/lib/renewals/scheduled-seat-cut";
+import { formatDate } from "@/lib/utils";
 
 /**
  * R-2617: a seat cut scheduled "At end of term" (R-2252) is billed by the renewal quote on the seats
@@ -52,18 +53,18 @@ import type { ScheduledSeatCutRow } from "@/lib/renewals/scheduled-seat-cut";
  * the plan change is REFUSED until the cut is removed. Same rule in SQL: trigger
  * subscriptions_r2617_plan_change_vs_seat_cut (migration 20261109052326). Returns the message, or
  * null when nothing is scheduled for this term (a stale row from an earlier term, R-2584, or a
- * cancelled / applied / done row never blocks).
+ * cancelled / applied / done row never blocks). "Scheduled for this term" is the renewal quote's own
+ * rule (renewalSeatCut, any kind but none) — one definition for both. Any such row blocks, also one
+ * whose seats no longer match: the owner still sees it in Manage seats.
  */
 export function planChangeSeatCutBlock(
   cuts: readonly ScheduledSeatCutRow[],
-  sub: Pick<ChangePlanSub, "renewal_date">,
+  sub: Pick<ChangePlanSub, "renewal_date" | "seats">,
 ): string | null {
-  const renewal = (sub.renewal_date ?? "").slice(0, 10);
-  if (!renewal) return null;
-  const live = cuts.find((r) => r.status === "scheduled" && r.timing === "end_of_term" && (r.effective_date ?? "").slice(0, 10) === renewal);
-  if (!live) return null;
-  return `A seat cut ${live.seats_before} → ${live.seats_after} is scheduled for the end of this term (${renewal}). ` +
-    "Remove the scheduled seat cut in Manage seats first, then change the plan — or put the new plan on the renewal quote with the cut.";
+  const cut = renewalSeatCut(cuts, { seats: sub.seats, renewalDate: sub.renewal_date ?? "" });
+  if (cut.kind === "none") return null;
+  return `A seat cut ${cut.row.seats_before} → ${cut.row.seats_after} is scheduled for the end of this term (${formatDate(cut.row.effective_date.slice(0, 10))}). ` +
+    "Remove the scheduled seat cut in Manage seats first, then change the plan.";
 }
 
 export interface ChangePlanSub {
@@ -199,8 +200,9 @@ export function buildPlanChange(args: {
   today: string;
   taxRatePct: number;
   money: ChangePlanMoney | null;
-  /** R-2617: the subscription's scheduled seat cuts (loadScheduledSeatCuts); null = not readable → refused. */
-  seatCuts: readonly ScheduledSeatCutRow[] | null;
+  /** R-2617: the subscription's scheduled seat cuts (loadScheduledSeatCuts). A failed read never
+   *  reaches here — the route answers 500 cut_check_failed first. */
+  seatCuts: readonly ScheduledSeatCutRow[];
 }): PlanChangeResult {
   const { sub, target, today, taxRatePct, money, seatCuts } = args;
   const newSeats = args.newSeats;
@@ -210,9 +212,6 @@ export function buildPlanChange(args: {
     return { ok: false, reason: `This subscription already has an open quote (${sub.renewal_quote_id}). Finish or delete it first.` };
   }
   /* R-2617: a scheduled end-of-term seat cut would be left stale by this change — remove it first. */
-  if (seatCuts == null) {
-    return { ok: false, reason: "Could not read this subscription's scheduled seat cuts, so the plan was not changed. Try again." };
-  }
   const cutBlock = planChangeSeatCutBlock(seatCuts, sub);
   if (cutBlock) return { ok: false, reason: cutBlock };
   if (target.id === sub.item_id) return { ok: false, reason: "Pick a different plan." };

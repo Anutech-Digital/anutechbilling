@@ -171,13 +171,16 @@ describe("R-2617 — a scheduled end-of-term seat cut refuses the plan change", 
   it("cut dated this renewal → refused, names the cut and the next step", () => {
     const r = run([cut]);
     expect(!r.ok && r.reason).toBe(
-      "A seat cut 10 → 8 is scheduled for the end of this term (2027-04-01). " +
-      "Remove the scheduled seat cut in Manage seats first, then change the plan — or put the new plan on the renewal quote with the cut.",
+      "A seat cut 10 → 8 is scheduled for the end of this term (1 Apr 2027). " +
+      "Remove the scheduled seat cut in Manage seats first, then change the plan.",
     );
   });
 
-  it("a cut whose seats no longer match (still scheduled) → refused too", () => {
-    expect(run([{ ...cut, seats_before: 9, seats_after: 6 }]).ok).toBe(false);
+  it.each([
+    ["seats no longer match", [{ ...cut, seats_before: 9, seats_after: 6 }]],
+    ["two cuts for this renewal", [cut, { ...cut, id: "R2" }]],
+  ])("a still-scheduled cut the renewal would not apply (%s) → refused too", (_n, rows) => {
+    expect(run(rows).ok).toBe(false);
   });
 
   it.each([
@@ -190,11 +193,7 @@ describe("R-2617 — a scheduled end-of-term seat cut refuses the plan change", 
     expect(planChangeSeatCutBlock([row], yearly)).toBeNull();
   });
 
-  it("cuts not readable (null) → refused, nothing priced", () => {
-    expect(!run(null).ok && (run(null) as { reason: string }).reason).toMatch(/Could not read this subscription's scheduled seat cuts/);
-  });
-
   it("no renewal date → nothing to block", () => {
-    expect(planChangeSeatCutBlock([cut], { renewal_date: null })).toBeNull();
+    expect(planChangeSeatCutBlock([cut], { renewal_date: null, seats: 10 })).toBeNull();
   });
 });

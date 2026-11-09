@@ -19,11 +19,14 @@
 -- between the route's read and the quote being paid):
 --
 --   subscriptions_r2617_plan_change_vs_seat_cut (BEFORE UPDATE OF item_id): the plan (item_id)
---   changes, the renewal date does NOT move (a renewal paid with a new plan moves it on — that is
---   R-2608's trigger, which marks the cut applied/cancelled) and a scheduled end_of_term cut is dated
---   this renewal → raise. Covers record_payment of a plan-change quote (R-2227 body sets item_id,
---   plan, seats, mrr in one update) and Correct details (correct_subscription_terms). A cascade from
---   another trigger (pg_trigger_depth() > 1) is let through, as in R-2605.
+--   changes, the renewal date does NOT move FORWARD (a renewal paid with a new plan moves it on —
+--   that is R-2608's trigger, which marks the cut applied/cancelled; a date moved back or kept is
+--   checked here, so a plan + date change in one statement cannot strand the cut either) and a
+--   scheduled end_of_term cut is dated the OLD renewal date → raise. Covers record_payment of a
+--   plan-change quote (R-2227 body sets item_id, plan, seats, mrr in one update), Correct details
+--   (correct_subscription_terms / correct_subscription_details) and an R-2073 support upgrade.
+--   No pg_trigger_depth() bypass: nothing upstream checked the cut, so a change that arrives
+--   through another trigger is checked the same way.
 --
 -- The message starts "R-2617: plan change refused" so the Razorpay webhook treats it like R-2589's
 -- refusals (late-payment.server.ts PLAN_CHANGE_REFUSED_RE → settleRefusedPlanChange: owner told,
@@ -45,9 +48,6 @@ as $function$
 declare
   v_cut public.subscription_seat_reductions%rowtype;
 begin
-  if pg_trigger_depth() > 1 then
-    return new;
-  end if;
   if old.renewal_date is null then
     return new;
   end if;
@@ -60,7 +60,7 @@ begin
    limit 1;
   if found then
     raise exception 'R-2617: plan change refused — a seat cut % → % is scheduled for the end of this term (%). Remove the scheduled seat cut in Manage seats first, then change the plan.',
-      v_cut.seats_before, v_cut.seats_after, to_char(v_cut.effective_date, 'DD Mon YYYY')
+      v_cut.seats_before, v_cut.seats_after, to_char(v_cut.effective_date, 'FMDD Mon YYYY')
       using errcode = 'check_violation';
   end if;
   return new;
@@ -73,7 +73,7 @@ create trigger subscriptions_r2617_plan_change_vs_seat_cut
   before update of item_id on public.subscriptions
   for each row
   when (new.item_id is distinct from old.item_id
-        and new.renewal_date is not distinct from old.renewal_date)
+        and coalesce(new.renewal_date > old.renewal_date, false) = false)
   execute function public.r2617_plan_change_vs_seat_cut();
 
 commit;

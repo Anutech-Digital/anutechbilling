@@ -161,7 +161,7 @@ describe("R-2227 change-plan route", () => {
       state.cuts = [cut];
       const res = await post({ to_item_id: "GW-STD", seats: 12, preview });
       expect(res.status).toBe(400);
-      expect((await res.json()).error).toMatch(/A seat cut 10 → 7 is scheduled for the end of this term \(2027-04-01\)\. Remove the scheduled seat cut in Manage seats first/);
+      expect((await res.json()).error).toMatch(/A seat cut 10 → 7 is scheduled for the end of this term \(1 Apr 2027\)\. Remove the scheduled seat cut in Manage seats first/);
       expect(state.inserted).toHaveLength(0);
     });
 
