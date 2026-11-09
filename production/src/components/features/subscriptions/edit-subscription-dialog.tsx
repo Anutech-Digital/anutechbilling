@@ -339,8 +339,12 @@ export function EditSubscriptionDialog({
               termMonths: termNext, billingCycle: cycleNext,
               /* R-2545: a changed renewal date goes WITH the new term / frequency, so the pair is
                  checked together (quarterly + the term's real end), not the new frequency against
-                 the old date. */
-              renewalDate: termNext !== termNow || renewal !== oldRenewal ? (renewal || null) : null,
+                 the old date. Not when the start date changes too: the start is written in the
+                 last step, so the new date would be judged against the OLD start — then the
+                 frequency goes first on the recorded date and the new dates follow together. */
+              renewalDate: termNext !== termNow
+                || (renewal.slice(0, 10) !== oldRenewal && startDate.slice(0, 10) === (sub.start_date ?? "").slice(0, 10))
+                ? (renewal || null) : null,
             }
           : undefined,
         patch: {

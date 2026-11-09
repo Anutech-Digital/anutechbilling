@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from pg_proc where proname = 'correct_subscription_details' and pronamespace = (select oid from pg_namespace where nspname = 'public') and prosrc like '%R-2545%')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_details(uuid,text,text,text,date,date,date,integer,integer,text,integer,integer,integer,public.billing_cycle,date)') and prosrc like '%R-2545%')
 -- deploy-key: r2545correctdetailsonesave
 -- 20261109034726_r2545_correct_details_one_save.sql
 --
@@ -76,14 +76,19 @@ begin
 
   -- 4. The record's own fields — as the old direct UPDATE (caller's RLS). Blank domain keeps the
   --    recorded one; blank dates clear (the dialog says so); no status here (R-2228).
+  --    The company check is explicit as well as RLS, like the step functions. A date change here
+  --    carries the reason onto its change-history row (when one was written).
+  perform set_config('app.amendment_note', left(coalesce(nullif(btrim(coalesce(p_reason, '')), ''), ''), 500), true);
   update public.subscriptions s
      set vendor           = coalesce(nullif(btrim(coalesce(p_vendor, '')), '')::public.vendor, s.vendor),
          domain           = coalesce(nullif(btrim(coalesce(p_domain, '')), ''), s.domain),
          start_date       = p_start_date,
          renewal_date     = p_renewal_date,
          payment_due_date = p_payment_due_date
-   where s.id = p_subscription_id;
+   where s.id = p_subscription_id
+     and s.tenant_id = coalesce(public.current_tenant_id(), s.tenant_id);
   get diagnostics v_rows = row_count;
+  perform set_config('app.amendment_note', '', true);
   if v_rows = 0 then
     raise exception 'That subscription was not found in your company. Refresh the page and try again.'
       using errcode = '42501';

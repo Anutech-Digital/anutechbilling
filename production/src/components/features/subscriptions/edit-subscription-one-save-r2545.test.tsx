@@ -90,6 +90,19 @@ describe("R-2545: Correct details is ONE save", () => {
     expect(details.mock.calls[0][0].commitment).toEqual({ termMonths: 12, billingCycle: "half_yearly", renewalDate: null });
   });
 
+  it("start AND renewal corrected with the frequency: the frequency goes on the recorded date (null), the new dates in the last step", async () => {
+    details.mockResolvedValue(undefined);
+    render(<EditSubscriptionDialog sub={r800} open onOpenChange={onOpenChange} />);
+    fireEvent.change(document.querySelector("#sub_frequency")!, { target: { value: "quarterly" } });
+    fireEvent.change(input("sub_start"), { target: { value: "2025-03-29" } });   // renewal follows: 29 Mar 2026
+    fireEvent.change(document.querySelector("#sub_correct_reason")!, { target: { value: "Year typed wrong; pays quarterly" } });
+    save();
+    await vi.waitFor(() => expect(details).toHaveBeenCalledTimes(1));
+    const arg = details.mock.calls[0][0];
+    expect(arg.commitment).toEqual({ termMonths: 12, billingCycle: "quarterly", renewalDate: null });
+    expect(arg.patch).toMatchObject({ start_date: "2025-03-29", renewal_date: "2026-03-29" });
+  });
+
   it("dates / domain only: one request with no data, plan or commitment part", async () => {
     details.mockResolvedValue(undefined);
     render(<EditSubscriptionDialog sub={r800} open onOpenChange={onOpenChange} />);
