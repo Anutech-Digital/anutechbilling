@@ -91,7 +91,7 @@ import { fxStampFromQuote, manualFxStamp, type FxStamp } from "@/lib/fx/rate-sou
 import { addOrMergeLine } from "@/lib/quotes/line-items";
 import { lineFromCatalog, catalogYearlyPrice, catalogLineListRate } from "@/lib/quotes/catalog-line";
 import { usdCommitmentReprice } from "@/lib/quotes/usd-commitment";
-import { foreignQuoteFigures, foreignUnit, inrRateFromForeign, linesInrSubtotal } from "@/lib/quotes/foreign-totals";
+import { foreignQuoteFigures, foreignUnit, inrRateFromForeign, linesInrListGross, linesInrSubtotal } from "@/lib/quotes/foreign-totals";
 import { billingUnitOf, lineRateSuffix, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/lib/quotes/quote-assist";
 import { OVERSEAS_NO_COUNTRY_FIX, OVERSEAS_NO_COUNTRY_LABEL } from "@/lib/quotes/quote-place-of-supply";
@@ -956,7 +956,8 @@ function QuoteBuilderBody() {
   // price (list_rate) and what we're actually charging (rate). The rate is
   // already the discounted price, so taxable = subtotal (no further deduction —
   // deducting again would double-count and break the billed amount / MRR).
-  const listGross         = lineItems.reduce((s, it) => s + it.qty * (it.list_rate ?? it.rate), 0);
+  /* R-2644: rounded per line like the subtotal (lineInr) — a USD rate change read ₹0.24 as a discount. */
+  const listGross         = linesInrListGross(lineItems);
   const customerDiscount    = Math.max(0, listGross - subtotal);
   const customerDiscountPct = listGross > 0 ? Math.round((customerDiscount / listGross) * 100) : 0;
   const taxable           = subtotal;

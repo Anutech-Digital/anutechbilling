@@ -142,3 +142,11 @@ export function linesInrSubtotal(lines: readonly ForeignLineIn[]): number {
     0,
   );
 }
+
+/* R-2644: the LIST gross the builder compares with the subtotal — Σ round(qty × list_rate), the
+   same once-per-line rupee round as linesInrSubtotal (lineInr). Unrounded, a USD quote at
+   94.8755 read 10 × ₹4,554.024 = ₹45,540.24 against a ₹45,540 subtotal → "Quote discount (0%)"
+   although price = list. A line without list_rate was never discounted: its list is its rate. */
+export function linesInrListGross(lines: ReadonlyArray<{ qty: number; rate: number; list_rate?: number | null }>): number {
+  return lines.reduce((s, l) => s + lineInr({ qty: l.qty, rate: l.list_rate ?? l.rate }), 0);
+}
