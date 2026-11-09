@@ -1,6 +1,6 @@
 -- R-2627 (9 Nov 2026, p1 money, fix card from R-2621's review): paying an accepted QUOTE that has no
 -- invoice yet from a bank line of a GST-filed month must not raise a new tax invoice dated in that month.
--- Migration 20261109092728_r2627_gst_filed_quote_invoice. Self-asserting, ONE transaction, rolled back.
+-- Migration 20261109112645_r2627_gst_filed_quote_invoice. Self-asserting, ONE transaction, rolled back.
 -- RED without the migration (A: the quote is paid and invoiced on 20 Sep 2026).
 --
 --   GST filed up to Sep 2026 (owner, R-2621's setting).

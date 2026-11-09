@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_pay_item(uuid,integer,text,text,text,integer,numeric,text,boolean,date,date)') and prosrc like '%R-2627%')
 -- deploy-key: r2627gstfiledquoteinvoice
--- 20261109092728_r2627_gst_filed_quote_invoice.sql
+-- 20261109112645_r2627_gst_filed_quote_invoice.sql
 --
 -- R-2627 (9 Nov 2026, p1 money, G-FY2526 D7 — fix card from R-2621's independent review): paying an accepted
 -- QUOTE that has no invoice yet from a bank line of a GST-filed month still made a NEW tax invoice dated on
