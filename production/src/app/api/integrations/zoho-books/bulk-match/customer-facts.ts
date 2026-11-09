@@ -21,7 +21,7 @@ import { paymentApprovalBlock } from "@/lib/quotes/payment-approval";
 import {
   DOUBLE_DAYS, type BulkMatchRow, type CustomerFacts, type OpenItemFact,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
-import type { ZohoAppSale } from "@/lib/integrations/zoho-books/zoho-sale-filed";
+import { normNo, type ZohoAppSale } from "@/lib/integrations/zoho-books/zoho-sale-filed";
 import { BooksStartReadError, readBooksStart, type BooksStartDb } from "@/lib/accounting/books-start";
 
 export class FactsReadError extends Error {}
@@ -52,6 +52,11 @@ export async function attachCustomerFacts(
   const { admin, tenantId } = caller;
   const custOf = (r: BulkMatchRow) => (r.result.kind === "match" ? mapZohoCustomer(r.result.match.customer, appCustomers)?.id ?? null : null);
 
+  /* R-2621: GST-filed days among the page's dates + the page's Zoho invoices already in the app —
+     read alongside the books start (independent reads). */
+  const gstRead = gstFacts(rows, caller);
+  gstRead.catch(() => {}); // awaited below; never an unhandled rejection meanwhile
+
   /* R-2496: the company's ONE books start (owner's setting, else opening balances date + 1). */
   let booksStart: string | null;
   try {
@@ -61,8 +66,7 @@ export async function attachCustomerFacts(
     throw e;
   }
 
-  /* R-2621: GST-filed days among the page's dates + the page's Zoho invoices already in the app. */
-  const gst = await gstFacts(rows, caller);
+  const gst = await gstRead;
   const withGst = (r: BulkMatchRow) => ({ ...r, ...gst(r) });
 
   const ids = [...new Set(rows.map(custOf).filter((x): x is string => !!x))];
@@ -190,7 +194,9 @@ async function gstFacts(
     for (const d of (g.data ?? []) as unknown[]) if (typeof d === "string") filed.add(d.slice(0, 10));
   }
 
-  const nums = [...new Set(rows.flatMap(numsOf).map((n) => n.trim()).filter(Boolean))];
+  /* Zoho's number as Zoho gives it and in capitals (an import keeps Zoho's text; the R-2360 server guard
+     also refuses a new sale whose Zoho number is in the app in any case). */
+  const nums = [...new Set(rows.flatMap(numsOf).map((n) => n.trim()).filter(Boolean).flatMap((n) => [n, n.toUpperCase()]))];
   const sales: ZohoAppSale[] = [];
   if (nums.length > 0) {
     const s = await admin.from("invoices")
@@ -198,8 +204,9 @@ async function gstFacts(
       .eq("tenant_id", tenantId).in("external_number", nums);
     if (s.error) throw new FactsReadError("the Zoho invoices already in the app");
     for (const r of (s.data ?? []) as Array<{ id: string; customer_id: string | null; external_number: string | null; invoice_date: string | null; amount: number | null; net_payable: number | null; paid_amount: number | null; taxable_value: number | null; status: string | null; document_kind: string | null }>) {
-      /* a void invoice is no sale; an opening invoice is last year's (the plan's opening path) */
-      if (!r.external_number || r.status === "void" || r.document_kind === "opening_invoice") continue;
+      /* only an issued invoice can be paid (bank_credit_pay_item: pending / overdue; paid = nothing due);
+         a draft or void one is no sale, an opening invoice is last year's (the plan's opening path) */
+      if (!r.external_number || !["pending", "overdue", "paid"].includes(r.status ?? "") || r.document_kind === "opening_invoice") continue;
       sales.push({
         number: r.external_number, invoiceId: r.id, customerId: r.customer_id,
         date: r.invoice_date ? String(r.invoice_date).slice(0, 10) : null,
@@ -208,12 +215,11 @@ async function gstFacts(
       });
     }
   }
-  const norm = (s: string) => s.trim().toUpperCase().replace(/\s+/g, "");
   return (r) => {
-    const mine = new Set(numsOf(r).map(norm));
+    const mine = new Set(numsOf(r).map(normNo));
     return {
       gstFiled: daysOf(r).filter((d) => filed.has(d)),
-      zohoSales: sales.filter((s) => mine.has(norm(s.number))),
+      zohoSales: sales.filter((s) => mine.has(normNo(s.number))),
     };
   };
 }

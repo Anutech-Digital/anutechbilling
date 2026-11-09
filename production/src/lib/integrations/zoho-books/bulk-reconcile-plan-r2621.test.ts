@@ -133,3 +133,37 @@ describe("R-2621 open month, not imported → a new sale as before", () => {
     expect(text(r)).not.toMatch(/already filed/);
   });
 });
+
+describe("R-2621 review fixes (9 Nov)", () => {
+  it("an imported invoice Zoho lists only by number (moreInvoices) → never a new sale, even in an open month", () => {
+    const m = { ...match([inv("INV/26-27/0800", "2026-10-01", 5080)]), moreInvoices: ["INV/25-26/2589"] };
+    const [r] = planAll([row(bank("2026-10-05"), m, { gstFiled: [], zohoSales: [sale()] })], ctx);
+    expect(r.book).toBeNull();
+    expect(text(r)).toMatch(/INV\/25-26\/2589 is already in the app — record it in Record payment/);
+  });
+
+  it("two lines of one run paying the same imported invoice → the second is not booked (would overpay it)", () => {
+    const m = match([inv("INV/25-26/2589", "2026-03-20")]);
+    const a = row({ ...bank("2026-04-08"), id: "t-a" }, m, { zohoSales: [sale()] });
+    const b = row({ ...bank("2026-04-08"), id: "t-b" }, m, { zohoSales: [sale()] });
+    const [r1, r2] = planAll([a, b], ctx);
+    expect(r1.book?.kind).toBe("pay_item");
+    expect(r2.book).toBeNull();
+    expect(r2.ticked).toBe(false);
+    expect(text(r2)).toMatch(/Another line in this run already pays INV\/25-26\/2589/);
+  });
+
+  it("paying an open QUOTE (no invoice yet) on a filed day → refused: its tax invoice would be dated in the filed month", () => {
+    const f = facts({ openItems: [{ kind: "new", quoteId: "Q-77", invoiceId: null, docDate: "2026-04-01", due: 10160, taxable: 8610, makesSubscription: false, approvalBlock: null }] });
+    const [r] = planAll([row(bank("2026-04-08"), match([inv("INV/26-27/0010", "2026-04-02")]), { facts: f })], ctx);
+    expect(r.book).toBeNull();
+    expect(text(r)).toMatch(/paying quote Q-77 now makes its tax invoice dated 8 Apr 2026, inside a filed return/);
+  });
+
+  it("the same open quote in an open month is paid as before", () => {
+    const f = facts({ openItems: [{ kind: "new", quoteId: "Q-77", invoiceId: null, docDate: "2026-10-01", due: 10160, taxable: 8610, makesSubscription: false, approvalBlock: null }] });
+    const [r] = planAll([row(bank("2026-10-05"), match([inv("INV/26-27/0010", "2026-10-02")]), { facts: f, gstFiled: [] })], ctx);
+    expect(r.book?.kind).toBe("pay_item");
+    expect(r.book?.item?.quoteId).toBe("Q-77");
+  });
+});

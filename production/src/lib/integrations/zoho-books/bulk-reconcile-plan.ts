@@ -61,7 +61,7 @@ import { formatForeign } from "@/lib/currency";
 import type { FindZohoResult, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
 import { fmtDay, openingParts, type OpeningPart } from "./opening-from-zoho";
 import { fyInNumber, fyOf, isLastYearInvoice, oldNumberSeries } from "./zoho-fy";
-import { r2621NewSaleCheck, type R2621PlanFacts, type R2621RowFacts } from "./zoho-sale-filed";
+import { r2621Check, r2621OnePayPerItem, type R2621PlanFacts, type R2621RowFacts } from "./zoho-sale-filed";
 export { fyInNumber, fyOf, isLastYearInvoice, oldNumberSeries } from "./zoho-fy";
 
 export { openingFromZoho, openingParts, type OpeningCreate, type OpeningPart } from "./opening-from-zoho";
@@ -915,7 +915,7 @@ export function planRow(
 
   /* R-2621 (zoho-sale-filed.ts): Zoho's invoice already in the app is PAID, never sold twice; no new sale
      on a GST-filed day (the line's or its Zoho invoice's) — import Zoho's invoice first. */
-  const r2621 = kind === "new_sale" && !noBook ? r2621NewSaleCheck({ match, opts, customer, money, tds, lineDate: line.txnDate, invoiceNumbers, slack: MATCH_SLACK }) : null;
+  const r2621 = !noBook && (kind === "new_sale" || kind === "pay_item") ? r2621Check({ kind, item, match, opts, customer, money, tds, lineDate: line.txnDate, invoiceNumbers, slack: MATCH_SLACK }) : null;
   if (r2621?.pay) { payItem(r2621.pay.item); summary = r2621.pay.summary; if (r2621.pay.note) notes.push(r2621.pay.note); }
   if (r2621?.problem) { pathProblems.push(r2621.problem); noBook = true; }
 
@@ -1005,7 +1005,7 @@ export function planAll(rows: readonly BulkMatchRow[], ctx: PlanContext): PlanRo
   type Cand = { row: number; idx: number; when: string; txn: string; label: string };
   const groups = new Map<string, Cand[]>();
   plans.forEach((p, row) => {
-    if (!p || p.kind !== "match" || !p.customer || (p.book && p.book.kind !== "new_sale")) return;
+    if (!p || p.kind !== "match" || !p.customer || !p.book || p.book.kind !== "new_sale") return; // R-2621: a refused row never wins
     const ck = p.customer.kind === "existing" ? `id:${p.customer.id}` : newCustomerKey(p.customer);
     p.lines.forEach((l, idx) => {
       if (l.action !== "new_sub") return;
@@ -1026,11 +1026,11 @@ export function planAll(rows: readonly BulkMatchRow[], ctx: PlanContext): PlanRo
       demote.set(c.row, m);
     }
   }
-  return plans.map((p, i) => {
+  return r2621OnePayPerItem(plans.map((p, i) => {
     const d = demote.get(i);
     const r = rows[i];
     return d ? planFromResult(r.line, r.result, r.contact, ctx, opt(r, d)) : p;
-  }).filter((p): p is PlanRow => !!p);
+  }).filter((p): p is PlanRow => !!p));
 }
 
 /** The rows "Book selected" sends: ticked, bookable, not booked already (in this run or before). */

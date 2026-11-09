@@ -115,7 +115,7 @@ begin
               c_line, false, null, null, 0, null, null, 'yearly');
   exception when check_violation then ok := true; get stacked diagnostics v_msg = message_text;
   end;
-  if not ok or v_msg not like 'GST for Apr 2026 is already filed, so a new sale on 8 Apr 2026 would change a filed return.%' then
+  if not ok or v_msg not like 'GST for Apr 2026 is already filed (GST returns are filed up to September 2026 %), so a new sale on 8 Apr 2026 would change a filed return.%' then
     raise exception 'FAIL A1: new sale on a filed month not refused (%)', v_msg; end if;
   -- A2: 11 args (Zoho number)
   ok := false;
@@ -193,6 +193,18 @@ begin
 end $$;
 
 reset role;
+-- tenant gate (§17c): even with execute, a login of company T cannot read company Q's filed months
+do $$
+declare ok boolean := false;
+begin
+  begin
+    perform public.gst_filed_why('b2621000-0000-0000-0000-0000000000f1', '2026-04-08');
+  exception when insufficient_privilege then ok := true;
+  end;
+  if not ok then raise exception 'FAIL D0: another company''s filed months were readable'; end if;
+  raise notice 'PASS D0: helpers not callable by a login; another company''s id refused';
+end $$;
+select set_config('request.jwt.claims', '', true);   -- a direct DB session (no login) from here
 
 -- ── D. The one rule: every source counts ─────────────────────────────────────────────────────────
 insert into public.compliance_log (tenant_id, obligation_key, period_key, filed_date) values
@@ -213,6 +225,11 @@ begin
   if public.gst_month_filed(t, '2026-06-15') then raise exception 'FAIL D: GSTR-3B alone made June filed'; end if;
   if public.gst_month_filed(t, '2026-08-01') then raise exception 'FAIL D: August is open but read as filed'; end if;
   if public.gst_filed_refusal(t, '2026-08-01') is not null then raise exception 'FAIL D: refusal text for an open month'; end if;
+  -- the refusal names WHY (review: a reachable next step, not always the setting)
+  if public.gst_filed_refusal(t, '2025-12-31') not like '%(the books are locked up to 31 Dec 2025 (Accounting → Overview → Lock books))%' then
+    raise exception 'FAIL D: lock refusal %', public.gst_filed_refusal(t, '2025-12-31'); end if;
+  if public.gst_filed_refusal(t, '2026-05-31') not like '%(GSTR-1 for May 2026 is marked filed (Compliance Calendar / Month close))%' then
+    raise exception 'FAIL D: GSTR-1 mark refusal %', public.gst_filed_refusal(t, '2026-05-31'); end if;
   v := public.gst_filed_days(t, array['2026-08-01', '2026-07-09', '2026-06-15', '2026-02-14', '2026-07-09']::date[]);
   if v <> array['2026-02-14', '2026-07-09']::date[] then raise exception 'FAIL D: gst_filed_days %', v; end if;
   raise notice 'PASS D: lock, quarter, month close, compliance month count; 3B alone and open months do not';

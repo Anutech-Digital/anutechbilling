@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenants' and column_name = 'gst_filed_through') and to_regprocedure('public.gst_filed_days(uuid,date[])') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.set_gst_filed_through(date)') and prosrc like '%R-2621%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2621%') and exists(select 1 from pg_trigger where tgname = 'r2621_gst_filed_through_guard' and tgrelid = to_regclass('public.tenants'))
+-- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenants' and column_name = 'gst_filed_through') and to_regprocedure('public.gst_filed_days(uuid,date[])') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.gst_filed_why(uuid,date)') and prosrc like '%R-2621%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.set_gst_filed_through(date)') and prosrc like '%R-2621%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2621%') and exists(select 1 from pg_trigger where tgname = 'r2621_gst_filed_through_guard' and tgrelid = to_regclass('public.tenants'))
 -- deploy-key: r2621gstfilednonewsale
 -- 20261109052458_r2621_gst_filed_no_new_sale.sql
 --
@@ -12,12 +12,13 @@
 --      stored as the month's last day; a month that has not ended yet is refused; NULL clears; one
 --      activity_log row per change (gst.filed_through_set). r2621_gst_filed_through_guard: a direct table
 --      write (tenants_self_update) cannot change it.
---   2. gst_month_filed(tenant, day) - the ONE rule "is this day's GST already filed": the day is on or
+--   2. gst_filed_why(tenant, day) / gst_month_filed(tenant, day) - the ONE rule "is this day's GST already filed" (and why): on or
 --      before gst_filed_through, or on or before books_locked_until, or GSTR-1 of its month (or of its FY
 --      quarter, QRMP) is marked filed in the existing register (compliance_log gst_gstr1 /
 --      month_close_checks gstr1_filed). gst_filed_refusal(tenant, day) = the plain message, null when open.
 --      gst_filed_days(tenant, days[]) = which of those days are filed (Reconcile from Zoho's plan reads it
---      through the server's admin client). All three: service_role + definer callers only.
+--      through the server's admin client). All four: service_role + definer callers only; gst_filed_why also refuses
+--      another company's id for a signed-in login (§17c tenant gate).
 --   3. bank_credit_new_sale_quote (latest body 20261107233022_r2193_flex_with_one_time) - the one quote
 --      maker of every NEW sale from a bank credit (reconcile_bank_credit_new_sale 10/11 args,
 --      reconcile_bank_credit_new_sale_fx, reconcile_bank_credit_split with p_sale, and the below-cost
@@ -35,6 +36,51 @@ comment on column public.tenants.gst_filed_through is
   'R-2621: GST returns (GSTR-1 / 3B) are filed up to the end of this month (stored as the month''s last day). NULL = not set. Written only by set_gst_filed_through() (owner). Read through gst_month_filed().';
 
 -- -- 2. The one rule ---------------------------------------------------------------------------------
+create or replace function public.gst_filed_why(p_tenant_id uuid, p_day date)
+returns text
+language plpgsql
+stable
+security definer
+set search_path = public
+as $function$
+/* R-2621: WHY the day's GST is final (null = open) - the setting, the books lock, or GSTR-1 of its month /
+   FY quarter marked filed. FY quarter key as the Compliance Calendar's QRMP GSTR-1: '<FY start year>-q<1..4>'
+   (Apr-Jun = q1). Tenant gate (§17c): a login only asks about its own company. */
+declare
+  v_caller uuid := public.current_tenant_id();
+  v_t      record;
+  v_fy     text;
+begin
+  if p_day is null or p_tenant_id is null then return null; end if;
+  if v_caller is not null and v_caller is distinct from p_tenant_id then
+    raise exception 'Not your company' using errcode = '42501';
+  end if;
+  select t.gst_filed_through, t.books_locked_until into v_t from public.tenants t where t.id = p_tenant_id;
+  if v_t.gst_filed_through is not null and p_day <= v_t.gst_filed_through then
+    return 'GST returns are filed up to ' || to_char(v_t.gst_filed_through, 'FMMonth YYYY') || ' (Accounting → Overview → GST returns filed up to)';
+  end if;
+  if v_t.books_locked_until is not null and p_day <= v_t.books_locked_until then
+    return 'the books are locked up to ' || to_char(v_t.books_locked_until, 'FMDD Mon YYYY') || ' (Accounting → Overview → Lock books)';
+  end if;
+  v_fy := (extract(year from p_day)::int - case when extract(month from p_day) < 4 then 1 else 0 end)::text
+          || '-q' || (((extract(month from p_day)::int + 8) % 12) / 3 + 1)::text;
+  if exists (select 1 from public.compliance_log c
+              where c.tenant_id = p_tenant_id and c.obligation_key = 'gst_gstr1'
+                and c.period_key in (to_char(p_day, 'YYYY-MM'), v_fy))
+     or exists (select 1 from public.month_close_checks m
+                 where m.tenant_id = p_tenant_id and m.key = 'gstr1_filed' and m.period = to_char(p_day, 'YYYY-MM')) then
+    return 'GSTR-1 for ' || to_char(p_day, 'FMMon YYYY') || ' is marked filed (Compliance Calendar / Month close)';
+  end if;
+  return null;
+end;
+$function$;
+
+comment on function public.gst_filed_why(uuid, date) is
+  'R-2621: why the day''s GST is already filed (null = open) - on/before tenants.gst_filed_through or books_locked_until, or GSTR-1 of its month / FY quarter marked filed (compliance_log gst_gstr1, month_close_checks gstr1_filed). A login may ask only about its own company.';
+
+revoke all on function public.gst_filed_why(uuid, date) from public, anon, authenticated;
+grant execute on function public.gst_filed_why(uuid, date) to service_role;
+
 create or replace function public.gst_month_filed(p_tenant_id uuid, p_day date)
 returns boolean
 language sql
@@ -42,24 +88,9 @@ stable
 security definer
 set search_path = public
 as $function$
-  /* R-2621: the day's GST is final - setting, books lock, or GSTR-1 of its month / FY quarter marked filed.
-     FY quarter key as the Compliance Calendar's QRMP GSTR-1: '<FY start year>-q<1..4>' (Apr-Jun = q1). */
-  select p_day is not null and p_tenant_id is not null and (
-    p_day <= coalesce((select greatest(t.gst_filed_through, t.books_locked_until) from public.tenants t where t.id = p_tenant_id),
-                      '-infinity'::date)
-    or exists (select 1 from public.compliance_log c
-                where c.tenant_id = p_tenant_id and c.obligation_key = 'gst_gstr1'
-                  and c.period_key in (
-                        to_char(p_day, 'YYYY-MM'),
-                        (extract(year from p_day)::int - case when extract(month from p_day) < 4 then 1 else 0 end)::text
-                          || '-q' || (((extract(month from p_day)::int + 8) % 12) / 3 + 1)::text))
-    or exists (select 1 from public.month_close_checks m
-                where m.tenant_id = p_tenant_id and m.key = 'gstr1_filed' and m.period = to_char(p_day, 'YYYY-MM'))
-  );
+  /* R-2621: the ONE rule - the day's GST is final (gst_filed_why, which holds the tenant gate). */
+  select public.gst_filed_why(p_tenant_id, p_day) is not null;
 $function$;
-
-comment on function public.gst_month_filed(uuid, date) is
-  'R-2621: true when the day''s GST is already filed - on/before tenants.gst_filed_through or books_locked_until, or GSTR-1 of its month / FY quarter marked filed (compliance_log gst_gstr1, month_close_checks gstr1_filed).';
 
 revoke all on function public.gst_month_filed(uuid, date) from public, anon, authenticated;
 grant execute on function public.gst_month_filed(uuid, date) to service_role;
@@ -71,13 +102,12 @@ stable
 security definer
 set search_path = public
 as $function$
-  /* R-2621: the plain refusal for a new sale on a GST-filed day; null = the month is open. */
-  select case when public.gst_month_filed(p_tenant_id, p_day) then
-    'GST for ' || to_char(p_day, 'FMMon YYYY') || ' is already filed, so a new sale on '
-    || to_char(p_day, 'FMDD Mon YYYY') || ' would change a filed return. If this money pays a Zoho invoice, import that invoice '
-    || '(Invoices → FY sales from Zoho) and pay it; otherwise reconcile this line by hand. '
-    || '(Filed months: Accounting → Overview → GST returns filed up to.)'
-  end;
+  /* R-2621: the plain refusal for a new sale on a GST-filed day, naming why; null = the month is open. */
+  select 'GST for ' || to_char(p_day, 'FMMon YYYY') || ' is already filed (' || w || '), so a new sale on '
+         || to_char(p_day, 'FMDD Mon YYYY') || ' would change a filed return. If this money pays a Zoho invoice, import that invoice '
+         || '(Invoices → FY sales from Zoho) and pay it; otherwise reconcile this line by hand.'
+    from (select public.gst_filed_why(p_tenant_id, p_day) as w) x
+   where x.w is not null;
 $function$;
 
 revoke all on function public.gst_filed_refusal(uuid, date) from public, anon, authenticated;
