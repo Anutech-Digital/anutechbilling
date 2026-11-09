@@ -11,10 +11,14 @@
 --   2. public.import_zoho_fy_purchases — the LATEST body (R-2502c, 20261106021100) with only the two
 --      notes lines changed. Money columns, _r2502_bill_sig / _r2502_expense_sig (no notes in them) and
 --      the "already" rerun rule are untouched, so re-import and undo work as before.
---   3. public.zoho_bill_reference_report(tenant) — READ-ONLY, service_role only: bills imported before
---      R-2629 (notes without " Ref: "), the reference their scan now holds (reference_read = false when
---      the scan was read before R-2629 and has no reference key), and the service month today vs with
---      the reference. Existing rows are NOT changed here — filling them is a data repair (owner's OK).
+--   3. public.zoho_bill_reference_report(tenant) — READ-ONLY, service_role only: Zoho-imported bills
+--      whose management month would MOVE with their Zoho reference (changes), or whose scan has no
+--      reference yet (reference_read = false: read before R-2629). NOTE: "Read from Zoho" keeps a saved
+--      bill's details unless its Zoho status changed, so those scans only get the reference when the
+--      bills' scan details are cleared and read again. Existing rows are NOT changed here — clearing the
+--      scans + adding the Ref to old notes is a data repair (owner's OK). After it the report shows 0.
+--      Known limit (R-2156 design): any month in the reference wins, e.g. a PO date; R-2623 lets the
+--      owner set the period on the bill.
 
 -- ── 1. The reference note ───────────────────────────────────────────────────────────────────
 create or replace function public._r2629_ref_note(p_payload jsonb)
@@ -25,10 +29,10 @@ set search_path to 'public'
 as $function$
   /* R-2629 */
   select case
-    when r.ref = '' or lower(r.ref) = lower(btrim(coalesce(p_payload->>'number', ''))) then ''
-    else format(' Ref: %s.', rtrim(r.ref, '.'))
+    when r.ref = '' or lower(r.ref) = lower(btrim(regexp_replace(coalesce(p_payload->>'number', ''), '\s+', ' ', 'g'))) then ''
+    else format(' Ref: %s.', r.ref)
   end
-  from (select left(btrim(regexp_replace(coalesce(p_payload->>'reference', ''), '\s+', ' ', 'g')), 200) as ref) r;
+  from (select btrim(rtrim(left(btrim(regexp_replace(coalesce(p_payload->>'reference', ''), '\s+', ' ', 'g')), 200), '.')) as ref) r;
 $function$;
 revoke all on function public._r2629_ref_note(jsonb) from public, anon;
 grant execute on function public._r2629_ref_note(jsonb) to authenticated, service_role;
@@ -396,9 +400,9 @@ begin
             false, null, null,
             left(nullif(btrim(coalesce((select string_agg(nullif(btrim(coalesce(l->>'description', '')), ''), ', ') from jsonb_array_elements(v_leg->'lines') l), '')), ''), 500),
             left(format('Imported from Zoho Books (%s %s).%s%s%s', case when p_kind = 'bills' then 'bill' else 'expense' end, coalesce(nullif(v_num, ''), v_zid),
-              public._r2629_ref_note(v_p),
               case when (v_leg->>'cost_gst')::integer > 0 then format(' GST ₹%s not claimable in Zoho (ineligible ITC) — kept in the cost.', v_leg->>'cost_gst') else '' end,
-              case when p_kind = 'expenses' and coalesce(v_p->>'paidThrough', '') <> '' then format(' Paid from %s in Zoho.', v_p->>'paidThrough') else '' end), 500),
+              case when p_kind = 'expenses' and coalesce(v_p->>'paidThrough', '') <> '' then format(' Paid from %s in Zoho.', v_p->>'paidThrough') else '' end,
+              public._r2629_ref_note(v_p)), 500),
             (select coalesce(jsonb_agg(jsonb_build_object(
                'name', left(coalesce(nullif(btrim(l->>'description'), ''), l->>'accountName', 'Item'), 300),
                'qty', coalesce((l->>'qty')::numeric, 1), 'amount', coalesce((l->>'taxable')::integer, 0))), '[]'::jsonb)
@@ -467,24 +471,30 @@ language sql
 stable
 set search_path to 'public'
 as $function$
-  /* R-2629: read-only. p_tenant null = every company (server / deploy check only). */
-  select b.tenant_id, b.id, b.bill_no, b.bill_date, b.category,
-         nullif(btrim(s.payload->>'reference'), ''),
-         coalesce(s.payload ? 'reference', false),
-         cur.service_from, cur.service_to, cur.basis,
-         nxt.service_from, nxt.service_to, nxt.basis,
-         (cur.service_from, cur.service_to, cur.basis) is distinct from (nxt.service_from, nxt.service_to, nxt.basis)
-    from public.vendor_bills b
-    left join public.zoho_fy_scan s
-      on s.tenant_id = b.tenant_id and s.kind = 'bills' and 'bills:' || s.zoho_id = b.zoho_doc_id
-   cross join lateral public.vendor_bill_service_period(b.bill_date, b.category, b.bill_no, b.notes, b.service_from, b.service_to) cur
-   cross join lateral public.vendor_bill_service_period(b.bill_date, b.category, b.bill_no,
-                        left(coalesce(b.notes, '') || coalesce(public._r2629_ref_note(s.payload), ''), 500), b.service_from, b.service_to) nxt
-   where b.zoho_doc_id like 'bills:%'
-     and (p_tenant is null or b.tenant_id = p_tenant)
-     and coalesce(b.notes, '') not like '% Ref: %'
-   order by b.tenant_id, b.bill_date, b.id;
+  /* R-2629: read-only. p_tenant null = every company (server / deploy check only). Listed: a bill
+     whose month would move with its reference, or whose scan has no reference yet. */
+  select x.* from (
+    select b.tenant_id, b.id as bill_id, b.bill_no, b.bill_date, b.category,
+           nullif(btrim(s.payload->>'reference'), '') as reference,
+           coalesce(s.payload ? 'reference', false) as reference_read,
+           cur.service_from as now_from, cur.service_to as now_to, cur.basis as now_basis,
+           nxt.service_from as new_from, nxt.service_to as new_to, nxt.basis as new_basis,
+           (cur.service_from, cur.service_to, cur.basis) is distinct from (nxt.service_from, nxt.service_to, nxt.basis) as changes
+      from public.vendor_bills b
+      left join public.zoho_fy_scan s
+        on s.tenant_id = b.tenant_id and s.kind = 'bills' and s.zoho_id = substr(b.zoho_doc_id, 7)
+     cross join lateral (select coalesce(public._r2629_ref_note(s.payload), '') as note) rn
+     cross join lateral public.vendor_bill_service_period(b.bill_date, b.category, b.bill_no, b.notes, b.service_from, b.service_to) cur
+     cross join lateral public.vendor_bill_service_period(b.bill_date, b.category, b.bill_no,
+                          case when rn.note = '' or strpos(coalesce(b.notes, ''), rn.note) > 0 then b.notes
+                               else left(coalesce(b.notes, '') || rn.note, 500) end,
+                          b.service_from, b.service_to) nxt
+     where b.zoho_doc_id like 'bills:%'
+       and (p_tenant is null or b.tenant_id = p_tenant)
+  ) x
+  where x.changes or not x.reference_read
+  order by x.tenant_id, x.bill_date, x.bill_id;
 $function$;
-comment on function public.zoho_bill_reference_report(uuid) is 'R-2629: READ-ONLY. Zoho-imported vendor bills from before R-2629 (no " Ref: " in notes): the reference their scan holds (reference_read false = scan read before R-2629, read from Zoho again first) and the management service month now vs with the reference (changes). Server / deploy check only.';
+comment on function public.zoho_bill_reference_report(uuid) is 'R-2629: READ-ONLY. Zoho-imported vendor bills whose management service month would move with their Zoho reference (changes), or whose scan was read before R-2629 and has no reference (reference_read false — its scan details must be cleared and read again). Expect 0 rows after the repair. Server / deploy check only.';
 revoke all on function public.zoho_bill_reference_report(uuid) from public, anon, authenticated;
 grant execute on function public.zoho_bill_reference_report(uuid) to service_role;

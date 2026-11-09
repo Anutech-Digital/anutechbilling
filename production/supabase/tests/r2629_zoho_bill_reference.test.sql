@@ -162,11 +162,18 @@ begin
     raise exception 'FAIL H1: old1 %', to_jsonb(r); end if;
   select * into r from public.zoho_bill_reference_report('b2629000-0000-0000-0000-0000000000f0') where bill_id = 'BILL-R2629-OLD2';
   if not found or r.reference_read or r.changes or r.reference is not null then raise exception 'FAIL H2: old2 (scan without reference) %', to_jsonb(r); end if;
-  select * into r from public.zoho_bill_reference_report('b2629000-0000-0000-0000-0000000000f0') where bill_id = 'BILL-R2629-OLD3';
-  if not found or not r.reference_read or r.changes then raise exception 'FAIL H3: old3 (reference = number) %', to_jsonb(r); end if;
-  -- Bills imported with R-2629 already carry their reference → not listed.
-  if exists (select 1 from public.zoho_bill_reference_report('b2629000-0000-0000-0000-0000000000f0') where bill_no in ('5667984259', 'GB-5')) then
+  -- Nothing to move (reference = number) → not listed, so the report reaches 0 after a repair.
+  if exists (select 1 from public.zoho_bill_reference_report('b2629000-0000-0000-0000-0000000000f0') where bill_id = 'BILL-R2629-OLD3') then
+    raise exception 'FAIL H3: old3 (reference = number) listed'; end if;
+  -- Bills imported with R-2629 already carry their reference → not listed; GB-2's scan has no reference key → listed as not read.
+  if exists (select 1 from public.zoho_bill_reference_report('b2629000-0000-0000-0000-0000000000f0') where bill_no in ('5667984259', 'GB-3', 'GB-5')) then
     raise exception 'FAIL H4: bills imported with R-2629 listed'; end if;
+  if not exists (select 1 from public.zoho_bill_reference_report('b2629000-0000-0000-0000-0000000000f0') where bill_no = 'GB-2' and not reference_read and not changes) then
+    raise exception 'FAIL H4b: GB-2 (scan read before R-2629) not listed as not read'; end if;
+  -- The note helper: dots-only reference → nothing; number written with other spacing → not repeated.
+  if public._r2629_ref_note('{"number":"X","reference":"..."}') <> '' then raise exception 'FAIL H9: dots-only reference gave a note'; end if;
+  if public._r2629_ref_note('{"number":"INV  12","reference":"inv 12"}') <> '' then raise exception 'FAIL H10: number repeated'; end if;
+  if public._r2629_ref_note('{"number":"X","reference":"Aug 2025."}') <> ' Ref: Aug 2025.' then raise exception 'FAIL H11: % ', public._r2629_ref_note('{"number":"X","reference":"Aug 2025."}'); end if;
   select count(*) into n from public.zoho_bill_reference_report('b2629000-0000-0000-0000-0000000000f0') where changes;
   if n <> 1 then raise exception 'FAIL H5: % bills would change, expected 1', n; end if;
   -- Other company: nothing; all companies (null) includes this one's.
