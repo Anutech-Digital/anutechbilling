@@ -32,6 +32,7 @@ const SQL_SALE = new Set([
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
   reduce_subscription_seats: "R-2252: the ONE invoice of a subscription part (by its quote / billing row) a seat cut credits — its open and settled amounts for the split, then issue_credit_note_core; no list or total",
+  r2626_plan_change_vs_later_part: "R-2626: only checks whether a LATER billing part of one subscription has a live (non-void) invoice, to refuse paying a plan-change quote — no amounts, lists or totals",
   cancel_quote: "R-2519: only checks whether a quote already has a live (non-void) invoice, to refuse cancelling it — no amounts, lists or totals",
   tg_tenants_lut_to_fy: "R-2444: checks only whether 0% export Tax Invoices of one FY exist, so an old writer of tenants.lut_number never drops the LUT they rely on; no amounts or totals",
   delete_tenant_lut: "R-2444: counts the company's 0% export Tax Invoices of one FY (document_kind 'tax_invoice' — never an opening invoice) only to refuse deleting the LUT they rely on; no amounts or totals",
@@ -228,6 +229,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/lib/queries/palette-search.ts": "Ctrl+K lookup by number or name (R-1121) — imported ones are findable too",
   "src/lib/queries/payments.ts": "open invoices to pay",
   "src/lib/queries/subscriptions.ts": "a subscription's invoice status",
+  "src/lib/subscriptions/change-plan-later-parts.server.ts": "R-2626: whether a later billing part of one subscription has a live (non-void) invoice, to refuse a plan change — ids and status only, not GST or revenue",
   "src/lib/subscriptions/change-plan-money.server.ts": "R-2227: what this subscription's current term / part was billed and paid (opening invoices count — they are money for the term), to cap a plan-change credit — not GST or revenue",
   "src/lib/queries/tds-receivable.ts": "R-1670: the invoice number raised from a TDS entry's quote (a label on the row) — not GST or revenue",
   "src/lib/import/zoho-opening-invoices.queries.ts": "Zoho numbers already imported",
