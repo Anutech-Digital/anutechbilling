@@ -27,7 +27,8 @@
  * Refused here (with the next step): a cheaper plan (an annual commitment cannot be reduced
  * mid-term — R-2205/R-2095 rule; takes effect at renewal), fewer seats (Reduce seats, R-2252), a
  * net of ₹0 or less (credit-note path is a follow-up card), a part with no bill yet, an open
- * quote already linked, a support plan (R-2073 has its own Upgrade plan).
+ * quote already linked, a support plan (R-2073 has its own Upgrade plan), a scheduled end-of-term
+ * seat cut (R-2617), a LATER part already billed at the old rate (R-2626).
  *
  * ⚠ Units: rupees ex-GST for per-seat / charge / net (the quote's columns); the credit split is
  * in PAISE incl. GST (change-credit.ts), converted back once, rounded DOWN (never credit more).
@@ -44,6 +45,50 @@ import { partShareOf, type SeatPartSegment } from "./seat-part-rate";
 import type { CatalogProduct } from "./catalog-options";
 import { renewalSeatCut, type ScheduledSeatCutRow } from "@/lib/renewals/scheduled-seat-cut";
 import { formatDate } from "@/lib/utils";
+import { partName } from "@/lib/invoices/split-sale-pending";
+import { periodLastDay } from "@/lib/billing/schedule";
+
+/**
+ * R-2626: a part of a billed-in-parts subscription AFTER the current one that already has a bill —
+ * a proforma raised ahead of its period (Bill next part, R-2519b) or that proforma's tax invoice
+ * once paid. Read by change-plan-later-parts.server.ts (route + online pay start).
+ */
+export interface LaterBilledPart {
+  periodIndex: number;
+  periodStart: string;
+  /** Exclusive end (subscription_billings.period_end). */
+  periodEnd: string;
+  /** A live (not void) tax invoice billing this part. */
+  invoiceId: string | null;
+  /** An open payment request / proforma for this part (draft / sent / viewed / accepted). */
+  requestId: string | null;
+}
+
+/**
+ * R-2626: Change plan prices the CURRENT part only — later parts are laid again at the new MRR by the
+ * billing run (R-527), but only while they have no bill. A later part already billed keeps the old
+ * plan's rate (under-bill). Charging its difference on this quote would be charged again once the
+ * part is freed and billed at the new rate (credit note → R-2095 Generate, Cancel proforma → R-2541),
+ * so the change is REFUSED while one exists — R-2589 / R-2617 style. Same rule and words as the SQL
+ * trigger subscriptions_r2626_plan_change_vs_later_part (migration 20261109064000). `chargeTo` = the
+ * plan change's last day (inclusive); only parts starting after it count.
+ */
+export function planChangeLaterPartBlock(
+  parts: readonly LaterBilledPart[],
+  chargeTo: string,
+  cycle: string | null | undefined,
+): string | null {
+  const hit = parts
+    .filter((p) => p.periodStart.slice(0, 10) > chargeTo.slice(0, 10) && (p.invoiceId || p.requestId))
+    .sort((a, b) => a.periodStart.localeCompare(b.periodStart))[0];
+  if (!hit) return null;
+  const name = `${partName(cycle, hit.periodIndex)} (${formatDate(hit.periodStart.slice(0, 10))} – ${formatDate(periodLastDay(hit.periodEnd))})`;
+  if (hit.invoiceId) {
+    return `${name} is already invoiced (${hit.invoiceId}) at the current plan's rate. Change the plan once that part starts, or on the renewal quote.`;
+  }
+  return `${name} already has proforma ${hit.requestId} at the current plan's rate. ` +
+    "Cancel that proforma first (open it → Cancel proforma), then change the plan; the part is billed again at the new rate on its date.";
+}
 
 /**
  * R-2617: a seat cut scheduled "At end of term" (R-2252) is billed by the renewal quote on the seats
@@ -203,8 +248,11 @@ export function buildPlanChange(args: {
   /** R-2617: the subscription's scheduled seat cuts (loadScheduledSeatCuts). A failed read never
    *  reaches here — the route answers 500 cut_check_failed first. */
   seatCuts: readonly ScheduledSeatCutRow[];
+  /** R-2626: parts after today that already have a bill (readLaterBilledParts). A failed read never
+   *  reaches here — the route answers 500 parts_check_failed first. */
+  laterParts: readonly LaterBilledPart[];
 }): PlanChangeResult {
-  const { sub, target, today, taxRatePct, money, seatCuts } = args;
+  const { sub, target, today, taxRatePct, money, seatCuts, laterParts } = args;
   const newSeats = args.newSeats;
   if (sub.status !== "active") return { ok: false, reason: `This subscription is ${sub.status}. Only an active plan can be changed.` };
   if (isSupportSkuId(sub.item_id)) return { ok: false, reason: "A support plan is changed with Upgrade plan." };
@@ -240,6 +288,9 @@ export function buildPlanChange(args: {
     return { ok: false, reason: "This term has ended. Renew the subscription first, then change the plan." };
   }
   const cur = window.current;
+  /* R-2626: a later part already billed at the old rate would stay under-billed — refuse. */
+  const laterBlock = planChangeLaterPartBlock(laterParts, cur.chargeTo, sub.billing_cycle);
+  if (laterBlock) return { ok: false, reason: laterBlock };
   const parts = cur.parts && cur.parts.length > 0 ? cur.parts : null;
   const chargedDays = Math.max(0, Math.min(cur.termDays, cur.remainingDays));
   const perSeat = (annual: number) => parts ? partShareOf(annual, parts) : Math.round((annual * chargedDays) / cur.termDays);

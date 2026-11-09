@@ -12,9 +12,21 @@
  *   - fewer seats than the subscription, or ₹0/month          → R-2227 (bad line)
  *   - an end-of-term seat cut scheduled for this renewal       → R-2617 (trigger
  *     subscriptions_r2617_plan_change_vs_seat_cut refuses the plan change while it is scheduled)
+ *   - a part AFTER the quote's period already billed (a proforma raised ahead, or its invoice)
+ *                                                              → R-2626 (trigger
+ *     subscriptions_r2626_plan_change_vs_later_part) — read separately (planChangePayRefusal)
  */
 import type { createAdminClient } from "@/lib/supabase/server";
-import { isPlanChangeQuote } from "@/lib/subscriptions/change-plan";
+import { isPlanChangeQuote, planChangeLaterPartBlock } from "@/lib/subscriptions/change-plan";
+import { readLaterBilledParts } from "@/lib/subscriptions/change-plan-later-parts.server";
+import { istToday } from "@/lib/dates/ist";
+
+/** R-2626: the plan change's last day (plan_change.period_to) — the SQL trigger's rule: today when not stored. */
+function planChangePeriodTo(lineItems: unknown): string {
+  const first = Array.isArray(lineItems) ? (lineItems[0] as { plan_change?: { period_to?: unknown } } | undefined) : undefined;
+  const to = first?.plan_change?.period_to;
+  return typeof to === "string" && /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : istToday();
+}
 
 export interface PlanChangeSubNow {
   id: string;
@@ -94,7 +106,30 @@ export async function planChangePayRefusal(
     console.error(`[plan-change-stale] ${quote.id}: subscription read failed: ${error.message}`);
     return { status: 500, body: { error: "Could not start payment. Please retry." } };
   }
-  const reason = planChangeStaleReason(quote.line_items, (data as PlanChangeSubNow | null) ?? null);
+  const sub = (data as PlanChangeSubNow | null) ?? null;
+  const reason = planChangeStaleReason(quote.line_items, sub);
+  if (!reason && sub) {
+    /* R-2626: a later part already billed at the old rate — record_payment's trigger would refuse. */
+    const periodTo = planChangePeriodTo(quote.line_items);
+    let later;
+    try {
+      later = await readLaterBilledParts(admin, quote.tenant_id, sub.id, periodTo);
+    } catch (e) {
+      console.error(`[plan-change-stale] ${quote.id}: billing parts read failed: ${e instanceof Error ? e.message : e}`);
+      return { status: 500, body: { error: "Could not start payment. Please retry." } };
+    }
+    if (planChangeLaterPartBlock(later, periodTo, null)) {
+      return {
+        status: 409,
+        body: {
+          error: "This plan change can't be paid right now — a later billing part of this subscription is already billed at the old plan's rate.",
+          nextStep: "Please ask the reseller to sort out that part's bill first. Nothing has been charged.",
+          planChangeStale: "later_part_billed",
+        },
+      };
+    }
+    return null;
+  }
   if (!reason) return null;
   if (reason === "seat_cut_scheduled") {
     return {
