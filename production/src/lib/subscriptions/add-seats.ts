@@ -245,7 +245,7 @@ export interface AddSeatsResult {
 
 export interface AddSeatsError {
   ok:       false;
-  code:     "invalid_seats" | "invalid_rate" | "invalid_effective_date" | "no_renewal_date" | "term_ended" | "no_doc_number" | "insert_failed" | "sub_update_failed";
+  code:     "invalid_seats" | "invalid_rate" | "invalid_effective_date" | "no_renewal_date" | "term_ended" | "no_doc_number" | "insert_failed" | "sub_update_failed" | "plan_change_open";
   message:  string;
 }
 

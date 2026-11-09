@@ -61,6 +61,7 @@ import { fileURLToPath } from "node:url";
 import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites, slowestSuites } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderGate } from "./worker-lock-guards.mjs";
 import { runRelatedSql } from "./worker-lock-sql.mjs";
+import { maskOwnMigrations, autoRenameLateMigrations, realAutoRenameDeps, checkMigrationClash } from "./worker-lock-migts.mjs";
 import { stashSnapshot, enforceStash, stashGit } from "./worker-lock-stash.mjs";
 import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
 import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue, turnGate, turnQueueLines, readTurnWaiters, joinTurnWait, leaveTurnWait, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
@@ -314,7 +315,7 @@ function holdsPushTurn(card) {
  * R-2591: waiters stand in a line by claim priority (p0 first, then who waited first) — a free turn goes to
  * the best live waiter; a held turn is never taken away (see turnGate).
  */
-async function withTurn(name, card, doing, fn) {
+export async function withTurn(name, card, doing, fn) {
   const turnFile = path.join(LOCK_DIR, `_${name}-turn.json`);
   const waitUntil = Date.now() + 30 * 60 * 1000;
   const priority = lockPriority(card);
@@ -349,7 +350,16 @@ async function withTurn(name, card, doing, fn) {
       await new Promise((r) => setTimeout(r, Number(process.env.WORKER_TURN_POLL_MS || 15000)));
     }
   } finally { bye(); process.off("exit", bye); for (const sig of ["SIGINT", "SIGTERM"]) process.off(sig, onSig); }
-  try { return await fn(); } finally { fs.rmSync(turnFile, { force: true }); }
+  /* R-2614: process.exit() inside fn (e.g. the migration-order stop, exit 5) skips this finally — the turn
+     stayed held and the next worker waited 15 min for it to go stale. The exit handler frees it too. */
+  const free = () => releaseOwnTurn(turnFile, card);
+  process.on("exit", free);
+  try { return await fn(); } finally { process.off("exit", free); free(); }
+}
+
+/** R-2614: remove a turn file only when it is still held by `card` (never another card's turn). */
+export function releaseOwnTurn(turnFile, card) {
+  try { if (JSON.parse(fs.readFileSync(turnFile, "utf8")).card === card) fs.rmSync(turnFile, { force: true }); } catch {}
 }
 
 /**
@@ -518,6 +528,13 @@ async function pushWithTurn(card, ciFlags = {}) {
       const r = refreshDerived(card, derived);
       if (r.how !== "none") console.log(`  generated files dobara bane (${r.changed.join(", ")}) — ${r.how === "amend" ? "apne aakhri commit me jode" : "alag commit"}.`);
     } catch (e) { console.error("✗ gen-deploy-db fail — push nahi hua (migration ka -- deploy-peek: dekho).\n" + String(e?.stderr ?? e?.message ?? e).slice(-800)); process.exit(1); }
+    /* R-2614: red ONLY because this card's own new migration is older than manager-pardeep's newest →
+       rename it to now (UTC), fix its mentions, regenerate, commit "rename migration (auto)", go on. */
+    const ren = autoRenameLateMigrations(card, realAutoRenameDeps(card, readLocks(), { regen: derived.regen }));
+    if (ren.renamed.length) {
+      try { updateLock(card, (l) => ({ ...l, areas: (l.areas ?? []).map((a) => ren.renamed.reduce((x, r) => x.replace(r.from, r.to), a)) })); } catch {}
+      appendCiLog({ at: new Date().toISOString(), card, how: "auto-rename-migration", renamed: ren.renamed });
+    }
     /* R-2106: the same migration-order check CI runs first — fail here, not after 29 min of CI. */
     if (!realMigrationOrderGate()) process.exit(5);
     /* R-910: the Auth.js/gateway code imports a Prisma client that is generated, not committed. */
@@ -1237,15 +1254,18 @@ export function checkReviewGate(cardId, card, { head, sameCode, noReview = null,
 }
 
 /** Repo-root pathspecs for the reviewed change: everything except the files push regenerates (R-2105). */
-const REVIEW_PATHSPEC = [":(top)", ":(top,exclude,glob)production/supabase/cloudsql/*/deploy-db-*.sh", ":(top,exclude)production/src/server/migrations-health/peeks.generated.ts"];
+const REVIEW_PATHSPEC = [":(top)", ":(top,exclude,glob)production/supabase/cloudsql/*/deploy-db-*.sh", ":(top,exclude)production/src/server/migrations-health/peeks.generated.ts", ":(top,exclude)docs/API.md"];
 
 /** patch-id of `rev`'s change against `base` (from their merge-base), or null (no change / unknown sha). */
 export function changePatchId(rev, base, git) {
   try {
     const mb = git(["merge-base", base, rev]).trim();
-    const diff = git(["diff", "--no-color", "--no-ext-diff", mb, rev, "--", ...REVIEW_PATHSPEC]);
+    /* --no-renames: a moved-in migration shows as "new file mode", like addedMigrations sees it (R-2615) */
+    const diff = git(["diff", "--no-color", "--no-ext-diff", "--no-renames", mb, rev, "--", ...REVIEW_PATHSPEC]);
     if (!diff.trim()) return null;
-    return git(["patch-id", "--stable"], diff).trim().split(/\s+/)[0] || null;
+    /* R-2614/R-2615: only the card's own new migration versions masked — a rename-only change (file +
+       its exact mentions) keeps the review; a change to any other 14-digit number does not. */
+    return git(["patch-id", "--stable"], maskOwnMigrations(diff)).trim().split(/\s+/)[0] || null;
   } catch { return null; }
 }
 
@@ -1332,6 +1352,9 @@ function main(argv) {
     if (derivedAsked.length) console.log(`(R-2105: ${derivedAsked.join(", ")} generated hain — claim ki zaroorat nahi, push inhe dobara banata hai)`);
     const broad = areas.filter(tooBroad);
     if (broad.length) { console.error(`✗ Bahut bada area: ${broad.join(", ")} — page/lib ka folder ya file do (kam se kam 3 hisse, jaise src/lib/deals).`); process.exit(1); }
+    /* R-2614: two cards may never hold the same migration version (R-2609/R-2613 both had 20261108133000). */
+    const clash = checkMigrationClash(card, worktree, readLocks());
+    if (!clash.ok) { console.error(clash.message); process.exit(2); }
     const priority = normPriority(askedPriority) ?? normPriority(cardPriority(cardFlags.cardPath)) ?? DEFAULT_PRIORITY;
     const settle = (locks) => (reclaim ? locks : settleCiWaitLocks(card, areas, locks, realSettleDeps()));
     /* One look at the slots, the queue and the files. Never exits. */
@@ -1388,6 +1411,8 @@ function main(argv) {
     const files = withoutDerived(changedFiles());
     const conflicts = findConflicts(card, files, settleCiWaitLocks(card, files, readLocks(), realSettleDeps()));
     if (conflicts.length) report(conflicts);
+    const clash = checkMigrationClash(card, process.cwd(), readLocks()); // R-2614
+    if (!clash.ok) { console.error(clash.message); process.exit(2); }
     enforceScope(card, "worktree", { lockDir: LOCK_DIR, allowOutside, cardPath: cardFlags.cardPath });
     me.files = [...new Set([...(me.files ?? []), ...files])];
     me.beatAt = new Date().toISOString();

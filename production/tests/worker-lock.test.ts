@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 // @ts-expect-error — plain .mjs ops script, no types
 import { migrationOrderGate, normaliseClaimAreas } from "../scripts/ops/worker-lock-guards.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
@@ -772,5 +773,106 @@ describe("R-2612: a newer green run on a descendant clears a card stuck red by a
     expect(lockAfterCiAll(lock(LOCK_STATES.ciRed), CI_EXIT.green, at)).toBeNull();
     expect(lockAfterCiAll(lock(LOCK_STATES.ciWait), CI_EXIT.red, at)?.state).toBe(LOCK_STATES.ciRed);
     expect(lockAfterCiAll(null, CI_EXIT.green, at)).toBeNull();
+  });
+});
+
+/* R-2614 (8 Nov 2026): every migration rename made a new sha and the R-2592 gate asked for a new review
+   (R-2604 three times); and a push that stopped on the migration-order check (process.exit inside the
+   turn) left _push-turn.json behind — the next worker waited 15 min for it to go stale. */
+describe("R-2614: a rename-only / regen-only change keeps the SAFE review; push releases its turn on any exit", () => {
+  it("changePatchId (real git): same after the card's migration is renamed with its mentions, and after docs/API.md regen; not after real code", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2614-pid-"));
+    const g = (a: string[], input?: string) => execFileSync("git", ["-c", "user.email=t@example.test", "-c", "user.name=t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", ...a], { cwd: tmp, encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"] });
+    const put = (f: string, s: string) => { fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true }); fs.writeFileSync(path.join(tmp, f), s); };
+    const commit = (m: string) => { g(["add", "-A"]); g(["commit", "-qm", m]); return g(["rev-parse", "HEAD"]).trim(); };
+    const M = "production/supabase/migrations";
+    try {
+      g(["init", "-q", "-b", "main"]);
+      put(`${M}/20261108120000_base.sql`, "select 1;\n"); put("docs/API.md", "v1\n"); commit("base");
+      g(["checkout", "-qb", "card"]);
+      put(`${M}/20261108133000_a.sql`, "create table a();\n"); put("production/tests/a.test.ts", "read('20261108133000_a.sql')\n");
+      const reviewed = commit("R-1: a");
+      const pid = changePatchId(reviewed, "main", g);
+      expect(pid).toBeTruthy();
+      g(["mv", `${M}/20261108133000_a.sql`, `${M}/20261108170000_a.sql`]); put("production/tests/a.test.ts", "read('20261108170000_a.sql')\n");
+      const renamed = commit("R-1: rename migration (auto)");
+      expect(changePatchId(renamed, "main", g)).toBe(pid);
+      put("docs/API.md", "v2\n"); const api = commit("regen api doc");
+      expect(changePatchId(api, "main", g)).toBe(pid);
+      put(`${M}/20261108170000_a.sql`, "create table a(id int);\n"); const more = commit("real change");
+      expect(changePatchId(more, "main", g)).not.toBe(pid);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it("withTurn: a process.exit() inside the held push turn removes _push-turn.json (real child process)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2614-turn-"));
+    try {
+      const script = path.join(tmp, "run.mjs");
+      const mod = pathToFileURL(path.resolve(__dirname, "..", "scripts", "ops", "worker-lock.mjs")).href;
+      fs.writeFileSync(script, `import { withTurn } from "${mod}";\nawait withTurn("push", "R-1", "push kar raha hai", async () => { process.exit(5); });\n`);
+      const locks = path.join(tmp, "locks"); fs.mkdirSync(locks);
+      const r = spawnSync(process.execPath, [script], { encoding: "utf8", env: { ...process.env, WORKER_LOCK_DIR: locks, WORKER_TURN_POLL_MS: "50" } });
+      expect(r.status).toBe(5);
+      expect(fs.existsSync(path.join(locks, "_push-turn.json"))).toBe(false);
+      // another card's turn is never removed by my exit handler
+      fs.writeFileSync(path.join(locks, "_push-turn.json"), JSON.stringify({ card: "R-9", priority: "p2", at: Date.now() }));
+      fs.writeFileSync(script, `import { releaseOwnTurn } from "${mod}";\nreleaseOwnTurn(${JSON.stringify(path.join(locks, "_push-turn.json"))}, "R-1");\n`);
+      spawnSync(process.execPath, [script], { encoding: "utf8", env: { ...process.env, WORKER_LOCK_DIR: locks } });
+      expect(fs.existsSync(path.join(locks, "_push-turn.json"))).toBe(true);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it("push wires the auto-rename before the order gate; claim and check run the timestamp-clash check", () => {
+    const src = readFileSync(path.join(__dirname, "..", "scripts", "ops", "worker-lock.mjs"), "utf8");
+    const body = src.slice(src.indexOf("async function pushWithTurn"));
+    const at = (s: string) => body.indexOf(s);
+    expect(at("autoRenameLateMigrations(")).toBeGreaterThan(at("refreshDerived("));
+    expect(at("autoRenameLateMigrations(")).toBeLessThan(at("realMigrationOrderGate("));
+    const main = src.slice(src.indexOf("function main("));
+    expect(main.slice(main.indexOf('cmd === "claim"'), main.indexOf('cmd === "beat"'))).toContain("checkMigrationClash(");
+    expect(main.slice(main.indexOf('cmd === "check"'), main.indexOf('cmd === "push"'))).toContain("checkMigrationClash(");
+  });
+});
+
+/* R-2615 (8 Nov 2026): R-2614 masked EVERY 14-digit 20… number in the reviewed diff, so a code line that
+   changed only such a number (an amount, an id, a date-time constant) kept the SAFE review — a hole in
+   the R-2592 gate. Now only the card's OWN new migration versions (files it adds under
+   supabase/migrations/, and their exact mentions) are masked. */
+describe("R-2615: only the card's own migration rename keeps the review — any other 14-digit number change needs a new one", () => {
+  it("changePatchId (real git): rename-only → same; a code line changing a 14-digit 20… number → different", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2615-pid-"));
+    const g = (a: string[], input?: string) => execFileSync("git", ["-c", "user.email=t@example.test", "-c", "user.name=t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.autocrlf=false", ...a], { cwd: tmp, encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"] });
+    const put = (f: string, s: string) => { fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true }); fs.writeFileSync(path.join(tmp, f), s); };
+    const commit = (m: string) => { g(["add", "-A"]); g(["commit", "-qm", m]); return g(["rev-parse", "HEAD"]).trim(); };
+    const M = "production/supabase/migrations";
+    try {
+      g(["init", "-q", "-b", "main"]);
+      put(`${M}/20261108120000_base.sql`, "select 1;\n"); put("production/src/limits.ts", "export const MAX_PAISE = 1;\n"); commit("base");
+      g(["checkout", "-qb", "card"]);
+      put(`${M}/20261108133000_a.sql`, "-- deploy-peek: 20261108133000\ncreate table a();\n");
+      put("production/tests/a.test.ts", "read('20261108133000_a.sql'); v = '20261108133000';\n");
+      put("production/src/limits.ts", "export const MAX_PAISE = 20261108150000;\nexport const ID = 20250401000000;\n");
+      const reviewed = commit("R-1: a");
+      const pid = changePatchId(reviewed, "main", g);
+      expect(pid).toBeTruthy();
+      // pure rename of the card's own migration (file + its exact mentions) → same code
+      g(["mv", `${M}/20261108133000_a.sql`, `${M}/20261108170000_a.sql`]);
+      put(`${M}/20261108170000_a.sql`, "-- deploy-peek: 20261108170000\ncreate table a();\n");
+      put("production/tests/a.test.ts", "read('20261108170000_a.sql'); v = '20261108170000';\n");
+      const renamed = commit("R-1: rename migration (auto)");
+      expect(changePatchId(renamed, "main", g)).toBe(pid);
+      // a code line changing a 14-digit 20… number that is NOT the card's migration → needs a new review
+      put("production/src/limits.ts", "export const MAX_PAISE = 20261108150001;\nexport const ID = 20250401000000;\n");
+      const amount = commit("R-1: change amount");
+      expect(changePatchId(amount, "main", g)).not.toBe(pid);
+      put("production/src/limits.ts", "export const MAX_PAISE = 20261108150000;\nexport const ID = 20260401000000;\n");
+      const id = commit("R-1: change id");
+      expect(changePatchId(id, "main", g)).not.toBe(pid);
+      // a mention moved to ANOTHER number (not the new migration name) is a code change too
+      put("production/src/limits.ts", "export const MAX_PAISE = 20261108150000;\nexport const ID = 20250401000000;\n");
+      put("production/tests/a.test.ts", "read('20261108170000_a.sql'); v = '20261108999999';\n");
+      const other = commit("R-1: other mention");
+      expect(changePatchId(other, "main", g)).not.toBe(pid);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 });

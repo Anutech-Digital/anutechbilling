@@ -64,6 +64,10 @@ commit"). Commands run from a worktree's `production/` on a fresh `anutech/manag
 - [ ] Staging **"Read from Zoho again"** — Claude presses it itself (Pardeep, 8 Nov). Only one Zoho
       reader at a time (HTTP 429).
 - [ ] Optional repair check: R-1823 report on staging should say 0.
+- [ ] Staging crons (R-2616): staging has its OWN scheduler jobs, named `resellersos-staging-*`. Check the plan
+      `bash production/scripts/setup-cloud-scheduler.sh --env staging --dry-run`, then run it without
+      `--dry-run` (gcloud login; secret read off the staging service). Default = zoho-fy-read only; more
+      with `ONLY=a,b`. Never `SERVICE_NAME=resellersos-staging` in live mode — that makes live names.
 - [ ] One short Hinglish message to Pardeep: sha, cards count, smoke result, and the
       **post-train owner steps** only (reconnects, approvals, data repairs) — each with your recommendation.
 - [ ] Refill workers to 4–6.

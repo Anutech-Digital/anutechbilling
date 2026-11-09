@@ -100,6 +100,7 @@ const SQL_NOT_SALE: Record<string, string> = {
   write_off_subscription: "R-1635: stamps one subscription's open invoices written off (no money column changes)",
   write_off_small_invoice_balance: "R-2410: stamps ONE invoice (balance ₹1–₹500) written off + an audit row (no money column changes) — not GST or revenue",
   settle_quote_part_short: "R-2595: reads ONE part invoice of a split-billed quote (its balance) and records the small rest via record_instalment_payment — not GST or revenue",
+  tg_bank_split_line_unmatched: "R-2609: reads the ONE part invoice an R-2595 settle closed (its balance, credit note / write-off) to give the ₹X back when the bank line is un-reconciled — not GST or revenue",
   sync_project_invoice_paid: "project receipts",
   tg_payment_followups_same_tenant: "tenant check",
   tg_quotes_add_seats_take_back: "per quote",
@@ -176,6 +177,7 @@ const TS_SALE = new Set([
   "src/components/features/collections/owner-report.tsx",        // R-2414: invoiced in the last 30 days, for DSO / CEI
 ]);
 const TS_NOT_SALE: Record<string, string> = {
+  "src/lib/quotes/settle-small-short.ts": "R-2606: the ONE open part invoice of a split-billed quote (same pick as settle_quote_part_short) and its balance, for the Settle dialog's preview — not a list, GST or revenue",
   "src/app/api/subscriptions/[id]/reduce-seats/load.ts": "R-2252: the ONE invoice of a subscription part a seat cut credits (same lookup as reduce_subscription_seats) and its open / settled amounts for the preview — not a list or a total",
   "src/lib/integrations/zoho-books/receipts-import/store.ts": "R-2501: invoices that came from Zoho (Zoho id / number, customer, what is still due) to place FY receipts on them — not a revenue or GST report",
   "src/lib/integrations/zoho-books/sales-import/store.ts": "R-2499: every invoice's number / Zoho number / Zoho id (skip what is already in the books) and the per-month recount of what came in from Zoho — not a revenue or GST report",
