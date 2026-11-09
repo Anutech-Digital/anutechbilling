@@ -4,19 +4,19 @@
 -- only for 0%, never fired). It also counted country 'Bharat' as abroad (CGST+SGST for a buyer in another
 -- state) while supply_is_zero_rated / isExportSupply say India.
 -- Migration 20261109181239_r2636_export_tax_head. Self-asserting, ONE transaction, rolled back.
--- Local/test DB only. Red without the migration (A issues a CGST+SGST export, D issues CGST+SGST, F inserts,
--- I says "no state on record").
+-- Local/test DB only. Red without the migration (A issues a CGST+SGST export, D issues CGST+SGST, F keeps
+-- CGST+SGST).
 --
---   A. Customer abroad (United States) + accepted quote at 18% → refused before a number, nothing issued;
---      a second try is refused the same way.
+--   A. Customer abroad (United States) + accepted quote at 18% (₹50,000 + ₹9,000) → export WITH payment of
+--      IGST: amount ₹59,000 kept, tax ₹9,000, inter_state true (never CGST+SGST, never refused).
 --   B. Same customer, 0% quote → export invoice at 0% (tax 0, treatment overseas).
---   C. 0% export quote, company with NO LUT → R-2444's refusal (unchanged).
+--   C. 0% export quote, company with NO LUT → R-2444's refusal (unchanged); C2: 18% quote there → IGST.
 --   D. Country 'Bharat', state 27, seller 07, 18% quote → IGST (inter_state true), tax ₹9,000.
 --   E. Country 'Bharat', state 07 (seller's state) → CGST+SGST 18% (inter_state false).
---   F. Any other path: an app Tax Invoice abroad carrying GST with inter_state false → refused by the trigger.
+--   F. Any other path (e.g. a project milestone at 18%): an app Tax Invoice abroad with GST and inter_state
+--      false → stored with inter_state true (IGST), not refused.
 --   G. Export with payment of IGST (inter_state true, tax > 0) → not refused (legal head, GSTR-1 6A WPAY).
 --   H. Zoho FY sales import session → an export row as filed with CGST+SGST is not refused.
---   I. Overseas + empty country + no state → R-2620's "pick its country" message, not "no state on record".
 
 begin;
 
@@ -47,17 +47,13 @@ insert into public.customers (id, tenant_id, name, state_code, country, gstin, c
   ('cccccccc-0000-0000-0000-000000263602','dddddddd-0000-0000-0000-000000263601','R2636 Pune Bharat','27','Bharat',null,'business','unregistered_business','b2636.example'),
   ('cccccccc-0000-0000-0000-000000263603','dddddddd-0000-0000-0000-000000263601','R2636 Delhi Bharat','07','Bharat',null,'business','unregistered_business','d2636.example'),
   ('cccccccc-0000-0000-0000-000000263604','dddddddd-0000-0000-0000-000000263602','R2636 Oslo AS',null,'Norway',null,'business','overseas','o2636.example');
--- I: an Overseas customer that lost its country (Zoho import), no state either.
-insert into public.customers (id, tenant_id, name, state_code, country, gstin, customer_type, gst_treatment, domain) values
-  ('cccccccc-0000-0000-0000-000000263605','dddddddd-0000-0000-0000-000000263601','R2636 Lost Country',null,'Germany',null,'business','overseas','l2636.example');
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, line_items) values
   ('Q-R2636-A',  'dddddddd-0000-0000-0000-000000263601','cccccccc-0000-0000-0000-000000263601','R2636 Peak LLC',     59000, 50000, 18, 'accepted', 'received', '[]'::jsonb),
   ('Q-R2636-B',  'dddddddd-0000-0000-0000-000000263601','cccccccc-0000-0000-0000-000000263601','R2636 Peak LLC',     50000, 50000,  0, 'accepted', 'received', '[]'::jsonb),
   ('Q-R2636-C',  'dddddddd-0000-0000-0000-000000263602','cccccccc-0000-0000-0000-000000263604','R2636 Oslo AS',      50000, 50000,  0, 'accepted', 'received', '[]'::jsonb),
+  ('Q-R2636-C2', 'dddddddd-0000-0000-0000-000000263602','cccccccc-0000-0000-0000-000000263604','R2636 Oslo AS',      59000, 50000, 18, 'accepted', 'received', '[]'::jsonb),
   ('Q-R2636-D',  'dddddddd-0000-0000-0000-000000263601','cccccccc-0000-0000-0000-000000263602','R2636 Pune Bharat',  59000, 50000, 18, 'accepted', 'received', '[]'::jsonb),
-  ('Q-R2636-E',  'dddddddd-0000-0000-0000-000000263601','cccccccc-0000-0000-0000-000000263603','R2636 Delhi Bharat', 59000, 50000, 18, 'accepted', 'received', '[]'::jsonb),
-  ('Q-R2636-I',  'dddddddd-0000-0000-0000-000000263601','cccccccc-0000-0000-0000-000000263605','R2636 Lost Country', 50000, 50000,  0, 'accepted', 'received', '[]'::jsonb);
-update public.customers set country = '' where id = 'cccccccc-0000-0000-0000-000000263605';
+  ('Q-R2636-E',  'dddddddd-0000-0000-0000-000000263601','cccccccc-0000-0000-0000-000000263603','R2636 Delhi Bharat', 59000, 50000, 18, 'accepted', 'received', '[]'::jsonb);
 
 do $$
 declare
@@ -66,22 +62,14 @@ declare
 begin
   perform set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000263601","role":"authenticated"}', true);
 
-  -- A. 18% quote abroad → refused, twice, nothing issued
-  for k in 1..2 loop
-    ok := false; v_msg := null;
-    begin
-      perform public.generate_invoice('Q-R2636-A');
-    exception when check_violation then
-      get stacked diagnostics v_msg = message_text;
-      ok := v_msg like 'Cannot issue this invoice: R2636 Peak LLC is a customer abroad (United States), so it is an export%0%% GST under your LUT%Q-R2636-A charges 18%% GST (₹9,000)%never CGST+SGST%Nothing was issued%new quote%0%% GST%';
-      if not ok then raise exception 'FAIL A: wrong message "%"', v_msg; end if;
-    end;
-    if not ok then raise exception 'FAIL A: an 18%% quote abroad was invoiced (try %)', k; end if;
-  end loop;
-  select count(*) into n from public.invoices where tenant_id = c_t and customer_id = 'cccccccc-0000-0000-0000-000000263601';
-  if n <> 0 then raise exception 'FAIL A: % invoice rows left', n; end if;
-  if (select invoice_id from public.quotes where id = 'Q-R2636-A') is not null then raise exception 'FAIL A: quote marked invoiced'; end if;
-  raise notice 'A PASS: 18%% quote abroad refused, nothing issued';
+  -- A. 18% quote abroad → IGST (export with payment), amount kept
+  select invoice_id into v_inv from public.generate_invoice('Q-R2636-A');
+  select * into i from public.invoices where id = v_inv;
+  if v_inv is null or i.inter_state is distinct from true or i.tax_amount <> 9000 or i.tax_rate <> 18 or i.amount <> 59000
+     or i.taxable_value <> 50000 then
+    raise exception 'FAIL A: 18%% export invoice % inter_state % tax % amount %', v_inv, i.inter_state, i.tax_amount, i.amount;
+  end if;
+  raise notice 'A PASS: 18%% quote abroad → IGST %, never CGST+SGST', v_inv;
 
   -- B. 0% quote abroad → export 0%
   select invoice_id into v_inv from public.generate_invoice('Q-R2636-B');
@@ -107,20 +95,15 @@ begin
   end if;
   raise notice 'E PASS: Bharat same state → CGST+SGST';
 
-  -- F. any other path: CGST+SGST on an export refused by the trigger
-  ok := false; v_msg := null;
-  begin
-    insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, due_date,
-                                 taxable_value, tax_amount, tax_rate, inter_state)
-    values ('INV-R2636-F', c_t, 'cccccccc-0000-0000-0000-000000263601', 'R2636 Peak LLC', 59000, 'pending',
-            public.ist_today(), public.ist_today() + 30, 50000, 9000, 18, false);
-  exception when check_violation then
-    get stacked diagnostics v_msg = message_text;
-    ok := v_msg like 'R2636 Peak LLC is a customer abroad (United States): an export invoice never carries CGST+SGST.%';
-    if not ok then raise exception 'FAIL F: wrong message "%"', v_msg; end if;
-  end;
-  if not ok then raise exception 'FAIL F: a CGST+SGST export invoice was inserted'; end if;
-  raise notice 'F PASS: CGST+SGST on an export refused on every path';
+  -- F. any other path: CGST+SGST on an export is stored as IGST
+  insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, due_date,
+                               taxable_value, tax_amount, tax_rate, inter_state)
+  values ('INV-R2636-F', c_t, 'cccccccc-0000-0000-0000-000000263601', 'R2636 Peak LLC', 59000, 'pending',
+          public.ist_today(), public.ist_today() + 30, 50000, 9000, 18, false);
+  if (select inter_state from public.invoices where id = 'INV-R2636-F') is distinct from true then
+    raise exception 'FAIL F: an export with GST was stored as CGST+SGST';
+  end if;
+  raise notice 'F PASS: CGST+SGST on an export becomes IGST on every path';
 
   -- G. export with payment of IGST → allowed
   insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, due_date,
@@ -129,38 +112,22 @@ begin
           public.ist_today(), public.ist_today() + 30, 50000, 9000, 18, true);
   raise notice 'G PASS: export with IGST (WPAY) allowed';
 
-  -- H. Zoho FY sales import session: as filed, not refused
+  -- H. Zoho FY sales import session: as filed, untouched
   perform set_config('app.zoho_sale_import', 'on', true);
-  ok := true;
-  begin
-    insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, due_date,
-                                 taxable_value, tax_amount, tax_rate, inter_state)
-    values ('INV-R2636-H', c_t, 'cccccccc-0000-0000-0000-000000263601', 'R2636 Peak LLC', 59000, 'pending',
-            public.ist_today(), public.ist_today() + 30, 50000, 9000, 18, false);
-  exception when check_violation then
-    get stacked diagnostics v_msg = message_text;
-    ok := v_msg not like '%never carries CGST+SGST%';
-  end;
+  insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, due_date,
+                               taxable_value, tax_amount, tax_rate, inter_state)
+  values ('INV-R2636-H', c_t, 'cccccccc-0000-0000-0000-000000263601', 'R2636 Peak LLC', 59000, 'pending',
+          public.ist_today(), public.ist_today() + 30, 50000, 9000, 18, false);
   perform set_config('app.zoho_sale_import', '', true);
-  if not ok then raise exception 'FAIL H: Zoho import session refused by the R-2636 guard'; end if;
-  raise notice 'H PASS: Zoho import session not refused';
-
-  -- I. Overseas + no country + no state → the country reason
-  ok := false; v_msg := null;
-  begin
-    perform public.generate_invoice('Q-R2636-I');
-  exception when check_violation then
-    get stacked diagnostics v_msg = message_text;
-    ok := v_msg like 'R2636 Lost Country is marked Overseas but has no country on record%pick its country%';
-    if not ok then raise exception 'FAIL I: wrong message "%"', v_msg; end if;
-  end;
-  if not ok then raise exception 'FAIL I: Overseas + no country invoiced'; end if;
-  raise notice 'I PASS: Overseas + no country → pick its country';
+  if (select inter_state from public.invoices where id = 'INV-R2636-H') is distinct from false then
+    raise exception 'FAIL H: the Zoho import row was changed';
+  end if;
+  raise notice 'H PASS: Zoho import kept as filed';
 end $$;
 
 -- C. no LUT → R-2444's refusal, unchanged
 do $$
-declare ok boolean := false; v_msg text;
+declare ok boolean := false; v_msg text; v_inv text;
 begin
   perform set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000263602","role":"authenticated"}', true);
   begin
@@ -171,6 +138,12 @@ begin
   end;
   if not ok then raise exception 'FAIL C: 0%% export with no LUT not refused for the LUT (msg "%")', v_msg; end if;
   raise notice 'C PASS: no LUT → R-2444 refusal';
+  -- C2. no LUT, 18% export quote → IGST (export with payment needs no LUT)
+  select invoice_id into v_inv from public.generate_invoice('Q-R2636-C2');
+  if (select i.inter_state from public.invoices i where i.id = v_inv) is distinct from true then
+    raise exception 'FAIL C2: 18%% export with no LUT not issued as IGST';
+  end if;
+  raise notice 'C2 PASS: no LUT, 18%% export → IGST';
 end $$;
 
 rollback;

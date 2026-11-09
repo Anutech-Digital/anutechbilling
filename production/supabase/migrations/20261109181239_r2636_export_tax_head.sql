@@ -12,23 +12,23 @@
 --   isExportSupply / raise_subscription_billing say India), so a 'Bharat' buyer in another state got
 --   CGST+SGST instead of IGST.
 --
--- DECISION (card R-2636 `decision`): refuse, never re-price, never CGST+SGST.
---   1. generate_invoice: a customer abroad (public.supply_is_zero_rated(country, null) — the one country
---      rule, G4/G5) whose quote charges GST is refused BEFORE a number is taken, with the way on (a new quote
---      at 0% — the builder sets it for a customer abroad). Export WITH payment of IGST is legal but it is the
---      exporter's choice (refund route) and the app has no setting for it; a company with an LUT exports at
---      0%. Re-pricing would silently change the amount the customer accepted. A 0% quote is invoiced as
---      before (0% export, R-2444 checks the LUT of the invoice date's FY).
---   2. generate_invoice: 'Bharat' = India (export test = supply_is_zero_rated); Overseas + no country gets
---      R-2620's "pick its country" reason before the misleading "no state on record".
---   3. Every path (BEFORE INSERT on invoices, after the party snapshot and R-2620, before the LUT check —
+-- DECISION (card R-2636 `decision`, changed after code review): never CGST+SGST on an export, never re-price,
+--   never block money.
+--   1. generate_invoice: a customer abroad (public.supply_is_zero_rated(country, null) — the one country rule,
+--      G4/G5; 'Bharat' = India) whose quote charges GST is invoiced as an export WITH payment of IGST at the
+--      quote's rate (inter_state = true; GSTR-1 6A WPAY): the amount the customer accepted / paid is kept, and
+--      GST collected from a customer must be paid to the government anyway (CGST s.76). A refusal was
+--      rejected: it runs inside the payment paths (record_payment, bank_credit_pay_item), so the RECEIPT
+--      would roll back and the money already received on that quote would have no way on (review finding).
+--      A 0% quote is invoiced as before (0% export, R-2444 checks the LUT of the invoice date's FY).
+--   2. Every path (BEFORE INSERT on invoices, after the party snapshot and R-2620, before the LUT check —
 --      trigger name order trg_invoices_zz_a_overseas_country < trg_invoices_zz_b_export_tax_head <
---      trg_invoices_zz_export_lut): a NEW app Tax Invoice to a customer abroad that carries GST with
---      inter_state = false (CGST+SGST) is refused. IGST (inter_state true = export with payment, GSTR-1 6A
---      WPAY) is not. Skipped like R-2620: Zoho FY sales import, opening-invoice imports (as filed).
--- NOT HERE: existing invoices (BEFORE INSERT only — never an UPDATE of an issued invoice, G8); an SEZ
---   without payment customer with a GST quote keeps IGST (tg_invoice_snapshot_parties forces inter_state —
---   a legal head; followUp on the card).
+--      trg_invoices_zz_export_lut): a NEW app Tax Invoice to a customer abroad that carries GST is set to
+--      inter_state = true (IGST), like tg_invoice_snapshot_parties does for SEZ — e.g. a project milestone
+--      priced at 18% for a customer abroad. Never refused (no receipt rolls back). Skipped like R-2620: Zoho
+--      FY sales import, opening-invoice imports (as filed).
+-- NOT HERE: existing invoices (BEFORE INSERT only — never an UPDATE of an issued invoice, G8); quote makers
+--   that still put 18% on a quote for a customer abroad (renewal copies, projects) — followUp on the card.
 -- Test: supabase/tests/r2636_export_tax_head.test.sql (begin … rollback; red without this file).
 
 begin;
@@ -56,7 +56,6 @@ declare
   v_cust_st   text;
   v_sell_st   text;
   v_cust_country text;
-  v_cust_treatment text;   -- R-2636
   v_is_export boolean;
   v_inter     boolean;
   v_cust_gstin text;
@@ -152,16 +151,8 @@ begin
   end if;
   v_tax := v_gross - v_taxable;
 
-  select c.state_code, c.country, c.gstin, c.gst_treatment
-    into v_cust_st, v_cust_country, v_cust_gstin, v_cust_treatment
+  select c.state_code, c.country, c.gstin into v_cust_st, v_cust_country, v_cust_gstin
     from public.customers c where c.id = v_quote.customer_id;
-
-  /* R-2636: an Overseas customer with no country outside India gets R-2620's reason (pick its country)
-     here, before the state check below would call it "no state on record". */
-  if public.overseas_country_missing(v_cust_treatment, v_cust_country) then
-    raise exception '%', public.overseas_country_refusal(v_quote.customer_name, v_cust_country, 'invoice')
-      using errcode = 'check_violation';
-  end if;
 
   /* R-373 (7 Oct 2026): a GSTIN's first two digits ARE the GST state code. A customer
      with a GSTIN but no state_code was refused below, although invoice_party_snapshot
@@ -179,19 +170,10 @@ begin
      the only place that counted it as abroad, so a Bharat buyer in another state got CGST+SGST). */
   v_is_export := public.supply_is_zero_rated(v_cust_country, null);
 
-  /* R-2636: an export is zero-rated — 0% under the LUT. A quote that still charges GST is refused
-     BEFORE a number is taken (never re-priced: the customer accepted that amount; never CGST+SGST).
-     Export with payment of IGST is the exporter's choice and has no setting in the app. */
-  if v_is_export and (v_rate <> 0 or v_tax <> 0) then
-    raise exception
-      'Cannot issue this invoice: % is a customer abroad (%), so it is an export — zero-rated, 0%% GST under your LUT — but quote % charges % GST (₹%). An export invoice is never CGST+SGST, and the app does not change an amount the customer agreed to. Nothing was issued. Make a new quote for % at 0%% GST (the quote builder sets 0%% for a customer abroad) and issue the invoice from it; GST the customer already paid on this quote is theirs to refund or keep as credit.',
-      v_quote.customer_name, btrim(v_cust_country), p_quote_id, v_rate::text || '%',
-      to_char(v_tax, 'FM99,99,99,99,990'), v_quote.customer_name
-      using errcode = 'check_violation';
-  end if;
-
   if v_is_export then
-    v_inter := false;   -- no Indian place of supply; 0% (checked above), so no tax head at all
+    /* R-2636: no Indian place of supply. 0% → no tax head. A quote that still charges GST → export WITH
+       payment of IGST (inter_state true), never CGST+SGST; the amount the customer accepted is kept. */
+    v_inter := (v_rate <> 0 or v_tax <> 0);
   elsif v_cust_st is null or btrim(v_cust_st) = '' then
     raise exception
       'Cannot issue this invoice: % has no state on record, so GST cannot decide between CGST+SGST and IGST. Add the state on the customer (Customers → % → Edit), then issue the invoice.',
@@ -270,7 +252,8 @@ begin
   /* R-2636. Runs after trg_invoice_document_kind, trg_invoice_snapshot_parties and
      trg_invoices_zz_a_overseas_country (name order), so document_kind, customer_country and
      party_from_source are already set. An export has no Indian place of supply: 0% under the LUT, or
-     IGST when exported with payment — CGST+SGST is never right. */
+     IGST when exported with payment — CGST+SGST is never right. Set, never refused: a refusal here would
+     roll back a receipt (bank allocation, record_payment) with no way on. */
   if new.customer_id is null
      or new.document_kind is distinct from 'tax_invoice'
      or new.party_from_source
@@ -282,9 +265,7 @@ begin
   if public.supply_is_zero_rated(new.customer_country, null)
      and coalesce(new.tax_amount, 0) <> 0
      and new.inter_state is distinct from true then
-    raise exception '% is a customer abroad (%): an export invoice never carries CGST+SGST. Bill it at 0%% GST under your LUT (a quote at 0%% — the quote builder sets it for a customer abroad), then issue the invoice. Nothing was issued.',
-      coalesce(nullif(btrim(new.customer_name), ''), 'This customer'), btrim(new.customer_country)
-      using errcode = 'check_violation';
+    new.inter_state := true;   -- IGST (export with payment of tax), never CGST+SGST
   end if;
   return new;
 end;

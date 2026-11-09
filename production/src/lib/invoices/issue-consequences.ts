@@ -254,14 +254,14 @@ function zeroRatedLine(quote: QuoteToInvoice): Consequence {
   const what = exportSale
     ? `an export invoice to ${who} (${country})`
     : `a zero-rated SEZ invoice (without payment of tax) to ${who}`;
-  /* R-2636: generate_invoice REFUSES an export whose quote charges GST (never CGST+SGST, never
-     re-priced) — so the warning says "nothing can be issued" and ConfirmIssueDialog holds Issue. */
+  /* R-2636: generate_invoice issues an export whose quote charges GST as export WITH payment of IGST
+     (never CGST+SGST, never re-priced — the customer accepted that amount). Said before the click. */
   if (exportSale && quote.taxAmount != null && quote.taxAmount > 0) {
     return {
       tone: "warning",
-      text: `This is ${what}, but the quote charges ${rupee(quote.taxAmount)} GST — not 0% under your LUT — so nothing can be issued: ` +
-        `an export invoice is never CGST+SGST, and the amount the customer agreed to is not changed. ` +
-        `Make a new quote for this customer at 0% GST (its country sets 0%) and issue that one instead.`,
+      text: `This is ${what}, but the quote charges ${rupee(quote.taxAmount)} GST — not 0% under your LUT — so it is issued as an export ` +
+        `WITH payment of IGST (${rupee(quote.taxAmount)} IGST, GSTR-1 table 6A WPAY), never CGST+SGST. The amount the customer agreed to is kept. ` +
+        `To bill it at 0% instead, make a new quote for this customer at 0% GST (its country sets 0%) and issue that one.`,
     };
   }
   /* SEZ without payment: a quote that still charges GST is invoiced with it (IGST — SEZ is always inter-state). */
