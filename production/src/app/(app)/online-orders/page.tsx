@@ -74,7 +74,7 @@ interface Order {
   company:     string;
   domain:      string;
   gstin:       string | null;
-  contact:     { name: string; email: string; phone: string };
+  contact:     { name: string; email: string; phone: string; country: string | null };
   tier:        string;
   seats:       number;
   /** R-1120: every money row comes from the order's quote / GST invoice / payment — never the lead value. */
@@ -431,6 +431,8 @@ interface LeadRow {
   contact_name:  string | null;
   contact_email: string | null;
   contact_phone: string | null;
+  /** R-2641: the drawer's WhatsApp / Call use this country's dialling code. */
+  country:       string | null;
   plan:          string | null;
   seats:         number | null;
   value:         number | null;
@@ -543,6 +545,7 @@ function leadToOrder(l: LeadRow, payment?: OrderPayment, money?: OrderMoney): Or
       name:  l.contact_name  ?? "—",
       email: l.contact_email ?? "—",
       phone: l.contact_phone ?? "—",
+      country: l.country ?? null,
     },
     tier,
     seats,
