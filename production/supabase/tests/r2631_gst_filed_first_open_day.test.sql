@@ -16,7 +16,8 @@
 --       number.
 --   F.  Open month: a 5 Oct receipt → 5 Oct; a future day → today.
 --   G.  Bank path unchanged: a 20 Sep bank line paying a quote with no invoice → still refused (R-2627).
---   H.  A login asking invoice_date_for_receipt about another company → 42501.
+--   A/A2 also: the settled invoice's paid date is the receipt day (23 / 24 Sep), not the shifted invoice date.
+--   H.  A login asking invoice_date_for_receipt about another company → 42501; H3. a login with no company → 28000.
 --   H2. Every month marked filed for 10+ years → plain error, no hang.
 
 begin;
@@ -35,7 +36,8 @@ create trigger zz_r1643_test_supplier before insert on public.tenants
 select set_config('request.jwt.claims', '', true);
 insert into auth.users (id, email) values
   ('b2631000-0000-0000-0000-0000000000a1', 'r2631-owner1@example.test'),
-  ('b2631000-0000-0000-0000-0000000000a2', 'r2631-owner2@example.test');
+  ('b2631000-0000-0000-0000-0000000000a2', 'r2631-owner2@example.test'),
+  ('b2631000-0000-0000-0000-0000000000a9', 'r2631-nocompany@example.test');   -- H3: a login with no company
 insert into public.tenants (id, name, email, state_code, doc_code) values
   ('b2631000-0000-0000-0000-0000000000f1', 'R2631 Filed Co', 'r2631a@example.test', '07', 'R31A'),
   ('b2631000-0000-0000-0000-0000000000f2', 'R2631 Lock Co',  'r2631b@example.test', '07', 'R31B'),
@@ -119,7 +121,9 @@ begin
   if v_paid is distinct from '2026-09-23' then raise exception 'FAIL A: the receipt moved to % (must keep 23 Sep)', v_paid; end if;
   if (select invoice_date from public.invoices where id = 'INV-R2631-OLD') <> '2026-09-10' then
     raise exception 'FAIL A: an existing Sep invoice was re-dated'; end if;
-  raise notice 'PASS A: 23 Sep receipt kept, invoice % dated 1 Oct 2026 (due 16 Oct)', v_inv.id;
+  if v_inv.status::text <> 'paid' or v_inv.paid_date is distinct from '2026-09-23' then
+    raise exception 'FAIL A: settled invoice status % paid_date % (want paid on the receipt day 2026-09-23)', v_inv.status, v_inv.paid_date; end if;
+  raise notice 'PASS A: 23 Sep receipt kept, invoice % dated 1 Oct 2026 (due 16 Oct), paid 23 Sep', v_inv.id;
 end $$;
 
 -- ── G. Bank path unchanged: a 20 Sep bank line on a quote with no invoice → still refused (R-2627) ──
@@ -164,6 +168,19 @@ begin
   raise notice 'PASS H: another company refused';
 end $$;
 
+-- ── H3. A login with no company calling it directly → refused (§17c, fail-closed) ─────────────
+select pg_temp.as_user('b2631000-0000-0000-0000-0000000000a9');
+do $$
+declare ok boolean := false;
+begin
+  begin
+    perform public.invoice_date_for_receipt('b2631000-0000-0000-0000-0000000000f2', '2026-09-01');
+  exception when invalid_authorization_specification then ok := true;
+  end;
+  if not ok then raise exception 'FAIL H3: a login with no company got another company''s invoice date'; end if;
+  raise notice 'PASS H3: no-company login refused';
+end $$;
+
 -- ── E. FY change (T3, filed up to Mar 2026): 20 Mar receipt → 1 Apr 2026, FY 2026-27 number ──────
 select pg_temp.as_user('b2631000-0000-0000-0000-0000000000a2');
 do $$
@@ -194,6 +211,8 @@ begin
   perform public.generate_invoice('Q-R2631-A2');
   select invoice_date into v_date from public.invoices where quote_id = 'Q-R2631-A2';
   if v_date is distinct from '2026-10-01' then raise exception 'FAIL A2: server-side invoice for a 24 Sep receipt dated % (want 2026-10-01)', v_date; end if;
+  if (select paid_date from public.invoices where quote_id = 'Q-R2631-A2') is distinct from '2026-09-24' then
+    raise exception 'FAIL A2: paid_date is not the receipt day 24 Sep'; end if;
   raise notice 'PASS A2: server path (Razorpay / online order) dated 1 Oct';
 end $$;
 

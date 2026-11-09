@@ -33,7 +33,9 @@ export function latestReceiptIstDay(
 
 /** Why the server's date is what it is — for the words on the confirm. */
 export function invoiceDateWhy(a: { date: string; receiptDay: string | null; today: string }): InvoiceDateWhy {
-  if (a.date === a.today) return "today";
+  /* R-2631: "today" only when there is no earlier receipt day it moved from — a first open day that
+     happens to be today still says the receipt's month is closed. */
+  if (a.date === a.today && (!a.receiptDay || a.receiptDay === a.today)) return "today";
   if (a.receiptDay && a.date === a.receiptDay) return "receipt";
   return "first_open";
 }

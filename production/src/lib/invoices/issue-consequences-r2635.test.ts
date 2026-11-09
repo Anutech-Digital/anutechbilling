@@ -150,5 +150,7 @@ describe("R-2635 latestReceiptIstDay / invoiceDateWhy (twin of generate_invoice'
     expect(invoiceDateWhy({ date: "2026-09-01", receiptDay: "2026-08-26", today: "2026-11-09" })).toBe("first_open");
     /* R-2631: a 23 Sep receipt with GST filed up to Sep → the server says 1 Oct. */
     expect(invoiceDateWhy({ date: "2026-10-01", receiptDay: "2026-09-23", today: "2026-11-09" })).toBe("first_open");
+    /* R-2631 review: the first open day that happens to be today still says why (the receipt's month is filed). */
+    expect(invoiceDateWhy({ date: "2026-11-01", receiptDay: "2026-09-23", today: "2026-11-01" })).toBe("first_open");
   });
 });

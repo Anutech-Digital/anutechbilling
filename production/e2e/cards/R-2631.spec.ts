@@ -7,7 +7,7 @@
  *
  * Data (planted here, local docker DB only): SCN First Open Buyer (Delhi), accepted quote Q-SCN-GFO-1 ₹5,900
  * (₹5,000 + 18%), no invoice, with a ₹5,900 receipt received 18 Sep 2026. E2E Test Co's "GST returns filed up
- * to" is cleared before step 1 (the owner sets it in step 1) and cleared again after the last step; the
+ * to" is cleared before step 1 (the owner sets it in step 1) and put back to what it was after the last step; the
  * planted rows are removed after the last step.
  */
 import { spawnSync } from "node:child_process";
@@ -85,9 +85,15 @@ select '${PAYMENT_ID}', t.id, '${QUOTE}', '${CUSTOMER_ID}', 5900, 'bank_transfer
 commit;`);
 }
 
-/** The owner's setting is cleared (postgres session — the guard trigger refuses only request logins). */
-function clearSetting(): void {
-  psql(`update public.tenants set gst_filed_through = null where email = '${E2E_TENANT_EMAIL}';`);
+/** The owner's setting before this test, put back after it (postgres session — the guard trigger refuses only
+    request logins). */
+let savedSetting: string | null = null;
+function readSetting(): string | null {
+  const v = (psql(`select coalesce(gst_filed_through::text, '') from public.tenants where email = '${E2E_TENANT_EMAIL}';`)[0] ?? "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+}
+function writeSetting(v: string | null): void {
+  psql(`update public.tenants set gst_filed_through = ${v ? `'${v}'` : "null"} where email = '${E2E_TENANT_EMAIL}';`);
 }
 
 function invoiceOfQuote(): string {
@@ -105,12 +111,13 @@ test.describe("R-2631 — a new invoice for money of a GST-filed month is dated 
 
   test.beforeAll(() => {
     if (!CARD_TESTS_ON) return;
-    clearSetting();
+    savedSetting = readSetting();
+    writeSetting(null);
     plant();
   });
   test.afterAll(() => {
     if (!CARD_TESTS_ON) return;
-    clearSetting();
+    writeSetting(savedSetting);
     unplant();
   });
 
