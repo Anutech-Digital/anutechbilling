@@ -485,6 +485,7 @@ MIGS=(
   "r2605planchangefreeze|20261108181100_r2605_plan_change_freeze.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.reduce_subscription_seats(uuid,uuid,integer,text,integer,integer,text,uuid,integer)') and prosrc like '%R-2605%') and exists(select 1 from pg_trigger where tgname = 'subscriptions_r2605_plan_change_freeze') and exists(select 1 from pg_trigger where tgname = 'quotes_r2605_unlink_cancelled_plan_change')"
   "r2590expiredplanchangerelease|20261108184500_r2590_expired_plan_change_release.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.release_expired_plan_change_quotes(uuid)') and prosrc like '%R-2590%')"
   "r2545correctdetailsonesave|20261109034726_r2545_correct_details_one_save.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_details(uuid,text,text,text,date,date,date,integer,integer,text,integer,integer,integer,public.billing_cycle,date)') and prosrc like '%R-2545%')"
+  "r2156billservicemonth|20261109053500_r2156_bill_service_month.sql|resellersos_migration|to_regprocedure('public.report_pnl_cogs_matched(date,date)') is not null"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER
