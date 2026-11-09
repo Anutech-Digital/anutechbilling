@@ -24,9 +24,9 @@ const GROUPS = ["(marketing)", "(lp)", "(product)"];
 const rel = (f: string) => relative(ROOT, f).split(sep).join("/");
 
 function walk(dir: string, out: string[] = []): string[] {
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
-    const p = join(dir, e.name);
-    if (e.isDirectory()) walk(p, out);
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name);
+    if (statSync(p).isDirectory()) walk(p, out);
     else out.push(p);
   }
   return out;

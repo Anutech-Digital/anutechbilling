@@ -36,7 +36,7 @@ import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
 import { afterAll } from "vitest";
-import { PRODUCTION_ROOT } from "./prisma-generated";
+import { PRODUCTION_ROOT, PRISMA_GENERATED } from "./prisma-generated";
 
 /** s/m/c = size, mtimeMs, ctimeMs at read time; r = Date.now() just before that read (R-2582);
     text decoded lazily from `buf`. */
@@ -57,8 +57,10 @@ export const SOURCE_CACHE_FILE = path.join(
 /** R-2630: a key's bucket — which cache file holds it ("" = the base file, for everything not below). */
 export const BUCKETS = ["", "src", "gen", "sql"] as const;
 export type Bucket = (typeof BUCKETS)[number];
+/** Prisma's generated client as a key prefix — from PRISMA_GENERATED (pinned to the schema's output). */
+const GEN_PREFIX = `${keyOf(PRISMA_GENERATED)}/`;
 export function bucketOf(key: string): Bucket {
-  if (key.startsWith("src/server/db/generated/")) return "gen";
+  if (key.startsWith(GEN_PREFIX)) return "gen";
   if (key.startsWith("src/")) return "src";
   if (key.startsWith("supabase/")) return "sql";
   return "";
@@ -122,7 +124,7 @@ export function readSource(file: string): string {
   const raw = fs.readFileSync(file);
   if (e && sameStat && e.buf && raw.equals(e.buf)) {
     // Racy but unchanged: trusted in memory once a re-read finds the file aged. Not added to `fresh`:
-    // persisting a promotion would rewrite the whole ~50 MB cache file to save one small re-read.
+    // persisting a promotion would rewrite a whole bucket file (up to ~36 MB) to save one small re-read.
     const next: Entry = { ...e, r: now };
     map.set(key, next);
     if (next.text === undefined) next.text = raw.toString("utf8");
@@ -216,17 +218,21 @@ function takeLock(lock: string): boolean {
   return false;
 }
 
+let pruned = false;
 /** Caches of worktrees that were removed: delete any cache file not touched for 3 days. */
 function pruneOldCaches(): void {
   try {
     const cutoff = Date.now() - 3 * 24 * 3600 * 1000;
     /* R-2582 / R-2630: this checkout's old-format (-v2, -v3) caches can never be read again — drop them
        at once. Its own bucket files (<base>, <base>.src, …) are kept. */
+    if (pruned) return; // once per process, not once per bucket flushed
+    pruned = true;
     const own = path.basename(cacheFile);
+    const keep = new Set(BUCKETS.map((b) => bucketFile(b, own)));
     const oldFormat = /-v4\.bin$/.test(own) ? [own.replace(/-v4\.bin$/, "-v2.bin"), own.replace(/-v4\.bin$/, "-v3.bin")] : [];
     for (const n of fs.readdirSync(path.dirname(cacheFile))) {
       const p = path.join(path.dirname(cacheFile), n);
-      if (n.startsWith(own) || n.endsWith(".lock")) continue;
+      if (keep.has(n) || n.endsWith(".lock")) continue; // a crashed writer's .tmp still goes after 3 days
       if (oldFormat.includes(n) || fs.statSync(p).mtimeMs < cutoff) fs.rmSync(p, { force: true });
     }
   } catch { /* best effort */ }
