@@ -29,6 +29,8 @@ import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
 import { useGenerateInvoice, useDocumentSeries } from "@/lib/queries/invoices";
 import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
 import { issueConsequences } from "@/lib/invoices/issue-consequences";
+import { latestReceiptIstDay, useInvoiceIssueDate } from "@/lib/invoices/issue-date";
+import { useTenantLuts } from "@/lib/queries/tenant-luts";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { issueEinvoiceNotice, isB2B } from "@/lib/compliance/einvoice";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
@@ -863,6 +865,12 @@ export default function QuoteDetailPage() {
   const [issueOpen, setIssueOpen] = React.useState(false);
   const { data: docSeries } = useDocumentSeries();
   const { data: turnover } = useTurnoverBracket();
+  /* R-2635: the date generate_invoice will really use (latest receipt day, R-2095) and the LUT of
+     that date's FY for a customer abroad — the confirm said "(today)" and "B2C invoice". */
+  const issueDate = useInvoiceIssueDate({
+    tenantId: me?.tenantId, receiptDay: latestReceiptIstDay(paymentHistory), enabled: issueOpen,
+  });
+  const { data: tenantLuts } = useTenantLuts(issueOpen);
 
   // ────────── Loading / Error ──────────
   /* R-2104: also wait for the subscriptions and the parts' invoices. Rendered before they came, a
@@ -2685,7 +2693,11 @@ export default function QuoteDetailPage() {
             paymentTermsDays: quote.payment_terms_days ?? null,
             /* undefined (no customer linked / not loaded) says nothing; null warns B2C. */
             customerGstin: customer ? (customer.gstin ?? null) : undefined,
-            invoiceDate: istToday(),
+            invoiceDate: issueDate.date,
+            invoiceDateWhy: issueDate.why,
+            customerCountry: customer ? (customer.country ?? null) : undefined,
+            customerTreatment: customer?.gst_treatment ?? null,
+            luts: tenantLuts,
             billOfSupply: !!billOfSupplyStatus(gstRegistration.data?.saved),
           },
           series: docSeries?.invoice ?? null,
