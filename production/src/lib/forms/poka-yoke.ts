@@ -24,6 +24,7 @@
  * instead of a dialog. Nothing here ever returns a bare "invalid".
  */
 import { isValidGstin, GST_STATE_BY_CODE } from "@/lib/utils";
+import { formatInternationalPhone, isIndiaPhoneCountry, phoneDigitsForCountry } from "@/lib/phone";
 
 /**
  * What a validation pill shows.
@@ -110,24 +111,53 @@ export function gstinState(raw: string): { code: string; name: string } | null {
  * Deliberately does NOT insert spaces while typing. Grouping mid-type is what fights the
  * caret; the pretty form arrives on blur via `commitPhone`.
  */
-export function livePhone(raw: string): string {
+/** E.164: an international number is at most 15 digits (code included). */
+const PHONE_MAX_DIGITS = 15;
+
+/** Typed with its own code: "+44 …" or "0044 …". */
+const hasOwnCode = (v: string) => v.startsWith("+") || v.startsWith("00");
+
+/*
+ * R-2645: `country` is the form's country (customer forms). India, empty, or text we cannot
+ * read keeps the Indian rules below exactly; another country takes its dialling code from
+ * lib/phone.ts (R-2639) — no second rule here. A number typed with "+CC" / "00CC" is kept
+ * whole in every form, so "+44 7911 123456" is never cut to ten digits.
+ */
+export function livePhone(raw: string, country?: string | null): string {
   const d = raw.replace(/\D/g, "");
-  /* +91 / 0091 / a trunk 0 are prefixes, not part of the number. Removed only when what
-     follows could be a real mobile, so somebody typing a landline or a partial number is
-     not silently edited. */
-  const stripped = d.replace(/^(?:0091|91|0)(?=[6-9]\d{0,9}$)/, "");
-  return stripped.slice(0, 10);
+  const plus = raw.trim().startsWith("+");
+  if (isIndiaPhoneCountry(country)) {
+    /* +91 / 0091 / a trunk 0 are prefixes, not part of the number. Removed only when what
+       follows could be a real mobile, so somebody typing a landline or a partial number is
+       not silently edited. */
+    const stripped = d.replace(/^(?:0091|91|0)(?=[6-9]\d{0,9}$)/, "");
+    if (stripped !== d) return stripped.slice(0, 10);
+    if (plus) return `+${d.slice(0, PHONE_MAX_DIGITS)}`;
+    if (d.startsWith("00")) return d.slice(0, PHONE_MAX_DIGITS + 2);
+    return d.slice(0, 10);
+  }
+  if (plus) return `+${d.slice(0, PHONE_MAX_DIGITS)}`;
+  return d.slice(0, PHONE_MAX_DIGITS + (d.startsWith("00") ? 2 : 0));
 }
 
-/** The display form, applied on blur. `+91 98765 43210`. */
-export function commitPhone(raw: string): string {
-  const d = livePhone(raw);
-  return d.length === 10 ? `+91 ${d.slice(0, 5)} ${d.slice(5)}` : raw.trim();
+/**
+ * The display form, applied on blur: `+91 98765 43210`, `+1 555 123 4567`, `+44 7911123456`.
+ * A number that is not complete yet is left as typed.
+ */
+export function commitPhone(raw: string, country?: string | null): string {
+  const v = livePhone(raw, country);
+  if (isIndiaPhoneCountry(country) && !hasOwnCode(v)) {
+    return v.length === 10 ? `+91 ${v.slice(0, 5)} ${v.slice(5)}` : raw.trim();
+  }
+  const digits = phoneDigitsForCountry(v, country);
+  return digits && digits.length <= PHONE_MAX_DIGITS ? formatInternationalPhone(digits) : raw.trim();
 }
 
-export function checkPhone(raw: string): FieldCheck {
-  const d = livePhone(raw);
-  if (!d) return EMPTY;
+export function checkPhone(raw: string, country?: string | null): FieldCheck {
+  const v = livePhone(raw, country);
+  if (!v) return EMPTY;
+  if (!isIndiaPhoneCountry(country) || hasOwnCode(v)) return checkInternationalPhone(v, country);
+  const d = v;
 
   if (d.length < 10) {
     return { tone: "typing", message: `${10 - d.length} more digit${10 - d.length === 1 ? "" : "s"} — an Indian mobile is 10.` };
@@ -141,6 +171,24 @@ export function checkPhone(raw: string): FieldCheck {
     };
   }
   return { tone: "ok", message: "Valid mobile number" };
+}
+
+/** R-2645: the pill for a number with a code, or a foreign customer's number. */
+function checkInternationalPhone(v: string, country?: string | null): FieldCheck {
+  const digits = phoneDigitsForCountry(v, country);
+  if (!digits) {
+    return { tone: "typing", message: "Keep typing — the number is not complete yet." };
+  }
+  if (digits.length > PHONE_MAX_DIGITS) {
+    return { tone: "error", message: "Too long — a phone number with its country code is at most 15 digits." };
+  }
+  if (digits.startsWith("91") && digits.length === 12 && !/^[6-9]/.test(digits.slice(2))) {
+    return {
+      tone: "error",
+      message: "Indian mobiles start with 6, 7, 8 or 9 — this looks like a landline.",
+    };
+  }
+  return { tone: "ok", message: "Valid number", detail: formatInternationalPhone(digits) };
 }
 
 /* ── Domain ────────────────────────────────────────────────────────────────── */

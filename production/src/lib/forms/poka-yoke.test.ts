@@ -133,6 +133,66 @@ describe("phone", () => {
   });
 });
 
+/**
+ * R-2645: the phone field used to force +91 and cut every number to 10 digits, whatever
+ * the customer's country — a US "5551234567" saved as "+91 55512 34567" and "+44 7911 123456"
+ * as "4479111234". The dialling code now comes from the form's country (R-2639 lib/phone.ts).
+ */
+describe("phone with the form's country (R-2645)", () => {
+  it("US customer: 5551234567 saves as +1, not +91", () => {
+    expect(livePhone("5551234567", "United States")).toBe("5551234567");
+    expect(commitPhone("5551234567", "United States")).toBe("+1 555 123 4567");
+    expect(commitPhone("(555) 123-4567", "USA")).toBe("+1 555 123 4567");
+    expect(checkPhone("5551234567", "United States")).toMatchObject({ tone: "ok" });
+  });
+
+  it("a number typed with +CC is kept whole — any country, also India / empty", () => {
+    for (const country of [undefined, "", "India", "United States"]) {
+      expect(livePhone("+44 7911 123456", country)).toBe("+447911123456");
+      expect(commitPhone("+44 7911 123456", country)).toBe("+44 7911123456");
+      expect(checkPhone("+44 7911 123456", country)).toMatchObject({ tone: "ok" });
+    }
+    expect(commitPhone("0044 7911 123456", "")).toBe("+44 7911123456");
+    expect(commitPhone("+1 (555) 123-4567")).toBe("+1 555 123 4567");
+  });
+
+  it("UK customer: national 07911 123456 gets +44, trunk 0 dropped", () => {
+    expect(livePhone("07911 123456", "United Kingdom")).toBe("07911123456");
+    expect(commitPhone("07911 123456", "United Kingdom")).toBe("+44 7911123456");
+  });
+
+  it("a foreign number is not cut to 10 digits while typing", () => {
+    expect(livePhone("971501234567", "United Arab Emirates")).toBe("971501234567");
+    expect(commitPhone("971501234567", "United Arab Emirates")).toBe("+971 501234567");
+  });
+
+  it("Indian numbers are unchanged (India, empty or unreadable country)", () => {
+    for (const country of [undefined, "", "India", "IN", "Inida"]) {
+      expect(livePhone("+91 98765 43210", country)).toBe("9876543210");
+      expect(livePhone("09876543210", country)).toBe("9876543210");
+      expect(livePhone("98765432109", country)).toBe("9876543210");
+      expect(commitPhone("9876543210", country)).toBe("+91 98765 43210");
+      expect(commitPhone("98765", country)).toBe("98765");
+      expect(checkPhone("98765", country).tone).toBe("typing");
+      expect(checkPhone("0114234567", country).tone).toBe("error");
+    }
+  });
+
+  it("a +91 number for a foreign customer stays Indian (not re-coded)", () => {
+    expect(commitPhone("+91 98765 43210", "United States")).toBe("+91 98765 43210");
+  });
+
+  it("half-typed foreign number: left alone on commit, 'typing' pill", () => {
+    expect(commitPhone("555 12", "United States")).toBe("555 12");
+    expect(checkPhone("55512", "United States").tone).toBe("typing");
+    expect(checkPhone("+4", "").tone).toBe("typing");
+  });
+
+  it("an Indian landline written with +91 is still caught", () => {
+    expect(checkPhone("+91 11 4234 5678", "").tone).toBe("error");
+  });
+});
+
 describe("domain", () => {
   it("strips scheme, www, path and query", () => {
     expect(liveDomain("https://www.acme.com/pricing?ref=x")).toBe("acme.com");

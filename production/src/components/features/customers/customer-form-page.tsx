@@ -264,7 +264,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
                 const opts = { shouldDirty: true } as const;
                 if (v.name)   setValue("contact_name",  v.name, opts);
                 if (v.email)  setValue("contact_email", liveEmail(v.email), opts);
-                if (v.phone)  setValue("contact_phone", commitPhone(v.phone), opts);
+                if (v.phone)  setValue("contact_phone", commitPhone(v.phone, country), opts);
                 /* The honest half of "company": the DOMAIN. The name is not derivable
                    from an address and the one that lands on a tax invoice is a legal
                    fact — the GSTIN lookup fills that properly. */
@@ -491,12 +491,12 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
                 id="contact_phone" inputMode="numeric" placeholder="Work phone"
                 error={errors.contact_phone?.message}
                 {...register("contact_phone")}
-                onChange={(e) => setValue("contact_phone", livePhone(e.target.value), { shouldDirty: true })}
-                onBlur={(e) => setValue("contact_phone", commitPhone(e.target.value), { shouldDirty: true })}
+                onChange={(e) => setValue("contact_phone", livePhone(e.target.value, country), { shouldDirty: true })}
+                onBlur={(e) => setValue("contact_phone", commitPhone(e.target.value, country), { shouldDirty: true })}
               />
               {/* Catches the ten-digit landline, which looks perfect until somebody
                   tries to WhatsApp it. */}
-              <FieldPill check={checkPhone(watch("contact_phone") ?? "")} />
+              <FieldPill check={checkPhone(watch("contact_phone") ?? "", country)} />
               <Input aria-label="Mobile" placeholder="Mobile" {...register("contact_mobile")} />
             </div>
           </Row>

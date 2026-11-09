@@ -346,12 +346,12 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated, initi
                 id="contact_phone" inputMode="numeric" placeholder="e.g. +91 98765 43210"
                 error={errors.contact_phone?.message}
                 {...register("contact_phone")}
-                onChange={(e) => setValue("contact_phone", livePhone(e.target.value), { shouldDirty: true })}
-                onBlur={(e) => setValue("contact_phone", commitPhone(e.target.value), { shouldDirty: true })}
+                onChange={(e) => setValue("contact_phone", livePhone(e.target.value, country), { shouldDirty: true })}
+                onBlur={(e) => setValue("contact_phone", commitPhone(e.target.value, country), { shouldDirty: true })}
               />
               {/* Catches the ten-digit landline, which looks perfect until somebody
                   tries to WhatsApp it. */}
-              <FieldPill check={checkPhone(watch("contact_phone") ?? "")} />
+              <FieldPill check={checkPhone(watch("contact_phone") ?? "", country)} />
             </FormField>
             <FormField label="Mobile" htmlFor="contact_mobile">
               <Input id="contact_mobile" placeholder="e.g. +91 98765 43210" {...register("contact_mobile")} />
