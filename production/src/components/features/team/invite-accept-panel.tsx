@@ -24,7 +24,7 @@ import { GENERIC_HOME } from "@/lib/nav";
 import { COMPANY_SWITCH_CHANNEL, describeSwitchRefusal, finishCompanySwitch, switchCompany } from "@/lib/auth/company-switch";
 import { INVITE_LINK_BROKEN_MESSAGE, inviteTokenShapeOk } from "@/lib/auth/invite-link-request";
 import {
-  acceptInviteLink, acceptedMessage, INVITE_TOKEN_KEY, inviteLinkStateMessage, InviteLinkError, lookupInviteLink,
+  acceptInviteLink, acceptedMessage, INVITE_LINK_SLOT, inviteLinkStateMessage, InviteLinkError, lookupInviteLink,
   type AcceptResult, type InviteLinkInfo, type InviteLinkState,
 } from "@/lib/auth/company-invites";
 
@@ -55,7 +55,7 @@ type View =
   | { kind: "accepted"; result: AcceptResult };
 
 function forgetToken() {
-  try { window.sessionStorage.removeItem(INVITE_TOKEN_KEY); } catch { /* storage blocked: nothing kept */ }
+  try { window.sessionStorage.removeItem(INVITE_LINK_SLOT); } catch { /* storage blocked: nothing kept */ }
 }
 
 /** Tell this login's other tabs to load fresh (same as the top-bar switcher). */

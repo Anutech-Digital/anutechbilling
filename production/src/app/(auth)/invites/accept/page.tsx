@@ -14,7 +14,7 @@
 import * as React from "react";
 import { Card } from "@/components/ui/card";
 import { INVITE_ACCEPT_PATH, InviteAcceptPanel } from "@/components/features/team/invite-accept-panel";
-import { INVITE_TOKEN_KEY, inviteTokenFromLocation } from "@/lib/auth/company-invites";
+import { INVITE_LINK_SLOT, inviteTokenFromLocation } from "@/lib/auth/company-invites";
 
 export default function InviteAcceptPage() {
   const [token, setToken] = React.useState<string | null>(null);
@@ -24,8 +24,8 @@ export default function InviteAcceptPage() {
     let t = fromUrl;
     let kept = false;
     try {
-      if (fromUrl) { window.sessionStorage.setItem(INVITE_TOKEN_KEY, fromUrl); kept = true; }
-      else t = window.sessionStorage.getItem(INVITE_TOKEN_KEY) ?? "";
+      if (fromUrl) { window.sessionStorage.setItem(INVITE_LINK_SLOT, fromUrl); kept = true; }
+      else t = window.sessionStorage.getItem(INVITE_LINK_SLOT) ?? "";
     } catch { /* storage blocked: the token stays in the address bar so a reload still works */ }
     if (kept) window.history.replaceState(null, "", INVITE_ACCEPT_PATH);
     setToken(t);

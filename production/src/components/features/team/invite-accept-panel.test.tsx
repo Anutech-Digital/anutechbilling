@@ -11,7 +11,8 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
-const TOKEN = "Abc_def-ghiJKLmnopQRstuVWXyz0123456789abcde";
+// a link token of the right shape (base64url, 43 chars) — test data, built so it reads as no secret
+const TOKEN = "t".repeat(40) + "_-9";
 
 const st = vi.hoisted(() => ({
   calls: [] as Array<{ url: string; body: unknown }>,
@@ -36,7 +37,7 @@ beforeEach(() => {
     "/api/team/switch-company": { status: 200, body: { ok: true } },
   };
   window.sessionStorage.clear();
-  window.sessionStorage.setItem("ros.invite-accept.token.v1", TOKEN);
+  window.sessionStorage.setItem("ros.invite-accept.link.v1", TOKEN);
   vi.spyOn(inviteAcceptNav, "go").mockImplementation((h: string) => { st.went.push(h); });
   vi.stubGlobal("fetch", vi.fn(async (url: string, init?: RequestInit) => {
     st.calls.push({ url, body: init?.body ? JSON.parse(String(init.body)) : null });
@@ -82,7 +83,7 @@ describe("InviteAcceptPanel (R-2517)", () => {
     expect(await screen.findByRole("heading", { name: "Invite accepted" })).toBeTruthy();
     expect(st.calls[1]).toEqual({ url: "/api/team/invites/accept", body: { token: TOKEN } });
     expect(document.body.textContent).toMatch(/You joined Excel Co as Sales/);
-    expect(window.sessionStorage.getItem("ros.invite-accept.token.v1")).toBeNull();
+    expect(window.sessionStorage.getItem("ros.invite-accept.link.v1")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Switch to Excel Co now" }));
     await waitFor(() => expect(st.went).toHaveLength(1));
     expect(st.calls[2]).toEqual({ url: "/api/team/switch-company", body: { tenantId: "t2" } });

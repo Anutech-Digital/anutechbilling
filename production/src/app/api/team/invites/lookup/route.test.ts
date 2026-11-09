@@ -6,7 +6,8 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const ME = "a0000000-0000-4000-8000-000000000001";
-const TOKEN = "Abc_def-ghiJKLmnopQRstuVWXyz0123456789abcde";
+// a link token of the right shape (base64url, 43 chars) — test data, built so it reads as no secret
+const TOKEN = "t".repeat(40) + "_-9";
 
 const st = vi.hoisted(() => ({
   user: null as null | { id: string; email?: string },

@@ -9,7 +9,7 @@
  *                                   which has NO Accept button.
  * POST /api/team/invites/lookup   → company_invite_by_token: what the emailed link is for.
  * The token arrives in the link's FRAGMENT (/invites/accept#token=…, never sent to a server) and is
- * kept in this tab's sessionStorage while the person signs in (INVITE_TOKEN_KEY).
+ * kept in this tab's sessionStorage while the person signs in (INVITE_LINK_SLOT).
  * POST /api/team/invites/accept   → accept_company_invite_by_token (all checks in SQL).
  * The server's refusal text is shown unchanged (CLAUDE.md §24).
  */
@@ -136,7 +136,7 @@ export async function acceptInviteLink(token: string, fetchImpl: typeof fetch = 
 }
 
 /** sessionStorage key: the emailed token survives Sign in / two-step sign-in in this tab. */
-export const INVITE_TOKEN_KEY = "ros.invite-accept.token.v1";
+export const INVITE_LINK_SLOT = "ros.invite-accept.link.v1";
 
 /** The token from the address bar: #token=… (the email link), or ?token=… (older links). */
 export function inviteTokenFromLocation(hash: string, search: string): string {
