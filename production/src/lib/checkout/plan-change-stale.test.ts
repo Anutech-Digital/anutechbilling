@@ -50,13 +50,28 @@ describe("planChangeStaleReason — the SQL's rules", () => {
 });
 
 /* startQuotePayment with an admin client that knows one subscription row. */
-function admin(sub: (PlanChangeSubNow & { renewal_quote_id: string; tenant_id: string }) | null, readError = false) {
+function admin(
+  sub: (PlanChangeSubNow & { renewal_quote_id: string; tenant_id: string }) | null,
+  readError = false,
+  /* R-2626: rows the later-parts reader sees (subscription_billings / invoices / quotes). */
+  later: { tables?: Record<string, Record<string, unknown>[]>; failOn?: string } = {},
+) {
   const from = vi.fn((table: string) => {
     const filters: [string, unknown][] = [];
     const q = {
       select: () => q,
       eq: (c: string, v: unknown) => { filters.push([c, v]); return q; },
+      gt: (c: string, v: unknown) => { filters.push([`gt:${c}`, v]); return q; },
+      in: () => q,
+      order: () => q,
       limit: () => q,
+      then: (ok: (r: unknown) => unknown, err?: (e: unknown) => unknown) => {
+        if (!["subscription_billings", "invoices", "quotes"].includes(table)) return Promise.reject(new Error(`unexpected table ${table}`)).then(ok, err);
+        if (later.failOn === table) return Promise.resolve({ data: null, error: { message: "boom" } }).then(ok, err);
+        const rows = (later.tables?.[table] ?? []).filter((r) => filters.every(([c, v]) =>
+          c.startsWith("gt:") ? String(r[c.slice(3)]) > String(v) : r[c] === v));
+        return Promise.resolve({ data: rows, error: null }).then(ok, err);
+      },
       maybeSingle: async () => {
         if (table !== "subscriptions") throw new Error(`unexpected table ${table}`);
         if (readError) return { data: null, error: { message: "boom" } };
@@ -103,7 +118,8 @@ describe("startQuotePayment — R-2596 stale plan-change quote", () => {
     const a = admin({ ...SUB, renewal_quote_id: "Q-PC-1", tenant_id: "t-1" });
     // The ledger read is the next step; the mock refuses any table but subscriptions → caught → 500.
     const r = await startQuotePayment(a.client, QUOTE, OPTS).catch((e: Error) => ({ status: -1, body: { error: e.message } }));
-    expect(a.from.mock.calls.map((c) => c[0]).slice(0, 2)).toEqual(["subscriptions", "payments"]);
+    /* R-2626: the later-parts read (no billing rows here) comes between. */
+    expect(a.from.mock.calls.map((c) => c[0]).slice(0, 3)).toEqual(["subscriptions", "subscription_billings", "payments"]);
     expect((r.body as Record<string, unknown>).planChangeStale).toBeUndefined();
   });
 
@@ -140,5 +156,49 @@ describe("R-2617 — scheduled end-of-term seat cut refuses the pay start", () =
     expect(String(r.body.error)).toMatch(/seat reduction is scheduled/);
     expect(String(r.body.nextStep)).toMatch(/Nothing has been charged/);
     expect(a.from.mock.calls.map((c) => c[0])).toEqual(["subscriptions"]);
+  });
+});
+
+describe("R-2626 — a later part already billed refuses the pay start", () => {
+  const PC_Q2 = { ...PC, period_from: "2026-08-16", period_to: "2026-09-30" };
+  const quote = { ...QUOTE, line_items: line(PC_Q2) };
+  const linked = { ...SUB, renewal_quote_id: "Q-PC-1", tenant_id: "t-1" };
+  const billing = (n: number, start: string, invoice_id: string | null = null) =>
+    ({ id: `B${n}`, tenant_id: "t-1", subscription_id: "sub-1", period_index: n, period_start: start, period_end: "2027-01-01", invoice_id });
+
+  it("Q3 has an open proforma → 409 later_part_billed before any payments read / order", async () => {
+    const a = admin(linked, false, { tables: {
+      subscription_billings: [billing(3, "2026-10-01")],
+      quotes: [{ id: "PI-3", tenant_id: "t-1", subscription_billing_id: "B3", status: "sent" }],
+    } });
+    const r = await startQuotePayment(a.client, quote, OPTS);
+    expect(r.status).toBe(409);
+    expect(r.body.planChangeStale).toBe("later_part_billed");
+    expect(String(r.body.error)).toMatch(/already billed at the old plan's rate/);
+    expect(String(r.body.nextStep)).toMatch(/Nothing has been charged/);
+    expect(a.from.mock.calls.map((c) => c[0])).not.toContain("payments");
+  });
+
+  it("Q3 invoiced (live) → 409; parts only up to the quote's period_to (Q2) → goes on", async () => {
+    const inv = admin(linked, false, { tables: {
+      subscription_billings: [billing(3, "2026-10-01", "INV-3")],
+      invoices: [{ id: "INV-3", tenant_id: "t-1", status: "paid" }],
+    } });
+    expect((await startQuotePayment(inv.client, quote, OPTS)).status).toBe(409);
+
+    const cur = admin(linked, false, { tables: {
+      subscription_billings: [billing(2, "2026-07-01", "INV-2")],
+      invoices: [{ id: "INV-2", tenant_id: "t-1", status: "paid" }],
+    } });
+    await startQuotePayment(cur.client, quote, OPTS).catch(() => undefined);
+    expect(cur.from.mock.calls.map((c) => c[0])).toContain("payments");
+  });
+
+  it("billing parts read fails → 500 retry, no order", async () => {
+    const a = admin(linked, false, { failOn: "subscription_billings" });
+    const r = await startQuotePayment(a.client, quote, OPTS);
+    expect(r.status).toBe(500);
+    expect(String(r.body.error)).toMatch(/retry/i);
+    expect(a.from.mock.calls.map((c) => c[0])).not.toContain("payments");
   });
 });

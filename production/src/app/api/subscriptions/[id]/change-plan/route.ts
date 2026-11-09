@@ -13,6 +13,8 @@
  *                   is paid in full. The renewal date does not move.
  * Preview and save run the SAME buildPlanChange() on the same server-read inputs (R-803 rule).
  *
+ * R-2626: refused (preview + save) while a LATER part is already billed at the old rate.
+ *
  * Roles: ACTION_ROLES["seats.change"] (owner / manager / billing) — the Extend / Add seats gate.
  */
 import { NextResponse } from "next/server";
@@ -30,6 +32,7 @@ import { subscriptionProducts } from "@/lib/subscriptions/catalog-options";
 import { buildPlanChange } from "@/lib/subscriptions/change-plan";
 import { readPlanChangeMoney } from "@/lib/subscriptions/change-plan-money.server";
 import { loadScheduledSeatCuts } from "@/lib/renewals/scheduled-seat-cut";
+import { readLaterBilledParts } from "@/lib/subscriptions/change-plan-later-parts.server";
 import type { Item } from "@/lib/supabase/database.types";
 
 export const dynamic = "force-dynamic";
@@ -73,6 +76,10 @@ export const POST = withRoute(
        Read alongside the money; not readable → 500 cut_check_failed, nothing saved. The SQL trigger
        subscriptions_r2617_plan_change_vs_seat_cut guards the same under the row lock. */
     const seatCutsP = loadScheduledSeatCuts(supabase, tenantId, sub.id).catch(() => null);
+    /* R-2626: a LATER part already billed (proforma raised ahead / its invoice) keeps the old rate —
+       buildPlanChange refuses while one exists. Not readable → 500 parts_check_failed, nothing saved.
+       The SQL trigger subscriptions_r2626_plan_change_vs_later_part guards the payment the same way. */
+    const laterPartsP = readLaterBilledParts(supabase, tenantId, sub.id, today).catch(() => null);
     let money;
     try {
       money = await readPlanChangeMoney(supabase, tenantId, sub, today);
@@ -92,7 +99,14 @@ export const POST = withRoute(
         code: "cut_check_failed",
       }, { status: 500 });
     }
-    const built = buildPlanChange({ sub, target, newSeats: input.seats, today, taxRatePct, money, seatCuts });
+    const laterParts = await laterPartsP;
+    if (laterParts == null) {
+      return NextResponse.json({
+        error: "Could not read this subscription's billing parts, so the plan was not changed. Try again.",
+        code: "parts_check_failed",
+      }, { status: 500 });
+    }
+    const built = buildPlanChange({ sub, target, newSeats: input.seats, today, taxRatePct, money, seatCuts, laterParts });
     if (!built.ok) return NextResponse.json({ error: built.reason }, { status: 400 });
     const { plan } = built;
 
