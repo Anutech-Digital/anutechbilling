@@ -41,6 +41,8 @@ vi.mock("@/lib/queries/bank", () => ({ useBankAccounts: () => ({ data: [] }) }))
 vi.mock("@/lib/queries/vendors", () => ({ useVendors: () => ({ data: [] }), ensureVendor: vi.fn(async () => null) }));
 vi.mock("@/lib/queries/reimbursements", () => ({ useAddReimbursement: () => ({ mutateAsync: vi.fn() }) }));
 vi.mock("@/lib/queries/vendor-bills", () => ({
+  /* R-2623: the bill's auto service period (vendor_bill_service_period). */
+  useAutoServicePeriod: () => ({ data: { service_from: "2026-09-01", service_to: "2026-09-30", basis: "vendor_default" }, isLoading: false, isError: false }),
   uploadBillAttachment: (f: File) => uploadSpy(f),
   useCreateVendorBill: () => ({ mutateAsync: createBillSpy }),
   useOwnStateCode: () => ({ data: "09" }),
