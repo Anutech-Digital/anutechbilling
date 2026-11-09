@@ -170,6 +170,18 @@ export const CI_ONLY_GUARD_SUITES = [
 /** Soft budget: the push prints a warning above this so the list gets trimmed, not ignored. R-2443: 90 → 60 s. */
 export const PUSH_GUARD_BUDGET_MS = 60_000;
 
+/**
+ * R-2630 (9 Nov 2026): per-test (and hook) timeout for the push's guard run only. 9 Nov the step
+ * took 66–102 s and once went red on a TIMEOUT (tests/secret-scan.test.ts, R-2622 pushed twice).
+ * Measured the same day, same 88 files, one file at a time: ~45 s of work in all on a quiet laptop,
+ * 135–169 s with 4 workers + checkers running — every file 3–8x slower, so a 1-s scan crosses
+ * vitest's 5 s default and the push goes red on load, not on a bug. The heaviest real work was cut
+ * (anchor-links re-resolved every import per page, scope-gate imported make-call's unreached AI side,
+ * every fork loaded the whole 89 MB source cache — now buckets); this keeps a slow-but-green scan from
+ * failing the push. A real hang still stops at 30 s; CI keeps vitest's default.
+ */
+export const PUSH_GUARD_TEST_TIMEOUT_MS = 30_000;
+
 /** A vitest json `name` (absolute path) relative to production/ (`root`), forward slashes. */
 function relToRoot(name, root) {
   const norm = (p) => String(p).replace(/\\/g, "/");
