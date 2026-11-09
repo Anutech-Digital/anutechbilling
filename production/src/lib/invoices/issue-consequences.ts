@@ -33,7 +33,8 @@ import {
   formatDocumentNumber, seriesGap,
   type Consequence, type SeriesState,
 } from "@/lib/actions/consequence";
-import { isExportSupply, isZeroRatedSupply } from "@/lib/gst/place-of-supply";
+import { isExportSupply, isZeroRatedSupply, overseasCountryMissing } from "@/lib/gst/place-of-supply";
+import { fyCodeOfYear, fyLabel, fyStartYear } from "@/lib/dates/ist";
 import { EXPORT_LUT_ENDORSEMENT, exportLutRefusal, lutFor, lutFyLabel, type TenantLut } from "@/lib/gst/export-lut";
 import type { InvoiceDateWhy } from "./issue-date";
 
@@ -100,11 +101,17 @@ export function issueConsequences(args: {
      BOS- series (R-1529, next_document_number). The INV counter says nothing about that
      series, so no number is predicted — the series is named instead. */
   const bos = quote.billOfSupply === true;
+  /* R-2635: next_document_number takes the FY from the invoice DATE — a receipt-dated invoice of an
+     earlier FY takes that year's series, not the series row passed in (this FY's). */
+  const otherFy = !bos && series !== null && quote.invoiceDate !== undefined
+    && series.fiscalYear !== fyCodeOfYear(fyStartYear(quote.invoiceDate));
   const predictedNumber = bos
     ? "Bill of Supply"
-    : series
-      ? formatDocumentNumber(series, next)
-      : `${quote.id} → the first invoice of this financial year`;
+    : otherFy
+      ? `the next number of the FY ${fyLabel(quote.invoiceDate as string)} series`
+      : series
+        ? formatDocumentNumber(series, next)
+        : `${quote.id} → the first invoice of this financial year`;
 
   /* Most consequential first, because this is read in a hurry. The two facts that
      were not on screen at all before are the two at the top. */
@@ -112,9 +119,11 @@ export function issueConsequences(args: {
     tone: "fact",
     text: bos
       ? "Issued as a Bill of Supply (your company is not GST-registered), with the next BOS- number. That number is used up either way — deleting it later retires it rather than freeing it."
-      : series
-        ? `Takes invoice number ${predictedNumber}. That number is used up either way — deleting the invoice later retires it rather than freeing it.`
-        : `This is the first invoice of the financial year for this business, so it opens the series.`,
+      : otherFy
+        ? `Takes ${predictedNumber} (the invoice is dated in that year). That number is used up either way — deleting the invoice later retires it rather than freeing it.`
+        : series
+          ? `Takes invoice number ${predictedNumber}. That number is used up either way — deleting the invoice later retires it rather than freeing it.`
+          : `This is the first invoice of the financial year for this business, so it opens the series.`,
   });
 
   if (quote.invoiceDate) {
@@ -123,7 +132,7 @@ export function issueConsequences(args: {
     const why = quote.invoiceDateWhy === "receipt"
       ? " — the day the money came in (the latest receipt), not today"
       : quote.invoiceDateWhy === "books_lock"
-        ? " — the first day after your locked books (the money came in on a locked day)"
+        ? " — the first day after your locked books"
         : " (today)";
     out.push({
       tone: "fact",
@@ -134,9 +143,19 @@ export function issueConsequences(args: {
   /* R-2635 (R-2171 item 3): a customer abroad (or an SEZ unit supplied without payment of tax) is a
      zero-rated supply under the LUT of the invoice date's FY (R-2444, R-2515) — never "B2C". Same
      rules the server applies (supply_is_zero_rated, trg_invoices_zz_export_lut). */
-  const zeroRated = quote.customerCountry !== undefined
+  const zeroRated = !bos && quote.customerCountry !== undefined
     && isZeroRatedSupply({ country: quote.customerCountry, treatment: quote.customerTreatment ?? null });
   if (zeroRated) out.push(zeroRatedLine(quote));
+  /* R-2620: Overseas with no country reads as India — the server refuses this invoice; never "B2C". */
+  const overseasNoCountry = !bos && quote.customerCountry !== undefined
+    && overseasCountryMissing({ treatment: quote.customerTreatment ?? null, country: quote.customerCountry });
+  if (overseasNoCountry) {
+    out.push({
+      tone: "warning",
+      text: `${quote.customerName || "This customer"} is marked Overseas but has no country, so nothing can be issued yet — ` +
+        "the app cannot tell a 0% export from an Indian sale. Open the customer, pick its country, then issue.",
+    });
+  }
 
   const gstin = quote.customerGstin?.trim();
   if (gstin) {
@@ -205,7 +224,7 @@ export function issueConsequences(args: {
      `undefined` — the caller did not tell us — says nothing rather than guessing.
      Silence is right there: a made-up warning on every invoice is a warning nobody
      reads, and this one has to be readable on the day it is true. */
-  if (quote.customerGstin !== undefined && !quote.customerGstin?.trim() && !zeroRated) {
+  if (quote.customerGstin !== undefined && !quote.customerGstin?.trim() && !zeroRated && !overseasNoCountry) {
     out.push({
       tone: "warning",
       text:
@@ -222,7 +241,7 @@ export function issueConsequences(args: {
 
   return {
     predictedNumber,
-    predictedIsCertain: !bos && series !== null,
+    predictedIsCertain: !bos && series !== null && !otherFy,
     consequences: out,
   };
 }
@@ -231,7 +250,8 @@ export function issueConsequences(args: {
 function zeroRatedLine(quote: QuoteToInvoice): Consequence {
   const who = quote.customerName || "this customer";
   const country = (quote.customerCountry ?? "").trim();
-  const what = isExportSupply(quote.customerCountry)
+  const exportSale = isExportSupply(quote.customerCountry);
+  const what = exportSale
     ? `an export invoice to ${who} (${country})`
     : `a zero-rated SEZ invoice (without payment of tax) to ${who}`;
   /* generate_invoice takes the rate from the quote: a quote that still charges GST is invoiced with it. */
@@ -239,13 +259,18 @@ function zeroRatedLine(quote: QuoteToInvoice): Consequence {
     return {
       tone: "warning",
       text: `This is ${what}, but the quote charges ${rupee(quote.taxAmount)} GST, so the invoice will too — not 0% under your LUT. ` +
-        "To bill it at 0%, make a new quote for this customer (the country sets 0%) and issue that one instead.",
+        `To bill it at 0%, make a new quote for this customer (${exportSale ? "its country" : "its SEZ without payment treatment"} sets 0%) and issue that one instead.`,
     };
   }
   const date = quote.invoiceDate ?? null;
   const known = date !== null && quote.luts !== undefined;
   const refusal = known ? exportLutRefusal(quote.luts, date) : null;
-  if (refusal) return { tone: "warning", text: `This is ${what} at 0% GST. ${refusal}` };
+  if (refusal) {
+    /* The server (trg_invoices_zz_export_lut) refuses it — so the Issue button is held
+       (ConfirmIssueDialog blocks a warning that says "nothing can be issued"). */
+    const words = exportSale ? refusal : refusal.replace(/An export( sale)? at 0% GST/g, "A 0% SEZ supply");
+    return { tone: "warning", text: `This is ${what} at 0% GST, so nothing can be issued until the LUT is on file. ${words}` };
+  }
   const lut = known ? lutFor(quote.luts, date) : null;
   const under = `0% GST${lut && date ? ` under LUT ${lut.arn} (FY ${lutFyLabel(date)})` : " under your LUT"}`;
   return {

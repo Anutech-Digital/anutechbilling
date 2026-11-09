@@ -80,6 +80,36 @@ describe("R-2635 export customer on the issue confirm", () => {
   it("country not passed (undefined) → nothing about export, as before", () => {
     expect(text({ ...PEAK, customerCountry: undefined })).not.toMatch(/export invoice/i);
   });
+
+  it("no LUT → the warning holds the Issue button (ConfirmIssueDialog's 'nothing can be issued')", () => {
+    const w = warnings({ ...PEAK, luts: [] }).join(" ");
+    expect(w).toMatch(/nothing can be issued/);
+  });
+
+  it("SEZ with no LUT is not called an export sale", () => {
+    const w = warnings({ ...PEAK, customerName: "SEZ Unit", customerCountry: "India", customerTreatment: "sez_without_payment", luts: [] }).join(" ");
+    expect(w).toMatch(/A 0% SEZ supply/);
+    expect(w).not.toMatch(/An export/);
+  });
+
+  it("Overseas with no country (R-2620) → held with the fix, never B2C", () => {
+    const w = warnings({ ...PEAK, customerCountry: "", customerTreatment: "overseas" }).join(" ");
+    expect(w).toMatch(/marked Overseas but has no country, so nothing can be issued/);
+    expect(text({ ...PEAK, customerCountry: "", customerTreatment: "overseas" })).not.toMatch(/B2C/);
+  });
+
+  it("a Bill of Supply business abroad: no export / LUT line (the server leaves BOS alone)", () => {
+    const t = text({ ...PEAK, billOfSupply: true, luts: [] });
+    expect(t).not.toMatch(/export invoice|LUT/);
+  });
+
+  it("an invoice dated in an earlier FY takes THAT year's series, not this year's predicted number", () => {
+    const c = issueConsequences({ quote: { ...PEAK, invoiceDate: "2026-03-28", invoiceDateWhy: "receipt" }, series: SERIES });
+    const t = c.consequences.map((x) => x.text).join(" | ");
+    expect(t).toMatch(/the next number of the FY 2025-26 series/);
+    expect(t).not.toContain("INV-TEST-27-0009");
+    expect(c.predictedIsCertain).toBe(false);
+  });
 });
 
 describe("R-2635 the date the invoice will really carry", () => {
@@ -91,7 +121,7 @@ describe("R-2635 the date the invoice will really carry", () => {
   });
 
   it("dated on the first open day after locked books says so", () => {
-    expect(text({ ...PEAK, invoiceDate: "2026-09-01", invoiceDateWhy: "books_lock" })).toMatch(/Dated 1 Sept? 2026.*locked/);
+    expect(text({ ...PEAK, invoiceDate: "2026-09-01", invoiceDateWhy: "books_lock" })).toMatch(/Dated 1 Sept? 2026 — the first day after your locked books/);
   });
 
   it("no why given → '(today)' as before", () => {

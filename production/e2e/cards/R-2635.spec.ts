@@ -27,7 +27,7 @@ function plant(): void {
   const sql = `
 \\set ON_ERROR_STOP 1
 begin;
-delete from public.payments where id = '${PAYMENT_ID}';
+delete from public.payments where id = '${PAYMENT_ID}' and exists (select 1 from public.quotes q where q.id = '${QUOTE}' and q.invoice_id is null);
 delete from public.quotes where id = '${QUOTE}' and invoice_id is null;
 delete from public.customers where id = '${CUSTOMER_ID}' and not exists (select 1 from public.quotes q where q.customer_id = '${CUSTOMER_ID}');
 insert into public.customers (id, tenant_id, name, state, state_code, country, gst_treatment, customer_type, notes)
