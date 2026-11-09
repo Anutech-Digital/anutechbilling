@@ -23,6 +23,7 @@
 import type { PnlRpcRow } from "@/lib/accounting/pnl-assemble";
 import type { RevenueByProductRow } from "@/lib/accounting/revenue-family";
 import type { RevenueLineRow } from "@/lib/accounting/pnl-drill";
+import { addDaysISO, istToday } from "@/lib/dates/ist";
 
 type MatchedCogsRpc = (
   fn: "report_pnl_cogs_matched", args: { p_from: string; p_to: string },
@@ -227,11 +228,15 @@ export async function fetchRevenueDrillLines(
   range: { from: string; to: string },
   families: string[] | null,
   basis: PnlBasis,
+  /** R-2625: Management lists only what is earned up to this day (the card's own cut). */
+  today: string = istToday(),
 ): Promise<RevenueLineRow[]> {
   const rpc = supabase.rpc as RevenueLinesRpc;
   const args = { p_from: range.from, p_to: range.to, p_families: families && families.length > 0 ? families : null };
   if (basis === "management") {
-    const { data, error } = await rpc.call(supabase, "report_pnl_revenue_matched_lines", args);
+    const earned = earnedRange(range, today);
+    if (!earned) return [];   // the whole range is after today: nothing earned yet (card ₹0)
+    const { data, error } = await rpc.call(supabase, "report_pnl_revenue_matched_lines", { ...args, p_from: earned.from, p_to: earned.to });
     if (!error) return (Array.isArray(data) ? data : []) as RevenueLineRow[];
     if (error.code !== "PGRST202" && error.code !== "42883") throw new Error(error.message);
   }
@@ -286,4 +291,45 @@ export async function fetchMatchedRevenueMonths(
     if (row && typeof r.month === "string") out.set(r.month.slice(0, 7), row);
   }
   return out;
+}
+
+// ─── R-2625: revenue is EARNED only up to today ───────────────────────────────────────
+
+/**
+ * R-2625 (R-2624 checker: "This FY" on Management counted Dec..Mar parts of yearly invoices as
+ * earned in November). Management revenue counts only the days that have happened: the range is
+ * cut at today. Null = the whole range is after today — nothing earned yet.
+ */
+export function earnedRange(range: { from: string; to: string }, today: string): { from: string; to: string } | null {
+  if (range.from > today) return null;
+  return { from: range.from, to: range.to < today ? range.to : today };
+}
+
+/** R-2625: the part of the range after today (its revenue is invoiced but not earned yet); null when none. */
+export function notYetEarnedRange(range: { from: string; to: string }, today: string): { from: string; to: string } | null {
+  if (range.to <= today) return null;
+  const next = addDaysISO(today, 1);
+  return { from: range.from > next ? range.from : next, to: range.to };
+}
+
+/** Revenue of a row the way the P&L adds it: invoices − credit notes + debit notes (before GST). */
+export function netRevenueOf(r: Pick<MatchedRevenueRow, "inv_taxable" | "cn_taxable" | "dn_taxable">): number {
+  return (Number(r.inv_taxable) || 0) - (Number(r.cn_taxable) || 0) + (Number(r.dn_taxable) || 0);
+}
+
+/**
+ * R-2625: the note on a Management P&L whose range runs past today — revenue is counted up to
+ * today; what is already invoiced for the later days is not earned yet (the Balance Sheet's
+ * Advance billing). Null when the range has nothing after today.
+ */
+export function notYetEarnedNote(
+  d: { revenueEarnedTo?: string; revenueNotYetEarned?: number },
+  money: (n: number) => string, date: (iso: string) => string,
+): string | null {
+  if (!d.revenueEarnedTo) return null;
+  const later = d.revenueNotYetEarned ?? 0;
+  const head = `Management revenue is counted only up to today (${date(d.revenueEarnedTo)}).`;
+  if (later === 0) return `${head} Nothing invoiced so far falls in the rest of this period.`;
+  if (later < 0) return `${head} Credit notes of ${money(-later)} for the rest of this period will count when those days come.`;
+  return `${head} ${money(later)} already invoiced for the rest of this period is not earned yet — the Balance Sheet shows it as Advance billing.`;
 }

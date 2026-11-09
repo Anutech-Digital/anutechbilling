@@ -65,6 +65,8 @@ interface Props {
   basis?: PnlBasis;
   /** R-2624: the Management card's revenue is spread over its service months (title + note say so). */
   revenueSpread?: boolean;
+  /** R-2625: the Management card counts revenue only up to this day (the range runs past today). */
+  earnedTo?: string;
 }
 
 /** R-2622: the cogs drill on the Management (matched) view. */
@@ -180,15 +182,18 @@ function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: 
   });
 }
 
-export function PnLDrilldownDialog({ open, onOpenChange, target, range, cogsEstimate, basis = "gst", revenueSpread = false }: Props) {
+export function PnLDrilldownDialog({ open, onOpenChange, target, range, cogsEstimate, basis = "gst", revenueSpread = false, earnedTo }: Props) {
   const kind = target?.kind ?? null;
   const expenseCategory = target?.category ?? null;
   /* The estimate's working only on a drill that lists an estimated part. */
   const estimate = kind === "cogs" && (target?.vendors === undefined || (target?.estimates?.length ?? 0) > 0) ? cogsEstimate ?? null : null;
-  const { data: rows, isLoading, isError } = useDrilldown(target, range, open, basis);
+  /* R-2625: a Management card whose revenue is not spread (older database) lists the GST rows it shows. */
+  const drillBasis: PnlBasis = kind === "revenue" && !revenueSpread ? "gst" : basis;
+  const { data: rows, isLoading, isError } = useDrilldown(target, range, open, drillBasis);
   const meta = !kind ? null
     : kind === "cogs" && basis === "management" ? { ...META.cogs, ...COGS_MATCHED_META }
-    : kind === "revenue" && basis === "management" && revenueSpread ? { ...META.revenue, ...REVENUE_MATCHED_META }
+    : kind === "revenue" && basis === "management" && revenueSpread
+      ? { ...META.revenue, ...REVENUE_MATCHED_META, ...(earnedTo ? { desc: `${REVENUE_MATCHED_META.desc} Counted only up to today (${formatDate(earnedTo)}) — what is already invoiced for the later days is not earned yet.` } : {}) }
     : META[kind];
   const amountColor = meta?.tone === "rose" ? "text-rose" : "text-ink";
   /* A sub-row (a product, a vendor, a category) is named in the title. */

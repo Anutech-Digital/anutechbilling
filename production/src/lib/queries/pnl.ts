@@ -29,8 +29,12 @@ import { fyMonthsSoFar, monthRange } from "@/lib/accounting/pnl-charts";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
 import {
   fetchMatchedCogs, fetchMatchedRevenue, fetchMatchedRevenueMonths, NO_MATCHED_REVENUE, withMatchedCogs, withMatchedRevenue,
+  earnedRange, notYetEarnedRange, netRevenueOf,
   type PnlBasis, type MatchedCogsRow, type MatchedRevenueRow,
 } from "@/lib/accounting/pnl-basis";
+import { istToday } from "@/lib/dates/ist";
+import { BOOKS_START_FALLBACK } from "@/lib/accounting/books-start";
+import { advanceBillingOf, type AdvanceBilling } from "@/lib/accounting/balance-sheet-totals";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import type { AssetBlock } from "@/lib/accounting/depreciation";
 import { fetchDirectorPayroll } from "@/lib/queries/director-payroll";
@@ -104,18 +108,19 @@ async function fetchPnlMasters(supabase: Client) {
 }
 
 async function pnlFor(
-  supabase: Client, range: Range, masters: (r: Range) => PnlMasters, basis: PnlBasis = "gst",
+  supabase: Client, range: Range, masters: (r: Range) => PnlMasters, basis: PnlBasis,
   /** R-2624: the month's spread revenue already read by the one FY call (undefined = read it here). */
-  revenueKnown?: MatchedRevenueRow | null,
+  revenueKnown: MatchedRevenueRow | null | undefined,
+  today: string,
 ): Promise<PnLNumbers> {
   const [rpc, other, matched, revenue] = await Promise.all([
     supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
     otherIncomeRows(supabase, range),
     matchedCogs(supabase, range, basis),
-    revenueKnown !== undefined ? Promise.resolve(revenueKnown) : matchedRevenue(supabase, range, basis),   // R-2624
+    revenueKnown !== undefined ? Promise.resolve({ earned: revenueKnown }) : matchedRevenue(supabase, range, basis, today),   // R-2624
   ]);
   const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-  return onBasis(range, { ...row, other_income: other }, masters(range), basis, matched, revenue);
+  return onBasis(range, { ...row, other_income: other }, masters(range), basis, matched, revenue?.earned, revenue?.cap);
 }
 
 /**
@@ -128,14 +133,29 @@ async function matchedCogs(supabase: Client, range: Range, basis: PnlBasis): Pro
   return fetchMatchedCogs(supabase, range);
 }
 
+/** R-2625: a Management range that runs past today — revenue earned up to `earnedTo`, the rest not yet. */
+export interface RevenueCap { earnedTo: string; notYetEarned: number }
+
 /**
  * R-2624: the Management view's revenue — each invoice spread over the months it pays for
  * (report_pnl_revenue_matched). Only asked for on the Management view; null on a database without
  * the function (revenue then stays as invoiced, marked); any other failure throws.
+ * R-2625: EARNED revenue only — the range is cut at today (a range wholly after today earns ₹0);
+ * the spread revenue of the later days is read too, for the "not earned yet" note (not a total).
  */
-async function matchedRevenue(supabase: Client, range: Range, basis: PnlBasis): Promise<MatchedRevenueRow | null | undefined> {
+async function matchedRevenue(
+  supabase: Client, range: Range, basis: PnlBasis, today: string,
+): Promise<{ earned: MatchedRevenueRow | null; cap?: RevenueCap } | undefined> {
   if (basis !== "management") return undefined;
-  return fetchMatchedRevenue(supabase, range);
+  const earned = earnedRange(range, today);
+  const later = notYetEarnedRange(range, today);
+  const [e, l] = await Promise.all([
+    earned ? fetchMatchedRevenue(supabase, earned) : Promise.resolve(NO_MATCHED_REVENUE),
+    later ? fetchMatchedRevenue(supabase, later) : Promise.resolve(undefined),
+  ]);
+  /* a database without the function: either call says so (null) → revenue as invoiced, marked */
+  if (e === null || l === null) return { earned: null };
+  return { earned: e, cap: l === undefined ? undefined : { earnedTo: today, notYetEarned: netRevenueOf(l) } };
 }
 
 /**
@@ -145,16 +165,20 @@ async function matchedRevenue(supabase: Client, range: Range, basis: PnlBasis): 
 export function onBasis(
   range: Range, row: PnlRpcRow, m: PnlMasters, basis: PnlBasis,
   matched: MatchedCogsRow | null | undefined, revenue?: MatchedRevenueRow | null,
+  /** R-2625: the range runs past today — revenue above is earned up to today only. */
+  cap?: RevenueCap,
 ): PnLNumbers {
   if (basis !== "management") return assemblePnl(range, row, m);
   if (!matched) return { ...assemblePnl(range, row, m), basis: "gst", managementUnavailable: true };
   const cogsRow = withMatchedCogs(row, matched);
   if (!revenue) return { ...assemblePnl(range, cogsRow, m), basis: "management", managementRevenueUnavailable: true };
-  return { ...assemblePnl(range, withMatchedRevenue(cogsRow, revenue), m), basis: "management", revenueSpread: true };
+  const out: PnLNumbers = { ...assemblePnl(range, withMatchedRevenue(cogsRow, revenue), m), basis: "management", revenueSpread: true };
+  return cap ? { ...out, revenueEarnedTo: cap.earnedTo, revenueNotYetEarned: cap.notYetEarned } : out;
 }
 
-/** GST keeps the query key it always had (Balance Sheet / Trial Balance share that cache). */
-const basisKey = (basis: PnlBasis) => (basis === "gst" ? [] : [basis]);
+/** GST keeps the query key it always had (Balance Sheet / Trial Balance share that cache);
+    Management's earned revenue depends on the day (R-2625). */
+const basisKey = (basis: PnlBasis, today: string) => (basis === "gst" ? [] : [basis, today]);
 
 type OtherIncomeRpc = (
   fn: "report_pnl_other_income", args: { p_from: string; p_to: string },
@@ -186,9 +210,9 @@ async function revenueByProductRows(supabase: Client, range: Range): Promise<Rev
   return error || !Array.isArray(data) ? null : data;
 }
 
-export function usePnL(range: Range, enabled = true, basis: PnlBasis = "gst") {
+export function usePnL(range: Range, enabled = true, basis: PnlBasis = "gst", today: string = istToday()) {
   return useQuery({
-    queryKey: [...queryKeys.pnl(), range.from, range.to, ...basisKey(basis)],
+    queryKey: [...queryKeys.pnl(), range.from, range.to, ...basisKey(basis, today)],
     /* The comparison period is fetched only once the owner asks for it. A second full
        aggregation on every page load, for a number nobody is reading, is a cost with no
        reader. */
@@ -201,10 +225,10 @@ export function usePnL(range: Range, enabled = true, basis: PnlBasis = "gst") {
         revenueByProductRows(supabase, range),
         otherIncomeRows(supabase, range),   // R-2095
         matchedCogs(supabase, range, basis),   // R-2622
-        matchedRevenue(supabase, range, basis),   // R-2624
+        matchedRevenue(supabase, range, basis, today),   // R-2624, R-2625 (earned to today)
       ]);
       const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-      return onBasis(range, { ...row, revenue_by_product: byProduct, other_income: other }, masters(range), basis, matched, revenue);
+      return onBasis(range, { ...row, revenue_by_product: byProduct, other_income: other }, masters(range), basis, matched, revenue?.earned, revenue?.cap);
     },
   });
 }
@@ -217,21 +241,50 @@ export function usePnL(range: Range, enabled = true, basis: PnlBasis = "gst") {
  */
 export function usePnLMonths(fyStartYear: number, today: string, enabled = true, basis: PnlBasis = "gst") {
   return useQuery({
-    queryKey: [...queryKeys.pnl(), "months", fyStartYear, today.slice(0, 7), ...basisKey(basis)],
+    queryKey: [...queryKeys.pnl(), "months", fyStartYear, today.slice(0, 7), ...basisKey(basis, today)],
     enabled,
     queryFn: async (): Promise<Map<string, PnLNumbers>> => {
       const supabase = createClient();
       const months = fyMonthsSoFar(fyStartYear, today);
-      /* R-2624: on Management every month's spread revenue comes from ONE SQL call, not one per month. */
-      const span = months.length > 0 ? { from: monthRange(months[0].key).from, to: monthRange(months[months.length - 1].key).to } : null;
+      /* R-2624: on Management every month's spread revenue comes from ONE SQL call, not one per month.
+         R-2625: only the months already over; the current month is earned up to today (its own call). */
+      const over = months.filter((m) => monthRange(m.key).to <= today);
+      const span = over.length > 0 ? { from: monthRange(over[0].key).from, to: monthRange(over[over.length - 1].key).to } : null;
       const [masters, byMonth] = await Promise.all([
         fetchPnlMasters(supabase),
         basis === "management" && span ? fetchMatchedRevenueMonths(supabase, span) : Promise.resolve(undefined),
       ]);
       const revenueOf = (key: string): MatchedRevenueRow | null | undefined =>
-        byMonth === undefined ? undefined : byMonth === null ? null : (byMonth.get(key) ?? NO_MATCHED_REVENUE);
-      const rows = await Promise.all(months.map((m) => pnlFor(supabase, monthRange(m.key), masters, basis, revenueOf(m.key))));
+        byMonth === undefined || monthRange(key).to > today ? undefined : byMonth === null ? null : (byMonth.get(key) ?? NO_MATCHED_REVENUE);
+      const rows = await Promise.all(months.map((m) => pnlFor(supabase, monthRange(m.key), masters, basis, revenueOf(m.key), today)));
       return new Map(months.map((m, i) => [m.key, rows[i]]));
     },
   });
 }
+
+/**
+ * R-2625: "Advance billing" on the Balance Sheet (Management view) — revenue invoiced up to `asOf`
+ * that is not earned by then (prepaid yearly / multi-month terms; R-2624 spreads it over the months
+ * it pays for). Exactly: invoiced revenue to date (report_pnl: invoices − credit notes + debit
+ * notes, before GST) − Management revenue earned to date (report_pnl_revenue_matched, the same
+ * dates; the current month by days). Both from BOOKS_START_FALLBACK, so every invoice in the app
+ * counts. Null on a database without the revenue function. A negative figure = revenue earned
+ * but invoiced later (accrued). Read-only; the statutory Balance Sheet does not use it.
+ */
+export function useAdvanceBilling(asOf: string, enabled = true) {
+  return useQuery({
+    queryKey: [...queryKeys.pnl(), "advance-billing", asOf],
+    enabled,
+    queryFn: async (): Promise<AdvanceBilling | null> => {
+      const supabase = createClient();
+      const range = { from: BOOKS_START_FALLBACK, to: asOf };
+      const [rpc, earned] = await Promise.all([
+        supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
+        fetchMatchedRevenue(supabase, range),
+      ]);
+      const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
+      return earned === null ? null : advanceBillingOf(row, earned);
+    },
+  });
+}
+

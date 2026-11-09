@@ -24,11 +24,11 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { LoadError, LoadErrorBanner } from "@/components/shared/load-error";
 import { Term } from "@/components/shared/term";
 import { Button } from "@/components/ui/button";
-import { rupee } from "@/lib/utils";
+import { rupee, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { usePnL, usePnLMonths } from "@/lib/queries/pnl";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { defaultPnlBasis, revenueCountText, revenueHint, type PnlBasis } from "@/lib/accounting/pnl-basis";
+import { defaultPnlBasis, notYetEarnedNote, revenueCountText, revenueHint, type PnlBasis } from "@/lib/accounting/pnl-basis";
 import { BasisToggle } from "./basis-toggle";
 import { PnLDrilldownDialog } from "@/components/features/accounting/pnl-drilldown-dialog";
 import { lineTarget, licenceLineTarget, revenueLineTarget, type PnLDrillKind, type PnLDrillTarget } from "@/lib/accounting/pnl-drill";
@@ -206,6 +206,7 @@ export default function PnLPage() {
   const opexLines = data ? opexBreakdown(data, prev, { showAll: showAll.opex }) : null;
   const financeLines = data ? financeCostBreakdown(data, prev, { showAll: showAll.finance }) : null;
   const cmpOn = cmpRange !== null;
+  const notYetNote = data ? notYetEarnedNote(data, rupee, formatDate) : null;   // R-2625
   /** The compare cell for a statement line: undefined while the compare period loads. */
   const cmp = (now: number | null, was: (p: NonNullable<typeof prev>) => number | null, sense: Sense, neg = false): Cmp | undefined =>
     cmpOn ? { now, was: prev ? was(prev) : undefined, sense, neg } : undefined;
@@ -307,6 +308,10 @@ export default function PnLPage() {
           Revenue · cost of goods · expenses · net profit, before any chart. The page used
           to open on a "per ₹100" bar that refused to draw when the licence cost was
           missing, with the statement itself at the bottom. */}
+      {/* R-2625: Management counts revenue only up to today — say what the later days hold. */}
+      {!isLoading && notYetNote && (
+        <p role="status" data-testid="pnl-not-yet-earned" className="mb-3 text-xs text-ink-2">{notYetNote}</p>
+      )}
       {!isLoading && data && (
         <PnlHeadline
           model={data.model}
@@ -919,6 +924,7 @@ export default function PnLPage() {
         cogsEstimate={data?.model.estimateBasis ?? null}
         basis={shownBasis}
         revenueSpread={!!data?.revenueSpread}
+        earnedTo={data?.revenueEarnedTo}
       />
     </div>
   );

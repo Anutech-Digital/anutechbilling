@@ -98,6 +98,13 @@ export interface PnLNumbers {
    */
   revenueSpread?: boolean;
   managementRevenueUnavailable?: boolean;
+  /**
+   * R-2625: Management only, when the range runs past today — revenue is earned up to this day
+   * (today); `revenueNotYetEarned` = the spread revenue of the range's later days, already
+   * invoiced but not earned (Advance billing on the Balance Sheet). Not in any total.
+   */
+  revenueEarnedTo?: string;
+  revenueNotYetEarned?: number;
 }
 
 /** `report_pnl` ki ek row — migration 20260928110000 ka RETURNS TABLE, naam wahi. */
