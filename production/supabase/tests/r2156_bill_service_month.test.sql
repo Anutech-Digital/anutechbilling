@@ -27,7 +27,34 @@ begin
   if r.service_from <> '2026-07-01' or r.service_to <> '2026-09-30' then
     raise exception 'FAIL A3: "Jul-2026 .. Sep 2026" gave % .. %', r.service_from, r.service_to; end if;
   select * into r from public.vendor_bill_service_period('2026-10-07', 'COGS-Other', null, 'aug''2026 usage', null, null);
-  if r.service_from <> '2026-08-01' then raise exception 'FAIL A4: "aug''2026" gave %', r.service_from; end if;
+  if r.service_from <> '2026-08-01' or r.service_to <> '2026-08-31' or r.basis <> 'reference' then
+    raise exception 'FAIL A4: "aug''2026" gave % .. % (%)', r.service_from, r.service_to, r.basis; end if;
+  -- A range whose first month has no year takes the second's: "Jan-Mar 2026".
+  select * into r from public.vendor_bill_service_period('2026-04-02', 'COGS-Other', null, 'Q4 (Jan-Mar 2026)', null, null);
+  if r.service_from <> '2026-01-01' or r.service_to <> '2026-03-31' then
+    raise exception 'FAIL A5: "Jan-Mar 2026" gave % .. %', r.service_from, r.service_to; end if;
+  select * into r from public.vendor_bill_service_period('2027-03-02', 'COGS-Other', null, 'Dec-Feb 2027', null, null);
+  if r.service_from <> '2026-12-01' or r.service_to <> '2027-02-28' then
+    raise exception 'FAIL A5b: "Dec-Feb 2027" gave % .. %', r.service_from, r.service_to; end if;
+  -- Days written in: "Sep 1, 2026 - Sep 30, 2026" = September.
+  select * into r from public.vendor_bill_service_period('2026-10-03', 'COGS-Zoho', null, 'Billing period Sep 1, 2026 - Sep 30, 2026', null, null);
+  if r.service_from <> '2026-09-01' or r.service_to <> '2026-09-30' or r.basis <> 'reference' then
+    raise exception 'FAIL A6: "Sep 1, 2026 - Sep 30, 2026" gave % .. % (%)', r.service_from, r.service_to, r.basis; end if;
+  -- Anniversary to anniversary is ONE year (12 months), not 13.
+  select * into r from public.vendor_bill_service_period('2026-10-07', 'COGS-Zoho', null, 'Renewal 07 Oct 2026 to 06 Oct 2027', null, null);
+  if r.service_from <> '2026-10-01' or r.service_to <> '2027-09-30' then
+    raise exception 'FAIL A7: "07 Oct 2026 to 06 Oct 2027" gave % .. %', r.service_from, r.service_to; end if;
+  -- Two unrelated months: the FIRST one only (a payment date never stretches the period).
+  select * into r from public.vendor_bill_service_period('2026-10-07', 'COGS-Workspace', null, 'Google Portal Bill (Aug 2026), paid 5 Nov 2026', null, null);
+  if r.service_from <> '2026-08-01' or r.service_to <> '2026-08-31' then
+    raise exception 'FAIL A8: payment date stretched the period: % .. %', r.service_from, r.service_to; end if;
+  -- Two-digit years written onto the month.
+  select * into r from public.vendor_bill_service_period('2026-10-03', 'COGS-Other', 'Licences Sep-26', null, null, null);
+  if r.service_from <> '2026-09-01' or r.basis <> 'reference' then
+    raise exception 'FAIL A9: "Sep-26" gave % (%)', r.service_from, r.basis; end if;
+  select * into r from public.vendor_bill_service_period('2026-10-03', 'COGS-Other', null, 'Aug''26 usage', null, null);
+  if r.service_from <> '2026-08-01' or r.basis <> 'reference' then
+    raise exception 'FAIL A10: "Aug''26" gave % (%)', r.service_from, r.basis; end if;
 
   -- B: Google / Microsoft with no month text → the month before the bill.
   select * into r from public.vendor_bill_service_period('2026-10-07', 'COGS-Workspace', '5667984259', null, null, null);
@@ -89,24 +116,43 @@ insert into public.vendor_bills (id, tenant_id, vendor_name, bill_no, notes, bil
   -- Tenant B's Google bill for October: never in A's report.
   ('R2156-B',    'd2156000-0000-0000-0000-0000000000b1', 'Google', 'B-1', 'Oct 2026', '2026-11-05', 'COGS-Workspace', 777777, 0, 0, 0, 777777, 'unpaid', 'tax_invoice', null, null);
 
--- The service period must be both-or-neither, in order, at most 36 months.
+-- The service period must be both-or-neither, whole months, in order, at most 36 months — and
+-- it is THIS constraint that refuses (not some other check on vendor_bills).
 do $$
+declare c text;
 begin
   begin
     insert into public.vendor_bills (id, tenant_id, vendor_name, bill_date, category, subtotal, total, service_from)
     values ('R2156-BAD1', 'd2156000-0000-0000-0000-0000000000a1', 'X', '2026-10-01', 'COGS-Other', 1, 1, '2026-10-01');
     raise exception 'FAIL CK1: service_from without service_to was saved';
-  exception when check_violation then null; end;
+  exception when check_violation then
+    get stacked diagnostics c = constraint_name;
+    if c <> 'vendor_bills_service_period_check' then raise exception 'FAIL CK1b: refused by %', c; end if;
+  end;
   begin
     insert into public.vendor_bills (id, tenant_id, vendor_name, bill_date, category, subtotal, total, service_from, service_to)
     values ('R2156-BAD2', 'd2156000-0000-0000-0000-0000000000a1', 'X', '2026-10-01', 'COGS-Other', 1, 1, '2026-10-01', '2026-09-30');
     raise exception 'FAIL CK2: service_to before service_from was saved';
-  exception when check_violation then null; end;
+  exception when check_violation then
+    get stacked diagnostics c = constraint_name;
+    if c <> 'vendor_bills_service_period_check' then raise exception 'FAIL CK2b: refused by %', c; end if;
+  end;
   begin
     insert into public.vendor_bills (id, tenant_id, vendor_name, bill_date, category, subtotal, total, service_from, service_to)
-    values ('R2156-BAD3', 'd2156000-0000-0000-0000-0000000000a1', 'X', '2026-10-01', 'COGS-Other', 1, 1, '2026-10-01', '2029-10-01');
+    values ('R2156-BAD3', 'd2156000-0000-0000-0000-0000000000a1', 'X', '2026-10-01', 'COGS-Other', 1, 1, '2026-10-01', '2029-10-31');
     raise exception 'FAIL CK3: a 36-month+ service period was saved';
-  exception when check_violation then null; end;
+  exception when check_violation then
+    get stacked diagnostics c = constraint_name;
+    if c <> 'vendor_bills_service_period_check' then raise exception 'FAIL CK3b: refused by %', c; end if;
+  end;
+  begin
+    insert into public.vendor_bills (id, tenant_id, vendor_name, bill_date, category, subtotal, total, service_from, service_to)
+    values ('R2156-BAD4', 'd2156000-0000-0000-0000-0000000000a1', 'X', '2026-10-01', 'COGS-Other', 1, 1, '2026-10-31', '2026-11-30');
+    raise exception 'FAIL CK4: a period not starting on the 1st was saved';
+  exception when check_violation then
+    get stacked diagnostics c = constraint_name;
+    if c <> 'vendor_bills_service_period_check' then raise exception 'FAIL CK4b: refused by %', c; end if;
+  end;
 end $$;
 
 set local role authenticated;
