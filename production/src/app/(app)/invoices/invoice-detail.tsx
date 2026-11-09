@@ -313,7 +313,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   size="sm"
                   variant="primary"
                   icon="whatsapp"
-                  onClick={() => openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never))}
+                  onClick={() => openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never), customer?.country)}
                 >
                   WhatsApp
                 </Button>

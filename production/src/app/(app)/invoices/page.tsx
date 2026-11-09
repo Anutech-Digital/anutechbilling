@@ -64,7 +64,7 @@ import { issueEinvoiceNotice, irnAgeingInvoices, irnAgeingNotice, isB2B } from "
 import { invoiceIrnGstin } from "@/lib/invoices/invoice-buyer";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { useCustomers } from "@/lib/queries/customers";
-import { invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
+import { invoiceCustomerCountry, invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
@@ -820,7 +820,7 @@ function InvoicesPageInner() {
             const selectedInvoices = rows.filter((r) => selected.has(r.id));
             const first = selectedInvoices[0];
             if (!first) return;
-            if (!openInvoiceWhatsApp(first, invoiceCustomerPhone(first, customers), waSender, (h) => router.push(h as never))) return;
+            if (!openInvoiceWhatsApp(first, invoiceCustomerPhone(first, customers), waSender, (h) => router.push(h as never), invoiceCustomerCountry(first, customers))) return;
             /* ── THE BUTTON USED TO SAY "Bulk WhatsApp" AND SEND ONE ─────────
                It opened `selectedInvoices[0]` and nothing else, so selecting twelve invoices
                and clicking it messaged one customer while the label said it had done all
@@ -1293,7 +1293,7 @@ function InvoiceRow({
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="gap-2.5 py-2 cursor-pointer font-medium text-emerald"
-                    onClick={() => openInvoiceWhatsApp(inv, invoiceCustomerPhone(inv, customers), waSender, (h) => router.push(h as never))}
+                    onClick={() => openInvoiceWhatsApp(inv, invoiceCustomerPhone(inv, customers), waSender, (h) => router.push(h as never), invoiceCustomerCountry(inv, customers))}
                   >
                     <Icon name="whatsapp" size={15} /> Send / remind on WhatsApp
                   </DropdownMenuItem>

@@ -63,6 +63,7 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Icon } from "@/components/ui/icon";
 import { rupee, cn, cleanDisplayName, phoneSuffixOf } from "@/lib/utils";
+import { whatsAppLink } from "@/lib/phone";
 import { missingInvoiceState } from "@/lib/gst/gstin-state";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { contactSearchHidden } from "@/lib/contacts/search-columns";
@@ -964,13 +965,15 @@ export default function CustomersPage() {
                     <div className="flex items-center gap-2">
                       {c.contact_phone && (
                         <a
-                          href={`https://wa.me/${c.contact_phone.replace(/\D/g, "")}`}
+                          /* R-2641: lib/phone adds the customer's country code (a bare Indian
+                             number used to open wa.me/9876543210 — no code at all). */
+                          href={whatsAppLink(c.contact_phone, c.country) ?? "#"}
                           target="_blank"
                           rel="noreferrer"
                           /* R-1009: a masked phone (role without can_view_contact_details) is
                              fetched from the server (logged) before WhatsApp opens. */
                           onClick={(e) => followRevealed(e, c.contact_phone, { table: "customers", id: c.id, field: "contact_phone" }, "whatsapp",
-                            (real) => `https://wa.me/${real.replace(/\D/g, "")}`, true)}
+                            (real) => whatsAppLink(real, c.country), true)}
                           className="relative z-10 inline-flex items-center gap-1 text-2xs px-2 py-0.5 rounded bg-emerald-soft text-emerald font-medium hover:bg-emerald hover:text-white transition-colors"
                         >
                           <Icon name="message_square" size={12} /> WhatsApp

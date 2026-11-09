@@ -128,3 +128,18 @@ export function phoneE164ForCountry(phone: string | null | undefined, country?: 
   const d = phoneDigitsForCountry(phone, country);
   return d ? `+${d}` : "";
 }
+
+/**
+ * R-2641: the wa.me link for a phone, with the dialling code from `country` (same rule as
+ * `phoneDigitsForCountry`) and the message as `?text=`. Null when there is no usable number —
+ * the caller shows no link instead of a blind `wa.me/` that opens a contact picker.
+ */
+export function whatsAppLink(
+  phone: string | null | undefined,
+  country?: string | null,
+  text?: string | null,
+): string | null {
+  const d = phoneDigitsForCountry(phone, country);
+  if (!d) return null;
+  return `https://wa.me/${d}${text ? `?text=${encodeURIComponent(text)}` : ""}`;
+}

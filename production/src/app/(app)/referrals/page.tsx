@@ -18,6 +18,7 @@ import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { rupee, formatDate } from "@/lib/utils";
+import { whatsAppLink } from "@/lib/phone";
 import { useReferralPartners, useReferralLeadCounts } from "@/lib/queries/referral-partners";
 import { buildTrackingUrl } from "@/lib/marketing/tracking-link";
 import { toast } from "sonner";
@@ -244,8 +245,8 @@ function PartnerLink({ name, phone, code, counts }: {
   const origin = (process.env.NEXT_PUBLIC_APP_URL?.trim() || (typeof window !== "undefined" ? window.location.origin : "")).replace(/\/+$/, "");
   const url = origin ? buildTrackingUrl({ origin, path: "/enquiry", channel: "referral", medium: "partner", campaign: code }) : "";
   const msg = `Hello ${name.split(" ")[0]}, here is your referral link. Send it to anyone who needs business email / Google Workspace / Microsoft 365 or software — the enquiry will come in under your name: ${url}`;
-  const digits = (phone ?? "").replace(/\D/g, "");
-  const wa = digits ? `https://wa.me/${digits.length === 10 ? "91" + digits : digits}?text=${encodeURIComponent(msg)}` : null;
+  // R-2641: lib/phone adds the code (partners have no saved country → India, unless the number has a code).
+  const wa = whatsAppLink(phone, null, msg);
   return (
     <div className="mt-3 border-t border-hairline pt-2 space-y-1.5">
       <div className="flex items-center justify-between text-[12px]">
