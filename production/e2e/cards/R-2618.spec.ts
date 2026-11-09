@@ -121,9 +121,10 @@ test.describe("R-2618 — a linked Change plan quote is never sent or used as th
 
   test("Step 3: after Cancel quote, Generate makes a real renewal quote — not the plan-change amount", async () => {
     const c = container();
-    // Cancel quote (R-2519) stores 'rejected'; R-2605's trigger lets go of the link.
+    /* Cancel quote (R-2519) stores 'rejected'. R-2605's trigger lets go of the link; on a DB without
+       it (or a row cancelled before it) the link stays — R-2618's helper then lets go of the closed
+       quote itself. Either way Generate must make the real renewal quote. */
     psql(c, `update public.quotes set status = 'rejected' where id = '${PCQ}';`);
-    expect(link()).toBe("");
     const res = await page.request.post(`/api/subscriptions/${SUB}/generate-renewal-quote`, { data: {}, timeout: 60_000 });
     const body = (await res.json().catch(() => ({}))) as { error?: string; quoteId?: string; amount?: number };
     expect(body.error ?? "").not.toMatch(/Plan change quote/);
