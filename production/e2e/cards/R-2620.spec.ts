@@ -9,7 +9,8 @@
  * Data: planted by this spec on the LOCAL docker DB (the customer form cannot make such a customer any
  * more — R-2537 refuses Overseas with no country; the rows come from the Zoho import): customer
  * "SCN Overseas No Country" (Overseas, country empty, no state) with draft quote Q-SCN-OV-1. Fixed ids,
- * re-planted on each run and left for a person to look at (same as a scenario).
+ * re-planted on each run and left for a person to look at (same as a scenario). The line has a vendor cost:
+ * with none the margin is unknown and the approval lock (checked first) hides the country reason.
  */
 import { spawnSync } from "node:child_process";
 import { expect, test } from "@playwright/test";
@@ -32,9 +33,9 @@ select '${CUSTOMER_ID}', t.id, '${CUSTOMER}', null, null, '', 'overseas', 'busin
   from public.tenants t where t.email = '${E2E_TENANT_EMAIL}';
 insert into public.quotes (id, tenant_id, customer_id, customer_name, plan, seats, amount, subtotal, total_cost, tax_rate,
                            discount_pct, status, created_date, expires_date, billing_cycle, currency, line_items, notes)
-select '${QUOTE}', t.id, '${CUSTOMER_ID}', '${CUSTOMER}', 'SCN Export services', 1, 11800, 10000, 0, 18, 0, 'draft',
+select '${QUOTE}', t.id, '${CUSTOMER_ID}', '${CUSTOMER}', 'SCN Export services', 1, 11800, 10000, 6000, 18, 0, 'draft',
        current_date, current_date + 15, 'yearly', 'INR',
-       '[{"id": "line-1", "qty": 1, "cost": 0, "name": "SCN Export services", "rate": 10000, "one_time": true}]'::jsonb,
+       '[{"id": "line-1", "qty": 1, "cost": 6000, "name": "SCN Export services", "rate": 10000, "one_time": true}]'::jsonb,
        'R-2620 card test'
   from public.tenants t where t.email = '${E2E_TENANT_EMAIL}';
 commit;
@@ -62,6 +63,8 @@ test.describe("R-2620 — Overseas customer with no country is held, not taxed a
   test("Step 2: the place of supply never reads Intra-state / CGST for it", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await openAppPage(page, `/quotes/${QUOTE}`);
+    /* The place-of-supply line is printed in the quote Preview (QuotePreview placeOfSupply), not on the page itself. */
+    await page.locator("main").getByRole("button", { name: "Preview", exact: true }).first().click();
     await expect(page.getByText("GST head pending (customer is Overseas but has no country)").first()).toBeVisible({ timeout: 60_000 });
     await expect(page.getByText(/Intra-state \(CGST \+ SGST\)/)).toHaveCount(0);
   });
