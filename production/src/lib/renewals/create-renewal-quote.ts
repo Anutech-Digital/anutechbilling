@@ -392,7 +392,7 @@ export async function createOrGetRenewalQuote(
       return {
         held:    "plan_change_pending",
         quoteId: got.id as string,
-        message: `Plan change quote ${got.id} was linked to this subscription while the renewal quote was being made, so no renewal quote was made. Retried next run.`,
+        message: `Plan change quote ${got.id} is closed but still linked to this subscription, so no renewal quote was made this time. Retried next run (it is unlinked then if nothing was paid on it).`,
       };
     }
     kind = quoteDocumentKind(got as never);

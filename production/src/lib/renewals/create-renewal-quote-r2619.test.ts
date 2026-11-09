@@ -109,6 +109,17 @@ describe("R-2619 (1): a closed plan-change quote with a RECEIVED payments row is
     expect(writes[0].filters).toEqual(expect.arrayContaining([["renewal_quote_id", "Q-LINKED"]]));
   });
 
+  it("1b. payment_status partial / received / invoiced, or an invoice_id → held at once (no payments read needed), never unlinked", async () => {
+    for (const over of [{ payment_status: "partial" }, { payment_status: "received" }, { payment_status: "invoiced" }, { invoice_id: "INV-9" }]) {
+      const { db, rpc, writes, reads } = fakeDb({ linked: planChangeQuote({ status: "rejected", ...over }), payments: [] });
+      const r = await createOrGetRenewalQuote(input(db));
+      expect(r).toMatchObject({ held: "plan_change_pending", quoteId: "Q-LINKED" });
+      expect(rpc).not.toHaveBeenCalled();
+      expect(writes).toHaveLength(0);
+      expect(reads.some((x) => x.table === "payments")).toBe(false);
+    }
+  });
+
   it("3. the payments read fails → held with the reason, nothing unlinked, no RPC (never let go on an unknown)", async () => {
     const { db, rpc, writes } = fakeDb({ linked: closed, payments: { error: "timeout" } });
     const r = await createOrGetRenewalQuote(input(db));
@@ -135,7 +146,7 @@ describe("R-2619 (2): the RPC's created:false answer is re-checked — a plan-ch
     const { db, writes } = fakeDb({ made: { quote_id: "Q-PC", created: false, amount: 5900, subtotal: 5000, discount_pct: 0, tax_rate: 18, line_items: pc.line_items }, reread: pc });
     const r = await createOrGetRenewalQuote(input(db, noLink));
     expect(r).toMatchObject({ held: "plan_change_pending", quoteId: "Q-PC" });
-    expect(isRenewalQuoteHold(r) && r.message).toMatch(/retried next run/i);
+    expect(isRenewalQuoteHold(r) && r.message).toMatch(/closed but still linked.*Retried next run/);
     expect(writes).toHaveLength(0);
   });
 
