@@ -1,7 +1,7 @@
 /**
  * R-2621 (G-FY2526 D2 + D7) — GST returns filed up to: the last month whose GST returns the company has
  * filed (Excel: September 2026). One per company, set by the OWNER on Accounting → Overview, next to
- * Books start. The database decides through set_gst_filed_through() (migration 20261109052458): owner
+ * Books start. The database decides through set_gst_filed_through() (migration 20261109071722): owner
  * only, never a month that has not ended, stored as the month's last day, one activity-log row per
  * change. Reconcile from Zoho reads it (with the books lock and GSTR-1 marked filed — gst_month_filed):
  * a bank line of a filed month never becomes a new sale. Anyone else sees it.

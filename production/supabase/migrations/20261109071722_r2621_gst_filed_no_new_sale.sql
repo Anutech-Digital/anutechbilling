@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenants' and column_name = 'gst_filed_through') and to_regprocedure('public.gst_filed_days(uuid,date[])') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.gst_filed_why(uuid,date)') and prosrc like '%R-2621%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.set_gst_filed_through(date)') and prosrc like '%R-2621%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_new_sale_quote(uuid,uuid,jsonb,text)') and prosrc like '%R-2621%') and exists(select 1 from pg_trigger where tgname = 'r2621_gst_filed_through_guard' and tgrelid = to_regclass('public.tenants'))
 -- deploy-key: r2621gstfilednonewsale
--- 20261109052458_r2621_gst_filed_no_new_sale.sql
+-- 20261109071722_r2621_gst_filed_no_new_sale.sql
 --
 -- R-2621 (9 Nov 2026, p0 money, G-FY2526 D2 + D7): Reconcile from Zoho was about to book ~69 brand-new
 -- 18% GST sales on bank lines of months whose GST returns are already filed (FY 2025-26, and Apr-Sep 2026

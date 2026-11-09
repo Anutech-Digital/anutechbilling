@@ -9,7 +9,7 @@
  *   (b) gstFiledProblem — the bank line's day, or its Zoho invoice's day, is GST-filed (SQL gst_month_filed:
  *       "GST returns filed up to", books lock, GSTR-1 marked filed): no new sale — import Zoho's invoice first.
  *
- * The server refuses the same new sale (bank_credit_new_sale_quote, migration 20261109052458).
+ * The server refuses the same new sale (bank_credit_new_sale_quote, migration 20261109071722).
  */
 import { formatDate, rupee } from "@/lib/utils";
 import type { ZohoMatchInvoice, ZohoPaymentMatch } from "./payment-match";

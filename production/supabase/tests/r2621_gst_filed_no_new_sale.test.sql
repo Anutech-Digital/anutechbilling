@@ -1,5 +1,5 @@
 -- R-2621 (9 Nov 2026, p0 money): no NEW sale from a bank line of a GST-filed month. Migration
--- 20261109052458_r2621_gst_filed_no_new_sale. Self-asserting, ONE transaction, rolled back.
+-- 20261109071722_r2621_gst_filed_no_new_sale. Self-asserting, ONE transaction, rolled back.
 -- RED without the migration (set_gst_filed_through does not exist; A's new sale is booked).
 --
 --   A. GST filed up to Sep 2026 (owner, stored 30 Sep) → a bank line of 8 Apr 2026: reconcile_bank_credit_new_sale
