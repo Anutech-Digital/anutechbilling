@@ -254,12 +254,22 @@ function zeroRatedLine(quote: QuoteToInvoice): Consequence {
   const what = exportSale
     ? `an export invoice to ${who} (${country})`
     : `a zero-rated SEZ invoice (without payment of tax) to ${who}`;
-  /* generate_invoice takes the rate from the quote: a quote that still charges GST is invoiced with it. */
+  /* R-2636: generate_invoice REFUSES an export whose quote charges GST (never CGST+SGST, never
+     re-priced) — so the warning says "nothing can be issued" and ConfirmIssueDialog holds Issue. */
+  if (exportSale && quote.taxAmount != null && quote.taxAmount > 0) {
+    return {
+      tone: "warning",
+      text: `This is ${what}, but the quote charges ${rupee(quote.taxAmount)} GST — not 0% under your LUT — so nothing can be issued: ` +
+        `an export invoice is never CGST+SGST, and the amount the customer agreed to is not changed. ` +
+        `Make a new quote for this customer at 0% GST (its country sets 0%) and issue that one instead.`,
+    };
+  }
+  /* SEZ without payment: a quote that still charges GST is invoiced with it (IGST — SEZ is always inter-state). */
   if (quote.taxAmount != null && quote.taxAmount > 0) {
     return {
       tone: "warning",
       text: `This is ${what}, but the quote charges ${rupee(quote.taxAmount)} GST, so the invoice will too — not 0% under your LUT. ` +
-        `To bill it at 0%, make a new quote for this customer (${exportSale ? "its country" : "its SEZ without payment treatment"} sets 0%) and issue that one instead.`,
+        `To bill it at 0%, make a new quote for this customer (its SEZ without payment treatment sets 0%) and issue that one instead.`,
     };
   }
   const date = quote.invoiceDate ?? null;
