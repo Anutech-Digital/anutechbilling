@@ -3,7 +3,7 @@
 -- WHY: an empty country reads as India everywhere (money-rules G5), so a customer whose GST treatment is
 -- 'overseas' but whose country is empty (or India) was taxed as an Indian sale on a NEW quote / invoice —
 -- 18% on what may be a 0% export under the LUT. Such rows came over from the Zoho import (staging Excel,
--- 6 Nov). R-2620 (migration 20261109050500) now refuses a sent quote / new invoice for them; this report
+-- 6 Nov). R-2620 (migration 20261109063436) now refuses a sent quote / new invoice for them; this report
 -- lists the customers to fix and what was already issued to them. Repairing a row (setting the real
 -- country, e.g. from the Zoho billing address) is Pardeep's decision — a data repair, never automatic.
 --

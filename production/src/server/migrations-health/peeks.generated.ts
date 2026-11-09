@@ -459,4 +459,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2545correctdetailsonesave", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_details(uuid,text,text,text,date,date,date,integer,integer,text,integer,integer,integer,public.billing_cycle,date)') and prosrc like '%R-2545%')" },
   { key: "r2617planchangevsseatcut", peek: "exists(select 1 from pg_trigger where tgname = 'subscriptions_r2617_plan_change_vs_seat_cut')" },
   { key: "r2156billservicemonth", peek: "to_regprocedure('public.report_pnl_cogs_matched(date,date)') is not null" },
+  { key: "r2620overseasneedscountry", peek: "to_regprocedure('public.overseas_country_missing(text,text)') is not null and exists (select 1 from pg_trigger where tgname = 'trg_invoices_zz_a_overseas_country' and tgrelid = to_regclass('public.invoices')) and exists (select 1 from pg_trigger where tgname = 'trg_quotes_overseas_country' and tgrelid = to_regclass('public.quotes'))" },
 ];

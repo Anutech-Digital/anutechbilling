@@ -1,6 +1,6 @@
 -- R-2620 (9 Nov 2026): a customer marked Overseas with no country (or country India) is read as India
 -- (G5), so a NEW quote / invoice to it was taxed as a domestic sale silently. Now refused with the reason.
--- Migration 20261109050500_r2620_overseas_needs_country. Self-asserting, ONE transaction, rolled back.
+-- Migration 20261109063436_r2620_overseas_needs_country. Self-asserting, ONE transaction, rolled back.
 -- Local/test DB only. Red without the migration (B, C, E, F issue / send with no refusal).
 --
 --   A. Draft quote for the Overseas + no-country customer → allowed (a draft may wait).

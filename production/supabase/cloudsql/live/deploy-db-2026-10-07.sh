@@ -487,6 +487,7 @@ MIGS=(
   "r2545correctdetailsonesave|20261109034726_r2545_correct_details_one_save.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_details(uuid,text,text,text,date,date,date,integer,integer,text,integer,integer,integer,public.billing_cycle,date)') and prosrc like '%R-2545%')"
   "r2617planchangevsseatcut|20261109052326_r2617_plan_change_vs_seat_cut.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'subscriptions_r2617_plan_change_vs_seat_cut')"
   "r2156billservicemonth|20261109053500_r2156_bill_service_month.sql|resellersos_migration|to_regprocedure('public.report_pnl_cogs_matched(date,date)') is not null"
+  "r2620overseasneedscountry|20261109063436_r2620_overseas_needs_country.sql|resellersos_migration|to_regprocedure('public.overseas_country_missing(text,text)') is not null and exists (select 1 from pg_trigger where tgname = 'trg_invoices_zz_a_overseas_country' and tgrelid = to_regclass('public.invoices')) and exists (select 1 from pg_trigger where tgname = 'trg_quotes_overseas_country' and tgrelid = to_regclass('public.quotes'))"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER

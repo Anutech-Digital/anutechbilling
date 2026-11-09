@@ -108,7 +108,7 @@ export function isZeroRatedSupply(a: {
  * R-2620 — a customer marked Overseas whose country is empty (or India). Empty = India (G5), so the
  * app cannot tell an export (0% under the LUT) from an Indian sale: a quote that goes out and a new
  * invoice are refused until the country is picked. SQL twin: public.overseas_country_missing
- * (migration 20261109050500_r2620_overseas_needs_country).
+ * (migration 20261109063436_r2620_overseas_needs_country).
  *
  * @example overseasCountryMissing({ treatment: "overseas", country: "" })    // true
  * @example overseasCountryMissing({ treatment: "overseas", country: "UAE" }) // false
