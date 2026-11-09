@@ -28,13 +28,14 @@ import { readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
+import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
 
 const SRC = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 
 function tsxFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
-    if (entry.isDirectory()) tsxFiles(full, out);
+    if (entry.isDirectory()) { if (!isPrismaGenerated(full)) tsxFiles(full, out); } // R-2630: skip Prisma's 36 MB generated client (R-2564)
     /* .ts too since S35: the lead drawer's "View invoice" label now lives in
        lib/leads/next-action.ts, a pure module, and a .tsx-only scan would stop seeing it. */
     else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(full);
