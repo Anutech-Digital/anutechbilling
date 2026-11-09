@@ -76,7 +76,9 @@ test.describe("R-2626 — Change plan vs a later part already billed at the old 
     const page = await pageAs(browser, baseURL, "owner");
     const dlg = await changePlan(page);
     const alert = dlg.getByRole("alert");
-    await expect(alert).toContainText(/Month 4 \(.+ – .+\) already has proforma PI-CT2626-4 at the current plan's rate\./, { timeout: 60_000 });
+    /* The first preview (default plan) answers "costs less …" at once; the Business Standard preview can take
+       over a minute on a cold `next dev` right after localhost:update — wait for the real refusal (9 Nov run). */
+    await expect(alert).toContainText(/Month 4 \(.+ – .+\) already has proforma PI-CT2626-4 at the current plan's rate\./, { timeout: 150_000 });
     await expect(alert).toContainText("Cancel that proforma first (open it → Cancel proforma), then change the plan");
     await expect(dlg.getByRole("button", { name: "Create plan change quote" })).toHaveCount(0);
     await page.context().close();
@@ -97,7 +99,7 @@ test.describe("R-2626 — Change plan vs a later part already billed at the old 
 
     const again = await pageAs(browser, baseURL, "owner");
     const dlg = await changePlan(again);
-    await expect(dlg.getByTestId("change-plan-calc")).toBeVisible({ timeout: 60_000 });
+    await expect(dlg.getByTestId("change-plan-calc")).toBeVisible({ timeout: 150_000 });
     await expect(dlg.getByRole("button", { name: "Create plan change quote" })).toBeVisible();
     await again.context().close();
   });
