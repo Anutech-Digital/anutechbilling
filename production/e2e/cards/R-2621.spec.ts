@@ -107,7 +107,10 @@ test.describe("R-2621 — no new GST sale in a filed month; the imported Zoho in
       await openAppPage(page, "/accounting");
       const card = page.getByTestId("gst-filed-through-card");
       await expect(card).toBeVisible({ timeout: 60_000 });
+      /* The stored month loads first — typing before it lands is overwritten by it (9 Nov re-run). */
+      await expect(page.getByTestId("gst-filed-through-text")).toContainText("Not set", { timeout: 60_000 });
       await card.getByLabel("GST returns filed up to (month)").fill("2026-09");
+      await expect(card.getByRole("button", { name: "Save" })).toBeEnabled({ timeout: 30_000 });
       await card.getByRole("button", { name: "Save" }).click();
       await page.getByRole("button", { name: "Save" }).last().click(); // the confirm dialog
       await expect(page.getByTestId("gst-filed-through-text")).toContainText("GST returns are filed up to September 2026", { timeout: 60_000 });
@@ -137,6 +140,11 @@ test.describe("R-2621 — no new GST sale in a filed month; the imported Zoho in
       await page.getByRole("button", { name: "Record ₹11,800 on ZB-SCN-GF-1 & reconcile" }).click();
       await expect(dlg.getByRole("region", { name: "Done — this bank line is reconciled" })).toBeVisible({ timeout: 240_000 });
       const c = container();
+      /* What the line was matched to + the receipts on the invoice — named in the failure if not paid. */
+      const state = () => psql(c, `select coalesce(t.matched_to_type, '-') || ':' || coalesce(t.matched_to_id, '-') || ' | inv ' || i.status || ' paid ' || i.paid_amount
+          || ' | receipts ' || (select count(*) from public.payments p where p.invoice_id = i.id and p.status = 'received')
+        from public.bank_transactions t, public.invoices i where t.id = '${TXN.paysZoho}' and i.id = 'ZB-SCN-GF-1';`)[0] ?? "";
+      await expect.poll(state, { timeout: 15_000, message: "the line pays ZB-SCN-GF-1 (receipt on it, invoice paid)" }).toMatch(/^payment:.* \| inv paid paid 11800 \| receipts 1$/);
       expect(psql(c, "select status::text || '|' || taxable_value from public.invoices where id = 'ZB-SCN-GF-1';")[0]).toBe("paid|10000");
       expect(psql(c, `select count(*) from public.invoices i join public.customers cu on cu.id = i.customer_id where cu.name = '${NAME}';`)[0]).toBe("1");
     } finally {
