@@ -41,21 +41,39 @@ const DIAL: Record<string, string> = {
   VI: "1", WF: "681", EH: "212", YE: "967", ZM: "260", ZW: "263",
 };
 
+/** Every ISO code of the country list has a dialling code (test: phone.test.ts). */
+export const DIAL_CODES: Readonly<Record<string, string>> = DIAL;
+
 /**
  * Countries whose national number has one fixed length — a number of exactly that length is
  * national even when it happens to start with the code (an Indian mobile "91234 56789").
  */
 const NATIONAL_LENGTH: Record<string, number> = { "91": 10, "1": 10 };
 
+/**
+ * Longest national number (without trunk 0) per code, where it is not 10. A number saved
+ * without "+" is read as already carrying the code only when it is LONGER than this —
+ * an Italian "393 123 4567" (10) is national, "39 393 123 4567" (12) has the code.
+ */
+const NATIONAL_MAX: Record<string, number> = {
+  "55": 11, "86": 11, "62": 12, "49": 11, "39": 11, "43": 13, "7": 10, "44": 10,
+  "61": 9, "971": 9, "65": 8, "372": 8, "852": 8, "974": 8, "973": 8, "968": 8, "965": 8,
+};
+const DEFAULT_NATIONAL_MAX = 10;
+
 /** Fewest digits a full international number has (code + subscriber). */
 const MIN_INTERNATIONAL = 8;
 
+/** India: the code used when the country is empty — or not one we can read (old behaviour). */
+const INDIA = "91";
+
 /**
  * The dialling code for a customer's country: India / empty → "91"; a known country → its
- * code ("United States" / "USA" / "US" → "1"); unknown text → null (never guessed).
+ * code ("United States" / "USA" / "US" → "1"); text that is not a country we know
+ * ("Inida", "Delhi") → null, and `phoneDigitsForCountry` then keeps the old India rule.
  */
 export function dialCodeForCountry(country: string | null | undefined): string | null {
-  if (!normalizeCountry(country)) return "91";
+  if (!normalizeCountry(country)) return INDIA;
   const iso = countryIsoCode(country);
   return iso ? DIAL[iso] ?? null : null;
 }
@@ -80,24 +98,28 @@ export function phoneDigitsForCountry(
     return d.length >= MIN_INTERNATIONAL ? d : null;
   }
 
-  const code = dialCodeForCountry(country);
-  // Unknown country: no code invented; the digits as saved (old rule: at least 10).
-  if (code === null) return d.length >= 10 ? d : null;
+  // A country text we cannot read ("Inida") keeps the old rule: India.
+  const code = dialCodeForCountry(country) ?? INDIA;
 
-  // Already starts with the country's code ("447911123456", "919876543210")?
+  // Already starts with the country's code ("447911123456", "919876543210")? Only when it is
+  // longer than any national number of that country.
   const nationalLen = NATIONAL_LENGTH[code];
   const hasCode = d.startsWith(code)
     && d.length - code.length >= 7
-    && (nationalLen === undefined ? d.length >= MIN_INTERNATIONAL + 2 : d.length === code.length + nationalLen);
+    && (nationalLen !== undefined
+      ? d.length === code.length + nationalLen
+      : d.length > (NATIONAL_MAX[code] ?? DEFAULT_NATIONAL_MAX));
   if (hasCode) return d;
 
-  // National number: drop the trunk 0 ("07911…", "050…", "098765…"), then add the code.
+  // National number: drop the trunk prefix ("07911…", "050…", "098765…"; Russia /
+  // Kazakhstan write "8 916 …"), then add the code.
   d = d.replace(/^0+/, "");
-  if (nationalLen !== undefined ? d.length !== nationalLen : d.length < 6) {
-    // India / NANP numbers have one length; anything else is not a number we can dial.
-    if (nationalLen !== undefined && d.length > nationalLen) return d; // e.g. a longer number saved without "+"
-    return null;
+  if (code === "7" && d.length === 11 && d.startsWith("8")) d = d.slice(1);
+  if (nationalLen !== undefined && d.length !== nationalLen) {
+    // India / NANP numbers have one length: longer = saved with some other code; shorter = not a number.
+    return d.length > nationalLen ? d : null;
   }
+  if (d.length < 6) return null;
   return code + d;
 }
 

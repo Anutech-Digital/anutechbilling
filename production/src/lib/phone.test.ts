@@ -3,7 +3,8 @@
  * an overseas customer, and never a second code on a number that already has one.
  */
 import { describe, it, expect } from "vitest";
-import { dialCodeForCountry, phoneDigitsForCountry, phoneE164ForCountry } from "./phone";
+import { DIAL_CODES, dialCodeForCountry, phoneDigitsForCountry, phoneE164ForCountry } from "./phone";
+import { COUNTRIES, countryIsoCode } from "./gst/countries";
 import { toWhatsAppDigits } from "./utils";
 import { formatWhatsAppPhone, invoiceWhatsAppTarget } from "./whatsapp";
 
@@ -27,8 +28,12 @@ describe("dialCodeForCountry", () => {
     expect(dialCodeForCountry("Singapore")).toBe("65");
     expect(dialCodeForCountry("Australia")).toBe("61");
   });
-  it("unknown text → null (never guessed as India)", () => {
+  it("unknown text → null", () => {
     expect(dialCodeForCountry("Atlantis")).toBeNull();
+  });
+  it("every country in the picker has a dialling code (the two lists cannot drift)", () => {
+    const missing = COUNTRIES.filter((c) => { const iso = countryIsoCode(c); return !iso || !DIAL_CODES[iso]; });
+    expect(missing).toEqual([]);
   });
 });
 
@@ -67,8 +72,21 @@ describe("phoneDigitsForCountry (card doneWhen)", () => {
     expect(phoneDigitsForCountry("9123 4567", "Singapore")).toBe("6591234567");
     expect(phoneDigitsForCountry("6591234567", "Singapore")).toBe("6591234567");
   });
-  it("unknown country → the digits as typed, no code invented", () => {
-    expect(phoneDigitsForCountry("5551234567", "Atlantis")).toBe("5551234567");
+  it("country text we cannot read keeps the old India rule (no regression for messy imports)", () => {
+    expect(phoneDigitsForCountry("9876543210", "Inida")).toBe("919876543210");
+    expect(phoneDigitsForCountry("09876543210", "Delhi")).toBe("919876543210");
+  });
+  it("a national number that happens to start with the code digits still gets the code", () => {
+    expect(phoneDigitsForCountry("3931234567", "Italy")).toBe("393931234567");
+    expect(phoneDigitsForCountry("393931234567", "Italy")).toBe("393931234567");
+    expect(phoneDigitsForCountry("55991234567", "Brazil")).toBe("5555991234567");
+    expect(phoneDigitsForCountry("5511991234567", "Brazil")).toBe("5511991234567");
+    expect(phoneDigitsForCountry("7011234567", "Kazakhstan")).toBe("77011234567");
+  });
+  it("Russia / Kazakhstan trunk 8 is dropped", () => {
+    expect(phoneDigitsForCountry("8 916 123 4567", "Russia")).toBe("79161234567");
+    expect(phoneDigitsForCountry("8 701 123 4567", "Kazakhstan")).toBe("77011234567");
+    expect(phoneDigitsForCountry("79161234567", "Russia")).toBe("79161234567");
   });
   it("nothing usable → null", () => {
     expect(phoneDigitsForCountry("", "India")).toBeNull();
