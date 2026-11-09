@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 // @ts-expect-error — plain .mjs ops script, no types
-import { PUSH_GUARD_SUITES, CI_ONLY_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites, slowestSuites } from "../scripts/ops/push-guard-suites.mjs";
+import { PUSH_GUARD_SUITES, CI_ONLY_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, PUSH_GUARD_TEST_TIMEOUT_MS, failedSuites, slowestSuites } from "../scripts/ops/push-guard-suites.mjs";
 
 // R-385 (7 Oct 2026): `worker-lock.mjs push` runs these repo-scan / ratchet suites after the
 // rebase, because twice today a worker's push broke a scan test outside its own area.
@@ -116,6 +116,16 @@ describe("push guard suites (R-385)", () => {
     const fn = src.slice(src.indexOf("export function runGuardSuites"), src.indexOf("async function pushWithTurn"));
     expect(fn).toContain("slowestSuites(json, root, 5)");
     expect(fn).toMatch(/if \(ms > PUSH_GUARD_BUDGET_MS\) \{[\s\S]*sabse dheemi/);
+  });
+
+  it("R-2630: the push's guard run gives each test 30 s, so laptop load does not turn a green scan red", () => {
+    expect(PUSH_GUARD_TEST_TIMEOUT_MS).toBe(30_000);
+    const src = fs.readFileSync(path.join(root, "scripts/ops/worker-lock.mjs"), "utf8");
+    const fn = src.slice(src.indexOf("export function runGuardSuites"), src.indexOf("async function pushWithTurn"));
+    expect(fn).toContain("`--testTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`");
+    expect(fn).toContain("`--hookTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`");
+    // CI's own run keeps vitest's default: the timeout is a push flag, not in vitest.config
+    expect(fs.readFileSync(path.join(root, "vitest.config.ts"), "utf8")).not.toMatch(/testTimeout/);
   });
 
   it("R-1817: the Gemini scans run on push, the slow retry-timer suite does not", () => {

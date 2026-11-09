@@ -58,7 +58,7 @@ import path from "node:path";
 import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL_STEP } from "./worker-tsc-cache.mjs";
 import { execSync, execFileSync, spawnSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites, slowestSuites } from "./push-guard-suites.mjs";
+import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, PUSH_GUARD_TEST_TIMEOUT_MS, failedSuites, slowestSuites } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderGate } from "./worker-lock-guards.mjs";
 import { runRelatedSql } from "./worker-lock-sql.mjs";
 import { maskOwnMigrations, autoRenameLateMigrations, realAutoRenameDeps, checkMigrationClash } from "./worker-lock-migts.mjs";
@@ -436,7 +436,8 @@ export function runGuardSuites(card) {
     const t0 = Date.now();
     let crashed = null;
     try {
-      execFileSync(process.execPath, [path.join(root, "node_modules", "vitest", "vitest.mjs"), "run", "--reporter=json", `--outputFile=${out}`, ...files],
+      execFileSync(process.execPath, [path.join(root, "node_modules", "vitest", "vitest.mjs"), "run", "--reporter=json", `--outputFile=${out}`,
+        `--testTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`, `--hookTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`, ...files], // R-2630: laptop load is not a red guard
         { cwd: root, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
     } catch (e) { crashed = String(e.stderr ?? e.message ?? "").slice(-1500); }
     const ms = Date.now() - t0;
@@ -447,7 +448,7 @@ export function runGuardSuites(card) {
     console.log(`${failed.length ? "✗" : "✓"} guard tests: ${files.length} files, ${(ms / 1000).toFixed(0)} s`);
     if (ms > PUSH_GUARD_BUDGET_MS) { // R-2443: also name the slowest files, so the next trim is measured
       console.log(`(guard tests ${Math.round(ms / 1000)} s le gaye — ${PUSH_GUARD_BUDGET_MS / 1000} s se zyada; manager ko batao, list chhoti karni hai)`);
-      if (slow.length) console.log(`  sabse dheemi (test time; fork/imports alag): ${slow.map((s) => `${s.file} ${(s.ms / 1000).toFixed(1)} s`).join(", ")}`);
+      if (slow.length) console.log(`  sabse dheemi (test time; fork/imports alag — laptop bhara ho to har file 3-8x dheemi, R-2630): ${slow.map((s) => `${s.file} ${(s.ms / 1000).toFixed(1)} s`).join(", ")}`);
     }
     const lv = lintRatchetVerdict(await lint);
     console.log(lv.message);
