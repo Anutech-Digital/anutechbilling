@@ -6,10 +6,18 @@ import { describe, it, expect, afterEach, vi, beforeEach } from "vitest";
 import { render, cleanup, fireEvent, screen } from "@testing-library/react";
 import { EditSubscriptionDialog } from "./edit-subscription-dialog";
 import type { Subscription } from "@/lib/supabase/database.types";
+import type { CorrectSubscriptionDetailsInput } from "@/lib/queries/subscriptions";
 
 const commit = vi.fn();
 const correct = vi.fn();
 const update = vi.fn();
+/* R-2545: the dialog now sends ONE request (useCorrectSubscriptionDetails, one transaction). Split it
+   back into its parts here so the checks below read as before — each part is what its SQL step gets. */
+const details = vi.fn(async (a: CorrectSubscriptionDetailsInput) => {
+  if (a.plan) await correct({ id: a.id, ...a.plan, reason: a.reason });
+  if (a.commitment) await commit({ id: a.id, ...a.commitment, reason: a.reason });
+  await update({ id: a.id, patch: a.patch });
+});
 let role = "owner";
 
 vi.mock("@/lib/queries/subscriptions", () => ({
@@ -17,6 +25,7 @@ vi.mock("@/lib/queries/subscriptions", () => ({
   useCorrectSubscriptionTerms: () => ({ mutateAsync: correct, isPending: false }),
   useCorrectSubscriptionData: () => ({ mutateAsync: vi.fn(), isPending: false }),  // R-2228
   useCorrectSubscriptionCommitment: () => ({ mutateAsync: commit, isPending: false }),
+  useCorrectSubscriptionDetails: () => ({ mutateAsync: details, isPending: false }),  // R-2545
   useScheduleInvoices: () => ({ data: undefined }),
 }));
 vi.mock("@/lib/queries/items", () => ({

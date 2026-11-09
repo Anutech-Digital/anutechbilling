@@ -21,6 +21,7 @@ vi.mock("@/lib/queries/subscriptions", () => ({
   useCorrectSubscriptionTerms: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCorrectSubscriptionData: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useCorrectSubscriptionCommitment: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useCorrectSubscriptionDetails: () => ({ mutateAsync: vi.fn(), isPending: false }),  // R-2545: the one save
   useScheduleInvoices: () => ({ data: { sale: null, instalments: [], renewals: [], addSeats: [] } }),
 }));
 vi.mock("@/lib/queries/items", () => ({ useItems: () => ({ data: [] }) }));
