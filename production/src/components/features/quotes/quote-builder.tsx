@@ -90,6 +90,7 @@ import { BILLING_CURRENCIES, isForeignCurrency, formatForeign } from "@/lib/curr
 import { fxStampFromQuote, manualFxStamp, type FxStamp } from "@/lib/fx/rate-source";
 import { addOrMergeLine } from "@/lib/quotes/line-items";
 import { lineFromCatalog, catalogYearlyPrice, catalogLineListRate } from "@/lib/quotes/catalog-line";
+import { usdCommitmentReprice } from "@/lib/quotes/usd-commitment";
 import { foreignQuoteFigures, foreignUnit, inrRateFromForeign, linesInrSubtotal } from "@/lib/quotes/foreign-totals";
 import { billingUnitOf, lineRateSuffix, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/lib/quotes/quote-assist";
@@ -1309,27 +1310,22 @@ function QuoteBuilderBody() {
               };
             }
           }
-          /* R-2638: a quote that bills on the item's USD price (International basis) keeps that
-             price for the new commitment. The ₹ tier below put the ₹ catalogue on a USD line
-             (rate AND list), so typing the USD price back read as a 65% "discount" and asked the
-             owner to approve it. Same pricing as adding the item (catalogLineListRate). */
-          const usdTier = item && !l.bulk ? usdFor(item) : null;
-          if (item && usdTier && unitYearMultiplier(billingUnitOf(item)) === 12) {
-            const p = catalogLineListRate(item, commitment, usdTier);
-            if (p.rate > 0) {
-              return {
-                ...l, commitment, rate: p.rate, list_rate: p.rate,
-                cost: costTypedRef.current.has(l.id) || p.cost <= 0 ? l.cost : p.cost,
-              };
-            }
+          /* R-2638: a line on the item's USD price list keeps it for the new commitment (discount
+             ratio kept). The ₹ tier below put the ₹ catalogue on a USD line (rate AND list), so
+             typing the USD price back read as a 65% "discount" and asked the owner to approve it.
+             A typed USD price (R-2178) never takes the ₹ tier either — it is unit-converted below. */
+          if (item && !typedPriceRef.current.has(l.id) && unitYearMultiplier(billingUnitOf(item)) === 12) {
+            const onUsd = usdCommitmentReprice({ line: l, item, commitment, usd: usdFor(item), costTyped: costTypedRef.current.has(l.id) });
+            if (onUsd) return onUsd;
           }
+          const typedUsd = isUsdBill && typedPriceRef.current.has(l.id);
           // Map line commitment → underlying item price tier
           // "monthly" = monthly flex tier · others = annual tier (same price, only billing differs)
           const tierKey = commitment === "monthly" ? "monthly" : "annual";
           const tier    = item?.prices?.[tierKey];
           /* R-526: the tier is ₹/MONTH only on a per-month item. A domain (per year) or a
              migration (once) keeps its rate here; the unit conversion below handles flex. */
-          if (item && tier && tier.msrp > 0 && unitYearMultiplier(billingUnitOf(item)) === 12) {
+          if (item && !typedUsd && tier && tier.msrp > 0 && unitYearMultiplier(billingUnitOf(item)) === 12) {
             /* R-369: the tier is ₹/seat/MONTH. An annual line stores the year (×12); a
                flex line stores the month as-is — that is what the PDF, e-mail, accept
                page and record_payment read. `tier.msrp * 12` on a flex line was a
