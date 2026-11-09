@@ -13,6 +13,9 @@
 --   G. Sales role -> 42501; another company's invoice -> 42501; a direct UPDATE of invoice_date -> freeze trigger.
 --   H. Draft, void, opening balance, Zoho-imported, foreign currency -> refused.
 --   I. With a credit note, a debit note, a business-network copy, a child company's mirrored bill -> refused.
+--   J. The business was not GST-registered on the new day (tax invoice issued as registered) -> refused.
+--   K. Moving LATER past money already received (A, paid 30 Oct) -> refused; moving to before it is fine.
+--   L. An UNPAID invoice moved earlier keeps its old due date (no sudden overdue); a signed-out / service call is refused.
 
 begin;
 
@@ -224,10 +227,49 @@ select pg_temp.refused('INV-R2173-I2', '2026-10-01', 'Has debit note', '%credit 
 select pg_temp.refused('INV-R2173-I3', '2026-10-01', 'Network copy', '%business network%');
 select pg_temp.refused('INV-R2173-I4', '2026-10-01', 'Mirrored bill', '%business network%');
 
+-- ── J. Not registered on the new day ──────────────────────────────────────────────────────────────
+reset role;
+select set_config('request.jwt.claims', '', true);
+update public.tenants set gst_registered_from = '2026-10-10' where id = 'b2173000-0000-0000-0000-0000000000f0';
+set local role authenticated;
+select pg_temp.as_user('b2173000-0000-0000-0000-0000000000a1');
+select pg_temp.refused('INV-R2173-F', '2026-10-05', 'Before registration', '%GST status was unregistered%issued as registered%');
+reset role;
+select set_config('request.jwt.claims', '', true);
+update public.tenants set gst_registered_from = null where id = 'b2173000-0000-0000-0000-0000000000f0';
+set local role authenticated;
+select pg_temp.as_user('b2173000-0000-0000-0000-0000000000a1');
+
+-- ── K. Later than money received (A: now 15 Sep, paid 30 Oct) ─────────────────────────────────────
+select pg_temp.refused('INV-R2173-A', '2026-11-02', 'Moved after the money', '%was received on 30 Oct 2026%cannot be dated after it%');
+do $$
+declare r jsonb;
+begin
+  r := public.correct_invoice_date('INV-R2173-A', '2026-10-20', 'Back to the right day in Oct');
+  if (select invoice_date from public.invoices where id = 'INV-R2173-A') <> '2026-10-20'
+     or (select due_date from public.invoices where id = 'INV-R2173-A') <> '2026-11-04' then
+    raise exception 'FAIL K: paid invoice moved later (before its money) did not move with its terms: %', r;
+  end if;
+end $$;
+
+-- ── L. Unpaid moved earlier keeps its due date; no signed-in company -> refused ──────────────────
+do $$
+declare r jsonb;
+begin
+  r := public.correct_invoice_date('INV-R2173-G', '2026-09-23', 'Raised late - money was due earlier');
+  if (select invoice_date from public.invoices where id = 'INV-R2173-G') <> '2026-09-23'
+     or (select due_date from public.invoices where id = 'INV-R2173-G') <> '2026-11-07' then
+    raise exception 'FAIL L: unpaid invoice due date moved earlier: %', r;
+  end if;
+end $$;
+select set_config('request.jwt.claims', '', true);
+select pg_temp.refused('INV-R2173-F', '2026-10-05', 'No login', 'Sign in to your company%', '28000');
+select pg_temp.as_user('b2173000-0000-0000-0000-0000000000a1');
+
 do $$ begin
   if (select count(*) from public.activity_log where action = 'invoice.date_corrected'
-        and entity_id like 'INV-R2173-%') <> 1 then
-    raise exception 'FAIL: only A should be logged';
+        and entity_id like 'INV-R2173-%') <> 3 then
+    raise exception 'FAIL: only A (twice) and G should be logged';
   end if;
   raise notice 'R-2173 correct_invoice_date: all cases passed';
 end $$;

@@ -23,7 +23,8 @@ import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
-import { istToday } from "@/lib/dates/ist";
+import { fyBounds, istToday } from "@/lib/dates/ist";
+import { formatDate } from "@/lib/utils";
 import { canDeleteMoney } from "@/lib/auth/roles";
 import { toastError } from "@/lib/errors/toast-error";
 
@@ -34,29 +35,40 @@ export type CorrectableInvoice = {
   document_kind?: string | null;
   gst_irn?: string | null;
   zoho_invoice_id?: string | null;
+  sale_import_batch_id?: string | null;
   currency?: string | null;
   fx_rate?: number | null;
 };
 
-/** Who sees the button: owner/accountant, on an issued INR sale of ours with no IRN. The server checks it all again. */
-export function canCorrectInvoiceDate(invoice: CorrectableInvoice, role: string | null | undefined): boolean {
+/** What else the page knows that makes the server refuse (so the button is not a dead end). */
+export type CorrectDateFacts = { hasNotes?: boolean; onNetwork?: boolean };
+
+/** Who sees the button: owner/accountant, on an issued INR sale of ours with no IRN, no credit/debit note and
+ *  no network copy. The server checks it all again (and the GST-filed months, which only it knows). */
+export function canCorrectInvoiceDate(invoice: CorrectableInvoice, role: string | null | undefined, facts: CorrectDateFacts = {}): boolean {
   if (!role || !canDeleteMoney(role)) return false; // unknown role (still loading) → hidden, unlike canDeleteMoney
   if (!invoice.invoice_date || invoice.status === "draft" || invoice.status === "void") return false;
   if (invoice.document_kind === "opening_invoice") return false;
   if (invoice.gst_irn && invoice.gst_irn.trim()) return false;
-  if (invoice.zoho_invoice_id) return false;
+  if (invoice.zoho_invoice_id || invoice.sale_import_batch_id) return false;
+  if (facts.hasNotes || facts.onNetwork) return false;
   if (invoice.fx_rate != null || (invoice.currency && invoice.currency !== "INR")) return false;
   return true;
 }
 
 /** The date picker's range: the invoice's own financial year (1 Apr – 31 Mar), never after today (IST). */
 export function correctDateBounds(invoiceDate: string, todayIst: string): { min: string; max: string } {
-  const y = Number(invoiceDate.slice(0, 4));
-  const m = Number(invoiceDate.slice(5, 7));
-  const fyStart = m >= 4 ? y : y - 1;
-  const min = `${fyStart}-04-01`;
-  const fyEnd = `${fyStart + 1}-03-31`;
-  return { min, max: fyEnd < todayIst ? fyEnd : todayIst };
+  const fy = fyBounds(invoiceDate);
+  return { min: fy.start, max: fy.end < todayIst ? fy.end : todayIst };
+}
+
+/** Why Save is not ready yet (shown under the button) — null when it is. */
+export function correctDateHint(current: string, date: string, reason: string, bounds: { min: string; max: string }): string | null {
+  if (!date) return "Pick the correct date.";
+  if (date === current) return "Pick a date different from the one on the invoice.";
+  if (date < bounds.min || date > bounds.max) return `Pick a date between ${formatDate(bounds.min)} and ${formatDate(bounds.max)}.`;
+  if (reason.trim().length < 5) return "Write why (at least 5 characters) — it is kept in the activity log.";
+  return null;
 }
 
 type CorrectRpc = (
@@ -75,20 +87,19 @@ function useCorrectInvoiceDate() {
       });
       if (error) throw error;
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["invoices"] });
-      qc.invalidateQueries({ queryKey: ["activity-log"] });
-    },
+    /* The date moves the invoice between months in every report (P&L, GST, aging, dashboard) — refresh all. */
+    onSuccess: () => { qc.invalidateQueries(); },
     onError: (e) => toastError(e, { fallback: "Could not correct the invoice date" }),
   });
 }
 
-const fmt = (d: string) =>
-  new Date(`${d}T00:00:00Z`).toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+const fmt = (d: string) => formatDate(d);
 
-export function CorrectInvoiceDateButton({ invoice, role }: { invoice: CorrectableInvoice; role: string | null | undefined }) {
+export function CorrectInvoiceDateButton({ invoice, role, facts }: {
+  invoice: CorrectableInvoice; role: string | null | undefined; facts?: CorrectDateFacts;
+}) {
   const [open, setOpen] = React.useState(false);
-  if (!canCorrectInvoiceDate(invoice, role)) return null;
+  if (!canCorrectInvoiceDate(invoice, role, facts)) return null;
   return (
     <>
       <Button size="sm" variant="outline" icon="calendar" onClick={() => setOpen(true)} data-testid="correct-invoice-date">
@@ -107,7 +118,8 @@ function CorrectInvoiceDateSheet({
   const [date, setDate] = React.useState(current);
   const [reason, setReason] = React.useState("");
   const save = useCorrectInvoiceDate();
-  const ready = !!date && date !== current && date >= bounds.min && date <= bounds.max && reason.trim().length >= 5;
+  const hint = correctDateHint(current, date, reason, bounds);
+  const ready = hint === null;
 
   async function submit() {
     if (!ready) return;
@@ -144,7 +156,7 @@ function CorrectInvoiceDateSheet({
               onChange={(e) => setDate(e.target.value)}
             />
             <p className="mt-1 text-2xs text-ink-3">
-              Between {fmt(bounds.min)} and {fmt(bounds.max)}. The due date moves by the same number of days.
+              Between {fmt(bounds.min)} and {fmt(bounds.max)}.
             </p>
           </FormField>
 
@@ -161,10 +173,14 @@ function CorrectInvoiceDateSheet({
 
           <div className="rounded-md bg-amber-soft/40 border border-amber/30 px-3 py-2 text-2xs text-amber-ink leading-relaxed">
             The amount, lines and payments stay as they are; the invoice moves to the new month in GSTR-1 and the P&amp;L.
+            The due date moves by the same days (an unpaid invoice never gets an earlier due date than it has).
             Once a month&apos;s GST return is filed, a wrong date is fixed with a credit note instead.
           </div>
         </div>
 
+        {hint && (
+          <p role="status" data-testid="correct-invoice-date-hint" className="px-5 pt-3 text-2xs text-ink-3">{hint}</p>
+        )}
         <SheetFooter className="!p-5 border-t border-hairline">
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button type="button" variant="primary" icon="calendar" loading={save.isPending} disabled={!ready} onClick={submit}
