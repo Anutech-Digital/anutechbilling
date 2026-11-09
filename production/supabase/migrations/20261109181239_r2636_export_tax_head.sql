@@ -70,8 +70,8 @@ begin
      (psql, scripts) that carries no request role at all. A signed-in user with no company
      (customer-portal login, apprentice, mid-signup) is NOT trusted — before R-454 a NULL
      current_tenant_id() skipped the tenant check entirely (fail-open). */
-  v_trusted := coalesce(auth.role(), '') = 'service_role'
-               or (auth.role() is null
+  v_trusted := coalesce(public.current_request_role(), '') = 'service_role'
+               or (public.current_request_role() is null
                    and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime'));
   v_caller := public.current_tenant_id();
   if v_caller is null and not v_trusted then
@@ -89,8 +89,8 @@ begin
     v_r885_ctx text;
   begin
     get diagnostics v_r885_ctx = pg_context;
-    if not (coalesce(auth.role(), '') = 'service_role'
-            or (auth.role() is null
+    if not (coalesce(public.current_request_role(), '') = 'service_role'
+            or (public.current_request_role() is null
                 and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
        and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing')
        and v_r885_ctx !~ 'function (public\.)?activate_quote_on_credit\(' then
