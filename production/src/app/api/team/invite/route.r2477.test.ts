@@ -4,7 +4,9 @@
  *   invite_existing_login FIRST (session client, cleaned address, the role); release_stale_team_invite
  *   only when the answer is not 'invited' / 'already_member':
  *     'invited'        → NO team_invites row; the answer says existingLogin; the email has no signup
- *                        link and tells them to press Accept on the invite in their app;
+ *                        link; R-2517: it carries /invites/accept#token=… whose sha256 is the
+ *                        p_token_hash sent to invite_existing_login — the token is in the email only
+ *                        (never in the answer to the owner's screen);
  *     'already_member' → 409 "already a member of your company" with a next step, nothing written;
  *     'no_company' / 'not_found' → the plain invite (team_invites row + signup link);
  *     54000            → 429;
@@ -12,6 +14,7 @@
  *   No other company is ever named.
  */
 import { describe, it, expect, beforeEach, vi } from "vitest";
+import { createHash } from "node:crypto";
 
 const T1 = "11111111-1111-4111-8111-111111111111";
 const OWNER = "a0000000-0000-4000-8000-000000000001";
@@ -21,7 +24,9 @@ const st = vi.hoisted(() => ({
   held: "member_elsewhere" as unknown,
   ex: { data: "invited" as unknown, error: null as null | { message: string; code?: string } },
   inserts: [] as Array<Record<string, unknown>>,
-  emails: [] as Array<{ to: string; text: string; subject: string }>,
+  emails: [] as Array<{ to: string; text: string; subject: string; route?: unknown }>,
+  emailStatus: "sent" as string,
+  deletes: [] as Array<Array<[string, string]>>,
 }));
 
 vi.mock("@/lib/security/rate-limit", () => ({
@@ -29,7 +34,7 @@ vi.mock("@/lib/security/rate-limit", () => ({
 }));
 
 vi.mock("@/lib/messaging", () => ({
-  sendInternalEmail: async (e: { to: string; text: string; subject: string }) => { st.emails.push(e); return { status: "stubbed" }; },
+  sendInternalEmail: async (e: { to: string; text: string; subject: string; route?: unknown }) => { st.emails.push(e); return { status: st.emailStatus }; },
 }));
 
 function chain(result: () => unknown) {
@@ -62,6 +67,16 @@ vi.mock("@/lib/supabase/server", () => ({
           select: () => chain(() => ({ data: null, error: null })),
         };
       }
+      if (table === "membership_invites") {
+        return {
+          delete() {
+            const eqs: Array<[string, string]> = [];
+            st.deletes.push(eqs);
+            const q = { eq(c: string, v: string) { eqs.push([c, v]); return q; }, then: (res: (v: unknown) => unknown) => Promise.resolve({ error: null }).then(res) };
+            return q;
+          },
+        };
+      }
       throw new Error(`unexpected table ${table}`);
     },
   }),
@@ -79,7 +94,7 @@ const call = (body: unknown) =>
 
 beforeEach(() => {
   st.rpcCalls = []; st.held = "member_elsewhere"; st.ex = { data: "invited", error: null };
-  st.inserts = []; st.emails = [];
+  st.inserts = []; st.emails = []; st.emailStatus = "sent"; st.deletes = [];
 });
 
 const EMAIL = "ravi@betatraders.test";
@@ -90,15 +105,55 @@ describe("R-2477: invite a login that works in another company", () => {
     expect(r.status).toBe(200);
     /* review: the membership invite comes FIRST, and the R-2469 clean-up (which may delete another
        workspace's stale team_invites row) never runs for it */
-    expect(st.rpcCalls).toEqual([{ fn: "invite_existing_login", args: { p_email: EMAIL, p_role: "sales" } }]);
+    expect(st.rpcCalls).toEqual([{ fn: "invite_existing_login", args: { p_email: EMAIL, p_role: "sales", p_token_hash: expect.stringMatching(/^[0-9a-f]{64}$/) } }]);
     expect(st.inserts).toHaveLength(0);
-    const body = await r.json() as { ok: boolean; existingLogin?: boolean };
+    const raw = await r.text();
+    const body = JSON.parse(raw) as { ok: boolean; existingLogin?: boolean };
     expect(body.existingLogin).toBe(true);
     expect(st.emails).toHaveLength(1);
     expect(st.emails[0].text).not.toMatch(/signup\?invite=/);
     expect(st.emails[0].text).toMatch(/you keep your current company/i);
     expect(st.emails[0].text).toMatch(/press Accept/i);
     expect(st.emails[0].text).toMatch(/Nothing changes until you accept/i);
+    /* R-2517: the emailed link's token hashes to what the database stored; the owner's screen never gets it */
+    const token = /\/invites\/accept#token=([A-Za-z0-9_-]+)/.exec(st.emails[0].text)?.[1];
+    expect(token).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(st.emails[0].text).toMatch(/https?:\/\/[^\s/]+\/invites\/accept#token=/);
+    expect(createHash("sha256").update(token!).digest("hex")).toBe(st.rpcCalls[0].args.p_token_hash);
+    expect(raw).not.toContain(token!);
+    expect(raw).not.toContain(String(st.rpcCalls[0].args.p_token_hash));
+  });
+
+  it("R-2517: the link email goes through the platform sender, never the inviting company's own mail route", async () => {
+    await call({ email: EMAIL, role: "sales" });
+    expect(st.emails[0].route).toBeUndefined();
+  });
+
+  it.each(["failed", "stubbed"])("R-2517: email %s → invite withdrawn, 502 with the next step (never 'they open the link')", async (status) => {
+    st.emailStatus = status;
+    const r = await call({ email: EMAIL, role: "sales" });
+    expect(r.status).toBe(502);
+    const { error } = await r.json() as { error: string };
+    expect(error).toMatch(/could not be sent, so the invite was not saved/);
+    expect(error).toMatch(/Next step/);
+    expect(st.deletes).toEqual([[["tenant_id", T1], ["email", EMAIL]]]);
+  });
+
+  it("the plain invite still goes through the company's own mail route", async () => {
+    st.ex = { data: "plain", error: null };
+    st.held = "none";
+    st.emailStatus = "stubbed";
+    const r = await call({ email: EMAIL, role: "sales" });
+    expect(r.status).toBe(200);
+    expect(st.emails[0].route).toEqual({ tenantId: T1 });
+    expect(st.deletes).toEqual([]);
+  });
+
+  it("R-2517: every invite gets a fresh link token", async () => {
+    await call({ email: EMAIL, role: "sales" });
+    await call({ email: EMAIL, role: "sales" });
+    const [a, b] = st.rpcCalls.filter((c) => c.fn === "invite_existing_login").map((c) => c.args.p_token_hash);
+    expect(a).not.toBe(b);
   });
 
   it("already a member here → 409 with a next step, nothing written, no email", async () => {

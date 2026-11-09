@@ -308,7 +308,8 @@ proof: red before, green after). Decisions by the coordinator under Pardeep's de
   role, 7-day expiry). The login sees it in a banner at the top of the app ("Invite from <company> to
   join as <role>. You keep your current company." — Accept / Not now) via `my_company_invites()`, and
   accepts it with POST `/api/team/invites/:id/accept` → `accept_company_invite(id)` (only the invited
-  login, not expired, MFA). The inviting company sees only the typed address (owner-only RLS on the
+  login, not expired, MFA). **Replaced by §6.3 (R-2517):** no Accept in the banner any more; only the
+  emailed link accepts. The inviting company sees only the typed address (owner-only RLS on the
   table; Pending invites lists it and can withdraw it). Claim refuses such a login with that next
   step; `list_stranded_auth_users` lists only logins that work in NO company right now, and for a
   login with a profile returns the address only (no name, account age or last sign-in).
@@ -375,3 +376,51 @@ login before it accepted:
 - Residual (card `review.left`): an owner who set a teammate's temporary password BEFORE any invite
   existed still knows a password for that login; the robust close is proof of the mailbox (accept by
   an emailed link / token, not the in-app banner alone) — follow-up.
+
+### 6.3 Proof of the mailbox — accept by the emailed link (R-2517, 9 Nov 2026)
+
+Migration `20261109132700_r2517_invite_mailbox_token.sql`; SQL test
+`supabase/tests/r2517_invite_mailbox_token.test.sql` (cases 1–9). Closes the §6.2 residual: whoever
+controls the LOGIN (e.g. the owner of the login's own company who once set a temporary password the
+teammate never used — the forced change-password clears `must_change_password`, so no "reset
+pending" check helps) can no longer accept another company's invite. Accepting needs the token from
+the invite EMAIL as well.
+
+- **Token.** Team → Invite (`/api/team/invite`) makes 32 random bytes (base64url, 43 chars) for every
+  invite and passes only its sha256 (hex) to `invite_existing_login(email, role, token_hash)` →
+  `membership_invites.token_hash` (unique). The token itself goes ONLY into the email's link
+  `<app>/invites/accept#token=…` — in the FRAGMENT, which a browser never sends to a server, so it
+  is in no request log, proxy or error report (the card said `?token=`; the fragment is stricter and
+  `?token=` is still read). It is never stored or sent back to the owner's screen.
+  The email goes through the PLATFORM sender (SMTP / Resend), never the inviting company's own
+  Gmail / SMTP route — otherwise the link would sit in that company's Sent folder, and an owner who
+  knows the login's password could invite it from a company of their own and read the link there.
+  If the email is not sent (failed, or stubbed: no mail set up / staging mails only the team) the
+  invite is withdrawn at once and the owner gets 502 with the next step — never an invite nobody
+  can accept.
+  A renewed invite gets a new hash, so the older email's link stops working. The 2-argument
+  `invite_existing_login(email, role)` stays for old callers and makes an invite with NO link,
+  which can never be accepted (the banner says to ask again).
+- **Accept page** `/invites/accept#token=…` (in the `(auth)` group, outside middleware's
+  `PROTECTED_PREFIXES` so every role reaches it and the role guard cannot bounce it). It moves the
+  token into this tab's sessionStorage and off the address bar; Signed out → Sign in (`next=/invites/accept`),
+  two-step pending (the middleware's 401 or the database's 42501) → /mfa, both back to the page. It asks `POST /api/team/invites/lookup` → `company_invite_by_token`:
+  `open` (company, role, address) / `blocked` + `reason` (an R-2477 check would refuse the accept:
+  sign-in or profile address changed, sender no longer an owner — ONE rule,
+  `r2517_invite_blocker`, used by the page and the accept) / `other_login` (the link was sent to another address — sign out,
+  sign in with it) / `used` / `expired` / `not_found` (replaced or withdrawn), each with a next step.
+  Accept → `POST /api/team/invites/accept` → `accept_company_invite_by_token(token)`: the token's
+  invite must be addressed to THIS login, open, not expired, MFA done, sign-in address and profile
+  email unchanged, sender still an active owner (all §6.1/§6.2 checks). Single use (`accepted_at`).
+  Then "Switch to <company> now" (or the app loads fresh there when the accept selected it; other
+  tabs of the login are told on `COMPANY_SWITCH_CHANNEL`). A second accept of a used link is refused
+  ("already used — pick it from the switcher"), not answered "ok": single use wins over idempotency.
+  Two clicks for the real person: the email link → Accept.
+- **Banner** has no Accept button: "Invite from X to join as Y. To accept, open the link we emailed
+  to <address>." `my_company_invites()` also returns `email` and `has_link` (never the hash).
+- **Old accept.** `accept_company_invite(uuid)` now always refuses ("Open the link in the invite
+  email") — kept, not dropped, because the deploy peeks of 20261105192420 / 20261106034600 look for
+  it (dropping it would make a deploy re-run them and bring the tokenless accept back). Same reason
+  the 2-argument `invite_existing_login` keeps "R-2477 re-review" in its body comment.
+- Not covered (inherent): a company that controls the invited MAILBOX itself (e.g. the address is on
+  that company's own Google Workspace domain) can still read the link.

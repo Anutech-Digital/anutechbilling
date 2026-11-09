@@ -30,6 +30,7 @@ import { MUST_CHANGE_PASSWORD_KEY } from "@/lib/auth/must-change-password";
 import { initials } from "@/lib/utils";
 import { can, roleLabel } from "@/lib/auth/roles";
 import { inviteExpiresAt, isInviteExpired } from "@/lib/auth/invite-accept";
+import { inviteAcceptUrl, newInviteLinkToken } from "@/lib/auth/invite-link-token";
 import {
   INVITE_CHECK_RATE,
   inviteInUseMessage,
@@ -141,17 +142,22 @@ export async function POST(request: NextRequest) {
   /* R-2477 (+ independent review, 5 Nov 2026): FIRST ask whether the address is a login that
      already works in ANOTHER company. Such a login is never claimed — it gets a membership invite
      (invite_existing_login: session client, owner + MFA + its own hourly cap re-checked in SQL;
-     nothing written or deleted in any other company) and ACCEPTS it itself in the app (accept
-     banner → accept_company_invite). This company sees only the address it typed. Only when it is
+     nothing written or deleted in any other company) and ACCEPTS it itself through the emailed
+     link (R-2517: /invites/accept → accept_company_invite_by_token). This company sees only the
+     address it typed. Only when it is
      NOT such a login does the R-2469 clean-up below run (it may clear another workspace's stale
      team_invites row — never needed for a membership invite). 'no_company' / 'not_found' go the
      plain invite way (Google sign-in / Claim). An error keeps the R-2469 refusal for a member of
-     another company. */
+     another company.
+     R-2517: accepting it needs proof of the invited MAILBOX — a single-use token that goes ONLY in
+     this email's link; the database keeps its sha256 (the login alone, e.g. signed in with an old
+     temporary password its own company's owner set, cannot accept). */
   let existingLogin = false;
+  const link = newInviteLinkToken();
   const { data: ex, error: exErr } = await (supabase.rpc as unknown as (
-    fn: "invite_existing_login", args: { p_email: string; p_role: string },
+    fn: "invite_existing_login", args: { p_email: string; p_role: string; p_token_hash: string },
   ) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>).call(
-    supabase, "invite_existing_login", { p_email: email, p_role: role },
+    supabase, "invite_existing_login", { p_email: email, p_role: role, p_token_hash: link.hash },
   );
   if (exErr?.code === "54000") {
     return NextResponse.json(
@@ -299,14 +305,17 @@ export async function POST(request: NextRequest) {
 
   const emailRes = await sendInternalEmail({
     /* Bina `route` ke ye default Resend par jata hai (send.ts:26), aur wo test mode
-          me hai. Tenant ne Gmail chuna hai to mail wahi se jaye. */
-    route: { tenantId: me.tenant_id },
+          me hai. Tenant ne Gmail chuna hai to mail wahi se jaye.
+       R-2517: NOT for the existing-login invite — its link is the proof of the invitee's mailbox,
+       so it must not sit in the inviting company's own Sent folder (its Gmail / SMTP route). It
+       goes out through the platform sender (SMTP / Resend), never through the tenant's route. */
+    ...(existingLogin ? {} : { route: { tenantId: me.tenant_id } }),
     to:      email,
     from:    FROM_EMAIL,
     subject: `You've been invited to ${workspace} on ResellerOS`,
     /* R-534: the password itself is never in the email — the owner hands it over. */
     text: existingLogin
-? existingLoginInviteEmail({ workspace, roleName, email, loginUrl })
+? existingLoginInviteEmail({ workspace, roleName, email, acceptUrl: inviteAcceptUrl(base, link.token) })
 : memberCreated
 ? `Hello,
 
@@ -331,6 +340,20 @@ ${signupUrl}
 — ${workspace} (via ResellerOS)`,
   });
 
+  /* R-2517: the accept link lives ONLY in that email. Not sent (failed, or stubbed: no mail set
+     up / staging mails only the team) → the invite could never be accepted, so it is withdrawn and
+     the owner is told what to do — never a "they open the link we emailed" for an email that did not
+     go. (Session client: membership_invites_owner_delete, own company only.) */
+  if (existingLogin && emailRes.status !== "sent") {
+    await (supabase.from as unknown as (t: "membership_invites") => {
+      delete(): { eq(c: string, v: string): { eq(c: string, v: string): PromiseLike<{ error: unknown }> } };
+    }).call(supabase, "membership_invites").delete().eq("tenant_id", me.tenant_id).eq("email", email);
+    return NextResponse.json(
+      { error: `The invite email to ${email} could not be sent, so the invite was not saved (they can accept only through the link in that email). Next step: check the app's email setup, then invite them again.` },
+      { status: 502, headers: NO_STORE },
+    );
+  }
+
   return NextResponse.json({
     ok: true,
     /* R-534: shown ONCE on the owner's screen with a Copy button. */
@@ -339,7 +362,7 @@ ${signupUrl}
        than "invited", which would read as a new person to anyone glancing at it. */
     roleChangedFrom,
     /* R-2477: they already use ResellerOS with another company — the screen says the next step
-       (they see the invite at the top of their app and accept it themselves). */
+       (R-2517: they open the link we emailed and accept it themselves). */
     ...(existingLogin ? { existingLogin: true } : {}),
     emailStatus: emailRes.status,             // "sent" | "stubbed" | "failed"
     emailError:  emailRes.errorMessage,
