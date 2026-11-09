@@ -13,6 +13,7 @@
 --   E. 5 Oct 2026 (open month): the quote is paid and invoiced on 5 Oct as before.
 --   F. GSTR-1 for Oct 2026 marked filed (compliance_log) → a 7 Oct line on a quote → refused the same.
 --   H. A part payment (no invoice raised now) on a filed day → recorded, nothing refused.
+--   I. A part payment that DOES raise the invoice (invoice_on_receipt quote, R-2095) on a filed day → refused.
 --   G. Books lock only (setting cleared, no marks): the receipt is refused by the books-lock rule as before — not by R-2627.
 
 begin;
@@ -39,7 +40,8 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('b2627000-0000-0000-0000-0000000000e5', 'b2627000-0000-0000-0000-0000000000f0', 'b2627000-0000-0000-0000-0000000000d1', '2026-10-05', 'NEFT CR R2627 E', 0, 1180, 'R2627UTRE', 'manual'),
   ('b2627000-0000-0000-0000-0000000000e6', 'b2627000-0000-0000-0000-0000000000f0', 'b2627000-0000-0000-0000-0000000000d1', '2026-10-07', 'NEFT CR R2627 F', 0, 1180, 'R2627UTRF', 'manual'),
   ('b2627000-0000-0000-0000-0000000000e7', 'b2627000-0000-0000-0000-0000000000f0', 'b2627000-0000-0000-0000-0000000000d1', '2026-08-20', 'NEFT CR R2627 G', 0, 1180, 'R2627UTRG', 'manual'),
-  ('b2627000-0000-0000-0000-0000000000e8', 'b2627000-0000-0000-0000-0000000000f0', 'b2627000-0000-0000-0000-0000000000d1', '2026-09-23', 'NEFT CR R2627 H', 0, 500, 'R2627UTRH', 'manual');
+  ('b2627000-0000-0000-0000-0000000000e8', 'b2627000-0000-0000-0000-0000000000f0', 'b2627000-0000-0000-0000-0000000000d1', '2026-09-23', 'NEFT CR R2627 H', 0, 500, 'R2627UTRH', 'manual'),
+  ('b2627000-0000-0000-0000-0000000000e9', 'b2627000-0000-0000-0000-0000000000f0', 'b2627000-0000-0000-0000-0000000000d1', '2026-09-24', 'NEFT CR R2627 I', 0, 500, 'R2627UTRI', 'manual');
 
 -- Accepted one-off quotes, no invoice yet (₹1,000 + 18% = ₹1,180; C's ₹5,000 + 18% = ₹5,900).
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
@@ -51,6 +53,11 @@ insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, su
   ('Q-R2627-F',  'b2627000-0000-0000-0000-0000000000f0', 'b2627000-0000-0000-0000-0000000000c1', 'R2627 Buyer', 1180, 1000, 18, 'accepted', 'awaiting', 'yearly', '[{"name":"Setup F","qty":1,"rate":1000,"one_time":true}]'::jsonb, true, '2026-09-01'),
   ('Q-R2627-G',  'b2627000-0000-0000-0000-0000000000f0', 'b2627000-0000-0000-0000-0000000000c1', 'R2627 Buyer', 1180, 1000, 18, 'accepted', 'awaiting', 'yearly', '[{"name":"Setup G","qty":1,"rate":1000,"one_time":true}]'::jsonb, true, '2026-08-01'),
   ('Q-R2627-H',  'b2627000-0000-0000-0000-0000000000f0', 'b2627000-0000-0000-0000-0000000000c1', 'R2627 Buyer', 1180, 1000, 18, 'accepted', 'awaiting', 'yearly', '[{"name":"Setup H","qty":1,"rate":1000,"one_time":true}]'::jsonb, true, '2026-09-01');
+
+-- I: a sale booked from a bank receipt (invoice_on_receipt, R-2095) is invoiced on its FIRST receipt, part-paid or not.
+insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
+                           billing_cycle, line_items, is_one_off, created_date, invoice_on_receipt) values
+  ('Q-R2627-I',  'b2627000-0000-0000-0000-0000000000f0', 'b2627000-0000-0000-0000-0000000000c1', 'R2627 Buyer', 1180, 1000, 18, 'accepted', 'awaiting', 'yearly', '[{"name":"Setup I","qty":1,"rate":1000,"one_time":true}]'::jsonb, true, '2026-08-15', true);
 
 -- Quotes that already have their invoice (B's other item, D).
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
@@ -175,6 +182,20 @@ begin
      or pg_temp.matched('b2627000-0000-0000-0000-0000000000e8') is distinct from 'payment' then
     raise exception 'FAIL H: part payment (no invoice) on a filed day not recorded (%)', r; end if;
   raise notice 'PASS H: ₹500 part payment on 23 Sep 2026 recorded, no invoice, not refused';
+end $$;
+
+-- ── I. Part payment on an invoice-on-receipt quote raises the invoice → refused ──────────────────
+do $$
+declare v_msg text; ok boolean := false;
+begin
+  begin
+    perform public.reconcile_bank_credit_to_item('b2627000-0000-0000-0000-0000000000e9', 'Q-R2627-I', null);
+  exception when check_violation then ok := true; get stacked diagnostics v_msg = message_text;
+  end;
+  if not ok or v_msg not like 'GST for Sep 2026 is already filed%quote Q-R2627-I cannot get a new tax invoice dated 24 Sep 2026%' then
+    raise exception 'FAIL I: part payment that raises the invoice on a filed day was not refused (%)', v_msg; end if;
+  if pg_temp.received('Q-R2627-I') <> 0 or pg_temp.inv_of('Q-R2627-I') is not null then raise exception 'FAIL I: something was saved'; end if;
+  raise notice 'PASS I: ₹500 of an invoice-on-receipt quote on 24 Sep 2026 (would invoice) refused';
 end $$;
 
 -- ── E. Open month: as before ─────────────────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_pay_quote_invoices(uuid,text)') and prosrc like '%R-2627%') and exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_pay_item(uuid,integer,text,text,text,integer,numeric,text,boolean,date,date)') and prosrc like '%R-2627%')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_pay_item(uuid,integer,text,text,text,integer,numeric,text,boolean,date,date)') and prosrc like '%R-2627%')
 -- deploy-key: r2627gstfiledquoteinvoice
 -- 20261109074651_r2627_gst_filed_quote_invoice.sql
 --
@@ -8,49 +8,25 @@
 -- so a filed GSTR-1 month got a new invoice. R-2621 refused only NEW sales (bank_credit_pay_item's callers
 -- from the Zoho plan were guarded in the browser plan only).
 --
---   1. bank_pay_quote_invoices(tenant, quote) (new, service_role only): the quote's invoices — its own
---      invoice_id, any invoice carrying its quote_id, and its part request's part invoice.
---   2. bank_credit_pay_item ← 20261107192231_r2179_reconcile_gaps (its latest body). Same signature and
---      grants. A tax invoice this payment RAISED (the quote's whole invoice, or a part request's part
---      invoice) whose date is GST-filed — R-2621's one rule, gst_filed_why (GST filed up to / books lock /
+--   bank_credit_pay_item ← 20261107192231_r2179_reconcile_gaps (its latest body). Same signature and
+--      grants. The tax invoice this payment RAISES for the quote (generate_invoice, dated on the receipt
+--      day by invoice_date_for_receipt) whose date is GST-filed — R-2621's one rule, gst_filed_why (GST filed up to / books lock /
 --      GSTR-1 marked filed) — is refused with a plain message naming why and the next step; the whole call
 --      is undone (receipt, invoice, the line stays unmatched). One guard for every bank path that pays a
 --      quote: Reconcile → An open quote / invoice (reconcile_bank_credit_to_item), "Several quotes /
 --      invoices" (reconcile_bank_credit_split items), relink_bank_one_off_sale path 'item' (the old sale is
 --      not undone either — one transaction), reconcile_bank_credit_fx_invoice and every Reconcile-from-Zoho
 --      /bulk-book pay row (the same RPCs, whatever the browser's plan said).
---   Not changed: paying an invoice that already exists (Zoho import, opening, instalment, a quote that has
---   its invoice) in a filed month; a receipt that raises no invoice (part-paid quote, advance); the books
---   lock alone (the invoice is dated the day after the lock, R-2095 — refused only if that day is filed too).
+--   Not changed: a part request's part invoice (raise_subscription_billing dates it on the part's bill date,
+--   not the bank day — refusing it here would trap a late payment from an open month; follow-up), invoices
+--   raised outside a bank line (Generate invoice, desk payment, cron); paying an invoice that already exists
+--   (Zoho import, opening, instalment, a quote that has its invoice) in a filed month; a receipt that raises
+--   no invoice (part-paid quote, advance); a receipt inside locked books (refused by the lock rule, as before).
 --   No other change in the body. Test: supabase/tests/r2627_gst_filed_quote_invoice.test.sql
 
 begin;
 
--- ── 1. The quote's invoices ──────────────────────────────────────────────────────────────────────
-create or replace function public.bank_pay_quote_invoices(p_tenant_id uuid, p_quote_id text)
-returns text[]
-language sql
-stable
-security definer
-set search_path = public
-as $function$
-  /* R-2627: every invoice of this quote — its own, any carrying its quote_id, its part request's part. */
-  select coalesce(array_agg(distinct x.id) filter (where x.id is not null), array[]::text[])
-    from (
-      select q.invoice_id as id from public.quotes q where q.id = p_quote_id and q.tenant_id = p_tenant_id
-      union all
-      select i.id from public.invoices i where i.tenant_id = p_tenant_id and i.quote_id = p_quote_id
-      union all
-      select b.invoice_id from public.quotes q
-        join public.subscription_billings b on b.id = q.subscription_billing_id and b.tenant_id = q.tenant_id
-       where q.id = p_quote_id and q.tenant_id = p_tenant_id
-    ) x;
-$function$;
-
-revoke all on function public.bank_pay_quote_invoices(uuid, text) from public, anon, authenticated;
-grant execute on function public.bank_pay_quote_invoices(uuid, text) to service_role;
-
--- ── 2. bank_credit_pay_item (from 20261107192231_r2179_reconcile_gaps — its latest body) ─────────
+-- ── bank_credit_pay_item (from 20261107192231_r2179_reconcile_gaps — its latest body) ─────────
 create or replace function public.bank_credit_pay_item(
   p_txn_id              uuid,
   p_amount              integer,
@@ -85,7 +61,7 @@ as $$
    the seats / the new term are live, so the tax invoice is for the whole supply with the balance due.
    R-2627: no NEW tax invoice dated in a GST-filed month (R-2621's one rule, gst_filed_why) — a quote with no
    invoice yet, paid from a bank line, is refused when the invoice this payment raises (generate_invoice on
-   the receipt day, or a part request's own part invoice) would fall on a GST-filed day. The whole call is
+   the receipt day) would fall on a GST-filed day. The whole call is
    undone (nothing saved). Paying an invoice that already exists is unchanged. */
 declare
   v_txn        record;
@@ -111,8 +87,7 @@ declare
   v_total      integer;          -- R-2538: the document's GST-inclusive total the part is measured against
   v_rate       numeric;          -- R-2538: the rate recorded (given, else from the part's gross)
   v_prev       record;           -- R-2538: a receipt with the line's reference but another amount
-  v_inv_before text[] := array[]::text[];   -- R-2627: the quote's invoices before this payment
-  v_new_inv    record;           -- R-2627: an invoice this payment raised
+  v_inv_date   date;             -- R-2627: the date of the invoice this payment raised
   v_why        text;             -- R-2627: why its day's GST is filed
 begin
   if coalesce(p_amount, 0) <= 0 then
@@ -243,8 +218,6 @@ begin
     if not found or v_quote.tenant_id is distinct from v_txn.tenant_id then
       raise exception 'Quote % not found in your company', v_quote_id using errcode = 'no_data_found';
     end if;
-    /* R-2627: the quote's invoices before this payment (its own, any with its quote_id, its part's). */
-    v_inv_before := public.bank_pay_quote_invoices(v_txn.tenant_id, v_quote_id);
     v_sub_id := coalesce(
       (select s.id from public.subscriptions s where s.tenant_id = v_quote.tenant_id and s.renewal_quote_id = v_quote.id limit 1),
       v_quote.renewal_subscription_id, v_quote.add_seats_subscription_id);
@@ -365,23 +338,16 @@ begin
     end if;
   end if;
 
-  /* R-2627: a tax invoice this payment raised must not be dated in a GST-filed month (it would change a
-     filed GSTR-1). Raised here, the whole call is undone — the receipt, the invoice, the line stays unmatched. */
-  if v_quote_id is not null then
-    for v_new_inv in
-      select i.id, i.invoice_date from public.invoices i
-       where i.tenant_id = v_txn.tenant_id
-         and i.id = any(public.bank_pay_quote_invoices(v_txn.tenant_id, v_quote_id))
-         and not (i.id = any(v_inv_before))
-       order by i.invoice_date, i.id
-    loop
-      v_why := public.gst_filed_why(v_txn.tenant_id, v_new_inv.invoice_date);
-      if v_why is not null then
-        raise exception 'GST for % is already filed (%), so quote % cannot get a new tax invoice dated % — that would change a filed return. Nothing was saved. If this sale''s invoice is in Zoho, import it (Invoices → FY sales from Zoho) and pay that invoice; if the money came before the sale, book it as "Advance — nothing to invoice yet" and invoice the quote in an open month.',
-          to_char(v_new_inv.invoice_date, 'FMMon YYYY'), v_why, v_quote_id, to_char(v_new_inv.invoice_date, 'FMDD Mon YYYY')
-          using errcode = 'check_violation';
-      end if;
-    end loop;
+  /* R-2627: the tax invoice this payment raised must not be dated in a GST-filed month (it would change a
+     filed GSTR-1). Raised here, the whole call is undone — the receipt, the invoice; the line stays unmatched. */
+  if v_inv_issued is not null then
+    select i.invoice_date into v_inv_date from public.invoices i where i.id = v_inv_issued and i.tenant_id = v_txn.tenant_id;
+    v_why := public.gst_filed_why(v_txn.tenant_id, v_inv_date);
+    if v_why is not null then
+      raise exception 'GST for % is already filed (%), so quote % cannot get a new tax invoice dated % — that would change a filed return. Nothing was saved. If this sale''s invoice is in Zoho, import it (Invoices → FY sales from Zoho) and pay that invoice; if the money came before the sale, book it as "Advance — nothing to invoice yet" and invoice the quote in an open month.',
+        to_char(v_inv_date, 'FMMon YYYY'), v_why, v_quote_id, to_char(v_inv_date, 'FMDD Mon YYYY')
+        using errcode = 'check_violation';
+    end if;
   end if;
 
   return jsonb_build_object(
