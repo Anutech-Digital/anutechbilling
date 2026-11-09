@@ -144,7 +144,7 @@ export async function createOrGetRenewalQuote(
           held:    "plan_change_pending",
           quoteId: q.id as string,
           message: `Plan change quote ${q.id} is pending on this subscription, so no renewal quote was made and no renewal reminder was sent. ` +
-                   "The renewal quote is made after it is paid or expires (or delete that quote to make it now).",
+                   "The renewal quote is made after it is paid or expires (or cancel that quote to make it now).",
         };
       }
       return {
