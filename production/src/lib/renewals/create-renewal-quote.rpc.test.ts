@@ -23,7 +23,9 @@ function fakeDb(made?: { data: unknown; error: { message: string } | null }) {
     Object.assign(chain, {
       select: self, eq: self,
       maybeSingle: async () => ({
-        data: table === "customers" ? { country: "India" } : table === "items" ? { msrp: 300, wholesale: 110 } : null,
+        /* R-2619: a created:false answer is re-read — here it is a real renewal quote. */
+        data: table === "customers" ? { country: "India" } : table === "items" ? { msrp: 300, wholesale: 110 }
+            : table === "quotes" ? { id: "Q-T-27-0000", is_renewal: true, extension_months: 12, line_items: [] } : null,
         error: null,
       }),
       insert: async (row: unknown) => { calls.inserts.push(row); return { error: null }; },

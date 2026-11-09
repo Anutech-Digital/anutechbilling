@@ -24,7 +24,7 @@ function fakeDb(linked?: Record<string, unknown> | null, opts: { updateError?: s
     const self = () => chain;
     let write: { table: string; row: unknown; filters: [string, unknown][] } | null = null;
     Object.assign(chain, {
-      select: self,
+      select: self, limit: self,
       eq: (col: string, val: unknown) => { write?.filters.push([col, val]); return chain; },
       then: (ok: (v: unknown) => unknown) => ok({ data: [], error: write && opts.updateError ? { message: opts.updateError } : null }),
       maybeSingle: async () => ({
