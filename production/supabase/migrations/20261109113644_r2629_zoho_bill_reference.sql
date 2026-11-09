@@ -495,6 +495,8 @@ as $function$
   where x.changes or not x.reference_read
   order by x.tenant_id, x.bill_date, x.bill_id;
 $function$;
-comment on function public.zoho_bill_reference_report(uuid) is 'R-2629: READ-ONLY. Zoho-imported vendor bills whose management service month would move with their Zoho reference (changes), or whose scan was read before R-2629 and has no reference (reference_read false — its scan details must be cleared and read again). Expect 0 rows after the repair. Server / deploy check only.';
-revoke all on function public.zoho_bill_reference_report(uuid) from public, anon, authenticated;
-grant execute on function public.zoho_bill_reference_report(uuid) to service_role;
+comment on function public.zoho_bill_reference_report(uuid) is 'R-2629: READ-ONLY. Zoho-imported vendor bills whose management service month would move with their Zoho reference (changes), or whose scan was read before R-2629 and has no reference (reference_read false — its scan details must be cleared and read again). Expect 0 rows after the repair. Server / deploy check only (a login is refused: zoho_fy_scan is service_role only).';
+revoke all on function public.zoho_bill_reference_report(uuid) from public, anon;
+-- R-401: invoker functions carry an explicit grant (Cloud SQL). A login still gets nothing: zoho_fy_scan is
+-- service_role only (no SELECT for authenticated), so the call is refused with permission denied.
+grant execute on function public.zoho_bill_reference_report(uuid) to authenticated, service_role;
