@@ -134,9 +134,12 @@ create or replace function public.r2517_token_hash(p_token text)
 returns text
 language sql
 immutable
+security definer
 set search_path = ''
 as $$
-  /* R-2517: only a token of the shape the app makes (base64url, 32-128 chars) is hashed. */
+  /* R-2517: only a token of the shape the app makes (base64url, 32-128 chars) is hashed.
+     SECURITY DEFINER only so no app role needs EXECUTE (R-401): it is called from the definer
+     functions below and revoked from every app role. */
   select case when p_token ~ '^[A-Za-z0-9_-]{32,128}$'
               then encode(pg_catalog.sha256(convert_to(p_token, 'UTF8')), 'hex') end;
 $$;
