@@ -27,6 +27,9 @@ import { Button } from "@/components/ui/button";
 import { rupee } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { usePnL, usePnLMonths } from "@/lib/queries/pnl";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { defaultPnlBasis, type PnlBasis } from "@/lib/accounting/pnl-basis";
+import { BasisToggle } from "./basis-toggle";
 import { PnLDrilldownDialog } from "@/components/features/accounting/pnl-drilldown-dialog";
 import { lineTarget, licenceLineTarget, revenueLineTarget, type PnLDrillKind, type PnLDrillTarget } from "@/lib/accounting/pnl-drill";
 import { PnlWaterfall, HundredRupeeBar } from "@/components/features/accounting/pnl-waterfall";
@@ -123,7 +126,19 @@ const QUICK_RANGES: { label: string; build: () => DateRange }[] = [
 
 export default function PnLPage() {
   const [range, setRange] = React.useState<DateRange>(thisMonth());
-  const { data, isLoading, isError, refetch } = usePnL(range);
+  /* ── R-2622: which view of cost of goods ─────────────────────────────────
+     Management (matched): vendor bills in the month the licence was used — the owner's view.
+     As invoiced (GST): bills on their date — the CA's view, the numbers as before. The
+     accountant opens on GST, everyone else on Management; the compare period and the FY trend
+     follow the same view. Other reports (Balance Sheet, Trial Balance) stay on GST. */
+  const me = useCurrentUser();
+  const [basisPick, setBasisPick] = React.useState<PnlBasis | null>(null);
+  const basis = basisPick ?? defaultPnlBasis(me.data?.role);
+  /* Wait for the role before the first fetch — no GST fetch + flash, then a Management refetch. */
+  const roleReady = basisPick !== null || !me.isLoading;
+  const { data, isLoading, isError, refetch } = usePnL(range, roleReady, basis);
+  /* An older database without the matched report: the GST numbers are shown and the page says so. */
+  const shownBasis: PnlBasis = data?.managementUnavailable ? "gst" : basis;
   /* R-2181: what was clicked — the line, its sub-row filter and the amount shown on it. */
   const [drill, setDrill] = React.useState<PnLDrillTarget | null>(null);
   const openLine = (k: PnLDrillKind, opts?: { licenceOnly?: boolean }) =>
@@ -138,7 +153,7 @@ export default function PnLPage() {
      pnl-compare.ts. */
   const [compareMode, setCompareMode] = React.useState<CompareMode>("none");
   const cmpRange = React.useMemo(() => compareRange(range, compareMode), [range, compareMode]);
-  const { data: cmpData, isError: cmpError } = usePnL(cmpRange ?? range, cmpRange !== null);
+  const { data: cmpData, isError: cmpError } = usePnL(cmpRange ?? range, cmpRange !== null, basis);
   /* undefined while loading; null when comparison is off. */
   const prev = cmpRange ? cmpData : null;
   const cmpName = cmpRange ? periodName(cmpRange) : "";
@@ -160,7 +175,7 @@ export default function PnLPage() {
     [data?.model.byVendor],
   );
   const fyStart = React.useMemo(() => fiscalYearStart(istToday()).getUTCFullYear(), []);
-  const { data: monthPnl } = usePnLMonths(fyStart, today, !!data);
+  const { data: monthPnl } = usePnLMonths(fyStart, today, !!data, basis);
   const trend = React.useMemo(
     () => (monthPnl ? monthlySeriesFromPnl({ fyStartYear: fyStart, today, months: monthPnl }) : undefined),
     [monthPnl, fyStart, today],
@@ -174,10 +189,12 @@ export default function PnLPage() {
        not as ₹0. With a comparison on, the compare amount and the change are columns too;
        the sub-lines (R-1833) are indented rows under their line. */
     const csv = pnlCsv(data, range, cmpRange && prev ? { data: prev, range: cmpRange } : null);
+    /* R-2622: a Management export says so in its name — the GST one keeps the old name. */
+    const prefix = shownBasis === "management" ? "pnl-management" : "pnl";
     downloadCSV(
       cmpRange && prev
-        ? `pnl-${range.from}-to-${range.to}-vs-${cmpRange.from}-to-${cmpRange.to}.csv`
-        : `pnl-${range.from}-to-${range.to}.csv`,
+        ? `${prefix}-${range.from}-to-${range.to}-vs-${cmpRange.from}-to-${cmpRange.to}.csv`
+        : `${prefix}-${range.from}-to-${range.to}.csv`,
       csv.headers,
       csv.rows,
     );
@@ -269,6 +286,8 @@ export default function PnLPage() {
             </button>
           ))}
         </div>
+        {/* R-2622: one control for the view of cost of goods. */}
+        <BasisToggle basis={basis} onPick={setBasisPick} unavailable={!!data?.managementUnavailable} />
         {cmpRange && (
           <p className="mt-2 text-xs text-ink-2" data-testid="pnl-compare-heading">
             <b className="font-semibold">{rangeLabel(range)}</b> vs <b className="font-semibold">{rangeLabel(cmpRange)}</b>
@@ -578,7 +597,9 @@ export default function PnLPage() {
             )}
             {isEstimatedBasis(data.model.cogsBasis) && (
               <li className="text-amber-ink">
-                {data.model.cogsBasis === "mixed"
+                {shownBasis === "management"
+                  ? <>{rupee(data.model.estimatedLicenceCogs)} of the licence cost above is estimated from your own wholesale rates — the vendors whose bill FOR this month has not come yet. A bill dated in this period but for an earlier month counts in that month: do not enter it again.</>
+                  : data.model.cogsBasis === "mixed"
                   ? <>{rupee(data.model.estimatedLicenceCogs)} of the licence cost above is estimated from your own wholesale rates — the vendors with no bill in this period. Enter their invoices to make this exact.</>
                   : <>The licence cost above is estimated from your own wholesale rates — no vendor bills are recorded. Enter the Google CSP / Microsoft / Zoho invoices to make this exact.</>}
               </li>
@@ -895,6 +916,7 @@ export default function PnLPage() {
         target={drill}
         range={range}
         cogsEstimate={data?.model.estimateBasis ?? null}
+        basis={shownBasis}
       />
     </div>
   );

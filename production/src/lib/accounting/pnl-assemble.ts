@@ -83,6 +83,14 @@ export interface PnLNumbers {
   licenceBillsByVendor?: Readonly<Record<string, number>> | null;
   /** employee id → name, for the project-cost drill-down. */
   employeeNames: Map<string, string>;
+  /**
+   * R-2622: which view of cost of goods these numbers are — "management" (bills in their service
+   * month, report_pnl_cogs_matched) or "gst" (bill date, report_pnl). Absent = "gst".
+   * `managementUnavailable`: Management was asked for but the database cannot give it (older
+   * database / call failed) — these are the GST numbers and the page says so.
+   */
+  basis?: "management" | "gst";
+  managementUnavailable?: boolean;
 }
 
 /** `report_pnl` ki ek row — migration 20260928110000 ka RETURNS TABLE, naam wahi. */

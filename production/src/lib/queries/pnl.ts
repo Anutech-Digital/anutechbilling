@@ -27,6 +27,7 @@ import { assemblePnl, type PnLNumbers, type PnlMasters, type PnlRpcRow } from "@
 import type { RevenueByProductRow } from "@/lib/accounting/revenue-family";
 import { fyMonthsSoFar, monthRange } from "@/lib/accounting/pnl-charts";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
+import { fetchMatchedCogs, withMatchedCogs, type PnlBasis, type MatchedCogsRow } from "@/lib/accounting/pnl-basis";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import type { AssetBlock } from "@/lib/accounting/depreciation";
 import { fetchDirectorPayroll } from "@/lib/queries/director-payroll";
@@ -99,14 +100,35 @@ async function fetchPnlMasters(supabase: Client) {
   return (range: Range): PnlMasters => ({ ...fixed, vendors: vendorsFromSubscriptions(book, range.from, range.to) });
 }
 
-async function pnlFor(supabase: Client, range: Range, masters: (r: Range) => PnlMasters): Promise<PnLNumbers> {
-  const [rpc, other] = await Promise.all([
+async function pnlFor(supabase: Client, range: Range, masters: (r: Range) => PnlMasters, basis: PnlBasis = "gst"): Promise<PnLNumbers> {
+  const [rpc, other, matched] = await Promise.all([
     supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
     otherIncomeRows(supabase, range),
+    matchedCogs(supabase, range, basis),
   ]);
   const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-  return assemblePnl(range, { ...row, other_income: other }, masters(range));
+  return onBasis(range, { ...row, other_income: other }, masters(range), basis, matched);
 }
+
+/**
+ * R-2622: the Management view's cost of goods — the COGS bills placed in their service month
+ * (report_pnl_cogs_matched, R-2156). Only asked for on the Management view; null on a database
+ * without the function (the caller then shows GST, marked); any other failure throws.
+ */
+async function matchedCogs(supabase: Client, range: Range, basis: PnlBasis): Promise<MatchedCogsRow | null | undefined> {
+  if (basis !== "management") return undefined;
+  return fetchMatchedCogs(supabase, range);
+}
+
+/** The P&L on the asked basis. GST = exactly the old assemble; Management swaps the COGS bills. */
+export function onBasis(range: Range, row: PnlRpcRow, m: PnlMasters, basis: PnlBasis, matched: MatchedCogsRow | null | undefined): PnLNumbers {
+  if (basis !== "management") return assemblePnl(range, row, m);
+  if (!matched) return { ...assemblePnl(range, row, m), basis: "gst", managementUnavailable: true };
+  return { ...assemblePnl(range, withMatchedCogs(row, matched), m), basis: "management" };
+}
+
+/** GST keeps the query key it always had (Balance Sheet / Trial Balance share that cache). */
+const basisKey = (basis: PnlBasis) => (basis === "gst" ? [] : [basis]);
 
 type OtherIncomeRpc = (
   fn: "report_pnl_other_income", args: { p_from: string; p_to: string },
@@ -138,23 +160,24 @@ async function revenueByProductRows(supabase: Client, range: Range): Promise<Rev
   return error || !Array.isArray(data) ? null : data;
 }
 
-export function usePnL(range: Range, enabled = true) {
+export function usePnL(range: Range, enabled = true, basis: PnlBasis = "gst") {
   return useQuery({
-    queryKey: [...queryKeys.pnl(), range.from, range.to],
+    queryKey: [...queryKeys.pnl(), range.from, range.to, ...basisKey(basis)],
     /* The comparison period is fetched only once the owner asks for it. A second full
        aggregation on every page load, for a number nobody is reading, is a cost with no
        reader. */
     enabled,
     queryFn: async (): Promise<PnLNumbers> => {
       const supabase = createClient();
-      const [rpc, masters, byProduct, other] = await Promise.all([
+      const [rpc, masters, byProduct, other, matched] = await Promise.all([
         supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
         fetchPnlMasters(supabase),
         revenueByProductRows(supabase, range),
         otherIncomeRows(supabase, range),   // R-2095
+        matchedCogs(supabase, range, basis),   // R-2622
       ]);
       const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-      return assemblePnl(range, { ...row, revenue_by_product: byProduct, other_income: other }, masters(range));
+      return onBasis(range, { ...row, revenue_by_product: byProduct, other_income: other }, masters(range), basis, matched);
     },
   });
 }
@@ -162,17 +185,18 @@ export function usePnL(range: Range, enabled = true) {
 /**
  * R-1647: the P&L of every FY month up to the current one — month key → that month's P&L, by
  * the same assemblePnl() as usePnL. The masters are read once; report_pnl runs per month (each
- * a small, indexed range) in parallel.
+ * a small, indexed range) in parallel. R-2622: on the same basis as the statement (Management /
+ * GST), so the trend and the statement never mix the two.
  */
-export function usePnLMonths(fyStartYear: number, today: string, enabled = true) {
+export function usePnLMonths(fyStartYear: number, today: string, enabled = true, basis: PnlBasis = "gst") {
   return useQuery({
-    queryKey: [...queryKeys.pnl(), "months", fyStartYear, today.slice(0, 7)],
+    queryKey: [...queryKeys.pnl(), "months", fyStartYear, today.slice(0, 7), ...basisKey(basis)],
     enabled,
     queryFn: async (): Promise<Map<string, PnLNumbers>> => {
       const supabase = createClient();
       const masters = await fetchPnlMasters(supabase);
       const months = fyMonthsSoFar(fyStartYear, today);
-      const rows = await Promise.all(months.map((m) => pnlFor(supabase, monthRange(m.key), masters)));
+      const rows = await Promise.all(months.map((m) => pnlFor(supabase, monthRange(m.key), masters, basis)));
       return new Map(months.map((m, i) => [m.key, rows[i]]));
     },
   });

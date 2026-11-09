@@ -87,6 +87,8 @@ vi.mock("@/lib/queries/pnl", () => ({
     : { data: undefined, isLoading: false, isError: false, refetch: vi.fn() },
   usePnLMonths: () => ({ data: undefined }),
 }));
+/* R-2622: no signed-in role here → the page opens on As invoiced (GST), the view these tests cover. */
+vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: undefined }) }));
 vi.mock("next/link", () => ({
   default: ({ href, children, ...rest }: { href: string; children: React.ReactNode }) => <a href={href} {...rest}>{children}</a>,
 }));
