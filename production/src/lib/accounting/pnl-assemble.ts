@@ -91,6 +91,13 @@ export interface PnLNumbers {
    */
   basis?: "management" | "gst";
   managementUnavailable?: boolean;
+  /**
+   * R-2624: Management view only — revenue is spread over the months it pays for
+   * (report_pnl_revenue_matched). `managementRevenueUnavailable`: the database has the matched COGS
+   * but not the revenue spread yet — revenue here is as invoiced, and the page says so.
+   */
+  revenueSpread?: boolean;
+  managementRevenueUnavailable?: boolean;
 }
 
 /** `report_pnl` ki ek row — migration 20260928110000 ka RETURNS TABLE, naam wahi. */

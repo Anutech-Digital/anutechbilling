@@ -28,7 +28,7 @@ import { rupee } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import { usePnL, usePnLMonths } from "@/lib/queries/pnl";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
-import { defaultPnlBasis, type PnlBasis } from "@/lib/accounting/pnl-basis";
+import { defaultPnlBasis, revenueCountText, revenueHint, type PnlBasis } from "@/lib/accounting/pnl-basis";
 import { BasisToggle } from "./basis-toggle";
 import { PnLDrilldownDialog } from "@/components/features/accounting/pnl-drilldown-dialog";
 import { lineTarget, licenceLineTarget, revenueLineTarget, type PnLDrillKind, type PnLDrillTarget } from "@/lib/accounting/pnl-drill";
@@ -287,7 +287,7 @@ export default function PnLPage() {
           ))}
         </div>
         {/* R-2622: one control for the view of cost of goods. */}
-        <BasisToggle basis={basis} onPick={setBasisPick} unavailable={!!data?.managementUnavailable} />
+        <BasisToggle basis={basis} onPick={setBasisPick} unavailable={!!data?.managementUnavailable} revenueUnavailable={!!data?.managementRevenueUnavailable} />
         {cmpRange && (
           <p className="mt-2 text-xs text-ink-2" data-testid="pnl-compare-heading">
             <b className="font-semibold">{rangeLabel(range)}</b> vs <b className="font-semibold">{rangeLabel(cmpRange)}</b>
@@ -313,6 +313,7 @@ export default function PnLPage() {
           revenueCount={data.revenueCount}
           expensesCount={data.expensesCount}
           outputGst={data.outputGST}
+          revenueSpread={!!data.revenueSpread}
           compare={cmpRange ? { model: prev?.model ?? null, name: cmpName } : null}
           onOpen={(k) => openLine(k)}
         />
@@ -348,7 +349,7 @@ export default function PnLPage() {
               {/* Revenue is the invoiced amount less the GST on it — GST is collected for
                   the government, not earned — and the hint says so in numbers. */}
               <Row label="Revenue"        amount={data.model.revenue}
-                   hint={`${rupee(data.model.revenue + data.outputGST)} invoiced − ${rupee(data.outputGST)} GST · ${data.revenueCount} invoice${data.revenueCount === 1 ? "" : "s"}`}
+                   hint={revenueHint({ ...data, revenue: data.model.revenue }, rupee)}
                    onHint={() => openLine("revenue")} tone="ink"
                    cmp={cmp(data.model.revenue, (p) => p.model.revenue, "more-is-good")} />
               {revenueLines && (
@@ -686,7 +687,7 @@ export default function PnLPage() {
                     {
                       key: "revenue", group: "in", label: "Revenue",
                       amount: m.revenue,
-                      hint: `${data.revenueCount} invoice${data.revenueCount === 1 ? "" : "s"} issued`,
+                      hint: revenueCountText(data),
                       onOpen: () => openLine("revenue"),
                     },
                     {
@@ -917,6 +918,7 @@ export default function PnLPage() {
         range={range}
         cogsEstimate={data?.model.estimateBasis ?? null}
         basis={shownBasis}
+        revenueSpread={!!data?.revenueSpread}
       />
     </div>
   );

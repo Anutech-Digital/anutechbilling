@@ -27,7 +27,10 @@ import { assemblePnl, type PnLNumbers, type PnlMasters, type PnlRpcRow } from "@
 import type { RevenueByProductRow } from "@/lib/accounting/revenue-family";
 import { fyMonthsSoFar, monthRange } from "@/lib/accounting/pnl-charts";
 import { rpcRowOrThrow } from "@/lib/accounting/report-rpc";
-import { fetchMatchedCogs, withMatchedCogs, type PnlBasis, type MatchedCogsRow } from "@/lib/accounting/pnl-basis";
+import {
+  fetchMatchedCogs, fetchMatchedRevenue, fetchMatchedRevenueMonths, NO_MATCHED_REVENUE, withMatchedCogs, withMatchedRevenue,
+  type PnlBasis, type MatchedCogsRow, type MatchedRevenueRow,
+} from "@/lib/accounting/pnl-basis";
 import { fetchAllRows, fetchAllRowsIn } from "@/lib/ops/fetch-all";
 import type { AssetBlock } from "@/lib/accounting/depreciation";
 import { fetchDirectorPayroll } from "@/lib/queries/director-payroll";
@@ -100,14 +103,19 @@ async function fetchPnlMasters(supabase: Client) {
   return (range: Range): PnlMasters => ({ ...fixed, vendors: vendorsFromSubscriptions(book, range.from, range.to) });
 }
 
-async function pnlFor(supabase: Client, range: Range, masters: (r: Range) => PnlMasters, basis: PnlBasis = "gst"): Promise<PnLNumbers> {
-  const [rpc, other, matched] = await Promise.all([
+async function pnlFor(
+  supabase: Client, range: Range, masters: (r: Range) => PnlMasters, basis: PnlBasis = "gst",
+  /** R-2624: the month's spread revenue already read by the one FY call (undefined = read it here). */
+  revenueKnown?: MatchedRevenueRow | null,
+): Promise<PnLNumbers> {
+  const [rpc, other, matched, revenue] = await Promise.all([
     supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
     otherIncomeRows(supabase, range),
     matchedCogs(supabase, range, basis),
+    revenueKnown !== undefined ? Promise.resolve(revenueKnown) : matchedRevenue(supabase, range, basis),   // R-2624
   ]);
   const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-  return onBasis(range, { ...row, other_income: other }, masters(range), basis, matched);
+  return onBasis(range, { ...row, other_income: other }, masters(range), basis, matched, revenue);
 }
 
 /**
@@ -120,11 +128,29 @@ async function matchedCogs(supabase: Client, range: Range, basis: PnlBasis): Pro
   return fetchMatchedCogs(supabase, range);
 }
 
-/** The P&L on the asked basis. GST = exactly the old assemble; Management swaps the COGS bills. */
-export function onBasis(range: Range, row: PnlRpcRow, m: PnlMasters, basis: PnlBasis, matched: MatchedCogsRow | null | undefined): PnLNumbers {
+/**
+ * R-2624: the Management view's revenue — each invoice spread over the months it pays for
+ * (report_pnl_revenue_matched). Only asked for on the Management view; null on a database without
+ * the function (revenue then stays as invoiced, marked); any other failure throws.
+ */
+async function matchedRevenue(supabase: Client, range: Range, basis: PnlBasis): Promise<MatchedRevenueRow | null | undefined> {
+  if (basis !== "management") return undefined;
+  return fetchMatchedRevenue(supabase, range);
+}
+
+/**
+ * The P&L on the asked basis. GST = exactly the old assemble; Management swaps the COGS bills
+ * (R-2622) and the revenue (R-2624, spread over its service months).
+ */
+export function onBasis(
+  range: Range, row: PnlRpcRow, m: PnlMasters, basis: PnlBasis,
+  matched: MatchedCogsRow | null | undefined, revenue?: MatchedRevenueRow | null,
+): PnLNumbers {
   if (basis !== "management") return assemblePnl(range, row, m);
   if (!matched) return { ...assemblePnl(range, row, m), basis: "gst", managementUnavailable: true };
-  return { ...assemblePnl(range, withMatchedCogs(row, matched), m), basis: "management" };
+  const cogsRow = withMatchedCogs(row, matched);
+  if (!revenue) return { ...assemblePnl(range, cogsRow, m), basis: "management", managementRevenueUnavailable: true };
+  return { ...assemblePnl(range, withMatchedRevenue(cogsRow, revenue), m), basis: "management", revenueSpread: true };
 }
 
 /** GST keeps the query key it always had (Balance Sheet / Trial Balance share that cache). */
@@ -169,15 +195,16 @@ export function usePnL(range: Range, enabled = true, basis: PnlBasis = "gst") {
     enabled,
     queryFn: async (): Promise<PnLNumbers> => {
       const supabase = createClient();
-      const [rpc, masters, byProduct, other, matched] = await Promise.all([
+      const [rpc, masters, byProduct, other, matched, revenue] = await Promise.all([
         supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
         fetchPnlMasters(supabase),
         revenueByProductRows(supabase, range),
         otherIncomeRows(supabase, range),   // R-2095
         matchedCogs(supabase, range, basis),   // R-2622
+        matchedRevenue(supabase, range, basis),   // R-2624
       ]);
       const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
-      return onBasis(range, { ...row, revenue_by_product: byProduct, other_income: other }, masters(range), basis, matched);
+      return onBasis(range, { ...row, revenue_by_product: byProduct, other_income: other }, masters(range), basis, matched, revenue);
     },
   });
 }
@@ -194,9 +221,16 @@ export function usePnLMonths(fyStartYear: number, today: string, enabled = true,
     enabled,
     queryFn: async (): Promise<Map<string, PnLNumbers>> => {
       const supabase = createClient();
-      const masters = await fetchPnlMasters(supabase);
       const months = fyMonthsSoFar(fyStartYear, today);
-      const rows = await Promise.all(months.map((m) => pnlFor(supabase, monthRange(m.key), masters, basis)));
+      /* R-2624: on Management every month's spread revenue comes from ONE SQL call, not one per month. */
+      const span = months.length > 0 ? { from: monthRange(months[0].key).from, to: monthRange(months[months.length - 1].key).to } : null;
+      const [masters, byMonth] = await Promise.all([
+        fetchPnlMasters(supabase),
+        basis === "management" && span ? fetchMatchedRevenueMonths(supabase, span) : Promise.resolve(undefined),
+      ]);
+      const revenueOf = (key: string): MatchedRevenueRow | null | undefined =>
+        byMonth === undefined ? undefined : byMonth === null ? null : (byMonth.get(key) ?? NO_MATCHED_REVENUE);
+      const rows = await Promise.all(months.map((m) => pnlFor(supabase, monthRange(m.key), masters, basis, revenueOf(m.key))));
       return new Map(months.map((m, i) => [m.key, rows[i]]));
     },
   });

@@ -20,7 +20,7 @@ import { vendorOfCogsCategory } from "@/lib/accounting/pnl";
 import { splitBillItc } from "@/lib/gst/bill-itc";
 import { rupee } from "@/lib/utils";
 import { licenceEstimates, periodName, type LicenceEstimate, type LicenceSource, type SubLine } from "@/lib/accounting/pnl-compare";
-import { serviceBasisLabel, type MatchedBill } from "@/lib/accounting/pnl-basis";
+import { revenueBasisLabel, serviceBasisLabel, type MatchedBill } from "@/lib/accounting/pnl-basis";
 
 export type PnLDrillKind = "revenue" | "cogs" | "expenses";
 
@@ -124,29 +124,54 @@ export interface RevenueLineRow {
   status: string | null;
   family: string;
   amount: number;
+  /**
+   * R-2624 — only on SQL `report_pnl_revenue_matched_lines` (Management view): the document's whole
+   * share of this family (`amount` is the part in the range), its service period and how that
+   * period was decided (revenueBasisLabel).
+   */
+  doc_amount?: number;
+  service_from?: string;
+  service_to?: string;
+  basis?: string;
 }
 
 /**
  * The Revenue drill's rows: one per document (a mixed invoice's families added back together when
  * the whole line is open), only the families asked for. A fully credited invoice and its credit
- * note net to ₹0.
+ * note net to ₹0. R-2624: a Management row also says which months it is for, how that was decided
+ * and, when only a part falls in the range, "part of the ₹X invoice".
  */
 export function revenueDrillRows(lines: readonly RevenueLineRow[], t: Pick<PnLDrillTarget, "families" | "excludeFamilies">): DrillRow[] {
   const want = t.families && t.families.length > 0 ? new Set(t.families) : null;
   const skip = new Set(t.excludeFamilies ?? []);
-  const byDoc = new Map<string, DrillRow>();
+  const byDoc = new Map<string, { row: DrillRow; head: string; whole: number; from?: string; to?: string; bases: Set<string> }>();
   for (const l of lines) {
     if (want && !want.has(l.family)) continue;
     if (skip.has(l.family)) continue;
     const id = `${l.doc_kind}:${l.doc_id}`;
-    const cur = byDoc.get(id);
-    if (cur) { cur.amount = r2(cur.amount + Number(l.amount)); continue; }
-    const sub = l.doc_kind === "credit_note" ? `${l.doc_id} · credit note on ${l.invoice_id}`
-      : l.doc_kind === "debit_note" ? `${l.doc_id} · debit note on ${l.invoice_id}`
-      : `${l.doc_id} · ${l.status ?? "invoice"}`;
-    byDoc.set(id, { id, date: l.doc_date, primary: l.customer_name || "Customer", sub, amount: Number(l.amount) || 0 });
+    let cur = byDoc.get(id);
+    if (!cur) {
+      const head = l.doc_kind === "credit_note" ? `${l.doc_id} · credit note on ${l.invoice_id}`
+        : l.doc_kind === "debit_note" ? `${l.doc_id} · debit note on ${l.invoice_id}`
+        : `${l.doc_id} · ${l.status ?? "invoice"}`;
+      cur = { row: { id, date: l.doc_date, primary: l.customer_name || "Customer", sub: head, amount: 0 }, head, whole: 0, bases: new Set() };
+      byDoc.set(id, cur);
+    }
+    cur.row.amount = r2(cur.row.amount + (Number(l.amount) || 0));
+    cur.whole += Number(l.doc_amount ?? l.amount) || 0;
+    if (l.service_from && (!cur.from || l.service_from < cur.from)) cur.from = l.service_from;
+    if (l.service_to && (!cur.to || l.service_to > cur.to)) cur.to = l.service_to;
+    if (l.basis) cur.bases.add(l.basis);
   }
-  return [...byDoc.values()];
+  return [...byDoc.values()].map((d) => {
+    if (!d.from || !d.to) return d.row;
+    const basis = d.bases.size === 1 ? [...d.bases][0] : "mixed";
+    /* `whole` is the shown families' share of the document (a product row opens one family), so it
+       is named as what is spread, never as the invoice total. */
+    const part = Math.abs(d.row.amount - d.whole) >= 0.5 ? `part of ${rupee(d.whole)} spread over the whole period` : null;
+    const sub = [d.head, `for ${periodName({ from: d.from, to: d.to })}`, revenueBasisLabel(basis), part].filter(Boolean).join(" · ");
+    return { ...d.row, sub };
+  });
 }
 
 /** A vendor bill as the drill reads it. */

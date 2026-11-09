@@ -25,6 +25,7 @@ const SQL_SALE = new Set([
   "report_pnl",            // revenue + output GST
   "report_pnl_monthly",    // revenue trend
   "report_pnl_revenue_lines", // R-2181: the documents behind Revenue per product family (R-1835 report_pnl_revenue_by_product is their sum)
+  "report_pnl_revenue_matched_rows", // R-2624: the same documents spread over their service months (Management view); _lines / _matched / _months are their sums
   "report_balance_sheet",  // gst_output (receivables keep the open balance)
   "report_day_book",       // Sales vouchers
   "report_party_ledger",   // 'Opening balance' for opening_balance, not a Sales voucher

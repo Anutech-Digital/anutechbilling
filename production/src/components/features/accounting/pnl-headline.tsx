@@ -18,6 +18,7 @@ import { rupee } from "@/lib/utils";
 import { cogsBasisNote, type PnlPeriod } from "@/lib/accounting/pnl";
 import { netProfitView } from "@/lib/accounting/pnl-bound";
 import { netFigure } from "@/lib/accounting/net-figure";
+import { revenueHint } from "@/lib/accounting/pnl-basis";
 import { periodChange, changeTone, formatChange, signedRupee, TONE_CLASS, type Sense } from "@/lib/accounting/pnl-compare";
 
 interface Props {
@@ -26,6 +27,8 @@ interface Props {
   expensesCount: number;
   /** Output GST on the same invoices — shown so "revenue = invoiced − GST" is visible. */
   outputGst: number;
+  /** R-2624: Management view — revenue is spread over its months (output GST stays as invoiced). */
+  revenueSpread?: boolean;
   onOpen: (kind: "revenue" | "cogs" | "expenses") => void;
   /**
    * R-1832: the compare period — its model (null while it loads) and its short name
@@ -84,7 +87,7 @@ function Tile({
   );
 }
 
-export function PnlHeadline({ model, revenueCount, expensesCount, outputGst, onOpen, compare }: Props) {
+export function PnlHeadline({ model, revenueCount, expensesCount, outputGst, revenueSpread, onOpen, compare }: Props) {
   const pctOfRevenue = (v: number) => (model.revenue > 0 ? Math.round((v / model.revenue) * 100) : null);
   const view = netProfitView(model);
 
@@ -109,7 +112,7 @@ export function PnlHeadline({ model, revenueCount, expensesCount, outputGst, onO
         <Tile
           label="Revenue"
           value={rupee(model.revenue)}
-          sub={<>{rupee(model.revenue + outputGst)} invoiced − {rupee(outputGst)} GST · {revenueCount} invoice{revenueCount === 1 ? "" : "s"}</>}
+          sub={revenueHint({ revenue: model.revenue, outputGST: outputGst, revenueCount, revenueSpread }, rupee)}
           onClick={() => onOpen("revenue")}
           vs={vs?.revenue}
         />

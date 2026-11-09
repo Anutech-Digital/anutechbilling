@@ -14,9 +14,15 @@
  *
  * Only the COGS bill subtotals move. GST that cannot be claimed on a COGS bill (R-1576) stays on
  * the bill date in both views (the drill lists it as its own row), so over a whole year the two
- * views add up to the same cost. Revenue, expenses and the GST snapshot are the same in both.
+ * views add up to the same cost. Expenses and the GST snapshot are the same in both.
+ *
+ * R-2624 (slice 4): Management also spreads REVENUE over the months it pays for — a ₹12,000 yearly
+ * invoice dated 1 Oct is ₹1,000 a month Oct..Sep (SQL report_pnl_revenue_matched); GST view keeps
+ * it on the invoice date. Output GST stays as invoiced in both views.
  */
 import type { PnlRpcRow } from "@/lib/accounting/pnl-assemble";
+import type { RevenueByProductRow } from "@/lib/accounting/revenue-family";
+import type { RevenueLineRow } from "@/lib/accounting/pnl-drill";
 
 type MatchedCogsRpc = (
   fn: "report_pnl_cogs_matched", args: { p_from: string; p_to: string },
@@ -37,12 +43,12 @@ export const PNL_BASIS_OPTIONS: ReadonlyArray<{ basis: PnlBasis; label: string; 
   {
     basis: "management",
     label: "Management (matched)",
-    help: "Cost of goods in the month the licence was used (the vendor bill's service month). For running the business.",
+    help: "Cost of goods in the month the licence was used, and prepaid revenue spread over the months it pays for (a yearly invoice = 1/12 a month). For running the business.",
   },
   {
     basis: "gst",
     label: "As invoiced (GST)",
-    help: "Cost of goods on the vendor bill's date — the same as your GST returns and what your CA files.",
+    help: "Revenue on the invoice date and cost of goods on the vendor bill's date — the same as your GST returns and what your CA files.",
   },
 ];
 
@@ -127,4 +133,157 @@ export function serviceBasisLabel(basis: string): string {
     case "bill_month": return "bill month";
     default: return basis;
   }
+}
+
+// ─── R-2624: revenue spread over the months it pays for ────────────────────────────────
+
+/**
+ * `report_pnl_revenue_matched(p_from, p_to)` — migration 20261109120954 (R-2624). The Management
+ * view's revenue: each invoice / credit note / debit note share spread over its service months
+ * (yearly prepaid = 1/12 a month, remainder in the last month), the part in the range. Same shape
+ * as report_pnl's revenue columns + report_pnl_revenue_by_product, so the card, the product rows
+ * and the drill (report_pnl_revenue_matched_lines) are the same rows added up.
+ */
+export interface MatchedRevenueRow {
+  inv_taxable: number;
+  cn_taxable: number;
+  dn_taxable: number;
+  revenue_count: number;
+  by_product: RevenueByProductRow[];
+}
+
+type MatchedRevenueRpc = (
+  fn: "report_pnl_revenue_matched", args: { p_from: string; p_to: string },
+) => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>;
+
+/** R-2624: report_pnl_revenue_matched for a range; null on a database without the function. */
+export async function fetchMatchedRevenue(
+  supabase: { rpc: unknown },
+  range: { from: string; to: string },
+): Promise<MatchedRevenueRow | null> {
+  const rpc = supabase.rpc as MatchedRevenueRpc;
+  return matchedRevenueOrNull(await rpc.call(supabase, "report_pnl_revenue_matched", { p_from: range.from, p_to: range.to }));
+}
+
+/** Same rule as matchedRowOrNull: null ONLY for a missing function (PGRST202 / 42883); other errors throw. */
+export function matchedRevenueOrNull(res: { data: unknown; error: { code?: string; message: string } | null }): MatchedRevenueRow | null {
+  if (res.error) {
+    if (res.error.code === "PGRST202" || res.error.code === "42883") return null;
+    throw new Error(res.error.message);
+  }
+  const row = Array.isArray(res.data) ? res.data[0] : res.data;
+  if (!row || typeof row !== "object") return null;
+  const r = row as Partial<Record<keyof MatchedRevenueRow, unknown>>;
+  return {
+    inv_taxable: Number(r.inv_taxable) || 0,
+    cn_taxable: Number(r.cn_taxable) || 0,
+    dn_taxable: Number(r.dn_taxable) || 0,
+    revenue_count: Number(r.revenue_count) || 0,
+    by_product: Array.isArray(r.by_product) ? (r.by_product as RevenueByProductRow[]) : [],
+  };
+}
+
+/**
+ * The report_pnl row with its revenue swapped for the spread one. Output GST (inv_tax / cn_tax /
+ * dn_tax) stays as invoiced — GST is collected on the invoice, not earned over months — and the
+ * project revenue split (project invoices are never spread: invoice month) is untouched.
+ */
+export function withMatchedRevenue(row: PnlRpcRow, rev: MatchedRevenueRow): PnlRpcRow {
+  return {
+    ...row,
+    inv_taxable: rev.inv_taxable,
+    cn_taxable: rev.cn_taxable,
+    dn_taxable: rev.dn_taxable,
+    revenue_count: rev.revenue_count,
+    revenue_by_product: rev.by_product,
+  };
+}
+
+/** How an invoice's service period was decided (SQL revenue_line_service_period) — shown in the drill. */
+export function revenueBasisLabel(basis: string): string {
+  switch (basis) {
+    case "billing_part": return "billing part";
+    case "line_dates": return "dates on the line";
+    case "term": return "subscription term";
+    case "invoice_month": return "invoice month";
+    case "mixed": return "mixed periods";
+    default: return basis;
+  }
+}
+
+type RevenueLinesRpc = (
+  fn: "report_pnl_revenue_lines" | "report_pnl_revenue_matched_lines",
+  args: { p_from: string; p_to: string; p_families: string[] | null },
+) => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>;
+
+/**
+ * The Revenue drill's documents on the asked view — the same rows the card was added up from:
+ * GST → report_pnl_revenue_lines (R-2181, invoice date); Management → report_pnl_revenue_matched_lines
+ * (R-2624, the part of each document in the range by its service months). A database without the
+ * matched function (PGRST202 / 42883) gives the GST rows — exactly what the card fell back to.
+ */
+export async function fetchRevenueDrillLines(
+  supabase: { rpc: unknown },
+  range: { from: string; to: string },
+  families: string[] | null,
+  basis: PnlBasis,
+): Promise<RevenueLineRow[]> {
+  const rpc = supabase.rpc as RevenueLinesRpc;
+  const args = { p_from: range.from, p_to: range.to, p_families: families && families.length > 0 ? families : null };
+  if (basis === "management") {
+    const { data, error } = await rpc.call(supabase, "report_pnl_revenue_matched_lines", args);
+    if (!error) return (Array.isArray(data) ? data : []) as RevenueLineRow[];
+    if (error.code !== "PGRST202" && error.code !== "42883") throw new Error(error.message);
+  }
+  const { data, error } = await rpc.call(supabase, "report_pnl_revenue_lines", args);
+  if (error) throw new Error(error.message);
+  return (Array.isArray(data) ? data : []) as RevenueLineRow[];
+}
+
+/**
+ * R-2624: the line under Revenue. As invoiced it reads "₹X invoiced − ₹Y GST · N invoices"; on
+ * Management the revenue is spread while GST stays as invoiced, so adding the two would print an
+ * "invoiced" figure that no invoice has — it says what the number is instead.
+ */
+export function revenueHint(d: { revenue: number; outputGST: number; revenueCount: number; revenueSpread?: boolean }, money: (n: number) => string): string {
+  const n = `${d.revenueCount} invoice${d.revenueCount === 1 ? "" : "s"}`;
+  if (d.revenueSpread) return `${money(d.revenue)} earned this period before GST · ${n} · prepaid terms spread over their months`;
+  return `${money(d.revenue + d.outputGST)} invoiced − ${money(d.outputGST)} GST · ${n}`;
+}
+
+/** R-2624: "N invoices issued" (as invoiced) / "N invoices with a part in this period" (spread). */
+export function revenueCountText(d: { revenueCount: number; revenueSpread?: boolean }): string {
+  const n = `${d.revenueCount} invoice${d.revenueCount === 1 ? "" : "s"}`;
+  return d.revenueSpread ? `${n} with a part in this period` : `${n} issued`;
+}
+
+type MatchedRevenueMonthsRpc = (
+  fn: "report_pnl_revenue_matched_months", args: { p_from: string; p_to: string },
+) => PromiseLike<{ data: unknown; error: { code?: string; message: string } | null }>;
+
+/** A month with no spread revenue: the SQL months call has no row for it. */
+export const NO_MATCHED_REVENUE: MatchedRevenueRow = { inv_taxable: 0, cn_taxable: 0, dn_taxable: 0, revenue_count: 0, by_product: [] };
+
+/**
+ * R-2624 (checker: the FY trend made 12 heavy calls): every month's spread revenue in ONE call —
+ * report_pnl_revenue_matched_months — "YYYY-MM" → that month's row (each equals
+ * report_pnl_revenue_matched for the month; SQL test M1). Null when the database has no such
+ * function (the trend then shows revenue as invoiced, as the statement does); other errors throw.
+ */
+export async function fetchMatchedRevenueMonths(
+  supabase: { rpc: unknown },
+  range: { from: string; to: string },
+): Promise<Map<string, MatchedRevenueRow> | null> {
+  const rpc = supabase.rpc as MatchedRevenueMonthsRpc;
+  const res = await rpc.call(supabase, "report_pnl_revenue_matched_months", { p_from: range.from, p_to: range.to });
+  if (res.error) {
+    if (res.error.code === "PGRST202" || res.error.code === "42883") return null;
+    throw new Error(res.error.message);
+  }
+  const out = new Map<string, MatchedRevenueRow>();
+  for (const r of Array.isArray(res.data) ? (res.data as Record<string, unknown>[]) : []) {
+    const row = matchedRevenueOrNull({ data: r, error: null });
+    if (row && typeof r.month === "string") out.set(r.month.slice(0, 7), row);
+  }
+  return out;
 }
