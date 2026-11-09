@@ -397,8 +397,9 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
 
   const sendLink = draft
     ? channel === "whatsapp" && phone
-      // R-2641: lib/phone adds the customer's country code (a masked phone gives "#" — the click reveals it).
-      ? whatsAppLink(phone, customer.country, draft.message) ?? "#"
+      /* R-2641: lib/phone adds the customer's country code. A masked phone gives "#" (the click
+         reveals it); a number lib/phone cannot read gives no Send link, not a blank tab. */
+      ? (isMaskedContact(phone) ? "#" : whatsAppLink(phone, customer.country, draft.message))
       : customer.contact_email
         ? `mailto:${customer.contact_email}?subject=${encodeURIComponent(draft.subject || `Regarding ${customer.name}`)}&body=${encodeURIComponent(draft.message)}`
         : null

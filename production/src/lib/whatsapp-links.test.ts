@@ -65,10 +65,13 @@ describe("invoice WhatsApp for an old invoice without a saved country", () => {
   it("opens wa.me with the US code", () => {
     const open = vi.fn();
     vi.stubGlobal("window", { open });
-    const ok = openInvoiceWhatsApp({ id: "INV-1", customer_id: "c1", amount: 100 }, "5551234567", null, vi.fn(), "United States");
-    expect(ok).toBe(true);
-    expect(String(open.mock.calls[0][0])).toMatch(/^https:\/\/wa\.me\/15551234567\?/);
-    vi.unstubAllGlobals();
+    try {
+      const ok = openInvoiceWhatsApp({ id: "INV-1", customer_id: "c1", amount: 100 }, "5551234567", null, vi.fn(), "United States");
+      expect(ok).toBe(true);
+      expect(String(open.mock.calls[0][0])).toMatch(/^https:\/\/wa\.me\/15551234567\?/);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
 

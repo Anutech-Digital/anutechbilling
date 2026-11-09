@@ -70,7 +70,7 @@ import { contactSearchHidden } from "@/lib/contacts/search-columns";
 import { canWriteSales } from "@/lib/nav";
 import { canDeleteMoney, canRecordMoney } from "@/lib/auth/roles";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
-import { followRevealed } from "@/lib/contacts/reveal-client";
+import { followRevealed, isMaskedContact } from "@/lib/contacts/reveal-client";
 
 // Saved-view segments (Zoho-style) — compact filters over already-loaded data
 // (receivables + unused credit + subscriptions).
@@ -963,10 +963,12 @@ export default function CustomersPage() {
                       )}
                     </span>
                     <div className="flex items-center gap-2">
-                      {c.contact_phone && (
+                      {/* A number lib/phone cannot read gets no chip (a "#" link would open a blank tab);
+                          a masked one keeps it — the click fetches the real number. */}
+                      {c.contact_phone && (isMaskedContact(c.contact_phone) || whatsAppLink(c.contact_phone, c.country)) && (
                         <a
                           /* R-2641: lib/phone adds the customer's country code (a bare Indian
-                             number used to open wa.me/9876543210 — no code at all). */
+                             number used to open the chat with no country code at all). */
                           href={whatsAppLink(c.contact_phone, c.country) ?? "#"}
                           target="_blank"
                           rel="noreferrer"
