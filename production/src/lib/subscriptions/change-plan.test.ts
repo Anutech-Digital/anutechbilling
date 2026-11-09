@@ -211,7 +211,7 @@ describe("R-2626 — a LATER part already billed at the old rate refuses the pla
     const r = run([{ ...q3, invoiceId: "INV-ANUT-27-0042" }, q4]);
     expect(!r.ok && r.reason).toBe(
       "Q3 (1 Oct 2026 – 31 Dec 2026) is already invoiced (INV-ANUT-27-0042) at the current plan's rate. " +
-      "Change the plan once that part starts, or on the renewal quote.",
+      "Change the plan once that part starts.",
     );
   });
 
@@ -223,9 +223,17 @@ describe("R-2626 — a LATER part already billed at the old rate refuses the pla
     );
   });
 
-  it("the EARLIEST billed later part is named; invoice wins over a proforma on the same part", () => {
+  it("Q3 and Q4 invoiced → the LATEST invoiced part is named (the change waits until it starts); invoice wins over a proforma", () => {
     const r = run([{ ...q4, invoiceId: "INV-4" }, { ...q3, invoiceId: "INV-3", requestId: "PI-3" }]);
-    expect(!r.ok && r.reason).toMatch(/^Q3 .* already invoiced \(INV-3\)/);
+    expect(!r.ok && r.reason).toMatch(/^Q4 \(1 Jan 2027 – 31 Mar 2027\) is already invoiced \(INV-4\)/);
+  });
+
+  it("Q3 and Q4 proformas → both named, cancel the latest first (cancel_quote frees only the latest, R-2519b)", () => {
+    const r = run([{ ...q4, requestId: "PI-4" }, { ...q3, requestId: "PI-3" }]);
+    expect(!r.ok && r.reason).toBe(
+      "Q3 (1 Oct 2026 – 31 Dec 2026) and Q4 (1 Jan 2027 – 31 Mar 2027) already have proformas PI-3, PI-4 at the current plan's rate. " +
+      "Cancel them first, the latest first (open each → Cancel proforma), then change the plan; the parts are billed again at the new rate on their dates.",
+    );
   });
 
   it("later parts laid but not billed (or freed / cancelled — the reader returns them without ids) → goes on", () => {

@@ -60,7 +60,7 @@ export interface LaterBilledPart {
   periodEnd: string;
   /** A live (not void) tax invoice billing this part. */
   invoiceId: string | null;
-  /** An open payment request / proforma for this part (draft / sent / viewed / accepted). */
+  /** A payment request / proforma still linked to this part (directly or as a group request's line). */
   requestId: string | null;
 }
 
@@ -72,22 +72,32 @@ export interface LaterBilledPart {
  * so the change is REFUSED while one exists — R-2589 / R-2617 style. Same rule and words as the SQL
  * trigger subscriptions_r2626_plan_change_vs_later_part (migration 20261109064000). `chargeTo` = the
  * plan change's last day (inclusive); only parts starting after it count.
+ * An invoiced part (paid ahead) names the LATEST one — the change waits until that part starts. With
+ * proformas only, all are named: cancel_quote frees only the latest billed period (R-2519b), so the
+ * owner cancels them latest first.
  */
 export function planChangeLaterPartBlock(
   parts: readonly LaterBilledPart[],
   chargeTo: string,
   cycle: string | null | undefined,
 ): string | null {
-  const hit = parts
+  const billed = parts
     .filter((p) => p.periodStart.slice(0, 10) > chargeTo.slice(0, 10) && (p.invoiceId || p.requestId))
-    .sort((a, b) => a.periodStart.localeCompare(b.periodStart))[0];
-  if (!hit) return null;
-  const name = `${partName(cycle, hit.periodIndex)} (${formatDate(hit.periodStart.slice(0, 10))} – ${formatDate(periodLastDay(hit.periodEnd))})`;
-  if (hit.invoiceId) {
-    return `${name} is already invoiced (${hit.invoiceId}) at the current plan's rate. Change the plan once that part starts, or on the renewal quote.`;
+    .sort((a, b) => a.periodStart.localeCompare(b.periodStart));
+  if (billed.length === 0) return null;
+  const name = (p: LaterBilledPart) =>
+    `${partName(cycle, p.periodIndex)} (${formatDate(p.periodStart.slice(0, 10))} – ${formatDate(periodLastDay(p.periodEnd))})`;
+  const invoiced = billed.filter((p) => p.invoiceId);
+  if (invoiced.length > 0) {
+    const last = invoiced[invoiced.length - 1];
+    return `${name(last)} is already invoiced (${last.invoiceId}) at the current plan's rate. Change the plan once that part starts.`;
   }
-  return `${name} already has proforma ${hit.requestId} at the current plan's rate. ` +
-    "Cancel that proforma first (open it → Cancel proforma), then change the plan; the part is billed again at the new rate on its date.";
+  if (billed.length === 1) {
+    return `${name(billed[0])} already has proforma ${billed[0].requestId} at the current plan's rate. ` +
+      "Cancel that proforma first (open it → Cancel proforma), then change the plan; the part is billed again at the new rate on its date.";
+  }
+  return `${billed.map(name).join(" and ")} already have proformas ${billed.map((p) => p.requestId).join(", ")} at the current plan's rate. ` +
+    "Cancel them first, the latest first (open each → Cancel proforma), then change the plan; the parts are billed again at the new rate on their dates.";
 }
 
 /**

@@ -63,6 +63,8 @@ function admin(
       eq: (c: string, v: unknown) => { filters.push([c, v]); return q; },
       gt: (c: string, v: unknown) => { filters.push([`gt:${c}`, v]); return q; },
       in: () => q,
+      not: () => q,
+      contains: () => q,
       order: () => q,
       limit: () => q,
       then: (ok: (r: unknown) => unknown, err?: (e: unknown) => unknown) => {
