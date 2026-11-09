@@ -20,8 +20,21 @@ async function openPnl(page: Page, from: string, to: string) {
   await page.goto("/accounting/pnl");
   await expect(page).not.toHaveURL(/\/login/);
   await expect(page.getByRole("heading", { name: /P&L Report/ })).toBeVisible({ timeout: 60_000 });
-  await page.locator("#pnl-from").fill(from);
-  await page.locator("#pnl-to").fill(to);
+  /* 9 Nov: dates typed before React hydrated were overwritten by the page's own "this month"
+     state (From 01-11-2026, To 31-10-2026 → "Profit & Loss didn't load"). Wait until the page has
+     loaded its first statement (only a hydrated page fetches), then type and confirm both fields
+     kept what was typed — retyping if the page replaced them. */
+  await expect(
+    page.getByRole("button", { name: /invoiced − |earned this period/ }).or(page.getByText("Profit & Loss didn't load")).first(),
+  ).toBeVisible({ timeout: 90_000 });
+  const fromInput = page.locator("#pnl-from");
+  const toInput = page.locator("#pnl-to");
+  await expect(async () => {
+    await fromInput.fill(from);
+    await toInput.fill(to);
+    await expect(fromInput).toHaveValue(from, { timeout: 2_000 });
+    await expect(toInput).toHaveValue(to, { timeout: 2_000 });
+  }).toPass({ timeout: 30_000 });
 }
 
 async function view(page: Page, name: "Management (matched)" | "As invoiced (GST)") {
