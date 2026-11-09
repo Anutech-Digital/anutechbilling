@@ -117,7 +117,7 @@ async function pnlFor(
     supabase.rpc("report_pnl", { p_from: range.from, p_to: range.to }),
     otherIncomeRows(supabase, range),
     matchedCogs(supabase, range, basis),
-    revenueKnown !== undefined ? Promise.resolve({ earned: revenueKnown }) : matchedRevenue(supabase, range, basis, today),   // R-2624
+    revenueKnown !== undefined ? Promise.resolve<EarnedRevenue>({ earned: revenueKnown }) : matchedRevenue(supabase, range, basis, today),   // R-2624
   ]);
   const row = rpcRowOrThrow<PnlRpcRow>(rpc, "report_pnl");
   return onBasis(range, { ...row, other_income: other }, masters(range), basis, matched, revenue?.earned, revenue?.cap);
@@ -135,6 +135,7 @@ async function matchedCogs(supabase: Client, range: Range, basis: PnlBasis): Pro
 
 /** R-2625: a Management range that runs past today — revenue earned up to `earnedTo`, the rest not yet. */
 export interface RevenueCap { earnedTo: string; notYetEarned: number }
+type EarnedRevenue = { earned: MatchedRevenueRow | null; cap?: RevenueCap };
 
 /**
  * R-2624: the Management view's revenue — each invoice spread over the months it pays for
@@ -145,7 +146,7 @@ export interface RevenueCap { earnedTo: string; notYetEarned: number }
  */
 async function matchedRevenue(
   supabase: Client, range: Range, basis: PnlBasis, today: string,
-): Promise<{ earned: MatchedRevenueRow | null; cap?: RevenueCap } | undefined> {
+): Promise<EarnedRevenue | undefined> {
   if (basis !== "management") return undefined;
   const earned = earnedRange(range, today);
   const later = notYetEarnedRange(range, today);
