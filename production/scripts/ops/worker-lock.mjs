@@ -58,7 +58,7 @@ import path from "node:path";
 import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL_STEP } from "./worker-tsc-cache.mjs";
 import { execSync, execFileSync, spawnSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, PUSH_GUARD_TEST_TIMEOUT_MS, failedSuites, slowestSuites } from "./push-guard-suites.mjs";
+import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, PUSH_GUARD_TEST_TIMEOUT_MS, PUSH_GUARD_RUN_TIMEOUT_MS, failedSuites, slowestSuites, testsOverCiTimeout } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderGate } from "./worker-lock-guards.mjs";
 import { runRelatedSql } from "./worker-lock-sql.mjs";
 import { maskOwnMigrations, autoRenameLateMigrations, realAutoRenameDeps, checkMigrationClash } from "./worker-lock-migts.mjs";
@@ -438,11 +438,11 @@ export function runGuardSuites(card) {
     try {
       execFileSync(process.execPath, [path.join(root, "node_modules", "vitest", "vitest.mjs"), "run", "--reporter=json", `--outputFile=${out}`,
         `--testTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`, `--hookTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`, ...files], // R-2630: laptop load is not a red guard
-        { cwd: root, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
+        { cwd: root, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024, timeout: PUSH_GUARD_RUN_TIMEOUT_MS }); // a hang never holds the heavy turn for ever
     } catch (e) { crashed = String(e.stderr ?? e.message ?? "").slice(-1500); }
     const ms = Date.now() - t0;
-    let failed = [], slow = [];
-    try { const json = JSON.parse(fs.readFileSync(out, "utf8")); failed = failedSuites(json, root); slow = slowestSuites(json, root, 5); } catch {}
+    let failed = [], slow = [], overCi = [];
+    try { const json = JSON.parse(fs.readFileSync(out, "utf8")); failed = failedSuites(json, root); slow = slowestSuites(json, root, 5); overCi = testsOverCiTimeout(json, root); } catch {}
     fs.rmSync(out, { force: true });
     if (crashed && !failed.length) failed = [`(vitest fail, koi file naam nahi mila)\n${crashed}`];
     console.log(`${failed.length ? "✗" : "✓"} guard tests: ${files.length} files, ${(ms / 1000).toFixed(0)} s`);
@@ -450,6 +450,9 @@ export function runGuardSuites(card) {
       console.log(`(guard tests ${Math.round(ms / 1000)} s le gaye — ${PUSH_GUARD_BUDGET_MS / 1000} s se zyada; manager ko batao, list chhoti karni hai)`);
       if (slow.length) console.log(`  sabse dheemi (test time; fork/imports alag — laptop bhara ho to har file 3-8x dheemi, R-2630): ${slow.map((s) => `${s.file} ${(s.ms / 1000).toFixed(1)} s`).join(", ")}`);
     }
+    /* R-2630: the push allows 30 s per test, CI vitest's 5 s — name what crossed 5 s here, so a test that
+       is slow even on a quiet machine is seen before CI turns red on it. */
+    if (overCi.length) console.log(`  (CI ki 5 s test-seema se upar, yahan load ki wajah se ho sakta hai — khaali laptop par bhi ho to test tez karo): ${overCi.slice(0, 5).map((t) => `${t.file} › ${t.test} ${(t.ms / 1000).toFixed(1)} s`).join("; ")}`);
     const lv = lintRatchetVerdict(await lint);
     console.log(lv.message);
     if (!lv.ok) failed.push(LINT_RATCHET_FAILED);
