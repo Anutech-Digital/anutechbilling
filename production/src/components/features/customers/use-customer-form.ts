@@ -148,8 +148,11 @@ function treatmentFacts(country: string | null | undefined, gstin: string | null
 }
 
 /** R-2537: said on both views when an edited customer has no country stored. */
-export const REGION_MISSING_NOTE =
-  "No region saved for this customer. Pick the country if you know it — leaving it empty keeps the country as it is. An Overseas customer needs its country before it can be saved.";
+export function regionMissingNote(treatment: string | null | undefined): string {
+  return treatment === "overseas"
+    ? "No region saved for this customer, but it is Overseas — pick its country to save it (an empty country is read as India on invoices)."
+    : "No region saved for this customer — it is treated as India (GST applies). Pick the country if you know it; leaving it empty keeps it as it is.";
+}
 
 /** R-2360 / R-2363: what a NEW customer can start with (Find in Zoho: Zoho's contact). */
 export interface CustomerSeed {
@@ -217,7 +220,9 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     if (customer) {
       // Normalize an existing free-text/legacy state to the canonical dropdown
       // option (case-insensitive) so e.g. "california" shows as "California".
-      const stateList = getStatesForCountry(normalizeCountry(customer.country));
+      /* R-2537: a customer saved with no country opens with an EMPTY region, not a guessed India. */
+      const savedCountry = normalizeCountry(customer.country);
+      const stateList = getStatesForCountry(savedCountry);
       const normalizedState =
         stateList?.find((s) => s.toLowerCase() === (customer.state ?? "").toLowerCase())
         ?? customer.state ?? "";
@@ -233,8 +238,6 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
       }
       const suggested = suggestGstTreatment({ country: customer.country, gstin: customer.gstin, customerType: customer.customer_type });
       treatmentManual.current = !!customer.gst_treatment && customer.gst_treatment !== suggested;
-      /* R-2537: a customer saved with no country opens with an EMPTY region, not a guessed India. */
-      const savedCountry = normalizeCountry(customer.country);
       loadedFacts.current = treatmentFacts(savedCountry, customer.gstin, customer.customer_type ?? "business");
       reset({
         gst_treatment: customer.gst_treatment ?? suggested,
@@ -248,7 +251,7 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
         /* R-2363: an Indian customer saved with no state at all (no code, no valid GSTIN) opens as
            "Not known yet" — what the record says — so editing its email never dead-ends on the
            state; the invoice still waits for a real state. */
-        state:         !isExportSupply(normalizeCountry(customer.country) || "India")
+        state:         !isExportSupply(savedCountry)
           && !normalizedState.trim() && !(customer.state_code ?? "").trim() && !stateCodeFromGstin(customer.gstin)
           ? STATE_NOT_KNOWN : normalizedState,
         state_code:    customer.state_code ?? "",
@@ -320,11 +323,14 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
        clear treatmentManual from stale defaults (then a saved SEZ pick lost to the next GSTIN edit). */
     const live = form.getValues();
     if (treatmentFacts(live.country, live.gstin, live.customer_type) !== currentFacts || live.gst_treatment !== watchedTreatment) return;
-    /* R-2537: facts as saved → the saved treatment (or this edit's hand pick) stays; changing them
-       back also undoes an auto-change. A saved treatment that contradicts its facts is NOT fixed
-       here — the save refuses it with the reason (gstTreatmentProblem), never a silent change. */
-    if (loadedFacts.current !== null && loadedFacts.current === currentFacts) {
-      if (!pickedThisEdit.current && savedTreatment && watchedTreatment !== savedTreatment) {
+    /* R-2537: facts as saved and nothing picked by hand in this edit → back to exactly the loaded
+       state (the saved treatment, and its "picked" flag as at load) — changing the facts back also
+       undoes an auto-change. A saved treatment that contradicts its facts is NOT fixed here — the
+       save refuses it with the reason (gstTreatmentProblem), never a silent change. A hand pick in
+       this edit goes through the normal rule below (kept, unless the border was crossed). */
+    if (loadedFacts.current !== null && loadedFacts.current === currentFacts && !pickedThisEdit.current && savedTreatment) {
+      treatmentManual.current = savedTreatment !== suggestedTreatment;
+      if (watchedTreatment !== savedTreatment) {
         setValue("gst_treatment", savedTreatment, { shouldDirty: true, shouldValidate: !!formState.isSubmitted });
       }
       return;
@@ -551,8 +557,8 @@ export function useCustomerForm({ customer, onSaved, open = true }: UseCustomerF
     gstTreatmentMeaning: gstTreatmentOption(watchedTreatment ?? suggestedTreatment)?.meaning ?? "",
     /* R-2537: the select says when Save would change the saved treatment. */
     gstTreatmentSaved: savedTreatment,
-    /* R-2537: an edit of a customer with no country stored → REGION_MISSING_NOTE instead of "India". */
-    regionMissingNote: isEdit && !(watchedCountry ?? "").trim() ? REGION_MISSING_NOTE : null,
+    /* R-2537: an edit of a customer with no country stored → say so instead of showing "India". */
+    regionMissingNote: isEdit && !(watchedCountry ?? "").trim() ? regionMissingNote(watchedTreatment) : null,
     onTreatmentChange,
     panLocked: !!panFromForm,
     onSubmit,

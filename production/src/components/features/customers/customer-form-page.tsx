@@ -304,7 +304,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
         {/* ── Country-first + live tax-treatment banner (better-than-Zoho) ── */}
         <div className="rounded-xl border border-hairline bg-paper-2/40 p-4 md:p-5 mb-5">
           <div className="grid grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)] gap-1.5 md:gap-5 md:items-center">
-            <Label htmlFor="country" required>Customer region</Label>
+            <Label htmlFor="country" required={!regionMissingNote}>Customer region</Label>
             <div className="max-w-xl">
               <CountryCombobox id="country" value={country} onChange={onCountryPick} />
             </div>
