@@ -21,9 +21,10 @@ import { E2E_TENANT_EMAIL } from "../fixtures/e2e-roles.mjs";
 
 const PROD = path.resolve(__dirname, "..", "..");
 const ACCT = "c1957000-0000-4000-8000-000000000a01"; // SCN_ACCOUNT_ID (scripts/dev/scenarios/index.mjs)
-const NAME = "SCN Filed Month Traders";
-const TXN = { paysZoho: "c2621000-0000-4000-8000-000000000011", sep: "c2621000-0000-4000-8000-000000000012", oct: "c2621000-0000-4000-8000-000000000013" };
-const LINE = { paysZoho: "ZB-SCN-GF-1", sep: "TRADERS-SEPT", oct: "TRADERS-OCT" };
+const NAME = "SCN Filed Quote Buyer";
+const TXN = { sep: "c2627000-0000-4000-8000-000000000011", oct: "c2627000-0000-4000-8000-000000000012" };
+const LINE = { sep: "FILED QUOTE BUYER-SEPT", oct: "FILED QUOTE BUYER-OCT" };
+const QUOTE = "Q-SCN-GFQ-1";
 
 function container(): string {
   const ps = spawnSync("docker", ["ps", "--format", "{{.Names}}"], { encoding: "utf8" });
