@@ -95,6 +95,23 @@ export interface BulkMatchRow {
   contact: ZohoContactInfo | null;
   facts?: CustomerFacts | null;
   booksStart?: string | null;
+  /** R-2621: which of this row's days (bank date, Zoho invoice dates) are GST-filed — SQL
+   *  gst_filed_days (setting "GST returns filed up to", books lock, GSTR-1 marked filed). Absent = not read. */
+  gstFiled?: string[] | null;
+  /** R-2621: the row's Zoho invoices that are already in the app (imported FY sales, by Zoho number). */
+  zohoSales?: ZohoAppSale[];
+}
+
+/** R-2621: an app invoice carrying a Zoho invoice's number (an imported FY sale). */
+export interface ZohoAppSale {
+  /** Zoho's invoice number (invoices.external_number). */
+  number: string;
+  invoiceId: string;
+  customerId: string | null;
+  date: string | null;
+  /** Whole rupees still owed. */
+  due: number;
+  taxable: number;
 }
 
 /** R-2419 (e): one open quote / unpaid invoice of the customer (bank_credit_open_items). */
@@ -527,6 +544,16 @@ export interface PlanOptions {
   requireFacts?: boolean;
   /** (b) line index → the newest line of the same customer + domain + product in this run. */
   chargeOnNew?: ReadonlyMap<number, { label: string; date: string }>;
+  /** R-2621: GST-filed days among the row's dates (null/undefined = not read; the server still refuses). */
+  gstFiled?: ReadonlySet<string> | null;
+  /** R-2621: the row's Zoho invoices already in the app. */
+  zohoSales?: readonly ZohoAppSale[];
+}
+
+/** R-2621: "Dec 2025" for a YYYY-MM-DD day. */
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function monthLabel(iso: string): string {
+  return `${MONTHS[Number(iso.slice(5, 7)) - 1]} ${iso.slice(0, 4)}`;
 }
 
 // ── The plan for one line ────────────────────────────────────────────────────────────────
@@ -942,6 +969,53 @@ export function planRow(
     }
   }
 
+  /* R-2621 (a): a Zoho invoice already in the app (an imported FY sale, by its Zoho number) is PAID —
+     never sold a second time, in any month. */
+  if (kind === "new_sale" && !noBook && match.invoices.length > 0) {
+    const inApp = match.invoices.map((i) => ({ inv: i, app: (opts.zohoSales ?? []).find((s) => normNo(s.number) === normNo(i.number)) ?? null }))
+      .filter((x): x is { inv: (typeof match.invoices)[number]; app: ZohoAppSale } => !!x.app);
+    if (inApp.length > 0) {
+      const { inv, app } = inApp[0];
+      const where = `Zoho's invoice ${inv.number} is in the app as ${app.invoiceId}`;
+      if (match.invoices.length > 1 || match.moreInvoices.length > 0) {
+        pathProblems.push(`The Zoho payment settles several invoices (${invoiceNumbers.join(", ")}) and ${inApp.map((x) => x.inv.number).join(", ")} ${inApp.length > 1 ? "are" : "is"} already in the app — record it in Record payment across those invoices, then match the line by hand.`);
+        noBook = true;
+      } else if (!isExisting || (app.customerId !== null && app.customerId !== customer.id)) {
+        pathProblems.push(`${where}, but it is in the app under another customer than ${customer.name} — check the customer, then reconcile this line by hand.`);
+        noBook = true;
+      } else if (app.due <= 0) {
+        pathProblems.push(`${where} and ${app.invoiceId} is already paid in the app — match this line to its receipt by hand.`);
+        noBook = true;
+      } else if (money > app.due + MATCH_SLACK) {
+        pathProblems.push(`${where}, which has only ${rupees(app.due)} due, but the bank line${tds ? " + TDS" : ""} is ${rupees(money)}. Reconcile this line by hand.`);
+        noBook = true;
+      } else {
+        payItem({ kind: "opening", quoteId: null, invoiceId: app.invoiceId, docDate: app.date, due: app.due, taxable: app.taxable, makesSubscription: false, approvalBlock: null });
+        summary = `Pays Zoho's invoice ${inv.number} (in the app as ${app.invoiceId}, ${rupees(app.due)} due) — no new sale`;
+        if (money < app.due - MATCH_SLACK) notes.push(`Part payment: ${rupees(app.due - money)} stays due on ${app.invoiceId}.`);
+      }
+    }
+  }
+
+  /* R-2621 (b): a NEW sale is never booked on a GST-filed day (the bank line's, or its Zoho invoice's) —
+     the sale is already in a filed return (G-FY2526 D2 + D7). Import Zoho's invoice, then the line pays it. */
+  if (kind === "new_sale" && !noBook && opts.gstFiled) {
+    const filed = opts.gstFiled;
+    const nos = invoiceNumbers.join(", ");
+    const next = nos
+      ? ` Import Zoho's invoice${invoiceNumbers.length > 1 ? "s" : ""} ${nos} first (Invoices → FY sales from Zoho), then run this again — the line then pays ${invoiceNumbers.length > 1 ? "them" : "it"}.`
+      : " Reconcile this line by hand.";
+    const invFiled = match.invoices.find((i) => !!i.date && filed.has(i.date.slice(0, 10)));
+    if (filed.has(line.txnDate)) {
+      pathProblems.push(`GST for ${monthLabel(line.txnDate)} is already filed — a new sale on ${fmtDay(line.txnDate)} would change a filed return${nos ? ` and count ${nos} twice` : ""}.${next}`);
+      noBook = true;
+    } else if (invFiled) {
+      const d = invFiled.date!.slice(0, 10);
+      pathProblems.push(`Zoho's invoice ${invFiled.number} is dated ${fmtDay(d)} — GST for ${monthLabel(d)} is already filed, so it is in a filed return; a new sale on ${fmtDay(line.txnDate)} would count it twice.${next}`);
+      noBook = true;
+    }
+  }
+
   /* R-2494: an invoice inside the app's books but of an EARLIER financial year than the bank line
      (books from 1 Apr 2025, invoice Feb 2026, money May 2026) is never a new sale on the bank date —
      its revenue and GST belong to its own year. It is paid against that invoice in the app. */
@@ -1022,7 +1096,10 @@ export function planFromResult(
  */
 export function planAll(rows: readonly BulkMatchRow[], ctx: PlanContext): PlanRow[] {
   const opt = (r: BulkMatchRow, chargeOnNew?: ReadonlyMap<number, { label: string; date: string }>): PlanOptions =>
-    ({ facts: r.facts, booksStart: r.booksStart ?? null, requireFacts: true, chargeOnNew });
+    ({
+      facts: r.facts, booksStart: r.booksStart ?? null, requireFacts: true, chargeOnNew,
+      gstFiled: r.gstFiled ? new Set(r.gstFiled) : null, zohoSales: r.zohoSales ?? [], // R-2621
+    });
   const plans = rows.map((r) => planFromResult(r.line, r.result, r.contact, ctx, opt(r)));
 
   type Cand = { row: number; idx: number; when: string; txn: string; label: string };
