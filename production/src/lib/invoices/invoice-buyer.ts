@@ -45,18 +45,21 @@ export interface InvoiceBuyer {
   country: string | null;
 }
 
-/** True when the invoice carries its own buyer facts (frozenParty's test + the R-2536 stamp). */
+/**
+ * True when the invoice carries its own buyer facts — EXACTLY frozenParty's test (GSTR-1) and
+ * TaxInvoiceDialog's, so the print, the IRN notice and the return never disagree on which rows
+ * are "as issued". (A Zoho as-filed sale always has seller_state_code: the trigger fills it.)
+ */
 export function hasBuyerSnapshot(inv: BuyerSnapshot | null | undefined): boolean {
   if (!inv) return false;
-  return inv.party_from_source === true
-    || inv.seller_state_code != null || inv.pos_state_code != null || inv.billing_address != null;
+  return inv.seller_state_code != null || inv.pos_state_code != null || inv.billing_address != null;
 }
 
 const liveAddress = (c: LiveBuyer | null | undefined) =>
   [c?.address, c?.city].filter(Boolean).join(", ") || null;
 
 export function invoiceBuyer(inv: BuyerSnapshot | null | undefined, live: LiveBuyer | null | undefined): InvoiceBuyer {
-  if (!hasBuyerSnapshot(inv) || !inv) {
+  if (!inv || !hasBuyerSnapshot(inv)) {
     return {
       gstin: live?.gstin ?? null,
       address: liveAddress(live),
@@ -66,7 +69,8 @@ export function invoiceBuyer(inv: BuyerSnapshot | null | undefined, live: LiveBu
     };
   }
   const asFiled = inv.party_from_source === true;
-  const pos = inv.pos_state_code?.trim() || null;
+  /* Raw, like placeOfSupplyLabel and the tax dialog read it — one reading of the field. */
+  const pos = inv.pos_state_code || null;
   /* State: the place of supply frozen at issue. A snapshot without one (backfill left it unknown) keeps
      today's state — except an as-filed Zoho sale, which may belong to another branch. */
   const state = pos === "96" ? null
@@ -77,7 +81,9 @@ export function invoiceBuyer(inv: BuyerSnapshot | null | undefined, live: LiveBu
     address: inv.billing_address ?? (asFiled ? null : liveAddress(live)),
     state,
     stateCode: pos ?? (asFiled ? null : live?.state_code ?? null),
-    country: inv.customer_country ?? live?.country ?? null,
+    /* An as-filed sale borrows today's country only for an export (96) — never turns a domestic
+       branch sale into an export because the customer record moved abroad later. */
+    country: inv.customer_country ?? (asFiled && pos !== "96" ? null : live?.country ?? null),
   };
 }
 

@@ -79,6 +79,18 @@ describe("invoiceBuyer (R-2540)", () => {
     expect(b.country).toBe("United States");
   });
 
+  it("as-filed branch sale with no country of its own is never an export because the customer moved abroad", () => {
+    const b = invoiceBuyer({ party_from_source: true, customer_gstin: "06AAHCB0569M1ZB", pos_state_code: "06", seller_state_code: "07" },
+      { ...delhiCustomer, country: "United States" });
+    expect(b.country).toBeNull();
+  });
+
+  it("same 'has a snapshot' test as frozenParty (GSTR-1): no snapshot columns → the live customer", async () => {
+    const { frozenParty } = await import("@/lib/gst/place-of-supply");
+    const row = { party_from_source: true, customer_gstin: null, pos_state_code: null, seller_state_code: null, billing_address: null };
+    expect(invoiceBuyer(row, delhiCustomer).gstin).toBe(frozenParty(row, { gstin: delhiCustomer.gstin!, stateCode: "07", state: "Delhi", country: "India" }).gstin);
+  });
+
   it("snapshot with no place of supply (backfill left it unknown) keeps today's state, as the tax dialog does", () => {
     const b = invoiceBuyer({ customer_gstin: "07AAHCB0569M1ZD", pos_state_code: null, seller_state_code: "07", billing_address: "a" }, delhiCustomer);
     expect(b.state).toBe("Delhi");
