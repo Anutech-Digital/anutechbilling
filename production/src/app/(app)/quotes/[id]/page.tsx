@@ -131,6 +131,7 @@ import { useLogLeadActivity } from "@/lib/queries/lead-activities";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canRecordMoney } from "@/lib/auth/roles";
 import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
+import { phoneE164ForCountry } from "@/lib/phone";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { quoteDocumentKind, quoteIsPaid, quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import {
@@ -191,12 +192,13 @@ export default function QuoteDetailPage() {
   const updateLeadStage = useUpdateLeadStage();
   const logActivity     = useLogLeadActivity();
   const recipientPhone = React.useMemo(() => {
-    const raw = customer?.contact_phone || lead?.contact_phone || "";
-    const d = raw.replace(/\D/g, "");
-    if (!d) return "";
-    // WhatsApp needs a country code — assume India (+91) for a bare 10-digit number.
-    return d.startsWith("91") ? `+${d}` : d.length === 10 ? `+91${d}` : `+${d}`;
-  }, [customer?.contact_phone, lead?.contact_phone]);
+    // R-2639: the code comes from the same record's country (a US customer's bare 10-digit
+    // number is +1, not +91); a number already written with its code keeps it.
+    const fromCustomer = !!customer?.contact_phone;
+    const raw = fromCustomer ? customer?.contact_phone : lead?.contact_phone;
+    const country = fromCustomer ? customer?.country : lead?.country;
+    return phoneE164ForCountry(raw, country);
+  }, [customer?.contact_phone, customer?.country, lead?.contact_phone, lead?.country]);
   /* R-445 (1): who the quote is addressed to — customer first, else the lead. Same values in
      the preview, the downloaded PDF and the WhatsApp attachment preview. */
   const contact = quoteContact(customer, lead);
