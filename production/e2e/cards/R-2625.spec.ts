@@ -29,7 +29,8 @@ test.describe("R-2625 Advance billing + no revenue for months not yet happened",
     await page.goto("/accounting/balance-sheet");
     await expect(page).not.toHaveURL(/\/login/);
     await expect(page.getByRole("heading", { name: "Balance Sheet" })).toBeVisible({ timeout: 60_000 });
-    await expect(page.getByText(/^Balanced: /)).toBeVisible({ timeout: 60_000 });
+    /* the statutory sheet's own balance line — the Management card below has a "Balanced:" line too (its <p>, not a <span>) */
+    await expect(page.locator("span", { hasText: /^Balanced: Assets/ })).toBeVisible({ timeout: 60_000 });
     const card = page.getByTestId("advance-billing-card");
     await expect(card).toBeVisible({ timeout: 60_000 });
     await expect(card).toContainText("Advance billing (unearned revenue)");
