@@ -14,7 +14,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { CARD_TESTS_ON, onlyInCardTests, openAppPage, pageAs, pickPayingCustomer } from "./card-steps";
+import { CARD_TESTS_ON, onlyInCardTests, openAppPage, pageAs } from "./card-steps";
 // @ts-expect-error — plain .mjs helpers (no types)
 import { scenarioTargetReason } from "../../scripts/dev/local-guard.mjs";
 import { E2E_TENANT_EMAIL } from "../fixtures/e2e-roles.mjs";
@@ -71,17 +71,20 @@ async function openLine(page: Page, text: string, txn: string): Promise<Locator>
   await openAppPage(page, `/accounting/banking/${ACCT}?txn=${txn}`); // R-1895: scrolled to the line
   const row = page.locator("main table tbody tr").filter({ hasText: text }).first();
   await expect(row).toBeVisible({ timeout: 60_000 });
-  await row.getByRole("button", { name: /^Reconcile$/ }).click();
+  /* The row paints before its action cell under load (12:44 run: row there, Reconcile not yet) — wait for it. */
+  const reconcile = row.getByRole("button", { name: /^Reconcile$/ });
+  await expect(reconcile).toBeVisible({ timeout: 90_000 });
+  await reconcile.click();
   const dlg = page.getByRole("dialog", { name: "Reconcile transaction" });
   await expect(dlg).toBeVisible({ timeout: 60_000 });
-  await pickPayingCustomer(dlg, NAME);
   return dlg;
 }
 
-async function payQuote(page: Page, dlg: Locator): Promise<void> {
-  await dlg.getByRole("button", { name: /^An open quote \/ invoice/ }).click();
-  await dlg.getByRole("radiogroup", { name: "Open quotes and invoices" }).getByRole("radio").filter({ hasText: QUOTE }).first().click();
-  await page.getByRole("button", { name: `Record ₹5,900 on ${QUOTE} & reconcile` }).click();
+/** The owner's one-click path: the dialog suggests the customer's only open item (₹5,900 = due on the quote),
+ *  the customer guessed from the bank line — so there is no customer picker to fill (12:47 run). */
+async function payQuote(_page: Page, dlg: Locator): Promise<void> {
+  await expect(dlg.getByText(`${NAME} · One-time sale ${QUOTE}`)).toBeVisible({ timeout: 90_000 });
+  await dlg.getByRole("button", { name: "Looks right — reconcile" }).click();
 }
 
 function invoicesOfQuote(): string[] {
@@ -111,7 +114,11 @@ test.describe("R-2627 — no new tax invoice in a GST-filed month when a bank li
       await openAppPage(page, "/accounting");
       const card = page.getByTestId("gst-filed-through-card");
       await expect(card).toBeVisible({ timeout: 60_000 });
+      /* The stored month loads first — typing before it lands is overwritten by it and Save stays disabled
+         (12:34 run: Save not clickable; same race R-2621 fixed in 9c0e55603). beforeAll cleared the setting. */
+      await expect(page.getByTestId("gst-filed-through-text")).toContainText("Not set", { timeout: 60_000 });
       await card.getByLabel("GST returns filed up to (month)").fill("2026-09");
+      await expect(card.getByRole("button", { name: "Save" })).toBeEnabled({ timeout: 30_000 });
       await card.getByRole("button", { name: "Save" }).click();
       await page.getByRole("button", { name: "Save" }).last().click(); // the confirm dialog
       await expect(page.getByTestId("gst-filed-through-text")).toContainText("GST returns are filed up to September 2026", { timeout: 60_000 });
@@ -120,7 +127,7 @@ test.describe("R-2627 — no new tax invoice in a GST-filed month when a bank li
     }
   });
 
-  test("Step 2: Banking → 18 Sep ₹5,900 line → An open quote / invoice → Q-SCN-GFQ-1 → refused, no invoice, line unmatched", async ({ browser, baseURL }) => {
+  test("Step 2: Banking → 18 Sep ₹5,900 line → Reconcile → suggestion Q-SCN-GFQ-1 → Looks right — reconcile → refused, no invoice, line unmatched", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     try {
       const dlg = await openLine(page, LINE.sep, TXN.sep);
@@ -133,16 +140,15 @@ test.describe("R-2627 — no new tax invoice in a GST-filed month when a bank li
     }
   });
 
-  test("Step 3: 6 Oct ₹5,900 line (open month) → same quote → paid, invoice dated 6 Oct", async ({ browser, baseURL }) => {
+  test("Step 3: 6 Oct ₹5,900 line (open month) → suggestion Q-SCN-GFQ-1 → Looks right — reconcile → paid, invoice dated 6 Oct", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     try {
       const dlg = await openLine(page, LINE.oct, TXN.oct);
       await payQuote(page, dlg);
-      await expect(dlg.getByRole("region", { name: "Done — this bank line is reconciled" })).toBeVisible({ timeout: 240_000 });
-      expect(matched(TXN.oct)).not.toBe("");
-      const inv = invoicesOfQuote();
-      expect(inv.length).toBe(1);
-      expect(inv[0].endsWith("|2026-10-06")).toBe(true);
+      /* "Looks right — reconcile" books and closes the dialog (no "Done" panel) — wait on the books themselves. */
+      await expect.poll(() => matched(TXN.oct), { timeout: 240_000, message: "the 6 Oct line is reconciled" }).toBe("payment");
+      await expect.poll(() => invoicesOfQuote().join(","), { timeout: 30_000, message: "one invoice on the quote, dated 6 Oct 2026" })
+        .toMatch(/^[^,|]+\|2026-10-06$/);
     } finally {
       await page.context().close();
     }
