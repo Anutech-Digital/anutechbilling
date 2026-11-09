@@ -144,8 +144,10 @@ export function invoiceWhatsAppTarget(
   invoice: Partial<Invoice>,
   phone: string | null | undefined,
   sender?: WhatsAppSender | null,
+  /** R-2639: the customer's country now — used when the invoice has no country snapshot (older rows). */
+  customerCountry?: string | null,
 ): InvoiceWhatsAppTarget {
-  const digits = toWhatsAppDigits(phone, invoice.customer_country);
+  const digits = toWhatsAppDigits(phone, invoice.customer_country ?? customerCountry);
   if (!digits) return { ok: false, reason: "no_phone" };
   // "+": the digits already carry the code — never read them as a national number again.
   return { ok: true, url: getInvoiceWhatsAppUrl(invoice, `+${digits}`, sender) };
@@ -184,8 +186,9 @@ export function getRenewalWhatsAppUrl(
   expiryDate: string,
   phone?: string | null,
   sender?: WhatsAppSender | null,
+  country?: string | null,
 ): string {
-  const targetPhone = formatWhatsAppPhone(phone || "");
+  const targetPhone = formatWhatsAppPhone(phone || "", country);
 
   const message = `Namaste 👋,
 
