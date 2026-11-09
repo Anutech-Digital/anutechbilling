@@ -63,8 +63,8 @@ export interface PurchaseFacts extends ScanFacts {
   lines: PurchaseLineFacts[];
   /** Expenses: the account it was paid from in Zoho. */
   paidThrough: string;
-  /** R-2629: Zoho's reference_number (often the month the bill is for, e.g. "Google Portal Bill (Aug 2026)"); "" when none, at most 200 characters. The import keeps it in the notes. */
-  reference: string;
+  /** R-2629: Zoho's reference_number (often the month the bill is for, e.g. "Google Portal Bill (Aug 2026)"); "" when none, at most 200 characters. The import keeps it in the notes. Missing in a scan read before R-2629. */
+  reference?: string;
   problems: string[];
 }
 
