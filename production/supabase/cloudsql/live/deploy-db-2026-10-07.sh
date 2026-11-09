@@ -494,6 +494,7 @@ MIGS=(
   "r2627gstfiledquoteinvoice|20261109112645_r2627_gst_filed_quote_invoice.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_pay_item(uuid,integer,text,text,text,integer,numeric,text,boolean,date,date)') and prosrc like '%R-2627%')"
   "r2629zohobil|20261109113644_r2629_zoho_bill_reference.sql|resellersos_migration|to_regprocedure('public._r2629_ref_note(jsonb)') is not null and to_regprocedure('public.zoho_bill_reference_report(uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_zoho_fy_purchases(text,text,jsonb,boolean)') and prosrc like '%R-2629%')"
   "r2624revenuematched|20261109120954_r2624_pnl_revenue_matched.sql|resellersos_migration|to_regprocedure('public.report_pnl_revenue_matched_months(date,date)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl_revenue_matched_rows(date,date,text[])') and prosrc like '%R-2624%')"
+  "r2173correctinvoicedate|20261109132649_r2173_correct_invoice_date.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_invoice_date(text,date,text)') and prosrc like '%R-2173%')"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER

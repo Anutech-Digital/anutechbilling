@@ -466,4 +466,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2627gstfiledquoteinvoice", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_pay_item(uuid,integer,text,text,text,integer,numeric,text,boolean,date,date)') and prosrc like '%R-2627%')" },
   { key: "r2629zohobil", peek: "to_regprocedure('public._r2629_ref_note(jsonb)') is not null and to_regprocedure('public.zoho_bill_reference_report(uuid)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_zoho_fy_purchases(text,text,jsonb,boolean)') and prosrc like '%R-2629%')" },
   { key: "r2624revenuematched", peek: "to_regprocedure('public.report_pnl_revenue_matched_months(date,date)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.report_pnl_revenue_matched_rows(date,date,text[])') and prosrc like '%R-2624%')" },
+  { key: "r2173correctinvoicedate", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_invoice_date(text,date,text)') and prosrc like '%R-2173%')" },
 ];
