@@ -252,8 +252,11 @@ export async function settleStaleRenewal(
  * plan changed since the quote was priced or it is no longer active (R-2589), or the quote lost its
  * link to the subscription, names another one, or its line cannot be right (R-2227). Not R-2073 (plan dropped from the
  * catalogue): the owner can add it back, so a Razorpay retry can still book it.
+ * R-2617: "R-2617: plan change refused — a seat cut … is scheduled" (trigger
+ * subscriptions_r2617_plan_change_vs_seat_cut) is the same class: the owner removes the cut or makes a
+ * new quote; the money is kept as advance / refunded, never booked wrongly.
  */
-export const PLAN_CHANGE_REFUSED_RE = /^R-(?:2227|2589): plan[ /]/i;
+export const PLAN_CHANGE_REFUSED_RE = /^R-(?:2227|2589|2617): plan[ /]/i;
 
 /**
  * R-2596: a Razorpay payment on a plan-change quote that record_payment refuses. Booking it on that

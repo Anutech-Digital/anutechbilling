@@ -27,7 +27,7 @@ const today = "2026-10-01"; // 182 of 365 days left
 
 describe("R-2227 buildPlanChange — yearly-paid", () => {
   it("charges the new plan for the days left less the unused old plan (paid in full)", () => {
-    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18, money: paid });
+    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18, seatCuts: [], money: paid });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     const c = r.plan.calc;
@@ -55,18 +55,18 @@ describe("R-2227 buildPlanChange — yearly-paid", () => {
   });
 
   it("an unpaid invoice: refused — that share needs a credit note on the old invoice, not a line here", () => {
-    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18,
+    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18, seatCuts: [],
       money: { billed: true, openDuePaise: 3_823_200, receivedPaise: 0, alreadyCreditedPaise: 0, invoiced: true } });
     expect(!r.ok && r.reason).toMatch(/still has ₹38,232.00 unpaid\. Record that payment first/);
   });
 
   it("refuses a support plan as the target (server side, not only the dialog list)", () => {
-    const r = buildPlanChange({ sub: { ...yearly, vendor: null }, target: { ...standard, id: "SUP-PRO-Y" }, newSeats: 10, today, taxRatePct: 18, money: paid });
+    const r = buildPlanChange({ sub: { ...yearly, vendor: null }, target: { ...standard, id: "SUP-PRO-Y" }, newSeats: 10, today, taxRatePct: 18, seatCuts: [], money: paid });
     expect(!r.ok && r.reason).toMatch(/support plan/);
   });
 
   it("R-2255: nothing open and nothing received → no credit (Zoho credited money never received)", () => {
-    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18,
+    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18, seatCuts: [],
       money: { billed: true, openDuePaise: 0, receivedPaise: 0, alreadyCreditedPaise: 0, invoiced: true } });
     expect(r.ok && r.plan.calc.credit).toBe(0);
     expect(r.ok && r.plan.calc.net).toBe(51700);
@@ -74,26 +74,26 @@ describe("R-2227 buildPlanChange — yearly-paid", () => {
   });
 
   it("partly received: credit only up to it (rounded down, ex-GST)", () => {
-    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18,
+    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18, seatCuts: [],
       money: { billed: true, openDuePaise: 0, receivedPaise: 1_180_000, alreadyCreditedPaise: 0, invoiced: true } });
     expect(r.ok && r.plan.calc.credit).toBe(10000); // ₹11,800 incl. GST = ₹10,000 ex-GST
   });
 
   it("billed outside this app (Zoho import / opening) counts as paid", () => {
-    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18,
+    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18, seatCuts: [],
       money: { billed: true, openDuePaise: 0, receivedPaise: 0, alreadyCreditedPaise: 0, invoiced: false, external: true } });
     expect(r.ok && r.plan.calc.credit).toBe(16160);
   });
 
   it("more seats with the change are charged at the new plan", () => {
-    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 12, today, taxRatePct: 18, money: paid });
+    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 12, today, taxRatePct: 18, seatCuts: [], money: paid });
     expect(r.ok && r.plan.calc.newCharge).toBe(5170 * 12);
     expect(r.ok && r.plan.line.plan_change.seats).toBe(12);
     expect(r.ok && r.plan.calc.newMrr).toBe(10368);
   });
 
   it("export (0% GST)", () => {
-    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 0,
+    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 0, seatCuts: [],
       money: { ...paid, receivedPaise: 3_240_000 } });
     expect(r.ok && r.plan.calc.total).toBe(35540);
   });
@@ -107,20 +107,20 @@ describe("R-2227 buildPlanChange — yearly-paid", () => {
     ["same plan", { sub: yearly, target: starter, newSeats: 10 }, /different plan/],
     ["no price", { sub: { ...yearly, mrr: 0 }, target: standard, newSeats: 10 }, /no price/],
   ])("refuses: %s", (_n, a, re) => {
-    const r = buildPlanChange({ ...(a as { sub: ChangePlanSub; target: CatalogProduct; newSeats: number }), today, taxRatePct: 18, money: paid });
+    const r = buildPlanChange({ ...(a as { sub: ChangePlanSub; target: CatalogProduct; newSeats: number }), today, taxRatePct: 18, seatCuts: [], money: paid });
     expect(r.ok).toBe(false);
     expect(!r.ok && r.reason).toMatch(re);
   });
 
   it("refuses when the part has no bill yet (would double-bill with the billing run)", () => {
-    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18, money: { ...paid, billed: false } });
+    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18, seatCuts: [], money: { ...paid, billed: false } });
     expect(!r.ok && r.reason).toMatch(/no bill yet/);
-    const r2 = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18, money: null });
+    const r2 = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today, taxRatePct: 18, seatCuts: [], money: null });
     expect(r2.ok).toBe(false);
   });
 
   it("refuses after the term ended", () => {
-    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today: "2027-04-05", taxRatePct: 18, money: paid });
+    const r = buildPlanChange({ sub: yearly, target: standard, newSeats: 10, today: "2027-04-05", taxRatePct: 18, seatCuts: [], money: paid });
     expect(!r.ok && r.reason).toMatch(/term has ended/);
   });
 });
@@ -128,7 +128,7 @@ describe("R-2227 buildPlanChange — yearly-paid", () => {
 describe("R-2227 + R-2226 — billed in parts: the current part at the part's own rate", () => {
   const monthly: ChangePlanSub = { ...yearly, billing_cycle: "monthly" };
   it("16 days of a 31-day October part = part rate × 16 ÷ 31", () => {
-    const r = buildPlanChange({ sub: monthly, target: standard, newSeats: 10, today: "2026-10-16", taxRatePct: 18,
+    const r = buildPlanChange({ sub: monthly, target: standard, newSeats: 10, today: "2026-10-16", taxRatePct: 18, seatCuts: [],
       money: { billed: true, openDuePaise: 0, receivedPaise: 318_600, alreadyCreditedPaise: 0, invoiced: true } });
     expect(r.ok).toBe(true);
     if (!r.ok) return;
