@@ -458,4 +458,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2590expiredplanchangerelease", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.release_expired_plan_change_quotes(uuid)') and prosrc like '%R-2590%')" },
   { key: "r2545correctdetailsonesave", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_subscription_details(uuid,text,text,text,date,date,date,integer,integer,text,integer,integer,integer,public.billing_cycle,date)') and prosrc like '%R-2545%')" },
   { key: "r2617planchangevsseatcut", peek: "exists(select 1 from pg_trigger where tgname = 'subscriptions_r2617_plan_change_vs_seat_cut')" },
+  { key: "r2156billservicemonth", peek: "to_regprocedure('public.report_pnl_cogs_matched(date,date)') is not null" },
 ];
