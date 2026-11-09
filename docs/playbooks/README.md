@@ -19,3 +19,4 @@ before go-live").
 | [ZOHO-BILLING.md](ZOHO-BILLING.md) | Comparing with Zoho Billing: its measured pro-rata/credit/GST rules, safe testing in a Zoho test org, 31 Oct process lessons |
 | [localhost-check.md](localhost-check.md) | Checking built cards in Chrome on localhost: `npm run localhost:ready`, `npm run card:check -- R-xxxx`, which test login / company, missing local data (R-2457) |
 | [cross-tenant-bank-links.md](cross-tenant-bank-links.md) | Read-only report on staging / live: bank lines linked to another company's record (R-2479, after R-2472) — exact commands for Pardeep's DB step |
+| [overseas-no-country.md](overseas-no-country.md) | Read-only report on staging / live: customers marked Overseas with no country (read as India on new invoices, G5) and what was issued to them (R-2620) — commands for Pardeep's DB step; the repair is his OK |
