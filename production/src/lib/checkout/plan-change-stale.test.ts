@@ -133,7 +133,7 @@ describe("R-2617 — scheduled end-of-term seat cut refuses the pay start", () =
   });
 
   it("startQuotePayment → 409 with its own message, no order", async () => {
-    const a = admin({ ...withCuts([cut]), renewal_quote_id: "Q-PC-1", tenant_id: "t-1" } as PlanChangeSubNow);
+    const a = admin({ ...withCuts([cut]), renewal_quote_id: "Q-PC-1", tenant_id: "t-1" });
     const r = await startQuotePayment(a.client, QUOTE, OPTS);
     expect(r.status).toBe(409);
     expect(r.body.planChangeStale).toBe("seat_cut_scheduled");
