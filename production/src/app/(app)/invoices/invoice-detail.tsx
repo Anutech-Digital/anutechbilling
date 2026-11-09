@@ -56,6 +56,7 @@ import { openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { invoiceLineItemsView } from "./invoice-line-items";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { invoiceEinvoiceNotice } from "@/lib/compliance/einvoice";
+import { invoiceBuyer, invoiceIrnGstin } from "@/lib/invoices/invoice-buyer";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { InvoiceLateCharges } from "@/components/features/late-charges/invoice-late-charges";
 import { OnlineFeeBillCard } from "@/components/features/payments/online-fee-bill-card";
@@ -123,8 +124,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   /* R-337: over ₹5 Cr turnover, a B2B invoice with no gst_irn gets a reminder. A warning
      only — the app does not generate IRNs yet (R-044). Unknown turnover shows nothing. */
   const { data: turnover } = useTurnoverBracket();
+  /* R-2540: the buyer as on the invoice (snapshot / Zoho sale as filed) — a B2C sale on a registered
+     customer is no "B2B without IRN", and the dialog + receipt print the invoice's own buyer. */
+  const buyer = invoiceBuyer(invoice, customer);
   const einvoiceNotice = invoiceEinvoiceNotice(turnover?.bracket ?? null, {
-    customerGstin: invoice.customer_gstin ?? customer?.gstin ?? null,
+    customerGstin: invoiceIrnGstin(invoice, customer?.gstin),
     gstIrn: invoice.gst_irn,
     status: invoice.status,
     invoiceDate: invoice.invoice_date,
@@ -537,11 +541,12 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           total={total}
           receivedPayments={receivedPayments}
           interState={interState}
-          customerGstin={customer?.gstin}
+          customerGstin={buyer.gstin}
           customerEmail={customer?.contact_email}
           customerPhone={customer?.contact_phone}
-          customerState={customer?.state}
-          customerCountry={customer?.country}
+          customerAddress={buyer.address}
+          customerState={buyer.state}
+          customerCountry={buyer.country}
           currency={quote?.currency}
           exchangeRate={quote?.exchange_rate}
           tenantName={supplier.name}
@@ -796,9 +801,9 @@ export function InvoicePaymentsAccordion({
           onOpenChange={(o) => { if (!o) setReceiptPayment(null); }}
           payment={receiptPayment}
           customerName={inv.customer_name}
-          customerGstin={customer?.gstin}
+          customerGstin={invoiceBuyer(inv, customer).gstin}
           customerEmail={customer?.contact_email}
-          customerAddress={customer?.address}
+          customerAddress={invoiceBuyer(inv, customer).address}
           tenantName={me.tenantName}
           tenantGstin={me.tenantGstin}
           tenantEmail={me.tenantEmail}

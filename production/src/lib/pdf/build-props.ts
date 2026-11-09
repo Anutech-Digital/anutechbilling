@@ -22,6 +22,7 @@ import { includedSupportLine } from "./quote-support-line";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 import { extensionTitle, isOneTimeQuote, quoteLinePeriodContext } from "@/lib/quotes/service-period";
+import { invoiceBuyer } from "@/lib/invoices/invoice-buyer";
 
 /**
  * R-045 slice 3: the currency + rate an INVOICE prints. An invoice issued since migration
@@ -171,6 +172,11 @@ export function buildInvoicePdfProps(args: {
     { customerGstin: customer?.gstin, sellerGstin: tenant.gstin, treatment: invoice.gst_treatment ?? customer?.gst_treatment },
   );
 
+  /* R-2540: the buyer AS ON THE INVOICE (R-043 snapshot; R-2536 Zoho sale as filed) — a NULL GSTIN
+     there is a B2C supply, never today's customer's GSTIN; a branch invoice keeps its own address.
+     Only a legacy row with no snapshot reads the live customer. Same rule as the invoice page. */
+  const buyer = invoiceBuyer(invoice, customer);
+
   return {
     invoice,
     /* A quote-less invoice carries its OWN lines (migration 20260817110000).
@@ -193,12 +199,12 @@ export function buildInvoicePdfProps(args: {
     tax:         a.tax,
     total,
     interState,
-    customerGstin:   customer?.gstin ?? null,
+    customerGstin:   buyer.gstin,
     customerEmail:   customer?.contact_email ?? null,
-    // Compose the billing address line + city (city is its own column since
-    // migration 0166; old customers with city inside `address` are unaffected).
-    customerAddress: [customer?.address, customer?.city].filter(Boolean).join(", ") || null,
-    customerState:   customer?.state ?? null,
+    // R-2540: the address frozen on the invoice; a legacy row composes the customer's
+    // address line + city (city is its own column since migration 0166).
+    customerAddress: buyer.address,
+    customerState:   buyer.state,
     /* R-175 (6 Oct 2026): Rule 46(n) — the state NAME and CODE for the place of supply. The
        in-app dialog printed "Haryana (06) · IGST" (R-043) but this builder never passed it, so
        every server PDF — the one the customer is emailed — fell back to "Inter-state (IGST)".
@@ -206,8 +212,8 @@ export function buildInvoicePdfProps(args: {
     placeOfSupply: placeOfSupplyLabel({
       posCode:    invoice.pos_state_code,
       interState,
-      isExport:   isExportSupply(customer?.country ?? null),
-      country:    customer?.country ?? null,
+      isExport:   isExportSupply(buyer.country),
+      country:    buyer.country,
     }),
     tenantName:    tenant.name,
     tenantGstin:   tenant.gstin,
@@ -219,7 +225,7 @@ export function buildInvoicePdfProps(args: {
     lutNumber:     tenant.lut_number ?? null,
     udyamNumber:   tenant.udyam_number ?? null,
     // Export (recipient outside India) → zero-rated display + foreign currency.
-    customerCountry: customer?.country ?? null,
+    customerCountry: buyer.country,
     // Foreign-currency display (books stay ₹). R-045: the rate frozen on the invoice at
     // issue (+ its source and date); older invoices fall back to the backing quote.
     ...invoiceFx(invoice, quote),

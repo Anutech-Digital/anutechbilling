@@ -273,3 +273,39 @@ describe("included free support line (R-367)", () => {
     expect(buildQuotePdfProps({ quote, customer: null, tenant }).includedSupport).toBeNull();
   });
 });
+
+/* R-2540: the server PDF (the copy the buyer is emailed) names the buyer AS ON THE INVOICE — a Zoho
+   B2C sale on a registered customer prints no GSTIN; a same-PAN branch invoice prints its own
+   address and state; a legacy invoice with no snapshot reads the customer as before. */
+describe("buyer as filed on the invoice (R-2540)", () => {
+  const delhi = {
+    id: "c1", name: "Abraf Traders", gstin: "07AAHCB0569M1ZD", address: "12 Nehru Place", city: "New Delhi",
+    state: "Delhi", state_code: "07", country: "India", contact_email: "a@b.in",
+  } as unknown as Customer;
+  const base = { id: "INV-9", amount: 1180, taxable_value: 1000, tax_amount: 180, tax_rate: 18, customer_name: "Abraf Traders", tenant_id: "t1", inter_state: false } as Invoice;
+
+  it("B2C Zoho sale on a registered customer: no buyer GSTIN", () => {
+    const invoice = { ...base, party_from_source: true, customer_gstin: null, pos_state_code: "07", seller_state_code: "07",
+      billing_address: "12 Nehru Place, New Delhi, Delhi 110019", customer_country: "India" } as unknown as Invoice;
+    const p = buildInvoicePdfProps({ invoice, quote: null, customer: delhi, tenant });
+    expect(p.customerGstin).toBeNull();
+    expect(p.customerAddress).toBe("12 Nehru Place, New Delhi, Delhi 110019");
+  });
+
+  it("same-PAN branch invoice: its own GSTIN, address and state — not the Delhi customer's", () => {
+    const invoice = { ...base, inter_state: true, party_from_source: true, customer_gstin: "06AAHCB0569M1ZB", pos_state_code: "06",
+      seller_state_code: "07", billing_address: "Plot 4, Sector 18, Gurugram, Haryana 122015", customer_country: "India" } as unknown as Invoice;
+    const p = buildInvoicePdfProps({ invoice, quote: null, customer: delhi, tenant });
+    expect(p.customerGstin).toBe("06AAHCB0569M1ZB");
+    expect(p.customerAddress).toBe("Plot 4, Sector 18, Gurugram, Haryana 122015");
+    expect(p.customerState).toBe("Haryana");
+    expect(p.placeOfSupply).toBe("Haryana (06) · IGST");
+  });
+
+  it("legacy invoice with no snapshot: the customer, as before", () => {
+    const p = buildInvoicePdfProps({ invoice: base, quote: null, customer: delhi, tenant });
+    expect(p.customerGstin).toBe("07AAHCB0569M1ZD");
+    expect(p.customerAddress).toBe("12 Nehru Place, New Delhi");
+    expect(p.customerState).toBe("Delhi");
+  });
+});
