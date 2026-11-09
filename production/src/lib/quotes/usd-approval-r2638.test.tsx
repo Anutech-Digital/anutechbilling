@@ -147,7 +147,7 @@ describe("R-2638: the builder keeps a USD line on the USD price list", () => {
     await act(async () => { fireEvent.change(commitSelect(c), { target: { value: "monthly" } }); });
     await act(async () => { fireEvent.change(commitSelect(c), { target: { value: "annual" } }); });
     expect(c.textContent ?? "").not.toContain("Quote discount");
-    expect(rateBox(c).value).toBe("4");   // shown per month ($48/yr), never the ₹ tier ($126.18)
+    expect(rateBox(c).value).toBe("48");   // $48/seat/year, never the ₹ annual tier ($126.18)
   });
 
   it("a real USD discount still shows: $2.80 typed on the $4 list after the switch → 30%", async () => {
