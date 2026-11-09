@@ -9,13 +9,13 @@ import * as React from "react";
 import type { UseFormRegisterReturn } from "react-hook-form";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { GST_TREATMENT_OPTIONS, type CustomerGstTreatment } from "@/lib/gst/customer-gst-treatment";
+import { GST_TREATMENT_OPTIONS, gstTreatmentOption, type CustomerGstTreatment } from "@/lib/gst/customer-gst-treatment";
 
 const selectBase =
   "w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber/40";
 
 export function GstTreatmentSelect({
-  id = "gst_treatment", value, onChange, auto, meaning, foreign, error,
+  id = "gst_treatment", value, onChange, auto, meaning, foreign, error, savedValue,
 }: {
   id?: string;
   value: CustomerGstTreatment;
@@ -26,8 +26,11 @@ export function GstTreatmentSelect({
   /** Outside India only Overseas applies; in India everything but Overseas. */
   foreign: boolean;
   error?: string;
+  /** R-2537: the treatment as saved on this customer (edit). When Save would change it, say so. */
+  savedValue?: CustomerGstTreatment | null;
 }) {
-  const describedBy = `${id}-meaning${error ? ` ${id}-error` : ""}`;
+  const changing = !!savedValue && savedValue !== value;
+  const describedBy = `${id}-meaning${changing ? ` ${id}-change` : ""}${error ? ` ${id}-error` : ""}`;
   return (
     <div>
       <select
@@ -48,6 +51,11 @@ export function GstTreatmentSelect({
         {meaning}
         {auto && <span className="text-ink-3"> Picked from the country, GSTIN and customer type — change it if it is different.</span>}
       </p>
+      {changing && (
+        <p id={`${id}-change`} role="status" className="mt-1 rounded-md border border-amber/40 bg-amber-soft px-2 py-1 text-xs text-amber-ink">
+          GST treatment changes from {gstTreatmentOption(savedValue)?.label ?? savedValue} to {gstTreatmentOption(value)?.label ?? value} when you save — new invoices for this customer are taxed that way.
+        </p>
+      )}
       {error && <p id={`${id}-error`} className="mt-1 text-xs text-rose">{error}</p>}
     </div>
   );
