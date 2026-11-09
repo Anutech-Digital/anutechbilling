@@ -123,6 +123,30 @@ describe("R-2537 — editing a customer never changes its GST treatment by itsel
     expect(screen.queryByText(/GST treatment changes from/)).toBeNull();
   });
 
+  it("a saved SEZ pick survives a round trip across the border and a later GSTIN edit", async () => {
+    const c = { ...DNB, id: "c-sez2", name: "SEZ Unit", country: "India", gst_treatment: "sez_without_payment", gstin: DELHI_GSTIN, state: "Delhi", state_code: "07" } as unknown as Customer;
+    render(<AddCustomerForm open onOpenChange={() => {}} customer={c} />);
+    await waitFor(() => expect(treatment()).toBe("sez_without_payment"));
+    pickCountry("United Arab Emirates");
+    await waitFor(() => expect(treatment()).toBe("overseas"));
+    pickCountry("India");
+    await waitFor(() => expect(treatment()).toBe("sez_without_payment"));
+    fireEvent.change(document.getElementById("gstin")!, { target: { value: "27AAPFU0939F1ZV" } });
+    await waitFor(() => expect((document.getElementById("gstin") as HTMLInputElement).value).toBe("27AAPFU0939F1ZV"));
+    expect(treatment()).toBe("sez_without_payment");
+  });
+
+  it("a hand pick then a border round trip never leaves Overseas on an Indian customer", async () => {
+    const c = { ...DNB, id: "c-sez3", name: "SEZ Unit", country: "India", gst_treatment: "sez_with_payment", gstin: DELHI_GSTIN, state: "Delhi", state_code: "07" } as unknown as Customer;
+    render(<AddCustomerForm open onOpenChange={() => {}} customer={c} />);
+    await waitFor(() => expect(treatment()).toBe("sez_with_payment"));
+    fireEvent.change(document.getElementById("gst_treatment")!, { target: { value: "deemed_export" } });
+    pickCountry("United Arab Emirates");
+    await waitFor(() => expect(treatment()).toBe("overseas"));
+    pickCountry("India");
+    await waitFor(() => expect(treatment()).not.toBe("overseas"));
+  });
+
   it("gstin cleared on a Regular customer: the change is shown, not silent", async () => {
     const c = { ...DNB, id: "c-reg", name: "Reg Co", country: "India", gst_treatment: "registered_regular", gstin: DELHI_GSTIN, state: "Delhi", state_code: "07" } as unknown as Customer;
     render(<AddCustomerForm open onOpenChange={() => {}} customer={c} />);
