@@ -30,7 +30,7 @@ import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import { GstTreatmentSelect, PanInput } from "./gst-treatment-fields";
 import { FieldPill } from "@/components/ui/field-pill";
 import {
-  liveGstin, checkGstin, livePhone, commitPhone, checkPhone,
+  liveGstin, checkGstin, livePhone, commitPhone, checkPhone, recommitPhoneForCountry,
   liveEmail, checkEmail, liveDomain, checkDomain,
 } from "@/lib/forms/poka-yoke";
 import { CountryCombobox } from "./country-combobox";
@@ -129,7 +129,12 @@ export function AddCustomerForm({ open, onOpenChange, customer, onCreated, initi
           {/* Country FIRST — it decides the whole form: India = GST flow (GSTIN,
               state code, 6-digit PIN); anything else = export flow (no GST). */}
           <FormField label="Country" htmlFor="country">
-            <CountryCombobox id="country" value={country} onChange={onCountryPick} />
+            <CountryCombobox id="country" value={country} onChange={(c) => {
+              onCountryPick(c);
+              /* R-2645: a phone formatted +91 before the country was picked follows the new country. */
+              const phone = recommitPhoneForCountry(watch("contact_phone"), c);
+              if (phone) setValue("contact_phone", phone, { shouldDirty: true });
+            }} />
             {regionMissingNote && <p className="mt-1 text-2xs leading-snug text-amber-ink">{regionMissingNote}</p>}
             {isForeign && (
               <p className="mt-1 flex items-start gap-1 text-2xs leading-snug text-indigo-ink">

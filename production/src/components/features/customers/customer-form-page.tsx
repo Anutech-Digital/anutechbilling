@@ -30,7 +30,7 @@ import { GST_STATE_BY_CODE, cn } from "@/lib/utils";
 import { FieldPill } from "@/components/ui/field-pill";
 import { SmartPaste } from "@/components/shared/smart-paste";
 import {
-  liveGstin, checkGstin, livePhone, commitPhone, checkPhone,
+  liveGstin, checkGstin, livePhone, commitPhone, checkPhone, recommitPhoneForCountry,
   liveEmail, checkEmail, liveDomain, checkDomain, gstinState,
 } from "@/lib/forms/poka-yoke";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
@@ -306,7 +306,12 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
           <div className="grid grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)] gap-1.5 md:gap-5 md:items-center">
             <Label htmlFor="country" required={!regionMissingNote}>Customer region</Label>
             <div className="max-w-xl">
-              <CountryCombobox id="country" value={country} onChange={onCountryPick} />
+              <CountryCombobox id="country" value={country} onChange={(c) => {
+              onCountryPick(c);
+              /* R-2645: a phone formatted +91 before the country was picked follows the new country. */
+              const phone = recommitPhoneForCountry(watch("contact_phone"), c);
+              if (phone) setValue("contact_phone", phone, { shouldDirty: true });
+            }} />
             </div>
           </div>
           <div className="mt-3 md:pl-[210px]">

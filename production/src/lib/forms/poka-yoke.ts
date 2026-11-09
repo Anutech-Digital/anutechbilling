@@ -24,7 +24,7 @@
  * instead of a dialog. Nothing here ever returns a bare "invalid".
  */
 import { isValidGstin, GST_STATE_BY_CODE } from "@/lib/utils";
-import { formatInternationalPhone, isIndiaPhoneCountry, phoneDigitsForCountry } from "@/lib/phone";
+import { formatInternationalPhone, isIndiaPhoneCountry, phoneDigitsForCountry, splitDialCode } from "@/lib/phone";
 
 /**
  * What a validation pill shows.
@@ -104,24 +104,30 @@ export function gstinState(raw: string): { code: string; name: string } | null {
 
 /* ── Phone ─────────────────────────────────────────────────────────────────── */
 
+/** E.164: an international number is at most 15 digits (code included). */
+const PHONE_MAX_DIGITS = 15;
+/** A pasted number is never cut silently near the limit — longer shows "Too long" instead. */
+const PHONE_LIVE_CAP = 20;
+/** Fewest digits after the code before a foreign number counts as complete. */
+const MIN_NATIONAL = 7;
+/** Codes whose national number is exactly ten digits (lib/phone.ts NATIONAL_LENGTH). */
+const TEN_DIGIT_CODES = new Set(["1", "91"]);
+const LANDLINE = "Indian mobiles start with 6, 7, 8 or 9 — this looks like a landline.";
+
+/** Typed with its own code: "+44 …" or "0044 …". */
+const hasOwnCode = (v: string) => v.startsWith("+") || v.startsWith("00");
+
 /**
  * On every keystroke: digits only, and a leading 91 or 0 stripped once ten digits are in
  * sight.
  *
  * Deliberately does NOT insert spaces while typing. Grouping mid-type is what fights the
  * caret; the pretty form arrives on blur via `commitPhone`.
- */
-/** E.164: an international number is at most 15 digits (code included). */
-const PHONE_MAX_DIGITS = 15;
-
-/** Typed with its own code: "+44 …" or "0044 …". */
-const hasOwnCode = (v: string) => v.startsWith("+") || v.startsWith("00");
-
-/*
+ *
  * R-2645: `country` is the form's country (customer forms). India, empty, or text we cannot
- * read keeps the Indian rules below exactly; another country takes its dialling code from
- * lib/phone.ts (R-2639) — no second rule here. A number typed with "+CC" / "00CC" is kept
- * whole in every form, so "+44 7911 123456" is never cut to ten digits.
+ * read keeps the Indian rules exactly; another country takes its dialling code from
+ * lib/phone.ts (R-2639) on commit. A number typed with "+CC" / "00CC" is kept whole in every
+ * form, so "+44 7911 123456" is never cut to ten digits.
  */
 export function livePhone(raw: string, country?: string | null): string {
   const d = raw.replace(/\D/g, "");
@@ -132,12 +138,14 @@ export function livePhone(raw: string, country?: string | null): string {
        not silently edited. */
     const stripped = d.replace(/^(?:0091|91|0)(?=[6-9]\d{0,9}$)/, "");
     if (stripped !== d) return stripped.slice(0, 10);
-    if (plus) return `+${d.slice(0, PHONE_MAX_DIGITS)}`;
-    if (d.startsWith("00")) return d.slice(0, PHONE_MAX_DIGITS + 2);
+    /* "+98765 43210": an Indian mobile with a stray "+", not Iran (+98). */
+    if (plus && /^[6-9]\d{9}$/.test(d)) return d;
+    if (plus) return `+${d.slice(0, PHONE_LIVE_CAP)}`;
+    if (d.startsWith("00")) return d.slice(0, PHONE_LIVE_CAP + 2);
     return d.slice(0, 10);
   }
-  if (plus) return `+${d.slice(0, PHONE_MAX_DIGITS)}`;
-  return d.slice(0, PHONE_MAX_DIGITS + (d.startsWith("00") ? 2 : 0));
+  if (plus) return `+${d.slice(0, PHONE_LIVE_CAP)}`;
+  return d.slice(0, PHONE_LIVE_CAP + (d.startsWith("00") ? 2 : 0));
 }
 
 /**
@@ -149,14 +157,15 @@ export function commitPhone(raw: string, country?: string | null): string {
   if (isIndiaPhoneCountry(country) && !hasOwnCode(v)) {
     return v.length === 10 ? `+91 ${v.slice(0, 5)} ${v.slice(5)}` : raw.trim();
   }
-  const digits = phoneDigitsForCountry(v, country);
-  return digits && digits.length <= PHONE_MAX_DIGITS ? formatInternationalPhone(digits) : raw.trim();
+  const { check, digits } = internationalPhone(v, country);
+  /* A landline still gets its +91 form, exactly like the national path above. */
+  return digits && (check.tone === "ok" || check.message === LANDLINE) ? formatInternationalPhone(digits) : raw.trim();
 }
 
 export function checkPhone(raw: string, country?: string | null): FieldCheck {
   const v = livePhone(raw, country);
   if (!v) return EMPTY;
-  if (!isIndiaPhoneCountry(country) || hasOwnCode(v)) return checkInternationalPhone(v, country);
+  if (!isIndiaPhoneCountry(country) || hasOwnCode(v)) return internationalPhone(v, country).check;
   const d = v;
 
   if (d.length < 10) {
@@ -165,30 +174,46 @@ export function checkPhone(raw: string, country?: string | null): FieldCheck {
   if (!/^[6-9]/.test(d)) {
     /* The single most common paste error: a landline with its STD code, which is ten
        digits and looks perfect until somebody tries to WhatsApp it. */
-    return {
-      tone: "error",
-      message: "Indian mobiles start with 6, 7, 8 or 9 — this looks like a landline.",
-    };
+    return { tone: "error", message: LANDLINE };
   }
   return { tone: "ok", message: "Valid mobile number" };
 }
 
-/** R-2645: the pill for a number with a code, or a foreign customer's number. */
-function checkInternationalPhone(v: string, country?: string | null): FieldCheck {
+/**
+ * R-2645: after the customer's country changes, the phone the form had already formatted for
+ * India ("+91 55512 34567" — a bare number given +91 because the country was still empty) is
+ * formatted again for the new country. Only that exact auto-format, and only when its ten
+ * digits are NOT an Indian mobile — a real Indian mobile, or anything the operator typed with
+ * another code, is never changed.
+ */
+export function recommitPhoneForCountry(current: string | null | undefined, country?: string | null): string | null {
+  const m = /^\+91 (\d{5}) (\d{5})$/.exec((current ?? "").trim());
+  if (!m || isIndiaPhoneCountry(country)) return null;
+  const national = m[1] + m[2];
+  if (/^[6-9]/.test(national)) return null;
+  const next = commitPhone(national, country);
+  return next !== current ? next : null;
+}
+
+/** R-2645: the pill (and the digits) for a number with a code, or a foreign customer's number. */
+function internationalPhone(v: string, country?: string | null): { check: FieldCheck; digits: string | null } {
   const digits = phoneDigitsForCountry(v, country);
-  if (!digits) {
-    return { tone: "typing", message: "Keep typing — the number is not complete yet." };
-  }
+  const typing = { tone: "typing", message: "Keep typing — the number is not complete yet." } as const;
+  if (!digits) return { check: typing, digits };
   if (digits.length > PHONE_MAX_DIGITS) {
-    return { tone: "error", message: "Too long — a phone number with its country code is at most 15 digits." };
+    return { check: { tone: "error", message: "Too long — a phone number with its country code is at most 15 digits." }, digits };
   }
-  if (digits.startsWith("91") && digits.length === 12 && !/^[6-9]/.test(digits.slice(2))) {
-    return {
-      tone: "error",
-      message: "Indian mobiles start with 6, 7, 8 or 9 — this looks like a landline.",
-    };
+  const { code, national } = splitDialCode(digits);
+  if (code && TEN_DIGIT_CODES.has(code)) {
+    if (national.length < 10) return { check: typing, digits };
+    if (national.length > 10) {
+      return { check: { tone: "error", message: `Too long — after +${code} the number is 10 digits.` }, digits };
+    }
+    if (code === "91" && !/^[6-9]/.test(national)) return { check: { tone: "error", message: LANDLINE }, digits };
+  } else if (national.length < MIN_NATIONAL) {
+    return { check: typing, digits };
   }
-  return { tone: "ok", message: "Valid number", detail: formatInternationalPhone(digits) };
+  return { check: { tone: "ok", message: "Valid number", detail: formatInternationalPhone(digits) }, digits };
 }
 
 /* ── Domain ────────────────────────────────────────────────────────────────── */

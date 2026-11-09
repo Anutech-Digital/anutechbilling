@@ -138,12 +138,17 @@ const KNOWN_CODES = new Set(Object.values(DIAL));
  * code we cannot find is "+<digits>".
  */
 export function formatInternationalPhone(digits: string): string {
-  const code = [3, 2, 1].map((n) => digits.slice(0, n)).find((c) => KNOWN_CODES.has(c));
+  const { code, national: n } = splitDialCode(digits);
   if (!code) return `+${digits}`;
-  const n = digits.slice(code.length);
   if (code === "1" && n.length === 10) return `+1 ${n.slice(0, 3)} ${n.slice(3, 6)} ${n.slice(6)}`;
   if (code === INDIA && n.length === 10) return `+91 ${n.slice(0, 5)} ${n.slice(5)}`;
   return `+${code} ${n}`;
+}
+
+/** R-2645: international digits → their dialling code + the rest; code null when none is known. */
+export function splitDialCode(digits: string): { code: string | null; national: string } {
+  const code = [3, 2, 1].map((n) => digits.slice(0, n)).find((c) => KNOWN_CODES.has(c)) ?? null;
+  return { code, national: code ? digits.slice(code.length) : digits };
 }
 
 /** R-2645: true when `country` is India, empty, or text we cannot read (the old +91 rule). */

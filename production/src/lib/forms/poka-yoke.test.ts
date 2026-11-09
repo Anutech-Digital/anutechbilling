@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   liveGstin, checkGstin, gstinState,
-  livePhone, commitPhone, checkPhone,
+  livePhone, commitPhone, checkPhone, recommitPhoneForCountry,
   liveDomain, checkDomain,
   liveMoney, parseMoney, commitMoney, checkMoney,
   liveEmail, checkEmail, companyDomainFromEmail,
@@ -190,6 +190,38 @@ describe("phone with the form's country (R-2645)", () => {
 
   it("an Indian landline written with +91 is still caught", () => {
     expect(checkPhone("+91 11 4234 5678", "").tone).toBe("error");
+  });
+
+  it("review: an Indian mobile with a stray '+' stays Indian, not Iran (+98)", () => {
+    expect(livePhone("+9876543210", "India")).toBe("9876543210");
+    expect(commitPhone("+98765 43210", "")).toBe("+91 98765 43210");
+  });
+
+  it("review: +1 / +91 need exactly 10 digits after the code; short foreign numbers are 'typing'", () => {
+    expect(checkPhone("+1 555 123 456", "").tone).toBe("typing");
+    expect(commitPhone("+1 555 123 456", "")).toBe("+1 555 123 456");
+    expect(checkPhone("+91 98765 432109", "").tone).toBe("error");
+    expect(checkPhone("+91 98765 4321", "United States").tone).toBe("typing");
+    expect(checkPhone("791112", "United Kingdom").tone).toBe("typing");
+    expect(commitPhone("791112", "United Kingdom")).toBe("791112");
+  });
+
+  it("review: an over-long paste is not cut silently — it shows Too long", () => {
+    const c = checkPhone("+44 7911 123456 / +44 7911 654321", "");
+    expect(c.tone).toBe("error");
+    expect(c.message).toMatch(/too long/i);
+  });
+});
+
+describe("recommitPhoneForCountry (R-2645 review: country picked after the phone)", () => {
+  it("a bare number formatted as +91 before the country was picked gets the new code", () => {
+    expect(recommitPhoneForCountry("+91 55512 34567", "United States")).toBe("+1 555 123 4567");
+  });
+  it("never touches a real Indian mobile, another code, or an India pick", () => {
+    expect(recommitPhoneForCountry("+91 98765 43210", "United States")).toBeNull();
+    expect(recommitPhoneForCountry("+44 7911123456", "United States")).toBeNull();
+    expect(recommitPhoneForCountry("+91 55512 34567", "India")).toBeNull();
+    expect(recommitPhoneForCountry("", "United States")).toBeNull();
   });
 });
 
