@@ -192,10 +192,11 @@ export async function createExtensionQuote(
   /* R-2648: a customer abroad (or an SEZ unit without payment) with an LUT for today's FY → 0% (export
      without payment, G16) — this path quoted 18% for everyone, which R-2636 then issued as IGST. No LUT →
      18% as before. */
+  const today        = istToday();   // R-2648: ONE date for the LUT's FY and the quote's created_date
   const usualTaxRate = quoteStartTaxRate(await readTenantGstRegistration(input.supabase, input.tenantId));
   const { rate: taxRatePct } = await exportQuoteRateFor({
     client: input.supabase, tenantId: input.tenantId, customerId: input.customerId,
-    date: istToday(), usualRate: usualTaxRate, billOfSupply: usualTaxRate === 0,
+    date: today, usualRate: usualTaxRate, billOfSupply: usualTaxRate === 0,
   });
   const charge       = extensionCharge({
     seats: input.seats, mrr: input.mrr, len, taxRatePct,
@@ -220,7 +221,6 @@ export async function createExtensionQuote(
 
   /* R-820: 30 days from today (DEFAULT_QUOTE_VALIDITY_DAYS), capped at the current renewal
      date — was renewal + grace, which left a quote open ~339 days right after a renewal. */
-  const today       = istToday();
   const expiresDate = extensionQuoteExpiry(today, input.renewalDate);
 
   const { error: insertErr } = await input.supabase.from("quotes").insert({

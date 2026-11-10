@@ -37,8 +37,11 @@ describe("exportQuoteDefault — one rule: isZeroRatedSupply (G4/G5) + lutFor (G
 
   it("read error (luts null) → no_lut: never zero-rate on an unknown", () => {
     const d = exportQuoteDefault({ country: "Germany", treatment: "overseas", date: DATE, luts: null });
-    expect(d.kind).toBe("no_lut");
+    expect(d).toMatchObject({ kind: "no_lut", lutsUnknown: true });
     expect(exportQuoteStartRate(d, 18)).toBe(18);
+    /* never "No LUT on file — add it" when the read failed */
+    expect(exportQuoteLutWarning(d, 18)).not.toContain("No LUT for FY");
+    expect(exportQuoteLutWarning(d, 0)).toContain("Your LUTs could not be read just now. An export at 0% GST needs the LUT for FY 2026-27");
   });
 
   it("zero-rate warning: a path that already quotes 0% without an LUT says the invoice will be refused", () => {
@@ -108,7 +111,8 @@ describe("exportQuoteRateFor (server quote makers)", () => {
     const f = fakeClient({ customer: { country: "United States", gst_treatment: "overseas" }, luts: null });
     const r = await exportQuoteRateFor({ client: f.client, tenantId: "T1", customerId: "C1", date: DATE, usualRate: 18 });
     expect(r.rate).toBe(18);
-    expect(r.warning).toContain("No LUT for FY 2026-27");
+    expect(r.warning).toBe("Your LUTs could not be read just now, so this quote stays at 18% IGST (an export with payment of tax). "
+      + "If an LUT for FY 2026-27 is saved in Settings → Company → LUT, reopen this to quote at 0%.");
   });
 
   it("customer read error / no customer / domestic → usual rate, LUTs not even read", async () => {

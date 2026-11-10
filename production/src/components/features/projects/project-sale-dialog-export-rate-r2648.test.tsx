@@ -12,6 +12,7 @@ const CUSTOMERS = [
   { id: "c-dl", name: "Delhi Traders", country: "India", gst_treatment: "registered_regular", state_code: "07", gstin: null, state: "Delhi" },
 ];
 
+vi.mock("@/lib/compliance/gst-registration-query", () => ({ useGstRegistration: () => ({ data: { saved: null } }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/lib/queries/customers", () => ({ useCustomers: () => ({ data: CUSTOMERS }) }));
 vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: { tenantId: "T1", tenantStateCode: "07" } }) }));

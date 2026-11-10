@@ -16,6 +16,7 @@ const CUSTOMERS = [
   { id: "c-dl", name: "Delhi Traders", country: "India", gst_treatment: "registered_regular", state_code: "07", gstin: null },
 ];
 
+vi.mock("@/lib/compliance/gst-registration-query", () => ({ useGstRegistration: () => ({ data: { saved: null } }) }));
 vi.mock("next/navigation", () => ({ useRouter: () => ({ push: vi.fn() }) }));
 vi.mock("@/lib/queries/items", () => ({ useItems: () => ({ data: [] }) }));
 vi.mock("@/lib/queries/customers", () => ({

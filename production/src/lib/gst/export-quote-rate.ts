@@ -22,8 +22,8 @@ export type ExportQuoteDefault =
   | { kind: "domestic" }
   /** Zero-rated buyer and an LUT covers the date — the quote starts at 0%. */
   | { kind: "zero_rated"; lut: TenantLut; fy: string; supply: "export" | "sez" }
-  /** Zero-rated buyer but no LUT for the date's FY (or the LUTs could not be read). */
-  | { kind: "no_lut"; fy: string; supply: "export" | "sez" };
+  /** Zero-rated buyer but no LUT for the date's FY — or (`lutsUnknown`) the LUTs could not be read. */
+  | { kind: "no_lut"; fy: string; supply: "export" | "sez"; lutsUnknown: boolean };
 
 export interface ExportQuoteDefaultInput {
   country:       string | null | undefined;
@@ -43,7 +43,7 @@ export function exportQuoteDefault(a: ExportQuoteDefaultInput): ExportQuoteDefau
   const supply = isExportSupply(a.country) ? "export" : "sez";
   const fy = lutFyLabel(a.date);
   const lut = lutFor(a.luts ?? null, a.date);
-  return lut ? { kind: "zero_rated", lut, fy, supply } : { kind: "no_lut", fy, supply };
+  return lut ? { kind: "zero_rated", lut, fy, supply } : { kind: "no_lut", fy, supply, lutsUnknown: a.luts == null };
 }
 
 /**
@@ -65,6 +65,14 @@ export function exportQuoteStartRate(def: ExportQuoteDefault, usualRate: number)
 export function exportQuoteLutWarning(def: ExportQuoteDefault, rate: number): string | null {
   if (def.kind !== "no_lut") return null;
   const what = def.supply === "export" ? "an export" : "an SEZ supply";
+  /* A failed read is not "no LUT on file" — never tell the owner to add an LUT they may have. */
+  if (def.lutsUnknown) {
+    return rate > 0
+      ? `Your LUTs could not be read just now, so this quote stays at ${rate}% IGST (${what} with payment of tax). `
+        + `If an LUT for FY ${def.fy} is saved in Settings → Company → LUT, reopen this to quote at 0%.`
+      : `Your LUTs could not be read just now. ${what[0].toUpperCase()}${what.slice(1)} at 0% GST needs the LUT for FY ${def.fy}: `
+        + "check it is saved in Settings → Company → LUT, or the invoice for this quote will be refused.";
+  }
   if (rate > 0) {
     return `No LUT for FY ${def.fy} on file, so this quote charges ${rate}% IGST (${what} with payment of tax) — `
       + "a customer abroad usually cannot claim it back. Add your LUT in Settings → Company → LUT to quote at 0%.";
