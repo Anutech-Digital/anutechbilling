@@ -126,6 +126,7 @@ const B_SAL2 = id("b014");
 const B_PRE = id("b015");
 const B_LOAN = id("b016");
 const B_EXP = "R2479-EXP-B";
+const B_ZOHO = "R2667-ZOHO-B"; // zoho_fy_receipts: primary key (tenant_id, zoho_payment_id), no `id` (R-2667)
 const A_PAY = id("a011");
 
 /** Fixture rows. session_replication_role = replica skips triggers (R-2472's gate would refuse
@@ -152,6 +153,13 @@ function fixture(cross: boolean, hideTable = false): string {
     `insert into public.prepaid_advances (id, tenant_id, vendor_name, total_amount) values ('${B_PRE}', '${B}', 'r2479', 900);`,
     `insert into public.business_loans (id, tenant_id, lender, principal, disbursed_on, disbursal_bank_txn_id)
        values ('${B_LOAN}', '${B}', 'r2479', 5000, date '2026-05-01', ${q(x(A_LINE_REV, null))});`,
+    // R-2667: a source table keyed (tenant_id, zoho_payment_id) — no single `id` column — and a link
+    // table with no primary key at all (B needs no key: the company is the row's own tenant_id).
+    "create table public.r2667_nopk_links (tenant_id uuid not null, bank_txn_id uuid references public.bank_transactions (id));",
+    `insert into public.r2667_nopk_links values ('${B}', ${q(x(A_LINE_REV, null))});`,
+    `insert into public.zoho_fy_receipts (tenant_id, zoho_payment_id, fy, batch_id, customer_id, received_on, bank_account_id,
+         received_paise, cash, tds, reference, payment_ids, bank_txn_id)
+       values ('${B}', '${B_ZOHO}', '2025-26', '${EMP}', '${EMP}', date '2026-05-01', '${B_ACC}', 70000, 700, 0, 'r2667', '{}', ${q(x(A_LINE_REV, null))});`,
     `insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit)
        values ('${B_LINE}', '${B}', '${B_ACC}', date '2026-05-01', 'r2479 fixture', 0, 1);`,
     line(A_LINE_PAY, "payment", x(B_PAY, A_PAY), 0, 1000),
@@ -206,6 +214,11 @@ describe.skipIf(!localDbUp())("R-2479 report on the local DB (planted fixture, r
     expect(has("B ", A_LINE_REV, "project_payments.bank_txn_id", B_PROJ)).toBe(true);
     expect(has("B ", A_LINE_REV, "business_loans.disbursal_bank_txn_id", B_LOAN)).toBe(true); // found via FK
     expect(has("B ", A_LINE_REC, "salary_payments.reconciled_txn_id", B_SAL2)).toBe(true);
+    expect(has("B ", A_LINE_REV, "zoho_fy_receipts.bank_txn_id", `zoho_payment_id=${B_ZOHO}`)).toBe(true); // composite key (R-2667)
+    expect(rows.some((r) => {
+      const c = r.split("|"); // no primary key → labelled by ctid (R-2667)
+      return c[0].startsWith("B ") && c[2] === A_LINE_REV && c[7] === "r2667_nopk_links.bank_txn_id" && c[8].startsWith("ctid=(") && c[9] === B;
+    })).toBe(true);
     expect(has("C ", A_LINE_SAL, "salary_payments", B_SAL)).toBe(true); // 'salary' line
     expect(has("C ", A_LINE_REC, "salary_payments", B_SAL2)).toBe(true); // reconciled_txn_id
     expect(has("D ", A_LINE_PRE, "prepaid_advances", B_PRE)).toBe(true); // own-flow type
@@ -234,11 +247,13 @@ describe.skipIf(!localDbUp())("R-2479 report on the local DB (planted fixture, r
                + (select count(*) from public.payments where id::text like 'e2479000-%')
                + (select count(*) from public.salary_payments where id::text like 'e2479000-%')
                + (select count(*) from public.expenses where id = '${B_EXP}')
-               + (select count(*) from public.business_loans where id::text like 'e2479000-%'))::text
+               + (select count(*) from public.business_loans where id::text like 'e2479000-%')
+               + (select count(*) from public.zoho_fy_receipts where zoho_payment_id = '${B_ZOHO}'))::text
               || ' ' || (to_regclass('public.business_loan_drawdowns') is not null)::text
-              || ' ' || (to_regclass('public.r2479_hidden_drawdowns') is null)::text`],
+              || ' ' || (to_regclass('public.r2479_hidden_drawdowns') is null)::text
+              || ' ' || (to_regclass('public.r2667_nopk_links') is null)::text`],
       { encoding: "utf8" },
     );
-    expect(r.stdout.trim()).toBe("0 true true");
+    expect(r.stdout.trim()).toBe("0 true true true");
   });
 });

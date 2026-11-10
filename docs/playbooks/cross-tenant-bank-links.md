@@ -73,7 +73,10 @@ docker exec -i supabase_db_resellerosv3 psql -X -U postgres -d postgres -v ON_ER
   - `B reverse` — another company's record points at this line; `linked_table` names the column
     (e.g. `payments.bank_txn_id` for split receipts, `project_payments.bank_txn_id`,
     `expenses.reconciled_txn_id`, `business_loans.disbursal_bank_txn_id` — every foreign key to
-    bank lines is found by itself).
+    bank lines is found by itself). Since R-2667 B reads every table with a `tenant_id`, whatever
+    its key: for a composite key `linked_id` is its columns other than tenant_id as `column=value`
+    (e.g. `zoho_fy_receipts.bank_txn_id` → `zoho_payment_id=…`); a table with no primary key shows
+    `ctid=(…)` (valid for this run only).
   - `C salary` — a salary of another company whose paid status came from this line.
   - `D other type` — a line booked by its own flow (statutory, prepaid, owner equity, vendor
     payment, EMI, referral commission, customer refund, …) whose `matched_to_id` is another
@@ -92,10 +95,15 @@ docker exec -i supabase_db_resellerosv3 psql -X -U postgres -d postgres -v ON_ER
 read-only wrapper, no name/contact column, the map block identical in 0b and 1; on the local DB
 (skipped where the container does not run, e.g. CI) one planted cross-company link of every kind
 (payment, salary, text-id expense, transfer, project receipt, loan disbursal found via its foreign
-key, salary reconciled_txn_id, a prepaid line) is found in its section A/B/C/D, a missing table is
+key, salary reconciled_txn_id, a prepaid line, a zoho_fy_receipts row — composite key — and a link
+table with no primary key, R-2667) is found in its section A/B/C/D, a missing table is
 skipped and listed in 0b, same-company links give 0 rows, and everything is rolled back.
 
 ## Lessons log
+
+- 10 Nov 2026 (R-2667): zoho_fy_receipts (R-2501) links to bank lines but is keyed (tenant_id,
+  zoho_payment_id); B read only single-`id` tables, so 0b listed it as not checked and the local
+  guard went red. B now needs only a `tenant_id` — the key is just the row's label.
 
 - 4 Nov 2026 (R-2479): local DB — 0 rows in 0b and 1 (42 companies, 2990 bank lines), ~1.5 s. The
   first version let Postgres inline the per-table checks and took 107 s; the checks are now
