@@ -3,7 +3,7 @@
  * an overseas customer, and never a second code on a number that already has one.
  */
 import { describe, it, expect } from "vitest";
-import { DIAL_CODES, dialCodeForCountry, phoneDigitsForCountry, phoneE164ForCountry } from "./phone";
+import { DIAL_CODES, dialCodeForCountry, formatInternationalPhone, isIndiaPhoneCountry, phoneDigitsForCountry, phoneE164ForCountry } from "./phone";
 import { COUNTRIES, countryIsoCode } from "./gst/countries";
 import { toWhatsAppDigits } from "./utils";
 import { formatWhatsAppPhone, invoiceWhatsAppTarget } from "./whatsapp";
@@ -114,5 +114,18 @@ describe("the WhatsApp helpers use the country", () => {
     );
     expect(t.ok).toBe(true);
     if (t.ok) expect(t.url).toContain("wa.me/15551234567");
+  });
+});
+
+describe("formatInternationalPhone (R-2645)", () => {
+  it("groups US/India, else code + number", () => {
+    expect(formatInternationalPhone("15551234567")).toBe("+1 555 123 4567");
+    expect(formatInternationalPhone("919876543210")).toBe("+91 98765 43210");
+    expect(formatInternationalPhone("447911123456")).toBe("+44 7911123456");
+    expect(formatInternationalPhone("971501234567")).toBe("+971 501234567");
+  });
+  it("India / empty / unreadable country keeps the old +91 rule", () => {
+    for (const c of [null, undefined, "", "India", "IN", "Inida"]) expect(isIndiaPhoneCountry(c)).toBe(true);
+    for (const c of ["United States", "USA", "United Kingdom"]) expect(isIndiaPhoneCountry(c)).toBe(false);
   });
 });

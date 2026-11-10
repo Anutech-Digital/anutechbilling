@@ -129,6 +129,34 @@ export function phoneE164ForCountry(phone: string | null | undefined, country?: 
   return d ? `+${d}` : "";
 }
 
+/** Every dialling code we know (ITU codes are prefix-free, so a prefix match is unique). */
+const KNOWN_CODES = new Set(Object.values(DIAL));
+
+/**
+ * R-2645: international digits ("15551234567") in the readable form the phone field saves —
+ * "+1 555 123 4567", "+91 9xxxx xxxxx", "+44 7xxxxxxxxx" (code, space, number). A number whose
+ * code we cannot find is "+<digits>".
+ */
+export function formatInternationalPhone(digits: string): string {
+  const { code, national: n } = splitDialCode(digits);
+  if (!code) return `+${digits}`;
+  if (code === "1" && n.length === 10) return `+1 ${n.slice(0, 3)} ${n.slice(3, 6)} ${n.slice(6)}`;
+  if (code === INDIA && n.length === 10) return `+91 ${n.slice(0, 5)} ${n.slice(5)}`;
+  return `+${code} ${n}`;
+}
+
+/** R-2645: international digits → their dialling code + the rest; code null when none is known. */
+export function splitDialCode(digits: string): { code: string | null; national: string } {
+  const code = [3, 2, 1].map((n) => digits.slice(0, n)).find((c) => KNOWN_CODES.has(c)) ?? null;
+  return { code, national: code ? digits.slice(code.length) : digits };
+}
+
+/** R-2645: true when `country` is India, empty, or text we cannot read (the old +91 rule). */
+export function isIndiaPhoneCountry(country: string | null | undefined): boolean {
+  const code = dialCodeForCountry(country);
+  return code === null || code === INDIA;
+}
+
 /**
  * R-2641: the wa.me link for a phone, with the dialling code from `country` (same rule as
  * `phoneDigitsForCountry`) and the message as `?text=`. Null when there is no usable number —
