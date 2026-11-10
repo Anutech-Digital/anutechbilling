@@ -22,7 +22,7 @@ async function openPnl(page: Page, from: string, to: string) {
   /* Let the first load (this month) finish before typing: on 9 Nov a From typed during hydration was
      lost, leaving From 1 Nov / To 31 Oct, and report_pnl refuses a reversed range ("didn't load").
      card-steps waitForHydrated + fillKept (R-2666): typed only after the data is on screen, and a wiped value is retyped. */
-  await waitForHydrated(page, page.getByRole("button", { name: /cost of goods/i }));
+  await waitForHydrated(page, page.getByRole("button", { name: /cost of goods/i }), { idleMs: 30_000 });
   /* Both moves go back in time from "this month": From first keeps From <= To at every step. */
   await fillKept(page.locator("#pnl-from"), from);
   await fillKept(page.locator("#pnl-to"), to);

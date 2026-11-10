@@ -10,16 +10,12 @@
  * cleared before step 1 (the owner sets it in step 1) and put back after the last step; the planted rows are
  * removed after the last step.
  */
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 import { expect, test } from "@playwright/test";
-import { CARD_TESTS_ON, onlyInCardTests, openAppPage, pageAs } from "./card-steps";
-// @ts-expect-error — plain .mjs helpers (no types)
-import { scenarioTargetReason } from "../../scripts/dev/local-guard.mjs";
+import {
+  CARD_TESTS_ON, localCleanupDeleteIssuedInvoice, localDb, onlyInCardTests, openAppPage, openCollapsedPanel, pageAs, setGstFiledThrough,
+} from "./card-steps";
 import { E2E_TENANT_EMAIL } from "../fixtures/e2e-roles.mjs";
 
-const PROD = path.resolve(__dirname, "..", "..");
 const CUSTOMER_ID = "c2642000-0000-4000-8000-000000000001";
 const SUB_ID = "c2642000-0000-4000-8000-000000000002";
 const PART_ID = "c2642000-0000-4000-8000-000000000003";
@@ -27,50 +23,24 @@ const PAYMENT_ID = "c2642000-0000-4000-8000-000000000011";
 const CUSTOMER = "SCN Part Paid Buyer";
 const QUOTE = "Q-SCN-PPR-1";
 
-function container(): string {
-  const ps = spawnSync("docker", ["ps", "--format", "{{.Names}}"], { encoding: "utf8" });
-  const c = (ps.stdout ?? "").split(/\r?\n/).map((s) => s.trim()).find((n) => /^supabase_db_/.test(n)) ?? null;
-  const env: Record<string, string> = {};
-  const f = path.join(PROD, ".env.local");
-  if (fs.existsSync(f)) {
-    for (const line of fs.readFileSync(f, "utf8").split(/\r?\n/)) {
-      const m = /^\s*([A-Z0-9_]+)\s*=\s*"?([^"\r\n]*)"?\s*$/.exec(line);
-      if (m) env[m[1]] = m[2];
-    }
-  }
-  const keys = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL", "DATABASE_URL", "DIRECT_URL"];
-  const why = scenarioTargetReason({ nodeEnv: process.env.NODE_ENV, container: c, urls: keys.flatMap((k) => [process.env[k], env[k]]) });
-  if (why || !c) throw new Error(`R-2642 card test refuses to write test data: ${why}`);
-  return c;
-}
+/** The local docker DB, guarded (card-steps localDb, R-2666). */
+const psql = (sql: string): string[] => localDb("R-2642").psql(sql);
 
-function psql(sql: string): string[] {
-  if (!/^[a-z0-9@._-]+$/i.test(E2E_TENANT_EMAIL)) throw new Error("unexpected tenant email");
-  const r = spawnSync("docker", ["exec", "-i", container(), "psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"],
-    { input: sql, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`psql failed (exit ${r.status}): ${(r.stderr || r.stdout || "").trim()}`);
-  return (r.stdout ?? "").split(/\r?\n/).filter(Boolean);
-}
-
-const T = `(select t.id from public.tenants t where t.email = '${E2E_TENANT_EMAIL}')`;
-
-/** Removes this test's rows (a part invoice it raised goes too — a local test invoice). That invoice is PAID, so
-    tg_invoices_block_delete_issued refuses a plain delete; the trigger's own named way past it
-    (app.invoice_amend_reason, transaction-local) is used — local docker DB only (psql()), as R-2631's spec. */
+/** Removes this test's rows (a part invoice it raised goes too — a local test invoice). That invoice is PAID, so a
+    plain delete is refused — card-steps localCleanupDeleteIssuedInvoice (app.invoice_amend_reason, transaction-local,
+    E2E Test Co + the part's own invoice / this quote's invoices only; local docker DB only). */
 function unplant(): void {
-  psql(`
-begin;
-set local app.invoice_amend_reason = 'R-2642 card test cleanup (local test invoice)';
-create temp table r2642_inv on commit drop as
-  select invoice_id as id from public.subscription_billings where id = '${PART_ID}' and invoice_id is not null;
-update public.subscription_billings set invoice_id = null where id = '${PART_ID}';
-delete from public.invoices where id in (select id from r2642_inv) and tenant_id = ${T};
-delete from public.subscription_billings where subscription_id = '${SUB_ID}';
+  const partInvoiceIds = psql(`select invoice_id from public.subscription_billings where id = '${PART_ID}' and invoice_id is not null;`);
+  localCleanupDeleteIssuedInvoice(localDb("R-2642"), "R-2642", {
+    invoiceIds: partInvoiceIds,
+    quoteIds: [QUOTE],
+    before: `update public.subscription_billings set invoice_id = null where id = '${PART_ID}';`,
+    after: `delete from public.subscription_billings where subscription_id = '${SUB_ID}';
 delete from public.payments where id = '${PAYMENT_ID}';
 delete from public.subscriptions where id = '${SUB_ID}';
 delete from public.quotes where id = '${QUOTE}';
-delete from public.customers where id = '${CUSTOMER_ID}';
-commit;`);
+delete from public.customers where id = '${CUSTOMER_ID}';`,
+  });
 }
 
 function plant(): void {
@@ -136,17 +106,9 @@ test.describe("R-2642 — a part invoice is paid on the day the money came in, n
   test("Step 1: Accounting → Overview → GST returns filed up to → September 2026 → Save", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     try {
-      await openAppPage(page, "/accounting");
-      const card = page.getByTestId("gst-filed-through-card");
-      await expect(card).toBeVisible({ timeout: 60_000 });
       /* Wait for the saved setting to load (cleared in beforeAll) before typing — on a cold page the form
          re-renders with the loaded value and wipes what was typed, leaving Save disabled (first run, 10 Nov). */
-      await expect(page.getByTestId("gst-filed-through-text")).toContainText("Not set", { timeout: 60_000 });
-      await card.getByLabel("GST returns filed up to (month)").fill("2026-09");
-      await expect(card.getByRole("button", { name: "Save" })).toBeEnabled({ timeout: 30_000 });
-      await card.getByRole("button", { name: "Save" }).click();
-      await page.getByRole("button", { name: "Save" }).last().click(); // the confirm dialog
-      await expect(page.getByTestId("gst-filed-through-text")).toContainText("GST returns are filed up to September 2026", { timeout: 60_000 });
+      await setGstFiledThrough(page, "2026-09", "September 2026");
     } finally {
       await page.context().close();
     }
@@ -157,8 +119,8 @@ test.describe("R-2642 — a part invoice is paid on the day the money came in, n
     try {
       await openAppPage(page, "/invoices");
       // the "Pending GST invoice generation" panel opens collapsed
-      await page.getByRole("heading", { name: "Pending GST invoice generation" }).click({ timeout: 60_000 });
       const row = page.getByRole("row").filter({ hasText: CUSTOMER });
+      await openCollapsedPanel(page, /Pending GST invoice generation/, row);
       await row.getByRole("button", { name: /Generate invoice for Q1/ }).first().click({ timeout: 60_000 });
       await expect.poll(() => partInvoice().split("|")[0], { timeout: 120_000, message: "Q1 invoice dated 1 Oct 2026" }).toBe("2026-10-01");
     } finally {
