@@ -124,7 +124,7 @@ async function buildMonth(args: MonthArgs, only?: ReadonlySet<string>): Promise<
   const already = new Set<string>();
   const ids = settlements.map((s) => s.id);
   for (let i = 0; i < ids.length; i += 200) {
-    const { data: recons, error: doneErr } = await db
+    const { data: recons, error: doneErr } = await (db as unknown as ReconsDb)
       .from("razorpay_settlement_recons")
       .select("settlement_id")
       .eq("tenant_id", tenantId)
@@ -164,6 +164,10 @@ async function buildMonth(args: MonthArgs, only?: ReadonlySet<string>): Promise<
   }
   return done({ state: "batch", batch: summarise(month, out) });
 }
+
+/* razorpay_settlement_recons (R-2099) is not in the generated table types yet. */
+interface ReconsQuery { eq(c: string, v: string): ReconsQuery; in(c: string, v: string[]): PromiseLike<{ data: unknown[] | null; error: { message: string } | null }> }
+interface ReconsDb { from(t: "razorpay_settlement_recons"): { select(cols: string): ReconsQuery } }
 
 type Rpc = (fn: string, args: Record<string, unknown>) => PromiseLike<{ data: unknown; error: { message: string; code?: string } | null }>;
 const rpcOf = (db: UserDb): Rpc => (db as unknown as { rpc: Rpc }).rpc.bind(db);
