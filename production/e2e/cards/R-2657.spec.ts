@@ -31,6 +31,7 @@ const G2 = "c2657000-0000-4000-8000-000000000014";
 const Z = "c2657000-0000-4000-8000-000000000015";
 const PATTERN = "ZQX PAYEE KAPOOR";
 const ZEXP = "EXP-CT2657-Z";
+const ZBATCH = "c2657000-0000-4000-8000-000000000b01";
 
 function container(): string {
   const ps = spawnSync("docker", ["ps", "--format", "{{.Names}}"], { encoding: "utf8" });
@@ -61,6 +62,7 @@ const CLEAN = (tenant: string) => `
   select set_config('app.zoho_purchase_import', 'on', true);
   update public.bank_transactions set matched_to_type = null, matched_to_id = null where bank_account_id = '${ACCT}';
   delete from public.expenses where tenant_id = '${tenant}' and (reconciled_txn_id in (${IDS}) or id = '${ZEXP}');
+  delete from public.zoho_fy_import_batches where id = '${ZBATCH}';
   delete from public.txn_category_rules where tenant_id = '${tenant}' and upper(pattern) = '${PATTERN}';
   delete from public.bank_transactions where bank_account_id = '${ACCT}';
   delete from public.bank_accounts where id = '${ACCT}';`;
@@ -90,8 +92,9 @@ function seed(): void {
       ('${G1}', '${tenant}', '${ACCT}', current_date - 7, '300326I049903313 DPO2608902104710 CGST', 61, 0, 'csv_upload', null, null),
       ('${G2}', '${tenant}', '${ACCT}', current_date - 7, '300326I049903313 DPO2608902104710 SGST', 61, 0, 'csv_upload', null, null),
       ('${Z}', '${tenant}', '${ACCT}', current_date - 5, 'NEFT DR-HDFC0000001-ZQX ZOHO VENDOR-NETBANK', 3333, 0, 'csv_upload', null, null);
-    insert into public.expenses (id, tenant_id, category, vendor_name, expense_date, amount, gst_paid, paid, paid_date, zoho_doc_id, zoho_leg)
-      values ('${ZEXP}', '${tenant}', 'Office Supplies', 'ZQX Zoho Vendor', current_date - 6, 3333, 0, true, current_date - 6, 'expenses:CT2657', 1);
+    insert into public.zoho_fy_import_batches (id, tenant_id, kind, fy) values ('${ZBATCH}', '${tenant}', 'expenses', '2026-27');
+    insert into public.expenses (id, tenant_id, category, vendor_name, expense_date, amount, gst_paid, paid, paid_date, zoho_doc_id, zoho_leg, purchase_import_batch_id)
+      values ('${ZEXP}', '${tenant}', 'Office Supplies', 'ZQX Zoho Vendor', current_date - 6, 3333, 0, true, current_date - 6, 'expenses:CT2657', 1, '${ZBATCH}');
     commit;`);
 }
 
@@ -153,6 +156,8 @@ test.describe("R-2657 card test", () => {
     await expect(gst).toBeVisible({ timeout: 30_000 });
     await gst.getByLabel(/^Tick the 2 lines paid to Bank GST/).check();
     await sheet.getByRole("button", { name: "Book selected (2)" }).click();
+    /* Step 2's "2 booked" summary is still on screen — wait until the booked group has left the list. */
+    await expect(gst).toHaveCount(0, { timeout: 120_000 });
     await expect(sheet.getByTestId("bulk-expense-result")).toContainText("2 booked · 0 not booked", { timeout: 60_000 });
     await expect.poll(bookedRows, { timeout: 30_000 }).toEqual([
       "UPI-ZQX PAYEE KAPOOR-9999@YBL-HDFC0000089-544244313572-EXP|Staff Welfare|0",
