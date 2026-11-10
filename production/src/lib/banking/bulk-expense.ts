@@ -32,9 +32,19 @@ type KeywordFn = (text: string) => string | null;
 export const isBookableCategory = (c: string | null | undefined): c is string =>
   !!c && c !== "Salaries" && (EXPENSE_CATEGORIES as readonly string[]).includes(c);
 
+/** R-2657 — HDFC's GST on its own charges: "<ref> DPO<digits> CGST" / "SGST" (also IGST / UTGST). */
+export const BANK_GST = /\bDPO\d{6,}\s+(?:CGST|SGST|IGST|UTGST)\b/i;
+export const isBankGstLine = (description: string | null | undefined): boolean => BANK_GST.test(description ?? "");
+
 /** What this money-out line probably is — same layers and order as the Reconcile sheet. */
 export function expenseSuggestion(t: Line, rules: readonly CategoryRule[], keywordFn: KeywordFn): ExpenseSuggestion | null {
   if (!(t.debit > 0)) return null;
+  /* R-2657: the bank's GST on its own charges — Bank Charges, GST ₹0 (an expense, never input GST:
+     Pardeep's D1, 10 Nov — the no-vendor tool must not claim ITC; open-month ITC is R-2664).
+     The company's own Category Rule for such a line still wins. */
+  if (isBankGstLine(t.description) && !categoriseByRules(t, rules)) {
+    return { category: "Bank Charges", reason: "the bank's GST on its charges (DPO … CGST / SGST) — booked as a bank charge, no GST claimed", confidence: "high" };
+  }
   /* "SALARY TO DIRECTOR": booked as an expense, this is Director's Remuneration —
      never plain Salaries (which belongs to Payroll) and never a guessed category. */
   if (/\bDIRECTORS?\b/i.test(t.description ?? "")) {
