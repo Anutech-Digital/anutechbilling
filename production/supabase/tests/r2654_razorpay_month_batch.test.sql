@@ -290,7 +290,7 @@ select set_config('request.jwt.claims', '', true);
 update public.tenants set books_locked_until = '2026-10-31' where id = 'dddddddd-0000-0000-0000-000000265401';
 select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000265401","role":"authenticated"}', true);
 set local role authenticated;
-do $
+do $$
 declare v_run uuid; v_ok boolean := false;
 begin
   v_run := public.razorpay_batch_run_start('bbbbbbbb-0000-0000-0000-000000265401');
@@ -303,7 +303,7 @@ begin
      or exists (select 1 from public.bank_recon_run_lines where run_id = v_run) then
     raise exception 'FAIL G2: refused booking wrote something';
   end if;
-end $;
+end $$;
 reset role;
 
 select 'r2654_razorpay_month_batch: ALL PASS' as result;
