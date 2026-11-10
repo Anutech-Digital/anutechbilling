@@ -117,6 +117,8 @@ test.describe("R-2611 card test", () => {
     await open.click();
     const sheet = page.getByRole("dialog", { name: /Book no-vendor lines/ });
     await expect(sheet).toBeVisible();
+    /* R-2657: the sheet opens "By payee"; this card's steps read the one-line-per-row view. */
+    await sheet.getByRole("button", { name: /^All lines \(\d+\)$/ }).click();
     await expect(sheet.getByTestId(`bulk-expense-row-${A}`)).toContainText("High", { timeout: 30_000 });
     await expect(sheet.getByTestId(`bulk-expense-row-${B}`)).toContainText("High", { timeout: 30_000 });
     await expect(sheet.getByTestId(`bulk-expense-row-${C}`)).toContainText("Medium");
