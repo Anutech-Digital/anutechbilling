@@ -24,7 +24,9 @@
 --     unreconcile_bank_receipt(line, false) - the Reconcile sheet's own plain un-reconcile; R-2099's
 --     trigger removes the settlement rows and its EXP-RZPFEE-STL fee expense, R-2098's frees the
 --     receipts (they stay, waiting for their bank line again; R-2565's per-payment fees stay). Each line
---     in its own savepoint; a line changed since the run or refused (books lock) is LEFT with the reason.
+--     in its own savepoint; a line changed since the run (incl. its settlement booked again by hand later)
+--     or refused (books lock) is LEFT with the reason. A line un-reconciled by hand after an older run is
+--     released from that run when a new run books it (else it would stay blocked for good).
 --     Messages no longer name only "Reconcile from Zoho". Everything else is unchanged.
 -- Test: supabase/tests/r2654_razorpay_month_batch.test.sql (begin ... rollback; red without this file).
 
@@ -87,7 +89,13 @@ begin
   if not found then
     raise exception 'This bank line is not in the run''s account — reload the bank page.' using errcode = 'no_data_found';
   end if;
-  if exists (select 1 from public.bank_recon_run_lines o
+  /* Review: a line un-reconciled by hand since an older run booked it is no longer that run's — release
+     the stale record (else the line is blocked from every later run, and the old run's Undo could reverse
+     a booking it did not make). A line still matched is refused by R-2099 below. */
+  if v_txn.matched_to_type is null then
+    update public.bank_recon_run_lines o set undone_at = now()
+     where o.tenant_id = v_tenant and o.txn_id = p_txn_id and o.run_id <> p_run_id and o.undone_at is null;
+  elsif exists (select 1 from public.bank_recon_run_lines o
               where o.tenant_id = v_tenant and o.txn_id = p_txn_id and o.run_id <> p_run_id and o.undone_at is null) then
     raise exception 'Another run already booked this bank line — undo that run or un-reconcile the line first.' using errcode = 'check_violation';
   end if;
@@ -143,6 +151,14 @@ begin
       continue;
     end if;
     if v_l.kind = 'razorpay_settlement' then
+      /* The line must still carry the settlement THIS run booked (same transaction = same now()) —
+         a settlement booked again by hand later is not this run's to undo. */
+      if not exists (select 1 from public.razorpay_settlement_recons rs
+                      where rs.tenant_id = v_tenant and rs.bank_txn_id = v_l.txn_id and rs.created_at <= v_l.booked_at) then
+        v_left := v_left || jsonb_build_object('txn_id', v_l.txn_id, 'txn_date', v_l.txn_date, 'credit', v_l.credit,
+          'reason', 'Changed since the run (re-matched or un-reconciled by hand) — left as it is.');
+        continue;
+      end if;
       begin
         perform public.unreconcile_bank_receipt(v_l.txn_id, false);
         update public.bank_recon_run_lines set undone_at = now() where id = v_l.id;
