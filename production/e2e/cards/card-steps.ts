@@ -153,9 +153,13 @@ export type LocalDb = {
 /**
  * The local docker DB, guarded: throws unless every DB/Supabase URL in the env and production/.env.local points at the
  * local stack (scripts/dev/local-guard.mjs scenarioTargetReason). Call it inside a test / beforeAll — never at import
- * time — so a spec collected by the staging E2E job (where it skips) never touches docker.
+ * time — so a spec collected by the staging E2E job (where it skips) never touches docker. The guard runs once per card
+ * per worker process (cached): `localDb(card).psql(...)` per statement costs no extra `docker ps`.
  */
+const localDbs = new Map<string, LocalDb>();
 export function localDb(card: string): LocalDb {
+  const cached = localDbs.get(card);
+  if (cached) return cached;
   const ps = spawnSync("docker", ["ps", "--format", "{{.Names}}"], { encoding: "utf8" });
   const c = (ps.stdout ?? "").split(/\r?\n/).map((s) => s.trim()).find((n) => /^supabase_db_/.test(n)) ?? null;
   const env: Record<string, string> = {};
@@ -177,7 +181,9 @@ export function localDb(card: string): LocalDb {
     if (r.status !== 0) throw new Error(`psql failed (exit ${r.status}): ${(r.stderr || r.stdout || "").trim()}`);
     return (r.stdout ?? "").split(/\r?\n/).filter(Boolean);
   };
-  return { container, psql, one: (sql) => (psql(sql)[0] ?? "").trim() };
+  const db: LocalDb = { container, psql, one: (sql) => (psql(sql)[0] ?? "").trim() };
+  localDbs.set(card, db);
+  return db;
 }
 
 /** A fixed planted test id in SQL — only letters, digits and - _ . / ('c2631000-…', 'Q-SCN-GFO-1'). */
@@ -202,11 +208,18 @@ export function localCleanupDeleteIssuedInvoice(
   const ids = (opts.invoiceIds ?? []).map(sqlId);
   const quotes = (opts.quoteIds ?? []).map(sqlId);
   const where = [ids.length ? `id in (${ids.join(", ")})` : "", quotes.length ? `quote_id in (${quotes.join(", ")})` : ""].filter(Boolean);
+  if (!where.length) throw new Error(`${card}: localCleanupDeleteIssuedInvoice needs invoiceIds or quoteIds (the fixed ids this spec planted)`);
+  /* before / after are the spec's OWN fixed-id statements; they share the transaction, so they must not touch invoices. */
+  for (const extra of [opts.before, opts.after]) {
+    if (extra && /\binvoices\b/i.test(extra.replace(/\binvoice_id\b/gi, ""))) {
+      throw new Error(`${card}: before/after must not touch public.invoices — pass invoiceIds/quoteIds instead`);
+    }
+  }
   db.psql(`
 begin;
 set local app.invoice_amend_reason = '${card} card test cleanup (local test invoice)';
 ${opts.before ?? ""}
-${where.length ? `delete from public.invoices where (${where.join(" or ")}) and tenant_id = ${E2E_TENANT_SQL};` : ""}
+delete from public.invoices where (${where.join(" or ")}) and tenant_id = ${E2E_TENANT_SQL};
 ${opts.after ?? ""}
 commit;`);
 }
@@ -217,11 +230,12 @@ commit;`);
  * 9 Nov: a P&L From typed during hydration was lost (reversed range → "didn't load"); "GST returns filed up to" typed
  * before the stored month loaded was wiped by the re-render and Save stayed disabled.
  */
-export async function waitForHydrated(page: Page, ready: Locator, timeout = 90_000): Promise<void> {
+export async function waitForHydrated(page: Page, ready: Locator, opts: { timeout?: number; idleMs?: number } = {}): Promise<void> {
   await expect(page).not.toHaveURL(/\/login/);
-  await expect(ready.first()).toBeVisible({ timeout });
+  await expect(ready.first()).toBeVisible({ timeout: opts.timeout ?? 90_000 });
   // Capped: polling pages never go idle, and `ready` already proved the data is there.
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => { /* polling page */ });
+  await page.waitForLoadState("networkidle", { timeout: opts.idleMs ?? 15_000 }).catch(() => { /* polling page */ });
+  await expect(page.getByText(/Something went wrong/i)).toHaveCount(0);
 }
 
 /**
@@ -241,15 +255,16 @@ export async function fillKept(input: Locator, value: string, expected: string =
 /**
  * Accounting → Overview → "GST returns filed up to" → <month> → Save → confirm (step 1 of R-2621 / R-2627 / R-2631 /
  * R-2642). Waits for the stored value ("Not set" or a saved month) BEFORE typing, keeps the typed month, waits for Save
- * to enable. `month` = "2026-09"; `monthName` = "September 2026" (what the card says once saved). Already saved at that
- * month → nothing to do (Save stays disabled for an unchanged month).
+ * to enable. `month` = "2026-09"; `monthName` = "September 2026" (what the card says once saved). The spec clears the
+ * setting in beforeAll: a month that is ALREADY saved fails here (Save would stay disabled and the step would prove
+ * nothing) — it never passes without pressing Save.
  */
 export async function setGstFiledThrough(page: Page, month: string, monthName: string): Promise<void> {
-  await page.goto("/accounting");
+  await openAppPage(page, "/accounting");
   const card = page.getByTestId("gst-filed-through-card");
   const text = page.getByTestId("gst-filed-through-text");
   await waitForHydrated(page, text.filter({ hasText: /Not set|GST returns are filed up to/ }));
-  if ((await text.textContent())?.includes(`filed up to ${monthName}`)) return;
+  await expect(text, `"GST returns filed up to" must not already be ${monthName} — clear it in beforeAll`).not.toContainText(`filed up to ${monthName}`);
   await fillKept(card.getByLabel("GST returns filed up to (month)"), month);
   const save = card.getByRole("button", { name: "Save" });
   await expect(save).toBeEnabled({ timeout: 30_000 });
@@ -261,28 +276,41 @@ export async function setGstFiledThrough(page: Page, month: string, monthName: s
 /**
  * Open a panel that starts collapsed (e.g. /invoices "Pending GST invoice generation") and wait for its content.
  * `name` = the clickable header's text (a button or role=button); `content` = something only the OPEN panel shows.
- * Already open → nothing is clicked. A toggle with aria-expanded is trusted; without it the content decides. A click
- * before hydration does nothing, so it is retried — never once the content shows (a second click would close it).
+ * Already open → nothing is clicked. A toggle with aria-expanded is trusted: it is clicked again only while it still
+ * says "false" (a click before hydration does nothing). Without aria-expanded nobody can tell "closed" from "open, rows
+ * still loading", so it is clicked ONCE and the content gets the whole timeout (a second click would close it).
  */
 export async function openCollapsedPanel(page: Page, name: string | RegExp, content: Locator, timeout = 60_000): Promise<void> {
   const toggle = page.getByRole("button", { name }).first();
   await expect(toggle).toBeVisible({ timeout });
+  if (await content.first().isVisible()) return;
+  if ((await toggle.getAttribute("aria-expanded")) === null) {
+    await toggle.click();
+    await expect(content.first()).toBeVisible({ timeout });
+    return;
+  }
   await expect(async () => {
-    if (await content.first().isVisible()) return;
-    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
-    await expect(content.first()).toBeVisible({ timeout: 10_000 });
+    if ((await toggle.getAttribute("aria-expanded")) === "false") await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true", { timeout: 5_000 });
   }).toPass({ timeout });
+  await expect(content.first()).toBeVisible({ timeout });
 }
 
 /**
  * USD (foreign-currency) quote: picking the currency fetches the "Latest" exchange rate on its own. A rate typed before
  * that fetch lands is overwritten later (R-2638 / R-2644) — wait for it, then fillKept the rate. Resolves once the rate
- * box holds a real rate (not empty / 0 / 1), or after `timeout` when the rate service is off on localhost.
+ * box holds a real rate (not empty / 0 / 1 / 1.00) that has stayed the same for 2 s, or after `timeout` when the rate
+ * service is off on localhost (then nothing will overwrite the typed rate).
  */
 export async function waitForAutoRateFetch(page: Page, rate: Locator = page.locator("#billingRate"), timeout = 20_000): Promise<void> {
   await expect(rate).toBeVisible({ timeout: 60_000 });
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => { /* polling page */ });
-  await expect(rate).not.toHaveValue(/^(|0|1)$/, { timeout }).catch(() => { /* no rate service: the typed rate stays */ });
+  await expect(async () => {
+    const v = await rate.inputValue();
+    expect(v, "exchange rate still the placeholder").not.toMatch(/^(|0+(\.0*)?|1(\.0*)?)$/);
+    await page.waitForTimeout(2_000);
+    expect(await rate.inputValue(), "exchange rate still changing").toBe(v);
+  }).toPass({ timeout }).catch(() => { /* no rate service on this localhost: the typed rate stays */ });
 }
 
 /**
