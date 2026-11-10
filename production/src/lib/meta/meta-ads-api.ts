@@ -93,7 +93,9 @@ export async function fetchMetaCampaignGoals(token: string, actId: string): Prom
     for (const a of r.data ?? []) if (a.campaign_id && a.optimization_goal) (goals.get(a.campaign_id) ?? goals.set(a.campaign_id, new Set()).get(a.campaign_id)!).add(a.optimization_goal);
     url = r.paging?.next;
   }
-  return new Map([...goals].map(([id, g]) => [id, metaResultKind([...g])]));
+  const out = new Map<string, MetaResultKind>();
+  for (const [id, g] of goals) { const kind = metaResultKind([...g]); if (kind) out.set(id, kind); }
+  return out;
 }
 
 export { META_LEAD_ACTIONS };
