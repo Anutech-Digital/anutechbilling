@@ -115,8 +115,9 @@ beforeEach(() => {
   };
 });
 
-const args = (extra: Record<string, unknown> = {}) => ({
-  db: fakeClient(), admin: fakeClient(), tenantId: T, accountId: ACC, month: "2025-10", fetchImpl: razorpay(), env: {}, ...extra,
+type RunArgs = Parameters<typeof runMonthBatch>[0];
+const args = (extra: Partial<RunArgs> = {}): RunArgs => ({
+  db: fakeClient(), admin: fakeClient(), tenantId: T, accountId: ACC, month: "2025-10", fetchImpl: razorpay(), env: {}, txnIds: [], ...extra,
 });
 
 describe("R-2654 loadMonthBatch", () => {
