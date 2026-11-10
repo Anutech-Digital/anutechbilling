@@ -59,5 +59,6 @@ export function useInvoiceIssueDate(args: { tenantId: string | null | undefined;
     },
   });
   const date = q.data ?? null;
-  return { date, why: date ? invoiceDateWhy({ date, receiptDay: args.receiptDay, today }) : undefined };
+  /* R-2647: `loading` — the /invoices confirm holds Issue until the server's date is in (or failed). */
+  return { date, why: date ? invoiceDateWhy({ date, receiptDay: args.receiptDay, today }) : undefined, loading: q.isLoading };
 }

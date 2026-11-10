@@ -14,6 +14,7 @@ import type { InvoiceDateWhy } from "./issue-date";
 import type { PendingPartAction } from "./split-sale-pending";
 import type { TenantLut } from "@/lib/gst/export-lut";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
+import { taxableAfterDiscount } from "@/lib/quotes/amounts";
 
 /** What useQuotesAwaitingInvoice returns per row (only the fields used here). */
 export interface PendingQuoteForIssue {
@@ -32,6 +33,17 @@ export interface PendingQuoteForIssue {
   part_action?: PendingPartAction;
 }
 
+/**
+ * The GST inside the quote total, as the quote page shows it (R-804: stored total − taxable after
+ * discount, when it agrees with the rate). No subtotal stored → worked back from the total and rate.
+ */
+function quoteGst(q: PendingQuoteForIssue): number | undefined {
+  const rate = q.tax_rate ?? 0;
+  if (q.subtotal != null) return quoteDisplayTax(taxableAfterDiscount(q.subtotal, q.discount_pct ?? 0), rate, q.amount);
+  if (q.amount == null) return undefined;
+  return q.amount - Math.round(q.amount / (1 + rate / 100));
+}
+
 export function pendingQuoteToIssuable(
   q: PendingQuoteForIssue,
   ctx?: {
@@ -40,28 +52,28 @@ export function pendingQuoteToIssuable(
     invoiceDateWhy?: InvoiceDateWhy;
     /** undefined = not loaded → no ARN is claimed. */
     luts?: readonly TenantLut[] | null;
+    /** The company is not GST-registered (R-1529) — a Bill of Supply, as on the quote page. */
+    billOfSupply?: boolean;
   },
 ): QuoteToInvoice {
-  const part = q.part_action?.kind === "part";
-  /* Same as the quote page: GST = stored total − taxable after discount (R-804), when it agrees. */
-  const subtotal = q.subtotal ?? null;
-  const taxable = subtotal === null ? null : subtotal - Math.round(subtotal * ((q.discount_pct ?? 0) / 100));
-  const taxAmount = part || taxable === null ? undefined : quoteDisplayTax(taxable, q.tax_rate ?? 0, q.amount);
+  const act = q.part_action;
+  /* A part row (R-2057) is issued by its own "Generate invoice for Q1" button, not this confirm; its
+     own GST is not on the row, so nothing is said about GST or export for it (never a 0% claim). */
+  const part = act?.kind === "part" ? act : null;
   return {
     id: q.id,
     customerName: q.customer_name ?? null,
     /* R-2057: a part's invoice is for the part, not the year. */
-    amount: part && q.part_action?.kind === "part" ? q.part_action.amount ?? q.amount ?? null : q.amount ?? null,
-    /* A part's own GST is not on the row — say no GST figure rather than the year's. */
-    taxAmount,
+    amount: part ? part.amount ?? q.amount ?? null : q.amount ?? null,
+    taxAmount: part ? undefined : quoteGst(q),
     paymentTermsDays: q.payment_terms_days ?? null,
-    customerGstin: q.customer_gstin ?? null,
-    /* A part row has no GST figure here, so it would be judged as 0% — say nothing about export for it
-       (parts are issued through the bulk confirm, which states no export line). */
+    /* undefined (lookup failed) stays undefined — no B2C warning about a GSTIN nobody read. */
+    customerGstin: q.customer_gstin,
     customerCountry: part ? undefined : q.customer_country,
     customerTreatment: q.customer_treatment ?? null,
     invoiceDate: ctx?.invoiceDate,
     invoiceDateWhy: ctx?.invoiceDateWhy,
     luts: ctx?.luts,
+    billOfSupply: ctx?.billOfSupply,
   };
 }

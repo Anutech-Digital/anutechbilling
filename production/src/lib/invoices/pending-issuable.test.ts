@@ -82,6 +82,24 @@ describe("R-2647 /invoices Generate confirm = the quote page's wording", () => {
     expect(text({ ...ROW, customer_country: undefined })).not.toMatch(/export invoice/);
   });
 
+  it("GSTIN lookup failed (undefined) → no B2C warning, still undefined on the quote", () => {
+    const row = { ...ROW, customer_gstin: undefined, customer_country: undefined, customer_treatment: undefined };
+    expect(pendingQuoteToIssuable(row).customerGstin).toBeUndefined();
+    expect(text(row)).not.toMatch(/B2C/);
+  });
+
+  it("no subtotal stored → GST worked back from total and rate, so the IGST line still shows", () => {
+    const row = { ...ROW, subtotal: null, amount: 15_583, tax_rate: 18 };
+    expect(pendingQuoteToIssuable(row).taxAmount).toBe(2_377);
+    expect(text(row, { invoiceDate: "2026-08-26", invoiceDateWhy: "receipt", luts: LUTS })).toMatch(/WITH payment of IGST/);
+  });
+
+  it("company not GST-registered → Bill of Supply, no export/LUT line (as on the quote page)", () => {
+    const t = text(ROW, { invoiceDate: "2026-08-26", invoiceDateWhy: "receipt", luts: LUTS, billOfSupply: true });
+    expect(t).toMatch(/Bill of Supply/);
+    expect(t).not.toMatch(/export invoice/);
+  });
+
   it("a part row bills the part amount and claims no GST figure for the whole year", () => {
     const q = pendingQuoteToIssuable({
       ...ROW, amount: 40_000, tax_rate: 18,

@@ -61,6 +61,8 @@ import { issueConsequences, bulkIssueConsequences } from "@/lib/invoices/issue-c
 import { pendingQuoteToIssuable, type PendingQuoteForIssue } from "@/lib/invoices/pending-issuable";
 import { useInvoiceIssueDate } from "@/lib/invoices/issue-date";
 import { useTenantLuts } from "@/lib/queries/tenant-luts";
+import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { issueEinvoiceNotice, irnAgeingInvoices, irnAgeingNotice, isB2B } from "@/lib/compliance/einvoice";
@@ -258,18 +260,24 @@ function InvoicesPageInner() {
   const singleIssueDate = useInvoiceIssueDate({
     tenantId: me?.tenantId, receiptDay: singleQuote?.latest_receipt_day ?? null, enabled: confirmSingle !== null,
   });
-  const { data: tenantLuts } = useTenantLuts(confirmSingle !== null);
+  const singleLuts = useTenantLuts(confirmSingle !== null);
+  const tenantLuts = singleLuts.data;
+  const gstRegistration = useGstRegistration();
+  const billOfSupply = !!billOfSupplyStatus(gstRegistration.data?.saved);
+  /* Held (Issue disabled, no lines) while the server's date or the LUTs are still loading — the
+     number's FY and the LUT block depend on them. A failed read stops holding: no date line, no ARN. */
+  const singleFactsLoading = singleIssueDate.loading || singleLuts.isLoading;
   const singleConsequences = React.useMemo(
-    () => (singleQuote ? issueConsequences({
+    () => (singleQuote && !singleFactsLoading ? issueConsequences({
       quote: pendingQuoteToIssuable(singleQuote, {
-        /* Only the server's date — while it loads or if it fails, no date line and no LUT judgement. */
         invoiceDate: singleIssueDate.date ?? undefined,
         invoiceDateWhy: singleIssueDate.why,
         luts: tenantLuts,
+        billOfSupply,
       }),
       series: invoiceSeries,
     }) : null),
-    [singleQuote, invoiceSeries, singleIssueDate.date, singleIssueDate.why, tenantLuts],
+    [singleQuote, singleFactsLoading, invoiceSeries, singleIssueDate.date, singleIssueDate.why, tenantLuts, billOfSupply],
   );
   const bulkConsequences = React.useMemo(() => {
     if (!confirmBulk || !pending) return null;

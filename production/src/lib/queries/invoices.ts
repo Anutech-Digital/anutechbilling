@@ -16,7 +16,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { exportLutFix, lutMissingWarning } from "@/lib/gst/export-lut";
 import { invoiceIssueFix } from "@/lib/onboarding/setup-links";
 import { customerBeforeInvoice } from "@/lib/quotes/quote-page-actions";
-import { latestReceiptIstDay } from "@/lib/invoices/issue-date";
+import { toIstDate } from "@/lib/dates/ist";
 import { pendingPartAction, partGenerateResult, type PartGenerateAnswer, type PartGenerateResult, type SplitSaleStatus } from "@/lib/invoices/split-sale-pending";
 
 /**
@@ -124,19 +124,15 @@ export function useQuotesAwaitingInvoice() {
       if (pErr) throw pErr;
 
       const firstAdvanceByQuote = new Map<string, string>();
-      /* R-2647: every received payment per quote, for the latest receipt's IST day — the day
-         generate_invoice dates the invoice on (R-2095); the confirm asks invoice_date_for_receipt
-         with it, same as the quote page (R-2635). */
-      const receivedByQuote = new Map<string, { status: string; received_at: string }[]>();
+      /* R-2647: the latest receipt (rows come oldest first) — its IST day is the day generate_invoice
+         dates the invoice on (R-2095); the confirm asks invoice_date_for_receipt with it, as the quote
+         page does (R-2635). */
+      const lastReceivedAt = new Map<string, string>();
       for (const p of payments ?? []) {
         if (p.quote_id && !firstAdvanceByQuote.has(p.quote_id)) {
           firstAdvanceByQuote.set(p.quote_id, p.received_at);
         }
-        if (p.quote_id) {
-          const list = receivedByQuote.get(p.quote_id) ?? [];
-          list.push({ status: "received", received_at: p.received_at });
-          receivedByQuote.set(p.quote_id, list);
-        }
+        if (p.quote_id && p.received_at) lastReceivedAt.set(p.quote_id, p.received_at);
       }
 
       /* ── THE BUYER'S GSTIN, FOR A REMINDER AND NOTHING ELSE ────────────────
@@ -194,10 +190,13 @@ export function useQuotesAwaitingInvoice() {
         .map((q) => ({
           ...q,
           first_advance_at: firstAdvanceByQuote.get(q.id) ?? q.payment_received_at ?? null,
-          customer_gstin: q.customer_id ? gstinByCustomer.get(q.customer_id) ?? null : null,
+          /* R-2647: lookup failed → undefined ("not asked"), as the comment above always meant —
+             null would warn "B2C" for a customer abroad whose country could not be read either. */
+          customer_gstin: !q.customer_id ? null
+            : gstinByCustomer.has(q.customer_id) ? gstinByCustomer.get(q.customer_id) ?? null : undefined,
           customer_country: q.customer_id ? placeByCustomer.get(q.customer_id)?.country : undefined,
           customer_treatment: q.customer_id ? placeByCustomer.get(q.customer_id)?.treatment : undefined,
-          latest_receipt_day: latestReceiptIstDay(receivedByQuote.get(q.id)),
+          latest_receipt_day: lastReceivedAt.has(q.id) ? toIstDate(lastReceivedAt.get(q.id) as string) : null,
           part_action: pendingPartAction(statusByQuote.get(q.id), q),
         }))
         .filter((q) => q.part_action.kind !== "hide")
