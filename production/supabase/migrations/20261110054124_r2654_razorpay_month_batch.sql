@@ -137,7 +137,7 @@ begin
   if not found then raise exception 'This run is not in your company — reload the page and try again.' using errcode = 'no_data_found'; end if;
 
   for v_l in
-    select l.id, l.txn_id, l.kind, l.matched_to_type, l.matched_to_id, bt.matched_to_type as now_type,
+    select l.id, l.txn_id, l.kind, l.matched_to_type, l.matched_to_id, l.booked_at, bt.matched_to_type as now_type,
            bt.matched_to_id as now_id, bt.txn_date, bt.credit
       from public.bank_recon_run_lines l
       join public.bank_transactions bt on bt.id = l.txn_id and bt.tenant_id = v_tenant
