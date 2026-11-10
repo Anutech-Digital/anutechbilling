@@ -15,7 +15,7 @@
  */
 import path from "node:path";
 import { PRODUCTION_ROOT } from "./prisma-generated";
-import { flushSourceCache, readSource } from "./source-cache";
+import { flushSourceCache, primeSources } from "./source-cache-core";
 import { listSourceFiles } from "./walk-source";
 
 /** What the guard scans read most: our TS source under src/ and the SQL under supabase/. */
@@ -24,25 +24,24 @@ export const WARM_TARGETS: ReadonlyArray<{ dir: string; ext: RegExp }> = [
   { dir: "supabase", ext: /\.sql$/ },
 ];
 
-/** Read every target file through readSource and write the cache. Returns how many files it read. */
-export function warmSourceCache(root: string = PRODUCTION_ROOT): number {
-  let n = 0;
+/** Read every target file into the cache (many reads in flight — a serial read of ~6,500 files took
+    13 s on this laptop) and write the cache files. Returns how many files were read from disk
+    (0 when the cache was already warm). */
+export async function warmSourceCache(root: string = PRODUCTION_ROOT): Promise<number> {
+  const files: string[] = [];
   for (const { dir, ext } of WARM_TARGETS) {
-    let files: string[] = [];
-    try { files = listSourceFiles(path.join(root, dir), (name) => ext.test(name)); } catch { continue; }
-    for (const f of files) {
-      try { readSource(f); n++; } catch { /* gone between walk and read — the scan will see that itself */ }
-    }
+    try { files.push(...listSourceFiles(path.join(root, dir), (name) => ext.test(name))); } catch { /* no such folder */ }
   }
+  const n = await primeSources(files);
   flushSourceCache();
   return n;
 }
 
 /** vitest globalSetup entry. */
-export default function setup(): void {
+export default async function setup(): Promise<void> {
   const t0 = Date.now();
   try {
-    const n = warmSourceCache();
-    if (process.env.SOURCE_CACHE_WARM_LOG) console.log(`(source cache warm: ${n} files, ${Date.now() - t0} ms)`);
+    const n = await warmSourceCache();
+    if (process.env.SOURCE_CACHE_WARM_LOG) console.log(`(source cache warm: ${n} files read, ${Date.now() - t0} ms)`);
   } catch { /* cache is only for speed */ }
 }

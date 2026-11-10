@@ -36,7 +36,8 @@
  * same strictness. The five a11y guards build the a11y-count report in-process (a11yReport) instead of
  * spawning node five times. Measured alternating runs, 5–6 worker locks + tsc running: before
  * 202.5/169.0/64.2 s, after 48.8/35.0/26.2 s (light load: 55/57/49 → 28/27/28 s; cold cache 44.6 s).
- * A NEW whole-tree scan: read with readSource(), not readFileSync.
+ * A NEW whole-tree scan: read with readSource(), not readFileSync; list files with listSourceFiles()
+ * (src/lib/testing/walk-source.ts, R-2649 — one memoised walk, no stat per entry).
  *
  * R-2571 (7 Nov 2026): +6 migration/security scans (cloudsql-auth-shim etc.) — CI went red on one the
  * push did not run. The six alone: 50 s → 14 s with readSource. Whole guard step (88 files + lint
