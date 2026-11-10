@@ -40,6 +40,8 @@ vi.mock("@/lib/supabase/server", () => {
         return { data: hidden ? null : state.sub, error: null };
       }
       if (table === "items") return { data: items, error: null };
+      if (table === "customers") return { data: state.customer, error: null };
+      if (table === "tenant_luts") return state.luts === null ? { data: null, error: { message: "boom" } } : { data: state.luts, error: null };
       if (table === "quotes") {
         if (ctx.op === "insert") state.inserted.push(ctx.payload);
         if (ctx.op === "delete") state.deleted.push(ctx.filters);
@@ -131,5 +133,32 @@ describe("R-2073 upgrade-support route", () => {
     const res = await post({ to_tier: "enterprise" });
     expect(res.status).toBe(409);
     expect(state.deleted).toHaveLength(1);
+  });
+
+  /* R-2648: a customer abroad + an LUT for the quote's FY (today 31 Dec 2027 → FY 2027-28) → 0%. */
+  it("R-2648: customer abroad with an LUT for FY 2027-28 → the upgrade quote is 0% (export without payment)", async () => {
+    state.customer = { country: "United States", gst_treatment: "overseas" };
+    state.luts = [{ fy_start: "2027-04-01", arn: "AD0704270001", valid_from: "2027-04-01", valid_upto: "2028-03-31" }];
+    const res = await post({ to_tier: "enterprise" });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ amountExGst: 19_998, amount: 19_998, taxWarning: null });
+    expect(state.inserted[0]).toMatchObject({ tax_rate: 0, subtotal: 19_998, amount: 19_998 });
+  });
+
+  it("R-2648: customer abroad, no LUT for FY 2027-28 → 18% as before + the add-LUT warning", async () => {
+    state.customer = { country: "United States", gst_treatment: "overseas" };
+    state.luts = [{ fy_start: "2026-04-01", arn: "AD0704260001", valid_from: "2026-04-01", valid_upto: "2027-03-31" }];
+    const res = await post({ to_tier: "enterprise" });
+    const body = await res.json();
+    expect(body).toMatchObject({ amount: 23_598 });
+    expect(body.taxWarning).toContain("No LUT for FY 2027-28 on file, so this quote charges 18% IGST");
+    expect(state.inserted[0]).toMatchObject({ tax_rate: 18 });
+  });
+
+  it("R-2648: LUT read error → 18% (never zero-rated on an unknown)", async () => {
+    state.customer = { country: "UAE", gst_treatment: "overseas" };
+    state.luts = null;
+    await post({ to_tier: "enterprise" });
+    expect(state.inserted[0]).toMatchObject({ tax_rate: 18 });
   });
 });
