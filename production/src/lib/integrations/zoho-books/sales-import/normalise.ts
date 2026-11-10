@@ -71,6 +71,9 @@ export interface ZohoSaleFacts {
   taxable: number;
   tax: number;
   amount: number;
+  /** R-2650: amount − taxable − tax in whole rupees (Zoho's round-off / adjustment in ₹, plus the
+   *  rounding of each figure). Optional: a scan saved before R-2650 has none. */
+  roundOff?: number;
   /** The one GST rate of the invoice; null when its lines carry different rates. */
   taxRate: number | null;
   head: TaxHead;
@@ -102,6 +105,17 @@ export function zohoBillingAddress(v: unknown): { address: string | null; countr
   return { address: parts.length ? parts.join(", ").slice(0, 500) : null, country: country ? country.slice(0, 60) : null };
 }
 
+/**
+ * R-2650: the most a Zoho invoice's total may differ from taxable + GST, in whole rupees — one unit
+ * of the invoice's currency (Zoho allows a round-off/adjustment up to that) in ₹, rounded up, plus ₹1
+ * for rounding each figure to the rupee once. ₹ invoice: 2; USD at 85.12: 87. The SQL import
+ * (import_zoho_fy_sales) uses the same rule on the scan's currency and fxRate.
+ */
+export function roundOffLimit(currency: string, fxRate: number | null): number {
+  const unit = (currency || "INR").toUpperCase() === "INR" || !fxRate || fxRate <= 0 ? 1 : Math.ceil(fxRate);
+  return unit + 1;
+}
+
 /** The rates an invoice here can carry (invoices.tax_rate is a whole number; 40% from 22 Sep 2025). */
 export const GST_RATES: readonly number[] = [0, 3, 5, 12, 18, 28, 40];
 
@@ -131,19 +145,50 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
   /** Document currency paise → INR paise (unrounded until paiseToRupees). */
   const inr = (p: number) => (fx ? p * fx : p);
 
+  /* Document-currency figures (the adjustment rule below is per unit of the invoice's currency). */
   const adjustmentPaise = paiseOf(raw.adjustment) + paiseOf(raw.roundoff_value);
   const totalPaise = d.totalPaise;
   const taxPaise = d.taxTotalPaise;
   const taxablePaise = totalPaise - taxPaise - adjustmentPaise;
 
-  const amount = paiseToRupees(inr(totalPaise));
-  const tax = paiseToRupees(inr(taxPaise));
-  const taxable = paiseToRupees(inr(taxablePaise));
+  /* R-2650: ₹ figures. A foreign-currency invoice uses Zoho's OWN base-currency (bcy_*) figures
+     when Zoho sends them — that is what Zoho filed in ₹ — else the rate × the document figures.
+     Each figure is rounded to the rupee once; the round-off stays a round-off (never folded into
+     the taxable or the GST). */
+  const bcy = (k: string): number | null => (fx ? num(raw[`bcy_${k}`]) : null);
+  const bcyTotal = bcy("total");
+  const bcyTax = bcy("tax_total");
+  const useBcy = bcyTotal !== null && bcyTax !== null;
+  const totalInr = useBcy ? Math.round(bcyTotal * 100) : inr(totalPaise);
+  const taxInr = useBcy ? Math.round(bcyTax * 100) : inr(taxPaise);
+  const bcyAdj = bcy("adjustment");
+  const bcyRound = bcy("roundoff_value");
+  const adjustmentInr = useBcy && (bcyAdj !== null || bcyRound !== null)
+    ? Math.round((bcyAdj ?? 0) * 100) + Math.round((bcyRound ?? 0) * 100)
+    : inr(adjustmentPaise);
+
+  const amount = paiseToRupees(totalInr);
+  const tax = paiseToRupees(taxInr);
+  const taxable = paiseToRupees(totalInr - taxInr - adjustmentInr);
+  /* R-2650: what is left between the total and taxable + GST (Zoho's round-off/adjustment in ₹,
+     plus at most ₹1 from rounding each figure once). The SQL import checks it with roundOffLimit. */
+  const roundOff = amount - taxable - tax;
   if (Math.abs(adjustmentPaise) > 100) {
-    problems.push(`Zoho has an adjustment of ₹${(adjustmentPaise / 100).toFixed(2)} on it — book it by hand or ask the CA.`);
-  } else if (amount !== taxable + tax) {
-    notes.push(`Round-off: total ₹${amount} = taxable ₹${taxable} + GST ₹${tax} ${amount > taxable + tax ? "+" : "−"} ₹${Math.abs(amount - taxable - tax)}.`);
+    problems.push(`Zoho has an adjustment of ${currency === "INR" ? "₹" : `${currency} `}${(adjustmentPaise / 100).toFixed(2)} on it — book it by hand or ask the CA.`);
+  } else if (Math.abs(roundOff) > roundOffLimit(currency, fx)) {
+    problems.push(`Zoho's round-off of ₹${roundOff} is more than one ${currency === "INR" ? "rupee" : currency} — book it by hand or ask the CA.`);
+  } else if (roundOff !== 0) {
+    notes.push(`Round-off: total ₹${amount} = taxable ₹${taxable} + GST ₹${tax} ${roundOff > 0 ? "+" : "−"} ₹${Math.abs(roundOff)}.`);
   }
+  /* R-2650: genuinely broken data stays refused — Zoho's own GST heads must make its GST total. */
+  if (d.taxes.length) {
+    const named = d.taxes.reduce((a, t) => a + t.amountPaise, 0);
+    if (Math.abs(named - taxPaise) > 100) {
+      problems.push(`Its GST heads (${(named / 100).toFixed(2)}) do not add up to its GST (${(taxPaise / 100).toFixed(2)}) in Zoho.`);
+    }
+  }
+  /* TCS is collected on top of the sale: it would sit inside the taxable value. */
+  if (paiseOf(raw.tcs_amount) > 0) problems.push("Zoho collected TCS on the invoice — book it by hand or ask the CA.");
   if (totalPaise <= 0) problems.push("Total is ₹0.");
   if (taxablePaise < 0 || taxPaise < 0) problems.push("Taxable value or GST is below zero.");
   if (d.tdsPaise > 0) problems.push("Zoho has TDS on the invoice itself — book it by hand or ask the CA.");
@@ -225,6 +270,7 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
     taxable,
     tax,
     amount,
+    roundOff,
     taxRate,
     head,
     lines,
