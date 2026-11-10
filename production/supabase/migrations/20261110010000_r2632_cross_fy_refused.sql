@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_invoice_date(text,date,text)') and prosrc like '%R-2632%')
+-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_invoice_date(text,date,text)') and prosrc like '%An issued invoice keeps its number%')
 -- deploy-key: r2632crossfyrefused
 -- 20261110010000_r2632_cross_fy_refused.sql
 --
