@@ -126,37 +126,11 @@ export function issueConsequences(args: {
           : `This is the first invoice of the financial year for this business, so it opens the series.`,
   });
 
-  if (quote.invoiceDate) {
-    /* R-2635: generate_invoice dates it on the latest receipt's day (R-2095), never inside locked
-       books — the confirm said "(today)" for a quote paid weeks ago. */
-    const why = quote.invoiceDateWhy === "receipt"
-      ? " — the day the money came in (the latest receipt), not today"
-      : quote.invoiceDateWhy === "first_open"
-        /* R-2631: a new invoice is never dated in a GST-filed month or inside locked books. */
-        ? " — the first open day: GST for the days before it is already filed or the books are locked"
-        : " (today)";
-    out.push({
-      tone: "fact",
-      text: `Dated ${formatDate(quote.invoiceDate)}${why}. The date cannot be changed afterwards.`,
-    });
-  }
+  const dated = invoiceDateFact(quote);
+  if (dated) out.push({ tone: "fact", text: `${dated} The date cannot be changed afterwards.` });
 
-  /* R-2635 (R-2171 item 3): a customer abroad (or an SEZ unit supplied without payment of tax) is a
-     zero-rated supply under the LUT of the invoice date's FY (R-2444, R-2515) — never "B2C". Same
-     rules the server applies (supply_is_zero_rated, trg_invoices_zz_export_lut). */
-  const zeroRated = !bos && quote.customerCountry !== undefined
-    && isZeroRatedSupply({ country: quote.customerCountry, treatment: quote.customerTreatment ?? null });
-  if (zeroRated) out.push(zeroRatedLine(quote));
-  /* R-2620: Overseas with no country reads as India — the server refuses this invoice; never "B2C". */
-  const overseasNoCountry = !bos && quote.customerCountry !== undefined
-    && overseasCountryMissing({ treatment: quote.customerTreatment ?? null, country: quote.customerCountry });
-  if (overseasNoCountry) {
-    out.push({
-      tone: "warning",
-      text: `${quote.customerName || "This customer"} is marked Overseas but has no country, so nothing can be issued yet — ` +
-        "the app cannot tell a 0% export from an Indian sale. Open the customer, pick its country, then issue.",
-    });
-  }
+  const { zeroRated, overseasNoCountry, lines: supplyLines } = supplyFacts(quote);
+  out.push(...supplyLines);
 
   const gstin = quote.customerGstin?.trim();
   if (gstin) {
@@ -247,6 +221,45 @@ export function issueConsequences(args: {
   };
 }
 
+/**
+ * "Dated 26 Aug 2026 — the day the money came in …" (R-2635): generate_invoice dates it on the latest
+ * receipt's day (R-2095); R-2631: never in a GST-filed month or inside locked books. Null when the
+ * date is not known (not passed / still loading). One wording for the single and bulk confirm (R-2651).
+ */
+function invoiceDateFact(quote: QuoteToInvoice): string | null {
+  if (!quote.invoiceDate) return null;
+  const why = quote.invoiceDateWhy === "receipt"
+    ? " — the day the money came in (the latest receipt), not today"
+    : quote.invoiceDateWhy === "first_open"
+      ? " — the first open day: GST for the days before it is already filed or the books are locked"
+      : " (today)";
+  return `Dated ${formatDate(quote.invoiceDate)}${why}.`;
+}
+
+/**
+ * R-2635 (R-2171 item 3): a customer abroad (or an SEZ unit supplied without payment of tax) is a
+ * zero-rated supply under the LUT of the invoice date's FY (R-2444, R-2515) — never "B2C". Same rules
+ * the server applies (supply_is_zero_rated, trg_invoices_zz_export_lut). R-2620: Overseas with no
+ * country reads as India — the server refuses it. Shared by the single and the bulk confirm (R-2651).
+ */
+function supplyFacts(quote: QuoteToInvoice): { zeroRated: boolean; overseasNoCountry: boolean; lines: Consequence[] } {
+  const bos = quote.billOfSupply === true;
+  const lines: Consequence[] = [];
+  const zeroRated = !bos && quote.customerCountry !== undefined
+    && isZeroRatedSupply({ country: quote.customerCountry, treatment: quote.customerTreatment ?? null });
+  if (zeroRated) lines.push(zeroRatedLine(quote));
+  const overseasNoCountry = !bos && quote.customerCountry !== undefined
+    && overseasCountryMissing({ treatment: quote.customerTreatment ?? null, country: quote.customerCountry });
+  if (overseasNoCountry) {
+    lines.push({
+      tone: "warning",
+      text: `${quote.customerName || "This customer"} is marked Overseas but has no country, so nothing can be issued yet — ` +
+        "the app cannot tell a 0% export from an Indian sale. Open the customer, pick its country, then issue.",
+    });
+  }
+  return { zeroRated, overseasNoCountry, lines };
+}
+
 /** R-2635: the one line for a zero-rated (export / SEZ without payment) invoice. */
 function zeroRatedLine(quote: QuoteToInvoice): Consequence {
   const who = quote.customerName || "this customer";
@@ -307,17 +320,43 @@ export function bulkIssueConsequences(args: {
 
   const first = (series?.lastNumber ?? 0) + 1;
   const last = first + Math.max(0, n - 1);
-  const range = series
-    ? n === 1
-      ? formatDocumentNumber(series, first)
-      : `${formatDocumentNumber(series, first)} … ${formatDocumentNumber(series, last)}`
-    : "the first numbers of this financial year";
+  /* R-2651 (as R-2635 for one): next_document_number takes the FY from each invoice's DATE — when a
+     receipt-dated invoice falls in another FY, the one range of this FY's series would be wrong. */
+  const fys = [...new Set(quotes.flatMap((q) => (q.invoiceDate ? [fyLabel(q.invoiceDate)] : [])))].sort();
+  const otherFy = series !== null && quotes.some(
+    (q) => q.invoiceDate !== undefined && fyCodeOfYear(fyStartYear(q.invoiceDate)) !== series.fiscalYear,
+  );
+  const range = otherFy
+    ? `the next numbers of the series of each invoice date's financial year (FY ${fys.join(", FY ")})`
+    : series
+      ? n === 1
+        ? formatDocumentNumber(series, first)
+        : `${formatDocumentNumber(series, first)} … ${formatDocumentNumber(series, last)}`
+      : "the first numbers of this financial year";
+
+  /* R-2651: per quote, the SAME date and export / LUT / IGST lines its single confirm shows — the
+     bulk confirm said nothing about them. A quote its single confirm would hold (no LUT for the
+     date's FY, Overseas with no country) holds the whole bulk issue (isBlocked) and is named. */
+  const perQuote: Consequence[] = [];
+  for (const q of quotes) {
+    const dated = invoiceDateFact(q);
+    const { lines } = supplyFacts(q);
+    if (!dated && lines.length === 0) continue;
+    const held = lines.some((c) => c.tone === "warning" && /nothing can be issued/i.test(c.text));
+    const words = [dated, ...lines.map((c) => c.text)].filter(Boolean).join(" ");
+    perQuote.push({
+      tone: lines.some((c) => c.tone === "warning") ? "warning" : "fact",
+      text: `${q.id}${q.customerName ? ` · ${q.customerName}` : ""}: ${words}${held ? ` Untick ${q.id} to issue the others.` : ""}`,
+    });
+  }
 
   const out: Consequence[] = [
     {
       tone: "fact",
       text: `Issues ${n} invoice${n === 1 ? "" : "s"} and uses ${n === 1 ? "number" : "numbers"} ${range}.`,
     },
+    ...perQuote,
+    ...(quotes.some((q) => q.invoiceDate) ? [{ tone: "fact" as const, text: "The dates cannot be changed afterwards." }] : []),
     {
       tone: "fact",
       text: "None of them can be edited afterwards. Each mistake needs its own credit note.",
@@ -340,5 +379,5 @@ export function bulkIssueConsequences(args: {
     });
   }
 
-  return { predictedNumber: range, predictedIsCertain: series !== null, consequences: out };
+  return { predictedNumber: range, predictedIsCertain: series !== null && !otherFy, consequences: out };
 }

@@ -30,6 +30,8 @@ export interface PendingQuoteForIssue {
   /** The customer's country; empty = India (G5). `undefined` = not loaded → nothing said about export. */
   customer_country?: string | null;
   customer_treatment?: string | null;
+  /** IST day of the latest received payment (generate_invoice dates on it), null when none. */
+  latest_receipt_day?: string | null;
   part_action?: PendingPartAction;
 }
 
@@ -76,4 +78,30 @@ export function pendingQuoteToIssuable(
     luts: ctx?.luts,
     billOfSupply: ctx?.billOfSupply,
   };
+}
+
+/**
+ * R-2651 — the selected rows for the bulk "Generate N" confirm, each with the same facts its single
+ * confirm gets: the server's date for ITS latest receipt day (`dateFor`, from useInvoiceIssueDates),
+ * the LUTs and Bill of Supply. A part row (R-2057) is billed by the billing job's own path, so no date
+ * is claimed for it (and pendingQuoteToIssuable claims no export/GST for it).
+ */
+export function pendingQuotesToIssuable(
+  rows: readonly PendingQuoteForIssue[],
+  ctx: {
+    /** undefined = that day's date not known (loading / failed) → no date line, no ARN. */
+    dateFor: (receiptDay: string | null) => { date: string | null; why?: InvoiceDateWhy } | undefined;
+    luts?: readonly TenantLut[] | null;
+    billOfSupply?: boolean;
+  },
+): QuoteToInvoice[] {
+  return rows.map((q) => {
+    const d = q.part_action?.kind === "part" ? undefined : ctx.dateFor(q.latest_receipt_day ?? null);
+    return pendingQuoteToIssuable(q, {
+      invoiceDate: d?.date ?? undefined,
+      invoiceDateWhy: d?.date ? d.why : undefined,
+      luts: ctx.luts,
+      billOfSupply: ctx.billOfSupply,
+    });
+  });
 }

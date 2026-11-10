@@ -58,8 +58,8 @@ import {
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
 import { issueConsequences, bulkIssueConsequences } from "@/lib/invoices/issue-consequences";
-import { pendingQuoteToIssuable, type PendingQuoteForIssue } from "@/lib/invoices/pending-issuable";
-import { useInvoiceIssueDate } from "@/lib/invoices/issue-date";
+import { pendingQuoteToIssuable, pendingQuotesToIssuable } from "@/lib/invoices/pending-issuable";
+import { useInvoiceIssueDate, useInvoiceIssueDates } from "@/lib/invoices/issue-date";
 import { useTenantLuts } from "@/lib/queries/tenant-luts";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
@@ -247,9 +247,6 @@ function InvoicesPageInner() {
   const { data: series } = useDocumentSeries();
   const invoiceSeries = series?.invoice ?? null;
 
-  /** A pending quote in the shape `issueConsequences` needs (R-2647: one mapper, pending-issuable.ts). */
-  const toIssuable = React.useCallback((q: PendingQuoteForIssue) => pendingQuoteToIssuable(q), []);
-
   const singleQuote = React.useMemo(
     () => (confirmSingle ? pending?.find((q) => q.id === confirmSingle) ?? null : null),
     [confirmSingle, pending],
@@ -260,7 +257,7 @@ function InvoicesPageInner() {
   const singleIssueDate = useInvoiceIssueDate({
     tenantId: me?.tenantId, receiptDay: singleQuote?.latest_receipt_day ?? null, enabled: confirmSingle !== null,
   });
-  const singleLuts = useTenantLuts(confirmSingle !== null);
+  const singleLuts = useTenantLuts(confirmSingle !== null || confirmBulk);
   const tenantLuts = singleLuts.data;
   const gstRegistration = useGstRegistration();
   const billOfSupply = !!billOfSupplyStatus(gstRegistration.data?.saved);
@@ -279,12 +276,25 @@ function InvoicesPageInner() {
     }) : null),
     [singleQuote, singleFactsLoading, invoiceSeries, singleIssueDate.date, singleIssueDate.why, tenantLuts, billOfSupply],
   );
+  /* R-2651: the bulk confirm gets the same facts per selected quote — its own server date (from its
+     latest receipt day) and the LUTs — and is held (no lines, Issue disabled) while they load. */
+  const bulkRows = React.useMemo(
+    () => (confirmBulk && pending ? pending.filter((q) => pendingSelected.has(q.id)) : []),
+    [confirmBulk, pending, pendingSelected],
+  );
+  const bulkIssueDates = useInvoiceIssueDates({
+    tenantId: me?.tenantId,
+    receiptDays: bulkRows.filter((q) => q.part_action?.kind !== "part").map((q) => q.latest_receipt_day ?? null),
+    enabled: confirmBulk,
+  });
+  const bulkFactsLoading = bulkIssueDates.loading || singleLuts.isLoading;
   const bulkConsequences = React.useMemo(() => {
-    if (!confirmBulk || !pending) return null;
-    const selected = pending.filter((q) => pendingSelected.has(q.id));
-    if (selected.length === 0) return null;
-    return bulkIssueConsequences({ quotes: selected.map(toIssuable), series: invoiceSeries });
-  }, [confirmBulk, pending, pendingSelected, invoiceSeries, toIssuable]);
+    if (bulkRows.length === 0 || bulkFactsLoading) return null;
+    return bulkIssueConsequences({
+      quotes: pendingQuotesToIssuable(bulkRows, { dateFor: bulkIssueDates.dateFor, luts: tenantLuts, billOfSupply }),
+      series: invoiceSeries,
+    });
+  }, [bulkRows, bulkFactsLoading, bulkIssueDates.dateFor, tenantLuts, billOfSupply, invoiceSeries]);
 
   /* R-337: "IRN needed" banner in the issue dialog for B2B (GSTIN) buyers above ₹5 Cr. */
   const singleEinvoice = React.useMemo(
@@ -1015,7 +1025,7 @@ function InvoicesPageInner() {
       />
 
       <ConfirmIssueDialog
-        open={confirmBulk && bulkConsequences !== null}
+        open={confirmBulk && bulkRows.length > 0}
         onOpenChange={(v) => { if (!v) setConfirmBulk(false); }}
         consequences={bulkConsequences}
         einvoiceNotice={bulkEinvoice}
