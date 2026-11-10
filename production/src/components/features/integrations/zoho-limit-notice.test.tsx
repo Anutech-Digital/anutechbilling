@@ -35,7 +35,9 @@ beforeEach(() => {
       if (readsLeftBusy > 0) { readsLeftBusy--; return new Response(JSON.stringify({ ok: true, listed: 0, detailed: 0, complete: false, busy: true })); }
       return new Response(JSON.stringify({ ok: true, listed: 2, detailed: 2, complete: true, busy: false }));
     }
-    if (b.action === "preview") return new Response(JSON.stringify(salesPreview));
+    /* R-2668: the dialog's first preview answers a little later, as a real server does — so every test
+       meets the "Read from Zoho" button while it is still disabled (busy = "preview"). */
+    if (b.action === "preview") { await new Promise((r) => setTimeout(r, 50)); return new Response(JSON.stringify(salesPreview)); }
     return new Response(JSON.stringify({ ok: true }));
   }));
 });
@@ -44,10 +46,18 @@ afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const reads = () => bodies.filter((b) => b.action === "read").length;
 
+/* R-2668: the button is disabled while the dialog loads its first preview, and a click then does nothing.
+   On CI (faster renders) the tests clicked inside that window, so the read never started — wait for it. */
+async function clickReadFromZoho() {
+  const button = await screen.findByRole("button", { name: /Read from Zoho/ });
+  await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
+  fireEvent.click(button);
+}
+
 describe("R-2652 FY sales from Zoho — Zoho's limit", () => {
   it("Zoho busy every time: stops after 3 reads and says the limit plainly, with Try again", async () => {
     render(<ZohoFySalesImportDialog open onOpenChange={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Read from Zoho/ }));
+    await clickReadFromZoho();
     const notice = await screen.findByTestId("zoho-limit-notice");
     expect(notice.textContent).toMatch(/Zoho's daily limit is reached/);
     expect(notice.textContent).toMatch(/Try again after 12:00 am IST on \d+ \w{3} \d{4}/);
@@ -70,7 +80,7 @@ describe("R-2652 FY sales from Zoho — Zoho's limit", () => {
   it("one busy answer then Zoho answers: no limit message, the read finishes", async () => {
     readsLeftBusy = 1;
     render(<ZohoFySalesImportDialog open onOpenChange={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Read from Zoho/ }));
+    await clickReadFromZoho();
     expect(await screen.findByText(/Read all 2 invoices/)).toBeTruthy();
     expect(screen.queryByTestId("zoho-limit-notice")).toBeNull();
   });
@@ -79,7 +89,7 @@ describe("R-2652 FY sales from Zoho — Zoho's limit", () => {
 describe("R-2652 FY purchases from Zoho (Expenses) — Zoho's limit", () => {
   it("Zoho busy every time: stops after 3 reads of bills with the same message", async () => {
     render(<ZohoPurchaseImportDialog open onOpenChange={() => {}} />);
-    fireEvent.click(await screen.findByRole("button", { name: /Read from Zoho/ }));
+    await clickReadFromZoho();
     const notice = await screen.findByTestId("zoho-limit-notice");
     expect(notice.textContent).toMatch(/Zoho's daily limit is reached/);
     expect(reads()).toBe(3);
