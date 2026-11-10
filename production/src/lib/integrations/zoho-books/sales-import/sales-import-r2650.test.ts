@@ -40,7 +40,7 @@ function detail(over: Partial<ZohoFyDocDetail> & { rawOver?: Record<string, unkn
 /** The SQL import's rule (import_zoho_fy_sales, R-2650): what it accepts, mirrored for the test. */
 function sqlAccepts(f: ZohoSaleFacts): boolean {
   const gap = f.amount - f.taxable - f.tax;
-  const limit = (f.currency === "INR" || !f.fxRate ? 1 : Math.ceil(f.fxRate)) + 1;
+  const limit = roundOffLimit(f.currency, f.fxRate);
   return f.taxable >= 0 && f.tax >= 0 && f.amount > 0 && Math.abs(gap) <= limit;
 }
 
@@ -75,6 +75,19 @@ describe("R-2650 foreign-currency round-off — imported as Zoho filed it", () =
     expect(f.roundOff).toBe(124020 - 105076 - 18914);
     expect(f.problems).toEqual([]);
     expect(sqlAccepts(f)).toBe(true);
+  });
+
+  it("Zoho sends bcy_adjustment but no bcy_roundoff_value — the round-off is not folded into the taxable", () => {
+    const f = zohoSaleFacts(usd({ bcy_total: 124019.84, bcy_tax_total: 18913.66, bcy_adjustment: 0 }), SELLER);
+    expect(f.taxable).toBe(Math.round(124019.84 - 18913.66 - 0.35 * 85.12)); // 105076, not 105106
+    expect(f.roundOff).toBe(30);
+    expect(f.problems).toEqual([]);
+  });
+
+  it("a gap from Zoho's ₹ figures above the limit is refused with the figures", () => {
+    // Zoho's ₹ adjustment (₹300) does not match its $0 document adjustment
+    const f = zohoSaleFacts(usd({ bcy_total: 124019.84, bcy_tax_total: 18913.66, bcy_adjustment: 300 }), SELLER);
+    expect(f.problems.join(" ")).toMatch(/leave ₹330 between the total ₹124020 .* allows \(₹87\)/);
   });
 
   it("a 0% export in USD with a round-off adds up too (the LUT rule is a separate gate)", () => {
