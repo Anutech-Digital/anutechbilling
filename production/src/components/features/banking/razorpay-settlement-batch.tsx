@@ -25,7 +25,9 @@ import {
 import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 
 /** Open Razorpay money-in lines per month (YYYY-MM → count), oldest first. */
-export function razorpayMonths(txns: ReadonlyArray<{ matched_to_type: string | null; credit: number | null; description: string | null; txn_date: string }>): Array<{ month: string; count: number }> {
+type TxnLite = { matched_to_type: string | null; credit: number | null; description: string | null; txn_date: string };
+
+export function razorpayMonths(txns: ReadonlyArray<TxnLite>): Array<{ month: string; count: number }> {
   const by = new Map<string, number>();
   for (const t of txns) {
     if (t.matched_to_type !== null || !isRazorpaySettlementLine(t)) continue;
@@ -190,13 +192,14 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
   );
 }
 
-/** The bank page's button — opens the sheet (mounted only while open). */
-export function RazorpaySettlementBatchButton({ accountId, accountName, months }: {
+/** The bank page's button — open Razorpay lines per month; opens the sheet (mounted only while open). */
+export function RazorpaySettlementBatchButton({ accountId, accountName, transactions }: {
   accountId: string;
   accountName: string;
-  months: Array<{ month: string; count: number }>;
+  transactions: ReadonlyArray<TxnLite>;
 }) {
   const [open, setOpen] = React.useState(false);
+  const months = React.useMemo(() => razorpayMonths(transactions), [transactions]);
   const total = months.reduce((s, m) => s + m.count, 0);
   if (!total) return null;
   return (
