@@ -116,14 +116,25 @@ export async function toCollectFigure(page: Page): Promise<Locator> {
 export async function pickPayingCustomer(dlg: Locator, name: string): Promise<void> {
   const picker = dlg.getByRole("combobox", { name: "Customer who paid" });
   const tile = dlg.getByRole("radiogroup", { name: "Who is this money for?" }).getByRole("radio", { name: /^Customer\b/ });
+  /* R-2666 (10 Nov, R-2621 step 3 screenshot): the sheet's Suggestion card ("… Looks right — reconcile" + "Change")
+     lands a few seconds AFTER the tiles and hides the customer form — a picker opened before it vanished again and
+     selectOption timed out. So: let the suggestion lookup land, use the card's own "Change" (the owner's way to the form)
+     when it is there, else the Customer tile, and pick until the picker HOLDS the customer. */
+  /* The Suggestion card's own "Change" (its sibling) — NOT the chosen-tile bar's "Change", which closes the tile again. */
+  const looksRight = dlg.getByRole("button", { name: "Looks right — reconcile" });
+  const change = looksRight.locator("xpath=..").getByRole("button", { name: "Change", exact: true });
   await expect(picker.or(tile).first()).toBeVisible({ timeout: 60_000 });
-  /* R-2666 (10 Nov): a tile click while the sheet was still loading its guesses was lost — the picker never opened and
-     selectOption timed out (R-2621 step 3). The tile is a radio, so clicking it again is safe: retry until the picker shows. */
+  await dlg.page().waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => { /* polling page */ });
   await expect(async () => {
-    if (!(await picker.isVisible())) await tile.click();
-    await expect(picker).toBeVisible({ timeout: 10_000 });
-  }).toPass({ timeout: 60_000 });
-  await picker.selectOption({ label: name });
+    if (!(await picker.isVisible())) {
+      if (await looksRight.isVisible()) await change.click();
+      else await tile.click(); // with no suggestion a tile click opens that tile's form (never closes it)
+    }
+    await picker.selectOption({ label: name }, { timeout: 10_000 });
+    await dlg.page().waitForTimeout(500);
+    await expect(picker).toBeVisible({ timeout: 1_000 });
+    await expect(picker).not.toHaveValue("", { timeout: 1_000 });
+  }).toPass({ timeout: 90_000 });
 }
 
 /* ─────────── R-2666 (10 Nov 2026): shared fixes for the traps that broke ~8 card specs in 2 days ───────────

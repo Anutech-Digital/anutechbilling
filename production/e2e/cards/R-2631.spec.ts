@@ -12,7 +12,7 @@
  */
 import { expect, test } from "@playwright/test";
 import {
-  CARD_TESTS_ON, E2E_TENANT_SQL as T, localCleanupDeleteIssuedInvoice, localDb, onlyInCardTests, openAppPage, pageAs, setGstFiledThrough,
+  CARD_TESTS_ON, localCleanupDeleteIssuedInvoice, localDb, onlyInCardTests, openAppPage, pageAs, setGstFiledThrough,
 } from "./card-steps";
 import { E2E_TENANT_EMAIL } from "../fixtures/e2e-roles.mjs";
 
