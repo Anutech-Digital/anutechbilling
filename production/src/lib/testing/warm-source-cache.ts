@@ -15,25 +15,31 @@
  */
 import path from "node:path";
 import { PRODUCTION_ROOT } from "./prisma-generated";
-import { flushSourceCache, primeSources } from "./source-cache-core";
+import { dropSourceCacheMemory, flushSourceCache, primeSources } from "./source-cache-core";
 import { listSourceFiles } from "./walk-source";
 
-/** What the guard scans read most: our TS source under src/ and the SQL under supabase/. */
+/** What the guard scans read most (counted 10 Nov): our TS source under src/ (tests too — no-seed-tenant
+    reads them), the migrations, and the Cloud SQL shims. Not all of supabase/ (archive, tests, seed:
+    ~800 more .sql few scans read) — each fork loads a whole bucket file, so it stays as small as it can. */
 export const WARM_TARGETS: ReadonlyArray<{ dir: string; ext: RegExp }> = [
   { dir: "src", ext: /\.(ts|tsx)$/ },
-  { dir: "supabase", ext: /\.sql$/ },
+  { dir: "supabase/migrations", ext: /\.sql$/ },
+  { dir: "supabase/cloudsql", ext: /\.sql$/ },
 ];
 
 /** Read every target file into the cache (many reads in flight — a serial read of ~6,500 files took
     13 s on this laptop) and write the cache files. Returns how many files were read from disk
     (0 when the cache was already warm). */
-export async function warmSourceCache(root: string = PRODUCTION_ROOT): Promise<number> {
+export async function warmSourceCache(root: string = PRODUCTION_ROOT, lockWaitMs = 10_000): Promise<number> {
   const files: string[] = [];
   for (const { dir, ext } of WARM_TARGETS) {
     try { files.push(...listSourceFiles(path.join(root, dir), (name) => ext.test(name))); } catch { /* no such folder */ }
   }
   const n = await primeSources(files);
-  flushSourceCache();
+  /* Wait up to 10 s for a held bucket lock, then take it over (a fork killed mid-flush leaves one):
+     skipping the write would leave every fork cold — the very thing this exists to stop. */
+  flushSourceCache({ waitMs: lockWaitMs });
+  dropSourceCacheMemory(); // the forks read the cache files; the long-lived parent need not hold ~40 MB
   return n;
 }
 

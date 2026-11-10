@@ -117,33 +117,44 @@ export function readSource(file: string): string {
   const key = keyOf(file);
   const map = load(bucketOf(key));
   const e = map.get(key);
-  const sameStat = !!e && e.s === st.size && e.m === st.mtimeMs && e.c === st.ctimeMs;
-  if (e && sameStat && !isRacy(e)) {
+  if (e && servable(e, st)) {
     if (e.text === undefined) e.text = e.buf!.toString("utf8");
     return e.text;
   }
   const raw = fs.readFileSync(file);
-  if (e && sameStat && e.buf && raw.equals(e.buf)) {
-    // Racy but unchanged: trusted in memory once a re-read finds the file aged. Not added to `fresh`:
-    // persisting a promotion would rewrite a whole bucket file (up to ~36 MB) to save one small re-read.
+  const next = settle(map, key, e, st, raw, now);
+  if (next.text === undefined) next.text = raw.toString("utf8");
+  return next.text;
+}
+
+const sameStat = (e: Entry, st: fs.Stats): boolean => e.s === st.size && e.m === st.mtimeMs && e.c === st.ctimeMs;
+/** The entry may be served on its stat alone: same size + mtime + ctime and not racy (R-2582). */
+const servable = (e: Entry, st: fs.Stats): boolean => sameStat(e, st) && !isRacy(e);
+
+/**
+ * After a disk read of `raw` (clock `now` taken before the stat `st`): a racy entry whose bytes are
+ * unchanged is trusted in memory from now on — not added to `fresh`: persisting a promotion would
+ * rewrite a whole bucket file (up to ~36 MB) to save one small re-read. Anything else is stored as a
+ * new entry for the next flush. One rule for readSource and primeSources (R-2649).
+ */
+function settle(map: Map<string, Entry>, key: string, e: Entry | undefined, st: fs.Stats, raw: Buffer, now: number): Entry {
+  if (e && sameStat(e, st) && e.buf && raw.equals(e.buf)) {
     const next: Entry = { ...e, r: now };
     map.set(key, next);
-    if (next.text === undefined) next.text = raw.toString("utf8");
-    return next.text;
+    return next;
   }
-  const text = raw.toString("utf8");
-  map.set(key, { s: st.size, m: st.mtimeMs, c: st.ctimeMs, r: now, buf: raw, text });
+  const next: Entry = { s: st.size, m: st.mtimeMs, c: st.ctimeMs, r: now, buf: raw };
+  map.set(key, next);
   fresh.add(key);
-  return text;
+  return next;
 }
 
 /**
  * R-2649: fill the cache for many files at once (the guard run's warm-up, warm-source-cache.ts) —
- * `concurrency` stats/reads in flight instead of one. Same order and rules as readSource: clock, then
- * stat, then read, so a file edited between them has a newer mtime than its entry and is read again
- * later; a racy entry is only trusted after its bytes compare equal (and that promotion is not
- * persisted, as in readSource). Stores entries only — the text is still served by readSource, which
- * checks the stat on every call. Returns how many files were read from disk; unreadable ones are skipped.
+ * `concurrency` stats/reads in flight instead of one. Same order and rules as readSource (servable /
+ * settle): clock, then stat, then read, so a file edited between them has a newer mtime than its entry
+ * and is read again later. Stores entries only — the text is still served by readSource, which checks
+ * the stat on every call. Returns how many files were read from disk; unreadable ones are skipped.
  */
 export async function primeSources(files: readonly string[], concurrency = 32): Promise<number> {
   let next = 0;
@@ -154,13 +165,10 @@ export async function primeSources(files: readonly string[], concurrency = 32): 
     const key = keyOf(file);
     const map = load(bucketOf(key));
     const e = map.get(key);
-    const sameStat = !!e && e.s === st.size && e.m === st.mtimeMs && e.c === st.ctimeMs;
-    if (e && sameStat && !isRacy(e)) return;
+    if (e && servable(e, st)) return;
     const raw = await fs.promises.readFile(file);
     read++;
-    if (e && sameStat && e.buf && raw.equals(e.buf)) { map.set(key, { ...e, r: now }); return; }
-    map.set(key, { s: st.size, m: st.mtimeMs, c: st.ctimeMs, r: now, buf: raw });
-    fresh.add(key);
+    settle(map, key, e, st, raw, now);
   }
   async function lane(): Promise<void> {
     while (next < files.length) {
@@ -179,7 +187,7 @@ export async function primeSources(files: readonly string[], concurrency = 32): 
  * already holds every fresh entry, and entries whose file is gone (deleted, renamed) are dropped —
  * so a dozen test files finishing a cold run (or a run after a rebase) write once, not ~50 MB each.
  */
-export function flushSourceCache(): void {
+export function flushSourceCache(opts: { waitMs?: number } = {}): void {
   if (!fresh.size) return;
   const mine = fresh;
   fresh = new Set();
@@ -190,17 +198,17 @@ export function flushSourceCache(): void {
     if (!byBucket.has(b)) byBucket.set(b, new Set());
     byBucket.get(b)!.add(k);
   }
-  for (const [b, keys] of byBucket) flushBucket(b, keys);
+  for (const [b, keys] of byBucket) flushBucket(b, keys, opts.waitMs ?? 0);
 }
 
-function flushBucket(b: Bucket, mine: Set<string>): void {
+function flushBucket(b: Bucket, mine: Set<string>, waitMs: number): void {
   const map = entries.get(b);
   if (!map) return;
   const file = bucketFile(b);
   const lock = `${file}.lock`;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    if (!takeLock(lock)) return;
+    if (!takeLock(lock, waitMs)) return;
   } catch { return; }
   try {
     const merged = readCacheFile(file);
@@ -241,17 +249,27 @@ function sameAs(d: Entry, e: Entry): boolean {
   return !!d.buf && d.buf.equals(eb);
 }
 
-/** Create the lock file; a lock older than 2 minutes is a crashed writer's and is taken over. */
-function takeLock(lock: string): boolean {
-  for (let i = 0; i < 2; i++) {
-    try { fs.closeSync(fs.openSync(lock, "wx")); return true; } catch {
-      try {
-        if (Date.now() - fs.statSync(lock).mtimeMs < 120_000) return false;
-        fs.rmSync(lock, { force: true });
-      } catch { return false; }
+/** Create the lock file; a lock older than 2 minutes is a crashed writer's and is taken over.
+    R-2649: with `waitMs` (the warm-up, whose whole point is to write) a held lock is waited for, then
+    taken over — a fork killed mid-flush by the push's run timeout leaves a fresh lock behind, and
+    skipping would leave every fork of the next run cold. Two writers only cost speed: each writes a
+    temp file and renames it, so a reader never sees half a file. */
+function takeLock(lock: string, waitMs = 0): boolean {
+  const deadline = Date.now() + waitMs;
+  for (let vanished = 0; ;) {
+    try { fs.closeSync(fs.openSync(lock, "wx")); return true; } catch { /* held */ }
+    let age: number;
+    try { age = Date.now() - fs.statSync(lock).mtimeMs; } catch {
+      if (++vanished > 3) return false; // released between our open and stat — just try again
+      continue;
     }
+    if (age >= 120_000 || (waitMs > 0 && Date.now() >= deadline)) {
+      fs.rmSync(lock, { force: true });
+      try { fs.closeSync(fs.openSync(lock, "wx")); return true; } catch { return false; }
+    }
+    if (waitMs <= 0) return false;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50); // sync sleep 50 ms
   }
-  return false;
 }
 
 let pruned = false;
@@ -278,10 +296,16 @@ function pruneOldCaches(): void {
    nothing from vitest, so a vitest globalSetup (warm-source-cache.ts, R-2649) can load it — vitest
    refuses to be imported there. */
 
+/** R-2649: free the in-memory copy (the warm-up, after its flush — tens of MB the long-lived vitest
+    parent would otherwise hold for the whole guard run). Unflushed entries are dropped too. */
+export function dropSourceCacheMemory(): void {
+  entries = new Map();
+  fresh = new Set();
+}
+
 /** Test hook: forget the in-memory copy (the next read loads the cache file again); `file` points
     the cache somewhere else (a temp folder) so a test never touches the shared one. */
 export function resetSourceCacheForTest(file?: string): void {
-  entries = new Map();
-  fresh = new Set();
+  dropSourceCacheMemory();
   if (file) cacheFile = file;
 }
