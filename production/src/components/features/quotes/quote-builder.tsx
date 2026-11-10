@@ -82,6 +82,8 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus, billOfSupplyBuilderLine, quoteEffectiveTaxRate } from "@/lib/quotes/bill-of-supply";
 import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead, treatmentIsAlwaysInterState } from "@/lib/gst/place-of-supply";
+import { useExportQuoteDefault } from "@/lib/gst/use-export-quote-default";
+import { exportQuoteLutWarning, EXPORT_QUOTE_LUT_HREF } from "@/lib/gst/export-quote-rate";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
 import { shortcutText } from "@/lib/keyboard/shortcuts";
@@ -999,6 +1001,15 @@ function QuoteBuilderBody() {
   }, [isExport, currency, duplicateOf, fetchLatestFx]);
 
   const effectiveTaxRate  = quoteEffectiveTaxRate({ saved: gstSaved, isExport: isExport || sezZeroRated, taxRate });
+  /* R-2648 (money-rules G16): the builder already quotes an export / SEZ-without-payment buyer at 0%.
+     With no LUT for today's FY that invoice is refused later (R-2444) — say so now, with the next step. */
+  const exportLut         = useExportQuoteDefault({
+    enabled:   (isExport || sezZeroRated) && !bosStatus,
+    country:   supplyCountry,
+    treatment: buyerTreatment,
+    date:      istToday(),
+  });
+  const exportLutWarning  = exportLut.ready ? exportQuoteLutWarning(exportLut.def, effectiveTaxRate) : null;
   const tax               = Math.round(taxable * (effectiveTaxRate / 100));
   const total             = taxable + tax;
   // Foreign-currency billing (books stay ₹). The whole builder renders in `currency`
@@ -3118,6 +3129,13 @@ function QuoteBuilderBody() {
                 </div>
                 )}
               </div>
+
+              {exportLutWarning && (
+                <div role="status" data-testid="export-lut-warning" className="rounded-md border border-amber/40 bg-amber-soft/40 p-2.5 my-1 text-2xs text-amber-ink">
+                  {exportLutWarning}{" "}
+                  <a href={EXPORT_QUOTE_LUT_HREF} className="font-semibold underline underline-offset-2">Add LUT</a>
+                </div>
+              )}
 
               {/* Foreign billing SUMMARY (read-only) — the currency + rate are set once
                   up top (Settings), so here we just confirm what the customer is billed. */}
