@@ -8,12 +8,13 @@
  * company links point there until a real one is built.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { HOSTING_PROOFS } from "@/site/lib/data/hosting-landing-v2";
 import { PRODUCT_PATHS, lookupMoved } from "@/site/lib/site-split";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
-const read = (f: string) => readFileSync(f, "utf8");
+const read = (f: string) => readSource(f);
 
 describe("company 'About' links stay on the Anutech site", () => {
   it("/about is a ResellerOS page (moved to the product host)", () => {

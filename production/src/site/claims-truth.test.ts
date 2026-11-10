@@ -14,8 +14,9 @@
  * Comments are stripped before scanning — they may explain history; only shipped text counts.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 import {
   DATA_LOCATION, SHOW_PREMIER_PARTNER, PARTNER_LINE, PARTNER_BADGE, PARTNER_SHORT, COMPANY,
 } from "@/site/lib/config";
@@ -51,7 +52,7 @@ function shipped(src: string): string {
     .replace(/^\s*import\b[^;]*;/gm, "");
 }
 
-const CODE = FILES.map((f) => ({ file: rel(f), text: shipped(readFileSync(f, "utf8")) }));
+const CODE = FILES.map((f) => ({ file: rel(f), text: shipped(readSource(f)) }));
 
 function offenders(re: RegExp, allow: (file: string) => boolean = () => false): string[] {
   return CODE.filter(({ file, text }) => !allow(file) && re.test(text)).map(({ file, text }) => {

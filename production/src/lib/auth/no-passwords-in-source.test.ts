@@ -4,8 +4,9 @@
  * landed before — the login page, the auth pages and the setup scripts.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const root = process.cwd();
 const authDir = join(root, "src", "app", "(auth)");
@@ -38,7 +39,7 @@ describe("no password literals in source (R-059)", () => {
 
   for (const f of files) {
     it(`${f.slice(root.length + 1)} has no password literal`, () => {
-      const hits = readFileSync(f, "utf8").split("\n").filter((l) => LITERAL.test(l) && !/process\.env|placeholder|type=/.test(l));
+      const hits = readSource(f).split("\n").filter((l) => LITERAL.test(l) && !/process\.env|placeholder|type=/.test(l));
       expect(hits).toEqual([]);
     });
   }

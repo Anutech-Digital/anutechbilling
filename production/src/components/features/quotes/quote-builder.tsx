@@ -82,6 +82,8 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus, billOfSupplyBuilderLine, quoteEffectiveTaxRate } from "@/lib/quotes/bill-of-supply";
 import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead, treatmentIsAlwaysInterState } from "@/lib/gst/place-of-supply";
+import { useExportQuoteDefault } from "@/lib/gst/use-export-quote-default";
+import { ExportLutNotice } from "@/components/features/quotes/export-lut-notice";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
 import { shortcutText } from "@/lib/keyboard/shortcuts";
@@ -90,9 +92,11 @@ import { BILLING_CURRENCIES, isForeignCurrency, formatForeign } from "@/lib/curr
 import { fxStampFromQuote, manualFxStamp, type FxStamp } from "@/lib/fx/rate-source";
 import { addOrMergeLine } from "@/lib/quotes/line-items";
 import { lineFromCatalog, catalogYearlyPrice, catalogLineListRate } from "@/lib/quotes/catalog-line";
-import { foreignQuoteFigures } from "@/lib/quotes/foreign-totals";
+import { usdCommitmentReprice } from "@/lib/quotes/usd-commitment";
+import { foreignQuoteFigures, foreignUnit, inrRateFromForeign, linesInrListGross, linesInrSubtotal } from "@/lib/quotes/foreign-totals";
 import { billingUnitOf, lineRateSuffix, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { suggestPlanProducts, productSupportSku, supplyStateMissing } from "@/lib/quotes/quote-assist";
+import { OVERSEAS_NO_COUNTRY_FIX, OVERSEAS_NO_COUNTRY_LABEL } from "@/lib/quotes/quote-place-of-supply";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { rupee, formatDate, GST_STATE_BY_CODE } from "@/lib/utils";
 import { cn } from "@/lib/utils";
@@ -598,7 +602,8 @@ function QuoteBuilderBody() {
          currency switch must move the list price, not erase the discount (2 Oct 2026). */
       const listBefore = l.list_rate ?? l.rate;
       const ratio = listBefore > 0 && l.rate < listBefore ? l.rate / listBefore : 1;
-      const rate = Math.round(annualRate * ratio);
+      /* R-2637: a USD price keeps its paise in ₹ — the line total is rounded once, not each unit. */
+      const rate = useUsd ? inrRateFromForeign(annualRate * ratio, 1) : Math.round(annualRate * ratio);
       /* R-388: a cost the user TYPED is theirs — a catalogue (re)load or a background
          refetch must not replace it. And a catalogue that cannot answer (wholesale 0 /
          missing) never wipes a cost the line already knows: 0 there means "unknown",
@@ -925,14 +930,17 @@ function QuoteBuilderBody() {
   /* R-1736: the picked customer's GST treatment — an SEZ buyer is IGST even in our own state. */
   const buyerTreatment = !isLeadMode && customerId ? (customer?.gst_treatment ?? null) : null;
   const sezBuyer = treatmentIsAlwaysInterState(buyerTreatment);
+  /* R-2515: an SEZ unit supplied WITHOUT payment of tax is zero-rated under the LUT, like an export
+     (isZeroRatedSupply). A Bill of Supply business has no LUT and charges no GST anyway — its words win. */
+  const sezZeroRated = !bosStatus && buyerTreatment === "sez_without_payment";
   const interState = isInterStateSupply(buyerStateCode, currentUser?.tenantStateCode, { customerGstin: customerId ? customer?.gstin : null, sellerGstin: currentUser?.tenantGstin, treatment: buyerTreatment });
 
   // Selling gross = the (negotiated) rate × qty. This is the actual revenue and
   // what gets billed / drives MRR — so it stays the subtotal.
-  const grossSubtotal     = lineItems.reduce((s, it) => s + it.qty * it.rate, 0);
+  /* R-2637: each line ₹ total = round(qty × rate) — rounded ONCE, at the line (a USD line keeps
+     a paise ₹ rate: 10 × $2 @ 95.10 = ₹1,902, not 10 × ₹190). Whole-rupee (INR) rates: unchanged. */
   // Legacy per-line discount (UI removed; still honoured for old/imported quotes).
-  const lineDiscountTotal = lineItems.reduce((s, it) => s + Math.round(it.qty * it.rate * ((it.discount_pct ?? 0) / 100)), 0);
-  const subtotal          = grossSubtotal - lineDiscountTotal;
+  const subtotal          = linesInrSubtotal(lineItems);
   const totalCost         = lineItems.reduce((s, it) => s + it.qty * it.cost, 0);
   /* Lines that are actually being SOLD but whose cost nobody knows. A ₹0 line is
      excluded — a free line legitimately costs nothing, and flagging it would train
@@ -950,7 +958,8 @@ function QuoteBuilderBody() {
   // price (list_rate) and what we're actually charging (rate). The rate is
   // already the discounted price, so taxable = subtotal (no further deduction —
   // deducting again would double-count and break the billed amount / MRR).
-  const listGross         = lineItems.reduce((s, it) => s + it.qty * (it.list_rate ?? it.rate), 0);
+  /* R-2644: rounded per line like the subtotal (lineInr) — a USD rate change read ₹0.24 as a discount. */
+  const listGross         = linesInrListGross(lineItems);
   const customerDiscount    = Math.max(0, listGross - subtotal);
   const customerDiscountPct = listGross > 0 ? Math.round((customerDiscount / listGross) * 100) : 0;
   const taxable           = subtotal;
@@ -973,6 +982,7 @@ function QuoteBuilderBody() {
   const sellerStateMissing = !!currentUser && gstHead.kind === "seller_state_missing";
   const placeOfSupply     = sellerStateMissing
     ? `${buyerStateCode && GST_STATE_BY_CODE[buyerStateCode] ? `${GST_STATE_BY_CODE[buyerStateCode]} (${buyerStateCode}) · ` : ""}GST head pending (company state not set)`
+    : gstHead.kind === "buyer_country_missing" ? OVERSEAS_NO_COUNTRY_LABEL
     : placeOfSupplyLabel({ posCode: buyerStateCode, interState, isExport });
 
   // Foreign (export) customer on a NEW quote → default the billing currency to
@@ -990,7 +1000,15 @@ function QuoteBuilderBody() {
     void fetchLatestFx("USD");
   }, [isExport, currency, duplicateOf, fetchLatestFx]);
 
-  const effectiveTaxRate  = quoteEffectiveTaxRate({ saved: gstSaved, isExport, taxRate });
+  const effectiveTaxRate  = quoteEffectiveTaxRate({ saved: gstSaved, isExport: isExport || sezZeroRated, taxRate });
+  /* R-2648 (money-rules G16): the builder already quotes an export / SEZ-without-payment buyer at 0%.
+     With no LUT for today's FY that invoice is refused later (R-2444) — say so now, with the next step. */
+  const exportLut         = useExportQuoteDefault({
+    enabled:   (isExport || sezZeroRated) && !bosStatus,
+    country:   supplyCountry,
+    treatment: buyerTreatment,
+    date:      istToday(),
+  });
   const tax               = Math.round(taxable * (effectiveTaxRate / 100));
   const total             = taxable + tax;
   // Foreign-currency billing (books stay ₹). The whole builder renders in `currency`
@@ -1303,13 +1321,22 @@ function QuoteBuilderBody() {
               };
             }
           }
+          /* R-2638: a line on the item's USD price list keeps it for the new commitment (discount
+             ratio kept). The ₹ tier below put the ₹ catalogue on a USD line (rate AND list), so
+             typing the USD price back read as a 65% "discount" and asked the owner to approve it.
+             A typed USD price (R-2178) never takes the ₹ tier either — it is unit-converted below. */
+          if (item && !typedPriceRef.current.has(l.id) && unitYearMultiplier(billingUnitOf(item)) === 12) {
+            const onUsd = usdCommitmentReprice({ line: l, item, commitment, usd: usdFor(item), costTyped: costTypedRef.current.has(l.id) });
+            if (onUsd) return onUsd;
+          }
+          const typedUsd = isUsdBill && typedPriceRef.current.has(l.id);
           // Map line commitment → underlying item price tier
           // "monthly" = monthly flex tier · others = annual tier (same price, only billing differs)
           const tierKey = commitment === "monthly" ? "monthly" : "annual";
           const tier    = item?.prices?.[tierKey];
           /* R-526: the tier is ₹/MONTH only on a per-month item. A domain (per year) or a
              migration (once) keeps its rate here; the unit conversion below handles flex. */
-          if (item && tier && tier.msrp > 0 && unitYearMultiplier(billingUnitOf(item)) === 12) {
+          if (item && !typedUsd && tier && tier.msrp > 0 && unitYearMultiplier(billingUnitOf(item)) === 12) {
             /* R-369: the tier is ₹/seat/MONTH. An annual line stores the year (×12); a
                flex line stores the month as-is — that is what the PDF, e-mail, accept
                page and record_payment read. `tier.msrp * 12` on a flex line was a
@@ -1340,12 +1367,12 @@ function QuoteBuilderBody() {
            catalogue path above is preferred and untouched. Right unit beats twelve times
            wrong. */
         const conv = convertRateForCommitment({
-          rate: l.rate, cost: l.cost, from: l.commitment, to: commitment,
+          rate: l.rate, cost: l.cost, from: l.commitment, to: commitment, keepPaise: isUsdBill,   // R-2637
         });
         /* The frozen list price is in the same unit as the rate (R-369) — convert it too,
            or a ₹3,240/yr list beside a ₹270/month rate reads as a ₹2,970 "discount". */
         const listConv = l.list_rate == null ? null : convertRateForCommitment({
-          rate: l.list_rate, cost: 0, from: l.commitment, to: commitment,
+          rate: l.list_rate, cost: 0, from: l.commitment, to: commitment, keepPaise: isUsdBill,
         });
         return {
           ...l, commitment, rate: conv.rate, cost: conv.cost,
@@ -1475,6 +1502,16 @@ function QuoteBuilderBody() {
         description: "The state decides CGST+SGST or IGST. You can still save this as a draft without it.",
       });
       document.getElementById(isLeadMode ? "leadState" : "state")?.focus();
+      return;
+    }
+    /* R-2620: Overseas with no country reads as India (G5) — 18% on what may be a 0% export. The
+       database refuses the send too; this says why before the click, with the fix one tap away. */
+    if (status === "sent" && customerId && !bosStatus && gstHead.kind === "buyer_country_missing") {
+      toast.error(`${customer?.name ?? "This customer"} is marked Overseas but has no country`, {
+        description: `${OVERSEAS_NO_COUNTRY_FIX} You can still save this as a draft.`,
+        duration: 15000,
+        action: { label: "Open customer", onClick: () => router.push(`/customers/${customerId}` as never) },
+      });
       return;
     }
     /* R-431: an existing customer with no state (and no GSTIN to prove one) is the same
@@ -2180,6 +2217,8 @@ function QuoteBuilderBody() {
                     <p className="text-2xs mt-2.5 pt-2.5 border-t border-hairline/70 flex items-center gap-1">
                       {isExport ? (
                         <span className="text-indigo-ink">🌍 Export ({exportCountryName}) → zero-rated under LUT, no GST</span>
+                      ) : sezZeroRated ? (
+                        <span className="text-indigo-ink">SEZ (without payment) → zero-rated under LUT, no GST</span>
                       ) : sellerStateMissing ? (
                         <CompanyStateFix />
                       ) : !buyerStateCode ? (
@@ -2512,9 +2551,9 @@ function QuoteBuilderBody() {
                       <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Rate {isUsdBill ? "$" : "₹"}{unitLabel}</span>
                       <input
                         type="number" min={0} step={isUsdBill ? "0.01" : "1"}
-                        value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate)}
+                        value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? foreignUnit(line.rate / lineDiv, fxRate) : displayRate)}
                         aria-invalid={!!lineDrafts[`${line.id}:rate`]}
-                        onChange={(e) => onRateInput(line.id, e.target.value, (v) => updateRate(line.id, (isUsdBill ? Math.round(v * fxRate) : Math.round(v)) * lineDiv))}
+                        onChange={(e) => onRateInput(line.id, e.target.value, (v) => updateRate(line.id, isUsdBill ? inrRateFromForeign(v * lineDiv, fxRate) : Math.round(v) * lineDiv))}
                         className={cn(
                           "mt-0.5 w-full px-2 py-1.5 text-sm tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
                           lineDrafts[`${line.id}:rate`] ? "border-rose" : "border-hairline",
@@ -2789,9 +2828,9 @@ function QuoteBuilderBody() {
                           type="number"
                           min={0}
                           step={isUsdBill ? "0.01" : "1"}
-                          value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? Number((displayRate / fxRate).toFixed(2)) : displayRate)}
+                          value={lineDrafts[`${line.id}:rate`]?.raw ?? (isUsdBill ? foreignUnit(line.rate / lineDiv, fxRate) : displayRate)}
                           aria-invalid={!!lineDrafts[`${line.id}:rate`]}
-                          onChange={(e) => onRateInput(line.id, e.target.value, (v) => handleRateChange(isUsdBill ? Math.round(v * fxRate) : Math.round(v)))}
+                          onChange={(e) => onRateInput(line.id, e.target.value, (v) => (isUsdBill ? updateRate(line.id, inrRateFromForeign(v * lineDiv, fxRate)) : handleRateChange(Math.round(v))))}
                           className={cn(
                             "w-24 px-2 py-1 text-sm text-right tabular-nums border rounded bg-paper focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber",
                             lineDrafts[`${line.id}:rate`] ? "border-rose" : "border-hairline",
@@ -2920,7 +2959,9 @@ function QuoteBuilderBody() {
                       helper a few fields up correctly said the head was still unknown.
                       Two labels on one screen, one of them wrong, is worse than either
                       alone: the operator believes the confident one. */}
-                  {sellerStateMissing
+                  {sezZeroRated
+                    ? "SEZ (without payment) → zero-rated under LUT, no GST"
+                    : sellerStateMissing
                     ? `Set your company's state to fix the GST head — the ${taxRate}% total is the same either way`
                     : !buyerStateCode
                     ? `Pick the customer's state to fix the GST head — the ${taxRate}% total is the same either way`
@@ -2954,7 +2995,7 @@ function QuoteBuilderBody() {
                         </span>
                       )}
                       <span className="text-ink-3" aria-hidden>·</span>
-                      <span>GST <b>{isExport ? "0% (export)" : bosStatus ? "0% (Bill of Supply)" : `${taxRate}%`}</b></span>
+                      <span>GST <b>{isExport ? "0% (export)" : sezZeroRated ? "0% (SEZ, under LUT)" : bosStatus ? "0% (Bill of Supply)" : `${taxRate}%`}</b></span>
                       <button
                         type="button"
                         onClick={() => setTermsOpen(true)}
@@ -3053,10 +3094,11 @@ function QuoteBuilderBody() {
                     suffix="%"
                     // Export supply is zero-rated under LUT — show 0% and lock the field
                     // so it never contradicts the "Export → no GST" badge above.
-                    value={isExport || bosStatus ? 0 : taxRate}
+                    value={isExport || sezZeroRated || bosStatus ? 0 : taxRate}
                     onChange={(e) => setTaxRate(parseInt(e.target.value) || 18)}
-                    /* R-1532: a Bill of Supply business cannot charge GST — locked at 0. */
-                    disabled={isExport || !!bosStatus}
+                    /* R-1532: a Bill of Supply business cannot charge GST — locked at 0.
+                       R-2515: nor an SEZ unit supplied without payment of tax (0% under the LUT). */
+                    disabled={isExport || sezZeroRated || !!bosStatus}
                     /* The smart default, SAID OUT LOUD. The rate and the SAC are filled in
                        for the operator and always were — but nothing ever showed what would
                        be printed on the document their customer's accountant reads, and a
@@ -3068,10 +3110,12 @@ function QuoteBuilderBody() {
                        knows. hsnSummary(null) says so instead. */
                     helper={isExport
                       ? "Export → zero-rated under LUT · no GST"
+                      : sezZeroRated
+                      ? "SEZ (without payment) → zero-rated under LUT · no GST. To charge IGST, set the customer to SEZ (with payment)."
                       : bosStatus
                       ? "Bill of Supply → no GST. Your GST registration is set in Settings → Company."
                       : hsnSummary(buyerStateCode && !sellerStateMissing ? interState : null)}
-                    className={isExport || bosStatus ? "bg-paper-2 cursor-not-allowed" : undefined}
+                    className={isExport || sezZeroRated || bosStatus ? "bg-paper-2 cursor-not-allowed" : undefined}
                   />
                 </FormField>
                 <button
@@ -3085,6 +3129,8 @@ function QuoteBuilderBody() {
                 )}
               </div>
 
+              {exportLut.def.kind === "no_lut" && <ExportLutNotice def={exportLut.def} rate={effectiveTaxRate} ready={exportLut.ready} className="my-1" />}
+
               {/* Foreign billing SUMMARY (read-only) — the currency + rate are set once
                   up top (Settings), so here we just confirm what the customer is billed. */}
               {isForeign && (
@@ -3097,7 +3143,7 @@ function QuoteBuilderBody() {
 
               {/* R-431: an unknown head (company or customer state empty) is one GST line,
                   never a guessed CGST + SGST split. The amount is the same either way. */}
-              {isExport || bosStatus ? null : (sellerStateMissing || !buyerStateCode) ? (
+              {isExport || sezZeroRated || bosStatus ? null : (sellerStateMissing || !buyerStateCode) ? (
                 <TotalRow label={`GST (${taxRate}%)`} value={fmtTotalC(dispTax)} />
               ) : interState ? (
                 <TotalRow label={`IGST (${taxRate}%)`} value={fmtTotalC(dispTax)} />

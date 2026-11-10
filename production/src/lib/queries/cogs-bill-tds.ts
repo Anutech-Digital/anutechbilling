@@ -3,6 +3,8 @@
  * line (bank_vendor_payment_lines, kind bill / new_bill, migration 20261024230000). It is NOT on
  * an expense row, so every reader of "TDS we deducted" (TDS payable, 26Q working, the months with
  * a TDS deposit) adds these rows. Paged past the gateway's 1000-row cap.
+ * R-1916: + TDS withheld on a vendor ADVANCE paid from the bank (kind advance, tds_base = the
+ * advance's gross, vendor_bill_id null) — due at payment, so it is in TDS payable and 26Q too.
  */
 import { fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
 import type { createClient } from "@/lib/supabase/client";
@@ -19,6 +21,9 @@ export interface CogsBillTdsRow {
   vendor_bill_id: string | null;
 }
 
+/** R-1916: the payment-row kinds that carry TDS we deducted (same list as report_balance_sheet.dues_vendor_tds). */
+export const COGS_BILL_TDS_KINDS = ["bill", "new_bill", "advance"] as const;
+
 /* The table is not in the generated types yet (R-1866). */
 export async function fetchCogsBillTds(
   supabase: ReturnType<typeof createClient>,
@@ -28,7 +33,7 @@ export async function fetchCogsBillTds(
     let q = supabase
       .from("bank_vendor_payment_lines" as never)
       .select("id, tds_on, tds_amount, tds_section, tds_base, vendor_id, vendor_bill_id")
-      .in("kind", ["bill", "new_bill"])
+      .in("kind", [...COGS_BILL_TDS_KINDS])
       .gt("tds_amount", 0);
     if (range.from) q = q.gte("tds_on", range.from);
     if (range.to) q = q.lte("tds_on", range.to);

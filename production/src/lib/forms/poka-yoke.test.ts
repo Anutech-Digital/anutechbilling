@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   liveGstin, checkGstin, gstinState,
-  livePhone, commitPhone, checkPhone,
+  livePhone, commitPhone, checkPhone, recommitPhoneForCountry,
   liveDomain, checkDomain,
   liveMoney, parseMoney, commitMoney, checkMoney,
   liveEmail, checkEmail, companyDomainFromEmail,
@@ -130,6 +130,98 @@ describe("phone", () => {
 
   it("accepts a real mobile", () => {
     expect(checkPhone("+91 98765 43210")).toMatchObject({ tone: "ok" });
+  });
+});
+
+/**
+ * R-2645: the phone field used to force +91 and cut every number to 10 digits, whatever
+ * the customer's country — a US "5551234567" saved as "+91 55512 34567" and "+44 7911 123456"
+ * as "4479111234". The dialling code now comes from the form's country (R-2639 lib/phone.ts).
+ */
+describe("phone with the form's country (R-2645)", () => {
+  it("US customer: 5551234567 saves as +1, not +91", () => {
+    expect(livePhone("5551234567", "United States")).toBe("5551234567");
+    expect(commitPhone("5551234567", "United States")).toBe("+1 555 123 4567");
+    expect(commitPhone("(555) 123-4567", "USA")).toBe("+1 555 123 4567");
+    expect(checkPhone("5551234567", "United States")).toMatchObject({ tone: "ok" });
+  });
+
+  it("a number typed with +CC is kept whole — any country, also India / empty", () => {
+    for (const country of [undefined, "", "India", "United States"]) {
+      expect(livePhone("+44 7911 123456", country)).toBe("+447911123456");
+      expect(commitPhone("+44 7911 123456", country)).toBe("+44 7911123456");
+      expect(checkPhone("+44 7911 123456", country)).toMatchObject({ tone: "ok" });
+    }
+    expect(commitPhone("0044 7911 123456", "")).toBe("+44 7911123456");
+    expect(commitPhone("+1 (555) 123-4567")).toBe("+1 555 123 4567");
+  });
+
+  it("UK customer: national 07911 123456 gets +44, trunk 0 dropped", () => {
+    expect(livePhone("07911 123456", "United Kingdom")).toBe("07911123456");
+    expect(commitPhone("07911 123456", "United Kingdom")).toBe("+44 7911123456");
+  });
+
+  it("a foreign number is not cut to 10 digits while typing", () => {
+    expect(livePhone("971501234567", "United Arab Emirates")).toBe("971501234567");
+    expect(commitPhone("971501234567", "United Arab Emirates")).toBe("+971 501234567");
+  });
+
+  it("Indian numbers are unchanged (India, empty or unreadable country)", () => {
+    for (const country of [undefined, "", "India", "IN", "Inida"]) {
+      expect(livePhone("+91 98765 43210", country)).toBe("9876543210");
+      expect(livePhone("09876543210", country)).toBe("9876543210");
+      expect(livePhone("98765432109", country)).toBe("9876543210");
+      expect(commitPhone("9876543210", country)).toBe("+91 98765 43210");
+      expect(commitPhone("98765", country)).toBe("98765");
+      expect(checkPhone("98765", country).tone).toBe("typing");
+      expect(checkPhone("0114234567", country).tone).toBe("error");
+    }
+  });
+
+  it("a +91 number for a foreign customer stays Indian (not re-coded)", () => {
+    expect(commitPhone("+91 98765 43210", "United States")).toBe("+91 98765 43210");
+  });
+
+  it("half-typed foreign number: left alone on commit, 'typing' pill", () => {
+    expect(commitPhone("555 12", "United States")).toBe("555 12");
+    expect(checkPhone("55512", "United States").tone).toBe("typing");
+    expect(checkPhone("+4", "").tone).toBe("typing");
+  });
+
+  it("an Indian landline written with +91 is still caught", () => {
+    expect(checkPhone("+91 11 4234 5678", "").tone).toBe("error");
+  });
+
+  it("review: an Indian mobile with a stray '+' stays Indian, not Iran (+98)", () => {
+    expect(livePhone("+9876543210", "India")).toBe("9876543210");
+    expect(commitPhone("+98765 43210", "")).toBe("+91 98765 43210");
+  });
+
+  it("review: +1 / +91 need exactly 10 digits after the code; short foreign numbers are 'typing'", () => {
+    expect(checkPhone("+1 555 123 456", "").tone).toBe("typing");
+    expect(commitPhone("+1 555 123 456", "")).toBe("+1 555 123 456");
+    expect(checkPhone("+91 98765 432109", "").tone).toBe("error");
+    expect(checkPhone("+91 98765 4321", "United States").tone).toBe("typing");
+    expect(checkPhone("791112", "United Kingdom").tone).toBe("typing");
+    expect(commitPhone("791112", "United Kingdom")).toBe("791112");
+  });
+
+  it("review: an over-long paste is not cut silently — it shows Too long", () => {
+    const c = checkPhone("+44 7911 123456 / +44 7911 654321", "");
+    expect(c.tone).toBe("error");
+    expect(c.message).toMatch(/too long/i);
+  });
+});
+
+describe("recommitPhoneForCountry (R-2645 review: country picked after the phone)", () => {
+  it("a bare number formatted as +91 before the country was picked gets the new code", () => {
+    expect(recommitPhoneForCountry("+91 55512 34567", "United States")).toBe("+1 555 123 4567");
+  });
+  it("never touches a real Indian mobile, another code, or an India pick", () => {
+    expect(recommitPhoneForCountry("+91 98765 43210", "United States")).toBeNull();
+    expect(recommitPhoneForCountry("+44 7911123456", "United States")).toBeNull();
+    expect(recommitPhoneForCountry("+91 55512 34567", "India")).toBeNull();
+    expect(recommitPhoneForCountry("", "United States")).toBeNull();
   });
 });
 

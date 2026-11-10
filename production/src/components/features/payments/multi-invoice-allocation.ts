@@ -76,19 +76,35 @@ export interface AllocationSummary {
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 
+/**
+ * R-2546: the sheet's Apply / TDS inputs hand back TEXT ("6600") once typed into, so
+ * "6600" + "200" was "6600200" → "More than due" on a ₹6,800 invoice. Every sum and compare
+ * here goes through this: a number; blank or not-a-number = 0.
+ */
+export function rupees(v: unknown): number {
+  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : 0;
+  return Number.isFinite(n) ? n : 0;
+}
+
+/** A form line with its amount and TDS as numbers (R-2546). */
+export function numericLine<L extends Pick<AllocationLine, "amount" | "tds">>(l: L): L {
+  return { ...l, amount: rupees(l.amount), tds: rupees(l.tds) };
+}
+
 export function summarise(received: number, lines: readonly AllocationLine[], invoices: readonly Pick<OpenInvoice, "id" | "due">[]): AllocationSummary {
   const dueOf = new Map(invoices.map((i) => [i.id, i.due]));
-  const used = lines.filter((l) => (l.amount || 0) + (l.tds || 0) > 0);
-  const allocated = used.reduce((s, l) => s + (l.amount || 0), 0);
-  const remaining = Math.floor(received || 0) - allocated;
-  const overDue = used.filter((l) => (l.amount || 0) + (l.tds || 0) > (dueOf.get(l.invoiceId) ?? 0)).map((l) => l.invoiceId);
-  const anyFull = used.some((l) => (l.amount || 0) + (l.tds || 0) === (dueOf.get(l.invoiceId) ?? -1));
+  const used = lines.map(numericLine).filter((l) => l.amount + l.tds > 0);
+  const allocated = used.reduce((s, l) => s + l.amount, 0);
+  const rec = Math.floor(rupees(received));
+  const remaining = rec - allocated;
+  const overDue = used.filter((l) => l.amount + l.tds > (dueOf.get(l.invoiceId) ?? 0)).map((l) => l.invoiceId);
+  const anyFull = used.some((l) => l.amount + l.tds === (dueOf.get(l.invoiceId) ?? -1));
 
   let problem: string | null = null;
-  if (!(received > 0)) problem = "Enter the amount received.";
+  if (!(rec > 0)) problem = "Enter the amount received.";
   else if (used.length === 0) problem = "Apply the payment to at least one invoice (Auto-fill does it oldest first).";
   else if (overDue.length) problem = `${overDue[0]} gets more than its due — lower that line; the rest can stay as advance credit.`;
-  else if (remaining < 0) problem = `The lines add up to ${inr(allocated)} but only ${inr(received)} came in — lower a line.`;
+  else if (remaining < 0) problem = `The lines add up to ${inr(allocated)} but only ${inr(rec)} came in — lower a line.`;
   else if (remaining > 0 && !anyFull) problem = `${inr(remaining)} would be kept as advance while every invoice is still part-paid — pay the oldest one in full first.`;
   return { allocated, remaining, overDue, used, anyFull, problem };
 }
@@ -98,11 +114,12 @@ export function summarise(received: number, lines: readonly AllocationLine[], in
  * TDS? Only when the line pays something and leaves something.
  */
 export function lineTdsHint(inv: Pick<OpenInvoice, "amount" | "net_payable" | "paid_amount" | "tax_rate">, line: Pick<AllocationLine, "amount" | "tds">, preferredSection?: string | null): TdsShortfallMatch | null {
-  if ((line.tds || 0) > 0 || !(line.amount > 0)) return null;
+  const amount = rupees(line.amount);
+  if (rupees(line.tds) > 0 || !(amount > 0)) return null;
   const total = inv.net_payable ?? inv.amount;
   return matchTdsShortfall({
     totalInclGst: total,
-    received: (inv.paid_amount ?? 0) + line.amount,
+    received: (inv.paid_amount ?? 0) + amount,
     gstRatePct: inv.tax_rate,
     preferredSection,
   });
@@ -111,10 +128,11 @@ export function lineTdsHint(inv: Pick<OpenInvoice, "amount" | "net_payable" | "p
 /** The RPC's p_allocations. */
 export function toRpcAllocations(lines: readonly AllocationLine[]): Array<{ invoice_id: string; amount: number; tds_amount?: number; tds_section?: string; tds_rate_pct?: number }> {
   return lines
-    .filter((l) => (l.amount || 0) + (l.tds || 0) > 0)
+    .map(numericLine)
+    .filter((l) => l.amount + l.tds > 0)
     .map((l) => ({
       invoice_id: l.invoiceId,
-      amount: Math.floor(l.amount || 0),
+      amount: Math.floor(l.amount),
       ...(l.tds > 0 ? { tds_amount: Math.floor(l.tds), tds_section: l.tdsSection ?? "194J", tds_rate_pct: l.tdsRatePct } : {}),
     }));
 }

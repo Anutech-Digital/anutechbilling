@@ -56,6 +56,124 @@ export function tdsBase(amountInclGst: number, taxRatePct: number | null | undef
   return Math.round((amountInclGst || 0) * 100 / (100 + r));
 }
 
+/** round(a × b ÷ c) for whole non-negative numbers, half away from zero like SQL's numeric round —
+ *  in BigInt, so crore × crore never drifts. */
+function mulDivRound(a: number, b: number, c: number): number {
+  const A = BigInt(a), B = BigInt(b), C = BigInt(c);
+  return Number((2n * A * B + C) / (2n * C));
+}
+
+/**
+ * R-2551 — the TDS gross of a receipt that may pay only a PART of a document: the twin of R-2538's
+ * SQL helpers bank_credit_tds_part_gross + bank_credit_tds_gross (migration 20261107074500), so the
+ * desk Record payment sheet books what the bank-reconcile path books.
+ * - gross = paid (money + TDS) × taxable ÷ GST-inclusive total, whole rupees, never above the taxable;
+ *   paid ≥ total (or no usable total) → the whole taxable.
+ * - a rate is given and the TDS does not fit it on that part (±₹1 is rounding) — the customer deducted
+ *   on more than this part — → TDS × 100 ÷ rate, never above the taxable (what 26AS shows).
+ * - never null: no taxable value → 0.
+ * Integer (BigInt) arithmetic with the rate to 6 decimals, so it gives the SQL helper's answer exactly.
+ */
+export function tdsPartGross(i: {
+  paid: number;
+  taxable: number | null | undefined;
+  total: number | null | undefined;
+  tds: number | null | undefined;
+  ratePct: number | null | undefined;
+}): number {
+  const whole = (n: number | null | undefined) => (typeof n === "number" && Number.isFinite(n) ? Math.round(n) : 0);
+  const taxable = whole(i.taxable);
+  const total = whole(i.total);
+  const paid = whole(i.paid);
+  const tds = whole(i.tds);
+  if (taxable <= 0) return 0;
+  let part: number;
+  if (total <= 0 || paid >= total) part = taxable;
+  else if (paid <= 0) part = 0;
+  else part = Math.min(taxable, mulDivRound(paid, taxable, total));
+  // The rate in millionths of a % (0.125% → 125000): exact for any rate typed with up to 6 decimals.
+  const rateM = typeof i.ratePct === "number" && Number.isFinite(i.ratePct) ? Math.round(i.ratePct * 1_000_000) : 0;
+  if (tds > 0 && rateM > 0 && Math.abs(mulDivRound(part, rateM, 100_000_000) - tds) > 1) {
+    return Math.min(taxable, mulDivRound(tds, 100_000_000, rateM));
+  }
+  return part;
+}
+
+/**
+ * R-2556 — the Record payment sheet's DEFAULT TDS when part of the document may already be paid.
+ * - partTaxable = the taxable share of THIS payment's part (the balance it settles), by the same part
+ *   rule as tdsPartGross (R-2551 / SQL bank_credit_tds_gross): remaining × taxable ÷ GST-inclusive total.
+ * - tds = rate × partTaxable, half away from zero, rate exact to 6 decimals (0.125% stays exact).
+ * - and never more than the document's TDS at that rate minus the TDS already booked on its earlier
+ *   parts (`bookedTds`; null = not known yet → only the part rule), so earlier TDS is never added again.
+ * Nothing paid before → remaining = total → rate × the whole taxable, exactly as before.
+ *
+ * R-2560 — `money` = the bank amount the owner TYPED for this payment (`credit` = advance used with it).
+ * When money + credit + TDS does not settle the balance, the TDS part is (money + TDS) — the same part
+ * the saved receipt's TDS gross is taken on (tdsPartGross of bank + TDS) — not the balance:
+ * TDS = rate × taxable share of (money + TDS) — the smallest whole-rupee fixed point, found by stepping up
+ * from ₹0 (each step is monotone and moves less than the rupee it adds, so it settles in a few steps; no
+ * fixed point in the step budget → the balance rule). Settling the balance to within ₹1 (R-2095 paise
+ * rounding) or more → the balance rule above. money absent / ₹0 (a TDS-only receipt) → the balance rule.
+ */
+export function tdsDefaultForPart(i: {
+  remaining: number;
+  taxable: number | null | undefined;
+  total: number | null | undefined;
+  ratePct: number | null | undefined;
+  bookedTds: number | null | undefined;
+  money?: number | null;
+  credit?: number | null;
+}): { partTaxable: number; tds: number } {
+  const remaining = Math.max(0, Math.round(i.remaining || 0));
+  const taxable = typeof i.taxable === "number" && Number.isFinite(i.taxable) ? Math.max(0, Math.round(i.taxable)) : 0;
+  const shareOf = (paid: number) => (paid > 0 ? tdsPartGross({ paid, taxable, total: i.total, tds: 0, ratePct: null }) : 0);
+  let partTaxable = shareOf(remaining);
+  const rateM = typeof i.ratePct === "number" && Number.isFinite(i.ratePct) && i.ratePct > 0
+    ? Math.round(i.ratePct * 1_000_000) : 0;
+  if (rateM <= 0 || partTaxable <= 0) return { partTaxable, tds: 0 };
+  const tdsOn = (part: number) => mulDivRound(part, rateM, 100_000_000);
+  let tds = tdsOn(partTaxable);
+  const money = typeof i.money === "number" && Number.isFinite(i.money) ? Math.round(i.money) : 0;
+  const credit = typeof i.credit === "number" && Number.isFinite(i.credit) ? Math.max(0, Math.round(i.credit)) : 0;
+  const settles = (t: number) => money + credit + t >= remaining - 1;
+  if (money > 0 && !settles(tds)) {
+    let t = 0;
+    let fixed = false;
+    for (let n = 0; n < 10_000 && !settles(t); n++) {
+      const next = tdsOn(shareOf(money + t));
+      if (next === t) { fixed = true; break; }
+      t = next;
+    }
+    if (fixed && !settles(t)) {
+      partTaxable = shareOf(money + t);
+      tds = t;
+    }
+  }
+  if (typeof i.bookedTds === "number" && Number.isFinite(i.bookedTds)) {
+    const left = mulDivRound(taxable, rateM, 100_000_000) - Math.max(0, Math.round(i.bookedTds));
+    tds = Math.max(0, Math.min(tds, left));
+  }
+  return { partTaxable, tds };
+}
+
+/** A tds_receivable row as the Record payment sheet reads it (R-2556). */
+export interface BookedTdsRow { tds_amount: number | null; rate_pct: number | string | null }
+
+/**
+ * R-2556 — TDS already booked on a document at THIS rate (rate compared to 6 decimals). TDS booked under
+ * another section/rate (194J 10% earlier, 194C 2% now) does not count: subtracting it would wrongly cap
+ * this part's TDS to ₹0.
+ */
+export function bookedTdsAtRate(rows: readonly BookedTdsRow[], ratePct: number | null | undefined): number {
+  const m = (r: unknown) => {
+    const n = typeof r === "string" ? Number(r) : r;
+    return typeof n === "number" && Number.isFinite(n) ? Math.round(n * 1_000_000) : NaN;
+  };
+  const want = m(ratePct);
+  return rows.reduce((s, r) => (m(r.rate_pct) === want ? s + Math.max(0, Math.round(r.tds_amount ?? 0)) : s), 0);
+}
+
 /** Sum of TDS per payment id, from tds_receivable rows (one payment can carry more than one). */
 export function tdsByPayment(rows: readonly { payment_id: string | null; tds_amount: number | null }[]): Record<string, number> {
   const out: Record<string, number> = {};

@@ -25,6 +25,7 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 
+import { authRedirectUrl } from "@/lib/app-url";
 import { createClient, isSupabaseConfigured } from "@/lib/supabase/client";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -47,10 +48,20 @@ export default function ForgotPasswordPage() {
   } = useForm<FormData>({ resolver: zodResolver(schema) });
 
   async function onSubmit(values: FormData) {
+    let redirectTo: string;
+    try {
+      // R-2600: an allowlisted host (same rule as the server), never just the browser's host.
+      redirectTo = authRedirectUrl(`/callback?next=${encodeURIComponent("/reset-password")}`);
+    } catch (e) {
+      // §24: what happened, why, and what next.
+      toast.error("Could not send the reset link", {
+        description: (e as Error).message,
+        action: { label: "Back to sign in", onClick: () => { window.location.assign("/login"); } },
+      });
+      return;
+    }
     const supabase = createClient();
-    const { error } = await supabase.auth.resetPasswordForEmail(values.email, {
-      redirectTo: `${window.location.origin}/callback?next=${encodeURIComponent("/reset-password")}`,
-    });
+    const { error } = await supabase.auth.resetPasswordForEmail(values.email, { redirectTo });
 
     /* Supabase does not say whether the address exists, and neither do we. Telling an
        anonymous visitor "no account with that email" turns this box into a way to find out

@@ -41,6 +41,8 @@ vi.mock("@/lib/queries/pnl", () => ({
 vi.mock("@/lib/csv", () => ({
   downloadCSV: (name: string, headers: string[], rows: (string | number)[][]) => { csv.calls.push({ name, headers, rows }); },
 }));
+/* R-2622: no signed-in role here → the page opens on As invoiced (GST), the view these tests cover. */
+vi.mock("@/lib/hooks/useCurrentUser", () => ({ useCurrentUser: () => ({ data: undefined }) }));
 vi.mock("@/components/shared/term", () => ({ Term: ({ children }: { children: React.ReactNode }) => <>{children}</> }));
 vi.mock("@/components/features/accounting/pnl-drilldown-dialog", () => ({ PnLDrilldownDialog: () => null }));
 vi.mock("@/components/features/accounting/pnl-waterfall", () => ({ PnlWaterfall: () => null, HundredRupeeBar: () => null }));

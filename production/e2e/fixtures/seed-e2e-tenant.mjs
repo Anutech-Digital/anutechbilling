@@ -7,7 +7,8 @@
  * Creates, idempotently (re-run any time; nothing is duplicated, nothing is deleted):
  *   - tenant "E2E Test Co" (found again by its marker email e2e-company@example.test)
  *   - four users in it: owner, manager, sales, accountant
- *     (+ R-2318: a second owner "owner2", only when E2E_OWNER2_PASSWORD is set — local only)
+ *     (+ R-2318: a second owner "owner2", only when E2E_OWNER2_PASSWORD is set — local only;
+ *      R-2553: likewise "billing" and "support", when E2E_BILLING_PASSWORD / E2E_SUPPORT_PASSWORD are set)
  *       email    = E2E_<ROLE>_EMAIL    (default e2e-<role>@example.test)
  *       password = E2E_<ROLE>_PASSWORD (REQUIRED — no default, never printed)
  *     An existing auth user gets its password reset to the env value, so the specs and
@@ -201,7 +202,7 @@ try {
     const u = await ensureUser(tenant.id, role);
     console.log(`user    ${u.role.padEnd(10)} ${u.email}  ${u.id}`);
   }
-  // R-2318: local-only extra logins (a second owner) — seeded only when their password is set.
+  // R-2318 / R-2553: local-only extra logins (owner2, billing, support) — seeded only when their password is set.
   for (const role of E2E_LOCAL_EXTRA_ROLES) {
     if (!process.env[roleEnvNames(role).password]) {
       console.log(`user    ${role.padEnd(10)} skipped — ${roleEnvNames(role).password} not set (local-only login)`);

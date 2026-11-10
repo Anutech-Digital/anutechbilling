@@ -12,6 +12,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const APP = path.join(process.cwd(), "src/app/(app)");
 const BANNED = /max-w-\[(1400|1500)px\]|max-w-screen-xl|max-w-7xl/g;
@@ -43,7 +44,7 @@ describe("R-1489: app pages use §20 widths (no 1400/1500px wrappers)", () => {
     for (const f of files) {
       const r = rel(f);
       if (r in ALLOWLIST) continue;
-      const hits = fs.readFileSync(f, "utf8").match(BANNED);
+      const hits = readSource(f).match(BANNED);
       if (hits) offenders.push(`${r}: ${[...new Set(hits)].join(", ")}`);
     }
     expect(offenders).toEqual([]);
@@ -55,7 +56,7 @@ describe("R-1489: app pages use §20 widths (no 1400/1500px wrappers)", () => {
       const full = path.join(APP, r);
       expect(fs.existsSync(full), `${r} is gone — remove it from ALLOWLIST`).toBe(true);
       expect(
-        BANNED.test(fs.readFileSync(full, "utf8")),
+        BANNED.test(readSource(full)),
         `${r} is fixed — remove it from ALLOWLIST`,
       ).toBe(true);
       BANNED.lastIndex = 0;

@@ -9,7 +9,7 @@
  * "charges unchanged" block below pins them.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { rupee } from "@/site/lib/money";
 import { quoteInr, quoteLineAmount, QUOTE_PRODUCTS } from "@/site/lib/data/quote-catalog";
@@ -18,6 +18,7 @@ import { LANDING_PLANS } from "@/site/lib/data/hosting-landing";
 import { buildRateCard } from "@/site/lib/rate-card";
 import { hostingRate, hostingPriceTable } from "@/lib/checkout/hosting-prices";
 import { paidHostingLine } from "@/site/lib/hosting-cart-line";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const tier = (name: string) => HOSTING_TIERS.find((t) => t.name === name)!;
 
@@ -55,7 +56,7 @@ describe("R-1465 one whole-rupee formatter on the site", () => {
         const p = join(d, f);
         if (statSync(p).isDirectory()) { walk(p); continue; }
         if (!/\.(ts|tsx)$/.test(f) || /\.test\.tsx?$/.test(f)) continue;
-        const src = readFileSync(p, "utf8");
+        const src = readSource(p);
         if (/minimumFractionDigits:\s*[^0]|toFixed\(2\)/.test(src)) hits.push(`${p}: paise formatter`);
         // "₹6.3L" / "₹69.4K" (compact demo figures) are not paise.
         if (/["'`][^"'`\n]*₹\d[\d,]*\.\d+(?![\dKL])/.test(src)) hits.push(`${p}: paise in a price string`);

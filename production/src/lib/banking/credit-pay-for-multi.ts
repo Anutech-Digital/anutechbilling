@@ -20,7 +20,23 @@ export const ROUND_OFF_LIMIT = 50;
 /** A ticked item and the part of the bank credit put on it. */
 export interface SplitPick { key: string; amount: number }
 
-export type SplitRest = "advance" | "round_off";
+/** R-1678: "fx" = foreign-currency items settled in full, the difference an exchange gain / loss
+ *  (lib/banking/item-fx-pay splitFxPlan decides it, never the operator's round-off choice).
+ *  R-2192: "bank_charge" = items settled in full, the shortfall the bank's / SWIFT charge — booked
+ *  as a Bank Charges expense (EXP-FXC-<line>, R-2427's row) on the line. */
+export type SplitRest = "advance" | "round_off" | "fx" | "bank_charge";
+
+/** R-2192: the largest bank / SWIFT charge on one line, and its largest share of what was settled.
+ *  Same numbers as c_charge_max / c_charge_pct in reconcile_bank_credit_split (migration
+ *  20261107205640_r2192_small_receipt_differences). More than that is not a bank charge — a part
+ *  payment or TDS. */
+export const BANK_CHARGE_MAX = 5000;
+export const BANK_CHARGE_MAX_PCT = 10;
+
+/** R-2192: may this shortfall on `due` be booked as the bank's charge? */
+export function bankChargeAllowed(shortBy: number, due: number): boolean {
+  return shortBy > 0 && due > 0 && shortBy <= BANK_CHARGE_MAX && shortBy * 100 <= due * BANK_CHARGE_MAX_PCT;
+}
 
 export type SplitState =
   | { kind: "empty" }
@@ -99,15 +115,19 @@ export function pickDefault(item: OpenItem): SplitPick {
   return { key: itemKey(item), amount: item.amount_due };
 }
 
-/** The bar's three numbers and its tone. */
-export function splitBarText(s: SplitSummary): { allocated: string; bank: string; left: string; tone: "ok" | "warn" | "bad" } {
-  const tone = s.state.kind === "exact" ? "ok" : s.state.kind === "over" || s.state.kind === "partShort" ? "bad" : "warn";
+/** The bar's three numbers and its tone. R-1678: with an exchange difference nothing is "over" — the gap is booked. */
+export function splitBarText(s: SplitSummary, rest: SplitRest | null = null): { allocated: string; bank: string; left: string; tone: "ok" | "warn" | "bad" } {
+  const tone = s.state.kind === "exact" ? "ok" : rest === "fx" ? "warn" : s.state.kind === "over" || s.state.kind === "partShort" ? "bad" : "warn";
   const left = s.left >= 0 ? rupee(s.left) : `−${rupee(-s.left)}`;
   return { allocated: rupee(s.allocated), bank: rupee(s.credit), left, tone };
 }
 
 /** The sentence under the bar. */
 export function splitStateText(state: SplitState, rest: SplitRest | null): string {
+  /* R-1678: foreign-currency items — each settled in full; the sheet says what the difference books. */
+  if (rest === "fx" && state.kind !== "empty") {
+    return state.kind === "exact" ? "Allocated exactly — nothing left over." : "Each invoice is settled in full — the difference is an exchange gain / loss (below), not a due and not TDS.";
+  }
   switch (state.kind) {
     case "empty": return "Tick what this money pays — each item gets its full due; change an amount if it was paid in part.";
     case "exact": return "Allocated exactly — nothing left over.";
@@ -128,13 +148,16 @@ export interface SplitSaleInput {
   subStart: string | null;
   subRenewal: string | null;
   amount: number;
+  /** R-2518: this sale's own Zoho invoice number (several sales on one line — one per Zoho invoice). */
+  externalNumber?: string | null;
 }
 
 export interface SplitInput {
   transactionId: string;
   customerId: string;
   items: ReadonlyArray<Pick<OpenItem, "quote_id" | "invoice_id"> & { amount: number }>;
-  sale: SplitSaleInput | null;
+  /** One new sale, or (R-2518) several — one per Zoho invoice, each with its own externalNumber. */
+  sale: SplitSaleInput | readonly SplitSaleInput[] | null;
   rest: SplitRest | null;
   /** R-2360: the Zoho invoice number of the NEW sale (Find in Zoho) — kept on its invoice. */
   externalNumber?: string | null;
@@ -142,24 +165,27 @@ export interface SplitInput {
 
 /** reconcile_bank_credit_split's arguments — exported so the tests pin what reaches the server. */
 export function splitArgs(i: SplitInput) {
+  const saleArg = (s: SplitSaleInput) => ({
+    lines: s.lines,
+    billing_cycle: s.billingCycle,
+    create_subscription: s.createSubscription,
+    sub_start: s.createSubscription ? s.subStart : null,
+    sub_renewal: s.createSubscription ? s.subRenewal : null,
+    amount: cleanAmount(s.amount),
+    /* R-2518: each sale's own Zoho number (stored on its invoice by the RPC). */
+    ...(s.externalNumber?.trim() ? { external_number: s.externalNumber.trim() } : {}),
+  });
+  const several = Array.isArray(i.sale);
   return {
     p_txn_id: i.transactionId,
     p_customer_id: i.customerId,
     p_items: i.items.map((it) => (it.invoice_id
       ? { invoice_id: it.invoice_id, amount: cleanAmount(it.amount) }
       : { quote_id: it.quote_id, amount: cleanAmount(it.amount) })),
-    p_sale: i.sale
-      ? {
-          lines: i.sale.lines,
-          billing_cycle: i.sale.billingCycle,
-          create_subscription: i.sale.createSubscription,
-          sub_start: i.sale.createSubscription ? i.sale.subStart : null,
-          sub_renewal: i.sale.createSubscription ? i.sale.subRenewal : null,
-          amount: cleanAmount(i.sale.amount),
-        }
-      : null,
+    /* R-2518: several sales → an array (one per Zoho invoice); one sale → the object, as before. */
+    p_sale: i.sale ? (several ? (i.sale as readonly SplitSaleInput[]).map(saleArg) : saleArg(i.sale as SplitSaleInput)) : null,
     p_rest: i.rest,
-    /* R-2360: only with a new sale — without it the call resolves to the old 5-argument function. */
-    ...(i.sale && i.externalNumber?.trim() ? { p_external_number: i.externalNumber.trim() } : {}),
+    /* R-2360: only with ONE new sale — without it the call resolves to the old 5-argument function. */
+    ...(i.sale && !several && i.externalNumber?.trim() ? { p_external_number: i.externalNumber.trim() } : {}),
   };
 }

@@ -204,6 +204,10 @@ jobs:
       # `<Link href="...">` the build rejects. Vitest never renders it; ESLint does not
       # type-check. The cost of leaving it out was not a red tick — it was a production
       # release that could not happen, with nothing in the gate saying so.
+      # ⚠️ Since R-2552 (7 Nov 2026) the typedRoutes TYPE errors are caught by the `typecheck` job
+      # (next typegen + tsc), not here — this build sets SKIP_BUILD_TYPECHECK=1 (see its env).
+      # What only this job still catches: compile/bundling errors, page-data collection and
+      # pre-rendering failures.
       #
       # Env: the SAME two publishable values production/Dockerfile's ARG defaults set, so
       # this build is the build that ships rather than a different one. They are public by
@@ -239,7 +243,27 @@ jobs:
           # called the LIVE domain and logged 503s there from Azure runner IPs. A closed local
           # port fails at once and the pages build with the typed fallback prices.
           CATALOG_ORIGIN: "http://127.0.0.1:9"
+          # ─── R-2552 (7 Nov 2026): NO SECOND TYPE CHECK INSIDE THE BUILD ──────────
+          # Measured on the last 10 manager-pardeep runs: the build job took 11.2–23.2 min, and
+          # next build's own "Checking validity of types" alone was 6.3–13.4 min of it (run
+          # 42357324621: 09:13:28 → 09:26:50Z) while compile (with the cache) was 1–3 min. The
+          # `typecheck` job above already runs exactly the check that catches typedRoutes —
+          # `npm run typecheck` = prisma generate && next typegen && tsc --noEmit (typegen writes
+          # the .next/types route files) — in parallel, and it is blocking in `checks`. That is
+          # the same split Cloud Build has used since R-182 (cloudbuild.yaml passes
+          # SKIP_BUILD_TYPECHECK=1 to the image build; its gate runs typegen + tsc). So the build
+          # job keeps compiling, page-data collection and pre-rendering (what typecheck cannot
+          # see) and stops repeating tsc. next.config.mjs: typescript.ignoreBuildErrors reads it.
+          # tests/ops/ci-workflow.test.ts pins: this flag only together with a blocking typecheck
+          # job that runs next typegen + tsc.
+          SKIP_BUILD_TYPECHECK: "1"
         run: npm run build
+
+      # R-2552: the restored .next/cache was 2.94–3.03 GB (download ~20 s + unpack ~1.5 min, save
+      # 1.0–1.9 min). Print what is in it so the next card can trim it by measurement.
+      - name: Next cache size (R-2552 — measure before trimming)
+        if: always()
+        run: du -sh .next/cache .next/cache/* .next/cache/webpack/* 2>/dev/null || true
 
   # R-2349: the one result for the whole gate (red unless every job above is green — also when
   # one was cancelled or timed out). The run's own conclusion is red on any red job either way;

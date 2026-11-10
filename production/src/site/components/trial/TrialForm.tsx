@@ -94,6 +94,13 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
   const [optIn, setOptIn] = useState(false);
   const [reqAt, setReqAt] = useState<Date | null>(null);
   const [delivered, setDelivered] = useState<"email" | "wa" | "">("");
+  /* R-1491: the request number(s) this one replaces — set by "← Change the request". */
+  const [replaces, setReplaces] = useState("");
+  /* R-2563: the server's signed replace token for the request on screen, and the tokens of the
+     earlier request(s) this one replaces — sent back so the server can close those (the token, not
+     the number, proves it is this visitor's own request). */
+  const [replaceToken, setReplaceToken] = useState("");
+  const [replaceTokens, setReplaceTokens] = useState<string[]>([]);
 
   /* Home ka Trial button edition + users URL me bhejta hai; draft localStorage me. */
   useEffect(() => {
@@ -160,11 +167,15 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
     { k: "Preferred start", v: startWhen.trim() || "As soon as possible" },
   ];
 
+  /** R-1491: one sentence, used in the WhatsApp/email text AND the enquiry the team reads. */
+  const replacesLine = replaces ? `Replaces my earlier request ${replaces} — please ignore that one.` : "";
+
   const requestText = (no: string) =>
     [
       `TRIAL REQUEST${no ? ` ${no}` : ""}`,
       "",
       ...rows.map((r) => `· ${r.k}: ${r.v}`),
+      ...(replacesLine ? [`· ${replacesLine}`] : []),
       "",
       `· Company contact: ${email || "—"} · ${phone || "—"}`,
       "",
@@ -208,15 +219,16 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
     setSending(true);
     setSubmitErr(null);
     try {
-      const requirement = `TRIAL: ${labelOf(ed)}, ${seats} mailbox(es) on ${domain.trim().toLowerCase()}, clean start, mail today: ${current}${startWhen ? `, preferred start: ${startWhen}` : ""}. If they keep it: ${rateAfter}. No card. (via anutech.in trial page)`;
+      const requirement = `TRIAL: ${labelOf(ed)}, ${seats} mailbox(es) on ${domain.trim().toLowerCase()}, clean start, mail today: ${current}${startWhen ? `, preferred start: ${startWhen}` : ""}. If they keep it: ${rateAfter}. No card. (via anutech.in trial page)${replacesLine ? ` ${replacesLine}` : ""}`;
       const res = await fetch("/api/enquiry", {
         method: "POST",
         headers: { "Content-Type": "application/json", ...ts.headers },
         body: JSON.stringify({ fullName: contactName.trim(), companyName: company, email, phone, product: `Trial — ${labelOf(ed)}`, seats, requirement, edition: ed, term: "annual", trial: true,
+          ...(replaceTokens.length > 0 ? { replaces: replaceTokens } : {}),
           /* R-1598: landing page with gclid/utm + where the visitor came from. */
           ...landingForForm(), ...formConsent("trial", optIn) }),
       });
-      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; ackSent?: boolean; reference?: string | null };
+      const json = (await res.json().catch(() => ({}))) as { ok?: boolean; error?: string; ackSent?: boolean; reference?: string | null; replaceToken?: string | null };
       if (!res.ok || !json.ok) {
         setSubmitErr(json.error || "We could not send your trial request. Nothing was saved — please press the button to try again.");
         ts.reset();
@@ -224,6 +236,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
         return;
       }
       setAckSent(json.ackSent === true);
+      setReplaceToken(typeof json.replaceToken === "string" ? json.replaceToken : "");
       no = enquiryReference(json);
     } catch {
       setSubmitErr("We could not reach our server, so your trial request was not sent. Check your connection and press the button to try again.");
@@ -232,6 +245,24 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
     }
     setReqNo(no); setReqAt(now); setSent(true); setSending(false);
     try { window.scrollTo({ top: 0, behavior: "smooth" }); } catch { /* ignore */ }
+  }
+
+  /* R-1491 (Pawan, 17 Oct 2026): "← Change the request" and then another product stacked the
+     old request onto the new one — its "WhatsApp also opened" note, number and email state
+     stayed. Going back now clears everything the sent request left, so the next confirmation
+     and its WhatsApp / email text are built only from the new choice (replace, never append),
+     and the new request names the one it replaces so the team sets up only the new product
+     (a request the app gave no number to is still named). The used Turnstile token is
+     dropped too — a token works once, so re-sending it would make the second request fail. */
+  function changeRequest() {
+    const old = reqNo || "(sent without a number)";
+    setReplaces((prev) => (prev ? `${prev}, ${old}` : old));
+    if (replaceToken) setReplaceTokens((prev) => (prev.includes(replaceToken) ? prev : [...prev, replaceToken].slice(-5)));
+    setReplaceToken("");
+    setSent(false); setOpen("plan");
+    setDelivered(""); setReqNo(""); setReqAt(null); setAckSent(false);
+    setSubmitErr(null); setFormErr(null);
+    ts.reset();
   }
 
   const fmt = (d: Date) => `${d.getDate()} ${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][d.getMonth()]} ${d.getFullYear()}`;
@@ -293,7 +324,7 @@ export function TrialForm({ editions }: { editions?: MergedEdition[] }) {
               <a href={mailHref} onClick={() => setDelivered("email")} className="btn btn-primary" style={{ width: "100%" }}>Email the request</a>
               <a href={waHref} target="_blank" rel="noopener" onClick={() => setDelivered("wa")} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 8, width: "100%", fontSize: 14.5, fontWeight: 600, padding: "11px 16px", borderRadius: 9, background: "#25D366", color: "#0A2B18", border: "1px solid #1DAE52", textDecoration: "none" }}>Send on WhatsApp</a>
               <a href={orderHref} style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", fontSize: 14, fontWeight: 600, padding: "11px 16px", borderRadius: 9, background: "#0C1116", color: "#fff", textDecoration: "none" }}>Skip the trial and order</a>
-              <button onClick={() => { setSent(false); setOpen("plan"); }} style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 13, cursor: "pointer", marginTop: 2 }}>← Change the request</button>
+              <button onClick={changeRequest} style={{ background: "none", border: "none", color: "var(--text-muted)", fontSize: 13, cursor: "pointer", marginTop: 2 }}>← Change the request</button>
             </div>
           </div>
         </div>

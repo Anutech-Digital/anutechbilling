@@ -164,3 +164,14 @@ export function searchCountries(query: string): string[] {
     .sort((a, b) => a.r - b.r || a.i - b.i)
     .map((x) => x.name);
 }
+
+const ISO_BY_NAME = new Map<string, string>(ISO_COUNTRIES.map(([code, name]) => [name, code]));
+
+/**
+ * R-2639: the ISO 3166-1 alpha-2 code for a country as typed or saved ("USA" → "US",
+ * "Estonia" → "EE", "ee" → "EE"). Empty or unknown text → null (never guessed).
+ */
+export function countryIsoCode(value: string | null | undefined): string | null {
+  const name = normalizeCountry(value);
+  return name ? ISO_BY_NAME.get(name) ?? null : null;
+}

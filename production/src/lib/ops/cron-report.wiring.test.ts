@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Helper likh dena aadha kaam hai. Asli bug ye tha ki cron BOLTE NAHI THE — aur wo aaj bhi
@@ -22,7 +23,7 @@ const routes = readdirSync(CRON_DIR, { withFileTypes: true })
   .filter((d) => d.isDirectory())
   .map((d) => ({ name: d.name, path: join(CRON_DIR, d.name, "route.ts") }))
   .filter((r) => { try { readFileSync(r.path); return true; } catch { return false; } })
-  .map((r) => ({ ...r, src: readFileSync(r.path, "utf8") }));
+  .map((r) => ({ ...r, src: readSource(r.path) }));
 
 describe("har cron jo failure ginta hai, wo bolta bhi hai", () => {
   it("cron mile hi — warna neeche ka loop zero baar chalega aur jhooth bol kar green hoga", () => {

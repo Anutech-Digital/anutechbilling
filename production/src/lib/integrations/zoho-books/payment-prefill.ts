@@ -173,13 +173,17 @@ export function zohoPrefill(
   }
   const starts: string[] = [];
   const ends: string[] = [];
+  /* R-2518: a payment applied to several Zoho invoices (all read) — each line remembers its invoice, so
+     Save books one app sale per Zoho invoice with its number (lib/banking/zoho-sales-split). */
+  const several = match.moreInvoices.length === 0 && new Set(match.invoices.map((i) => i.number.trim().toUpperCase()).filter(Boolean)).size > 1;
   for (const inv of match.invoices) {
     for (const zl of inv.lines) {
       const made = zohoSaleLine(zl, ctx.catalog);
       if (!made) continue;
       const { cycle } = made;
       if (!made.inCatalog) unmatched.push(zl.name.trim());
-      lines.push(fxRate ? { ...made.line, rate: Math.round(made.line.rate * fxRate * 100) / 100 } : made.line);
+      const tagged: SaleLine = several ? { ...made.line, zohoInvoice: inv.number.trim() } : made.line;
+      lines.push(fxRate ? { ...tagged, rate: Math.round(tagged.rate * fxRate * 100) / 100 } : tagged);
       if (zl.start && zl.end) { starts.push(zl.start); ends.push(zl.end); }
       if (cycle === "annual_yearly" && zl.months !== null && zl.months !== 12) {
         notes.push(`${zl.name.trim()}: Zoho billed ${zl.months} month${zl.months === 1 ? "" : "s"} — check the price per year.`);
@@ -226,7 +230,8 @@ export function zohoUnconvertedProblem(
 /**
  * R-2360: the Zoho invoice number the sale keeps on its app invoice (invoices.external_number) —
  * only when the Zoho payment was applied to exactly ONE invoice. Several (or none) → null: one app
- * sale cannot be several Zoho invoices, so the numbers are only shown.
+ * sale cannot be several Zoho invoices — R-2518 books one sale per Zoho invoice instead, each with
+ * its own number (SaleLine.zohoInvoice, lib/banking/zoho-sales-split).
  */
 export function zohoSaleNumber(p: Pick<ZohoPrefill, "invoiceNumbers"> | null | undefined): string | null {
   const nums = (p?.invoiceNumbers ?? []).map((n) => n.trim()).filter(Boolean);
@@ -249,8 +254,13 @@ export function zohoKeptLine(r: {
   return { text: `Zoho invoice ${r.external_number} is not on an invoice yet — the first part's invoice was not raised now.`, tone: "warn" };
 }
 
-/** R-2360: zohoKeptLine as a list for the result panel (empty when the sale had no Zoho number). */
+/** R-2360: zohoKeptLine as a list for the result panel (empty when the sale had no Zoho number).
+ *  R-2518: a split with several new sales — one line per sale that carries its own Zoho number. */
 export function zohoKeptLines(r: object): Array<{ text: string; tone: "ok" | "warn"; href?: string }> {
   const line = zohoKeptLine(r as Parameters<typeof zohoKeptLine>[0]);
-  return line ? [line] : [];
+  const parts = (r as { parts?: unknown }).parts;
+  const fromParts = Array.isArray(parts)
+    ? parts.flatMap((p) => { const l = zohoKeptLine((p ?? {}) as Parameters<typeof zohoKeptLine>[0]); return l ? [l] : []; })
+    : [];
+  return line ? [line, ...fromParts] : fromParts;
 }

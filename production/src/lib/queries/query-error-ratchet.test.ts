@@ -13,10 +13,11 @@
  */
 import * as React from "react";
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { renderHook, waitFor, cleanup } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 vi.mock("@/lib/supabase/client", () => {
   const failing = () => {
@@ -67,7 +68,7 @@ describe("query modules do not turn a failed list read into [] (R-1655 ratchet)"
   });
 
   it.each(files)("%s", (f) => {
-    const n = swallowCount(readFileSync(join(dir, f), "utf8"));
+    const n = swallowCount(readSource(join(dir, f)));
     expect(n, `${f}: a failed read must throw so the page shows an error + Try again (CLAUDE.md §24)`).toBeLessThanOrEqual(ALLOWED[f] ?? 0);
   });
 });
@@ -90,6 +91,9 @@ function walk(d: string, out: string[] = []): string[] {
   return out;
 }
 const rel = (p: string) => p.slice(SRC.length + 1).replace(/\\/g, "/");
+/* R-2564 (7 Nov 2026): A and D below read each app/components file (up to three times) through
+   the shared read cache — 41–91 s under push load before, for a 4 s job. */
+const read = (p: string): string => readSource(p);
 
 const MONEY_HOOK = String.raw`use\w*(?:Quote|Invoice|Payment|Receivable|Outstanding|Due)\w*`;
 function defaultedMoneyReads(src: string): number {
@@ -119,7 +123,7 @@ describe("screens do not read a failed money read as [] (R-1806 ratchet)", () =>
 
   it("A. no new `{ data: x = [] } = use<Money>()`", () => {
     const over = files
-      .map((f) => [rel(f), defaultedMoneyReads(readFileSync(f, "utf8"))] as const)
+      .map((f) => [rel(f), defaultedMoneyReads(read(f))] as const)
       .filter(([r, n]) => n > (ALLOWED_DEFAULTED[r] ?? 0));
     expect(over, "a failed money read must show the §24 error + Try again, not an empty list").toEqual([]);
   });
@@ -139,7 +143,7 @@ describe("screens do not read a failed money read as [] (R-1806 ratchet)", () =>
     ["components/features/customers/customer-profile.tsx", "moneyFailed", "Outstanding (not 'All clear')"],
     ["components/features/contacts/contact-company-panel.tsx", "moneyFailed", "Outstanding (not 'All clear')"],
   ])("C. %s checks %s before showing %s", (file, name) => {
-    const src = readFileSync(join(SRC, file), "utf8");
+    const src = readSource(join(SRC, file));
     expect(src).toMatch(new RegExp(String.raw`\b${name}(\.isError|\b)`));
     expect(src).toMatch(/LoadErrorBanner|LoadError\b|LoadErrorInline/);
     if (name !== "moneyFailed") expect(src).toContain(`${name}.isError`);
@@ -149,8 +153,8 @@ describe("screens do not read a failed money read as [] (R-1806 ratchet)", () =>
      that render it pass `failed`, so "All clear" is never a guess. */
   it("D. every <CustomerMetricBar> is told whether its reads failed", () => {
     const missing = files
-      .filter((f) => /<CustomerMetricBar\b/.test(readFileSync(f, "utf8")))
-      .filter((f) => !/<CustomerMetricBar\b[^>]*\bfailed=/.test(readFileSync(f, "utf8")))
+      .filter((f) => /<CustomerMetricBar\b/.test(read(f)))
+      .filter((f) => !/<CustomerMetricBar\b[^>]*\bfailed=/.test(read(f)))
       .map(rel);
     expect(missing).toEqual([]);
   });
@@ -158,17 +162,17 @@ describe("screens do not read a failed money read as [] (R-1806 ratchet)", () =>
   /* E. R-1807: the lead drawer must tell nextActionFor() and the footer whether its quotes are
      known, or "Send quote" comes back on a failed read. */
   it("E. the lead drawer passes quotesUnknown to nextActionFor and the footer", () => {
-    const src = readFileSync(join(SRC, "components/features/leads/lead-detail-sheet.tsx"), "utf8");
+    const src = readSource(join(SRC, "components/features/leads/lead-detail-sheet.tsx"));
     expect(src).toMatch(/nextActionFor\(\{[^}]*quotesUnknown/);
     expect(src).toMatch(/<LeadDetailFooter[\s\S]*?quotesUnknown=/);
   });
 
   it("B. every screen calling useQuotesByLead() handles its error", () => {
     const missing = files
-      .filter((f) => /=\s*useQuotesByLead\(/.test(readFileSync(f, "utf8")))
+      .filter((f) => /=\s*useQuotesByLead\(/.test(readSource(f)))
       .map(rel)
       .filter((r) => !ALLOWED_BYLEAD_NO_ERROR[r])
-      .filter((r) => !/isError|LoadError/.test(readFileSync(join(SRC, r), "utf8")));
+      .filter((r) => !/isError|LoadError/.test(readSource(join(SRC, r))));
     expect(missing).toEqual([]);
   });
 });

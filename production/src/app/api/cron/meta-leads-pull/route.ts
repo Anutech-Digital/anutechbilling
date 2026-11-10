@@ -1,5 +1,5 @@
 /**
- * R-2521 / R-2522: every 30 minutes, bring new leads of each company's CHOSEN Facebook / Instagram
+ * R-2521 / R-2670: every 30 minutes, bring new leads of each company's CHOSEN Facebook / Instagram
  * lead forms into Sales → Leads (looks back 2 days, so a missed run loses nothing; the same lead is
  * never saved twice — deterministic id, see lib/meta-leads/leadgen.server.ts).
  */

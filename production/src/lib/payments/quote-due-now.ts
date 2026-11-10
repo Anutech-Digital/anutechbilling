@@ -21,7 +21,7 @@
  *    maths the PDF prints (lib/quotes/per-period-figures, R-1570) — never a ₹ instalment with
  *    a "$" in front. `inr: false` → Razorpay and UPI both refuse it (they settle rupees only).
  */
-import { quoteInstalments } from "@/lib/billing/instalments";
+import { quoteInstalments, firstLineCommitment } from "@/lib/billing/instalments";
 import { cycleFromLegacyCommitment } from "@/lib/quotes/billing";
 import { quotePerPeriodFigures } from "@/lib/quotes/per-period-figures";
 import { taxableAfterDiscount } from "@/lib/quotes/amounts";
@@ -67,9 +67,11 @@ function lines(raw: unknown): RawLine[] {
   return Array.isArray(raw) ? (raw as RawLine[]) : [];
 }
 
+/** The quote's term, read off its first RECURRING line (R-2580: instalments.firstLineCommitment).
+ *  A domain typed before Monthly flex seats made a flex sale read as annual in 12 parts, so the
+ *  Pay-now button and the PDF's QR asked for 1/12 of month 1. */
 export function quoteFirstCommitment(lineItems: unknown): string | null {
-  const c = lines(lineItems)[0]?.commitment;
-  return typeof c === "string" ? c : null;
+  return firstLineCommitment(lineItems);
 }
 
 const n = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);

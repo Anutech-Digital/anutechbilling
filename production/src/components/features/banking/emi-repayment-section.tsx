@@ -9,6 +9,13 @@
  * of the schedule recomputed). A smaller line pays interest first; the rest of the schedule is
  * recomputed. "Down payment for a new asset on EMI" and "Prepayment / foreclosure" open the
  * same dialogs as Assets & EMIs.
+ *
+ * R-2523: the extra can also be "Broken-period / extra interest" (interest expense, the same head
+ * as EMI interest; principal and the later schedule unchanged) — the default on EMI 1, where it
+ * usually is (₹30,183 line vs ₹27,764 EMI on the Thar Roxx loan). An EMI paid by hand can be
+ * replaced by a bigger statement line the same way. A line SMALLER than the down payment is ONE
+ * PART of it (Thar: three HDFC lines + Petty Cash): it is taken out of the part still recorded
+ * by hand, which shrinks by the same amount.
  */
 "use client";
 
@@ -30,8 +37,16 @@ type Txn = { id: string; debit: number; txn_date: string; bank_account_id: strin
 
 const matchKey = (m: EmiMatch) => `${m.purchase_id}:${m.seq}`;
 
+/** R-2523: a line smaller than what is left of the down payment pays one part of it. */
+const isDownPart = (m: EmiMatch | null): boolean => Boolean(m && m.kind === "down_payment" && m.difference < 0);
+
+type ExtraOption = readonly [ExtraAs, string];
+const EXTRA_INTEREST: ExtraOption = ["interest", "Broken-period / extra interest (interest expense)"];
+const EXTRA_LATE_FEE: ExtraOption = ["late_fee", "Late fee / bounce charge (expense)"];
+const EXTRA_PREPAY: ExtraOption = ["prepay", "Extra paid toward the loan (part prepayment)"];
+
 function matchTitle(m: EmiMatch): string {
-  if (m.kind === "down_payment") return `Down payment · ${m.purchase_name}`;
+  if (m.kind === "down_payment") return `${isDownPart(m) ? "Part of the down payment" : "Down payment"} · ${m.purchase_name}`;
   return `EMI ${m.seq} · ${m.purchase_name}${m.kind === "paid_by_hand" ? " (paid by hand — this line replaces it)" : ""}`;
 }
 
@@ -55,7 +70,8 @@ export function EmiRepaymentSection({ transaction, onDone, onFooterSave }: {
   React.useEffect(() => { if (anyMatch) setOpen(true); }, [anyMatch]);
   const [picked, setPicked] = React.useState<string>("");
   React.useEffect(() => { if (!picked && matches.length > 0) setPicked(matchKey(matches[0])); }, [matches, picked]);
-  const [extraAs, setExtraAs] = React.useState<ExtraAs>("late_fee");
+  /* null = not picked: EMI 1 → broken-period interest (the usual reason it is bigger), else a late fee. */
+  const [extraPicked, setExtraAs] = React.useState<ExtraAs | null>(null);
   const [purchaseOpen, setPurchaseOpen] = React.useState(false);
   const [prepayFor, setPrepayFor] = React.useState<string>("");
   /* R-2323: no loan in the books for this EMI → set one up from the line. */
@@ -66,7 +82,17 @@ export function EmiRepaymentSection({ transaction, onDone, onFooterSave }: {
   const purchase = m ? (purchasesQ.data ?? []).find((p) => p.id === m.purchase_id) : undefined;
 
   const amount = transaction.debit;
-  const split = m && m.kind === "instalment" ? splitDebit({ emi: m.expected, principal: m.principal, interest: m.interest }, amount, extraAs) : null;
+  const extraAs: ExtraAs = extraPicked ?? (m?.seq === 1 ? "interest" : "late_fee");
+  /* An EMI paid by hand: only a bigger line needs a split (the extra is interest or a charge). */
+  const byHandExtra = Boolean(m && m.kind === "paid_by_hand" && m.difference > 0);
+  const byHandAs: ExtraAs = extraAs === "prepay" ? "late_fee" : extraAs;
+  const split = m && m.kind === "instalment"
+    ? splitDebit({ emi: m.expected, principal: m.principal, interest: m.interest }, amount, extraAs)
+    : m && byHandExtra ? splitDebit({ emi: m.expected, principal: m.principal, interest: m.interest }, amount, byHandAs)
+    : null;
+  const extraOptions: readonly ExtraOption[] = m?.kind === "paid_by_hand" ? [EXTRA_INTEREST, EXTRA_LATE_FEE] : [EXTRA_INTEREST, EXTRA_LATE_FEE, EXTRA_PREPAY];
+  const shownAs: ExtraAs = m?.kind === "paid_by_hand" ? byHandAs : extraAs;
+  const extraInterest = split && split.difference > 0 && shownAs === "interest" ? split.difference : 0;
 
   // A payment that is not the scheduled EMI: the rest of the loan is re-worked out.
   let newSchedule: ScheduleRow[] | null = null;
@@ -91,7 +117,13 @@ export function EmiRepaymentSection({ transaction, onDone, onFooterSave }: {
 
   async function save() {
     if (!m) return;
-    if (m.kind !== "instalment") {
+    if (m.kind === "paid_by_hand" && split) {
+      /* R-2523: the bigger line replaces the manual one; principal stays, the extra is interest or a charge. */
+      await reconcile.mutateAsync({
+        txnId: transaction.id, purchaseId: m.purchase_id, seq: m.seq,
+        principal: split.principal, interest: split.interest, charges: split.charges, newSchedule: null,
+      });
+    } else if (m.kind !== "instalment") {
       await reconcile.mutateAsync({ txnId: transaction.id, purchaseId: m.purchase_id, seq: m.seq });
     } else if (split) {
       await reconcile.mutateAsync({
@@ -109,7 +141,11 @@ export function EmiRepaymentSection({ transaction, onDone, onFooterSave }: {
 
   /* R-2008: same label, same rule, same save() — in the footer once an EMI is listed to pick (the
      section open, matches found). It books the whole line (principal + interest + charges). */
-  const saveLabel = m ? (m.kind === "down_payment" ? `Match down payment ${rupee(amount)}` : `Reconcile as EMI ${m.seq}`) : "Pick the EMI";
+  const saveLabel = m
+    ? (m.kind === "down_payment"
+        ? (isDownPart(m) ? `Match ${rupee(amount)} of the down payment` : `Match down payment ${rupee(amount)}`)
+        : `Reconcile as EMI ${m.seq}`)
+    : "Pick the EMI";
   const saveDisabled = !m || Boolean(recomputeError) || waitingForSchedule;
   useFooterSaveReport(onFooterSave, open && !busy && matches.length > 0
     ? { label: saveLabel, onSave: () => { void save(); }, disabled: saveDisabled, loading: reconcile.isPending }
@@ -162,9 +198,9 @@ export function EmiRepaymentSection({ transaction, onDone, onFooterSave }: {
               {m && split && split.difference > 0 && (
                 <div className="space-y-1" role="radiogroup" aria-label="The extra amount is">
                   <p className="text-xs text-ink-2">The extra {rupee(split.difference)} is:</p>
-                  {([["late_fee", "Late fee / bounce charge (expense)"], ["prepay", "Extra paid toward the loan (part prepayment)"]] as const).map(([v, l]) => (
+                  {extraOptions.map(([v, l]) => (
                     <label key={v} className="flex items-center gap-2 text-sm text-ink">
-                      <input type="radio" name="emi-extra" checked={extraAs === v} onChange={() => setExtraAs(v)} /> {l}
+                      <input type="radio" name="emi-extra" checked={shownAs === v} onChange={() => setExtraAs(v)} /> {l}
                     </label>
                   ))}
                 </div>
@@ -177,6 +213,7 @@ export function EmiRepaymentSection({ transaction, onDone, onFooterSave }: {
                 <div className="rounded-md bg-paper-2/50 p-2.5 text-sm space-y-0.5" data-testid="emi-split">
                   <div className="flex justify-between"><span className="text-ink-2">Principal — reduces the loan</span><span className="font-mono tabular-nums">{rupee(split.principal)}</span></div>
                   <div className="flex justify-between"><span className="text-ink-2">Interest — expense (P&amp;L)</span><span className="font-mono tabular-nums">{rupee(split.interest)}</span></div>
+                  {extraInterest > 0 && <p className="text-xs text-ink-3">incl. {rupee(extraInterest)} broken-period / extra interest — the later EMIs stay as scheduled.</p>}
                   {split.charges > 0 && <div className="flex justify-between"><span className="text-ink-2">Late fee — expense (P&amp;L)</span><span className="font-mono tabular-nums">{rupee(split.charges)}</span></div>}
                   {newSchedule && newSchedule.length > 0 && (
                     <p className="text-xs text-ink-3 pt-1">Then {newSchedule.length} EMIs of {rupee(newSchedule[0].emi)}.</p>
@@ -185,7 +222,9 @@ export function EmiRepaymentSection({ transaction, onDone, onFooterSave }: {
               )}
               {m && m.kind !== "instalment" && (
                 <p className="text-xs text-ink-3">
-                  {m.kind === "down_payment"
+                  {isDownPart(m)
+                    ? `This line pays ${rupee(amount)} of the down payment. The ${rupee(m.expected)} still recorded by hand (cash, another account or the owner) goes down to ${rupee(m.expected - amount)} — counted once. Undo gives it back.`
+                    : m.kind === "down_payment"
                     ? "The down payment was recorded with a manual line; this statement line takes its place (counted once)."
                     : "This EMI was recorded by hand; this statement line takes the place of that manual line (counted once)."}
                 </p>

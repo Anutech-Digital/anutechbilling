@@ -72,6 +72,8 @@ interface SendQuoteDialogProps {
   /** R-1523: tenant's UPI ID + the quote's currency → the "why no pay QR" line. Omitted → no line. */
   upiVpa?:            string | null;
   currency?:          string | null;
+  /** R-2519: the paper picked when the dialog opens — a part payment request opens on Proforma Invoice. */
+  defaultTemplate?:   "quotation" | "proforma";
 }
 
 const TEMPLATES = [
@@ -92,12 +94,14 @@ export function SendQuoteDialog({
   validityDays,
   upiVpa,
   currency,
+  defaultTemplate = "quotation",
 }: SendQuoteDialogProps) {
   const qc = useQueryClient();
   const { data: currentUser } = useCurrentUser();
-  /* R-1523: per-send choice — nothing is stored on the quote. Reset to Quotation on each open. */
-  const [template, setTemplate] = React.useState<"quotation" | "proforma">("quotation");
-  React.useEffect(() => { if (open) setTemplate("quotation"); }, [open]);
+  /* R-1523: per-send choice — nothing is stored on the quote. Reset on each open (R-2519: to the
+     quote's own default — Proforma Invoice for a part payment request). */
+  const [template, setTemplate] = React.useState<"quotation" | "proforma">(defaultTemplate);
+  React.useEffect(() => { if (open) setTemplate(defaultTemplate); }, [open, defaultTemplate]);
 
   const {
     register,

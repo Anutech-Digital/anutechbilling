@@ -13,9 +13,10 @@
  *     the rule) or to NOT_SALE (with the reason it is not GST / revenue);
  *   - a SALE reader that no longer uses the rule.
  */
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = join(__dirname, "..", "..", "..");
 
@@ -24,12 +25,17 @@ const SQL_SALE = new Set([
   "report_pnl",            // revenue + output GST
   "report_pnl_monthly",    // revenue trend
   "report_pnl_revenue_lines", // R-2181: the documents behind Revenue per product family (R-1835 report_pnl_revenue_by_product is their sum)
+  "report_pnl_revenue_matched_rows", // R-2624: the same documents spread over their service months (Management view); _lines / _matched / _months are their sums
   "report_balance_sheet",  // gst_output (receivables keep the open balance)
   "report_day_book",       // Sales vouchers
   "report_party_ledger",   // 'Opening balance' for opening_balance, not a Sales voucher
   "get_partner_metrics",   // invoiced this month (reseller children)
+  "correct_invoice_date",  // R-2173: re-dates one issued sale of ours - an opening balance (not a sale) is refused
 ]);
 const SQL_NOT_SALE: Record<string, string> = {
+  reduce_subscription_seats: "R-2252: the ONE invoice of a subscription part (by its quote / billing row) a seat cut credits — its open and settled amounts for the split, then issue_credit_note_core; no list or total",
+  r2626_plan_change_vs_later_part: "R-2626: only checks whether a LATER billing part of one subscription has a live (non-void) invoice, to refuse paying a plan-change quote — no amounts, lists or totals",
+  cancel_quote: "R-2519: only checks whether a quote already has a live (non-void) invoice, to refuse cancelling it — no amounts, lists or totals",
   tg_tenants_lut_to_fy: "R-2444: checks only whether 0% export Tax Invoices of one FY exist, so an old writer of tenants.lut_number never drops the LUT they rely on; no amounts or totals",
   delete_tenant_lut: "R-2444: counts the company's 0% export Tax Invoices of one FY (document_kind 'tax_invoice' — never an opening invoice) only to refuse deleting the LUT they rely on; no amounts or totals",
   bank_line_kept_receipt_ref: "R-2430: reads only the quote_id of the ONE invoice a bank line is being matched to (by id), to find a kept receipt on that quote (R-2466: or on that opening invoice) — no amounts, lists or totals",
@@ -80,8 +86,14 @@ const SQL_NOT_SALE: Record<string, string> = {
   r2322_refund_scope: "R-2322: snapshot of the rows a customer refund touches (to undo it exactly) — not GST or revenue",
   set_late_fee_mode: "late fee settings",
   set_books_start_date: "R-2496: only the earliest dated invoice (not opening invoices) — refuses a books start after a money row; not GST or revenue",
+  import_zoho_fy_sales: "R-2499: writes Zoho's FY sales as tax invoices; reads invoices only to skip a Zoho id / number already in the books — not GST or revenue",
+  remove_zoho_fy_sales_import: "R-2499: the invoices of one import batch (to check they are untouched, then delete) — not GST or revenue",
+  remove_zoho_fy_receipts_import: "R-2501 re-review: locks the invoices its receipts paid (so a credit note issued at the same moment is seen) — not GST or revenue",
+  import_zoho_fy_receipts: "R-2501: finds the imported Zoho sale (or opening invoice) a Zoho payment was applied to and what is still due on it, to record the receipt — not GST or revenue",
   set_invoice_external_number: "R-2360: stores the Zoho invoice number on one invoice (duplicate check) — not GST or revenue",
   invoice_external_number_holder: "R-2360: which invoice already is a Zoho number (duplicate check) — not GST or revenue",
+  bank_sale_take_back: "R-2518: the one invoice of a bank-receipt sale being taken back (credit note + receipt removed) — not GST or revenue",
+  repair_split_merged_bank_sale: "R-2518: the merged bank-sale invoice to split per Zoho invoice (checks + backup; owner data repair) — not GST or revenue",
   split_outstanding_for: "per quote",
   sync_invoice_subscription_outstanding: "R-2178: one invoice's quote / billing-part link, to re-sync the subscriptions' stored balance after a credit / debit note — not GST or revenue",
   subscription_dues_drift: "R-2154: read-only report — only asks whether a quote has any invoice (then the invoice is the claim)",
@@ -90,6 +102,8 @@ const SQL_NOT_SALE: Record<string, string> = {
   cancel_subscription: "R-1711: what one subscription's open invoices still ask for, so a cancel never clears it (no money column changes on invoices)",
   write_off_subscription: "R-1635: stamps one subscription's open invoices written off (no money column changes)",
   write_off_small_invoice_balance: "R-2410: stamps ONE invoice (balance ₹1–₹500) written off + an audit row (no money column changes) — not GST or revenue",
+  settle_quote_part_short: "R-2595: reads ONE part invoice of a split-billed quote (its balance) and records the small rest via record_instalment_payment — not GST or revenue",
+  tg_bank_split_line_unmatched: "R-2609: reads the ONE part invoice an R-2595 settle closed (its balance, credit note / write-off) to give the ₹X back when the bank line is un-reconciled — not GST or revenue",
   sync_project_invoice_paid: "project receipts",
   tg_payment_followups_same_tenant: "tenant check",
   tg_quotes_add_seats_take_back: "per quote",
@@ -116,7 +130,7 @@ function latestSqlFunctions(): Map<string, { file: string; body: string }> {
   }
   const latest = new Map<string, { file: string; body: string }>();
   for (const file of sources) {
-    const s = readFileSync(file, "utf8");
+    const s = readSource(file);
     const re = /create\s+(?:or\s+replace\s+)?function\s+(?:"?public"?\.)"?([a-z0-9_]+)"?\s*\(/gi;
     let m: RegExpExecArray | null;
     while ((m = re.exec(s))) {
@@ -166,6 +180,10 @@ const TS_SALE = new Set([
   "src/components/features/collections/owner-report.tsx",        // R-2414: invoiced in the last 30 days, for DSO / CEI
 ]);
 const TS_NOT_SALE: Record<string, string> = {
+  "src/lib/quotes/settle-small-short.ts": "R-2606: the ONE open part invoice of a split-billed quote (same pick as settle_quote_part_short) and its balance, for the Settle dialog's preview — not a list, GST or revenue",
+  "src/app/api/subscriptions/[id]/reduce-seats/load.ts": "R-2252: the ONE invoice of a subscription part a seat cut credits (same lookup as reduce_subscription_seats) and its open / settled amounts for the preview — not a list or a total",
+  "src/lib/integrations/zoho-books/receipts-import/store.ts": "R-2501: invoices that came from Zoho (Zoho id / number, customer, what is still due) to place FY receipts on them — not a revenue or GST report",
+  "src/lib/integrations/zoho-books/sales-import/store.ts": "R-2499: every invoice's number / Zoho number / Zoho id (skip what is already in the books) and the per-month recount of what came in from Zoho — not a revenue or GST report",
   "src/lib/payments/payment-link.server.ts": "R-2415: the open invoices (by id) a Send-reminder pay link may carry, and their due for the stale-link sweep — not a list or a total",
   "src/app/(app)/renewals/last-paid-data.ts": "R-2422: the invoice numbers raised from one subscription's own quotes (by quote_id), to name what a payment paid on the Renewals row's Last paid — not a list or a total",
   "src/lib/payments/online-fee.server.ts": "R-2416: one invoice's online-fee waiver flag (by id) for the fee policy on capture — not a list or a total",
@@ -174,7 +192,7 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/lib/exports/read-rows.server.ts": "R-1007: the invoice-register CSV lists every invoice the user ticked or can see (opening ones too, as the Invoices screen does) — not GST or revenue",
   "src/lib/integrations/zoho-books/import-store.ts": "R-1753: Zoho numbers already imported as opening invoices (so a second import skips them)",
   "src/app/api/integrations/zoho-books/bulk-match/customer-facts.ts": "R-2419: a customer's OPEN opening invoices (document_kind opening_invoice) so Reconcile from Zoho settles last year's invoice on them — never a sale, not GST or revenue",
-  "src/components/features/banking/zoho-bulk-reconcile.tsx": "R-2474: reads back the opening invoice import_opening_invoices just made (by Zoho number) to pay it with the bank line — one invoice by number, not a list or a total, not GST or revenue",
+  "src/lib/integrations/zoho-books/bulk-book-server.ts": "R-2474 (moved to the server by R-2535): reads back the opening invoice import_opening_invoices just made (by Zoho number) to pay it with the bank line — one invoice by number, not a list or a total, not GST or revenue",
   "src/lib/privacy/queries.ts": "R-2013: one person's own invoices for their DPDP data export (every kind, as the person sees them) — not GST or revenue",
   "src/app/(app)/accounting/aging/read.ts": "aging of open balances — includes opening invoices on purpose",
   "src/app/(app)/invoices/[id]/page.tsx": "one invoice; an opening invoice gets its own view",
@@ -213,6 +231,8 @@ const TS_NOT_SALE: Record<string, string> = {
   "src/lib/queries/palette-search.ts": "Ctrl+K lookup by number or name (R-1121) — imported ones are findable too",
   "src/lib/queries/payments.ts": "open invoices to pay",
   "src/lib/queries/subscriptions.ts": "a subscription's invoice status",
+  "src/lib/subscriptions/change-plan-later-parts.server.ts": "R-2626: whether a later billing part of one subscription has a live (non-void) invoice, to refuse a plan change — ids and status only, not GST or revenue",
+  "src/lib/subscriptions/change-plan-money.server.ts": "R-2227: what this subscription's current term / part was billed and paid (opening invoices count — they are money for the term), to cap a plan-change credit — not GST or revenue",
   "src/lib/queries/tds-receivable.ts": "R-1670: the invoice number raised from a TDS entry's quote (a label on the row) — not GST or revenue",
   "src/lib/import/zoho-opening-invoices.queries.ts": "Zoho numbers already imported",
   "src/components/features/invoices/opening-invoice-dues-card.tsx": "balances on imported Zoho invoices (dues)",
@@ -234,7 +254,7 @@ const SALE_RULE_TS = /onlySaleInvoices\(|invoiceIsSale\(|isTaxInvoiceRow|\.eq\("
 
 describe("R-1739: TypeScript readers of invoices", () => {
   const files = walk(join(ROOT, "src")).map((p) => relative(ROOT, p).replace(/\\/g, "/"));
-  const readers = files.filter((f) => READS_INVOICES_TS.test(readFileSync(join(ROOT, f), "utf8"))).sort();
+  const readers = files.filter((f) => READS_INVOICES_TS.test(readSource(join(ROOT, f)))).sort();
 
   it("every file that reads invoices is classified (sale or not)", () => {
     const unknown = readers.filter((f) => !TS_SALE.has(f) && !(f in TS_NOT_SALE));
@@ -242,7 +262,7 @@ describe("R-1739: TypeScript readers of invoices", () => {
   });
 
   it("every SALE file applies the sales-only rule", () => {
-    const missing = [...TS_SALE].filter((f) => !SALE_RULE_TS.test(readFileSync(join(ROOT, f), "utf8")));
+    const missing = [...TS_SALE].filter((f) => !SALE_RULE_TS.test(readSource(join(ROOT, f))));
     expect(missing).toEqual([]);
   });
 

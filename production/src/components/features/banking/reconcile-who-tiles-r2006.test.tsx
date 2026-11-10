@@ -86,6 +86,7 @@ vi.mock("@/components/features/banking/emi-repayment-section", () => ({
   EmiRepaymentSection: () => <section aria-label="EMI form">EMI</section>,
 }));
 vi.mock("@/components/features/banking/loan-given-receipt-section", () => ({ LoanGivenReceiptSection: () => null }));   // R-2340
+vi.mock("@/components/features/banking/loan-given-out-fields", () => ({ LoanGivenOutFields: () => null, LOAN_GIVEN_BORROWERS_LIST_ID: "r2603-borrowers" }));   // R-2603
 vi.mock("@/components/features/banking/debit-pay-for-section", async () => {
   const R = await import("react");
   return {

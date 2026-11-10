@@ -6,8 +6,9 @@
  * tsc reuses `tsconfig.tsbuildinfo`. Every card started in a NEW worktree, so every card paid the
  * cold 8–16 min. This module carries that file from one worktree to the next:
  *
- *   restore — after `next typegen`, before tsc: a worktree with no build info of its own gets the
- *             shared one for the SAME route types (cache key, below);
+ *   restore — after `next typegen`, before tsc: the worktree starts from the shared build info for
+ *             the SAME route types (cache key, below) — when it has its own build info too, from
+ *             whichever of the two is closer to its files (R-2634, see restoreBuildInfo);
  *   save    — after a GREEN tsc, the worktree's build info becomes the shared one for that key.
  *
  * Why the key includes the route types: `next typegen` writes .next/types/routes.d.ts and link.d.ts,
@@ -40,6 +41,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import crypto from "node:crypto";
+import { createRequire } from "node:module";
 
 export const TSC_CACHE_DIR = process.env.WORKER_TSC_CACHE_DIR || path.join(os.homedir(), ".claude", "worker-tsc-cache");
 export const BUILD_INFO = "tsconfig.tsbuildinfo";
@@ -78,16 +80,132 @@ export function cacheFile(root, dir = TSC_CACHE_DIR) {
 }
 
 /**
- * After typegen, before tsc. The worktree's own build info (an earlier run on this card) is closer to
- * its code than the shared one, so it is kept. Returns what happened, for the gate's log line.
+ * tsc's own file version: the same hash it stores in the build info (TypeScript's
+ * getSourceFileVersionAsHashFromText = sha256 of the text, minus a trailing sourceMappingURL line).
+ * Falls back to plain sha256 if this TypeScript does not expose it.
  */
-export function restoreBuildInfo(root, { dir = TSC_CACHE_DIR } = {}) {
+function versionHasher(root) {
+  /* The worktree's TypeScript first; else the one next to this script (same repo, via the junction). */
+  for (const from of [path.join(root, "package.json"), import.meta.url]) {
+    try {
+      const ts = createRequire(from)("typescript");
+      if (typeof ts.getSourceFileVersionAsHashFromText === "function" && ts.sys?.createHash) {
+        const host = { createHash: (x) => ts.sys.createHash(x) };
+        return Object.assign((text) => ts.getSourceFileVersionAsHashFromText(host, text), { kind: "typescript" });
+      }
+    } catch {}
+  }
+  return Object.assign((text) => crypto.createHash("sha256").update(text).digest("hex"), { kind: "sha256" });
+}
+
+/** Which hash restore uses: "typescript" (tsc's own) or "sha256" (fallback — the log line says so). */
+export function hasherKind(root) { return versionHasher(root).kind; }
+
+const isProjectFile = (name) => !/(^|\/)node_modules\//.test(name);
+
+function readBuildInfo(file) {
+  let info;
+  try { info = JSON.parse(fs.readFileSync(file, "utf8")); } catch { return null; }
+  return Array.isArray(info?.fileNames) && Array.isArray(info?.fileInfos) ? info : null;
+}
+
+/** Hash of each file on disk, read once per restore (null = gone); shared by both measurements. */
+function diskHashes(root, hash) {
+  const seen = new Map();
+  return (name) => {
+    if (!seen.has(name)) {
+      let text = null;
+      try { text = fs.readFileSync(path.resolve(root, name), "utf8"); } catch {}
+      if (text !== null && text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      seen.set(name, text === null ? null : hash(text));
+    }
+    return seen.get(name);
+  };
+}
+
+/**
+ * R-2634 (9 Nov 2026): how far a build info is from the worktree's files right now.
+ *   changed — its project files (outside node_modules, which every worktree shares through the
+ *             junction) whose text differs today or that are gone, plus `alsoOnDisk` files (seen in
+ *             the other candidate) that exist on disk but this build info has never checked;
+ *   global  — how many of those are GLOBAL (affectsGlobalScope, e.g. .next/types/routes.d.ts): a
+ *             changed global file makes tsc re-check EVERY file;
+ *   weight  — each changed file counted with its direct importers (referencedMap), because tsc
+ *             re-checks the importers of a file whose exported types changed (a hub like ist.ts
+ *             costs far more than a leaf).
+ * null = unreadable (tsc would ignore it and run cold).
+ */
+export function buildInfoDistance(root, file, { hash = versionHasher(root), disk = diskHashes(root, hash), alsoOnDisk = [] } = {}) {
+  const info = readBuildInfo(file);
+  if (!info) return null;
+  /* referencedMap: [fileId, fileIdsList index] pairs, both 1-based — file → the files it imports. */
+  const importers = new Map();
+  for (const [, list] of Array.isArray(info.referencedMap) ? info.referencedMap : []) {
+    for (const ref of info.fileIdsList?.[list - 1] ?? []) importers.set(ref, (importers.get(ref) ?? 0) + 1);
+  }
+  let changed = 0, global = 0, project = 0, weight = 0;
+  const known = new Set();
+  info.fileNames.forEach((name, i) => {
+    if (!isProjectFile(name)) return;
+    project++; known.add(name);
+    const fi = info.fileInfos[i];
+    const version = typeof fi === "string" ? fi : fi?.version;
+    if (disk(name) === version) return;
+    changed++; weight += 1 + (importers.get(i + 1) ?? 0);
+    if (typeof fi === "object" && fi?.affectsGlobalScope) global++;
+  });
+  for (const name of alsoOnDisk) {
+    if (known.has(name) || disk(name) === null) continue;
+    changed++; weight++;
+  }
+  return { changed, global, project, weight };
+}
+
+/** Lower = less for tsc to re-check. A changed global file means a full re-check. */
+function distanceScore(d) {
+  if (!d) return Number.POSITIVE_INFINITY;
+  return d.global ? 1e9 + d.weight : d.weight;
+}
+
+/**
+ * After typegen, before tsc. R-1960 kept the worktree's own build info whenever it had one; R-2634
+ * found that wrong exactly where it costs most — inside `push`, after the rebase: the own build info
+ * is from the card's OLD base (everything merged since then counts as changed, and a route added
+ * since then is a global change = full re-check; 445–1063 s seen 9 Nov, 1181.7 s measured), while the
+ * shared one for the same route types was saved by the last push on the NEW base (62.7 s). Now both
+ * are measured against the files on disk (buildInfoDistance, one read + hash per file) and the
+ * closer one is used; a tie keeps the own one. Either choice is only a starting point — tsc still
+ * hashes every file and re-checks what changed, so a wrong pick is slower, never more lenient.
+ */
+export function restoreBuildInfo(root, { dir = TSC_CACHE_DIR, hash } = {}) {
   const own = path.join(root, BUILD_INFO);
-  if (fs.existsSync(own)) return { restored: false, reason: "own" };
   const src = cacheFile(root, dir);
-  if (!fs.existsSync(src)) return { restored: false, reason: "empty" };
-  try { fs.copyFileSync(src, own); return { restored: true, reason: "shared", from: src }; }
-  catch (e) { return { restored: false, reason: `copy failed: ${e.message}` }; }
+  const hasOwn = fs.existsSync(own), hasShared = fs.existsSync(src);
+  if (!hasShared) return hasOwn ? { restored: false, reason: "own" } : { restored: false, reason: "empty" };
+  let measured = {};
+  if (hasOwn) {
+    const h = hash ?? versionHasher(root);
+    const disk = diskHashes(root, h);
+    const names = (file) => (readBuildInfo(file)?.fileNames ?? []).filter(isProjectFile);
+    measured = {
+      own: buildInfoDistance(root, own, { hash: h, disk, alsoOnDisk: names(src) }),
+      shared: buildInfoDistance(root, src, { hash: h, disk, alsoOnDisk: names(own) }),
+      hashKind: h.kind ?? "custom",
+    };
+    if (distanceScore(measured.own) <= distanceScore(measured.shared)) return { restored: false, reason: "own", ...measured };
+  }
+  try { fs.copyFileSync(src, own); return { restored: true, reason: "shared", from: src, ...measured }; }
+  catch (e) { return { restored: false, reason: hasOwn ? "own" : `copy failed: ${e.message}`, copyFailed: e.message, ...measured }; }
+}
+
+/** One line for the gate's log: which build info tsc starts from and how far it is. */
+export function restoreLine(r) {
+  const d = (x) => (x ? `${x.changed} file badli${x.global ? `, ${x.global} global — poora re-check` : ""}` : "padhi nahi gayi");
+  const warn = r.hashKind === "sha256" ? "; DHYAN: tsc ka hash nahi mila, ginti galat ho sakti hai" : "";
+  const both = r.own !== undefined || r.shared !== undefined ? ` [apni: ${d(r.own)}; shared: ${d(r.shared)}${warn}]` : "";
+  if (r.restored) return `  tsc: incremental — shared cache se shuru (${r.from})${both}`;
+  if (r.reason === "own") return `  tsc: incremental — is worktree ki apni build info${r.copyFailed ? ` (shared copy nahi hui: ${r.copyFailed})` : ""}${both}`;
+  return `  tsc: incremental — in route types ka shared cache nahi (${r.reason}), is baar poora chalega`;
 }
 
 /** After a green tsc: this worktree's build info becomes the shared one for its key (atomic replace). */

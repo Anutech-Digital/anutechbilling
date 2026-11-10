@@ -42,7 +42,7 @@ import { primaryContactEmail } from "@/lib/contacts/primary";
 import { decideCadence, CADENCE_TRIGGERS, reopensForNewTerm, effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";
 import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
 import { renderTemplate } from "@/lib/renewals/templates";
-import { createOrGetRenewalQuote } from "@/lib/renewals/create-renewal-quote";
+import { createOrGetRenewalQuote, isRenewalQuoteHold } from "@/lib/renewals/create-renewal-quote";
 import { flagsForQuoteKind, type QuoteDocumentKind } from "@/lib/pdf/quote-document-kind";
 import { splitBilledRenewalStep } from "@/lib/renewals/split-billed-renewal";
 import { createDomainRenewalQuote } from "@/lib/domains/renewal";
@@ -66,6 +66,7 @@ import { cronDbFailure } from "@/app/api/cron/_lib/db-failure";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
+import { releaseExpiredPlanChanges, dropReleasedLinks, tenantsWithLinkedQuote, type RpcClient } from "@/lib/renewals/release-expired-plan-change";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -207,6 +208,38 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
   }
   /* R-897 */ allSubs = allSubs.filter((s) => cronTenantAllowed(s.tenant_id));
   result.total_active = allSubs.length;
+
+  /* R-2590 (c): an unpaid Change plan quote whose validity ended lets go of the renewal link
+     FIRST — else the steps below reuse it as this subscription's renewal quote (existingQuoteId)
+     or hold a split-billed roll on it. SQL release_expired_plan_change_quotes. Every allowed
+     tenant with ANY linked quote (not only renewable subscriptions: a non-renewing one is blocked
+     from Change plan / Extend / Add seats too). The function is not in the generated Database
+     types yet — hence the RpcClient cast. */
+  let linkedTenants: string[] = [];
+  try {
+    const linked = await fetchAllRows((from, to) => supabase
+      .from("subscriptions").select("id, tenant_id, renewal_quote_id")
+      .not("renewal_quote_id", "is", null)
+      .order("id", { ascending: true })
+      .range(from, to));
+    linkedTenants = tenantsWithLinkedQuote(linked.filter((s) => cronTenantAllowed(s.tenant_id)));
+  } catch (e) {
+    result.errors.push({ subscription_id: "(plan-change-expiry)", message: `linked quotes read failed: ${errorMessage(e)}` });
+  }
+  const planChangeRelease = await releaseExpiredPlanChanges(supabase as unknown as RpcClient, linkedTenants);
+  dropReleasedLinks(allSubs, planChangeRelease.released);
+  for (const e of planChangeRelease.errors) {
+    result.errors.push({ subscription_id: "(plan-change-expiry)", message: `Tenant ${e.tenantId}: ${e.message}` });
+  }
+  const customerOf = new Map(allSubs.map((s) => [s.id, s.customer_name]));
+  for (const r of planChangeRelease.released) {
+    result.details.push({
+      subscription_id: r.subscription_id,
+      customer:        customerOf.get(r.subscription_id) ?? "",
+      step:            `plan change quote ${r.quote_id} expired unpaid — renewal link freed`,
+      daysUntil:       0,
+    });
+  }
 
   /* ── S22: look-ups fetched ONCE, not three round trips per subscription ──
      This loop used to read the tenant, the tenant's ingest mailboxes and the customer
@@ -481,6 +514,16 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
            a yearly figure (the exact case renewalTerm refuses). A reminder with no true
            price and no way to pay is worse than one a day later. Nothing is logged as
            sent, so the step is retried next run; the reason is in errors. */
+        /* R-2618: the link holds a Change-plan quote — not a renewal. It used to go out as the
+           renewal reminder with the plan-change amount. No email; the owner sees why in errors;
+           retried next run (paid → link cleared, new plan priced; expired → R-2590 releases it). */
+        if (isRenewalQuoteHold(quoteResult)) {
+          detail.emailStatus = `(held: plan change quote ${quoteResult.quoteId} pending — renewal quote after it is paid or expires)`;
+          result.emails_skipped += 1;
+          result.errors.push({ subscription_id: sub.id, message: quoteResult.message });
+          result.details.push(detail);
+          return;
+        }
         if (!quoteResult) {
           const why = sub.vendor === "domain" && sub.domain
             ? `No renewal quote for domain ${sub.domain}: the live renewal price could not be read.`

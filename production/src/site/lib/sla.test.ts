@@ -18,6 +18,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { SLA, COMPANY, AFTER_YOU_PAY } from "./config";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = path.resolve(__dirname, "../../..");
 const DIRS = ["src/site", "src/app/(public)", "src/app/(marketing)"];
@@ -73,7 +74,7 @@ describe("R-229 public site promises", () => {
     const hits: string[] = [];
     for (const d of DIRS) {
       for (const f of sourceFiles(path.join(ROOT, d))) {
-        const text = withoutTestimonials(withoutComments(fs.readFileSync(f, "utf8")));
+        const text = withoutTestimonials(withoutComments(readSource(f)));
         for (const [name, re] of OLD_PROMISES) {
           if (re.test(text)) hits.push(`${path.relative(ROOT, f)}: ${name}`);
         }

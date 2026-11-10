@@ -26,6 +26,7 @@ import { normalizeCountry } from "@/lib/gst/countries";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 import type { CustomerGstTreatment } from "@/lib/gst/customer-gst-treatment";
 import { parseInwardRemittance, type InwardRemittance } from "@/lib/banking/inward-remittance";
+import { bankRefKey, bankRefNorm } from "@/lib/banking/narration-ref";
 
 /** ₹ either side of the bank amount the fallback accepts (bank charges / round-off). */
 export const AMOUNT_TOLERANCE = 2;
@@ -170,14 +171,13 @@ const num = (v: unknown): number | null => {
 };
 
 /** Upper-case letters and digits only, leading zeros dropped: "0000162440272175" → "162440272175". */
-export function normRef(s: string | null | undefined): string {
-  return (s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "").replace(/^0+/, "");
-}
+export const normRef = bankRefNorm;   // R-2534: one rule for bank references (narration-ref.ts)
 
 const IFSC_RE = /^[A-Z]{4}0[A-Z0-9]{6}$/;
 
 /**
- * The UTR-looking tokens of a bank line, most likely first: its Reference column, then narration
+ * The UTR-looking tokens of a bank line, most likely first: the rail's own reference (R-2534,
+ * narration-ref.ts), its Reference column, then narration
  * tokens of 12–22 letters/digits with at least 8 digits (UPI/IMPS 12, NEFT 16, RTGS 22). IFSC
  * codes and 10-digit phone numbers are not UTRs.
  */
@@ -190,9 +190,13 @@ export function utrCandidates(line: Pick<BankCreditLine, "description" | "refere
     if (IFSC_RE.test(raw.toUpperCase())) return;
     if (!out.includes(t)) out.push(t);
   };
+  /* R-2534: the reference the rail's own slot carries (UTR / RRN) comes first. */
+  const parsed = bankRefKey(line.description, line.reference);
+  if (parsed) push(parsed);
   if (line.reference) push(line.reference);
-  for (const tok of (line.description ?? "").split(/[^A-Za-z0-9]+/)) {
-    if (tok.length >= 12 && tok.length <= 22) push(tok);
+  const desc = (line.description ?? "").toUpperCase();
+  for (const tok of desc.split(/[^A-Z0-9]+/)) {
+    if (tok.length >= 12 && tok.length <= 22 && !desc.includes(`${tok}@`)) push(tok);   // a phone UPI id is not a UTR
   }
   return out.slice(0, 4);
 }

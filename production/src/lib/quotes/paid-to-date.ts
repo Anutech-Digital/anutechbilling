@@ -16,6 +16,7 @@ import { planForQuote, type QuoteInstalmentPlan, type SplitQuoteFields, type Ins
 import { isPartRequest } from "@/lib/billing/part-requests";
 import { istToday } from "@/lib/dates/ist";
 import { rupee } from "@/lib/utils";
+import { isSmallShort } from "./instalment-status";
 
 /** The post-R-2044 sentence, wherever a split-billed quote explains its later parts. */
 export const PARTS_WORDING = "each part gets a payment request on its date; its tax invoice is raised when paid";
@@ -31,6 +32,8 @@ export interface PaidToDate {
   next: InstalmentLine;
   /** Parts in the term. */
   count: number;
+  /** R-2587: the last part counted as received came in a little short (isSmallShort). */
+  short?: { index: number; amount: number } | null;
 }
 
 /** From a plan already built (the quote page builds it from the subscription's start). */
@@ -39,14 +42,22 @@ export function paidToDateOfPlan(plan: QuoteInstalmentPlan | null | undefined, r
   const got = Math.max(0, Math.round(received || 0));
   let left = got;
   let paidCount = 0;
+  let short: PaidToDate["short"] = null;
   for (const l of plan.lines) {
-    if (left >= l.gross) { left -= l.gross; paidCount += 1; } else break;
+    if (left >= l.gross) { left -= l.gross; paidCount += 1; continue; }
+    /* R-2587: ₹95,933 in on a ₹95,993 part (Q-A378-27-0021) — received, ₹60 short; not "due now". */
+    if (left > 0 && isSmallShort(l.gross - left, l.gross)) {
+      short = { index: l.index, amount: l.gross - left };
+      left = 0; paidCount += 1;
+    }
+    break;
   }
   /* Nothing paid yet → the first part is due (ordinary "Record payment"); all paid → Paid. */
   if (paidCount === 0 || paidCount >= plan.lines.length) return null;
   const rest = plan.lines.slice(paidCount);
-  const committed = Math.max(0, rest.reduce((s, l) => s + l.gross, 0) - left);
-  return { received: got, committed, partsLeft: rest.length, next: rest[0], count: plan.lines.length };
+  /* The small difference is still owed — it stays in what is still to come. */
+  const committed = Math.max(0, rest.reduce((s, l) => s + l.gross, 0) - left + (short?.amount ?? 0));
+  return { received: got, committed, partsLeft: rest.length, next: rest[0], count: plan.lines.length, short };
 }
 
 export interface PaidToDateQuote {
@@ -104,8 +115,9 @@ export function pagePaidToDate(a: {
 export const PAID_TO_DATE_LABEL = "Paid to date";
 
 /** "Paid to date — next part ₹9,558 on 28 Jan 2027" (date already formatted by the caller). */
-export function paidToDateLine(p: Pick<PaidToDate, "next">, billOnShown: string): string {
-  return `${PAID_TO_DATE_LABEL} — next part ${rupee(p.next.gross)} on ${billOnShown}`;
+export function paidToDateLine(p: Pick<PaidToDate, "next" | "short">, billOnShown: string): string {
+  const short = p.short ? ` (Part ${p.short.index} ${rupee(p.short.amount)} short)` : "";
+  return `${PAID_TO_DATE_LABEL}${short} — next part ${rupee(p.next.gross)} on ${billOnShown}`;
 }
 
 /** "Committed for the rest of the year ₹28,674 (3 parts)" — payment history, instead of "Remaining". */

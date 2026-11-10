@@ -137,3 +137,32 @@ export function customerSearchFromUrl(search: string): string {
   const p = new URLSearchParams(search);
   return p.get("q") ?? p.get("contact") ?? "";
 }
+
+/**
+ * R-1473 (7 Nov 2026): may this customer row be shown? The Archived switch swaps the list to
+ * archived companies only, as before — EXCEPT in "Has receivables": a company archived while it
+ * still owes money stays in that list (with its Archived badge). The "To collect" tile, the chip
+ * and the dashboard all count its due, so hiding the row made the list ₹42,367 short of the tile
+ * on staging (Delhi Traders). `isActive` null/undefined = active (name-only rows).
+ */
+export function customerInList(
+  isActive: boolean | null | undefined,
+  opts: { showArchived: boolean; viewId: string; owes: number },
+): boolean {
+  const archived = isActive === false;
+  if (opts.showArchived) return archived;
+  if (!archived) return true;
+  return opts.viewId === "unpaid" && opts.owes > 0;
+}
+
+/**
+ * R-2559 (7 Nov 2026, card test R-1473): the line over "Has receivables" adds subscription dues
+ * and project invoices. Built while one read was still on its way it said "Subscription dues ₹0 …
+ * = ₹23,109" for a moment. So: "ready" once every read has data (a failed background refetch keeps
+ * the last good data — the tile shows it, so the line does too), "failed" when a read with no data
+ * failed (the page's money error says so — no half-made line), else "loading".
+ */
+export function collectLineState(reads: readonly { data: unknown; isError: boolean }[]): "loading" | "ready" | "failed" {
+  if (reads.every((r) => r.data !== undefined)) return "ready";
+  return reads.some((r) => r.data === undefined && r.isError) ? "failed" : "loading";
+}

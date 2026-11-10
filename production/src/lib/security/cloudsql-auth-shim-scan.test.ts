@@ -25,6 +25,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564/R-2571: shared, always-fresh read cache
 
 const DIR = "supabase/migrations";
 const R2487 = "20261105021052";
@@ -82,7 +83,7 @@ const files = readdirSync(DIR).filter((f) => /^\d{14}_.*\.sql$/.test(f)).sort();
 const latestByName = new Map<string, string>();
 const latestBySig = new Map<string, string>();
 for (const f of files) {
-  for (const b of functionBodies(stripComments(readFileSync(`${DIR}/${f}`, "utf8")))) {
+  for (const b of functionBodies(stripComments(readSource(`${DIR}/${f}`)))) {
     latestByName.set(b.name, b.body);
     latestBySig.set(b.sig, b.body);
   }
@@ -102,6 +103,10 @@ function uidMap(body: string): Record<string, string> {
   }
   return out;
 }
+
+/** Pushed migration (never edited) → the later migration that redefines its raw-list bodies.
+ *  R-2570's file copied nine bodies with the raw list; 20261107183015 (R-2570b) fixes them. */
+const FORWARD_FIXED: Record<string, string> = { "20261107165630": "20261107183015" };
 
 const RAW_TRUSTED = /auth\.role\(\)\s+is\s+null[\s\S]{0,200}?session_user(?:::text)?\s+not\s+in\s*\(/i;
 
@@ -164,8 +169,32 @@ describe("R-2487: raw trusted-server lists only shrink", () => {
   });
 
   it("no migration after R-2487 adds a raw `auth.role() is null … session_user not in (…)` list", () => {
-    const bad = files.filter((f) => f.slice(0, 14) > R2487 && RAW_TRUSTED.test(stripComments(readFileSync(`${DIR}/${f}`, "utf8"))));
+    const bad = files.filter(
+      (f) => f.slice(0, 14) > R2487 && !FORWARD_FIXED[f.slice(0, 14)] && RAW_TRUSTED.test(stripComments(readSource(`${DIR}/${f}`))),
+    );
     expect(bad, "write public.current_request_role() in place of auth.role() (R-2487) — never a new auth.role() list").toEqual([]);
+  });
+
+  /* A pushed migration is never edited (worker-lock exit 9), so a slip that already reached
+     manager-pardeep is fixed FORWARD: a later file redefines every raw body with
+     current_request_role(). Only files named here, and only while that holds. */
+  it.each(Object.entries(FORWARD_FIXED))("%s: every raw list it shipped is redefined clean by %s", (stamp, fixer) => {
+    const own = files.find((f) => f.startsWith(stamp));
+    const fix = files.find((f) => f.startsWith(fixer));
+    expect(own && fix && fixer > stamp, "both files exist, the fix is later").toBeTruthy();
+    const ownSql = stripComments(readSource(`${DIR}/${own}`));
+    const ownBodies = functionBodies(ownSql);
+    const raw = ownBodies.filter((b) => RAW_TRUSTED.test(b.body));
+    expect(raw.length).toBeGreaterThan(0);
+    let rest = ownSql; // nothing outside a function body carries the list
+    for (const b of ownBodies) rest = rest.replace(b.body, "");
+    expect(RAW_TRUSTED.test(rest)).toBe(false);
+    const fixed = new Map(functionBodies(stripComments(readSource(`${DIR}/${fix}`))).map((b) => [b.sig, b.body]));
+    for (const b of raw) {
+      expect(fixed.has(b.sig), `${fix} redefines ${b.sig}`).toBe(true);
+      expect(RAW_TRUSTED.test(fixed.get(b.sig)!), `${fix}: ${b.sig} has no raw list`).toBe(false);
+      expect(RAW_TRUSTED.test(latestBySig.get(b.sig)!), `latest ${b.sig} has no raw list`).toBe(false);
+    }
   });
 
   it(`latest bodies with a raw list stay <= ${RAW_TRUSTED_BASELINE} (lower the baseline when you move some)`, () => {

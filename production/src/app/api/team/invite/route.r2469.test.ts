@@ -102,10 +102,15 @@ const EMAIL = "ravi@acme.test";
 describe("R-2469: invite an address held by another workspace", () => {
   it("asks release_stale_team_invite first, with the cleaned address", async () => {
     await call({ email: "Ravi@Acme.test", role: "sales" });
-    expect(st.rpcCalls).toEqual([{ fn: "release_stale_team_invite", args: { p_email: EMAIL } }]);
+    /* R-2477: the existing-login step (invite_existing_login) runs first; this mock answers it with
+       an unknown value, so the R-2469 check follows. */
+    expect(st.rpcCalls.find((c) => c.fn === "release_stale_team_invite")).toEqual({ fn: "release_stale_team_invite", args: { p_email: EMAIL } });
   });
 
-  it("member of another real company → 409 with a next step, nothing written, no company named", async () => {
+  /* R-2477: a member elsewhere is now invited (route.r2477.test.ts). This mock answers every rpc
+     with the same value, so prepare_invite_for_existing_login gets an unknown answer and the route
+     keeps this refusal (e.g. the R-2477 migration not deployed yet). */
+  it("member of another real company, membership step unavailable → 409 with a next step, nothing written, no company named", async () => {
     st.rpcResult = { data: "member_elsewhere", error: null };
     const r = await call({ email: EMAIL, role: "sales" });
     expect(r.status).toBe(409);

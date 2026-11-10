@@ -173,8 +173,10 @@ describe("R-1838 new sale — seats × unit price", () => {
   });
   it("monthly + annual on one sale is flagged before the server refuses it", () => {
     expect(saleTermsMixed([saleLineFromItem(GWS, "monthly"), saleLineFromItem(GWS, "annual_yearly")])).toBe(true);
-    /* R-2095: Monthly flex + one-time is refused by the server too (R-381 trigger) — say it first. */
-    expect(saleTermsMixed([saleLineFromItem(GWS, "monthly"), saleLineFromItem(SETUP)])).toBe(true);
+    /* R-2193 (G-ZOHO): Monthly flex + one-time (domain, setup) is ONE sale — the one-time line is
+       billed once on month 1 (migration 20261107233022; supabase/tests/r2193_flex_with_one_time). */
+    expect(saleTermsMixed([saleLineFromItem(GWS, "monthly"), saleLineFromItem(SETUP)])).toBe(false);
+    expect(saleTermsMixed([saleLineFromItem(SETUP), saleLineFromItem(GWS, "monthly"), saleLineFromItem(GWS, "annual_yearly")])).toBe(true);
     expect(saleTermsMixed([saleLineFromItem(GWS, "annual_yearly"), saleLineFromItem(SETUP)])).toBe(false);
     expect(saleTermsMixed([saleLineFromItem(GWS, "monthly"), saleLineFromItem(GWS, "monthly")])).toBe(false);
   });
@@ -210,6 +212,17 @@ describe("R-1838 result — what happened, in words", () => {
     expect(warn?.text).toMatch(/No subscription created for this paid quote/);
     expect(warn?.href).toBe("/quotes/Q-NEW2");
     expect(lines.some((l) => l.text.startsWith("Subscription created"))).toBe(false);
+  });
+  /* R-2546: a quote-less receipt (Zoho-imported invoice, kind "opening") said "recorded on quote null". */
+  it("R-2546: a quote sale names its quote; a Zoho invoice (no quote) names the invoice", () => {
+    expect(resultLines(result({ amount: 5000, quote_id: "Q-7" }))[0]).toEqual({ text: "₹5,000 recorded on quote Q-7", href: "/quotes/Q-7" });
+    const zoho = resultLines(result({ kind: "opening", amount: 5000, quote_id: null, invoice_id: "SCN-ZB-0042", is_fully_paid: false, outstanding: 1800 }));
+    expect(zoho[0]).toEqual({ text: "₹5,000 recorded on invoice SCN-ZB-0042", href: "/invoices/SCN-ZB-0042" });
+    const all = zoho.map((l) => l.text).join("\n");
+    expect(all).not.toMatch(/null|undefined/);
+    expect(all.match(/SCN-ZB-0042/g)).toHaveLength(1);
+    const replay = resultLines(result({ kind: "opening", quote_id: null, invoice_id: "SCN-ZB-0042", already_recorded: true }));
+    expect(replay[0]).toEqual({ text: "This payment was already recorded on SCN-ZB-0042 — the bank line is now matched to it.", href: "/invoices/SCN-ZB-0042" });
   });
   it("TDS, part payment and extra credit are each said once", () => {
     const t = resultLines(result({ tds_amount: 200, outstanding: 500, overpaid_credit: 1100 })).map((l) => l.text).join("\n");

@@ -13,8 +13,12 @@
  *      It is a real folder with files → REFUSE (exit 11): never delete it here, tell the person what to do.
  *   2. delete the copied production/.env.local (and .env.test when a checker copied it) — single files only.
  *   3. `git worktree remove <path>` (never --force), run from the main clone, never from inside the worktree.
- *   4. `git branch -D w-<card>` only when the branch is already in anutech/manager-pardeep or
- *      anutech/wip/<card> exists — otherwise the branch is kept and that is said.
+ *   4. `git branch -D <branch>` only when the branch is already in anutech/manager-pardeep or
+ *      anutech/wip/<card> exists — otherwise the branch is kept and that is said. R-2561 (7 Nov 2026):
+ *      <branch> is the branch checked out in THIS worktree (read from `git worktree list --porcelain`
+ *      before the worktree goes), never a name built from the card id: R-1495's worker used w-r-1495b and
+ *      cleanup would have deleted an older w-r-1495 from a past worker. Detached / not found → no branch
+ *      is deleted.
  *
  * Every effect is injected (`deps`) so tests use fakes; `--dry-run` prints the steps and changes nothing.
  */
@@ -42,6 +46,28 @@ export function parseCleanupFlags(args = []) {
 
 export const defaultWorktree = (card, home = os.homedir()) => path.join(home, `reselleros-w-${String(card).toLowerCase()}`);
 export const workerBranch = (card) => `w-${String(card).toLowerCase()}`;
+/** R-2561: w-r-1495, w-r-1495b, w-r-1495-fix are R-1495's worker branches; w-r-14950 and manager-pardeep are not. */
+export const isCardWorkerBranch = (branch, card) => {
+  const b = String(branch ?? "").toLowerCase(), base = workerBranch(card);
+  return b.startsWith(base) && !/^[0-9]/.test(b.slice(base.length));
+};
+
+/**
+ * R-2561: the branch checked out in `worktree`, from `git worktree list --porcelain` output — or null
+ * (detached HEAD, bare, or the worktree is not listed). Paths compare resolved, case-insensitive on Windows.
+ */
+export function worktreeBranch(porcelain, worktree, platform = process.platform) {
+  const norm = (x) => { const r = path.resolve(x).replace(/[\\/]+$/, ""); return platform === "win32" ? r.toLowerCase() : r; };
+  const want = norm(worktree);
+  for (const block of String(porcelain ?? "").replace(/\r\n/g, "\n").split(/\n\s*\n/)) {
+    const lines = block.split("\n").map((l) => l.trim()).filter(Boolean);
+    const wt = lines.find((l) => l.startsWith("worktree "));
+    if (!wt || norm(wt.slice("worktree ".length)) !== want) continue;
+    const br = lines.find((l) => l.startsWith("branch "));
+    return br ? br.slice("branch ".length).replace(/^refs\/heads\//, "") : null;
+  }
+  return null;
+}
 
 /**
  * What production/node_modules is: "none" | "link" (junction/symlink; `target`) | "empty-dir" | "dir" (real
@@ -78,7 +104,6 @@ export function isInside(p, dir, platform = process.platform) {
 export function runCleanup(card, opts, deps) {
   const { dryRun = false } = opts;
   const worktree = path.resolve(opts.worktree ?? defaultWorktree(card, deps.home));
-  const branch = workerBranch(card);
   const nm = path.join(worktree, "production", "node_modules");
   const rootNm = path.join(worktree, "node_modules");
   const steps = [];
@@ -97,6 +122,10 @@ export function runCleanup(card, opts, deps) {
     return stop(CLEANUP_EXIT.refused, `✗ ${worktree} git worktree nahi lagta (${String(e?.message ?? e).split("\n")[0]}) — kuch nahi hataya.`);
   }
   if (isInside(mainRepo, worktree, deps.platform)) return stop(CLEANUP_EXIT.refused, `✗ ${worktree} main clone hai, worker worktree nahi — kuch nahi hataya.`);
+
+  /* R-2561: the branch to delete later is the one THIS worktree has checked out — read now, while git still lists it. */
+  let branch = null;
+  try { branch = worktreeBranch(deps.git(["-C", mainRepo, "worktree", "list", "--porcelain"]), worktree, deps.platform); } catch {}
 
   /* Step 1: every node_modules link goes first, one by one; a real folder with files → refuse. */
   for (const p of [nm, rootNm]) {
@@ -157,10 +186,15 @@ export function runCleanup(card, opts, deps) {
   /* Step 4: the branch — only when its work is safe elsewhere. */
   const done = () => { if (dryRun) say(`[dry-run] kuch nahi badla.`); return { code: CLEANUP_EXIT.ok, steps }; };
   const g = (args) => { try { return { ok: true, out: deps.git(["-C", mainRepo, ...args]) }; } catch { return { ok: false }; } };
+  if (!branch) { say(`4. is worktree par koi branch nahi mili (detached, ya git worktree list me ye path nahi) — koi branch nahi hategi (naam se andaza nahi lagate).`); return done(); }
+  /* Only this card's worker branch (w-<card>, w-<card>b, …) — never manager-pardeep / preview-* / another card's
+     w-r-NNNN when --worktree points at the wrong folder. */
+  if (!isCardWorkerBranch(branch, card)) { say(`4. branch ${branch} RAKHA: ye ${workerBranch(card)}… worker branch nahi — cleanup sirf is card ki worker branch mitata hai.`); return done(); }
   if (!g(["rev-parse", "--verify", "--quiet", `refs/heads/${branch}`]).ok) { say(`4. branch ${branch} nahi hai — kuch nahi karna.`); return done(); }
   g(["fetch", "-q", "anutech"]);
   const merged = g(["merge-base", "--is-ancestor", branch, "anutech/manager-pardeep"]).ok;
-  const wip = g(["rev-parse", "--verify", "--quiet", `refs/remotes/anutech/wip/${String(card).toLowerCase()}`]).ok;
+  /* wip counts only when it holds the branch tip (commits after the last wip push would be lost). */
+  const wip = g(["merge-base", "--is-ancestor", branch, `refs/remotes/anutech/wip/${String(card).toLowerCase()}`]).ok;
   if (!merged && !wip) {
     say(`4. branch ${branch} RAKHA: na anutech/manager-pardeep me hai, na anutech/wip/${String(card).toLowerCase()} — pehle push/wip karo, phir git branch -D ${branch}.`);
     return done();

@@ -23,7 +23,8 @@
  * real database.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564/R-2571: shared, always-fresh read cache
 // @ts-expect-error — plain .mjs ops script, no types (stripComments below gives it its type)
 import { stripSqlComments } from "../../../scripts/ops/sql-comments.mjs";
 
@@ -63,7 +64,7 @@ export function functionBodies(sql: string): { name: string; body: string }[] {
 }
 
 const files = readdirSync(DIR).filter((f) => /^\d{14}_.*\.sql$/.test(f)).sort();
-const src = (f: string) => stripComments(readFileSync(`${DIR}/${f}`, "utf8"));
+const src = (f: string) => stripComments(readSource(`${DIR}/${f}`));
 
 describe("R-2485: the scan itself", () => {
   it("catches the shapes that bit (and not the helper call)", () => {

@@ -1,7 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { AI_ACTIONS, type AiAction, type AiActionSpec } from "./autonomy";
+import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* ─────────────────────────────────────────────────────────────────────────────
    Is the brake actually connected?
@@ -22,7 +24,7 @@ import { AI_ACTIONS, type AiAction, type AiActionSpec } from "./autonomy";
    ───────────────────────────────────────────────────────────────────────────── */
 
 const SRC = join(process.cwd(), "src");
-const read = (p: string) => readFileSync(join(SRC, p), "utf8");
+const read = (p: string) => readSource(join(SRC, p));
 const strip = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
@@ -64,9 +66,9 @@ describe("every gateable action in the registry is actually wired somewhere", ()
     const walk = (dir: string) => {
       for (const e of readdirSync(dir, { withFileTypes: true })) {
         const p = join(dir, e.name);
-        if (e.isDirectory()) walk(p);
+        if (e.isDirectory()) { if (!isPrismaGenerated(p)) walk(p); } // R-2564: the generated Prisma client is not our code (36 MB)
         else if (/\.tsx?$/.test(e.name) && !/\.test\.tsx?$/.test(e.name)) {
-          out.push(readFileSync(p, "utf8"));
+          out.push(readSource(p));
         }
       }
     };
@@ -147,7 +149,7 @@ describe("the five unattended crons", () => {
   ])("%s gates its customer send with %s", (dir, action) => {
     const file = join(CRON, dir, "route.ts");
     expect(existsSync(file), `${dir} route is missing`).toBe(true);
-    const code = strip(readFileSync(file, "utf8"));
+    const code = strip(readSource(file));
     expect(code).toContain(`action: "${action}"`);
   });
 
@@ -155,7 +157,7 @@ describe("the five unattended crons", () => {
     /* The line this draws: the dial stops what the app sends OUT to other people, never what
        it says TO YOU. A kill switch that also muted "your GSTR-1 is due" would turn one bad
        afternoon into a late fee. */
-    const code = strip(readFileSync(join(CRON, "compliance-reminders", "route.ts"), "utf8"));
+    const code = strip(readSource(join(CRON, "compliance-reminders", "route.ts")));
     expect(code).not.toContain("automated:");
     expect(Object.keys(AI_ACTIONS)).not.toContain("compliance.send");
   });

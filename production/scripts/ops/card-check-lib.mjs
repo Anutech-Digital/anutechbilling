@@ -13,7 +13,7 @@
 import { appHostLocalReason } from "../dev/local-guard.mjs";
 
 export const LOCAL_COMPANY = "E2E Test Co";
-export const ROLE_LABEL = { owner: "Owner", manager: "Manager", accountant: "Accountant", sales: "Sales", owner2: "Owner 2" };
+export const ROLE_LABEL = { owner: "Owner", manager: "Manager", accountant: "Accountant", sales: "Sales", owner2: "Owner 2", billing: "Billing", support: "Support" };
 
 export function normaliseCardId(input) {
   const m = /^\s*[Rr]-?(\d{1,5}[a-z]?)\s*$/.exec(String(input ?? ""));
@@ -103,8 +103,9 @@ export function findPages(text, links) {
 export function pickLoginRole(steps) {
   const t = (steps ?? []).join("\n");
   if (/owner\s*2\b|\bowner2\b|doosra owner|second owner|another owner/i.test(t)) return "owner2";
-  const m = /(?:test login|login|sign[- ]?in|\bas)\s*(?:→|->|:|se|with)?\s*(owner|manager|accountant|sales)\b/i.exec(t)
-    ?? /\b(owner|manager|accountant|sales)\s+(?:se\s+)?(?:login|sign)/i.exec(t);
+  // R-2553: billing + support are Local test logins too (local only).
+  const m = /(?:test login|login|sign[- ]?in|\bas)\s*(?:→|->|:|se|with)?\s*(owner|manager|accountant|sales|billing|support)\b/i.exec(t)
+    ?? /\b(owner|manager|accountant|sales|billing|support)\s+(?:test\s+)?(?:se\s+)?(?:login|sign)/i.exec(t);
   return m ? m[1].toLowerCase() : "owner";
 }
 

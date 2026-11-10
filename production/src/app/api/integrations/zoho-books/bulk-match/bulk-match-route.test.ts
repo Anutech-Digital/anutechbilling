@@ -25,6 +25,10 @@ const st = vi.hoisted(() => ({
   /* R-2419: the facts reads — rows per table, and the user-session RPC calls. */
   tables: {} as Record<string, Array<Record<string, unknown>>>,
   rpcs: [] as Array<[string, Record<string, unknown>]>,
+  /* R-2621: the admin (service-role) RPC calls — gst_filed_days — and its answer. */
+  adminRpcs: [] as Array<[string, Record<string, unknown>]>,
+  gstFiled: [] as string[],
+  gstFiledError: false,
 }));
 
 vi.mock("@/lib/supabase/server", () => ({
@@ -40,6 +44,11 @@ vi.mock("@/lib/integrations/zoho-books/store", () => ({
   resolveZohoCaller: async () => (st.role === null ? null : {
     userId: "u1", tenantId: TENANT, role: st.role, canManage: true,
     admin: {
+      rpc: async (fn: string, args: Record<string, unknown>) => {
+        st.adminRpcs.push([fn, args]);
+        if (st.gstFiledError) return { data: null, error: { message: "boom" } };
+        return { data: fn === "gst_filed_days" ? st.gstFiled : null, error: null };
+      },
       from: (table: string) => {
         const rows = table === "customers" ? st.customers : table === "bank_transactions" ? st.lines : (st.tables[table] ?? []);
         const q: Record<string, unknown> = {
@@ -107,7 +116,7 @@ beforeEach(() => {
   ];
   st.customers = [];
   st.filters = []; st.writes = 0; st.busyOn = null; zohoCalls.length = 0;
-  st.tables = {}; st.rpcs = [];
+  st.tables = {}; st.rpcs = []; st.adminRpcs = []; st.gstFiled = []; st.gstFiledError = false;
   vi.stubEnv("ZOHO_BOOKS_CLIENT_ID", "test-id");
   vi.stubEnv("ZOHO_BOOKS_CLIENT_SECRET", "test-secret");
   vi.stubGlobal("fetch", fakeFetch);
@@ -165,8 +174,35 @@ describe("R-2402 bulk-match route", () => {
     expect(body.rows[0].facts.openItems).toHaveLength(1);
     expect(body.rows[0].facts.openItems[0].approvalBlock).toMatch(/below cost/);
     expect(st.rpcs).toEqual([["bank_credit_open_items", { p_customer_id: "c-ranz" }]]);
-    for (const t of ["invoices", "payments", "subscriptions", "quotes", "opening_balances"]) expect(tenantFilters(t)).toEqual([TENANT]);
+    for (const t of ["invoices", "payments", "subscriptions", "quotes", "opening_balances"]) {
+      expect(tenantFilters(t).length).toBeGreaterThan(0);
+      expect(new Set(tenantFilters(t))).toEqual(new Set([TENANT])); // R-2621: invoices is read twice (openings + Zoho numbers)
+    }
     expect(st.writes).toBe(0);
+  });
+
+  it("R-2621: each row carries its GST-filed days (admin gst_filed_days, own tenant) and its Zoho invoices already in the app", async () => {
+    st.customers = [{ id: "c-ranz", name: "RANZ INTERNATIONAL LLC", gstin: null }];
+    st.gstFiled = ["2026-10-30"];
+    st.tables = {
+      invoices: [
+        { id: "INV/26-27/1139", customer_id: "c-ranz", external_number: "INV/26-27/1139", invoice_date: "2026-10-30", amount: 3823, net_payable: 3823, paid_amount: 0, taxable_value: 3240, status: "pending", document_kind: "tax_invoice" },
+        { id: "INV-VOID", customer_id: "c-ranz", external_number: "INV/26-27/1139", invoice_date: "2026-10-30", amount: 3823, net_payable: 3823, paid_amount: 0, taxable_value: 3240, status: "void", document_kind: "tax_invoice" },
+      ],
+    };
+    const body = await (await POST(req({ accountId: ACCOUNT, txnIds: [L1] }))).json();
+    expect(st.adminRpcs).toEqual([["gst_filed_days", { p_tenant_id: TENANT, p_days: ["2026-10-30", "2026-10-31"] }]]);
+    expect(body.rows[0].gstFiled).toEqual(["2026-10-30"]);
+    expect(body.rows[0].zohoSales).toEqual([{ number: "INV/26-27/1139", invoiceId: "INV/26-27/1139", customerId: "c-ranz", date: "2026-10-30", due: 3823, taxable: 3240 }]);
+    expect(st.filters).toContainEqual(["invoices", "in", "external_number", ["INV/26-27/1139"]]);
+    expect(st.writes).toBe(0);
+  });
+
+  it("R-2621: the GST-filed read fails → the page is refused, nothing planned blind", async () => {
+    st.gstFiledError = true;
+    const res = await POST(req({ accountId: ACCOUNT, txnIds: [L1] }));
+    expect(res.status).toBe(500);
+    expect((await res.json()).error).toMatch(/months whose GST is already filed/);
   });
 
   it("the window read is cached — a second page reads no payment list again", async () => {

@@ -10,6 +10,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { NextRequest } from "next/server";
+import { isDefaultOn } from "@/lib/automation/jobs";
 
 const h = vi.hoisted(() => ({
   cronTenants: vi.fn(async () => ({ on: [] as string[], dry: [] as string[] })),
@@ -24,7 +25,7 @@ vi.mock("@/lib/automation/gate.server", () => ({
   cronTenants: h.cronTenants,
   recordRun: h.recordRun,
   readTenantJobs: vi.fn(),
-  /* backup is default-ON (SAFETY_JOBS_DEFAULT_ON); here the owner has turned it off too. */
+  /* backup + zoho-fy-read are default-ON (SAFETY_JOBS_DEFAULT_ON); here the owner has turned them off too. */
   readJobRow: vi.fn(async () => ({ job: "backup", enabled: false, dry_run: false, last_run_at: null, last_result: null, changed_by: null, changed_at: null })),
   ensureDefaultOnRow: vi.fn(async () => {}),
   automationState: vi.fn(async () => "off"),
@@ -65,7 +66,8 @@ describe("every cron route is gated", () => {
       expect(res.status).toBe(200);
       expect(await res.json()).toMatchObject({ skipped: "off", job });
     }
-    if (job !== "backup") expect(h.cronTenants).toHaveBeenCalledWith(job);
+    /* default-ON jobs (backup, R-2607 zoho-fy-read) read their own row instead of the company list */
+    if (!isDefaultOn(job)) expect(h.cronTenants).toHaveBeenCalledWith(job);
     expect(h.recordRun).toHaveBeenCalledWith(job, expect.any(Array), "Skipped — turned off");
     expect(h.sendEmail).not.toHaveBeenCalled();
     expect(h.sendWhatsApp).not.toHaveBeenCalled();

@@ -69,7 +69,7 @@ function failed(status: number): PagePullResult {
   return { forms: 0, leads: [], needsReconnect: false, error: `Facebook did not answer (HTTP ${status}). Try again in a few minutes.` };
 }
 
-/** R-2522: leads of ONE chosen form since a day (the Page token of the form's Page). */
+/** R-2670: leads of ONE chosen form since a day (the Page token of the form's Page). */
 export async function pullFormLeads(opts: {
   formId: string; pageToken: string; since: Date; graphVersion?: string; fetchImpl?: Fetch;
 }): Promise<{ leads: GraphLead[]; needsReconnect: boolean; error: string | null }> {

@@ -248,6 +248,64 @@ export async function settleStaleRenewal(
 }
 
 /**
+ * R-2596: record_payment's refusals of a PLAN-CHANGE quote — the subscription's seats / ₹/month /
+ * plan changed since the quote was priced or it is no longer active (R-2589), or the quote lost its
+ * link to the subscription, names another one, or its line cannot be right (R-2227). Not R-2073 (plan dropped from the
+ * catalogue): the owner can add it back, so a Razorpay retry can still book it.
+ * R-2617: "R-2617: plan change refused — a seat cut … is scheduled" (trigger
+ * subscriptions_r2617_plan_change_vs_seat_cut) is the same class: the owner removes the cut or makes a
+ * new quote; the money is kept as advance / refunded, never booked wrongly.
+ * R-2626: "R-2626: plan change refused — Q3 (…) is already invoiced / already has proforma …" (trigger
+ * subscriptions_r2626_plan_change_vs_later_part) — a later part is billed at the old rate; same class.
+ */
+export const PLAN_CHANGE_REFUSED_RE = /^R-(?:2227|2589|2617|2626): plan[ /]/i;
+
+/**
+ * R-2596: a Razorpay payment on a plan-change quote that record_payment refuses. Booking it on that
+ * quote would apply a plan change priced on seats the subscription no longer has (a seat cut in
+ * between would be credited twice), and no other quote is "the" plan change — so nothing is recorded
+ * on any quote. 200 (a retry gets the same refusal), the owner told once per payment id with every
+ * detail, and the next step: refund, or book it as the customer's advance when the money reaches
+ * the bank, or a new plan-change quote paid with it.
+ */
+export function settleRefusedPlanChange(
+  admin: ReturnType<typeof createAdminClient>,
+  args: LateArgs,
+  /** record_payment's own refusal text (our guard wording) — the owner sees the real reason. */
+  refusal: string,
+): Promise<NextResponse> {
+  const ref = args.payment.id;
+  const reason = refusal.replace(/\s*Nothing was recorded\..*$/s, "").trim();
+  if (/^R-2617:/.test(refusal)) {
+    /* R-2617: the quote itself is still right — only a scheduled end-of-term seat cut stands in the way.
+       Deleting the quote (the generic step) would throw away a payable quote. */
+    return reportUnapplied(admin, args,
+      `is a plan-change quote refused because a seat cut is scheduled (${reason.replace(/^R-2617:\s*/, "")})`,
+      `If the plan change should go ahead: remove the scheduled seat cut in Manage seats, then record this payment on quote ${args.quote.id} (Record payment, reference ${ref}). ` +
+      `If the seat cut should stay: refund the customer (Razorpay dashboard), or when Razorpay settles it to the bank, reconcile that bank line as this customer's advance (customer credit).`);
+  }
+  if (/^R-2626:/.test(refusal)) {
+    /* R-2626: a later part is already billed at the old rate. A proforma can be cancelled and THIS quote
+       paid; a part already invoiced (paid ahead) blocks this quote for good — its period is over by the
+       time that part starts, so the money goes back or becomes advance. */
+    const why = reason.replace(/^R-2626:\s*/, "");
+    const proforma = /already (?:has proforma|have proformas)/.test(refusal);
+    return reportUnapplied(admin, args,
+      `is a plan-change quote refused because a later billing part is already billed at the old rate (${why})`,
+      proforma
+        ? `If the plan change should go ahead: cancel the proforma(s) named above, the latest first (open each → Cancel proforma), then record this payment on quote ${args.quote.id} (Record payment, reference ${ref}). ` +
+          `Otherwise refund the customer (Razorpay dashboard), or when Razorpay settles it to the bank, reconcile that bank line as this customer's advance (customer credit).`
+        : `This quote cannot be paid while that part is invoiced. Delete quote ${args.quote.id}, then refund the customer (Razorpay dashboard), ` +
+          `or when Razorpay settles it to the bank, reconcile that bank line as this customer's advance (customer credit) and use it on a new plan-change quote once that part starts.`);
+  }
+  return reportUnapplied(admin, args,
+    `is a plan-change quote the plan-change check refused (${reason})`,
+    `First delete the old quote ${args.quote.id} (Change plan stays blocked while it is linked). Then either refund the customer (Razorpay dashboard), ` +
+    `or keep the money: when Razorpay settles it to the bank, reconcile that bank line as this customer's advance (customer credit). ` +
+    `If the subscription is still active you can instead make a new plan-change quote (Change plan) and record this payment on it (reference ${ref}).`);
+}
+
+/**
  * Money with nowhere honest to be recorded: the owner is told, with every detail needed to
  * refund it or book it by hand, once per Razorpay payment id (the notification row is the
  * fact), plus a note on the lead. 200 — a retry cannot change the answer.

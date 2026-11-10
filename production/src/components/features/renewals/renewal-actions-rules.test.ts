@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   renewalActionSet, isGraceOver,
-  SEND_RENEWAL_QUOTE, CREATE_QUOTE_NO_SEND, BILL_NEXT_PART, CUSTOMER_NOT_RENEWING, CANCEL_LABEL, RESEND_RENEWAL_QUOTE,
+  SEND_RENEWAL_QUOTE, CREATE_QUOTE_NO_SEND, BILL_NEXT_PART, BILL_RENEWAL_YEAR, CUSTOMER_NOT_RENEWING, CANCEL_LABEL, RESEND_RENEWAL_QUOTE,
   type RenewalActionSub,
 } from "./renewal-actions-rules";
 
@@ -26,9 +26,12 @@ describe("R-2401 labels", () => {
     expect(CREATE_QUOTE_NO_SEND).toBe("Create quote (don't send)");
   });
 
-  it("billed in parts: only 'Bill next part' (send-now refuses a whole-term quote, R-808)", () => {
+  it("billed in parts: only the part's bill, never a whole-term quote (R-808) — mid-term 'Bill next part', past the date the renewal (R-2548)", () => {
+    const mid = renewalActionSet(sub({ billing_cycle: "monthly", renewal_date: "2027-03-31" }), null, { ...OWNER, daysUntil: 150 });
+    expect(mid.primary).toEqual({ kind: "generate", label: BILL_NEXT_PART });
+    expect(mid.secondary).toBeNull();
     const a = renewalActionSet(sub({ billing_cycle: "monthly" }), null, { ...OWNER, daysUntil: -3 });
-    expect(a.primary).toEqual({ kind: "generate", label: BILL_NEXT_PART });
+    expect(a.primary).toEqual({ kind: "generate", label: BILL_RENEWAL_YEAR });
     expect(a.secondary).toBeNull();
   });
 

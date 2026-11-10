@@ -36,9 +36,10 @@ describe("stateOf", () => {
 });
 
 describe("default-ON safety jobs", () => {
-  it("backup is ON with no row; every other job is OFF with no row", () => {
+  it("backup + zoho-fy-read are ON with no row; every other job is OFF with no row", () => {
     expect(stateOf(null, "backup")).toBe("on");
-    for (const j of Object.keys(AUTOMATION_JOBS).filter((x) => x !== "backup")) expect(stateOf(null, j)).toBe("off");
+    expect(stateOf(null, "zoho-fy-read")).toBe("on");
+    for (const j of Object.keys(AUTOMATION_JOBS).filter((x) => x !== "backup" && x !== "zoho-fy-read")) expect(stateOf(null, j)).toBe("off");
     expect(stateOf(null, CUSTOMER_MESSAGES)).toBe("off");
   });
   it("the owner can still turn backup off", () => {
@@ -46,6 +47,7 @@ describe("default-ON safety jobs", () => {
   });
   it("no job that reaches customers can be default-ON", () => {
     for (const j of SAFETY_JOBS_DEFAULT_ON) expect(AUTOMATION_JOBS[j].customerFacing).toBe(false);
-    expect([...SAFETY_JOBS_DEFAULT_ON]).toEqual(["backup"]);
+    /* R-2607: zoho-fy-read reads Zoho only for a read the owner asked for — sends and imports nothing. */
+    expect([...SAFETY_JOBS_DEFAULT_ON]).toEqual(["backup", "zoho-fy-read"]);
   });
 });

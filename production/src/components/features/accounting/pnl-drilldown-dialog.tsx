@@ -13,6 +13,13 @@
  *              is not credit) + the estimated parts (R-2095)
  *   expenses → operating expenses in the period
  *
+ * R-2622: on the P&L's Management (matched) view the cogs drill lists the bills placed in this
+ * period by their SERVICE month (SQL report_pnl_cogs_matched) — the part in the period, the month
+ * it is for and how that month was decided — plus GST not claimable on bills dated in the period.
+ *
+ * R-2624: on Management the revenue drill lists report_pnl_revenue_matched_lines — each document's
+ * part in the period by its service months, with the months it is for.
+ *
  * Read-only. No money is written here — it's a lens onto existing data.
  */
 "use client";
@@ -38,9 +45,10 @@ import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { rupee, formatDate } from "@/lib/utils";
 import { signedRupee } from "@/lib/accounting/net-figure";
 import type { CogsEstimateBasis } from "@/lib/accounting/pnl";
+import { fetchMatchedCogs, fetchRevenueDrillLines, type PnlBasis } from "@/lib/accounting/pnl-basis";
 import {
-  cogsDrillRows, drillTie, revenueDrillRows,
-  type CogsBillRow, type DrillRow, type PnLDrillKind, type PnLDrillTarget, type RevenueLineRow,
+  cogsDrillRows, drillTie, matchedCogsDrillRows, revenueDrillRows,
+  type CogsBillRow, type DrillRow, type PnLDrillKind, type PnLDrillTarget,
 } from "@/lib/accounting/pnl-drill";
 
 export type { PnLDrillKind, PnLDrillTarget } from "@/lib/accounting/pnl-drill";
@@ -53,7 +61,27 @@ interface Props {
   range:        { from: string; to: string };
   /** R-2095: the licence cost is (partly) estimated — show how, on the COGS drill. */
   cogsEstimate?: CogsEstimateBasis | null;
+  /** R-2622: the P&L view the row was clicked on. Absent = "gst" (bills by bill date). */
+  basis?: PnlBasis;
+  /** R-2624: the Management card's revenue is spread over its service months (title + note say so). */
+  revenueSpread?: boolean;
+  /** R-2625: the Management card counts revenue only up to this day (the end of this month). */
+  earnedTo?: string;
+  /** R-2625: the page's today — the drill cuts Management revenue at the same month as the card. */
+  today?: string;
 }
+
+/** R-2622: the cogs drill on the Management (matched) view. */
+const COGS_MATCHED_META = {
+  title: "Cost of goods — by the month the licence was used",
+  desc:  "Vendor bills placed in the month they are for (the service month), at the part that falls in this period, pre-GST. GST that cannot be claimed back stays on the bill date. A vendor with no bill for the month shows its estimate.",
+};
+
+/** R-2624: the revenue drill on the Management (matched) view. */
+const REVENUE_MATCHED_META = {
+  title: "Revenue — spread over the months it pays for",
+  desc:  "Each invoice, credit note and debit note placed in the months it covers (a yearly invoice = 1/12 a month, the rupee left over in the last month), at the part that falls in this period, before GST. A one-time sale stays in its invoice month.",
+};
 
 const META: Record<PnLDrillKind, { title: string; desc: string; href: string; hrefLabel: string; tone: "ink" | "rose"; groupLabel: string }> = {
   revenue: {
@@ -82,14 +110,10 @@ const META: Record<PnLDrillKind, { title: string; desc: string; href: string; hr
   },
 };
 
-type RevenueLinesRpc = (
-  fn: "report_pnl_revenue_lines", args: { p_from: string; p_to: string; p_families: string[] | null },
-) => PromiseLike<{ data: RevenueLineRow[] | null; error: { code?: string; message: string } | null }>;
-
-function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: string }, enabled: boolean) {
+function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: string }, enabled: boolean, basis: PnlBasis, today?: string) {
   const kind = target?.kind ?? null;
   return useQuery({
-    queryKey: ["accounting", "pnl-drill", kind, range, target?.families ?? null, target?.excludeFamilies ?? null,
+    queryKey: ["accounting", "pnl-drill", kind, range, basis, today ?? null, target?.families ?? null, target?.excludeFamilies ?? null,
                target?.vendors ?? null, target?.estimates ?? null, target?.projectCost ?? null, target?.category ?? null],
     enabled:  enabled && !!kind,
     queryFn: async (): Promise<DrillRow[]> => {
@@ -97,18 +121,14 @@ function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: 
 
       if (kind === "revenue") {
         /* R-2181: the same rows report_pnl_revenue_by_product adds up (ex-GST, net of notes,
-           sales only — R-1739), only the families of the row clicked. */
-        const rpc = supabase.rpc as unknown as RevenueLinesRpc;
-        const { data, error } = await rpc.call(supabase, "report_pnl_revenue_lines", {
-          p_from: range.from, p_to: range.to,
-          p_families: target?.families && target.families.length > 0 ? target.families : null,
-        });
-        if (error) throw new Error(error.message);
-        return revenueDrillRows(data ?? [], target ?? {});
+           sales only — R-1739), only the families of the row clicked. R-2624: on Management the
+           spread rows (report_pnl_revenue_matched_lines) the card was added up from. */
+        const lines = await fetchRevenueDrillLines(supabase, range, target?.families ?? null, basis, today);
+        return revenueDrillRows(lines, target ?? {});
       }
 
       if (kind === "cogs") {
-        const [{ data, error }, { data: tenant }] = await Promise.all([
+        const [{ data, error }, { data: tenant }, matched] = await Promise.all([
           supabase
             .from("vendor_bills")
             .select("id, vendor_name, bill_no, bill_date, subtotal, category, cgst, sgst, igst, document_type, vendor_gstin")
@@ -117,10 +137,16 @@ function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: 
             .like("category", "COGS-%")
             .order("bill_date", { ascending: false }),
           supabase.from("tenants").select("state_code, gstin").limit(1).maybeSingle(),
+          /* R-2622: the same RPC the Management card was built from — the rows add up to it. */
+          basis === "management" ? fetchMatchedCogs(supabase, range) : Promise.resolve(undefined),
         ]);
         if (error) throw error;
         /* Our state, as report_pnl reads it — for the bill's GST credit check (R-1576). */
         const own = tenant?.state_code?.trim() || stateCodeFromGstin(tenant?.gstin ?? null) || null;
+        if (basis === "management") {
+          if (!matched) throw new Error("report_pnl_cogs_matched is not available");
+          return matchedCogsDrillRows(matched.bills, (data ?? []) as CogsBillRow[], target ?? {}, own, range);
+        }
         return cogsDrillRows((data ?? []) as CogsBillRow[], target ?? {}, own, range);
       }
 
@@ -158,13 +184,19 @@ function useDrilldown(target: PnLDrillTarget | null, range: { from: string; to: 
   });
 }
 
-export function PnLDrilldownDialog({ open, onOpenChange, target, range, cogsEstimate }: Props) {
+export function PnLDrilldownDialog({ open, onOpenChange, target, range, cogsEstimate, basis = "gst", revenueSpread = false, earnedTo, today }: Props) {
   const kind = target?.kind ?? null;
   const expenseCategory = target?.category ?? null;
   /* The estimate's working only on a drill that lists an estimated part. */
   const estimate = kind === "cogs" && (target?.vendors === undefined || (target?.estimates?.length ?? 0) > 0) ? cogsEstimate ?? null : null;
-  const { data: rows, isLoading, isError } = useDrilldown(target, range, open);
-  const meta = kind ? META[kind] : null;
+  /* R-2625: a Management card whose revenue is not spread (older database) lists the GST rows it shows. */
+  const drillBasis: PnlBasis = kind === "revenue" && !revenueSpread ? "gst" : basis;
+  const { data: rows, isLoading, isError } = useDrilldown(target, range, open, drillBasis, today);
+  const meta = !kind ? null
+    : kind === "cogs" && basis === "management" ? { ...META.cogs, ...COGS_MATCHED_META }
+    : kind === "revenue" && basis === "management" && revenueSpread
+      ? { ...META.revenue, ...REVENUE_MATCHED_META, ...(earnedTo ? { desc: `${REVENUE_MATCHED_META.desc} Counted only up to the end of this month (${formatDate(earnedTo)}) — what is already invoiced for later months is not earned yet.` } : {}) }
+    : META[kind];
   const amountColor = meta?.tone === "rose" ? "text-rose" : "text-ink";
   /* A sub-row (a product, a vendor, a category) is named in the title. */
   const subRow = (kind === "revenue" && (target?.families || target?.excludeFamilies)) || (kind === "cogs" && target?.vendors);

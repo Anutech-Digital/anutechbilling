@@ -118,3 +118,26 @@ describe("R-2055 paid to date", () => {
     expect(paid.detail).toBe("Paid to date — next part ₹9,558 on 28 Jan 2027.");
   });
 });
+
+/** R-2587 (8 Nov 2026): staging Q-A378-27-0021 — Part 1 ₹95,993, ₹95,933 received (₹60 short). */
+describe("R-2587 — a part received with a small difference counts as received", () => {
+  const BIG = { ...Q, subtotal: 325_400, amount: 383_972, line_items: [{ id: "l1", name: "Workspace", qty: 100, rate: 3254, commitment: "annual" }] };
+
+  it("₹60 short on Part 1 → paid to date, the ₹60 stays in what is still to come", () => {
+    const p = paidToDateOf({ ...BIG, payment_amount: 95_933 }, "2026-11-01")!;
+    expect(p).not.toBeNull();
+    expect(p.short).toEqual({ index: 1, amount: 60 });
+    expect(p.next.index).toBe(2);
+    expect(p.next.billOn).toBe("2027-02-01");
+    expect(p.committed).toBe(95_993 * 3 + 60);
+    expect(paidToDateLine(p, "1 Feb 2027")).toBe("Paid to date (Part 1 ₹60 short) — next part ₹95,993 on 1 Feb 2027");
+  });
+
+  it("the Quotes list reads it as paid to date too (one rule)", () => {
+    expect(quoteListTab({ ...BIG, payment_amount: 95_933 } as never)).not.toBe("partial");
+  });
+
+  it("₹5,000 short is a real part payment — not paid to date", () => {
+    expect(paidToDateOf({ ...BIG, payment_amount: 90_993 }, "2026-11-01")).toBeNull();
+  });
+});

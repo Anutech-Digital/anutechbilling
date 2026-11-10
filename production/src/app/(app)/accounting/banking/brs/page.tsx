@@ -15,7 +15,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { LoadError } from "@/components/shared/load-error";
 import { useBankAccounts, useBankTransactions } from "@/lib/queries/bank";
-import { buildBrs, brsRows, type BrsLine } from "@/lib/banking/brs";
+import { buildBrs, brsRows, searchBrsLines, withStatementClosing, BRS_PAGE_SIZE, type BrsLine } from "@/lib/banking/brs";
 import { downloadCSV } from "@/lib/csv";
 import { rupee, formatDate } from "@/lib/utils";
 import { istToday } from "@/lib/dates/ist";
@@ -23,6 +23,58 @@ import { istToday } from "@/lib/dates/ist";
 function todayIso(): string {
   return istToday();
 }
+
+/**
+ * R-2566: one BRS list, painted BRS_PAGE_SIZE lines at a time ("Show more"), with a search box
+ * when the list is longer than a page. Defined OUTSIDE the page: as an inner component it was a
+ * new component type on every render, so typing one digit in "Closing balance" re-built all
+ * 3,500 rows. The count and ₹ in each list's header come from buildBrs over every line.
+ */
+const LineTable = React.memo(function LineTable({ rows, sign, label }: { rows: BrsLine[]; sign: "credit" | "debit" | "net"; label: string }) {
+  const [limit, setLimit] = React.useState(BRS_PAGE_SIZE);   // a new account / date remounts it (key)
+  const [query, setQuery] = React.useState("");
+  const found = React.useMemo(() => searchBrsLines(rows, query), [rows, query]);
+  const shown = found.length > limit ? found.slice(0, limit) : found;
+  const hidden = found.length - shown.length;
+  return (
+    <>
+      {/* Kept while a search is typed, so a list that shrank below a page can still be cleared. */}
+      {(rows.length > BRS_PAGE_SIZE || query !== "") && (
+        <div className="px-3 pt-2">
+          <Input type="search" value={query} onChange={(e) => { setQuery(e.target.value); setLimit(BRS_PAGE_SIZE); }}
+            placeholder="Search narration, date or amount" aria-label={`Search ${label}`} className="h-8 text-sm" />
+        </div>
+      )}
+      <table className="w-full text-sm">
+        <tbody className="divide-y divide-hairline">
+          {shown.map((l) => (
+            <tr key={l.id}>
+              <td className="px-3 py-1.5 text-ink-3 whitespace-nowrap">{formatDate(l.txn_date)}</td>
+              <td className="px-3 py-1.5 text-ink-2 truncate max-w-[420px]">{l.description}</td>
+              <td className="px-3 py-1.5 text-right font-mono tabular-nums text-ink">
+                {sign === "credit" ? rupee(l.credit) : sign === "debit" ? rupee(l.debit) : (l.credit > 0 ? `+${rupee(l.credit)}` : `−${rupee(l.debit)}`)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {query.trim() !== "" && found.length === 0 && <p className="px-4 py-3 text-sm text-ink-3">No line matches “{query.trim()}”.</p>}
+      {(hidden > 0 || found.length !== rows.length) && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-hairline px-3 py-2 text-xs text-ink-3">
+          <span data-brs-shown>
+            Showing {shown.length.toLocaleString("en-IN")} of {found.length.toLocaleString("en-IN")}
+            {found.length !== rows.length ? ` matching (${rows.length.toLocaleString("en-IN")} in all)` : ""}
+          </span>
+          {hidden > 0 && (
+            <Button variant="outline" size="sm" onClick={() => setLimit((n) => n + BRS_PAGE_SIZE)}>
+              Show {Math.min(hidden, BRS_PAGE_SIZE)} more
+            </Button>
+          )}
+        </div>
+      )}
+    </>
+  );
+});
 
 export default function BrsPage() {
   const { data: accounts, isLoading: accLoading, isError: accError, refetch: refetchAcc } = useBankAccounts();
@@ -34,35 +86,25 @@ export default function BrsPage() {
   const account = bankAccounts.find((a) => a.id === accountId) ?? null;
   const { data: txns, isLoading: txLoading, isError: txError, refetch: refetchTx } = useBankTransactions(accountId || null);
 
-  const brs = React.useMemo(() => {
+  /* R-2566: the lists + totals once per account / date / data; a keystroke in "Closing balance"
+     only re-derives the import gap (withStatementClosing — the same step buildBrs ends with). */
+  const brsLists = React.useMemo(() => {
     if (!account) return null;
-    const closingN = closing.trim() === "" ? null : Math.round(Number(closing) || 0);
     return buildBrs({
       openingBalance: account.opening_balance, openingDate: account.opening_balance_date, asOf,
-      lines: (txns ?? []) as BrsLine[], statementClosing: closingN,
+      lines: (txns ?? []) as BrsLine[], statementClosing: null,
     });
-  }, [account, txns, asOf, closing]);
+  }, [account, txns, asOf]);
+  const brs = React.useMemo(() => {
+    if (!brsLists) return null;
+    const closingN = closing.trim() === "" ? null : Math.round(Number(closing) || 0);
+    return withStatementClosing(brsLists, closingN);
+  }, [brsLists, closing]);
 
   function exportCsv() {
     if (!brs || !account) return;
     downloadCSV(`BRS-${account.name.replace(/\s+/g, "-")}-${asOf}.csv`, ["Line", "Amount (INR)"], brsRows(brs, account.name));
   }
-
-  const LineTable = ({ rows, sign }: { rows: BrsLine[]; sign: "credit" | "debit" | "net" }) => (
-    <table className="w-full text-sm">
-      <tbody className="divide-y divide-hairline">
-        {rows.map((l) => (
-          <tr key={l.id}>
-            <td className="px-3 py-1.5 text-ink-3 whitespace-nowrap">{formatDate(l.txn_date)}</td>
-            <td className="px-3 py-1.5 text-ink-2 truncate max-w-[420px]">{l.description}</td>
-            <td className="px-3 py-1.5 text-right font-mono tabular-nums text-ink">
-              {sign === "credit" ? rupee(l.credit) : sign === "debit" ? rupee(l.debit) : (l.credit > 0 ? `+${rupee(l.credit)}` : `−${rupee(l.debit)}`)}
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
-  );
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1100px] mx-auto">
@@ -147,7 +189,7 @@ export default function BrsPage() {
               ? <p className="px-4 py-3 text-sm text-ink-3">None. Every imported line is matched to an entry.</p>
               : <>
                   <p className="px-4 pt-2 text-xs text-ink-3">Bank charges, interest, unknown receipts: book or reconcile each line in <Link href={`/accounting/banking/${account.id}`} className="text-amber-ink underline">Banking → this account</Link>.</p>
-                  <LineTable rows={brs.unbookedImports} sign="net" />
+                  <LineTable key={`${accountId}|${asOf}`} rows={brs.unbookedImports} sign="net" label="In bank, not in books" />
                 </>}
           </Card>
 
@@ -161,7 +203,7 @@ export default function BrsPage() {
                 ? <p className="px-4 py-3 text-sm text-ink-3">None.</p>
                 : <>
                     <p className="px-4 pt-2 text-xs text-ink-3">Booked in the books (from Bills, Payroll or Referrals) but not yet out of the bank. When the statement arrives, reconcile that line and it replaces this manual line.</p>
-                    <LineTable rows={brs.paymentsNotPresented} sign="debit" />
+                    <LineTable key={`${accountId}|${asOf}`} rows={brs.paymentsNotPresented} sign="debit" label="Payments not yet presented" />
                   </>}
             </Card>
             <Card className="overflow-hidden">
@@ -171,7 +213,7 @@ export default function BrsPage() {
               </div>
               {brs.depositsInTransit.length === 0
                 ? <p className="px-4 py-3 text-sm text-ink-3">None.</p>
-                : <LineTable rows={brs.depositsInTransit} sign="credit" />}
+                : <LineTable key={`${accountId}|${asOf}`} rows={brs.depositsInTransit} sign="credit" label="Deposits in transit" />}
             </Card>
           </div>
 

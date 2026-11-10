@@ -21,7 +21,9 @@
 --   BLOCKED  sales of A sets a teammate's employee_id
 --   ALLOWED  sales of A changes own full_name
 --   ALLOWED  sales of A links own employee record through set_my_employee (email matches)
---   ALLOWED  active owner of A changes a teammate's role / employee_id / email
+--   ALLOWED  active owner of A changes a teammate's role / employee_id
+--   BLOCKED  (R-2477 re-review) even the owner: a teammate's email — it is their sign-in identity;
+--            only back to their own sign-in address
 --   ALLOWED  the service connection (no auth.uid()) moves a row between tenants
 
 begin;
@@ -137,7 +139,9 @@ begin
   if not v_err or v_s <> 'r712-owner-a@example.in' then
     raise exception 'FAIL 6: a sales login rewrote the owner''s email (owner row takeover on next login)';
   end if;
-  if v_msg not like 'Only an owner%' then raise exception 'FAIL 6: blocked, but not by the guard: %', v_msg; end if;
+  /* R-2477 re-review: the guard's sign-in-identity rule may fire first — still the guard */
+  if v_msg not like 'Only an owner%' and v_msg not like 'This email is their sign-in identity%' then
+    raise exception 'FAIL 6: blocked, but not by the guard: %', v_msg; end if;
 
   -- ── 7. BLOCKED: sales sets a teammate's employee_id ──────────────────────
   v_err := false;
@@ -178,15 +182,21 @@ begin
   perform set_config('request.jwt.claims', json_build_object('sub', c_owner_a, 'role', 'authenticated')::text, true);
   begin
     update public.users
-       set role = 'manager', employee_id = '71200000-0000-4000-8000-0000000000e1', email = 'r712-sales-new@example.in'
+       set role = 'manager', employee_id = '71200000-0000-4000-8000-0000000000e1'
      where id = c_sales_a;
   exception when others then
     raise exception 'FAIL 11: the active owner was blocked from managing a teammate: %', sqlerrm;
   end;
   select role::text, email into v_s, v_msg from public.users where id = c_sales_a;
-  if v_s <> 'manager' or v_msg <> 'r712-sales-new@example.in' then
-    raise exception 'FAIL 11: owner update did not stick (role %, email %)', v_s, v_msg;
+  if v_s <> 'manager' then
+    raise exception 'FAIL 11: owner update did not stick (role %)', v_s;
   end if;
+  /* R-2477 re-review: a teammate's email is their sign-in identity — not even the owner re-points it */
+  v_err := false;
+  begin
+    update public.users set email = 'r712-sales-new@example.in' where id = c_sales_a;
+  exception when others then v_err := true; end;
+  if not v_err then raise exception 'FAIL 11: the owner re-pointed a teammate''s sign-in email'; end if;
 
   -- ── 12. BLOCKED even for the owner: a teammate's email onto an invitee's ──
   v_err := false;

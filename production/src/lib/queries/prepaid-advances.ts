@@ -11,12 +11,13 @@ import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 
 import { createClient } from "@/lib/supabase/client";
-import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { fetchAllRows, type PageQuery } from "@/lib/ops/fetch-all";
 import type { PrepaidAdvanceRow, ExpenseRow } from "@/lib/supabase/database.types";
 
 const KEY = ["prepaid_advances"] as const;
 
-export type PrepaidAdvance = PrepaidAdvanceRow & { balance: number };
+/** R-2588: tds_amount = TDS deducted on the advance (0 for most). */
+export type PrepaidAdvance = PrepaidAdvanceRow & { balance: number; tds_amount: number };
 
 /** The expenses booked against one advance (each "Consume"). Lazy — only runs
  *  when a card is expanded. `enabled` gates the fetch. */
@@ -52,7 +53,19 @@ export async function fetchPrepaidAdvances(supabase: ReturnType<typeof createCli
     .order("paid_date", { ascending: false })
     .order("id", { ascending: true })
     .range(from, to));
-  return rows.map((r) => ({ ...r, balance: r.total_amount - r.consumed_amount }));
+  /* R-2588: TDS deducted on an advance (R-1916 — its bank payment row, kind 'advance'). Apply
+     advance credits it on the bill, so "Apply advance ₹X" can show the full gross. Few rows. */
+  type AdvTds = { prepaid_advance_id: string | null; tds_amount: number | null };
+  const tdsRows = await fetchAllRows<AdvTds>((from, to) => supabase
+    .from("bank_vendor_payment_lines" as never)
+    .select("prepaid_advance_id, tds_amount")
+    .eq("kind", "advance").gt("tds_amount", 0)
+    .order("id", { ascending: true })
+    .range(from, to) as unknown as PageQuery<AdvTds>)
+    .catch((): AdvTds[] => []);
+  const tdsBy = new Map<string, number>();
+  for (const t of tdsRows) if (t.prepaid_advance_id) tdsBy.set(t.prepaid_advance_id, (tdsBy.get(t.prepaid_advance_id) ?? 0) + (t.tds_amount ?? 0));
+  return rows.map((r) => ({ ...r, balance: r.total_amount - r.consumed_amount, tds_amount: tdsBy.get(r.id) ?? 0 }));
 }
 
 export function usePrepaidAdvances() {

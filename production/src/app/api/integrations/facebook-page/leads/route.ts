@@ -1,5 +1,5 @@
 /**
- * R-2521 / R-2522: POST /api/integrations/facebook-page/leads — "Fetch leads now" on the Facebook
+ * R-2521 / R-2670: POST /api/integrations/facebook-page/leads — "Fetch leads now" on the Facebook
  * Page screen. Brings the leads of the CHOSEN lead forms (any Page the Meta Ads login manages) into
  * Sales → Leads (source Facebook). Owner / manager only. The meta-leads-pull cron does the same
  * every 30 minutes. Forms are chosen through /api/integrations/meta-lead-forms.

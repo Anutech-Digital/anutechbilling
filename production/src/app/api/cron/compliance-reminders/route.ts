@@ -38,6 +38,7 @@ import {
 import { isMissingColumnError, profileFromRow, type PgErrorLike } from "@/lib/compliance/profile-row";
 import { dueReminders, renderReminder, type PlannedReminder } from "@/lib/compliance/reminders";
 import { noTdsDeductedPredicate, tdsLookbackFrom, tdsMonthsFrom } from "@/lib/compliance/tds-not-applicable";
+import { COGS_BILL_TDS_KINDS } from "@/lib/queries/cogs-bill-tds";
 import { isEmailConfigured } from "@/lib/email/send";
 import { sendInternalEmail } from "@/lib/messaging";
 import { timingSafeEqualStr } from "@/lib/crypto/timing-safe";
@@ -226,8 +227,9 @@ async function handle(req: Request) {
         supabase.from("referral_commissions").select("earned_date, tds_amount, status")
           .eq("tenant_id", tenant.id).gte("earned_date", lookback).gt("tds_amount", 0).neq("status", "cancelled"),
         // R-1891: 194Q TDS on goods bills paid from the bank (on the payment row, not an expense).
+        // R-1916: + TDS withheld on a vendor advance paid from the bank.
         supabase.from("bank_vendor_payment_lines" as never).select("tds_on, tds_amount")
-          .eq("tenant_id", tenant.id).in("kind", ["bill", "new_bill"]).gte("tds_on", lookback).gt("tds_amount", 0) as unknown as
+          .eq("tenant_id", tenant.id).in("kind", [...COGS_BILL_TDS_KINDS]).gte("tds_on", lookback).gt("tds_amount", 0) as unknown as
           PromiseLike<{ data: { tds_on: string | null; tds_amount: number }[] | null; error: unknown }>,
       ]);
       const notApplicable = tdsSal.error || tdsExp.error || tdsComm.error || tdsGoods.error

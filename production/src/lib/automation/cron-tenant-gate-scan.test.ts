@@ -16,6 +16,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { AUTOMATION_JOBS, type AutomationJob } from "./jobs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = process.cwd();
 const CRON_DIR = path.join(ROOT, "src/app/api/cron");
@@ -41,7 +42,7 @@ function tenantCronRoutes(): { job: AutomationJob; file: string }[] {
   for (const dir of fs.readdirSync(CRON_DIR)) {
     const file = path.join(CRON_DIR, dir, "route.ts");
     if (!fs.existsSync(file)) continue;
-    const m = fs.readFileSync(file, "utf8").match(/gatedCron\(\s*"([a-z0-9-]+)"/);
+    const m = readSource(file).match(/gatedCron\(\s*"([a-z0-9-]+)"/);
     if (!m) continue;
     const job = m[1] as AutomationJob;
     if (AUTOMATION_JOBS[job]?.scope === "tenant") out.push({ job, file });
@@ -58,12 +59,12 @@ describe("company-scoped crons use the automation gate (R-1818)", () => {
   });
 
   it.each(routes.map((r) => [r.job, r.file] as const))("%s skips companies the gate does not allow", (_job, file) => {
-    const src = fs.readFileSync(file, "utf8");
+    const src = readSource(file);
     if (usesGate(src)) return;
     const imported = [...src.matchAll(/from\s+"([^"]+)"/g)]
       .map((m) => resolveImport(m[1]))
       .filter((f): f is string => f !== null && !NOT_THE_ROUTES_OWN_FILTER.has(rel(f)));
-    const viaLib = imported.filter((f) => usesGate(fs.readFileSync(f, "utf8")));
+    const viaLib = imported.filter((f) => usesGate(readSource(f)));
     expect(
       viaLib.length,
       `${rel(file)} loops over companies without cronTenantAllowed(tenantId) — add ` +

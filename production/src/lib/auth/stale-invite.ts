@@ -45,3 +45,49 @@ export function loginElsewhereMessage(email: string): string {
     "If they ended up in an empty workspace of their own, they sign in once and you use Claim a colleague on this page."
   );
 }
+
+/* ── R-2477 (memberships slice 3): inviting a login that already works in another company ── */
+
+/** What invite_existing_login answers. R-2477 re-review (migration 20261106034600): "plain" for both
+    "no login" and "works in no company" (it no longer says whether an address has a login); the
+    older "no_company" / "not_found" are still understood while a database runs the earlier body. */
+export type ExistingLoginInvite = "invited" | "already_member" | "plain" | "no_company" | "not_found";
+
+export function parseExistingLoginInvite(v: unknown): ExistingLoginInvite | null {
+  return v === "invited" || v === "already_member" || v === "plain" || v === "no_company" || v === "not_found" ? v : null;
+}
+
+/** The login is already a member of the inviting company (maybe working in another one right now). */
+export function alreadyMemberMessage(email: string): string {
+  return (
+    `${email} is already a member of your company, so there is nothing to invite. ` +
+    "Next step: change their role on the Team page if needed. If they can't see your company, ask them to pick it from the company switcher in the top bar."
+  );
+}
+
+/** Shown to the owner after inviting a login that already works in another company. */
+export function existingLoginInvitedNote(email: string): string {
+  return (
+    `${email} already uses ResellerOS with another company — they keep it. ` +
+    /* R-2517: only the emailed link accepts it (proof of their mailbox) */
+    "Next step: they open the link we emailed to that address and accept it themselves; then they appear in your Team list. You can withdraw it from Pending invites, or invite again to send a fresh link."
+  );
+}
+
+/** The email such a person gets: no signup link (they have a login), and what happens next. */
+export function existingLoginInviteEmail(p: { workspace: string; roleName: string; email: string; acceptUrl: string }): string {
+  /* R-2517: the link carries a single-use token — opening it from this mailbox is the proof that
+     the invite reached its owner. It is the only way to accept (no Accept button in the app). */
+  return `Hello,
+
+${p.workspace} has invited you to join them on ResellerOS as ${p.roleName}.
+
+You already have a ResellerOS login with this address (${p.email}) — you keep your current company. To accept, open this link and sign in the way you always do, with ${p.email}:
+${p.acceptUrl}
+
+Then press Accept. The link works once and for 7 days, only for ${p.email}. Nothing changes until you accept. After that you can switch between your companies from the top bar.
+
+Did not expect this? Ignore this email — nothing happens.
+
+— ${p.workspace} (via ResellerOS)`;
+}

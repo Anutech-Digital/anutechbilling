@@ -107,6 +107,8 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
           <p className="text-xs text-ink-3 leading-relaxed">
             Someone who signed in before you invited them ends up outside this workspace —
             either with nowhere to go, or in an empty company of their own. Put them back here.
+            Someone who already works in another company is not claimed: they accept your invite
+            themselves, at the top of their app.
             Only people who asked to join, or signed in after your invite, can be claimed.
           </p>
         </div>
@@ -172,7 +174,7 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
         <div className="mt-4 border-t border-hairline pt-3">
           <p className="mb-2 text-xs text-ink-3">
             {list.length} {list.length === 1 ? "person" : "people"} asked to join or {list.length === 1 ? "was" : "were"} invited
-            here but {list.length === 1 ? "has" : "have"} no workspace yet. Until claimed, they land in an app with nothing in it.
+            here and signed in. Until claimed, they can't open this company.
           </p>
           <ul className="flex flex-wrap gap-1.5">
             {list.map((u) => (
@@ -181,7 +183,7 @@ export function ClaimColleagueCard({ isOwner }: { isOwner: boolean }) {
                   type="button"
                   onClick={() => { setEmail(u.email); setBlocked(null); }}
                   className="rounded-full border border-hairline px-2.5 py-1 font-mono text-2xs text-ink-2 hover:border-amber hover:text-ink"
-                  title={u.last_sign_in_at ? `Last signed in ${new Date(u.last_sign_in_at).toLocaleDateString("en-IN")}` : "Never signed in"}
+                  title={u.last_sign_in_at ? `Last signed in ${new Date(u.last_sign_in_at).toLocaleDateString("en-IN")}` : undefined /* R-2477: not shown for a login that has a profile */}
                 >
                   {u.email}
                 </button>

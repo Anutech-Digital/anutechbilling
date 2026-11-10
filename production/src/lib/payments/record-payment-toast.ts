@@ -70,7 +70,7 @@ export interface PaymentToast {
 function headline(r: PaymentToastInput): string {
   if (r.isUpgradeQuote) {
     return r.isFullyPaid
-      ? "Paid in full · support plan upgraded"
+      ? "Paid in full · plan upgraded"
       : `Partial upgrade payment recorded · ${rupee(r.outstanding)} still due to upgrade the plan`;
   }
   if (r.renewalRolledForward) return "Renewal payment received · subscription rolled forward 1 year";

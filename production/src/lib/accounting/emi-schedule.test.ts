@@ -102,6 +102,10 @@ describe("splitDebit — a bank debit against its instalment", () => {
   it("₹50 more as extra principal → part prepayment, schedule recomputed", () => {
     expect(splitDebit(emi2, 9029, "prepay")).toEqual({ principal: 7953, interest: 1076, charges: 0, difference: 50, recompute: true });
   });
+  it("R-2523: first EMI ₹30,183 vs ₹27,764 — the extra ₹2,419 as broken-period interest", () => {
+    const emi1 = { emi: 27764, principal: 14764, interest: 13000 };
+    expect(splitDebit(emi1, 30183, "interest")).toEqual({ principal: 14764, interest: 15419, charges: 0, difference: 2419, recompute: false });
+  });
   it("less than the EMI → interest first, the rest is principal", () => {
     expect(splitDebit(emi2, 5000)).toEqual({ principal: 3924, interest: 1076, charges: 0, difference: -3979, recompute: true });
     expect(splitDebit(emi2, 800)).toMatchObject({ principal: 0, interest: 800 });

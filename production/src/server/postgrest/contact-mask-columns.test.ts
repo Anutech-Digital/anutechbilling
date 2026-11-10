@@ -10,9 +10,10 @@
  * migration's `add column` / `create table` for these tables — the types can lag a migration.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { maskedColumns, CONTACT_JSON_COLUMNS } from "./contact-mask";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = join(__dirname, "..", "..", "..");
 const TABLES = ["leads", "customers", "contacts", "customer_groups"] as const;
@@ -23,7 +24,7 @@ const NOT_A_CONTACT: Readonly<Record<string, string>> = {
 };
 
 function typeColumns(table: string): string[] {
-  const src = readFileSync(join(ROOT, "src/lib/supabase/database.generated.ts"), "utf8").replace(/\r/g, "");
+  const src = readSource(join(ROOT, "src/lib/supabase/database.generated.ts")).replace(/\r/g, "");
   const start = src.indexOf(`\n      ${table}: {\n        Row: {\n`);
   if (start < 0) return [];
   const from = src.indexOf("Row: {\n", start) + "Row: {\n".length;
@@ -36,7 +37,7 @@ function migrationSql(): string[] {
   if (!migrations) {
     const dir = join(ROOT, "supabase/migrations");
     migrations = readdirSync(dir).filter((n) => n.endsWith(".sql"))
-      .map((f) => readFileSync(join(dir, f), "utf8").replace(/--[^\n]*/g, ""))
+      .map((f) => readSource(join(dir, f)).replace(/--[^\n]*/g, ""))
       .filter((sql) => /\b(leads|customers|contacts|customer_groups)\b/.test(sql));
   }
   return migrations;
@@ -77,7 +78,7 @@ describe("R-1820: the contact masker covers every phone / email column", () => {
   }
 
   it("R-1850: a director's email / phone (company_directors) is masked too", () => {
-    const sql = readFileSync(join(ROOT, "supabase/migrations/20261024205900_r1850_company_directors.sql"), "utf8");
+    const sql = readSource(join(ROOT, "supabase/migrations/20261024205900_r1850_company_directors.sql"));
     const body = sql.match(/create table if not exists public\.company_directors \(([\s\S]*?)\n\);/)?.[1] ?? "";
     const cols = body.split("\n").map((l) => l.trim().match(/^([a-z_0-9]+)\s+[a-z]/)?.[1]).filter((c): c is string => Boolean(c) && c !== "constraint");
     expect(cols).toContain("din");

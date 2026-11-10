@@ -28,7 +28,8 @@
  * authenticated) proves the same thing against a real database.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const DIR = "supabase/migrations";
 const FROM = "20261001";
@@ -55,6 +56,9 @@ const DEFINER_INTERNAL: Record<string, string> = {
     "20261003130000: used only by customer_names_agree, inside match_existing_customer (definer).",
   customer_names_agree:
     "20261003130000: used only inside match_existing_customer (security definer).",
+  r2522_bank_meet_balance:
+    "R-2522: takes a tenant id as a parameter, so no client role may call it (revoked from " +
+    "public/anon/authenticated); used only inside set_bank_opening_from_statement (security definer).",
 };
 
 /* ── parsing ──────────────────────────────────────────────────────────────── */
@@ -249,8 +253,8 @@ function analyse(files: Array<[string, string]>): { findings: Finding[]; checked
 
 const migrationFiles = readdirSync(DIR).filter((f) => f.endsWith(".sql")).sort();
 const tree: Array<[string, string]> = [
-  ["baseline.sql", readFileSync("supabase/baseline.sql", "utf8")],
-  ...migrationFiles.map((f): [string, string] => [f, readFileSync(`${DIR}/${f}`, "utf8")]),
+  ["baseline.sql", readSource("supabase/baseline.sql")],
+  ...migrationFiles.map((f): [string, string] => [f, readSource(`${DIR}/${f}`)]),
 ];
 const HOTFIX = "20261007250000_quote_terms_fn_grant.sql";
 

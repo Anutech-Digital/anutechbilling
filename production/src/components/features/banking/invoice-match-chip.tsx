@@ -5,6 +5,7 @@
  * (lib/banking/invoice-credit-match.ts certainInvoiceMatches). It points, it does not
  * record: a click opens the existing reconcile drawer, where the invoice match section
  * shows the reasons and the one-click "Match & record payment".
+ * R-2192: a credit within ₹1 of the due also gets the chip, saying "₹1 round-off".
  */
 "use client";
 
@@ -13,16 +14,17 @@ import type { InvoiceMatch } from "@/lib/banking/invoice-credit-match";
 
 export function InvoiceMatchChip({ match, onOpen }: { match: InvoiceMatch; onOpen: () => void }) {
   const who = match.customerName ? ` (${match.customerName})` : "";
+  const roundOff = match.roundOff !== 0 ? ` · ₹${Math.abs(match.roundOff)} round-off` : "";
   return (
     <button
       type="button"
       onClick={onOpen}
       title={`${match.reasons.join(" · ")} — open to match`}
-      aria-label={`Matches invoice ${match.invoiceId}${who}. Open reconcile.`}
+      aria-label={`Matches invoice ${match.invoiceId}${who}${roundOff}. Open reconcile.`}
       className="inline-flex max-w-full items-center gap-1 rounded-full border border-emerald/30 bg-emerald-soft/40 px-2 py-0.5 text-xs font-medium text-emerald-ink hover:bg-emerald-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald/50"
     >
       <Icon name="check_circle" size={11} className="shrink-0" />
-      <span className="truncate">Matches <span className="font-mono">{match.invoiceId}</span></span>
+      <span className="truncate">Matches <span className="font-mono">{match.invoiceId}</span>{roundOff}</span>
     </button>
   );
 }

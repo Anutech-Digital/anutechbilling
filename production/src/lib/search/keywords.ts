@@ -55,6 +55,8 @@ export interface CustomerLike {
   contact_name?: string | null;
   contact_email?: string | null;
   contact_phone?: string | null;
+  /** R-2185: the company's own mobile — indexed as digits like the work phone. */
+  contact_mobile?: string | null;
   gstin?: string | null;
   domain?: string | null;
 }
@@ -63,7 +65,7 @@ export interface CustomerLike {
 export function customerKeywords(c: CustomerLike): string[] {
   return clean([
     c.name, c.contact_name, c.contact_email, c.domain, c.gstin, c.id,
-    ...phoneDigits(c.contact_phone),
+    ...phoneDigits(c.contact_phone), ...phoneDigits(c.contact_mobile),
     // GSTIN state code alone ("27") is too short to be a useful term and would
     // match half the table, so it is deliberately not indexed.
   ]);

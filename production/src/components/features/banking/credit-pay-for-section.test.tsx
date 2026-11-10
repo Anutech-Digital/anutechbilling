@@ -182,7 +182,7 @@ describe("R-1838 CreditPayForSection", () => {
     state.pay.mockResolvedValue(done({}));
     renderIt(11600);
     choose("An open quote / invoice");
-    expect(screen.getByText(/That is 2% TDS/)).toBeTruthy();
+    expect(screen.getByText(/₹200 is 2% of the taxable value ₹10,000/)).toBeTruthy();
     expect(screen.getByRole("button", { name: /TDS deducted/ }).getAttribute("aria-pressed")).toBe("true");
     fireEvent.click(screen.getByRole("button", { name: "Record ₹11,600 on INV-1 & reconcile" }));
     expect(state.pay.mock.calls[0][0]).toMatchObject({ invoiceId: "INV-1", tdsAmount: 200, tdsRatePct: 2 });

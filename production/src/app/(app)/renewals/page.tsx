@@ -24,10 +24,13 @@
 
 import * as React from "react";
 import { useUrlChoice } from "@/lib/hooks/use-url-choice";
-import { RENEWAL_BUCKETS } from "@/lib/navigation/drilldown";
+import { RENEWAL_BUCKETS, drillHref } from "@/lib/navigation/drilldown";
+import type { Route } from "next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useSubscriptions, useOpenRenewalQuotes } from "@/lib/queries/subscriptions";
+import { useProjectReceivablesByCustomer } from "@/lib/queries/projects";
+import { toChaseSummary, subscriptionDuesLine, subscriptionDue } from "@/lib/accounting/receivables-due";
 import { renewalForecast } from "@/lib/renewals/forecast";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -41,7 +44,7 @@ import { Icon } from "@/components/ui/icon";
 import { FAB } from "@/components/ui/fab";
 import { BulkActionBar, BulkBarButton } from "@/components/ui/bulk-action-bar";
 import { rupee, formatDate } from "@/lib/utils";
-import { daysUntilRenewal, isFlexSubscription, onRenewalsPage, RENEWAL_FUTURE_DAYS } from "@/lib/renewals/buckets";
+import { daysUntilRenewal, isFlexSubscription, onRenewalsPage } from "@/lib/renewals/buckets";
 import { cn } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import type { Subscription } from "@/lib/supabase/database.types";
@@ -67,10 +70,11 @@ import { priorTermDueText } from "./prior-due";
 import { openRenewalQuoteMap, openRenewalQuoteStatus, withRenewalQuote } from "./open-renewal-quotes";
 import { renewalRowAction, type RowAction } from "./row-action";
 import { GraceOverCard } from "./grace-over-card";
+import { NoRenewalDateCard } from "./no-date-card";
 import { classifyRenewals, chasedRenewal } from "./classify";
 import {
-  QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, LEGACY_BUCKETS, STATUS_FILTER_LABEL, NO_FILTERS,
-  queueTabs, resolveBucket, renewalRowStatus, renewalAmount, isPaidRenewalQuote,
+  QUEUE_TABS, QUEUE_TAB_LABEL, QUEUE_TABLE_COLS, LEGACY_BUCKETS, STATUS_FILTER_LABEL, NO_FILTERS, TILE_TABS,
+  queueTabs, noRenewalDate, resolveBucket, renewalRowStatus, renewalAmount, isPaidRenewalQuote,
   sortQueue, filterQueue, filterOptions, bulkQuoteTargets, bulkQuoteConfirm,
   type QueueTab, type LegacyBucket, type QueueFilters, type QueueSort, type RowStatus, type RenewalAmount, type RowStatusKey,
 } from "./queue";
@@ -510,6 +514,19 @@ export default function RenewalsPage() {
   const openRenewalMap = React.useMemo(() => openRenewalQuoteMap(openRenewals ?? []), [openRenewals]);
   const quoteStatusMap = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
   const { data: me } = useCurrentUser();
+  /* R-1473 (7 Nov 2026, Pawan's ✗ Galat): the rows' "Unpaid balance" badges add up to subscription
+     dues only; the dashboard and Companies "To collect" also count project invoices. One line under
+     the title says both figures, from the same rule (lib/accounting/receivables-due). */
+  const projRecvQ = useProjectReceivablesByCustomer();
+  /* R-2562: "unread" = failed with nothing to show — a failed background refetch keeps the last good
+     figure, as on Companies (collectLineState) and the dashboard (loadView). */
+  const projectsUnread = projRecvQ.isError && projRecvQ.data === undefined;
+  const duesLine = React.useMemo(() => {
+    if (!subs || projRecvQ.isPending) return null;
+    // The page's own rows (onRenewalsPage) — what their "Unpaid balance" badges add up to.
+    const renewalDues = subs.filter(onRenewalsPage).reduce((t, s) => t + subscriptionDue(s), 0);
+    return subscriptionDuesLine(toChaseSummary(subs, projRecvQ.data ?? {}), renewalDues, projectsUnread);
+  }, [subs, projRecvQ.data, projRecvQ.isPending, projectsUnread]);
   const qc = useQueryClient();
   const router = useRouter();
   /* R-118 / R-2403: ?bucket= holds the tab; the old values (urgent / upcoming / future / risk —
@@ -529,11 +546,11 @@ export default function RenewalsPage() {
   const month = monthOf(istToday(today));
   const { data: monthQuotes } = useRenewalPaymentsForMonth(month);
 
-  /* Rows on the page within 90 days: their contacts and renewal quotes (hooks run before any early return). */
+  /* Rows on the page: their contacts and renewal quotes (hooks run before any early return).
+     R-2586: every dated row — the Later (91+ days) tab lists the annual book past 90 days. */
   const listed = React.useMemo(() => (subs ?? [])
     .filter(onRenewalsPage)
-    .map((s) => withRenewalQuote(s, openRenewalMap))
-    .filter((s) => daysUntilRenewal(s.renewal_date!) <= RENEWAL_FUTURE_DAYS), [subs, openRenewalMap]);
+    .map((s) => withRenewalQuote(s, openRenewalMap)), [subs, openRenewalMap]);
   const { data: contacts } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
   const { data: quoteInfo } = useRenewalQuoteInfo(listed.map((s) => s.renewal_quote_id));
   /* R-2404: owner / next follow-up / promise per renewal — Payment Follow-up's rows for these subscriptions. */
@@ -682,8 +699,9 @@ export default function RenewalsPage() {
   for (const t of QUEUE_TABS) items[t] = tabs[t].map(toItem);
   const allItems = QUEUE_TABS.flatMap((t) => items[t]);
 
-  /* R-2405: the tiles add up the rows' own renewal amounts; a pressed tile lists those rows. */
-  const tileRowOf = new Map<string, TileRow>(QUEUE_TABS.flatMap((t) => items[t].map((i) => [i.sub.id, {
+  /* R-2405: the tiles add up the rows' own renewal amounts; a pressed tile lists those rows.
+     R-2586: the tiles stay on the 90-day window (TILE_TABS) — Later is a look-ahead list. */
+  const tileRowOf = new Map<string, TileRow>(TILE_TABS.flatMap((t) => items[t].map((i) => [i.sub.id, {
     id: i.sub.id, tab: t, statusKey: i.status.key, amount: i.amount.value, renewalDate: i.sub.renewal_date,
   }] as const)));
   const tileFigures = renewalTiles([...tileRowOf.values()], monthQuotes ?? [], month);
@@ -708,7 +726,11 @@ export default function RenewalsPage() {
       .map((r) => r.item);
   const shown = Object.fromEntries(QUEUE_TABS.map((t) => [t, narrow(items[t])])) as Record<QueueTab, QueueItem[]>;
   /* R-2405: a pressed tile lists its rows from every tab (search / filters / sort still apply). */
-  const tileShown = narrow(tile ? allItems.filter((i) => tileMatches(tile, tileRowOf.get(i.sub.id)!, month, paidSubs)) : []);
+  /* R-2586: Later rows are not tile rows (no tileRowOf entry) — a pressed tile never lists them. */
+  const tileShown = narrow(tile ? allItems.filter((i) => {
+    const tr = tileRowOf.get(i.sub.id);
+    return !!tr && tileMatches(tile, tr, month, paidSubs);
+  }) : []);
 
   const productOptions = filterOptions(allItems.map((i) => i.sub.plan));
   const vendorOptions  = filterOptions(allItems.map((i) => i.sub.vendor));
@@ -914,6 +936,23 @@ export default function RenewalsPage() {
           <h1 className="font-serif text-3xl text-ink">Renewals</h1>
           <p className="mt-1 text-sm text-ink-3">
             {activeSubs} active subscription{activeSubs !== 1 ? "s" : ""}
+            {duesLine && (
+              <>
+                {" · "}
+                <Link href={drillHref("customersUnpaid") as Route} className="text-rose hover:underline" data-testid="renewals-dues-line">
+                  {duesLine}
+                </Link>
+                {/* R-2562: the project read failed — the line says so; this retries just that read. */}
+                {projectsUnread && (
+                  <>
+                    {" "}
+                    <Button size="sm" variant="ghost" icon="refresh" className="align-middle" loading={projRecvQ.isFetching} onClick={() => void projRecvQ.refetch()}>
+                      Try again
+                    </Button>
+                  </>
+                )}
+              </>
+            )}
             {/* R-2266: the at-risk ARR figure lived here AND in the strip — it is only on the
                 strip line now, and the At risk chip below filters the list. */}
           </p>
@@ -978,6 +1017,9 @@ export default function RenewalsPage() {
 
       {/* R-1621: grace ended unpaid → the owner stops the service or gives more days. */}
       <GraceOverCard />
+
+      {/* R-2586: subscriptions with no renewal date are on no tab — named here, not dropped. */}
+      <NoRenewalDateCard subs={noRenewalDate(all)} />
 
       {/* ── The renewal queue — tabs by time window (R-2403) ── */}
       <Card flush>

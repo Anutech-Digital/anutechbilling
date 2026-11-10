@@ -19,7 +19,8 @@
  * house loop `foreach t in array array['X', ...] loop ... to service_role ... end loop`.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const DIR = "supabase/migrations";
 /** Cloud SQL cut-over (8a25d726, 6 Sep 2026). Older tables got the 01b loop. */
@@ -67,7 +68,7 @@ function scanServiceRoleGaps(files: Array<{ name: string; sql: string }>): strin
 function readMigrations() {
   return readdirSync(DIR)
     .filter((f) => f.endsWith(".sql"))
-    .map((name) => ({ name, sql: readFileSync(`${DIR}/${name}`, "utf8") }));
+    .map((name) => ({ name, sql: readSource(`${DIR}/${name}`) }));
 }
 
 describe("R-450: every RLS table since the Cloud SQL cut-over has a service_role policy", () => {

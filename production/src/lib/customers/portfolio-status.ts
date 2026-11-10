@@ -76,7 +76,8 @@ export function projectValue(projects: readonly ProjectLike[]): number {
  * business), then a subscription, then won project work, then a live proposal.
  */
 export function customerPortfolioStatus(facts: CustomerProjectFacts): PortfolioStatus {
-  if (facts.archived) return { label: "Inactive", kind: "muted", dot: false };
+  /* R-2559: "Archived" — the app's one word for this (the Archived switch, Archive / Reactivate). */
+  if (facts.archived) return { label: "Archived", kind: "muted", dot: false };
   if (facts.hasActiveSub) return { label: "Active", kind: "success", dot: true };
   if (wonProjects(facts.projects).length > 0) return { label: "Project client", kind: "info", dot: true };
   if (proposedProjects(facts.projects).length > 0) return { label: "Project quoted", kind: "info", dot: false };

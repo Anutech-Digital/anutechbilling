@@ -112,7 +112,7 @@ begin
     raise exception 'FAIL A: line not matched to the receipt';
   end if;
   select category, amount, expense_date, reconciled_txn_id, paid into e from public.expenses
-   where tenant_id = c_t and reconciled_txn_id = '11111111-0000-0000-0000-000000242701' and category = 'Foreign Exchange Gain / Loss';
+   where tenant_id = c_t and reconciled_txn_id = '11111111-0000-0000-0000-000000242701' and category = 'Exchange gain / loss (realised)'   /* R-1678: the ledger's name */;
   if not found or e.amount <> -1500 or e.expense_date <> '2026-08-07' or not e.paid then
     raise exception 'FAIL A: forex line is % % % %', e.category, e.amount, e.expense_date, e.paid;
   end if;
@@ -134,7 +134,7 @@ begin
   if p.reference <> 'BANK-11111111-0000-0000-0000-000000242702' then raise exception 'FAIL B: placeholder ref kept as %', p.reference; end if;
   select amount into e from public.expenses where tenant_id = c_t and reconciled_txn_id = '11111111-0000-0000-0000-000000242702' and category = 'Bank Charges';
   if not found or e.amount <> 2246 then raise exception 'FAIL B: bank charges line %', e.amount; end if;
-  select count(*) into n from public.expenses where tenant_id = c_t and reconciled_txn_id = '11111111-0000-0000-0000-000000242702' and category = 'Foreign Exchange Gain / Loss';
+  select count(*) into n from public.expenses where tenant_id = c_t and reconciled_txn_id = '11111111-0000-0000-0000-000000242702' and category = 'Exchange gain / loss (realised)'   /* R-1678: the ledger's name */;
   if n <> 0 then raise exception 'FAIL B: a forex line at the same rate'; end if;
   select count(*) into n from public.tds_receivable where tenant_id = c_t;
   if n <> 0 then raise exception 'FAIL B: the short part was booked as TDS'; end if;

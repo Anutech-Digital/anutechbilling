@@ -23,7 +23,10 @@ import { SAAS_HSN } from "@/lib/gst/hsn";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/queries/payments";
 import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
+import { CorrectInvoiceDateButton } from "@/components/features/invoices/correct-invoice-date-dialog";
 import { invoiceReceiptsQuote, invoiceTdsMoney } from "./invoice-receipts";
+import { takesQuotelessReceipt } from "@/lib/payments/quoteless-receipt";
+import { useQuotelessReceipts } from "@/lib/queries/quoteless-receipts";
 import { invoiceAmountDue } from "@/lib/payments/amount-due";
 import { invoiceMoneyIn } from "@/lib/invoices/payment-state";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
@@ -54,6 +57,7 @@ import { openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { invoiceLineItemsView } from "./invoice-line-items";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { invoiceEinvoiceNotice } from "@/lib/compliance/einvoice";
+import { invoiceBuyer, invoiceIrnGstin } from "@/lib/invoices/invoice-buyer";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { InvoiceLateCharges } from "@/components/features/late-charges/invoice-late-charges";
 import { OnlineFeeBillCard } from "@/components/features/payments/online-fee-bill-card";
@@ -88,7 +92,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   /* R-1564: a subscription instalment has no quote of its own — Record payment goes through
      its subscription's quote (record_instalment_payment), so the button shows for it too. */
   const { data: instalment } = useInstalmentLink(invoice.quote_id ? null : invoice.id);
-  const canPay = !!quote?.id || !!instalment?.quoteId;
+  /* R-2542: + an FY sale imported from Zoho (no quote) — paid on the several-invoices sheet. */
+  const canPay = !!quote?.id || !!instalment?.quoteId || takesQuotelessReceipt(invoice);
   const { data: customer } = useCustomer(invoice.customer_id ?? undefined);
   const { data: me } = useCurrentUser();
   const waSender = useWhatsAppSender();
@@ -113,6 +118,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way
      to issue one (and so no way to refund after a cancel). */
   const [cnOpen, setCnOpen] = React.useState(false);
+  /* R-2632: "Credit note instead" from Correct date opens the credit note as a cancellation of the whole
+     invoice (Correct date only shows on an invoice with no notes, so the whole amount is creditable). */
+  const [cnReason, setCnReason] = React.useState<"cancellation" | undefined>(undefined);
   const canCreditNote = canWrite && invoice.status !== "draft" && invoice.status !== "void";
   /* R-1520: set by the TDS banner's "Record TDS" — opens Record payment in TDS mode. */
   const [tdsOnly, setTdsOnly] = React.useState<{ section: string; ratePct: number } | null>(null);
@@ -120,8 +128,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   /* R-337: over ₹5 Cr turnover, a B2B invoice with no gst_irn gets a reminder. A warning
      only — the app does not generate IRNs yet (R-044). Unknown turnover shows nothing. */
   const { data: turnover } = useTurnoverBracket();
+  /* R-2540: the buyer as on the invoice (snapshot / Zoho sale as filed) — a B2C sale on a registered
+     customer is no "B2B without IRN", and the dialog + receipt print the invoice's own buyer. */
+  const buyer = invoiceBuyer(invoice, customer);
   const einvoiceNotice = invoiceEinvoiceNotice(turnover?.bracket ?? null, {
-    customerGstin: invoice.customer_gstin ?? customer?.gstin ?? null,
+    customerGstin: invoiceIrnGstin(invoice, customer?.gstin),
     gstIrn: invoice.gst_irn,
     status: invoice.status,
     invoiceDate: invoice.invoice_date,
@@ -291,16 +302,21 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 </Button>
               )}
               {canCreditNote && (
-                <Button size="sm" variant="outline" icon="receipt" onClick={() => setCnOpen(true)}>
+                <Button size="sm" variant="outline" icon="receipt" onClick={() => { setCnReason(undefined); setCnOpen(true); }}>
                   Credit note
                 </Button>
               )}
+              {/* R-2173: owner/accountant correct the date while GST for the month is not filed. */}
+              <CorrectInvoiceDateButton invoice={invoice} role={me?.role} facts={{
+                hasNotes: (creditNotesForBadge?.length ?? 0) + (debitNotesForBadge?.length ?? 0) > 0,
+                onNetwork: (network.data ?? []).some((d) => d.sellerInvoiceId === invoice.id && d.status !== "cancelled"),
+              }} onCreditNoteInstead={canCreditNote ? () => { setCnReason("cancellation"); setCnOpen(true); } : undefined} />
               {canWrite && (
                 <Button
                   size="sm"
                   variant="primary"
                   icon="whatsapp"
-                  onClick={() => openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never))}
+                  onClick={() => openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never), customer?.country)}
                 >
                   WhatsApp
                 </Button>
@@ -534,11 +550,12 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           total={total}
           receivedPayments={receivedPayments}
           interState={interState}
-          customerGstin={customer?.gstin}
+          customerGstin={buyer.gstin}
           customerEmail={customer?.contact_email}
           customerPhone={customer?.contact_phone}
-          customerState={customer?.state}
-          customerCountry={customer?.country}
+          customerAddress={buyer.address}
+          customerState={buyer.state}
+          customerCountry={buyer.country}
           currency={quote?.currency}
           exchangeRate={quote?.exchange_rate}
           tenantName={supplier.name}
@@ -562,6 +579,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           interState={invoice.inter_state}
           isExport={(invoice.tax_rate ?? 18) === 0}
           invoiceDate={invoice.invoice_date}
+          defaultReasonCode={cnReason}
+          defaultAmount={cnReason === "cancellation" ? invoice.amount : undefined}
         />
       )}
       {payOpen && !quote && instalment?.quoteId && (
@@ -695,7 +714,12 @@ export function InvoicePaymentsAccordion({
   /* R-1636: an instalment has no quote of its own — its receipts are on its subscription's quote. */
   const { data: instalment } = useInstalmentLink(inv.quote_id ? null : inv.id);
   const source = invoiceReceiptsQuote(quote?.id, instalment);
-  const { data: payments, isLoading } = usePaymentsByQuote(source?.quoteId);
+  const { data: quotePays, isLoading: quoteLoading } = usePaymentsByQuote(source?.quoteId);
+  /* R-2542: a Zoho FY sale's receipts carry the invoice itself (no quote). */
+  const quoteless = !source && takesQuotelessReceipt(inv);
+  const { data: invoicePays, isLoading: invoiceLoading } = useQuotelessReceipts(quoteless ? inv.id : null);
+  const payments = quoteless ? invoicePays : quotePays;
+  const isLoading = quoteless ? invoiceLoading : quoteLoading;
   // Project invoices have no parent quote — their receipts live in project_payments.
   const { data: projPays, isLoading: projLoading } = useProjectPaymentsByInvoice(inv.id);
   const { data: customer } = useCustomer(inv.customer_id ?? undefined);
@@ -703,7 +727,9 @@ export function InvoicePaymentsAccordion({
   const [receiptPayment, setReceiptPayment] = React.useState<Payment | null>(null);
 
   const received = (payments ?? []).filter((p) => p.status === "received");
-  const interState = isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin, treatment: inv.gst_treatment ?? customer?.gst_treatment });
+  /* R-2540: the receipt names the invoice's own buyer and keeps the invoice's frozen GST head. */
+  const buyer = invoiceBuyer(inv, customer);
+  const interState = inv.inter_state ?? isInterStateSupply(customer?.state_code, me?.tenantStateCode, { customerGstin: customer?.gstin, sellerGstin: me?.tenantGstin, treatment: inv.gst_treatment ?? customer?.gst_treatment });
 
   if (isLoading || projLoading) return <div className="text-xs text-ink-3 italic">Loading receipts…</div>;
 
@@ -788,9 +814,9 @@ export function InvoicePaymentsAccordion({
           onOpenChange={(o) => { if (!o) setReceiptPayment(null); }}
           payment={receiptPayment}
           customerName={inv.customer_name}
-          customerGstin={customer?.gstin}
+          customerGstin={buyer.gstin}
           customerEmail={customer?.contact_email}
-          customerAddress={customer?.address}
+          customerAddress={buyer.address}
           tenantName={me.tenantName}
           tenantGstin={me.tenantGstin}
           tenantEmail={me.tenantEmail}

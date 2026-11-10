@@ -107,7 +107,8 @@ begin
   if v_r.id is null or v_r.amount <> 16000 or v_r.status <> 'pending' or v_r.expense_id is not null
      or v_r.employee_id <> 'e2407000-0000-4000-8000-0000000000e1' or v_r.incurred_on <> '2026-10-26' or coalesce(v_r.gst_paid, 0) <> 0 then
     raise exception 'FAIL 1a payable %', row_to_json(v_r); end if;
-  if v_t.matched_to_type <> 'manual' or v_t.matched_to_id <> 'reimbursement:' || v_r.id::text then
+  -- R-2570: its own type now ('reimbursement'), same id shape.
+  if v_t.matched_to_type <> 'reimbursement' or v_t.matched_to_id <> 'reimbursement:' || v_r.id::text then
     raise exception 'FAIL 1b line %', row_to_json(v_t); end if;
   if not exists (select 1 from public.employee_advance_bank_links where bank_txn_id = v_t.id and kind = 'owed_back'
                   and reimbursement_id = v_r.id and advance_id is null and amount = 16000) then

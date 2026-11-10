@@ -11,8 +11,9 @@
  * below with the reason its own screen already shows progress.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOT = process.cwd();
 const AREAS = ["src/app/(marketing)", "src/app/(public)", "src/site"];
@@ -37,7 +38,7 @@ function walk(dir: string, out: string[] = []): string[] {
 
 const files = AREAS.flatMap((a) => walk(join(ROOT, a))).map((f) => ({
   rel: relative(ROOT, f).split(sep).join("/"),
-  src: readFileSync(f, "utf8"),
+  src: readSource(f),
 }));
 const waiting = files.filter((f) => BUSY.test(f.src) && POSTS.test(f.src));
 

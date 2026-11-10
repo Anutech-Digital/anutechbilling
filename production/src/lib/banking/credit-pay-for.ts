@@ -20,6 +20,8 @@
  */
 import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-match";
 import { tdsRateFor } from "@/lib/banking/invoice-credit-match";
+import { parseInwardRemittance, remittanceFitsCredit } from "@/lib/banking/inward-remittance";
+import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { billingUnitOf, defaultQtyForUnit, isPerSeat, unitYearMultiplier } from "@/lib/catalog/billing-unit";
 import { headlinePrice } from "@/lib/catalog/headline-price";
 import { catalogLineListRate } from "@/lib/quotes/catalog-line";
@@ -27,7 +29,8 @@ import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { BILLING_CYCLE_OPTIONS, cycleScheduleLabel } from "@/lib/quotes/billing";
 import { COMMIT_CHOICES, type CommitChoice } from "@/lib/quotes/line-commit-choice";
 import { isSplitBilled, quoteInstalmentPlan } from "@/lib/billing/instalments";
-import { ROUND_OFF_LIMIT } from "@/lib/banking/credit-pay-for-multi";
+import { ROUND_OFF_LIMIT, bankChargeAllowed } from "@/lib/banking/credit-pay-for-multi";
+import { ROUND_OFF_AUTO, sameMoney } from "@/lib/banking/same-money";
 import { addDaysISO, addMonthsClamped } from "@/lib/billing/schedule";
 import { rupee, formatDate } from "@/lib/utils";
 import { knownPayerCustomer, notPayerNames, payerFromNarration, type KnownPayer } from "@/lib/banking/customer-payer";
@@ -36,7 +39,7 @@ import { linesBelowCost, NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-appro
 
 /* ─── Open items (rows of bank_credit_open_items) ──────────────────────────────────────── */
 
-/** R-2466: "opening" — an unpaid invoice imported from Zoho (R-1739, no quote). */
+/** R-2466: "opening" — an unpaid invoice imported from Zoho (R-1739, no quote); R-2542: or an FY sale imported from Zoho (R-2499). */
 export type OpenItemKind = "renewal" | "add_seats" | "new" | "one_off" | "invoice" | "instalment" | "opening";
 
 export interface OpenItem {
@@ -76,7 +79,7 @@ export function kindLabel(kind: OpenItemKind): string {
     case "new":        return "New product";
     case "one_off":    return "One-time sale";
     case "instalment": return "Instalment invoice";
-    case "opening":    return "Opening invoice (from Zoho)";
+    case "opening":    return "Invoice from Zoho";   // R-2542: opening invoice or FY sale — both have no quote
     default:          return "Invoice";
   }
 }
@@ -163,6 +166,28 @@ function wholeNameSaid(name: string, said: string): boolean {
   return ws.length >= 2 && said.includes(` ${ws.join(" ")} `);
 }
 
+type CustomerWordIndex = {
+  named: Array<{ c: CustomerLite; toks: string[] }>;
+  /** How many customers' names have each word. */
+  howMany: Map<string, number>;
+  /** A word only ONE customer's name has → that customer's index in `named`. */
+  owners: Map<string, number>;
+};
+/* R-2524: built once per customer list (the bank page passes the same cached array for every line). */
+const wordIndexes = new WeakMap<readonly CustomerLite[], CustomerWordIndex>();
+function customerWordIndex(customers: readonly CustomerLite[]): CustomerWordIndex {
+  const hit = wordIndexes.get(customers);
+  if (hit && hit.named.length === customers.length) return hit;
+  const named = customers.map((c) => ({ c, toks: [...new Set(customerNameTokens(c.name))].filter((t) => !GENERIC_NAME_WORDS.has(t)) }));
+  const howMany = new Map<string, number>();
+  for (const n of named) for (const t of n.toks) howMany.set(t, (howMany.get(t) ?? 0) + 1);
+  const owners = new Map<string, number>();
+  named.forEach((n, i) => { for (const t of n.toks) if (howMany.get(t) === 1) owners.set(t, i); });
+  const idx = { named, howMany, owners };
+  wordIndexes.set(customers, idx);
+  return idx;
+}
+
 /** R-2371: the name word a "certain" invoice match rests on, when its only identity is a name
  *  (no invoice number in the narration) — from invoice-credit-match's reason text. */
 function nameOnlyHit(m: { reasons?: readonly string[] }): string | null {
@@ -211,10 +236,12 @@ export function guessCustomer(
   const seq = withoutOwnNames(credit.description, memory?.ownNames);
   const words = new Set(narrationNames(seq.join(" ")));
   const said = ` ${seq.join(" ")} `;
-  const named = customers.map((c) => ({ c, toks: [...new Set(customerNameTokens(c.name))].filter((t) => !GENERIC_NAME_WORDS.has(t)) }));
-  const howMany = new Map<string, number>();
-  for (const n of named) for (const t of n.toks) howMany.set(t, (howMany.get(t) ?? 0) + 1);
-  const own = named
+  /* R-2524: the customers' name words are counted once per customer list, and only the customers
+     owning a word of THIS narration are looked at (was: every customer for every line). */
+  const { named, howMany, owners } = customerWordIndex(customers);
+  const touched = new Set<number>();
+  for (const w of words) { const at = owners.get(w); if (at !== undefined) touched.add(at); }
+  const own = [...touched].sort((a, b) => a - b).map((i) => named[i])
     .map((n) => ({ c: n.c, words: n.toks.filter((t) => words.has(t) && howMany.get(t) === 1) }))
     .filter((h) => h.words.some((t) => !TRADE_WORDS.has(t)) || (h.words.length > 0 && wholeNameSaid(h.c.name, said)));
   if (own.length === 1) return { customerId: own[0].c.id, reason: `the bank line says “${own[0].words.join(" ")}”` };
@@ -236,50 +263,95 @@ export function guessCustomer(
 /* ─── Pre-selection + amount check ────────────────────────────────────────────────────── */
 
 /**
- * The item to tick for the operator: the ONE whose due equals the credit to the rupee, else the
- * ONE that the credit pays less a common TDS rate. Two candidates → none (the operator picks).
+ * The item to tick for the operator: the ONE whose due equals the credit to the rupee, else
+ * (R-2192) the ONE within ₹1 of it (the ₹1 is a round-off), else the ONE that the credit pays less a
+ * common TDS rate. Two candidates → none (the operator picks).
  */
 export function preselectItem(items: readonly OpenItem[], credit: number): OpenItem | null {
   const exact = items.filter((i) => i.amount_due === credit);
   if (exact.length === 1) return exact[0];
   if (exact.length > 1) return null;
+  const near = items.filter((i) => sameMoney(credit, i.amount_due));
+  if (near.length === 1) return near[0];
+  if (near.length > 1) return null;
   const tds = items.filter((i) => tdsRateFor(credit, i.amount_due, i.taxable_value || null) !== null);
   return tds.length === 1 ? tds[0] : null;
 }
 
 export type AmountCheck =
   | { kind: "exact" }
-  /** Credit is less than due. `tdsRatePct` when the gap looks like TDS on the taxable value. */
-  | { kind: "short"; shortBy: number; tdsRatePct: number | null }
+  /** Credit is less than due. `tdsRatePct` when the gap looks like TDS on the taxable value.
+   *  R-2577: `bankChargeOk` — the gap may be the bank's / SWIFT charge (bankChargeWire); absent = no. */
+  | { kind: "short"; shortBy: number; tdsRatePct: number | null; bankChargeOk?: boolean }
   /** Credit is more than due — record_payment keeps the extra as customer credit. */
   | { kind: "over"; overBy: number };
 
-export function amountCheck(credit: number, due: number, taxable: number | null): AmountCheck {
-  if (credit === due) return { kind: "exact" };
-  if (credit > due) return { kind: "over", overBy: credit - due };
-  return { kind: "short", shortBy: due - credit, tdsRatePct: tdsRateFor(credit, due, taxable && taxable > 0 ? taxable : null) };
+/** R-2577 (independent review of R-2192) — may a gap on this line be the bank's / SWIFT charge? The
+ *  server (reconcile_bank_credit_split, migration 20261107221154) refuses the same cases:
+ *   - a customer in India (empty country = India, isExportSupply) on a line that is not an inward
+ *     remittance of THIS credit (amount × rate ±₹1, remittanceFitsCredit) — an Indian NEFT / RTGS / IMPS
+ *     has no bank deduction; the gap is TDS, a short payment or a discount;
+ *   - a customer in India whose gap is TDS at a common rate (TDS receivable, never an expense).
+ *  A customer outside India deducts no Indian TDS: a round SWIFT charge (₹500 on ₹50,000) stays allowed. */
+export function bankChargeWire(
+  country: string | null | undefined, narration: string | null | undefined, credit: number, tdsRatePct: number | null,
+): boolean {
+  if (isExportSupply(country)) return true;
+  const r = parseInwardRemittance(narration);
+  return r !== null && remittanceFitsCredit(r, credit) && tdsRatePct === null;
 }
 
-/** What the operator decided about a short payment. R-2095: or a round-off (≤ ROUND_OFF_LIMIT). */
-export type ShortChoice = "tds" | "part" | "round_off";
+/** R-2577: `payer` (the customer's country + the line's narration) decides bankChargeOk; left out → no bank charge. */
+export function amountCheck(
+  credit: number, due: number, taxable: number | null,
+  payer?: { country: string | null | undefined; narration: string | null | undefined },
+): AmountCheck {
+  if (credit === due) return { kind: "exact" };
+  if (credit > due) return { kind: "over", overBy: credit - due };
+  const tdsRatePct = tdsRateFor(credit, due, taxable && taxable > 0 ? taxable : null);
+  return { kind: "short", shortBy: due - credit, tdsRatePct, ...(payer ? { bankChargeOk: bankChargeWire(payer.country, payer.narration, credit, tdsRatePct) } : {}) };
+}
 
-/** R-2095 (Sept reconcile): the answers to "why less came in" — round-off only up to ₹50 (R-2098). */
-export function shortChoices(check: AmountCheck): Array<{ value: ShortChoice; label: string }> {
+/** What the operator decided about a short payment. R-2095: or a round-off (≤ ROUND_OFF_LIMIT).
+ *  R-2192: or the bank's / SWIFT charge (bankChargeAllowed) — settled in full, Bank Charges expense. */
+export type ShortChoice = "tds" | "part" | "round_off" | "bank_charge";
+
+/** R-2095 (Sept reconcile): the answers to "why less came in" — round-off only up to ₹50 (R-2098).
+ *  R-2192: with the item's `due`, also "Bank / SWIFT charge" (a wire the bank kept a fee from). */
+export function shortChoices(check: AmountCheck, due?: number): Array<{ value: ShortChoice; label: string }> {
   if (check.kind !== "short") return [];
   const out: Array<{ value: ShortChoice; label: string }> = [
     { value: "tds", label: `TDS deducted (${rupee(check.shortBy)})` },
     { value: "part", label: `Part payment — ${rupee(check.shortBy)} stays due` },
   ];
   if (check.shortBy <= ROUND_OFF_LIMIT) out.push({ value: "round_off", label: `Round off ${rupee(check.shortBy)} — settled in full` });
+  /* R-2577: only on a wire that may carry one (bankChargeWire: not an Indian transfer, not TDS of an
+     Indian customer) — the server refuses the rest. */
+  if (due !== undefined && check.bankChargeOk === true && bankChargeAllowed(check.shortBy, due)) {
+    out.push({ value: "bank_charge", label: `Bank / SWIFT charge ${rupee(check.shortBy)} — settled in full` });
+  }
   return out;
 }
 
-/** R-2095: a round-off on ONE sale / item is saved through the split (R-2098: it settles in full). */
-export function roundOffSplit(a: { mode: "sale"; saleTotal: number } | { mode: "item"; item: Pick<OpenItem, "quote_id" | "invoice_id" | "amount_due"> }):
-  { items: Array<{ quote_id: string | null; invoice_id: string | null; amount: number }>; saleAmount: number | null; rest: "round_off" } {
+/** R-2192: up to ₹1 short is a round-off — chosen for the operator, nothing to answer. */
+export function autoShortChoice(check: AmountCheck): ShortChoice | null {
+  return check.kind === "short" && check.shortBy <= ROUND_OFF_AUTO ? "round_off" : null;
+}
+
+/** R-2192: up to ₹1 more than due is a round-off gain — never a ₹1 advance on the customer. */
+export function overIsRoundOff(check: AmountCheck): boolean {
+  return check.kind === "over" && check.overBy <= ROUND_OFF_AUTO;
+}
+
+/** R-2095: a round-off on ONE sale / item is saved through the split (R-2098: it settles in full).
+ *  R-2192: the same call books a bank / SWIFT charge (rest "bank_charge"). */
+export function roundOffSplit<R extends "round_off" | "bank_charge" = "round_off">(
+  a: { mode: "sale"; saleTotal: number } | { mode: "item"; item: Pick<OpenItem, "quote_id" | "invoice_id" | "amount_due"> },
+  rest: R = "round_off" as R,
+): { items: Array<{ quote_id: string | null; invoice_id: string | null; amount: number }>; saleAmount: number | null; rest: R } {
   return a.mode === "sale"
-    ? { items: [], saleAmount: a.saleTotal, rest: "round_off" }
-    : { items: [{ quote_id: a.item.quote_id, invoice_id: a.item.invoice_id, amount: a.item.amount_due }], saleAmount: null, rest: "round_off" };
+    ? { items: [], saleAmount: a.saleTotal, rest }
+    : { items: [{ quote_id: a.item.quote_id, invoice_id: a.item.invoice_id, amount: a.item.amount_due }], saleAmount: null, rest };
 }
 
 /** The TDS amount to send: the whole shortfall when the operator says it was TDS, else 0. */
@@ -323,6 +395,9 @@ export interface SaleLine {
   priceTyped?: boolean;
   /** R-2095 (Sept): the subscription's END-domain (Zoho bills per end-domain); empty = the customer's. */
   domain?: string | null;
+  /** R-2518: the Zoho invoice this line came from (Find in Zoho / Reconcile from Zoho). When a bank
+   *  receipt paid several Zoho invoices, Save books one app sale per invoice (lib/banking/zoho-sales-split). */
+  zohoInvoice?: string;
   /** R-2178: the commitment the typed price was entered for (its unit: ₹/year, ₹/month, once). A
    *  Commitment change never rewrites a typed price; when this differs from `cycle` the line asks
    *  (typedPriceCheck) until the operator converts or keeps the number. */
@@ -753,13 +828,17 @@ export function saleLinesPayload(lines: readonly SaleLine[]) {
   }));
 }
 
-/** Monthly flex beside ANY other line (annual or one-time) is refused by the server — R-381's
- *  trigger (quote_line_terms_mixed) counts a line without a monthly commitment as annual. R-2095
- *  (staging, 30 Oct): Monthly flex + one-time passed this check, the save got a 400 and the
- *  drawer said nothing. One quote = one billing term. */
+/** Monthly flex beside an ANNUAL line is refused by the server (R-381's trigger,
+ *  quote_line_terms_mixed): a flex rate is per month, an annual rate per year. One quote = one
+ *  billing term. R-2193 (G-ZOHO): a one-time line (domain, setup) has no term, so it may sit beside
+ *  Monthly flex — billed once on month 1 (R-2095's first-part rule); later months carry the seats only. */
 export function saleTermsMixed(lines: readonly SaleLine[]): boolean {
-  return lines.some((l) => l.cycle === "monthly") && lines.some((l) => l.cycle !== "monthly");
+  return lines.some((l) => l.cycle === "monthly") && lines.some((l) => l.cycle === "annual_yearly");
 }
+
+/** What the drawer says while saleTermsMixed is true (Save stays disabled). */
+export const SALE_TERMS_MIXED_MESSAGE =
+  "Flexible (monthly) cannot be on one sale with Annual-commitment products — record them as separate sales, or make them all one commitment. One-time products (domain, setup) can go with either.";
 
 /* ─── Subscription dates ─────────────────────────────────────────────────────────────── */
 
@@ -824,6 +903,8 @@ export interface PayForResult {
   parts?: PayForResult[];
   allocated?: number;
   round_off?: number;
+  /** R-2192: the bank's / SWIFT charge booked as Bank Charges (rest "bank_charge"). */
+  bank_charge?: number;
   advance_receipt_voucher_no?: string | null;
   /* R-2397: a new sale priced below cost — NOT booked. Its quote waits in Needs approval and the
      bank line stays unmatched (bank_sale_park_for_approval). */
@@ -887,6 +968,8 @@ export function resultLines(r: PayForResult): ResultLine[] {
     const ro = r.round_off ?? 0;
     if (ro > 0) out.push({ text: `${rupee(ro)} less came in — written off as round-off (Bank Charges)` });
     else if (ro < 0) out.push({ text: `${rupee(-ro)} more came in — written off as round-off (Bank Charges)` });
+    const bc = r.bank_charge ?? 0;
+    if (bc > 0) out.push({ text: `${rupee(bc)} bank / SWIFT charge booked as Bank Charges — invoice settled in full` });
     return out;
   }
   const subs = r.subscriptions ?? [];
@@ -915,8 +998,12 @@ export function resultLines(r: PayForResult): ResultLine[] {
     return out;
   }
 
+  /* R-2546: a quote-less receipt (Zoho-imported invoice, kind "opening") names its invoice — it
+     said "recorded on quote null". The first line then carries the invoice link, so no repeat. */
+  const invoiceOnly = !r.quote_id && !!r.invoice_id && r.kind !== "renewal" && r.kind !== "add_seats" && r.kind !== "instalment";
+  const invoiceHref = r.invoice_id ? `/invoices/${encodeURIComponent(r.invoice_id)}` : undefined;
   if (r.already_recorded) {
-    out.push({ text: `This payment was already recorded on ${r.quote_id ?? r.invoice_id} — the bank line is now matched to it.`, href: quoteHref });
+    out.push({ text: `This payment was already recorded on ${r.quote_id || r.invoice_id || "this receipt"} — the bank line is now matched to it.`, href: quoteHref ?? invoiceHref });
   } else if (r.kind === "renewal") {
     out.push({
       text: r.renewal_rolled_forward && sub?.renewal_date
@@ -928,6 +1015,8 @@ export function resultLines(r: PayForResult): ResultLine[] {
     out.push({ text: `Add-seats payment recorded${sub ? ` → ${subName}` : ""}`, href: quoteHref });
   } else if (r.kind === "instalment") {
     out.push({ text: `Instalment ${r.invoice_id} paid${sub ? ` · ${subName}` : ""}` });
+  } else if (invoiceOnly) {
+    out.push({ text: `${rupee(r.amount)} recorded on invoice ${r.invoice_id}`, href: invoiceHref });
   } else {
     out.push({ text: `${rupee(r.amount)} recorded on ${r.new_quote ? "new sale" : "quote"} ${r.quote_id}`, href: quoteHref });
     for (const s of subs) {
@@ -943,7 +1032,7 @@ export function resultLines(r: PayForResult): ResultLine[] {
 
   if (r.invoice_issued) out.push({ text: `Invoice ${r.invoice_issued} issued`, href: `/invoices/${encodeURIComponent(r.invoice_issued)}` });
   if (r.instalment_error) out.push({ text: `The first bill's invoice was not raised yet (${r.instalment_error}) — the daily billing run raises it.`, tone: "warn" });
-  else if (r.invoice_id && r.kind !== "instalment") out.push({ text: `Invoice ${r.invoice_id}`, href: `/invoices/${encodeURIComponent(r.invoice_id)}` });
+  else if (r.invoice_id && r.kind !== "instalment" && !invoiceOnly) out.push({ text: `Invoice ${r.invoice_id}`, href: `/invoices/${encodeURIComponent(r.invoice_id)}` });
   if (r.tds_amount > 0) out.push({ text: `${rupee(r.tds_amount)} TDS booked as TDS receivable — collect the certificate (Form 16A)` });
   /* R-2026: paid in parts — the rest of the year is not owed today. R-2048: each part is a payment
      request on its date; its invoice is raised when it is paid (R-2044). */

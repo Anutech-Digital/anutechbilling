@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
 import { parseDeployHeaders, splitScript } from "../scripts/ops/gen-deploy-db.mjs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 // R-2118 (30 Oct 2026): the staging DB step stopped at 20261030053741_gp16a_personal_identity_link.sql
 // with "permission denied for table users" — the file created `auth_user_id … references auth.users(id)`
@@ -27,7 +28,7 @@ function migsrc(file: string): string {
 
 /** MIGS lines → { file, user } exactly as the deploy script will run them. */
 function migsOf(scriptPath: string): { file: string; user: string }[] {
-  const body: string[] = splitScript(fs.readFileSync(scriptPath, "utf8"), scriptPath).body;
+  const body: string[] = splitScript(readSource(scriptPath), scriptPath).body;
   return body
     .map((l) => /^\s*"[^|]+\|([^|]+)\|([^|]+)\|/.exec(l))
     .filter((m): m is RegExpExecArray => m !== null)
@@ -102,7 +103,7 @@ describe("R-2118 ratchet: auth.* DDL runs as postgres", () => {
   it.each(scripts)("every migration in %s that touches auth.* in DDL runs as postgres", (scriptPath) => {
     const migs = migsOf(scriptPath);
     expect(migs.length).toBeGreaterThan(100);
-    const files = migs.map(({ file, user }) => ({ file, user, sql: fs.readFileSync(migsrc(file), "utf8") }));
+    const files = migs.map(({ file, user }) => ({ file, user, sql: readSource(migsrc(file)) }));
     expect(missingPostgres(files)).toEqual([]);
     // gp16a is in the script and runs as postgres.
     expect(migs.find((m) => m.file === GP16A)?.user).toBe("postgres");
@@ -116,7 +117,7 @@ describe("R-2118 ratchet: auth.* DDL runs as postgres", () => {
       "20261017020500_r731_mfa_ok_grants.sql",
       "20261018031506_r1546_storage_mime_allowlists.sql",
     ]) {
-      expect(parseDeployHeaders(fs.readFileSync(path.join(migDir, f), "utf8"), f).user).toBe("postgres");
+      expect(parseDeployHeaders(readSource(path.join(migDir, f)), f).user).toBe("postgres");
     }
   });
 });

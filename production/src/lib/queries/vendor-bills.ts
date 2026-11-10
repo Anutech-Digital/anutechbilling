@@ -8,16 +8,19 @@
  */
 "use client";
 
+import * as React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { toastDeleteBlocked } from "@/lib/queries/expenses";
 import { createClient } from "@/lib/supabase/client";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
+import { queryKeys } from "@/lib/queries/keys";
 import type { Database, VendorBillRow } from "@/lib/supabase/database.types";
 import { billItcEligibility } from "@/lib/gst/bill-itc";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { payVendorBillArgs } from "@/lib/accounting/bill-pay-tds";
+import { servicePeriodErrorText, type ServicePeriodBasis } from "@/lib/accounting/bill-service-period";
 
 type VendorBillInsert = Database["public"]["Tables"]["vendor_bills"]["Insert"];
 type VendorBillUpdate = Database["public"]["Tables"]["vendor_bills"]["Update"];
@@ -63,6 +66,108 @@ export function useVendorBills(opts?: {
       });
     },
   });
+}
+
+/** R-2623: a bill's service period as the database works it out (vendor_bill_service_period). */
+export interface BillServicePeriod {
+  service_from: string;
+  service_to: string;
+  basis: ServicePeriodBasis;
+}
+
+/**
+ * R-2623: the service period of each listed bill — ONE rule, in SQL (`vendor_bills_service_periods`
+ * → vendor_bill_service_period, R-2156): the owner's own period, else a month written on the bill,
+ * else the month before for Google / Microsoft, else the bill month. Read in chunks of 500 ids.
+ */
+export function useVendorBillServicePeriods(ids: string[]) {
+  const key = React.useMemo(() => [...ids].sort().join(","), [ids]);
+  return useQuery({
+    queryKey: ["vendor_bills", "service-periods", key],
+    enabled: ids.length > 0,
+    queryFn: async (): Promise<Map<string, BillServicePeriod>> => {
+      const supabase = createClient();
+      const out = new Map<string, BillServicePeriod>();
+      const all = key ? key.split(",") : [];
+      const chunks: string[][] = [];
+      for (let i = 0; i < all.length; i += 500) chunks.push(all.slice(i, i + 500));
+      const answers = await Promise.all(chunks.map((c) => supabase.rpc("vendor_bills_service_periods", { p_ids: c })));
+      for (const { data, error } of answers) {
+        if (error) throw error;
+        for (const r of data ?? []) {
+          out.set(r.id, { service_from: r.service_from, service_to: r.service_to, basis: r.basis as ServicePeriodBasis });
+        }
+      }
+      return out;
+    },
+  });
+}
+
+/**
+ * R-2623: the period a NEW bill would get if the owner leaves it on auto — the same SQL rule, fed
+ * the form's bill date, category, bill # and notes.
+ */
+export function useAutoServicePeriod(input: { billDate: string; category: string; billNo: string; notes: string }) {
+  const { billDate, category, billNo, notes } = input;
+  return useQuery({
+    queryKey: ["vendor_bills", "auto-service-period", billDate, category, billNo, notes],
+    enabled: /^\d{4}-\d{2}-\d{2}$/.test(billDate),
+    staleTime: 60 * 1000,
+    placeholderData: (prev) => prev,   // a changed field keeps the last answer on screen until the new one comes
+    queryFn: async (): Promise<BillServicePeriod | null> => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("vendor_bill_service_period", {
+        p_bill_date: billDate, p_category: category, p_bill_no: billNo, p_notes: notes,
+        p_service_from: null, p_service_to: null,   // PostgREST matches the function by every argument name
+      });
+      if (error) throw error;
+      const r = (data ?? [])[0];
+      return r ? { service_from: r.service_from, service_to: r.service_to, basis: r.basis as ServicePeriodBasis } : null;
+    },
+  });
+}
+
+/**
+ * R-2623: set (or clear back to auto, both null) a bill's service period. Writes ONLY
+ * service_from / service_to — the books lock lets exactly these through on a filed month (GST and
+ * the amounts are untouched).
+ */
+export function useSetBillServicePeriod() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ id, service_from, service_to }: { id: string; service_from: string | null; service_to: string | null }) => {
+      const supabase = createClient();
+      const { data, error } = await supabase
+        .from("vendor_bills")
+        .update({ service_from, service_to })
+        .eq("id", id)
+        .select("id")
+        .maybeSingle();
+      if (error) throw error;
+      /* RLS: only owner / manager / accountant / billing may change a bill (vendor_bills_update_roles). */
+      if (!data) throw new Error("This bill could not be changed — only the owner, a manager, an accountant or billing can change a bill. Ask one of them, or refresh the list if it was deleted.");
+      return id;
+    },
+    onSuccess: (_id, v) => {
+      invalidateBillCost(qc);
+      toast.success(v.service_from ? "Service period saved" : "Service period set back to auto");
+    },
+    onError: (err) => toastServicePeriodError(err),
+  });
+}
+
+/** R-2623: a bill's cost or period changed → the bills, the P&L card and its drill (R-2622) read again. */
+function invalidateBillCost(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["vendor_bills"] });
+  qc.invalidateQueries({ queryKey: queryKeys.pnl() });
+  qc.invalidateQueries({ queryKey: ["accounting", "pnl-drill"] });
+}
+
+/** R-2623: the period check's raw error → the rule in words; anything else as usual. */
+function toastServicePeriodError(err: unknown) {
+  const plain = servicePeriodErrorText(err);
+  if (plain) toast.error("Service period not saved", { description: plain });
+  else toastError(err);
 }
 
 /** Our own GST state code ("07") — the tenant's state_code, else its GSTIN's first two digits. */
@@ -160,10 +265,10 @@ export function useCreateVendorBill() {
       return data as VendorBill;
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["vendor_bills"] });
+      invalidateBillCost(qc);   // R-2623: a set period moves the management P&L too
       toast.success("Bill added");
     },
-    onError: (err) => toastError(err),
+    onError: (err) => toastServicePeriodError(err),
   });
 }
 

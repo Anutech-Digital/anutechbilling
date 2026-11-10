@@ -1,9 +1,26 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterAll } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
 import { urlPathOf, groupOf, methodsOf, authHint, collectRoutes, renderApiDoc, main, DOC_FILE } from "../../scripts/ops/gen-api-doc.mjs";
+import { readSource } from "@/lib/testing/source-cache";
+
+/* R-2564 (7 Nov 2026): the two freshness tests each walk every route under src/app (10 s in the
+   loaded push pool). A source file under src/ is read through the shared, always-fresh read cache
+   (size+mtime+ctime checked on every read) — same text, without re-opening each file. Anything
+   else (docs/API.md, the temp fixtures below) is read from disk as before. */
+const SRC_DIR = path.resolve(__dirname, "..", "..", "src").toLowerCase() + path.sep;
+const realReadFileSync = fs.readFileSync;
+let inCache = false; // readSource() itself reads through fs.readFileSync — that call goes to disk
+vi.spyOn(fs, "readFileSync").mockImplementation(((file: fs.PathOrFileDescriptor, opts?: unknown) => {
+  if (!inCache && typeof file === "string" && opts === "utf8" && path.resolve(file).toLowerCase().startsWith(SRC_DIR)) {
+    inCache = true;
+    try { return readSource(file); } finally { inCache = false; }
+  }
+  return (realReadFileSync as (f: unknown, o?: unknown) => string | Buffer)(file, opts);
+}) as typeof fs.readFileSync);
+afterAll(() => vi.restoreAllMocks());
 
 /* R-1665 (19 Oct 2026): docs/API.md is generated from src/app/**\/route.ts. This test keeps it
    fresh — a new, removed or changed route fails here until `node scripts/ops/gen-api-doc.mjs`

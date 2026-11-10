@@ -207,9 +207,10 @@ export function suggestMoneyOut(input: {
   /* The TDS section DebitPayForSection would use; with one, an expense bill's TDS depends on the
      vendor's year so far (and 194Q on goods) — that stays the section's work, no card. */
   const section = ((vendor.default_tds_section || open.find((i) => i.tds_section)?.tds_section) ?? "").trim().toUpperCase();
-  const fixedTds = (i: VendorOpenItem) => (i.source === "expense" && i.tds_amount > 0 ? i.tds_amount : 0);
+  /* R-1915 expense bill's own TDS; R-2502c a Zoho-imported COGS bill's TDS (pre-filled on its first payment). */
+  const fixedTds = (i: VendorOpenItem) => ((i.source === "expense" || i.source === "vendor_bill") && i.tds_amount > 0 ? i.tds_amount : 0);
   const needsTds = (i: VendorOpenItem) => !isRecorded(i)
-    && (i.source === "expense" ? !(i.tds_amount > 0) && i.tds_base > 0 && section !== "" : section === "194Q");
+    && (i.source === "expense" ? !(i.tds_amount > 0) && i.tds_base > 0 && section !== "" : !(i.tds_amount > 0) && section === "194Q");
 
   const card = (i: VendorOpenItem, cash: number, part: boolean): Suggestion => {
     const due = cashDue(i, fixedTds(i));

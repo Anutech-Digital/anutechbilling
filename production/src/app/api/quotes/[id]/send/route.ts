@@ -52,6 +52,7 @@ import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { extensionTitle, isOneTimeQuote } from "@/lib/quotes/service-period";
 import { loadQuotePeriodContext } from "@/lib/quotes/line-period-context";
 import { lineDetailNotes } from "@/lib/pdf/invoice-display";
+import { partRequestOf } from "@/lib/billing/part-request-of.server";
 import {
   parseQuoteTemplate, proformaBank, quoteTemplateFileName, quoteTemplateNoun, PROFORMA_NOTICE,
 } from "@/lib/pdf/quote-template";
@@ -236,8 +237,16 @@ export async function POST(req: Request, props: { params: Promise<{ id: string }
       { status: 500 },
     );
   }
-  /* R-1523: per-send choice, nothing stored on the quote. A Proforma keeps the quote number. */
-  const template    = parseQuoteTemplate(body.template);
+  /* R-1523: per-send choice, nothing stored on the quote. A Proforma keeps the quote number.
+     R-2519: a part payment request IS a Proforma Invoice — it goes out as one unless the sender
+     picked the Quotation paper. */
+  const part        = await partRequestOf(supabase, quote.id, quote.tenant_id);
+  const template    = body.template == null && part ? "proforma" : parseQuoteTemplate(body.template);
+  const partPayBy   = part
+    ? (((await supabase.from("subscription_billings").select("due_on, bill_on").eq("id", part.billingId).maybeSingle()).data as
+        { due_on?: string | null; bill_on?: string | null } | null) ?? null)
+    : null;
+  const partPayByDay = partPayBy ? (partPayBy.due_on ?? partPayBy.bill_on ?? null) : null;
   const proforma    = template === "proforma";
   const docNoun     = quoteTemplateNoun(template);
   const subject     = body.subject?.trim() ||
@@ -337,9 +346,12 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
       billOfSupply:  pos.isExport ? null : quoteDocBillOfSupply(await readTenantGstRegistration(supabase, me.tenant_id), taxRate),
       /* R-376 (f): "Haryana (06) · IGST" — state name and code, not just the head. */
       placeOfSupply: pos.label,
-      validityDays:  30,
+      validityDays:  partPayByDay && quote.created_date
+        ? Math.max(0, Math.round((Date.parse(partPayByDay) - Date.parse(quote.created_date)) / 86_400_000))
+        : 30,
       createdDate:   quote.created_date,
-      expiresDate:   quote.expires_date,
+      /* R-2519: a proforma's pay-by date is its part's due date. */
+      expiresDate:   partPayByDay ?? quote.expires_date,
       termsConditions: quote.terms_conditions ?? null,
       /* R-1523 */
       template,
@@ -398,6 +410,16 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
     error_message:   sendResult.errorMessage,
     sent_by:         authData.user.id,
   });
+
+  /* R-2519: a part request mailed by hand counts as the request's first mail — the billing
+     job does not send it again (its reminders go on from here). */
+  if (part && sendResult.status === "sent") {
+    const { error: stepErr } = await (supabase as unknown as import("@supabase/supabase-js").SupabaseClient)
+      .from("subscription_billings")
+      .update({ request_reminder_step: "request_sent", request_reminded_at: new Date().toISOString() })
+      .eq("id", part.billingId).is("request_reminder_step", null);
+    if (stepErr) console.error(`[quotes/send] could not mark ${quote.id}'s part mailed:`, stepErr);
+  }
 
   // ── 10. Flip quote.status draft → sent on success ────────────────
   if (sendResult.status === "sent" || sendResult.status === "stubbed") {

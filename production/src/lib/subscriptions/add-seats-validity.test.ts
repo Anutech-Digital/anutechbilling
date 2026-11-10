@@ -63,7 +63,7 @@ describe("addSeats — R-814 expiry", () => {
     expect(await expiry({ renewalDate: "2026-10-20" })).toBe("2026-10-20");
   });
   it("split billing → capped at the instalment end it charges to", async () => {
-    expect(await expiry({ chargeWindow: { remainingDays: 21, chargeTo: "2026-10-31" } })).toBe("2026-10-31");
+    expect(await expiry({ chargeWindow: { remainingDays: 21, chargeTo: "2026-10-31", parts: null } })).toBe("2026-10-31");
   });
 });
 

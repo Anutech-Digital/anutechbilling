@@ -242,3 +242,19 @@ describe("Remove import", () => {
     expect((await within(dialog).findByRole("alert")).textContent).toContain("Month-end close");
   });
 });
+
+describe("R-2522 — each import says which period it covers", () => {
+  it("collapsed: active imports grouped by FY; open: FY · first – last line · line count on each row", () => {
+    history = [
+      row({ batch_id: "fy", file_name: "Acct_Statement_4523_05112026.xls", source: "xlsx", line_count: 3665,
+        txn_from: "2025-04-01", txn_to: "2026-03-31", imported_at: "2026-11-06T09:00:00+00:00" }),
+      pdf, old,
+    ];
+    renderSection();
+    expect(screen.getByTestId("imports-summary").textContent).toContain("3 active (FY 2025-26, FY 2026-27 ×2)");
+    expand();
+    const periods = screen.getAllByTestId("import-period").map((e) => e.textContent);
+    expect(periods).toContain("FY 2025-26 · 1 Apr 2025 – 31 Mar 2026 · 3,665 lines");
+    expect(periods).toContain("FY 2026-27 · 1 Aug 2026 – 31 Aug 2026 · 2 lines");
+  });
+});

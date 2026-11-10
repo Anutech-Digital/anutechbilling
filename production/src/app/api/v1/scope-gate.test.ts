@@ -7,14 +7,15 @@
  * expect a 403 BEFORE the database is touched; a wiring test makes a future route that forgets
  * the gate fail here instead of in production.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterAll } from "vitest";
 import { NextRequest } from "next/server";
-import { readFileSync, readdirSync, statSync } from "fs";
+import { readdirSync, statSync } from "fs";
 import { join, relative } from "path";
 
 const state = vi.hoisted(() => ({
   scopes: [] as string[],
   dbTouched: 0,
+  aiReached: 0,
 }));
 
 vi.mock("@/lib/api-keys/auth", () => ({
@@ -36,6 +37,17 @@ vi.mock("@/lib/supabase/server", () => ({
   },
   createClient: () => ({ auth: { getUser: async () => ({ data: { user: null } }) } }),
 }));
+/* R-2630 (9 Nov 2026): make-call's AI side (sales catalogue + telecall dispatcher) is never reached
+   here — every call stops at the scope gate, the rate limit or the missing lead — but importing it
+   pulled in the Gemini / autonomy / DNS graph: 13–16 s of the push guard step for this one file
+   (1.6–2 s without). Stubs that count a call; afterAll below fails the file if one is ever reached. */
+vi.mock("@/lib/ai/sales-agent.server", () => ({
+  loadSalesCatalog: () => { state.aiReached += 1; throw new Error("scope-gate test reached loadSalesCatalog"); },
+}));
+vi.mock("@/lib/ai/actions/telecall-dispatcher", () => ({
+  dispatchTelecall: () => { state.aiReached += 1; throw new Error("scope-gate test reached dispatchTelecall"); },
+}));
+afterAll(() => expect(state.aiReached, "a test went past the gate into the AI side — the stubs above no longer fit").toBe(0));
 
 import { GET as customers } from "./customers/route";
 import { GET as customer } from "./customers/[id]/route";
@@ -45,6 +57,7 @@ import { GET as quotes } from "./customers/[id]/quotes/route";
 import { GET as subscriptions } from "./customers/[id]/subscriptions/route";
 import { POST as makeCall } from "./telecalling/make-call/route";
 import { resetRateLimiter, MAKE_CALL_PER_KEY } from "@/lib/security/rate-limit";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const req = (path: string, init?: { method?: string; body?: string }) =>
   new NextRequest(`https://ros.invalid${path}`, init);
@@ -128,10 +141,10 @@ describe("wiring — every API-key route under /api/v1 calls requireScope", () =
     });
 
   it("no route authenticates a key without checking its scope right after", () => {
-    const keyRoutes = walk(root).filter((p) => readFileSync(p, "utf8").includes("authenticateApiKey("));
+    const keyRoutes = walk(root).filter((p) => readSource(p).includes("authenticateApiKey("));
     expect(keyRoutes.length).toBeGreaterThanOrEqual(7);
     const missing = keyRoutes.filter((p) => {
-      const src = readFileSync(p, "utf8");
+      const src = readSource(p);
       const auth = src.indexOf("authenticateApiKey(req)");
       const gate = src.indexOf("requireScope(auth,");
       return gate === -1 || gate < auth;

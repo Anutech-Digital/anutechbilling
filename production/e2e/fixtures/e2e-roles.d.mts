@@ -1,7 +1,7 @@
 /** Types for e2e-roles.mjs (tsconfig has allowJs: false). Keep in sync with the .mjs. */
 export type E2ERole = "owner" | "manager" | "sales" | "accountant";
-/** R-2318: local-only extra logins (a second owner); never required by CI. */
-export type E2ELocalExtraRole = "owner2";
+/** R-2318: local-only extra logins (a second owner); R-2553: billing + support. Never required by CI. */
+export type E2ELocalExtraRole = "owner2" | "billing" | "support";
 
 export declare const E2E_TENANT_NAME: string;
 export declare const E2E_TENANT_EMAIL: string;
@@ -14,7 +14,7 @@ export declare const E2E_LOCAL_EXTRA_ROLES: readonly E2ELocalExtraRole[];
 
 type Env = Record<string, string | undefined>;
 
-export declare function roleDbRole(role: E2ERole | E2ELocalExtraRole): E2ERole;
+export declare function roleDbRole(role: E2ERole | E2ELocalExtraRole): E2ERole | "billing" | "support";
 export declare function roleEnvNames(role: E2ERole | E2ELocalExtraRole): { email: string; password: string };
 export declare function roleCreds<R extends E2ERole | E2ELocalExtraRole = E2ERole>(
   role: R,

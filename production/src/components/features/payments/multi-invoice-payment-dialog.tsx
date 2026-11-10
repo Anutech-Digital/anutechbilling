@@ -51,6 +51,7 @@ import { Icon } from "@/components/ui/icon";
 import {
   fifoAllocate,
   lineTdsHint,
+  numericLine,
   openInvoicesOldestFirst,
   summarise,
   toRpcAllocations,
@@ -326,8 +327,9 @@ export function MultiInvoicePaymentDialog({
                     if (!inv) return null;
                     const line = lines?.[idx] ?? f;
                     const over = summary.overDue.includes(inv.id);
-                    const hint = lineTdsHint(inv, { amount: Number(line.amount) || 0, tds: Number(line.tds) || 0 });
-                    const showTds = (Number(line.tds) || 0) > 0 || !!line.tdsSection;
+                    const n = numericLine(line);  // R-2546: typed inputs are text — one parser for every read
+                    const hint = lineTdsHint(inv, n);
+                    const showTds = n.tds > 0 || !!line.tdsSection;
                     return (
                       <li key={f.id} className="px-3 py-2.5 space-y-1.5">
                         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
@@ -373,7 +375,7 @@ export function MultiInvoicePaymentDialog({
                               setValue(`lines.${idx}.tdsRatePct`, hint.ratePct);
                             }}>Yes, TDS was deducted</Button>
                           </div>
-                        ) : (Number(line.amount) || 0) > 0 ? (
+                        ) : n.amount > 0 ? (
                           <Button type="button" size="sm" variant="ghost" className="!px-0 text-xs" onClick={() => setValue(`lines.${idx}.tdsSection`, "194J")}>
                             + Customer deducted TDS
                           </Button>

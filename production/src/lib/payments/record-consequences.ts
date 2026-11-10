@@ -66,7 +66,7 @@ export const ADD_SEATS_CONSEQUENCE =
 
 /** R-2087: what recording the full payment on a support-plan upgrade quote does. */
 export const UPGRADE_PLAN_CONSEQUENCE =
-  "Upgrades the existing support plan once paid in full — same subscription, same renewal date. No new subscription is created.";
+  "Upgrades the existing plan once paid in full — same subscription, same renewal date. No new subscription is created.";
 
 export function recordPaymentConsequences(args: {
   payment: PaymentToRecord;

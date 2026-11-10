@@ -12,15 +12,16 @@
  * staff list) is allowed only through BOUNDED below, each with the reason it cannot reach
  * 1000 rows. A new list read in these files must page, or argue its case there.
  */
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const GATEWAY_MAX_ROWS = 1000;
 
 /** Comments stripped: prose about a removed pattern must not satisfy (or trip) the scan. */
 const strip = (f: string) =>
-  readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  readSource(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 const QUERIES_DIR = "src/lib/queries";
 const GOOGLE_BILL_CHECK = [

@@ -16,10 +16,11 @@
 
 /**
  * The roles e2e/fixtures/e2e-roles.mjs seeds (E2E_ROLES + E2E_LOCAL_EXTRA_ROLES). Kept in step by
- * a test. No billing account exists. R-2318: "owner2" is a second owner of the same company, so
- * "another owner approves" (R-2213) can be checked on localhost.
+ * a test. R-2318: "owner2" is a second owner of the same company, so "another owner approves"
+ * (R-2213) can be checked on localhost. R-2553: "billing" and "support" (users.role of the same
+ * names), so card tests can sign in as them in the browser — same gates, local only.
  */
-export const TEST_LOGIN_ROLES = ["owner", "manager", "accountant", "sales", "owner2"] as const;
+export const TEST_LOGIN_ROLES = ["owner", "manager", "accountant", "sales", "owner2", "billing", "support"] as const;
 export type TestLoginRole = (typeof TEST_LOGIN_ROLES)[number];
 
 export function isTestLoginRole(v: unknown): v is TestLoginRole {

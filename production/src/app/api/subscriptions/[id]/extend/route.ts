@@ -114,7 +114,8 @@ export const POST = withRoute(
   });
 
   if (!result.ok) {
-    const status = result.code === "already_open" ? 409 : 500;
+    /* R-2608: a seat cut scheduled for this renewal — the message names it (409, like already_open). */
+    const status = result.code === "already_open" || result.code === "seat_cut_scheduled" ? 409 : 500;
     return NextResponse.json({ error: result.message, code: result.code }, { status });
   }
 

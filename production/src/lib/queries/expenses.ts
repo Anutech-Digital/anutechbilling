@@ -34,7 +34,7 @@ export type Expense = ExpenseRow;
 export { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { COMMISSION_CATEGORY, fyStartOf } from "@/lib/accounting/commission-tds";
-import { vendorFyTdsTotal, type FyCogsBillRow, type FyCogsTdsRow, type FyExpenseRow, type VendorFyTds } from "@/lib/accounting/vendor-tds-fy";
+import { vendorFyTdsTotal, type FyAdvanceTdsCreditRow, type FyCogsBillRow, type FyCogsTdsRow, type FyExpenseRow, type VendorFyTds } from "@/lib/accounting/vendor-tds-fy";
 
 /**
  * Guess an expense category from the free-text "what was this for?" note.
@@ -739,8 +739,17 @@ export function useVendorTdsThisFy(vendorId: string | null, vendorName: string, 
         .select("vendor_bill_id, tds_amount, tds_section")
         .in("vendor_bill_id", run).gt("tds_amount", 0)
         .order("id", { ascending: true }).range(rFrom, rTo) as unknown as PageQuery<FyCogsTdsRow>);
+      /* R-2588: bills whose TDS was credited from a vendor advance (R-1916) — TDS was deducted on them. */
+      const noTdsIds = expenses.filter((e) => !(e.tds_amount && e.tds_amount > 0)).map((e) => e.id);
+      const advanceTdsCredits = await fetchAllRowsIn<FyAdvanceTdsCreditRow, string>(noTdsIds, (run, rFrom, rTo) => supabase
+        .from("vendor_advance_applications" as never)
+        .select("expense_id, tds_credit")
+        .in("expense_id", run).gt("tds_credit", 0)
+        .order("id", { ascending: true }).range(rFrom, rTo) as unknown as PageQuery<FyAdvanceTdsCreditRow>)
+        /* A DB without the R-2588 column yet: no credits — the year total reads as before. */
+        .catch(() => [] as FyAdvanceTdsCreditRow[]);
       /* R-2338: 194J(a) / (b) / royalty (and old plain 194J) share one yearly limit per vendor. */
-      return vendorFyTdsTotal({ section: sec, expenses, cogsBills, cogsTds, excludeId, excludeBillIds: skipBills });
+      return vendorFyTdsTotal({ section: sec, expenses, cogsBills, cogsTds, excludeId, excludeBillIds: skipBills, advanceTdsCredits });
     },
     staleTime: 30_000,
   });

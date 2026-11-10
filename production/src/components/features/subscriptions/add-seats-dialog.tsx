@@ -37,11 +37,13 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
 import { addSeatsErrorMessage, type AddSeatsOk } from "./add-seats-error";
 import { seatChargeWindow, seatChargePlan } from "@/lib/subscriptions/seat-charge-window";
+import { partFormula } from "@/lib/subscriptions/seat-part-rate";
 import { seatIncreaseQuote } from "@/lib/subscriptions/seat-increase-charge";
 import { istToday } from "@/lib/dates/ist";
 import { seatEffectiveBounds, checkSeatEffectiveDate } from "@/lib/subscriptions/seat-effective-date";
 import { parseTypedSeatRate, seatRateWarning, seatRateSourceText } from "@/lib/subscriptions/seat-rate-check";
 import { useExpectedSeatRate } from "./use-expected-seat-rate";
+import ReduceSeatsPanel from "./reduce-seats-panel";
 
 interface Props {
   sub:          Subscription;
@@ -81,6 +83,9 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
       setDraftPo(false);
     }
   }, [open, initialSeats, sub.id]);
+  /* R-2252: Manage seats also REDUCES — same dialog, a second mode with its own credit preview. */
+  const [mode, setMode] = React.useState<"add" | "reduce">("add");
+  React.useEffect(() => { if (open) setMode("add"); }, [open, sub.id]);
   const [submitting, setSubmitting] = React.useState(false);
   /* R-450: a failed add used to show only a toast, easy to miss behind the open dialog
      ("nothing happens"). The reason now also stays in the dialog, next to the button,
@@ -124,6 +129,10 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   const daysRemaining = window ? Math.max(0, window.remainingDays) : 0;
   const termDaysForPreview = window?.termDays ?? 365;
   const factor = termDaysForPreview > 0 ? daysRemaining / termDaysForPreview : 0;
+  /* R-2226: billed in parts → the seats are priced at the PART's own rate (the server passes the
+     same parts — applySeatIncrease), so a whole month costs one month's price. */
+  const parts = window?.parts ?? null;
+  const prevParts = prevPart?.parts ?? null;
 
   /* R-389 (F9): name the head the invoice will use — "IGST 18%" for an inter-state customer,
      "CGST 9% + SGST 9%" within the state — and zero-rate an export, the same rule the server
@@ -147,8 +156,8 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   const quoted           = seatIncreaseQuote({
     currentSeats: sub.seats, currentMrr: sub.mrr, additionalSeats, taxRatePct,
     annualPerSeatOverride: typedRate,
-    previous: prevPart ? { remainingDays: prevPart.remainingDays, termDays: prevPart.termDays } : null,
-    current: { remainingDays: daysRemaining, termDays: termDaysForPreview },
+    previous: prevPart ? { remainingDays: prevPart.remainingDays, termDays: prevPart.termDays, parts: prevParts } : null,
+    current: { remainingDays: daysRemaining, termDays: termDaysForPreview, parts },
   });
   const charge           = quoted.current;
   const annualPerSeat    = quoted.annualPerSeat;
@@ -156,6 +165,9 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
   const gstAmt           = quoted.tax;
   const totalIncl        = quoted.total;
   const proRataPerSeat   = charge.perSeat;
+  /* R-2226: the formula the server charges, worked out once per render. */
+  const partLine         = parts ? partFormula(annualPerSeat, parts) : null;
+  const prevPartLine     = prevParts ? partFormula(annualPerSeat, prevParts) : null;
   const newSeats         = sub.seats + additionalSeats;
   const newMrr           = quoted.newMrr;
   /* R-2292: compare the rate this quote uses with the last GST invoice line for the item. */
@@ -220,23 +232,44 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
     }
   };
 
+  /* The header and the Add / Reduce switch — shared by both modes. */
+  const top = (
+    <>
+      <header className="border-b border-hairline pb-3 mb-4">
+        <p className="text-3xs uppercase tracking-wider font-semibold text-amber-ink mb-1">
+          {mode === "reduce" ? "Subscription · Reduce seats" : "Subscription · Add seats"}
+        </p>
+        <h2 className="font-serif text-2xl text-ink">{sub.customer_name}</h2>
+        {sub.domain && (
+          <p className="text-xs font-mono text-ink-3 mt-0.5">{sub.domain}</p>
+        )}
+        <p className="text-xs text-ink-2 mt-1">
+          {sub.plan} · {sub.seats} seats · renews {renewal ? formatDate(renewal.toISOString()) : "—"}
+        </p>
+      </header>
+      <div className="grid grid-cols-2 gap-2 mb-4" role="group" aria-label="Add or reduce seats">
+        <Button variant={mode === "add" ? "primary" : "ghost"} size="sm" aria-pressed={mode === "add"} onClick={() => setMode("add")}>
+          Add seats
+        </Button>
+        <Button variant={mode === "reduce" ? "primary" : "ghost"} size="sm" aria-pressed={mode === "reduce"} onClick={() => setMode("reduce")}>
+          Reduce seats
+        </Button>
+      </div>
+    </>
+  );
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-lg flex flex-col gap-0 overflow-hidden p-0 pt-3 md:p-0">
         {/* R-2268: the body scrolls; the footer (Cancel + primary) stays on screen below it. */}
+        {mode === "reduce" ? (
+          <>
+            <div className="shrink-0 px-5 pt-2 md:px-6 md:pt-6">{top}</div>
+            <ReduceSeatsPanel sub={sub} onCancel={() => onOpenChange(false)} onDone={() => onOpenChange(false)} />
+          </>
+        ) : (<>
         <div className="flex-1 min-h-0 overflow-y-auto grid gap-4 [&>*]:min-w-0 px-5 pt-2 pb-5 md:p-6" data-testid="dialog-scroll-body">
-        <header className="border-b border-hairline pb-3 mb-4">
-          <p className="text-3xs uppercase tracking-wider font-semibold text-amber-ink mb-1">
-            Subscription · Add seats
-          </p>
-          <h2 className="font-serif text-2xl text-ink">{sub.customer_name}</h2>
-          {sub.domain && (
-            <p className="text-xs font-mono text-ink-3 mt-0.5">{sub.domain}</p>
-          )}
-          <p className="text-xs text-ink-2 mt-1">
-            {sub.plan} · {sub.seats} seats · renews {renewal ? formatDate(renewal.toISOString()) : "—"}
-          </p>
-        </header>
+        {top}
 
         {isTermEnded ? (
           <div className="bg-rose/10 border border-rose/30 rounded-md p-3 text-sm text-rose mb-4">
@@ -332,14 +365,14 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
                   <div className="flex justify-between gap-3 mb-1 pt-2 border-t border-hairline">
                     <span className="text-ink-3">
                       Previous term, {formatDate(prevPart.from)} to {formatDate(prevPart.to)}
-                      <span className="block text-2xs">{prevPart.remainingDays} of {prevPart.termDays} days · {additionalSeats} × {rupee(quoted.previous.perSeat)}</span>
+                      <span className="block text-2xs">{prevPartLine ?? `${prevPart.remainingDays} of ${prevPart.termDays} days`} · {additionalSeats} × {rupee(quoted.previous.perSeat)}</span>
                     </span>
                     <span className="tabular-nums text-ink-2">{rupee(quoted.previous.subtotal)}</span>
                   </div>
                   <div className="flex justify-between gap-3 mb-1">
                     <span className="text-ink-3">
                       Current term, {formatDate(window.from)} to {formatDate(window.chargeTo)}
-                      <span className="block text-2xs">{daysRemaining} of {termDaysForPreview} days · {additionalSeats} × {rupee(proRataPerSeat)}</span>
+                      <span className="block text-2xs" data-testid="add-seats-current-formula">{partLine ?? `${daysRemaining} of ${termDaysForPreview} days`} · {additionalSeats} × {rupee(proRataPerSeat)}</span>
                     </span>
                     <span className="tabular-nums text-ink-2">{rupee(charge.subtotal)}</span>
                   </div>
@@ -354,10 +387,15 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
                     <span className="text-ink-3">{window?.instalmentPeriod ? `Days charged in this instalment (to ${formatDate(window.chargeTo)})` : "Days charged (to renewal)"}</span>
                     <span className="tabular-nums text-ink-2">{daysRemaining} days</span>
                   </div>
-                  <div className="flex justify-between mb-1">
-                    <span className="text-ink-3">Pro-rata factor</span>
-                    <span className="tabular-nums text-ink-2">{factor.toFixed(3)} ({Math.round(factor * 100)}%)</span>
-                  </div>
+                  {partLine ? (
+                    /* R-2226: the part's own rate, shown as the formula the server charges. */
+                    <p className="text-2xs text-ink-3 mb-1" data-testid="add-seats-part-formula">{partLine}</p>
+                  ) : (
+                    <div className="flex justify-between mb-1">
+                      <span className="text-ink-3">Pro-rata factor</span>
+                      <span className="tabular-nums text-ink-2">{factor.toFixed(3)} ({Math.round(factor * 100)}%)</span>
+                    </div>
+                  )}
                   <div className="flex justify-between mb-1">
                     <span className="text-ink-3">Pro-rata per seat</span>
                     <span className="tabular-nums text-ink-2">{rupee(proRataPerSeat)}</span>
@@ -444,6 +482,7 @@ export default function AddSeatsDialog({ sub, open, onOpenChange, initialSeats }
             </Button>
           )}
         </DialogFooter>
+        </>)}
       </DialogContent>
     </Dialog>
   );

@@ -34,7 +34,7 @@ import { rupee } from "@/lib/utils";
 import { useItems } from "@/lib/queries/items";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
-import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { useOpenInvoicesForCreditMatch, type BankTransactionRow } from "@/lib/queries/bank";
 import { matchCreditToInvoices } from "@/lib/banking/invoice-credit-match";
 import {
@@ -44,12 +44,13 @@ import {
 import {
   amountCheck, commitmentOptions, customerOptions, defaultCycle, defaultRenewal, guessCustomer, itemKey,
   laterBillsText, linesAreMonthly, paymentChoice, preselectItem, rateFromShownPrice, repriceLine, resultLines, saleBillingCycle,
-  paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
-  tdsRateToRecord, tdsToRecord, shortChoices, roundOffSplit, saleLineDomainProblem, saleLinesBelowCost, BANK_SALE_BELOW_COST_TEXT,
+  paidUpText, saleLineFromItem, saleLinesPayload, saleMakesSubscription, salePaidUp, salePreview, saleSchedule, saleTermsMixed, SALE_TERMS_MIXED_MESSAGE, saleTermText, shownPriceUnit, shownUnitPrice, splitRenewalProblem,
+  tdsToRecord, roundOffSplit, autoShortChoice, overIsRoundOff, saleLineDomainProblem, saleLinesBelowCost, BANK_SALE_BELOW_COST_TEXT,
   typedPriceCheck, convertTypedPrice, keepTypedPrice, undoTypedConversion,
   type AmountCheck, type OldOneOffBooking, type OpenItem, type PayForResult, type PaymentChoice, type SaleCycle, type SaleLine, type ShortChoice,
 } from "@/lib/banking/credit-pay-for";
-import { tdsSectionGuess, TDS_SECTION_CHOICES } from "@/lib/banking/tds-section";
+import { bankTdsDefault, bankTdsProblem, customerTdsSection, parseTdsRate, sectionForRate, shortChoiceDefault } from "@/lib/banking/bank-tds-rate";
+import { tdsPartGross } from "@/lib/accounting/tds-receipt";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { PAYER_RELATIONS, payerFromNarration, payerMatchesCustomer, type PayerRelation } from "@/lib/banking/customer-payer";
 import { usePayerMemory, useSetBankLinePayer } from "@/lib/queries/customer-payers";
@@ -59,12 +60,20 @@ import { useFooterSaveReport, type FooterSave } from "./reconcile-who-tiles";
 import { NEEDS_APPROVAL_LABEL } from "@/lib/quotes/payment-approval";
 import { prefillSaleFx, zohoKeptLines, zohoSaleNumber, zohoUnconvertedProblem, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
 import { ZohoFindPanel, type NewCustomerSeed } from "./zoho-find-panel";
-import { itemPayPlan, splitFxProblem } from "@/lib/banking/item-fx-pay";
+import { fxDefaultChoice, itemPayPlan, splitFxPlan } from "@/lib/banking/item-fx-pay";
+import { FxSettleNote, type FxChoice } from "./credit-pay-for-fx-note";
 import { ItemPlanNote, OpenItemRow } from "./credit-pay-for-item";
+import { zohoSheetProblem, zohoSheetSales, zohoSplitSales } from "@/lib/banking/zoho-sales-split";
+import { ZohoSalesNote } from "./credit-pay-for-zoho-note";
+import { AmountCheckBox } from "./credit-pay-for-amount-check";
 
 const NEW_CUSTOMER = "__new_customer__";
 
-export interface PayForCustomer { id: string; name: string; country?: string | null; gstin?: string | null; domain?: string | null }
+export interface PayForCustomer {
+  id: string; name: string; country?: string | null; gstin?: string | null; domain?: string | null; gst_treatment?: string | null;
+  /** R-2558: the TDS this customer usually deducts (R-2370) — pre-fills the rate box. */
+  tds_default_section?: string | null; tds_default_rate_pct?: number | string | null;
+}
 
 interface Props {
   transaction: BankTransactionRow;
@@ -175,6 +184,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const [splitSale, setSplitSale] = React.useState(false);
   const [splitSaleAmount, setSplitSaleAmount] = React.useState<number | null>(null);   // null = its first bill
   const [restChoice, setRestChoice] = React.useState<SplitRest>("advance");
+  /* R-1678: the operator's answer; null = the default (R-1678b: "rupee" when the gap looks like TDS or a gateway fee). */
+  const [fxChoicePick, setFxChoice] = React.useState<FxChoice | null>(null);
   React.useEffect(() => { setPicks({}); setSplitSale(false); setSplitSaleAmount(null); setRestChoice("advance"); }, [customerId, transaction.id]);
   const togglePick = (i: OpenItem) => setPicks((p) => {
     const k = itemKey(i);
@@ -189,7 +200,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const [lines, setLines] = React.useState<SaleLine[]>([]);
   React.useEffect(() => { setLines([]); }, [transaction.id]);
   const gst = useGstRegistration();
-  const gstRate = billOfSupplyStatus(gst.data?.saved ?? null) || isExportSupply(customer?.country ?? null) ? 0 : 18;
+  /* R-2515: an export or an SEZ unit supplied without payment of tax is 0% (the server applies the same rule). */
+  const gstRate = billOfSupplyStatus(gst.data?.saved ?? null) || isZeroRatedSupply({ country: customer?.country, treatment: customer?.gst_treatment }) ? 0 : 18;
   const preview = salePreview(lines, gstRate);
   /* R-2026: Payment — how often an annual commitment is billed (the quote's billing_cycle). */
   const [payCycle, setPayCycle] = React.useState<BillingCycle>("yearly");
@@ -248,14 +260,10 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
      no TDS, no "kept as credit"); a Zoho opening invoice takes no more than its due. Either way the
      ₹ over / short check does not apply. */
   const itemPlan = mode === "item" && picked
-    ? itemPayPlan(picked, { description: transaction.description, credit }, { relink: Boolean(relink) }) : null;
+    ? itemPayPlan(picked, { description: transaction.description, credit }, { relink: Boolean(relink), customerCountry: customer?.country ?? null }) : null;
   const itemFx = itemPlan?.fx ?? null;
-  const check: AmountCheck | null = due === null || itemFx || itemPlan?.problem ? null : amountCheck(credit, due, taxable);
-  /* R-2052: annual commitment billed in parts — Renews on stays the end of the year; this says
-     how far the money pays, and takes over the "Next N bills" line (the next bill said once). */
-  const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0
-    ? salePaidUp(schedule, check?.kind === "over" ? check.overBy : 0, renewalShown, saleCycle)
-    : null;
+  /* R-1678: a foreign invoice paid in ₹ — settled in full, the gap an exchange difference (no TDS / part choice). */
+  const itemFxPlanned = itemPlan?.splitFx ?? null;
   /* R-2098: the split's bar. */
   const splitPicked = (items ?? []).filter((i) => itemKey(i) in picks);
   const saleAmt = splitSale ? cleanAmount(splitSaleAmount ?? schedule.dueNow) : 0;
@@ -265,23 +273,55 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
     ...(splitSale ? [{ amount: saleAmt, due: preview.total }] : []),
   ]);
   const split = splitSummary(credit, [...splitPicked.map((i) => picks[itemKey(i)]), saleAmt], { partPaid: splitPart });
-  const rest = splitRest(split.state, restChoice);
-  const splitFx = mode === "split" ? splitFxProblem(splitPicked) : null;   // R-2466: the split books ₹ only
+  /* R-1678: foreign-currency items are settled in full; the difference is an exchange gain / loss. */
+  const splitFxRes = mode === "split"
+    ? splitFxPlan(splitPicked.map((i) => ({ item: i, amount: picks[itemKey(i)] })), { description: transaction.description, credit }, { sale: splitSale, customerCountry: customer?.country ?? null })
+    : null;
+  const splitFx = splitFxRes?.problem ?? null;
+  const splitFxPlanned = splitFxRes?.fx ?? null;
+  const fxPlanned = itemFxPlanned ?? splitFxPlanned;
+  const fxTaxable = mode === "item" ? (picked?.taxable_value ?? 0) : splitPicked.reduce((a, i) => a + (i.taxable_value ?? 0), 0);
+  const fxChoice: FxChoice = fxChoicePick ?? (fxPlanned ? fxDefaultChoice(fxPlanned, { description: transaction.description, credit }, fxTaxable) : "fx");
+  React.useEffect(() => { setFxChoice(null); }, [pickKey, mode, transaction.id]);
+  const itemInrFx = fxChoice === "fx" || itemFxPlanned?.remittance ? itemFxPlanned : null;
+  const splitFxBooked = fxChoice === "fx" || splitFxPlanned?.remittance ? splitFxPlanned : null;
+  const check: AmountCheck | null = due === null || itemFx || itemInrFx || itemPlan?.problem ? null
+    : amountCheck(credit, due, taxable, { country: customer?.country, narration: transaction.description });   // R-2577: bank charge only on a real wire
+  /* R-2052: annual commitment billed in parts — Renews on stays the end of the year; this says
+     how far the money pays, and takes over the "Next N bills" line (the next bill said once). */
+  const paidUp = mode === "sale" && makesSub && createSub && preview.total > 0
+    ? salePaidUp(schedule, check?.kind === "over" ? check.overBy : 0, renewalShown, saleCycle)
+    : null;
+  const rest = splitFxBooked ? "fx" as const : splitRest(split.state, restChoice);
   const splitInvalid = Boolean(splitFx) || (splitPicked.length === 0 && !splitSale)
     || splitPicked.some((i) => pickProblem(i, picks[itemKey(i)]) !== null)
     || (splitSale && (saleInvalidOf(lines, preview.taxable) || saleAmt <= 0 || saleAmt > preview.total))
-    || splitBlocked(split.state)
+    || (!splitFxBooked && splitBlocked(split.state))
     || splitPicked.some((i) => Boolean(i.approval_block));
   /* R-2213: the picked quote (or a ticked one in a split) is below cost and waits for approval. */
   const blockedItem = mode === "item" ? (picked?.approval_block ? picked : null)
     : mode === "split" ? splitPicked.find((i) => Boolean(i.approval_block)) ?? null : null;
   const approvalBlocked = blockedItem?.approval_block && blockedItem.quote_id
     ? { reason: blockedItem.approval_block, quoteId: blockedItem.quote_id } : null;
-  const [shortChoice, setShortChoice] = React.useState<ShortChoice>("part");
-  /* TDS pre-chosen when the gap IS a common TDS rate; else part payment. Re-decided per item. */
-  const tdsLikely = check?.kind === "short" && check.tdsRatePct !== null;
+  /* R-2558: the rate + section a "TDS deducted" books — pre-filled only from evidence (a common rate
+     on the part or on the whole sale, or the customer's saved TDS), never TDS ÷ part. */
+  const wholeTaxable = mode === "sale" ? preview.taxable : (picked?.taxable_value ?? null);
+  const tdsDef = check?.kind === "short"
+    ? bankTdsDefault({ shortBy: check.shortBy, partTaxable: taxable, wholeTaxable, partRatePct: check.tdsRatePct, customer })
+    : null;
+  /* R-2558: nothing pre-chosen unless the gap IS TDS at a known rate (or the Suggestion card said so) —
+     the owner answers "why less came in"; it used to default to Part payment. Re-decided per item. */
+  const [shortChoice, setShortChoice] = React.useState<ShortChoice | null>(null);
+  const tdsLikely = Boolean(tdsDef?.likely);
   const cardSaysTds = Boolean(suggested?.tds && suggested.itemKey === pickKey);
-  React.useEffect(() => { setShortChoice(tdsLikely || cardSaysTds ? "tds" : "part"); }, [tdsLikely, cardSaysTds, pickKey, mode]);
+  const shortBy = check?.kind === "short" ? check.shortBy : 0;
+  /* R-2192: a write-off (round-off / bank charge) settles the WHOLE item or sale through the split —
+     not on a relink, a sale billed in parts (due now < total) or a foreign-currency sale. */
+  const writeOffOk = !relink && (mode === "item" || (mode === "sale" && due === preview.total
+    && !prefillSaleFx(zohoFill, transaction.description, credit)));
+  /* R-2192: up to ₹1 short is a round-off — pre-chosen. */
+  const shortDefault = (check && writeOffOk ? autoShortChoice(check) : null) ?? shortChoiceDefault(shortBy, due ?? 0, tdsLikely || cardSaysTds);
+  React.useEffect(() => { setShortChoice(shortDefault); }, [shortDefault, pickKey, mode]);
 
   /* ── 4. Save ─────────────────────────────────────────────────────────────────── */
   const payItem = usePayItemFromBankCredit();
@@ -296,21 +336,46 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const saveErrorObj = splitPay.error ?? newSale.error ?? payItem.error ?? advance.error ?? relinkSale.error ?? setLinePayer.error;
   const saveError = saveErrorObj ? (saveErrorObj as { message?: string }).message ?? String(saveErrorObj) : null;
 
-  const tdsAmount = check ? tdsToRecord(check, shortChoice) : 0;
-  const tdsRate = check ? tdsRateToRecord(check, taxable) : null;
-  /* R-2095: the section follows the rate and the customer's PAN type (lib/banking/tds-section); changeable. */
-  const tdsGuess = tdsSectionGuess(check?.kind === "short" ? check.tdsRatePct : null, customer?.gstin ?? null);
+  const tdsAmount = check && shortChoice ? tdsToRecord(check, shortChoice) : 0;
+  /* R-2558: the rate box (typed, else the default) and the section (picked, else the customer's /
+     the rate's usual one, else none — the owner picks). Reset per item / customer / amount. */
+  const [tdsRateText, setTdsRateText] = React.useState<string | null>(null);
   const [tdsSectionPick, setTdsSectionPick] = React.useState<string | null>(null);
-  React.useEffect(() => { setTdsSectionPick(null); }, [pickKey, mode, customerId]);
-  const tdsSection = tdsSectionPick ?? tdsGuess.section;
+  React.useEffect(() => { setTdsSectionPick(null); setTdsRateText(null); }, [pickKey, mode, customerId]);
+  const tdsRateShown = tdsRateText ?? (tdsDef?.ratePct != null ? String(tdsDef.ratePct) : "");
+  const tdsRateTyped = parseTdsRate(tdsRateShown);
+  /* A typed rate: the customer's saved section only when it goes with that rate (or no rate is saved);
+     else the typed rate's usual section — never 194C @ 10%. */
+  const savedRate = parseTdsRate(customer?.tds_default_rate_pct == null ? "" : String(customer.tds_default_rate_pct));
+  const tdsSection = tdsSectionPick
+    ?? (tdsRateText === null
+      ? tdsDef?.section ?? null
+      : (savedRate === null || savedRate === tdsRateTyped ? customerTdsSection(customer) : null)
+        ?? sectionForRate(tdsRateTyped, customer?.gstin ?? null)?.section)
+    ?? null;
+  /* The gross the server will store for this rate (R-2538's rule, tdsPartGross = the SQL helper) —
+     shown on a new sale, where the sheet knows the whole sale's taxable and total. */
+  const tdsGrossShown = mode === "sale" && shortBy > 0 && tdsRateTyped !== null && due !== null
+    ? tdsPartGross({ paid: due, taxable: preview.taxable, total: preview.total, tds: shortBy, ratePct: tdsRateTyped })
+    : null;
+  /* The default's "why" only while the box still holds the default. */
+  const tdsReasonShown = tdsRateText === null || parseTdsRate(tdsRateText) === tdsDef?.ratePct ? tdsDef?.reason ?? null : null;
+  const tdsRate = tdsAmount > 0 ? tdsRateTyped : null;
+  const tdsOn = tdsAmount > 0 && !itemFx;
+  const tdsProblem = tdsOn ? bankTdsProblem(tdsRateShown, tdsSection) : null;
+  const shortUnanswered = check?.kind === "short" && shortChoice === null
+    ? "Say why less came in — TDS, part payment, round-off or bank charge." : null;
   const saleInvalid = saleInvalidOf(lines, preview.taxable);
   const payerUnanswered = payerMismatch && !payerAnswer;
   /* R-2440: Find in Zoho left prices in USD (no bank rate fitting Zoho's) — no Save until they are in ₹. */
   const fxUnconverted = saleShown ? zohoUnconvertedProblem(zohoFill, lines) : null;
   /* R-2427 (3): a Find-in-Zoho USD bill (₹ at the bank's rate) saves IN USD with the narration's figures; not on a relink. */
   const saleFx = mode === "sale" && !relink ? prefillSaleFx(zohoFill, transaction.description, credit) : null;
+  /* R-2518: the receipt paid SEVERAL Zoho invoices (Find in Zoho) — one app sale per Zoho invoice in ONE split call. */
+  const zoho = mode === "sale" && !relink && !saleFx ? zohoSheetSales(lines, { payCycle, gstRate, start: subStart || transaction.txn_date, credit }) : null;
+  const zohoProblem = zohoSheetProblem(zoho, { tdsAmount, belowCost: saleBelowCost });
   const canSave = Boolean(customerId) && mode !== null && !busy && !datesBad && !payerUnanswered
-    && !approvalBlocked && !fxUnconverted && !itemPlan?.problem
+    && !approvalBlocked && !fxUnconverted && !itemPlan?.problem && !zohoProblem && !tdsProblem && !shortUnanswered
     && !(relink && saleBelowCost)   // R-2397: the server refuses a relink to a below-cost sale
     && (mode === "item" ? Boolean(picked) : mode === "sale" ? !saleInvalid : mode === "split" ? !splitInvalid : true);
 
@@ -321,18 +386,36 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
       subStart: makesSub && createSub ? subStart : null,
       subRenewal: makesSub && createSub ? subRenewal : null,
     };
-    /* R-2095: a round-off (≤ ₹50) on one sale / item settles it in full — saved through the split
-       RPC, which books the difference (R-2098's rule) in the same transaction. */
-    const roundOff = !relink && shortChoice === "round_off" && check?.kind === "short" && (mode === "sale" || (mode === "item" && picked))
-      ? roundOffSplit(mode === "sale" ? { mode: "sale", saleTotal: preview.total } : { mode: "item", item: picked! })
-      : null;
-    if (roundOff) {
+    const bookSplit = async (input: Parameters<typeof splitPay.mutateAsync>[0]) => {
       try {
         if (payer && payerToRecord) {
           await setLinePayer.mutateAsync({ transactionId: transaction.id, customerId, payer, relation: payerToRecord.relation, note: payerToRecord.note });
         }
-        const r = await splitPay.mutateAsync({
-          transactionId: transaction.id, customerId, customerName: customer?.name ?? null,
+        const r = await splitPay.mutateAsync(input);
+        setResult(r);
+        if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
+      } catch { /* the hook toasts */ }
+    };
+    const splitHead = { transactionId: transaction.id, customerId, customerName: customer?.name ?? null };
+    /* R-2518: several Zoho invoices → one sale each, ONE split call (the amounts: zohoSalesPlan). */
+    if (zoho) {
+      return bookSplit({ ...splitHead, items: [], rest: zoho.plan.rest,
+        sale: zohoSplitSales(zoho, { makeSubs: makesSub && createSub, subStart: subArgs.subStart, subRenewal: subArgs.subRenewal }) });
+    }
+    /* R-2095: a round-off (≤ ₹50) on one sale / item settles it in full — saved through the split
+       RPC, which books the difference (R-2098's rule) in the same transaction. */
+    /* R-1678: a foreign invoice paid in ₹ — the same split call, settled in full + the exchange difference. */
+    const roundOff = !relink && mode === "item" && picked && itemInrFx
+      ? { ...roundOffSplit({ mode: "item", item: picked }), rest: "fx" as const }
+      : writeOffOk && check && (mode === "sale" || (mode === "item" && picked))
+        && ((check.kind === "short" && (shortChoice === "round_off" || shortChoice === "bank_charge")) || overIsRoundOff(check))
+      /* R-2192: ₹1 over → round-off gain; a bank / SWIFT charge → rest "bank_charge" (Bank Charges expense). */
+      ? roundOffSplit(mode === "sale" ? { mode: "sale", saleTotal: preview.total } : { mode: "item", item: picked! },
+          check.kind === "short" && shortChoice === "bank_charge" ? "bank_charge" : "round_off")
+      : null;
+    if (roundOff) {
+      return bookSplit({
+          ...splitHead,
           items: roundOff.items,
           sale: roundOff.saleAmount !== null
             ? { lines: saleLinesPayload(lines), billingCycle: saleCycle, createSubscription: makesSub ? createSub : false,
@@ -341,18 +424,10 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           rest: roundOff.rest,
           externalNumber: zohoNumber,
         });
-        setResult(r);
-        if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
-      } catch { /* the hook toasts */ }
-      return;
     }
     if (mode === "split") {
-      try {
-        if (payer && payerToRecord) {
-          await setLinePayer.mutateAsync({ transactionId: transaction.id, customerId, payer, relation: payerToRecord.relation, note: payerToRecord.note });
-        }
-        const r = await splitPay.mutateAsync({
-          transactionId: transaction.id, customerId, customerName: customer?.name ?? null,
+      return bookSplit({
+          ...splitHead,
           items: splitPicked.map((i) => ({ quote_id: i.quote_id, invoice_id: i.invoice_id, amount: picks[itemKey(i)] })),
           sale: splitSale
             ? { lines: saleLinesPayload(lines), billingCycle: saleCycle, createSubscription: makesSub ? createSub : false,
@@ -361,10 +436,6 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
           rest,
           externalNumber: zohoNumber,
         });
-        setResult(r);
-        if (!r.needs_approval) onSaved?.();   // R-2397: nothing was booked
-      } catch { /* the hook toasts */ }
-      return;
     }
     const target: RelinkTarget = mode === "item" && picked
       ? {
@@ -401,18 +472,18 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
   const saveLabel = `${relink ? "Relink: " : ""}${mode === null
     ? "Choose what this money is for"
     : mode === "item"
-    ? picked ? `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile` : "Pick what it pays"
+    ? picked ? (itemInrFx ? `Settle ${picked.invoice_id ?? picked.quote_id} in full & reconcile ${rupee(credit)}` : `Record ${rupee(credit)} on ${picked.invoice_id ?? picked.quote_id} & reconcile`) : "Pick what it pays"
     : saleBelowCost && !relink
       ? "Send sale for approval (line stays unmatched)"   // R-2397
     : mode === "split"
       ? `Record on ${splitCount} item${splitCount === 1 ? "" : "s"} & reconcile ${rupee(credit)}`
     : mode === "sale"
-      ? `Record sale & reconcile ${rupee(credit)}`
+      ? (zoho ? `Record ${zoho.sales.length} sales (one per Zoho invoice) & reconcile ${rupee(credit)}` : `Record sale & reconcile ${rupee(credit)}`)   // R-2518
       : `Keep ${rupee(credit)} as advance & reconcile`}`;
   useFooterSaveReport(onFooterSave, credit > 0 && !result && customerId
     ? {
         label: saveLabel, onSave: () => { void save(); }, disabled: !canSave, loading: busy,
-        disabledReason: fxUnconverted ?? itemPlan?.problem ?? splitFx ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
+        disabledReason: fxUnconverted ?? itemPlan?.problem ?? splitFx ?? zohoProblem ?? shortUnanswered ?? tdsProblem ?? (payerUnanswered && mode !== null ? "Say who paid before saving." : null),
       }
     : null);
 
@@ -574,6 +645,8 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
             )
           ) : saleEditorNode}
 
+          {zoho && <ZohoSalesNote zoho={zoho} problem={zohoProblem} />}{/* R-2518 */}
+
           {/* R-2213: a below-cost quote waiting for the owner takes no money — the DB refuses it, so
               Save is locked here with the same reason and the way forward. */}
           {approvalBlocked && (
@@ -638,9 +711,13 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
 
           {/* 3. Amount check */}
           {check && <AmountCheckBox check={check} credit={credit} due={due ?? 0} choice={shortChoice} onChoice={setShortChoice}
-            section={tdsSection} sectionReason={tdsSectionPick ? null : tdsGuess.reason} onSection={setTdsSectionPick} noRoundOff={Boolean(relink)} />}
+            section={tdsSection} onSection={setTdsSectionPick} rateText={tdsRateShown} onRate={setTdsRateText}
+            rateReason={tdsReasonShown} problem={tdsProblem}
+            gross={tdsGrossShown} noRoundOff={!writeOffOk} />}
           {/* R-2466: an export receipt on a foreign invoice / an opening invoice paid over its due. */}
           <ItemPlanNote plan={splitFx ? { fx: null, problem: splitFx } : itemPlan} item={picked} />
+          {/* R-1678: what the exchange difference books (one foreign invoice paid in ₹, or several on one credit). */}
+          {fxPlanned && <FxSettleNote fx={fxPlanned} choice={fxChoice} onChoice={setFxChoice} />}
 
           {/* R-2095 (staging, 30 Oct): a refused save left the drawer open with nothing said — the
               server's reason is shown here too, not only as a toast. */}
@@ -663,57 +740,6 @@ export function CreditPayForSection({ transaction, customers, onNewCustomer, pic
         </>
       )}
     </section>
-  );
-}
-
-function AmountCheckBox({ check, credit, due, choice, onChoice, section, sectionReason, onSection, noRoundOff }: {
-  check: AmountCheck; credit: number; due: number; choice: ShortChoice; onChoice: (c: ShortChoice) => void;
-  section: string; sectionReason: string | null; onSection: (s: string) => void; noRoundOff?: boolean;
-}) {
-  const choices = shortChoices(check).filter((c) => !(noRoundOff && c.value === "round_off"));
-  if (check.kind === "exact") {
-    return <p className="text-xs text-emerald inline-flex items-center gap-1"><Icon name="check" size={12} /> {rupee(credit)} received = {rupee(due)} due.</p>;
-  }
-  if (check.kind === "over") {
-    return (
-      <p className="text-xs text-ink-2 bg-paper rounded-md border border-hairline px-2.5 py-2">
-        {rupee(credit)} received is <b>{rupee(check.overBy)} more</b> than {rupee(due)} due — the extra is kept as the customer&apos;s advance credit and used on their next bill.
-      </p>
-    );
-  }
-  return (
-    <div className="rounded-md border border-hairline bg-paper px-2.5 py-2 space-y-1.5">
-      <p className="text-xs text-ink-2">
-        {rupee(credit)} received is <b>{rupee(check.shortBy)} less</b> than {rupee(due)} due.
-        {check.tdsRatePct !== null && <> That is {check.tdsRatePct}% TDS on the taxable value.</>}
-      </p>
-      <div className={`grid grid-cols-1 gap-1.5 ${choices.length > 2 ? "sm:grid-cols-3" : "sm:grid-cols-2"}`} role="group" aria-label="Why less was received">
-        {choices.map(({ value: k, label }) => (
-          <button
-            key={k}
-            type="button"
-            aria-pressed={choice === k}
-            onClick={() => onChoice(k)}
-            className={`rounded-md border px-2 py-1.5 text-xs font-medium text-left ${choice === k ? "border-amber bg-amber/10 text-amber-ink" : "border-hairline text-ink-2"}`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
-      {choice === "tds" && (
-        <div className="space-y-1">
-          <label className="flex flex-wrap items-center gap-2 text-xs text-ink-2">
-            <span>TDS section</span>
-            <select value={section} onChange={(e) => onSection(e.target.value)} aria-label="TDS section"
-              className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40">
-              {TDS_SECTION_CHOICES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
-          </label>
-          {sectionReason && <p className="text-xs text-ink-3">{sectionReason}</p>}
-          <p className="text-xs text-ink-3">Booked as TDS receivable (section {section}) — collect the customer&apos;s Form 16A.</p>
-        </div>
-      )}
-    </div>
   );
 }
 
@@ -803,7 +829,7 @@ function SaleEditor({ customerDomain, lines, catalog, gstRate, preview, payment,
         <option value="" disabled>{lines.length ? "＋ Add another product…" : "What was sold? Select a product…"}</option>
         {catalog.map((i) => <option key={i.id} value={i.id}>{i.name}{i.vendor ? ` · ${i.vendor}` : ""}</option>)}
       </select>
-      {saleTermsMixed(lines) && <p className="text-xs text-rose-ink">Flexible (monthly) cannot be on one sale with yearly or one-time products — record them as separate sales (or make them all one commitment).</p>}
+      {saleTermsMixed(lines) && <p role="alert" className="text-xs text-rose-ink">{SALE_TERMS_MIXED_MESSAGE}</p>}
       {payment.options.length > 0 && (
         <label className="block text-xs text-ink-3 space-y-0.5">
           <span className="block">Payment frequency</span>

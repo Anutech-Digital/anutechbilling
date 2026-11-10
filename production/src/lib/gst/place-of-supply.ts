@@ -6,8 +6,8 @@ import type { CustomerGstTreatment } from "./customer-gst-treatment";
  * R-1736 — THE one tax rule a customer's GST treatment adds: a supply to an SEZ unit or
  * developer is INTER-STATE whatever the two states are (IGST Act §7(5)(b)), so it is IGST
  * even when the SEZ sits in the seller's own state. Every other treatment keeps the state
- * comparison. (Zero-rating SEZ-without-payment / exports under an LUT is Hitesh's pending
- * decision — LUT_ZERO_RATING_PENDING in customer-gst-treatment.ts.)
+ * comparison. (R-2515: an SEZ supplied WITHOUT payment of tax is also zero-rated under the
+ * LUT, like an export — isZeroRatedSupply below. SEZ with payment stays IGST.)
  *
  * The SQL side applies the same rule in tg_invoice_snapshot_parties (migration
  * ..._r1736_customer_gst_treatment), so every invoice path agrees with this.
@@ -86,6 +86,38 @@ export function isExportSupply(customerCountry: string | null | undefined): bool
   const c = (customerCountry ?? "").trim().toLowerCase();
   if (c === "") return false;
   return !DOMESTIC_COUNTRIES.has(c);
+}
+
+/**
+ * R-2515 — is a supply to this customer zero-rated (0% GST under the LUT)? True for an export
+ * (customer outside India, whatever treatment it still carries) and for an SEZ unit / developer
+ * supplied WITHOUT payment of tax (IGST Act s.16(1)(b), s.16(3)(a)). SEZ WITH payment is taxed.
+ * SQL twin: public.supply_is_zero_rated(country, treatment) (migration
+ * 20261105190824_r2515_sez_zero_rated); a 0% invoice of either kind needs the LUT of its FY.
+ *
+ * @example isZeroRatedSupply({ country: "India", treatment: "sez_without_payment" }) // true
+ */
+export function isZeroRatedSupply(a: {
+  country: string | null | undefined;
+  treatment: CustomerGstTreatment | string | null | undefined;
+}): boolean {
+  return isExportSupply(a.country) || a.treatment === "sez_without_payment";
+}
+
+/**
+ * R-2620 — a customer marked Overseas whose country is empty (or India). Empty = India (G5), so the
+ * app cannot tell an export (0% under the LUT) from an Indian sale: a quote that goes out and a new
+ * invoice are refused until the country is picked. SQL twin: public.overseas_country_missing
+ * (migration 20261109063436_r2620_overseas_needs_country).
+ *
+ * @example overseasCountryMissing({ treatment: "overseas", country: "" })    // true
+ * @example overseasCountryMissing({ treatment: "overseas", country: "UAE" }) // false
+ */
+export function overseasCountryMissing(a: {
+  treatment: CustomerGstTreatment | string | null | undefined;
+  country: string | null | undefined;
+}): boolean {
+  return a.treatment === "overseas" && !isExportSupply(a.country);
 }
 
 /** Resolve the GST treatment. Export (outside India) wins over the state comparison. */
@@ -169,13 +201,15 @@ export function frozenParty(
  * The BUYER side is the place of supply the caller already resolved (state code, else the
  * GSTIN prefix — generate_invoice does the same since R-373).
  *
- * Order: export (no Indian place of supply) → company state → customer state → compare.
+ * Order: export (no Indian place of supply) → company state → Overseas customer with no country
+ * (R-2620) → customer state → compare.
  * The company check comes first because it is one click to fix and blocks every quote.
  *
  * @example supplyHead({ isExport: false, buyerStateCode: "06", sellerStateCode: null }).kind  // "seller_state_missing"
  * @example supplyHead({ isExport: false, buyerStateCode: "06", sellerStateCode: "07" }).kind  // "inter_state"
  */
-export type SupplyHeadKind = "export" | "seller_state_missing" | "buyer_state_missing" | "intra_state" | "inter_state";
+export type SupplyHeadKind =
+  | "export" | "seller_state_missing" | "buyer_country_missing" | "buyer_state_missing" | "intra_state" | "inter_state";
 
 export interface SupplyHead {
   kind: SupplyHeadKind;
@@ -195,6 +229,8 @@ export function supplyHead(a: {
   if (a.isExport) return { kind: "export", known: true, interState: false };
   const seller = (a.sellerStateCode ?? "").trim();
   if (!seller) return { kind: "seller_state_missing", known: false, interState: false };
+  /* R-2620: Overseas with no country outside India — neither export nor a state comparison is right. */
+  if (a.treatment === "overseas") return { kind: "buyer_country_missing", known: false, interState: false };
   const buyer = (a.buyerStateCode ?? "").trim();
   if (!buyer) return { kind: "buyer_state_missing", known: false, interState: false };
   const inter = treatmentIsAlwaysInterState(a.treatment) || Number(buyer) !== Number(seller);

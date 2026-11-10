@@ -194,6 +194,15 @@ describe("a failure does not burn the key", () => {
     expect(state.apply).toHaveBeenCalledTimes(1);
   });
 
+  it("R-2605: an open plan-change quote → 409 plan_change_open, key released", async () => {
+    const msg = "Plan change quote Q-PC-1 is open for this subscription — it was priced on today's seats, monthly amount and plan. Delete that quote (or record its payment) first, then change the seats or details.";
+    state.apply = vi.fn(async () => ({ ok: false, code: "plan_change_open", message: msg }));
+    const res = await post({ additional_seats: 2, idempotency_key: KEY });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ code: "plan_change_open", error: msg });
+    expect(state.claims).toHaveLength(0);
+  });
+
   it("a HALF-written attempt keeps the key and reports itself", async () => {
     /* sub_update_failed means the quote exists and the seats do not. Releasing the key
        here would let a retry raise a SECOND quote on top of the first — the customer

@@ -26,6 +26,23 @@
  * GATE (docs/WORKER-STEPS.md) runs that list by name before push (most of the names do not match
  * the wiring or scan name globs). A file that turned CI red after skipping push (R-1592, R-1973) stays here.
  * Run it: `node scripts/ops/push-guard-suites.mjs --ci-only` prints the paths, one per line.
+ *
+ * R-2564 (7 Nov 2026): every push still took 85–169 s. Cause: ~20 of these files each walked src/
+ * (4,900 files + Prisma's 36 MB generated client) or supabase/migrations (600 files) on their own —
+ * on Windows the file opens are the cost, a dozen times over in the fork pool. Now a repo-wide scan
+ * reads through src/lib/testing/source-cache.ts (`readSource`: size+mtime+ctime checked on EVERY
+ * read, so never stale; one shared cache file per checkout in the OS temp folder) and skips the
+ * generated client (src/lib/testing/prisma-generated.ts, pinned to the schema's output). Same tests,
+ * same strictness. The five a11y guards build the a11y-count report in-process (a11yReport) instead of
+ * spawning node five times. Measured alternating runs, 5–6 worker locks + tsc running: before
+ * 202.5/169.0/64.2 s, after 48.8/35.0/26.2 s (light load: 55/57/49 → 28/27/28 s; cold cache 44.6 s).
+ * A NEW whole-tree scan: read with readSource(), not readFileSync; list files with listSourceFiles()
+ * (src/lib/testing/walk-source.ts, R-2649 — one memoised walk, no stat per entry).
+ *
+ * R-2571 (7 Nov 2026): +6 migration/security scans (cloudsql-auth-shim etc.) — CI went red on one the
+ * push did not run. The six alone: 50 s → 14 s with readSource. Whole guard step (88 files + lint
+ * ratchet), 7 Nov with 64/44/21 node processes running: 32.0/29.5/28.4 s; a fresh worktree whose caches the
+ * fast gate has not warmed yet: 85.7 s once.
  */
 export const PUSH_GUARD_SUITES = [
   // ── ratchets ──
@@ -59,6 +76,16 @@ export const PUSH_GUARD_SUITES = [
   "src/lib/security/definer-hardening-holds.test.ts",
   "src/lib/security/invoker-function-grants.test.ts", // R-401: Cloud SQL gives no PUBLIC EXECUTE
   "src/lib/security/service-role-policies.test.ts", // R-450: Cloud SQL gives service_role no BYPASSRLS
+  // R-2571 (7 Nov 2026): R-2570's migration added a raw `auth.role() is null … session_user not in (…)`
+  // list; cloudsql-auth-shim-scan caught it only in CI (red, every push stopped). Every src/lib/security
+  // test that reads supabase/migrations now runs here (tests/push-guard-suites.test.ts pins that). All
+  // read through readSource(); none needs a DB.
+  "src/lib/security/cloudsql-auth-shim-scan.test.ts", // R-2487: no new raw auth.role() trusted-server list
+  "src/lib/security/direct-login-role-scan.test.ts", // R-2485: no new raw current_user role check
+  "src/lib/security/invoker-helper-grants-r2389.test.ts", // R-2389: invoker helpers stay granted to authenticated
+  "src/lib/security/secret-columns.test.ts", // R-833: no browser role reads a secret column
+  "src/lib/security/contact-logging-scan.test.ts", // R-1610: no unmasked email/phone in a server log
+  "src/server/db/migrations-frozen.test.ts", // a new supabase/migrations file must reach the deploy-db scripts
   // ── repo-source scans (readdirSync / glob over src) ──
   "src/app/(app)/quotes/invoice-link.test.ts",
   "src/app/(app)/accounting/cash-flow/cash-flow-copy-english.test.ts",
@@ -116,6 +143,9 @@ export const PUSH_GUARD_SUITES = [
   // ── repo-wide file scans ──
   "tests/ops/deploy-targets.test.ts", // R-1604: only live + staging deploy targets
   "tests/ops/dev-local-resend.test.ts", // R-2106: dev:local never lets a send key (Resend/SMTP/…) through; cron:local secret = dev-local's
+  // R-2564: every scan above reads through this cache — it must never serve old text, and the skip is exactly Prisma's output
+  "src/lib/testing/source-cache.test.ts",
+  "src/lib/testing/prisma-generated.test.ts",
 ];
 
 /**
@@ -140,6 +170,44 @@ export const CI_ONLY_GUARD_SUITES = [
 
 /** Soft budget: the push prints a warning above this so the list gets trimmed, not ignored. R-2443: 90 → 60 s. */
 export const PUSH_GUARD_BUDGET_MS = 60_000;
+
+/**
+ * R-2630 (9 Nov 2026): per-test (and hook) timeout for the push's guard run only. 9 Nov the step
+ * took 66–102 s and once went red on a TIMEOUT (tests/secret-scan.test.ts, R-2622 pushed twice).
+ * Measured the same day, same 88 files, one file at a time: ~45 s of work in all on a quiet laptop,
+ * 135–169 s with 4 workers + checkers running — every file 3–8x slower, so a 1-s scan crosses
+ * vitest's 5 s default and the push goes red on load, not on a bug. The heaviest real work was cut
+ * (anchor-links re-resolved every import per page, scope-gate imported make-call's unreached AI side,
+ * every fork loaded the whole 89 MB source cache — now buckets); this keeps a slow-but-green scan from
+ * failing the push. A real hang still stops at 30 s; CI keeps vitest's default.
+ */
+export const PUSH_GUARD_TEST_TIMEOUT_MS = 30_000;
+/** R-2630: the whole guard vitest run is killed after this (→ the push is refused, "vitest fail") so a
+    hang never holds the shared heavy turn for ever. Loaded laptop, 9 Nov: the run took up to ~102 s. */
+export const PUSH_GUARD_RUN_TIMEOUT_MS = 300_000;
+/**
+ * R-2649 (10 Nov 2026): the push runs the guard files with this config — vitest.config.ts plus a
+ * globalSetup (src/lib/testing/warm-source-cache.ts) that reads src/ + supabase/ through the source
+ * cache ONCE before the forks start. Every worker's push runs in a fresh worktree whose cache is cold:
+ * measured 10 Nov, same 88 files, other workers running — cold 135.3 s (app-url 116.9, secret-columns
+ * 77.6, no-seed-tenant 53.4 s: ~20 forks each reading the same 5,000 files at once), warm 28.4 s.
+ * Path relative to production/.
+ */
+export const GUARD_VITEST_CONFIG = "vitest.guard.config.ts";
+/** CI runs vitest with its default per-test timeout (vitest.config.ts sets none). */
+export const CI_TEST_TIMEOUT_MS = 5_000;
+
+/** R-2630: single tests that took longer than CI's timeout in a vitest json result, slowest first —
+    the push allows 30 s, so these are named (not failed) for a look on a quiet laptop. */
+export function testsOverCiTimeout(json, root, limitMs = CI_TEST_TIMEOUT_MS) {
+  const out = [];
+  for (const f of json?.testResults ?? []) {
+    for (const a of f.assertionResults ?? []) {
+      if (Number(a.duration) > limitMs) out.push({ file: relToRoot(f.name, root), test: a.title ?? a.fullName ?? "?", ms: Number(a.duration) });
+    }
+  }
+  return out.sort((a, b) => b.ms - a.ms);
+}
 
 /** A vitest json `name` (absolute path) relative to production/ (`root`), forward slashes. */
 function relToRoot(name, root) {

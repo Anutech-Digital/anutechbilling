@@ -58,12 +58,18 @@ import {
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
 import { issueConsequences, bulkIssueConsequences } from "@/lib/invoices/issue-consequences";
+import { pendingQuoteToIssuable, pendingQuotesToIssuable } from "@/lib/invoices/pending-issuable";
+import { useInvoiceIssueDate, useInvoiceIssueDates } from "@/lib/invoices/issue-date";
+import { useTenantLuts } from "@/lib/queries/tenant-luts";
+import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { issueEinvoiceNotice, irnAgeingInvoices, irnAgeingNotice, isB2B } from "@/lib/compliance/einvoice";
+import { invoiceIrnGstin } from "@/lib/invoices/invoice-buyer";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { useCustomers } from "@/lib/queries/customers";
-import { invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
+import { invoiceCustomerCountry, invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
@@ -80,6 +86,9 @@ import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
 import { downloadServerExport } from "@/lib/exports/download-server-export";
 import { mayExport } from "@/lib/exports/server-export";
 import { ImportZohoInvoicesDialog, canImportOpeningInvoices } from "@/components/features/invoices/import-zoho-invoices-dialog";
+import { ZohoFySalesImportDialog } from "@/components/features/invoices/zoho-fy-sales-import-dialog";
+import { ZohoFyReceiptsImportDialog } from "@/components/features/invoices/zoho-fy-receipts-import-dialog";
+import { canImportFySales } from "@/lib/integrations/zoho-books/sales-import/plan";
 
 /* R-085: on the shared DataTable. Widths are fluid percentages (with the 3% checkbox
    column they sum to 100) so the table always fits — no horizontal scroll. Clicking a
@@ -108,6 +117,11 @@ function InvoicesPageInner() {
   /* R-1739: Import open invoices from Zoho (owner / manager / accountant). */
   const canImportZoho = canImportOpeningInvoices(me?.role);
   const [zohoOpen, setZohoOpen] = React.useState(false);
+  /* R-2499: FY 2025-26 sales from Zoho (owner / accountant — the RPC checks too). */
+  const canImportFy = canImportFySales(me?.role);
+  const [fyOpen, setFyOpen] = React.useState(false);
+  /* R-2501: their receipts + TDS from Zoho (same roles). */
+  const [fyRcptOpen, setFyRcptOpen] = React.useState(false);
   /* R-487: "Fill missing costs" writes invoice lines — the owner's call only (the RPC checks too). */
   const isOwner      = me?.role === "owner";
   const [fillCostsOpen, setFillCostsOpen] = React.useState(false);
@@ -126,11 +140,13 @@ function InvoicesPageInner() {
   const bracket = turnover?.bracket ?? null;
   const irnAgeing = React.useMemo(() => {
     if (!invoices || !bracket) return null;
-    /* Older invoices may not carry customer_gstin — fall back to the customer's GSTIN. */
+    /* R-2540: only an older invoice with NO buyer snapshot falls back to the customer's GSTIN. Once
+       the invoice carries its snapshot (or is a Zoho sale kept as filed), a NULL GSTIN is a B2C
+       supply — no IRN is due, whatever the customer's GSTIN is today. */
     const gstinById = new Map((customers ?? []).map((c) => [c.id, c.gstin ?? null] as const));
     const rows = invoices.map((i) => ({
       ...i,
-      customer_gstin: i.customer_gstin ?? (i.customer_id ? gstinById.get(i.customer_id) ?? null : null),
+      customer_gstin: invoiceIrnGstin(i, i.customer_id ? gstinById.get(i.customer_id) ?? null : null),
     }));
     const { ageing, pastLimit } = irnAgeingInvoices(bracket, rows);
     return irnAgeingNotice(ageing.length, pastLimit);
@@ -231,41 +247,54 @@ function InvoicesPageInner() {
   const { data: series } = useDocumentSeries();
   const invoiceSeries = series?.invoice ?? null;
 
-  /** A pending quote in the shape `issueConsequences` needs. */
-  const toIssuable = React.useCallback(
-    (q: {
-      id: string; customer_name?: string | null; amount?: number | null;
-      payment_terms_days?: number | null;
-      /* Decorated by useQuotesAwaitingInvoice. Absent (undefined) means "not asked", and
-         issue-consequences then says nothing rather than warning about a GSTIN nobody
-         looked for. */
-      customer_gstin?: string | null;
-      part_action?: PendingPartAction;
-    }) => ({
-      id: q.id,
-      customerName: q.customer_name ?? null,
-      /* R-2057: a part's invoice is for the part, not the year. */
-      amount: q.part_action?.kind === "part" ? q.part_action.amount ?? q.amount ?? null : q.amount ?? null,
-      paymentTermsDays: q.payment_terms_days ?? null,
-      customerGstin: q.customer_gstin ?? null,
-    }),
-    [],
-  );
-
   const singleQuote = React.useMemo(
     () => (confirmSingle ? pending?.find((q) => q.id === confirmSingle) ?? null : null),
     [confirmSingle, pending],
   );
+  /* R-2647: the same facts the quote page's confirm gets (R-2635/R-2636) — the date generate_invoice
+     will really use (latest receipt day, first open day) and the LUT of that date's FY — so a customer
+     abroad reads "export … 0% under LUT" / "WITH payment of IGST", never "B2C". */
+  const singleIssueDate = useInvoiceIssueDate({
+    tenantId: me?.tenantId, receiptDay: singleQuote?.latest_receipt_day ?? null, enabled: confirmSingle !== null,
+  });
+  const singleLuts = useTenantLuts(confirmSingle !== null || confirmBulk);
+  const tenantLuts = singleLuts.data;
+  const gstRegistration = useGstRegistration();
+  const billOfSupply = !!billOfSupplyStatus(gstRegistration.data?.saved);
+  /* Held (Issue disabled, no lines) while the server's date or the LUTs are still loading — the
+     number's FY and the LUT block depend on them. A failed read stops holding: no date line, no ARN. */
+  const singleFactsLoading = singleIssueDate.loading || singleLuts.isLoading;
   const singleConsequences = React.useMemo(
-    () => (singleQuote ? issueConsequences({ quote: toIssuable(singleQuote), series: invoiceSeries }) : null),
-    [singleQuote, invoiceSeries, toIssuable],
+    () => (singleQuote && !singleFactsLoading ? issueConsequences({
+      quote: pendingQuoteToIssuable(singleQuote, {
+        invoiceDate: singleIssueDate.date ?? undefined,
+        invoiceDateWhy: singleIssueDate.why,
+        luts: tenantLuts,
+        billOfSupply,
+      }),
+      series: invoiceSeries,
+    }) : null),
+    [singleQuote, singleFactsLoading, invoiceSeries, singleIssueDate.date, singleIssueDate.why, tenantLuts, billOfSupply],
   );
+  /* R-2651: the bulk confirm gets the same facts per selected quote — its own server date (from its
+     latest receipt day) and the LUTs — and is held (no lines, Issue disabled) while they load. */
+  const bulkRows = React.useMemo(
+    () => (confirmBulk && pending ? pending.filter((q) => pendingSelected.has(q.id)) : []),
+    [confirmBulk, pending, pendingSelected],
+  );
+  const bulkIssueDates = useInvoiceIssueDates({
+    tenantId: me?.tenantId,
+    receiptDays: bulkRows.filter((q) => q.part_action?.kind !== "part").map((q) => q.latest_receipt_day ?? null),
+    enabled: confirmBulk,
+  });
+  const bulkFactsLoading = bulkIssueDates.loading || singleLuts.isLoading;
   const bulkConsequences = React.useMemo(() => {
-    if (!confirmBulk || !pending) return null;
-    const selected = pending.filter((q) => pendingSelected.has(q.id));
-    if (selected.length === 0) return null;
-    return bulkIssueConsequences({ quotes: selected.map(toIssuable), series: invoiceSeries });
-  }, [confirmBulk, pending, pendingSelected, invoiceSeries, toIssuable]);
+    if (bulkRows.length === 0 || bulkFactsLoading) return null;
+    return bulkIssueConsequences({
+      quotes: pendingQuotesToIssuable(bulkRows, { dateFor: bulkIssueDates.dateFor, luts: tenantLuts, billOfSupply }),
+      series: invoiceSeries,
+    });
+  }, [bulkRows, bulkFactsLoading, bulkIssueDates.dateFor, tenantLuts, billOfSupply, invoiceSeries]);
 
   /* R-337: "IRN needed" banner in the issue dialog for B2B (GSTIN) buyers above ₹5 Cr. */
   const singleEinvoice = React.useMemo(
@@ -274,9 +303,8 @@ function InvoicesPageInner() {
   );
   const bulkEinvoice = React.useMemo(() => {
     if (!confirmBulk || !pending) return null;
-    const selected = pending.filter((q) => pendingSelected.has(q.id));
-    return issueEinvoiceNotice(bracket, selected.filter((q) => isB2B(q.customer_gstin)).length, selected.length);
-  }, [confirmBulk, pending, pendingSelected, bracket]);
+    return issueEinvoiceNotice(bracket, bulkRows.filter((q) => isB2B(q.customer_gstin)).length, bulkRows.length);
+  }, [confirmBulk, pending, bulkRows, bracket]);
 
   /* Lifted out of the pending-card IIFE so the confirmation can call it. Unchanged
      otherwise — including that it issues one at a time and counts failures, which is
@@ -288,8 +316,11 @@ function InvoicesPageInner() {
     }
     setGenerating(true);
     let ok = 0, fail = 0;
+    /* R-2651: only the rows the confirm listed — a quote invoiced elsewhere meanwhile has left `pending`. */
     for (const id of pendingSelected) {
-      const act = pending?.find((q) => q.id === id)?.part_action;
+      const row = pending?.find((q) => q.id === id);
+      if (!row) continue;
+      const act = row.part_action;
       try {
         if (act?.kind === "short") { fail++; continue; }   // not paid in full — no tax invoice yet
         if (act?.kind === "part") {
@@ -318,7 +349,12 @@ function InvoicesPageInner() {
   /* R-060: bucket, not raw status (an unpaid invoice past due is Overdue). R-063: one
      invoice, one chip — invoiceChip — so the chips add up to All, Void included.
      R-1709: chip, row badge and "Paid this month" read one money state (lib/invoices/payment-state.ts). */
-  const counts = React.useMemo(() => invoiceChipCounts(viewInvoices, undefined, noteTotals), [viewInvoices, noteTotals]);
+  /* R-2566: the IST day is an input of every overdue / "this month" answer below (chips, list,
+     KPIs), passed explicitly so the memos re-run when the day changes. todayAt = noon IST of
+     today, for the helpers that take a Date: same IST day and month as "now", stable all day. */
+  const today = istToday();
+  const todayAt = React.useMemo(() => new Date(`${today}T12:00:00+05:30`), [today]);
+  const counts = React.useMemo(() => invoiceChipCounts(viewInvoices, today, noteTotals), [viewInvoices, noteTotals, today]);
 
   const tabs: TabBarItem[] = [
     { id: "all",     label: "All",     count: counts.all ?? 0 },
@@ -336,11 +372,13 @@ function InvoicesPageInner() {
   // Filter — status tab (Partial/Pending both derive from status='pending',
   // split by whether advances were applied) + free-text search on invoice #,
   // customer, or status.
-  const rows = dateFilteredInvoices.filter((i) => {
+  /* R-2566: memoised — with 2,000+ invoices this ran invoiceChip on every one at EVERY render
+     (a row tick, a menu open). Same predicate, same inputs (the IST day included, above). */
+  const rows = React.useMemo(() => dateFilteredInvoices.filter((i) => {
     // Tile focus (R-118) — the same predicate the tile summed
-    if (focus && !invoiceInFocus(i, focus, undefined, noteTotals)) return false;
+    if (focus && !invoiceInFocus(i, focus, todayAt, noteTotals)) return false;
     // Status tab
-    if (tab !== "all" && invoiceChip(i, undefined, noteTotals) !== tab) return false;   // same function the counts use
+    if (tab !== "all" && invoiceChip(i, today, noteTotals) !== tab) return false;   // same function the counts use
     // Search
     if (search.trim()) {
       const s = search.toLowerCase();
@@ -348,17 +386,18 @@ function InvoicesPageInner() {
         i.id.toLowerCase().includes(s) ||
         (i.customer_name?.toLowerCase().includes(s) ?? false) ||
         // The bucket, so typing "overdue" finds the invoices the tab shows (R-060).
-        invoiceBucket(i).toLowerCase().includes(s);
+        invoiceBucket(i, today).toLowerCase().includes(s);
       if (!hit) return false;
     }
     return true;
-  });
+  }), [dateFilteredInvoices, focus, tab, search, noteTotals, today, todayAt]);
 
   /* KPIs (R-062): lib/invoices/kpis.ts. Outstanding = what is still owed on pending /
      overdue invoices (net of advances and receipts) — void and draft owe nothing.
      "Paid this month" = invoices fully paid in this IST month, by paid date; the
      /payments page's "Collected MTD" is money RECEIVED (incl. part payments and TDS). */
-  const { outstanding, overdueTotal, paidThisMonth: collectedMTD, paidThisMonthCount, outstandingCount } = invoiceKpis(invoices ?? [], undefined, noteTotals);
+  const { outstanding, overdueTotal, paidThisMonth: collectedMTD, paidThisMonthCount, outstandingCount } = React.useMemo(
+    () => invoiceKpis(invoices ?? [], todayAt, noteTotals), [invoices, noteTotals, todayAt]);   // R-2566: once per data / IST day, not per render
   /* A tile opens its exact set over EVERY invoice, as the tile counted it: no tab, date or
      type narrowing left over from before the click. */
   const focusOn = (f: InvoiceFocus) => { setView("all"); setDateRange("all"); setTab("all"); setFocus(f); };
@@ -395,6 +434,12 @@ function InvoicesPageInner() {
           {canImportZoho && (
             <Button icon="download" onClick={() => setZohoOpen(true)}>Import from Zoho</Button>
           )}
+          {canImportFy && (
+            <Button icon="download" onClick={() => setFyOpen(true)}>FY 2025-26 sales from Zoho</Button>
+          )}
+          {canImportFy && (
+            <Button icon="download" onClick={() => setFyRcptOpen(true)}>FY 2025-26 receipts from Zoho</Button>
+          )}
           <Button icon="upload" onClick={() => router.push("/accounting/gst" as any)}>Export GSTR-1</Button>
           {canQuotes && (
             <Button variant="primary" icon="plus" onClick={() => router.push(NEW_INVOICE_HREF as never)}>
@@ -406,6 +451,8 @@ function InvoicesPageInner() {
 
       {!canWrite && <ViewOnlyNote what="issue invoices, record payments or credit notes" />}
       {zohoOpen && <ImportZohoInvoicesDialog open={zohoOpen} onOpenChange={setZohoOpen} />}
+      {fyOpen && <ZohoFySalesImportDialog open={fyOpen} onOpenChange={setFyOpen} />}
+      {fyRcptOpen && <ZohoFyReceiptsImportDialog open={fyRcptOpen} onOpenChange={setFyRcptOpen} />}
 
       {/* R-337: ₹10 Cr+ turnover — B2B invoices 25+ days old with no IRN. */}
       <EinvoiceBanner notice={irnAgeing} className="mb-4" />
@@ -793,7 +840,7 @@ function InvoicesPageInner() {
             const selectedInvoices = rows.filter((r) => selected.has(r.id));
             const first = selectedInvoices[0];
             if (!first) return;
-            if (!openInvoiceWhatsApp(first, invoiceCustomerPhone(first, customers), waSender, (h) => router.push(h as never))) return;
+            if (!openInvoiceWhatsApp(first, invoiceCustomerPhone(first, customers), waSender, (h) => router.push(h as never), invoiceCustomerCountry(first, customers))) return;
             /* ── THE BUTTON USED TO SAY "Bulk WhatsApp" AND SEND ONE ─────────
                It opened `selectedInvoices[0]` and nothing else, so selecting twelve invoices
                and clicking it messaged one customer while the label said it had done all
@@ -980,11 +1027,11 @@ function InvoicesPageInner() {
       />
 
       <ConfirmIssueDialog
-        open={confirmBulk && bulkConsequences !== null}
+        open={confirmBulk && bulkRows.length > 0}
         onOpenChange={(v) => { if (!v) setConfirmBulk(false); }}
         consequences={bulkConsequences}
         einvoiceNotice={bulkEinvoice}
-        confirmLabel={`Issue ${pendingSelected.size} invoice${pendingSelected.size === 1 ? "" : "s"}`}
+        confirmLabel={`Issue ${bulkRows.length} invoice${bulkRows.length === 1 ? "" : "s"}`}
         busy={generating}
         onConfirm={() => { void issueSelected(); }}
       />
@@ -1266,7 +1313,7 @@ function InvoiceRow({
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="gap-2.5 py-2 cursor-pointer font-medium text-emerald"
-                    onClick={() => openInvoiceWhatsApp(inv, invoiceCustomerPhone(inv, customers), waSender, (h) => router.push(h as never))}
+                    onClick={() => openInvoiceWhatsApp(inv, invoiceCustomerPhone(inv, customers), waSender, (h) => router.push(h as never), invoiceCustomerCountry(inv, customers))}
                   >
                     <Icon name="whatsapp" size={15} /> Send / remind on WhatsApp
                   </DropdownMenuItem>
@@ -1309,7 +1356,10 @@ function InvoiceRow({
           );
         })()}
 
-        <DeleteInvoiceDialog
+        {/* R-2566: these three dialogs mount only while open — each of the 50 painted rows used
+            to mount all three with their queries / mutations (~450 ms of render measured on
+            2,000 invoices). Same pattern as RecordSubscriptionPaymentContainer below. */}
+        {delOpen && <DeleteInvoiceDialog
           open={delOpen}
           onOpenChange={setDelOpen}
           invoiceId={inv.id}
@@ -1320,7 +1370,7 @@ function InvoiceRow({
               onSuccess: () => setDelOpen(false),
             });
           }}
-        />
+        />}
         {isProject && payMilestone && (
           <RecordProjectPaymentDialog
             open={payOpen}
@@ -1336,7 +1386,7 @@ function InvoiceRow({
             onOpenChange={setSubPayOpen}
           />
         )}
-        <IssueCreditNoteDialog
+        {cnOpen && <IssueCreditNoteDialog
           open={cnOpen}
           onOpenChange={setCnOpen}
           invoiceId={inv.id}
@@ -1346,8 +1396,8 @@ function InvoiceRow({
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
           invoiceDate={inv.invoice_date}
-        />
-        <IssueCreditNoteDialog
+        />}
+        {dnOpen && <IssueCreditNoteDialog
           open={dnOpen}
           onOpenChange={setDnOpen}
           mode="debit"
@@ -1357,7 +1407,7 @@ function InvoiceRow({
           taxRate={inv.tax_rate}
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
-        />
+        />}
       </td>
     </tr>
     {expanded && (

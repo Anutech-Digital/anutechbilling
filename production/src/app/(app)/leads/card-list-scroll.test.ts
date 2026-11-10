@@ -24,9 +24,10 @@
  * can satisfy.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const APP = join(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -70,7 +71,7 @@ function clippingPages(): { file: string; src: string }[] {
          LeadListView). Those sources are scanned WITH the page, so the list is still held
          to the page's clipping rule instead of escaping it by changing files. */
       src: [file, ...(RENDERED_LISTS[file.replace(/\\/g, "/").split("/app/").pop() ?? ""] ?? [])]
-        .map((f) => readFileSync(f, "utf8"))
+        .map((f) => readSource(f))
         .join("\n"),
     }))
     .filter(({ src }) =>

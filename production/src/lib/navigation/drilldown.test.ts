@@ -165,7 +165,10 @@ describe("invoice money tiles: tile, list and dashboard agree", () => {
     const page = read("app/(app)/invoices/page.tsx");
     expect(page).toMatch(/useUrlChoice<InvoiceFocus>\("focus", INVOICE_FOCI, ""\)/);
     /* R-1709: the same note totals the tile summed with (credit-note settled = Credited, not paid). */
-    expect(page).toMatch(/if \(focus && !invoiceInFocus\(i, focus, undefined, noteTotals\)\) return false;/);
+    /* R-2566: the IST day is passed explicitly (todayAt = noon IST of today) — the tile's own
+       invoiceKpis gets the same todayAt, so list and tile still judge "this month" alike. */
+    expect(page).toMatch(/if \(focus && !invoiceInFocus\(i, focus, todayAt, noteTotals\)\) return false;/);
+    expect(page).toMatch(/invoiceKpis\(invoices \?\? \[\], todayAt, noteTotals\)/);
     expect(page).toMatch(/onClick=\{\(\) => focusOn\("unpaid"\)\}/);
     expect(page).toMatch(/onClick=\{\(\) => focusOn\("paid-month"\)\}/);
     expect(page).toMatch(/<FocusBanner/);

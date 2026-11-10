@@ -18,7 +18,9 @@
  */
 import { vendorOfCogsCategory } from "@/lib/accounting/pnl";
 import { splitBillItc } from "@/lib/gst/bill-itc";
-import { licenceEstimates, type LicenceEstimate, type LicenceSource, type SubLine } from "@/lib/accounting/pnl-compare";
+import { rupee } from "@/lib/utils";
+import { licenceEstimates, periodName, type LicenceEstimate, type LicenceSource, type SubLine } from "@/lib/accounting/pnl-compare";
+import { revenueBasisLabel, serviceBasisLabel, type MatchedBill } from "@/lib/accounting/pnl-basis";
 
 export type PnLDrillKind = "revenue" | "cogs" | "expenses";
 
@@ -122,29 +124,54 @@ export interface RevenueLineRow {
   status: string | null;
   family: string;
   amount: number;
+  /**
+   * R-2624 — only on SQL `report_pnl_revenue_matched_lines` (Management view): the document's whole
+   * share of this family (`amount` is the part in the range), its service period and how that
+   * period was decided (revenueBasisLabel).
+   */
+  doc_amount?: number;
+  service_from?: string;
+  service_to?: string;
+  basis?: string;
 }
 
 /**
  * The Revenue drill's rows: one per document (a mixed invoice's families added back together when
  * the whole line is open), only the families asked for. A fully credited invoice and its credit
- * note net to ₹0.
+ * note net to ₹0. R-2624: a Management row also says which months it is for, how that was decided
+ * and, when only a part falls in the range, "part of the ₹X invoice".
  */
 export function revenueDrillRows(lines: readonly RevenueLineRow[], t: Pick<PnLDrillTarget, "families" | "excludeFamilies">): DrillRow[] {
   const want = t.families && t.families.length > 0 ? new Set(t.families) : null;
   const skip = new Set(t.excludeFamilies ?? []);
-  const byDoc = new Map<string, DrillRow>();
+  const byDoc = new Map<string, { row: DrillRow; head: string; whole: number; from?: string; to?: string; bases: Set<string> }>();
   for (const l of lines) {
     if (want && !want.has(l.family)) continue;
     if (skip.has(l.family)) continue;
     const id = `${l.doc_kind}:${l.doc_id}`;
-    const cur = byDoc.get(id);
-    if (cur) { cur.amount = r2(cur.amount + Number(l.amount)); continue; }
-    const sub = l.doc_kind === "credit_note" ? `${l.doc_id} · credit note on ${l.invoice_id}`
-      : l.doc_kind === "debit_note" ? `${l.doc_id} · debit note on ${l.invoice_id}`
-      : `${l.doc_id} · ${l.status ?? "invoice"}`;
-    byDoc.set(id, { id, date: l.doc_date, primary: l.customer_name || "Customer", sub, amount: Number(l.amount) || 0 });
+    let cur = byDoc.get(id);
+    if (!cur) {
+      const head = l.doc_kind === "credit_note" ? `${l.doc_id} · credit note on ${l.invoice_id}`
+        : l.doc_kind === "debit_note" ? `${l.doc_id} · debit note on ${l.invoice_id}`
+        : `${l.doc_id} · ${l.status ?? "invoice"}`;
+      cur = { row: { id, date: l.doc_date, primary: l.customer_name || "Customer", sub: head, amount: 0 }, head, whole: 0, bases: new Set() };
+      byDoc.set(id, cur);
+    }
+    cur.row.amount = r2(cur.row.amount + (Number(l.amount) || 0));
+    cur.whole += Number(l.doc_amount ?? l.amount) || 0;
+    if (l.service_from && (!cur.from || l.service_from < cur.from)) cur.from = l.service_from;
+    if (l.service_to && (!cur.to || l.service_to > cur.to)) cur.to = l.service_to;
+    if (l.basis) cur.bases.add(l.basis);
   }
-  return [...byDoc.values()];
+  return [...byDoc.values()].map((d) => {
+    if (!d.from || !d.to) return d.row;
+    const basis = d.bases.size === 1 ? [...d.bases][0] : "mixed";
+    /* `whole` is the shown families' share of the document (a product row opens one family), so it
+       is named as what is spread, never as the invoice total. */
+    const part = Math.abs(d.row.amount - d.whole) >= 0.5 ? `part of ${rupee(d.whole)} spread over the whole period` : null;
+    const sub = [d.head, `for ${periodName({ from: d.from, to: d.to })}`, revenueBasisLabel(basis), part].filter(Boolean).join(" · ");
+    return { ...d.row, sub };
+  });
 }
 
 /** A vendor bill as the drill reads it. */
@@ -207,6 +234,66 @@ export function cogsDrillRows(
     });
   }
   return rows;
+}
+
+/**
+ * R-2622: the Management (matched) view's Licence-cost drill — the bills placed in this period by
+ * their SERVICE month (report_pnl_cogs_matched, R-2156): each at the part that falls in the range,
+ * with its service period and how that month was decided (a month misread from the bill text is
+ * visible at once). GST that cannot be claimed stays on the bill DATE in both views, so each bill
+ * dated in the range with such GST is its own row. Then the estimate rows and the project cost,
+ * as in the GST view — the rows add up to the line.
+ */
+export function matchedCogsDrillRows(
+  matched: readonly MatchedBill[],
+  billsByDate: readonly CogsBillRow[],
+  t: Pick<PnLDrillTarget, "vendors" | "estimates" | "projectCost">,
+  ownStateCode: string | null,
+  range: { to: string },
+): DrillRow[] {
+  const want = t.vendors && t.vendors.length > 0 ? new Set(t.vendors) : null;
+  /* Which statement line each row belongs to — the same rule as billedByVendor + licenceItems:
+     a vendor's line = its matched bills + the non-claimable GST of ITS categories that have a
+     matched bill in the range; a vendor whose total is 0 or less has no line of its own and, like
+     COGS-Other and GST of a category with no matched bill, sits in "Other vendor bills". */
+  const matchedCategories = new Set(matched.map((b) => b.category));
+  const tagged: { vendor: string; row: DrillRow }[] = [];
+  for (const b of matched) {
+    const part = Number(b.amount) !== Number(b.subtotal) ? `part of the ${rupee(Number(b.subtotal))} bill` : null;
+    tagged.push({
+      vendor: vendorOfCogsCategory(b.category) ?? "other",
+      row: {
+        id: b.id,
+        date: b.bill_date,
+        primary: b.vendor_name || "Vendor",
+        sub: [b.category?.replace(/^COGS-/, ""), b.bill_no, `for ${periodName({ from: b.service_from, to: b.service_to })}`,
+              serviceBasisLabel(b.basis), part].filter(Boolean).join(" · "),
+        amount: r2(Number(b.amount) || 0),
+      },
+    });
+  }
+  for (const b of billsByDate) {
+    const blocked = splitBillItc([{ ...b, ownStateCode }]).blocked;
+    if (!(blocked > 0)) continue;
+    tagged.push({
+      vendor: matchedCategories.has(b.category) ? (vendorOfCogsCategory(b.category) ?? "other") : "other",
+      row: {
+        id: `gst:${b.id}`,
+        date: b.bill_date,
+        primary: b.vendor_name || "Vendor",
+        sub: [b.bill_no, "GST not claimable (counted on the bill date)"].filter(Boolean).join(" · "),
+        amount: r2(blocked),
+      },
+    });
+  }
+  const vendorTotal = new Map<string, number>();
+  for (const x of tagged) vendorTotal.set(x.vendor, (vendorTotal.get(x.vendor) ?? 0) + x.row.amount);
+  const lineOf = (vendor: string) => (vendor !== "other" && (vendorTotal.get(vendor) ?? 0) > 0 ? vendor : "other");
+  /* assemblePnl counts bills only when their total is above 0 (`cogs > 0 ? cogs : null`) — a month that
+     nets to a credit shows no billed cost on the card, so the drill lists none either. */
+  const billedTotal = tagged.reduce((sum, x) => sum + x.row.amount, 0);
+  const rows = billedTotal > 0 ? tagged.filter((x) => !want || want.has(lineOf(x.vendor))).map((x) => x.row) : [];
+  return [...rows, ...cogsDrillRows([], t, ownStateCode, range)];
 }
 
 // ─── The tie ───────────────────────────────────────────────────────────────────────────

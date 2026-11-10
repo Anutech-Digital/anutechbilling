@@ -1,5 +1,5 @@
 /**
- * R-2522: GET  → the lead forms on every Page the Meta Ads login manages + which ones are chosen.
+ * R-2670: GET  → the lead forms on every Page the Meta Ads login manages + which ones are chosen.
  *         PUT  → save the chosen forms (owner / manager). Only forms that the login really sees are
  *                accepted, so a form id from somewhere else cannot be saved.
  * Pulling them: POST /api/integrations/facebook-page/leads and the meta-leads-pull cron.

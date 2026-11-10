@@ -11,6 +11,7 @@
 import type { BalanceSheetAuto, BalanceSheetItem } from "@/lib/queries/balance-sheet";
 import type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 import { addDaysISO } from "@/lib/dates/ist";
+import { netRevenueOf, type MatchedRevenueRow } from "@/lib/accounting/pnl-basis";
 
 export interface BalanceSheetTotals {
   /** GST: positive → payable (liability); negative → ITC credit (asset). */
@@ -110,4 +111,43 @@ export function balanceSheetTotals(
     currentRatio: currentLiab > 0 ? currentAssets / currentLiab : null,
     debtToEquity: netWorth > 0 ? totalLiab / netWorth : null,
   };
+}
+
+// ─── R-2625: Advance billing — the Management view of the Balance Sheet ───────────────
+
+/** Revenue invoiced to a date vs Management revenue earned to it (R-2624 spread). */
+export interface AdvanceBilling {
+  /** invoiced − earned. Positive = Advance billing (a liability); negative = earned, invoiced later. */
+  advance: number;
+  invoiced: number;
+  earned: number;
+}
+
+/**
+ * R-2625: Advance billing at a date = invoiced revenue to that date (report_pnl: invoices − credit
+ * notes + debit notes, before GST) − Management revenue earned to it (report_pnl_revenue_matched,
+ * the same dates). Whole rupees — both sides are sums of whole-rupee rows, so the difference is exact.
+ */
+export function advanceBillingOf(
+  invoiced: Pick<MatchedRevenueRow, "inv_taxable" | "cn_taxable" | "dn_taxable">,
+  earned: Pick<MatchedRevenueRow, "inv_taxable" | "cn_taxable" | "dn_taxable">,
+): AdvanceBilling {
+  const inv = netRevenueOf(invoiced);
+  const e = netRevenueOf(earned);
+  return { advance: inv - e, invoiced: inv, earned: e };
+}
+
+/**
+ * R-2625: the Management view of the sheet — the statutory totals with Advance billing added:
+ * positive → a liability (service still owed for money already invoiced), negative → an asset
+ * (revenue earned, invoice still to come). Net worth moves by the same amount, so the sheet still
+ * balances. The statutory totals (balanceSheetTotals, Trial Balance, CSV) never use this.
+ */
+export function managementBalanceSheet(
+  t: Pick<BalanceSheetTotals, "totalAssets" | "totalLiab" | "netWorth">,
+  advance: number,
+): { totalAssets: number; totalLiab: number; netWorth: number } {
+  const liability = advance > 0 ? advance : 0;
+  const asset = advance < 0 ? -advance : 0;
+  return { totalAssets: t.totalAssets + asset, totalLiab: t.totalLiab + liability, netWorth: t.netWorth - advance };
 }

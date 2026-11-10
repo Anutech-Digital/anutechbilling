@@ -61,6 +61,9 @@ interface Props {
   invoiceDate?: string | null;
   /** R-1711: the reason picked when it opens (the cancel dialog opens it as "cancellation"). */
   defaultReasonCode?: CreditNoteReasonCode;
+  /** R-2632: the amount filled in when it opens, instead of the balance still owed (a cancellation credits
+   *  the whole invoice, even when part or all of it is paid — the paid part becomes customer credit). */
+  defaultAmount?: number;
   /** R-1711: called after the note is issued (the cancel dialog re-reads what is still due). */
   onIssued?: () => void;
 }
@@ -80,7 +83,7 @@ function useInvoiceDate(invoiceId: string, enabled: boolean) {
 }
 
 export function IssueCreditNoteDialog({
-  open, onOpenChange, invoiceId, customerName, amountDue, taxRate, interState, isExport, mode = "credit", invoiceDate, defaultReasonCode, onIssued,
+  open, onOpenChange, invoiceId, customerName, amountDue, taxRate, interState, isExport, mode = "credit", invoiceDate, defaultReasonCode, defaultAmount, onIssued,
 }: Props) {
   const isDebit = mode === "debit";
   const { data: fetchedDate } = useInvoiceDate(invoiceId, open && !isDebit && invoiceDate === undefined);
@@ -99,11 +102,12 @@ export function IssueCreditNoteDialog({
       // Credit defaults to the balance still owed (blank when nothing is owed); a debit is a
       // fresh add, so start blank.
       const owed = Math.max(0, Math.round(amountDue));
-      setAmount(isDebit || owed <= 0 ? "" : String(owed));
+      if (!isDebit && defaultAmount != null && defaultAmount > 0) setAmount(String(Math.round(defaultAmount)));
+      else setAmount(isDebit || owed <= 0 ? "" : String(owed));
       setReasonCode(isDebit ? "undercharge" : (defaultReasonCode ?? "seats_reduced"));
       setReason("");
     }
-  }, [open, amountDue, isDebit, defaultReasonCode]);
+  }, [open, amountDue, isDebit, defaultReasonCode, defaultAmount]);
 
   const gross = Math.round(Number(amount) || 0);
   const rate = isExport ? 0 : (taxRate ?? 18);

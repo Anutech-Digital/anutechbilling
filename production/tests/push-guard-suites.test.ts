@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 // @ts-expect-error — plain .mjs ops script, no types
-import { PUSH_GUARD_SUITES, CI_ONLY_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites, slowestSuites } from "../scripts/ops/push-guard-suites.mjs";
+import { PUSH_GUARD_SUITES, CI_ONLY_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, PUSH_GUARD_TEST_TIMEOUT_MS, CI_TEST_TIMEOUT_MS, GUARD_VITEST_CONFIG, failedSuites, slowestSuites, testsOverCiTimeout } from "../scripts/ops/push-guard-suites.mjs";
 
 // R-385 (7 Oct 2026): `worker-lock.mjs push` runs these repo-scan / ratchet suites after the
 // rebase, because twice today a worker's push broke a scan test outside its own area.
@@ -44,7 +44,7 @@ describe("push guard suites (R-385)", () => {
   it("has no duplicates and stays a short list (the push waits for it)", () => {
     expect(new Set(list).size).toBe(list.length);
     expect(list.length).toBeGreaterThan(10);
-    expect(list.length).toBeLessThanOrEqual(80); // R-1973: 74 → 84 with the src/site scans; R-2443: 89 → 80 (+nav-coverage)
+    expect(list.length).toBeLessThanOrEqual(88); // R-1973: 74 → 84 with the src/site scans; R-2443: 89 → 80 (+nav-coverage); R-2564: +2 tiny source-cache guards (~0.1 s); R-2571: +6 migration/security scans
     expect(PUSH_GUARD_BUDGET_MS).toBe(60_000); // R-2443: 90 → 60 s
   });
 
@@ -118,6 +118,43 @@ describe("push guard suites (R-385)", () => {
     expect(fn).toMatch(/if \(ms > PUSH_GUARD_BUDGET_MS\) \{[\s\S]*sabse dheemi/);
   });
 
+  it("R-2630: the push's guard run gives each test 30 s, so laptop load does not turn a green scan red", () => {
+    expect(PUSH_GUARD_TEST_TIMEOUT_MS).toBe(30_000);
+    const src = fs.readFileSync(path.join(root, "scripts/ops/worker-lock.mjs"), "utf8");
+    const fn = src.slice(src.indexOf("export function runGuardSuites"), src.indexOf("async function pushWithTurn"));
+    expect(fn).toContain("`--testTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`");
+    expect(fn).toContain("`--hookTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`");
+    expect(fn).toContain("timeout: PUSH_GUARD_RUN_TIMEOUT_MS"); // a hang never holds the heavy turn for ever
+    expect(fn).toContain("testsOverCiTimeout(json, root)"); // CI's 5 s still named
+    // CI's own run keeps vitest's default (CI_TEST_TIMEOUT_MS): no testTimeout option in vitest.config
+    expect(fs.readFileSync(path.join(root, "vitest.config.ts"), "utf8")).not.toMatch(/testTimeout\s*:/);
+    expect(CI_TEST_TIMEOUT_MS).toBe(5_000);
+  });
+
+  it("R-2649: the push's guard run warms the source cache once first (cold worktree 135 s vs warm 28 s)", () => {
+    const src = fs.readFileSync(path.join(root, "scripts/ops/worker-lock.mjs"), "utf8");
+    const fn = src.slice(src.indexOf("export function runGuardSuites"), src.indexOf("async function pushWithTurn"));
+    expect(fn).toContain("`--config=${GUARD_VITEST_CONFIG}`");
+    expect(GUARD_VITEST_CONFIG).toBe("vitest.guard.config.ts");
+    const cfg = fs.readFileSync(path.join(root, GUARD_VITEST_CONFIG), "utf8");
+    expect(cfg).toMatch(/mergeConfig\(base,/); // the base config, unchanged — only a globalSetup added
+    expect(cfg).toContain('globalSetup: ["./src/lib/testing/warm-source-cache.ts"]');
+    expect(fs.existsSync(path.join(root, "src/lib/testing/warm-source-cache.ts"))).toBe(true);
+  });
+
+  it("R-2630: tests over CI's 5 s are named, slowest first", () => {
+    const json = { testResults: [
+      { name: "C:/w/production/src/a.test.ts", assertionResults: [{ title: "fast", duration: 40 }, { title: "slow", duration: 7000 }] },
+      { name: "C:/w/production/tests/b.test.ts", assertionResults: [{ title: "slower", duration: 12000 }, { title: "edge", duration: 5000 }] },
+      { name: "C:/w/production/tests/c.test.ts" },
+    ] };
+    expect(testsOverCiTimeout(json, "C:\\w\\production")).toEqual([
+      { file: "tests/b.test.ts", test: "slower", ms: 12000 },
+      { file: "src/a.test.ts", test: "slow", ms: 7000 },
+    ]);
+    expect(testsOverCiTimeout({}, "/x")).toEqual([]);
+  });
+
   it("R-1817: the Gemini scans run on push, the slow retry-timer suite does not", () => {
     expect(list).toContain("src/lib/ai/gemini-one-door.test.ts");
     expect(list).not.toContain("src/lib/ai/gemini.test.ts");
@@ -129,6 +166,15 @@ describe("push guard suites (R-385)", () => {
   it("R-1973: the src/site scan that turned CI red at 8ca1bcbe runs on push", () => {
     expect(list).toContain("src/site/page-metadata.test.ts");
     expect(list).toContain("src/site/lib/public-metadata-r1631.test.ts");
+  });
+
+  it("R-2571: every src/lib/security test that reads supabase/migrations runs on push", () => {
+    // 7 Nov 2026: R-2570's raw auth.role() list reached CI — cloudsql-auth-shim-scan was not on the list.
+    const security = walk(path.join(root, "src", "lib", "security")).filter((f) => /\.test\.tsx?$/.test(f));
+    const migrationScans = security.filter((f) => /supabase\/migrations/.test(fs.readFileSync(path.join(root, f), "utf8")));
+    expect(migrationScans).toContain("src/lib/security/cloudsql-auth-shim-scan.test.ts");
+    expect(migrationScans.length).toBeGreaterThanOrEqual(7);
+    expect(migrationScans.filter((f) => !list.includes(f))).toEqual([]);
   });
 
   it("includes the two suites that broke CI on 7 Oct", () => {

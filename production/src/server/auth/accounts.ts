@@ -268,6 +268,15 @@ export async function linkOAuthUser(input: OAuthLinkInput, store: OAuthStore): P
 
   if (profileId) {
     const owner = await store.byId(profileId);
+    /* R-2477 re-review: the profile email (public.users.email) can be set by a company owner for a
+       teammate who has NEVER signed in (R-712 typo fix). If it no longer equals that login's own
+       address, a sign-in with it must not take the login — the owner could point it at an address
+       they control and act as the teammate (accept another company's invite). A login that HAS
+       signed in keeps the R-529 behaviour (its profile email is guarded since R-2477: only the
+       login itself may move it), so existing accounts with an old login address still link. */
+    if (owner && normalise(owner.email ?? "") !== email && !owner.last_sign_in_at) {
+      return { ok: false, reason: "conflict" };
+    }
     if (owner) return finish(owner, "profile");
     // The profile has no login row, and a DIFFERENT login holds the address: refuse rather
     // than fork the account. db/ops/22-r529-merge-duplicate-google-login.sql repairs this.

@@ -136,7 +136,7 @@ describe("R-2405 page wiring", () => {
   it("the tiles sit above the queue and a press filters it (the table shows the tile's rows)", () => {
     expect(page).toMatch(/<RenewalTileRow[\s\S]*?onPick=\{pickTile\}/);
     expect(page.indexOf("<RenewalTileRow")).toBeLessThan(page.indexOf("<RenewalQueue"));
-    expect(page).toMatch(/tile \? allItems\.filter\(\(i\) => tileMatches\(tile, /);
+    expect(page).toMatch(/tile \? allItems\.filter\(\(i\) => \{[^}]*tileMatches\(tile, /);   // R-2586: Later rows have no tile row
     expect(page).toMatch(/rows=\{tile \? tileShown : shown\[bucketTab\]\}/);
   });
 

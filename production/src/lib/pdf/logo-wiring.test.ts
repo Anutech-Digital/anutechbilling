@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* ─────────────────────────────────────────────────────────────────────────────
    HAR QUOTE PDF PAR LOGO JAANA CHAHIYE — ek bhi call site chhoota to wo document
@@ -24,7 +26,7 @@ const SRC = join(process.cwd(), "src");
 function walk(dir: string, out: string[] = []): string[] {
   for (const e of readdirSync(dir)) {
     const p = join(dir, e);
-    if (statSync(p).isDirectory()) { walk(p, out); continue; }
+    if (statSync(p).isDirectory()) { if (!isPrismaGenerated(p)) walk(p, out); continue; } // R-2564: not the generated Prisma client
     if (/\.tsx?$/.test(e) && !/\.test\.tsx?$/.test(e)) out.push(p);
   }
   return out;
@@ -52,7 +54,7 @@ interface Site { file: string; fn: string; body: string }
 function quotePdfCallSites(): Site[] {
   const sites: Site[] = [];
   for (const file of walk(SRC)) {
-    const raw = readFileSync(file, "utf8");
+    const raw = readSource(file);
     /* Comment pehle hata do. Is session me teen baar meri apni jaanch mere apne COMMENT se
        mel kha gayi aur test bina kuch jaanche hara ho gaya. */
     const code = raw.replace(/\/\*[\s\S]*?\*\//g, "")
@@ -96,7 +98,7 @@ describe("wo rail jo URL ko renderer tak nahi jaane deti, source par pin hai", (
      bina deadline ke fetch ho jaye — use test me banaya nahi ja sakta bina network ke.
 
      Isliye niyam yahan pin hai. Comment pehle hata diye jate hain. */
-  const code = readFileSync(join(SRC, "lib", "pdf", "QuotePDF.tsx"), "utf8")
+  const code = readSource(join(SRC, "lib", "pdf", "QuotePDF.tsx"))
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
 
@@ -112,7 +114,7 @@ describe("wo rail jo URL ko renderer tak nahi jaane deti, source par pin hai", (
     /* Teeno document ek hi jagah se poochhte hain. Do alag tarike se "kya ye logo hai"
        poochhna theek wahi darar hai jisse 12x wali galti nikli thi. */
     for (const doc of ["InvoicePDF.tsx", "ReceiptVoucherPDF.tsx"]) {
-      const c = readFileSync(join(SRC, "lib", "pdf", doc), "utf8")
+      const c = readSource(join(SRC, "lib", "pdf", doc))
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .split("\n").filter((l) => !l.trim().startsWith("//")).join("\n");
       expect(c, doc).toMatch(/isRenderableLogo\(tenantLogo\) && <Image src=\{tenantLogo\}/);

@@ -21,7 +21,7 @@
  *   payArgs            — the RPC arguments
  *   resultLines        — what happened, in the owner's words, after the save
  */
-import { customerNameTokens, narrationNames } from "@/lib/accounting/credit-match";
+import { cachedNarrationSet, customerNameTokens } from "@/lib/accounting/credit-match";
 import { tdsDecision, tdsRatePct, panFromGstin } from "@/lib/accounting/tds-deductor";
 import { tds26qSection } from "@/lib/accounting/tds-rates";
 import { rupee, formatDate } from "@/lib/utils";
@@ -73,6 +73,23 @@ export function vendorsForRule(pattern: string, vendors: readonly VendorLite[]):
   });
 }
 
+type PreparedVendor = { v: VendorLite; upi: string; acct: string; toks: string[] };
+/* R-2524: the bank page asks guessVendor for every unmatched money-out line (~1,000 on a
+   6,000-line account) with the same vendor list — read each vendor once per list. */
+const preparedLists = new WeakMap<readonly VendorLite[], PreparedVendor[]>();
+function preparedVendors(vendors: readonly VendorLite[]): PreparedVendor[] {
+  const hit = preparedLists.get(vendors);
+  if (hit && hit.length === vendors.length) return hit;
+  const out = vendors.map((v) => ({
+    v,
+    upi: (v.upi_id ?? "").trim().toLowerCase(),
+    acct: (v.bank_account_no ?? "").replace(/[^0-9]/g, ""),
+    toks: [...new Set(customerNameTokens(v.name))],
+  }));
+  preparedLists.set(vendors, out);
+  return out;
+}
+
 /**
  * Who was paid — R-1919: ONE order, the same as the database's bank_debit_vendor_guess (which
  * auto-reconcile uses), so the sheet and auto-reconcile can never disagree:
@@ -93,23 +110,19 @@ export function guessVendor(
   const lower = text.toLowerCase();
   const digits = text.replace(/[^0-9]/g, " ");
 
-  const byUpi = vendors.filter((v) => v.upi_id && v.upi_id.trim() && lower.includes(v.upi_id.trim().toLowerCase()));
+  const prep = preparedVendors(vendors);   // R-2524: each vendor's UPI / account / name words read once per list
+  const byUpi = prep.filter((p) => p.upi && lower.includes(p.upi)).map((p) => p.v);
   if (byUpi.length === 1) return { vendorId: byUpi[0].id, reason: `the bank line has their UPI id ${byUpi[0].upi_id}`, step: "upi" };
 
-  const byAcct = vendors.filter((v) => {
-    const a = (v.bank_account_no ?? "").replace(/[^0-9]/g, "");
-    return a.length >= 6 && digits.split(/\s+/).some((d) => d.length >= 6 && (a.endsWith(d) || d.endsWith(a)));
-  });
+  const runs = digits.split(/\s+/).filter((d) => d.length >= 6);
+  const byAcct = prep.filter(({ acct: a }) => a.length >= 6 && runs.some((d) => a.endsWith(d) || d.endsWith(a))).map((p) => p.v);
   if (byAcct.length === 1) return { vendorId: byAcct[0].id, reason: "the bank line has their account number", step: "account" };
 
   /* R-1919: a masked account ("XXXXXX4521") shows only its last digits — R-1918's parser reads
      them; one vendor whose saved account ends with them (4+ digits) is a match. */
   const tail = bankDetailsFromNarration(txn.description).accountTail;
   if (tail && tail.length >= 4) {
-    const byTail = vendors.filter((v) => {
-      const a = (v.bank_account_no ?? "").replace(/[^0-9]/g, "");
-      return a.length >= 6 && a.endsWith(tail);
-    });
+    const byTail = prep.filter(({ acct: a }) => a.length >= 6 && a.endsWith(tail)).map((p) => p.v);
     if (byTail.length === 1) return { vendorId: byTail[0].id, reason: `the bank line shows their account ending ${tail}`, step: "account_tail" };
   }
 
@@ -128,9 +141,9 @@ export function guessVendor(
 
   /* Name words: the vendor sharing the MOST distinctive words wins, only when no other vendor
      shares as many ("Kapoor Legal Associates" over "Kapoor Stationers" for "KAPOOR LEGAL…"). */
-  const words = new Set(narrationNames(txn.description));
-  const hits = vendors
-    .map((v) => ({ v, shared: [...new Set(customerNameTokens(v.name))].filter((t) => words.has(t)) }))
+  const words = cachedNarrationSet(txn.description);
+  const hits = prep
+    .map(({ v, toks }) => ({ v, shared: toks.filter((t) => words.has(t)) }))
     .filter((h) => h.shared.length > 0)
     .sort((a, b) => b.shared.length - a.shared.length);
   if (hits.length > 0 && (hits.length === 1 || hits[0].shared.length > hits[1].shared.length)) {
@@ -278,10 +291,13 @@ export function planTds(
   /* R-2320: a COGS bill takes a services section (not 194Q) like an expense bill — while nothing
      is paid on it yet (its whole TDS goes with the first payment). */
   const servicesCogs = (i: VendorOpenItem) =>
-    i.source === "vendor_bill" && sec !== "194Q" && i.tds_base > 0 && i.amount_due === i.total;
+    i.source === "vendor_bill" && !(i.tds_amount > 0) && sec !== "194Q" && i.tds_base > 0 && i.amount_due === i.total;
+  /* R-1915: an expense bill's own TDS; R-2502c: a COGS bill imported from Zoho carries Zoho's TDS
+     (pre-filled on its first payment) — both exactly as booked, never worked out again. */
+  const ownTds = (i: VendorOpenItem) => (i.source === "expense" || i.source === "vendor_bill") && i.tds_amount > 0;
   /* R-1915: a part-paid expense bill (tds_base 0) takes no TDS — it went with its first part. */
   const free = items.filter((i) => (i.source === "expense" && !(i.tds_amount > 0) && i.tds_base > 0) || servicesCogs(i));
-  const fixedBase = items.filter((i) => i.source === "expense" && i.tds_amount > 0).reduce((s, i) => s + i.tds_base, 0);
+  const fixedBase = items.filter(ownTds).reduce((s, i) => s + i.tds_base, 0);
   const base = free.reduce((s, i) => s + i.tds_base, 0);
   const d = !opts.off && sec && base > 0
     ? tdsDecision({ section: sec, base, fyBaseSoFar: Math.max(0, opts.fyOthers?.base ?? 0) + fixedBase, fyBaseWithoutTds: Math.max(0, opts.fyOthers?.baseWithoutTds ?? 0), pan: opts.pan })
@@ -296,7 +312,7 @@ export function planTds(
   const lastFree = free.length ? itemKey(free[free.length - 1]) : "";
   return items.map((i) => {
     const key = itemKey(i);
-    if (i.source === "expense" && i.tds_amount > 0) return { key, tds: i.tds_amount, section: i.tds_section, reason: "TDS already on this bill", fixed: true };
+    if (ownTds(i)) return { key, tds: i.tds_amount, section: i.tds_section, reason: i.source === "vendor_bill" ? "TDS Zoho deducted on this bill" : "TDS already on this bill", fixed: true };
     if (!freeKeys.has(key)) return (i.source === "vendor_bill" ? goods(i) : null) ?? { key, tds: 0, section: null, reason: null, fixed: false };
     if (!d) return { key, tds: 0, section: null, reason: null, fixed: false };
     const share = key === lastFree ? total - given : Math.round((total * i.tds_base) / base);
@@ -513,6 +529,11 @@ export interface PayInput {
   newBill: (NewBillDraft & { tds: number; tdsSection: string | null; tdsOverride?: string | null }) | null;
   advance: number;
   advanceCategory: string | null;
+  /** R-1916: TDS withheld on the advance (the advance's gross = advance cash + this), its section,
+   *  and the owner's below-threshold reason. 0 / missing = no TDS (the 9-argument call). */
+  advanceTds?: number;
+  advanceTdsSection?: string | null;
+  advanceTdsOverride?: string | null;
   bankCharge: number;
   note: string | null;
   /** R-2338: the owner ticked "Remember for this vendor" — the server saves the section used as the
@@ -571,7 +592,25 @@ export function payArgs(i: PayInput) {
     p_advance_category: i.advance > 0 ? i.advanceCategory : null,
     p_bank_charge: n(i.bankCharge),
     p_note: i.note,
+    /* R-1916: TDS on the advance → the 12-argument form (all three keys, or none). */
+    ...(n(i.advance) > 0 && n(i.advanceTds ?? 0) > 0 ? {
+      p_advance_tds: n(i.advanceTds ?? 0),
+      p_advance_tds_section: i.advanceTdsSection || null,
+      p_advance_tds_override_reason: overrideReason(i.advanceTdsOverride) ?? null,
+    } : {}),
   };
+}
+
+/**
+ * R-1916: TDS on an advance paid from the bank. The bank paid the gross less the TDS, so at the
+ * section's rate r (lib/accounting/tds-rates.ts) the TDS is cash × r / (100 − r) — ₹90,000 paid
+ * under 194J(b) 10% → ₹10,000 (advance ₹1,00,000). The rate is the vendor's (tdsRatePct: 194C 1% for an
+ * individual / HUF, 20% with no PAN — like every other TDS here). null = a section the table does not know.
+ */
+export function advanceTdsFromCash(cash: number, section: string | null | undefined, pan: string | null | undefined): number | null {
+  const r = section ? tdsRatePct(section, pan) : null;
+  if (r === null || r <= 0 || r >= 100) return null;
+  return Math.round((Math.max(0, cash || 0) * r) / (100 - r));
 }
 
 /* ─── After the save ────────────────────────────────────────────────────────────────── */
@@ -590,7 +629,8 @@ export interface VendorPayResult {
   bank_amount: number;
   paid: PaidDoc[];
   new_bill: PaidDoc | null;
-  advance: { id: string; amount: number; category: string } | null;
+  /** R-1916: amount = the advance's gross; with TDS also cash (from the bank) + tds + section. */
+  advance: { id: string; amount: number; category: string; cash?: number; tds?: number; tds_section?: string | null } | null;
   bank_charge: { expense_id: string; amount: number } | null;
   tds_total: number;
   tds_section: string | null;
@@ -626,7 +666,10 @@ export function resultLines(r: VendorPayResult): ResultLine[] {
   if (r.vendor_created) out.push({ text: `New vendor ${r.vendor_name} added`, href: "/accounting/vendors" });
   for (const d of r.paid) out.push(docLine(d, r.vendor_name, false));
   if (r.new_bill) out.push(docLine(r.new_bill, r.vendor_name, true));
-  if (r.advance) out.push({ text: `${rupee(r.advance.amount)} kept as an advance to ${r.vendor_name} (${r.advance.category}) — adjust a later bill on Prepaid`, href: "/accounting/prepaid" });
+  if (r.advance) {
+    const withTds = (r.advance.tds ?? 0) > 0 ? ` (${rupee(r.advance.cash ?? r.advance.amount - (r.advance.tds ?? 0))} paid + TDS ${rupee(r.advance.tds ?? 0)})` : "";
+    out.push({ text: `${rupee(r.advance.amount)} kept as an advance to ${r.vendor_name}${withTds} (${r.advance.category}) — adjust a later bill on Prepaid${(r.advance.tds ?? 0) > 0 ? " (record the bill on Expenses and press Apply advance — this TDS is credited, not taken twice; on Book invoice leave TDS empty)" : ""}`, href: "/accounting/prepaid" });
+  }
   if (r.bank_charge) out.push({ text: `Bank charge ${rupee(r.bank_charge.amount)} booked as an expense`, href: `/accounting/expenses?edit=${encodeURIComponent(r.bank_charge.expense_id)}` });
   if (r.tds_total > 0) out.push({ text: `TDS ${rupee(r.tds_total)} (${tds26qSection(r.tds_section)}) withheld — now in TDS payable and the 26Q list`, href: "/accounting/balance-sheet" });
   out.push({ text: `${r.vendor_name}: see bills and payments`, href: "/accounting/vendors" });

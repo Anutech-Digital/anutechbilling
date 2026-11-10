@@ -38,13 +38,16 @@ import { openRenewalQuoteMap, openRenewalQuoteStatus } from "@/app/(app)/renewal
 import { NonRenewingDialog } from "@/components/features/subscriptions/non-renewing-dialog";
 import { CancelSubscriptionDialog } from "@/components/features/subscriptions/cancel-subscription-dialog";
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
+import { BillNextPartDialog, type BillNextChoice } from "./bill-next-part-dialog";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import type { BillingCycle } from "@/lib/supabase/database.types";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { AiDraftButton } from "@/components/shared/ai-draft-button";
 import { useVoiceNoteSend } from "@/components/shared/voice-note-button";
 import {
-  renewalActionSet, renewalNextStep, FOLLOW_UP,
+  renewalActionSet, renewalNextStep, billPartDialogTitle, FOLLOW_UP, BILL_NEXT_PART,
   type RenewalActionSub, type RenewalButtonKind, type RenewalMenuItem,
 } from "./renewal-actions-rules";
 
@@ -102,7 +105,9 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   const name = sub.customer_name ?? "this customer";
 
   const [busy, setBusy] = React.useState<"send-now" | "generate" | null>(null);
-  const [dialog, setDialog] = React.useState<"non-renewing" | "cancel" | "nudge" | null>(null);
+  const [dialog, setDialog] = React.useState<"non-renewing" | "cancel" | "nudge" | "bill-next" | null>(null);
+  /* R-2519: billed in parts → "Bill next part" opens the proforma preview first (seats, rate, periods). */
+  const splitBilled = isSplitBilled((sub.billing_cycle ?? null) as BillingCycle | null);
   const voice = useVoiceNoteSend({ customerId: sub.customer_id ?? "", purpose: "renewal", customerName: name });
 
   const refresh = () => {
@@ -111,22 +116,25 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
     void qc.invalidateQueries({ queryKey: queryKeys.collections() });
   };
 
-  async function onGenerate() {
+  async function onGenerate(choice?: BillNextChoice) {
+    if (splitBilled && !choice) { setDialog("bill-next"); return; }
     setBusy("generate");
     try {
       const res = await fetch(`/api/subscriptions/${sub.id}/generate-renewal-quote`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        body: choice ? JSON.stringify(choice) : undefined,
       });
       /* R-239: an HTML 500 used to surface as "Failed: Unexpected token <". */
       const json = (await readJsonSafe(res)) as { error?: string; alreadyExisted?: boolean; quoteId?: string; split?: boolean; message?: string; href?: string | null };
       if (!res.ok) {
         toastError(new Error(json.error ?? "Could not create the renewal quote"), {
-          action: { label: "Retry", onClick: () => void onGenerate() },
+          action: { label: "Retry", onClick: () => void onGenerate(choice) },
         });
         return;
       }
       refresh();
+      setDialog(null);
       /* R-2095: billed in parts → this billed the next part (request or invoice), not a quote. */
       if (json.split) {
         void qc.invalidateQueries({ queryKey: ["invoices"] });
@@ -187,6 +195,10 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   /* R-2422: ONE next-step button + ⋯ (Payment Follow-up's R-2408 pattern) instead of six stacked buttons. */
   const step = renewalNextStep(set, { followup: !!onFollowup, messaging: !!messaging && !!sub.customer_id });
   const button = step.button;
+  /* R-2519: billed in parts and Bill next part is not the row's button → it is in the ⋯ menu
+     (bill a period ahead, or re-bill one whose proforma was cancelled). */
+  const menuKeys: RenewalMenuItem[] = splitBilled && sub.status === "active" && button?.kind !== "generate"
+    ? ["bill-ahead", ...step.menu] : step.menu;
 
   const notRenewingButton = set.notRenewing && (
     <Button
@@ -205,6 +217,12 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   /* The ⋯ has its own name — on Payment Follow-up this sits inside a row that has a ⋯ of its own. */
   const menuLabel = `More renewal actions for ${name}${sub.plan ? ` — ${sub.plan}` : ""}`;
   const menuItem: Record<RenewalMenuItem, React.ReactNode> = {
+    "bill-ahead": (
+      <DropdownMenuItem key="bill-ahead" className={ITEM} disabled={busy !== null} onClick={() => setDialog("bill-next")}
+        title="Make the next period's proforma now — check seats, rate and how many periods first">
+        <Icon name="plus" size={15} /> Bill next part…
+      </DropdownMenuItem>
+    ),
     "create-quote": (
       <DropdownMenuItem key="create-quote" className={ITEM} disabled={busy !== null} onClick={() => void onGenerate()}
         title="Create the renewal quote and open it — nothing is emailed until you send it">
@@ -263,13 +281,19 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
             onClick={() => void run(button.kind as RenewalButtonKind)}
             title={button.kind === "send-now"
               ? "Email the customer the renewal quote with its accept / pay link (creates it first if needed)"
-              : "Bill the next part of this subscription (payment request, or the tax invoice when paid)"}
+              : set.renewal
+                ? "Bill part 1 of the next term — the renewal, at today's seats × rate (you check them first; proforma, then the tax invoice when paid)"
+                : "Bill the next part of this subscription (payment request, or the tax invoice when paid)"}
           >
             <Icon name={button.kind === "send-now" ? "mail" : "plus"} size={12} />
             {button.label}
           </Button>
         )}
-        {step.menu.length > 0 && (
+        {button && button.kind === "generate" && set.renewal && set.note && (
+          /* R-2548: what the renewal click bills — the next term's dates and today's seats × rate. */
+          <p className="basis-full text-2xs text-ink-3 tabular-nums" data-testid="renewal-part-note">{set.note}</p>
+        )}
+        {menuKeys.length > 0 && (
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <button
@@ -282,12 +306,22 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="min-w-[13rem]">
-              {step.menu.map((k) => menuItem[k])}
+              {menuKeys.map((k) => menuItem[k])}
             </DropdownMenuContent>
           </DropdownMenu>
         )}
       </div>
 
+      {dialog === "bill-next" && (
+        <BillNextPartDialog
+          sub={{ id: sub.id, customer_name: name, plan: sub.plan }}
+          titleFor={(firstStart) => billPartDialogTitle(sub, button && button.kind === "generate" ? button.label : BILL_NEXT_PART, firstStart)}
+          open
+          busy={busy === "generate"}
+          onOpenChange={(v) => { if (!v) setDialog(null); }}
+          onConfirm={(choice) => void onGenerate(choice)}
+        />
+      )}
       {dialog === "nudge" && sub.customer_id && (
         <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" onClose={() => setDialog(null)} />
       )}

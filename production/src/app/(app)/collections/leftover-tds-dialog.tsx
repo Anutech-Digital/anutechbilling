@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived } from "@/lib/queries/payments";
-import { isOpeningInvoice } from "@/lib/accounting/sale-documents";
+import { takesQuotelessReceipt } from "@/lib/payments/quoteless-receipt";
 import type { Invoice } from "@/lib/supabase/database.types";
 import { RecordPaymentDialog } from "@/components/features/quotes/record-payment-dialog";
 import { RecordSubscriptionPaymentContainer } from "@/app/(app)/invoices/record-invoice-payment";
@@ -52,8 +52,8 @@ export function BookTdsSheet({
       </p>
     );
   }
-  if (isOpeningInvoice(invoice)) {
-    /* An invoice imported from Zoho Books is paid on the Several-invoices sheet, which needs
+  if (takesQuotelessReceipt(invoice)) {
+    /* An invoice imported from Zoho Books (R-1739 opening; R-2542 FY sale) is paid on the Several-invoices sheet, which needs
        money in the bank — a TDS-only receipt cannot be saved there. */
     return (
       <p role="alert" className="mt-1 text-2xs text-ink-2">

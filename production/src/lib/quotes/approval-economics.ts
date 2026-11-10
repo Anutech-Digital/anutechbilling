@@ -18,6 +18,10 @@ export function lineEconomics(lines: readonly QuoteLineItem[]): QuoteEconomics {
   let costUnknown = false;
 
   for (const l of lines) {
+    /* R-2637: NOT rounded per line on purpose — this is the approval maths, and its SQL twin
+       (quote_lines_approval_bps, R-2447's stale-approval guard) uses Σ qty × rate unrounded. A
+       USD line's paise are under ₹1 a line, so client and server stay on one number; the money figure (the saved
+       subtotal) is linesInrSubtotal in lib/quotes/foreign-totals. */
     const gross = l.qty * l.rate;
     subtotal  += gross - Math.round(gross * ((l.discount_pct ?? 0) / 100));
     /* list_rate falls back to rate, not to zero: an older line without a frozen list

@@ -14440,6 +14440,8 @@ export type Database = {
           line_items: Json
           notes: string | null
           paid_amount: number
+          service_from: string | null
+          service_to: string | null
           sgst: number
           source_tenant_invoice_id: string | null
           status: string
@@ -14467,6 +14469,8 @@ export type Database = {
           line_items?: Json
           notes?: string | null
           paid_amount?: number
+          service_from?: string | null
+          service_to?: string | null
           sgst?: number
           source_tenant_invoice_id?: string | null
           status?: string
@@ -14494,6 +14498,8 @@ export type Database = {
           line_items?: Json
           notes?: string | null
           paid_amount?: number
+          service_from?: string | null
+          service_to?: string | null
           sgst?: number
           source_tenant_invoice_id?: string | null
           status?: string
@@ -17023,6 +17029,30 @@ export type Database = {
         Returns: undefined
       }
       validate_presence_code: { Args: { p_code: string }; Returns: boolean }
+      vendor_bill_service_period: {
+        Args: {
+          p_bill_date: string
+          p_bill_no: string
+          p_category: string
+          p_notes: string
+          p_service_from: string | null
+          p_service_to: string | null
+        }
+        Returns: {
+          basis: string
+          service_from: string
+          service_to: string
+        }[]
+      }
+      vendor_bills_service_periods: {
+        Args: { p_ids: string[] }
+        Returns: {
+          basis: string
+          id: string
+          service_from: string
+          service_to: string
+        }[]
+      }
       verify_claim_access: {
         Args: { p_employee_id: string; p_pin: string; p_tenant_id: string }
         Returns: number

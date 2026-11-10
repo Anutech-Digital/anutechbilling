@@ -17,6 +17,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import { formatIstDate } from "./ist";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const ROOTS = ["src/app/api", "src/lib", "src/server"];
 
@@ -57,7 +58,7 @@ describe("server-side dates are India time (R-1660)", () => {
   it("no date/time toLocale…String call without timeZone in src/app/api, src/lib, src/server", () => {
     const offenders: string[] = [];
     for (const f of files) {
-      for (const call of nakedDateCalls(fs.readFileSync(f, "utf8"))) {
+      for (const call of nakedDateCalls(readSource(f))) {
         offenders.push(`${path.relative(process.cwd(), f).replace(/\\/g, "/")}: (${call})`);
       }
     }

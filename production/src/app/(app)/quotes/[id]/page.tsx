@@ -7,7 +7,7 @@ import * as React from "react";
 import { isAnnualTier } from "@/lib/quotes/commitment-rate";
 import Link from "next/link";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { QuoteSendRefusedError, refusedFrom } from "@/lib/quotes/send-quote-email";
@@ -20,17 +20,27 @@ import { withInvoiceIssued, rejectLeadOffer, lostActivityDetail, lossLabel, acce
 import type { LossReasonCode } from "@/lib/leads/loss-reasons";
 import { RejectQuoteDialog } from "./reject-quote-dialog";
 import { CustomerStoppedDialog } from "./customer-stopped-dialog";
+import { CancelQuoteDialog } from "./cancel-quote-dialog";
+import { proformaShownState, cancelQuoteAction } from "@/lib/billing/proforma";
+import { usePartDueOn } from "@/lib/billing/use-part-due";
 import { showCustomerStopped, isPartRequest, partRequestSteps, partRequestOpenLine, PART_REQUEST_BADGE } from "@/lib/billing/part-requests";
 import { isQuoteEditableInPlace } from "@/lib/quotes/editable";
 import { paymentDomainDefault } from "@/lib/quotes/payment-domain";
 import { useGenerateInvoice, useDocumentSeries } from "@/lib/queries/invoices";
 import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
 import { issueConsequences } from "@/lib/invoices/issue-consequences";
+import { latestReceiptIstDay, useInvoiceIssueDate } from "@/lib/invoices/issue-date";
+import { useTenantLuts } from "@/lib/queries/tenant-luts";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { issueEinvoiceNotice, isB2B } from "@/lib/compliance/einvoice";
 import { invalidateReceivables } from "@/lib/queries/receivables-refresh";
 import { quoteMoneyActions, splitBilledCycleOf } from "@/lib/quotes/money-stage";
 import { pagePaidToDate, paidToDateLine, PAID_TO_DATE_LABEL } from "@/lib/quotes/paid-to-date";
+import { instalmentStatus, instalmentHeadline } from "@/lib/quotes/instalment-status";
+import { InstalmentList } from "./instalment-list";
+import { SettleShortDialog } from "./settle-short-dialog";
+import { maySettleSmallShort, settleShortLabel, isRoundOffReceipt, type SettleShortPreview } from "@/lib/quotes/settle-small-short";
+import { queryKeys } from "@/lib/queries/keys";
 import { useNextPartRequest } from "./next-part-request";
 import { useQuotePartInvoices } from "./part-invoices";
 import { PaymentHistoryCard } from "./payment-history-card";
@@ -42,7 +52,7 @@ import { orphanState, isOrphan, orphanNote } from "@/lib/subscriptions/orphan-qu
 import { addSeatsCount } from "@/lib/subscriptions/seat-quotes-pending";
 import { renewalSubOfQuote, priorTermDueText } from "@/app/(app)/renewals/prior-due";
 import { useQuoteSubscriptions, useRecreateSubscription } from "@/lib/queries/subscriptions";
-import { quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
+import { OVERSEAS_NO_COUNTRY_FIX, quotePlaceOfSupply } from "@/lib/quotes/quote-place-of-supply";
 import { historyTime, quoteCreatedAt } from "@/lib/quotes/history-time";
 import { quotePaymentBadge } from "@/lib/quotes/status-badge";
 import { shownQuoteStatus, expiredByDate, validityDaysLeft } from "@/lib/quotes/quote-expiry";
@@ -121,6 +131,7 @@ import { useLogLeadActivity } from "@/lib/queries/lead-activities";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canRecordMoney } from "@/lib/auth/roles";
 import { rupee, formatDate, daysBetween, toWhatsAppDigits } from "@/lib/utils";
+import { phoneE164ForCountry } from "@/lib/phone";
 import { logoDataUri } from "@/lib/pdf/logo";
 import { quoteDocumentKind, quoteIsPaid, quoteKindFlags } from "@/lib/pdf/quote-document-kind";
 import {
@@ -181,12 +192,13 @@ export default function QuoteDetailPage() {
   const updateLeadStage = useUpdateLeadStage();
   const logActivity     = useLogLeadActivity();
   const recipientPhone = React.useMemo(() => {
-    const raw = customer?.contact_phone || lead?.contact_phone || "";
-    const d = raw.replace(/\D/g, "");
-    if (!d) return "";
-    // WhatsApp needs a country code — assume India (+91) for a bare 10-digit number.
-    return d.startsWith("91") ? `+${d}` : d.length === 10 ? `+91${d}` : `+${d}`;
-  }, [customer?.contact_phone, lead?.contact_phone]);
+    // R-2639: the code comes from the same record's country (a US customer's bare 10-digit
+    // number is +1, not +91); a number already written with its code keeps it.
+    const fromCustomer = !!customer?.contact_phone;
+    const raw = fromCustomer ? customer?.contact_phone : lead?.contact_phone;
+    const country = fromCustomer ? customer?.country : lead?.country;
+    return phoneE164ForCountry(raw, country);
+  }, [customer?.contact_phone, customer?.country, lead?.contact_phone, lead?.country]);
   /* R-445 (1): who the quote is addressed to — customer first, else the lead. Same values in
      the preview, the downloaded PDF and the WhatsApp attachment preview. */
   const contact = quoteContact(customer, lead);
@@ -366,6 +378,12 @@ export default function QuoteDetailPage() {
     [leadBillingId, quote],
   );
   const { data: partFacts } = usePartFacts(partBillingIds);
+  /* R-2519: the proforma's pay-by date (its part's due date). */
+  const { data: partDue = null } = usePartDueOn(leadBillingId);
+  const partDueOn = partDue?.dueOn ?? null;
+  /* A real email went (send log), or — before R-2519 wrote send-log rows — the billing job's mail step. */
+  const proformaMailed = (quoteSends ?? []).some((s) => s.status === "sent")
+    || ((quoteSends ?? []).length === 0 && !!partDue?.mailStep);
   /* R-2101: the parts' tax invoices (linked through subscription_billings) tick INVOICED. Not
      loaded / failed → null: the step falls back to quote.invoice_id alone (as before R-2101). */
   const { data: partInvoices = null, isLoading: partInvoicesLoading } = useQuotePartInvoices(
@@ -523,6 +541,9 @@ export default function QuoteDetailPage() {
           href: companyStateFixFor(me.role).action.href,
           label: companyStateFixFor(me.role).action.label,
         }
+      /* R-2620: Overseas with no country reads as India — neither 0% export nor CGST/IGST is known. */
+      : pos.head.kind === "buyer_country_missing" && quote.customer_id && !billOfSupply
+        ? { title: `${quote.customer_name ?? "This customer"} is marked Overseas but has no country`, body: OVERSEAS_NO_COUNTRY_FIX, href: `/customers/${quote.customer_id}`, label: "Open customer" }
       : pos.head.kind === "buyer_state_missing" && quote.customer_id
         ? { title: `${quote.customer_name ?? "This customer"} has no state on record`, body: "The customer's state decides CGST + SGST or IGST. Add it on the customer, then issue the GST invoice.", href: `/customers/${quote.customer_id}`, label: "Open customer" }
         : null;
@@ -690,6 +711,64 @@ export default function QuoteDetailPage() {
   const [stoppedOpen, setStoppedOpen] = React.useState(false);
   /* R-2046: the same mutation as the Quotes list's Commitment due section (lib/queries/quotes). */
   const customerStopped = useCustomerStopped({ onDone: () => setStoppedOpen(false) });
+  /* R-2519: Cancel (kept, reason logged, subscription untouched) and its Undo. */
+  const [cancelOpen, setCancelOpen] = React.useState(false);
+  const cancelQuote = useMutation({
+    mutationFn: async (input: { undo: boolean; reason?: string }) => {
+      const res = await fetch(`/api/quotes/${encodeURIComponent(params.id)}/cancel`, {
+        method: input.undo ? "DELETE" : "POST",
+        headers: { "Content-Type": "application/json" },
+        body: input.undo ? undefined : JSON.stringify({ reason: input.reason }),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) throw new Error(json.error ?? `Could not ${input.undo ? "undo the cancel" : "cancel the quote"} (${res.status})`);
+      return input;
+    },
+    onSuccess: (input) => {
+      setCancelOpen(false);
+      void qc.invalidateQueries({ queryKey: ["quotes"] });
+      void qc.invalidateQueries({ queryKey: ["subscriptions"] });
+      toast.success(input.undo ? `${params.id} is open again` : `${params.id} cancelled — kept on record`);
+    },
+    onError: (e) => toastError(e, { fallback: "Could not change the quote" }),
+  });
+  /* R-2606: a part received a little short (P7) → "Settle ₹X as round-off" (R-2595's
+     settle_quote_part_short). The refusal stays in the dialog so the owner reads what to do. */
+  const [settleOpen, setSettleOpen] = React.useState(false);
+  const [settleError, setSettleError] = React.useState<string | null>(null);
+  /* What the RPC would settle (amount + the real bank line), read when the dialog opens. */
+  const settlePreview = useQuery({
+    queryKey: ["settle-short", params.id],
+    enabled: settleOpen,
+    staleTime: 0,
+    queryFn: async (): Promise<SettleShortPreview | null> => {
+      const res = await fetch(`/api/quotes/${encodeURIComponent(params.id)}/settle-short`);
+      const json = (await res.json().catch(() => ({}))) as { error?: string; preview?: SettleShortPreview | null };
+      if (!res.ok) throw new Error(json.error ?? `Could not read the difference (${res.status})`);
+      return json.preview ?? null;
+    },
+  });
+  const settleShort = useMutation({
+    mutationFn: async (input: { reason: string | null; expected: number }) => {
+      const res = await fetch(`/api/quotes/${encodeURIComponent(params.id)}/settle-short`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const json = (await res.json().catch(() => ({}))) as { error?: string; amount?: number };
+      if (!res.ok) throw new Error(json.error ?? `Could not settle the difference (${res.status})`);
+      return json;
+    },
+    onMutate: () => setSettleError(null),
+    onSuccess: (r) => {
+      setSettleOpen(false);
+      invalidateReceivables(qc);   // payments, quotes, invoices … (R-1634)
+      void qc.invalidateQueries({ queryKey: ["quote-part-invoices"] });
+      void qc.invalidateQueries({ queryKey: queryKeys.bankTransactions() }); // the line now has a round-off
+      toast.success(`${rupee(Number(r.amount ?? 0))} settled as round-off — the part is fully received`);
+    },
+    onError: (e) => setSettleError(e instanceof Error ? e.message : "Could not settle the difference"),
+  });
   /* R-1807: a failed (or unanswered) read is not "no other open quote" — the Lost offer waits
      for the list; on isError the dialog says the lead stays as it is. */
   const leadQuotesQ = useQuotesByLead(quote?.lead_id ?? undefined);
@@ -788,6 +867,12 @@ export default function QuoteDetailPage() {
   const [issueOpen, setIssueOpen] = React.useState(false);
   const { data: docSeries } = useDocumentSeries();
   const { data: turnover } = useTurnoverBracket();
+  /* R-2635: the date generate_invoice will really use (latest receipt day, R-2095) and the LUT of
+     that date's FY for a customer abroad — the confirm said "(today)" and "B2C invoice". */
+  const issueDate = useInvoiceIssueDate({
+    tenantId: me?.tenantId, receiptDay: latestReceiptIstDay(paymentHistory), enabled: issueOpen,
+  });
+  const { data: tenantLuts } = useTenantLuts(issueOpen);
 
   // ────────── Loading / Error ──────────
   /* R-2104: also wait for the subscriptions and the parts' invoices. Rendered before they came, a
@@ -851,7 +936,16 @@ export default function QuoteDetailPage() {
   /* R-1679: a sent / viewed quote past its validity reads "Expired" (one rule: quote-expiry.ts). */
   const shownStatus = shownQuoteStatus(quote);
   /* R-2326: while the quote waits for sign-off the header says the list's "Needs approval", not "Sent". */
-  const status = quoteHeaderStatus(
+  /* R-2519: Cancelled (any quote); a proforma never emailed reads "Ready to send", past its pay-by
+     date unpaid "Expired" — instead of the stored "Sent" (Q-A378-27-0947 said Sent, nothing went). */
+  const proformaState = proformaShownState({
+    isPartRequest: partRequest, status: quote.status,
+    cancelledAt: (quote as { cancelled_at?: string | null }).cancelled_at,
+    invoiceId: quote.invoice_id, paymentStatus: quote.payment_status,
+    mailed: proformaMailed,
+    dueOn: partDue?.dueOn ?? null, todayISO: istToday(),
+  });
+  const status = proformaState ?? quoteHeaderStatus(
     quote as typeof quote & { below_cost?: boolean | null },
     quote.superseded_by ? { kind: "muted" as const, label: QUOTE_STATE_LABEL.replaced } : STATUS_META[shownStatus],
   );
@@ -929,6 +1023,14 @@ export default function QuoteDetailPage() {
     ? planForQuote(quote, (firstQuoteSub?.start_date ?? istToday()).slice(0, 10))
     : null;
   const due = splitPlan ? splitDue(splitPlan, { todayISO: istToday(), received: totalReceivedSoFar }) : null;
+  /* R-2587: each part with what came in — the list under the money row and its headline. */
+  const partStatus = splitPlan && totalReceivedSoFar > 0
+    ? instalmentStatus(splitPlan, { received: totalReceivedSoFar, todayISO: istToday() })
+    : null;
+  /* Only a small difference left due → say the part is received, not "₹60 due now". */
+  const partHeadline = partStatus?.smallShort && due && due.outstanding > 0 && due.outstanding <= partStatus.smallShort.amount
+    ? instalmentHeadline(partStatus, formatDate, rupee)
+    : null;
   const money = quoteMoneyActions(
     {
       splitDue: splitPlan && due ? {
@@ -936,6 +1038,10 @@ export default function QuoteDetailPage() {
         outstanding: due.outstanding,
         count: splitPlan.count,
         next: due.next ? { gross: due.next.gross, billOn: formatDate(due.next.billOn), index: due.next.index } : null,
+        smallShort: partStatus?.smallShort ? {
+          ...partStatus.smallShort,
+          next: partStatus.next ? { gross: partStatus.next.gross, billOn: formatDate(partStatus.next.billOn), index: partStatus.next.index } : null,
+        } : null,
       } : null,
       status:        quote.status,
       paymentStatus: quote.payment_status,
@@ -989,7 +1095,8 @@ export default function QuoteDetailPage() {
   /* R-1726 (+R-1724): ONE orange button — the right next step for this state. Every button
      below takes its variant from this; see ./primary-action.ts for the table. */
   const closedQuote = isClosedForSending({ status: shownStatus, supersededBy: quote.superseded_by });
-  const receiptTarget = receivedPayments[receivedPayments.length - 1] ?? null;
+  /* R-2606: never the BANKCHG round-off receipt — the customer did not pay that ₹X. */
+  const receiptTarget = [...receivedPayments].reverse().find((p) => !isRoundOffReceipt(p)) ?? null;
   const primary = quotePrimaryAction({
     status: shownStatus,
     supersededBy: quote.superseded_by,
@@ -1154,7 +1261,12 @@ export default function QuoteDetailPage() {
   ];
   const sentEvent = quoteSentEvent(quote, quoteSends);
   if (sentEvent) {
-    events.push({ icon: "send", kind: "indigo", title: sentEvent.title, body: sentEvent.body, time: historyTime(sentEvent.at) });
+    /* R-2519: a proforma is stored open ("sent") the moment it is made — that is not an email. */
+    const notMailed = partRequest && sentEvent.title === "Marked as sent";
+    events.push({ icon: "send", kind: "indigo",
+      title: notMailed ? "Proforma made" : sentEvent.title,
+      body: notMailed ? "Not emailed yet — Send it, or the billing job emails it with its reminders" : sentEvent.body,
+      time: historyTime(sentEvent.at) });
   }
   if (quote.status === "accepted") {
     events.push({ icon: "check_circle", kind: "emerald", title: "Customer accepted", body: "Quote accepted · payment workflow started", time: historyTime(signature?.signed_at ?? null) });
@@ -1194,7 +1306,7 @@ export default function QuoteDetailPage() {
           <IconButton icon="arrow_left" aria-label="Back" onClick={() => router.push("/quotes" as any)} />
           <div className="min-w-0">
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
-              Revenue · {quote.is_extension ? "Extension Quote" : upgradeQuote ? "Upgrade Quote" : quote.is_renewal ? "Renewal Quote" : "Quote"}
+              Revenue · {partRequest ? "Proforma Invoice" : quote.is_extension ? "Extension Quote" : upgradeQuote ? "Upgrade Quote" : quote.is_renewal ? "Renewal Quote" : "Quote"}
             </p>
             <div className="flex items-center gap-3 flex-wrap">
               <h1 className="font-serif text-3xl md:text-4xl leading-tight">
@@ -1458,6 +1570,27 @@ export default function QuoteDetailPage() {
                   <Icon name="x" size={15} /> Customer stopped
                 </DropdownMenuItem>
               )}
+              {(() => {
+                /* R-2519: Cancel keeps the quote (reason logged, subscription untouched); Undo while unpaid. */
+                const act = cancelQuoteAction({
+                  status: quote.status, cancelledAt: (quote as { cancelled_at?: string | null }).cancelled_at,
+                  invoiceId: quote.invoice_id, receivedSoFar: totalReceivedSoFar,
+                  isAddSeats: quote.is_add_seats, supersededBy: quote.superseded_by,
+                });
+                if (act === "cancel") return (
+                  <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => setCancelOpen(true)}
+                    title="Close it as Cancelled — kept on record, no reminders, subscription not changed">
+                    <Icon name="x" size={15} /> {partRequest ? "Cancel proforma" : "Cancel quote"}
+                  </DropdownMenuItem>
+                );
+                if (act === "undo") return (
+                  <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" disabled={cancelQuote.isPending}
+                    onClick={() => cancelQuote.mutate({ undo: true })}>
+                    <Icon name="refresh" size={15} /> Undo cancel
+                  </DropdownMenuItem>
+                );
+                return null;
+              })()}
               <DropdownMenuSeparator />
               {deleteBlock ? (
                 <DropdownMenuItem
@@ -1662,7 +1795,7 @@ export default function QuoteDetailPage() {
         {/* R-2048: an open part request — no accept / reject / revise; it is paid (money row
             below) or closed with More → Customer stopped. */}
         {partRequest && ["sent", "viewed", "accepted"].includes(quote.status) && !quote.invoice_id && (
-          <p className="text-sm text-ink-2">{partRequestOpenLine(quote.created_date ? formatDate(quote.created_date) : null)}</p>
+          <p className="text-sm text-ink-2">{partRequestOpenLine(partDueOn ? formatDate(partDueOn) : quote.created_date ? formatDate(quote.created_date) : null)}</p>
         )}
         {!partRequest && (quote.status === "sent" || quote.status === "viewed")
           && quote.payment_status !== "invoiced" && !quote.invoice_id && (
@@ -1687,7 +1820,9 @@ export default function QuoteDetailPage() {
                   ₹20,000 UPI payment with its own receipt voucher. Money that has already
                   arrived is stated, in rose, instead of being described as a future
                   possibility. */}
-              {totalReceivedSoFar > 0 ? (
+              {partHeadline ? (
+                <span className="text-ink-2">{partHeadline}.</span> /* R-2587 */
+              ) : totalReceivedSoFar > 0 ? (
                 <span className="font-medium text-rose">
                   {due
                     ? <>{rupee(totalReceivedSoFar)} received · {rupee(due.outstanding)} due now{due.next && due.outstanding === 0 ? <> · next instalment {rupee(due.next.gross)} on {formatDate(due.next.billOn)}</> : null}.</>
@@ -1810,6 +1945,9 @@ export default function QuoteDetailPage() {
                   </Link>
                   . The customer&apos;s old link now shows that this quote was replaced.
                 </>
+              ) : quote.status === "rejected" && (quote as { cancelled_at?: string | null }).cancelled_at ? (
+                /* R-2519: cancelled, kept — the reason, and Undo (not Reopen: Undo re-links its part). */
+                <>Cancelled — {(quote as { cancel_reason?: string | null }).cancel_reason ?? "no reason given"}. Kept on record; no reminders. Use More → Undo cancel while nothing is paid.</>
               ) : quote.status === "rejected" && seatsTakenBack ? (
                 <>Rejected{lossLabel(quote.rejected_reason) ? <> · <b>{lossLabel(quote.rejected_reason)}</b></> : null}
                   {quote.rejected_note ? <> — {quote.rejected_note}</> : null}. The {addSeatsCount(quote.seats)} {quote.seats === 1 ? "was" : "were"} taken back off the subscription. If the customer comes back, add them again from Manage seats.
@@ -1823,7 +1961,7 @@ export default function QuoteDetailPage() {
               )}
             </div>
             <div className="flex gap-2 flex-wrap">
-              {quote.status === "rejected" && !quote.superseded_by && !seatsTakenBack && (
+              {quote.status === "rejected" && !quote.superseded_by && !(quote as { cancelled_at?: string | null }).cancelled_at && !seatsTakenBack && (
                 <Button
                   variant="default"
                   icon="arrow_left"
@@ -1850,7 +1988,10 @@ export default function QuoteDetailPage() {
 
         {money.stage !== "closed" && (money.canRecordPayment || money.canGenerateInvoice || money.note) && (
           <div className="flex items-center justify-between gap-3 flex-wrap">
-            <div className="text-sm text-ink-2">{money.note}</div>
+            <div className="text-sm text-ink-2">
+              {money.note}
+              {partStatus && <InstalmentList status={partStatus} lastReceivedOn={receivedPayments[receivedPayments.length - 1]?.received_at ?? null} />}
+            </div>
             <div className="flex gap-2 flex-wrap">
               {/* Reopen stays available while no money has moved — undoing an
                   accidental accept must not need a database. */}
@@ -1928,6 +2069,13 @@ export default function QuoteDetailPage() {
               {money.canRecordPayment && mayRecordMoney && (
                 <Button variant={variantFor(primary, "record_payment")} icon="rupee" onClick={onRecordPayment}>
                   {money.recordLabel}
+                </Button>
+              )}
+
+              {/* R-2606: the small difference closed as a round-off (owner / accountant, P7). */}
+              {money.smallShort && partStatus?.smallShort && maySettleSmallShort(me?.role) && (
+                <Button variant="default" icon="check_circle" onClick={() => { setSettleError(null); setSettleOpen(true); }}>
+                  {settleShortLabel(partStatus.smallShort.amount, rupee)}
                 </Button>
               )}
 
@@ -2321,7 +2469,9 @@ export default function QuoteDetailPage() {
         quoteId={quote.id}
         customerName={quote.customer_name}
         defaultRecipient={customer?.contact_email ?? null}
-        alreadySent={quote.status === "sent" || quote.status === "viewed"}
+        alreadySent={(quote.status === "sent" || quote.status === "viewed") && (!partRequest || proformaMailed)}
+        /* R-2519: a part payment request goes out as a Proforma Invoice. */
+        defaultTemplate={partRequest ? "proforma" : "quotation"}
         /* The quote's own figures, so the dialog can state what sending commits you to
            — the amount that reaches the customer, whether the total matches its own GST,
            and how long the price stands. Passing null where the quote is genuinely
@@ -2492,6 +2642,29 @@ export default function QuoteDetailPage() {
         </DialogContent>
       </Dialog>
 
+      <CancelQuoteDialog
+        open={cancelOpen}
+        onOpenChange={setCancelOpen}
+        quoteId={quote.id}
+        partRequest={partRequest}
+        pending={cancelQuote.isPending}
+        onConfirm={(reason) => cancelQuote.mutate({ undo: false, reason })}
+      />
+
+      {partStatus?.smallShort && splitPlan && (
+        <SettleShortDialog
+          open={settleOpen}
+          onOpenChange={setSettleOpen}
+          rowAmount={partStatus.smallShort.amount}
+          partIndex={partStatus.smallShort.index}
+          partCount={splitPlan.count}
+          preview={settlePreview.isSuccess && !settlePreview.isFetching ? settlePreview.data : undefined}
+          pending={settleShort.isPending}
+          error={settleError ?? (settlePreview.error instanceof Error ? settlePreview.error.message : null)}
+          onConfirm={(reason, expected) => settleShort.mutate({ reason, expected })}
+        />
+      )}
+
       <CustomerStoppedDialog
         open={stoppedOpen}
         onOpenChange={setStoppedOpen}
@@ -2522,7 +2695,13 @@ export default function QuoteDetailPage() {
             paymentTermsDays: quote.payment_terms_days ?? null,
             /* undefined (no customer linked / not loaded) says nothing; null warns B2C. */
             customerGstin: customer ? (customer.gstin ?? null) : undefined,
-            invoiceDate: istToday(),
+            /* Only the server's date (books lock included) — while it loads or if it fails, no date
+               line and no LUT judgement rather than a guess. */
+            invoiceDate: issueDate.date ?? undefined,
+            invoiceDateWhy: issueDate.why,
+            customerCountry: customer ? (customer.country ?? null) : undefined,
+            customerTreatment: customer?.gst_treatment ?? null,
+            luts: tenantLuts,
             billOfSupply: !!billOfSupplyStatus(gstRegistration.data?.saved),
           },
           series: docSeries?.invoice ?? null,

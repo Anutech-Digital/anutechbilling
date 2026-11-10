@@ -23,6 +23,7 @@
 import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const API = path.resolve(__dirname);
 
@@ -135,6 +136,8 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
   "push/unsubscribe": "the caller's own push endpoint",
   "push/test": "a test push to the caller's own device",
   "settings/change-password": "the caller's own password",
+  "team/invites/accept": "R-2517 (was team/invites/[id]/accept, R-2477): the caller accepts an invite addressed to ITS OWN login with the token from the invite email — accept_company_invite_by_token (SECURITY DEFINER) checks the token, that the invite is for this login, open, and MFA; called with the caller's own session",
+  "team/invites/lookup": "R-2517: what the caller's emailed invite link is for — company_invite_by_token (SECURITY DEFINER) answers only the invited login itself, after MFA; called with the caller's own session",
   "team/switch-company": "R-2476: the caller picks which of its OWN companies to work in — switch_company (SECURITY DEFINER) checks the caller's active membership, end date and MFA and copies that membership's role; called with the caller's own session",
   "settings/mobile/send": "R-1903: a code to verify the caller's OWN mobile — request_phone_otp acts only on the caller's users row",
   "settings/mobile/verify": "R-1903: checks the caller's OWN code — verify_phone_otp reads and writes only the caller's rows",
@@ -148,7 +151,7 @@ const NOT_A_USER_ROUTE: Record<string, string> = {
 };
 
 const routes = walk(API)
-  .map((f) => ({ route: rel(f), src: code(fs.readFileSync(f, "utf8")) }))
+  .map((f) => ({ route: rel(f), src: code(readSource(f)) }))
   .filter((r) => MUTATES.test(r.src))
   .filter((r) => !MACHINE_CALLER.test(r.src))
   .filter((r) => !(r.route in NOT_A_USER_ROUTE));

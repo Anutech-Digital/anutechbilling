@@ -95,7 +95,8 @@ export function plannedInstalments(sub: ScheduleFields): PlannedInstalment[] {
  * top of that would be a second tax invoice for the same supply.
  */
 export interface InstalmentSkip {
-  code:   "not_split_billed" | "term_already_invoiced" | "no_schedule" | "billed_elsewhere";
+  /** R-2543: "short_term" — split-billed with a renewal date short of one whole term (shortSplitTerm). */
+  code:   "not_split_billed" | "term_already_invoiced" | "no_schedule" | "billed_elsewhere" | "short_term";
   reason: string;
 }
 
@@ -351,10 +352,18 @@ export interface SplitQuoteFields {
   line_items?:    unknown;
 }
 
-/** The first line's commitment, read defensively off a stored line_items jsonb. */
+/** The first line's commitment, read defensively off a stored line_items jsonb.
+ *  R-2193: one-time lines (one_time: true / commitment "one_time") have no term and are skipped, so a
+ *  domain typed before Monthly flex seats does not make the sale read as an annual one in 12 parts.
+ *  A quote of one-time lines only answers as before (the first line's). */
 export function firstLineCommitment(lineItems: unknown): string | null {
   if (!Array.isArray(lineItems) || lineItems.length === 0) return null;
-  const c = (lineItems[0] as { commitment?: unknown } | null)?.commitment;
+  const isOnce = (l: unknown) => {
+    const o = l as { one_time?: unknown; commitment?: unknown } | null;
+    return o?.one_time === true || String(o?.one_time ?? "").toLowerCase() === "true" || o?.commitment === "one_time";
+  };
+  const line = lineItems.find((l) => !isOnce(l)) ?? lineItems[0];
+  const c = (line as { commitment?: unknown } | null)?.commitment;
   return typeof c === "string" ? c : null;
 }
 

@@ -171,6 +171,7 @@ describe("warmVerdict / loginHint (review)", () => {
   it("gives the fix that matches the status", () => {
     expect(loginHint(404)).toMatch(/dev:local/);
     expect(loginHint(400)).toMatch(/owner2/);
+    expect(loginHint(400)).toMatch(/billing or support/);
     expect(loginHint(412)).toMatch(/seed-e2e-tenant/);
   });
 });
@@ -186,6 +187,7 @@ describe("updateNeedsRestart / parseReadyArgs", () => {
       .toMatchObject({ dryRun: true, port: 3005, restart: false, update: false, warm: ["/a", "/b"] });
     expect(() => parseReadyArgs(["--kill-all"])).toThrow(/Unknown/);
     expect(parseReadyArgs(["--role", "Owner2"]).role).toBe("owner2");
+    expect(parseReadyArgs(["--role", "billing"]).role).toBe("billing");
     expect(() => parseReadyArgs(["--role", "admin"])).toThrow(/role/);
     expect(() => parseReadyArgs(["--warm", "http://evil.example/x"])).toThrow(/path/);
   });

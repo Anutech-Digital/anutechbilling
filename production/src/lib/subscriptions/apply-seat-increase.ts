@@ -20,13 +20,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/supabase/database.types";
 import { addSeats, type AddSeatsResult, type AddSeatsError } from "./add-seats";
-import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { quotePlaceOfSupply, gstHeadLabel } from "@/lib/quotes/quote-place-of-supply";
 import { seatChargePlan, seatTermEnd, seatTermDays } from "./seat-charge-window";
 import { checkSeatEffectiveDate } from "./seat-effective-date";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { syncSubscriptionInstalments, readQuotePaymentFacts } from "@/lib/billing/sync-instalments.server";
 import { istToday } from "@/lib/dates/ist";
+import { loadOpenPlanChangeQuoteId, planChangeFreezeMessage } from "./plan-change-open";
 
 type Admin = SupabaseClient<Database>;
 
@@ -48,6 +49,8 @@ export interface SeatIncreaseSubject {
   billing_cycle: Database["public"]["Tables"]["subscriptions"]["Row"]["billing_cycle"];
   term_months: Database["public"]["Tables"]["subscriptions"]["Row"]["term_months"];
   quote_id: string | null;
+  /** R-2605: the linked renewal / extension / plan-change quote — an open plan-change quote blocks Add seats. */
+  renewal_quote_id?: string | null;
 }
 
 /**
@@ -82,7 +85,8 @@ export async function resolveSeatTax(
       : Promise.resolve({ data: null }),
     supabase.from("tenants").select("state_code, gstin").eq("id", tenantId).maybeSingle(),
   ]);
-  const taxRatePct = isExportSupply(customer?.country) ? 0 : 18;
+  /* R-2515: an export or an SEZ unit supplied without payment of tax is 0% under the LUT. */
+  const taxRatePct = isZeroRatedSupply({ country: customer?.country, treatment: customer?.gst_treatment }) ? 0 : 18;
   const pos = quotePlaceOfSupply({ customer: customer ?? null, seller: tenant ?? {} });
   return { taxRatePct, taxLabel: gstHeadLabel({ ratePct: taxRatePct, interState: pos.interState, isExport: pos.isExport }) };
 }
@@ -112,6 +116,14 @@ export async function applySeatIncrease(args: {
 
   if (!sub.renewal_date) {
     return { ok: false, code: "no_renewal_date", message: "subscription has no renewal_date" };
+  }
+
+  /* R-2605: an open plan-change quote was priced on today's seats and sets its own seat count when
+     paid — refused BEFORE any seat quote is made (the subscriptions_r2605_plan_change_freeze trigger
+     refuses the same under the row lock). */
+  const planChangeQuoteId = await loadOpenPlanChangeQuoteId(supabase, sub);
+  if (planChangeQuoteId) {
+    return { ok: false, code: "plan_change_open", message: planChangeFreezeMessage(planChangeQuoteId) };
   }
 
   const { taxRatePct, taxLabel } = await resolveSeatTax(supabase, sub.customer_id, sub.tenant_id);
@@ -162,14 +174,17 @@ export async function applySeatIncrease(args: {
     taxLabel,
     termDays,
     termEnd:        seatTermEnd(sub),
-    chargeWindow:   window?.instalmentPeriod ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo } : null,
+    /* R-2226: the parts this window covers, so the seats are priced at the part's own rate. */
+    chargeWindow:   window?.instalmentPeriod
+      ? { remainingDays: window.remainingDays, chargeTo: window.chargeTo, parts: window.parts ?? null }
+      : null,
     effectiveDate:  eff.date,
     effectiveDateSetBy: args.effectiveDateSetBy ?? null,
     requestedBy:    args.requestedBy ?? null,
     annualPerSeatOverride: args.annualPerSeatOverride ?? null,
     draftPurchaseOrder: args.draftPurchaseOrder === true,
     previousTerm:   plan?.previous
-      ? { to: plan.previous.to, remainingDays: plan.previous.remainingDays, termDays: plan.previous.termDays }
+      ? { to: plan.previous.to, remainingDays: plan.previous.remainingDays, termDays: plan.previous.termDays, parts: plan.previous.parts ?? null }
       : null,
     currentTermStart: plan?.previous ? plan.current.from : null,
     todayISO:       today,
@@ -178,4 +193,4 @@ export async function applySeatIncrease(args: {
 
 /** The columns applySeatIncrease needs — shared so both callers select the same set. */
 export const SEAT_INCREASE_SELECT =
-  "id, tenant_id, customer_id, customer_name, plan, vendor, domain, seats, mrr, item_id, start_date, renewal_date, status, billing_cycle, term_months, quote_id" as const;
+  "id, tenant_id, customer_id, customer_name, plan, vendor, domain, seats, mrr, item_id, start_date, renewal_date, status, billing_cycle, term_months, quote_id, renewal_quote_id" as const;

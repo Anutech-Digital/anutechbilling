@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { fifoAllocate, lineTdsHint, openInvoicesOldestFirst, summarise, toRpcAllocations } from "./multi-invoice-allocation";
+import { fifoAllocate, lineTdsHint, openInvoicesOldestFirst, summarise, toRpcAllocations, type AllocationLine } from "./multi-invoice-allocation";
 
 const inv = (id: string, date: string, amount: number, paid = 0, status = "pending") =>
   ({ id, invoice_date: date, due_date: null, amount, net_payable: amount, paid_amount: paid, status, tax_rate: 18 });
@@ -91,5 +91,39 @@ describe("R-1525 toRpcAllocations", () => {
       { invoice_id: "I1", amount: 1080, tds_amount: 100, tds_section: "194J", tds_rate_pct: 10 },
       { invoice_id: "I3", amount: 500 },
     ]);
+  });
+});
+
+/* R-2546 (chk-local3, R-2542 localhost check): the sheet's inputs hand back TEXT ("6600"), so
+   "6600" + "200" was "6600200" → "More than due" on a ₹6,800 Zoho invoice, and the same for any
+   Apply typed by hand ("6800" + 0 = "68000"). Lines as the form really holds them: */
+describe("R-2546 typed (text) Apply / TDS values are rupees, not text", () => {
+  const typed = (invoiceId: string, amount: string, tds: string | number, more: Partial<AllocationLine> = {}) =>
+    ({ invoiceId, amount, tds, ...more }) as unknown as AllocationLine;
+  const zoho = [{ id: "SCN-ZB-0042", due: 6800 }];
+
+  it("owner example: ₹6,600 + TDS ₹200 on ₹6,800 due → saves, invoice paid in full", () => {
+    const s = summarise(6600, [typed("SCN-ZB-0042", "6600", "200", { tdsSection: "194J" })], zoho);
+    expect(s).toMatchObject({ overDue: [], allocated: 6600, remaining: 0, anyFull: true, problem: null });
+  });
+  it("Apply typed alone (no TDS) → no false 'More than due'", () => {
+    expect(summarise(6800, [typed("SCN-ZB-0042", "6800", 0)], zoho)).toMatchObject({ overDue: [], allocated: 6800, anyFull: true, problem: null });
+    expect(summarise(5000, [typed("SCN-ZB-0042", "5000", "")], zoho).overDue).toEqual([]);
+  });
+  it("a typed line that really is over its due is still refused", () => {
+    expect(summarise(7000, [typed("SCN-ZB-0042", "6700", "200")], zoho).problem).toMatch(/gets more than its due/);
+  });
+  it("an emptied line is not used", () => {
+    expect(summarise(6800, [typed("SCN-ZB-0042", "", "")], zoho).used).toEqual([]);
+  });
+  it("payload: numbers, never text", () => {
+    const out = toRpcAllocations([typed("SCN-ZB-0042", "6600", "200", { tdsSection: "194J", tdsRatePct: 2 }), typed("X", "0", "0")]);
+    expect(out).toEqual([{ invoice_id: "SCN-ZB-0042", amount: 6600, tds_amount: 200, tds_section: "194J", tds_rate_pct: 2 }]);
+    expect(typeof out[0].amount).toBe("number");
+    expect(typeof out[0].tds_amount).toBe("number");
+  });
+  it("TDS hint reads typed text as rupees", () => {
+    const m = lineTdsHint(inv("I1", "2026-07-01", 1180), typed("I1", "1080", ""));
+    expect(m).toMatchObject({ section: "194J", tds: 100 });
   });
 });

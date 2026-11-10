@@ -51,6 +51,7 @@ export function OnlineFeeBillCard({ kind, id, billTotal, customerId, linked, rol
   const result = onlineFeeFor(
     {
       billTotal,
+      gstPct: own.gstPct, // R-2598: a 0% (export / SEZ) bill → its fee carries no GST either
       waived: own.waived || otherWaived,
       waiveReason: own.waived ? own.reason : otherWaived ? other?.reason : null,
     },

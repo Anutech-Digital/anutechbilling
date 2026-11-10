@@ -7,9 +7,10 @@
  * requests, quote / invoice links and the auth callback redirect.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { allowedHosts, appUrl, isAllowedHost, normalizeHost, trustedOrigin } from "./app-url";
+import { allowedHosts, appUrl, authRedirectUrl, isAllowedHost, normalizeHost, trustedOrigin } from "./app-url";
+import { listSourceFiles } from "@/lib/testing/walk-source"; // R-2649: one walk for both scans
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared fresh read cache
 
 function h(init: Record<string, string>): Headers {
   return new Headers(init);
@@ -137,22 +138,98 @@ const ALLOWED_READERS = new Set([
   "src/app/api/attendance/device/_server.ts", // logged only
 ]);
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) walk(p, out);
-    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p);
-  }
-  return out;
+/** src/ .ts/.tsx files, tests excluded; the generated Prisma client is skipped (R-2564: not our code,
+    36 MB). R-2649: walked once for both scans below (they ran two full walks with a stat per entry);
+    nothing in this file writes under src/, so one list serves both. */
+let srcFiles: string[] | undefined;
+function walk(dir: string): string[] {
+  srcFiles ??= listSourceFiles(dir, (name) => /\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name));
+  return srcFiles;
 }
 
 describe("R-723 scan — no new raw-host links", () => {
   it("x-forwarded-host is read only by the allowlisted files", () => {
     const root = process.cwd();
     const offenders = walk(join(root, "src"))
-      .filter((f) => /["']x-forwarded-host["']/i.test(readFileSync(f, "utf8")))
+      .filter((f) => /["']x-forwarded-host["']/i.test(readSource(f)))
       .map((f) => relative(root, f).split("\\").join("/"))
       .filter((f) => !ALLOWED_READERS.has(f));
+    expect(offenders).toEqual([]);
+  });
+});
+
+/**
+ * R-2600 — emailed auth links built in the BROWSER (GoTrue resetPasswordForEmail redirectTo)
+ * used `window.location.origin` as-is: whatever host the page was opened on went into the
+ * reset mail. Now the same rule as trustedOrigin(): allowlisted host kept, anything else → app URL.
+ */
+function onPage(origin: string) {
+  const u = new URL(origin);
+  vi.stubGlobal("window", { location: { origin: u.origin, host: u.host, protocol: u.protocol } });
+}
+const NEXT = `/callback?next=${encodeURIComponent("/reset-password")}`;
+
+describe("R-2600 authRedirectUrl — never an untrusted browser host", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("page opened on an evil host → the app URL", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://reselleros.anutech.in/");
+    onPage("https://evil.tld");
+    const url = authRedirectUrl(NEXT);
+    expect(url).toBe("https://reselleros.anutech.in/callback?next=%2Freset-password");
+    expect(url).not.toContain("evil.tld");
+  });
+
+  it("page opened on a LAN IP / http downgrade → the app URL", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3001");
+    onPage("http://192.168.1.20:3001");
+    expect(authRedirectUrl(NEXT)).toBe(`http://localhost:3001${NEXT}`);
+  });
+
+  it("in production even [::1] / localhost is not trusted → the app URL", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://reselleros.anutech.in");
+    onPage("http://[::1]:3001");
+    expect(authRedirectUrl(NEXT)).toBe(`https://reselleros.anutech.in${NEXT}`);
+  });
+
+  it("the app's own host is kept (PKCE cookie lives there); local hosts only outside production", () => {
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "https://reselleros.anutech.in");
+    onPage("https://reselleros.anutech.in");
+    expect(authRedirectUrl("callback")).toBe("https://reselleros.anutech.in/callback");
+    onPage("http://[::1]:3001");
+    expect(authRedirectUrl("/callback")).toBe("http://[::1]:3001/callback");
+  });
+
+  it("production without an app URL → plain-English error, not the developer text", () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("NEXT_PUBLIC_APP_URL", "");
+    onPage("https://evil.tld");
+    expect(() => authRedirectUrl(NEXT)).toThrow(/not set up on this server/);
+    expect(() => authRedirectUrl(NEXT)).not.toThrow(/NEXT_PUBLIC_APP_URL/);
+  });
+});
+
+/**
+ * Scan (R-2600): an auth redirect handed to the auth server (`redirectTo` / `emailRedirectTo`)
+ * may not be built from the browser's origin (`window.` / `globalThis.` / `document.` /
+ * bare `location.origin`). Use authRedirectUrl(). The only exceptions are OAuth sign-ins: that
+ * round trip happens in the user's own browser (nothing is mailed) and must come back to the
+ * same host for its PKCE cookie.
+ */
+const OAUTH_BROWSER_ORIGIN = new Set([
+  "src/components/features/auth/google-button.tsx",                     // signInWithOAuth
+  "src/components/features/contacts/google-contacts-import-dialog.tsx", // signInWithOAuth (contacts scope)
+]);
+
+describe("R-2600 scan — no auth redirect from the browser's origin", () => {
+  it("redirectTo / emailRedirectTo values never read location.origin (OAuth listed only)", () => {
+    const root = process.cwd();
+    const pattern = /(?:emailRedirectTo|redirectTo)\s*:[^\n]*\blocation\.origin/;
+    const offenders = walk(join(root, "src"))
+      .filter((f) => pattern.test(readSource(f)))
+      .map((f) => relative(root, f).split("\\").join("/"))
+      .filter((f) => !OAUTH_BROWSER_ORIGIN.has(f));
     expect(offenders).toEqual([]);
   });
 });

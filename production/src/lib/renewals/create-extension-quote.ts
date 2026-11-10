@@ -34,10 +34,12 @@ import { addDaysISO } from "@/lib/billing/schedule";
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
+import { exportQuoteRateFor } from "@/lib/gst/export-quote-rate";
 import {
   extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
   type ExtensionLength,
 } from "./extension-term";
+import { loadScheduledSeatCuts, renewalSeatCut } from "./scheduled-seat-cut";
 
 type SupabaseAdmin = SupabaseClient<Database>;
 
@@ -127,7 +129,7 @@ export interface CreateExtensionQuoteResult {
 
 export interface CreateExtensionQuoteError {
   ok:       false;
-  code:     "already_open" | "no_doc_number" | "insert_failed" | "invalid_years";
+  code:     "already_open" | "no_doc_number" | "insert_failed" | "invalid_years" | "seat_cut_scheduled" | "cut_check_failed";
   message:  string;
 }
 
@@ -156,6 +158,24 @@ export async function createExtensionQuote(
     };
   }
 
+  /* R-2608: an extension quote bills every current seat — it does not read a seat cut scheduled for
+     this renewal (R-2252 / R-2583). Refuse while one is scheduled; a failed read refuses too. */
+  const cutRows = await loadScheduledSeatCuts(input.supabase, input.tenantId, input.subscriptionId);
+  const cut = cutRows === null ? null : renewalSeatCut(cutRows, { seats: input.seats, renewalDate: input.renewalDate });
+  if (cutRows === null) {
+    return { ok: false, code: "cut_check_failed", message: "Could not check for a scheduled seat cut, so no extension quote was made. Try again in a minute." };
+  }
+  /* Only a cut the renewal quote would really bill (kind apply) — a cut that no longer applies
+     (seats changed since) is not billed by the renewal either, so the extension is not refused. */
+  if (cut?.kind === "apply") {
+    return {
+      ok: false,
+      code: "seat_cut_scheduled",
+      message: `A seat cut to ${cut.row.seats_after} seats is scheduled for ${formatIstDate(cut.row.effective_date)} — Extend term would bill all ${input.seats} seats. ` +
+        "Remove the cut in Manage seats first, or let the renewal happen with the cut.",
+    };
+  }
+
   // Allocate quote number
   const { data: nextNumber, error: numErr } = await input.supabase.rpc("next_document_number", {
     p_doc_type:  "quote",
@@ -169,7 +189,15 @@ export async function createExtensionQuote(
   /* Build line item. R-834: the charge is built FROM the line — whole-rupee rate per seat
      × seats = subtotal, so rate × qty on every screen equals the subtotal (extension-term.ts). */
   /* R-1532: a Bill of Supply business (not GST-registered / composition) charges no GST. */
-  const taxRatePct   = quoteStartTaxRate(await readTenantGstRegistration(input.supabase, input.tenantId));
+  /* R-2648: a customer abroad (or an SEZ unit without payment) with an LUT for today's FY → 0% (export
+     without payment, G16) — this path quoted 18% for everyone, which R-2636 then issued as IGST. No LUT →
+     18% as before. */
+  const today        = istToday();   // R-2648: ONE date for the LUT's FY and the quote's created_date
+  const usualTaxRate = quoteStartTaxRate(await readTenantGstRegistration(input.supabase, input.tenantId));
+  const { rate: taxRatePct } = await exportQuoteRateFor({
+    client: input.supabase, tenantId: input.tenantId, customerId: input.customerId,
+    date: today, usualRate: usualTaxRate, billOfSupply: usualTaxRate === 0,
+  });
   const charge       = extensionCharge({
     seats: input.seats, mrr: input.mrr, len, taxRatePct,
     termAmount: input.termAmount ?? null, termMonths: input.termMonths ?? null,  // R-2369
@@ -193,7 +221,6 @@ export async function createExtensionQuote(
 
   /* R-820: 30 days from today (DEFAULT_QUOTE_VALIDITY_DAYS), capped at the current renewal
      date — was renewal + grace, which left a quote open ~339 days right after a renewal. */
-  const today       = istToday();
   const expiresDate = extensionQuoteExpiry(today, input.renewalDate);
 
   const { error: insertErr } = await input.supabase.from("quotes").insert({
@@ -232,11 +259,26 @@ export async function createExtensionQuote(
     return { ok: false, code: "insert_failed", message: insertErr.message };
   }
 
-  // Link back so record_payment finds it
-  await input.supabase
+  /* Link back so record_payment finds it. R-2613: the link can be refused — a seat cut scheduled
+     after the check above (trigger subscriptions_r2613_quote_link_guard, rule N5). An unlinked
+     extension quote must not stay: paid, it is not recognised as this subscription's renewal. */
+  const linked = (await input.supabase
     .from("subscriptions")
     .update({ renewal_quote_id: newQuoteId })
-    .eq("id", input.subscriptionId);
+    .eq("id", input.subscriptionId)) as { error?: { message: string; code?: string } | null } | undefined;
+  if (linked?.error) {
+    const removed = (await input.supabase.from("quotes").delete().eq("id", newQuoteId).eq("tenant_id", input.tenantId)) as
+      { error?: { message: string } | null } | undefined;
+    const msg = linked.error.message;
+    return {
+      ok: false,
+      /* 23514 = check_violation, what the link guard raises: a refusal (409), not a failure. */
+      code: linked.error.code === "23514" || /^A seat cut to \d+ seats is scheduled/.test(msg) ? "seat_cut_scheduled" : "insert_failed",
+      message: removed?.error
+        ? `${msg} Quote ${newQuoteId} could not be removed (${removed.error.message}) — delete it in Quotes; it is not linked to the subscription.`
+        : `${msg} (quote ${newQuoteId} was removed).`,
+    };
+  }
 
   return { ok: true, quoteId: newQuoteId, amount: grossAnnual, years: len.unit === "years" ? len.count : null, months };
 }

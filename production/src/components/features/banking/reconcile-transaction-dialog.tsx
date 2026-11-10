@@ -51,7 +51,7 @@ import {
 } from "@/lib/queries/bank";
 import { EXPENSE_CATEGORIES, useUnreconciledExpenses, suggestCategory } from "@/lib/queries/expenses";
 import { useTxnCategoryRules } from "@/lib/queries/txn-category-rules";
-import { suggestForLine, categoriseByRules } from "@/lib/banking/categorise";
+import { expenseSuggestion as expenseSuggestionOf, suggestedPayee } from "@/lib/banking/bulk-expense";
 import { useUnreconciledSalaries, useEmployees } from "@/lib/queries/payroll";
 import { useCustomers } from "@/lib/queries/customers";
 import { rupee, formatDate } from "@/lib/utils";
@@ -60,7 +60,6 @@ import { fyLabel, fyStartYearOf } from "@/lib/accounting/tax-payments";
 import { previousPeriod, titleCaseName, parseSalaryNarration, matchEmployee } from "@/lib/banking/salary-lines";
 import { useBookSalaryLines } from "@/lib/queries/salary-from-bank";
 import { detectGovtPayment } from "@/lib/banking/govt-payment";
-import { payeeFromNarration, TEST_TRANSFER_MAX } from "@/lib/banking/narration";
 import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { useReferralCommissions } from "@/lib/queries/referral-commissions";
 import { AddCustomerForm } from "@/components/features/customers/add-customer-form";
@@ -72,6 +71,7 @@ import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 import { DebitPayForSection } from "@/components/features/banking/debit-pay-for-section";
 import { EmiRepaymentSection } from "@/components/features/banking/emi-repayment-section";
 import { LoanGivenReceiptSection } from "@/components/features/banking/loan-given-receipt-section";
+import { LoanGivenOutFields, LOAN_GIVEN_BORROWERS_LIST_ID } from "@/components/features/banking/loan-given-out-fields";
 import { CreditLineSection } from "@/components/features/banking/credit-line-section";
 import { OwnerEquitySection } from "@/components/features/banking/owner-equity-section";
 import { CustomerRefundSection } from "@/components/features/banking/customer-refund-section";
@@ -147,6 +147,8 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
   const [transferSave, setTransferSave] = React.useState<FooterSave | null>(null);
   const [otherIncomeSave, setOtherIncomeSave] = React.useState<FooterSave | null>(null);
   const [loanReceiptSave, setLoanReceiptSave] = React.useState<FooterSave | null>(null);
+  /* R-2603: money-out "I am GIVING a loan" — a Loans given row, saved by LoanGivenOutFields. */
+  const [loanOutSave, setLoanOutSave] = React.useState<FooterSave | null>(null);
   /* R-2374: a drawdown / repayment on a credit line or business loan (Loan / EMI tile). */
   const [creditLineSave, setCreditLineSave] = React.useState<FooterSave | null>(null);
   const [razorpaySave, setRazorpaySave] = React.useState<FooterSave | null>(null);
@@ -231,26 +233,12 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      keywords. Only an expense category counts — Salaries belong to Payroll. It PREFILLS
      the expense form and moves it to the top; nothing is booked until the click. */
   const { data: categoryRules } = useTxnCategoryRules();
-  const expenseSuggestion = React.useMemo((): { category: string; reason: string } | null => {
-    if (!transaction || transaction.debit <= 0) return null;
-    const isExpenseCat = (c: string | null | undefined): c is string =>
-      !!c && c !== "Salaries" && (EXPENSE_CATEGORIES as readonly string[]).includes(c);
-    /* "SALARY TO DIRECTOR": booked as an expense, this is Director's Remuneration —
-       never plain Salaries (which belongs to Payroll) and never a guessed category. */
-    if (/\bDIRECTORS?\b/i.test(transaction.description ?? "")) {
-      return { category: "Director's Remuneration", reason: "the word \"director\" in the narration" };
-    }
-    if (isExpenseCat(transaction.category)) return { category: transaction.category, reason: "set when the statement was imported" };
-    const s = suggestForLine(transaction, categoryRules ?? [], suggestCategory);
-    if (s && isExpenseCat(s.category)) return { category: s.category, reason: s.reason };
-    /* Last layer: a ₹1–₹10 debit with nothing else to say about it is a test /
-       account-verification ("penny drop") transfer. Real money left the bank, so it is
-       booked — as a bank charge — rather than waved through as "reconciled". */
-    if (transaction.debit <= TEST_TRANSFER_MAX) {
-      return { category: "Bank Charges", reason: `a ₹${transaction.debit} debit — usually a test / account-verification transfer` };
-    }
-    return null;
-  }, [transaction, categoryRules]);
+  /* R-2611: one place for this suggestion (lib/banking/bulk-expense) — the bulk "no vendor yet"
+     sheet reads the same layers: director → import → Category Rule → keyword → ₹1–₹10 test transfer. */
+  const expenseSuggestion = React.useMemo(
+    () => (transaction ? expenseSuggestionOf(transaction, categoryRules ?? [], suggestCategory) : null),
+    [transaction, categoryRules],
+  );
 
   React.useEffect(() => {
     setBookCategory(expenseSuggestion?.category ?? ""); setBookGst("");
@@ -268,14 +256,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
      parsed from the category's reason, which says "set at import" when the category
      came from the statement. A name already used for advances wins ("FACEBK" →
      the existing "Facebook"), so one vendor's top-ups stay one vendor. */
-  const suggestedVendor = React.useMemo(() => {
-    if (!transaction || transaction.debit <= 0) return "";
-    const pattern = categoriseByRules(transaction, categoryRules ?? [])?.rule.pattern.trim() ?? "";
-    /* No rule: the payee slot of an IMPS / NEFT / UPI narration, else blank. */
-    if (!pattern) return payeeFromNarration(transaction.description) ?? "";
-    const key = pattern.toUpperCase().slice(0, 5);
-    return prepaidVendorNames.find((v) => v.toUpperCase().startsWith(key)) ?? titleCaseName(pattern);
-  }, [transaction, categoryRules, prepaidVendorNames]);
+  /* No rule: the payee slot of an IMPS / NEFT / UPI narration, else blank (R-2611: shared lib). */
+  const suggestedVendor = React.useMemo(
+    () => (transaction ? suggestedPayee(transaction, categoryRules ?? [], prepaidVendorNames) : ""),
+    [transaction, categoryRules, prepaidVendorNames],
+  );
 
   /* R-1917 (R-1906 audit B8): the vendor the "Paying a vendor?" section is on (guessed from the
      narration or picked) and its open items. With a vendor, that section is the ONE way: it is the
@@ -648,7 +633,11 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
     onSave: handleBookCredit,
     loading: bookCredit.isPending,
   };
-  const advanceSave: FooterSave = {
+  /* R-2603: money out + "I am GIVING" saves ONLY through LoanGivenOutFields (a Loans given row) —
+     until it reports, the footer is off, never the old Balance Sheet booking. */
+  const advanceSave: FooterSave = !isCredit && advanceKind === "given" ? (loanOutSave ?? {
+    label: `Book ${rupee(amount)} as a loan given (Loans given)`, onSave: () => {}, disabled: true,
+  }) : {
     label: `Book ${rupee(amount)} as ${advanceKind === "given"
       ? (isCredit ? "an advance returned to you (asset)" : "a loan/advance you gave (asset)")
       : (isCredit ? "a loan received (liability)" : "a loan you repaid (liability)")}`,
@@ -912,6 +901,7 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
 
   /* Loan / advance between you and a person — BOTH sides. Not income, not expense: books a
      balance-sheet ASSET (you lent) or LIABILITY (you borrowed). Saved from the footer. */
+  const loanGivenOut = !isCredit && advanceKind === "given";
   const advanceBox = (
     <div className="rounded-md border border-indigo/40 bg-indigo-soft/25 p-3">
       <p className="text-xs font-semibold text-ink-2 mb-1">Loan / advance with a person?</p>
@@ -942,7 +932,17 @@ export function ReconcileTransactionDialog({ open, onOpenChange, transaction }: 
         value={advanceParty}
         onChange={(e) => setAdvanceParty(e.target.value)}
         placeholder="Person's name (e.g. Julie Rawat)"
+        list={loanGivenOut ? LOAN_GIVEN_BORROWERS_LIST_ID : undefined}
       />
+      {isCredit && advanceKind === "given" && (
+        <p className="text-xs text-ink-3 mt-1.5 leading-relaxed">
+          Money back on a loan listed on <b>Accounting → Loans given</b>? Use “A receipt on a loan you gave?” above — this box is for older advances on the Balance Sheet.
+        </p>
+      )}
+      {loanGivenOut && transaction && (
+        <LoanGivenOutFields txnId={transaction.id} amount={amount} borrower={advanceParty} notes={transaction.description}
+          onDone={() => onOpenChange(false)} onFooterSave={setLoanOutSave} />
+      )}
     </div>
   );
 

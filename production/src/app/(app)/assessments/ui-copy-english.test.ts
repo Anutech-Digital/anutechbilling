@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* R-292 (after R-273): My attendance (/attendance/me) and Assessments still showed Hinglish
    labels, hints and toasts. App UI copy is short plain English. Same checker as R-273: comments,
@@ -20,7 +21,7 @@ const HINGLISH = /\b(nahi|nahin|karo|karein|kar do|kijiye|dabao|dabaiye|chuno|li
 
 /** Source without comments, imports and console lines — what can reach the screen. */
 function uiLines(file: string): string[] {
-  return readFileSync(file, "utf8")
+  return readSource(file)
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1")
     .split(/\r?\n/)

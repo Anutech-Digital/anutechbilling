@@ -314,7 +314,8 @@ export function EmiScheduleDialog({ purchase, onClose }: { purchase: EmiPurchase
   const downQ = useEmiDownPayment(isAsset && downCash > 0 ? purchase : null);
   const down = downQ.data;
   const downFrom = !down ? "…" : down.kind === "owner" ? "Paid by owner"
-    : down.kind === "account" ? (allAccounts.find((a) => a.id === down.accountId)?.name ?? "An account") : "Not recorded";
+    : down.kind === "account" ? (allAccounts.find((a) => a.id === down.accountId)?.name ?? "An account")
+    : down.kind === "split" ? `Split — ${down.parts.length} parts` /* R-2523 */ : "Not recorded";
 
   const rows = q.data?.rows ?? [];
   const payments = q.data?.payments ?? [];

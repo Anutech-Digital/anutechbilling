@@ -10,7 +10,12 @@
 import { describe, it, expect } from "vitest";
 import { join } from "path";
 import { readFileSync } from "fs";
+import { readSource } from "@/lib/testing/source-cache";
+import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
 const { countRaw } = require("../../../scripts/count-raw-toast-errors.cjs");
+/* R-2564: one count per test file, through the shared read cache, without the generated Prisma client. */
+let rawCount: { total: number; raw: number; rawByFile: Map<string, number> } | undefined;
+const countRawSrc = () => (rawCount ??= countRaw(join(process.cwd(), "src"), { read: readSource, skipDir: isPrismaGenerated }));
 
 const R300_FILES = [
   "src/components/features/quotes/quote-builder.tsx",
@@ -20,7 +25,7 @@ const R300_FILES = [
 ] as const;
 
 describe("R-300 — no bare or raw error toasts in these components", () => {
-  const { total, rawByFile } = countRaw(join(process.cwd(), "src")) as {
+  const { total, rawByFile } = countRawSrc() as {
     total: number;
     rawByFile: Map<string, number>;
   };

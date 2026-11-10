@@ -1,6 +1,6 @@
 -- deploy-peek: to_regclass('public.meta_lead_forms') is not null
--- deploy-key: r2522metaleadforms
--- R-2522: which Facebook / Instagram lead forms a company brings into Sales → Leads. A form can sit
+-- deploy-key: r2670metaleadforms
+-- R-2670: which Facebook / Instagram lead forms a company brings into Sales → Leads. A form can sit
 -- on any Page the connected Meta Ads login manages (e.g. a brand Page that is not the posting Page).
 -- No token is stored here: page tokens are fetched at pull time through the Meta Ads login.
 begin;

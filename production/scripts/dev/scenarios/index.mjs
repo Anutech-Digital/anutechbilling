@@ -182,13 +182,14 @@ export const SCENARIOS = [
   },
   {
     name: "usd-inw-lines",
-    about: "Three USD inward remittances on SCN HDFC Current ··7788: $1,024 @ ₹93.60 = ₹95,846 (SCN Design Box LLC, new export sale); $2,000 @ ₹88.50 = ₹1,77,000 (SCN Timbergloss Inc) paying INV-SCN-USD-1 raised at $2,000 @ ₹84.00 (₹9,000 forex gain); $1,000 @ ₹93.60 = ₹93,600 (Design Box, short: billed $1,024). LUTs: scenario lut-per-fy.",
-    cards: ["R-2425", "R-2427", "R-2440", "R-2466"],
+    about: "Three USD inward remittances on SCN HDFC Current ··7788: $1,024 @ ₹93.60 = ₹95,846 (SCN Design Box LLC, new export sale); $2,000 @ ₹88.50 = ₹1,77,000 (SCN Timbergloss Inc) paying INV-SCN-USD-1 raised at $2,000 @ ₹84.00 (₹9,000 forex gain); $1,000 @ ₹93.60 = ₹93,600 (Design Box, short: billed $1,024). R-1678: ₹12,976 NEFT from SCN Peak Performance Hackers for INV-SCN-USD-2 ($139 @ ₹95.007 = ₹13,206 → ₹230 exchange loss); $1,500 @ ₹95 = ₹1,42,500 (Timbergloss) for INV-SCN-USD-3 ($1,000 @ ₹90) + INV-SCN-USD-4 ($500 @ ₹92) → ₹6,500 gain. LUTs: scenario lut-per-fy.",
+    cards: ["R-2425", "R-2427", "R-2440", "R-2466", "R-1678"],
     /* R-2466: INV-SCN-USD-1 comes from its USD quote Q-SCN-USD-1 (as every export sale in the app). */
-    scope: { vendors: [], txns: [x(21), x(22), x(23)], docs: [], names: [], upis: [], extra: [x(11), x(12), "Q-SCN-USD-1", "INV-SCN-USD-1"] },
-    expect: { ...NO_OLD, txns: 3, ...NO_EXTRA, xCustomers: 2, xQuotes: 1, xInvoices: 1 },
+    scope: { vendors: [], txns: [x(21), x(22), x(23), x(24), x(25)], docs: [], names: [], upis: [],
+      extra: [x(11), x(12), x(13), "Q-SCN-USD-1", "INV-SCN-USD-1", "Q-SCN-USD-2", "INV-SCN-USD-2", "Q-SCN-USD-3", "INV-SCN-USD-3", "Q-SCN-USD-4", "INV-SCN-USD-4"] },
+    expect: { ...NO_OLD, txns: 5, ...NO_EXTRA, xCustomers: 3, xQuotes: 4, xInvoices: 4 },
     pages: [
-      { path: "banking", for: "R-2425 'INW … USD1024.0@93.6' line shows $1,024 @ ₹93.60 · R-2427 / R-2466 the ₹1,77,000 line → Reconcile → SCN Timbergloss Inc → An open quote / invoice → INV-SCN-USD-1 ('₹9,000 forex gain') and the ₹93,600 line is the short one · Reconcile from Zoho needs a Zoho connection (not local)" },
+      { path: "banking", for: "R-2425 'INW … USD1024.0@93.6' line shows $1,024 @ ₹93.60 · R-2427 / R-2466 the ₹1,77,000 line → Reconcile → SCN Timbergloss Inc → An open quote / invoice → INV-SCN-USD-1 ('₹9,000 forex gain') and the ₹93,600 line is the short one · R-1678 the ₹12,976 NEFT line → SCN Peak Performance Hackers → An open quote / invoice → INV-SCN-USD-2 (₹230 exchange loss) · the ₹1,42,500 line → SCN Timbergloss Inc → Several quotes / invoices → INV-SCN-USD-3 + INV-SCN-USD-4 (₹6,500 gain) · Reconcile from Zoho needs a Zoho connection (not local)" },
       { path: "invoices", for: "R-2427 INV-SCN-USD-1 in USD ($2,000 @ ₹84.00)" },
     ],
   },
@@ -304,6 +305,113 @@ export const SCENARIOS = [
       { path: "customers-all", for: "R-2476 after switching to SCN Second Company Pvt Ltd: the list is empty (no E2E Test Co customer stays)" },
     ],
   },
+  {
+    name: "renewal-proforma",
+    about: "SCN Bit Labs — monthly Google Workspace Business Starter, 17 seats × ₹300; its current month was billed the old way as Q-SCN-PF-1 (1 × ₹5,100 'One-time' + IGST = ₹6,018, Sent, nothing emailed) — staging BITDECENTRO Q-A378-27-0947 in miniature. Cancel it, then Renewals → Bill next part at 18 seats.",
+    cards: ["R-2519"],
+    needs: { sql: "to_regprocedure('public.cancel_quote(text,text)') is not null", what: "proforma + cancel (migration R-2519)" },
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: [x(201), "Q-SCN-PF-1"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1, xQuotes: 1 },
+    pages: [
+      { path: "quote:Q-SCN-PF-1", for: "R-2519 More → Cancel quote (reason) → 'Cancelled', kept; More → Undo cancel brings it back; cancel again" },
+      { path: "renewals", for: "R-2519 SCN Bit Labs → ⋯ → Bill next part… → preview 17 × ₹300 → Seats 18, Periods 2 → Create 2 proformas (PI-…)" },
+    ],
+  },
+  {
+    name: "money-owed-archived",
+    about: "R-1473 Pawan's staging case: SCN Kochi Hosting owes ₹25,488 on its subscription; SCN Delhi Traders (ARCHIVED) owes ₹19,258 on its subscription + ₹23,109 on project invoice INV-SCN-MO-1. Dashboard 'to collect', Companies › Has receivables and its line all say ₹67,855 (subscriptions ₹44,746 + project ₹23,109); Renewals says ₹44,746 on these renewals + the project money.",
+    cards: ["R-1473"],
+    // customers + project, like project-receipts: their subscriptions and invoices go with them (_common.sql scn_project_clear)
+    scope: { vendors: [], txns: [], docs: [x(301), x(302), x(321)], names: [], upis: [] },
+    expect: { vendors: 0, expenses: 0, bills: 0, txns: 0, prepaid: 0, paymentLines: 0, aliases: 0, duplicateBillNos: 0, ...NO_SALES,
+              customers: 2, projects: 1, milestones: 2, projectPayments: 0, projectInvoices: 1, tdsRows: 0, ...NO_EXTRA },
+    pages: [
+      { path: "dashboard", for: "R-1473 Collections card: ₹67,855 to collect (Subscription dues ₹44.7K + project invoices ₹23.1K)" },
+      { path: "customers?view=unpaid", for: "R-1473 Has receivables lists SCN Kochi Hosting ₹25,488 and SCN Delhi Traders ₹42,367 (Archived badge); line over the list: … = ₹67,855 to collect · includes 1 archived company" },
+      { path: "renewals", for: "R-1473 under the title: ₹44,746 unpaid on these renewals · Companies › Has receivables ₹67,855 also has project invoices ₹23,109" },
+    ],
+  },
+  {
+    name: "renewal-parts",
+    about: "R-2548 card test's own customers, no subscriptions (the test adds them through Subscriptions → Add Subscription): SCN Part Bill Studio (Annual · Half-yearly, renews in 30 days), SCN Part Bill Late Co (Half-yearly, renews in 3 days), SCN Part Bill Yearly (paid Yearly). A reload or --clear also removes the subscriptions added on them.",
+    cards: ["R-2548", "R-2569"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [],
+             extra: ["c2569000-0000-4000-8000-000000000001", "c2569000-0000-4000-8000-000000000002", "c2569000-0000-4000-8000-000000000003"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 3 },
+    pages: [
+      { path: "customers", for: "R-2548 the three SCN Part Bill customers — Subscriptions → Add Subscription → Existing Customer picks them" },
+      { path: "renewals", for: "R-2548 after adding SCN Part Bill Studio's Annual · Half-yearly subscription: 'Bill renewal · part 1 of next year'" },
+    ],
+  },
+  {
+    name: "seat-parts",
+    about: "R-2226 card test's own customer SCN Seat Parts Co with two Google Workspace subscriptions, 10 seats × ₹3,240/yr (mrr ₹2,700), annual term from the 1st two months ago: SCN Seat Parts Monthly (billed monthly — a whole month's seat is ₹270, the part's own rate) and SCN Seat Parts Yearly (paid yearly — annual × days ÷ 365, unchanged). The test only reads the Manage seats preview; a reload or --clear removes both subscriptions.",
+    cards: ["R-2226"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: ["c2226000-0000-4000-8000-000000000001"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1 },
+    pages: [
+      { path: "subscriptions", for: "R-2226 SCN Seat Parts Monthly → Manage seats → effective date = 1st of this month → 'Part rate ₹270/seat (1 month of ₹3,240/yr)', ₹270 per seat; SCN Seat Parts Yearly → Pro-rata factor as before" },
+    ],
+  },
+  {
+    name: "plan-change",
+    about: "R-2227 card test's own customer SCN Plan Change Co: Google Workspace Business Starter (subscription 'SCN Plan Change Starter'), 10 seats × ₹3,240/yr paid yearly, annual term from the 1st two months ago, its invoice INV-SCN-PC-1 ₹38,232 paid in full. Change plan → E2E Google Workspace Business Standard credits the whole unused Starter value. A reload or --clear removes the customer, its subscription, quotes and invoices.",
+    cards: ["R-2227"],
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [], extra: ["c2227000-0000-4000-8000-000000000001", "INV-SCN-PC-1"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1, xQuotes: 1, xInvoices: 1 },
+    pages: [
+      { path: "subscriptions", for: "R-2227 SCN Plan Change Starter → Change plan → E2E Google Workspace Business Standard, 10 seats → new plan for the days left, less unused Starter, net to pay → Create plan change quote" },
+    ],
+  },
+  {
+    name: "receipt-gaps",
+    about: "R-2192 small receipt differences: SCN Round Off Traders INV-SCN-RG-1 ₹13,106 + a ₹13,105 NEFT line (₹1 short → round-off); SCN Wire Exports INV-SCN-RG-2 ₹50,000 + a ₹49,500 RTGS wire (₹500 kept by the bank → Bank / SWIFT charge).",
+    cards: ["R-2192"],
+    needs: { sql: "exists(select 1 from pg_proc where oid = to_regprocedure('public.reconcile_bank_credit_split(uuid,uuid,jsonb,jsonb,text)') and prosrc like '%R-2192%')", what: "bank charge on a receipt (migration R-2192)" },
+    scope: { vendors: [], txns: ["c2192000-0000-4000-8000-000000000003", "c2192000-0000-4000-8000-000000000004"], docs: [], names: [], upis: [],
+             extra: ["c2192000-0000-4000-8000-000000000001", "c2192000-0000-4000-8000-000000000002", "Q-SCN-RG-1", "Q-SCN-RG-2", "INV-SCN-RG-1", "INV-SCN-RG-2"] },
+    expect: { ...NO_OLD, txns: 2, ...NO_EXTRA, xCustomers: 2, xQuotes: 2, xInvoices: 2 },
+    pages: [
+      { path: "banking", for: "R-2192 the ₹13,105 SCN Round Off Traders line: 'Matches INV-SCN-RG-1 · ₹1 round-off' → Reconcile: INV-SCN-RG-1 ticked, 'Round off ₹1' chosen → Record → Paid in full · the ₹49,500 SCN Wire Exports line → This money is for INV-SCN-RG-2 → Bank / SWIFT charge ₹500 → Paid" },
+    ],
+  },
+  {
+    name: "gst-filed-quote",
+    about: "R-2627: SCN Filed Quote Buyer (Delhi) with accepted quote Q-SCN-GFQ-1 ₹5,900 (no invoice yet); money-in lines on SCN HDFC Current ··7788: 18 Sep 2026 ₹5,900 (paying the quote is refused once GST is filed up to Sep 2026 — it would raise a tax invoice in a filed month), 6 Oct 2026 ₹5,900 (open month — paid and invoiced as before).",
+    cards: ["R-2627"],
+    needs: { sql: "exists(select 1 from pg_proc where oid = to_regprocedure('public.bank_credit_pay_item(uuid,integer,text,text,text,integer,numeric,text,boolean,date,date)') and prosrc like '%R-2627%')", what: "no new invoice in a GST-filed month (migration R-2627)" },
+    scope: { vendors: [], txns: ["c2627000-0000-4000-8000-000000000011", "c2627000-0000-4000-8000-000000000012"],
+             docs: [], names: [], upis: [],
+             extra: ["c2627000-0000-4000-8000-000000000001", "Q-SCN-GFQ-1"] },
+    expect: { ...NO_OLD, txns: 2, ...NO_EXTRA, xCustomers: 1, xQuotes: 1 },
+    pages: [
+      { path: "banking", for: "R-2627 first Accounting → Overview → 'GST returns filed up to' → September 2026 → Save (Clear it when done) · 18 Sep ₹5,900 line → Reconcile → SCN Filed Quote Buyer → An open quote / invoice → Q-SCN-GFQ-1 → 'GST for Sep 2026 is already filed' · 6 Oct ₹5,900 line → same quote → paid + invoice dated 6 Oct" },
+    ],
+  },
+  {
+    name: "zoho-as-filed",
+    about: "R-2540: SCN As Filed Traders (Maharashtra, GSTIN 27AAHCS1234K1Z5, Baner Road, Pune) with two FY sales kept as filed in Zoho: ZB-SCN-AF-1 ₹11,800 filed as B2C (no GSTIN) and ZB-SCN-AF-2 ₹23,600 for its Karnataka branch (GSTIN 29AAHCS1234K1Z1, 5th Floor, MG Road, Bengaluru).",
+    cards: ["R-2540"],
+    needs: { sql: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'invoices' and column_name = 'party_from_source')", what: "Zoho sale kept as filed (migration R-2536)" },
+    scope: { vendors: [], txns: [], docs: [], names: [], upis: [],
+             extra: ["c2540000-0000-4000-8000-000000000001", "ZB-SCN-AF-1", "ZB-SCN-AF-2"] },
+    expect: { ...NO_OLD, txns: 0, ...NO_EXTRA, xCustomers: 1, xInvoices: 2 },
+    pages: [
+      { path: "invoices", for: "R-2540 ZB-SCN-AF-1 → Tax invoice: no buyer GSTIN (B2C as filed) · ZB-SCN-AF-2 → GSTIN 29AAHCS1234K1Z1, MG Road Bengaluru address, State: Karnataka — not the Pune address" },
+    ],
+  },
+  {
+    name: "gst-filed",
+    about: "R-2621: SCN Filed Month Traders (Delhi) with FY sale ZB-SCN-GF-1 ₹11,800 imported from Zoho (10 Sep 2026); money-in lines on SCN HDFC Current ··7788: 15 Sep 2026 ₹11,800 (pays ZB-SCN-GF-1), 20 Sep 2026 ₹5,900 (a new sale is refused once GST is filed up to Sep 2026), 5 Oct 2026 ₹5,900 (open month — new sale as before).",
+    cards: ["R-2621"],
+    scope: { vendors: [], txns: ["c2621000-0000-4000-8000-000000000011", "c2621000-0000-4000-8000-000000000012", "c2621000-0000-4000-8000-000000000013"],
+             docs: [], names: [], upis: [],
+             extra: ["c2621000-0000-4000-8000-000000000001", "ZB-SCN-GF-1"] },
+    expect: { ...NO_OLD, txns: 3, ...NO_EXTRA, xCustomers: 1, xInvoices: 1 },
+    pages: [
+      { path: "banking", for: "R-2621 first Accounting → Overview → 'GST returns filed up to' → September 2026 → Save (Clear it when done) · 20 Sep ₹5,900 line → Reconcile → SCN Filed Month Traders → New sale → 'GST for Sep 2026 is already filed' · 15 Sep ₹11,800 line → An open quote / invoice → ZB-SCN-GF-1 → paid · 5 Oct ₹5,900 line → new sale books" },
+    ],
+  },
 ];
 
 export const SCENARIO_NAMES = SCENARIOS.map((s) => s.name);
@@ -343,6 +451,8 @@ export function pageUrl(host, key, today = new Date()) {
     /* R-2476 */
     case "dashboard": return `${base}/dashboard`;
     case "customers-all": return `${base}/customers`;
+    /* R-2519 */
+    case "renewals": return `${base}/renewals?q=SCN`;
     default:
       if (key.startsWith("quote:")) return `${base}/quotes/${encodeURIComponent(key.slice(6))}`;
       return `${base}/accounting/${key}`;

@@ -124,11 +124,9 @@ export function SwipeLeadCard({ lead, onTap, onChangeStage, onSendQuote, onOutco
      `lib/leads/stage-advance.ts` hai, jahan wo tested hai aur teeno surface ek jaisa
      bartaav karte hain. */
 
-  // Phone normalisation for wa.me + tel: — assume Indian +91 if 10 digits.
+  // wa.me number from lib/phone via waFrom (R-2641): India (91) unless the number has a code.
   const phoneDigits = (lead.contact_phone ?? "").replace(/\D/g, "");
-  const waNumber    = phoneDigits.startsWith("91")
-    ? phoneDigits
-    : (phoneDigits.length === 10 ? `91${phoneDigits}` : phoneDigits);
+  const waNumber    = waFrom(lead.contact_phone ?? "");
   /* R-1009: a masked phone ("••••••3210") is still a phone — Call / WhatsApp / Email fetch the
      real value (logged) when used. */
   const phoneMasked = isMaskedContact(lead.contact_phone);

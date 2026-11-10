@@ -8,7 +8,7 @@
  * popup — and a button with no backend behind it (retry provisioning, re-send DNS
  * guide, escalate to Google, winback email) is not shown at all.
  */
-import { formatWhatsAppPhone } from "@/lib/whatsapp";
+import { phoneDigitsForCountry } from "@/lib/phone";
 import { leadQuoteHref } from "@/lib/leads/lead-quote-href";
 
 export interface DrawerActionInput {
@@ -20,7 +20,8 @@ export interface DrawerActionInput {
   company: string;
   plan: string | null;
   seats: number | null;
-  contact: { name: string; email: string; phone: string };
+  /** R-2641: `country` = the lead's country — its dialling code goes in front of a bare number. */
+  contact: { name: string; email: string; phone: string; country?: string | null };
 }
 
 export interface DrawerAction {
@@ -33,10 +34,10 @@ export interface DrawerAction {
   primary?: boolean;
 }
 
-/** 10+ digits, else null. "—" and short numbers are not dialled. */
-function phoneDigits(phone: string): string | null {
-  const wa = formatWhatsAppPhone(phone);
-  return wa.length >= 10 ? wa : null;
+/** International digits (lib/phone, R-2641) of 10+ digits, else null. "—" and short numbers are not dialled. */
+function phoneDigits(phone: string, country?: string | null): string | null {
+  const wa = phoneDigitsForCountry(phone, country);
+  return wa && wa.length >= 10 ? wa : null;
 }
 
 function validEmail(email: string): string | null {
@@ -67,7 +68,7 @@ export function orderDrawerActions(i: DrawerActionInput): DrawerAction[] {
     out.push({ key: "log-call", label: "Log call", icon: "phone", kind: "call-log", primary: true });
   }
 
-  const phone = phoneDigits(i.contact.phone);
+  const phone = phoneDigits(i.contact.phone, i.contact.country);
   if (phone) {
     out.push({ key: "whatsapp", label: "WhatsApp", icon: "whatsapp", kind: "external", href: `https://wa.me/${phone}` });
     out.push({ key: "call", label: "Call", icon: "phone", kind: "external", href: `tel:+${phone}` });

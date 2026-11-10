@@ -29,6 +29,7 @@
  * not a quote, it is an order form the seller has not seen.
  */
 import type { Item, QuoteLineItem } from "@/lib/supabase/database.types";
+import { lineInr } from "./foreign-totals";
 import { slabPricing } from "./volume-tiers";
 import { lineCostUnknown } from "./line-cost";
 import { requiredApproval, type QuoteEconomics, type ApprovalRequirement } from "./approval";
@@ -141,13 +142,15 @@ export function configureQuote(
   }
 
   const live = configured.filter((c) => c.included);
-  const subtotal = live.reduce((s, c) => s + c.qty * c.rate, 0);
+  /* R-2637: line ₹ total rounded once (a USD line keeps a paise ₹ rate) — the builder's own rule. */
+  const subtotal = live.reduce((s, c) => s + lineInr(c), 0);
   const originalSubtotal = lines
     .filter((l) => !l.optional || l.included_by_default)
-    .reduce((s, l) => s + l.qty * l.rate, 0);
+    .reduce((s, l) => s + lineInr(l), 0);
 
   const economics: QuoteEconomics = {
-    subtotal,
+    /* Approval maths: unrounded, like lineEconomics and SQL quote_lines_approval_bps (R-2637). */
+    subtotal: live.reduce((s, c) => s + c.qty * c.rate, 0),
     listTotal: live.reduce((s, c) => s + c.qty * (c.line.list_rate ?? c.rate), 0),
     totalCost: live.reduce((s, c) => s + c.qty * c.cost, 0),
     /* R-388: shared rule — the support plan at ₹0 is a known cost. */

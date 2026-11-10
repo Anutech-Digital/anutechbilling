@@ -7,8 +7,12 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_ONLINE_FEE_SETTINGS,
   ONLINE_FEE_GST_PCT,
+  billGstColumns,
+  billOnlineFeeGstPct,
+  onlineFeeAmounts,
   onlineFeeEffectivePct,
   onlineFeeFor,
+  onlineFeeGstPct,
   onlineFeeLine,
   parseOnlineFeeSettings,
   type OnlineFeeSettings,
@@ -113,5 +117,51 @@ describe("onlineFeeLine (R-2416) — what the quote / invoice shows", () => {
     const s = settings({ waiveAbove: 100000 });
     expect(onlineFeeLine(onlineFeeFor({ billTotal: 150000 }, null, s), s))
       .toBe("Online fee: we absorb it — bill is ₹1,00,000 or more");
+  });
+});
+
+describe("the fee carries the BILL's GST rate (R-2598 — money-rules F2, razorpay-fee.md rule 3)", () => {
+  it("0% bill (export / SEZ without payment, G4): fee GST is 0 and the gross-up uses 1.00, not 1.18", () => {
+    // B ₹11,800 at 0%: fee = 0.02 × 11,800 / (1 − 0.02 × 1.00) = 236 / 0.98 = ₹240.82 → ₹241; GST ₹0.
+    expect(onlineFeeAmounts(11800, 2, 0)).toEqual({ fee: 241, gst: 0, total: 241, payable: 12041 });
+    const r = onlineFeeFor({ billTotal: 11800, gstPct: 0 }, null, settings());
+    expect(r).toMatchObject({ bearer: "customer", fee: 241, gst: 0, total: 241, payable: 12041 });
+    // No output GST on the fee, Razorpay's own GST is input credit → after Razorpay's 2% the bill is left (± ₹1).
+    expect(Math.abs(r.payable - r.payable * 0.02 - 11800)).toBeLessThanOrEqual(1);
+    expect(onlineFeeLine(r)).toBe(
+      "Online fee: customer pays ₹241 (no GST — 0% bill) if paid online — ₹12,041 in all. Bank transfer is free.",
+    );
+  });
+
+  it("18% bill: unchanged — the same ₹242 + ₹44 as before R-2598", () => {
+    expect(onlineFeeAmounts(11800, 2, 18)).toEqual({ fee: 242, gst: 44, total: 286, payable: 12086 });
+    expect(onlineFeeAmounts(11800, 2)).toEqual({ fee: 242, gst: 44, total: 286, payable: 12086 });
+    expect(onlineFeeFor({ billTotal: 11800, gstPct: 18 }, null, settings())).toMatchObject({ fee: 242, gst: 44, payable: 12086 });
+  });
+
+  it("a 0% bill whose fee we absorb shows the 0% cost too", () => {
+    expect(onlineFeeFor({ billTotal: 11800, gstPct: 0, waived: true }, null, settings()))
+      .toMatchObject({ bearer: "business", fee: 241, gst: 0, total: 241 });
+  });
+
+  it("the bill's rate: 0 → 0; 5 / 18 / 28 kept; unknown (null, NaN, negative, > 28) → 18 — never zero-rate by guess", () => {
+    expect(onlineFeeGstPct(0)).toBe(0);
+    expect(onlineFeeGstPct("0")).toBe(0);
+    expect(onlineFeeGstPct(18)).toBe(18);
+    expect(onlineFeeGstPct(5)).toBe(5);
+    expect(onlineFeeGstPct(28)).toBe(28);
+    for (const v of [null, undefined, "", "abc", Number.NaN, -1, 40]) expect(onlineFeeGstPct(v)).toBe(ONLINE_FEE_GST_PCT);
+    // The bill row: quote tax_rate 0 → 0; an export invoice with ₹0 tax but a stale tax_rate 18 → 0;
+    // a missing tax_amount (quotes have none) never zero-rates; tax_rate null → 18.
+    expect(billOnlineFeeGstPct({ tax_rate: 0 })).toBe(0);
+    expect(billOnlineFeeGstPct({ tax_rate: 18, tax_amount: 0 })).toBe(0);
+    expect(billOnlineFeeGstPct({ tax_rate: 18, tax_amount: 90000 })).toBe(18);
+    expect(billOnlineFeeGstPct({ tax_rate: 18, tax_amount: null })).toBe(18);
+    expect(billOnlineFeeGstPct({ tax_rate: null })).toBe(18);
+    expect(billOnlineFeeGstPct(null)).toBe(18);
+    expect(billGstColumns("quote")).toBe("tax_rate");
+    expect(billGstColumns("invoice")).toBe("tax_rate, tax_amount");
+    // A bill with no gstPct = 18% (callers that pass nothing keep today's answer).
+    expect(onlineFeeFor({ billTotal: 11800 }, null, settings())).toMatchObject({ gst: 44 });
   });
 });

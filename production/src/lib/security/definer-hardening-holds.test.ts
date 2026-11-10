@@ -22,7 +22,8 @@
  * database. It catches the case that actually bit, which is a migration being written.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const DIR = "supabase/migrations";
 /** The migration that did the hardening. Anything after it inherits the rules. */
@@ -32,11 +33,22 @@ const later = readdirSync(DIR)
   .filter((f) => f.endsWith(".sql") && f.split("_")[0] > HARDENING)
   .sort();
 
+/* R-2564 (7 Nov 2026): each migration is read (shared cache) and comment-stripped ONCE per run. The scans below
+   read every file 3–4 times (two it.each passes + two whole-tree joins, ~11 MB of SQL each time);
+   under push load this suite took 70–97 s for a 4 s job. Same text, same checks. */
+const raw = (f: string): string => readSource(`${DIR}/${f}`); // shared, always-fresh read cache
+const codeCache = new Map<string, string>();
 /** Comments stripped — several of these files quote the old form in order to explain it (L46). */
-const code = (f: string) =>
-  readFileSync(`${DIR}/${f}`, "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/^\s*--.*$/gm, "");
+const code = (f: string): string => {
+  let s = codeCache.get(f);
+  if (s === undefined) {
+    s = raw(f)
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*--.*$/gm, "");
+    codeCache.set(f, s);
+  }
+  return s;
+};
 
 describe("the hardening migration exists and says what it did", () => {
   it("is still in the tree", () => {
@@ -153,7 +165,7 @@ describe("no later migration hands anon EXECUTE back", () => {
        than against a live database, so it runs with no Docker. */
     const all = readdirSync(DIR)
       .filter((f) => f.endsWith(".sql"))
-      .map((f) => readFileSync(`${DIR}/${f}`, "utf8"))
+      .map((f) => raw(f))
       .join("\n");
     for (const fn of Object.keys(POLICY_HELPERS)) {
       const policiesUsingIt = all

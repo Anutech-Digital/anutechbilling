@@ -21,6 +21,7 @@
  * being approved into a code path that would silently do nothing.
  */
 import { seatIncreaseCharge } from "./seat-increase-charge";
+import type { SeatPartSegment } from "./seat-part-rate";
 
 export type SeatRequestStatus = "pending" | "approved" | "rejected" | "withdrawn";
 
@@ -148,6 +149,8 @@ export function previewCharge(args: {
   remainingDays: number;
   termDays: number;
   taxRatePct: number;
+  /** R-2226: seatChargeParts() for a split-billed subscription — the part's own rate. */
+  parts?: readonly SeatPartSegment[] | null;
 }): ChargePreview | null {
   const { currentSeats, currentMrr, seatsToAdd, remainingDays, termDays, taxRatePct } = args;
   if (seatsToAdd < 1 || currentSeats < 1 || termDays <= 0) return null;
@@ -157,6 +160,7 @@ export function previewCharge(args: {
      and round the GST on its own, which could land ₹1 away from the quote. */
   const c = seatIncreaseCharge({
     currentSeats, currentMrr, additionalSeats: seatsToAdd, remainingDays, termDays, taxRatePct,
+    parts: args.parts ?? null,
   });
 
   return {

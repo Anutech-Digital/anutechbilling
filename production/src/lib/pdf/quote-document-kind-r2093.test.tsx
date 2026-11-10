@@ -102,7 +102,8 @@ describe("renewal reminder: the subscription's linked quote may be an upgrade", 
       plan: "p", itemId: null, seats: 1, mrr: 0, termMonths: 12, renewalDate: "2027-01-01", graceDays: 0,
       existingQuoteId: "Q-1",
     } as never);
-    expect(r?.kind).toBe("upgrade");
+    /* R-2618: the helper may also answer a hold (plan-change quote) — a support upgrade is still a result. */
+    expect(r && "kind" in r ? r.kind : null).toBe("upgrade");
     expect(String((select.mock.calls[0] as unknown[])[0])).toMatch(/is_renewal, is_extension, extension_months/);
   });
 });
@@ -140,7 +141,7 @@ describe("record-payment toast", () => {
   });
   it("full payment on an upgrade quote says the plan is upgraded", () => {
     expect(paymentToast({ ...base, isUpgradeQuote: true, isFullyPaid: true, outstanding: 0 }).title)
-      .toBe("Paid in full · support plan upgraded");
+      .toBe("Paid in full · plan upgraded");
   });
   it("a real renewal keeps its wording", () => {
     expect(paymentToast(base).title).toMatch(/^Partial renewal payment recorded/);

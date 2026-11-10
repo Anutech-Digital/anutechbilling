@@ -75,6 +75,23 @@ describe("ci.yml — R-1593 cost controls", () => {
     expect(w["restore-keys"]).toContain("hashFiles('production/package-lock.json')");
   });
 
+  /* R-2552 (7 Nov 2026): build job 11–23 min, of which next build's own type check was 6–13 min —
+     a repeat of the parallel `typecheck` job. The build skips it ONLY while that job still runs
+     next typegen + tsc (the check that sees typedRoutes) and blocks `checks`. */
+  it("R-2552: the build skips its type check only because the blocking typecheck job does typegen + tsc", () => {
+    const build = wf.jobs.build.steps.find((s) => s.run === "npm run build")!;
+    expect(build.env?.SKIP_BUILD_TYPECHECK).toBe("1");
+    const pkg = JSON.parse(readFileSync(`${root}production/package.json`, "utf8")) as { scripts: Record<string, string> };
+    expect(pkg.scripts.typecheck).toMatch(/next typegen && tsc --noEmit/);
+    expect(wf.jobs.typecheck.steps.some((s) => s.run === "npm run typecheck")).toBe(true);
+    expect(wf.jobs.typecheck["continue-on-error"]).toBeUndefined();
+    expect(wf.jobs.checks.needs).toContain("typecheck");
+    const nextConfig = readFileSync(`${root}production/next.config.mjs`, "utf8");
+    expect(nextConfig).toMatch(/ignoreBuildErrors:\s*process\.env\.SKIP_BUILD_TYPECHECK === "1"/);
+    // The Next build cache stays (removing it would put compile back to cold every push).
+    expect(wf.jobs.build.steps.filter((s) => s.uses?.startsWith("actions/cache@"))).toHaveLength(1);
+  });
+
   it("npm download cache stays on in every job that installs", () => {
     for (const [name, job] of Object.entries(wf.jobs)) {
       if (!job.steps.some((s) => s.run === "npm ci")) continue;
@@ -109,7 +126,8 @@ describe("ci.yml — R-2349 parallel gate jobs", () => {
       "npx prisma generate && npx next typegen",
       "npm run test -- --shard=${{ matrix.shard }}/2",
     ]);
-    expect(runs("build")).toEqual(["npm ci", "npm run build"]);
+    // R-2552: + a read-only `du` of the Next cache after the build (measurement, never fails).
+    expect(runs("build")).toEqual(["npm ci", "npm run build", "du -sh .next/cache .next/cache/* .next/cache/webpack/* 2>/dev/null || true"]);
     expect(runs("e2e-smoke")).toEqual([
       "npm ci",
       "npx playwright install --with-deps chromium",
@@ -144,7 +162,7 @@ describe("ci.yml — R-2349 parallel gate jobs", () => {
     });
     expect(step("typecheck", "npm run typecheck").env).toEqual({ NODE_OPTIONS: "--max-old-space-size=8192" });
     const env = step("build", "npm run build").env ?? {};
-    expect(Object.keys(env).sort()).toEqual(["CATALOG_ORIGIN", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_URL", "NODE_OPTIONS"]);
+    expect(Object.keys(env).sort()).toEqual(["CATALOG_ORIGIN", "NEXT_PUBLIC_SUPABASE_ANON_KEY", "NEXT_PUBLIC_SUPABASE_URL", "NODE_OPTIONS", "SKIP_BUILD_TYPECHECK"]);
     expect(env.NEXT_PUBLIC_SUPABASE_URL).toBe("https://api.anutech.in");
     expect(env.NODE_OPTIONS).toBe("--max-old-space-size=6144");
     expect(env.CATALOG_ORIGIN).toBe("http://127.0.0.1:9");

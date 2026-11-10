@@ -83,6 +83,7 @@ vi.mock("@/lib/queries/prepaid-advances", () => ({ usePrepaidAdvances: () => ({ 
 vi.mock("@/lib/queries/referral-commissions", () => ({ useReferralCommissions: () => ({ data: state.commissions }) }));
 /* R-2007's Suggestion card has its own test (reconcile-suggestion-r2007.test.tsx); none here. */
 vi.mock("@/components/features/banking/credit-line-section", () => ({ CreditLineSection: () => null }));   // R-2374
+vi.mock("@/components/features/banking/loan-given-out-fields", () => ({ LoanGivenOutFields: () => null, LOAN_GIVEN_BORROWERS_LIST_ID: "r2603-borrowers" }));   // R-2603
 vi.mock("@/components/features/banking/reconcile-suggestion-card", () => ({
   useReconcileSuggestion: () => ({ suggestion: null, accept: async () => false, accepting: false }),
   SuggestionCard: () => null,

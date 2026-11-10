@@ -49,6 +49,7 @@ export const CRON_ROUTES: Record<AutomationJob, Loader> = {
   "social-drafts":        () => import("@/app/api/cron/social-drafts/route"),
   "social-publish":       () => import("@/app/api/cron/social-publish/route"),
   "meta-leads-pull":      () => import("@/app/api/cron/meta-leads-pull/route"),
+  "zoho-fy-read":         () => import("@/app/api/cron/zoho-fy-read/route"),
 };
 
 /** The job's GET handler (the gated one), or null when the module has none. */

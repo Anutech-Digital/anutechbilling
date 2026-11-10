@@ -29,6 +29,8 @@ import ExtendSubscriptionDialog from "@/components/features/subscriptions/extend
 import AddSeatsDialog            from "@/components/features/subscriptions/add-seats-dialog";
 import UpgradeSupportDialog      from "@/components/features/subscriptions/upgrade-support-dialog";
 import { supportUpgradeFrom } from "@/lib/support/upgrade-quote";
+import ChangePlanDialog          from "@/components/features/subscriptions/change-plan-dialog";
+import { canChangePlan } from "@/lib/subscriptions/change-plan";
 import { isSupportSkuId } from "@/lib/support/tiers";
 import { mayDo } from "@/lib/auth/action-roles";
 import { AddSubscriptionDialog } from "@/components/features/subscriptions/add-subscription-dialog";
@@ -376,6 +378,7 @@ export default function SubscriptionsPage() {
   const [extendSub,  setExtendSub]   = React.useState<Subscription | null>(null);
   /* R-2073: the support plan being upgraded (pro-rata quote dialog). */
   const [upgradeSub, setUpgradeSub]  = React.useState<Subscription | null>(null);
+  const [changePlanSub, setChangePlanSub] = React.useState<Subscription | null>(null); // R-2227
   const [scheduleSub, setScheduleSub] = React.useState<Subscription | null>(null);
   /* R-1433: ?open=<subscription id> — "Open subscription" on an invoice lands here and opens
      that subscription's drawer. Read once after mount (no useSearchParams: build rule), then
@@ -1923,6 +1926,8 @@ export default function SubscriptionsPage() {
         />
       )}
 
+      {changePlanSub && <ChangePlanDialog sub={changePlanSub} catalog={catalog} open onOpenChange={(v) => { if (!v) setChangePlanSub(null); }} />}
+
       {/* Add seats dialog */}
       {addSeatsSub && (
         <AddSeatsDialog
@@ -2020,6 +2025,9 @@ export default function SubscriptionsPage() {
                 onCorrect={() => { const sub = scheduleSub; setScheduleSub(null); setEditSub(sub); }}
                 onUpgradePlan={canChangeTerms && supportUpgradeFrom(scheduleSub)
                   ? () => { const sub = scheduleSub; setScheduleSub(null); setUpgradeSub(sub); }
+                  : undefined}
+                onChangePlan={canChangeTerms && canChangePlan(scheduleSub)
+                  ? () => { const sub = scheduleSub; setScheduleSub(null); setChangePlanSub(sub); }
                   : undefined}
               />
               {/* ── WHAT TO DO ABOUT THE LEAK, NOT JUST THAT THERE IS ONE ────────

@@ -3,9 +3,10 @@
  * of every public route so a new `error.message` in a response fails here.
  */
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { publicDbError } from "./db-error";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 afterEach(() => vi.restoreAllMocks());
 
@@ -36,7 +37,7 @@ describe("no public route sends raw database error text", () => {
   });
   it("no response body carries a database error's .message", () => {
     const bad = routes.filter((f) => {
-      const code = readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      const code = readSource(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
       return /json\([^)]*\b\w*(error|Err)\.message/.test(code);
     });
     expect(bad).toEqual([]);

@@ -8,8 +8,9 @@
  * before its first money call — then add it to KNOWN so the list stays honest.
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative, sep } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 const SRC = join(__dirname, "..", "..");
 const GUARD = "liveKeyCheckoutRefusal(";
@@ -40,7 +41,7 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 const rel = (p: string) => relative(SRC, p).split(sep).join("/");
 /** Strip comments so a call named in prose does not count either way. */
-const code = (p: string) => readFileSync(p, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
+const code = (p: string) => readSource(p).replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|[^:"'`])\/\/.*$/gm, "$1");
 
 const files = walk(SRC);
 /** Only Razorpay counts (Google Reseller also has a subscriptions.create). */

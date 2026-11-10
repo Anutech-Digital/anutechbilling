@@ -33,9 +33,9 @@
  * typecheck + push. A rebase conflict aborts and stops (exit 2) — never resolved by force.
  *
  * Exit 0 = go. Exit 2 = conflict (message names the other card). Exit 5 = push guard test failed
- * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = maxWorkersAt() (2 by day, 3 by night) already
+ * (R-385: repo-scan/ratchet suites in push-guard-suites.mjs). Exit 3 = maxWorkersAt() (4 by day, 6 by night) already
  * running — R-1973: cards in ci-wait / ci-red (pushed, waiting on CI) do not count, but keep their files.
- * Either way: stop, do not work around it.
+ * Either way: stop, do not work around it. Exit 13 (R-2592) = money/p0 card without a SAFE independent review of this code.
  *
  * R-842 (11 Oct) — board v76 card contract, enforced here instead of by cleanup (400+ cards lacked fields).
  * The script cannot read the board (claude.ai artifact DB), so the caller saves the card first with
@@ -55,18 +55,19 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { restoreBuildInfo, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL_STEP } from "./worker-tsc-cache.mjs";
-import { execSync, execFileSync, spawnSync } from "node:child_process";
+import { restoreBuildInfo, restoreLine, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL_STEP } from "./worker-tsc-cache.mjs";
+import { execSync, execFileSync, spawnSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, failedSuites, slowestSuites } from "./push-guard-suites.mjs";
+import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, PUSH_GUARD_TEST_TIMEOUT_MS, PUSH_GUARD_RUN_TIMEOUT_MS, GUARD_VITEST_CONFIG, failedSuites, slowestSuites, testsOverCiTimeout } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderGate } from "./worker-lock-guards.mjs";
 import { runRelatedSql } from "./worker-lock-sql.mjs";
+import { maskOwnMigrations, autoRenameLateMigrations, realAutoRenameDeps, checkMigrationClash } from "./worker-lock-migts.mjs";
 import { stashSnapshot, enforceStash, stashGit } from "./worker-lock-stash.mjs";
 import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
-import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue } from "./worker-lock-queue.mjs";
+import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue, turnGate, turnQueueLines, readTurnWaiters, joinTurnWait, leaveTurnWait, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
 const readQueue = () => readQueueIn(LOCK_DIR);
 const leaveQueue = (c) => leaveQueueIn(LOCK_DIR, c);
-export { PRIORITIES, normPriority, priorityRank, queueOrder, liveQueue, queueTurn, lockActivityAt, isStaleLock, lockBeat, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS, parseQueueFlags, worktreeIndexMtime, readQueue as readQueueDir } from "./worker-lock-queue.mjs";
+export { PRIORITIES, normPriority, priorityRank, queueOrder, liveQueue, queueTurn, lockActivityAt, isStaleLock, lockBeat, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS, parseQueueFlags, worktreeIndexMtime, readQueue as readQueueDir, turnGate, turnQueueLines, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
 export { isDerived, withoutDerived, newestDeployDate, refreshDerived, rebaseResolvingDerived, MIGRATION_DERIVED } from "./worker-lock-derived.mjs";
 export { migrationDefines, relatedSqlTests, deployPeek, sqlTestSafe, relatedTestScript, runRelatedSql } from "./worker-lock-sql.mjs";
 
@@ -104,13 +105,15 @@ export const MAX_WORKERS = Number(process.env.WORKER_MAX || 4);
 
 /**
  * Pardeep (6 Oct night): the local app crawled while 4 workers type-checked. While he works
- * (09:00–21:59 IST) only 2 workers run; at night 4. WORKER_MAX still overrides.
+ * (09:00–21:59 IST) only 2 workers ran; at night 4. WORKER_MAX still overrides.
  * R-1960 (26 Oct 2026): night cap 4 → 3 — 4 parallel tsc runs took the laptop to ~90 node processes.
+ * 7 Nov 2026 (Pardeep): day cap 2 → 4 for speed (R-2552) — cards waited 10+ min in the slot queue.
+ * 7 Nov 2026 (Pardeep): night cap 3 → 6 (R-2557) — "raat ko 6 worker allow kar do" (22:00–08:59 IST).
  */
 export function maxWorkersAt(date) {
   if (process.env.WORKER_MAX) return Number(process.env.WORKER_MAX);
   const h = Number(new Date(date).toLocaleString("en-US", { timeZone: "Asia/Kolkata", hour: "numeric", hour12: false })) % 24;
-  return h >= 9 && h < 22 ? 2 : 3;
+  return h >= 9 && h < 22 ? 4 : 6;
 }
 
 /**
@@ -150,6 +153,15 @@ export function lockAfterCi(lock, code, { at }) {
   if (code === 0) return null;
   if (code === 7) return { ...lock, state: LOCK_STATES.ciRed, ciRedAt: at };
   return lock;
+}
+
+/**
+ * R-2612: ci-all settles from a list read a moment earlier — if the card was taken back meanwhile
+ * (claim --fixes-red → working), its lock is left alone; only ci-wait / ci-red locks are settled.
+ */
+export function lockAfterCiAll(lock, code, { at }) {
+  if (!lock || (lock.state !== LOCK_STATES.ciWait && lock.state !== LOCK_STATES.ciRed)) return lock;
+  return lockAfterCi(lock, code, { at });
 }
 
 /** The lock while the card is being built again (re-claim or a new push): back in a slot. */
@@ -209,7 +221,10 @@ export function readLocks({ now = Date.now() } = {}) {
     const full = path.join(LOCK_DIR, f);
     let l;
     try { l = JSON.parse(fs.readFileSync(full, "utf8")); } catch { continue; }
-    if (!l.worktree || !fs.existsSync(l.worktree)) {
+    /* R-2552: a pushed card (ci-wait / ci-red) keeps its lock when its worktree is cleaned up — the
+       worker hands back right after the push now, and the files stay held until CI says green
+       (`ci-all`/`ci`) or the 120-min quiet rule below releases it. Only a BUILDING lock needs its folder. */
+    if ((!l.worktree || !fs.existsSync(l.worktree)) && countsTowardCap(l)) {
       fs.rmSync(full, { force: true });
       console.log(`(stale lock ${l.card ?? f} removed — its worktree folder is gone)`);
       continue;
@@ -285,23 +300,66 @@ export function pushDoneLine(card, plan) {
   return `✓ ${String(card).toUpperCase()} push ho gaya: ${plan.sha} (${plan.count} commit apne)`;
 }
 
-/** Wait for a named turn (one holder at a time across all workers), run fn, release. */
-async function withTurn(name, card, doing, fn) {
+/** This card's priority as recorded at claim (lock file), else p2. */
+function lockPriority(card) {
+  try { return normPriority(JSON.parse(fs.readFileSync(lockFile(card), "utf8")).priority) ?? DEFAULT_PRIORITY; } catch { return DEFAULT_PRIORITY; }
+}
+
+/** Does `card` hold the push turn right now? (its own heavy step inside the push never queues — R-2591) */
+function holdsPushTurn(card) {
+  try { return JSON.parse(fs.readFileSync(path.join(LOCK_DIR, "_push-turn.json"), "utf8")).card === card; } catch { return false; }
+}
+
+/**
+ * Wait for a named turn (one holder at a time across all workers), run fn, release.
+ * R-2591: waiters stand in a line by claim priority (p0 first, then who waited first) — a free turn goes to
+ * the best live waiter; a held turn is never taken away (see turnGate).
+ */
+export async function withTurn(name, card, doing, fn) {
   const turnFile = path.join(LOCK_DIR, `_${name}-turn.json`);
   const waitUntil = Date.now() + 30 * 60 * 1000;
-  for (;;) {
-    let turn = null;
-    try { turn = JSON.parse(fs.readFileSync(turnFile, "utf8")); } catch {}
-    if (turn && turn.card === card) { fs.rmSync(turnFile, { force: true }); turn = null; }
-    if (pushTurnFree(turn, Date.now())) {
-      if (turn) fs.rmSync(turnFile, { force: true });
-      try { fs.writeFileSync(turnFile, JSON.stringify({ card, at: Date.now() }), { flag: "wx" }); break; } catch {}
+  const priority = lockPriority(card);
+  const bypass = name !== "push" && holdsPushTurn(card);
+  const joinedAt = Date.now();
+  const bye = () => leaveTurnWait(LOCK_DIR, name, card);
+  /* a waiter stopped by Ctrl-C / TaskStop must not stay at the head of the line (else 2 min till stale) */
+  const onSig = () => { bye(); process.exit(130); };
+  process.on("exit", bye);
+  for (const sig of ["SIGINT", "SIGTERM"]) process.on(sig, onSig);
+  let lastLine = "";
+  try {
+    for (;;) {
+      let turn = null;
+      try { turn = JSON.parse(fs.readFileSync(turnFile, "utf8")); } catch {}
+      if (turn && turn.card === card) { fs.rmSync(turnFile, { force: true }); turn = null; }
+      joinTurnWait(LOCK_DIR, name, bypass ? pushHolderEntry(card, Date.now()) : { card, priority, joinedAt, seenAt: Date.now() });
+      const busy = !pushTurnFree(turn, Date.now());
+      const gate = turnGate(card, { busy, waiters: readTurnWaiters(LOCK_DIR, name), now: Date.now(), bypass });
+      if (gate.go) {
+        if (turn) fs.rmSync(turnFile, { force: true });
+        try { fs.writeFileSync(turnFile, JSON.stringify({ card, priority, at: Date.now() }), { flag: "wx" }); break; } catch {}
+      }
+      if (Date.now() > waitUntil) {
+        const why = busy ? `${turn?.card} ${doing}` : `line me aage: ${gate.ahead.join(", ")}`;
+        console.error(`✗ 30 min se ${name} ki baari nahi aayi (${why}). Owner ko batao.`); process.exit(4);
+      }
+      const line = busy || !gate.ahead.length
+        ? waitLine(name, card, turn?.card, doing)
+        : `… ${card} (${priority}): ${name} ki baari ka intezaar — line me aage: ${gate.ahead.join(", ")} (priority, phir pehle aaya)`;
+      if (line !== lastLine) { console.log(line); lastLine = line; }
+      await new Promise((r) => setTimeout(r, Number(process.env.WORKER_TURN_POLL_MS || 15000)));
     }
-    if (Date.now() > waitUntil) { console.error(`✗ 30 min se ${name} ki baari nahi aayi (${turn?.card} ${doing}). Owner ko batao.`); process.exit(4); }
-    console.log(waitLine(name, card, turn?.card, doing));
-    await new Promise((r) => setTimeout(r, 15000));
-  }
-  try { return await fn(); } finally { fs.rmSync(turnFile, { force: true }); }
+  } finally { bye(); process.off("exit", bye); for (const sig of ["SIGINT", "SIGTERM"]) process.off(sig, onSig); }
+  /* R-2614: process.exit() inside fn (e.g. the migration-order stop, exit 5) skips this finally — the turn
+     stayed held and the next worker waited 15 min for it to go stale. The exit handler frees it too. */
+  const free = () => releaseOwnTurn(turnFile, card);
+  process.on("exit", free);
+  try { return await fn(); } finally { process.off("exit", free); free(); }
+}
+
+/** R-2614: remove a turn file only when it is still held by `card` (never another card's turn). */
+export function releaseOwnTurn(turnFile, card) {
+  try { if (JSON.parse(fs.readFileSync(turnFile, "utf8")).card === card) fs.rmSync(turnFile, { force: true }); } catch {}
 }
 
 /**
@@ -347,9 +405,8 @@ function tscWithTurn(card, { full = false } = {}) {
     for (const step of tscStepsFor({ full })) {
       /* The cache key includes the route types, so restore only after `next typegen` wrote them. */
       if (!full && step === TSC_STEPS[TSC_STEPS.length - 1]) {
-        const r = restoreBuildInfo(root);
-        console.log(r.restored ? `  tsc: incremental — shared cache se shuru (${r.from})`
-          : `  tsc: incremental — ${r.reason === "own" ? "is worktree ki apni build info" : `in route types ka shared cache nahi (${r.reason}), is baar poora chalega`}`);
+        /* R-2634: own vs shared build info — whichever is closer to the (rebased) files wins. */
+        console.log(restoreLine(restoreBuildInfo(root)));
       }
       const t0 = Date.now();
       try { sh(step, tscEnv()); }
@@ -374,24 +431,73 @@ export function runGuardSuites(card) {
     const files = PUSH_GUARD_SUITES.filter((f) => !missing.includes(f));
     if (missing.length) console.log(`(guard list me ${missing.length} file nahi mili, chhodi: ${missing.join(", ")})`);
     const out = path.join(os.tmpdir(), `push-guard-${card}-${Date.now()}.json`);
+    const lint = startLintRatchet(root); // R-2568: CI's lint:ratchet, in parallel with the guard files
     const t0 = Date.now();
     let crashed = null;
     try {
-      execFileSync(process.execPath, [path.join(root, "node_modules", "vitest", "vitest.mjs"), "run", "--reporter=json", `--outputFile=${out}`, ...files],
-        { cwd: root, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024 });
+      /* R-2649: GUARD_VITEST_CONFIG = vitest.config.ts + a globalSetup that warms the source cache once
+         (a fresh worktree's cold cache made this step 135 s instead of 28 s). */
+      execFileSync(process.execPath, [path.join(root, "node_modules", "vitest", "vitest.mjs"), "run", `--config=${GUARD_VITEST_CONFIG}`, "--reporter=json", `--outputFile=${out}`,
+        `--testTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`, `--hookTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`, ...files], // R-2630: laptop load is not a red guard
+        { cwd: root, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024, timeout: PUSH_GUARD_RUN_TIMEOUT_MS }); // a hang never holds the heavy turn for ever
     } catch (e) { crashed = String(e.stderr ?? e.message ?? "").slice(-1500); }
     const ms = Date.now() - t0;
-    let failed = [], slow = [];
-    try { const json = JSON.parse(fs.readFileSync(out, "utf8")); failed = failedSuites(json, root); slow = slowestSuites(json, root, 5); } catch {}
+    let failed = [], slow = [], overCi = [];
+    try { const json = JSON.parse(fs.readFileSync(out, "utf8")); failed = failedSuites(json, root); slow = slowestSuites(json, root, 5); overCi = testsOverCiTimeout(json, root); } catch {}
     fs.rmSync(out, { force: true });
     if (crashed && !failed.length) failed = [`(vitest fail, koi file naam nahi mila)\n${crashed}`];
     console.log(`${failed.length ? "✗" : "✓"} guard tests: ${files.length} files, ${(ms / 1000).toFixed(0)} s`);
     if (ms > PUSH_GUARD_BUDGET_MS) { // R-2443: also name the slowest files, so the next trim is measured
       console.log(`(guard tests ${Math.round(ms / 1000)} s le gaye — ${PUSH_GUARD_BUDGET_MS / 1000} s se zyada; manager ko batao, list chhoti karni hai)`);
-      if (slow.length) console.log(`  sabse dheemi (test time; fork/imports alag): ${slow.map((s) => `${s.file} ${(s.ms / 1000).toFixed(1)} s`).join(", ")}`);
+      if (slow.length) console.log(`  sabse dheemi (test time; fork/imports alag — laptop bhara ho to har file 3-8x dheemi, R-2630): ${slow.map((s) => `${s.file} ${(s.ms / 1000).toFixed(1)} s`).join(", ")}`);
     }
+    /* R-2630: the push allows 30 s per test, CI vitest's 5 s — name what crossed 5 s here, so a test that
+       is slow even on a quiet machine is seen before CI turns red on it. */
+    if (overCi.length) console.log(`  (CI ki 5 s test-seema se upar, yahan load ki wajah se ho sakta hai — khaali laptop par bhi ho to test tez karo): ${overCi.slice(0, 5).map((t) => `${t.file} › ${t.test} ${(t.ms / 1000).toFixed(1)} s`).join("; ")}`);
+    const lv = lintRatchetVerdict(await lint);
+    console.log(lv.message);
+    if (!lv.ok) failed.push(LINT_RATCHET_FAILED);
     return failed;
   });
+}
+
+/* R-2568 (7 Nov 2026): twice on 7 Nov a push went red in CI only on `npm run lint:ratchet` (R-2558
+   max-lines 26/25, R-2566 react-hooks/exhaustive-deps 12/10) — no local step ran it. The push now runs
+   the same script (`--cache`: one content-keyed ESLint cache per checkout, so after the first run only
+   changed files are re-linted) as a child process next to the guard vitest run, and refuses on a
+   non-zero exit with the text CI prints. Output goes to a file, not a pipe: the vitest call above is
+   synchronous, so a pipe would not be drained until it ends. */
+export const LINT_RATCHET_FAILED = "npm run lint:ratchet (CI ka lint ratchet — upar ka text dekho)";
+export function startLintRatchet(root, { spawnFn = spawn, script = path.join(root, "scripts", "lint-ratchet.mjs") } = {}) {
+  const t0 = Date.now();
+  const out = path.join(os.tmpdir(), `push-lint-${process.pid}-${t0}.txt`);
+  let fd;
+  try { fd = fs.openSync(out, "w"); } catch (e) { return Promise.resolve({ code: -1, text: String(e?.message ?? e), ms: 0 }); }
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (code, extra = "") => {
+      if (done) return;
+      done = true;
+      let text = "";
+      try { text = fs.readFileSync(out, "utf8"); } catch {}
+      fs.rmSync(out, { force: true });
+      resolve({ code, text: text + extra, ms: Date.now() - t0 });
+    };
+    let child;
+    try { child = spawnFn(process.execPath, [script, "--cache"], { cwd: root, stdio: ["ignore", fd, fd] }); }
+    catch (e) { fs.closeSync(fd); finish(-1, String(e?.message ?? e)); return; }
+    fs.closeSync(fd);
+    child.on("error", (e) => finish(-1, String(e?.message ?? e)));
+    child.on("exit", (code, signal) => finish(code ?? -1, signal ? `(lint ratchet ${signal} se ruka)` : ""));
+  });
+}
+/** Exit 0 WITH the script's own summary line = ok. Anything else (over a ceiling, an ESLint error, a
+    crash, a script that exited 0 without linting) refuses — CI would not be green either. */
+export function lintRatchetVerdict({ code, text, ms }) {
+  const secs = `${Math.round((ms ?? 0) / 1000)} s`;
+  if (code === 0 && /\(lint-ratchet --cache: \d+ file\(s\) linted, \d+ from cache/.test(String(text ?? ""))) return { ok: true, message: `✓ lint ratchet (CI jaisa): ${secs}` };
+  const tail = String(text ?? "").trim().split(/\r?\n/).slice(-40).join("\n");
+  return { ok: false, message: `✗ lint ratchet (CI ka \`npm run lint:ratchet\`) LAAL — push NAHI hoga (${secs}):\n${tail}` };
 }
 
 async function pushWithTurn(card, ciFlags = {}) {
@@ -427,6 +533,13 @@ async function pushWithTurn(card, ciFlags = {}) {
       const r = refreshDerived(card, derived);
       if (r.how !== "none") console.log(`  generated files dobara bane (${r.changed.join(", ")}) — ${r.how === "amend" ? "apne aakhri commit me jode" : "alag commit"}.`);
     } catch (e) { console.error("✗ gen-deploy-db fail — push nahi hua (migration ka -- deploy-peek: dekho).\n" + String(e?.stderr ?? e?.message ?? e).slice(-800)); process.exit(1); }
+    /* R-2614: red ONLY because this card's own new migration is older than manager-pardeep's newest →
+       rename it to now (UTC), fix its mentions, regenerate, commit "rename migration (auto)", go on. */
+    const ren = autoRenameLateMigrations(card, realAutoRenameDeps(card, readLocks(), { regen: derived.regen }));
+    if (ren.renamed.length) {
+      try { updateLock(card, (l) => ({ ...l, areas: (l.areas ?? []).map((a) => ren.renamed.reduce((x, r) => x.replace(r.from, r.to), a)) })); } catch {}
+      appendCiLog({ at: new Date().toISOString(), card, how: "auto-rename-migration", renamed: ren.renamed });
+    }
     /* R-2106: the same migration-order check CI runs first — fail here, not after 29 min of CI. */
     if (!realMigrationOrderGate()) process.exit(5);
     /* R-910: the Auth.js/gateway code imports a Prisma client that is generated, not committed. */
@@ -441,7 +554,9 @@ async function pushWithTurn(card, ciFlags = {}) {
     if (failed.length) {
       console.error("✗ Guard test fail — push NAHI hua (repo-scan/ratchet test, shayad tumhare area ke bahar ka):");
       for (const f of failed) console.error(`   ${f}`);
-      console.error(`Chalao: npx vitest run "${failed[0].split("\n")[0]}" — apni badli file theek karo (test ko dheela mat karo), phir dobara push.`);
+      const vitestFail = failed.find((f) => f !== LINT_RATCHET_FAILED);
+      if (vitestFail) console.error(`Chalao: npx vitest run "${vitestFail.split("\n")[0]}" — apni badli file theek karo (test ko dheela mat karo), phir dobara push.`);
+      if (failed.includes(LINT_RATCHET_FAILED)) console.error("Chalao: npm run lint:ratchet (aur `npx next lint` jagah dekhne ko) — nayi warnings theek karo; lint-baseline.json mat badhao. Phir dobara push.");
       process.exit(5);
     }
     /* R-1430 (12 Oct): the repo is PUBLIC — scan the lines this push adds for secrets / client data.
@@ -460,7 +575,9 @@ async function pushWithTurn(card, ciFlags = {}) {
       const u = updateLock(card, (l) => lockAfterPush(l, { sha: pushedSha, at: new Date().toISOString() }));
       if (u.found) console.log(`  ${card} ab ci-wait: worker slot khaali (doosra card shuru ho sakta hai), files ka claim CI green/red tak rahega.`);
     } catch {}
-    console.log(`Ab: node scripts/ops/worker-lock.mjs ci ${card}  → jo JSON aaye use card par ciCheck likho.`);
+    /* R-2552 (7 Nov 2026): the worker no longer waits 30–40 min for CI — it writes a pending ciCheck, sets
+       the card to review, cleans up and hands back; the manager runs `ci-all` (or `ci <CARD>`). */
+    console.log(`Ab: card par ciCheck {sha: "${pushedSha ?? "<sha>"}", ci: "pending", at: <date -u>} likho, status review, cleanup ${card}, hand back — CI manager dekhta hai (worker-lock ci-all).`);
   });
 }
 
@@ -594,7 +711,7 @@ export function guardPush(lines, env = process.env) {
  *           failing test names, and a one-line JSON the worker writes as `ciCheck` on the card.
  *           Exit 0 green, 7 red, 8 timeout / could not tell.
  *
- *   node scripts/ops/worker-lock.mjs push R-197 --card c.json [--fixes-red | --owner-override] [--skip-related-sql]
+ *   node scripts/ops/worker-lock.mjs push R-197 --card c.json [--fixes-red | --owner-override] [--skip-related-sql] [--no-review "<reason>"]
  *   node scripts/ops/worker-lock.mjs ci   R-197 [--sha <sha>] [--timeout-min 35]   (default CI_DEFAULT_TIMEOUT_MIN)
  *   node scripts/ops/worker-lock.mjs sql-related R-197
  *
@@ -721,6 +838,10 @@ export function checkRedGate(card, { gh, fixesRed = false, ownerOverride = false
 /**
  * Verdict for one workflow from the runs for this sha. `later` = newer runs on the branch whose sha
  * CONTAINS ours (oldest first): when our run was cancelled by the next push, that run decides.
+ * R-2612 (8 Nov 2026): among several later runs of the workflow, any green one decides green (it ran
+ * with our sha inside) — a newer green run on a descendant supersedes an older red one (a setup-cli 504
+ * whose re-runs keep failing on the old workflow file). Red only when no later run is green and none is
+ * still running; an older red with a newer run still going → pending.
  * Returns { state: green|red|pending|skipped|missing, run? , via? }.
  */
 export function workflowVerdict(wf, shaRuns, later, { graceOver, ciDone }) {
@@ -728,7 +849,10 @@ export function workflowVerdict(wf, shaRuns, later, { graceOver, ciDone }) {
   const pick = (r) => (r.status !== "completed" ? "pending" : RED_CONCLUSIONS.includes(r.conclusion) ? "red" : r.conclusion === "success" ? "green" : null);
   for (const r of mine) { const s = pick(r); if (s) return { state: s, run: r }; }
   if (mine.length || graceOver) {
-    for (const r of later.filter((x) => x.workflowName === wf)) { const s = pick(r); if (s) return { state: s, run: r, via: r.headSha }; }
+    const decided = newestFirst(later.filter((x) => x.workflowName === wf)).map((r) => ({ s: pick(r), r })).filter((x) => x.s);
+    const by = (st) => decided.find((x) => x.s === st);
+    const hit = by("green") ?? by("pending") ?? by("red");
+    if (hit) return { state: hit.s, run: hit.r, via: hit.r.headSha };
   }
   if (!mine.length) {
     /* SQL tests run only when production/supabase/** changed — none for this sha = nothing to test. */
@@ -750,25 +874,50 @@ export function lastPushedSha(card, { git, readNote = () => null } = {}) {
 }
 
 /**
- * R-2105: one look (no waiting) at the CI verdict of a ci-wait lock's pushed sha — or of any later
- * manager-pardeep run whose sha contains it. "green" | "red" | "pending" | null (not a ci-wait lock /
- * no sha / gh failed). Same rules as `ci`, with the grace period already over.
+ * R-2561 (7 Nov 2026): how long after a push "no CI run for this sha" still means "GitHub has not listed
+ * it yet" (pending) rather than "there is no run" (unknown). R-1427's CI ran 11:58–12:07Z; at 12:02Z
+ * ci-all said "unknown" and the manager's watcher stopped early.
  */
-export function ciWaitVerdict(lock, { gh, isAncestor }) {
-  if (!lock || lock.state !== LOCK_STATES.ciWait || !lock.pushedSha) return null;
+export const CI_NO_RUN_GRACE_MS = 15 * 60_000;
+
+/** ms since the lock's push (ciWaitSince, or pushedAt); Infinity when the lock carries no push time. */
+export function pushAgeMs(lock, now = Date.now()) {
+  const t = Date.parse(lock?.ciWaitSince ?? lock?.pushedAt ?? "");
+  return Number.isFinite(t) ? Math.max(0, now - t) : Infinity;
+}
+
+/**
+ * R-2105: one look (no waiting) at the CI verdict of a ci-wait lock's pushed sha — or of any later
+ * manager-pardeep run whose sha contains it. Same rules as `ci`. Returns
+ *   "green" | "red";
+ *   "pending" — a run for the sha (or a later one containing it) is queued / running, OR no run is listed
+ *               yet / gh did not answer while the push is under 15 min old (R-2561);
+ *   "unknown" — no run for the sha nor any later manager-pardeep run containing it, push 15+ min old;
+ *   null      — not a ci-wait / ci-red lock / no sha, or gh did not answer (twice) for a push 15+ min old.
+ * R-2612: a ci-red lock is looked at again too — a newer green run may have cleared it.
+ */
+export function ciWaitVerdict(lock, { gh, isAncestor, now = Date.now() }) {
+  if (!lock || (lock.state !== LOCK_STATES.ciWait && lock.state !== LOCK_STATES.ciRed) || !lock.pushedSha) return null;
   const full = lock.pushedSha;
-  let shaRuns, branchRuns;
-  try {
-    shaRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "--commit", full, "-L", "20", "--json", RUN_FIELDS]));
-    branchRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "-b", CI_BRANCH, "-L", "40", "--json", RUN_FIELDS]));
-  } catch { return null; }
+  const young = pushAgeMs(lock, now) < CI_NO_RUN_GRACE_MS;
+  let shaRuns = null, branchRuns = null;
+  for (let attempt = 0; attempt < 2 && !branchRuns; attempt++) {
+    try {
+      shaRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "--commit", full, "-L", "20", "--json", RUN_FIELDS]));
+      branchRuns = JSON.parse(gh(["run", "list", "-R", CI_REPO, "-b", CI_BRANCH, "-L", "40", "--json", RUN_FIELDS]));
+    } catch { shaRuns = branchRuns = null; }
+  }
+  if (!Array.isArray(shaRuns) || !Array.isArray(branchRuns)) return young ? "pending" : null;
   const later = newestFirst(branchRuns).reverse()
     .filter((r) => r.headSha !== full && !shaRuns.some((m) => m.databaseId === r.databaseId))
     .filter((r) => { try { return isAncestor(full, r.headSha); } catch { return false; } });
+  /* graceOver: true as before (R-2105) so a finished later run that contains the sha still decides at once;
+     only "no run at all" waits 15 min from the push before it is called unknown. */
   const ci = workflowVerdict("CI", shaRuns, later, { graceOver: true, ciDone: false });
   const sql = workflowVerdict("SQL tests", shaRuns, later, { graceOver: true, ciDone: ci.state === "green" || ci.state === "red" });
   if (ci.state === "red" || sql.state === "red") return "red";
   if (ci.state === "green" && (sql.state === "green" || sql.state === "skipped")) return "green";
+  if (ci.state === "missing" || sql.state === "missing") return young ? "pending" : "unknown";
   return "pending";
 }
 
@@ -782,10 +931,37 @@ export function settleCiWaitLocks(card, mine, locks, { gh, isAncestor, remove, p
 }
 
 /**
+ * R-2552 (7 Nov 2026): workers no longer sit 30–40 min in `ci <CARD>` after a push — they hand back
+ * and the manager watches CI. `ci-all` is one look (no waiting) at every ci-wait lock and settles it
+ * exactly like `ci <CARD>`: green → lock removed (files free), red → ci-red (files kept; the fix
+ * takes the slot back with `claim --fixes-red`), pending/unknown → left as it is. One line per card
+ * plus one JSON line {card, sha, ci, at} (ci = CI + SQL tests together) for the board's `ciCheck`.
+ * `verdict(lock)` and `settle(card, exitCode)` are injected for tests.
+ * R-2612: ci-red locks are looked at again too — green (a newer run containing the sha passed) frees
+ * them; still red is left as it is (no new ciRedAt).
+ */
+export function ciAllReport(locks, { verdict, settle, at = new Date().toISOString() }) {
+  const waiting = locks.filter((l) => l.state === LOCK_STATES.ciWait || l.state === LOCK_STATES.ciRed);
+  if (!waiting.length) return { lines: ["Koi card CI ke intezaar (ci-wait) mein nahi."], results: [] };
+  const lines = [], results = [];
+  for (const l of waiting) {
+    const v = verdict(l) ?? "unknown";
+    const sha = String(l.pushedSha ?? "").slice(0, 9);
+    if (v === "green") settle(l.card, CI_EXIT.green);
+    if (v === "red" && l.state === LOCK_STATES.ciWait) settle(l.card, CI_EXIT.red);
+    lines.push(`${l.card}  ${sha || "(sha nahi)"}  ${v === "green" ? "CI green — lock hata" : v === "red" ? "CI LAAL — card wala worker theek kare (claim --fixes-red)" : v === "pending" ? "CI abhi chal raha / line mein (ya GitHub ne abhi run nahi dikhaya) — baad mein dobara ci-all" : "CI ka run nahi mila (push 15+ min purana) ya gh nahi chala — GitHub Actions par dekho"}`);
+    const r = { card: l.card, sha: l.pushedSha ?? null, ci: v, at };
+    results.push(r);
+    lines.push(JSON.stringify(r));
+  }
+  return { lines, results };
+}
+
+/**
  * `ci <CARD>`: poll until both gate workflows have a verdict for the sha, or the timeout.
  * deps: gh, git, isAncestor(a, b), now(), sleep(ms), print(line). Returns { code, check, lines }.
  */
-export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DEFAULT_TIMEOUT_MIN, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), print = () => {}, readNote, pollMs = 30_000, graceMs = 3 * 60_000 } = {}) {
+export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DEFAULT_TIMEOUT_MIN, now = () => Date.now(), sleep = (ms) => new Promise((r) => setTimeout(r, ms)), print = () => {}, readNote, pollMs = 30_000, graceMs = CI_NO_RUN_GRACE_MS } = {}) {
   const id = String(card).toUpperCase();
   const target = sha || lastPushedSha(id, { git, readNote });
   const finish = (code, check, extra = []) => ({ code, check, lines: extra });
@@ -794,6 +970,9 @@ export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DE
   try { full = git(["rev-parse", target]).trim() || target; } catch {}
   const t0 = now();
   const deadline = t0 + timeoutMin * 60_000;
+  /* R-2561: "no run" counts from the PUSH (push's note), not from when `ci` started — and only after 15 min. */
+  let pushedAt = t0;
+  try { const n = readNote?.(id); const at = Date.parse(n?.at ?? ""); const ns = String(n?.sha ?? ""); if (ns && (full.startsWith(ns) || ns.startsWith(full)) && Number.isFinite(at) && at <= t0) pushedAt = at; } catch {}
   let lastErr = null;
   for (;;) {
     let shaRuns = null, branchRuns = [];
@@ -806,18 +985,19 @@ export async function runCi(card, { gh, git, isAncestor, sha, timeoutMin = CI_DE
       const later = newestFirst(branchRuns).reverse()
         .filter((r) => r.headSha !== full && !shaRuns.some((m) => m.databaseId === r.databaseId))
         .filter((r) => { try { return isAncestor(full, r.headSha); } catch { return false; } });
-      const graceOver = now() - t0 >= graceMs;
+      const graceOver = now() - pushedAt >= graceMs;
       const ci = workflowVerdict("CI", shaRuns, later, { graceOver, ciDone: false });
       const sql = workflowVerdict("SQL tests", shaRuns, later, { graceOver, ciDone: ci.state === "green" || ci.state === "red" });
       const settled = (v) => v.state !== "pending";
       const timedOut = now() >= deadline;
       if ((settled(ci) && settled(sql)) || timedOut) {
         const runUrls = [ci.run?.url, sql.run?.url].filter(Boolean);
-        const check = { sha: full, ci: ci.state, sql: sql.state, at: new Date(now()).toISOString().replace(/\.\d{3}Z$/, "Z"), runUrls };
+        const shown = (st) => (st === "missing" ? "unknown" : st);
+        const check = { sha: full, ci: shown(ci.state), sql: shown(sql.state), at: new Date(now()).toISOString().replace(/\.\d{3}Z$/, "Z"), runUrls };
         if (ci.via || sql.via) check.via = (ci.via || sql.via);
         const lines = [];
         const icon = (s) => (s === "green" ? "✓" : s === "skipped" ? "–" : s === "red" ? "✗" : "…");
-        lines.push(`${id} @ ${full.slice(0, 8)}: CI ${icon(ci.state)} ${ci.state} · SQL ${icon(sql.state)} ${sql.state}${check.via ? ` (apna run cancel hua; ${check.via.slice(0, 8)} wala run dekha jisme ye sha hai)` : ""}`);
+        lines.push(`${id} @ ${full.slice(0, 8)}: CI ${icon(ci.state)} ${check.ci} · SQL ${icon(sql.state)} ${check.sql}${check.via ? ` (apna run cancel hua; ${check.via.slice(0, 8)} wala run dekha jisme ye sha hai)` : ""}`);
         for (const [wf, v] of [["CI", ci], ["SQL tests", sql]]) {
           if (v.state === "red") { const names = failedTestsOf(gh, v.run); check[wf === "CI" ? "ciFailed" : "sqlFailed"] = names; lines.push(`  ✗ ${wf} laal: ${names.join(", ")}\n    ${v.run.url}`); }
         }
@@ -1008,6 +1188,112 @@ function enforceCard(card, stage, flags) {
   console.log(r.message);
 }
 
+/**
+ * R-2592 (8 Nov 2026) — independent review BEFORE push for money cards. R-2252 and R-2227 were
+ * reviewed only after merging; the reviewer's BLOCK findings (over-billing at renewal, double credit)
+ * then held a 47-card staging train. Now `push` refuses (exit 13) a card whose card file (the --card
+ * JSON) has category money/paisa or priority p0 unless `independentReview.verdict === "SAFE"` and
+ * `independentReview.sha` carries the SAME code as the HEAD being pushed: the sha itself, or a commit
+ * whose change against manager-pardeep has the same `git patch-id --stable` (so the push's own rebase,
+ * a retry after a failed push, or squashing the WIP commits keep the review; one more commit of code
+ * does not — an early WIP review never covers later code, and a reviewed sha already merged has an
+ * empty change). Generated deploy-db/peeks files are left out of the comparison (push regenerates
+ * them). Way in: the worker runs `wip <CARD>` on its final commit, the coordinator starts the
+ * independent-check skill on that sha, the checker writes {verdict, sha}, the worker re-saves the card
+ * file and pushes. Escape hatch: `--no-review "<reason>"` — logged to the gate log (_ci-gate.log).
+ */
+export const REVIEW_CATEGORIES = ["money", "paisa"];
+/** 11 is cleanup's "node_modules is a real folder" refusal; 12 unused but kept free. */
+export const REVIEW_EXIT = 13;
+
+/** Does this card need an independent SAFE review before push? category money/paisa or priority p0. */
+export function needsIndependentReview(card) {
+  const c = card && typeof card === "object" ? card : {};
+  return REVIEW_CATEGORIES.includes(String(c.category ?? "").trim().toLowerCase()) || normPriority(c.priority) === "p0";
+}
+
+/** Pull --no-review <reason> / --no-review=<reason> out of the args. noReview: null = not given, "" = given without a reason. */
+export function parseReviewFlags(args) {
+  const rest = []; let noReview = null;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "--no-review") {
+      const next = args[i + 1];
+      if (next != null && !String(next).startsWith("--")) { noReview = String(next); i++; } else noReview = "";
+    } else if (a.startsWith("--no-review=")) noReview = a.slice("--no-review=".length);
+    else rest.push(a);
+  }
+  return { rest, noReview };
+}
+
+/**
+ * The review gate inside `push`, pure: { ok, message, logged? }. `sameCode(sha, head)` = the reviewed
+ * sha carries exactly the change being pushed (see above); `head` = the commit being pushed;
+ * `cardUnreadable` = a --card file was given but could not be read (fail closed); `log(line)` records
+ * a --no-review pass.
+ */
+export function checkReviewGate(cardId, card, { head, sameCode, noReview = null, cardUnreadable = false, log = () => {}, now = () => new Date().toISOString() } = {}) {
+  const id = String(cardId).toUpperCase();
+  if (cardUnreadable) return { ok: false, message: `✗ ${id}: card file padh nahi paaya — paise/p0 review gate bina card ke nahi chalta. Card dobara save karo.` };
+  if (!needsIndependentReview(card)) return { ok: true, message: `(${id}: paise/p0 card nahi — independent review gate laagu nahi)` };
+  const why = `${id} paise/p0 card hai (category ${card?.category ?? "-"}, ${card?.priority ?? "-"})`;
+  if (noReview != null) {
+    const reason = String(noReview).trim();
+    if (!reason) return { ok: false, message: `✗ ${id}: --no-review ke saath wajah do: --no-review "<kyun bina review push>" (gate log me likhi jaati hai).` };
+    const line = JSON.stringify({ at: now(), card: id, how: "--no-review", reason, headBeforePush: head ?? null });
+    try { log(line); } catch {}
+    return { ok: true, logged: line, message: `⚠ ${why} — BINA independent review push (--no-review: "${reason}"), gate log me likha. Card ke liveLog me bhi likho.` };
+  }
+  const how = `\n   Karo: commit → "worker-lock wip ${id}" → coordinator se checker maango (skill independent-check, us sha par) → checker card par independentReview {verdict: "SAFE", sha} likhe → card file dobara save (ArtifactData get out_dir) → push.`;
+  const rev = card?.independentReview;
+  if (!rev || rev.verdict !== "SAFE") {
+    const got = rev?.verdict ? `verdict "${rev.verdict}"` : "independentReview nahi";
+    return { ok: false, message: `✗ ${why} — push se PEHLE alag reviewer ka SAFE chahiye (${got}).` + how };
+  }
+  const sha = String(rev.sha ?? "").trim();
+  if (!sha) return { ok: false, message: `✗ ${why} — independentReview SAFE hai par sha nahi likha; kaunsa code dekha pata nahi.` + how };
+  if (!head || !sameCode(sha, head)) {
+    return { ok: false, message: `✗ ${why} — review ${sha.slice(0, 10)} par hua, par push ho raha code (${String(head ?? "?").slice(0, 10)}) wahi nahi hai (review ke baad naya code, ya review wala code pehle se manager-pardeep par, ya sha fetch nahi hua: git fetch anutech wip/${id.toLowerCase()}). Is HEAD ka review chahiye.` + how };
+  }
+  return { ok: true, message: `✓ ${id}: independent review SAFE (${sha.slice(0, 10)} — push me wahi code hai).` };
+}
+
+/** Repo-root pathspecs for the reviewed change: everything except the files push regenerates (R-2105). */
+const REVIEW_PATHSPEC = [":(top)", ":(top,exclude,glob)production/supabase/cloudsql/*/deploy-db-*.sh", ":(top,exclude)production/src/server/migrations-health/peeks.generated.ts", ":(top,exclude)docs/API.md"];
+
+/** patch-id of `rev`'s change against `base` (from their merge-base), or null (no change / unknown sha). */
+export function changePatchId(rev, base, git) {
+  try {
+    const mb = git(["merge-base", base, rev]).trim();
+    /* --no-renames: a moved-in migration shows as "new file mode", like addedMigrations sees it (R-2615) */
+    const diff = git(["diff", "--no-color", "--no-ext-diff", "--no-renames", mb, rev, "--", ...REVIEW_PATHSPEC]);
+    if (!diff.trim()) return null;
+    /* R-2614/R-2615: only the card's own new migration versions masked — a rename-only change (file +
+       its exact mentions) keeps the review; a change to any other 14-digit number does not. */
+    return git(["patch-id", "--stable"], maskOwnMigrations(diff)).trim().split(/\s+/)[0] || null;
+  } catch { return null; }
+}
+
+function enforceReview(card, cardPath, noReview) {
+  let c = null; let cardUnreadable = false;
+  if (cardPath) { try { c = cardFromJson(JSON.parse(fs.readFileSync(cardPath, "utf8"))); } catch { cardUnreadable = true; } }
+  const git = (a, input) => execFileSync("git", a, { encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"], maxBuffer: 256 * 1024 * 1024 });
+  let head = null;
+  try { head = git(["rev-parse", "HEAD"]).trim(); } catch {}
+  const base = "anutech/manager-pardeep";
+  const sameCode = (sha, h) => {
+    try { git(["fetch", "-q", "anutech"]); } catch {} // a stale base would compare against the wrong fork point
+    let full = null; try { full = git(["rev-parse", "--verify", "-q", `${sha}^{commit}`]).trim(); } catch {}
+    if (!full) return false;
+    if (full === h) return true;
+    const a = changePatchId(full, base, git);
+    return a != null && a === changePatchId(h, base, git);
+  };
+  const r = checkReviewGate(card, c, { head, sameCode, noReview, cardUnreadable, log: appendCiLog });
+  if (!r.ok) { console.error(r.message); process.exit(REVIEW_EXIT); }
+  console.log(r.message);
+}
+
 function main(argv) {
   const [cmd, rawCard, ...args] = argv;
   const card = rawCard?.toUpperCase();
@@ -1015,10 +1301,38 @@ function main(argv) {
   const { rest, ...cardFlags } = parseCardFlags(scopeRest);
   fs.mkdirSync(LOCK_DIR, { recursive: true });
 
+  if (cmd === "status") {
+    /* R-2591: locks with priority, the slot queue, and who holds / waits for the push and heavy turns. */
+    const locks = readLocks();
+    if (!locks.length) console.log("Koi worker lock nahi.");
+    for (const l of locks) console.log(`${l.card} (${normPriority(l.priority) ?? DEFAULT_PRIORITY})  ${l.state ?? LOCK_STATES.working}${countsTowardCap(l) ? "" : " (slot nahi ginta)"}  ${l.claimedAt}`);
+    const slotLine = lineOf(readQueue().filter((e) => e.waitingFor !== "files"), Date.now());
+    if (slotLine) console.log(`slot line: ${slotLine}`);
+    for (const name of ["push", "heavy"]) {
+      let turn = null;
+      try { turn = JSON.parse(fs.readFileSync(path.join(LOCK_DIR, `_${name}-turn.json`), "utf8")); } catch {}
+      if (pushTurnFree(turn, Date.now())) turn = null;
+      /* a turn file from an older script has no priority — show the holder lock's */
+      if (turn && !turn.priority) turn = { ...turn, priority: locks.find((l) => l.card === turn.card)?.priority };
+      for (const line of turnQueueLines(name, turn, readTurnWaiters(LOCK_DIR, name), Date.now())) console.log(line);
+    }
+    return;
+  }
   if (cmd === "list") {
     const locks = readLocks();
     if (!locks.length) return console.log("Koi worker lock nahi.");
     for (const l of locks) console.log(`${l.card}  ${l.state ?? LOCK_STATES.working}${countsTowardCap(l) ? "" : " (slot nahi ginta)"}  ${l.claimedAt}  ${[...l.areas, ...(l.files ?? [])].join("  ")}`);
+    return;
+  }
+  if (cmd === "ci-all") {
+    /* R-2552: the manager's one command for every pushed card's CI (workers no longer wait). */
+    const isAncestor = (a, b) => { try { execFileSync("git", ["merge-base", "--is-ancestor", a, b], { stdio: "ignore" }); return true; } catch { return false; } };
+    const locks = readLocks();
+    if (locks.some((l) => l.state === LOCK_STATES.ciWait || l.state === LOCK_STATES.ciRed)) { try { execFileSync("git", ["fetch", "-q", "anutech"], { stdio: "ignore", timeout: 60_000 }); } catch {} }
+    const at = new Date().toISOString();
+    const settle = (c, code) => { try { updateLock(c, (l) => lockAfterCiAll(l, code, { at })); } catch {} };
+    const r = ciAllReport(locks, { verdict: (l) => ciWaitVerdict(l, { gh: realGh, isAncestor }), settle, at });
+    for (const l of r.lines) console.log(l);
     return;
   }
   if (cmd === "guard-push") {
@@ -1043,6 +1357,9 @@ function main(argv) {
     if (derivedAsked.length) console.log(`(R-2105: ${derivedAsked.join(", ")} generated hain — claim ki zaroorat nahi, push inhe dobara banata hai)`);
     const broad = areas.filter(tooBroad);
     if (broad.length) { console.error(`✗ Bahut bada area: ${broad.join(", ")} — page/lib ka folder ya file do (kam se kam 3 hisse, jaise src/lib/deals).`); process.exit(1); }
+    /* R-2614: two cards may never hold the same migration version (R-2609/R-2613 both had 20261108133000). */
+    const clash = checkMigrationClash(card, worktree, readLocks());
+    if (!clash.ok) { console.error(clash.message); process.exit(2); }
     const priority = normPriority(askedPriority) ?? normPriority(cardPriority(cardFlags.cardPath)) ?? DEFAULT_PRIORITY;
     const settle = (locks) => (reclaim ? locks : settleCiWaitLocks(card, areas, locks, realSettleDeps()));
     /* One look at the slots, the queue and the files. Never exits. */
@@ -1099,6 +1416,8 @@ function main(argv) {
     const files = withoutDerived(changedFiles());
     const conflicts = findConflicts(card, files, settleCiWaitLocks(card, files, readLocks(), realSettleDeps()));
     if (conflicts.length) report(conflicts);
+    const clash = checkMigrationClash(card, process.cwd(), readLocks()); // R-2614
+    if (!clash.ok) { console.error(clash.message); process.exit(2); }
     enforceScope(card, "worktree", { lockDir: LOCK_DIR, allowOutside, cardPath: cardFlags.cardPath });
     me.files = [...new Set([...(me.files ?? []), ...files])];
     me.beatAt = new Date().toISOString();
@@ -1107,9 +1426,12 @@ function main(argv) {
     return;
   }
   if (cmd === "push") {
-    const ciFlags = parseCiFlags(rest);
+    const { rest: pushRest, noReview } = parseReviewFlags(rest);
+    const ciFlags = parseCiFlags(pushRest);
     enforceCard(card, "push", cardFlags);
-    return pushWithTurn(card, { ...ciFlags, fullTsc: parseTscFlags(rest).full, allowOutside, cardPath: cardFlags.cardPath });
+    /* R-2592: money / p0 card → SAFE independent review of this HEAD first (before the rebase rewrites shas). */
+    enforceReview(card, cardFlags.cardPath, noReview);
+    return pushWithTurn(card, { ...ciFlags, fullTsc: parseTscFlags(pushRest).full, allowOutside, cardPath: cardFlags.cardPath });
   }
   if (cmd === "ci") {
     /* R-1936: wait for this card's CI + SQL tests runs; exit 0 green, 7 red, 8 timeout. */
@@ -1154,7 +1476,7 @@ function main(argv) {
     console.log(r.message);
     return;
   }
-  console.error("claim [--wait --priority p0] | beat | check | push | ci | sql-related | wip | resume | tsc | prep | release | cleanup [--worktree <path>] [--dry-run] | list | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
+  console.error("claim [--wait --priority p0 | --train-blocker] | beat | check | push | ci | ci-all | sql-related | wip | resume | tsc | prep | release | cleanup [--worktree <path>] [--dry-run] | list | status | guard-push   (claim/push need --card <card.json>; tsc/push take --full-tsc)");
   process.exit(1);
 }
 

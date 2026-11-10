@@ -4,10 +4,11 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import { execFileSync, spawnSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 // @ts-expect-error — plain .mjs ops script, no types
 import { migrationOrderGate, normaliseClaimAreas } from "../scripts/ops/worker-lock-guards.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
-import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript } from "../scripts/ops/worker-lock.mjs";
+import { normPath, pathsOverlap, tooBroad, findConflicts, queueFull, pushTurnFree, PUSH_TURN_STALE_MS, maxWorkersAt, reexportTarget, lockAreaFor, cardContractGaps, checkCardContract, parseCardFlags, managerCard, cardFromJson, TSC_STEPS, TSC_HEAP_FLAG, tscEnv, pushPlan, pushDoneLine, waitLine, checkRedGate, failingTestNames, failingSteps, parseCiFlags, runCi, CI_DEFAULT_TIMEOUT_MIN, lastPushedSha, CI_EXIT, migrationDefines, relatedSqlTests, deployPeek, runRelatedSql, sqlTestSafe, relatedTestScript, needsIndependentReview, parseReviewFlags, checkReviewGate, changePatchId, ciWaitVerdict, ciAllReport, LOCK_STATES, lockAfterCi, lockAfterCiAll } from "../scripts/ops/worker-lock.mjs";
 
 describe("worker locks (two workers must never build in the same files)", () => {
   it("compares paths from the app root, whatever the slashes", () => {
@@ -85,11 +86,31 @@ describe("worker locks (two workers must never build in the same files)", () => 
     expect(lockAreaFor("src/components/layout/topbar.tsx")).toBe("src/components/layout/topbar.tsx");
   });
 
-  it("2 workers while Pardeep works (09:00–21:59 IST), 4 at night", () => {
-    expect(maxWorkersAt("2026-10-07T03:30:00Z")).toBe(2); // 09:00 IST
-    expect(maxWorkersAt("2026-10-07T16:29:00Z")).toBe(2); // 21:59 IST
-    expect(maxWorkersAt("2026-10-07T16:30:00Z")).toBe(3); // 22:00 IST (R-1960: night cap 3)
-    expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(3); // 02:30 IST
+  it("4 workers by day (09:00–21:59 IST), 6 at night", () => {
+    // 7 Nov 2026 (Pardeep): day cap 2 → 4 for speed (R-2552); night cap 3 → 6 (R-2557).
+    // Workers run worker-lock (and its push guard tests) with WORKER_MAX=4 set — clear it here.
+    const old = process.env.WORKER_MAX;
+    delete process.env.WORKER_MAX;
+    try {
+      expect(maxWorkersAt("2026-10-07T03:30:00Z")).toBe(4); // 09:00 IST
+      expect(maxWorkersAt("2026-10-07T16:29:00Z")).toBe(4); // 21:59 IST
+      expect(maxWorkersAt("2026-10-07T16:30:00Z")).toBe(6); // 22:00 IST (R-2557: night cap 6)
+      expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(6); // 02:30 IST
+      expect(maxWorkersAt("2026-10-07T03:29:00Z")).toBe(6); // 08:59 IST — still night
+    } finally {
+      if (old !== undefined) process.env.WORKER_MAX = old;
+    }
+  });
+
+  it("WORKER_MAX still overrides day and night caps", () => {
+    const old = process.env.WORKER_MAX;
+    process.env.WORKER_MAX = "2";
+    try {
+      expect(maxWorkersAt("2026-10-07T03:30:00Z")).toBe(2); // day
+      expect(maxWorkersAt("2026-10-06T21:00:00Z")).toBe(2); // night
+    } finally {
+      if (old === undefined) delete process.env.WORKER_MAX; else process.env.WORKER_MAX = old;
+    }
   });
 });
 
@@ -577,5 +598,281 @@ describe("R-2106: claim paths are normalised (29 Oct: R-2102/R-2104/R-2098 own f
   });
   it("leaves plain paths alone", () => {
     expect(normaliseClaimAreas(["src/lib/x.ts", "../docs/A.md"], "C:/w")).toEqual(["src/lib/x.ts", "../docs/A.md"]);
+  });
+});
+
+describe("R-2592: push refuses a money / p0 card without an independent SAFE review of the same code", () => {
+  const money = { id: "R-600", title: "x", kind: "bug", category: "paisa", priority: "p1", doneWhen: "credit once", howToCheck: "1. /invoices" };
+  // "ccc" = HEAD; "ccc-rebased" carries the same change; "bbb" = an earlier WIP; "aaa" = already merged
+  const same = new Set(["ccc", "ccc-rebased"]);
+  const sameCode = (sha: string, head: string) => head === "ccc" && same.has(sha);
+  const opts = { head: "ccc", sameCode };
+
+  it("which cards: category money/paisa (any case) or p0; others pass untouched", () => {
+    expect(needsIndependentReview({ category: "paisa" })).toBe(true);
+    expect(needsIndependentReview({ category: "Money" })).toBe(true);
+    expect(needsIndependentReview({ category: "process", priority: "P0" })).toBe(true);
+    expect(needsIndependentReview({ category: "process", priority: "p1" })).toBe(false);
+    expect(needsIndependentReview(null)).toBe(false);
+    expect(checkReviewGate("R-600", { ...money, category: "process" }, opts).ok).toBe(true);
+  });
+
+  it("no independentReview → refused, saying wip + checker first", () => {
+    const r = checkReviewGate("R-600", money, opts);
+    expect(r.ok).toBe(false);
+    expect(r.message).toContain("independentReview nahi");
+    expect(r.message).toContain("worker-lock wip R-600");
+    expect(r.message).toContain("independent-check");
+  });
+
+  it("BLOCK verdict, or SAFE without sha → refused", () => {
+    expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "BLOCK", sha: "ccc" } }, opts).message).toContain('verdict "BLOCK"');
+    expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE" } }, opts).ok).toBe(false);
+  });
+
+  it("SAFE on the head, or on a commit with the same change (rebased / squashed / retry) → ok", () => {
+    expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "ccc" } }, opts).ok).toBe(true);
+    expect(checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha: "ccc-rebased" } }, opts).ok).toBe(true);
+  });
+
+  it("SAFE on an earlier WIP (code added after review) or on merged code → refused", () => {
+    for (const sha of ["bbb", "aaa"]) {
+      const r = checkReviewGate("R-600", { ...money, independentReview: { verdict: "SAFE", sha } }, opts);
+      expect(r.ok).toBe(false);
+      expect(r.message).toContain("Is HEAD ka review chahiye");
+    }
+  });
+
+  it("a --card file that cannot be read fails closed", () => {
+    expect(checkReviewGate("R-600", null, { ...opts, cardUnreadable: true }).ok).toBe(false);
+  });
+
+  it("--no-review needs a reason; with one it passes and logs it", () => {
+    expect(parseReviewFlags(["--card", "c.json", "--no-review", "owner said", "--fixes-red"])).toEqual({ rest: ["--card", "c.json", "--fixes-red"], noReview: "owner said" });
+    expect(parseReviewFlags(["--no-review=hotfix"]).noReview).toBe("hotfix");
+    expect(parseReviewFlags(["--no-review", "--fixes-red"])).toEqual({ rest: ["--fixes-red"], noReview: "" });
+    expect(parseReviewFlags(["x"]).noReview).toBeNull();
+    expect(checkReviewGate("R-600", money, { ...opts, noReview: "  " }).ok).toBe(false);
+    const lines: string[] = [];
+    const r = checkReviewGate("R-600", money, { ...opts, noReview: "owner said", log: (l: string) => lines.push(l), now: () => "2026-11-08T07:00:00Z" });
+    expect(r.ok).toBe(true);
+    expect(JSON.parse(lines[0])).toEqual({ at: "2026-11-08T07:00:00Z", card: "R-600", how: "--no-review", reason: "owner said", headBeforePush: "ccc" });
+  });
+
+  it("changePatchId (real git): same after a rebase, different with one more commit, null once merged; generated files ignored", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2592-git-"));
+    // self-contained: CI runners have no global git identity, so rebase/merge (which write commits) need one here
+    const g = (a: string[], input?: string) => execFileSync("git", ["-c", "user.email=t@example.test", "-c", "user.name=t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", ...a], { cwd: tmp, encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"] });
+    const put = (f: string, s: string) => { fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true }); fs.writeFileSync(path.join(tmp, f), s); };
+    const commit = (m: string) => { g(["add", "-A"]); g(["commit", "-qm", m]); return g(["rev-parse", "HEAD"]).trim(); };
+    try {
+      g(["init", "-q", "-b", "main"]);
+      put("production/a.ts", "1\n"); put("production/b.ts", "x\n"); commit("base");
+      g(["checkout", "-qb", "card"]);
+      put("production/a.ts", "1\n2\n"); const reviewed = commit("card");
+      g(["checkout", "-q", "main"]); put("production/b.ts", "x\ny\n"); commit("other card");
+      g(["checkout", "-q", "card"]); g(["rebase", "-q", "main"]); const rebased = g(["rev-parse", "HEAD"]).trim();
+      expect(rebased).not.toBe(reviewed);
+      const pid = changePatchId(reviewed, "main", g);
+      expect(pid).toBeTruthy();
+      expect(changePatchId(rebased, "main", g)).toBe(pid);
+      put("production/supabase/cloudsql/staging/deploy-db-2026-11-08.sh", "regen\n"); const regen = commit("regen");
+      expect(changePatchId(regen, "main", g)).toBe(pid);
+      put("production/a.ts", "1\n2\n3\n"); const more = commit("more code");
+      expect(changePatchId(more, "main", g)).not.toBe(pid);
+      g(["checkout", "-q", "main"]); g(["merge", "-q", "--ff-only", "card"]);
+      expect(changePatchId(more, "main", g)).toBeNull();
+      expect(changePatchId("deadbeef", "main", g)).toBeNull();
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it("CLI: push of an unreviewed money card stops with exit 13 before anything else runs", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2592-"));
+    try {
+      const cardFile = path.join(tmp, "R-600.json");
+      fs.writeFileSync(cardFile, JSON.stringify({ id: "R-600", data: money }));
+      const script = path.resolve("scripts/ops/worker-lock.mjs");
+      const r = spawnSync(process.execPath, [script, "push", "R-600", "--card", cardFile], { encoding: "utf8", env: { ...process.env, WORKER_LOCK_DIR: path.join(tmp, "locks") } });
+      expect(r.status).toBe(13);
+      expect(`${r.stdout}${r.stderr}`).toContain("independentReview nahi");
+      expect(fs.existsSync(path.join(tmp, "locks", "_push-turn.json"))).toBe(false);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+});
+
+/* R-2612 (8 Nov 2026): R-2594/2596/2597/2600/2603 had no SQL run of their own. The first later SQL run
+   that contained their sha (42466580532 on dba71dc4c) failed at 'Run supabase/setup-cli' (504) and its
+   re-runs kept failing on the old workflow file, while the NEWER SQL run on 7c6127015 (a descendant) was
+   green — yet the oldest-first loop let the old red decide, the five cards stayed ci-red and held their
+   files. Now a green later run that contains the sha wins over an older red one, and `ci-all` / `ci <CARD>`
+   look at ci-red locks again and free them when the verdict has turned green. */
+describe("R-2612: a newer green run on a descendant clears a card stuck red by an older infra-failed run", () => {
+  const SHA = "b".repeat(40), OLD = "d".repeat(40), NEW = "7".repeat(40);
+  const isAncestor = (a: string, b: string) => a === SHA && (b === OLD || b === NEW);
+  const own = [run({ databaseId: 10, headSha: SHA, url: "u-ci" })]; // own CI green, no own SQL run
+  const oldRed = run({ databaseId: 20, workflowName: "SQL tests", headSha: OLD, conclusion: "failure", url: "u-old", createdAt: "2026-11-08T09:40:00Z" });
+  const newGreen = run({ databaseId: 30, workflowName: "SQL tests", headSha: NEW, url: "u-new", createdAt: "2026-11-08T10:33:00Z" });
+  const lock = (state: string) => ({ card: "R-2594", areas: ["src/lib/x"], state, pushedSha: SHA, ciWaitSince: "2026-11-08T09:30:00Z" });
+  const now = Date.parse("2026-11-08T11:00:00Z");
+
+  it("ci <CARD>: older red later SQL run + newer green descendant run → green, via the newer run", async () => {
+    const { gh } = fakeGh({ sha: own, branch: [newGreen, oldRed] });
+    const r = await runCi("R-2594", { gh, git: () => `${SHA}\n`, isAncestor, sha: SHA, timeoutMin: 5, readNote: () => ({ sha: SHA, at: "2026-11-08T09:30:00Z" }), now: () => now, sleep: async () => {} });
+    expect(r.code).toBe(CI_EXIT.green);
+    expect(r.check).toMatchObject({ ci: "green", sql: "green", via: NEW });
+    expect(r.check?.runUrls).toEqual(["u-ci", "u-new"]);
+  });
+
+  it("ciWaitVerdict: same runs → green for a ci-wait lock AND for a ci-red lock (re-evaluated)", () => {
+    const { gh } = fakeGh({ sha: own, branch: [oldRed, newGreen] });
+    expect(ciWaitVerdict(lock(LOCK_STATES.ciWait), { gh, isAncestor, now })).toBe("green");
+    expect(ciWaitVerdict(lock(LOCK_STATES.ciRed), { gh, isAncestor, now })).toBe("green");
+  });
+
+  it("an older green later run is not overturned by a newer red one (the sha was already proven green)", () => {
+    const oldGreen = { ...oldRed, conclusion: "success" };
+    const newRed = { ...newGreen, conclusion: "failure" };
+    const { gh } = fakeGh({ sha: own, branch: [oldGreen, newRed] });
+    expect(ciWaitVerdict(lock(LOCK_STATES.ciWait), { gh, isAncestor, now })).toBe("green");
+  });
+
+  it("older red + newer still running → pending (wait for the newer run), not red", () => {
+    const going = { ...newGreen, status: "in_progress", conclusion: "" };
+    const { gh } = fakeGh({ sha: own, branch: [oldRed, going] });
+    expect(ciWaitVerdict(lock(LOCK_STATES.ciWait), { gh, isAncestor, now })).toBe("pending");
+  });
+
+  it("only red later runs → still red", () => {
+    const { gh } = fakeGh({ sha: own, branch: [oldRed] });
+    expect(ciWaitVerdict(lock(LOCK_STATES.ciWait), { gh, isAncestor, now })).toBe("red");
+  });
+
+  it("a working lock is still not looked at", () => {
+    const { gh } = fakeGh({ sha: own, branch: [newGreen] });
+    expect(ciWaitVerdict(lock(LOCK_STATES.working), { gh, isAncestor, now })).toBeNull();
+  });
+
+  it("ci-all: a ci-red lock now green is freed; still red is left alone (no new ciRedAt); pending stays", () => {
+    const locks = [lock(LOCK_STATES.ciRed), { ...lock(LOCK_STATES.ciRed), card: "R-2596" }, { ...lock(LOCK_STATES.ciRed), card: "R-2597" }];
+    const v: Record<string, string> = { "R-2594": "green", "R-2596": "red", "R-2597": "pending" };
+    const settled: [string, number][] = [];
+    const r = ciAllReport(locks, { verdict: (l: { card: string }) => v[l.card], settle: (c: string, code: number) => settled.push([c, code]), at: "2026-11-08T11:00:00Z" });
+    expect(settled).toEqual([["R-2594", CI_EXIT.green]]);
+    expect(r.results.map((x: { card: string; ci: string }) => `${x.card}:${x.ci}`)).toEqual(["R-2594:green", "R-2596:red", "R-2597:pending"]);
+    expect(r.lines.join("\n")).toContain("R-2594");
+  });
+
+  it("ci <CARD> on a ci-red lock: green removes it (files free)", () => {
+    expect(lockAfterCi(lock(LOCK_STATES.ciRed), CI_EXIT.green, { at: "2026-11-08T11:00:00Z" })).toBeNull();
+  });
+
+  it("ci-all settle: a lock taken back meanwhile (claim --fixes-red → working) is left alone", () => {
+    const at = { at: "2026-11-08T11:00:00Z" };
+    const working = lock(LOCK_STATES.working);
+    expect(lockAfterCiAll(working, CI_EXIT.green, at)).toBe(working);
+    expect(lockAfterCiAll(lock(LOCK_STATES.ciRed), CI_EXIT.green, at)).toBeNull();
+    expect(lockAfterCiAll(lock(LOCK_STATES.ciWait), CI_EXIT.red, at)?.state).toBe(LOCK_STATES.ciRed);
+    expect(lockAfterCiAll(null, CI_EXIT.green, at)).toBeNull();
+  });
+});
+
+/* R-2614 (8 Nov 2026): every migration rename made a new sha and the R-2592 gate asked for a new review
+   (R-2604 three times); and a push that stopped on the migration-order check (process.exit inside the
+   turn) left _push-turn.json behind — the next worker waited 15 min for it to go stale. */
+describe("R-2614: a rename-only / regen-only change keeps the SAFE review; push releases its turn on any exit", () => {
+  it("changePatchId (real git): same after the card's migration is renamed with its mentions, and after docs/API.md regen; not after real code", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2614-pid-"));
+    const g = (a: string[], input?: string) => execFileSync("git", ["-c", "user.email=t@example.test", "-c", "user.name=t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", ...a], { cwd: tmp, encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"] });
+    const put = (f: string, s: string) => { fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true }); fs.writeFileSync(path.join(tmp, f), s); };
+    const commit = (m: string) => { g(["add", "-A"]); g(["commit", "-qm", m]); return g(["rev-parse", "HEAD"]).trim(); };
+    const M = "production/supabase/migrations";
+    try {
+      g(["init", "-q", "-b", "main"]);
+      put(`${M}/20261108120000_base.sql`, "select 1;\n"); put("docs/API.md", "v1\n"); commit("base");
+      g(["checkout", "-qb", "card"]);
+      put(`${M}/20261108133000_a.sql`, "create table a();\n"); put("production/tests/a.test.ts", "read('20261108133000_a.sql')\n");
+      const reviewed = commit("R-1: a");
+      const pid = changePatchId(reviewed, "main", g);
+      expect(pid).toBeTruthy();
+      g(["mv", `${M}/20261108133000_a.sql`, `${M}/20261108170000_a.sql`]); put("production/tests/a.test.ts", "read('20261108170000_a.sql')\n");
+      const renamed = commit("R-1: rename migration (auto)");
+      expect(changePatchId(renamed, "main", g)).toBe(pid);
+      put("docs/API.md", "v2\n"); const api = commit("regen api doc");
+      expect(changePatchId(api, "main", g)).toBe(pid);
+      put(`${M}/20261108170000_a.sql`, "create table a(id int);\n"); const more = commit("real change");
+      expect(changePatchId(more, "main", g)).not.toBe(pid);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it("withTurn: a process.exit() inside the held push turn removes _push-turn.json (real child process)", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2614-turn-"));
+    try {
+      const script = path.join(tmp, "run.mjs");
+      const mod = pathToFileURL(path.resolve(__dirname, "..", "scripts", "ops", "worker-lock.mjs")).href;
+      fs.writeFileSync(script, `import { withTurn } from "${mod}";\nawait withTurn("push", "R-1", "push kar raha hai", async () => { process.exit(5); });\n`);
+      const locks = path.join(tmp, "locks"); fs.mkdirSync(locks);
+      const r = spawnSync(process.execPath, [script], { encoding: "utf8", env: { ...process.env, WORKER_LOCK_DIR: locks, WORKER_TURN_POLL_MS: "50" } });
+      expect(r.status).toBe(5);
+      expect(fs.existsSync(path.join(locks, "_push-turn.json"))).toBe(false);
+      // another card's turn is never removed by my exit handler
+      fs.writeFileSync(path.join(locks, "_push-turn.json"), JSON.stringify({ card: "R-9", priority: "p2", at: Date.now() }));
+      fs.writeFileSync(script, `import { releaseOwnTurn } from "${mod}";\nreleaseOwnTurn(${JSON.stringify(path.join(locks, "_push-turn.json"))}, "R-1");\n`);
+      spawnSync(process.execPath, [script], { encoding: "utf8", env: { ...process.env, WORKER_LOCK_DIR: locks } });
+      expect(fs.existsSync(path.join(locks, "_push-turn.json"))).toBe(true);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+  });
+
+  it("push wires the auto-rename before the order gate; claim and check run the timestamp-clash check", () => {
+    const src = readFileSync(path.join(__dirname, "..", "scripts", "ops", "worker-lock.mjs"), "utf8");
+    const body = src.slice(src.indexOf("async function pushWithTurn"));
+    const at = (s: string) => body.indexOf(s);
+    expect(at("autoRenameLateMigrations(")).toBeGreaterThan(at("refreshDerived("));
+    expect(at("autoRenameLateMigrations(")).toBeLessThan(at("realMigrationOrderGate("));
+    const main = src.slice(src.indexOf("function main("));
+    expect(main.slice(main.indexOf('cmd === "claim"'), main.indexOf('cmd === "beat"'))).toContain("checkMigrationClash(");
+    expect(main.slice(main.indexOf('cmd === "check"'), main.indexOf('cmd === "push"'))).toContain("checkMigrationClash(");
+  });
+});
+
+/* R-2615 (8 Nov 2026): R-2614 masked EVERY 14-digit 20… number in the reviewed diff, so a code line that
+   changed only such a number (an amount, an id, a date-time constant) kept the SAFE review — a hole in
+   the R-2592 gate. Now only the card's OWN new migration versions (files it adds under
+   supabase/migrations/, and their exact mentions) are masked. */
+describe("R-2615: only the card's own migration rename keeps the review — any other 14-digit number change needs a new one", () => {
+  it("changePatchId (real git): rename-only → same; a code line changing a 14-digit 20… number → different", () => {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "r2615-pid-"));
+    const g = (a: string[], input?: string) => execFileSync("git", ["-c", "user.email=t@example.test", "-c", "user.name=t", "-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-c", "core.autocrlf=false", ...a], { cwd: tmp, encoding: "utf8", input, stdio: ["pipe", "pipe", "ignore"] });
+    const put = (f: string, s: string) => { fs.mkdirSync(path.dirname(path.join(tmp, f)), { recursive: true }); fs.writeFileSync(path.join(tmp, f), s); };
+    const commit = (m: string) => { g(["add", "-A"]); g(["commit", "-qm", m]); return g(["rev-parse", "HEAD"]).trim(); };
+    const M = "production/supabase/migrations";
+    try {
+      g(["init", "-q", "-b", "main"]);
+      put(`${M}/20261108120000_base.sql`, "select 1;\n"); put("production/src/limits.ts", "export const MAX_PAISE = 1;\n"); commit("base");
+      g(["checkout", "-qb", "card"]);
+      put(`${M}/20261108133000_a.sql`, "-- deploy-peek: 20261108133000\ncreate table a();\n");
+      put("production/tests/a.test.ts", "read('20261108133000_a.sql'); v = '20261108133000';\n");
+      put("production/src/limits.ts", "export const MAX_PAISE = 20261108150000;\nexport const ID = 20250401000000;\n");
+      const reviewed = commit("R-1: a");
+      const pid = changePatchId(reviewed, "main", g);
+      expect(pid).toBeTruthy();
+      // pure rename of the card's own migration (file + its exact mentions) → same code
+      g(["mv", `${M}/20261108133000_a.sql`, `${M}/20261108170000_a.sql`]);
+      put(`${M}/20261108170000_a.sql`, "-- deploy-peek: 20261108170000\ncreate table a();\n");
+      put("production/tests/a.test.ts", "read('20261108170000_a.sql'); v = '20261108170000';\n");
+      const renamed = commit("R-1: rename migration (auto)");
+      expect(changePatchId(renamed, "main", g)).toBe(pid);
+      // a code line changing a 14-digit 20… number that is NOT the card's migration → needs a new review
+      put("production/src/limits.ts", "export const MAX_PAISE = 20261108150001;\nexport const ID = 20250401000000;\n");
+      const amount = commit("R-1: change amount");
+      expect(changePatchId(amount, "main", g)).not.toBe(pid);
+      put("production/src/limits.ts", "export const MAX_PAISE = 20261108150000;\nexport const ID = 20260401000000;\n");
+      const id = commit("R-1: change id");
+      expect(changePatchId(id, "main", g)).not.toBe(pid);
+      // a mention moved to ANOTHER number (not the new migration name) is a code change too
+      put("production/src/limits.ts", "export const MAX_PAISE = 20261108150000;\nexport const ID = 20250401000000;\n");
+      put("production/tests/a.test.ts", "read('20261108170000_a.sql'); v = '20261108999999';\n");
+      const other = commit("R-1: other mention");
+      expect(changePatchId(other, "main", g)).not.toBe(pid);
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
   });
 });

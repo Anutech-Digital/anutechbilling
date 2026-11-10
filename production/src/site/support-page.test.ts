@@ -7,12 +7,13 @@
  * the DMS customer panel's sign-in (CLIENT_AREA_URL).
  */
 import { describe, it, expect } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { nextWorkingDays, dayLabel } from "@/site/components/support/SupportBody";
 import { SUPPORT_CHANNELS } from "@/site/lib/data/misc";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
-const code = (f: string) => readFileSync(f, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+const code = (f: string) => readSource(f).replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const n of readdirSync(dir)) {
@@ -50,7 +51,7 @@ describe("the support page says only what is true", () => {
     expect(text).not.toMatch(/WhatsApp|SLA|automatically/);
   });
   it("is a real page at /contact", () => {
-    expect(readFileSync("src/app/(marketing)/contact/page.tsx", "utf8")).toMatch(/<SupportBody \/>/);
+    expect(readSource("src/app/(marketing)/contact/page.tsx")).toMatch(/<SupportBody \/>/);
   });
 });
 

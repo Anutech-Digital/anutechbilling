@@ -69,6 +69,13 @@ describe("loadLateCharges (wiring)", () => {
     expect(b.view).toMatchObject({ interestApplies: false, feeToBill: 500, interestToBill: 0 });
   });
 
+  it("R-2499: an FY sale imported as Zoho's own invoice never gets a late fee (bulk or by customer)", async () => {
+    const zoho = { ...base.invoices[0], id: "INV/25-26/0009", quote_id: null, zoho_invoice_id: "9000009" };
+    const db = fakeDb({ ...base, tenants: [{ ...base.tenants[0], late_fee_enabled: true }], invoices: [...base.invoices, zoho] });
+    expect((await loadLateCharges(db, {}, "2026-10-01")).map((r) => r.invoiceId)).not.toContain("INV/25-26/0009");
+    expect((await loadLateCharges(db, { customerId: "c1" }, "2026-10-01")).map((r) => r.invoiceId)).toEqual(["INV-A"]);
+  });
+
   it("bulk scope: unpaid + recently paid only", async () => {
     const db = fakeDb({
       ...base,

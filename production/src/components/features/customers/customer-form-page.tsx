@@ -30,7 +30,7 @@ import { GST_STATE_BY_CODE, cn } from "@/lib/utils";
 import { FieldPill } from "@/components/ui/field-pill";
 import { SmartPaste } from "@/components/shared/smart-paste";
 import {
-  liveGstin, checkGstin, livePhone, commitPhone, checkPhone,
+  liveGstin, checkGstin, livePhone, commitPhone, checkPhone, recommitPhoneForCountry,
   liveEmail, checkEmail, liveDomain, checkDomain, gstinState,
 } from "@/lib/forms/poka-yoke";
 import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
@@ -113,6 +113,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
     verification, setVerification, watchedGstin,
     isForeign, foreignStates, country, onCountryPick, submit,
     gstTreatment, gstTreatmentAuto, gstTreatmentMeaning, onTreatmentChange, panLocked,
+    gstTreatmentSaved, regionMissingNote,
   } = useCustomerForm({
     customer,
     /* R-2108: "?return=" (e.g. Hosting & Domains → Add email) goes back there after Save. */
@@ -263,7 +264,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
                 const opts = { shouldDirty: true } as const;
                 if (v.name)   setValue("contact_name",  v.name, opts);
                 if (v.email)  setValue("contact_email", liveEmail(v.email), opts);
-                if (v.phone)  setValue("contact_phone", commitPhone(v.phone), opts);
+                if (v.phone)  setValue("contact_phone", commitPhone(v.phone, country), opts);
                 /* The honest half of "company": the DOMAIN. The name is not derivable
                    from an address and the one that lands on a tax invoice is a legal
                    fact — the GSTIN lookup fills that properly. */
@@ -303,13 +304,23 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
         {/* ── Country-first + live tax-treatment banner (better-than-Zoho) ── */}
         <div className="rounded-xl border border-hairline bg-paper-2/40 p-4 md:p-5 mb-5">
           <div className="grid grid-cols-1 md:grid-cols-[190px_minmax(0,1fr)] gap-1.5 md:gap-5 md:items-center">
-            <Label htmlFor="country" required>Customer region</Label>
+            <Label htmlFor="country" required={!regionMissingNote}>Customer region</Label>
             <div className="max-w-xl">
-              <CountryCombobox id="country" value={country} onChange={onCountryPick} />
+              <CountryCombobox id="country" value={country} onChange={(c) => {
+              onCountryPick(c);
+              /* R-2645: a phone formatted +91 before the country was picked follows the new country. */
+              const phone = recommitPhoneForCountry(watch("contact_phone"), c);
+              if (phone) setValue("contact_phone", phone, { shouldDirty: true });
+            }} />
             </div>
           </div>
           <div className="mt-3 md:pl-[210px]">
-            {isForeign ? (
+            {regionMissingNote ? (
+              <p className="flex items-start gap-2 text-[12px] leading-snug text-amber-ink">
+                <Icon name="info" size={14} className="mt-0.5 flex-shrink-0" />
+                <span>{regionMissingNote}</span>
+              </p>
+            ) : isForeign ? (
               <p className="flex items-start gap-2 text-[12px] leading-snug text-indigo-ink">
                 <Icon name="globe" size={14} className="mt-0.5 flex-shrink-0" />
                 <span>
@@ -401,6 +412,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               auto={gstTreatmentAuto}
               meaning={gstTreatmentMeaning}
               foreign={isForeign}
+              savedValue={gstTreatmentSaved}
               error={errors.gst_treatment?.message}
             />
           </Row>
@@ -484,12 +496,12 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
                 id="contact_phone" inputMode="numeric" placeholder="Work phone"
                 error={errors.contact_phone?.message}
                 {...register("contact_phone")}
-                onChange={(e) => setValue("contact_phone", livePhone(e.target.value), { shouldDirty: true })}
-                onBlur={(e) => setValue("contact_phone", commitPhone(e.target.value), { shouldDirty: true })}
+                onChange={(e) => setValue("contact_phone", livePhone(e.target.value, country), { shouldDirty: true })}
+                onBlur={(e) => setValue("contact_phone", commitPhone(e.target.value, country), { shouldDirty: true })}
               />
               {/* Catches the ten-digit landline, which looks perfect until somebody
                   tries to WhatsApp it. */}
-              <FieldPill check={checkPhone(watch("contact_phone") ?? "")} />
+              <FieldPill check={checkPhone(watch("contact_phone") ?? "", country)} />
               <Input aria-label="Mobile" placeholder="Mobile" {...register("contact_mobile")} />
             </div>
           </Row>

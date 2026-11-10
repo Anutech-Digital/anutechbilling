@@ -164,7 +164,7 @@ export function updateNeedsRestart(lines) {
 /** What to do when POST /api/dev/test-login fails, by its status. */
 export function loginHint(status) {
   if (status === 404) return "the :3001 server is not `npm run dev:local` (NEXT_PUBLIC_APP_ENV=local) or is not reached as localhost — start it with localhost:ready / dev:local, never plain `npm run dev`.";
-  if (status === 400) return "unknown role — use owner, manager, accountant, sales or owner2.";
+  if (status === 400) return "unknown role — use owner, manager, accountant, sales, owner2, billing or support.";
   if (status === 412 || status === 401) return "seed the test users once — E2E_ALLOW_SEED=1 node e2e/fixtures/seed-e2e-tenant.mjs (local DB only), and keep production/.env.test.";
   return "read the dev server log (the route answered no ok) and try the Local test login button on /login.";
 }
@@ -177,7 +177,8 @@ export function warmVerdict(w) {
   return null;
 }
 
-export const TEST_ROLES = ["owner", "manager", "accountant", "sales", "owner2"];
+/** Same list as TEST_LOGIN_ROLES (src/app/api/dev/test-login/rules.ts) — a test keeps them in step (R-2553). */
+export const TEST_ROLES = ["owner", "manager", "accountant", "sales", "owner2", "billing", "support"];
 
 export function parseReadyArgs(argv) {
   const out = {

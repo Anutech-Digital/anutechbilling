@@ -7,7 +7,7 @@
 import { describe, it, expect } from "vitest";
 import {
   renewalActionSet, renewalNextStep,
-  SEND_RENEWAL_QUOTE, BILL_NEXT_PART, RESEND_RENEWAL_QUOTE, FOLLOW_UP,
+  SEND_RENEWAL_QUOTE, BILL_NEXT_PART, BILL_RENEWAL_YEAR, RESEND_RENEWAL_QUOTE, FOLLOW_UP,
   type RenewalActionSub,
 } from "./renewal-actions-rules";
 
@@ -25,10 +25,12 @@ describe("R-2422 renewalNextStep — one button + ⋯", () => {
     expect(s.menu).toEqual(["create-quote", "followup", "nudge", "voice", "not-renewing"]);
   });
 
-  it("billed in parts: button Bill next part; no Create quote in ⋯", () => {
+  it("billed in parts: button Bill next part (R-2548: the renewal label when the next part starts the next term); no Create quote in ⋯", () => {
     const s = renewalNextStep(renewalActionSet(sub({ billing_cycle: "quarterly" }), null, { ...OWNER, daysUntil: 5 }), RENEWALS);
-    expect(s.button).toEqual({ kind: "generate", label: BILL_NEXT_PART });
+    expect(s.button).toEqual({ kind: "generate", label: BILL_RENEWAL_YEAR });
     expect(s.menu).toEqual(["followup", "nudge", "voice", "not-renewing"]);
+    const mid = renewalNextStep(renewalActionSet(sub({ billing_cycle: "quarterly", renewal_date: "2027-03-31" }), null, { ...OWNER, daysUntil: 130 }), RENEWALS);
+    expect(mid.button).toEqual({ kind: "generate", label: BILL_NEXT_PART });
   });
 
   it("quote already sent: button Resend renewal quote", () => {

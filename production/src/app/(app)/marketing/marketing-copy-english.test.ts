@@ -1,6 +1,7 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* R-273 (after R-216 / R-246 / R-261): the marketing screens (IndiaMART, WhatsApp, Google
    Business, Ads, Lead finder, Campaigns…) still showed Hinglish labels, hints and toasts
@@ -26,7 +27,7 @@ const HINGLISH = /\b(nahi|nahin|karo|karein|kar do|kijiye|dabao|dabaiye|chuno|li
 function uiLines(file: string): string[] {
   /* The marker is read BEFORE comments are stripped, so a trailing `// customer-language`
      on a template line counts (R-296: review and unsubscribe text the customer receives). */
-  return readFileSync(file, "utf8")
+  return readSource(file)
     .replace(/^.*customer-language.*$/gm, "")
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/(^|[^:"'`\\])\/\/.*$/gm, "$1")

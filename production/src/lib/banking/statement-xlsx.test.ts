@@ -70,11 +70,11 @@ const toBytes = (wb: XLSX.WorkBook, bookType: "xlsx" | "biff8") =>
 describe("R-1512 statement Excel → same lines as the CSV path", () => {
   const expected = parseStatement(CSV);
 
-  it("the CSV path itself reads the three lines (whole rupees)", () => {
+  it("the CSV path itself reads the three lines (whole rupees; R-2528: printed paise kept alongside)", () => {
     expect(expected.rows).toEqual([
       { txn_date: "2026-04-01", description: "IMPS-CUSTOMER PAYMENT", debit: 0, credit: 25000, balance_after: 125000, reference: "0000412345" },
-      { txn_date: "2026-04-03", description: "UPI-RAZORPAY-ACME, PUNE", debit: 1250, credit: 0, balance_after: 123750, reference: "UPI0099" },
-      { txn_date: "2026-04-05", description: "NEFT-GOOGLE CLOUD", debit: 18500, credit: 0, balance_after: 105250, reference: "N123456" },
+      { txn_date: "2026-04-03", description: "UPI-RAZORPAY-ACME, PUNE", debit: 1250, credit: 0, balance_after: 123750, reference: "UPI0099", amount_paise: 125040, balance_paise: 12374960 },
+      { txn_date: "2026-04-05", description: "NEFT-GOOGLE CLOUD", debit: 18500, credit: 0, balance_after: 105250, reference: "N123456", balance_paise: 10524960 },
     ]);
   });
 

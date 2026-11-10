@@ -117,15 +117,19 @@ export const toRpcRows = (rows: ScheduleRow[]) => rows.map((r) => ({
  *  - same as the EMI → the schedule's principal + interest;
  *  - more → the extra is a late fee / bounce charge (an expense) or extra principal (part
  *    prepayment — the rest of the schedule is recomputed);
+ *  - more, R-2523 → broken-period / extra interest (interest expense, the same head as EMI
+ *    interest — e.g. the first EMI after a mid-month disbursal); principal and the later
+ *    schedule unchanged;
  *  - less → interest first, the rest reduces the loan; the rest of the schedule is recomputed.
  */
-export type ExtraAs = "late_fee" | "prepay";
+export type ExtraAs = "late_fee" | "prepay" | "interest";
 export function splitDebit(row: { emi: number; principal: number; interest: number }, debit: number, extraAs: ExtraAs = "late_fee"): {
   principal: number; interest: number; charges: number; difference: number; recompute: boolean;
 } {
   const difference = debit - row.emi;
   if (difference === 0) return { principal: row.principal, interest: row.interest, charges: 0, difference, recompute: false };
   if (difference > 0) {
+    if (extraAs === "interest") return { principal: row.principal, interest: row.interest + difference, charges: 0, difference, recompute: false };
     return extraAs === "late_fee"
       ? { principal: row.principal, interest: row.interest, charges: difference, difference, recompute: false }
       : { principal: row.principal + difference, interest: row.interest, charges: 0, difference, recompute: true };

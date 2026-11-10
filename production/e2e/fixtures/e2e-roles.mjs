@@ -30,9 +30,11 @@ export const E2E_ROLES = /** @type {const} */ (["owner", "manager", "sales", "ac
  * is not — so CI (preflight, suite-health, the specs) never needs a new secret for them.
  * "owner2" is a SECOND owner of the same company: R-2213's below-cost approval must come from
  * an owner who did not raise the quote, and a check on localhost needs two owners for that.
- * @type {readonly ["owner2"]}
+ * R-2553 (7 Nov 2026): "billing" and "support" — card tests (e2e/cards) log in as these roles in
+ * the browser instead of reading the menu rules, e.g. R-1001's "Billing: no Payroll/Loans" step.
+ * @type {readonly ["owner2", "billing", "support"]}
  */
-export const E2E_LOCAL_EXTRA_ROLES = /** @type {const} */ (["owner2"]);
+export const E2E_LOCAL_EXTRA_ROLES = /** @type {const} */ (["owner2", "billing", "support"]);
 
 /**
  * The users.role a test login is seeded with ("owner2" is an owner).

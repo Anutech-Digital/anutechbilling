@@ -26,7 +26,7 @@ import {
 } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import {
-  useUpdateSubscription, useCorrectSubscriptionTerms, useCorrectSubscriptionCommitment, useCorrectSubscriptionData, useScheduleInvoices,
+  useCorrectSubscriptionDetails, useScheduleInvoices,
 } from "@/lib/queries/subscriptions";
 import {
   COMMITMENT_OPTIONS, THREE_YEAR_OPTION, FREQUENCY_LABEL, catalogCostPerSeatMonth, commitmentLabel, commitmentOf,
@@ -90,13 +90,10 @@ export function EditSubscriptionDialog({
   /** R-2228: links from the read-only seats / status to the action that changes them. */
   actions?: CorrectDetailsActions;
 }) {
-  const update = useUpdateSubscription();
-  /* R-2228: the owner's Data correction of seats / MRR (record fix, no money). */
-  const correctData = useCorrectSubscriptionData();
-  /* R-1684: seats / plan / price go through correct_subscription_terms (reason, role, catalog). */
-  const correctTerms = useCorrectSubscriptionTerms();
-  /* R-2095: commitment (term_months) and payment frequency (billing_cycle) go through correct_subscription_commitment. */
-  const correctCommitment = useCorrectSubscriptionCommitment();
+  /* R-2545: one save for everything, in one transaction — the owner's Data correction of seats /
+     MRR (R-2228), the plan (R-1684), commitment / payment frequency (R-2095) and the record's own
+     fields. */
+  const correctDetails = useCorrectSubscriptionDetails();
   const { data: me } = useCurrentUser();
   const { data: items } = useItems();
   const products = React.useMemo(() => subscriptionProducts(items ?? []), [items]);
@@ -136,6 +133,26 @@ export function EditSubscriptionDialog({
     setMrr(String(sub.mrr)); setStart(sub.start_date ?? ""); setRenewal(sub.renewal_date ?? "");
     setPaymentDue(sub.payment_due_date ?? ""); setDataFix(false);
   }, [sub]);
+
+  /* R-2613 (rule N5): moving the renewal date earlier (or clearing it) moves a scheduled
+     end-of-term seat cut with it, or removes it when the new date has passed (database trigger
+     subscriptions_r2613_seat_cut_redate). Read the cut only then, so the note names a real one. */
+  const oldRenewal = (sub.renewal_date ?? "").slice(0, 10);
+  const renewalEarlier = oldRenewal !== "" && (renewal === "" || (/^\d{4}-\d{2}-\d{2}$/.test(renewal) && renewal < oldRenewal));
+  const [cutOnOld, setCutOnOld] = React.useState<{ seats_before: number; seats_after: number } | "none" | "unknown" | null>(null);
+  React.useEffect(() => {
+    if (!open || !renewalEarlier) return;
+    let live = true;
+    fetch(`/api/subscriptions/${sub.id}/reduce-seats?seats=1`)
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(String(r.status)))))
+      .then((j: { scheduled?: { seats_before: number; seats_after: number; effective_date: string } | null }) => {
+        if (!live) return;
+        const s = j?.scheduled;
+        setCutOnOld(s && s.effective_date.slice(0, 10) === oldRenewal ? { seats_before: s.seats_before, seats_after: s.seats_after } : "none");
+      })
+      .catch(() => { if (live) setCutOnOld("unknown"); });
+    return () => { live = false; };
+  }, [open, renewalEarlier, sub.id, oldRenewal]);
 
   /** R-2228: switching Data correction off puts seats / MRR back to the record. */
   const toggleDataFix = (on: boolean) => {
@@ -305,23 +322,31 @@ export function EditSubscriptionDialog({
       toast.error("Microsoft NCE lock", { description: nceCheck.reason });
       return;
     }
+    /* R-2545: ONE request — correct_subscription_details runs the data fix, the plan, the
+       commitment and the record's own fields in one transaction. Before, four requests ran one
+       after another, and a refused renewal date (R-2533) left the payment frequency already saved.
+       On a refusal nothing changed: the hook shows why, the dialog stays open with what was typed. */
     try {
-      if (seatsMrrChanged) {
-        await correctData.mutateAsync({ id: sub.id, seats: nextSeats, mrr: nextMrr, reason: reason.trim() });
-      }
-      /* The plan only — correct_subscription_terms refuses a seats / MRR change (R-2228); after a
-         data correction the record already holds nextSeats / nextMrr. */
-      if (verdict.planChanged) {
-        await correctTerms.mutateAsync({ id: sub.id, itemId: nextItem, seats: nextSeats, mrr: nextMrr, reason: reason.trim() });
-      }
-      if (commitVerdict.changed) {
-        await correctCommitment.mutateAsync({
-          id: sub.id, termMonths: termNext, billingCycle: cycleNext,
-          renewalDate: termNext !== termNow ? (renewal || null) : null, reason: reason.trim(),
-        });
-      }
-      await update.mutateAsync({
+      await correctDetails.mutateAsync({
         id: sub.id,
+        reason: reason.trim(),
+        data: seatsMrrChanged ? { seats: nextSeats, mrr: nextMrr } : undefined,
+        /* The plan only — correct_subscription_terms refuses a seats / MRR change (R-2228); after a
+           data correction (same transaction) the record already holds nextSeats / nextMrr. */
+        plan: verdict.planChanged && nextItem ? { itemId: nextItem, seats: nextSeats, mrr: nextMrr } : undefined,
+        commitment: commitVerdict.changed
+          ? {
+              termMonths: termNext, billingCycle: cycleNext,
+              /* R-2545: a changed renewal date goes WITH the new term / frequency, so the pair is
+                 checked together (quarterly + the term's real end), not the new frequency against
+                 the old date. Not when the start date changes too: the start is written in the
+                 last step, so the new date would be judged against the OLD start — then the
+                 frequency goes first on the recorded date and the new dates follow together. */
+              renewalDate: termNext !== termNow
+                || (renewal.slice(0, 10) !== oldRenewal && startDate.slice(0, 10) === (sub.start_date ?? "").slice(0, 10))
+                ? (renewal || null) : null,
+            }
+          : undefined,
         patch: {
           vendor,
           /* R-2095: cleaned like the Onboard dialog; blank keeps the recorded one. */
@@ -542,6 +567,18 @@ export function EditSubscriptionDialog({
                 {/^\d{4}-\d{2}-\d{2}$/.test(renewal) ? `The next term starts on this date; this term ends ${formatDate(addDaysISO(renewal, -1))}. ` : ""}
                 Override it if the real term differs.
               </p>
+              {/* R-2613 (rule N5): the database moves a scheduled end-of-term seat cut with an earlier
+                  renewal date, or removes it when the new date has passed / is cleared. */}
+              {renewalEarlier && cutOnOld !== null && cutOnOld !== "none" && (
+                <p className="mt-1 text-2xs leading-snug text-ink-2" data-testid="renewal-earlier-seat-cut-note">
+                  {cutOnOld === "unknown"
+                    ? `If a seat cut is scheduled for ${formatDate(oldRenewal)} (Manage seats → At end of term), it `
+                    : `The seat cut ${cutOnOld.seats_before} → ${cutOnOld.seats_after} seats scheduled for ${formatDate(oldRenewal)} `}
+                  {renewal === "" || renewal < istToday()
+                    ? "is removed when you save."
+                    : `moves to ${formatDate(renewal)} when you save.`}
+                </p>
+              )}
             </FormField>
           </div>
 
@@ -589,7 +626,7 @@ export function EditSubscriptionDialog({
         <DialogFooter className="shrink-0 border-t border-hairline bg-paper px-5 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] md:px-6 md:pb-4" data-testid="dialog-sticky-footer">
           <Button type="button" variant="default" onClick={() => onOpenChange(false)}>Cancel</Button>
           <Button
-            type="button" variant="primary" loading={update.isPending || correctData.isPending || correctTerms.isPending || correctCommitment.isPending}
+            type="button" variant="primary" loading={correctDetails.isPending}
             disabled={nceCheck.locked || !!verdict.roleBlock || !!commitVerdict.block || (commitVerdict.changed && !!commitVerdict.roleBlock)}
             onClick={save}
           >

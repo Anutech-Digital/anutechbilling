@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, always-fresh read cache
 
 /* R-1817 (24 Oct 2026): these two repo-source scans moved here from gemini.test.ts so the push
    guard (scripts/ops/push-guard-suites.mjs) runs only them. gemini.test.ts waits on real retry /
@@ -12,8 +13,8 @@ describe("inbound-email ka extract geminiJson se guzre", () => {
     /* 23 Aug ko yahi jagah 7 second me 8 baar 429 kha gayi thi, kyunki iske paas breaker
        hi nahi tha. Aur timeout na hone ka matlab tha: Gemini atke to ye request atke, aur
        forwarder POST ke baad thread label kar deta hai — yaani enquiry gayi. */
-    const src = readFileSync(
-      join(process.cwd(), "src", "lib", "inbound", "ingest.ts"), "utf8");
+    const src = readSource(
+      join(process.cwd(), "src", "lib", "inbound", "ingest.ts"));
     expect(src).toContain("geminiJson<Partial<ExtractedLead>>");
     expect(src).not.toContain("generativelanguage.googleapis.com");
   });
@@ -63,7 +64,7 @@ describe("Gemini ka ek hi darwaza", () => {
 
   it("gemini.ts aur key-test ke ALAWA koi seedha Gemini API nahi bulata", () => {
     const offenders = walk(SRC)
-      .filter((p) => readFileSync(p, "utf8").includes("generativelanguage.googleapis.com"))
+      .filter((p) => readSource(p).includes("generativelanguage.googleapis.com"))
       .filter((p) => !ALLOWED.some((a) => p.endsWith(a)));
     expect(offenders.map((p) => p.slice(p.indexOf("src")))).toEqual([]);
   });

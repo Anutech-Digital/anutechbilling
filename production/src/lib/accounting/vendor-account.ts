@@ -83,6 +83,60 @@ export interface VendorAdvanceLike extends AdvanceLike {
   vendor_id: string | null;
   vendor_name: string | null;
   category?: string | null;
+  /** R-2588: TDS deducted on this advance (its bank payment row, R-1916) — credited on the bill. */
+  tds_amount?: number | null;
+  paid_date?: string | null;
+  created_at?: string | null;
+  id?: string;
+}
+
+/**
+ * R-2588: one advance's share on one bill — the same arithmetic as the database's
+ * vendor_advance_tds_take (migration 20261108053501_r2588): the gross taken from an advance that
+ * carried TDS also takes that TDS off the bill (pro-rata), so taken − credit ≤ the bill's due.
+ */
+export function advanceTdsTake(avail: number, due: number, billTds: number, advTds: number, gross: number, want: number | null = null): { take: number; credit: number } {
+  const lim = Math.max(0, Math.min(avail, want ?? avail));
+  if (due <= 0 || lim <= 0) return { take: 0, credit: 0 };
+  if (advTds <= 0 || billTds <= 0 || gross <= advTds) return { take: Math.min(lim, due), credit: 0 };
+  /* Postgres round() on numeric: half away from zero (amounts here are positive). */
+  const share = (t: number) => Math.min(billTds, Math.round((advTds * t) / gross));
+  let take = Math.min(lim, due + billTds, Math.floor((due * gross) / (gross - advTds)));
+  let credit = share(take);
+  if (take - credit > due) {
+    take = due + credit;
+    credit = share(take);
+    if (take - credit > due) take = due + credit;
+  }
+  if (take - credit < due && take < lim) take += Math.min(lim - take, due - (take - credit));
+  return { take, credit };
+}
+
+/** SQL "order by" on text/date/uuid: plain code-unit order, NULLs last. */
+const byNullsLast = (a: string | null | undefined, b: string | null | undefined): number =>
+  a == null ? (b == null ? 0 : 1) : b == null ? -1 : a < b ? -1 : a > b ? 1 : 0;
+
+/** R-2588: the most of the vendor's advances (gross, oldest first) a bill can take — its due plus
+ *  the TDS those advances already deducted. Matches apply_vendor_advance's own dry run. */
+export function advanceToApplyWithTds(advances: readonly VendorAdvanceLike[], vendorId: string | null, vendorName: string | null, billDue: number, billTds: number): number {
+  const name = (vendorName ?? "").trim().toUpperCase();
+  const mine = advances.filter((a) => {
+    if (a.category === "Employee advance" || advanceLeft(a) <= 0) return false;
+    const byId = vendorId != null && a.vendor_id === vendorId;
+    const byName = (a.vendor_id == null || vendorId == null) && name !== "" && (a.vendor_name ?? "").trim().toUpperCase() === name;
+    return byId || byName;
+  }).sort((x, y) => byNullsLast(x.paid_date, y.paid_date) || byNullsLast(x.created_at, y.created_at) || byNullsLast(x.id, y.id));
+  let due = Math.round(billDue || 0);
+  let btds = Math.max(0, Math.round(billTds || 0));
+  let total = 0;
+  for (const a of mine) {
+    if (due <= 0) break;
+    const { take, credit } = advanceTdsTake(advanceLeft(a), due, btds, Math.max(0, a.tds_amount ?? 0), a.total_amount ?? 0);
+    total += take;
+    due -= take - credit;
+    btds -= credit;
+  }
+  return total;
 }
 
 /**
@@ -127,7 +181,12 @@ export function billAdvanceView(
   const paidPart = isPartlyPaidExpense(e) ? Math.max(0, e.paid_amount ?? 0) : 0;
   const open = isOpenExpenseBill(e);
   const due = expenseBillDue(e);
-  const canApply = open && due > 0 ? advanceToApply(vendorAdvanceLeft(advances, e.vendor_id, e.vendor_name), due) : 0;
+  /* R-2588: an advance that carried TDS also covers the bill's TDS (credited, not taken twice) —
+     not after a bank part (that part already took the bill's TDS). */
+  const canApply = !(open && due > 0) ? 0
+    : (e.paid_amount ?? 0) > 0 || !((e.tds_amount ?? 0) > 0)
+      ? advanceToApply(vendorAdvanceLeft(advances, e.vendor_id, e.vendor_name), due)
+      : advanceToApplyWithTds(advances, e.vendor_id, e.vendor_name, due, e.tds_amount ?? 0);
   /* R-1915: not while a bank part is on the bill (undo_vendor_advance refuses — un-reconcile first). */
   const canUndo = applied > 0 && !e.reconciled_txn_id && !((e.paid_amount ?? 0) > 0) && (e.paid === false || e.payment_method === "advance");
   return { applied, paidPart, due, canApply, canUndo };

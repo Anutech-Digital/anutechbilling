@@ -12,6 +12,7 @@ import { Sidebar, MobileSidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/topbar";
 import { MobileBottomNav } from "@/components/layout/MobileBottomNav";
 import { WorkspaceTabBar } from "@/components/layout/workspace-tab-bar";
+import { NavProgressBar } from "@/components/layout/nav-progress";
 import { GlobalBugReporter } from "@/components/shared/global-bug-reporter";
 import { AiHelp } from "@/components/shared/ai-help";
 import { AttendanceReminder } from "@/components/features/attendance/attendance-reminder";
@@ -20,6 +21,7 @@ import { useGlobalKeys } from "@/lib/hooks/useKeyboard";
 import { MustChangePasswordGate } from "@/components/shared/must-change-password-gate";
 import { DemoBanner } from "@/components/layout/demo-banner";
 import { DeniedRouteToast } from "@/components/layout/denied-route-toast";
+import { CompanyInvitesBanner } from "@/components/features/team/company-invites-banner";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
@@ -43,6 +45,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
          this instead of each guessing (bottom-6 / bottom-20 / pb-16 had drifted apart). */
       style={{ "--bottom-nav-h": "calc(56px + env(safe-area-inset-bottom))" } as React.CSSProperties}
     >
+      {/* R-2186: thin bar along the top while a menu click is opening its page.
+          Suspense: it reads useSearchParams, which needs a boundary in a layout. */}
+      <React.Suspense fallback={null}>
+        <NavProgressBar />
+      </React.Suspense>
+
       {/* Desktop sidebar (sticky 240px) */}
       <Sidebar />
 
@@ -54,6 +62,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         {/* R-524: "Try the demo" visitor only — read-only notice + Sign up / Exit. */}
         <DemoBanner />
         <TopBar onMobileMenuClick={() => setMobileNavOpen(true)} />
+        {/* R-2477: an invite from another company — the login accepts it here itself.
+            Renders nothing when there is none. */}
+        <CompanyInvitesBanner />
         {/* Renders nothing until a second tab is open — a one-tab strip is
             decoration that costs vertical space on every screen. */}
         <WorkspaceTabBar />

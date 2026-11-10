@@ -1,5 +1,5 @@
 /**
- * R-2522 — choose which Facebook / Instagram lead forms come into Sales → Leads, from ANY Page the
+ * R-2670 — choose which Facebook / Instagram lead forms come into Sales → Leads, from ANY Page the
  * connected Meta Ads login manages (a brand's lead ads often run on a Page other than the one used
  * for posting). No Page token is stored: at list / pull time the Meta Ads login's token
  * (ad_accounts.access_token, sealed) is opened server-side and asked for its Pages' tokens.

@@ -10,7 +10,8 @@
  *
  * Signals, strongest first:
  *   1. The invoice number (or its quote id) appears in the narration / reference.
- *   2. The amount equals what is still due (`invoiceAmountDue`, R-371) to the rupee.
+ *   2. The amount equals what is still due (`invoiceAmountDue`, R-371) to the rupee — or (R-2192)
+ *      is within ₹1 of it (sameMoney): the Reconcile sheet books that ₹1 as a round-off.
  *   3. A distinctive word of the customer's name appears in the narration (`nameOverlap`).
  *   4. Date: money normally arrives after the invoice; closer is a little better.
  *
@@ -22,7 +23,9 @@
  * Nothing here writes. `oneClick` only says the drawer may show the "Match & record
  * payment" button; the operator still clicks it (see `canAutoApply` in credit-match.ts).
  */
-import { nameOverlap } from "@/lib/accounting/credit-match";
+import { cachedNameTokens, cachedNarrationSet } from "@/lib/accounting/credit-match";
+import type { LineMemo } from "@/lib/banking/line-memo";
+import { sameMoney } from "@/lib/banking/same-money";
 
 export interface CreditLine {
   /** Whole rupees credited. */
@@ -62,6 +65,9 @@ export interface InvoiceMatch {
   reasons: string[];
   /** Credit == due to the rupee. */
   exactAmount: boolean;
+  /** R-2192: credit − due when they are within ₹1 (sameMoney) but not equal — the Reconcile sheet
+   *  books it as a round-off and settles the invoice in full. 0 otherwise. */
+  roundOff: number;
   /** Credit looks like due minus TDS at this rate (%), else null. */
   tdsRatePct: number | null;
   /** Rupees short of the due amount (credit < due), 0 otherwise. */
@@ -83,13 +89,34 @@ export const MAX_INVOICE_AGE_DAYS = 365;
 /** Money a couple of days BEFORE the invoice date (paid against the quote / proforma). */
 export const MAX_DAYS_BEFORE_INVOICE = 7;
 
-const inr = (n: number) => n.toLocaleString("en-IN");
+/* R-2524: one formatter, not toLocaleString per call (it builds a new Intl formatter each time —
+   ~30k calls on a 6,000-line account). Same output. */
+const INR_FMT = new Intl.NumberFormat("en-IN");
+const inr = (n: number) => INR_FMT.format(n);
 const norm = (s: string | null | undefined) => (s ?? "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
-function daysBetween(fromISO: string, toISO: string): number {
-  const a = Date.parse(`${fromISO.slice(0, 10)}T00:00:00+05:30`);
-  const b = Date.parse(`${toISO.slice(0, 10)}T00:00:00+05:30`);
-  return Math.round((b - a) / 86_400_000);
+/** Midnight IST of a YYYY-MM-DD (or ISO) date, in ms. */
+function dayMs(iso: string): number {
+  return Date.parse(`${iso.slice(0, 10)}T00:00:00+05:30`);
+}
+
+type PreparedInvoices = {
+  list: Array<{ inv: OpenInvoice; idN: string; quoteN: string; day: number; nameToks: readonly string[] }>;
+  byId: Map<string, OpenInvoice>;
+};
+/* R-2524: one prepared copy per invoice list (the bank page passes the same cached array for
+   every line); a new list (after a refetch) is prepared again. */
+const prepared = new WeakMap<readonly OpenInvoice[], PreparedInvoices>();
+function preparedInvoices(invoices: readonly OpenInvoice[]): PreparedInvoices {
+  let hit = prepared.get(invoices);
+  if (!hit || hit.list.length !== invoices.length) {   // a list pushed to after it was prepared
+    hit = {
+      list: invoices.map((inv) => ({ inv, idN: norm(inv.id), quoteN: norm(inv.quoteId), day: dayMs(inv.invoiceDate), nameToks: cachedNameTokens(inv.customerName) })),
+      byId: new Map(invoices.map((i) => [i.id, i])),
+    };
+    prepared.set(invoices, hit);
+  }
+  return hit;
 }
 
 /** Does the narration/reference carry this document number? Whole id only — a bare "0013" matches too much. */
@@ -123,23 +150,34 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
   const amount = Math.round(credit.amount);
   if (!(amount > 0)) return [];
   const out: InvoiceMatch[] = [];
+  /* R-2524: the narration, reference and date are read once per credit, and each invoice's
+     ids and date once per invoice list — not once per (credit, invoice) pair. Same rules as
+     referencesDocument / daysBetween. */
+  const descN = norm(credit.description);
+  const refN = norm(credit.reference);
+  const creditDay = dayMs(credit.txnDate);
+  const said = (id: string) => id.length >= 6 && (descN.includes(id) || refN.includes(id));
+  const prep = preparedInvoices(invoices);
+  const narration = cachedNarrationSet(credit.description);   // nameOverlap, read once per credit
 
-  for (const inv of invoices) {
+  for (const { inv, idN, quoteN, day, nameToks } of prep.list) {
     const due = Math.round(inv.amountDue);
     if (!(due > 0)) continue;
-    const age = daysBetween(inv.invoiceDate, credit.txnDate);
+    const age = Math.round((creditDay - day) / 86_400_000);
     if (age < -MAX_DAYS_BEFORE_INVOICE || age > MAX_INVOICE_AGE_DAYS) continue;
 
-    const refHit = referencesDocument(credit, inv.id) || referencesDocument(credit, inv.quoteId);
-    const nameHit = nameOverlap(credit.description, inv.customerName);
+    const refHit = said(idN) || said(quoteN);
+    const nameHit = nameToks.find((t) => narration.has(t)) ?? null;   // = nameOverlap(credit.description, inv.customerName)
     const exactAmount = amount === due;
-    const tdsRatePct = exactAmount ? null : tdsRateFor(amount, due, inv.taxableValue);
-    if (!refHit && !nameHit && !exactAmount && tdsRatePct === null) continue;
+    const roundOff = !exactAmount && sameMoney(amount, due) ? amount - due : 0;   // whole rupees, like exactAmount
+    const tdsRatePct = exactAmount || roundOff !== 0 ? null : tdsRateFor(amount, due, inv.taxableValue);
+    if (!refHit && !nameHit && !exactAmount && roundOff === 0 && tdsRatePct === null) continue;
 
     const reasons: string[] = [];
     let score = 0;
     if (refHit) { score += 45; reasons.push(`Narration carries ${inv.id}`); }
     if (exactAmount) { score += 35; reasons.push("Exact amount due"); }
+    else if (roundOff !== 0) { score += 35; reasons.push(`Within ₹1 of due — ₹${inr(Math.abs(roundOff))} round-off`); }
     else if (tdsRatePct !== null) { score += 25; reasons.push(`Due less ${tdsRatePct}% TDS`); }
     if (nameHit) { score += 20; reasons.push(`Narration says “${nameHit}”`); }
     // Date: up to 5 points, highest within a month of the invoice.
@@ -148,13 +186,13 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
     score = Math.min(100, score);
 
     const strongIdentity = refHit || Boolean(nameHit);
-    const amountFits = exactAmount || tdsRatePct !== null;
+    const amountFits = exactAmount || roundOff !== 0 || tdsRatePct !== null;
     const confidence: InvoiceMatchConfidence =
       strongIdentity && amountFits ? "certain" : amountFits || refHit ? "likely" : "possible";
 
     out.push({
       invoiceId: inv.id, quoteId: inv.quoteId, customerName: inv.customerName, amountDue: due,
-      score, confidence, reasons, exactAmount, tdsRatePct,
+      score, confidence, reasons, exactAmount, roundOff, tdsRatePct,
       shortBy: Math.max(0, due - amount), overBy: Math.max(0, amount - due),
       oneClick: false, blockedReason: null,
     });
@@ -163,8 +201,10 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
   /* Two invoices with the same due and no name/ref telling them apart: an amount alone
      cannot choose, so neither is "likely" — both drop to "possible" and lose one-click.
      Two customers on the same plan paying the same day is the normal case, not rare. */
-  const exactNoIdentity = out.filter((m) => m.exactAmount && !m.reasons.some((r) => r.startsWith("Narration")));
-  const exactCount = out.filter((m) => m.exactAmount).length;
+  /* R-2192: within ₹1 is the same amount here too. */
+  const sameAmount = (m: InvoiceMatch) => m.exactAmount || m.roundOff !== 0;
+  const exactNoIdentity = out.filter((m) => sameAmount(m) && !m.reasons.some((r) => r.startsWith("Narration")));
+  const exactCount = out.filter(sameAmount).length;
   if (exactNoIdentity.length > 0 && exactCount > 1) {
     for (const m of exactNoIdentity) {
       m.confidence = "possible";
@@ -173,14 +213,15 @@ export function matchCreditToInvoices(credit: CreditLine, invoices: readonly Ope
     }
   }
 
-  const byId = new Map(invoices.map((i) => [i.id, i]));
   for (const m of out) {
-    const inv = byId.get(m.invoiceId);
+    const inv = prep.byId.get(m.invoiceId);
     m.blockedReason =
       inv?.isProject ? "Project invoice — record it as a project payment"
       : !m.quoteId ? "No quote behind this invoice — record the payment from the invoice"
+      /* R-2192: the one click records the bank amount only — the ₹1 round-off is booked by Reconcile. */
+      : m.roundOff !== 0 ? `₹${inr(Math.abs(m.roundOff))} ${m.roundOff < 0 ? "short" : "over"} — open Reconcile: it settles the invoice and books the round-off`
       : m.tdsRatePct !== null ? `Short by ₹${inr(m.shortBy)} — looks like ${m.tdsRatePct}% TDS; record it with TDS from the invoice`
-      : !m.exactAmount ? (m.overBy > 0 ? `Deposit is ₹${inr(m.overBy)} more than due` : `Deposit is ₹${inr(m.shortBy)} short of due`)
+      : !m.exactAmount && m.roundOff === 0 ? (m.overBy > 0 ? `Deposit is ₹${inr(m.overBy)} more than due` : `Deposit is ₹${inr(m.shortBy)} short of due`)
       : m.confidence === "possible" ? "Same amount as another invoice — open the invoice to be sure"
       : null;
     m.oneClick = m.blockedReason === null;
@@ -214,15 +255,40 @@ export function certainInvoiceMatches(
   txns: readonly ChipTxn[],
   invoices: readonly OpenInvoice[],
 ): Map<string, InvoiceMatch> {
-  const out = new Map<string, InvoiceMatch>();
+  return certainOf(invoiceMatchesOfCredits(txns, invoices));
+}
+
+/**
+ * R-2524: the ranked invoice matches of every UNMATCHED credit line, by line id — worked out once
+ * for the bank page, which reads it for the chip (certainOf) and for "no customer yet". Lines
+ * that are matched or money out are left out (their answer is "no matches").
+ */
+export function invoiceMatchesOfCredits(
+  txns: readonly ChipTxn[],
+  invoices: readonly OpenInvoice[],
+  /** R-2524: remember each line's answer across saves (the page passes one; reset on the invoice list). */
+  memo?: LineMemo<InvoiceMatch[]>,
+): Map<string, InvoiceMatch[]> {
+  memo?.reset([invoices]);
+  const out = new Map<string, InvoiceMatch[]>();
   if (invoices.length === 0) return out;
   for (const t of txns) {
     if (t.matched_to_type !== null || !(t.credit > 0)) continue;
-    const ms = matchCreditToInvoices(
+    const run = () => matchCreditToInvoices(
       { amount: t.credit, txnDate: t.txn_date, description: t.description, reference: t.reference },
       invoices,
     );
-    if (ms[0]?.confidence === "certain" && ms[1]?.confidence !== "certain") out.set(t.id, ms[0]);
+    const ms = memo ? memo.get(t, run) : run();
+    if (ms.length > 0) out.set(t.id, ms);
+  }
+  return out;
+}
+
+/** R-399's chip rule over invoiceMatchesOfCredits: one "certain" candidate, never two. */
+export function certainOf(matches: ReadonlyMap<string, readonly InvoiceMatch[]>): Map<string, InvoiceMatch> {
+  const out = new Map<string, InvoiceMatch>();
+  for (const [id, ms] of matches) {
+    if (ms[0]?.confidence === "certain" && ms[1]?.confidence !== "certain") out.set(id, ms[0]);
   }
   return out;
 }

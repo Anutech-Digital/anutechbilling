@@ -60,7 +60,7 @@ describe("addSeats — R-813 notes", () => {
   });
 
   it("a split-billed charge names the instalment end, not renewal", async () => {
-    const { notes, lines } = await stored({ chargeWindow: { remainingDays: 83, chargeTo: "2026-12-31" } });
+    const { notes, lines } = await stored({ chargeWindow: { remainingDays: 83, chargeTo: "2026-12-31", parts: null } });
     expect(customerQuoteNotes(notes, lines)).toBe("Additional seats from 10 Oct 2026 to 31 Dec 2026 (pro-rata).");
   });
 });

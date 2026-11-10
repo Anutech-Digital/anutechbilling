@@ -13,7 +13,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { rupee, formatDate, formatForeignAmount } from "@/lib/utils";
-import type { VendorBill } from "@/lib/queries/vendor-bills";
+import { useSetBillServicePeriod, useVendorBillServicePeriods, type VendorBill } from "@/lib/queries/vendor-bills";
+import { monthsToPeriod } from "@/lib/accounting/bill-service-period";
+import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+
+/** R-2623: who may change a bill — the same roles as RLS vendor_bills_update_roles (migration r719). */
+const BILL_EDIT_ROLES = new Set(["owner", "manager", "accountant", "billing"]);
+import { ServicePeriodField, type ServicePeriodMonths } from "@/app/(app)/accounting/bills/service-period-field";
 
 export function BillDetailDialog({ bill, onClose }: { bill: VendorBill; onClose: () => void }) {
   const foreign = (bill.currency ?? "INR") !== "INR" && (bill.fx_rate ?? 1) > 0;
@@ -51,6 +57,8 @@ export function BillDetailDialog({ bill, onClose }: { bill: VendorBill; onClose:
         </DialogHeader>
 
         <div className="space-y-3 max-h-[62vh] overflow-y-auto -mx-1 px-1">
+          <BillServicePeriodSection billId={bill.id} />
+
           {/* Line items */}
           <div className="rounded-lg border border-hairline overflow-hidden">
             <table className="w-full text-sm">
@@ -124,5 +132,73 @@ export function BillDetailDialog({ bill, onClose }: { bill: VendorBill; onClose:
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * R-2623 — the month(s) this bill is for (management P&L; GST keeps the bill date). Shows the
+ * database's period and why ("auto (…)" / "set on the bill"); Change → month pickers → Save writes
+ * only service_from / service_to (allowed on a filed month too — the amounts and GST do not move).
+ * "Use auto" (outside the pickers, on a period the owner set) clears it — both columns back to
+ * empty. Only the roles that may change a bill (owner, manager, accountant, billing —
+ * vendor_bills_update_roles) see Change.
+ */
+function BillServicePeriodSection({ billId }: { billId: string }) {
+  const ids = React.useMemo(() => [billId], [billId]);
+  const periodsQ = useVendorBillServicePeriods(ids);
+  const { data: me } = useCurrentUser();
+  const canEdit = BILL_EDIT_ROLES.has(me?.role ?? "");
+  const current = periodsQ.isLoading ? undefined : (periodsQ.data?.get(billId) ?? null);
+  const save = useSetBillServicePeriod();
+  const [draft, setDraft] = React.useState<ServicePeriodMonths>(null);
+  const isSet = current?.basis === "set";
+  const check = draft ? monthsToPeriod(draft.from, draft.to) : null;
+
+  function onChange(v: ServicePeriodMonths) {
+    if (v) { setDraft(v); return; }
+    // "Use auto": the owner's own period goes (the pickers close once it is saved).
+    if (isSet) save.mutate({ id: billId, service_from: null, service_to: null }, { onSuccess: () => setDraft(null) });
+    else setDraft(null);
+  }
+
+  function onSave() {
+    if (!check || !check.ok) return;
+    save.mutate(
+      { id: billId, service_from: check.service_from, service_to: check.service_to },
+      { onSuccess: () => setDraft(null) },
+    );
+  }
+
+  return (
+    <div className="rounded-lg border border-hairline bg-paper-2/30 p-3">
+      <p className="mb-1.5 text-3xs uppercase tracking-wider text-ink-3 font-semibold">Service period</p>
+      {periodsQ.isError ? (
+        <p className="text-xs text-rose">The service period did not load — close and open the bill again.</p>
+      ) : (
+        <ServicePeriodField
+          idPrefix={`bill-${billId}-service`}
+          current={current}
+          auto={isSet ? null : current}
+          value={draft}
+          onChange={onChange}
+          disabled={save.isPending || !canEdit}
+          showUseAuto={false}
+        />
+      )}
+      {draft && (
+        <div className="mt-2 flex justify-end gap-2">
+          <Button type="button" variant="default" size="sm" onClick={() => setDraft(null)} disabled={save.isPending}>Cancel</Button>
+          <Button type="button" variant="primary" size="sm" onClick={onSave} loading={save.isPending} disabled={!check?.ok}>
+            Save period
+          </Button>
+        </div>
+      )}
+      {!draft && isSet && canEdit && (
+        <div className="mt-2 flex justify-end">
+          <Button type="button" variant="ghost" size="sm" onClick={() => onChange(null)} loading={save.isPending}>Use auto</Button>
+        </div>
+      )}
+      <p className="mt-1.5 text-xs text-ink-3">The management P&amp;L shows this bill&apos;s cost in these months; GST reports use the bill date.</p>
+    </div>
   );
 }

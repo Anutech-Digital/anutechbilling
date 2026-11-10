@@ -18,6 +18,7 @@ import { formatForeign } from "@/lib/currency";
 import type { FindZohoResult, ZohoPaymentMatch, ZohoPaymentRow } from "@/lib/integrations/zoho-books/payment-match";
 import type { CustomerSeed } from "@/components/features/customers/use-customer-form";
 import { zohoPrefill, zohoSaleNumber, type AppCustomerLite, type ZohoPrefill } from "@/lib/integrations/zoho-books/payment-prefill";
+import { zohoInvoiceGroups } from "@/lib/banking/zoho-sales-split";
 
 export const ZOHO_FIND_URL = "/api/integrations/zoho-books/payment-match";
 
@@ -188,7 +189,10 @@ function MatchBox({ match, prefill, onNewCustomer }: { match: ZohoPaymentMatch; 
         Zoho invoice{prefill.invoiceNumbers.length === 1 ? "" : "s"}: <b>{prefill.invoiceNumbers.join(", ") || "none applied"}</b>
         {kept
           ? <span className="text-ink-3"> — kept on the app invoice when you save the new sale</span>
-          : prefill.invoiceNumbers.length > 1 ? <span className="text-ink-3"> — several, so none is kept on the app invoice</span> : null}
+          /* R-2518: several Zoho invoices, all read — one app sale per Zoho invoice, each keeps its number. */
+          : zohoInvoiceGroups(prefill.lines) && !prefill.fx
+            ? <span className="text-ink-3"> — Save books one app sale per Zoho invoice, each keeping its number</span>
+            : prefill.invoiceNumbers.length > 1 ? <span className="text-ink-3"> — several, so none is kept on the app invoice</span> : null}
       </p>
       {lines.length > 0 && (
         <ul className="text-xs text-ink-2 space-y-0.5">

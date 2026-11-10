@@ -154,13 +154,18 @@ begin
   -- ── MERGE: the legitimate case still works ─────────────────────────────
   perform pg_temp.r721_merge('merge/A claims its own requester', a, 'r721-wants-a@example.test',   ta, 'ok');
   perform pg_temp.r721_merge('merge/A claims a fresh invitee',   a, 'r721-inv-fresh@example.test', ta, 'ok');
+  -- R-2477 review: their join request is their agreement → a membership in A; their own (owned)
+  -- workspace is never moved out of or deleted
   perform pg_temp.r721_merge('merge/A claims empty-workspace requester', a, 'r721-stray-d@example.test', ta, 'ok');
   if not exists (select 1 from public.users where id = 'e7210000-0000-4000-8000-000000000503' and tenant_id = ta) then
     insert into r721_fail(label, detail) values ('merge/A claims its own requester', 'no users row in A afterwards'); end if;
   if exists (select 1 from public.join_requests where email = 'r721-wants-a@example.test' and status = 'pending_approval') then
     insert into r721_fail(label, detail) values ('merge/A claims its own requester', 'join request left pending'); end if;
-  if (select tenant_id from public.users where id = 'e7210000-0000-4000-8000-0000000000d1') is distinct from ta then
-    insert into r721_fail(label, detail) values ('merge/A claims empty-workspace requester', 'not moved into A'); end if;
+  if (select tenant_id from public.users where id = 'e7210000-0000-4000-8000-0000000000d1') = ta then
+    insert into r721_fail(label, detail) values ('merge/A claims empty-workspace requester', 'moved out of their own workspace'); end if;
+  if not exists (select 1 from public.tenant_memberships where user_id = 'e7210000-0000-4000-8000-0000000000d1'
+                  and tenant_id = ta and ended_at is null) then
+    insert into r721_fail(label, detail) values ('merge/A claims empty-workspace requester', 'no membership in A'); end if;
 
   perform pg_temp.r721_merge('merge/service_role claims no-request login', 'service', 'r721-nobody@example.test', ta, 'ok');
 end $$;

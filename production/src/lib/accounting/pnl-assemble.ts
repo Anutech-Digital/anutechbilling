@@ -83,6 +83,28 @@ export interface PnLNumbers {
   licenceBillsByVendor?: Readonly<Record<string, number>> | null;
   /** employee id → name, for the project-cost drill-down. */
   employeeNames: Map<string, string>;
+  /**
+   * R-2622: which view of cost of goods these numbers are — "management" (bills in their service
+   * month, report_pnl_cogs_matched) or "gst" (bill date, report_pnl). Absent = "gst".
+   * `managementUnavailable`: Management was asked for but the database cannot give it (older
+   * database / call failed) — these are the GST numbers and the page says so.
+   */
+  basis?: "management" | "gst";
+  managementUnavailable?: boolean;
+  /**
+   * R-2624: Management view only — revenue is spread over the months it pays for
+   * (report_pnl_revenue_matched). `managementRevenueUnavailable`: the database has the matched COGS
+   * but not the revenue spread yet — revenue here is as invoiced, and the page says so.
+   */
+  revenueSpread?: boolean;
+  managementRevenueUnavailable?: boolean;
+  /**
+   * R-2625: Management only, when the range runs past today — revenue is earned up to this day
+   * (today); `revenueNotYetEarned` = the spread revenue of the range's later days, already
+   * invoiced but not earned (Advance billing on the Balance Sheet). Not in any total.
+   */
+  revenueEarnedTo?: string;
+  revenueNotYetEarned?: number;
 }
 
 /** `report_pnl` ki ek row — migration 20260928110000 ka RETURNS TABLE, naam wahi. */

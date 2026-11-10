@@ -640,6 +640,58 @@ describe("R-1569 — a payment that arrives after the quote is settled or replac
     expect(alerts("payment.unapplied")).toHaveLength(1);
   });
 
+  /* R-2596: record_payment refuses a plan-change quote whose subscription changed since it was
+     priced (R-2589) or that lost its link (R-2227). Through the webhook that was a 500 —
+     Razorpay retried for a day, the money was captured but never booked, the owner never told. */
+  const planChangeRefusal = (message: string) => {
+    const base = db.rpcImpl!;
+    db.rpcImpl = (name, args) =>
+      name === "record_payment" && args.p_quote_id === QUOTE
+        ? { data: null, error: { code: "P0001", message } }
+        : base(name, args);
+  };
+  const R2589_MSG = `R-2589: plan/seats changed since this quote ${QUOTE} was made (priced on 10 seats at ₹1000/month, Starter; the subscription now has 7 seats at ₹700/month, Starter). Nothing was recorded. Delete this quote and make a new plan-change quote from Change plan.`;
+
+  it.each([
+    ["R-2589 seats changed", R2589_MSG],
+    ["R-2589 subscription not active", `R-2589: plan change quote ${QUOTE} is for a subscription that is no longer active (cancelled). Nothing was recorded. Delete this quote; a plan can be changed only on an active subscription.`],
+    ["R-2227 link lost", `R-2227: plan change quote ${QUOTE} is no longer linked to its subscription, so this payment would change nothing. Nothing was recorded. Delete the quote and make it again from the subscription (Change plan).`],
+    ["R-2227 another subscription", `R-2227: plan change quote ${QUOTE} was made for another subscription. Nothing was recorded.`],
+    ["R-2227 bad quote line", `R-2227: plan change quote ${QUOTE} has seats or a monthly amount that cannot be right (seats 3, monthly 0). Nothing was recorded. Delete the quote and make it again from Change plan.`],
+  ])("R-2596 %s → 200 (no Razorpay retry loop), nothing booked, owner told once with the payment id", async (_label, message) => {
+    planChangeRefusal(message);
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.unapplied).toBe(true);
+    expect(rpcNames()).toEqual(["record_payment"]);
+    expect(queueProvisioning).not.toHaveBeenCalled();
+    const a = alerts("payment.unapplied");
+    expect(a).toHaveLength(1);
+    expect(String(a[0].body)).toContain("pay_AITEST1");
+    expect(String(a[0].body)).toMatch(/plan.change/i);
+    expect(String(a[0].body)).toContain(message.split(" Nothing was recorded")[0]); // the real reason, not a guess
+    expect(String(a[0].body)).toMatch(/First delete the old quote/);
+    expect(String(a[0].body)).toMatch(/refund/i);
+    expect(String(a[0].body)).toMatch(/advance|credit/i);
+    expect(leadNotes().some((n) => n.includes("pay_AITEST1"))).toBe(true);
+
+    // Razorpay delivers it again (retry, and as order.paid) — still 200, no second alert.
+    const again = await POST(signed(captured()));
+    expect(again.status).toBe(200);
+    expect((await again.json()).alreadyProcessed).toBe(true);
+    const orderPaid = await POST(signed(captured("order.paid")));
+    expect(orderPaid.status).toBe(200);
+    expect(alerts("payment.unapplied")).toHaveLength(1);
+  });
+
+  it("R-2596: an R-2073 refusal (plan dropped from the catalogue — the owner can fix it) still answers 500 so Razorpay retries", async () => {
+    planChangeRefusal(`R-2073: upgrade quote ${QUOTE} names plan Business Plus, which is no longer in the catalogue. Nothing was recorded. Add the plan back under Products, then record the payment again.`);
+    const res = await POST(signed(captured()));
+    expect(res.status).toBe(500);
+    expect(alerts("payment.unapplied")).toHaveLength(0);
+  });
+
   it("R-1575: a REJECTED quote with no replacement records nothing, and the owner is told once (refund or new quote)", async () => {
     db.tables.quotes[0].status = "rejected";
     const res = await POST(signed(captured()));
