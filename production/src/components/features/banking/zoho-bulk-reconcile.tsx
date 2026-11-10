@@ -121,9 +121,11 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const stopRef = React.useRef(false);
   const history = React.useRef<PaceEntry[]>([]);
   /* R-2652: busy answers in a row; at 3 the read stops with "Zoho's daily limit is reached". */
-  const busyRef = React.useRef(busyStreak());
+  const [streakCounter] = React.useState(() => busyStreak());
   const [busyStreakCount, setBusyStreak] = React.useState(0);
   const [limit, setLimit] = React.useState<ZohoLimitHit | null>(null);
+  /* A closed sheet forgets an old "limit reached" notice (its date would be stale, and it hides Continue). */
+  React.useEffect(() => { if (!open) setLimit(null); }, [open]);
 
   /* Pick up a run this tab already started for this account. */
   React.useEffect(() => {
@@ -172,7 +174,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   /* ── 1. Look every line up in Zoho, paced ─────────────────────────────────────────── */
   const read = async (fresh: boolean) => {
     stopRef.current = false;
-    setFailure(null); setLimit(null); setBusyStreak(0); busyRef.current.reset();
+    setFailure(null); setLimit(null); setBusyStreak(0); streakCounter.reset();
     setPhase("reading");
     let list = fresh ? null : ids;
     let at = fresh ? 0 : cursor;
@@ -213,9 +215,9 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       saveProgress(accountId, { ids: list, cursor: at, matches: found, booked: [...booked.keys()] });
       /* R-2652: Zoho busy with NOTHING read, 3 times in a row → its daily limit; stop and say so
          (what was read is kept above; Try again carries on from this line). */
-      const hit = busyRef.current.note(Boolean(r.stopped) && advance === 0, Date.now());
-      setBusyStreak(busyRef.current.count);
-      if (hit) { busyRef.current.reset(); setBusyStreak(0); setLimit(hit); setPhase("paused"); return; }
+      const hit = streakCounter.note(Boolean(r.stopped) && advance === 0, Date.now());
+      setBusyStreak(streakCounter.count);
+      if (hit) { streakCounter.reset(); setBusyStreak(0); setLimit(hit); setPhase("paused"); return; }
       if (r.stopped) {
         history.current.push({ at: Date.now(), calls: 1000 });
         setPhase("waiting"); setWaitSec(Math.ceil(ZOHO_BUSY_WAIT_MS / 1000));

@@ -76,6 +76,17 @@ describe("R-2652 read loop", () => {
     expect((await r.p).end).toBe("complete");
   });
 
+  it("review: busy part-way while reading moves on (another reader shares Zoho's minute) is NOT the daily limit", async () => {
+    const r = run([
+      { complete: false, busy: true, listed: 200, detailed: 10 } as { complete: boolean; busy?: boolean },
+      { complete: false, busy: true, listed: 200, detailed: 25 } as { complete: boolean; busy?: boolean },
+      { complete: false, busy: true, listed: 200, detailed: 40 } as { complete: boolean; busy?: boolean },
+      { complete: false, busy: true, listed: 200, detailed: 55 } as { complete: boolean; busy?: boolean },
+      { complete: true, listed: 200, detailed: 200 } as { complete: boolean; busy?: boolean },
+    ]);
+    expect((await r.p).end).toBe("complete");
+  });
+
   it("closing the dialog stops the loop", async () => {
     let stop = false;
     const end = await readUntilDone({

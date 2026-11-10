@@ -7,19 +7,23 @@
  * so the owner could not tell that Zoho's limit was reached.
  *
  * Rule: a busy answer is retried after a minute (Zoho's per-minute limit clears by then). After
- * ZOHO_LIMIT_STREAK busy answers IN A ROW (a minute apart, so the per-minute limit cannot be the
- * cause) the loop stops and the dialog says Zoho's daily limit is reached, when to try again (the
- * next midnight IST — Zoho counts an India organization's calls per calendar day) and that nothing
- * was changed. A good answer in between starts the count again. Pure, except `readUntilDone`, which
- * takes its clock and sleep from the caller (tests never wait and never call Zoho).
+ * ZOHO_LIMIT_STREAK busy answers IN A ROW that read NOTHING (a minute apart, so the per-minute limit
+ * cannot be the cause) the loop stops and the dialog says Zoho's daily limit is reached, when to try
+ * again (the next midnight IST — assumed: Zoho counts an India organization's calls per calendar
+ * day; Zoho's own reset time is not read yet) and that nothing was changed. An answer that read
+ * something (busy part-way, e.g. another reader shares the minute) starts the count again. Pure,
+ * except `readUntilDone`, which takes its clock and sleep from the caller (tests never wait and
+ * never call Zoho). Used by the FY sales / FY purchases dialogs and the bank Reconcile from Zoho
+ * sheet; the FY receipts dialog reads in the background (cron) and is not covered here.
  */
 import { formatDate } from "@/lib/utils";
 import { IST_OFFSET_MS, istToday } from "@/lib/dates/ist";
+import { ZOHO_BUSY_WAIT_MS } from "./zoho-pace";
 
 /** Busy answers in a row before the dialog stops retrying and says Zoho's limit is reached. */
 export const ZOHO_LIMIT_STREAK = 3;
-/** After one busy answer, wait this long before asking again (Zoho's per-minute window). */
-export const ZOHO_BUSY_RETRY_MS = 60_000;
+/** After one busy answer, wait this long before asking again (the same wait as the bank sheet). */
+export const ZOHO_BUSY_RETRY_MS = ZOHO_BUSY_WAIT_MS;
 
 export interface ZohoLimitHit {
   /** When the dialog stopped (ms). */
@@ -76,11 +80,12 @@ export type ReadLoopEnd =
 
 /**
  * The FY dialogs' read loop: call `step` until the read is complete; wait `gapMs` between good
- * answers and ZOHO_BUSY_RETRY_MS after a busy one; stop after ZOHO_LIMIT_STREAK busy in a row.
- * `onBusy(streak)` is called with 0 after a good answer (clear the "busy" line) and n after the
- * nth busy answer. Errors from `step` are thrown to the caller as before.
+ * answers and ZOHO_BUSY_RETRY_MS after a busy one; stop after ZOHO_LIMIT_STREAK busy answers in
+ * a row that read nothing (`listed` / `detailed` did not move). `onBusy(streak)` is called with 0
+ * after a good answer (clear the "busy" line) and n after the nth such busy answer. Errors from
+ * `step` are thrown to the caller as before.
  */
-export async function readUntilDone<R extends { complete: boolean; busy?: boolean }>(opts: {
+export async function readUntilDone<R extends { complete: boolean; busy?: boolean; listed?: number; detailed?: number }>(opts: {
   step: () => Promise<R>;
   onAnswer?: (r: R) => void;
   onBusy?: (streak: number) => void;
@@ -91,12 +96,17 @@ export async function readUntilDone<R extends { complete: boolean; busy?: boolea
 }): Promise<ReadLoopEnd> {
   const streak = busyStreak();
   const now = opts.now ?? Date.now;
+  let last: string | null = null;
   for (;;) {
     const r = await opts.step();
     opts.onAnswer?.(r);
     if (r.complete) { opts.onBusy?.(0); return { end: "complete" }; }
     if (opts.shouldStop?.()) return { end: "stopped" };
-    const hit = streak.note(Boolean(r.busy), now());
+    /* Busy part-way (something was read) is not the daily limit — the count starts again. */
+    const mark = `${r.listed ?? ""}/${r.detailed ?? ""}`;
+    const readSomething = last !== null && mark !== last;
+    last = mark;
+    const hit = streak.note(Boolean(r.busy) && !readSomething, now());
     opts.onBusy?.(streak.count);
     if (hit) return { end: "limit", hit };
     await opts.sleep(r.busy ? ZOHO_BUSY_RETRY_MS : opts.gapMs);

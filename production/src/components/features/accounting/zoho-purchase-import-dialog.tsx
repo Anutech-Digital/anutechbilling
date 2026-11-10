@@ -96,7 +96,10 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
   const [busyStreak, setBusyStreak] = React.useState(0);
   const [limit, setLimit] = React.useState<ZohoLimitHit | null>(null);
   const stop = React.useRef(false);
-  React.useEffect(() => () => { stop.current = true; }, []);
+  /* Set on mount too (R-2652 review): React strict mode mounts twice, and a stale `true` would stop every read. */
+  React.useEffect(() => { stop.current = false; return () => { stop.current = true; }; }, []);
+  /* A closed dialog forgets an old "limit reached" notice (its date would be stale next time). */
+  React.useEffect(() => { if (!open) setLimit(null); }, [open]);
 
   const loadPreview = React.useCallback(async () => {
     setBusy("preview"); setError(null);
@@ -182,9 +185,10 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
 
         <div className="space-y-4 text-sm max-h-[70vh] overflow-y-auto">
           <div className="flex items-center gap-3 flex-wrap">
-            <Button type="button" icon="download" loading={busy === "read"} disabled={!!busy && busy !== "read"} onClick={() => void readZoho()}>
+            {/* R-2652: while the limit notice shows, its Try again is the one way on (no second button). */}
+            {!limit && <Button type="button" icon="download" loading={busy === "read"} disabled={!!busy && busy !== "read"} onClick={() => void readZoho()}>
               {preview ? "Read from Zoho again" : "Read from Zoho"}
-            </Button>
+            </Button>}
             {KINDS.map(({ kind, label }) => read[kind] && (
               <span key={kind} className="text-xs text-ink-2" role="status">
                 {read[kind]!.complete ? `${n(read[kind]!.listed)} ${label}` : `${label}: ${n(read[kind]!.detailed)} of ${n(read[kind]!.listed)}`}

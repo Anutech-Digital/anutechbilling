@@ -77,6 +77,8 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
   const stop = React.useRef(false);
   /* Set on mount too: React strict mode mounts twice, and a stale `true` would stop every loop. */
   React.useEffect(() => { stop.current = false; return () => { stop.current = true; }; }, []);
+  /* R-2652: a closed dialog forgets an old "limit reached" notice (its date would be stale next time). */
+  React.useEffect(() => { if (!open) setLimit(null); }, [open]);
 
   const loadPreview = React.useCallback(async (ticks: Record<string, string> = useAnyway) => {
     setBusy("preview"); setError(null);
@@ -157,9 +159,10 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
 
         <div className="space-y-4 text-sm">
           <div className="flex items-center gap-3 flex-wrap">
-            <Button type="button" icon="download" loading={busy === "read"} disabled={!!busy && busy !== "read"} onClick={() => void readZoho()}>
+            {/* R-2652: while the limit notice shows, its Try again is the one way on (no second button). */}
+            {!limit && <Button type="button" icon="download" loading={busy === "read"} disabled={!!busy && busy !== "read"} onClick={() => void readZoho()}>
               {read?.complete || preview ? "Read from Zoho again" : "Read from Zoho"}
-            </Button>
+            </Button>}
             {read && (
               <span className="text-xs text-ink-2" role="status">
                 {read.complete ? `Read all ${read.listed.toLocaleString("en-IN")} invoices.` : `Read ${read.detailed.toLocaleString("en-IN")} of ${read.listed.toLocaleString("en-IN")}${busy === "read" ? " — keep this open" : ""}`}
