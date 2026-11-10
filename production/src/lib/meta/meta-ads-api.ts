@@ -8,7 +8,7 @@
  *
  * META_GRAPH_VERSION — optional, e.g. "v21.0". Meta retires versions after ~2 years.
  */
-import { META_LEAD_ACTIONS, metaRowsFromInsights, type AdSpendRow, type MetaInsightRow } from "@/lib/marketing/ad-platforms";
+import { META_LEAD_ACTIONS, metaRowsFromInsights, metaResultKind, type AdSpendRow, type MetaInsightRow, type MetaResultKind } from "@/lib/marketing/ad-platforms";
 
 export function metaAppCreds(): { appId: string; appSecret: string } | null {
   const appId = process.env.META_APP_ID?.trim();
@@ -79,7 +79,21 @@ export async function fetchMetaCampaignSpend(token: string, actId: string, from:
     rows.push(...(r.data ?? []));
     url = r.paging?.next;
   }
-  return metaRowsFromInsights(rows, accountRowId);
+  // R-2671: what each campaign optimises for decides what its "Result" is (as in Ads Manager).
+  const goals = await fetchMetaCampaignGoals(token, actId).catch(() => new Map<string, MetaResultKind>());
+  return metaRowsFromInsights(rows, accountRowId, goals);
+}
+
+/** Campaign id → what its ad sets optimise for (leads / chats / both), from the ad sets' optimization_goal. */
+export async function fetchMetaCampaignGoals(token: string, actId: string): Promise<Map<string, MetaResultKind>> {
+  const goals = new Map<string, Set<string>>();
+  let url: string | undefined = `${GRAPH()}/${actId}/adsets?${new URLSearchParams({ fields: "campaign_id,optimization_goal", limit: "500", access_token: token })}`;
+  while (url) {
+    const r: { data?: { campaign_id?: string; optimization_goal?: string }[]; paging?: { next?: string } } = await gget(url);
+    for (const a of r.data ?? []) if (a.campaign_id && a.optimization_goal) (goals.get(a.campaign_id) ?? goals.set(a.campaign_id, new Set()).get(a.campaign_id)!).add(a.optimization_goal);
+    url = r.paging?.next;
+  }
+  return new Map([...goals].map(([id, g]) => [id, metaResultKind([...g])]));
 }
 
 export { META_LEAD_ACTIONS };

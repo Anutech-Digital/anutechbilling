@@ -14,6 +14,7 @@ import Link from "next/link";
 import type { Route } from "next";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
+import { ArrowUpRight } from "lucide-react";
 import { ResponsiveContainer, BarChart, Bar, CartesianGrid, XAxis, YAxis, Tooltip, Legend } from "recharts";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -28,7 +29,7 @@ import { LoadError, LoadErrorInline } from "@/components/shared/load-error";
 import { rupee, cn, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
 import {
-  PLATFORM_LABEL, PLATFORM_CHANNEL, totalsOf, campaignStats, pacing, reconcileMonths, dailySeries, adCsvRows, AD_CSV_HEADERS,
+  PLATFORM_LABEL, PLATFORM_CHANNEL, adsManagerUrl, totalsOf, campaignStats, pacing, reconcileMonths, dailySeries, adCsvRows, AD_CSV_HEADERS,
   type AdPlatform,
 } from "@/lib/marketing/ad-platforms";
 import { useAdsStatus, useAdSpend, useBookedAdSpendByMonth, useLeadsByCampaign, useAdSyncRuns, type AdsStatus } from "@/lib/queries/ads";
@@ -201,7 +202,7 @@ export default function AdPlatformsPage() {
         <LoadError what="Ad account status" error={status.error} onRetry={() => void status.refetch()} />
       ) : (
         <>
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {(["google-ads", "meta-ads", "linkedin-ads"] as const).map((platform) => (
               <PlatformCard key={platform} platform={platform} status={status.data} accounts={accounts.filter((a) => a.platform === platform)} />
             ))}
@@ -224,7 +225,7 @@ export default function AdPlatformsPage() {
 
           {/* This month's pace */}
           {budgets.isError && <LoadErrorInline what="Approved ad budgets" error={budgets.error} onRetry={() => void budgets.refetch()} />}
-          <div className="grid gap-3 md:grid-cols-3">
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
             {([["google-ads", paceG], ["meta-ads", paceM], ["linkedin-ads", paceL]] as const).filter(([p]) => (pf === "all" || p === pf) && (!selectedAccount || p === selectedAccount.platform)).map(([p, pc]) => (
               <Card key={p} className="h-full p-4">
                 <p className="text-sm font-semibold leading-snug text-ink">{PLATFORM_LABEL[p]} · {monthLabel(pc.month)}</p>
@@ -271,6 +272,9 @@ export default function AdPlatformsPage() {
                     <option value="all">{pf === "all" ? "All ad accounts" : `All ${PLATFORM_LABEL[pf]} accounts`}</option>
                     {selectableAccounts.map((a) => <option key={a.id} value={a.id}>{pf === "all" ? `${PLATFORM_LABEL[a.platform]} · ` : ""}{a.name} ({a.account_id})</option>)}
                   </select>
+                  {(() => { const url = selectedAccount ? adsManagerUrl(selectedAccount.platform, selectedAccount.account_id) : null; return url
+                    ? <a href={url} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 self-start text-xs font-medium text-ink-2 underline hover:text-ink">Open {selectedAccount!.name} in {selectedAccount!.platform === "meta-ads" ? "Meta Ads Manager" : selectedAccount!.platform === "google-ads" ? "Google Ads" : "LinkedIn Campaign Manager"} <ArrowUpRight size={12} aria-hidden="true" /></a>
+                    : <span className="mt-1 text-xs font-normal text-ink-3">Choose one account to open it in its ads manager.</span>; })()}
               </label>}
               <div className="min-w-0 sm:col-span-2 xl:col-span-1">
                 <p className="mb-1 text-xs font-medium text-ink-3">Date range</p>
@@ -286,7 +290,7 @@ export default function AdPlatformsPage() {
               <Kpi label="Impressions" value={num(totals.impressions)} change={pct(totals.impressions, prev.impressions)} compare={isPreset} />
               <Kpi label="Clicks" value={num(totals.clicks)} change={pct(totals.clicks, prev.clicks)} compare={isPreset} hint={totals.ctr !== null ? `CTR ${totals.ctr}%` : undefined} />
               <Kpi label="Cost / click" value={totals.cpc !== null ? rupee(totals.cpc) : "—"} change={totals.cpc !== null && prev.cpc !== null ? pct(totals.cpc, prev.cpc) : null} compare={isPreset} invert />
-              <Kpi label="Results" hint="leads + chats" value={num(totals.conversions)} change={pct(totals.conversions, prev.conversions)} compare={isPreset} />
+              <Kpi label="Results" hint="as Ads Manager counts" value={num(totals.conversions)} change={pct(totals.conversions, prev.conversions)} compare={isPreset} />
               <Kpi label="Cost / result" value={totals.cpa !== null ? rupee(totals.cpa) : "—"} change={totals.cpa !== null && prev.cpa !== null ? pct(totals.cpa, prev.cpa) : null} compare={isPreset} invert />
             </div>
             {inRange.length > 0 && (
@@ -327,7 +331,7 @@ export default function AdPlatformsPage() {
                   <tbody>
                     {campaigns.map((c) => (
                       <tr key={`${c.platform}|${c.account_id}|${c.campaign_id}`} className="border-b border-hairline last:border-0 hover:bg-paper-2/40">
-                        <td className="p-3"><span className="font-medium text-ink">{c.campaign_name}</span> <Badge kind={c.platform === "google-ads" ? "warning" : c.platform === "meta-ads" ? "info" : "success"} size="sm">{c.platform === "google-ads" ? "Google" : c.platform === "meta-ads" ? "Meta" : "LinkedIn"}</Badge><span className="block text-xs text-ink-3">{accounts.find((a) => a.id === c.account_id)?.name ?? "Ad account"}</span></td>
+                        <td className="p-3"><span className="font-medium text-ink">{c.campaign_name}</span> <Badge kind={c.platform === "google-ads" ? "warning" : c.platform === "meta-ads" ? "info" : "success"} size="sm">{c.platform === "google-ads" ? "Google" : c.platform === "meta-ads" ? "Meta" : "LinkedIn"}</Badge><span className="block text-xs text-ink-3">{accounts.find((a) => a.id === c.account_id)?.name ?? "Ad account"}{(() => { const acc = accounts.find((a) => a.id === c.account_id); const url = acc && c.platform !== "linkedin-ads" ? adsManagerUrl(acc.platform, acc.account_id, c.campaign_id) : acc ? adsManagerUrl(acc.platform, acc.account_id) : null; return url ? <> · <a href={url} target="_blank" rel="noopener noreferrer" aria-label={`Open ${c.campaign_name} in its ads manager`} className="inline-flex items-center gap-0.5 underline hover:text-ink">Open <ArrowUpRight size={11} aria-hidden="true" /></a></> : null; })()}</span></td>
                         <td className="p-3 text-right tabular-nums font-serif">{rupee(c.spend)}</td>
                         <td className="p-3 text-right tabular-nums text-ink-2">{num(c.impressions)}</td>
                         <td className="p-3 text-right tabular-nums text-ink-2">{num(c.clicks)}{c.ctr !== null && <span className="text-xs text-ink-3"> ({c.ctr}%)</span>}</td>

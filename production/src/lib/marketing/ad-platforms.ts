@@ -217,20 +217,37 @@ export const META_LEAD_ACTIONS = new Set([
  * R-2520: Meta lists the SAME lead under several overlapping action types ("lead" is the total;
  * "onsite_conversion.lead_grouped" / "leadgen_grouped" / the pixel lead are parts of it), and one chat
  * shows up as both "conversation started" and "first reply". Adding them all counted one person 2–3
- * times. A result is counted once: leads from the first type Meta reports in this order, chats only as
- * "conversation started", plus contact / application / booking.
+ * times. A result is counted once, the way Ads Manager's "Results" column does: leads (the first type
+ * Meta reports, in this order); if none, chats ("conversation started"); if none, contact / application / booking.
  */
 const META_LEAD_TYPES_IN_ORDER = ["lead", "onsite_conversion.lead_grouped", "leadgen_grouped", "offsite_conversion.fb_pixel_lead"] as const;
 const META_CHAT_TYPE = "onsite_conversion.messaging_conversation_started_7d";
 const META_OTHER_RESULT_TYPES = ["contact", "submit_application", "schedule"] as const;
 
-export function metaResultCount(actions: MetaInsightRow["actions"]): number {
+/** R-2671: what a campaign's "Result" is, from its ad sets' optimization goals (Ads Manager counts that). */
+export type MetaResultKind = "leads" | "chats" | "leads+chats";
+const META_CHAT_GOALS = new Set(["CONVERSATIONS", "REPLIES"]);
+const META_LEAD_GOALS = new Set(["LEAD_GENERATION", "QUALITY_LEAD", "OFFSITE_CONVERSIONS"]);
+export function metaResultKind(goals: readonly string[]): MetaResultKind | undefined {
+  const chats = goals.some((g) => META_CHAT_GOALS.has(g));
+  const leads = goals.some((g) => META_LEAD_GOALS.has(g));
+  return chats && leads ? "leads+chats" : chats ? "chats" : leads ? "leads" : undefined;
+}
+
+export function metaResultCount(actions: MetaInsightRow["actions"], kind?: MetaResultKind): number {
   const by = new Map<string, number>();
   for (const a of actions ?? []) if (a.action_type) by.set(a.action_type, (by.get(a.action_type) ?? 0) + Number(a.value ?? 0));
   const leadType = META_LEAD_TYPES_IN_ORDER.find((t) => by.has(t));
   const leads = leadType ? by.get(leadType) ?? 0 : 0;
-  const others = META_OTHER_RESULT_TYPES.reduce((s, t) => s + (by.get(t) ?? 0), 0);
-  return leads + (by.get(META_CHAT_TYPE) ?? 0) + others;
+  if (kind === "leads") return leads;
+  if (kind === "chats") return by.get(META_CHAT_TYPE) ?? 0;
+  if (kind === "leads+chats") return leads + (by.get(META_CHAT_TYPE) ?? 0);
+  // R-2671: like Ads Manager's "Results" — a lead campaign counts its leads only (a stray chat on it
+  // is not a result); a campaign with no leads counts its chats, then contact / application / booking.
+  if (leads > 0) return leads;
+  const chats = by.get(META_CHAT_TYPE) ?? 0;
+  if (chats > 0) return chats;
+  return META_OTHER_RESULT_TYPES.reduce((s, t) => s + (by.get(t) ?? 0), 0);
 }
 
 export interface MetaInsightRow {
@@ -240,11 +257,12 @@ export interface MetaInsightRow {
   action_values?: { action_type?: string; value?: string | number }[];
 }
 
-export function metaRowsFromInsights(data: readonly MetaInsightRow[], accountId: string): AdSpendRow[] {
+export function metaRowsFromInsights(data: readonly MetaInsightRow[], accountId: string, goals?: ReadonlyMap<string, MetaResultKind>): AdSpendRow[] {
   return data.flatMap((r) => {
     if (!r.campaign_id || !r.date_start) return [];
-    const conv = metaResultCount(r.actions);
-    const val = metaResultCount(r.action_values);
+    const kind = goals?.get(r.campaign_id);
+    const conv = metaResultCount(r.actions, kind);
+    const val = metaResultCount(r.action_values, kind);
     return [{
       platform: "meta-ads" as const, account_id: accountId, day: r.date_start, campaign_id: r.campaign_id, campaign_name: r.campaign_name ?? r.campaign_id,
       spend: r2(Number(r.spend ?? 0)), impressions: Math.round(Number(r.impressions ?? 0)), clicks: Math.round(Number(r.clicks ?? 0)),
@@ -259,4 +277,20 @@ export const AD_CSV_HEADERS = ["Day", "Platform", "Ad account", "Campaign", "Spe
 export function adCsvRows(rows: readonly AdSpendRow[], accountNames: ReadonlyMap<string, string> = new Map()): (string | number)[][] {
   return [...rows].sort((a, b) => a.day.localeCompare(b.day) || a.platform.localeCompare(b.platform))
     .map((r) => [r.day, PLATFORM_LABEL[r.platform], accountNames.get(r.account_id) ?? r.account_id, r.campaign_name, r.spend, r.impressions, r.clicks, r.conversions, r.conversion_value]);
+}
+
+// ── R-2671: open the ad account (or one campaign) in the platform's own manager ─────────────
+
+/** The platform's ads manager for this ad account, at one campaign when given. Null when the id is not plain digits. */
+export function adsManagerUrl(platform: AdPlatform, accountId: string, campaignId?: string): string | null {
+  const acct = accountId.replace(/^act_/, "").replace(/-/g, "");
+  if (!/^\d{1,30}$/.test(acct)) return null;
+  const camp = campaignId && /^\d{1,30}$/.test(campaignId) ? campaignId : null;
+  if (platform === "meta-ads") {
+    return `https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=${acct}${camp ? `&selected_campaign_ids=${camp}` : ""}`;
+  }
+  if (platform === "google-ads") {
+    return `https://ads.google.com/aw/campaigns?__e=${acct}${camp ? `&campaignId=${camp}` : ""}`;
+  }
+  return `https://www.linkedin.com/campaignmanager/accounts/${acct}/campaign-groups`;
 }

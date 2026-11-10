@@ -75,8 +75,8 @@ describe("ad platforms", () => {
       actions: [{ action_type: "lead", value: "2" }, { action_type: "link_click", value: "20" }, { action_type: "onsite_conversion.messaging_conversation_started_7d", value: "1" }],
     }, { date_start: "2026-09-01" }], "acc");
     expect(rows).toHaveLength(1);
-    expect(rows[0].spend).toBe(250.5); expect(rows[0].conversions).toBe(3);
-    expect(adCsvRows(rows, new Map([["acc", "Main Meta account"]]))[0]).toEqual(["2026-09-01", "Facebook / Instagram Ads", "Main Meta account", "Diwali", 250.5, 900, 20, 3, 0]);
+    expect(rows[0].spend).toBe(250.5); expect(rows[0].conversions).toBe(2);
+    expect(adCsvRows(rows, new Map([["acc", "Main Meta account"]]))[0]).toEqual(["2026-09-01", "Facebook / Instagram Ads", "Main Meta account", "Diwali", 250.5, 900, 20, 2, 0]);
   });
 
   it("R-2520: one lead or one chat is one result, even when Meta lists it under several action types", async () => {
@@ -86,7 +86,35 @@ describe("ad platforms", () => {
     // One chat: started + first reply → 1.
     expect(metaResultCount([{ action_type: "onsite_conversion.messaging_conversation_started_7d", value: "3" }, { action_type: "onsite_conversion.messaging_first_reply", value: "3" }])).toBe(3);
     // No "lead" total → the grouped number is used once.
-    expect(metaResultCount([{ action_type: "onsite_conversion.lead_grouped", value: "4" }, { action_type: "contact", value: "1" }, { action_type: "link_click", value: "40" }])).toBe(5);
+    expect(metaResultCount([{ action_type: "onsite_conversion.lead_grouped", value: "4" }, { action_type: "contact", value: "1" }, { action_type: "link_click", value: "40" }])).toBe(4);
+    // R-2671: the real Neo Trail SE Asia row (13 Aug–10 Nov): Ads Manager says 105 results, not 108.
+    expect(metaResultCount([{ action_type: "lead", value: "105" }, { action_type: "onsite_conversion.lead_grouped", value: "105" }, { action_type: "offsite_complete_registration_add_meta_leads", value: "105" }, { action_type: "onsite_conversion.messaging_conversation_started_7d", value: "3" }, { action_type: "onsite_conversion.messaging_first_reply", value: "3" }])).toBe(105);
     expect(metaResultCount(undefined)).toBe(0);
+  });
+});
+
+describe("R-2671 open in the platform's ads manager", () => {
+  it("builds each platform's link for the account, at the campaign when known", async () => {
+    const { adsManagerUrl } = await import("./ad-platforms");
+    expect(adsManagerUrl("meta-ads", "act_1322588906661964")).toBe("https://adsmanager.facebook.com/adsmanager/manage/campaigns?act=1322588906661964");
+    expect(adsManagerUrl("meta-ads", "act_1322588906661964", "120200000001")).toContain("selected_campaign_ids=120200000001");
+    expect(adsManagerUrl("google-ads", "144-399-5960")).toBe("https://ads.google.com/aw/campaigns?__e=1443995960");
+    expect(adsManagerUrl("linkedin-ads", "512579562")).toBe("https://www.linkedin.com/campaignmanager/accounts/512579562/campaign-groups");
+    expect(adsManagerUrl("meta-ads", "../evil")).toBeNull();
+  });
+});
+
+describe("R-2671 the campaign's goal decides its Result (as in Ads Manager)", () => {
+  it("a chat campaign counts chats even with a few stray leads; a lead campaign counts leads", async () => {
+    const { metaResultCount, metaResultKind, metaRowsFromInsights } = await import("./ad-platforms");
+    // Real 'Google Workspace – India – Sunil': 2,043 chats, 24 stray leads, ad sets optimise for CONVERSATIONS.
+    const sunil = [{ action_type: "lead", value: "24" }, { action_type: "onsite_conversion.messaging_conversation_started_7d", value: "2043" }, { action_type: "onsite_conversion.messaging_first_reply", value: "1807" }];
+    expect(metaResultKind(["CONVERSATIONS"])).toBe("chats");
+    expect(metaResultCount(sunil, "chats")).toBe(2043);
+    expect(metaResultCount(sunil, "leads")).toBe(24);
+    expect(metaResultKind(["LEAD_GENERATION", "CONVERSATIONS"])).toBe("leads+chats");
+    expect(metaResultKind(["LINK_CLICKS"])).toBeUndefined();
+    const rows = metaRowsFromInsights([{ campaign_id: "c1", date_start: "2026-10-01", actions: sunil }], "acc", new Map([["c1", "chats" as const]]));
+    expect(rows[0].conversions).toBe(2043);
   });
 });
