@@ -63,7 +63,7 @@ describe("R-2650 foreign-currency round-off — imported as Zoho filed it", () =
     expect(f.tax).toBe(Math.round(222.20 * 85.12));           // 18914
     expect(f.taxable).toBe(Math.round((1457 - 222.20 - 0.35) * 85.12)); // 105077
     expect(f.roundOff).toBe(f.amount - f.taxable - f.tax);
-    expect(Math.abs(f.roundOff)).toBeGreaterThan(1);           // the old ₹1 rule refused exactly this
+    expect(Math.abs(f.roundOff ?? 0)).toBeGreaterThan(1);           // the old ₹1 rule refused exactly this
     expect(sqlAccepts(f)).toBe(true);
   });
 
