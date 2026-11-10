@@ -174,9 +174,9 @@ describe("R-2654 loadMonthBatch", () => {
 
 describe("R-2654 runMonthBatch — Reconcile all ready", () => {
   it("books the 2 ready lines under ONE run with the server's own numbers; the blocked one is not sent", async () => {
-    const r = await runMonthBatch(args());
+    const r = await runMonthBatch(args({ txnIds: ["L1", "L2"] }));
     if (r.state !== "done") throw new Error(JSON.stringify(r));
-    expect(r.result).toMatchObject({ runId: "99999999-0000-4000-8000-000000000001", blocked: 1, refused: [] });
+    expect(r.result).toMatchObject({ runId: "99999999-0000-4000-8000-000000000001", refused: [] });
     expect(r.result.booked.map((b) => [b.txnId, b.settlementId, b.fee])).toEqual([["L1", "setl_A", 24], ["L2", "setl_B", 47]]);
     expect(db.rpc.map((c) => c.fn)).toEqual(["razorpay_batch_run_start", "reconcile_razorpay_settlement_in_run", "reconcile_razorpay_settlement_in_run"]);
     const arg = db.rpc[1].args.p_settlement as { id: string; fee_paise: number; payments: Array<{ rzp_id: string; amount_paise: number; payment_ids: string[] }> };
@@ -189,20 +189,22 @@ describe("R-2654 runMonthBatch — Reconcile all ready", () => {
     expect(r.result.booked.map((b) => b.txnId)).toEqual(["L2"]);
   });
 
-  it("second press after booking: lines are reconciled now → nothing ready, no run started", async () => {
-    await runMonthBatch(args());
+  it("second press after booking: lines are reconciled now → refused as no longer open, no run started", async () => {
+    await runMonthBatch(args({ txnIds: ["L1", "L2"] }));
     db.rpc = [];
-    const r = await runMonthBatch(args());
+    const r = await runMonthBatch(args({ txnIds: ["L1", "L2"] }));
     if (r.state !== "done") throw new Error("not done");
-    expect(r.result).toMatchObject({ runId: null, booked: [], blocked: 1 });
+    expect(r.result).toMatchObject({ runId: null, booked: [] });
+    expect(r.result.refused.map((x) => x.txnId)).toEqual(["L1", "L2"]);
     expect(db.rpc).toEqual([]);
   });
 
   it("a line the database refuses comes back with its message; the others still book", async () => {
     db.rpcError = { message: "This bank line is already reconciled (payment).", code: "23514" };
-    const r = await runMonthBatch(args());
+    const r = await runMonthBatch(args({ txnIds: ["L1", "L2"] }));
     if (r.state !== "done") throw new Error("not done");
     expect(r.result.booked).toEqual([]);
+    expect(r.result.runId).toBeNull();
     expect(r.result.refused).toEqual([
       { txnId: "L1", message: "This bank line is already reconciled (payment)." },
       { txnId: "L2", message: "This bank line is already reconciled (payment)." },
@@ -211,7 +213,7 @@ describe("R-2654 runMonthBatch — Reconcile all ready", () => {
 
   it("no keys → nothing started", async () => {
     db.tables.tenant_secrets = [];
-    const r = await runMonthBatch(args());
+    const r = await runMonthBatch(args({ txnIds: ["L1"] }));
     expect(r.state).toBe("no_keys");
     expect(db.rpc).toEqual([]);
   });
@@ -230,5 +232,45 @@ describe("R-2654 undoMonthRun + cachedGetter", () => {
     expect(await get("/p", { a: 1 })).toEqual({ ok: 2 });
     expect(await get("/p", { a: 1 })).toEqual({ ok: 2 });
     expect(n).toBe(2);
+  });
+});
+
+describe("R-2654 review cases", () => {
+  it("a settlement wanted by a line of the NEXT month too is paired with neither (fail closed across months)", async () => {
+    /* 31 Oct and 1 Nov lines of ₹5,782 with no UTR; only setl_C (8 Oct → moved to 31 Oct) could be either. */
+    SETTLEMENTS[2].created_at = at("2025-10-31");
+    try {
+      db.tables.bank_transactions = [
+        { ...line("L3", "2025-10-31", 5782, "x"), description: NARR },
+        { ...line("L4", "2025-11-01", 5782, "x"), description: NARR },
+      ];
+      const r = await loadMonthBatch(args());
+      if (r.state !== "batch") throw new Error("not batch");
+      expect(r.batch.rows.map((x) => x.txnId)).toEqual(["L3"]);
+      expect(r.batch.rows[0].ready).toBe(false);
+      expect(r.batch.rows[0].blockers[0]).toMatch(/could be this line or 2025-11-01/);
+    } finally {
+      SETTLEMENTS[2].created_at = at("2025-10-08");
+    }
+  });
+
+  it("Razorpay rate-limits part way: the rest are not asked again and say why", async () => {
+    let recon = 0;
+    const base = razorpay();
+    const limited = (async (url: string, init?: RequestInit) => {
+      if (url.includes("/recon/combined")) { recon++; return new Response("{}", { status: 429 }); }
+      return base(url, init);
+    }) as typeof fetch;
+    const r = await loadMonthBatch(args({ fetchImpl: limited }));
+    if (r.state !== "batch") throw new Error("not batch");
+    expect(recon).toBe(1);
+    expect(r.batch.rows.every((x) => !x.ready && /rate-limiting/.test(x.blockers[0]))).toBe(true);
+  });
+
+  it("a run takes at most RUN_CHUNK lines per request", async () => {
+    const ids = Array.from({ length: 20 }, (_, i) => `X${i}`);
+    const r = await runMonthBatch(args({ txnIds: ids }));
+    if (r.state !== "done") throw new Error("not done");
+    expect(r.result.refused.length).toBe(15);
   });
 });
