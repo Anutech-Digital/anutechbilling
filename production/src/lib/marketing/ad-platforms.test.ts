@@ -118,3 +118,16 @@ describe("R-2671 the campaign's goal decides its Result (as in Ads Manager)", ()
     expect(rows[0].conversions).toBe(2043);
   });
 });
+
+describe("R-2671 Google keeps ₹0-cost days that still have impressions or conversions", () => {
+  it("does not ask Google to drop ₹0-cost days, and skips only fully empty days", async () => {
+    const { gaqlCampaignSpend, googleRowsFromSearchStream } = await import("./ad-platforms");
+    expect(gaqlCampaignSpend("2026-09-01", "2026-09-30")).not.toContain("cost_micros > 0");
+    const rows = googleRowsFromSearchStream([{ results: [
+      { campaign: { id: "1", name: "cloud-search" }, segments: { date: "2026-09-02" }, metrics: { costMicros: "0", impressions: "11", clicks: "0", conversions: 0 } },
+      { campaign: { id: "1", name: "cloud-search" }, segments: { date: "2026-09-03" }, metrics: { costMicros: "0", impressions: "0", clicks: "0", conversions: 2 } },
+      { campaign: { id: "1", name: "cloud-search" }, segments: { date: "2026-09-04" }, metrics: { costMicros: "0", impressions: "0", clicks: "0", conversions: 0 } },
+    ] }], "acc");
+    expect(rows.map((r) => [r.day, r.impressions, r.conversions])).toEqual([["2026-09-02", 11, 0], ["2026-09-03", 0, 2]]);
+  });
+});

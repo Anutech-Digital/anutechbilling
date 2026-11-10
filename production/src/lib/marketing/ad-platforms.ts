@@ -178,7 +178,7 @@ export function dailySeries(rows: readonly AdSpendRow[], from: string, to: strin
 
 /** GAQL for daily campaign spend. Dates inclusive. */
 export function gaqlCampaignSpend(from: string, to: string): string {
-  return `SELECT campaign.id, campaign.name, segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign WHERE segments.date BETWEEN '${from}' AND '${to}' AND metrics.cost_micros > 0`;
+  return `SELECT campaign.id, campaign.name, segments.date, metrics.cost_micros, metrics.impressions, metrics.clicks, metrics.conversions, metrics.conversions_value FROM campaign WHERE segments.date BETWEEN '${from}' AND '${to}'`;
 }
 
 export interface GoogleSearchStreamChunk {
@@ -194,6 +194,10 @@ export function googleRowsFromSearchStream(chunks: readonly GoogleSearchStreamCh
   for (const c of chunks) for (const r of c.results ?? []) {
     const id = r.campaign?.id, day = r.segments?.date;
     if (id === undefined || !day) continue;
+    /* R-2671: a day with ₹0 cost can still carry impressions or (late) conversions — Google Ads
+       counts them, so they are kept. Only a day with nothing at all is skipped. */
+    const m = r.metrics;
+    if (!Number(m?.costMicros ?? 0) && !Number(m?.impressions ?? 0) && !Number(m?.clicks ?? 0) && !Number(m?.conversions ?? 0) && !Number(m?.conversionsValue ?? 0)) continue;
     out.push({
       platform: "google-ads", account_id: accountId, day, campaign_id: String(id), campaign_name: r.campaign?.name ?? String(id),
       spend: r2(Number(r.metrics?.costMicros ?? 0) / 1_000_000),
