@@ -8,7 +8,8 @@
  *   read     { kind } → reads the next piece of one Zoho list (bills / expenses / vendorpayments) into
  *              the server's scan; READ only; at most FY_CALLS_PER_REQUEST Zoho calls a request — call
  *              again until `complete`. Counts come from the stored rows.
- *   restart  { kind } → forgets that list's scan.
+ *   restart  { kind } → R-2653: Read again — lists it again, reads only new / changed documents
+ *              (status / last_modified_time); one gone from Zoho is dropped. { fresh: true } forgets the scan.
  *   accounts { "<Zoho paid-through account>": "<app account id>" } may go with preview / import (R-2502c):
  *              the owner's map of where Zoho's expenses and payments were paid from (else suggested).
  *   preview  → from the COMPLETE bills + expenses scans: counts, skip reasons, Zoho vs to-import vs
@@ -75,7 +76,11 @@ export async function POST(req: NextRequest) {
 
   if (action === "restart") {
     if (!isKind(body.kind)) return fail(400, "Choose bills, expenses or vendor payments.");
-    try { await storeOf(body.kind).reset(fy); } catch { return fail(500, "Could not clear the Zoho read. Try again."); }
+    try {
+      const st = storeOf(body.kind);
+      if (body.fresh === true) await st.reset(fy);
+      else await st.refresh(fy, { onlyAccount: null, nowIso: new Date().toISOString() });
+    } catch { return fail(500, "Could not start the Zoho read again. Try again."); }
     return NextResponse.json({ ok: true, fy, kind: body.kind, listed: 0, detailed: 0, complete: false });
   }
 

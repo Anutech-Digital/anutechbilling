@@ -11,7 +11,11 @@
  *              browser closed; progress is saved after every Zoho call, so it resumes.
  *   step     → R-2607: the open dialog runs one server pass too (same lease — never two at once).
  *   status   → R-2607: progress { listed, detailed, complete, running, error } — no Zoho call.
- *   restart  → forgets the scan (refused while a server pass runs).
+ *   restart  → R-2653: Read again (refused while a server pass runs) — lists the FY again and reads the
+ *              detail only of payments new or changed in Zoho (status / last_modified_time); one gone from
+ *              Zoho is dropped. { onlyAccount: <Zoho account id> } limits it to payments deposited to that
+ *              account (Razorpay Clearing: ~13 list + its changed payments, not 2,576). { fresh: true }
+ *              forgets the scan instead (every detail again).
  *   preview  → the plan from the COMPLETE scan: counts, totals, Zoho deposit accounts with the app
  *              account each goes to (owner's choice, else a suggestion; "none" = Leave these out → its
  *              payments are skipped "Left out by owner."), skip reasons, past batches.
@@ -30,6 +34,8 @@ import { resolveZohoCaller } from "@/lib/integrations/zoho-books/store";
 import { fyDateRange } from "@/lib/integrations/zoho-books/fy-fetch";
 import { supabaseBgStore } from "@/lib/integrations/zoho-books/fy-import/bg-store";
 import { companyReadPass } from "@/lib/integrations/zoho-books/fy-import/read-job.server";
+import { parseOnlyAccount } from "@/lib/integrations/zoho-books/fy-import/scan";
+import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { RECEIPTS_IMPORT_PART, partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts";
 import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb } from "@/lib/integrations/zoho-books/fy-import/store";
 import type { ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
@@ -70,13 +76,26 @@ export async function POST(req: NextRequest) {
 
   if (action === "restart") {
     /* R-2607: never under a running pass — it would save its old page over the fresh start. The
-       restart TAKES the lease itself first (no pass can start in between), then forgets the run. */
+       restart TAKES the lease itself first (no pass can start in between), then starts the read again. */
+    const only = parseOnlyAccount(body.onlyAccount);
+    if (only === undefined) return fail(400, "Choose a Zoho account to read, or All accounts.");
+    const until = Date.now() + 60_000;
+    let held: PaceEntry[] | null = null;
     try {
       const s = await bg.readBg(fy);
-      if (s && !(await bg.takeLease(fy, Date.now() + 60_000, Date.now()))) return fail(409, READING_MSG);
-      await store.reset(fy);
-    } catch { return fail(500, "Could not clear the Zoho read. Try again."); }
-    return NextResponse.json({ ok: true, fy, listed: 0, detailed: 0, complete: false, running: false, error: null });
+      if (s && !(await bg.takeLease(fy, until, Date.now()))) return fail(409, READING_MSG);
+      if (s) held = s.pace ?? [];
+      /* R-2653: Read again keeps what is read — lists again, reads only new / changed payments (of
+         `only`'s account, when chosen). { fresh: true } forgets the scan (every detail again). */
+      if (body.fresh === true) await store.reset(fy);
+      else await store.refresh(fy, { onlyAccount: only, nowIso: new Date().toISOString() });
+    } catch {
+      return fail(500, "Could not start the Zoho read again. Try again.");
+    } finally {
+      /* R-2653: let go of the restart's own lease at once (also after an error), so the next pass need not wait it out. */
+      if (held) await bg.release(fy, { finished: false, error: null, nowMs: Date.now(), leaseUntilMs: until, pace: held }).catch(() => {});
+    }
+    return NextResponse.json({ ok: true, fy, listed: 0, detailed: 0, complete: false, running: false, error: null, onlyAccount: only });
   }
 
   /* R-2607: the read runs on the SERVER. start = ask for it (keeps what is read — resumes);
@@ -91,6 +110,8 @@ export async function POST(req: NextRequest) {
         ok: true, fy, ...c,
         complete: !!run?.listDone && c.detailed >= c.listed && !s?.requestedAt,
         running: !!s?.requestedAt, error: s?.error ?? null, finishedAt: s?.finishedAt ?? null, lastStepAt: s?.lastStepAt ?? null,
+        /* R-2653: the last Read again was limited to this Zoho deposit account (null = all). */
+        onlyAccount: run?.onlyAccount ?? null,
       });
     } catch {
       return fail(500, "Could not reach the Zoho read. Try again.");

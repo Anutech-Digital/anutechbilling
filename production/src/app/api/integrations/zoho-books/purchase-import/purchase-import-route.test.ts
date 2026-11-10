@@ -17,6 +17,7 @@ const st = vi.hoisted(() => ({
   rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   rpcResult: { data: { dry_run: true, imported: 1 } as unknown, error: null as null | { message: string } },
   resets: [] as string[],
+  refreshes: [] as string[],
   targets: new Map<string, { type: "vendor_bill" | "expense" }>(),
 }));
 
@@ -31,6 +32,7 @@ vi.mock("@/lib/integrations/zoho-books/fy-import/store", () => ({
     readRun: async () => st.runs[kind] ?? null,
     counts: async () => st.counts[kind] ?? { listed: 0, detailed: 0 },
     reset: async () => { st.resets.push(kind); },
+    refresh: async () => { st.refreshes.push(kind); },
   }),
   readScannedFacts: async (_db: unknown, _t: string, kind: string) => st.facts[kind] ?? [],
   readImportBatches: async () => [],
@@ -80,7 +82,7 @@ function req(body: unknown) {
 const done = { nextPage: 2, listDone: true };
 
 beforeEach(() => {
-  st.role = "owner"; st.rpc = []; st.resets = [];
+  st.role = "owner"; st.rpc = []; st.resets = []; st.refreshes = [];
   st.runs = { bills: done, expenses: done, vendorpayments: done };
   st.counts = { bills: { listed: 2, detailed: 2 }, expenses: { listed: 0, detailed: 0 }, vendorpayments: { listed: 1, detailed: 1 } };
   st.facts = { bills: [bill(), bill({ zohoId: "B2", status: "void" })], expenses: [], vendorpayments: [pay()] };
@@ -170,7 +172,11 @@ describe("R-2502 purchase-import route", () => {
     st.rpcResult = { data: { removed: 1 }, error: null };
     await POST(req({ action: "undo", fy: "2025-26", batchId: "b2502000-0000-0000-0000-0000000000b1", reason: "test" }));
     expect(st.rpc[1]).toEqual({ fn: "remove_zoho_fy_purchase_import", args: { p_batch_id: "b2502000-0000-0000-0000-0000000000b1", p_reason: "test" } });
+    /* R-2653: Read again keeps the scan (only new / changed documents are read); fresh forgets it. */
     await POST(req({ action: "restart", fy: "2025-26", kind: "expenses" }));
+    expect(st.refreshes).toEqual(["expenses"]);
+    expect(st.resets).toEqual([]);
+    await POST(req({ action: "restart", fy: "2025-26", kind: "expenses", fresh: true }));
     expect(st.resets).toEqual(["expenses"]);
   });
 });

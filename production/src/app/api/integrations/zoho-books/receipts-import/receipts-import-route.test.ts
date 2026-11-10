@@ -19,6 +19,8 @@ const st = vi.hoisted(() => ({
   rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   rpcResult: { data: { dry_run: true, imported: 1 } as unknown, error: null as null | { message: string } },
   resets: 0,
+  /* R-2653: Read again keeps the scan — refresh(fy, { onlyAccount }) instead of reset. */
+  refreshes: [] as Array<string | null>,
 }));
 
 vi.mock("@/lib/integrations/zoho-books/store", () => ({
@@ -30,7 +32,8 @@ vi.mock("@/lib/integrations/zoho-books/store", () => ({
 vi.mock("@/lib/integrations/zoho-books/fy-import/store", () => ({
   supabaseScanStore: (_db: unknown, _t: string, kind: string) => {
     if (kind !== "customerpayments") throw new Error(`wrong kind ${kind}`);
-    return { readRun: async () => st.run, counts: async () => st.counts, reset: async () => { st.resets += 1; } };
+    return { readRun: async () => st.run, counts: async () => st.counts, reset: async () => { st.resets += 1; },
+      refresh: async (_fy: string, o: { onlyAccount: string | null }) => { st.refreshes.push(o.onlyAccount); } };
   },
   readScannedFacts: async () => st.facts,
   readImportBatches: async () => [],
@@ -69,6 +72,9 @@ vi.mock("@/lib/integrations/zoho-books/fy-import/bg-store", () => ({
         if (bgst.state) bgst.state.leaseUntil = new Date(until).toISOString();
         return true;
       },
+      release: async (_fy: string, end: { leaseUntilMs: number }) => {
+        if (bgst.state && bgst.state.leaseUntil === new Date(end.leaseUntilMs).toISOString()) bgst.state.leaseUntil = null;
+      },
     };
   },
 }));
@@ -91,7 +97,7 @@ function req(body: unknown) {
 }
 
 beforeEach(() => {
-  st.role = "owner"; st.run = { nextPage: 3, listDone: true }; st.counts = { listed: 2, detailed: 2 }; st.rpc = []; st.resets = 0;
+  st.role = "owner"; st.run = { nextPage: 3, listDone: true }; st.counts = { listed: 2, detailed: 2 }; st.rpc = []; st.resets = 0; st.refreshes = [];
   st.booked = new Map(); st.accountMapSeen = null;
   st.facts = [fact({}), fact({ zohoId: "p2", number: "102", problems: ["Zoho took bank charges off this payment and it is not a Razorpay payment — book it by hand."] })];
   st.rpcResult = { data: { dry_run: true, imported: 1 }, error: null };
@@ -180,13 +186,26 @@ describe("R-2501 receipts-import route", () => {
     expect((await POST(req({ action: "undo", fy: "2025-26", batchId: "x' or 1=1" }))).status).toBe(400);
   });
 
-  it("the database's refusal comes back as the message; restart clears the scan", async () => {
+  it("the database's refusal comes back as the message; restart = Read again keeps the scan (R-2653); fresh forgets it", async () => {
     st.rpcResult = { data: null, error: { message: "Only the owner or an accountant can import FY receipts from Zoho. Ask one of them." } };
     const res = await POST(req({ action: "import", fy: "2025-26", part: 0, accounts: { za: "11111111-1111-4111-8111-111111111111" } }));
     expect(res.status).toBe(400);
     expect((await res.json()).error).toMatch(/owner or an accountant/);
     await POST(req({ action: "restart", fy: "2025-26" }));
+    expect(st.resets).toBe(0);
+    expect(st.refreshes).toEqual([null]);
+    await POST(req({ action: "restart", fy: "2025-26", fresh: true }));
     expect(st.resets).toBe(1);
+  });
+
+  it("R-2653: Read again limited to one Zoho deposit account; a bad account id is refused", async () => {
+    const ok = await POST(req({ action: "restart", fy: "2025-26", onlyAccount: "460000000012345" }));
+    expect(ok.status).toBe(200);
+    expect((await ok.json()).onlyAccount).toBe("460000000012345");
+    expect(st.refreshes).toEqual(["460000000012345"]);
+    const bad = await POST(req({ action: "restart", fy: "2025-26", onlyAccount: "x'); drop" }));
+    expect(bad.status).toBe(400);
+    expect(st.refreshes).toHaveLength(1);
   });
 });
 
@@ -224,9 +243,12 @@ describe("R-2607 the read runs on the server", () => {
     const res = await POST(req({ action: "restart", fy: "2025-26" }));
     expect(res.status).toBe(409);
     expect(st.resets).toBe(0);
+    expect(st.refreshes).toEqual([]);
     bgst.state.leaseUntil = new Date(Date.now() - 1_000).toISOString();
     expect((await POST(req({ action: "restart", fy: "2025-26" }))).status).toBe(200);
-    expect(st.resets).toBe(1);
+    expect(st.refreshes).toEqual([null]);
+    /* R-2653: the restart lets go of its own lease at once — the next pass need not wait a minute. */
+    expect(bgst.state.leaseUntil).toBeNull();
   });
 
   it("a manager cannot start the read", async () => {

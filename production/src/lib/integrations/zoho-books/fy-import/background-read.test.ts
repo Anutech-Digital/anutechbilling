@@ -23,6 +23,9 @@ function memoryScan() {
     async drop(_fy, id) { rows.delete(id); },
     async counts(fy) { const a = [...rows.values()].filter((r) => r.fy === fy); return { listed: a.length, detailed: a.filter((r) => r.payload).length }; },
     async reset(fy) { runs.delete(fy); for (const [k, v] of rows) if (v.fy === fy) rows.delete(k); },
+    /* R-2653: Read again (keeps the rows) + the re-check after a complete list — not used by these tests. */
+    async refresh(fy) { runs.set(fy, { nextPage: 1, listDone: false, listStartedAt: null, onlyAccount: null }); },
+    async requeueUnlisted() { return 0; },
   };
   return { store, runs, rows };
 }
