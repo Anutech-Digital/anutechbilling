@@ -134,6 +134,23 @@ describe("R-2654 loadMonthBatch", () => {
     expect(db.rpc).toEqual([]);
   });
 
+  it("a receipt already on another bank line blocks its settlement line (R-2098 / manual match) — never booked twice", async () => {
+    (db.tables.payments[1] as Row).bank_txn_id = "other-line";
+    const r = await loadMonthBatch(args());
+    if (r.state !== "batch") throw new Error("not batch");
+    const l2 = r.batch.rows.find((x) => x.txnId === "L2");
+    expect(l2?.ready).toBe(false);
+    expect(l2?.blockers.join(" ")).toMatch(/already reconciled to another bank line/);
+  });
+
+  it("UTR pairs a settlement whose amount differs from the line → blocked by R-2099's amount rule", async () => {
+    (db.tables.bank_transactions[0] as Row).credit = 1150;
+    const r = await loadMonthBatch(args());
+    if (r.state !== "batch") throw new Error("not batch");
+    expect(r.batch.rows[0]).toMatchObject({ txnId: "L1", settlementId: "setl_A", pairedBy: "utr", ready: false });
+    expect(r.batch.rows[0].blockers.join(" ")).toMatch(/settlement is ₹1,156.*this bank line is ₹1,150/);
+  });
+
   it("reads the settlements list ONCE and a shared recon day once (setl_A and setl_B are the same day)", async () => {
     await loadMonthBatch(args());
     expect(calls.filter((c) => c.includes("/v1/settlements?")).length).toBe(1);

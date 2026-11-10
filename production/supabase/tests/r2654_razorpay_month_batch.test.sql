@@ -14,6 +14,7 @@
 --      stay (bank_txn_id null again), R-2565's per-payment fee expense stays; run marked undone; undo again
 --      undoes 0.
 --   E. A line changed by hand after the run is LEFT by Undo with the reason.
+--   G. Books locked over the line's day: the in-run booking is refused, nothing written.
 --   F. Gates: billing login refused (owner/accountant only), another company's run / account refused, a
 --      Zoho run cannot be used for a Razorpay booking, an undone run cannot book.
 
@@ -282,6 +283,27 @@ begin
     raise exception 'FAIL E2: a run with a line left is not marked undone';
   end if;
 end $$;
+reset role;
+
+-- ── G. Books locked over the line's day: the run refuses the line, nothing written ────────────
+select set_config('request.jwt.claims', '', true);
+update public.tenants set books_locked_until = '2026-10-31' where id = 'dddddddd-0000-0000-0000-000000265401';
+select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000265401","role":"authenticated"}', true);
+set local role authenticated;
+do $
+declare v_run uuid; v_ok boolean := false;
+begin
+  v_run := public.razorpay_batch_run_start('bbbbbbbb-0000-0000-0000-000000265401');
+  begin
+    perform public.reconcile_razorpay_settlement_in_run(v_run, '11111111-0000-0000-0000-000000265401', pg_temp.setl1());
+  exception when others then v_ok := true;
+  end;
+  if not v_ok then raise exception 'FAIL G1: a line inside locked books was booked'; end if;
+  if exists (select 1 from public.bank_transactions where id = '11111111-0000-0000-0000-000000265401' and matched_to_type is not null)
+     or exists (select 1 from public.bank_recon_run_lines where run_id = v_run) then
+    raise exception 'FAIL G2: refused booking wrote something';
+  end if;
+end $;
 reset role;
 
 select 'r2654_razorpay_month_batch: ALL PASS' as result;
