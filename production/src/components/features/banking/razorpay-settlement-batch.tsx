@@ -17,7 +17,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { rupee, formatDate } from "@/lib/utils";
-import { toastError } from "@/lib/errors/toast-error";
+import { describeError, toastError } from "@/lib/errors/toast-error";
 import {
   useRazorpayMonthBatch, useRunRazorpayMonth, useUndoRazorpayMonth,
   type BatchRow, type MonthRunResult, type MonthUndoResult,
@@ -138,7 +138,7 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
             {lookup.state === "no_keys" && <a className="underline" href="/settings?tab=integrations">Open Settings → Integrations</a>}
           </p>
         )}
-        {batch.error && <p className="mt-6 text-sm text-danger">{(batch.error as Error).message}</p>}
+        {batch.error && <p className="mt-6 text-sm text-danger">{describeError(batch.error, "Could not read the month from Razorpay — try again.").message}</p>}
 
         {lastRun && (
           <div className="mt-4 rounded-md border border-hairline px-3 py-2 text-sm" role="status">
