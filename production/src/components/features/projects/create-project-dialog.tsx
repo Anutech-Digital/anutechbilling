@@ -25,6 +25,9 @@ import { AddCustomerForm } from "@/components/features/customers/add-customer-fo
 import { useCustomers } from "@/lib/queries/customers";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
+import { istToday } from "@/lib/dates/ist";
+import { useExportQuoteDefault } from "@/lib/gst/use-export-quote-default";
+import { exportQuoteLutWarning, EXPORT_QUOTE_LUT_HREF } from "@/lib/gst/export-quote-rate";
 import { rupee } from "@/lib/utils";
 
 interface Props {
@@ -61,12 +64,15 @@ export function CreateProjectDialog({ open, onOpenChange }: Props) {
   const [gstRate, setGstRate]           = React.useState("18");
   const [interState, setInterState]     = React.useState(false);
   const [rows, setRows]                 = React.useState<Row[]>(BLANK_ROWS);
+  /* R-2648: set once the operator types a GST rate — the export default never overwrites it. */
+  const rateTouched = React.useRef(false);
 
   React.useEffect(() => {
     if (!open) {
       setCustomerId(""); setTitle(""); setDescription("");
       setTaxable(""); setGstRate("18"); setInterState(false); setRows(BLANK_ROWS);
       setInterStateTouched(false);
+      rateTouched.current = false;
     }
   }, [open]);
 
@@ -75,22 +81,40 @@ export function CreateProjectDialog({ open, onOpenChange }: Props) {
   const selectedCustomer = customers?.find((c) => c.id === customerId);
   const customerName = selectedCustomer?.name ?? "";
 
+  /* R-2648 (money-rules G16): a buyer abroad (or an SEZ unit without payment) starts at 0% GST when
+     the company holds an LUT for today's FY — export without payment. With no LUT it stays 18% (export
+     WITH payment of IGST, R-2636) and the form says so with the next step. Either way the head is IGST. */
+  const exportBuyer = useExportQuoteDefault({
+    enabled:   open && Boolean(selectedCustomer),
+    country:   selectedCustomer?.country,
+    treatment: selectedCustomer?.gst_treatment,
+    date:      istToday(),
+  });
+  const exportKind = exportBuyer.def.kind;
+  React.useEffect(() => {
+    if (!exportBuyer.ready) return;
+    if (!rateTouched.current) setGstRate(exportKind === "zero_rated" ? "0" : "18");
+    if (exportKind !== "domestic" && !interStateTouched) setInterState(true);
+  }, [exportBuyer.ready, exportKind, interStateTouched]);
+
   /* Follow the customer until the operator overrides. Both GSTINs are passed because
      36 of 41 customers holding a GSTIN have no state_code, and the first two characters
      of a GSTIN are the state — see lib/gst/place-of-supply.ts. */
   React.useEffect(() => {
     if (interStateTouched || !selectedCustomer) return;
+    if (exportKind !== "domestic") return;   // R-2648: abroad / SEZ wop is always IGST (effect above)
     setInterState(isInterStateSupply(
       selectedCustomer.state_code,
       me?.tenantStateCode,
       { customerGstin: selectedCustomer.gstin, sellerGstin: me?.tenantGstin, treatment: selectedCustomer.gst_treatment },
     ));
-  }, [selectedCustomer, me?.tenantStateCode, me?.tenantGstin, interStateTouched]);
+  }, [selectedCustomer, me?.tenantStateCode, me?.tenantGstin, interStateTouched, exportKind]);
 
   const taxableNum = Math.max(0, Math.round(Number(taxable) || 0));
   const rateNum    = Math.max(0, Math.round(Number(gstRate) || 0));
   const gstNum     = Math.round(taxableNum * rateNum / 100);
   const totalNum   = taxableNum + gstNum;
+  const lutWarning = exportBuyer.ready ? exportQuoteLutWarning(exportBuyer.def, rateNum) : null;
 
   const milestonesTotal = rows.reduce((s, r) => s + Math.max(0, Math.round(Number(r.amount) || 0)), 0);
   const mismatch = milestonesTotal !== totalNum;
@@ -179,7 +203,7 @@ export function CreateProjectDialog({ open, onOpenChange }: Props) {
               <Input id="p_taxable" inputMode="numeric" prefix="₹" placeholder="e.g. 2200000" value={taxable} onChange={(e) => setTaxable(e.target.value)} />
             </FormField>
             <FormField label="GST rate %" htmlFor="p_gst">
-              <Input id="p_gst" inputMode="numeric" placeholder="18" value={gstRate} onChange={(e) => setGstRate(e.target.value)} />
+              <Input id="p_gst" inputMode="numeric" placeholder="18" value={gstRate} onChange={(e) => { rateTouched.current = true; setGstRate(e.target.value); }} />
             </FormField>
           </div>
 
@@ -197,10 +221,24 @@ export function CreateProjectDialog({ open, onOpenChange }: Props) {
               pre-set saved — the same reasoning as the quote builder's match note. */}
           {selectedCustomer && !interStateTouched && (
             <p className="text-3xs text-ink-3 -mt-2">
-              {me?.tenantStateCode
+              {exportKind !== "domestic"
+                ? <>{selectedCustomer.name} is {exportBuyer.def.kind !== "domestic" && exportBuyer.def.supply === "sez" ? "an SEZ unit (without payment)" : "outside India"} — always IGST.</>
+                : me?.tenantStateCode
                 ? <>Set from {selectedCustomer.name}&apos;s state{selectedCustomer.state ? ` (${selectedCustomer.state})` : ""} against yours. Change it if that is wrong.</>
                 : <>Your company&apos;s state is not set, so this defaults to intra-state. Set it in Settings → GST profile to have it decided for you.</>}
             </p>
+          )}
+
+          {exportBuyer.def.kind === "zero_rated" && rateNum === 0 && (
+            <p className="text-2xs text-ink-3" data-testid="export-lut-note">
+              {exportBuyer.def.supply === "export" ? "Export" : "SEZ supply"} → 0% GST under LUT {exportBuyer.def.lut.arn} (FY {exportBuyer.def.fy}) — no GST added.
+            </p>
+          )}
+          {lutWarning && (
+            <div role="status" data-testid="export-lut-warning" className="rounded-md border border-amber/40 bg-amber-soft/40 p-2.5 text-xs text-amber-ink">
+              {lutWarning}{" "}
+              <a href={EXPORT_QUOTE_LUT_HREF} className="font-semibold underline underline-offset-2">Add LUT</a>
+            </div>
           )}
 
           {/* GST summary */}

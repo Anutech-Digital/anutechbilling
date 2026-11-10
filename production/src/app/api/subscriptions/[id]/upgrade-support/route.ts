@@ -3,7 +3,8 @@
  *
  * "Upgrade plan" on a support subscription (SKU SUP-…). Makes a DRAFT quote for the customer
  * with one line: the new tier for the days left in this term, less the old tier for the same
- * days (lib/support/pro-rata-upgrade.ts). GST is the quote's normal rate. The renewal date
+ * days (lib/support/pro-rata-upgrade.ts). GST is the quote's normal rate (0% for a customer abroad with an
+ * LUT for the FY, R-2648). The renewal date
  * does not move. Downgrades are refused — they take effect at renewal.
  *
  * Same path as Extend term (api/subscriptions/[id]/extend): the quote is linked through
@@ -25,6 +26,7 @@ import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { extensionQuoteExpiry } from "@/lib/quotes/quote-validity";
 import { buildSupportUpgrade } from "@/lib/support/upgrade-quote";
+import { exportQuoteRateFor } from "@/lib/gst/export-quote-rate";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -64,7 +66,13 @@ export const POST = withRoute(
     if (!built.ok) return NextResponse.json({ error: built.reason }, { status: 400 });
     const { plan } = built;
 
-    const taxRatePct = quoteStartTaxRate(await readTenantGstRegistration(supabase, tenantId));
+    /* R-2648 (G16): a customer abroad / SEZ without payment with an LUT for today's FY → 0% (export
+       without payment); no LUT → the usual rate as before, and the answer carries the add-LUT warning. */
+    const usualTaxRate = quoteStartTaxRate(await readTenantGstRegistration(supabase, tenantId));
+    const { rate: taxRatePct, warning: taxWarning } = await exportQuoteRateFor({
+      client: supabase, tenantId, customerId: sub.customer_id, date: today,
+      usualRate: usualTaxRate, billOfSupply: usualTaxRate === 0,
+    });
     const subtotal = plan.calc.amountExGst;
     const amount = grossAmount(subtotal, taxRatePct);
 
@@ -112,6 +120,6 @@ export const POST = withRoute(
       return NextResponse.json({ error: "This subscription already has an open quote. Finish or delete it first." }, { status: 409 });
     }
 
-    return { quoteId, amount, amountExGst: subtotal, subscriptionId: sub.id };
+    return { quoteId, amount, amountExGst: subtotal, subscriptionId: sub.id, taxWarning };
   },
 );

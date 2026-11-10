@@ -34,6 +34,7 @@ import { addDaysISO } from "@/lib/billing/schedule";
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
 import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
+import { exportQuoteRateFor } from "@/lib/gst/export-quote-rate";
 import {
   extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
   type ExtensionLength,
@@ -188,7 +189,14 @@ export async function createExtensionQuote(
   /* Build line item. R-834: the charge is built FROM the line — whole-rupee rate per seat
      × seats = subtotal, so rate × qty on every screen equals the subtotal (extension-term.ts). */
   /* R-1532: a Bill of Supply business (not GST-registered / composition) charges no GST. */
-  const taxRatePct   = quoteStartTaxRate(await readTenantGstRegistration(input.supabase, input.tenantId));
+  /* R-2648: a customer abroad (or an SEZ unit without payment) with an LUT for today's FY → 0% (export
+     without payment, G16) — this path quoted 18% for everyone, which R-2636 then issued as IGST. No LUT →
+     18% as before. */
+  const usualTaxRate = quoteStartTaxRate(await readTenantGstRegistration(input.supabase, input.tenantId));
+  const { rate: taxRatePct } = await exportQuoteRateFor({
+    client: input.supabase, tenantId: input.tenantId, customerId: input.customerId,
+    date: istToday(), usualRate: usualTaxRate, billOfSupply: usualTaxRate === 0,
+  });
   const charge       = extensionCharge({
     seats: input.seats, mrr: input.mrr, len, taxRatePct,
     termAmount: input.termAmount ?? null, termMonths: input.termMonths ?? null,  // R-2369

@@ -29,6 +29,8 @@ import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { istToday } from "@/lib/dates/ist";
+import { useExportQuoteDefault } from "@/lib/gst/use-export-quote-default";
+import { exportQuoteLutWarning, EXPORT_QUOTE_LUT_HREF } from "@/lib/gst/export-quote-rate";
 
 interface Props {
   open: boolean;
@@ -83,11 +85,14 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
   const todayISO = istToday();
 
   const prefilledFor = React.useRef<string | null>(null);
+  /* R-2648: set once the operator types a GST rate — the export default never overwrites it. */
+  const rateTouched = React.useRef(false);
   React.useEffect(() => {
     if (!open) {
       prefilledFor.current = null;
       setCustomerId(""); setNewName(""); setContactName(""); setEmail(""); setPhone(""); setGstin(""); setStateCode("");
       setTitle(""); setDescription(""); setGstRate("18"); setInterState(false);
+      rateTouched.current = false;
       setLines([{ name: "", qty: "1", rate: "" }]); setRows([{ label: "Advance", amount: "", due: "" }]);
       return;
     }
@@ -132,19 +137,36 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
      buyer's state against ours (same rule as everywhere: isInterStateSupply); the box stays
      editable as an override. Never touches an existing project — its head is already set. */
   const { data: me } = useCurrentUser();
+  /* R-2648 (money-rules G16): a NEW project for a buyer abroad (or an SEZ unit without payment)
+     starts at 0% GST when the company holds an LUT for today's FY — export without payment. With no
+     LUT it stays 18% (export WITH payment of IGST; the invoice is issued IGST, R-2636) and the form
+     says so with the next step. Either way the head is IGST. Never touches an existing project. */
+  const exportBuyer = useExportQuoteDefault({
+    enabled:   open && !isEdit,
+    country:   isNewCustomer ? (stateCode === EXPORT_STATE ? "Outside India" : null) : selectedCustomer?.country,
+    treatment: isNewCustomer ? null : selectedCustomer?.gst_treatment,
+    date:      todayISO,
+  });
+  const exportKind = exportBuyer.def.kind;
+  React.useEffect(() => {
+    if (isEdit || !exportBuyer.ready) return;
+    if (!rateTouched.current) setGstRate(exportKind === "zero_rated" ? "0" : "18");
+    if (exportKind !== "domestic") setInterState(true);
+  }, [isEdit, exportBuyer.ready, exportKind]);
   const buyerCode = isNewCustomer
     ? (stateCode && stateCode !== EXPORT_STATE ? stateCode : stateCodeFromGstin(gstin))
     : (selectedCustomer?.state_code ?? stateCodeFromGstin(selectedCustomer?.gstin));
   React.useEffect(() => {
-    if (editProject || !buyerCode || !me?.tenantStateCode) return;
+    if (editProject || !buyerCode || !me?.tenantStateCode || exportKind !== "domestic") return;
     setInterState(isInterStateSupply(buyerCode, me.tenantStateCode, { treatment: isNewCustomer ? null : selectedCustomer?.gst_treatment }));
-  }, [editProject, buyerCode, me?.tenantStateCode, isNewCustomer, selectedCustomer?.gst_treatment]);
+  }, [editProject, buyerCode, me?.tenantStateCode, isNewCustomer, selectedCustomer?.gst_treatment, exportKind]);
 
   const lineAmount = (l: LineRow) => Math.max(0, Math.round(Number(l.qty) || 0)) * Math.max(0, Math.round(Number(l.rate) || 0));
   const taxableNum = lines.reduce((s, l) => s + lineAmount(l), 0);
   const rateNum    = Math.max(0, Math.round(Number(gstRate) || 0));
   const gstNum     = Math.round(taxableNum * rateNum / 100);
   const totalNum   = taxableNum + gstNum;
+  const lutWarning = !isEdit && exportBuyer.ready ? exportQuoteLutWarning(exportBuyer.def, rateNum) : null;
   const milestonesTotal = rows.reduce((s, r) => s + Math.max(0, Math.round(Number(r.amount) || 0)), 0);
 
   // A milestone is LOCKED once it's invoiced or paid — a GST document / receipt
@@ -373,7 +395,7 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
 
           <div className="grid grid-cols-2 gap-3">
             <FormField label="GST rate %" htmlFor="q_gst">
-              <Input id="q_gst" inputMode="numeric" value={gstRate} onChange={(e) => setGstRate(e.target.value)} disabled={partialLock} />
+              <Input id="q_gst" inputMode="numeric" value={gstRate} onChange={(e) => { rateTouched.current = true; setGstRate(e.target.value); }} disabled={partialLock} />
             </FormField>
             <label className="flex items-center gap-2 text-sm text-ink-2 mt-6">
               <input type="checkbox" checked={interState} onChange={(e) => setInterState(e.target.checked)} disabled={partialLock} className="rounded border-hairline disabled:opacity-60" />
@@ -383,6 +405,18 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
               )}
             </label>
           </div>
+
+          {exportBuyer.def.kind === "zero_rated" && rateNum === 0 && !isEdit && (
+            <p className="text-2xs text-ink-3" data-testid="export-lut-note">
+              {exportBuyer.def.supply === "export" ? "Export" : "SEZ supply"} → 0% GST under LUT {exportBuyer.def.lut.arn} (FY {exportBuyer.def.fy}) — no GST added.
+            </p>
+          )}
+          {lutWarning && (
+            <div role="status" data-testid="export-lut-warning" className="rounded-md border border-amber/40 bg-amber-soft/40 p-2.5 text-xs text-amber-ink">
+              {lutWarning}{" "}
+              <a href={EXPORT_QUOTE_LUT_HREF} className="font-semibold underline underline-offset-2">Add LUT</a>
+            </div>
+          )}
 
           {/* Totals */}
           <div className="rounded-md border border-hairline bg-paper-2/40 p-3 text-sm space-y-1">
