@@ -15,7 +15,8 @@ import { decryptTenantSecrets } from "@/lib/crypto/tenant-secrets";
 import { rupee } from "@/lib/utils";
 import { platformEnvRazorpayKeys } from "@/lib/checkout/platform-razorpay";
 import {
-  buildSettlementPlan, pickSettlement, type AppPayment, type BankLine, type RzpSettlement, type SettlementLookup,
+  buildSettlementPlan, pickSettlement, type AppPayment, type BankLine, type RzpReconItem, type RzpSettlement,
+  type SettlementLookup, type SettlementPlan,
 } from "./settlement-match";
 import {
   listSettlements, razorpayGetter, RazorpayApiError, settlementItems, settlementWindow, type RazorpayCreds,
@@ -146,6 +147,23 @@ export async function loadSettlementPlan(args: {
     throw e;
   }
 
+  const plan = await planForSettlement({ db, tenantId, line, settlement, items, picks: args.picks });
+  return { state: "plan", plan };
+}
+
+/**
+ * R-2654: the app's side of ONE settlement, matched — the same for the one-line path above and the
+ * month batch (settlement-batch.server.ts), so a batch line ends exactly as the one-line Reconcile.
+ */
+export async function planForSettlement(args: {
+  db: UserDb;
+  tenantId: string;
+  line: BankLine;
+  settlement: RzpSettlement;
+  items: RzpReconItem[];
+  picks?: Record<string, string>;
+}): Promise<SettlementPlan> {
+  const { db, tenantId, line, settlement, items } = args;
   /* The app's side: by Razorpay payment id (the webhook's reference), by order id, and a pool
      to pick from for anything not found. */
   const refs = [...new Set(items.flatMap((i) => [i.type === "payment" ? i.entity_id : null, i.type === "refund" ? i.payment_id ?? null : null]).filter((x): x is string => Boolean(x)))];
@@ -185,7 +203,7 @@ export async function loadSettlementPlan(args: {
     .limit(500);
   fail("payments", poolErr);
 
-  const plan = buildSettlementPlan({
+  return buildSettlementPlan({
     line,
     settlement,
     items,
@@ -194,5 +212,4 @@ export async function loadSettlementPlan(args: {
     pool: await toAppPayments(db, tenantId, (poolRows ?? []) as unknown as PayRow[]),
     picks: args.picks,
   });
-  return { state: "plan", plan };
 }
