@@ -17,6 +17,7 @@
  * A false "covered" only leaves the line for R-2655 / the Reconcile sheet (safe); a missed one
  * would double the cost, so the windows are wide on purpose.
  */
+import { addDaysISO } from "@/lib/dates/ist";
 
 export interface ImportedExpenseRow {
   zoho_doc_id: string;
@@ -51,11 +52,7 @@ const BILL_DAYS_BEFORE = 7;
 const BILL_DAYS_AFTER = 120;
 const TOLERANCE = 1;
 
-const addDays = (iso: string, n: number): string => {
-  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
-  d.setUTCDate(d.getUTCDate() + n);
-  return d.toISOString().slice(0, 10);
-};
+const addDays = addDaysISO;
 
 const uniq = (xs: number[]) => [...new Set(xs.filter((x) => x > 0))];
 
