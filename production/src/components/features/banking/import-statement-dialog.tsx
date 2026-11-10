@@ -43,6 +43,8 @@ import { openingMoveCheck, linesBeforeOpening } from "@/lib/banking/opening-move
 import { importBadge } from "./import-badge";
 import { openingBalanceFromStatement, fyStartFor } from "@/lib/banking/opening-balance";
 import { isEncryptedPdf, pdfPageCount } from "@/lib/banking/pdf-check";
+import { pdfTextPages, statementTextBase64, unlockMessage } from "@/lib/banking/pdf-unlock";
+import { StatementPasswordBox } from "./statement-password-box";
 import {
   readStatementInChunks,
   chunkResultFrom,
@@ -189,6 +191,13 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   const importMut = useImportBankTransactions();
   /* R-1623: which file (and kind) this import came from — the account's Imports list shows it. */
   const [origin, setOrigin] = React.useState<{ name: string | null; source: ImportOrigin } | null>(null);
+  /* R-2662: a password-protected PDF waits here for its password (the bytes only — never the password). */
+  const [locked, setLocked] = React.useState<{ name: string; bytes: Uint8Array; message: string; failed: boolean } | null>(null);
+  const [unlocking, setUnlocking] = React.useState(false);
+  /* R-2662 review: a newer file, Cancel or closing the dialog makes an unlock still running stale —
+     its text is then never sent to the AI. */
+  const unlockRun = React.useRef(0);
+  const dropLocked = () => { unlockRun.current++; setLocked(null); setUnlocking(false); };
 
   // Rotating status while the AI reads — so a multi-second read never looks stuck.
   const READ_MSGS = ["Opening the file…", "Finding transactions…", "Extracting rows…", "Checking amounts…", "Almost done…"];
@@ -342,7 +351,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
   React.useEffect(() => { setPreviewPage(0); }, [rawParsed]);
 
   React.useEffect(() => {
-    if (!open) { setCsvText(""); setParsed(null); setMode("csv"); setReading(false); setOrigin(null); }
+    if (!open) { setCsvText(""); setParsed(null); setMode("csv"); setReading(false); setOrigin(null); unlockRun.current++; setLocked(null); setUnlocking(false); }
   }, [open]);
 
   // Re-parse the textarea (CSV mode only — don't clobber an AI/PDF result).
@@ -352,33 +361,71 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     setParsed(withRealDates(parseStatement(csvText)));
   }, [csvText, mode]);
 
+  /* What one AI call sends: the file (or, for an unlocked PDF, its text) — pages = one chunk. */
+  type AiSource = { pageCount: number | null; body: (pages?: { from: number; to: number; total: number }) => Record<string, unknown> };
+
   // Read a bank-statement PDF/photo with AI → transaction rows (operator reviews).
   const readPdf = async (file: File) => {
-    /* A password-protected PDF (bank e-statements usually are) cannot be read by the AI —
-       it fails with a bare 400. Say so before uploading it, and say what works instead. */
+    /* R-2662: a password-protected PDF (bank e-statements almost always are) cannot be read by
+       the AI on the server. It is opened HERE, in the browser — first with no password (some
+       only lock printing/copying), else after asking for it — and only its text goes on. */
     const isPdf = /pdf/i.test(file.type);
     const bytes = isPdf ? new Uint8Array(await file.arrayBuffer()) : null;
+    dropLocked();
     if (bytes && isEncryptedPdf(bytes)) {
-      toast.error("This PDF is password-protected, so it can't be read.", {
-        description: "Download the statement as CSV / \"Delimited\" (.txt) from net banking — or open the PDF with its password, Print → Save as PDF, and upload that copy.",
-        duration: 12000,
-      });
+      /* A new file: the last file's preview goes, so it can never be imported under this name. */
+      setParsed(null); setCsvText("");
+      const run = unlockRun.current;
+      const r = await pdfTextPages(bytes);
+      if (run !== unlockRun.current) return;
+      if (r.ok) { await readText(r.pages); return; }
+      if (r.reason === "need-password") setLocked({ name: file.name, bytes, message: unlockMessage("need-password"), failed: false });
+      else toast.error(unlockMessage(r.reason), { duration: 12000 });
       return;
     }
-    setReading(true);
-    setMode("ai");
-    setCsvText("");
-    try {
+    await readWithAi(async () => {
       const base64 = await new Promise<string>((resolve, reject) => {
         const r = new FileReader();
         r.onload  = () => resolve((r.result as string).split(",")[1] ?? "");
         r.onerror = () => reject(new Error("read failed"));
         r.readAsDataURL(file);
       });
+      return {
+        pageCount: bytes ? await pdfPageCount(bytes) : null,
+        body: (pages) => ({ fileBase64: base64, mimeType: file.type, ...(pages ? { pages } : {}) }),
+      };
+    });
+  };
 
+  /* R-2662: the unlocked PDF's text, page by page — the same chunked AI reading as a PDF. */
+  const readText = (pages: string[]) => readWithAi(async () => ({
+    pageCount: pages.length,
+    body: (range) => ({ fileBase64: statementTextBase64(pages, range), mimeType: "text/plain", ...(range ? { pages: range } : {}) }),
+  }));
+
+  /* R-2662: the password goes to pdfjs (in this browser) and nowhere else; the box has already
+     emptied its input, and nothing here keeps it. Wrong → say so, the box stays for a retry. */
+  const unlockPdf = async (password: string) => {
+    if (!locked) return;
+    const run = ++unlockRun.current;
+    setUnlocking(true);
+    const r = await pdfTextPages(locked.bytes, password);
+    if (run !== unlockRun.current) return;     // Cancel / closed / another file meanwhile
+    setUnlocking(false);
+    if (r.ok) { setLocked(null); await readText(r.pages); return; }
+    if (r.reason === "wrong-password" || r.reason === "need-password") { setLocked((l) => (l ? { ...l, message: unlockMessage("wrong-password"), failed: true } : l)); return; }
+    setLocked(null);
+    toast.error(unlockMessage(r.reason), { duration: 12000 });
+  };
+
+  const readWithAi = async (prepare: () => Promise<AiSource>) => {
+    setReading(true);
+    setMode("ai");
+    setCsvText("");
+    try {
+      const { pageCount, body } = await prepare();
       /* R-1690: a PDF longer than one chunk is read a few pages per call. In one call a
          month of entries timed out at 60 s on both models, every time (staging, 19 Oct). */
-      const pageCount = bytes ? await pdfPageCount(bytes) : null;
       if (pageCount && pageCount > STATEMENT_CHUNK_PAGES) {
         setChunkProgress({ pagesDone: 0, pageCount, reading: [] });
         const out = await readStatementInChunks<ParsedRow>({
@@ -388,7 +435,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             const res = await fetch("/api/ai/extract-statement", {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ fileBase64: base64, mimeType: file.type, pages: { ...pages, total: pageCount } }),
+              body: JSON.stringify(body({ ...pages, total: pageCount })),
             });
             return chunkResultFrom<ParsedRow>(res.ok, await res.json().catch(() => null));
           },
@@ -412,7 +459,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
             const res = await fetch("/api/ai/extract-statement", {
               method: "POST",
               headers: { "content-type": "application/json" },
-              body: JSON.stringify({ fileBase64: base64, mimeType: file.type, pages: { from: page, to: page, total: pageCount } }),
+              body: JSON.stringify(body({ from: page, to: page, total: pageCount })),
             });
             return chunkResultFrom<ParsedRow>(res.ok, await res.json().catch(() => null));
           },
@@ -439,7 +486,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       const res = await fetch("/api/ai/extract-statement", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ fileBase64: base64, mimeType: file.type }),
+        body: JSON.stringify(body()),
       });
       const json = await res.json();
       if (!res.ok) {
@@ -595,7 +642,10 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
               while the AI reads, so a multi-second read never looks frozen. */}
           <div className="rounded-md border border-dashed border-hairline-strong bg-paper-2/30 p-4">
             <style>{"@keyframes ros-loadbar{0%{transform:translateX(-100%)}100%{transform:translateX(320%)}}"}</style>
-            {reading ? (
+            {locked && !reading ? (
+              <StatementPasswordBox fileName={locked.name} message={locked.message} failed={locked.failed} busy={unlocking}
+                onUnlock={unlockPdf} onCancel={() => { dropLocked(); setOrigin(null); }} />
+            ) : reading ? (
               <div className="flex flex-col items-center text-center gap-3 py-1">
                 <Icon name="sparkles" size={22} className="text-amber-ink animate-pulse" />
                 {rereadProgress ? (

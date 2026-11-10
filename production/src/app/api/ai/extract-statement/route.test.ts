@@ -316,3 +316,37 @@ describe("R-2528 — the PDF path keeps the printed paise, like the CSV / Excel 
     expect(r.json.rows[1].amount_paise).toBeUndefined();
   });
 });
+
+describe("R-2662 — the text of a password-protected PDF, unlocked in the browser", () => {
+  const TEXT = Buffer.from("=== Page 2 ===\n01/09/2026 | NEFT/row-1 | 501.00 | 50001.00").toString("base64");
+
+  it("text/plain is accepted; the prompt says it is text with page marks and keeps the page range", async () => {
+    ai.json.mockResolvedValue({ rows: [aiRow(1)] });
+    const r = await call({ fileBase64: TEXT, mimeType: "text/plain", pages: { from: 2, to: 2, total: 3 } });
+    expect(r.status).toBe(200);
+    const args = ai.json.mock.calls[0][0] as GeminiArgs & { attachment: { mimeType: string; base64: string } };
+    expect(args.attachment).toEqual({ mimeType: "text/plain", base64: TEXT });
+    expect(args.user).toMatch(/given as TEXT taken from the PDF/);
+    expect(askedPages(args.user)).toEqual([2, 2]);
+    expect(r.json.chunk).toEqual({ from: 2, to: 2, total: 3 });
+  });
+
+  it("whole text (no pages) → one call, dates fixed on the server like a PDF", async () => {
+    ai.json.mockResolvedValue({ rows: [aiRow(1)] });
+    const r = await call({ fileBase64: TEXT, mimeType: "text/plain" });
+    expect(r.status).toBe(200);
+    expect(askedPages((ai.json.mock.calls[0][0] as GeminiArgs).user)).toBeNull();
+    expect(r.json.rows[0].txn_date).toBe("2026-09-01");
+  });
+
+  it("a password field in the body is never passed on (the schema has none)", async () => {
+    ai.json.mockResolvedValue({ rows: [aiRow(1)] });
+    await call({ fileBase64: TEXT, mimeType: "text/plain", password: "dummy-should-not-travel" });
+    expect(JSON.stringify(ai.json.mock.calls[0][0])).not.toContain("dummy-should-not-travel");
+  });
+
+  it("other mime types are still refused", async () => {
+    const r = await call({ fileBase64: TEXT, mimeType: "text/html" });
+    expect(r.status).toBe(400);
+  });
+});
