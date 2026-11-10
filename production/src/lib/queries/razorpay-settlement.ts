@@ -84,7 +84,6 @@ export interface MonthRunResult {
   runId: string | null;
   booked: Array<{ txnId: string; settlementId: string; amount: number; fee: number }>;
   refused: Array<{ txnId: string; message: string }>;
-  blocked: number;
 }
 export interface MonthUndoResult {
   undone: number;
@@ -107,24 +106,24 @@ export function useRazorpayMonthBatch(accountId: string, month: string | null) {
   });
 }
 
-function invalidateBank(qc: ReturnType<typeof useQueryClient>) {
+/** After a run / undo: the bank lines, the month table, expenses and what customers owe. */
+export function invalidateBank(qc: ReturnType<typeof useQueryClient>) {
   qc.invalidateQueries({ queryKey: ["bank_transactions"] });
   qc.invalidateQueries({ queryKey: ["razorpay_settlement"] });
   qc.invalidateQueries({ queryKey: ["expenses"] });
   invalidateReceivables(qc);
 }
 
-/** "Reconcile all ready" — the server plans again and books under one run id. */
+/** One chunk of "Reconcile all ready" — the server plans again and books under one run id. The sheet
+ *  sends the chunks one after another and refreshes the bank page once at the end (invalidateBank). */
 export function useRunRazorpayMonth() {
-  const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (input: { accountId: string; month: string; txnIds: string[] }) =>
+    mutationFn: async (input: { accountId: string; month: string; txnIds: string[]; runId?: string | null }) =>
       (await call<{ run: MonthRunResult }>(MONTH_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "run", ...input }),
+        body: JSON.stringify({ action: "run", accountId: input.accountId, month: input.month, txnIds: input.txnIds, ...(input.runId ? { runId: input.runId } : {}) }),
       })).run,
-    onSuccess: () => invalidateBank(qc),
   });
 }
 

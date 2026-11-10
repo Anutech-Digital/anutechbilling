@@ -5,10 +5,11 @@
  * books only the ready ones.
  */
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { razorpayMonths } from "./razorpay-settlement-batch";
 
-const mutate = vi.fn();
+const mutateAsync = vi.fn(async () => ({ runId: "R1", booked: [{ txnId: "L1", settlementId: "setl_A", amount: 1156, fee: 24 }], refused: [] }));
 vi.mock("@/lib/queries/razorpay-settlement", () => ({
   useRazorpayMonthBatch: () => ({
     isLoading: false, isFetching: false, error: null,
@@ -23,7 +24,8 @@ vi.mock("@/lib/queries/razorpay-settlement", () => ({
       },
     },
   }),
-  useRunRazorpayMonth: () => ({ mutate, isPending: false }),
+  useRunRazorpayMonth: () => ({ mutateAsync, isPending: false }),
+  invalidateBank: vi.fn(),
   useUndoRazorpayMonth: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
@@ -44,13 +46,16 @@ describe("R-2654 razorpayMonths", () => {
 });
 
 describe("R-2654 the sheet", () => {
-  it("shows Ready / Blocked with the reason and books only the ready line", () => {
-    render(<RazorpaySettlementBatch accountId="acc" accountName="HDFC 4523" months={[{ month: "2025-10", count: 2 }]} open onOpenChange={() => {}} />);
+  it("shows Ready / Blocked with the reason, books only the ready line and keeps the run for Undo", async () => {
+    render(<QueryClientProvider client={new QueryClient()}><RazorpaySettlementBatch accountId="acc" accountName="HDFC 4523" months={[{ month: "2025-10", count: 2 }]} open onOpenChange={() => {}} /></QueryClientProvider>);
     expect(screen.getByText("Ready")).toBeTruthy();
     expect(screen.getByText("Blocked")).toBeTruthy();
     expect(screen.getByText(/pay_UNKNOWN .* is not in the app/)).toBeTruthy();
     expect(screen.getByText(/1 ready \(₹1,156\) · 1 blocked/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Reconcile all ready \(1\)/ }));
-    expect(mutate).toHaveBeenCalledWith({ accountId: "acc", month: "2025-10", txnIds: ["L1"] }, expect.anything());
+    await waitFor(() => expect(mutateAsync).toHaveBeenCalledWith({ accountId: "acc", month: "2025-10", txnIds: ["L1"], runId: null }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Undo this run/ })).toBeTruthy());
+    expect(window.sessionStorage.getItem("ros_rzp_month_run_v1:acc")).toContain("R1");
+    expect(await screen.findByText(/This run reconciled 1 line \(₹1,156, fees ₹24\)/)).toBeTruthy();
   });
 });

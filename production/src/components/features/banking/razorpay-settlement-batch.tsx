@@ -5,13 +5,15 @@
  * 3-4 minutes a line). Here the month is read from Razorpay once; each open Razorpay line of this account
  * is paired with its settlement (UTR, else the one settlement of that amount — never a guess between
  * two) and checked by R-2099's own rules. The table says Ready, or Blocked and why. "Reconcile all
- * ready" books every ready line in one run (the server plans again — the browser sends no amounts);
- * "Undo this run" takes the whole run back. Owner / accountant only.
+ * ready" books every ready line in one run (sent in chunks of RUN_CHUNK, the server plans each chunk
+ * again — the browser sends no amounts); "Undo this run" takes the whole run back. The run id is kept
+ * in this browser tab (per account) so Undo survives closing the sheet. Owner / accountant only.
  */
 "use client";
 
 import * as React from "react";
 import { toast } from "sonner";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
@@ -19,14 +21,17 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { rupee, formatDate } from "@/lib/utils";
 import { describeError, toastError } from "@/lib/errors/toast-error";
 import {
-  useRazorpayMonthBatch, useRunRazorpayMonth, useUndoRazorpayMonth,
+  invalidateBank, useRazorpayMonthBatch, useRunRazorpayMonth, useUndoRazorpayMonth,
   type BatchRow, type MonthRunResult, type MonthUndoResult,
 } from "@/lib/queries/razorpay-settlement";
 import { isRazorpaySettlementLine } from "@/lib/razorpay/settlement-match";
 
-/** Open Razorpay money-in lines per month (YYYY-MM → count), oldest first. */
+/** Lines per request — the server's RUN_CHUNK (settlement-batch.server.ts). */
+export const RUN_CHUNK = 15;
+
 type TxnLite = { matched_to_type: string | null; credit: number | null; description: string | null; txn_date: string };
 
+/** Open Razorpay money-in lines per month (YYYY-MM → count), oldest first. */
 export function razorpayMonths(txns: ReadonlyArray<TxnLite>): Array<{ month: string; count: number }> {
   const by = new Map<string, number>();
   for (const t of txns) {
@@ -39,6 +44,22 @@ export function razorpayMonths(txns: ReadonlyArray<TxnLite>): Array<{ month: str
 
 const monthLabel = (m: string) => new Date(`${m}-01T00:00:00Z`).toLocaleDateString("en-IN", { month: "short", year: "numeric", timeZone: "UTC" });
 
+/* The last run of this account, kept in this browser tab so "Undo this run" survives closing the sheet. */
+const runKey = (accountId: string) => `ros_rzp_month_run_v1:${accountId}`;
+interface SavedRun { runId: string; month: string; booked: number; amount: number }
+export function loadRun(accountId: string): SavedRun | null {
+  try {
+    const raw = window.sessionStorage.getItem(runKey(accountId));
+    return raw ? (JSON.parse(raw) as SavedRun) : null;
+  } catch { return null; }
+}
+function saveRun(accountId: string, run: SavedRun | null): void {
+  try {
+    if (run) window.sessionStorage.setItem(runKey(accountId), JSON.stringify(run));
+    else window.sessionStorage.removeItem(runKey(accountId));
+  } catch { /* storage blocked — Undo still works while the sheet stays open */ }
+}
+
 function StatusCell({ row }: { row: BatchRow }) {
   if (row.ready) return <span className="text-success font-medium">Ready</span>;
   return (
@@ -50,6 +71,8 @@ function StatusCell({ row }: { row: BatchRow }) {
   );
 }
 
+const plural = (n: number) => `${n} line${n === 1 ? "" : "s"}`;
+
 export function RazorpaySettlementBatch({ accountId, accountName, months, open, onOpenChange }: {
   accountId: string;
   accountName: string;
@@ -57,40 +80,63 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
   open: boolean;
   onOpenChange: (v: boolean) => void;
 }) {
+  const qc = useQueryClient();
   const [month, setMonth] = React.useState<string | null>(months[0]?.month ?? null);
   const batch = useRazorpayMonthBatch(accountId, open ? month : null);
   const run = useRunRazorpayMonth();
   const undo = useUndoRazorpayMonth();
-  const [lastRun, setLastRun] = React.useState<MonthRunResult | null>(null);
+  const [running, setRunning] = React.useState<{ done: number; of: number } | null>(null);
+  const [lastRun, setLastRun] = React.useState<(MonthRunResult & { dates: Record<string, string> }) | null>(null);
+  const [saved, setSaved] = React.useState<SavedRun | null>(() => loadRun(accountId));
   const [undone, setUndone] = React.useState<MonthUndoResult | null>(null);
 
   const lookup = batch.data;
   const rows = lookup?.state === "batch" ? lookup.batch.rows : [];
   const readyRows = rows.filter((r) => r.ready);
 
-  const doRun = () => {
-    if (!month || !readyRows.length) return;
+  const doRun = async () => {
+    if (!month || !readyRows.length || running) return;
     setUndone(null);
-    run.mutate({ accountId, month, txnIds: readyRows.map((r) => r.txnId) }, {
-      onSuccess: (r) => {
-        setLastRun(r);
-        if (r.booked.length) toast.success(`Reconciled ${r.booked.length} Razorpay settlement line${r.booked.length === 1 ? "" : "s"}`);
-        else toast.info("Nothing was booked — see the reasons below.");
-      },
-      onError: (e) => toastError(e, { fallback: "Could not reconcile the settlements — nothing more was saved." }),
-    });
+    const todo = readyRows.map((r) => r.txnId);
+    const dates = Object.fromEntries(rows.map((r) => [r.txnId, r.txnDate]));
+    const total: MonthRunResult = { runId: null, booked: [], refused: [] };
+    setRunning({ done: 0, of: todo.length });
+    try {
+      for (let i = 0; i < todo.length; i += RUN_CHUNK) {
+        const r = await run.mutateAsync({ accountId, month, txnIds: todo.slice(i, i + RUN_CHUNK), runId: total.runId });
+        total.runId = total.runId ?? r.runId;
+        total.booked.push(...r.booked);
+        total.refused.push(...r.refused);
+        if (total.runId && total.booked.length) {
+          const s = { runId: total.runId, month, booked: total.booked.length, amount: total.booked.reduce((a, b) => a + b.amount, 0) };
+          saveRun(accountId, s);
+          setSaved(s);
+        }
+        setRunning({ done: Math.min(i + RUN_CHUNK, todo.length), of: todo.length });
+      }
+      if (total.booked.length) toast.success(`Reconciled ${plural(total.booked.length)} of Razorpay settlements`);
+      else toast.info("Nothing was booked — see the reasons below.");
+    } catch (e) {
+      toastError(e, { fallback: total.booked.length ? `Stopped after ${plural(total.booked.length)} — "Undo this run" can still take them back.` : "Could not reconcile the settlements — nothing was booked." });
+    } finally {
+      setLastRun({ ...total, dates });
+      setRunning(null);
+      invalidateBank(qc);
+    }
   };
   const doUndo = () => {
-    if (!lastRun?.runId) return;
-    undo.mutate(lastRun.runId, {
+    if (!saved) return;
+    undo.mutate(saved.runId, {
       onSuccess: (u) => {
         setUndone(u);
-        if (!u.left.length) setLastRun(null);
-        toast.success(`Undone: ${u.undone} line${u.undone === 1 ? "" : "s"} un-reconciled${u.left.length ? `, ${u.left.length} left` : ""}`);
+        if (!u.left.length) { saveRun(accountId, null); setSaved(null); setLastRun(null); }
+        const msg = `Undone: ${plural(u.undone)} un-reconciled${u.left.length ? `, ${u.left.length} left (see why below)` : ""}`;
+        if (u.left.length) toast.warning(msg); else toast.success(msg);
       },
       onError: (e) => toastError(e, { fallback: "Could not undo the run." }),
     });
   };
+  const dateOf = (id: string) => { const d = lastRun?.dates[id]; return d ? `${formatDate(d)}: ` : ""; };
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -119,14 +165,14 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
             </span>
           )}
           <div className="ml-auto flex gap-2">
-            {lastRun?.runId && (
-              <Button variant="default" icon="refresh" loading={undo.isPending} onClick={doUndo}
-                title="Un-reconcile every line this run booked — the fee expenses go, the receipts wait for their bank line again">
+            {saved && (
+              <Button variant="default" icon="refresh" loading={undo.isPending} disabled={Boolean(running)} onClick={doUndo}
+                title={`Un-reconcile the ${plural(saved.booked)} the last run booked (${monthLabel(saved.month)}) — the fee expenses go, the receipts wait for their bank line again`}>
                 Undo this run
               </Button>
             )}
-            <Button variant="primary" icon="check" loading={run.isPending} disabled={!readyRows.length || batch.isFetching} onClick={doRun}>
-              {`Reconcile all ready (${readyRows.length})`}
+            <Button variant="primary" icon="check" loading={Boolean(running)} disabled={!readyRows.length || batch.isFetching} onClick={() => void doRun()}>
+              {running ? `Reconciling… ${running.done} of ${running.of}` : `Reconcile all ready (${readyRows.length})`}
             </Button>
           </div>
         </div>
@@ -140,12 +186,13 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
         )}
         {batch.error && <p className="mt-6 text-sm text-danger">{describeError(batch.error, "Could not read the month from Razorpay — try again.").message}</p>}
 
+        {saved && !lastRun && (
+          <p className="mt-4 text-sm text-ink-2" role="status">{`Last run: ${plural(saved.booked)} of ${monthLabel(saved.month)} (${rupee(saved.amount)}) — "Undo this run" takes them back.`}</p>
+        )}
         {lastRun && (
           <div className="mt-4 rounded-md border border-hairline px-3 py-2 text-sm" role="status">
-            <p>{`This run reconciled ${lastRun.booked.length} line${lastRun.booked.length === 1 ? "" : "s"}${lastRun.booked.length ? ` (${rupee(lastRun.booked.reduce((s, b) => s + b.amount, 0))}, fees ${rupee(lastRun.booked.reduce((s, b) => s + b.fee, 0))})` : ""}.`}</p>
-            {lastRun.refused.map((r) => (
-              <p key={r.txnId} className="text-warning-ink">{`${formatDate(rows.find((x) => x.txnId === r.txnId)?.txnDate ?? "")}: ${r.message}`}</p>
-            ))}
+            <p>{`This run reconciled ${plural(lastRun.booked.length)}${lastRun.booked.length ? ` (${rupee(lastRun.booked.reduce((s, b) => s + b.amount, 0))}, fees ${rupee(lastRun.booked.reduce((s, b) => s + b.fee, 0))})` : ""}.`}</p>
+            {lastRun.refused.map((r) => <p key={r.txnId} className="text-warning-ink">{`${dateOf(r.txnId)}${r.message}`}</p>)}
           </div>
         )}
         {undone && undone.left.length > 0 && (
@@ -199,16 +246,25 @@ export function RazorpaySettlementBatchButton({ accountId, accountName, transact
   transactions: ReadonlyArray<TxnLite>;
 }) {
   const [open, setOpen] = React.useState(false);
-  const months = React.useMemo(() => razorpayMonths(transactions), [transactions]);
-  const total = months.reduce((s, m) => s + m.count, 0);
-  if (!total) return null;
+  const live = React.useMemo(() => razorpayMonths(transactions), [transactions]);
+  /* Review: the month list is frozen while the sheet is open — booking the last open lines must not
+     unmount the sheet (its result and "Undo this run" would vanish) nor blank the month picker. */
+  const [frozen, setFrozen] = React.useState<typeof live | null>(null);
+  /* A run kept in this tab keeps the button, so its Undo can be reached after all lines are booked. */
+  const [hasSaved, setHasSaved] = React.useState(false);
+  React.useEffect(() => { setHasSaved(loadRun(accountId) !== null); }, [accountId, open]);
+  const total = live.reduce((s, m) => s + m.count, 0);
+  if (!total && !open && !hasSaved) return null;
   return (
     <>
-      <Button icon="layers" variant="default" onClick={() => setOpen(true)}
+      <Button icon="layers" variant="default" onClick={() => { setFrozen(live); setOpen(true); }}
         title="Pair this account's open Razorpay settlement lines with Razorpay's settlements for a month and reconcile every ready one at once">
         {`Razorpay settlements (${total})`}
       </Button>
-      {open && <RazorpaySettlementBatch accountId={accountId} accountName={accountName} months={months} open={open} onOpenChange={setOpen} />}
+      {open && (
+        <RazorpaySettlementBatch accountId={accountId} accountName={accountName} months={frozen ?? live} open={open}
+          onOpenChange={(v) => { setOpen(v); if (!v) setFrozen(null); }} />
+      )}
     </>
   );
 }

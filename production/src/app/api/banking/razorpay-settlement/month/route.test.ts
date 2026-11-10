@@ -90,7 +90,7 @@ describe("POST /api/banking/razorpay-settlement/month", () => {
   });
   it("run without keys → 409 with the message", async () => {
     state.runOut = { state: "no_keys", message: "Add your Razorpay API key in Settings → Integrations to fetch settlements from Razorpay." };
-    const res = await post({ action: "run", accountId: ACC, month: "2025-10" });
+    const res = await post({ action: "run", accountId: ACC, month: "2025-10", txnIds: [RUN] });
     expect(res.status).toBe(409);
     expect((await res.json()).error).toMatch(/Add your Razorpay API key/);
   });
@@ -104,7 +104,7 @@ describe("POST /api/banking/razorpay-settlement/month", () => {
   });
   it("billing cannot run or undo", async () => {
     state.role = "billing";
-    expect((await post({ action: "run", accountId: ACC, month: "2025-10" })).status).toBe(403);
+    expect((await post({ action: "run", accountId: ACC, month: "2025-10", txnIds: [RUN] })).status).toBe(403);
     expect((await post({ action: "undo", runId: RUN })).status).toBe(403);
     expect(state.runArgs).toEqual([]);
     expect(state.undoArgs).toEqual([]);
