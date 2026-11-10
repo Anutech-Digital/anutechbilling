@@ -138,10 +138,13 @@ const ALLOWED_READERS = new Set([
   "src/app/api/attendance/device/_server.ts", // logged only
 ]);
 
-/** src/ .ts/.tsx files, tests excluded. R-2649: walked once for both scans below (shared, no stat per
-    entry); the generated Prisma client is skipped (R-2564: not our code, 36 MB). */
+/** src/ .ts/.tsx files, tests excluded; the generated Prisma client is skipped (R-2564: not our code,
+    36 MB). R-2649: walked once for both scans below (they ran two full walks with a stat per entry);
+    nothing in this file writes under src/, so one list serves both. */
+let srcFiles: string[] | undefined;
 function walk(dir: string): string[] {
-  return listSourceFiles(dir, (name) => /\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name));
+  srcFiles ??= listSourceFiles(dir, (name) => /\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name));
+  return srcFiles;
 }
 
 describe("R-723 scan — no new raw-host links", () => {

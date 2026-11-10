@@ -31,9 +31,10 @@ const ALLOWED = new Set([
 ]);
 
 /** Every .ts/.tsx under `dir`; node_modules, .next and the generated Prisma client (R-2564: 36 MB, not
-    our code) skipped — listSourceFiles walks exactly as the old hand walk did, without a stat per entry. */
+    our code) skipped, as the old hand walk did — R-2649: via listSourceFiles, no stat per entry. */
 function walk(dir: string): string[] {
-  return listSourceFiles(dir, (name) => /\.(ts|tsx)$/.test(name));
+  return listSourceFiles(dir, (name) => /\.(ts|tsx)$/.test(name))
+    .filter((f) => !f.split(/[\\/]/).some((seg) => seg === "node_modules" || seg === ".next"));
 }
 
 describe("the seed tenant is never a fallback", () => {
