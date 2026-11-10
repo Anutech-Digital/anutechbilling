@@ -6,6 +6,8 @@
  * Pure: no React, no network. Amounts are whole rupees (CLAUDE.md §13).
  */
 import { toIstDate } from "@/lib/dates/ist";
+import { dateOrderIndex } from "./statement-check";
+import { AMOUNT_HEADERS, FLAG_HEADERS, flagSide, unknownFlagWarning } from "./statement-hdfc-card";
 
 export type ParsedRow = {
   txn_date:      string;       // ISO YYYY-MM-DD
@@ -105,8 +107,9 @@ export function detectDayOrder(cells: string[]): "dmy" | "mdy" {
   return !firstOver12 && secondOver12 ? "mdy" : "dmy";
 }
 
-/** Heuristic date parser — handles DD/MM/YYYY (or MM/DD for the whole file), DD-MM-YYYY, YYYY-MM-DD. */
-function parseDate(input: string, order: "dmy" | "mdy" = "dmy"): string | null {
+/** Heuristic date parser — handles DD/MM/YYYY (or MM/DD for the whole file), DD-MM-YYYY, YYYY-MM-DD.
+    `strict` (R-2665): numeric dates only — no Date() guess, which reads a summary cell "0" as 2000. */
+function parseDate(input: string, order: "dmy" | "mdy" = "dmy", strict = false): string | null {
   const s = input.trim();
   if (!s) return null;
   // YYYY-MM-DD already — never swapped (R-1890)
@@ -121,6 +124,7 @@ function parseDate(input: string, order: "dmy" | "mdy" = "dmy"): string | null {
     if (yy.length === 2) yy = (parseInt(yy, 10) > 50 ? "19" : "20") + yy;
     return `${yy}-${mm}-${dd}`;
   }
+  if (strict) return null;
   // Try Date.parse fallback
   const d = new Date(s);
   if (!isNaN(d.getTime())) return toIstDate(d);   // "28 Sep 2026" = local midnight; UTC slice din peeche le jata
@@ -136,6 +140,16 @@ export function parseAmount(input: string | undefined): number {
 }
 
 /** R-2528: the printed amount as a number (paise kept), sign kept; 0 when unreadable. */
+/**
+ * R-2665: a running-balance cell → its figure, or null when the cell holds no number (blank, "-").
+ * A printed 0 / 0.00 IS a balance — the account (or card) stands at zero. It was read as "no
+ * balance", and the day it ended on was then judged on its other lines: a false gap of the
+ * payment's amount (HDFC card paid in full, "missing ₹2,00,352").
+ */
+export function parseBalanceCell(input: string | undefined): number | null {
+  return /\d/.test(input ?? "") ? parseAmountExact(input) : null;
+}
+
 export function parseAmountExact(input: string | undefined): number {
   if (!input) return 0;
   let cleaned = input.replace(/[₹,\s]/g, "").replace(/[Cc][Rr]$/, "").replace(/[Dd][Rr]$/, "");
@@ -292,10 +306,15 @@ function asUnsettled<T extends ParsedRow>(r: T): T {
 export function settleReversals<T extends ParsedRow>(rows: readonly T[], opts: { final?: boolean } = {}): T[] {
   if (!rows.some((r) => r.reversal)) return [...rows];
   const final = opts.final ?? true;
-  const dir = chainDirection(rows);
+  /* R-2665: neighbours in DATE order (stable within a day) — HDFC card files print Domestic
+     lines, then International ones, so the line before in the file is not the line before in time. */
+  const order = dateOrderIndex(rows.map((r) => r.txn_date));
+  const dated = order.map((i) => rows[i]);
+  const posOf = new Map(order.map((i, pos) => [i, pos]));
+  const dir = chainDirection(dated);
   return rows.map((r, i) => {
     if (!r.reversal) return r;
-    const v = reversalVerdict(rows, i, dir);
+    const v = reversalVerdict(dated, posOf.get(i)!, dir);
     if (v === "flipped") return asReversal(r);
     if (v === "printed" && final) return asPrinted(r);
     return asUnsettled(r);
@@ -361,13 +380,22 @@ function normaliseHeader(s: string): string {
  * holds which field. Returns null when the basic Date/Debit/Credit columns
  * can't be detected.
  */
-function detectColumns(headerRow: string[]): Record<ColumnField, number> | null {
+type Columns = Record<ColumnField, number> & {
+  /** R-2665: flag layout — the one amount column and the Dr / Cr flag column (else -1). */
+  amount: number;
+  flag:   number;
+};
+
+function detectColumns(headerRow: string[]): Columns | null {
   const normalised = headerRow.map(normaliseHeader);
   const map: Partial<Record<ColumnField, number>> = {};
+  /* R-2665: "Debit / Credit" is a side FLAG, not the Debit amount column — kept out of the aliases. */
+  const flag = normalised.findIndex((h) => FLAG_HEADERS.includes(h));
 
   for (const [field, aliases] of Object.entries(HEADER_ALIASES) as Array<[ColumnField, string[]]>) {
     const normAliases = aliases.map(normaliseHeader);
     for (let i = 0; i < normalised.length; i++) {
+      if (i === flag) continue;
       // Match either exact or prefix (covers "withdrawal amt" ↔ "withdrawal amt rs")
       if (normAliases.some((a) => normalised[i] === a || normalised[i].startsWith(a + " "))) {
         map[field] = i;
@@ -376,8 +404,13 @@ function detectColumns(headerRow: string[]): Record<ColumnField, number> | null 
     }
   }
   if (map.txn_date == null || map.description == null) return null;
-  if (map.debit == null && map.credit == null) return null;
+  const amount = flag >= 0 && map.debit == null && map.credit == null
+    ? normalised.findIndex((h, i) => i !== flag && AMOUNT_HEADERS.includes(h))
+    : -1;
+  if (map.debit == null && map.credit == null && amount < 0) return null;
   return {
+    amount,
+    flag: amount >= 0 ? flag : -1,
     txn_date:      map.txn_date,
     description:   map.description,
     debit:         map.debit ?? -1,
@@ -418,18 +451,51 @@ export function parseStatementRows(raw: string[][]): ParseResult {
   let skipped = 0;
   let reversals = 0;
   const dateCol = mapping.txn_date;
+  const flagged = mapping.flag >= 0;
   const order = detectDayOrder(raw.slice(headerIdx + 1).map((r) => r[dateCol] ?? ""));
-  const amountsOf = (col: number) => (col >= 0 ? raw.slice(headerIdx + 1).map((r) => parseAmount(r[col])) : []);
-  const signed = { debit: columnIsSigned(amountsOf(mapping.debit)), credit: columnIsSigned(amountsOf(mapping.credit)) };
+  /* R-2528: each cell read once — rupees for the line, paise kept beside them. R-2665: a flag
+     layout puts its one amount on the side the Debit / Credit flag names (null = unknown flag). */
+  const cellsOf = (r: string[]): { dRaw: number; cRaw: number } | null => {
+    if (!flagged) {
+      return {
+        dRaw: mapping.debit  >= 0 ? parseAmountExact(r[mapping.debit])  : 0,
+        cRaw: mapping.credit >= 0 ? parseAmountExact(r[mapping.credit]) : 0,
+      };
+    }
+    const side = flagSide(r[mapping.flag]);
+    if (!side) return null;
+    const a = parseAmountExact(r[mapping.amount]);
+    return side === "debit" ? { dRaw: a, cRaw: 0 } : { dRaw: 0, cRaw: a };
+  };
+  const body = raw.slice(headerIdx + 1).map(cellsOf);
+  const amountsOf = (k: "dRaw" | "cRaw") => body.flatMap((c) => (c ? [signedRound(c[k])] : []));
+  const signed = { debit: columnIsSigned(amountsOf("dRaw")), credit: columnIsSigned(amountsOf("cRaw")) };
+  const unknownFlags: string[] = [];
+  let unknownFlagLines = 0;
   for (let i = headerIdx + 1; i < raw.length; i++) {
     const r = raw[i];
-    const date = parseDate(r[mapping.txn_date] ?? "", order);
-    if (!date) { skipped++; continue; }
+    /* R-2665: a flag layout's date cell is "03/04/2025 / 16:50" — numeric dates only, so the
+       reward-points / GST summary under the table (a "0" cell) is never read as a date. Such a row
+       counts as skipped only when its amount cell holds a figure (it looked like a line). */
+    const date = parseDate(r[mapping.txn_date] ?? "", order, flagged);
+    if (!date) {
+      if (!flagged || parseAmount(r[mapping.amount]) !== 0) skipped++;
+      continue;
+    }
+    const cells = body[i - headerIdx - 1];
+    if (!cells) {
+      /* The flag names neither side: skipped and said, never guessed. */
+      skipped++;
+      if (parseAmount(r[mapping.amount]) !== 0) {
+        unknownFlagLines++;
+        const f = (r[mapping.flag] ?? "").trim();
+        if (!unknownFlags.includes(f)) unknownFlags.push(f);
+      }
+      continue;
+    }
+    const { dRaw, cRaw } = cells;
     // R-2495: a negative amount is a reversal — it moves to the other side. It was clamped to
     // 0 and skipped, which dropped a ₹20,000 ATM reversal and broke the balance check.
-    /* R-2528: each cell read once — rupees for the line, paise kept beside them. */
-    const dRaw = mapping.debit  >= 0 ? parseAmountExact(r[mapping.debit])  : 0;
-    const cRaw = mapping.credit >= 0 ? parseAmountExact(r[mapping.credit]) : 0;
     const { debit, credit, reversal } = signedAmounts(signedRound(dRaw), signedRound(cRaw), signed);
     if (debit === 0 && credit === 0) { skipped++; continue; }
     // A bank line is debit XOR credit. If a row genuinely has both populated
@@ -440,8 +506,9 @@ export function parseStatementRows(raw: string[][]): ParseResult {
     /* R-2522: kept only when it differs from the txn date — the usual same-day value date says nothing. */
     const valueDate = mapping.value_date >= 0 ? parseDate(r[mapping.value_date] ?? "", order) : null;
     if (reversal) reversals++;
-    const bRaw = mapping.balance_after >= 0 ? parseAmountExact(r[mapping.balance_after]) : null;
-    const balanceAfter = bRaw === null ? null : signedRound(bRaw) || null;
+    /* R-2665: a printed ₹0 is a balance; only a cell with no figure is "no balance". */
+    const bRaw = mapping.balance_after >= 0 ? parseBalanceCell(r[mapping.balance_after]) : null;
+    const balanceAfter = bRaw === null ? null : signedRound(bRaw);
     out.push({
       txn_date:      date,
       description:   reversal ? description + REVERSAL_MARK : description,
@@ -457,6 +524,7 @@ export function parseStatementRows(raw: string[][]): ParseResult {
   const warnings = order === "mdy"
     ? ["Dates in this file are written month first (MM/DD/YYYY) — read that way for every line. Check a few dates in the preview."]
     : [];
+  if (unknownFlagLines > 0) warnings.push(unknownFlagWarning(unknownFlagLines, unknownFlags));
   /* R-2508: a reversal stays one only when the running balance agrees; otherwise "check sign". */
   const rows = reversals > 0 ? settleReversals(out) : out;
   const settled = countReversals(rows);
