@@ -41,6 +41,8 @@ import {
 import { bookOnServer, isCleanPair, previewCounts, screenRows, type RefusedRow, type ScreenRow } from "@/lib/integrations/zoho-books/bulk-book-run";
 import { planAllWithZohoSales } from "@/lib/integrations/zoho-books/bulk-zoho-sales";
 import { expectedPageCost, paceWaitMs, ZOHO_BUSY_WAIT_MS, type PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
+import { busyStreak, zohoBusyText, type ZohoLimitHit } from "@/lib/integrations/zoho-books/zoho-limit";
+import { ZohoLimitNotice } from "@/components/features/integrations/zoho-limit-notice";
 import { newCustomerPayload, type BookedRow, type BookRun } from "./zoho-bulk-book";
 import { ZohoBulkTable } from "./zoho-bulk-table";
 import { ZohoBulkRunBar, ZohoRefusedList, type BookMode } from "./zoho-bulk-run-bar";
@@ -118,6 +120,10 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const [undoNote, setUndoNote] = React.useState<string | null>(null);
   const stopRef = React.useRef(false);
   const history = React.useRef<PaceEntry[]>([]);
+  /* R-2652: busy answers in a row; at 3 the read stops with "Zoho's daily limit is reached". */
+  const busyRef = React.useRef(busyStreak());
+  const [busyStreakCount, setBusyStreak] = React.useState(0);
+  const [limit, setLimit] = React.useState<ZohoLimitHit | null>(null);
 
   /* Pick up a run this tab already started for this account. */
   React.useEffect(() => {
@@ -166,7 +172,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   /* ── 1. Look every line up in Zoho, paced ─────────────────────────────────────────── */
   const read = async (fresh: boolean) => {
     stopRef.current = false;
-    setFailure(null);
+    setFailure(null); setLimit(null); setBusyStreak(0); busyRef.current.reset();
     setPhase("reading");
     let list = fresh ? null : ids;
     let at = fresh ? 0 : cursor;
@@ -205,6 +211,11 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       at += advance;
       setMatches(found); setCursor(at);
       saveProgress(accountId, { ids: list, cursor: at, matches: found, booked: [...booked.keys()] });
+      /* R-2652: Zoho busy with NOTHING read, 3 times in a row → its daily limit; stop and say so
+         (what was read is kept above; Try again carries on from this line). */
+      const hit = busyRef.current.note(Boolean(r.stopped) && advance === 0, Date.now());
+      setBusyStreak(busyRef.current.count);
+      if (hit) { busyRef.current.reset(); setBusyStreak(0); setLimit(hit); setPhase("paused"); return; }
       if (r.stopped) {
         history.current.push({ at: Date.now(), calls: 1000 });
         setPhase("waiting"); setWaitSec(Math.ceil(ZOHO_BUSY_WAIT_MS / 1000));
@@ -353,11 +364,11 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
               <div className="flex items-center justify-between gap-3 text-xs text-ink-2">
                 <span>
                   Checked {cursor} of {total} lines · {plan.length} found in Zoho · {notInZoho} not in Zoho (left out)
-                  {phase === "waiting" && ` · waiting ${waitSec}s to stay under Zoho's limit`}
+                  {phase === "waiting" && (busyStreakCount > 0 ? ` · ${zohoBusyText(busyStreakCount)}` : ` · waiting ${waitSec}s to stay under Zoho's limit`)}
                 </span>
                 <span className="flex gap-2">
                   {reading && <Button size="sm" variant="default" onClick={() => { stopRef.current = true; }}>Pause</Button>}
-                  {!reading && phase !== "booking" && cursor < total && <Button size="sm" variant="default" onClick={() => void read(false)}>Continue ({total - cursor} left)</Button>}
+                  {!reading && !limit && phase !== "booking" && cursor < total && <Button size="sm" variant="default" onClick={() => void read(false)}>Continue ({total - cursor} left)</Button>}
                   {!reading && phase !== "booking" && <Button size="sm" variant="default" onClick={() => void read(true)}>Start again</Button>}
                 </span>
               </div>
@@ -366,6 +377,8 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
               </div>
             </div>
           )}
+
+          {limit && <ZohoLimitNotice hit={limit} disabled={reading || phase === "booking"} onTryAgain={() => void read(false)} />}
 
           {failure && (
             <div role="alert" className="rounded-md border border-rose/30 bg-rose-soft/40 px-3 py-2 text-xs">
