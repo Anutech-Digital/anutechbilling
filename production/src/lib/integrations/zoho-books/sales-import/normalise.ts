@@ -163,9 +163,11 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
   const taxInr = useBcy ? Math.round(bcyTax * 100) : inr(taxPaise);
   const bcyAdj = bcy("adjustment");
   const bcyRound = bcy("roundoff_value");
-  const adjustmentInr = useBcy && (bcyAdj !== null || bcyRound !== null)
-    ? Math.round((bcyAdj ?? 0) * 100) + Math.round((bcyRound ?? 0) * 100)
-    : inr(adjustmentPaise);
+  /* Each part on its own: Zoho's ₹ figure when it sent one, else the rate × the document figure
+     (Zoho often sends bcy_adjustment but no bcy_roundoff_value — the round-off must not vanish). */
+  const adjustmentInr =
+    (useBcy && bcyAdj !== null ? Math.round(bcyAdj * 100) : inr(paiseOf(raw.adjustment)))
+    + (useBcy && bcyRound !== null ? Math.round(bcyRound * 100) : inr(paiseOf(raw.roundoff_value)));
 
   const amount = paiseToRupees(totalInr);
   const tax = paiseToRupees(taxInr);
@@ -176,12 +178,13 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
   if (Math.abs(adjustmentPaise) > 100) {
     problems.push(`Zoho has an adjustment of ${currency === "INR" ? "₹" : `${currency} `}${(adjustmentPaise / 100).toFixed(2)} on it — book it by hand or ask the CA.`);
   } else if (Math.abs(roundOff) > roundOffLimit(currency, fx)) {
-    problems.push(`Zoho's round-off of ₹${roundOff} is more than one ${currency === "INR" ? "rupee" : currency} — book it by hand or ask the CA.`);
+    problems.push(`Zoho's ₹ figures leave ₹${Math.abs(roundOff)} between the total ₹${amount} and taxable ₹${taxable} + GST ₹${tax} — more than its round-off allows (₹${roundOffLimit(currency, fx)}). Book it by hand or ask the CA.`);
   } else if (roundOff !== 0) {
     notes.push(`Round-off: total ₹${amount} = taxable ₹${taxable} + GST ₹${tax} ${roundOff > 0 ? "+" : "−"} ₹${Math.abs(roundOff)}.`);
   }
   /* R-2650: genuinely broken data stays refused — Zoho's own GST heads must make its GST total. */
-  if (d.taxes.length) {
+  /* Not on a reverse-charge sale: its tax rows are the buyer's, not in Zoho's tax_total. */
+  if (d.taxes.length && !d.reverseCharge) {
     const named = d.taxes.reduce((a, t) => a + t.amountPaise, 0);
     if (Math.abs(named - taxPaise) > 100) {
       problems.push(`Its GST heads (${(named / 100).toFixed(2)}) do not add up to its GST (${(taxPaise / 100).toFixed(2)}) in Zoho.`);
