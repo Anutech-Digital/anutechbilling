@@ -9,7 +9,7 @@
  */
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueries } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/client";
@@ -40,6 +40,15 @@ export function invoiceDateWhy(a: { date: string; receiptDay: string | null; tod
   return "first_open";
 }
 
+/** invoice_date_for_receipt — the one SQL function generate_invoice dates with. */
+async function fetchInvoiceDate(tenantId: string | null | undefined, receiptDay: string | null): Promise<string | null> {
+  const { data, error } = await (createClient() as unknown as SupabaseClient).rpc("invoice_date_for_receipt", {
+    p_tenant_id: tenantId, p_date: receiptDay,
+  });
+  if (error) throw new Error(error.message);
+  return typeof data === "string" ? data.slice(0, 10) : null;
+}
+
 /**
  * The invoice date generate_invoice will use, from invoice_date_for_receipt. While loading, or if the
  * call fails, `date` is null — the confirm then says nothing about the date rather than guess.
@@ -50,15 +59,36 @@ export function useInvoiceIssueDate(args: { tenantId: string | null | undefined;
     queryKey: ["invoice_date_for_receipt", args.tenantId ?? null, args.receiptDay],
     enabled: args.enabled && Boolean(args.tenantId),
     staleTime: 60_000,
-    queryFn: async (): Promise<string | null> => {
-      const { data, error } = await (createClient() as unknown as SupabaseClient).rpc("invoice_date_for_receipt", {
-        p_tenant_id: args.tenantId, p_date: args.receiptDay,
-      });
-      if (error) throw new Error(error.message);
-      return typeof data === "string" ? data.slice(0, 10) : null;
-    },
+    queryFn: () => fetchInvoiceDate(args.tenantId, args.receiptDay),
   });
   const date = q.data ?? null;
   /* R-2647: `loading` — the /invoices confirm holds Issue until the server's date is in (or failed). */
   return { date, why: date ? invoiceDateWhy({ date, receiptDay: args.receiptDay, today }) : undefined, loading: q.isLoading };
+}
+
+/**
+ * R-2651 — the same server date for SEVERAL receipt days at once (the bulk "Generate N" confirm):
+ * one invoice_date_for_receipt call per distinct day, same query key as useInvoiceIssueDate (shared
+ * cache). `dateFor(day)` is undefined while that day loads or if its call failed — the confirm then
+ * says nothing about that date rather than guess. `loading` holds Issue until every day is in.
+ */
+export function useInvoiceIssueDates(args: { tenantId: string | null | undefined; receiptDays: readonly (string | null)[]; enabled: boolean }) {
+  const today = istToday();
+  const days = [...new Set(args.receiptDays)];
+  const results = useQueries({
+    queries: days.map((day) => ({
+      queryKey: ["invoice_date_for_receipt", args.tenantId ?? null, day],
+      enabled: args.enabled && Boolean(args.tenantId),
+      staleTime: 60_000,
+      queryFn: () => fetchInvoiceDate(args.tenantId, day),
+    })),
+  });
+  const byDay = new Map<string | null, string | null>();
+  days.forEach((day, i) => { if (results[i]?.data !== undefined) byDay.set(day, results[i].data ?? null); });
+  const dateFor = (day: string | null): { date: string | null; why?: InvoiceDateWhy } | undefined => {
+    const date = byDay.get(day);
+    if (date === undefined) return undefined;
+    return { date, why: date ? invoiceDateWhy({ date, receiptDay: day, today }) : undefined };
+  };
+  return { dateFor, loading: results.some((r) => r.isLoading) };
 }
