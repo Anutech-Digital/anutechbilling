@@ -16,6 +16,7 @@ import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { exportLutFix, lutMissingWarning } from "@/lib/gst/export-lut";
 import { invoiceIssueFix } from "@/lib/onboarding/setup-links";
 import { customerBeforeInvoice } from "@/lib/quotes/quote-page-actions";
+import { latestReceiptIstDay } from "@/lib/invoices/issue-date";
 import { pendingPartAction, partGenerateResult, type PartGenerateAnswer, type PartGenerateResult, type SplitSaleStatus } from "@/lib/invoices/split-sale-pending";
 
 /**
@@ -123,9 +124,18 @@ export function useQuotesAwaitingInvoice() {
       if (pErr) throw pErr;
 
       const firstAdvanceByQuote = new Map<string, string>();
+      /* R-2647: every received payment per quote, for the latest receipt's IST day — the day
+         generate_invoice dates the invoice on (R-2095); the confirm asks invoice_date_for_receipt
+         with it, same as the quote page (R-2635). */
+      const receivedByQuote = new Map<string, { status: string; received_at: string }[]>();
       for (const p of payments ?? []) {
         if (p.quote_id && !firstAdvanceByQuote.has(p.quote_id)) {
           firstAdvanceByQuote.set(p.quote_id, p.received_at);
+        }
+        if (p.quote_id) {
+          const list = receivedByQuote.get(p.quote_id) ?? [];
+          list.push({ status: "received", received_at: p.received_at });
+          receivedByQuote.set(p.quote_id, list);
         }
       }
 
@@ -144,17 +154,23 @@ export function useQuotesAwaitingInvoice() {
          and this way the feature does not rest on a types file being fresh. */
       const customerIds = [...new Set(quotes.map((q) => q.customer_id).filter(Boolean))] as string[];
       const gstinByCustomer = new Map<string, string | null>();
+      /* R-2647: country + GST treatment for the confirm's export / LUT / IGST line (as on the quote
+         page, R-2635/R-2636). Not read → undefined → the confirm says nothing about export. */
+      const placeByCustomer = new Map<string, { country: string | null; treatment: string | null }>();
       if (customerIds.length > 0) {
         const { data: custs, error: cErr } = await supabase
           .from("customers")
-          .select("id, gstin")
+          .select("id, gstin, country, gst_treatment")
           .in("id", customerIds);
         /* Not thrown. A missing GSTIN lookup must not take down the invoicing screen —
            the reminder is worth having, and it is worth less than the page. `undefined`
            below then means "not asked", and the dialog stays silent instead of warning
            about a GSTIN nobody looked for. */
         if (cErr) console.error("[useQuotesAwaitingInvoice] gstin lookup failed:", cErr.message);
-        for (const c of custs ?? []) gstinByCustomer.set(c.id, c.gstin ?? null);
+        for (const c of custs ?? []) {
+          gstinByCustomer.set(c.id, c.gstin ?? null);
+          placeByCustomer.set(c.id, { country: c.country ?? null, treatment: c.gst_treatment ?? null });
+        }
       }
 
       /* R-2057: a sale billed in parts (annual commitment, paid quarterly / monthly) is tax-invoiced
@@ -179,6 +195,9 @@ export function useQuotesAwaitingInvoice() {
           ...q,
           first_advance_at: firstAdvanceByQuote.get(q.id) ?? q.payment_received_at ?? null,
           customer_gstin: q.customer_id ? gstinByCustomer.get(q.customer_id) ?? null : null,
+          customer_country: q.customer_id ? placeByCustomer.get(q.customer_id)?.country : undefined,
+          customer_treatment: q.customer_id ? placeByCustomer.get(q.customer_id)?.treatment : undefined,
+          latest_receipt_day: latestReceiptIstDay(receivedByQuote.get(q.id)),
           part_action: pendingPartAction(statusByQuote.get(q.id), q),
         }))
         .filter((q) => q.part_action.kind !== "hide")

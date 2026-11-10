@@ -58,6 +58,9 @@ import {
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
 import { issueConsequences, bulkIssueConsequences } from "@/lib/invoices/issue-consequences";
+import { pendingQuoteToIssuable, type PendingQuoteForIssue } from "@/lib/invoices/pending-issuable";
+import { useInvoiceIssueDate } from "@/lib/invoices/issue-date";
+import { useTenantLuts } from "@/lib/queries/tenant-luts";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { issueEinvoiceNotice, irnAgeingInvoices, irnAgeingNotice, isB2B } from "@/lib/compliance/einvoice";
@@ -242,34 +245,31 @@ function InvoicesPageInner() {
   const { data: series } = useDocumentSeries();
   const invoiceSeries = series?.invoice ?? null;
 
-  /** A pending quote in the shape `issueConsequences` needs. */
-  const toIssuable = React.useCallback(
-    (q: {
-      id: string; customer_name?: string | null; amount?: number | null;
-      payment_terms_days?: number | null;
-      /* Decorated by useQuotesAwaitingInvoice. Absent (undefined) means "not asked", and
-         issue-consequences then says nothing rather than warning about a GSTIN nobody
-         looked for. */
-      customer_gstin?: string | null;
-      part_action?: PendingPartAction;
-    }) => ({
-      id: q.id,
-      customerName: q.customer_name ?? null,
-      /* R-2057: a part's invoice is for the part, not the year. */
-      amount: q.part_action?.kind === "part" ? q.part_action.amount ?? q.amount ?? null : q.amount ?? null,
-      paymentTermsDays: q.payment_terms_days ?? null,
-      customerGstin: q.customer_gstin ?? null,
-    }),
-    [],
-  );
+  /** A pending quote in the shape `issueConsequences` needs (R-2647: one mapper, pending-issuable.ts). */
+  const toIssuable = React.useCallback((q: PendingQuoteForIssue) => pendingQuoteToIssuable(q), []);
 
   const singleQuote = React.useMemo(
     () => (confirmSingle ? pending?.find((q) => q.id === confirmSingle) ?? null : null),
     [confirmSingle, pending],
   );
+  /* R-2647: the same facts the quote page's confirm gets (R-2635/R-2636) — the date generate_invoice
+     will really use (latest receipt day, first open day) and the LUT of that date's FY — so a customer
+     abroad reads "export … 0% under LUT" / "WITH payment of IGST", never "B2C". */
+  const singleIssueDate = useInvoiceIssueDate({
+    tenantId: me?.tenantId, receiptDay: singleQuote?.latest_receipt_day ?? null, enabled: confirmSingle !== null,
+  });
+  const { data: tenantLuts } = useTenantLuts(confirmSingle !== null);
   const singleConsequences = React.useMemo(
-    () => (singleQuote ? issueConsequences({ quote: toIssuable(singleQuote), series: invoiceSeries }) : null),
-    [singleQuote, invoiceSeries, toIssuable],
+    () => (singleQuote ? issueConsequences({
+      quote: pendingQuoteToIssuable(singleQuote, {
+        /* Only the server's date — while it loads or if it fails, no date line and no LUT judgement. */
+        invoiceDate: singleIssueDate.date ?? undefined,
+        invoiceDateWhy: singleIssueDate.why,
+        luts: tenantLuts,
+      }),
+      series: invoiceSeries,
+    }) : null),
+    [singleQuote, invoiceSeries, singleIssueDate.date, singleIssueDate.why, tenantLuts],
   );
   const bulkConsequences = React.useMemo(() => {
     if (!confirmBulk || !pending) return null;
