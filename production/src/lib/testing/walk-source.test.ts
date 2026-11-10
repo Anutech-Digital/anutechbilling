@@ -1,10 +1,10 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { listSourceFiles, resetSourceWalkForTest } from "./walk-source";
 import { warmSourceCache } from "./warm-source-cache";
-import { BUCKETS, bucketFile, resetSourceCacheForTest } from "./source-cache";
+import { BUCKETS, bucketFile, readSource, resetSourceCacheForTest } from "./source-cache";
 import { PRISMA_GENERATED, isPrismaGenerated } from "./prisma-generated";
 
 /* R-2649: the shared walk must list EXACTLY what the old hand walkers listed (statSync per entry),
@@ -52,7 +52,7 @@ describe("listSourceFiles (R-2649 shared src walk)", () => {
 });
 
 describe("warmSourceCache (R-2649 guard-run globalSetup)", () => {
-  it("reads src/*.ts(x) and supabase/*.sql into the cache, nothing else", () => {
+  it("reads src/*.ts(x) and supabase/*.sql into the cache, nothing else", async () => {
     const root = path.join(tmp, "prod");
     fs.mkdirSync(path.join(root, "src", "x"), { recursive: true });
     fs.mkdirSync(path.join(root, "supabase", "migrations"), { recursive: true });
@@ -60,10 +60,16 @@ describe("warmSourceCache (R-2649 guard-run globalSetup)", () => {
     fs.writeFileSync(path.join(root, "src", "x", "b.tsx"), "b");
     fs.writeFileSync(path.join(root, "src", "notes.md"), "skip");
     fs.writeFileSync(path.join(root, "supabase", "migrations", "1.sql"), "select 1;");
+    const old = new Date(Date.now() - 3600_000); // R-2582: not racy — checked out an hour ago
+    for (const f of ["src/a.ts", "src/x/b.tsx", "supabase/migrations/1.sql"]) fs.utimesSync(path.join(root, f), old, old);
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 10_000);
     const cache = path.join(tmp, "cache.bin");
     resetSourceCacheForTest(cache);
     resetSourceWalkForTest();
-    expect(warmSourceCache(root)).toBe(3);
+    expect(await warmSourceCache(root)).toBe(3);
+    resetSourceCacheForTest(); // a new process (a fork) loads what the warm-up wrote
+    expect(await warmSourceCache(root)).toBe(0); // warm already: stats only, nothing read
+    clock.mockRestore();
     const written = BUCKETS.map((b) => bucketFile(b, cache)).filter((f) => fs.existsSync(f));
     expect(written.length).toBeGreaterThan(0);
     const all = written.map((f) => fs.readFileSync(f, "utf8")).join("\n");
@@ -71,9 +77,22 @@ describe("warmSourceCache (R-2649 guard-run globalSetup)", () => {
     expect(all).not.toContain("skip");
   });
 
-  it("a missing folder only costs speed, never throws", () => {
+  it("never makes a scan read old text: an edit after the warm-up (same size) is seen", async () => {
+    const root = path.join(tmp, "prod2");
+    fs.mkdirSync(path.join(root, "src"), { recursive: true });
+    const f = path.join(root, "src", "a.ts");
+    fs.writeFileSync(f, "const x = 'safe';");
+    resetSourceCacheForTest(path.join(tmp, "cache3.bin"));
+    resetSourceWalkForTest();
+    expect(await warmSourceCache(root)).toBe(1);
+    fs.writeFileSync(f, "const x = 'BAD!';"); // same length, same tick possible (racy rule)
+    resetSourceCacheForTest();
+    expect(readSource(f)).toBe("const x = 'BAD!';");
+  });
+
+  it("a missing folder only costs speed, never throws", async () => {
     resetSourceCacheForTest(path.join(tmp, "cache2.bin"));
     resetSourceWalkForTest();
-    expect(warmSourceCache(path.join(tmp, "nope"))).toBe(0);
+    expect(await warmSourceCache(path.join(tmp, "nope"))).toBe(0);
   });
 });
