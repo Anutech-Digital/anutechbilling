@@ -83,7 +83,7 @@ import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyStatus, billOfSupplyBuilderLine, quoteEffectiveTaxRate } from "@/lib/quotes/bill-of-supply";
 import { isInterStateSupply, isExportSupply, placeOfSupplyLabel, supplyHead, treatmentIsAlwaysInterState } from "@/lib/gst/place-of-supply";
 import { useExportQuoteDefault } from "@/lib/gst/use-export-quote-default";
-import { exportQuoteLutWarning, EXPORT_QUOTE_LUT_HREF } from "@/lib/gst/export-quote-rate";
+import { ExportLutNotice } from "@/components/features/quotes/export-lut-notice";
 import { hsnSummary } from "@/lib/gst/hsn";
 import { Kbd } from "@/components/ui/kbd";
 import { shortcutText } from "@/lib/keyboard/shortcuts";
@@ -1009,7 +1009,6 @@ function QuoteBuilderBody() {
     treatment: buyerTreatment,
     date:      istToday(),
   });
-  const exportLutWarning  = exportLut.ready ? exportQuoteLutWarning(exportLut.def, effectiveTaxRate) : null;
   const tax               = Math.round(taxable * (effectiveTaxRate / 100));
   const total             = taxable + tax;
   // Foreign-currency billing (books stay ₹). The whole builder renders in `currency`
@@ -3130,12 +3129,7 @@ function QuoteBuilderBody() {
                 )}
               </div>
 
-              {exportLutWarning && (
-                <div role="status" data-testid="export-lut-warning" className="rounded-md border border-amber/40 bg-amber-soft/40 p-2.5 my-1 text-2xs text-amber-ink">
-                  {exportLutWarning}{" "}
-                  <a href={EXPORT_QUOTE_LUT_HREF} className="font-semibold underline underline-offset-2">Add LUT</a>
-                </div>
-              )}
+              {exportLut.def.kind === "no_lut" && <ExportLutNotice def={exportLut.def} rate={effectiveTaxRate} ready={exportLut.ready} className="my-1" />}
 
               {/* Foreign billing SUMMARY (read-only) — the currency + rate are set once
                   up top (Settings), so here we just confirm what the customer is billed. */}

@@ -30,7 +30,9 @@ import { isInterStateSupply } from "@/lib/gst/place-of-supply";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { istToday } from "@/lib/dates/ist";
 import { useExportQuoteDefault } from "@/lib/gst/use-export-quote-default";
-import { exportQuoteLutWarning, EXPORT_QUOTE_LUT_HREF } from "@/lib/gst/export-quote-rate";
+import { ExportLutNotice } from "@/components/features/quotes/export-lut-notice";
+import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 
 interface Props {
   open: boolean;
@@ -141,11 +143,13 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
      starts at 0% GST when the company holds an LUT for today's FY — export without payment. With no
      LUT it stays 18% (export WITH payment of IGST; the invoice is issued IGST, R-2636) and the form
      says so with the next step. Either way the head is IGST. Never touches an existing project. */
+  const billOfSupply = Boolean(billOfSupplyStatus(useGstRegistration().data?.saved ?? null));
   const exportBuyer = useExportQuoteDefault({
     enabled:   open && !isEdit,
     country:   isNewCustomer ? (stateCode === EXPORT_STATE ? "Outside India" : null) : selectedCustomer?.country,
     treatment: isNewCustomer ? null : selectedCustomer?.gst_treatment,
     date:      todayISO,
+    billOfSupply,
   });
   const exportKind = exportBuyer.def.kind;
   React.useEffect(() => {
@@ -166,7 +170,6 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
   const rateNum    = Math.max(0, Math.round(Number(gstRate) || 0));
   const gstNum     = Math.round(taxableNum * rateNum / 100);
   const totalNum   = taxableNum + gstNum;
-  const lutWarning = !isEdit && exportBuyer.ready ? exportQuoteLutWarning(exportBuyer.def, rateNum) : null;
   const milestonesTotal = rows.reduce((s, r) => s + Math.max(0, Math.round(Number(r.amount) || 0)), 0);
 
   // A milestone is LOCKED once it's invoiced or paid — a GST document / receipt
@@ -406,17 +409,7 @@ export function CreateProjectQuoteDialog({ open, onOpenChange, editProject, pref
             </label>
           </div>
 
-          {exportBuyer.def.kind === "zero_rated" && rateNum === 0 && !isEdit && (
-            <p className="text-2xs text-ink-3" data-testid="export-lut-note">
-              {exportBuyer.def.supply === "export" ? "Export" : "SEZ supply"} → 0% GST under LUT {exportBuyer.def.lut.arn} (FY {exportBuyer.def.fy}) — no GST added.
-            </p>
-          )}
-          {lutWarning && (
-            <div role="status" data-testid="export-lut-warning" className="rounded-md border border-amber/40 bg-amber-soft/40 p-2.5 text-xs text-amber-ink">
-              {lutWarning}{" "}
-              <a href={EXPORT_QUOTE_LUT_HREF} className="font-semibold underline underline-offset-2">Add LUT</a>
-            </div>
-          )}
+          {!isEdit && <ExportLutNotice def={exportBuyer.def} rate={rateNum} ready={exportBuyer.ready} />}
 
           {/* Totals */}
           <div className="rounded-md border border-hairline bg-paper-2/40 p-3 text-sm space-y-1">

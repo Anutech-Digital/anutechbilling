@@ -29,6 +29,11 @@ import { cn, rupee, formatDate } from "@/lib/utils";
 import type { Subscription } from "@/lib/supabase/database.types";
 import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
 import { billOfSupplyBuilderLine, billOfSupplyStatus, quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
+import { useCustomers } from "@/lib/queries/customers";
+import { istToday } from "@/lib/dates/ist";
+import { useExportQuoteDefault } from "@/lib/gst/use-export-quote-default";
+import { exportQuoteStartRate } from "@/lib/gst/export-quote-rate";
+import { ExportLutNotice } from "@/components/features/quotes/export-lut-notice";
 import {
   EXTENSION_MONTH_PRESETS, MAX_EXTENSION_MONTHS,
   extensionBlockedReason, extensionCharge, extensionLabel, extensionLengthError, extensionMonths, extensionRenewalDate,
@@ -59,6 +64,15 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
   /* R-1532: a Bill of Supply business's extension quote carries no GST — same rule as the quote. */
   const gstSaved = useGstRegistration().data?.saved ?? null;
   const bosStatus = billOfSupplyStatus(gstSaved);
+  /* R-2648 (G16): the same rate the server's createExtensionQuote saves — a customer abroad / SEZ
+     without payment with an LUT for today's FY → 0%; no LUT → 18% as before, said with the next step. */
+  const { data: customers } = useCustomers({ enabled: open && Boolean(sub.customer_id) });
+  const customer = customers?.find((c) => c.id === sub.customer_id);
+  const exportLut = useExportQuoteDefault({
+    enabled: open && Boolean(customer) && !bosStatus,
+    country: customer?.country, treatment: customer?.gst_treatment, date: istToday(),
+  });
+  const taxRatePct = exportQuoteStartRate(exportLut.def, quoteStartTaxRate(gstSaved));
 
   /* R-807: a subscription billed in parts (monthly / quarterly / half-yearly) cannot be
      extended at all — the extension quote and the billing cron would both bill the same
@@ -75,7 +89,7 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
     seats: sub.seats ?? 0,
     mrr:   sub.mrr ?? 0,
     len:   lenError ? { unit: "years", count: 0 } : len,
-    taxRatePct: quoteStartTaxRate(gstSaved),
+    taxRatePct,
     termAmount: sub.term_amount ?? null, termMonths: sub.term_months ?? null,  // R-2369
   });
   /* R-2369: the exact sold yearly amount when the row has it (₹4,250, not mrr ₹355 × 12). */
@@ -250,7 +264,7 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
             <p className="text-2xs text-ink-2">{billOfSupplyBuilderLine(bosStatus)}</p>
           ) : (
             <div className="flex justify-between">
-              <span className="text-ink-3">GST 18%</span>
+              <span className="text-ink-3">GST {taxRatePct}%</span>
               <span className="tabular-nums text-ink-2">{rupee(charge.tax)}</span>
             </div>
           )}
@@ -259,6 +273,7 @@ export default function ExtendSubscriptionDialog({ sub, open, onOpenChange }: Pr
             <span className="font-serif text-lg tabular-nums text-ink">{rupee(charge.total)}</span>
           </div>
         </div>
+        <ExportLutNotice def={exportLut.def} rate={taxRatePct} ready={exportLut.ready} className="mb-3" />
 
         <p className="text-2xs text-ink-3 leading-relaxed mb-1">
           A separate <b className="text-ink-2">extension quote</b> will be issued — the original

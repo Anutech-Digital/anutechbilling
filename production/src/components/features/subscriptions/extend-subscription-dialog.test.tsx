@@ -14,7 +14,15 @@ vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 const gst = vi.hoisted(() => ({ saved: null as string | null }));
 vi.mock("@/lib/compliance/gst-registration-query", () => ({ useGstRegistration: () => ({ data: { saved: gst.saved } }) }));
 
+/* R-2648: the dialog reads the customer (country) and the company's LUTs. */
+const r2648 = vi.hoisted(() => ({ customer: null as Record<string, unknown> | null, luts: [] as unknown[] }));
+vi.mock("@/lib/queries/customers", () => ({ useCustomers: () => ({ data: r2648.customer ? [r2648.customer] : [] }) }));
+vi.mock("@/lib/queries/tenant-luts", () => ({
+  useTenantLuts: (enabled: boolean) => (enabled ? { isSuccess: true, isError: false, data: r2648.luts } : { isSuccess: false, isError: false, data: undefined }),
+}));
+
 import ExtendSubscriptionDialog from "./extend-subscription-dialog";
+import { istToday, fyStartISO, fyBounds, fyLabel } from "@/lib/dates/ist";
 import { toast } from "sonner";
 
 afterEach(cleanup);
@@ -101,5 +109,28 @@ describe("Extend term dialog — opens the new quote (R-820)", () => {
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith("already open"));
     expect(nav.push).not.toHaveBeenCalled();
     expect(onOpenChange).not.toHaveBeenCalledWith(false);
+  });
+});
+
+describe("Extend term dialog — customer abroad (R-2648)", () => {
+  const today = istToday();
+  afterEach(() => { r2648.customer = null; r2648.luts = []; });
+
+  it("LUT for today's FY → GST 0%, total = subtotal, the LUT named (same rate the server saves)", () => {
+    r2648.customer = { id: "c1", country: "United States", gst_treatment: "overseas" };
+    r2648.luts = [{ fyStart: fyStartISO(today), arn: "AD0704260001234", validFrom: fyStartISO(today), validUpto: fyBounds(today).end }];
+    render(<ExtendSubscriptionDialog sub={sub} open onOpenChange={() => {}} />);
+    const t = document.body.textContent ?? "";
+    expect(t).toContain("GST 0%");
+    expect(t).not.toContain("GST 18%");
+    expect(screen.getByTestId("export-lut-note").textContent).toContain("0% GST under LUT AD0704260001234");
+  });
+
+  it("no LUT → GST 18% as before + the add-LUT warning", () => {
+    r2648.customer = { id: "c1", country: "United States", gst_treatment: "overseas" };
+    render(<ExtendSubscriptionDialog sub={sub} open onOpenChange={() => {}} />);
+    expect(document.body.textContent).toContain("GST 18%");
+    expect(screen.getByTestId("export-lut-warning").textContent).toContain(`No LUT for FY ${fyLabel(today)} on file, so this quote charges 18% IGST`);
+    expect(screen.getByRole("link", { name: "Add LUT" }).getAttribute("target")).toBe("_blank");
   });
 });
