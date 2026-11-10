@@ -20,7 +20,7 @@
 import { z } from "zod";
 import { withRoute, dbFail } from "@/lib/api/with-route";
 import { BULK_MAX, refuseBulkRow } from "@/lib/banking/bulk-expense";
-import { COVERED_MESSAGE, coveringDoc, loadImportedDocs, type DocsDb, type ImportedDoc } from "@/lib/banking/zoho-covered";
+import { COVERED_MESSAGE, coveredLines, loadImportedDocs, type DocsDb, type ImportedDoc } from "@/lib/banking/zoho-covered";
 import { Sentry } from "@/lib/sentry";
 
 export const runtime = "nodejs";
@@ -80,6 +80,8 @@ export const POST = withRoute(
         dbFail({ message: e instanceof Error ? e.message : String(e) }, "Could not check the Zoho-imported purchases — nothing was booked. Try again.");
       }
     }
+    /* Each imported document covers at most one line (the nearest in date) — same rule as the sheet. */
+    const covered = coveredLines(lines.map((l) => ({ id: l.id, debit: Number(l.debit ?? 0), txn_date: String(l.txn_date ?? "") })), docs);
 
     const bookOne = async (r: (typeof rows)[number]): Promise<BulkExpenseResult> => {
       const line = byId.get(r.txnId);
@@ -87,7 +89,7 @@ export const POST = withRoute(
       if (line.matched_to_type !== null) return { txnId: r.txnId, ok: false, error: "This line is already reconciled." };
       const refused = refuseBulkRow({ description: line.description, debit: Number(line.debit ?? 0) }, r.category);
       if (refused) return { txnId: r.txnId, ok: false, error: refused };
-      if (coveringDoc({ debit: Number(line.debit ?? 0), txn_date: String(line.txn_date ?? "") }, docs)) {
+      if (covered.has(line.id)) {
         return { txnId: r.txnId, ok: false, error: COVERED_MESSAGE };
       }
       const res = await db.rpc("book_bank_txn_as_expense", {

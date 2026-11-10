@@ -29,7 +29,7 @@ import { usePrepaidAdvances } from "@/lib/queries/prepaid-advances";
 import { createClient } from "@/lib/supabase/client";
 import { AUTO_TICK_MAX, BULK_MAX, bulkExcluded, bulkRows, type BulkRow } from "@/lib/banking/bulk-expense";
 import { applyGroupCategory, payeeGroups, tickGroupIds, type PayeeGroup } from "@/lib/banking/bulk-expense-groups";
-import { coveringDoc, loadImportedDocs, type DocsDb } from "@/lib/banking/zoho-covered";
+import { coveredLines, loadImportedDocs, type DocsDb } from "@/lib/banking/zoho-covered";
 import type { BankTransactionRow } from "@/lib/queries/bank";
 import type { BulkExpenseResult } from "@/app/api/banking/bulk-expense/route";
 
@@ -69,14 +69,18 @@ export function BulkExpenseButton({ accountName, transactions, ids }: {
 
 /** D1: the Zoho-imported purchases (no bank line yet) that could cover these lines. */
 function useImportedDocs(lines: readonly BankTransactionRow[]) {
-  const dates = React.useMemo(() => lines.map((l) => l.txn_date.slice(0, 10)).sort(), [lines]);
-  const from = dates[0] ?? "";
-  const to = dates[dates.length - 1] ?? "";
+  /* The date range of the lines when the sheet OPENED — booking removes lines, and a moving key
+     would reload every document (and blank the table) after each run. Dropped on close (gcTime 0). */
+  const [range] = React.useState(() => {
+    const dates = lines.map((l) => l.txn_date.slice(0, 10)).sort();
+    return { from: dates[0] ?? "", to: dates[dates.length - 1] ?? "" };
+  });
   return useQuery({
-    queryKey: ["zoho-covered-docs", from, to],
-    enabled: !!from,
-    queryFn: () => loadImportedDocs(createClient() as unknown as DocsDb, from, to),
-    staleTime: 60_000,
+    queryKey: ["zoho-covered-docs", range.from, range.to],
+    enabled: !!range.from,
+    queryFn: () => loadImportedDocs(createClient() as unknown as DocsDb, range.from, range.to),
+    staleTime: Infinity,
+    gcTime: 0,
   });
 }
 
@@ -94,10 +98,10 @@ export function BulkExpenseSheet({ onOpenChange, accountName, lines }: {
   const known = React.useMemo(() => [...new Set((advances ?? []).map((a) => a.vendor_name.trim()))].sort(), [advances]);
 
   /* Lines a Zoho-imported expense / bill already covers are not offered (D1) — listed as a count. */
-  const coveredIds = React.useMemo(() => {
-    const docs = docsQ.data ?? [];
-    return new Set(lines.filter((l) => coveringDoc({ debit: l.debit, txn_date: l.txn_date }, docs)).map((l) => l.id));
-  }, [lines, docsQ.data]);
+  const coveredIds = React.useMemo(
+    () => new Set(coveredLines(lines, docsQ.data ?? []).keys()),
+    [lines, docsQ.data],
+  );
 
   /* Oldest first — booked lines leave the list, so the next ones come up. */
   const all = React.useMemo(() => {
@@ -121,7 +125,8 @@ export function BulkExpenseSheet({ onOpenChange, accountName, lines }: {
 
   const catOf = (r: BulkRow) => edits[r.id]?.category ?? r.category;
   const payeeOf = (r: BulkRow) => edits[r.id]?.payee ?? r.payee;
-  const highIds = all.filter((r) => r.autoTick).map((r) => r.id).slice(0, BULK_MAX);
+  /* Only among the oldest 100 (the lines "All lines" shows) — never lines the owner cannot see. */
+  const highIds = rows.filter((r) => r.autoTick).map((r) => r.id);
   const picked = all.filter((r) => ticked.has(r.id));
   const missingCat = picked.filter((r) => !catOf(r)).length;
   const tooMany = picked.length > BULK_MAX;
@@ -138,29 +143,31 @@ export function BulkExpenseSheet({ onOpenChange, accountName, lines }: {
     setter((s) => { const n = new Set(s); if (on) n.add(key); else n.delete(key); return n; });
 
   /* "Always book like this": after a group's lines are booked, its Category Rule is saved. */
-  const saveRules = async (res: readonly Result[]) => {
+  const saveRules = async (res: readonly Result[], sentCat: ReadonlyMap<string, string>) => {
     const okIds = new Set(res.filter((r) => r.ok).map((r) => r.txnId));
-    let saved = 0;
+    const jobs: Promise<unknown>[] = [];
     for (const g of groups) {
-      const cat = groupCatOf(g);
-      if (!remember.has(g.key) || !g.rulePattern || !cat) continue;
-      const first = g.rows.find((r) => okIds.has(r.id));
-      if (!first) continue;
-      try {
-        await createRule.mutateAsync({ pattern: g.rulePattern, category: cat, direction: "debit", fromTxnId: first.id });
-        saved++;
-      } catch { /* the hook shows its own message */ }
+      if (!remember.has(g.key) || !g.rulePattern) continue;
+      const bookedRows = g.rows.filter((r) => okIds.has(r.id));
+      /* The rule says what was actually booked — one category for all booked lines, else no rule. */
+      const cats = new Set(bookedRows.map((r) => sentCat.get(r.id)));
+      const cat = cats.size === 1 ? [...cats][0] : undefined;
+      if (!cat) continue;
+      jobs.push(createRule.mutateAsync({ pattern: g.rulePattern, category: cat, direction: "debit", fromTxnId: bookedRows[0].id }));
     }
-    setRulesSaved(saved);
+    const done = await Promise.allSettled(jobs); /* a failure shows the hook's own message */
+    setRulesSaved(done.filter((d) => d.status === "fulfilled").length);
+    setRemember(new Set());
   };
 
   const book = async () => {
     if (busy || picked.length === 0 || missingCat > 0 || tooMany) return;
     setBusy(true); setFailure(null); setRulesSaved(0);
+    const sent = picked.map((r) => ({ txnId: r.id, category: catOf(r), payee: payeeOf(r).trim() || null }));
     try {
       const res = await fetch(BULK_EXPENSE_URL, {
         method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ rows: picked.map((r) => ({ txnId: r.id, category: catOf(r), payee: payeeOf(r).trim() || null })) }),
+        body: JSON.stringify({ rows: sent }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -171,7 +178,7 @@ export function BulkExpenseSheet({ onOpenChange, accountName, lines }: {
       }
       setResults(body.results as Result[]);
       setTicked(new Set());
-      await saveRules(body.results as Result[]);
+      await saveRules(body.results as Result[], new Map(sent.map((s) => [s.txnId, s.category])));
     } catch {
       /* R-2611 review: the request may have booked lines before the answer was lost — clear the
          ticks so the same lines are not sent again from memory. */
