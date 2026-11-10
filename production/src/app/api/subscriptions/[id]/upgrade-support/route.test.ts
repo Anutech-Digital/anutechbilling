@@ -15,6 +15,8 @@ const state = vi.hoisted(() => ({
   inserted: [] as Row[],
   deleted: [] as Row[],
   linkRows: [{ id: "S1" }] as Row[],
+  customer: null as Row | null,
+  luts: [] as Row[] | null,
 }));
 
 vi.mock("@/lib/dates/ist", async (orig) => ({
@@ -85,6 +87,8 @@ beforeEach(() => {
   state.inserted = [];
   state.deleted = [];
   state.linkRows = [{ id: "S1" }];
+  state.customer = null;
+  state.luts = [];
   state.sub = {
     id: "S1", tenant_id: "T1", customer_id: "C1", customer_name: "Acme", plan: "Anutech Standard Support (Yearly)",
     item_id: "SUP-STANDARD-YR-fbb976f1909049f097260901bd144e42", status: "active", billing_cycle: "annual",

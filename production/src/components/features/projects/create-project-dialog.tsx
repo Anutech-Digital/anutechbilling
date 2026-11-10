@@ -91,6 +91,7 @@ export function CreateProjectDialog({ open, onOpenChange }: Props) {
     date:      istToday(),
   });
   const exportKind = exportBuyer.def.kind;
+  const exportSupply = exportBuyer.def.kind === "domestic" ? null : exportBuyer.def.supply;
   React.useEffect(() => {
     if (!exportBuyer.ready) return;
     if (!rateTouched.current) setGstRate(exportKind === "zero_rated" ? "0" : "18");
@@ -222,7 +223,7 @@ export function CreateProjectDialog({ open, onOpenChange }: Props) {
           {selectedCustomer && !interStateTouched && (
             <p className="text-3xs text-ink-3 -mt-2">
               {exportKind !== "domestic"
-                ? <>{selectedCustomer.name} is {exportBuyer.def.kind !== "domestic" && exportBuyer.def.supply === "sez" ? "an SEZ unit (without payment)" : "outside India"} — always IGST.</>
+                ? <>{selectedCustomer.name} is {exportSupply === "sez" ? "an SEZ unit (without payment)" : "outside India"} — always IGST.</>
                 : me?.tenantStateCode
                 ? <>Set from {selectedCustomer.name}&apos;s state{selectedCustomer.state ? ` (${selectedCustomer.state})` : ""} against yours. Change it if that is wrong.</>
                 : <>Your company&apos;s state is not set, so this defaults to intra-state. Set it in Settings → GST profile to have it decided for you.</>}
