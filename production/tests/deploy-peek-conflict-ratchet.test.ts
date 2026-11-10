@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
-import { splitScript, pgProcPeekChecks } from "../scripts/ops/gen-deploy-db.mjs";
+import { splitScript, pgProcPeekChecks, parseDeployHeaders } from "../scripts/ops/gen-deploy-db.mjs";
 import { readSource } from "@/lib/testing/source-cache"; // R-2646: shared, always-fresh read cache (R-2564/R-2630)
 
 // R-2106 (31 Oct 2026): the staging DB step ended "Still missing: r2095receiptlinkundo".
@@ -145,20 +145,22 @@ describe("deploy-peek conflict ratchet (R-2106)", () => {
   });
 });
 
-// ── R-2646 (10 Nov 2026): a peek's `prosrc like` marker must not be in the OLDER body ────────────
+// ── R-2646 (10 Nov 2026): a peek's `prosrc like` marker must not be in an OLDER body ────────────
 // R-2632's migration had `-- deploy-peek: exists(… to_regprocedure('public.correct_invoice_date(text,date,text)')
 // and prosrc like '%R-2632%')`, but the R-2173 body it replaces already said "not available yet (R-2632)"
 // in a message. The peek was TRUE before the file ran, so the staging/live DB step would have reported it
 // applied and silently SKIPPED it — the fix would never reach the DB. A checker caught it by hand.
 //
-// Rule: for every migration whose own `-- deploy-peek:` tests a function's prosrc (like/ilike, inside a
+// Rule: for every migration whose own `-- deploy-peek:` tests a public function's prosrc (like/ilike, in a
 // non-negated exists(… from pg_proc …) block — gen-deploy-db's pgProcPeekChecks, the deploy scripts' own
-// parser), the body of that function as it stands BEFORE the file (the newest earlier `create function`
-// of the same name and input-argument count) must NOT pass all of the block's tests. Fix: pick a marker only
-// the new body has (e.g. '%R-2632 cross-FY%' or a new name), never a bare card id that an older message,
-// comment or TODO could already contain. Only the header line may change in a shipped migration.
+// parser), NO earlier body of that function (same name and argument types; any earlier one, because the
+// deploy step reads every peek once, BEFORE applying, on a DB that may still hold an old body) may pass
+// all of the block's tests. This also covers R-2473's widened MIGS peeks: the extra `or <newer marker>`
+// is checked here against every body older than that newer file. Fix: a marker only the new body has
+// (e.g. '%An issued invoice keeps its number%'), never a bare card id that an older message, comment or
+// TODO could already contain. In a shipped migration only the header line may change.
 
-type Body = { fn: string; argc: number; body: string };
+type Body = { fn: string; sig: string; file: string; body: string };
 
 /** LIKE / ILIKE pattern → RegExp over the whole string (% any, _ one char, \ escapes — Postgres defaults). */
 function likeToRegExp(pattern: string, ci: boolean): RegExp {
@@ -180,8 +182,73 @@ function passes(test: string, body: string): boolean {
   return !!m && likeToRegExp(m[2].replace(/''/g, "'"), m[1] !== "").test(body);
 }
 
-/** Input arguments in a `create function f(<args>)` list or a to_regprocedure signature (OUT args are not in the signature). */
-function inArgCount(args: string): number {
+/**
+ * The SQL with comments, string literals and dollar-quoted bodies blanked to spaces (same length, same
+ * positions); the dollar tags themselves stay, so `as $fn$` and its closing tag can still be found.
+ */
+function codeMask(sql: string): string {
+  const out = sql.split("");
+  const blank = (a: number, b: number) => {
+    for (let k = a; k < b; k++) if (out[k] !== "\n") out[k] = " ";
+  };
+  let i = 0;
+  while (i < sql.length) {
+    const two = sql.slice(i, i + 2);
+    if (two === "--") {
+      const e = sql.indexOf("\n", i);
+      const end = e < 0 ? sql.length : e;
+      blank(i, end);
+      i = end;
+    } else if (two === "/*") {
+      const e = sql.indexOf("*/", i + 2);
+      const end = e < 0 ? sql.length : e + 2;
+      blank(i, end);
+      i = end;
+    } else if (sql[i] === "'") {
+      let j = i + 1;
+      while (j < sql.length && !(sql[j] === "'" && sql[j + 1] !== "'")) j += sql[j] === "'" ? 2 : 1;
+      blank(i, j + 1);
+      i = j + 1;
+    } else if (sql[i] === "$") {
+      const tag = /^\$[A-Za-z_][A-Za-z0-9_]*\$|^\$\$/.exec(sql.slice(i, i + 64))?.[0];
+      if (!tag) {
+        i++;
+        continue;
+      }
+      const e = sql.indexOf(tag, i + tag.length);
+      const end = e < 0 ? sql.length : e;
+      blank(i + tag.length, end);
+      i = end + tag.length;
+    } else i++;
+  }
+  return out.join("");
+}
+
+const TYPE_ALIAS: Record<string, string> = {
+  int: "integer", int4: "integer", int8: "bigint", int2: "smallint", bool: "boolean", float8: "double precision",
+  float4: "real", varchar: "character varying", timestamptz: "timestamp with time zone", timetz: "time with time zone",
+  decimal: "numeric", char: "character",
+};
+const MULTI_WORD = /^(double precision|character varying|timestamp (?:with|without) time zone|time (?:with|without) time zone)\b/;
+
+/** One argument's type, normalised the way to_regprocedure's text reads ("public." dropped, aliases folded, (p,s) dropped). */
+function argType(arg: string): string | null {
+  let a = arg.replace(/\s+default\s[\s\S]*$/i, "").replace(/\s*=[\s\S]*$/, "").trim().toLowerCase().replace(/\s+/g, " ");
+  const mode = /^(in|out|inout|variadic)\s+/.exec(a);
+  if (mode?.[1] === "out") return null;
+  if (mode) a = a.slice(mode[0].length);
+  const norm = (t: string) => {
+    const s = t.replace(/^public\./, "").replace(/\s*\([^)]*\)/g, "").replace(/"/g, "").trim();
+    const arr = /(\[\])+$/.exec(s)?.[0] ?? "";
+    const base = s.slice(0, s.length - arr.length);
+    return (TYPE_ALIAS[base] ?? base) + arr;
+  };
+  if (MULTI_WORD.test(a) || !a.includes(" ")) return norm(a); // unnamed argument
+  return norm(a.slice(a.indexOf(" ") + 1)); // "<name> <type>"
+}
+
+/** Input-argument types of an argument list (a create function header or a to_regprocedure signature). */
+function signature(args: string): string {
   const parts: string[] = [];
   let depth = 0;
   let cur = "";
@@ -194,87 +261,79 @@ function inArgCount(args: string): number {
     } else cur += c;
   }
   if (cur.trim()) parts.push(cur);
-  return parts.filter((p) => !/^\s*out\s/i.test(p)).length;
+  return parts.map(argType).filter((t): t is string => t !== null).join(",").replace(/\s+/g, ""); // pgProcPeekChecks drops spaces
 }
 
-/** Every `create function` body (prosrc = the text between the dollar quotes) in a migration, in file order. */
-function functionBodies(sql: string): Body[] {
+/** Every public `create function` body (prosrc = the text between the dollar quotes) in a migration, in file order. */
+function functionBodies(sql: string, file: string): Body[] {
+  const code = codeMask(sql);
   const out: Body[] = [];
-  const head = /create\s+(?:or\s+replace\s+)?function\s+(?:"?[a-z_][a-z0-9_]*"?\.)?"?([a-z_][a-z0-9_]*)"?\s*\(/gi;
-  for (const m of sql.matchAll(head)) {
-    const lineStart = sql.lastIndexOf("\n", m.index) + 1;
-    if (sql.slice(lineStart, m.index).includes("--")) continue; // inside a -- comment
+  const head = /create\s+(?:or\s+replace\s+)?function\s+(?:"?([a-z_][a-z0-9_]*)"?\.)?"?([a-z_][a-z0-9_]*)"?\s*\(/gi;
+  for (const m of code.matchAll(head)) {
+    if (m[1] && m[1].toLowerCase() !== "public") continue;
     let depth = 0;
     let close = -1;
-    for (let i = m.index + m[0].length - 1; i < sql.length; i++) {
-      if (sql[i] === "(") depth++;
-      else if (sql[i] === ")" && --depth === 0) {
+    for (let i = m.index + m[0].length - 1; i < code.length; i++) {
+      if (code[i] === "(") depth++;
+      else if (code[i] === ")" && --depth === 0) {
         close = i;
         break;
       }
     }
     if (close < 0) continue;
-    const tag = /\bas\s+(\$[A-Za-z0-9_]*\$)/i.exec(sql.slice(close, close + 4000));
+    // the body's tag must come before the statement ends (a quoted or `begin atomic` body has none)
+    const tag = /^[^;]*?\bas\s+(\$[A-Za-z0-9_]*\$)/i.exec(code.slice(close));
     if (!tag) continue;
-    const start = close + tag.index + tag[0].length;
-    const end = sql.indexOf(tag[1], start);
+    const start = close + tag[0].length;
+    const end = code.indexOf(tag[1], start);
     if (end < 0) continue;
-    out.push({ fn: m[1].toLowerCase(), argc: inArgCount(sql.slice(m.index + m[0].length, close)), body: sql.slice(start, end) });
+    out.push({ fn: m[2].toLowerCase(), sig: signature(code.slice(m.index + m[0].length, close)), file, body: sql.slice(start, end) });
   }
   return out;
 }
 
-/** The file's own header peek (the leading `--` block, as parseDeployHeaders reads it), or null. */
-function headerPeek(sql: string): string | null {
-  for (const raw of sql.split("\n")) {
-    const line = raw.replace(/\r$/, "").trim();
-    if (!line) continue;
-    if (!line.startsWith("--")) break;
-    const m = /^--\s*deploy-peek:\s*(.*)$/.exec(line);
-    if (m) return m[1].trim();
-  }
-  return null;
-}
-
 /**
- * files: migrations in apply order. For each file's OWN header peek, every non-negated pg_proc block whose
- * prosrc tests ALL pass on the function's body as it stood before the file → one message.
+ * files: migrations in apply order. For each file's OWN header peek (a deploy-skip file is never run and
+ * is left out), every non-negated pg_proc block whose prosrc tests ALL pass on an earlier body of that
+ * function → one message.
  */
 function peekMarkerTraps(files: { file: string; sql: string }[]): string[] {
   const out: string[] = [];
-  const bodies = new Map<string, (Body & { file: string })[]>(); // fn → current body per argument count
+  const bodies = new Map<string, Body[]>(); // fn → every earlier body, oldest first
   for (const { file, sql } of files) {
-    const peek = headerPeek(sql);
-    if (peek) {
-      for (const c of pgProcPeekChecks(peek) as { fn: string; sig: string | null; tests: { test: string }[] }[]) {
-        const argc = c.sig === null ? null : inArgCount(c.sig);
-        const before = (bodies.get(c.fn) ?? []).filter((b) => argc === null || b.argc === argc);
-        const hit = before.find((b) => c.tests.every((t) => passes(t.test, b.body)));
+    let head: { peek: string | null; skip: string | null };
+    try {
+      head = parseDeployHeaders(sql, file);
+    } catch {
+      head = { peek: null, skip: null }; // an old file without a header (not in the deploy scripts)
+    }
+    if (head.skip) continue;
+    if (head.peek) {
+      for (const c of pgProcPeekChecks(head.peek) as { fn: string; sig: string | null; tests: { test: string }[] }[]) {
+        const sig = c.sig === null ? null : signature(c.sig);
+        const hit = (bodies.get(c.fn) ?? []).find((b) => (sig === null || b.sig === sig) && c.tests.every((t) => passes(t.test, b.body)));
         if (hit) {
           out.push(`${file}: deploy-peek ${c.fn} ${c.tests.map((t) => t.test).join(" + ")} is already true on the older body from ${hit.file} — the DB step would skip this migration`);
         }
       }
     }
-    for (const b of functionBodies(sql)) {
-      const list = (bodies.get(b.fn) ?? []).filter((x) => x.argc !== b.argc);
-      list.push({ ...b, file });
-      bodies.set(b.fn, list);
-    }
+    for (const b of functionBodies(sql, file)) bodies.set(b.fn, [...(bodies.get(b.fn) ?? []), b]);
   }
   return out;
 }
 
 const migDir = path.resolve(__dirname, "..", "supabase", "migrations");
-const oldBody = `create or replace function public.correct_invoice_date(p_invoice_id text, p_new_date date, p_reason text)
+const oldBody = `create or replace function public.correct_invoice_date(p_invoice_id text, p_new_date date, p_reason text default 'a, b')
 returns jsonb language plpgsql as $fn$
 begin
   raise exception 'That move is not available yet (R-2632) - pick a date in the same financial year.';
 end $fn$;`;
 const newBody = oldBody.replace("That move is not available yet (R-2632)", "R-2632 cross-FY: refused for good");
-const peekOf = (marker: string) =>
-  `-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_invoice_date(text,date,text)') and prosrc like '${marker}')\n`;
+const peekOf = (marker: string, sig = "text,date,text") =>
+  `-- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_invoice_date(${sig})') and prosrc like '${marker}')\n`;
+const plain = (sql: string) => `-- deploy-peek: true\n${sql}`;
 
-describe("deploy-peek marker not already in the older body (R-2646)", () => {
+describe("deploy-peek marker not already in an older body (R-2646)", () => {
   it("LIKE/ILIKE read as Postgres does", () => {
     expect(likeToRegExp("%R-2632%", false).test("x (R-2632) y")).toBe(true);
     expect(likeToRegExp("%r-2632%", false).test("R-2632")).toBe(false);
@@ -283,31 +342,55 @@ describe("deploy-peek marker not already in the older body (R-2646)", () => {
     expect(likeToRegExp("a\\_c", false).test("abc")).toBe(false);
   });
 
-  it("finds each function body with its input-argument count", () => {
-    const b = functionBodies(`-- create function public.not_this(a int) as $$ x $$\n${oldBody}\ncreate function f(out x int, y text) returns int language sql as $$ select 1 $$;`);
-    expect(b.map((x) => [x.fn, x.argc])).toEqual([["correct_invoice_date", 3], ["f", 1]]);
+  it("finds each public function body with its argument types; comments, quoted bodies and other schemas are not bodies", () => {
+    const sql = [
+      "-- create function public.not_this(a int) as $$ x $$",
+      "/* create function public.nor_this(a int) as $$ R-1 $$ */",
+      oldBody,
+      "create function q() returns int language sql as 'select 1';",
+      "create function private.p(a int) returns int language sql as $$ select 2 $$;",
+      "create function f(out x int, y varchar(20), z timestamptz) returns int language sql as $$ select 1 $$;",
+    ].join("\n");
+    const b = functionBodies(sql, "x.sql");
+    expect(b.map((x) => [x.fn, x.sig])).toEqual([
+      ["correct_invoice_date", "text,date,text"],
+      ["f", "charactervarying,timestampwithtimezone"],
+    ]);
     expect(b[0].body).toContain("(R-2632)");
+    expect(signature("text, int, timestamptz")).toBe("text,integer,timestampwithtimezone");
   });
 
   it("flags the R-2632 shape: the marker was already in the body it replaces", () => {
     const traps = peekMarkerTraps([
-      { file: "a_r2173.sql", sql: `-- deploy-peek: true\n${oldBody}` },
+      { file: "a_r2173.sql", sql: plain(oldBody) },
       { file: "b_r2632.sql", sql: peekOf("%R-2632%") + newBody },
     ]);
     expect(traps).toHaveLength(1);
     expect(traps[0]).toMatch(/^b_r2632\.sql: .*already true on the older body from a_r2173\.sql/);
   });
 
-  it("passes a marker only the new body has, an overload with other arguments, and a negated block", () => {
-    const a = { file: "a.sql", sql: `-- deploy-peek: true\n${oldBody}` };
+  it("flags a marker in ANY earlier body, not only the newest (a DB behind still holds it)", () => {
+    const middle = oldBody.replace("That move is not available yet (R-2632)", "Not this year");
+    const traps = peekMarkerTraps([
+      { file: "a.sql", sql: plain(oldBody) },
+      { file: "b.sql", sql: plain(middle) },
+      { file: "c.sql", sql: peekOf("%R-2632%") + newBody },
+    ]);
+    expect(traps).toEqual([expect.stringMatching(/^c\.sql: .*older body from a\.sql/)]);
+  });
+
+  it("passes a marker only the new body has, an overload with other types, a negated block and a deploy-skip file", () => {
+    const a = { file: "a.sql", sql: plain(oldBody) };
     expect(peekMarkerTraps([a, { file: "b.sql", sql: peekOf("%R-2632 cross-FY%") + newBody }])).toEqual([]);
-    const overload = { file: "a.sql", sql: `-- deploy-peek: true\n${oldBody.replace("p_reason text)", "p_reason text, p_x int)")}` };
+    const overload = { file: "a.sql", sql: plain(oldBody.replace("p_new_date date", "p_new_date integer")) };
     expect(peekMarkerTraps([overload, { file: "b.sql", sql: peekOf("%R-2632%") + newBody }])).toEqual([]);
     const negated = `-- deploy-peek: not exists(select 1 from pg_proc where proname = 'correct_invoice_date' and prosrc like '%R-2632%')\n`;
     expect(peekMarkerTraps([a, { file: "b.sql", sql: negated + newBody }])).toEqual([]);
+    const skipped = `${peekOf("%R-2632%")}-- deploy-skip: never deployed\n${newBody}`;
+    expect(peekMarkerTraps([a, { file: "b.sql", sql: skipped }])).toEqual([]);
   });
 
-  it("no migration's peek marker is already in the body it replaces (supabase/migrations)", () => {
+  it("no migration's peek marker is already in an older body (supabase/migrations)", () => {
     const files = fs
       .readdirSync(migDir)
       .filter((f) => /^\d{14}_.*\.sql$/.test(f))
