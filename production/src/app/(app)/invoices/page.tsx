@@ -303,9 +303,8 @@ function InvoicesPageInner() {
   );
   const bulkEinvoice = React.useMemo(() => {
     if (!confirmBulk || !pending) return null;
-    const selected = pending.filter((q) => pendingSelected.has(q.id));
-    return issueEinvoiceNotice(bracket, selected.filter((q) => isB2B(q.customer_gstin)).length, selected.length);
-  }, [confirmBulk, pending, pendingSelected, bracket]);
+    return issueEinvoiceNotice(bracket, bulkRows.filter((q) => isB2B(q.customer_gstin)).length, bulkRows.length);
+  }, [confirmBulk, pending, bulkRows, bracket]);
 
   /* Lifted out of the pending-card IIFE so the confirmation can call it. Unchanged
      otherwise — including that it issues one at a time and counts failures, which is
@@ -317,8 +316,11 @@ function InvoicesPageInner() {
     }
     setGenerating(true);
     let ok = 0, fail = 0;
+    /* R-2651: only the rows the confirm listed — a quote invoiced elsewhere meanwhile has left `pending`. */
     for (const id of pendingSelected) {
-      const act = pending?.find((q) => q.id === id)?.part_action;
+      const row = pending?.find((q) => q.id === id);
+      if (!row) continue;
+      const act = row.part_action;
       try {
         if (act?.kind === "short") { fail++; continue; }   // not paid in full — no tax invoice yet
         if (act?.kind === "part") {
@@ -1029,7 +1031,7 @@ function InvoicesPageInner() {
         onOpenChange={(v) => { if (!v) setConfirmBulk(false); }}
         consequences={bulkConsequences}
         einvoiceNotice={bulkEinvoice}
-        confirmLabel={`Issue ${pendingSelected.size} invoice${pendingSelected.size === 1 ? "" : "s"}`}
+        confirmLabel={`Issue ${bulkRows.length} invoice${bulkRows.length === 1 ? "" : "s"}`}
         busy={generating}
         onConfirm={() => { void issueSelected(); }}
       />

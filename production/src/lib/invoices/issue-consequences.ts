@@ -34,7 +34,7 @@ import {
   type Consequence, type SeriesState,
 } from "@/lib/actions/consequence";
 import { isExportSupply, isZeroRatedSupply, overseasCountryMissing } from "@/lib/gst/place-of-supply";
-import { fyCodeOfYear, fyLabel, fyStartYear } from "@/lib/dates/ist";
+import { fyCodeOfYear, fyLabel, fyStartYear, istToday } from "@/lib/dates/ist";
 import { EXPORT_LUT_ENDORSEMENT, exportLutRefusal, lutFor, lutFyLabel, type TenantLut } from "@/lib/gst/export-lut";
 import type { InvoiceDateWhy } from "./issue-date";
 
@@ -318,43 +318,68 @@ export function bulkIssueConsequences(args: {
   const n = quotes.length;
   const total = quotes.reduce((s, q) => s + (q.amount ?? 0), 0);
 
+  /* R-1633: a business that is not GST-registered issues Bills of Supply from its own BOS- series —
+     the INV counter says nothing about it, so no INV number is named (as in the single confirm). */
+  const bos = quotes.some((q) => q.billOfSupply === true);
   const first = (series?.lastNumber ?? 0) + 1;
   const last = first + Math.max(0, n - 1);
   /* R-2651 (as R-2635 for one): next_document_number takes the FY from each invoice's DATE — when a
      receipt-dated invoice falls in another FY, the one range of this FY's series would be wrong. */
-  const fys = [...new Set(quotes.flatMap((q) => (q.invoiceDate ? [fyLabel(q.invoiceDate)] : [])))].sort();
-  const otherFy = series !== null && quotes.some(
-    (q) => q.invoiceDate !== undefined && fyCodeOfYear(fyStartYear(q.invoiceDate)) !== series.fiscalYear,
+  const seriesFy = series?.fiscalYear ?? fyCodeOfYear(fyStartYear(istToday()));
+  const otherFy = !bos && quotes.some(
+    (q) => q.invoiceDate !== undefined && fyCodeOfYear(fyStartYear(q.invoiceDate)) !== seriesFy,
   );
-  const range = otherFy
-    ? `the next numbers of the series of each invoice date's financial year (FY ${fys.join(", FY ")})`
-    : series
-      ? n === 1
-        ? formatDocumentNumber(series, first)
-        : `${formatDocumentNumber(series, first)} … ${formatDocumentNumber(series, last)}`
-      : "the first numbers of this financial year";
+  const fys = [...new Set(quotes.flatMap((q) => (q.invoiceDate ? [fyLabel(q.invoiceDate)] : [])))].sort();
+  const undated = quotes.some((q) => q.invoiceDate === undefined);
+  const range = bos
+    ? "the next Bill of Supply (BOS-) numbers"
+    : otherFy
+      ? `the next numbers of the series of each invoice date's financial year (FY ${fys.join(", FY ")}` +
+        `${undated ? "; the ones with no date shown take the series of the day they are issued" : ""})`
+      : series
+        ? n === 1
+          ? formatDocumentNumber(series, first)
+          : `${formatDocumentNumber(series, first)} … ${formatDocumentNumber(series, last)}`
+        : "the first numbers of this financial year";
 
-  /* R-2651: per quote, the SAME date and export / LUT / IGST lines its single confirm shows — the
-     bulk confirm said nothing about them. A quote its single confirm would hold (no LUT for the
-     date's FY, Overseas with no country) holds the whole bulk issue (isBlocked) and is named. */
+  /* R-2651: per quote, the SAME date and export / LUT / IGST lines its single confirm shows — the bulk
+     confirm said nothing about them. A quote its single confirm would hold (₹0, no LUT for the date's
+     FY, Overseas with no country) holds the whole bulk issue (the dialog's "nothing can be issued")
+     and is named first, so it can be unticked. When every date is the same, it is said once. */
+  const dateFacts = quotes.map(invoiceDateFact);
+  const oneDate = dateFacts.every((d) => d !== null && d === dateFacts[0]) ? dateFacts[0] : null;
+  const held: Consequence[] = [];
   const perQuote: Consequence[] = [];
-  for (const q of quotes) {
-    const dated = invoiceDateFact(q);
-    const { lines } = supplyFacts(q);
-    if (!dated && lines.length === 0) continue;
-    const held = lines.some((c) => c.tone === "warning" && /nothing can be issued/i.test(c.text));
-    const words = [dated, ...lines.map((c) => c.text)].filter(Boolean).join(" ");
-    perQuote.push({
-      tone: lines.some((c) => c.tone === "warning") ? "warning" : "fact",
-      text: `${q.id}${q.customerName ? ` · ${q.customerName}` : ""}: ${words}${held ? ` Untick ${q.id} to issue the others.` : ""}`,
-    });
-  }
+  quotes.forEach((q, i) => {
+    const { zeroRated, lines } = supplyFacts(q);
+    const words = [...lines.map((c) => c.text)];
+    let blocks = lines.some((c) => c.tone === "warning" && /nothing can be issued/i.test(c.text));
+    /* A failed date / LUT read cannot prove the LUT is on file — the server would refuse it mid-run. */
+    if (zeroRated && !blocks && !(q.taxAmount != null && q.taxAmount > 0) && (q.invoiceDate === undefined || q.luts === undefined)) {
+      words.push("Its invoice date or your LUT could not be read, so nothing can be issued in this bulk run — issue it from its own Generate button.");
+      blocks = true;
+    }
+    if (total > 0 && !(q.amount != null && q.amount > 0)) {
+      words.push("This quote has no amount, so no invoice can be issued from it.");
+      blocks = true;
+    }
+    const dated = oneDate ? null : dateFacts[i];
+    if (!dated && words.length === 0) return;
+    const line: Consequence = {
+      tone: blocks || lines.some((c) => c.tone === "warning") ? "warning" : "fact",
+      text: `${q.id}${q.customerName ? ` · ${q.customerName}` : ""}: ${[dated, ...words].filter(Boolean).join(" ")}` +
+        `${blocks ? ` Untick ${q.id} to issue the others.` : ""}`,
+    };
+    (blocks ? held : perQuote).push(line);
+  });
 
   const out: Consequence[] = [
     {
       tone: "fact",
       text: `Issues ${n} invoice${n === 1 ? "" : "s"} and uses ${n === 1 ? "number" : "numbers"} ${range}.`,
     },
+    ...held,
+    ...(oneDate ? [{ tone: "fact" as const, text: `All ${n === 1 ? "of it" : n}: ${oneDate}` }] : []),
     ...perQuote,
     ...(quotes.some((q) => q.invoiceDate) ? [{ tone: "fact" as const, text: "The dates cannot be changed afterwards." }] : []),
     {
@@ -379,5 +404,5 @@ export function bulkIssueConsequences(args: {
     });
   }
 
-  return { predictedNumber: range, predictedIsCertain: series !== null && !otherFy, consequences: out };
+  return { predictedNumber: range, predictedIsCertain: !bos && series !== null && !otherFy, consequences: out };
 }
