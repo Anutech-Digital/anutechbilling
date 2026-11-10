@@ -68,7 +68,8 @@ select pg_temp.refused('INV-R2632-A', '2026-03-20',
 select pg_temp.refused('INV-R2632-B', '2026-04-02',
   '%INV-R2632-B is numbered in financial year FY2526%2 Apr 2026 is in financial year FY2627%credit note for this invoice%fresh invoice dated in FY2627%');
 
--- C. Retry of A: same refusal, nothing written
+-- C. Retry of A (the very same call): same refusal, nothing written - then another FY2526 day too
+select pg_temp.refused('INV-R2632-A', '2026-03-20', '%financial year FY2526%credit note for this invoice%');
 select pg_temp.refused('INV-R2632-A', '2026-03-31', '%financial year FY2526%credit note for this invoice%');
 
 -- D. Same FY still works

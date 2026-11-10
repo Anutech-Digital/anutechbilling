@@ -39,16 +39,29 @@ describe("R-2632 otherYearNote", () => {
 });
 
 describe("R-2632 Correct date sheet — another financial year", () => {
-  it("shows the note and 'Credit note instead'; the button closes the sheet and opens the credit note", () => {
+  it("folded away on a normal same-year fix: only the link shows, no Credit note button next to Save", () => {
+    open(vi.fn());
+    expect(screen.getByTestId("correct-invoice-date-other-year-link")).toBeTruthy();
+    expect(screen.queryByTestId("correct-invoice-date-credit-note")).toBeNull();
+  });
+  it("the link opens the note; 'Credit note instead' opens the credit note on top (this sheet stays)", () => {
     const onCn = vi.fn();
     open(onCn);
+    fireEvent.click(screen.getByTestId("correct-invoice-date-other-year-link"));
     expect(screen.getByTestId("correct-invoice-date-other-year").textContent).toMatch(/FY 2026-27/);
     fireEvent.click(screen.getByTestId("correct-invoice-date-credit-note"));
     expect(onCn).toHaveBeenCalledTimes(1);
-    expect(screen.queryByTestId("correct-invoice-date-other-year")).toBeNull();
+    expect(screen.getByTestId("correct-invoice-date-other-year")).toBeTruthy();
+  });
+  it("typing a date in the year before opens the note by itself and the hint points to it", () => {
+    open(vi.fn());
+    fireEvent.change(screen.getByLabelText("Correct date"), { target: { value: "2026-03-20" } });
+    expect(screen.getByTestId("correct-invoice-date-other-year")).toBeTruthy();
+    expect(screen.getByTestId("correct-invoice-date-hint").textContent).toMatch(/earlier financial year needs a credit note/);
   });
   it("without credit note rights: the note shows, no button", () => {
     open(undefined);
+    fireEvent.click(screen.getByTestId("correct-invoice-date-other-year-link"));
     expect(screen.getByTestId("correct-invoice-date-other-year")).toBeTruthy();
     expect(screen.queryByTestId("correct-invoice-date-credit-note")).toBeNull();
   });

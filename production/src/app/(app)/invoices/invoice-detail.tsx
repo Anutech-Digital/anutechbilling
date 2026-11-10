@@ -118,7 +118,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way
      to issue one (and so no way to refund after a cancel). */
   const [cnOpen, setCnOpen] = React.useState(false);
-  /* R-2632: "Credit note instead" from Correct date opens the credit note as a cancellation. */
+  /* R-2632: "Credit note instead" from Correct date opens the credit note as a cancellation of the whole
+     invoice (Correct date only shows on an invoice with no notes, so the whole amount is creditable). */
   const [cnReason, setCnReason] = React.useState<"cancellation" | undefined>(undefined);
   const canCreditNote = canWrite && invoice.status !== "draft" && invoice.status !== "void";
   /* R-1520: set by the TDS banner's "Record TDS" — opens Record payment in TDS mode. */
@@ -579,6 +580,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           isExport={(invoice.tax_rate ?? 18) === 0}
           invoiceDate={invoice.invoice_date}
           defaultReasonCode={cnReason}
+          defaultAmount={cnReason === "cancellation" ? invoice.amount : undefined}
         />
       )}
       {payOpen && !quote && instalment?.quoteId && (
