@@ -226,14 +226,17 @@ export default function AdPlatformsPage() {
           {budgets.isError && <LoadErrorInline what="Approved ad budgets" error={budgets.error} onRetry={() => void budgets.refetch()} />}
           <div className="grid gap-3 md:grid-cols-3">
             {([["google-ads", paceG], ["meta-ads", paceM], ["linkedin-ads", paceL]] as const).filter(([p]) => (pf === "all" || p === pf) && (!selectedAccount || p === selectedAccount.platform)).map(([p, pc]) => (
-              <Card key={p} className="p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-ink">{PLATFORM_LABEL[p]} · {pc.month}</p>
-                  {pc.verdict === "over" && <Badge kind="danger" size="sm">Over budget</Badge>}
-                  {pc.verdict === "on_track" && <Badge kind="success" size="sm">On track</Badge>}
-                  {pc.verdict === "under" && <Badge kind="info" size="sm">Well under budget</Badge>}
-                  {!pc.budget && pendingFor(p) && <Badge kind="warning" size="sm">Approval pending</Badge>}
-                  {!selectedAccount && canAskBudget(budgets.data?.role) && <button type="button" onClick={() => setBudgetPlatform(p)} aria-label={`Request ${PLATFORM_LABEL[p]} budget`} className="text-xs underline text-ink-3 hover:text-ink">{pc.budget ? "Request more" : "Request budget"} →</button>}
+              <Card key={p} className="h-full p-4">
+                <p className="text-sm font-semibold leading-snug text-ink">{PLATFORM_LABEL[p]} · {monthLabel(pc.month)}</p>
+                <div className="mt-1.5 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    {pc.verdict === "over" && <Badge kind="danger" size="sm">Over budget</Badge>}
+                    {pc.verdict === "on_track" && <Badge kind="success" size="sm">On track</Badge>}
+                    {pc.verdict === "under" && <Badge kind="info" size="sm">Well under budget</Badge>}
+                    {!pc.budget && pendingFor(p) && <Badge kind="warning" size="sm">Approval pending</Badge>}
+                    {!pc.budget && !pendingFor(p) && <Badge kind="muted" size="sm">No budget approved</Badge>}
+                  </div>
+                  {!selectedAccount && canAskBudget(budgets.data?.role) && <button type="button" onClick={() => setBudgetPlatform(p)} aria-label={`Request ${PLATFORM_LABEL[p]} budget`} className="whitespace-nowrap text-xs text-ink-3 underline hover:text-ink">{pc.budget ? "Request more" : "Request budget"} →</button>}
                 </div>
                 <div className="mt-2 flex items-baseline gap-3 flex-wrap">
                   <span className="font-serif text-3xl text-ink tabular-nums">{rupee(pc.spent)}</span>
@@ -504,20 +507,18 @@ function PlatformCard({ platform, status, accounts }: { platform: AdPlatform; st
   const syncingCount = accounts.filter((account) => account.enabled).length;
   const pausedCount = accounts.length - syncingCount;
   return (
-    <Card className="p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-ink inline-flex items-center gap-2">
-            {PLATFORM_LABEL[platform]}
-            {expired ? <Badge kind="danger" size="sm">Token expired</Badge> : googleNeedsAccess ? <Badge kind="danger" size="sm">Needs API access</Badge> : connected ? <Badge kind="success" size="sm">Connected</Badge> : configured ? <Badge kind="warning" size="sm">Connect</Badge> : <Badge kind="muted" size="sm">Setup</Badge>}
-            {expiringSoon && <Badge kind="danger" size="sm">Token expires {formatDate(expiry!)}</Badge>}
-          </p>
-          <p className="text-xs text-ink-3 mt-0.5">{accounts.length} {accounts.length === 1 ? "account" : "accounts"} · {syncingCount} syncing{pausedCount ? ` · ${pausedCount} paused` : ""}</p>
-          {isG && status?.google.email && accounts.length > 0 && <p className="text-xs text-ink-3 mt-1 truncate">Connected as {status.google.email}</p>}
-          {isG && status?.google.lastError && <p className="text-xs text-rose-ink mt-1">{status.google.lastError}</p>}
-        </div>
-        <Button asChild size="sm" variant="outline"><Link href={`/marketing/ads/accounts?platform=${platform}` as Route}>View accounts</Link></Button>
+    <Card className="flex h-full flex-col gap-2 p-4">
+      <div className="flex items-start justify-between gap-2">
+        <p className="min-w-0 text-sm font-semibold leading-snug text-ink">{PLATFORM_LABEL[platform]}</p>
+        <Button asChild size="sm" variant="outline" className="shrink-0"><Link href={`/marketing/ads/accounts?platform=${platform}` as Route}>View accounts</Link></Button>
       </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {expired ? <Badge kind="danger" size="sm">Token expired</Badge> : googleNeedsAccess ? <Badge kind="danger" size="sm">Needs API access</Badge> : connected ? <Badge kind="success" size="sm">Connected</Badge> : configured ? <Badge kind="warning" size="sm">Connect</Badge> : <Badge kind="muted" size="sm">Setup</Badge>}
+        {expiringSoon && <Badge kind="danger" size="sm">Token expires {formatDate(expiry!)}</Badge>}
+      </div>
+      <p className="text-xs text-ink-3">{accounts.length} {accounts.length === 1 ? "account" : "accounts"} · {syncingCount} syncing{pausedCount ? ` · ${pausedCount} paused` : ""}</p>
+      {isG && status?.google.email && accounts.length > 0 && <p className="truncate text-xs text-ink-3" title={status.google.email}>Connected as {status.google.email}</p>}
+      {isG && status?.google.lastError && <p className="text-xs text-rose-ink">{status.google.lastError}</p>}
     </Card>
   );
 }
