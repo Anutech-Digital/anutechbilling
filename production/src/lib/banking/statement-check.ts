@@ -99,27 +99,48 @@ function dayStart(lines: StatementLine[]): number {
   return startOf(starts.length === 1 ? starts[0] : lines[0]);
 }
 
+type OrderLine = { txn_date: string; debit?: number; credit?: number; balance_after?: number | null };
+
+/**
+ * R-2665: was the file printed newest-first? The running balance says so when it can: next to
+ * each other, a line either continues from the one printed before it (oldest-first) or the one
+ * printed before continues from it (newest-first). Without balances, only the dates: newest-first
+ * when they step back more often than forward AND at least twice — a file of two date-sorted
+ * blocks (HDFC credit card: Domestic, then International) steps back exactly once.
+ */
+function printedNewestFirst(lines: readonly OrderLine[]): boolean {
+  let asc = 0, desc = 0, fwd = 0, back = 0;
+  for (let i = 1; i < lines.length; i++) {
+    const a = lines[i - 1], b = lines[i];
+    if (b.txn_date > a.txn_date) fwd++;
+    else if (b.txn_date < a.txn_date) back++;
+    if (a.balance_after == null || b.balance_after == null) continue;
+    const net = (l: OrderLine) => (l.credit ?? 0) - (l.debit ?? 0);
+    const up = close(b.balance_after - a.balance_after, net(b));
+    const down = close(a.balance_after - b.balance_after, net(a));
+    if (up && !down) asc++;
+    if (down && !up) desc++;
+  }
+  if (asc !== desc) return desc > asc;
+  return back > fwd && back >= 2;
+}
+
 /**
  * R-2665: positions of the lines in DATE order (oldest first), the file's order kept inside a day.
- * A file printed newest-first (more steps back in date than forward between neighbours) is turned
- * round first, so its days' lines are oldest-first too. HDFC credit-card files print Domestic
- * lines, then International lines, each block in date order — the dates jump back once and the
- * file must not be walked as printed. Ties (no proof of direction) count as oldest-first.
+ * A file printed newest-first (printedNewestFirst) is turned round first, so its days' lines are
+ * oldest-first too. HDFC credit-card files print Domestic lines, then International lines, each
+ * block in date order — the dates jump back once and the file must not be walked as printed.
  */
-export function dateOrderIndex(dates: readonly string[]): number[] {
-  let fwd = 0, back = 0;
-  for (let i = 1; i < dates.length; i++) {
-    if (dates[i] > dates[i - 1]) fwd++;
-    else if (dates[i] < dates[i - 1]) back++;
-  }
-  const idx = dates.map((_, i) => i);
-  if (back > fwd) idx.reverse();
-  return idx.sort((a, b) => (dates[a] < dates[b] ? -1 : dates[a] > dates[b] ? 1 : 0));   // stable
+export function dateOrderIndex(lines: readonly OrderLine[]): number[] {
+  const idx = lines.map((_, i) => i);
+  if (printedNewestFirst(lines)) idx.reverse();
+  const d = (i: number) => lines[i].txn_date;
+  return idx.sort((a, b) => (d(a) < d(b) ? -1 : d(a) > d(b) ? 1 : 0));   // stable
 }
 
 /** R-2665: the lines in date order (see dateOrderIndex) — a new array, the input untouched. */
-export function inDateOrder<T extends { txn_date: string }>(lines: readonly T[]): T[] {
-  return dateOrderIndex(lines.map((l) => l.txn_date)).map((i) => lines[i]);
+export function inDateOrder<T extends OrderLine>(lines: readonly T[]): T[] {
+  return dateOrderIndex(lines).map((i) => lines[i]);
 }
 
 export function checkStatement(input: StatementLine[], openingBalance: number): StatementCheck | null {

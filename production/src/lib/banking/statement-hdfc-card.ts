@@ -23,18 +23,20 @@ export const AMOUNT_HEADERS = ["amt", "amount", "transaction amount", "amount rs
 
 /**
  * The flag cell → the side. HDFC leaves the cell EMPTY for a spend and writes "Cr" for money in;
- * other banks write Dr / Cr in full. Anything else → null: the line is skipped and counted with a
- * warning, never guessed.
+ * other banks write Dr / Cr in full. `blankIsDebit`: only for a file that never writes Dr itself
+ * (the HDFC way) — elsewhere a blank says nothing. Anything else → null: the line is skipped and
+ * counted with a warning, never guessed.
  */
-export function flagSide(cell: string | undefined): "debit" | "credit" | null {
+export function flagSide(cell: string | undefined, blankIsDebit: boolean): "debit" | "credit" | null {
   const t = (cell ?? "").trim().toLowerCase().replace(/\.$/, "");
-  if (t === "" || t === "dr" || t === "d" || t === "debit") return "debit";
+  if (t === "") return blankIsDebit ? "debit" : null;
+  if (t === "dr" || t === "d" || t === "debit") return "debit";
   if (t === "cr" || t === "c" || t === "credit") return "credit";
   return null;
 }
 
 /** The warning for lines whose flag said neither side. */
 export function unknownFlagWarning(n: number, seen: readonly string[]): string {
-  const shown = seen.slice(0, 3).map((s) => `"${s}"`).join(", ");
+  const shown = seen.slice(0, 3).map((s) => (s ? `"${s}"` : "nothing (blank)")).join(", ");
   return `${n} line${n === 1 ? " was" : "s were"} skipped — the Debit / Credit column says ${shown}, which is neither Cr (money in) nor Dr / blank (money out). Check ${n === 1 ? "it" : "them"} in the statement.`;
 }

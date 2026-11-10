@@ -62,6 +62,20 @@ describe("R-2665 lines printed in two date-sorted blocks (HDFC Domestic, then In
       .toEqual([4, 3, 2, 1]);
   });
 
+  it("a two-block file with few dates is not taken for newest-first (same-day order kept)", () => {
+    /* [03/02 PAY, 03/02 SHOP] then [20/01 SAAS]: one step back only — not newest-first. */
+    const r = csv("03/02/2026,CARD PAYMENT,,1000,0", "03/02/2026,SHOP,200,,-200", "20/01/2026,SAAS INC,1000,,-1000").rows;
+    expect(inDateOrder(r).map((x) => x.description)).toEqual(["SAAS INC", "CARD PAYMENT", "SHOP"]);
+    expect(openingBalanceFromStatement(r, "2026-02-01")).toEqual({ ok: true, amount: -1000, firstLineDate: "2026-02-03", linesBefore: 1, chainBreaks: 0 });
+  });
+
+  it("a newest-first file is known by its running balance, even with only two dates", () => {
+    /* Printed newest-first: 03/02 SHOP −200 → −200, 03/02 PAY +1000 → 0, 20/01 SAAS −1000 → −1000. */
+    const r = csv("03/02/2026,SHOP,200,,-200", "03/02/2026,CARD PAYMENT,,1000,0", "20/01/2026,SAAS INC,1000,,-1000").rows;
+    expect(inDateOrder(r).map((x) => x.description)).toEqual(["SAAS INC", "CARD PAYMENT", "SHOP"]);
+    expect(openingBalanceFromStatement(r, "2026-02-01")).toMatchObject({ ok: true, amount: -1000, chainBreaks: 0 });
+  });
+
   it("no false gap in the preview check", () => {
     expect(checkPreview(rows).gaps).toEqual([]);
   });

@@ -30,19 +30,27 @@ describe("R-2665 HDFC credit-card billed statement (.xls)", () => {
     expect(res.warnings.filter((w) => /auto-detect/i.test(w))).toEqual([]);
   });
 
-  it("flag decides the side: '' = spend (money out), Cr / CR / C / Credit = money in, Dr = out", async () => {
+  it("flag decides the side: '' = spend (HDFC), Cr / CR / C / Credit = money in", async () => {
     const res = await card([
       line("01/02/2026 / 10:00", "100.00", ""),
       line("01/02/2026 / 10:01", "200.00", "Cr"),
       line("01/02/2026 / 10:02", "300.00", "CR"),
       line("01/02/2026 / 10:03", "400.00", "C"),
       line("01/02/2026 / 10:04", "500.00", "Credit"),
-      line("01/02/2026 / 10:05", "600.00", "Dr"),
-      line("01/02/2026 / 10:06", "700.00", "Debit"),
     ]);
-    expect(res.rows.map((r) => [r.debit, r.credit])).toEqual([
-      [100, 0], [0, 200], [0, 300], [0, 400], [0, 500], [600, 0], [700, 0],
+    expect(res.rows.map((r) => [r.debit, r.credit])).toEqual([[100, 0], [0, 200], [0, 300], [0, 400], [0, 500]]);
+  });
+
+  it("a file that writes Dr itself: Dr / Debit = out, and a BLANK flag is not guessed", async () => {
+    const res = await card([
+      line("01/02/2026 / 10:00", "600.00", "Dr"),
+      line("01/02/2026 / 10:01", "700.00", "Debit"),
+      line("01/02/2026 / 10:02", "200.00", "Cr"),
+      line("01/02/2026 / 10:03", "999.00", ""),
     ]);
+    expect(res.rows.map((r) => [r.debit, r.credit])).toEqual([[600, 0], [700, 0], [0, 200]]);
+    expect(res.skipped).toBe(1);
+    expect(res.warnings.join(" ")).toMatch(/1 line was skipped.*nothing \(blank\)/);
   });
 
   it("unknown flag: the line is skipped and counted, never guessed", async () => {
@@ -93,6 +101,35 @@ describe("R-2665 HDFC credit-card billed statement (.xls)", () => {
   it("the CSV of the same sheet reads the same (one parser for CSV and Excel)", async () => {
     const rows = await excelToRows(hdfcCardXls());
     expect(parseStatement(rowsToCsv(rows))).toEqual(parseStatementRows(rows));
+  });
+
+  it("other flag files: text dates read, 'AMT (INR)' header, a stray 'Credit Limit' column ignored", () => {
+    const res = parseStatement([
+      "Date,Description,Credit Limit,AMT (INR),Dr/Cr",
+      "03 Feb 2026,SHOP,500000,1000.00,Dr",
+      "05-Feb-2026,REFUND,500000,250.00,Cr",
+    ].join("\n"));
+    expect(res.rows.map((r) => [r.txn_date, r.debit, r.credit])).toEqual([["2026-02-03", 1000, 0], ["2026-02-05", 0, 250]]);
+  });
+
+  it("a balance with its own Dr / Cr column keeps its sign (Dr = owed, below 0)", () => {
+    const res = parseStatement([
+      "Date,Description,Amount,Dr/Cr,Balance,Dr/Cr",
+      "01/02/2026,SHOP,1000.00,Dr,12000.00,Dr",
+      "02/02/2026,PAYMENT,15000.00,Cr,3000.00,Cr",
+    ].join("\n"));
+    expect(res.rows.map((r) => [r.debit, r.credit, r.balance_after])).toEqual([[1000, 0, -12000], [0, 15000, 3000]]);
+    expect(checkPreview(res.rows).gaps).toEqual([]);
+  });
+
+  it("a bare number in the date column is never a date (was: a footer '0' became a line of 2000)", () => {
+    const res = parseStatement([
+      "Date,Narration,Debit,Credit,Balance",
+      "01/02/2026,ATM,500,,9500",
+      "0,TOTAL,500,0,",
+    ].join("\n"));
+    expect(res.rows.map((r) => r.txn_date)).toEqual(["2026-02-01"]);
+    expect(res.skipped).toBe(1);
   });
 
   it("a bank file with real Debit and Credit columns is NOT read as a flag layout", () => {
