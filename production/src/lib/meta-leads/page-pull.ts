@@ -24,7 +24,7 @@ export interface PagePullResult {
 
 type Fetch = typeof fetch;
 
-async function getAll<T>(firstUrl: string, token: string, fetchImpl: Fetch, graph: string): Promise<{ items: T[]; status: number }> {
+export async function getAll<T>(firstUrl: string, token: string, fetchImpl: Fetch, graph: string): Promise<{ items: T[]; status: number }> {
   const items: T[] = [];
   let url: string | undefined = firstUrl;
   for (let i = 0; url && i < MAX_PAGES; i++) {
@@ -67,4 +67,17 @@ function failed(status: number): PagePullResult {
     return { forms: 0, leads: [], needsReconnect: true, error: "Facebook did not allow reading leads for this Page. Connect the Page again and allow lead access." };
   }
   return { forms: 0, leads: [], needsReconnect: false, error: `Facebook did not answer (HTTP ${status}). Try again in a few minutes.` };
+}
+
+/** R-2522: leads of ONE chosen form since a day (the Page token of the form's Page). */
+export async function pullFormLeads(opts: {
+  formId: string; pageToken: string; since: Date; graphVersion?: string; fetchImpl?: Fetch;
+}): Promise<{ leads: GraphLead[]; needsReconnect: boolean; error: string | null }> {
+  const graph = `https://graph.facebook.com/${opts.graphVersion ?? "v21.0"}`;
+  if (!/^\d{1,30}$/.test(opts.formId)) return { leads: [], needsReconnect: false, error: "The form id is not valid. Choose the form again." };
+  const sinceUnix = Math.floor(opts.since.getTime() / 1000);
+  const filtering = encodeURIComponent(JSON.stringify([{ field: "time_created", operator: "GREATER_THAN_OR_EQUAL", value: sinceUnix }]));
+  const res = await getAll<GraphLead>(`${graph}/${opts.formId}/leads?fields=${LEAD_FIELDS}&limit=100&filtering=${filtering}`, opts.pageToken, opts.fetchImpl ?? fetch, graph);
+  if (res.status !== 200) { const f = failed(res.status); return { leads: [], needsReconnect: f.needsReconnect, error: f.error }; }
+  return { leads: res.items.filter((l) => l.id).map((l) => ({ ...l, form_id: l.form_id ?? opts.formId })), needsReconnect: false, error: null };
 }

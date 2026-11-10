@@ -431,6 +431,7 @@ MIGS=(
   "linkedinadssync|20261105141300_linkedin_ads_sync.sql|resellersos_migration|exists(select 1 from pg_constraint where conname = 'ad_accounts_platform_check' and pg_get_constraintdef(oid) like '%linkedin-ads%')"
   "linkedinadstenantcredentials|20261105141400_linkedin_ads_tenant_credentials.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'linkedin_ads_client_secret')"
   "r2510socialschedule|20261105150000_r2510_social_schedule.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content' and column_name = 'scheduled_at') and to_regclass('public.social_content_due_idx') is not null"
+  "r2522metaleadforms|20261110120000_r2522_meta_lead_forms.sql|resellersos_migration|to_regclass('public.meta_lead_forms') is not null"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER

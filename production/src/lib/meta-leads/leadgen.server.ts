@@ -164,7 +164,12 @@ export async function ingestMetaLead(opts: {
     return { kind: "duplicate", leadId: existing };
   }
 
-  const row = buildMetaLeadRow(tenantId, ref, graph, fetched.ok ? null : fetched.note);
+  const built = buildMetaLeadRow(tenantId, ref, graph, fetched.ok ? null : fetched.note);
+  /* R-2522: a pulled lead keeps the day the person filled the form, not the day it was fetched
+     (a 30-day fetch would otherwise date every lead "today"). Only a sane past time is used. */
+  const filledAt = graph?.created_time ? Date.parse(graph.created_time) : NaN;
+  const row = Number.isFinite(filledAt) && filledAt <= Date.now() && filledAt > Date.now() - 400 * 86_400_000
+    ? { ...built, created_at: new Date(filledAt).toISOString() } : built;
   const { error } = await admin.from("leads").insert(row);
   if (error) {
     /* 23505 = the deterministic id was inserted by a parallel delivery a moment ago. */
