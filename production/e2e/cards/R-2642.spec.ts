@@ -54,10 +54,13 @@ function psql(sql: string): string[] {
 
 const T = `(select t.id from public.tenants t where t.email = '${E2E_TENANT_EMAIL}')`;
 
-/** Removes this test's rows (a part invoice it raised goes too — a local test invoice). */
+/** Removes this test's rows (a part invoice it raised goes too — a local test invoice). That invoice is PAID, so
+    tg_invoices_block_delete_issued refuses a plain delete; the trigger's own named way past it
+    (app.invoice_amend_reason, transaction-local) is used — local docker DB only (psql()), as R-2631's spec. */
 function unplant(): void {
   psql(`
 begin;
+set local app.invoice_amend_reason = 'R-2642 card test cleanup (local test invoice)';
 create temp table r2642_inv on commit drop as
   select invoice_id as id from public.subscription_billings where id = '${PART_ID}' and invoice_id is not null;
 update public.subscription_billings set invoice_id = null where id = '${PART_ID}';
@@ -79,8 +82,9 @@ select '${CUSTOMER_ID}', t.id, '${CUSTOMER}', '07AAHCP2642K1Z5', 'Saket', 'New D
        'R-2642 card test'
   from public.tenants t where t.email = '${E2E_TENANT_EMAIL}';
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
-                           created_date, billing_cycle, currency, line_items, notes)
-select '${QUOTE}', t.id, '${CUSTOMER_ID}', '${CUSTOMER}', 4720, 4000, 18, 'accepted', 'awaiting', '2026-08-25', 'quarterly', 'INR',
+                           payment_amount, payment_received_at, created_date, billing_cycle, currency, line_items, notes)
+select '${QUOTE}', t.id, '${CUSTOMER_ID}', '${CUSTOMER}', 4720, 4000, 18, 'accepted', 'partial',
+       1180, '2026-09-05 11:00:00+05:30', '2026-08-25', 'quarterly', 'INR',
        '[{"name":"Google Workspace Business Starter","qty":1,"rate":4000,"commitment":"annual_quarterly"}]'::jsonb, 'R-2642 card test'
   from public.tenants t where t.email = '${E2E_TENANT_EMAIL}';
 insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, billing_cycle, quote_id, start_date, status)
@@ -135,6 +139,9 @@ test.describe("R-2642 — a part invoice is paid on the day the money came in, n
       await openAppPage(page, "/accounting");
       const card = page.getByTestId("gst-filed-through-card");
       await expect(card).toBeVisible({ timeout: 60_000 });
+      /* Wait for the saved setting to load (cleared in beforeAll) before typing — on a cold page the form
+         re-renders with the loaded value and wipes what was typed, leaving Save disabled (first run, 10 Nov). */
+      await expect(page.getByTestId("gst-filed-through-text")).toContainText("Not set", { timeout: 60_000 });
       await card.getByLabel("GST returns filed up to (month)").fill("2026-09");
       await expect(card.getByRole("button", { name: "Save" })).toBeEnabled({ timeout: 30_000 });
       await card.getByRole("button", { name: "Save" }).click();
@@ -145,10 +152,12 @@ test.describe("R-2642 — a part invoice is paid on the day the money came in, n
     }
   });
 
-  test("Step 2: Invoices → SCN Part Paid Buyer → Generate invoice for Q1 ₹1,180 → invoice dated 1 Oct 2026", async ({ browser, baseURL }) => {
+  test("Step 2: Invoices → Pending GST invoice generation → SCN Part Paid Buyer → Generate invoice for Q1 ₹1,180 → invoice dated 1 Oct 2026", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     try {
       await openAppPage(page, "/invoices");
+      // the "Pending GST invoice generation" panel opens collapsed
+      await page.getByRole("heading", { name: "Pending GST invoice generation" }).click({ timeout: 60_000 });
       const row = page.getByRole("row").filter({ hasText: CUSTOMER });
       await row.getByRole("button", { name: /Generate invoice for Q1/ }).first().click({ timeout: 60_000 });
       await expect.poll(() => partInvoice().split("|")[0], { timeout: 120_000, message: "Q1 invoice dated 1 Oct 2026" }).toBe("2026-10-01");
