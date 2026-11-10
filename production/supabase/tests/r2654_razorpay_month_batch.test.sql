@@ -283,6 +283,27 @@ begin
     raise exception 'FAIL E2: a run with a line left is not marked undone';
   end if;
 end $$;
+
+-- ── H. That hand-freed line is not stuck: a new run books it (the stale record is released) and the
+--      old run's Undo no longer touches it ──────────────────────────────────────────────────────────
+do $$
+declare v_old uuid := (select v from r2654_ids where k = 'run3'); v_new uuid; v_res jsonb;
+begin
+  v_new := public.razorpay_batch_run_start('bbbbbbbb-0000-0000-0000-000000265401');
+  perform public.reconcile_razorpay_settlement_in_run(v_new, '11111111-0000-0000-0000-000000265402', pg_temp.setl2());
+  if not exists (select 1 from public.bank_recon_run_lines where run_id = v_new and txn_id = '11111111-0000-0000-0000-000000265402' and undone_at is null) then
+    raise exception 'FAIL H1: new run did not record the line';
+  end if;
+  v_res := public.undo_bank_recon_run(v_old);
+  if (v_res->>'undone')::int <> 0 or jsonb_array_length(v_res->'left') <> 0 then
+    raise exception 'FAIL H2: old run undo should find nothing of its own now (%)', v_res;
+  end if;
+  if not exists (select 1 from public.bank_transactions where id = '11111111-0000-0000-0000-000000265402' and matched_to_type = 'payment') then
+    raise exception 'FAIL H3: the old run undid the new run''s booking';
+  end if;
+  v_res := public.undo_bank_recon_run(v_new);
+  if (v_res->>'undone')::int <> 1 then raise exception 'FAIL H4: new run undo %', v_res; end if;
+end $$;
 reset role;
 
 -- ── G. Books locked over the line's day: the run refuses the line, nothing written ────────────
