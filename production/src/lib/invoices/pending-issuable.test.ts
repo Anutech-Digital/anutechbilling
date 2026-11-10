@@ -202,3 +202,45 @@ describe("R-2651 /invoices bulk 'Generate N' confirm = the single confirm's line
     expect(t).not.toMatch(/B2C/);
   });
 });
+
+describe("R-2651 bulk confirm — review fixes", () => {
+  const A: PendingQuoteForIssue = {
+    id: "Q-A", customer_name: "Alpha", amount: 11_800, payment_terms_days: 30, subtotal: 10_000, discount_pct: 0,
+    tax_rate: 18, customer_gstin: "07ABCDE1234F1Z5", customer_country: "India", customer_treatment: "registered",
+    latest_receipt_day: "2026-09-02", part_action: { kind: "whole" },
+  };
+  const B: PendingQuoteForIssue = { ...A, id: "Q-B", customer_name: "Beta" };
+  const dateFor = (d: string | null) => (d ? { date: d, why: "receipt" as const } : undefined);
+  const run = (rows: PendingQuoteForIssue[], over: Partial<Parameters<typeof pendingQuotesToIssuable>[1]> = {}) =>
+    bulkIssueConsequences({ quotes: pendingQuotesToIssuable(rows, { dateFor, luts: LUTS, ...over }), series: SERIES });
+  const all = (r: ReturnType<typeof run>) => r.consequences.map((x) => x.text).join(" | ");
+
+  it("company not GST-registered → no INV number named or claimed certain (Bill of Supply series)", () => {
+    const r = run([A, B], { billOfSupply: true });
+    expect(r.predictedIsCertain).toBe(false);
+    expect(all(r)).toMatch(/Bill of Supply \(BOS-\) numbers/);
+    expect(all(r)).not.toMatch(/INV-TEST/);
+  });
+
+  it("one ₹0 quote in the selection holds the bulk issue and is named (single confirm holds it too)", () => {
+    const r = run([A, { ...B, amount: 0, subtotal: 0 }]);
+    expect(all(r)).toMatch(/Q-B · Beta: .*no amount.*Untick Q-B/);
+    expect(r.consequences.some((c) => c.tone === "warning" && /no amount|nothing can be issued/i.test(c.text))).toBe(true);
+  });
+
+  it("an export whose date or LUT could not be read is held in bulk (server could refuse it mid-run)", () => {
+    const r = run([{ ...ROW, latest_receipt_day: "2026-08-26" }, A], { dateFor: (d) => (d === "2026-08-26" ? undefined : dateFor(d)) });
+    expect(all(r)).toMatch(/Q-USD-1 · Peak Performance Hackers: .*could not be read, so nothing can be issued.*Untick Q-USD-1/);
+  });
+
+  it("same date for every quote → said once, not per quote", () => {
+    const t = all(run([A, B]));
+    expect(t).toMatch(/All 2: Dated 2 Sept? 2026 — the day the money came in/);
+    expect(t).not.toMatch(/Q-A · Alpha/);
+  });
+
+  it("held quotes come first, right after the number line", () => {
+    const r = run([A, { ...ROW, latest_receipt_day: "2026-08-26" }], { luts: [] });
+    expect(r.consequences[1].text).toMatch(/^Q-USD-1 /);
+  });
+});

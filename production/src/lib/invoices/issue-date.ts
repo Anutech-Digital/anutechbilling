@@ -9,7 +9,8 @@
  */
 "use client";
 
-import { useQuery, useQueries } from "@tanstack/react-query";
+import { useMemo } from "react";
+import { useQueries } from "@tanstack/react-query";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/client";
@@ -52,25 +53,20 @@ async function fetchInvoiceDate(tenantId: string | null | undefined, receiptDay:
 /**
  * The invoice date generate_invoice will use, from invoice_date_for_receipt. While loading, or if the
  * call fails, `date` is null — the confirm then says nothing about the date rather than guess.
+ * R-2651: the one-day case of useInvoiceIssueDates (same query, same words).
  */
 export function useInvoiceIssueDate(args: { tenantId: string | null | undefined; receiptDay: string | null; enabled: boolean }) {
-  const today = istToday();
-  const q = useQuery({
-    queryKey: ["invoice_date_for_receipt", args.tenantId ?? null, args.receiptDay],
-    enabled: args.enabled && Boolean(args.tenantId),
-    staleTime: 60_000,
-    queryFn: () => fetchInvoiceDate(args.tenantId, args.receiptDay),
-  });
-  const date = q.data ?? null;
+  const many = useInvoiceIssueDates({ tenantId: args.tenantId, receiptDays: [args.receiptDay], enabled: args.enabled });
+  const d = many.dateFor(args.receiptDay);
   /* R-2647: `loading` — the /invoices confirm holds Issue until the server's date is in (or failed). */
-  return { date, why: date ? invoiceDateWhy({ date, receiptDay: args.receiptDay, today }) : undefined, loading: q.isLoading };
+  return { date: d?.date ?? null, why: d?.why, loading: many.loading };
 }
 
 /**
- * R-2651 — the same server date for SEVERAL receipt days at once (the bulk "Generate N" confirm):
- * one invoice_date_for_receipt call per distinct day, same query key as useInvoiceIssueDate (shared
- * cache). `dateFor(day)` is undefined while that day loads or if its call failed — the confirm then
- * says nothing about that date rather than guess. `loading` holds Issue until every day is in.
+ * R-2651 — the server date for SEVERAL receipt days at once (the bulk "Generate N" confirm): one
+ * invoice_date_for_receipt call per distinct day (cached per day). `dateFor(day)` is undefined while
+ * that day loads or if its call failed — the confirm then says nothing about that date rather than
+ * guess. `loading` holds Issue until every day is in (or failed).
  */
 export function useInvoiceIssueDates(args: { tenantId: string | null | undefined; receiptDays: readonly (string | null)[]; enabled: boolean }) {
   const today = istToday();
@@ -83,12 +79,18 @@ export function useInvoiceIssueDates(args: { tenantId: string | null | undefined
       queryFn: () => fetchInvoiceDate(args.tenantId, day),
     })),
   });
-  const byDay = new Map<string | null, string | null>();
-  days.forEach((day, i) => { if (results[i]?.data !== undefined) byDay.set(day, results[i].data ?? null); });
-  const dateFor = (day: string | null): { date: string | null; why?: InvoiceDateWhy } | undefined => {
-    const date = byDay.get(day);
-    if (date === undefined) return undefined;
-    return { date, why: date ? invoiceDateWhy({ date, receiptDay: day, today }) : undefined };
-  };
-  return { dateFor, loading: results.some((r) => r.isLoading) };
+  const loading = results.some((r) => r.isLoading);
+  /* Stable while the answers are the same, so a caller's useMemo on dateFor caches between renders. */
+  const key = JSON.stringify(days.map((day, i) => [day, results[i]?.data === undefined ? "?" : results[i].data]));
+  const dateFor = useMemo(() => {
+    const byDay = new Map<string | null, string | null>(
+      (JSON.parse(key) as [string | null, string | null | "?"][]).filter(([, v]) => v !== "?") as [string | null, string | null][],
+    );
+    return (day: string | null): { date: string | null; why?: InvoiceDateWhy } | undefined => {
+      const date = byDay.get(day);
+      if (date === undefined) return undefined;
+      return { date, why: date ? invoiceDateWhy({ date, receiptDay: day, today }) : undefined };
+    };
+  }, [key, today]);
+  return { dateFor, loading };
 }
