@@ -14,8 +14,14 @@
  * (`npm run test:e2e`, GitHub's E2E job against staging) also collects e2e/cards/*.spec.ts —
  * there every card spec skips, because the local test login does not exist there.
  */
+import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { expect, test, type Browser, type Locator, type Page } from "@playwright/test";
 import type { TestLoginRole } from "../../src/app/api/dev/test-login/rules";
+// @ts-expect-error — plain .mjs helpers (no types)
+import { scenarioTargetReason } from "../../scripts/dev/local-guard.mjs";
+import { E2E_TENANT_EMAIL } from "../fixtures/e2e-roles.mjs";
 
 /** True only inside `node scripts/ops/card-tests.mjs`. */
 export const CARD_TESTS_ON = process.env.CARD_TESTS === "1";
@@ -111,6 +117,180 @@ export async function pickPayingCustomer(dlg: Locator, name: string): Promise<vo
   const picker = dlg.getByRole("combobox", { name: "Customer who paid" });
   const tile = dlg.getByRole("radiogroup", { name: "Who is this money for?" }).getByRole("radio", { name: /^Customer\b/ });
   await expect(picker.or(tile).first()).toBeVisible({ timeout: 60_000 });
-  if (!(await picker.isVisible())) await tile.click();
+  /* R-2666 (10 Nov): a tile click while the sheet was still loading its guesses was lost — the picker never opened and
+     selectOption timed out (R-2621 step 3). The tile is a radio, so clicking it again is safe: retry until the picker shows. */
+  await expect(async () => {
+    if (!(await picker.isVisible())) await tile.click();
+    await expect(picker).toBeVisible({ timeout: 10_000 });
+  }).toPass({ timeout: 60_000 });
   await picker.selectOption({ label: name });
+}
+
+/* ─────────── R-2666 (10 Nov 2026): shared fixes for the traps that broke ~8 card specs in 2 days ───────────
+ * 9–10 Nov: the R-2621, R-2622, R-2624, R-2627, R-2631, R-2638, R-2642 and R-2644 specs each failed a first localhost
+ * run for the SAME few reasons — no app bug. Use these instead of re-writing the fix in every spec
+ * (docs/WORKER-STEPS.md → "Card spec rules"):
+ *   - typed before hydration / before the stored value loaded → re-render wiped it   → waitForHydrated + fillKept
+ *   - looked for a row inside a panel that opens collapsed                          → openCollapsedPanel
+ *   - USD quote: the automatic "Latest" rate fetch overwrote the typed rate         → waitForAutoRateFetch
+ *   - cleanup could not delete an ISSUED / PAID test invoice                        → localCleanupDeleteIssuedInvoice
+ *   - getByText matched two elements (strict mode) or the wrong one (a sort header) → scope to a region + onlyOne
+ *   - every spec carried its own 20-line copy of the docker/psql local-DB guard     → localDb
+ */
+
+/** SQL for E2E Test Co's tenant id (the card tests' own company). */
+export const E2E_TENANT_SQL = `(select t.id from public.tenants t where t.email = '${E2E_TENANT_EMAIL}')`;
+
+export type LocalDb = {
+  /** The local supabase_db_* docker container. */
+  container: string;
+  /** Run SQL as postgres on the LOCAL docker DB (ON_ERROR_STOP); returns the non-empty output lines (-At). */
+  psql: (sql: string) => string[];
+  /** First output line, trimmed ("" when none) — for one-value reads. */
+  one: (sql: string) => string;
+};
+
+/**
+ * The local docker DB, guarded: throws unless every DB/Supabase URL in the env and production/.env.local points at the
+ * local stack (scripts/dev/local-guard.mjs scenarioTargetReason). Call it inside a test / beforeAll — never at import
+ * time — so a spec collected by the staging E2E job (where it skips) never touches docker.
+ */
+export function localDb(card: string): LocalDb {
+  const ps = spawnSync("docker", ["ps", "--format", "{{.Names}}"], { encoding: "utf8" });
+  const c = (ps.stdout ?? "").split(/\r?\n/).map((s) => s.trim()).find((n) => /^supabase_db_/.test(n)) ?? null;
+  const env: Record<string, string> = {};
+  const f = path.resolve(__dirname, "..", "..", ".env.local");
+  if (fs.existsSync(f)) {
+    for (const line of fs.readFileSync(f, "utf8").split(/\r?\n/)) {
+      const m = /^\s*([A-Z0-9_]+)\s*=\s*"?([^"\r\n]*)"?\s*$/.exec(line);
+      if (m) env[m[1]] = m[2];
+    }
+  }
+  const keys = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL", "DATABASE_URL", "DIRECT_URL"];
+  const why = scenarioTargetReason({ nodeEnv: process.env.NODE_ENV, container: c, urls: keys.flatMap((k) => [process.env[k], env[k]]) });
+  if (why || !c) throw new Error(`${card} card test refuses to write test data: ${why || "no local supabase_db_* container"}`);
+  if (!/^[a-z0-9@._-]+$/i.test(E2E_TENANT_EMAIL)) throw new Error("unexpected tenant email");
+  const container = c;
+  const psql = (sql: string): string[] => {
+    const r = spawnSync("docker", ["exec", "-i", container, "psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"],
+      { input: sql, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
+    if (r.status !== 0) throw new Error(`psql failed (exit ${r.status}): ${(r.stderr || r.stdout || "").trim()}`);
+    return (r.stdout ?? "").split(/\r?\n/).filter(Boolean);
+  };
+  return { container, psql, one: (sql) => (psql(sql)[0] ?? "").trim() };
+}
+
+/** A fixed planted test id in SQL — only letters, digits and - _ . / ('c2631000-…', 'Q-SCN-GFO-1'). */
+function sqlId(v: string): string {
+  if (!/^[A-Za-z0-9._/-]+$/.test(v)) throw new Error(`not a plain test id: ${v}`);
+  return `'${v}'`;
+}
+
+/**
+ * Delete this card test's ISSUED / PAID local test invoices. tg_invoices_block_delete_issued refuses a plain delete; its
+ * own named way past it is `set local app.invoice_amend_reason` (transaction-local), used here inside ONE transaction.
+ * The delete is scoped to E2E Test Co AND the fixed ids the spec planted (or the invoices of its fixed quotes) — never a
+ * pattern. `before` runs first in the same transaction (e.g. unlink quotes.invoice_id); `after` runs last (delete the
+ * planted payments / quotes / customers). Local docker DB only (localDb).
+ */
+export function localCleanupDeleteIssuedInvoice(
+  db: LocalDb,
+  card: string,
+  opts: { invoiceIds?: readonly string[]; quoteIds?: readonly string[]; before?: string; after?: string },
+): void {
+  if (!/^R-\d+$/.test(card)) throw new Error(`card id like R-1234, got ${card}`);
+  const ids = (opts.invoiceIds ?? []).map(sqlId);
+  const quotes = (opts.quoteIds ?? []).map(sqlId);
+  const where = [ids.length ? `id in (${ids.join(", ")})` : "", quotes.length ? `quote_id in (${quotes.join(", ")})` : ""].filter(Boolean);
+  db.psql(`
+begin;
+set local app.invoice_amend_reason = '${card} card test cleanup (local test invoice)';
+${opts.before ?? ""}
+${where.length ? `delete from public.invoices where (${where.join(" or ")}) and tenant_id = ${E2E_TENANT_SQL};` : ""}
+${opts.after ?? ""}
+commit;`);
+}
+
+/**
+ * Wait until a client page is HYDRATED and its stored data is on screen, before typing. `ready` = an element that shows
+ * only once the saved value has loaded ("Not set" / the stored month, the statement heading, a loaded row).
+ * 9 Nov: a P&L From typed during hydration was lost (reversed range → "didn't load"); "GST returns filed up to" typed
+ * before the stored month loaded was wiped by the re-render and Save stayed disabled.
+ */
+export async function waitForHydrated(page: Page, ready: Locator, timeout = 90_000): Promise<void> {
+  await expect(page).not.toHaveURL(/\/login/);
+  await expect(ready.first()).toBeVisible({ timeout });
+  // Capped: polling pages never go idle, and `ready` already proved the data is there.
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => { /* polling page */ });
+}
+
+/**
+ * Fill an input and prove it KEPT the value. A late re-render (hydration, a query landing, an auto-fetch) that wipes it
+ * is typed again instead of failing three steps later with a confusing message. `expected` defaults to `value`
+ * (a number box normalises "95.10" → "95.1").
+ */
+export async function fillKept(input: Locator, value: string, expected: string = value, timeout = 30_000): Promise<void> {
+  await expect(async () => {
+    if ((await input.inputValue()) !== expected) await input.fill(value);
+    await expect(input).toHaveValue(expected, { timeout: 1_500 });
+    await input.page().waitForTimeout(300); // still there a moment later = not wiped by a re-render
+    await expect(input).toHaveValue(expected, { timeout: 500 });
+  }).toPass({ timeout });
+}
+
+/**
+ * Accounting → Overview → "GST returns filed up to" → <month> → Save → confirm (step 1 of R-2621 / R-2627 / R-2631 /
+ * R-2642). Waits for the stored value ("Not set" or a saved month) BEFORE typing, keeps the typed month, waits for Save
+ * to enable. `month` = "2026-09"; `monthName` = "September 2026" (what the card says once saved). Already saved at that
+ * month → nothing to do (Save stays disabled for an unchanged month).
+ */
+export async function setGstFiledThrough(page: Page, month: string, monthName: string): Promise<void> {
+  await page.goto("/accounting");
+  const card = page.getByTestId("gst-filed-through-card");
+  const text = page.getByTestId("gst-filed-through-text");
+  await waitForHydrated(page, text.filter({ hasText: /Not set|GST returns are filed up to/ }));
+  if ((await text.textContent())?.includes(`filed up to ${monthName}`)) return;
+  await fillKept(card.getByLabel("GST returns filed up to (month)"), month);
+  const save = card.getByRole("button", { name: "Save" });
+  await expect(save).toBeEnabled({ timeout: 30_000 });
+  await save.click();
+  await page.getByRole("dialog", { name: `GST returns filed up to ${monthName}?` }).getByRole("button", { name: "Save" }).click(); // the confirm
+  await expect(text).toContainText(`GST returns are filed up to ${monthName}`, { timeout: 60_000 });
+}
+
+/**
+ * Open a panel that starts collapsed (e.g. /invoices "Pending GST invoice generation") and wait for its content.
+ * `name` = the clickable header's text (a button or role=button); `content` = something only the OPEN panel shows.
+ * Already open → nothing is clicked. A toggle with aria-expanded is trusted; without it the content decides. A click
+ * before hydration does nothing, so it is retried — never once the content shows (a second click would close it).
+ */
+export async function openCollapsedPanel(page: Page, name: string | RegExp, content: Locator, timeout = 60_000): Promise<void> {
+  const toggle = page.getByRole("button", { name }).first();
+  await expect(toggle).toBeVisible({ timeout });
+  await expect(async () => {
+    if (await content.first().isVisible()) return;
+    if ((await toggle.getAttribute("aria-expanded")) !== "true") await toggle.click();
+    await expect(content.first()).toBeVisible({ timeout: 10_000 });
+  }).toPass({ timeout });
+}
+
+/**
+ * USD (foreign-currency) quote: picking the currency fetches the "Latest" exchange rate on its own. A rate typed before
+ * that fetch lands is overwritten later (R-2638 / R-2644) — wait for it, then fillKept the rate. Resolves once the rate
+ * box holds a real rate (not empty / 0 / 1), or after `timeout` when the rate service is off on localhost.
+ */
+export async function waitForAutoRateFetch(page: Page, rate: Locator = page.locator("#billingRate"), timeout = 20_000): Promise<void> {
+  await expect(rate).toBeVisible({ timeout: 60_000 });
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => { /* polling page */ });
+  await expect(rate).not.toHaveValue(/^(|0|1)$/, { timeout }).catch(() => { /* no rate service: the typed rate stays */ });
+}
+
+/**
+ * Strict-mode-safe: assert the locator matches exactly ONE element and return it. Scope first (a dialog, `main`, a row,
+ * a testid card), then onlyOne — instead of `.first()` on a page-wide getByText, which hides that the text is ALSO a
+ * sort header, a toast or the page title (R-2562, R-2625: the test read the wrong element).
+ */
+export async function onlyOne(locator: Locator, what = "the element", timeout = 60_000): Promise<Locator> {
+  await expect(locator, `${what}: exactly one on the page`).toHaveCount(1, { timeout });
+  return locator;
 }

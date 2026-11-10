@@ -348,3 +348,27 @@ Format: `- <date>: what went wrong → the rule it created (card).`
   `status: doing` (always running, even with a human `step` on it — board v108) + `review` cards with
   `checkRunning: true`; never count from your own spawn list (skill `status-update`).
 - 8 Nov 2026 (R-2594): the day's review BLOCKs (R-2227 x R-2252 plan change + seat cut = double credit; R-1916 undo after TDS was deposited) were cross-feature cases an edge-case list would have caught → money / paisa / p0 cards get `edgeCases` on the card before coding (each a test or a `refused` line); the checker reads it first.
+- 10 Nov 2026 (R-2666, G-PROCESS) — Pardeep: "behtar kaam karne ka tarika sikho jisse kaam fast ho sake aur
+  use apne system me implement karo aur note bhi karo". 9–10 Nov lessons:
+  - (a) **Bulk-first reconcile.** Pehle bulk tool banao (preview + run id + "Undo this run" — R-2654 Razorpay
+    month batch, R-2656 own-account / reversal pairs, R-2657 no-vendor group by payee), phir book karo; Chrome
+    me ek-ek line haath se book karna aakhri raasta hai. Chrome agents sirf checks aur one-offs ke liye.
+    / Build the preview+run-id+undo bulk tool first, then book; never hand-book hundreds of lines in Chrome.
+  - (b) **Zoho API = daily budget.** Ek hi reader chale, jo padh liya use dobara mat padho (R-2653 day budget,
+    R-2661 "N of ~limit today"); bade import ke waqt Zoho scheduler/cron pause karo. 9 Nov limit khatam hua to
+    reconcile ruk gaya. / One reader, never re-read, pause the scheduler during big imports.
+  - (c) **deploy-peek text new body ka hi ho** (R-2646) — purani body me pehle se ho to staging/live chupchaap
+    migration skip karta hai. Guard test pakadta hai; likhte waqt hi function ki current body grep karo.
+  - (d) **Workers ≥4 turant refill** — ek worker khatam hote hi agla card spawn karo. Staging / checker /
+    recon agents gine nahi jaate (woh build nahi karte). / Refill to ≥4 building workers the moment one finishes.
+  - (e) **Shared docs (docs/specs/money-rules.md) poore card ke liye claim mat karo** — row sirf final commit me
+    jodo (claim me add karo usi waqt), taaki doosre cards us file ki wajah se ruke nahi. / Add the row in the
+    final commit only, so other cards are not blocked on the shared doc.
+  - (f) **Guard tests load me dheeme** (R-2630, R-2649): push ke waqt bhaari parallel workers kam (tsc + vitest
+    ek saath = har file 3–8x slow). Push turn me 2+ bhaari workers ho to naya bhaari kaam mat chhedo.
+  - (g) **HDFC credit-card billed statement (.xls) aur password wale PDF** ke liye import tool ban rahe hain
+    (R-2665 CC .xls, R-2662 PDF password browser me unlock) — haath se copy/paste ya password chat me mat do;
+    tool aane tak woh statements pending list me.
+  - Card specs: ~8 specs ek hi wajah se toote (hydration se pehle type, collapsed panel, USD rate fetch, issued
+    invoice cleanup, strict-mode double match) → shared helpers `e2e/cards/card-steps.ts` + WORKER-STEPS "Card
+    spec rules". Spec-only change after SAFE → 5-min diff-only re-check (WORKER-STEPS "Re-check rules").
