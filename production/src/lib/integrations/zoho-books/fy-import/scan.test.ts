@@ -27,6 +27,9 @@ function memoryStore() {
       return { listed: all.length, detailed: all.filter((r) => r.payload).length };
     },
     async reset(fy) { runs.delete(fy); for (const [k, v] of rows) if (v.fy === fy) rows.delete(k); },
+    /* R-2653: Read again (keeps the rows) + the re-check after a complete list — not used by these tests. */
+    async refresh(fy) { runs.set(fy, { nextPage: 1, listDone: false, listStartedAt: null, onlyAccount: null }); },
+    async requeueUnlisted() { return 0; },
   };
   return { store, rows };
 }

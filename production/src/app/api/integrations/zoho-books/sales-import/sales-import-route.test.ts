@@ -16,6 +16,7 @@ const st = vi.hoisted(() => ({
   rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>,
   rpcResult: { data: { dry_run: true, imported: 1 } as unknown, error: null as null | { message: string } },
   resets: 0,
+  refreshes: 0,
 }));
 
 vi.mock("@/lib/integrations/zoho-books/store", () => ({
@@ -29,6 +30,7 @@ vi.mock("@/lib/integrations/zoho-books/fy-import/store", () => ({
     readRun: async () => st.run,
     counts: async () => st.counts,
     reset: async () => { st.resets += 1; },
+    refresh: async () => { st.refreshes += 1; },
   }),
   readScannedFacts: async () => st.facts,
   readImportBatches: async () => [],
@@ -60,7 +62,7 @@ function req(body: unknown) {
 }
 
 beforeEach(() => {
-  st.role = "owner"; st.run = { nextPage: 3, listDone: true }; st.counts = { listed: 2, detailed: 2 }; st.rpc = []; st.resets = 0;
+  st.role = "owner"; st.run = { nextPage: 3, listDone: true }; st.counts = { listed: 2, detailed: 2 }; st.rpc = []; st.resets = 0; st.refreshes = 0;
   st.facts = [fact({}), fact({ zohoId: "z2", number: "INV/25-26/0002", status: "void", problems: ["Void in Zoho — not a sale, not in revenue or GST."] })];
   st.rpcResult = { data: { dry_run: true, imported: 1 }, error: null };
 });
@@ -140,10 +142,13 @@ describe("R-2499 sales-import route", () => {
     }
   });
 
-  it("undo calls remove_zoho_fy_sales_import with the reason; restart clears the scan", async () => {
+  it("undo calls remove_zoho_fy_sales_import with the reason; restart = Read again keeps the scan (R-2653); fresh forgets it", async () => {
     await POST(req({ action: "undo", fy: "2025-26", batchId: "b2499000-0000-0000-0000-0000000000b1", reason: "test batch" }));
     expect(st.rpc[0]).toEqual({ fn: "remove_zoho_fy_sales_import", args: { p_batch_id: "b2499000-0000-0000-0000-0000000000b1", p_reason: "test batch" } });
     await POST(req({ action: "restart", fy: "2025-26" }));
+    expect(st.refreshes).toBe(1);
+    expect(st.resets).toBe(0);
+    await POST(req({ action: "restart", fy: "2025-26", fresh: true }));
     expect(st.resets).toBe(1);
   });
 });

@@ -163,3 +163,65 @@ describe("R-2607 FY receipts dialog — server read", () => {
     expect(await screen.findByText("Read 900 of 2,576 — stopped.")).toBeTruthy();
   });
 });
+
+/* R-2653 — Read again keeps what is read; it can be limited to one Zoho deposit account (Razorpay Clearing). */
+describe("R-2653 FY receipts — Read again by deposit account", () => {
+  const withDeposits = {
+    ...preview,
+    deposits: [
+      { zohoAccountId: "ZA-RZP", zohoName: "Razorpay Clearing", count: 140, amount: 500000, appAccountId: null, suggested: false, leftOut: false },
+      { zohoAccountId: "ZA-HDFC", zohoName: "HDFC 4523", count: 2436, amount: 9000000, appAccountId: null, suggested: false, leftOut: false },
+      /* payments Zoho gave no account: never a Read-again choice (its value would equal All accounts) */
+      { zohoAccountId: "", zohoName: "(no account in Zoho)", count: 3, amount: 3000, appAccountId: null, suggested: false, leftOut: false },
+    ],
+  };
+
+  it("progress line while Read again checks the list; names the account it is limited to", () => {
+    expect(readStatusText({ listed: 2576, detailed: 2576, complete: false, running: true }))
+      .toBe("Checking Zoho for new or changed payments — on the server; you can close this window and come back.");
+    expect(readStatusText({ listed: 2576, detailed: 2570, complete: false, running: true }, "Razorpay Clearing"))
+      .toBe("Read 2,570 of 2,576 (Read again: only Razorpay Clearing) — on the server; you can close this window and come back.");
+    expect(readStatusText({ listed: 2576, detailed: 2576, complete: true }, "Razorpay Clearing")).toBe("Read all 2,576 payments. (Read again: only Razorpay Clearing)");
+  });
+
+  it("choose Only Razorpay Clearing → Read again sends that account (the scan is not forgotten) and says what is left as it was", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      const b = JSON.parse(init.body) as Record<string, unknown>;
+      bodies.push(b);
+      if (b.action === "status") return { ok: true, json: async () => ({ ok: true, listed: 2576, detailed: 2576, complete: true, running: false, error: null }) } as Response;
+      if (b.action === "preview") return { ok: true, json: async () => withDeposits } as Response;
+      if (b.action === "restart") return { ok: true, json: async () => ({ ok: true, listed: 0, detailed: 0, complete: false, running: false, error: null, onlyAccount: b.onlyAccount }) } as Response;
+      if (b.action === "start") return { ok: true, json: async () => ({ ok: true, listed: 2576, detailed: 2576, complete: false, running: true, error: null, onlyAccount: "ZA-RZP" }) } as Response;
+      if (b.action === "step") return { ok: true, json: async () => ({ ok: true, listed: 2577, detailed: 2577, complete: true, running: false, error: null, onlyAccount: "ZA-RZP" }) } as Response;
+      return { ok: false, json: async () => ({ ok: false, error: "unexpected" }) } as Response;
+    }));
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    const pick = await screen.findByTestId("fy-receipts-only-account");
+    expect([...(pick as HTMLSelectElement).options].map((o) => o.textContent)).toEqual(["All accounts", "Only Razorpay Clearing", "Only HDFC 4523"]);
+    fireEvent.change(pick, { target: { value: "ZA-RZP" } });
+    expect(screen.getByTestId("fy-receipts-only-hint").textContent).toMatch(/Only payments deposited to Razorpay Clearing are checked in Zoho/);
+    fireEvent.click(screen.getByRole("button", { name: /Read from Zoho again/ }));
+    await screen.findByText("Read all 2,577 payments. (Read again: only Razorpay Clearing)", undefined, { timeout: 5_000 });
+    const restart = bodies.find((x) => x.action === "restart")!;
+    expect(restart).toMatchObject({ action: "restart", onlyAccount: "ZA-RZP" });
+    expect(restart.fresh).toBeUndefined();
+  });
+
+  it("All accounts (default) → Read again sends no account", async () => {
+    const bodies: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      const b = JSON.parse(init.body) as Record<string, unknown>;
+      bodies.push(b);
+      if (b.action === "status") return { ok: true, json: async () => ({ ok: true, listed: 10, detailed: 10, complete: true, running: false, error: null }) } as Response;
+      if (b.action === "preview") return { ok: true, json: async () => withDeposits } as Response;
+      return { ok: true, json: async () => ({ ok: true, listed: 10, detailed: 10, complete: true, running: false, error: null }) } as Response;
+    }));
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    await screen.findByTestId("fy-receipts-only-account");
+    expect(screen.queryByTestId("fy-receipts-only-hint")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Read from Zoho again/ }));
+    await waitFor(() => expect(bodies.some((x) => x.action === "restart")).toBe(true));
+    expect(bodies.find((x) => x.action === "restart")!.onlyAccount).toBeNull();
+  });
+});
