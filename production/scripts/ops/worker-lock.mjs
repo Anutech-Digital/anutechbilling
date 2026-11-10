@@ -58,7 +58,7 @@ import path from "node:path";
 import { restoreBuildInfo, restoreLine, saveBuildInfo, dropBuildInfo, parseTscFlags, TSC_FULL_STEP } from "./worker-tsc-cache.mjs";
 import { execSync, execFileSync, spawnSync, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, PUSH_GUARD_TEST_TIMEOUT_MS, PUSH_GUARD_RUN_TIMEOUT_MS, failedSuites, slowestSuites, testsOverCiTimeout } from "./push-guard-suites.mjs";
+import { PUSH_GUARD_SUITES, PUSH_GUARD_BUDGET_MS, PUSH_GUARD_TEST_TIMEOUT_MS, PUSH_GUARD_RUN_TIMEOUT_MS, GUARD_VITEST_CONFIG, failedSuites, slowestSuites, testsOverCiTimeout } from "./push-guard-suites.mjs";
 import { enforceScope, parseScopeFlags, normaliseClaimAreas, realMigrationOrderGate } from "./worker-lock-guards.mjs";
 import { runRelatedSql } from "./worker-lock-sql.mjs";
 import { maskOwnMigrations, autoRenameLateMigrations, realAutoRenameDeps, checkMigrationClash } from "./worker-lock-migts.mjs";
@@ -435,7 +435,9 @@ export function runGuardSuites(card) {
     const t0 = Date.now();
     let crashed = null;
     try {
-      execFileSync(process.execPath, [path.join(root, "node_modules", "vitest", "vitest.mjs"), "run", "--reporter=json", `--outputFile=${out}`,
+      /* R-2649: GUARD_VITEST_CONFIG = vitest.config.ts + a globalSetup that warms the source cache once
+         (a fresh worktree's cold cache made this step 135 s instead of 28 s). */
+      execFileSync(process.execPath, [path.join(root, "node_modules", "vitest", "vitest.mjs"), "run", `--config=${GUARD_VITEST_CONFIG}`, "--reporter=json", `--outputFile=${out}`,
         `--testTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`, `--hookTimeout=${PUSH_GUARD_TEST_TIMEOUT_MS}`, ...files], // R-2630: laptop load is not a red guard
         { cwd: root, stdio: ["ignore", "pipe", "pipe"], maxBuffer: 64 * 1024 * 1024, timeout: PUSH_GUARD_RUN_TIMEOUT_MS }); // a hang never holds the heavy turn for ever
     } catch (e) { crashed = String(e.stderr ?? e.message ?? "").slice(-1500); }

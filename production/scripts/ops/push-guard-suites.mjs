@@ -184,6 +184,15 @@ export const PUSH_GUARD_TEST_TIMEOUT_MS = 30_000;
 /** R-2630: the whole guard vitest run is killed after this (→ the push is refused, "vitest fail") so a
     hang never holds the shared heavy turn for ever. Loaded laptop, 9 Nov: the run took up to ~102 s. */
 export const PUSH_GUARD_RUN_TIMEOUT_MS = 300_000;
+/**
+ * R-2649 (10 Nov 2026): the push runs the guard files with this config — vitest.config.ts plus a
+ * globalSetup (src/lib/testing/warm-source-cache.ts) that reads src/ + supabase/ through the source
+ * cache ONCE before the forks start. Every worker's push runs in a fresh worktree whose cache is cold:
+ * measured 10 Nov, same 88 files, other workers running — cold 135.3 s (app-url 116.9, secret-columns
+ * 77.6, no-seed-tenant 53.4 s: ~20 forks each reading the same 5,000 files at once), warm 28.4 s.
+ * Path relative to production/.
+ */
+export const GUARD_VITEST_CONFIG = "vitest.guard.config.ts";
 /** CI runs vitest with its default per-test timeout (vitest.config.ts sets none). */
 export const CI_TEST_TIMEOUT_MS = 5_000;
 
