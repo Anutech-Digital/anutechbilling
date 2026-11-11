@@ -423,7 +423,7 @@ export function BulkExpenseSheet({ onOpenChange, accountName, lines }: {
               </span>
               <span>
                 {view === "lines" && all.length > rows.length ? `Oldest ${rows.length} of ${all.length}. ` : ""}
-                High = your own Category Rule or a sure default. Lines of {rupee(AUTO_TICK_MAX)} or more are never ticked for you.
+                High = your own Category Rule on the full payee name, or a sure default. Lines of {rupee(AUTO_TICK_MAX)} or more are never ticked for you.
               </span>
             </span>
             <span className="flex gap-2">

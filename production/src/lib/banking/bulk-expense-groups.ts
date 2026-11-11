@@ -14,7 +14,7 @@
  * Pure: no React, no database. The sheet and its tests read the same functions.
  */
 import { narrationKey } from "./narration-key";
-import { AUTO_TICK_MAX, isBankGstLine, type BulkRow } from "./bulk-expense";
+import { AUTO_TICK_MAX, isBankGstLine, isSafeRuleKey, ruleUnsafeLine, wholeWordMatch, type BulkRow } from "./bulk-expense";
 
 export const BANK_GST_KEY = "bank-gst";
 export const BANK_GST_LABEL = "Bank GST on charges (DPO… CGST / SGST)";
@@ -26,22 +26,23 @@ export function groupKeyOf(row: { id: string; description: string | null }): str
   return k ? `payee:${k}` : `line:${row.id}`;
 }
 
-/** Rail / filler words that must never become a rule on their own — they are on every line. */
-const RULE_STOP = new Set(["UPI", "NEFT", "IMPS", "RTGS", "POS", "PAYMENT", "REMARK", "TRANSFER", "PAY", "BANK", "CHARGES"]);
-
 const norm = (s: string | null | undefined) => (s ?? "").toUpperCase().replace(/\s+/g, " ").trim();
 
 /**
- * The Category Rule text for a payee group, or null when no safe rule exists. A rule matches a
- * narration by substring (lib/banking/categorise.ts), so the pattern must be IN every line of the
- * group (else the rule would not even catch the lines that taught it), at least 4 letters, and not
- * just a rail word. The bank-GST group needs no rule — it has its built-in default.
+ * The Category Rule text for a payee group, or null when no safe rule exists. Category Rules match
+ * a narration by substring elsewhere (lib/banking/categorise.ts), and in this tool only as whole
+ * word(s) of a full payee text (bulk-expense.ts isSafeRuleKey / wholeWordMatch — independent review,
+ * 11 Nov: rule RAVI must never tick "RAVINDRA STEELS"). So a rule is offered only when the payee
+ * text has 2+ real words or one word of 6+ letters (no rail / bank / generic word), stands as whole
+ * word(s) in EVERY line of the group, and no line of the group is cash from an ATM, an own-account
+ * transfer, salary, a tax challan or a loan / EMI. The bank-GST group needs no rule — it has its
+ * built-in default.
  */
 export function rulePatternFor(key: string, rows: readonly { description: string | null }[]): string | null {
   if (!key.startsWith("payee:")) return null;
   const pattern = norm(key.slice("payee:".length));
-  if (pattern.replace(/[^A-Z]/g, "").length < 4 || RULE_STOP.has(pattern)) return null;
-  if (rows.length === 0 || !rows.every((r) => norm(r.description).includes(pattern))) return null;
+  if (!isSafeRuleKey(pattern) || rows.length === 0) return null;
+  if (rows.some((r) => ruleUnsafeLine(r.description) || !wholeWordMatch(r.description, pattern))) return null;
   return pattern;
 }
 
