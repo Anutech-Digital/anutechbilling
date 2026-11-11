@@ -6,7 +6,9 @@
 --      possible partners = 'ambiguous' (fail closed), "CHQ PAID-SELF" vs "NEFT CR-ACME" and "NEFT DR-VENDOR
 --      RENT" vs "FD CLOSURE" (a word on one line only) = not shown, a refund naming nobody from the first
 --      line = 'check' (never booked), a shared app name (PHONEPE) or IFSC + "TECHNOLOGIES" = 'check',
---      the same full payee name = sure, UPI reversal (UPIRET) = sure by its RRN, a REFUND paid out
+--      the same full payee name = sure, a number written in both narrations only (UPIRET + RRN) = 'check',
+--      a reference on ONE line only + an unrelated refund = 'check' (11 Nov: was booked through a NULL),
+--      the company's own account number in both narrations = 'check', a REFUND paid out
 --      followed by another customer's receipt = not shown (the word is on the FIRST line), three ₹5L
 --      cheques returned the same day = 3 sure pairs by cheque number, reversal whose other side is
 --      booked = 'other_side_booked', books lock = 'locked', a reconciled line / another company's
@@ -115,8 +117,22 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
   ('11111111-0000-0000-0000-000000265644','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-11-21','NEFT RETURN-HDFC0000240-GUPTA TRADERS',null,0,25000,'manual'),
   -- 18 the SAME full payee name (2+ words) with a return word → sure
   ('11111111-0000-0000-0000-000000265645','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-11-22','NEFT DR-HDFC0000240-RAMESH KUMAR SHARMA',null,33000,0,'manual'),
-  ('11111111-0000-0000-0000-000000265646','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-11-23','NEFT RETURN-HDFC0000240-RAMESH KUMAR SHARMA',null,0,33000,'manual');
+  ('11111111-0000-0000-0000-000000265646','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-11-23','NEFT RETURN-HDFC0000240-RAMESH KUMAR SHARMA',null,0,33000,'manual'),
+  -- 19 independent check 11 Nov (proven, was booked): only the OUT line has a reference (cheque no.) and
+  --    an unrelated refund comes in the next day → 'check', never booked (a NULL must never mean sure)
+  ('11111111-0000-0000-0000-000000265647','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-12-01','CHQ PAID-ZOMATO','000211',900,0,'manual'),
+  ('11111111-0000-0000-0000-000000265648','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-12-02','AMAZON REFUND',null,0,900,'manual'),
+  ('11111111-0000-0000-0000-000000265649','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-12-15','CHQ PAID-SUPPLIER K','000333',1700,0,'manual'),
+  ('11111111-0000-0000-0000-000000265650','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-12-16','NYKAA REFUND',null,0,1700,'manual'),
+  -- 20 the reverse: only the IN line has a reference → 'check'
+  ('11111111-0000-0000-0000-000000265651','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-12-05','NEFT DR-VENDOR P',null,1100,0,'manual'),
+  ('11111111-0000-0000-0000-000000265652','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-12-06','I/W CHQ RET-MYNTRA REFUND','000222',0,1100,'manual'),
+  -- 21 the two narrations share only the company's OWN account number (…4523) → 'check', and the
+  --    number is not even named as a shared reference
+  ('11111111-0000-0000-0000-000000265653','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-12-20','NEFT DR-50100012344523-VENDOR Q',null,1900,0,'manual'),
+  ('11111111-0000-0000-0000-000000265654','dddddddd-0000-0000-0000-000000265601','bbbbbbbb-0000-0000-0000-000000265601','2026-12-21','NEFT RETURN-50100012344523-SELLER R',null,0,1900,'manual');
 
+update public.bank_accounts set account_number_last4 = '4523' where id = 'bbbbbbbb-0000-0000-0000-000000265601';
 update public.tenants set books_locked_until = '2026-03-10' where id = 'dddddddd-0000-0000-0000-000000265601';
 
 select set_config('request.jwt.claims',
@@ -139,18 +155,27 @@ begin
   select string_agg(format('%s|%s|%s|%s', kind, status, right(out_txn_id::text, 2), right(in_txn_id::text, 2)), ' ' order by right(out_txn_id::text, 2), right(in_txn_id::text, 2))
     into v_got from public.bank_pair_candidates(null);
   v_want := 'transfer|sure|01|02 transfer|sure|08|09 transfer|ambiguous|12|13 transfer|ambiguous|12|14'
-         || ' reversal|sure|15|16 reversal|sure|17|21 reversal|sure|18|22 reversal|sure|19|20'
+         || ' reversal|check|15|16 reversal|sure|17|21 reversal|sure|18|22 reversal|sure|19|20'
          || ' reversal|other_side_booked|23|24 transfer|locked|29|30 transfer|sure|31|32 reversal|check|39|40'
-         || ' reversal|check|41|42 reversal|check|43|44 reversal|sure|45|46';
+         || ' reversal|check|41|42 reversal|check|43|44 reversal|sure|45|46'
+         || ' reversal|check|47|48 reversal|check|49|50 reversal|check|51|52 reversal|check|53|54';
   if v_got is distinct from v_want then
     raise exception 'FAIL A: preview — got: % — want: %', v_got, v_want;
   end if;
   if exists (select 1 from public.bank_pair_candidates(null) where reason is null or length(reason) < 10) then
     raise exception 'FAIL A: a row without a reason'; end if;
-  -- the UPI reversal is sure by its RRN in both narrations, not by the app name
+  -- a number written in both narrations (UPIRET with the RRN) is not proof by itself (it may be an
+  -- account number): 'check', and the reason says so
   if (select reason from public.bank_pair_candidates(null) where out_txn_id = '11111111-0000-0000-0000-000000265615')
-       not like 'Reversal word on the money coming back, same reference number in both narrations%' then
+       not like 'A reversal word and the same number in both narrations%' then
     raise exception 'FAIL A: UPI pair reason'; end if;
+  -- the company's own account number in both narrations is not a shared number at all
+  if (select reason from public.bank_pair_candidates(null) where out_txn_id = '11111111-0000-0000-0000-000000265653')
+       not like 'A reversal word, but the two lines share no reference number or payee name%' then
+    raise exception 'FAIL A: own account number was read as a shared reference'; end if;
+  if (select reason from public.bank_pair_candidates(null) where out_txn_id = '11111111-0000-0000-0000-000000265647')
+       not like 'A reversal word, but the two lines share no reference number or payee name%' then
+    raise exception 'FAIL A: cheque + unrelated refund reason'; end if;
   if (select reason from public.bank_pair_candidates(null) where out_txn_id = '11111111-0000-0000-0000-000000265645')
        not like 'Reversal word on the money coming back, same payee name%' then
     raise exception 'FAIL A: same-payee reason'; end if;
@@ -177,9 +202,9 @@ begin
           union all select '11111111-0000-0000-0000-000000265606'::uuid, '11111111-0000-0000-0000-000000265607'::uuid) s;
   v_res := public.book_bank_pairs(v_pairs);
   v_run := (v_res->>'run_id')::uuid;
-  if (v_res->>'booked')::int <> 7 or v_run is null then
-    raise exception 'FAIL B: booked % (want 7): %', v_res->>'booked', v_res; end if;
-  if (select count(*) from public.bank_pair_run_lines where run_id = v_run) <> 7 then
+  if (v_res->>'booked')::int <> 6 or v_run is null then
+    raise exception 'FAIL B: booked % (want 6): %', v_res->>'booked', v_res; end if;
+  if (select count(*) from public.bank_pair_run_lines where run_id = v_run) <> 6 then
     raise exception 'FAIL B: run lines'; end if;
   -- transfer: both sides 'transfer', pointing at each other, no added line
   if (select matched_to_type || ':' || matched_to_id from public.bank_transactions where id = '11111111-0000-0000-0000-000000265601')
@@ -195,7 +220,7 @@ begin
      or (select reversal_of from public.bank_transactions where id = '11111111-0000-0000-0000-000000265620')
        is distinct from '11111111-0000-0000-0000-000000265619' then
     raise exception 'FAIL B: cheque returns not paired by cheque number'; end if;
-  if (select reconcile_note from public.bank_transactions where id = '11111111-0000-0000-0000-000000265616') not like 'Reversal pair (Find pairs):%' then
+  if (select reconcile_note from public.bank_transactions where id = '11111111-0000-0000-0000-000000265621') not like 'Reversal pair (Find pairs):%' then
     raise exception 'FAIL B: reversal reason missing'; end if;
   -- not booked: ambiguous, locked, other side booked, the hand-booked one, the made-up pair
   if exists (select 1 from public.bank_transactions
@@ -210,8 +235,13 @@ begin
                            '11111111-0000-0000-0000-000000265637','11111111-0000-0000-0000-000000265638',
                            '11111111-0000-0000-0000-000000265639','11111111-0000-0000-0000-000000265640',
                            '11111111-0000-0000-0000-000000265641','11111111-0000-0000-0000-000000265642',
-                           '11111111-0000-0000-0000-000000265643','11111111-0000-0000-0000-000000265644')
-                and matched_to_type is not null) then
+                           '11111111-0000-0000-0000-000000265643','11111111-0000-0000-0000-000000265644',
+                           '11111111-0000-0000-0000-000000265615','11111111-0000-0000-0000-000000265616',
+                           '11111111-0000-0000-0000-000000265647','11111111-0000-0000-0000-000000265648',
+                           '11111111-0000-0000-0000-000000265649','11111111-0000-0000-0000-000000265650',
+                           '11111111-0000-0000-0000-000000265651','11111111-0000-0000-0000-000000265652',
+                           '11111111-0000-0000-0000-000000265653','11111111-0000-0000-0000-000000265654')
+                and (matched_to_type is not null or reversal_of is not null)) then
     raise exception 'FAIL B: a not-sure line was booked'; end if;
   if (select matched_to_type from public.bank_transactions where id = '11111111-0000-0000-0000-000000265623') is distinct from 'manual'
      or (select matched_to_type from public.bank_transactions where id = '11111111-0000-0000-0000-000000265632') is distinct from 'manual'
@@ -224,7 +254,7 @@ begin
      or (select count(*) from public.expenses where tenant_id = 'dddddddd-0000-0000-0000-000000265601') <> v_exp0
      or (select count(*) from public.other_incomes where tenant_id = 'dddddddd-0000-0000-0000-000000265601') <> v_oi0 then
     raise exception 'FAIL B: a payment / expense / other income row was written'; end if;
-  raise notice 'B PASS: 7 sure pairs booked through the transfer / manual pair paths; the rest left as they were';
+  raise notice 'B PASS: 6 sure pairs booked through the transfer / manual pair paths; the rest left as they were';
 
   -- C. book again → nothing
   v_res := public.book_bank_pairs(v_pairs);
@@ -243,7 +273,7 @@ begin
   if (v_res->>'booked')::int <> 1 then
     raise exception 'FAIL D: a pair freed by hand could not be booked again: %', v_res; end if;
   v_res := public.undo_bank_pair_run(v_run);
-  if (v_res->>'undone')::int <> 5 or jsonb_array_length(v_res->'left') <> 1
+  if (v_res->>'undone')::int <> 4 or jsonb_array_length(v_res->'left') <> 1
      or (v_res->'left'->0->>'out_txn_id') <> '11111111-0000-0000-0000-000000265619' then
     raise exception 'FAIL D: undo result %', v_res; end if;
   if (select undone_at from public.bank_pair_runs where id = v_run) is null then

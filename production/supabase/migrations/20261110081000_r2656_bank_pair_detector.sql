@@ -29,12 +29,20 @@
 --                 and the other line is in an overdraft account;
 --       reversal: both lines carry the same UTR / RRN (10+ characters); or the LATER line (either line on
 --                 the same day) has a reversal word (REV, REVERSAL, RET, RETURN, RTN, REFUND, UPIRET …)
---                 AND the two lines share the cheque no. (ref_key) or an 8+ digit / UTR reference written in
---                 both narrations (bank_pair_shared_ref), or carry the SAME full payee name
---                 (bank_pair_payee: 2+ words left after rail / IFSC / payment-app / company-suffix words).
+--                 AND both lines carry the SAME bank reference key (ref_key — a cheque no. too; both
+--                 not empty), or the SAME full payee name (bank_pair_payee: 2+ words left after rail /
+--                 IFSC / payment-app / company-suffix words).
 --                 A reversal word with anything less is status 'check' — listed, never booked. Re-check
 --                 10 Nov (proven): a shared app name (PHONEPE) or IFSC (HDFC0000240) or "TECHNOLOGIES" is
 --                 NOT the same party — "UPI-PHONEPE-SWIGGY" vs "UPI REFUND-PHONEPE-AMAZON" is a 'check'.
+--                 Check 11 Nov (proven, was booked): a reference on ONE line only is not a shared
+--                 reference — "CHQ PAID-ZOMATO" ref 000111 + next-day "AMAZON REFUND" (no ref) is a
+--                 'check'. A missing value (NULL) never counts as a match: a pair is 'sure' only when a
+--                 reason is positively true (fail closed).
+--                 Decision 11 Nov: an 8+ digit / UTR-shaped number written in both narrations
+--                 (bank_pair_shared_ref) is NOT proof by itself — it may be an account number — so it
+--                 gives 'check' with its own reason; the company's own bank account numbers (as stored:
+--                 full or last digits) are not counted as such a number at all.
 --     status 'sure'  — each of the two lines has exactly ONE possible partner (fail closed: two or more
 --                      → 'ambiguous', nothing booked). Counted over EVERY open same-amount opposite line
 --                      ≤3 days (with or without a reason), in any account. For a reversal, when several
@@ -44,7 +52,8 @@
 --                      reconcile_bank_txn_as_transfer picks the nearest open line of the other account
 --                      itself, so a transfer is sure only when there is no other line it could pick.
 --            'ambiguous' — more than one possible partner on either side.
---            'check'     — a one-to-one reversal with a reversal word only (no shared name / reference).
+--            'check'     — a one-to-one reversal with a reversal word but no same reference key / payee
+--                      name (a number shared only in the narrations is still 'check').
 --            'locked'    — a line is on or before the company's books lock date.
 --            'other_side_booked' — an open line with a reversal word whose same-amount opposite line in
 --                      that account (≤3 days) is ALREADY reconciled, and which has no open partner: never
@@ -179,10 +188,14 @@ as $function$
 $function$;
 grant execute on function public.bank_pair_transfer_word(text) to authenticated, service_role;
 
-/* A reference number written in BOTH narrations: an all-digit token of 8+ digits (RRN, cheque / UTR
-   digits), or a 12+ character token with 6+ digits that is not IFSC-shaped (a UTR). Dates and amounts
-   (under 8 digits) and IFSC codes (HDFC0000240 — the same branch for many payees) never count. */
-create or replace function public.bank_pair_shared_ref(p_a text, p_b text)
+/* A number written in BOTH narrations: an all-digit token of 8+ digits (RRN, cheque / UTR digits), or
+   a 12+ character token with 6+ digits that is not IFSC-shaped (a UTR). Dates and amounts (under 8
+   digits) and IFSC codes (HDFC0000240 — the same branch for many payees) never count, and neither
+   does an all-digit token that is one of the company's OWN account numbers (p_own: the digits stored
+   on its bank accounts, 4+ long — the token equals them or ends with them).
+   Decision 11 Nov: this is only a hint for the 'check' reason — never a reason to book. */
+drop function if exists public.bank_pair_shared_ref(text, text);
+create or replace function public.bank_pair_shared_ref(p_a text, p_b text, p_own text[] default '{}')
 returns boolean
 language sql
 immutable
@@ -195,9 +208,12 @@ as $function$
             or (length(t) >= 12 and length(regexp_replace(t, '[^0-9]', '', 'g')) >= 6
                 and t !~ '^[A-Z]{4}0[A-Z0-9]{6}$'))
        and t = any (regexp_split_to_array(upper(coalesce(p_b, '')), '[^A-Z0-9]+'))
+       and not exists (
+         select 1 from unnest(coalesce(p_own, '{}'::text[])) own
+          where length(own) >= 4 and t ~ '^[0-9]+$' and right(t, length(own)) = own)
   );
 $function$;
-grant execute on function public.bank_pair_shared_ref(text, text) to authenticated, service_role;
+grant execute on function public.bank_pair_shared_ref(text, text, text[]) to authenticated, service_role;
 
 /* The payee's name in a narration: its words in order, without rail / reversal / bank words,
    IFSC-shaped codes, payment apps and UPI handles (PHONEPE, PAYTM, GPAY, RAZORPAY, YBL …), company
@@ -259,9 +275,14 @@ stable
 security definer
 set search_path to 'public'
 as $function$
-declare v_tenant uuid := public._r2656_pair_gate(); v_lock date;
+declare v_tenant uuid := public._r2656_pair_gate(); v_lock date; v_own text[];
 begin
   select t.books_locked_until into v_lock from public.tenants t where t.id = v_tenant;
+  /* the company's own account numbers, digits only as stored (full or last digits) */
+  select coalesce(array_agg(distinct d.n), '{}'::text[]) into v_own
+    from public.bank_accounts a
+    cross join lateral (select regexp_replace(coalesce(a.account_number_last4, ''), '[^0-9]', '', 'g') as n) d
+   where a.tenant_id = v_tenant and length(d.n) >= 4;
   return query
   with lines as (
     select bt.id, bt.bank_account_id, bt.txn_date, bt.description, bt.ref_key, bt.matched_to_type,
@@ -278,10 +299,11 @@ begin
   raw as (
     select o.id as oid, i.id as iid,
            case when o.bank_account_id = i.bank_account_id then 'reversal' else 'transfer' end as k,
-           /* any equal key (a cheque no. too) — only to tell same-account candidates apart */
-           (o.ref_key is not null and o.ref_key = i.ref_key) as ref_any,
+           /* Both lines carry the same key (a cheque no. too). coalesce: a key on ONE line only makes
+              the comparison NULL, and a NULL must never read as a match (11 Nov: it was booked). */
+           coalesce(o.ref_key = i.ref_key, false) as ref_any,
            /* a UTR / RRN — strong enough to be a reason by itself */
-           (o.ref_key is not null and o.ref_key = i.ref_key and length(o.ref_key) >= 10) as ref_strong,
+           coalesce(o.ref_key = i.ref_key and length(o.ref_key) >= 10, false) as ref_strong,
            o.dr as amt, o.txn_date as od, i.txn_date as idt,
            o.description as odesc, i.description as idesc,
            o.bank_account_id as oacc, i.bank_account_id as iacc, o.acc_name as oname, i.acc_name as iname,
@@ -302,8 +324,8 @@ begin
            /* reversal: the word is on the money coming back (the later line; either on the same day) */
            ((r.idt >= r.od and public.bank_pair_reversal_word(r.idesc))
              or (r.od >= r.idt and public.bank_pair_reversal_word(r.odesc))) as rw_later,
-           public.bank_pair_shared_ref(r.odesc, r.idesc) as shared_ref,
-           /* coalesce: a NULL here would make word_only NULL and slip a pair through as 'sure' */
+           /* only a hint for the 'check' reason — never makes a pair sure (decision 11 Nov) */
+           coalesce(public.bank_pair_shared_ref(r.odesc, r.idesc, v_own), false) as shared_ref,
            coalesce(public.bank_pair_payee(r.odesc) = public.bank_pair_payee(r.idesc), false) as same_payee
       from raw r
   ),
@@ -311,8 +333,15 @@ begin
     select w.*,
            case when w.k = 'transfer' then w.ref_strong or w.tw_both or w.tw_account
                 else w.ref_strong or w.rw_later end as qualifies,
-           /* a reversal word with no shared reference / name: shown for a person, never booked */
-           coalesce(w.k = 'reversal' and not w.ref_strong and w.rw_later and not w.ref_any and not w.shared_ref and not w.same_payee, false) as word_only
+           /* FAIL CLOSED: a pair may be booked only when a reason is positively TRUE — a transfer by its
+              reason above; a reversal by the same reference key on both lines or the same payee name.
+              Each part is coalesced to false and the whole is "is true": a NULL anywhere means NOT
+              confirmed → 'check' (shown for a person, never booked). A number shared only in the
+              narrations (shared_ref) is not in here on purpose. */
+           (case when w.k = 'transfer'
+                 then coalesce(w.ref_strong, false) or coalesce(w.tw_both, false) or coalesce(w.tw_account, false)
+                 else coalesce(w.ref_strong, false) or coalesce(w.ref_any, false) or coalesce(w.same_payee, false)
+            end) is true as confirmed
       from w
   ),
   /* Each line's possible partners — every open same-amount opposite line ≤3 days, reason or not. A
@@ -340,15 +369,17 @@ begin
   ),
   pairs as (
     select j.k,
-           case when not j.only_one then 'ambiguous'
+           case when j.only_one is not true then 'ambiguous'
                 when v_lock is not null and least(j.od, j.idt) <= v_lock then 'locked'
-                when j.word_only then 'check'
-                else 'sure' end as st,
-           case when not j.only_one then
+                when j.confirmed is true then 'sure'
+                else 'check' end as st,
+           case when j.only_one is not true then
                   format('%s lines could pair here — nothing is booked when there is more than one match. Pair it by hand on the line.', j.n_max)
                 when v_lock is not null and least(j.od, j.idt) <= v_lock then
                   format('Books are locked up to %s.', to_char(v_lock, 'DD Mon YYYY'))
-                when j.word_only then
+                when j.confirmed is not true and coalesce(j.shared_ref, false) then
+                  'A reversal word and the same number in both narrations, but no matching bank reference or payee name — the number may be an account number. Check it and pair it by hand on the line.'
+                when j.confirmed is not true then
                   'A reversal word, but the two lines share no reference number or payee name — it may be a different refund. Check it and pair it by hand on the line.'
                 when j.k = 'transfer' then
                   case when j.ref_strong then 'Same bank reference on both lines'
@@ -358,7 +389,6 @@ begin
                 else
                   case when j.ref_strong then 'Same bank reference on both lines'
                        when j.ref_any then 'Reversal word on the money coming back, same cheque / reference number'
-                       when j.shared_ref then 'Reversal word on the money coming back, same reference number in both narrations'
                        else 'Reversal word on the money coming back, same payee name' end
                   || format(', same amount, same account, %s day(s) apart, the only open line on each side.', abs(j.idt - j.od))
            end as why,
