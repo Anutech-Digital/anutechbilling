@@ -372,3 +372,11 @@ Format: `- <date>: what went wrong → the rule it created (card).`
   - Card specs: ~8 specs ek hi wajah se toote (hydration se pehle type, collapsed panel, USD rate fetch, issued
     invoice cleanup, strict-mode double match) → shared helpers `e2e/cards/card-steps.ts` + WORKER-STEPS "Card
     spec rules". Spec-only change after SAFE → 5-min diff-only re-check (WORKER-STEPS "Re-check rules").
+- 11 Nov 2026 (R-2678): CI was red for two pushes (R-2665, R-2654) on ONE test — `export-log-scan.test.ts` read R-2665's
+  test fixture (`src/lib/testing/fixtures/hdfc-card-statement.ts`, `XLSX.write()`) as an unlogged export. The fast gate
+  had skipped that scan and the push did not run it → the scan is on the push guard list now; a test-only file helper
+  under `src/lib/testing` goes in that test's `TEST_ONLY` list (it proves no app file imports it). Reading a red run when
+  `gh run view --json jobs` answers 502: `gh api repos/<repo>/commits/<sha>/check-runs` for the job ids, then
+  `gh api repos/<repo>/check-runs/<job id>/annotations` names the failing test. `e2e-smoke` is non-blocking (red on green
+  runs too) — never read it as the cause. Taking a card id: `get` meta/nextId AND check the card does not exist yet
+  (R-2676/R-2677 were made without a bump).

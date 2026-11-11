@@ -44,7 +44,7 @@ describe("push guard suites (R-385)", () => {
   it("has no duplicates and stays a short list (the push waits for it)", () => {
     expect(new Set(list).size).toBe(list.length);
     expect(list.length).toBeGreaterThan(10);
-    expect(list.length).toBeLessThanOrEqual(88); // R-1973: 74 → 84 with the src/site scans; R-2443: 89 → 80 (+nav-coverage); R-2564: +2 tiny source-cache guards (~0.1 s); R-2571: +6 migration/security scans
+    expect(list.length).toBeLessThanOrEqual(89); // R-1973: 74 → 84 with the src/site scans; R-2443: 89 → 80 (+nav-coverage); R-2564: +2 tiny source-cache guards (~0.1 s); R-2571: +6 migration/security scans; R-2678: +export-log-scan (turned CI red after skipping push; reads through the source cache)
     expect(PUSH_GUARD_BUDGET_MS).toBe(60_000); // R-2443: 90 → 60 s
   });
 
@@ -166,6 +166,16 @@ describe("push guard suites (R-385)", () => {
   it("R-1973: the src/site scan that turned CI red at 8ca1bcbe runs on push", () => {
     expect(list).toContain("src/site/page-metadata.test.ts");
     expect(list).toContain("src/site/lib/public-metadata-r1631.test.ts");
+  });
+
+  it("R-2678: the export-log scan that turned CI red at 08599ada8 runs on push, through the shared source cache", () => {
+    // 11 Nov 2026: R-2665's test fixture calls XLSX.write(); the R-1006 scan was red in CI for two pushes.
+    expect(list).toContain("src/lib/export-log/export-log-scan.test.ts");
+    const scan = fs.readFileSync(path.join(root, "src/lib/export-log/export-log-scan.test.ts"), "utf8");
+    expect(scan).toContain("readSource(");
+    expect(scan).toContain("listSourceFiles(");
+    expect(scan).not.toContain("readFileSync");
+    expect(scan).not.toContain("statSync");
   });
 
   it("R-2571: every src/lib/security test that reads supabase/migrations runs on push", () => {
