@@ -60,7 +60,7 @@ export function ZohoBulkRunBar(p: Props) {
         <span className="text-xs text-ink-2" aria-live="polite">
           {p.booking && p.progress
             ? `Booking ${Math.min(p.progress.at, p.progress.of)} of ${p.progress.of}…`
-            : `${p.preview.clean} clean ${p.preview.clean === 1 ? "pair" : "pairs"} (paired by UTR, nothing to check) · ${p.preview.needLook} need a look · ${p.selected.count} ticked`}
+            : `${p.preview.clean} clean ${p.preview.clean === 1 ? "pair" : "pairs"} (paired by UTR, or a foreign receipt whose exact amount pays the customer's one open invoice) · ${p.preview.needLook} need a look · ${p.selected.count} ticked`}
         </span>
         <span className="flex flex-wrap gap-2">
           {p.onDownload && <Button variant="default" icon="download" onClick={p.onDownload}>Download CSV</Button>}

@@ -18,7 +18,7 @@ describe("R-2535 ZohoBulkRunBar", () => {
   it("shows the preview and books only after the confirm step", () => {
     const onBook = vi.fn();
     render(<ZohoBulkRunBar {...base} onBook={onBook} onUndo={() => {}} />);
-    expect(screen.getByText(/6 clean pairs \(paired by UTR, nothing to check\) · 4 need a look · 2 ticked/)).toBeTruthy();
+    expect(screen.getByText(/6 clean pairs \(paired by UTR, or a foreign receipt whose exact amount pays the customer's one open invoice\) · 4 need a look · 2 ticked/)).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Book all clean (6)" }));
     expect(onBook).not.toHaveBeenCalled();
     expect(screen.getByRole("alert").textContent).toMatch(/Book 6 lines · ₹70,800\?/);

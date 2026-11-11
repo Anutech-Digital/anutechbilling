@@ -5,7 +5,8 @@
  * One batch read, never one Zoho call per line: the Zoho customer payments dated inside the lines'
  * window (earliest line − 3 days … latest line + 3 days) are read page by page (200 each, at most
  * MAX_PAYMENT_PAGES), then every line is matched IN MEMORY with R-2359's own rules — its UTR in the
- * payment reference, else amount ±₹2 and date ±3 days. The read is kept per company + window for
+ * payment reference, else amount ±₹2 and date ±3 days (R-2658: an inward remittance — its foreign
+ * amount ±1 unit and date ±10 days, payment-match.ts pickByAmount). The read is kept per company + window for
  * BATCH_CACHE_MS, so opening Banking again (or another account with the same window) does not ask
  * Zoho again (Zoho allows about 100 calls a minute per organization).
  *
@@ -15,8 +16,8 @@
 import { listCustomerPaymentsPage } from "./api";
 import { parseInwardRemittance } from "@/lib/banking/inward-remittance";
 import {
-  DATE_WINDOW_DAYS, isLineMoney, paymentFromZoho, referenceHasUtr, utrCandidates,
-  type BankCreditLine, type ZohoPaymentRow, type ZohoReadDeps,
+  isLineMoney, lineWindowDays, paymentFromZoho, pickByAmount, referenceHasUtr, utrCandidates,
+  type BankCreditLine, type MatchBy, type RivalLine, type WindowLine, type ZohoPaymentRow, type ZohoReadDeps,
 } from "./payment-match";
 
 /** Pages of 200 read at most per batch (2,000 payments). */
@@ -54,11 +55,19 @@ function addDays(iso: string, days: number): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** The Zoho date window that covers every line (± DATE_WINDOW_DAYS); null when there are none. */
-export function paymentWindow(lines: readonly Pick<BankCreditLine, "txnDate">[]): { from: string; to: string } | null {
-  const dates = lines.map((l) => String(l.txnDate).slice(0, 10)).filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
-  if (dates.length === 0) return null;
-  return { from: addDays(dates[0], -DATE_WINDOW_DAYS), to: addDays(dates[dates.length - 1], DATE_WINDOW_DAYS) };
+/** The Zoho date window that covers every line — ± 3 days round a ₹ line, R-2658: ± 10 round an
+ *  inward remittance (lineWindowDays); null when there are none. */
+export function paymentWindow(lines: readonly WindowLine[]): { from: string; to: string } | null {
+  let from: string | null = null, to: string | null = null;
+  for (const l of lines) {
+    const d = String(l.txnDate).slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) continue;
+    const days = lineWindowDays(l);
+    const a = addDays(d, -days), b = addDays(d, days);
+    if (from === null || a < from) from = a;
+    if (to === null || b > to) to = b;
+  }
+  return from && to ? { from, to } : null;
 }
 
 /** Does this line have at least one Zoho payment candidate (R-2359's rules)? */
@@ -66,10 +75,7 @@ export function lineHasZohoMatch(line: BankCreditLine, payments: readonly ZohoPa
   for (const utr of utrCandidates(line)) {
     if (payments.some((p) => referenceHasUtr(p.reference, utr))) return true;
   }
-  const d = day(line.txnDate);
-  const rem = parseInwardRemittance(line.description);
-  return payments.some((p) => p.date !== null && isLineMoney(p, line, rem)
-    && Math.abs(day(p.date) - d) / 86_400_000 <= DATE_WINDOW_DAYS);
+  return pickByAmount(line, payments).kind !== "none";
 }
 
 /** The ids of the lines that have a Zoho match — pure, no I/O. */
@@ -80,11 +86,14 @@ export function linesWithZohoMatch(lines: readonly BatchLine[], payments: readon
 /**
  * R-2402: WHICH Zoho payment a line is, from an already-read list — R-2359's order (its UTR in the
  * reference, the same amount winning among several; else amount ±₹2 within ±3 days, nearest first).
+ * R-2658: an inward remittance is also paired by its foreign amount within ±10 days (pickByAmount);
+ * `rivals` = the company's other remittance lines and `complete` = the list was not cut short — a
+ * pair with a rival or from a short list carries `notSure`.
  * Pure; the bulk reconcile reads the window once instead of searching Zoho line by line.
  */
-export function findInPaymentList(line: BankCreditLine, payments: readonly ZohoPaymentRow[]):
-  | { kind: "one"; by: "utr" | "amount_date"; payment: ZohoPaymentRow }
-  | { kind: "several"; by: "utr" | "amount_date"; candidates: ZohoPaymentRow[] }
+export function findInPaymentList(line: RivalLine, payments: readonly ZohoPaymentRow[], rivals: readonly RivalLine[] = [], complete = true):
+  | { kind: "one"; by: MatchBy; payment: ZohoPaymentRow; notSure?: string }
+  | { kind: "several"; by: MatchBy; candidates: ZohoPaymentRow[] }
   | { kind: "none" } {
   /* R-2425: an inward remittance is matched by its foreign amount (isLineMoney). */
   const rem = parseInwardRemittance(line.description);
@@ -96,12 +105,7 @@ export function findInPaymentList(line: BankCreditLine, payments: readonly ZohoP
     if (same.length === 1) return { kind: "one", by: "utr", payment: same[0] };
     return { kind: "several", by: "utr", candidates: (same.length ? same : hits).slice(0, 10) };
   }
-  const d = day(line.txnDate);
-  const gap = (p: ZohoPaymentRow) => (p.date ? Math.abs(day(p.date) - d) / 86_400_000 : Infinity);
-  const nearBy = payments.filter((p) => isLineMoney(p, line, rem) && gap(p) <= DATE_WINDOW_DAYS).sort((a, b) => gap(a) - gap(b));
-  if (nearBy.length === 1) return { kind: "one", by: "amount_date", payment: nearBy[0] };
-  if (nearBy.length > 1) return { kind: "several", by: "amount_date", candidates: nearBy.slice(0, 10) };
-  return { kind: "none" };
+  return pickByAmount(line, payments, rivals, complete);
 }
 
 /** Every Zoho customer payment dated inside the window, page by page (stops at MAX_PAYMENT_PAGES). */

@@ -21,8 +21,9 @@ import { NOT_CONFIGURED_MESSAGE, SETTINGS_RETURN, ZOHO_FIND_ROLES, zohoBooksCred
 import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
 import { getContact, ZohoApiError } from "@/lib/integrations/zoho-books/api";
 import {
-  findZohoPayment, readZohoPaymentMatch, type ZohoReadDeps,
+  findZohoPayment, FX_DATE_WINDOW_DAYS, readZohoPaymentMatch, type RivalLine, type ZohoReadDeps,
 } from "@/lib/integrations/zoho-books/payment-match";
+import { parseInwardRemittance, REMITTANCE_CODES } from "@/lib/banking/inward-remittance";
 import { cachedZohoPayments, findInPaymentList, paymentWindow } from "@/lib/integrations/zoho-books/payment-batch";
 import { mapZohoCustomer } from "@/lib/integrations/zoho-books/payment-prefill";
 import { BULK_PAGE, zohoContactInfo, type BulkLine, type BulkMatchRow, type ZohoContactInfo } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
@@ -35,6 +36,11 @@ export const maxDuration = 60;
 
 const MAX_LINES = 3000;
 const PAGE = 1000;
+/** R-2658: the company's other foreign receipts read at most (pages of PAGE — the API gives no more per request). */
+const MAX_RIVALS = 3000;
+/** R-2658: a narration that may carry "<CODE><amount>@<rate>" — PostgREST or-filter over the parser's codes. */
+const REMITTANCE_OR = REMITTANCE_CODES.map((c) => `description.ilike.%${c}%@%`).join(",");
+const NOT_SURE_CUT = "There are too many bank lines to check that no other line could be this Zoho payment — check which line it belongs to.";
 
 const SETTINGS_NEXT = { label: "Open Settings → Integrations", href: SETTINGS_RETURN };
 function fail(status: number, code: string, error: string, why: string, next?: { label: string; href?: string }) {
@@ -43,6 +49,11 @@ function fail(status: number, code: string, error: string, why: string, next?: {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type LineRow = { id: string; txn_date: string; description: string | null; reference: string | null; credit: number | null };
+function addDays(iso: string, days: number): string {
+  const d = new Date(`${iso.slice(0, 10)}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
 
 export async function POST(req: NextRequest) {
   const caller = await resolveZohoCaller();
@@ -92,6 +103,36 @@ export async function POST(req: NextRequest) {
   const win = paymentWindow(lines);
   if (!win || wanted.length === 0) return NextResponse.json({ ok: true, rows: [], skipped, zohoCalls: 0 });
 
+  /* R-2658: every remittance line of the company near the wanted ones — reconciled or not, any
+     account — so a Zoho payment another line could be, or has already used, is never a sure pair.
+     Read like the lines above: ordered, PAGE at a time (the API returns at most PAGE rows a request),
+     only narrations that can be a remittance (never every "@" — UPI handles). FAIL CLOSED: when this
+     read, or the account's own lines above, stops at its cap, a rival may be missing — then no pair
+     by foreign amount is sure (rivalsCut). */
+  let rivals: RivalLine[] = lines;
+  let rivalsCut = rows.length >= MAX_LINES;
+  const fxWanted = wanted.filter((l) => parseInwardRemittance(l.description)).map((l) => l.txnDate).sort();
+  if (fxWanted.length) {
+    const others: LineRow[] = [];
+    for (let from = 0; from < MAX_RIVALS; from += PAGE) {
+      const { data, error } = await caller.admin.from("bank_transactions")
+        .select("id, txn_date, description, reference, credit")
+        .eq("tenant_id", caller.tenantId).gt("credit", 0).or(REMITTANCE_OR)
+        .gte("txn_date", addDays(fxWanted[0], -3 * FX_DATE_WINDOW_DAYS)).lte("txn_date", addDays(fxWanted[fxWanted.length - 1], 3 * FX_DATE_WINDOW_DAYS))
+        .order("txn_date", { ascending: false }).order("id", { ascending: true })
+        .range(from, Math.min(from + PAGE, MAX_RIVALS) - 1);
+      if (error) return fail(500, "read_failed", "Could not read the company's other foreign receipts.", "Without them a foreign receipt could be paired with another line's Zoho payment, so nothing is planned.", { label: "Press Continue to try again" });
+      const page = (data ?? []) as LineRow[];
+      others.push(...page);
+      if (page.length < PAGE) break;
+    }
+    if (others.length >= MAX_RIVALS) rivalsCut = true;
+    const seen = new Set(lines.map((l) => l.id));
+    rivals = [...lines, ...others.filter((r) => !seen.has(r.id) && parseInwardRemittance(r.description)).map((r) => ({
+      id: r.id, txnDate: String(r.txn_date).slice(0, 10), credit: Number(r.credit ?? 0), description: r.description, reference: r.reference,
+    }))];
+  }
+
   /* The tenant's customers, to know whether Zoho's customer needs its contact read. */
   const { data: custData } = await caller.admin.from("customers").select("id, name, gstin").eq("tenant_id", caller.tenantId);
   const appCustomers = (custData ?? []) as Array<{ id: string; name: string; gstin: string | null }>;
@@ -104,14 +145,19 @@ export async function POST(req: NextRequest) {
   const out: BulkMatchRow[] = [];
   const contacts = new Map<string, ZohoContactInfo>();
   const planOne = async (line: BulkLine, payments: Awaited<ReturnType<typeof cachedZohoPayments>>): Promise<BulkMatchRow> => {
-    let found = findInPaymentList(line, payments.payments);
+    /* R-2658: a Zoho payment another remittance line could be (or already used), or one from a read
+       that stopped at its page limit, is paired but never sure (notSure). */
+    let found = findInPaymentList(line, payments.payments, rivals, payments.complete);
     if (found.kind === "none" && !payments.complete) {
-      const live = await findZohoPayment(line, deps());
+      const live = await findZohoPayment(line, deps(), rivals);
       found = live.kind === "none" ? { kind: "none" } : live;
     }
+    if (found.kind === "one" && found.by === "fx_amount" && !found.notSure && rivalsCut) found = { ...found, notSure: NOT_SURE_CUT };
     if (found.kind === "none") return { line, result: { kind: "none", utrs: [], from: win.from, to: win.to }, contact: null };
     if (found.kind === "several") return { line, result: found, contact: null };
     const match = await readZohoPaymentMatch(found.payment.zohoId, found.by, deps());
+    match.notSure = found.notSure ?? null;
+    match.matchedAt = new Date().toISOString();
     let contact: ZohoContactInfo | null = null;
     if (match.customer.zohoId && !mapZohoCustomer(match.customer, appCustomers)) {
       contact = contacts.get(match.customer.zohoId) ?? null;
