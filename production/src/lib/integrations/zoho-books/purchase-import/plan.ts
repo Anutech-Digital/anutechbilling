@@ -194,7 +194,9 @@ export const NO_VENDOR_REASON = "It has no vendor in Zoho.";
 
 /**
  * R-2676: why a Zoho EXPENSE with no vendor cannot come in as a vendor-less expense; null when it can.
- * The same sentences, in the same order, as import_zoho_fy_purchases (the SQL is the last word):
+ * The same sentences, in the same order, as import_zoho_fy_purchases for these three rules. The SQL is
+ * the last word and has one more that needs the books ("already in the books" — a vendor-less row or a
+ * reconciled debit of the same amount, ±3 days): the dry run lists those, this preview does not.
  *   - every line's Zoho account must be mapped to an expense category. The scan has no account type,
  *     so this keeps balance-sheet accounts (fixed deposit, loan, GST, asset) and salaries out — an
  *     unmapped account is never "Unmapped — review" on this path;

@@ -6,9 +6,11 @@
 --      an unmapped account (fixed deposit, loan, GST, asset), a salary account (Salaries can never be mapped), or one unmapped line
 --      among mapped ones → left out with the reason (never "Unmapped — review").
 --   3. Claims input GST, reverse charge, TDS, a COGS account → left out with the reason.
---   4. A vendor-less expense NOT from Zoho of the same amount (±₹1), ±3 days, same paid-from account (or
---      none) → "already in the books" (the no-vendor sheet / hand entry); a Salaries row never blocks;
---      the same amount from ANOTHER account does not block.
+--   4. Already in the books (±₹1, ±3 days): a vendor-less expense NOT from Zoho paid from the same account
+--      (the no-vendor sheet / hand entry) — a Payroll Salaries row too; or a debit of that amount in the
+--      paid-from account already reconciled as something else (here: a vendor's expense). The same
+--      amount from ANOTHER account does not block.
+--   4d. A Zoho expense WITH a vendor in the same call is unchanged (vendor made, no_vendor false).
 --   5. Dry run counts them (no_vendor) and writes nothing; the real import writes vendor-less paid rows
 --      (bank: account set, no line; two categories = two rows, ineligible GST in the cost; petty cash =
 --      its cash line); no vendor made, no vendor change logged.
@@ -36,6 +38,14 @@ insert into public.expenses (id, tenant_id, category, expense_date, amount, paid
   ('EXP-R2676-SHEET', 'b2676000-0000-0000-0000-0000000000f0', 'Office Supplies', '2025-06-10', 777, true, '2025-06-10', 'bank', 'b2676000-0000-0000-0000-0000000000e1'),
   ('EXP-R2676-CARD',  'b2676000-0000-0000-0000-0000000000f0', 'Office Supplies', '2025-06-10', 555, true, '2025-06-10', 'card', 'b2676000-0000-0000-0000-0000000000e3'),
   ('EXP-R2676-SAL',   'b2676000-0000-0000-0000-0000000000f0', 'Salaries',        '2025-06-10', 888, true, '2025-06-10', 'bank', 'b2676000-0000-0000-0000-0000000000e1');
+
+-- Booked from the bank line against a VENDOR: 1,180 on 20 Jun, reconciled to its HDFC debit.
+insert into public.vendors (id, tenant_id, name) values ('b2676000-0000-0000-0000-0000000000d1', 'b2676000-0000-0000-0000-0000000000f0', 'R2676 Hand Vendor');
+insert into public.expenses (id, tenant_id, category, vendor_name, vendor_id, expense_date, amount, paid, paid_date, payment_method, bank_account_id) values
+  ('EXP-R2676-VEND', 'b2676000-0000-0000-0000-0000000000f0', 'Office Supplies', 'R2676 Hand Vendor', 'b2676000-0000-0000-0000-0000000000d1', '2025-06-20', 1180, true, '2025-06-20', 'bank', 'b2676000-0000-0000-0000-0000000000e1');
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, debit, credit, source, matched_to_type, matched_to_id, match_confidence) values
+  ('b2676000-0000-0000-0000-0000000000c1', 'b2676000-0000-0000-0000-0000000000f0', 'b2676000-0000-0000-0000-0000000000e1', '2025-06-20', 'NEFT DR HAND VENDOR', 1180, 0, 'csv_upload', 'expense', 'EXP-R2676-VEND', 'manual');
+update public.expenses set reconciled_txn_id = 'b2676000-0000-0000-0000-0000000000c1' where id = 'EXP-R2676-VEND';
 
 create function pg_temp.ln(acct text, taxable int, tax int, elig boolean default true) returns jsonb language sql as $f$
   select jsonb_build_object('accountId', acct, 'accountName', acct || ' name', 'description', 'line ' || acct, 'hsn', '', 'qty', 1,
@@ -67,7 +77,10 @@ from (values
   ('expenses', 'n10', pg_temp.doc('expenses', 'n10', '2025-06-11', 888, 0, jsonb_build_array(pg_temp.ln('A-RENT', 888, 0)))),
   ('expenses', 'n11', pg_temp.doc('expenses', 'n11', '2025-06-12', 150, 0, jsonb_build_array(pg_temp.ln('A-WEL', 150, 0)))),
   ('expenses', 'n12', pg_temp.doc('expenses', 'n12', '2025-06-13', 900, 0, jsonb_build_array(pg_temp.ln('A-RENT', 400, 0), pg_temp.ln('A-LOAN', 500, 0)))),
-  ('expenses', 'n13', pg_temp.doc('expenses', 'n13', '2025-06-11', 555, 0, jsonb_build_array(pg_temp.ln('A-RENT', 555, 0))))
+  ('expenses', 'n13', pg_temp.doc('expenses', 'n13', '2025-06-11', 555, 0, jsonb_build_array(pg_temp.ln('A-RENT', 555, 0)))),
+  ('expenses', 'n14', pg_temp.doc('expenses', 'n14', '2025-06-21', 1180, 0, jsonb_build_array(pg_temp.ln('A-RENT', 1180, 0)))),
+  -- WITH a vendor (a new one, made from Zoho), listed after the no-vendor ones
+  ('expenses', 'v1',  pg_temp.doc('expenses', 'v1',  '2025-06-22', 640, 0, jsonb_build_array(pg_temp.ln('A-RENT', 640, 0))) || '{"vendorName":"R2676 Stationers","vendorZohoId":"VZ-ST"}'::jsonb)
 ) as x(kind, zid, p);
 
 -- A-SAL (salaries) can never be mapped: the map table itself refuses the category Salaries (check
@@ -91,7 +104,7 @@ $f$;
 create function pg_temp.all_picks() returns jsonb language sql as $f$
   select jsonb_build_array(pg_temp.pick('n1'), pg_temp.pick('n2'), pg_temp.pick('n3'), pg_temp.pick('n4'), pg_temp.pick('n5'),
     pg_temp.pick('n6'), pg_temp.pick('n7'), pg_temp.pick('n8'), pg_temp.pick('n9'), pg_temp.pick('n10'),
-    pg_temp.pick('n11', 'b2676000-0000-0000-0000-0000000000e2'), pg_temp.pick('n12'), pg_temp.pick('n13'));
+    pg_temp.pick('n11', 'b2676000-0000-0000-0000-0000000000e2'), pg_temp.pick('n12'), pg_temp.pick('n13'), pg_temp.pick('n14'), pg_temp.pick('v1'));
 $f$;
 grant execute on function pg_temp.as_user(uuid), pg_temp.pick(text, text), pg_temp.all_picks() to authenticated;
 set local role authenticated;
@@ -114,7 +127,7 @@ begin
   -- 5a. Dry run: counted, the refusals said, nothing written.
   r := public.import_zoho_fy_purchases('expenses', '2025-26', pg_temp.all_picks(), true);
   select string_agg((s->>'zoho_id') || '=' || (s->>'reason'), ' | ') into reasons from jsonb_array_elements(r->'skipped') s;
-  if (r->>'dry_run')::boolean is not true or (r->>'imported')::int <> 5 or (r->>'no_vendor')::int <> 5 or (r->>'new_vendors')::int <> 0 then
+  if (r->>'dry_run')::boolean is not true or (r->>'imported')::int <> 5 or (r->>'no_vendor')::int <> 4 or (r->>'new_vendors')::int <> 1 then
     raise exception 'FAIL 5a: dry run % — %', r - 'done', reasons; end if;
   -- 2. every line must be on a mapped expense account
   if reasons not like '%n3=Zoho account "A-FD name" is not mapped to an expense category — map it only if it is an expense. A fixed deposit, loan, GST, asset or salary payment is not an expense and stays out.%' then
@@ -130,18 +143,26 @@ begin
   -- 4. already in the books (no-vendor sheet); a salary and another account's expense do not block
   if reasons not like '%n9=Looks already in the books (not from Zoho): EXP-R2676-SHEET (10 Jun 2025, ₹777) — no vendor, same paid-from account, ±3 days, same amount%' then
     raise exception 'FAIL 4a: duplicate %', reasons; end if;
-  if reasons like '%n10=%' then raise exception 'FAIL 4b: a Salaries row blocked an expense: %', reasons; end if;
+  if reasons not like '%n10=Looks already in the books (not from Zoho): EXP-R2676-SAL (10 Jun 2025, ₹888)%' then
+    raise exception 'FAIL 4b: a salary Payroll booked did not block the same pay-out from Zoho: %', reasons; end if;
+  if reasons not like '%n14=Looks already in the books: a debit in HDFC 4523 (20 Jun 2025, ₹1180, reconciled as expense) of the same amount, ±3 days.%' then
+    raise exception 'FAIL 4e: a debit already booked against a vendor did not block: %', reasons; end if;
   if reasons like '%n13=%' then raise exception 'FAIL 4c: an expense paid from another account blocked it: %', reasons; end if;
-  if jsonb_array_length(r->'skipped') <> 8 then raise exception 'FAIL 5a: % skipped, want 8: %', jsonb_array_length(r->'skipped'), reasons; end if;
+  if jsonb_array_length(r->'skipped') <> 10 then raise exception 'FAIL 5a: % skipped, want 10: %', jsonb_array_length(r->'skipped'), reasons; end if;
+  -- 4d. the vendor expense after the no-vendor ones is an ordinary one
+  if (select d->>'no_vendor' from jsonb_array_elements(r->'done') d where d->>'zoho_id' = 'v1') is distinct from 'false'
+     or (select d->>'no_vendor' from jsonb_array_elements(r->'done') d where d->>'zoho_id' = 'n13') is distinct from 'true' then
+    raise exception 'FAIL 4d: no_vendor flag per document %', r->'done'; end if;
   if exists (select 1 from public.expenses where tenant_id = 'b2676000-0000-0000-0000-0000000000f0' and zoho_doc_id is not null)
      or exists (select 1 from public.zoho_fy_import_batches where tenant_id = 'b2676000-0000-0000-0000-0000000000f0')
+     or (select count(*) from public.vendors where tenant_id = 'b2676000-0000-0000-0000-0000000000f0') <> v_vendors0
      or (select count(*) from public.bank_transactions where tenant_id = 'b2676000-0000-0000-0000-0000000000f0') <> v_lines0 then
     raise exception 'FAIL 5a: the dry run wrote something'; end if;
 
   -- 5b. For real.
   r := public.import_zoho_fy_purchases('expenses', '2025-26', pg_temp.all_picks(), false);
   v_batch := (r->>'batch_id')::uuid;
-  if v_batch is null or (r->>'imported')::int <> 5 or (r->>'no_vendor')::int <> 5 then raise exception 'FAIL 5b: import %', r - 'done'; end if;
+  if v_batch is null or (r->>'imported')::int <> 5 or (r->>'no_vendor')::int <> 4 then raise exception 'FAIL 5b: import %', r - 'done'; end if;
   select * into e from public.expenses where zoho_doc_id = 'expenses:n1';
   if e.vendor_id is not null or e.vendor_name is not null or e.category <> 'Office Rent' or e.amount <> 500 or e.gst_paid <> 0
      or e.bill_type <> 'none' or e.tds_amount <> 0 or not e.paid or e.paid_date <> '2025-05-20' or e.payment_method <> 'bank'
@@ -160,13 +181,17 @@ begin
      or (select t.debit from public.bank_transactions t where t.id = e.reconciled_txn_id and t.bank_account_id = 'b2676000-0000-0000-0000-0000000000e2') is distinct from 150 then
     raise exception 'FAIL 5d: petty cash %', to_jsonb(e); end if;
   -- nothing refused came in; no vendor made or changed
-  if exists (select 1 from public.expenses where zoho_doc_id in ('expenses:n3','expenses:n4','expenses:n5','expenses:n6','expenses:n7','expenses:n8','expenses:n9','expenses:n12')) then
+  if exists (select 1 from public.expenses where zoho_doc_id in ('expenses:n3','expenses:n4','expenses:n5','expenses:n6','expenses:n7','expenses:n8','expenses:n9','expenses:n10','expenses:n12','expenses:n14')) then
     raise exception 'FAIL 5e: a refused document was imported'; end if;
   if exists (select 1 from public.expenses where tenant_id = 'b2676000-0000-0000-0000-0000000000f0' and category in ('Unmapped — review', 'Salaries') and zoho_doc_id is not null) then
     raise exception 'FAIL 5e: an unmapped / salary row was written'; end if;
-  if (select count(*) from public.vendors where tenant_id = 'b2676000-0000-0000-0000-0000000000f0') <> v_vendors0
-     or exists (select 1 from public.zoho_purchase_vendor_changes where batch_id = v_batch) then
-    raise exception 'FAIL 5f: a vendor was made or changed'; end if;
+  -- only v1's vendor was made; nothing was made or changed for a vendor-less document
+  select * into e from public.expenses where zoho_doc_id = 'expenses:v1';
+  if e.vendor_id is null or e.vendor_name <> 'R2676 Stationers' or e.amount <> 640 then raise exception 'FAIL 4d: v1 stored wrong %', to_jsonb(e); end if;
+  if (select count(*) from public.vendors where tenant_id = 'b2676000-0000-0000-0000-0000000000f0') <> v_vendors0 + 1
+     or (select count(*) from public.zoho_purchase_vendor_changes where batch_id = v_batch) <> 1
+     or exists (select 1 from public.zoho_purchase_vendor_changes where batch_id = v_batch and vendor_id is distinct from e.vendor_id) then
+    raise exception 'FAIL 5f: a vendor was made or changed for a vendor-less document'; end if;
   if (select count(*) from public.expenses where purchase_import_batch_id = v_batch) <> 6 then raise exception 'FAIL 5g: batch rows'; end if;
 
   -- 6. Rerun = already.
@@ -179,7 +204,7 @@ begin
   if exists (select 1 from public.expenses where purchase_import_batch_id = v_batch)
      or (select count(*) from public.bank_transactions where tenant_id = 'b2676000-0000-0000-0000-0000000000f0') <> v_lines0 then
     raise exception 'FAIL 7: remove left rows %', r; end if;
-  if (select count(*) from public.expenses where tenant_id = 'b2676000-0000-0000-0000-0000000000f0') <> 3 then raise exception 'FAIL 7: remove touched a hand row'; end if;
+  if (select count(*) from public.expenses where tenant_id = 'b2676000-0000-0000-0000-0000000000f0') <> 4 then raise exception 'FAIL 7: remove touched a hand row'; end if;
   raise notice 'R-2676 PASS: no-vendor Zoho expenses import as vendor-less expenses; balance-sheet / salary / GST-claim / TDS / duplicates stay out';
 end $$;
 
