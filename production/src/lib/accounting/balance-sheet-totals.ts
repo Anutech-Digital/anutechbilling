@@ -12,6 +12,7 @@ import type { BalanceSheetAuto, BalanceSheetItem } from "@/lib/queries/balance-s
 import type { PnLNumbers } from "@/lib/accounting/pnl-assemble";
 import { addDaysISO } from "@/lib/dates/ist";
 import { netRevenueOf, type MatchedRevenueRow } from "@/lib/accounting/pnl-basis";
+import { loansAdvancesSplit } from "@/lib/accounting/loans-current-split";
 
 export interface BalanceSheetTotals {
   /** GST: positive → payable (liability); negative → ITC credit (asset). */
@@ -97,10 +98,13 @@ export function balanceSheetTotals(
      "Opening Balance Adjustments" equity line hai — retained (aur Unexplained) me nahi. */
   const retained = netWorth - manualEquity - (a?.openingBalanceAdjustments ?? 0);
 
-  // Current = liquid within a year. Fixed assets, staff loans, EMI / business loans bahar.
+  /* Current = liquid within a year. Fixed assets, EMI / business loans bahar.
+     R-2674: loans given / staff loans — only the part due back within 12 months (one split,
+     loans-current-split.ts, from SQL loans_current_split); the rest stays outside. */
   const currentAssets =
     cashLike + (a?.receivables ?? 0) + (a?.projectReceivable ?? 0)
-    + (a?.tdsReceivable ?? 0) + gstCredit + (a?.advanceTaxPaid ?? 0) + manualAssets;
+    + (a?.tdsReceivable ?? 0) + gstCredit + (a?.advanceTaxPaid ?? 0) + manualAssets
+    + loansAdvancesSplit(a).current;
   const currentLiab =
     (a?.payables ?? 0) + (a?.advancesFromCustomers ?? 0) + (a?.salaryPayable ?? 0) + (a?.salaryDuesPayable ?? 0)
     + (a?.reimbursementsPayable ?? 0) + (a?.creditCardPayable ?? 0) + (a?.bankOverdraft ?? 0)   // R-2373: OD is repayable on demand — current
