@@ -27,8 +27,9 @@ export interface ZohoMatchRow {
   parts: number;
   expense_ids: string[];
   reference: string | null;
-  account_id: string;
-  account: string;
+  /** null: the expense was marked paid with no paid-from account (status look). */
+  account_id: string | null;
+  account: string | null;
   txn_id: string | null;
   txn_date: string | null;
   txn_description: string | null;
@@ -88,7 +89,7 @@ export function zohoMatchBreakdown(s: ZohoMatchSummary): string {
 
 /** The bank line of a row, opened on its account page (R-1895 ?txn= shows the line whatever the filters). */
 export function zohoMatchLineHref(r: Pick<ZohoMatchRow, "account_id" | "txn_id">): Route | null {
-  if (!r.txn_id) return null;
+  if (!r.txn_id || !r.account_id) return null;
   return `/accounting/banking/${encodeURIComponent(r.account_id)}?txn=${encodeURIComponent(r.txn_id)}` as Route;
 }
 

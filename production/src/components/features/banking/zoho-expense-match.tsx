@@ -56,7 +56,7 @@ function MatchTable({ rows }: { rows: ZohoMatchRow[] }) {
                 <div className="min-w-0">
                   <p className="text-sm text-ink truncate" title={label}>{label}</p>
                   <p className="text-xs text-ink-3 truncate" title={r.categories ?? undefined}>
-                    Paid {formatDate(r.paid_on)} · {r.account}{r.parts > 1 ? ` · ${r.parts} parts` : ""}
+                    Paid {formatDate(r.paid_on)} · {r.account ?? "no account"}{r.parts > 1 ? ` · ${r.parts} parts` : ""}
                   </p>
                   <Badge kind={STATUS_BADGE[r.status]} size="sm">{ZOHO_MATCH_STATUS_LABEL[r.status]}</Badge>
                 </div>

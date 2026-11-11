@@ -28,13 +28,16 @@
 --     'sure'      — the document has exactly ONE such line and the line exactly ONE such document
 --                   (fail closed). When several are possible but exactly one shares the reference
 --                   (6+ characters — a cheque number counts), that one is the pair.
---     'ambiguous' — more than one possible on either side, or a hand-recorded (non-Zoho) paid
---                   expense of the same cash, not banked, within 7 days could be this line too.
+--     'ambiguous' — more than one possible on either side, or something else recorded as paid could
+--                   be this line too (R-1911's lists, ±30 days): another open paid expense of the same
+--                   cash, or a Bills-page / payment-run payment (its stand-in manual line).
 --     'look'      — every part of the document is not open the same way (some banked by hand, other
---                   account / paid date), or the only debit is ₹1 apart (S1: the same money, but a
---                   recorded payment is matched only at its exact cash).
+--                   account / paid date, no paid-from account); Zoho paid 2+ bills with ONE vendor
+--                   payment (the debit is their total); the debit carries a UTR that is not the one
+--                   Zoho has (both 10+ characters), or another document's reference; or the only debit
+--                   is ₹1 apart (S1: the same money, but a recorded payment is matched at its exact cash).
 --     'booked_elsewhere' — no open line, and a debit of the same amount within 7 days is ALREADY
---                   reconciled as something else: the expense may be in the books twice (R-2629's
+--                   reconciled as something else (not as another Zoho document's own payment): the expense may be in the books twice (R-2629's
 --                   double-pay rule). Listed for the owner; nothing here touches a reconciled line.
 --     'locked'    — the line or the paid date is on or before the books lock.
 --     'no_line'   — no open debit of that amount in the window (the nearest one outside it is named).
@@ -85,20 +88,26 @@ declare v_tenant uuid := public._r2655_match_gate(); v_lock date;
 begin
   select t.books_locked_until into v_lock from public.tenants t where t.id = v_tenant;
   return query
-  with legs as (
-    select e.id, e.zoho_doc_id as zdoc, e.zoho_leg, e.vendor_id, e.vendor_name, e.bill_no, e.category, e.expense_date,
-           e.bank_account_id, coalesce(e.paid_date, e.expense_date) as paid_on,
-           e.amount - coalesce(e.tds_amount, 0) - coalesce(e.advance_applied, 0) - coalesce(e.paid_amount, 0) as cash,
-           /* an open "recorded payment" — the R-1911 (b) list, part for part */
-           (e.paid = true and e.reconciled_txn_id is null
-            and upper(coalesce(e.currency, 'INR')) = 'INR'
-            and e.category <> 'Salaries'
-            and lower(coalesce(e.payment_method, '')) not in ('cash', 'payroll', 'statutory', 'reimbursement', 'emi', 'advance', 'employee_advance')
-            and e.prepaid_advance_id is null
-            and e.amount - coalesce(e.tds_amount, 0) - coalesce(e.advance_applied, 0) - coalesce(e.paid_amount, 0) > 0
-            and not exists (select 1 from public.bank_vendor_payment_lines l where l.expense_id = e.id and l.kind = 'recorded_payment')
-           ) as is_open
+  with open_rows as (
+    /* Every open "recorded payment" expense row of the company — the R-1911 (b) list, part for part,
+       written ONCE here (the documents and their rivals both read it). */
+    select e.id, e.zoho_doc_id as zdoc, e.bank_account_id, coalesce(e.paid_date, e.expense_date) as paid_on,
+           e.amount - coalesce(e.tds_amount, 0) - coalesce(e.advance_applied, 0) - coalesce(e.paid_amount, 0) as cash
       from public.expenses e
+     where e.tenant_id = v_tenant
+       and e.paid = true and e.reconciled_txn_id is null
+       and upper(coalesce(e.currency, 'INR')) = 'INR'
+       and e.category <> 'Salaries'
+       and lower(coalesce(e.payment_method, '')) not in ('cash', 'payroll', 'statutory', 'reimbursement', 'emi', 'advance', 'employee_advance')
+       and e.prepaid_advance_id is null
+       and e.amount - coalesce(e.tds_amount, 0) - coalesce(e.advance_applied, 0) - coalesce(e.paid_amount, 0) > 0
+       and not exists (select 1 from public.bank_vendor_payment_lines l where l.expense_id = e.id and l.kind = 'recorded_payment')
+  ),
+  legs as (
+    select e.id, e.zoho_doc_id as zdoc, e.zoho_leg, e.vendor_id, e.vendor_name, e.bill_no, e.category, e.expense_date,
+           o.bank_account_id, o.paid_on, o.cash, (o.id is not null) as is_open
+      from public.expenses e
+      left join open_rows o on o.id = e.id
      where e.tenant_id = v_tenant and e.zoho_doc_id is not null
   ),
   docs0 as (
@@ -119,43 +128,65 @@ begin
       from legs g
      group by g.zdoc
   ),
-  docs as (
+  docs1 as (
     select d.*, a.name as acc_name,
-           (d.n_open = d.n_legs and d.n_acc = 1 and d.n_days = 1) as whole,
+           /* every part open the same way, paid from ONE known account */
+           (d.n_open = d.n_legs and d.n_acc = 1 and d.n_days = 1 and a.id is not null) as whole,
+           /* Zoho paid 2+ bills with this one vendor payment: the debit is their TOTAL, never this bill's own cash */
+           coalesce(pay.n_bills, 1) as n_bills,
            /* The bank's reference as Zoho has it: the vendor payment that paid the bill (R-2502 link),
               else the Zoho expense's own reference. A bill's own reference is a bill note, not a UTR. */
            nullif(btrim(coalesce(
-             (select s.payload->>'reference'
-                from public.zoho_vendor_payment_links k
-                join public.zoho_fy_scan s on s.tenant_id = k.tenant_id and s.kind = 'vendorpayments' and s.zoho_id = k.zoho_payment_id
-               where k.tenant_id = v_tenant and k.target_type = 'expense' and k.target_ids && d.ids
-                 and nullif(btrim(s.payload->>'reference'), '') is not null
-               order by k.created_at, k.id limit 1),
+             (select nullif(btrim(s.payload->>'reference'), '') from public.zoho_fy_scan s
+               where s.tenant_id = v_tenant and s.kind = 'vendorpayments' and s.zoho_id = pay.zoho_payment_id),
              case when d.zdoc like 'expenses:%' then
                (select s.payload->>'reference' from public.zoho_fy_scan s
                  where s.tenant_id = v_tenant and s.kind = 'expenses' and s.zoho_id = substr(d.zdoc, 10))
              end, '')), '') as ref
       from docs0 d
-      join public.bank_accounts a on a.id = d.acc and a.tenant_id = v_tenant
+      left join public.bank_accounts a on a.id = d.acc and a.tenant_id = v_tenant
+      left join lateral (
+        select k.zoho_payment_id,
+               (select count(distinct k2.zoho_bill_id) from public.zoho_vendor_payment_links k2
+                 where k2.tenant_id = v_tenant and k2.zoho_payment_id = k.zoho_payment_id) as n_bills
+          from public.zoho_vendor_payment_links k
+         where k.tenant_id = v_tenant and k.target_type = 'expense' and k.target_ids && d.ids
+         order by k.created_at, k.id limit 1
+      ) pay on true
      where d.n_open > 0 and d.cash > 0
        and coalesce(a.account_type::text, '') <> 'cash'
        and (p_account_id is null or d.acc = p_account_id)
   ),
+  docs as (
+    select d.*,
+           /* the Zoho reference when it is shaped like a UTR / RRN (10–22 characters, 6+ digits) */
+           case when length(public.bank_ref_norm(d.ref)) between 10 and 22
+                 and length(regexp_replace(public.bank_ref_norm(d.ref), '[^0-9]', '', 'g')) >= 6
+                then public.bank_ref_norm(d.ref) end as ref_utr
+      from docs1 d
+  ),
   lines as (
+    /* Statement debits of the documents' accounts with a document's cash (±₹1). Never the app's own
+       stand-in line of a payment recorded on the Bills page / a payment run (source 'manual' matched
+       to a bill / expense) — that is not a bank debit; it counts as a rival below. */
     select bt.id, bt.bank_account_id, bt.txn_date, bt.description, bt.ref_key, bt.matched_to_type,
            coalesce(bt.debit, 0) as dr
       from public.bank_transactions bt
      where bt.tenant_id = v_tenant
-       and bt.bank_account_id in (select d.acc from docs d)
        and coalesce(bt.debit, 0) > 0 and coalesce(bt.credit, 0) = 0
+       and not (bt.source = 'manual' and coalesce(bt.matched_to_type, '') in ('vendor_bill', 'expense'))
+       and exists (select 1 from docs d where d.acc = bt.bank_account_id and abs(coalesce(bt.debit, 0) - d.cash) <= 1)
   ),
   cand as (
     select d.zdoc, l.id as lid, l.txn_date, l.description,
            /* NULL never reads as a match (R-2656 lesson): coalesce to false */
-           coalesce(length(public.bank_ref_norm(l.ref_key)) >= 6 and public.bank_ref_matches(d.ref, l.ref_key), false) as by_ref
+           coalesce(length(public.bank_ref_norm(l.ref_key)) >= 6 and public.bank_ref_matches(d.ref, l.ref_key), false) as by_ref,
+           /* both sides carry a UTR / RRN and they are NOT the same: another payment */
+           coalesce(d.ref_utr is not null and length(public.bank_ref_norm(l.ref_key)) >= 10
+                    and not public.bank_ref_matches(d.ref, l.ref_key), false) as ref_clash
       from docs d
       join lines l on l.bank_account_id = d.acc and l.matched_to_type is null and l.dr = d.cash
-     where d.whole
+     where d.whole and d.n_bills = 1
        and (abs(l.txn_date - d.paid_on) <= 7
             or (abs(l.txn_date - d.paid_on) <= 60
                 and coalesce(length(public.bank_ref_norm(l.ref_key)) >= 10 and public.bank_ref_matches(d.ref, l.ref_key), false)))
@@ -174,19 +205,23 @@ begin
       join per_line pl on pl.lid = c.lid
   ),
   pairs as (
-    select d.zdoc, j.lid, j.txn_date, j.description, j.by_ref, j.only_one, j.n_max,
-           /* a hand-recorded (non-Zoho) paid expense of the same cash, not banked, that this line could be */
-           exists (select 1 from public.expenses r
-                    where r.tenant_id = v_tenant and r.zoho_doc_id is null
-                      and r.paid = true and r.reconciled_txn_id is null
-                      and (r.bank_account_id is null or r.bank_account_id = d.acc)
-                      and upper(coalesce(r.currency, 'INR')) = 'INR' and r.category <> 'Salaries'
-                      and lower(coalesce(r.payment_method, '')) not in ('cash', 'payroll', 'statutory', 'reimbursement', 'emi', 'advance', 'employee_advance')
-                      and r.prepaid_advance_id is null
-                      and r.amount - coalesce(r.tds_amount, 0) - coalesce(r.advance_applied, 0) - coalesce(r.paid_amount, 0) = d.cash
-                      and abs(coalesce(r.paid_date, r.expense_date) - j.txn_date) <= 7
-                      and not exists (select 1 from public.bank_vendor_payment_lines l where l.expense_id = r.id and l.kind = 'recorded_payment')
-                  ) as rival
+    select d.zdoc, j.lid, j.txn_date, j.description, j.by_ref, j.ref_clash, j.only_one, j.n_max,
+           /* Something else recorded as paid that this debit could be (R-1911's two lists, ±30 days as
+              bank_debit_vendor_auto_match): (b) another open paid expense of the same cash — from Zoho
+              or not — that is not already counted as a candidate of this line; (a) a payment recorded
+              on the Bills page / a payment run (its stand-in manual line) of the same amount. */
+           (exists (select 1 from open_rows r
+                     where r.cash = d.cash
+                       and (r.bank_account_id is null or r.bank_account_id = d.acc)
+                       and abs(r.paid_on - j.txn_date) <= 30
+                       and (r.zdoc is null
+                            or (r.zdoc <> d.zdoc
+                                and not exists (select 1 from cand c2 where c2.zdoc = r.zdoc and c2.lid = j.lid))))
+            or exists (select 1 from public.bank_transactions m
+                        where m.tenant_id = v_tenant and m.bank_account_id = d.acc
+                          and m.source = 'manual' and m.matched_to_type in ('vendor_bill', 'expense')
+                          and coalesce(m.debit, 0) = d.cash and abs(m.txn_date - j.txn_date) <= 30)
+           ) as rival
       from judged j
       join docs d on d.zdoc = j.zdoc
      where j.in_play
@@ -195,13 +230,16 @@ begin
     select d.*, p.lid, p.txn_date as l_date, p.description as l_desc,
            case when p.only_one is not true or p.rival then 'ambiguous'
                 when v_lock is not null and least(p.txn_date, d.paid_on) <= v_lock then 'locked'
+                when p.ref_clash then 'look'
                 else 'sure' end as st,
            case when p.only_one is not true then
                   format('%s documents / debits of this amount could pair here — nothing is matched when there is more than one. Match it on the bank line.', p.n_max)
                 when p.rival then
-                  'Another paid expense of the same amount (not from Zoho, not reconciled yet) could be this debit too. Match it on the bank line.'
+                  'Another paid expense of the same amount (not reconciled yet), or a payment recorded on the Bills page, could be this debit too. Match it on the bank line.'
                 when v_lock is not null and least(p.txn_date, d.paid_on) <= v_lock then
                   format('Books are locked up to %s.', to_char(v_lock, 'DD Mon YYYY'))
+                when p.ref_clash then
+                  'Same amount, but the bank reference on the debit is not the one Zoho has for this payment — it may be another payment. Check it and match it on the bank line.'
                 else
                   case when p.by_ref then 'Same bank reference as in Zoho, same amount' else 'Same amount' end
                   || format(', paid from this account, %s day(s) apart, the only open debit and the only Zoho document that fit.', abs(p.txn_date - d.paid_on))
@@ -210,50 +248,69 @@ begin
       join docs d on d.zdoc = p.zdoc
   ),
   alone as (
-    /* a document with no pair in play: say why */
+    /* a document with no pair in play: say why (the first that applies) */
     select d.*, x.lid, x.l_date, x.l_desc, x.st, x.why
       from docs d
       cross join lateral (
         select * from (
-          /* 0. its parts are not all open the same way */
+          /* 0. its parts are not all open the same way, or it has no paid-from account */
           select 0 as pri, null::uuid as lid, null::date as l_date, null::text as l_desc, 'look'::text as st,
-                 format('%s of its %s parts are open, or its parts were paid from different accounts / dates — it was changed by hand. Match it on the bank line.', d.n_open, d.n_legs) as why
+                 case when d.acc is null then
+                        'Marked paid with no paid-from account — it cannot be matched to an account''s lines here. Match it on the bank line.'
+                      else format('%s of its %s parts are open, or its parts were paid from different accounts / dates — it was changed by hand. Match it on the bank line.', d.n_open, d.n_legs)
+                 end as why
            where not d.whole
           union all
-          /* 1. the same-amount debit is already reconciled as something else */
-          select 1, b.id, b.txn_date, b.description, 'booked_elsewhere',
+          /* 1. Zoho paid several bills with one payment */
+          select 1, null::uuid, null::date, null::text, 'look',
+                 format('Zoho paid this bill together with %s other bill(s) in one payment — the bank debit is their total, not this amount. Match it on the bank line.', d.n_bills - 1)
+           where d.whole and d.n_bills > 1
+          union all
+          /* 2. its only open debit carries another Zoho document's reference */
+          select 2, t.lid, t.txn_date, t.description, 'look',
+                 'The open debit of this amount carries the bank reference of another Zoho document — it belongs to that one.'
+            from (select c.* from cand c where c.zdoc = d.zdoc order by abs(c.txn_date - d.paid_on), c.lid limit 1) t
+          union all
+          /* 3. the same-amount debit is already reconciled as something else — not as a Zoho document's
+                own recorded payment (a sibling document matched correctly is not a double expense) */
+          select 3, b.id, b.txn_date, b.description, 'booked_elsewhere',
                  format('A debit of the same amount on %s is already reconciled as %s. If that is this payment, the expense is in the books twice — check it.',
                         to_char(b.txn_date, 'DD Mon YYYY'), replace(b.matched_to_type, '_', ' '))
             from (select l.* from lines l
                    where l.bank_account_id = d.acc and l.matched_to_type is not null and l.dr = d.cash
                      and abs(l.txn_date - d.paid_on) <= 7
+                     and not exists (select 1 from public.expenses z
+                                      where z.tenant_id = v_tenant and z.zoho_doc_id is not null and z.reconciled_txn_id = l.id)
+                     and not exists (select 1 from public.bank_vendor_payment_lines pl
+                                      join public.expenses z on z.id = pl.expense_id and z.tenant_id = v_tenant
+                                     where pl.bank_txn_id = l.id and pl.kind = 'recorded_payment' and z.zoho_doc_id is not null)
                    order by abs(l.txn_date - d.paid_on), l.id limit 1) b
-           where d.whole
+           where d.whole and d.n_bills = 1
           union all
-          /* 2. an open debit ₹1 apart */
-          select 2, n.id, n.txn_date, n.description, 'look',
+          /* 4. an open debit ₹1 apart */
+          select 4, n.id, n.txn_date, n.description, 'look',
                  'The debit is ₹1 apart from what Zoho paid — the same money, but it is not matched automatically. Match it on the bank line.'
             from (select l.* from lines l
                    where l.bank_account_id = d.acc and l.matched_to_type is null and abs(l.dr - d.cash) = 1
                      and abs(l.txn_date - d.paid_on) <= 7
                    order by abs(l.txn_date - d.paid_on), l.id limit 1) n
-           where d.whole
+           where d.whole and d.n_bills = 1
           union all
-          /* 3. an open same-amount debit outside the window */
-          select 3, f.id, f.txn_date, f.description, 'no_line',
+          /* 5. an open same-amount debit outside the window */
+          select 5, f.id, f.txn_date, f.description, 'no_line',
                  format('No open debit of this amount within 7 days of %s. The nearest one is on %s (%s days away) — check it is the same payment and match it on the bank line.',
                         to_char(d.paid_on, 'DD Mon YYYY'), to_char(f.txn_date, 'DD Mon YYYY'), abs(f.txn_date - d.paid_on))
             from (select l.* from lines l
                    where l.bank_account_id = d.acc and l.matched_to_type is null and l.dr = d.cash
                      and abs(l.txn_date - d.paid_on) between 8 and 60
                    order by abs(l.txn_date - d.paid_on), l.id limit 1) f
-           where d.whole
+           where d.whole and d.n_bills = 1
           union all
-          /* 4. nothing */
-          select 4, null::uuid, null::date, null::text, 'no_line',
+          /* 6. nothing */
+          select 6, null::uuid, null::date, null::text, 'no_line',
                  format('No open debit of this amount within 7 days of %s in this account — is the statement imported up to that date?',
                         to_char(d.paid_on, 'DD Mon YYYY'))
-           where d.whole
+           where d.whole and d.n_bills = 1
         ) y order by y.pri limit 1
       ) x
      where not exists (select 1 from pairs p where p.zdoc = d.zdoc)
