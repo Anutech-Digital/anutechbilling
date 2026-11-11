@@ -102,27 +102,38 @@ function dayStart(lines: StatementLine[]): number {
 type OrderLine = { txn_date: string; debit?: number; credit?: number; balance_after?: number | null };
 
 /**
- * R-2665: was the file printed newest-first? The running balance says so when it can: next to
- * each other, a line either continues from the one printed before it (oldest-first) or the one
- * printed before continues from it (newest-first). Without balances, only the dates: newest-first
- * when they step back more often than forward AND at least twice — a file of two date-sorted
- * blocks (HDFC credit card: Domestic, then International) steps back exactly once.
+ * R-2665: was the file printed newest-first? The DATES decide first:
+ *  - they only step forward, or forward more often than back → no (oldest-first; a file of two
+ *    date-sorted blocks — HDFC credit card: Domestic, then International — steps back once);
+ *  - they step back more often than forward AND at least twice → yes, unless the running balance
+ *    clearly runs forward (days newest-first, each day's own lines oldest-first).
+ *  - one step back and none forward (two dates, the later one printed first — newest-first, or
+ *    two blocks) → yes only when the running balance agrees: more links backward than forward.
+ * Where the dates say nothing (all one day, or as many steps back as forward) the running
+ * balance decides alone — next to each other, a line either continues from the one printed
+ * before it (oldest-first) or the one printed before continues from it (newest-first) — and only
+ * with a clear majority: 2+ links and more than twice the other way. ONE reversed pair there, or
+ * in a file whose dates run forward, is a pair printed out of order inside a day (R-2522: two FD
+ * redemptions), never the whole file: the file's order is kept and the out-of-order note says so.
  */
 function printedNewestFirst(lines: readonly OrderLine[]): boolean {
   let asc = 0, desc = 0, fwd = 0, back = 0;
+  const net = (l: OrderLine) => (l.credit ?? 0) - (l.debit ?? 0);
   for (let i = 1; i < lines.length; i++) {
     const a = lines[i - 1], b = lines[i];
     if (b.txn_date > a.txn_date) fwd++;
     else if (b.txn_date < a.txn_date) back++;
     if (a.balance_after == null || b.balance_after == null) continue;
-    const net = (l: OrderLine) => (l.credit ?? 0) - (l.debit ?? 0);
     const up = close(b.balance_after - a.balance_after, net(b));
     const down = close(a.balance_after - b.balance_after, net(a));
     if (up && !down) asc++;
     if (down && !up) desc++;
   }
-  if (asc !== desc) return desc > asc;
-  return back > fwd && back >= 2;
+  const clearly = (n: number, other: number) => n >= 2 && n > 2 * other;
+  if (back > fwd && back >= 2) return !clearly(asc, desc);
+  if (fwd > back) return false;
+  if (back > fwd) return desc > asc;
+  return clearly(desc, asc);
 }
 
 /**
