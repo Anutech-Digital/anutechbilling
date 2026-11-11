@@ -510,7 +510,7 @@ const TEAM_CHAT: UserRole[] = [...STAFF, "marketing"];
 export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/quotes/new": "Opened by the New quote / Send quote buttons on Quotes, leads and deals",
   /* G-SOCIAL (5 Nov 2026): Marketing Hub tool pages — each opens from its card on /marketing (tool-catalog.ts / hub-navigation.ts) */
-  "/marketing/ads/accounts": "Manage ad accounts; opened from Ad accounts (live) on the Marketing Hub",
+  "/marketing/ads/accounts": "Manage ad accounts; opened from Paid ads on the Marketing Hub",
   "/marketing/email": "Email tool page; opened from its Marketing Hub card",
   "/marketing/facebook": "Facebook Page connection; opened from the Social (organic) cards on the Marketing Hub",
   "/marketing/linkedin": "LinkedIn Company Page; opened from its Marketing Hub card",
@@ -611,7 +611,7 @@ export const APP_NAV: NavSection[] = [
           { id: "wa-broadcast",    href: "/marketing/whatsapp",  label: "WhatsApp broadcast", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Message many leads at once with an approved template" },
           /* S28: renewal / invoice reminders on WhatsApp — switch, template per kind, send log. */
           { id: "wa-reminders",    href: "/marketing/whatsapp/reminders", label: "WhatsApp reminders", icon: "whatsapp", roles: OM, group: "Campaigns", hint: "Renewal and invoice reminders on WhatsApp — ON/OFF, template, log" },
-          { id: "ad-platforms",    href: "/marketing/ads",      label: "Ad accounts (live)", icon: "trending_up", roles: OMK, group: "Ads & tracking", hint: "Google Ads + Facebook spend by campaign, daily from Google/Meta" },
+          { id: "ad-platforms",    href: "/marketing/ads",      label: "Paid ads", icon: "trending_up", roles: OMK, group: "Ads & tracking", hint: "Google Ads + Facebook spend by campaign, daily from Google/Meta" },
           { id: "ad-landing-pages", href: "/marketing/landing-pages", label: "Ads landing pages", icon: "layout", roles: OMK, group: "Ads & tracking", hint: "Ad final URL, phone preview, leads received" },
           { id: "marketing-links", href: "/marketing/links",   label: "Tracking links", icon: "globe",  roles: OMK, group: "Ads & tracking", hint: "A link per ad or post — the lead source is set automatically" },
           { id: "lead-gen",        href: "/lead-gen",          label: "Lead sources",    icon: "target",  roles: OMK, group: "Ads & tracking" },
@@ -974,6 +974,8 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   "/setup":                  { tail: ["Setup Wizard"], under: "Settings" },
   /* R-2115 checker: the personal Account page (avatar menu) read "Home > Dashboard". */
   "/account":                { tail: ["Account"], under: "Personal" },
+  /* R-2671: Sales › Marketing Hub › Paid ads › Manage ad accounts (it read "… › Ad accounts (live)"). */
+  "/marketing/ads/accounts": { tail: ["Manage ad accounts"] },
 };
 
 /** The crumb of every APP_NAV entry, from where it sits. */
