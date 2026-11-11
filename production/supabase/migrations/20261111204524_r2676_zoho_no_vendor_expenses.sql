@@ -18,9 +18,18 @@
 --     · it claims no input GST and is not under reverse charge (both need the supplier's GSTIN);
 --       GST that Zoho marked ineligible stays in the cost, as before;
 --     · it has no TDS (26Q needs the deductee);
---     · no vendor-less expense that is NOT from Zoho has the same amount (±₹1) within 3 days from the
---       same paid-from account (or with no account) — the no-vendor sheet / a hand entry already
---       booked it. Salaries rows are never counted.
+--     · it is not already in the books (fail closed, ±3 days, ±₹1): no vendor-less expense that is
+--       NOT from Zoho paid from the same account (or with no account) — the no-vendor sheet, a hand
+--       entry or a Payroll salary — and no debit of that amount in the paid-from account already
+--       reconciled as something that is not a Zoho document (an own transfer is not counted).
+--       Several identical Zoho expenses next to ONE such row are all left out (it cannot tell which
+--       one is the duplicate) — those are added by hand.
+--   NOT in this file (must ship together — see the card): the other direction. An imported vendor-less
+--   expense is paid with no bank line; until Banking's no-vendor sheet / "book as expense" refuses a
+--   debit that such an expense covers (R-2657 zoho-covered + its server guard) and R-2655's preview is
+--   in, that debit could be booked a second time.
+--   Known limit: a balance-sheet account stays out only while the owner has not mapped it. Zoho's own
+--   account type (chart of accounts) is not stored yet — a follow-up card adds it as a hard refusal.
 --   Each refusal is a sentence in "skipped" (the preview, plan.ts, says the same). A Zoho BILL with no
 --   vendor still stays out. The answer gains "no_vendor" (how many came in vendor-less); each "done"
 --   row says no_vendor true / false. No vendor is created and no vendor change is logged for them.
@@ -323,14 +332,19 @@ begin
       end if;
     end if;
 
-    -- R-2676: a no-vendor expense already in the books without a Zoho id — booked from the bank line
-    -- (the no-vendor sheet) or by hand: no vendor, ±3 days, same amount (±₹1), paid from the same
-    -- account (or with no account). Salaries rows are Payroll's and never counted.
+    -- R-2676: a no-vendor expense already in the books without a Zoho id. Two looks, both fail closed:
+    --   (a) a vendor-less expense row — booked from the bank line (the no-vendor sheet) or by hand —
+    --       ±3 days, same amount (±₹1), paid from the same account (or with no account). A Salaries
+    --       row counts too: a pay-out Payroll booked must not come in again as a Zoho expense.
+    --   (b) a debit of that amount in the paid-from account, ±3 days, that is ALREADY reconciled as
+    --       something that is not a Zoho document (a vendor's bill / expense, a salary, a recorded
+    --       payment's stand-in line …) — the spend is in the books whatever it was booked as. An own
+    --       transfer is not a spend and is not counted.
     if v_reason is null and v_no_vendor then
       v_dup := null;
       select coalesce(e.bill_no, e.id) || ' (' || to_char(e.expense_date, 'DD Mon YYYY') || ', ₹' || e.amount || ')' into v_dup
         from public.expenses e
-       where e.tenant_id = v_tenant and e.zoho_doc_id is null and e.category <> 'Salaries'
+       where e.tenant_id = v_tenant and e.zoho_doc_id is null
          and e.vendor_id is null
          and e.expense_date between v_date - 3 and v_date + 3 and abs(e.amount - v_book) <= 1
          and (e.bank_account_id = v_acct.id
@@ -340,6 +354,22 @@ begin
        order by abs(e.expense_date - v_date), e.id limit 1;
       if v_dup is not null then
         v_reason := format('Looks already in the books (not from Zoho): %s — no vendor, same paid-from account, ±3 days, same amount. Check it; delete one by hand if it is the same purchase.', v_dup);
+      else
+        select to_char(t.txn_date, 'DD Mon YYYY') || ', ₹' || t.debit || ', reconciled as ' || replace(t.matched_to_type, '_', ' ') into v_dup
+          from public.bank_transactions t
+         where t.tenant_id = v_tenant and t.bank_account_id = v_acct.id
+           and coalesce(t.debit, 0) > 0 and coalesce(t.credit, 0) = 0
+           and abs(t.debit - v_book) <= 1 and t.txn_date between v_date - 3 and v_date + 3
+           and t.matched_to_type is not null and t.matched_to_type <> 'transfer'
+           and not exists (select 1 from public.expenses z
+                            where z.tenant_id = v_tenant and z.zoho_doc_id is not null and z.reconciled_txn_id = t.id)
+           and not exists (select 1 from public.bank_vendor_payment_lines pl
+                            join public.expenses z on z.id = pl.expense_id and z.tenant_id = v_tenant
+                           where pl.bank_txn_id = t.id and z.zoho_doc_id is not null)
+         order by abs(t.txn_date - v_date), t.id limit 1;
+        if v_dup is not null then
+          v_reason := format('Looks already in the books: a debit in %s (%s) of the same amount, ±3 days. If it is this expense it would be counted twice — check it; add it by hand if it is another payment.', v_acct.name, v_dup);
+        end if;
       end if;
     end if;
 

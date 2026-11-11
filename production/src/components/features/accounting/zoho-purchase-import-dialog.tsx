@@ -45,7 +45,7 @@ const selectCls = "w-full rounded-md border border-hairline bg-paper px-2 py-1 t
 
 interface Preview {
   purchases: {
-    counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number; newVendors: number };
+    counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number; newVendors: number; /** R-2676 */ noVendor?: number };
     parts: { bills: number; expenses: number };
     zohoByMonth: MonthTotals[]; importByMonth: MonthTotals[]; appByMonth: MonthTotals[];
     /** R-2502c: purchases already in the app NOT from Zoho, per month — an overlap shows before importing. */
@@ -205,6 +205,7 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
               <p data-testid="fy-purchases-summary">
                 <b>{n(p.counts.scanned)}</b> Zoho bills + expenses · <b>{n(p.counts.import)}</b> to import
                 {p.counts.newVendors > 0 && <> · {p.counts.newVendors} new vendors from Zoho</>}
+                {(p.counts.noVendor ?? 0) > 0 && <> · {n(p.counts.noVendor ?? 0)} with no vendor in Zoho (come in as expenses with no vendor)</>}
                 {p.counts.already > 0 && <> · <Badge kind="muted" size="sm">{p.counts.already} already in the app</Badge></>}
                 {p.counts.skip > 0 && <> · <Badge kind="warning" size="sm">{p.counts.skip} left out</Badge></>}
               </p>
@@ -212,6 +213,11 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
               {p.unmapped.length > 0 && (
                 <div className="rounded-md border border-amber/50 px-3 py-2">
                   <p className="text-xs font-semibold text-ink mb-1">Map Zoho accounts to your categories ({p.unmapped.length} not mapped — they come in as &quot;Unmapped — review&quot;)</p>
+                  {/* R-2676: on an expense with no vendor an unmapped account keeps the whole expense out. */}
+                  <p className="text-xs text-ink-2 mb-1">
+                    A Zoho expense with <b>no vendor</b> comes in only when its account is mapped here. Map an account only if it
+                    is an expense — leave a fixed deposit, loan, GST, asset or salary account unmapped, so those payments stay out.
+                  </p>
                   <table className="w-full text-xs">
                     <tbody>
                       {p.unmapped.slice(0, 100).map((u) => (
