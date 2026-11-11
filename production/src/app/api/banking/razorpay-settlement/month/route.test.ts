@@ -29,6 +29,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 vi.mock("@/lib/sentry", () => ({ Sentry: { captureException: vi.fn() } }));
 vi.mock("@/lib/razorpay/settlement-batch.server", () => ({
+  RUN_CHUNK: 15,
   loadMonthBatch: async (a: Record<string, unknown>) => { state.loadArgs.push(a); return { state: "batch", batch: { month: a.month, rows: [], ready: 0, blocked: 0, readyAmount: 0 } }; },
   runMonthBatch: async (a: Record<string, unknown>) => { state.runArgs.push(a); return state.runOut; },
   undoMonthRun: async (_db: unknown, runId: string) => {
