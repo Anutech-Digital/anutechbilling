@@ -1,5 +1,5 @@
 -- R-2656 (10 Nov 2026, p1 paisa, G-RECON N3): own-account transfer + reversal pair detector.
--- Migration 20261110081000_r2656_bank_pair_detector. Self-asserting, ONE transaction, rolled back.
+-- Migration 20261111155249_r2656_bank_pair_detector. Self-asserting, ONE transaction, rolled back.
 --
 --   A. Preview: sure transfer (FD / sweep word), an FD account with no word = not shown, SBI-style
 --      "BY TRANSFER" / "TRF" third-party lines = not shown, 3-day window (3 = pair, 4 = not), two

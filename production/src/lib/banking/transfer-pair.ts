@@ -1,7 +1,7 @@
 /**
  * R-2656 (10 Nov 2026, G-RECON N3) — "Find transfer & reversal pairs": the words and the sums of the
  * preview. The pairing itself is on the server (bank_pair_candidates, migration
- * 20261110081000_r2656_bank_pair_detector.sql): two OPEN lines, same amount, opposite sides, at most
+ * 20261111155249_r2656_bank_pair_detector.sql): two OPEN lines, same amount, opposite sides, at most
  * 3 days apart —
  *   'transfer' = two of the company's own accounts (FD / sweep / OD / card), with a transfer word, an
  *                FD / OD / credit-card account or the same bank reference;

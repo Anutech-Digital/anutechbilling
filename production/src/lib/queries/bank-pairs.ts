@@ -1,6 +1,6 @@
 /**
  * R-2656 (10 Nov 2026, G-RECON N3) — "Find transfer & reversal pairs" on Banking. Three RPCs of
- * migration 20261110081000_r2656_bank_pair_detector (owner / accountant only, own company only):
+ * migration 20261111155249_r2656_bank_pair_detector (owner / accountant only, own company only):
  *   bank_pair_candidates()   the preview (read only);
  *   book_bank_pairs(pairs)   books the pairs the SERVER finds sure right now, under a run id;
  *   undo_bank_pair_run(run)  un-reconciles that run's pairs (through the line's own un-reconcile).
