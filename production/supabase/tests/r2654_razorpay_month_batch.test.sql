@@ -1,5 +1,5 @@
 -- R-2654 (10 Nov 2026): Razorpay settlements month batch — "Reconcile all ready" under a run id + "Undo this run".
--- Migration 20261110054124_r2654_razorpay_month_batch (needs R-2099 20261029060514, R-2535 20261107043907,
+-- Migration 20261111161247_r2654_razorpay_month_batch (needs R-2099 20261029060514, R-2535 20261107043907,
 -- R-2565 20261107134000). Self-asserting, ONE transaction, rolled back. Local/test DB only.
 --
 -- Proves:

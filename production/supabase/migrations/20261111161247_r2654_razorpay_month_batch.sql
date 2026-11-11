@@ -1,6 +1,6 @@
 -- deploy-peek: to_regprocedure('public.razorpay_batch_run_start(uuid)') is not null and to_regprocedure('public.reconcile_razorpay_settlement_in_run(uuid,uuid,jsonb)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.undo_bank_recon_run(uuid)') and prosrc like '%R-2654%')
 -- deploy-key: r2654razorpaymonthbatch
--- 20261110054124_r2654_razorpay_month_batch.sql
+-- 20261111161247_r2654_razorpay_month_batch.sql
 --
 -- R-2654 (10 Nov 2026, p0 money, G-RECON plan N2): HDFC 4523 has 138 open Razorpay settlement lines and
 -- R-2099's settlement path books them one line at a time (3-4 min each). The bank page now reads a whole
