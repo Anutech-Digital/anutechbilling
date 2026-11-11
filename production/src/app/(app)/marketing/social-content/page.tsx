@@ -3,7 +3,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
-import { ArrowUpRight, CalendarClock, Check, Facebook, Instagram, PenLine, Send, Sparkles } from "lucide-react";
+import { ArrowUpRight, Bot, CalendarClock, Check, Facebook, Instagram, PenLine, Send, Sparkles } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,9 +14,9 @@ type Platform = "facebook" | "instagram";
 type Item = { id: string; platform: Platform; format: "post" | "story"; caption: string; media_url: string | null;
   topic: string; origin: string; status: string; created_at: string; published_at: string | null; error: string | null;
   scheduled_at: string | null };
-type State = { items: Item[]; canReview: boolean; canManage: boolean;
+type State = { items: Item[]; canReview: boolean; canManage: boolean; aiReady: boolean;
   facebook: { name: string } | null; instagram: { name: string; type: string | null } | null;
-  settings: { auto_drafts: boolean; brief: string } };
+  settings: { auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: string | null } };
 
 /* R-2513: the queue is split the way the work is done — what waits for the approver comes first. */
 const TABS = [
@@ -51,6 +51,12 @@ export default function SocialContentPage() {
   const [confirmPublish, setConfirmPublish] = React.useState<string | null>(null);
   const [brief, setBrief] = React.useState("");
   const [autoDrafts, setAutoDrafts] = React.useState(false);
+  /* R-2672: the marketer picks — AI asks first (each post waits for Approve) or AI posts by itself. */
+  const [autopilot, setAutopilot] = React.useState(false);
+  const [postsPerWeek, setPostsPerWeek] = React.useState(3);
+  const [pictures, setPictures] = React.useState("");
+  const [aiProblem, setAiProblem] = React.useState<string | null>(null);
+  const [planNote, setPlanNote] = React.useState<{ text: string; warn: boolean } | null>(null);
   const times = React.useMemo(() => quickTimes(), []);
 
   const load = React.useCallback(async () => {
@@ -58,6 +64,7 @@ export default function SocialContentPage() {
     const data = await response.json() as State & { error?: string };
     if (!response.ok) throw new Error(data.error ?? "Could not load content.");
     setState(data); setBrief(data.settings.brief); setAutoDrafts(data.settings.auto_drafts); setError(null);
+    setAutopilot(Boolean(data.settings.autopilot)); setPostsPerWeek(data.settings.posts_per_week || 3); setPictures((data.settings.picture_urls ?? []).join("\n"));
     return data;
   }, []);
   React.useEffect(() => {
@@ -80,12 +87,13 @@ export default function SocialContentPage() {
   }
 
   async function writeWithAi() {
-    setBusy(true);
+    setBusy(true); setAiProblem(null);
     try {
       const response = await fetch("/api/marketing/social-content", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ platform: platforms[0], format: story ? "story" : "post", topic, caption: "", mediaUrl: null, ai: true, previewOnly: true }) });
-      const data = await response.json() as { caption?: string; error?: string };
-      if (!response.ok || !data.caption) throw new Error(data.error ?? "AI could not write the post.");
+      const data = await response.json() as { caption?: string; error?: string; description?: string };
+      // R-2672: the reason stays on screen under the button (a toast vanished before anyone read it).
+      if (!response.ok || !data.caption) { setAiProblem([data.error ?? "AI could not write the post.", data.description].filter(Boolean).join(" ")); return; }
       setCaption(data.caption);
       toast.success("AI wrote the post. Read it, change anything, then send it for approval.");
     } catch (e) { toastError(e, { fallback: "AI could not write the post.", description: "Try a clearer topic, or write the post yourself." }); }
@@ -121,7 +129,7 @@ export default function SocialContentPage() {
       const item = state?.items.find(x => x.id === id);
       toast.success(action === "publish" ? "Posted to Meta."
         : action === "approve" ? (item?.scheduled_at ? `Approved. It posts on ${formatIst(item.scheduled_at)}.` : "Approved. Press Publish now when you are ready.")
-        : action === "submit" ? "Sent for approval." : action === "return" ? "Sent back to drafts." : "Saved.");
+        : action === "submit" ? "Sent for approval." : action === "return" ? "Sent back to drafts." : action === "stop" ? "Stopped. It will not go out; it is in Drafts now." : "Saved.");
       setEditing(null); setConfirmPublish(null); await load();
       if (action === "approve") setTab("scheduled");
       if (action === "publish") setTab("published");
@@ -133,11 +141,27 @@ export default function SocialContentPage() {
     setBusy(true);
     try {
       const response = await fetch("/api/marketing/social-content/settings", { method: "PUT", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ autoDrafts, brief }) });
-      const data = await response.json() as { error?: string };
-      if (!response.ok) throw new Error(data.error ?? "Could not save settings.");
-      toast.success("Weekly AI drafts saved."); await load();
+        body: JSON.stringify({ autoDrafts, brief, autopilot, postsPerWeek, pictures }) });
+      const data = await response.json() as { error?: string; description?: string };
+      if (!response.ok) { setPlanNote({ text: [data.error ?? "Could not save.", data.description].filter(Boolean).join(" "), warn: true }); return; }
+      setPlanNote({ text: autoDrafts ? `Saved. Every Monday the AI plans ${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"}${autopilot ? " and posts them by itself" : " for you to approve"}.` : "Saved. The Monday plan is off — press Plan this week now whenever you want posts.", warn: false });
+      toast.success("AI posts settings saved."); await load();
     } catch (e) { toastError(e, { fallback: "Could not save settings.", description: "Nothing was saved. Try again." }); }
+    finally { setBusy(false); }
+  }
+
+  /** R-2672: "Plan this week now" — the AI plans the week straight away (same as the Monday run). */
+  async function planNow() {
+    setBusy(true); setPlanNote(null);
+    try {
+      const response = await fetch("/api/marketing/social-content/settings", { method: "POST" });
+      const data = await response.json() as { error?: string; description?: string; created?: number; autopilot?: boolean; instagramSkipped?: boolean };
+      if (!response.ok) { setPlanNote({ text: [data.error ?? "Could not plan the week.", data.description].filter(Boolean).join(" "), warn: true }); return; }
+      const n = data.created ?? 0;
+      setPlanNote({ text: `${n} post${n === 1 ? "" : "s"} planned for the next 7 days. ${data.autopilot ? "They go out by themselves at their time (see Scheduled). Press Stop on any you do not want." : "They are waiting for your approval (see Waiting for approval)."}${data.instagramSkipped ? " Instagram was skipped: add picture links below so Instagram posts are planned too." : ""}`, warn: Boolean(data.instagramSkipped) });
+      await load();
+      setTab(data.autopilot ? "scheduled" : "review");
+    } catch (e) { toastError(e, { fallback: "Could not plan the week.", description: "Nothing was posted. Try again." }); }
     finally { setBusy(false); }
   }
 
@@ -153,7 +177,7 @@ export default function SocialContentPage() {
         {[
           { icon: <PenLine size={18} />, title: "1. Write", text: "Type the post or let AI write it. Pick when it should go out." },
           { icon: <Check size={18} />, title: "2. Approve", text: "The owner or a manager reads it and presses Approve." },
-          { icon: <CalendarClock size={18} />, title: "3. It posts itself", text: "At the chosen time it appears on your Page. Nothing posts without approval." },
+          { icon: <CalendarClock size={18} />, title: "3. It posts itself", text: state.settings.autopilot ? "At the chosen time it appears on your Page. Autopilot is on, so AI posts go out without approval." : "At the chosen time it appears on your Page. Nothing posts without approval." },
         ].map((s) => <li key={s.title} className="flex gap-3 rounded-xl border border-hairline bg-paper p-4"><span className="mt-0.5 text-amber-ink">{s.icon}</span><div><p className="text-sm font-semibold">{s.title}</p><p className="mt-0.5 text-xs leading-5 text-ink-3">{s.text}</p></div></li>)}
       </ol>
 
@@ -177,7 +201,8 @@ export default function SocialContentPage() {
           <div>
             <label className="block text-xs font-medium text-ink-2" htmlFor="social-topic">What is it about?</label>
             <input id="social-topic" className={`${inputClass} mt-1`} value={topic} maxLength={500} onChange={e => setTopic(e.target.value)} placeholder="Example: 3 Google Workspace tips for small teams" />
-            <Button className="mt-2" variant="outline" disabled={busy || !topic.trim()} onClick={() => void writeWithAi()}><Sparkles size={15} /> Write with AI</Button>
+            <Button className="mt-2" variant="outline" disabled={busy} onClick={() => { if (topic.trim()) void writeWithAi(); else setAiProblem("Type what the post is about first, then press Write with AI."); }}><Sparkles size={15} /> Write with AI</Button>
+            {aiProblem && <p role="alert" className="mt-2 rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber-ink">{aiProblem}{!state.aiReady && <> <a className="font-medium underline" href="/settings?tab=integrations">Open Settings → Integrations</a></>}</p>}
           </div>
 
           <label className="block text-xs font-medium text-ink-2">Post text<textarea className={`${inputClass} mt-1 min-h-36 resize-y`} value={caption} maxLength={2200} onChange={e => setCaption(e.target.value)} placeholder="Type the post here, or press Write with AI" /><span className="mt-1 block text-right font-normal text-ink-3">{caption.length}/2200</span></label>
@@ -220,13 +245,41 @@ export default function SocialContentPage() {
               {item.status === "review" && !state.canReview && <span className="self-center text-xs text-ink-3">Waiting for the owner or a manager.</span>}
               {["draft", "failed"].includes(item.status) && <Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "submit")}><Send size={14} /> Send for approval</Button>}
               {["draft", "review", "failed"].includes(item.status) && editing !== item.id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setEditing(item.id); setEditCaption(item.caption); setEditMediaUrl(item.media_url ?? ""); setEditPostAt(item.scheduled_at ? toIstLocal(item.scheduled_at) : ""); }}>Edit</Button>}
+              {item.status === "approved" && state.canReview && item.scheduled_at && confirmPublish !== item.id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(item.id, "stop")}>Stop</Button>}
               {item.status === "approved" && state.canReview && (confirmPublish === item.id ? <><Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "publish")}><Send size={14} /> Yes, post now</Button><Button size="sm" variant="ghost" onClick={() => setConfirmPublish(null)}>Cancel</Button></> : <Button size="sm" variant={item.scheduled_at ? "outline" : "primary"} disabled={busy} onClick={() => setConfirmPublish(item.id)}>{item.scheduled_at ? "Post now instead" : "Publish now"}</Button>)}
             </div>
           </div>)}</div>
         </div></Card>
       </div>
 
-      {state.canManage && <Card><div className="grid gap-4 p-1 md:grid-cols-[1fr_auto] md:items-end md:p-2"><div><h2 className="text-lg font-semibold">Weekly AI drafts</h2><p className="mt-1 text-sm text-ink-3">Every Monday AI writes one draft for each connected place. You still approve each one — nothing posts without approval.</p><label className="mt-4 block text-xs font-medium text-ink-2">What should AI write about?<textarea className={`${inputClass} mt-1 min-h-20`} maxLength={1000} value={brief} onChange={e => setBrief(e.target.value)} placeholder="Your products, who you sell to, tone, and claims to avoid" /></label><label className="mt-3 flex items-center gap-2 text-sm"><input type="checkbox" checked={autoDrafts} onChange={e => setAutoDrafts(e.target.checked)} /> Write weekly AI drafts</label></div><Button disabled={busy} onClick={() => void saveSettings()}>Save</Button></div></Card>}
+      {(state.canManage || state.canReview) && <Card><div className="space-y-4 p-1 md:p-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3"><Bot size={20} className="mt-0.5 shrink-0 text-amber-ink" aria-hidden="true" /><div className="min-w-0">
+            <h2 className="text-lg font-semibold">AI posts</h2>
+            <p className="mt-1 text-sm text-ink-3">Posting regularly is what grows followers. The AI plans posts for the next 7 days, spread over the week at 9 AM or 6 PM.</p>
+          </div></div>
+          {state.canReview && <Button variant="primary" disabled={busy} onClick={() => void planNow()}><Sparkles size={15} /> Plan this week now</Button>}
+        </div>
+        {!state.aiReady && <p className="rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber-ink">AI is not set up yet. <a className="font-medium underline" href="/settings?tab=integrations">Add a Gemini key in Settings → Integrations</a>, then come back.</p>}
+        {state.canManage ? <>
+          <label className="block text-xs font-medium text-ink-2">What should the AI write about?<textarea className={`${inputClass} mt-1 min-h-20`} maxLength={1000} value={brief} onChange={e => setBrief(e.target.value)} placeholder="Your products, who you sell to, tone, and claims to avoid" /></label>
+          <fieldset><legend className="text-xs font-medium text-ink-2">Before an AI post goes out</legend>
+            <div className="mt-2 grid gap-2 sm:grid-cols-2">
+              <button type="button" aria-pressed={!autopilot} onClick={() => setAutopilot(false)} className={`rounded-xl border p-3 text-left ${!autopilot ? "border-ink bg-paper-2" : "border-hairline"}`}><span className="block text-sm font-semibold text-ink">Ask me first</span><span className="mt-0.5 block text-xs text-ink-3">Each AI post waits in Waiting for approval. Nothing posts until someone presses Approve.</span></button>
+              <button type="button" aria-pressed={autopilot} onClick={() => setAutopilot(true)} className={`rounded-xl border p-3 text-left ${autopilot ? "border-ink bg-paper-2" : "border-hairline"}`}><span className="block text-sm font-semibold text-ink">Autopilot (post without asking)</span><span className="mt-0.5 block text-xs text-ink-3">AI posts go out by themselves at their time. You can still Stop any of them in Scheduled.</span></button>
+            </div>
+          </fieldset>
+          <div className="grid gap-4 sm:grid-cols-[200px_minmax(0,1fr)]">
+            <label className="block text-xs font-medium text-ink-2">Posts per week<select className={`${inputClass} mt-1`} value={postsPerWeek} onChange={e => setPostsPerWeek(Number(e.target.value))}>{[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
+            <label className="block text-xs font-medium text-ink-2">Picture links the AI may use (one per line, needed for Instagram)<textarea className={`${inputClass} mt-1 min-h-20 font-mono text-xs`} value={pictures} onChange={e => setPictures(e.target.value)} placeholder="https://… (a public image link)" /></label>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-4">
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={autoDrafts} onChange={e => setAutoDrafts(e.target.checked)} /> Plan posts every Monday by itself</label>
+            <Button disabled={busy} onClick={() => void saveSettings()}>Save</Button>
+          </div>
+        </> : <p className="text-sm text-ink-2">{state.settings.autopilot ? "Autopilot is on: AI posts go out without approval." : "AI posts wait for approval."} Only the owner can change these settings.</p>}
+        {planNote && <p role="status" className={planNote.warn ? "rounded-lg bg-amber-soft px-3 py-2 text-sm text-amber-ink" : "rounded-lg bg-paper-2 px-3 py-2 text-sm text-ink-2"}>{planNote.text}</p>}
+      </div></Card>}
     </>}
   </div>;
 }

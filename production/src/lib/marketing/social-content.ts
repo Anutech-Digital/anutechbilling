@@ -37,8 +37,9 @@ export async function listSocial(session: TenantSession): Promise<SocialItem[]> 
 export async function createSocial(session: TenantSession, input: {
   platform: SocialPlatform; format: SocialFormat; caption: string; mediaUrl: string | null; topic: string; origin: "manual" | "ai" | "scheduled";
   scheduledAt?: Date | null;
-  /** R-2513: "Send for approval" saves straight into review. Never approved or published here. */
-  status?: "draft" | "review";
+  /** R-2513: "Send for approval" saves straight into review. R-2672: "approved" only for the AI
+   *  autopilot, which the owner switched on (it then posts at scheduledAt). Never published here. */
+  status?: "draft" | "review" | "approved";
 }): Promise<string> {
   const rows = await withTenant(session, tx => tx.$queryRaw<{ id: string }[]>`
     insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by, scheduled_at, status)

@@ -8,7 +8,7 @@ import { parseIstLocal, scheduleProblem } from "@/lib/marketing/social-schedule"
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
-const payload = z.object({ action: z.enum(["save", "submit", "approve", "return", "publish"]),
+const payload = z.object({ action: z.enum(["save", "submit", "approve", "return", "publish", "stop"]),
   caption: z.string().trim().max(2200).optional(), mediaUrl: z.string().trim().max(2000).nullable().optional(),
   topic: z.string().trim().max(500).optional(),
   /* R-2510: post time as typed in the form ("2026-11-06T09:00", India time); null clears it. */
@@ -34,7 +34,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     const problem = scheduledAt ? scheduleProblem(scheduledAt) : null;
     if (problem) return NextResponse.json({ error: problem }, { status: 400 });
   }
-  if (["approve", "return", "publish"].includes(input.action) && !canReviewSocial(role)) return NextResponse.json({ error: "Only an owner or manager can review and publish." }, { status: 403 });
+  if (["approve", "return", "publish", "stop"].includes(input.action) && !canReviewSocial(role)) return NextResponse.json({ error: "Only an owner or manager can review and publish." }, { status: 403 });
   try {
     if (input.action === "publish") {
       const item = await claimApproved(session, id);
@@ -53,14 +53,15 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       select status, platform, format, media_url, caption from public.social_content where id = ${id}::uuid and tenant_id = ${session.tenantId}::uuid limit 1`);
     const current = before[0];
     if (!current) return NextResponse.json({ error: "Draft not found." }, { status: 404 });
-    const allowed = input.action === "save" ? ["draft", "review", "failed"] : input.action === "submit" ? ["draft", "failed"] : ["review"];
+    /* R-2672: "stop" takes a scheduled (approved) post — e.g. one the AI autopilot planned — back to Drafts before it goes out. */
+    const allowed = input.action === "save" ? ["draft", "review", "failed"] : input.action === "submit" ? ["draft", "failed"] : input.action === "stop" ? ["approved"] : ["review"];
     if (!allowed.includes(current.status)) return NextResponse.json({ error: "This draft is no longer in that stage. Refresh the page." }, { status: 409 });
     const media = input.mediaUrl === undefined ? current.media_url : input.mediaUrl;
     const caption = input.caption === undefined ? current.caption : input.caption;
     if (current.platform === "instagram" && !media) return NextResponse.json({ error: "Instagram needs an image URL." }, { status: 400 });
     if (current.format === "post" && !caption) return NextResponse.json({ error: "Write a caption." }, { status: 400 });
-    const next = input.action === "submit" ? "review" : input.action === "approve" ? "approved" : input.action === "return" ? "draft" : undefined;
-    const item = await updateSocial(session, id, { caption: input.caption, mediaUrl: input.mediaUrl, topic: input.topic, status: next, scheduledAt }, current.status as "draft" | "review" | "failed", input.action === "approve" || input.action === "return");
+    const next = input.action === "submit" ? "review" : input.action === "approve" ? "approved" : input.action === "return" || input.action === "stop" ? "draft" : undefined;
+    const item = await updateSocial(session, id, { caption: input.caption, mediaUrl: input.mediaUrl, topic: input.topic, status: next, scheduledAt }, current.status as "draft" | "review" | "failed" | "approved", input.action === "approve" || input.action === "return" || input.action === "stop");
     if (!item) return NextResponse.json({ error: "Draft changed. Refresh the page." }, { status: 409 });
     return NextResponse.json({ item });
   } catch (error) {

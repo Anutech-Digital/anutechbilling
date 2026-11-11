@@ -31,12 +31,14 @@ export async function GET() {
   try {
     const [items, settings, connection] = await Promise.all([
       listSocial(session),
-      withTenant(session, tx => tx.$queryRaw<{ auto_drafts: boolean; brief: string }[]>`select auto_drafts, brief from public.social_content_settings where tenant_id = ${session.tenantId}::uuid`),
+      withTenant(session, tx => tx.$queryRaw<{ auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: Date | null }[]>`select auto_drafts, brief, autopilot, posts_per_week, picture_urls, last_generated_on from public.social_content_settings where tenant_id = ${session.tenantId}::uuid`),
       readFacebookPage(createAdminClientFor(session.userId), session.tenantId),
     ]);
     const instagram = connection.pageId && connection.pageToken ? await instagramForPage(connection.pageId, connection.pageToken) : null;
-    return NextResponse.json({ items, settings: settings[0] ?? { auto_drafts: false, brief: "" },
-      canReview: canReviewSocial(role), canManage: role === "owner",
+    // R-2672: tell the screen up front whether AI can write, so Write with AI never fails silently.
+    const aiReady = Boolean((await resolveGeminiConfig(createClient(), session.tenantId)).apiKey);
+    return NextResponse.json({ items, settings: settings[0] ?? { auto_drafts: false, brief: "", autopilot: false, posts_per_week: 3, picture_urls: [], last_generated_on: null },
+      canReview: canReviewSocial(role), canManage: role === "owner", aiReady,
       facebook: connection.pageId ? { name: connection.pageName, connected: true } : null,
       instagram: instagram ? { name: instagram.username ?? "Instagram", type: null } : null });
   } catch (error) {
@@ -64,7 +66,7 @@ export async function POST(req: Request) {
   if (input.ai) {
     if (!input.topic) return NextResponse.json({ error: "Describe the post topic first." }, { status: 400 });
     const ai = await resolveGeminiConfig(createClient(), session.tenantId);
-    if (!ai.apiKey) return NextResponse.json({ error: "Set up an AI key before generating drafts." }, { status: 409 });
+    if (!ai.apiKey) return NextResponse.json({ error: "AI is not set up yet.", description: "Add a Gemini key in Settings → Integrations, then press Write with AI again.", needsAiKey: true }, { status: 409 });
     let cap: string | null = null;
     const result = await geminiJson<{ caption?: string }>({ apiKey: ai.apiKey, model: ai.model, tenantId: session.tenantId,
       system: "You write honest, useful B2B social media posts for a cloud services reseller. Return JSON with one caption. No invented results, testimonials, prices, offers, or customer names. Avoid engagement bait. Include at most 3 relevant hashtags. This is a draft for human review.",
