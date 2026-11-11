@@ -504,6 +504,7 @@ MIGS=(
   "r2650zohosalesfxroundoff|20261111154423_r2650_zoho_sales_fx_round_off.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.import_zoho_fy_sales(text,jsonb,boolean)') and prosrc like '%v_round_limit%')"
   "r2656bankpairdetector|20261111155249_r2656_bank_pair_detector.sql|resellersos_migration|to_regclass('public.bank_pair_run_lines') is not null and to_regprocedure('public.bank_pair_candidates(uuid)') is not null and to_regprocedure('public.book_bank_pairs(jsonb)') is not null and to_regprocedure('public.undo_bank_pair_run(uuid)') is not null"
   "r2654razorpaymonthbatch|20261111161247_r2654_razorpay_month_batch.sql|resellersos_migration|to_regprocedure('public.razorpay_batch_run_start(uuid)') is not null and to_regprocedure('public.reconcile_razorpay_settlement_in_run(uuid,uuid,jsonb)') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.undo_bank_recon_run(uuid)') and prosrc like '%R-2654%')"
+  "r2655zohoexpensebankmatch|20261111161638_r2655_zoho_expense_bank_match.sql|resellersos_migration|to_regprocedure('public.zoho_expense_bank_matches(uuid)') is not null and to_regprocedure('public._r2655_match_gate()') is not null"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER
