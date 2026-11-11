@@ -15,6 +15,15 @@
 --         UTR = sure;
 --      A9 a hand-recorded paid expense of the same amount could be the debit too = 'ambiguous';
 --      A10 a document with one part not open = 'look' (changed by hand);
+--      A11 Zoho paid two bills with ONE vendor payment: both 'look' (the debit is their total) and an
+--          unrelated debit of one bill's amount is never offered;
+--      A12 the debit carries a UTR that is not the one Zoho has = 'look', never sure;
+--      A13 a Zoho expense marked paid with NO account = 'look', and it makes the same-amount document
+--          paid from the bank 'ambiguous' (it could be that debit too);
+--      A14 a payment recorded on the Bills page (its stand-in manual line) of the same amount =
+--          'ambiguous', and that manual line is never shown as a bank debit;
+--      A15 a sibling Zoho document already matched to its own debit is NOT a 'booked_elsewhere' for
+--          the next document of the same amount (that one is 'no_line');
 --      another company's document and line are never seen.
 --   B. Read only: nothing is written (lines, expenses, payment lines unchanged); a second call gives
 --      the same rows; the account filter keeps only that account's documents.
@@ -136,6 +145,45 @@ insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, 
 update public.expenses set reconciled_txn_id = '11111111-0000-0000-0000-000000265510' where id = 'EXP-HAND-2655-6';
 update public.tenants set books_locked_until = '2026-09-30' where id = 'dddddddd-0000-0000-0000-000000265501';
 
+-- ── review cases A11–A15 ──
+select set_config('app.zoho_purchase_import', 'on', true);
+insert into public.expenses (id, tenant_id, category, vendor_name, vendor_id, expense_date, amount, gst_paid, bill_type, bill_no,
+                             paid, paid_date, payment_method, bank_account_id, tds_amount, tds_section, currency,
+                             zoho_doc_id, zoho_leg, purchase_import_batch_id) values
+  -- A11 two bills, ONE Zoho vendor payment P11 (5,000 + 3,100 = one 8,100 debit)
+  ('EXP-Z-2655-11A-1','dddddddd-0000-0000-0000-000000265501','Office Supplies','Sharma Associates','eeeeeeee-0000-0000-0000-000000265502','2026-10-26',5000,0,'none','PS-11A',true,'2026-10-26','bank','bbbbbbbb-0000-0000-0000-000000265501',0,null,'INR','bills:Z11A',1,'cccccccc-0000-0000-0000-000000265501'),
+  ('EXP-Z-2655-11B-1','dddddddd-0000-0000-0000-000000265501','Office Supplies','Sharma Associates','eeeeeeee-0000-0000-0000-000000265502','2026-10-26',3100,0,'none','PS-11B',true,'2026-10-26','bank','bbbbbbbb-0000-0000-0000-000000265501',0,null,'INR','bills:Z11B',1,'cccccccc-0000-0000-0000-000000265501'),
+  -- A12 Zoho has UTR …000012; the debit carries another UTR
+  ('EXP-Z-2655-12-1','dddddddd-0000-0000-0000-000000265501','Office Supplies','Amazon Retail','eeeeeeee-0000-0000-0000-000000265501','2026-10-27',1500,0,'none','AMZ-12',true,'2026-10-27','bank','bbbbbbbb-0000-0000-0000-000000265501',0,null,'INR','expenses:Z12',1,'cccccccc-0000-0000-0000-000000265501'),
+  -- A13 paid with no account + the same amount paid from the bank
+  ('EXP-Z-2655-13-1','dddddddd-0000-0000-0000-000000265501','Office Supplies','Amazon Retail','eeeeeeee-0000-0000-0000-000000265501','2026-10-28',2222,0,'none','AMZ-13',true,'2026-10-28','bank',null,0,null,'INR','expenses:Z13',1,'cccccccc-0000-0000-0000-000000265501'),
+  ('EXP-Z-2655-14-1','dddddddd-0000-0000-0000-000000265501','Office Supplies','Amazon Retail','eeeeeeee-0000-0000-0000-000000265501','2026-10-28',2222,0,'none','AMZ-14',true,'2026-10-28','bank','bbbbbbbb-0000-0000-0000-000000265501',0,null,'INR','expenses:Z14',1,'cccccccc-0000-0000-0000-000000265501'),
+  -- A14 a Bills-page payment of the same amount exists
+  ('EXP-Z-2655-15-1','dddddddd-0000-0000-0000-000000265501','Office Supplies','Amazon Retail','eeeeeeee-0000-0000-0000-000000265501','2026-10-29',3333,0,'none','AMZ-15',true,'2026-10-29','bank','bbbbbbbb-0000-0000-0000-000000265501',0,null,'INR','expenses:Z15',1,'cccccccc-0000-0000-0000-000000265501'),
+  -- A15 siblings of 1,180: 16A already matched to its debit, 16B waiting
+  ('EXP-Z-2655-16A-1','dddddddd-0000-0000-0000-000000265501','Office Supplies','Amazon Retail','eeeeeeee-0000-0000-0000-000000265501','2026-10-30',1180,0,'none','AMZ-16A',true,'2026-10-30','bank','bbbbbbbb-0000-0000-0000-000000265501',0,null,'INR','expenses:Z16A',1,'cccccccc-0000-0000-0000-000000265501'),
+  ('EXP-Z-2655-16B-1','dddddddd-0000-0000-0000-000000265501','Office Supplies','Amazon Retail','eeeeeeee-0000-0000-0000-000000265501','2026-10-31',1180,0,'none','AMZ-16B',true,'2026-10-31','bank','bbbbbbbb-0000-0000-0000-000000265501',0,null,'INR','expenses:Z16B',1,'cccccccc-0000-0000-0000-000000265501');
+select set_config('app.zoho_purchase_import', '', true);
+insert into public.zoho_vendor_payment_links (tenant_id, batch_id, zoho_payment_id, zoho_bill_id, target_type, target_ids, amount) values
+  ('dddddddd-0000-0000-0000-000000265501','cccccccc-0000-0000-0000-000000265501','P11','Z11A','expense',array['EXP-Z-2655-11A-1'],5000),
+  ('dddddddd-0000-0000-0000-000000265501','cccccccc-0000-0000-0000-000000265501','P11','Z11B','expense',array['EXP-Z-2655-11B-1'],3100);
+insert into public.zoho_fy_scan (tenant_id, kind, fy, zoho_id, number, doc_date, zoho_status, payload) values
+  ('dddddddd-0000-0000-0000-000000265501','expenses','2026-27','Z12','', '2026-10-27','paid','{"reference":"628712000012"}');
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, reference, debit, credit, source) values
+  ('11111111-0000-0000-0000-000000265520','dddddddd-0000-0000-0000-000000265501','bbbbbbbb-0000-0000-0000-000000265501','2026-10-26','UPI-SOMEBODY ELSE',null,5000,0,'csv_upload'),
+  ('11111111-0000-0000-0000-000000265521','dddddddd-0000-0000-0000-000000265501','bbbbbbbb-0000-0000-0000-000000265501','2026-10-27','UPI-AMZN-628799000012-PAY',null,1500,0,'csv_upload'),
+  ('11111111-0000-0000-0000-000000265522','dddddddd-0000-0000-0000-000000265501','bbbbbbbb-0000-0000-0000-000000265501','2026-10-28','POS AMZN',null,2222,0,'csv_upload'),
+  ('11111111-0000-0000-0000-000000265523','dddddddd-0000-0000-0000-000000265501','bbbbbbbb-0000-0000-0000-000000265501','2026-10-30','POS AMZN',null,3333,0,'csv_upload');
+insert into public.bank_transactions (id, tenant_id, bank_account_id, txn_date, description, reference, debit, credit, source,
+                                      matched_to_type, matched_to_id, match_confidence) values
+  -- A14 the stand-in line of a Bills-page payment (not a bank debit)
+  ('11111111-0000-0000-0000-000000265524','dddddddd-0000-0000-0000-000000265501','bbbbbbbb-0000-0000-0000-000000265501','2026-10-29','Paid: Some vendor bill',null,3333,0,'manual','vendor_bill','VB-R2655-X','manual'),
+  -- A15 16A's own debit, matched to it
+  ('11111111-0000-0000-0000-000000265525','dddddddd-0000-0000-0000-000000265501','bbbbbbbb-0000-0000-0000-000000265501','2026-10-30','POS AMZN',null,1180,0,'csv_upload','expense','EXP-Z-2655-16A-1','manual');
+select set_config('app.zoho_purchase_import', 'on', true);
+update public.expenses set reconciled_txn_id = '11111111-0000-0000-0000-000000265525' where id = 'EXP-Z-2655-16A-1';
+select set_config('app.zoho_purchase_import', '', true);
+
 select set_config('request.jwt.claims',
   '{"sub":"aaaaaaaa-0000-0000-0000-000000265501","role":"authenticated"}', true);
 
@@ -152,7 +200,7 @@ begin
 
   -- ── A ──
   select string_agg(m.zoho_doc_id || '>' || coalesce(right(m.txn_id::text, 2), '--') || ':' || m.status, ' ' order by m.zoho_doc_id, m.txn_id)
-    into v_got from public.zoho_expense_bank_matches(null) m;
+    into v_got from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id !~ 'Z1[1-6]';
   v_want := 'bills:Z2>02:sure expenses:Z1>01:sure expenses:Z10>--:look expenses:Z3>04:look'
          || ' expenses:Z4A>05:ambiguous expenses:Z4A>06:ambiguous expenses:Z4B>05:ambiguous expenses:Z4B>06:ambiguous'
          || ' expenses:Z4C>07:sure expenses:Z4D>08:ambiguous expenses:Z5>--:no_line expenses:Z6>10:booked_elsewhere'
@@ -190,11 +238,36 @@ begin
   if r.reason not like 'Another paid expense of the same amount%' then raise exception 'FAIL A9: reason %', r.reason; end if;
   select * into r from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id = 'expenses:Z10';
   if r.reason not like '1 of its 2 parts are open%' then raise exception 'FAIL A10: reason %', r.reason; end if;
+  -- A11 one Zoho payment, two bills
+  select string_agg(m.zoho_doc_id || ':' || m.status || ':' || coalesce(right(m.txn_id::text, 2), '--'), ' ' order by m.zoho_doc_id) into v_got
+    from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id in ('bills:Z11A', 'bills:Z11B');
+  if v_got is distinct from 'bills:Z11A:look:-- bills:Z11B:look:--' then raise exception 'FAIL A11: %', v_got; end if;
+  if not exists (select 1 from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id = 'bills:Z11A' and m.reason like 'Zoho paid this bill together with 1 other bill(s)%') then
+    raise exception 'FAIL A11: reason'; end if;
+  if exists (select 1 from public.zoho_expense_bank_matches(null) m where m.txn_id = '11111111-0000-0000-0000-000000265520') then
+    raise exception 'FAIL A11: an unrelated debit of one bill''s amount was offered'; end if;
+  -- A12 another UTR on the debit
+  select * into r from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id = 'expenses:Z12';
+  if r.status <> 'look' or r.txn_id <> '11111111-0000-0000-0000-000000265521' or r.reason not like '%not the one Zoho has%' then raise exception 'FAIL A12: %', r; end if;
+  -- A13 no paid-from account
+  select * into r from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id = 'expenses:Z13';
+  if r.status <> 'look' or r.account_id is not null or r.reason not like 'Marked paid with no paid-from account%' then raise exception 'FAIL A13: %', r; end if;
+  select * into r from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id = 'expenses:Z14';
+  if r.status <> 'ambiguous' or r.txn_id <> '11111111-0000-0000-0000-000000265522' then raise exception 'FAIL A13: the bank document should be ambiguous: %', r; end if;
+  -- A14 a Bills-page payment of the same amount
+  select * into r from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id = 'expenses:Z15';
+  if r.status <> 'ambiguous' or r.txn_id <> '11111111-0000-0000-0000-000000265523' then raise exception 'FAIL A14: %', r; end if;
+  if exists (select 1 from public.zoho_expense_bank_matches(null) m where m.txn_id = '11111111-0000-0000-0000-000000265524') then
+    raise exception 'FAIL A14: the stand-in manual line was shown as a bank debit'; end if;
+  -- A15 a sibling matched to its own debit
+  select string_agg(m.zoho_doc_id || ':' || m.status, ' ') into v_got
+    from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id like 'expenses:Z16%';
+  if v_got is distinct from 'expenses:Z16B:no_line' then raise exception 'FAIL A15: %', v_got; end if;
   raise notice 'A PASS: sure / ambiguous / look / booked_elsewhere / locked / no_line as designed';
 
   -- ── B ──
   select string_agg(m.zoho_doc_id || '>' || coalesce(right(m.txn_id::text, 2), '--') || ':' || m.status, ' ' order by m.zoho_doc_id, m.txn_id)
-    into v_got from public.zoho_expense_bank_matches(null) m;
+    into v_got from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id !~ 'Z1[1-6]';
   if v_got is distinct from v_want then raise exception 'FAIL B: second call differs'; end if;
   if (select md5(string_agg(t.id::text || coalesce(t.matched_to_type, '-') || coalesce(t.matched_to_id, '-'), ',' order by t.id))
         from public.bank_transactions t where t.tenant_id in ('dddddddd-0000-0000-0000-000000265501','dddddddd-0000-0000-0000-000000265502')) is distinct from v_lines0
@@ -225,7 +298,7 @@ select set_config('request.jwt.claims',
 do $$
 declare v_got text;
 begin
-  select string_agg(m.zoho_doc_id || ':' || m.status || ':' || right(m.txn_id::text, 2), ' ') into v_got from public.zoho_expense_bank_matches(null) m;
+  select string_agg(m.zoho_doc_id || ':' || m.status || ':' || right(m.txn_id::text, 2), ' ') into v_got from public.zoho_expense_bank_matches(null) m where m.zoho_doc_id !~ 'Z1[1-6]';
   if v_got is distinct from 'expenses:ZX:sure:15' then raise exception 'FAIL C: other company sees %', v_got; end if;
   raise notice 'C PASS: manager refused, other company sees only its own';
 end $$;
