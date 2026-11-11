@@ -17,6 +17,9 @@
  * Left out, with the reason: void / draft, a normaliser problem, outside the FY, no books start /
  * before it, inside the books lock, two vendors with that name. Already (same Zoho id) → "already".
  * Vendor: Zoho contact id → GSTIN → the one vendor with that exact name → else created from Zoho.
+ * R-2676: a Zoho EXPENSE with no vendor comes in as a vendor-less expense (noVendorRefusal says when
+ * not: an unmapped account — how a fixed deposit, loan, GST, asset or salary stays out — a GST claim,
+ * reverse charge or TDS). A Zoho bill with no vendor still stays out.
  */
 import { EXPENSE_CATEGORIES } from "@/lib/accounting/expense-categories";
 import { isGstin, normalizeGstin } from "@/lib/gst/itc";
@@ -156,6 +159,8 @@ export interface PurchasePlanRow {
   target: "vendor_bill" | "expense" | null;
   vendorId: string | null;
   createVendor: boolean;
+  /** R-2676: a Zoho expense with no vendor, coming in as a vendor-less expense. */
+  noVendor: boolean;
   legs: Leg[];
   /** Zoho expenses: the app account it was paid from (null for a bill — paid later). */
   accountId: string | null;
@@ -163,7 +168,7 @@ export interface PurchasePlanRow {
 
 export interface PurchasePlan {
   rows: PurchasePlanRow[];
-  counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number; newVendors: number };
+  counts: { scanned: number; import: number; already: number; skip: number; voidOrDraft: number; newVendors: number; /** R-2676: imported with no vendor. */ noVendor: number };
   zohoByMonth: MonthTotals[];
   importByMonth: MonthTotals[];
   skipReasons: { reason: string; count: number }[];
@@ -185,6 +190,31 @@ function addMonth(m: Map<string, MonthTotals>, f: PurchaseFacts, legs: Leg[]) {
 }
 const sorted = (m: Map<string, MonthTotals>) => [...m.values()].sort((a, b) => a.month.localeCompare(b.month));
 
+export const NO_VENDOR_REASON = "It has no vendor in Zoho.";
+
+/**
+ * R-2676: why a Zoho EXPENSE with no vendor cannot come in as a vendor-less expense; null when it can.
+ * The same sentences, in the same order, as import_zoho_fy_purchases (the SQL is the last word):
+ *   - every line's Zoho account must be mapped to an expense category. The scan has no account type,
+ *     so this keeps balance-sheet accounts (fixed deposit, loan, GST, asset) and salaries out — an
+ *     unmapped account is never "Unmapped — review" on this path;
+ *   - no claimable input GST and no reverse charge (both need the supplier's GSTIN); GST Zoho marked
+ *     ineligible stays in the cost and is fine;
+ *   - no TDS (26Q needs the deductee).
+ */
+export function noVendorRefusal(f: Pick<PurchaseFacts, "lines" | "rcm" | "tdsAmount">, legs: readonly Leg[], map: Record<string, string>): string | null {
+  const unmapped = f.lines.find((l) => categoryOf(l.accountId, map) === UNMAPPED_CATEGORY);
+  if (unmapped) {
+    const name = unmapped.accountName.trim() || unmapped.accountId.trim() || "?";
+    return `Zoho account "${name}" is not mapped to an expense category — map it only if it is an expense. A fixed deposit, loan, GST, asset or salary payment is not an expense and stays out.`;
+  }
+  if (f.rcm || legs.some((l) => l.gst !== 0 || l.rcmTax !== 0)) {
+    return "It claims input GST (or reverse charge) but has no vendor in Zoho — add the vendor in Zoho, or add it by hand with the supplier.";
+  }
+  if (f.tdsAmount !== 0) return "It has TDS but no vendor in Zoho — add the vendor in Zoho, or add it by hand.";
+  return null;
+}
+
 export function matchVendor(f: { vendorZohoId: string; vendorName: string; gstin: string }, vendors: VendorRef[]): { id: string | null; create: boolean; problem: string | null } {
   if (f.vendorZohoId) {
     const z = vendors.find((v) => v.zohoContactId === f.vendorZohoId);
@@ -201,7 +231,7 @@ export function matchVendor(f: { vendorZohoId: string; vendorName: string; gstin
     && (!isGstin(g) || !normalizeGstin(v.gstin) || normalizeGstin(v.gstin) === g));
   if (byName.length === 1) return { id: byName[0].id, create: false, problem: null };
   if (byName.length > 1) return { id: null, create: false, problem: `${byName.length} vendors are named "${f.vendorName}" — add the GSTIN to the right one (Vendors), then preview again.` };
-  if (!f.vendorName.trim()) return { id: null, create: false, problem: "It has no vendor in Zoho." };
+  if (!f.vendorName.trim()) return { id: null, create: false, problem: NO_VENDOR_REASON };
   return { id: null, create: true, problem: null };
 }
 
@@ -221,7 +251,7 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
   const reasons = new Map<string, number>();
   const unmapped = new Map<string, { accountId: string; accountName: string; count: number; taxable: number }>();
   const tds = new Map<string, { section: string; amount: number; count: number }>();
-  const counts = { scanned: facts.length, import: 0, already: 0, skip: 0, voidOrDraft: 0, newVendors: 0 };
+  const counts = { scanned: facts.length, import: 0, already: 0, skip: 0, voidOrDraft: 0, newVendors: 0, noVendor: 0 };
   const newVendorKeys = new Set<string>();
   const accounts = resolveAccounts(
     facts.filter((f) => f.kind === "expenses" && f.status !== "void" && f.status !== "draft").map((f) => ({ name: f.paidThrough, amount: f.total })),
@@ -242,6 +272,7 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
     let reason: string | null = null;
     let target: PurchasePlanRow["target"] = null;
     let vendor: ReturnType<typeof matchVendor> = { id: null, create: false, problem: null };
+    let noVendor = false;
     if (f.status === "void") { reason = "Void in Zoho — not a purchase, not in the P&L or ITC."; counts.voidOrDraft++; }
     else if (f.status === "draft") { reason = "Draft in Zoho — never booked there."; counts.voidOrDraft++; }
     else if (f.problems.length) reason = f.problems[0];
@@ -258,6 +289,11 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
     }
     if (!reason && !already) {
       vendor = matchVendor(f, ctx.vendors);
+      /* R-2676: an expense (not a bill) with no vendor comes in vendor-less, unless noVendorRefusal says why not. */
+      if (vendor.problem === NO_VENDOR_REASON && f.kind === "expenses") {
+        noVendor = true;
+        vendor = { id: null, create: false, problem: noVendorRefusal(f, legs, ctx.categoryMap) };
+      }
       if (vendor.problem) { reason = vendor.problem; target = null; }
     }
     const accountId = f.kind === "expenses" ? accounts.get(f.paidThrough || NO_ACCOUNT)?.appAccountId ?? null : null;
@@ -275,6 +311,7 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
     else if (already) { verdict = "already"; counts.already++; }
     else {
       verdict = "import"; counts.import++;
+      if (noVendor) counts.noVendor++;
       addMonth(imp, f, legs);
       if (vendor.create) {
         const k = f.vendorZohoId || norm(f.vendorName);
@@ -286,7 +323,7 @@ export function buildPurchasePlan(facts: readonly PurchaseFacts[], ctx: Purchase
       t.amount += f.tdsAmount; t.count += 1;
       tds.set(f.tdsSection, t);
     }
-    rows.push({ facts: f, verdict, reason, target: verdict === "skip" ? null : target, vendorId: vendor.id, createVendor: vendor.create, legs, accountId: verdict === "skip" ? null : accountId });
+    rows.push({ facts: f, verdict, reason, target: verdict === "skip" ? null : target, vendorId: vendor.id, createVendor: vendor.create, noVendor: noVendor && verdict === "import", legs, accountId: verdict === "skip" ? null : accountId });
   }
 
   return {
