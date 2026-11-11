@@ -13,16 +13,10 @@
  *       Z  ₹3,333 "NEFT DR-ZQX ZOHO VENDOR-…"              covered by a Zoho-imported expense (D1) — not offered
  *   · that Zoho-imported expense (₹3,333, zoho_doc_id expenses:CT2657, no bank line yet).
  */
-import { spawnSync } from "node:child_process";
-import fs from "node:fs";
-import path from "node:path";
 import { expect, test, type Page } from "@playwright/test";
-import { CARD_TESTS_ON, onlyInCardTests, openAppPage, pageAs } from "./card-steps";
-// @ts-expect-error — plain .mjs helpers (no types)
-import { scenarioTargetReason } from "../../scripts/dev/local-guard.mjs";
+import { CARD_TESTS_ON, localDb, onlyInCardTests, openAppPage, pageAs } from "./card-steps";
 import { E2E_TENANT_EMAIL } from "../fixtures/e2e-roles.mjs";
 
-const PROD = path.resolve(__dirname, "..", "..");
 const ACCT = "c2657000-0000-4000-8000-000000000a01";
 const P1 = "c2657000-0000-4000-8000-000000000011";
 const P2 = "c2657000-0000-4000-8000-000000000012";
@@ -33,29 +27,9 @@ const PATTERN = "ZQX PAYEE KAPOOR";
 const ZEXP = "EXP-CT2657-Z";
 const ZBATCH = "c2657000-0000-4000-8000-000000000b01";
 
-function container(): string {
-  const ps = spawnSync("docker", ["ps", "--format", "{{.Names}}"], { encoding: "utf8" });
-  const c = (ps.stdout ?? "").split(/\r?\n/).map((s) => s.trim()).find((n) => /^supabase_db_/.test(n)) ?? null;
-  const env: Record<string, string> = {};
-  const f = path.join(PROD, ".env.local");
-  if (fs.existsSync(f)) {
-    for (const line of fs.readFileSync(f, "utf8").split(/\r?\n/)) {
-      const m = /^\s*([A-Z0-9_]+)\s*=\s*"?([^"\r\n]*)"?\s*$/.exec(line);
-      if (m) env[m[1]] = m[2];
-    }
-  }
-  const keys = ["NEXT_PUBLIC_SUPABASE_URL", "SUPABASE_URL", "DATABASE_URL", "DIRECT_URL"];
-  const why = scenarioTargetReason({ nodeEnv: process.env.NODE_ENV, container: c, urls: keys.flatMap((k) => [process.env[k], env[k]]) });
-  if (why || !c) throw new Error(`R-2657 card test refuses to write test data: ${why}`);
-  return c;
-}
-
-function psql(c: string, sql: string): string[] {
-  const r = spawnSync("docker", ["exec", "-i", c, "psql", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1", "-U", "postgres", "-d", "postgres"],
-    { input: sql, encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
-  if (r.status !== 0) throw new Error(`psql failed (exit ${r.status}): ${(r.stderr || r.stdout || "").trim()}`);
-  return (r.stdout ?? "").split(/\r?\n/).filter(Boolean);
-}
+/* The local docker DB through the shared, guarded helper (R-2666) — local stack only. */
+const container = (): string => localDb("R-2657").container;
+const psql = (_c: string, sql: string): string[] => localDb("R-2657").psql(sql);
 
 const IDS = `'${P1}','${P2}','${G1}','${G2}','${Z}'`;
 const CLEAN = (tenant: string) => `
