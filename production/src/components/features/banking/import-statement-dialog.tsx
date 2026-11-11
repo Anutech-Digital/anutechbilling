@@ -380,7 +380,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
       if (run !== unlockRun.current) return;
       if (r.ok) { await readText(r.pages); return; }
       if (r.reason === "need-password") setLocked({ name: file.name, bytes, message: unlockMessage("need-password"), failed: false });
-      else toast.error(unlockMessage(r.reason), { duration: 12000 });
+      else toast.error(unlockMessage(r.reason), { duration: 12000, description: "Nothing was imported. Upload that CSV / Excel file here, or paste the CSV text instead." });
       return;
     }
     await readWithAi(async () => {
@@ -415,7 +415,7 @@ export function ImportStatementDialog({ open, onOpenChange, accountId }: Props) 
     if (r.ok) { setLocked(null); await readText(r.pages); return; }
     if (r.reason === "wrong-password" || r.reason === "need-password") { setLocked((l) => (l ? { ...l, message: unlockMessage("wrong-password"), failed: true } : l)); return; }
     setLocked(null);
-    toast.error(unlockMessage(r.reason), { duration: 12000 });
+    toast.error(unlockMessage(r.reason), { duration: 12000, description: "Nothing was imported. Upload that CSV / Excel file here, or paste the CSV text instead." });
   };
 
   const readWithAi = async (prepare: () => Promise<AiSource>) => {
