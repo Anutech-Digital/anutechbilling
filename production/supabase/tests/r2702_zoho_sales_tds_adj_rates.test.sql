@@ -7,9 +7,13 @@
 --       store; TDS on a foreign-currency invoice.
 --   R1. Receipts: Zoho's payment of the NET ₹1,08,000 (no TDS withheld on the payment) on the TDS invoice →
 --       receipt ₹1,08,000 + TDS ₹10,000 (194JB, Zoho's) in TDS receivable; the invoice is Paid.
---   R2. Part payments: ₹50,000 stays money only (TDS not guessed); the ₹58,000 that closes it carries the TDS.
+--   S5. review c: a NO-GST invoice whose lines say 0% and 18% imports at rate 0 — the same rule as the
+--       preview (normalise.ts), so Check first and Import agree.
+--   P.  review a: report_pnl books S2's −₹250 (total − taxable − GST) as "Round Off" ₹250 expense.
+--   R2. Part payments: ₹50,000 stays money only (TDS not guessed); the ₹58,000 that closes it carries the TDS,
+--       gross = the invoice's whole taxable ₹1,00,000 @ 10% (review: not the payment's share).
 --   R3. A Zoho payment that itself withholds the TDS (settle ₹1,18,000, TDS ₹10,000): booked once, as before.
--- Self-asserting; the whole file rolls back. Red without 20261112112400_r2702_zoho_sales_tds_adj_rates.sql.
+-- Self-asserting; the whole file rolls back. Red without 20261112130505_r2702_zoho_sales_tds_adj_rates.sql.
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 < this file
 
 begin;
@@ -56,7 +60,11 @@ select 'b2702000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', x.zid, x.n
     ('s4c', 'INV/25-26/R2702-08', '{"tax": 16225, "amount": 116225, "lines": [
        {"name": "Seats", "hsn": "998315", "qty": 1, "rate": 90000, "taxable": 90000, "taxPercent": 18},
        {"name": "Odd", "hsn": "998599", "qty": 1, "rate": 10000, "taxable": 10000, "taxPercent": 0.25}]}'::jsonb),
-    ('s4d', 'INV/25-26/R2702-09', '{"tds": 10000, "currency": "USD", "fxRate": 85}'::jsonb)
+    ('s4d', 'INV/25-26/R2702-09', '{"tds": 10000, "currency": "USD", "fxRate": 85}'::jsonb),
+    -- S5: no GST at all; lines tagged 0% and 18% (the preview takes rate 0 — the import must too)
+    ('s5',  'INV/25-26/R2702-10', '{"tax": 0, "amount": 100000, "taxRate": 0, "head": "none", "lines": [
+       {"name": "Seats", "hsn": "998315", "qty": 1, "rate": 90000, "taxable": 90000, "taxPercent": 18},
+       {"name": "Govt fee", "hsn": "998599", "qty": 1, "rate": 10000, "taxable": 10000, "taxPercent": 0}]}'::jsonb)
   ) as x(zid, num, extra);
 
 -- Zoho ₹ payments (receipts normaliser shape)
@@ -96,9 +104,22 @@ declare
   n int;
 begin
   r := public.import_zoho_fy_sales('2025-26', (select jsonb_agg(jsonb_build_object('zoho_invoice_id', z, 'customer_id', c))
-         from unnest(array['s1', 's1b', 's1c', 's2', 's3', 's4a', 's4b', 's4c', 's4d']) z), false);
-  if (r->>'imported')::int <> 4 then
-    raise exception 'R-2702 S: expected s1, s1b, s1c, s2 imported, got % (skipped %)', r->>'imported', r->'skipped';
+         from unnest(array['s1', 's1b', 's1c', 's2', 's3', 's4a', 's4b', 's4c', 's4d', 's5']) z), false);
+  if (r->>'imported')::int <> 5 then
+    raise exception 'R-2702 S: expected s1, s1b, s1c, s2, s5 imported, got % (skipped %)', r->>'imported', r->'skipped';
+  end if;
+  select tax_rate, tax_amount into inv from public.invoices where tenant_id = t and zoho_invoice_id = 's5';
+  if inv.tax_rate is distinct from 0 or inv.tax_amount is distinct from 0 then
+    raise exception 'R-2702 S5: rate % tax %', inv.tax_rate, inv.tax_amount;
+  end if;
+
+  -- P: the adjustment reaches the P&L as Round Off (S2: ₹1,18,000 − ₹1,17,750 = ₹250 expense; no other
+  --    imported invoice of this company has a gap).
+  select coalesce(sum((g->>'amount')::bigint), 0) into n
+    from public.report_pnl('2025-08-01', '2025-08-31') p, jsonb_array_elements(p.expense_groups) g
+   where g->>'category' = 'Round Off';
+  if n <> 250 then
+    raise exception 'R-2702 P: Round Off in P&L ₹% (want ₹250)', n;
   end if;
 
   -- S1: the full sale, never net of TDS.
@@ -171,10 +192,15 @@ begin
   r := public.import_zoho_fy_receipts('2025-26', pg_temp.picks(array['p2b']), false);
   if (r->>'imported')::int <> 1 then raise exception 'R-2702 R2: p2b %', r; end if;
   select i.status::text st into inv from public.invoices i where i.tenant_id = t and i.zoho_invoice_id = 's1b';
-  select x2.tds_amount, x2.section into x from public.tds_receivable x2 join public.invoices i on i.id = x2.invoice_id
+  select x2.tds_amount, x2.section, x2.gross_amount, x2.rate_pct into x from public.tds_receivable x2 join public.invoices i on i.id = x2.invoice_id
    where i.tenant_id = t and i.zoho_invoice_id = 's1b';
   if inv.st <> 'paid' or x.tds_amount is distinct from 10000 or x.section is distinct from '194JB' then
     raise exception 'R-2702 R2: invoice % TDS % %', inv.st, x.tds_amount, x.section;
+  end if;
+  -- review: the TDS was deducted on the WHOLE invoice — gross ₹1,00,000 @ 10%, not the closing payment's
+  -- share (₹57,627 @ 17.35%).
+  if x.gross_amount is distinct from 100000 or x.rate_pct is distinct from 10.00 then
+    raise exception 'R-2702 R2: TDS gross % rate % (want 100000 @ 10)', x.gross_amount, x.rate_pct;
   end if;
 
   raise notice 'R-2702 zoho sales TDS / adjustment / mixed rates: all assertions passed';
