@@ -55,7 +55,7 @@ describe("R-2693 normalise — a foreign-currency payment says what it is", () =
   it("USD: currency, its own amount and Zoho's rate kept; ₹ = amount × Zoho's rate (never the dollars as rupees)", () => {
     const f = zohoReceiptFacts(detail(usd));
     expect(f).toMatchObject({ currency: "USD", foreignAmount: 663.05, fxRate: 88.2, amount: 58481 });
-    expect(f.problems[0]).toMatch(/^Received in USD in Zoho/);
+    expect(f.problems).toEqual([]);   // R-2694: a USD payment with a rate is imported now
     expect(foreignOf(f)).toEqual({ currency: "USD", amount: 663.05, inr: 58481 });
   });
 
@@ -79,7 +79,7 @@ describe("R-2693 normalise — a foreign-currency payment says what it is", () =
 });
 
 describe("R-2693 plan — every scanned payment accounted for, each left-out one with a reason", () => {
-  it("INR payment imports; overseas customer with NO GSTIN imports (never refused for that); USD and missing-invoice ones are left out WITH a reason", () => {
+  it("INR payment imports; overseas customer with NO GSTIN imports (never refused for that); USD and missing-invoice ones are left out WITH a reason (R-2694: USD with a rate now imports)", () => {
     const usdFacts = zohoReceiptFacts(detail(usd));
     const all = [
       facts("inr"),
@@ -91,8 +91,7 @@ describe("R-2693 plan — every scanned payment accounted for, each left-out one
     const by = Object.fromEntries(p.rows.map((r) => [r.facts.zohoId, r]));
     expect(by.inr).toMatchObject({ verdict: "import", customerId: "c1" });
     expect(by.overseas).toMatchObject({ verdict: "import", customerId: "c-overseas" });
-    expect(by.pu1.verdict).toBe("skip");
-    expect(by.pu1.reason).toMatch(/^Received in USD in Zoho/);
+    expect(by.pu1).toMatchObject({ verdict: "import", customerId: "c-usd" });   // R-2694: imported now
     expect(by.noinv.verdict).toBe("skip");
     expect(by.noinv.reason).toMatch(/INV\/25-26\/1552 is not an FY sale imported from Zoho here/);
     /* nothing disappears: the buckets add up to what was scanned, every left-out one has a reason */
@@ -106,9 +105,9 @@ describe("R-2693 plan — every scanned payment accounted for, each left-out one
     expect(p.deposits[0]).toMatchObject({ zohoAccountId: "za4523", count: 2, amount: 1000 + 58481 });
   });
 
-  it("skip reasons group by kind: two USD payments of different amounts are ONE reason with count 2", () => {
-    const a = zohoReceiptFacts(detail(usd));
-    const b = zohoReceiptFacts(detail({ ...usd, payment_id: "pu2", amount: 1416.65, invoices: [{ invoice_id: "ziu", invoice_number: "INV/25-26/2274", amount_applied: 1416.65 }] }));
+  it("skip reasons group by kind: two USD payments of different amounts are ONE reason with count 2 (R-2694: both read before they could be imported)", () => {
+    const a = { ...zohoReceiptFacts(detail(usd)), foreignLines: undefined };
+    const b = { ...zohoReceiptFacts(detail({ ...usd, payment_id: "pu2", amount: 1416.65, invoices: [{ invoice_id: "ziu", invoice_number: "INV/25-26/2274", amount_applied: 1416.65 }] })), foreignLines: undefined };
     const p = buildReceiptsPlan([a, b], ctx());
     expect(p.skipReasons).toEqual([{ reason: skipReasonKey(p.rows[0].reason!), count: 2 }]);
   });

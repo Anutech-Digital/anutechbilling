@@ -16,7 +16,7 @@
  *     for the PREVIEW (shown in the dialog, changeable); the import uses only what the dialog sent.
  * Pure: no I/O.
  */
-import { OLD_BANK_CHARGES_PROBLEM, inrAmountOf, isRazorpayPayment, type ZohoReceiptFacts } from "./normalise";
+import { OLD_BANK_CHARGES_PROBLEM, foreignOf, inrAmountOf, isRazorpayPayment, type ZohoReceiptFacts } from "./normalise";
 import { defaultCashAccountId, depositAccounts, type DepositAccount as AppBankAccount } from "@/lib/payments/deposit-accounts";
 
 export type { AppBankAccount };
@@ -164,6 +164,12 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
         ? "Read from Zoho again — a Razorpay fee payment can be imported now (fee booked as Bank Charges)."
         : "Zoho took bank charges off this payment and it is not a Razorpay payment — book it by hand.");
     }
+    /* R-2694: a foreign payment read before it could be imported (no per-invoice foreign amounts) —
+       Read again fetches only these (fy-import receiptFactsIncomplete). */
+    const fx = foreignOf(f);
+    if (fx && !f.foreignLines && f.fxRate) {
+      return row("skip", `Read from Zoho again — a ${fx.currency} payment can be imported now (₹ at the invoice's rate, exchange gain / loss booked).`);
+    }
     if (f.problems.length) return row("skip", f.problems[0]);
     if (!f.date || f.date < ctx.fyStart || f.date > ctx.fyEnd) return row("skip", `Dated ${f.date || "?"}, outside the year.`);
     if (!ctx.booksStart) return row("skip", "The books start date is not set (Accounting → Overview → Books start).");
@@ -182,7 +188,11 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     const custs = new Set(invoiceIds.map((id) => customerOf.get(id!) ?? ""));
     if (custs.size !== 1 || custs.has("")) return row("skip", "Its invoices belong to different customers here.");
     const customerId = [...custs][0];
+    /* R-2694: a foreign payment's lines are in its currency — the ₹ (at each invoice's own rate) and the
+       "more than due" refusal are the import's (SQL knows the invoice's rate); here only ₹ lines. */
+    const inrSettle = (k: number) => (fx ? Math.round((f.foreignLines?.[k]?.foreign ?? 0) * (f.fxRate ?? 0)) : f.lines[k].settle);
     for (let k = 0; k < f.lines.length; k++) {
+      if (fx) break;
       const id = invoiceIds[k]!;
       const due = left.get(id) ?? 0;
       if (f.lines[k].settle > due + 1) return row("skip", `${f.lines[k].invoiceNumber} has only ₹${due} due here, but Zoho settles ₹${f.lines[k].settle} with this payment.`, customerId);
@@ -190,7 +200,7 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     if (!bankAccountId) return row("skip", `Choose the app account for Zoho's "${f.depositAccountName || "no account"}".`, customerId);
     for (let k = 0; k < f.lines.length; k++) {
       const id = invoiceIds[k]!;
-      left.set(id, Math.max(0, (left.get(id) ?? 0) - f.lines[k].settle));
+      left.set(id, Math.max(0, (left.get(id) ?? 0) - inrSettle(k)));
     }
     return row("import", null, customerId);
   });
