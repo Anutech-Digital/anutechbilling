@@ -5436,6 +5436,7 @@ export type Database = {
           notes: string | null
           pan: string | null
           pf_applicable: boolean
+          pf_full_wage: boolean
           pf_no: string | null
           phone: string | null
           pin_hash: string | null
@@ -5475,6 +5476,7 @@ export type Database = {
           notes?: string | null
           pan?: string | null
           pf_applicable?: boolean
+          pf_full_wage?: boolean
           pf_no?: string | null
           phone?: string | null
           pin_hash?: string | null
@@ -5514,6 +5516,7 @@ export type Database = {
           notes?: string | null
           pan?: string | null
           pf_applicable?: boolean
+          pf_full_wage?: boolean
           pf_no?: string | null
           phone?: string | null
           pin_hash?: string | null

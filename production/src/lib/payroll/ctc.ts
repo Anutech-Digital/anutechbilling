@@ -21,7 +21,7 @@
  *    PF/ESI flags from the employee master) → its CTC. The CTC register and the employee drawer
  *    use this; they used to feed `monthly_gross × 12` to the calculator as if it were the CTC.
  */
-import { computePf, pfEpsCap, pfWage, PF_EMPLOYEE_RATE, PF_EMPLOYER_RATE, PF_EPS_RATE } from "./pf";
+import { computePf, pfEpsCap, pfWage, PF_EPS_RATE } from "./pf";
 import { computeEsi, ESI_EMPLOYER_RATE } from "./esi";
 import { computePt } from "./pt";
 
@@ -153,6 +153,8 @@ export function calculateCtcBreakdown(
     asOf?: string; // salary month (YYYY-MM) or date — picks the PF ceiling; default today
     includeGratuity?: boolean;
     includeEsi?: boolean;
+    /** R-2698: false = the employee is not PF-covered → no PF on either side (default true). */
+    includePf?: boolean;
   }
 ): CtcBreakdown {
   const isMetro = opts?.isMetro ?? false;
@@ -186,10 +188,12 @@ export function calculateCtcBreakdown(
 
   // 4. PF from pf.ts — 12% each side on Basic, capped at the month's wage ceiling when the
   //    cap applies (computePf); uncapped = 12% of the full Basic.
-  const pf = computePf(basicMonthly, true, opts?.asOf);
-  const employerPfMonthly = capPfWageCeiling ? pf.employer : Math.round(basicMonthly * PF_EMPLOYER_RATE);
-  const employeePfMonthly = capPfWageCeiling ? pf.employee : Math.round(basicMonthly * PF_EMPLOYEE_RATE);
-  const employerEpsMonthly = Math.min(pfEpsCap(opts?.asOf), Math.round(basicMonthly * PF_EPS_RATE));
+  //    R-2698: an employee with PF switched off pays / gets none (this used to be charged always).
+  const includePf = opts?.includePf ?? true;
+  const pf = computePf(basicMonthly, includePf, opts?.asOf, { capped: capPfWageCeiling });
+  const employerPfMonthly = pf.employer;
+  const employeePfMonthly = pf.employee;
+  const employerEpsMonthly = pf.applicable ? Math.min(pfEpsCap(opts?.asOf), Math.round(basicMonthly * PF_EPS_RATE)) : 0;
 
   // 5. Gratuity (4.81% of Basic = 15/26 / 12)
   const gratuityMonthly = includeGratuity ? gratuityOf(basicMonthly) : 0;
@@ -236,6 +240,8 @@ export interface CtcEmployee {
   da_monthly: number | null;
   pf_applicable: boolean;
   esi_applicable: boolean;
+  /** R-2698: true = PF on the full Basic + DA (above the ceiling); missing/false = capped. */
+  pf_full_wage?: boolean | null;
 }
 
 export interface EmployeeCtc extends CtcBreakdown {
@@ -262,7 +268,7 @@ export function ctcFromEmployee(
   const daMonthly = basicAssumed ? 0 : Math.min(grossMonthly, Math.max(0, Math.round(e.da_monthly ?? 0)));
   const basicMonthly = basicAssumed ? grossMonthly : Math.min(grossMonthly - daMonthly, Math.max(0, Math.round(e.basic_monthly ?? 0)));
 
-  const pf = computePf(wage.base, e.pf_applicable, opts?.asOf);
+  const pf = computePf(wage.base, e.pf_applicable, opts?.asOf, { capped: !e.pf_full_wage });
   const esi = computeEsi(grossMonthly, e.esi_applicable);
   const gratuityMonthly = (opts?.includeGratuity ?? true) ? gratuityOf(basicMonthly + daMonthly) : 0;
   const employerEpsMonthly = pf.applicable ? Math.min(pfEpsCap(opts?.asOf), Math.round(pf.base * PF_EPS_RATE)) : 0;
