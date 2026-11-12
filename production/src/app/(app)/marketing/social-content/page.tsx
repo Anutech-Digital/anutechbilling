@@ -10,19 +10,33 @@ import { Badge } from "@/components/ui/badge";
 import { MarketingPageHeader } from "@/components/features/marketing-hub/workspace-links";
 import { formatIst, quickTimes, toIstLocal } from "@/lib/marketing/social-schedule";
 import { pagePhotoId } from "@/lib/marketing/social-autopilot";
+import { LENGTHS, POST_TYPES, type StrategyPlan, type StrategyPlatform } from "@/lib/marketing/social-strategy";
 
 type Platform = "facebook" | "instagram";
 type Item = { id: string; platform: Platform; format: "post" | "story"; caption: string; media_url: string | null;
   topic: string; origin: string; status: string; created_at: string; published_at: string | null; error: string | null;
-  scheduled_at: string | null; media_preview?: string | null };
+  scheduled_at: string | null; media_preview?: string | null; post_type?: string | null;
+  stats?: { reach: number | null; likes: number | null; comments: number | null; shares: number | null; saves: number | null } | null };
+type StrategyRow = { platform: StrategyPlatform; version: number; plan: StrategyPlan; reason: string; created_by: string | null; created_at: string };
+type Strategies = Record<StrategyPlatform, { active: StrategyRow | null; proposed: StrategyRow | null }>;
+const PLATFORM_NAME: Record<StrategyPlatform, string> = { facebook: "Facebook", instagram: "Instagram", linkedin: "LinkedIn" };
+const hourText = (h: number) => `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? "AM" : "PM"}`;
+/** R-2706: a post's results in words. */
+function statsLine(st: NonNullable<Item["stats"]>): string {
+  const parts: string[] = [];
+  const add = (n: number | null, one: string, many: string) => { if (n !== null) parts.push(`${n.toLocaleString("en-IN")} ${n === 1 ? one : many}`); };
+  add(st.reach, "person reached", "people reached"); add(st.likes, "like", "likes"); add(st.comments, "comment", "comments"); add(st.shares, "share", "shares"); add(st.saves, "save", "saves");
+  return parts.join(" · ");
+}
 type Activity = { id: string; at: string; actor: "ai" | "person" | "system"; user_name: string | null; platform: string | null;
   action: string; detail: string; content_id: string | null; result: "ok" | "failed" | "waiting" };
 type State = { items: Item[]; canReview: boolean; canManage: boolean; aiReady: boolean;
   facebook: { name: string } | null; instagram: { name: string; type: string | null } | null; linkedin: { name: string } | null;
-  followers: { facebook: number | null; instagram: number | null }; activity: Activity[];
+  followers: { facebook: number | null; instagram: number | null }; activity: Activity[]; strategies: Strategies | null;
   settings: { auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: string | null; ai_paused: boolean } };
 
 /* R-2513: the queue is split the way the work is done — what waits for the approver comes first. */
+const STRATEGY_KEYS: StrategyPlatform[] = ["facebook", "instagram", "linkedin"];
 const TABS = [
   { key: "activity", label: "Activity", match: () => false },
   { key: "review", label: "Waiting for approval", match: (i: Item) => i.status === "review" },
@@ -45,7 +59,8 @@ export default function SocialContentPage() {
   const [platforms, setPlatforms] = React.useState<Platform[]>(["facebook"]);
   const [story, setStory] = React.useState(false);
   const [topic, setTopic] = React.useState("");
-  const [caption, setCaption] = React.useState("");
+  /* R-2705: one text per place — the AI writes each from that platform's strategy. */
+  const [texts, setTexts] = React.useState<Record<Platform, string>>({ facebook: "", instagram: "" });
   const [mediaUrl, setMediaUrl] = React.useState("");
   const [when, setWhen] = React.useState<When>("morning");
   const [customAt, setCustomAt] = React.useState("");
@@ -68,6 +83,8 @@ export default function SocialContentPage() {
   const [picturing, setPicturing] = React.useState<string | null>(null);
   const [pictureProblem, setPictureProblem] = React.useState<{ target: string; text: string } | null>(null);
   const [previews, setPreviews] = React.useState<Record<string, string>>({});
+  /* R-2705 / R-2707: strategy editing. */
+  const [strategyEdit, setStrategyEdit] = React.useState<{ platform: StrategyPlatform; plan: StrategyPlan } | null>(null);
   const [showPostSettings, setShowPostSettings] = React.useState(false);
   /* R-2687: one control per AI action — Off / Ask me first / Autopilot (stored as auto_drafts + autopilot). */
   const postsMode: "off" | "ask" | "auto" = !autoDrafts ? "off" : autopilot ? "auto" : "ask";
@@ -93,6 +110,7 @@ export default function SocialContentPage() {
   }, [load]);
 
   const hasInstagram = platforms.includes("instagram");
+  const caption = texts[platforms[0]];
   const postAt = when === "morning" ? times.tomorrowMorning : when === "evening" ? times.tomorrowEvening : when === "custom" ? customAt : "";
 
   function togglePlatform(p: Platform) {
@@ -107,11 +125,11 @@ export default function SocialContentPage() {
     setBusy(true); setAiProblem(null); setAiWriting(true);
     try {
       const response = await fetch("/api/marketing/social-content", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ platform: platforms[0], format: story ? "story" : "post", topic, caption: "", mediaUrl: null, ai: true, previewOnly: true }) });
-      const data = await response.json() as { caption?: string; error?: string; description?: string };
+        body: JSON.stringify({ platform: platforms[0], platforms, format: story ? "story" : "post", topic, caption: "", mediaUrl: null, ai: true, previewOnly: true }) });
+      const data = await response.json() as { caption?: string; captions?: Partial<Record<Platform, string>>; error?: string; description?: string };
       // R-2672: the reason stays on screen under the button (a toast vanished before anyone read it).
       if (!response.ok || !data.caption) { setAiProblem([data.error ?? "AI could not write the post.", data.description].filter(Boolean).join(" ")); return; }
-      setCaption(data.caption);
+      setTexts((cur) => ({ ...cur, ...Object.fromEntries(platforms.map((p) => [p, data.captions?.[p] || data.caption || ""])) }));
       toast.success("AI wrote the post. Read it, change anything, then send it for approval.");
     } catch (e) { toastError(e, { fallback: "AI could not write the post.", description: "Try a clearer topic, or write the post yourself." }); }
     finally { setBusy(false); setAiWriting(false); }
@@ -152,20 +170,84 @@ export default function SocialContentPage() {
     </div>;
   }
 
+  /** R-2705 / R-2707: write the first strategies, save an edit, or answer the AI's suggested change. */
+  async function strategyCall(method: "POST" | "PUT" | "PATCH", body: Record<string, unknown>, done: string) {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/marketing/social-content/strategy", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const data = await response.json() as { error?: string; description?: string };
+      if (!response.ok) throw Object.assign(new Error(data.error ?? "Could not save the strategy."), { description: data.description });
+      toast.success(done); setStrategyEdit(null); await load();
+    } catch (e) { toastError(e, { fallback: "Could not save the strategy.", description: "Nothing changed. Try again." }); }
+    finally { setBusy(false); }
+  }
+
+  /** R-2705: one platform's strategy card — what the AI follows, why it last changed, and the AI's waiting suggestion. */
+  function strategyCard(p: StrategyPlatform) {
+    const st = state!.strategies?.[p];
+    const row = st?.active;
+    const plan = row?.plan;
+    const editingThis = strategyEdit?.platform === p;
+    return <div key={p} className="rounded-lg border border-hairline bg-paper p-3">
+      <div className="flex items-center justify-between gap-2"><p className="text-sm font-semibold text-ink">{PLATFORM_NAME[p]}</p>{row && <span className="text-xs text-ink-3">Version {row.version}</span>}</div>
+      {!plan ? <p className="mt-2 text-xs text-ink-3">No strategy yet.</p> : editingThis ? strategyForm(p) : <>
+        <p className="mt-1 text-sm text-ink-2">{plan.summary}</p>
+        <ul className="mt-2 space-y-0.5 text-xs text-ink-3">
+          <li><span className="text-ink-2">Posts:</span> {plan.mix.map((m) => `${m.type} ${m.share}%`).join(" · ")}</li>
+          <li><span className="text-ink-2">Style:</span> {plan.tone.replace(/[.;,\s]+$/, "")}; {plan.length} text; {plan.hashtags} hashtag{plan.hashtags === 1 ? "" : "s"}</li>
+          <li><span className="text-ink-2">Posts at:</span> {hourText(plan.bestHourIst)} (India time)</li>
+          {plan.avoid && <li><span className="text-ink-2">Avoid:</span> {plan.avoid}</li>}
+        </ul>
+        {row?.reason && <p className="mt-2 text-xs text-ink-3"><span className="text-ink-2">Why: </span>{row.reason}</p>}
+        {p === "linkedin" && <p className="mt-2 text-xs text-ink-3">Used once LinkedIn posting is connected.</p>}
+        {state!.canReview && <Button size="sm" variant="ghost" className="mt-1 px-0" disabled={busy} onClick={() => setStrategyEdit({ platform: p, plan: { ...plan, mix: plan.mix.map((m) => ({ ...m })) } })}>Change</Button>}
+      </>}
+      {st?.proposed && !editingThis && <div className="mt-2 rounded-lg bg-amber-soft p-2 text-xs text-amber-ink">
+        <p className="font-semibold">The AI suggests a change (version {st.proposed.version})</p>
+        <p className="mt-1">{st.proposed.reason}</p>
+        <p className="mt-1">New: {st.proposed.plan.mix.map((m) => `${m.type} ${m.share}%`).join(" · ")}; posts at {hourText(st.proposed.plan.bestHourIst)}</p>
+        {state!.canReview && <div className="mt-2 flex gap-2"><Button size="sm" variant="primary" disabled={busy} onClick={() => void strategyCall("PATCH", { platform: p, accept: true }, "New strategy in use.")}>Use it</Button><Button size="sm" variant="ghost" disabled={busy} onClick={() => void strategyCall("PATCH", { platform: p, accept: false }, "Kept the old strategy.")}>Keep old</Button></div>}
+      </div>}
+    </div>;
+  }
+
+  function strategyForm(p: StrategyPlatform) {
+    const plan = strategyEdit!.plan;
+    const set = (patch: Partial<StrategyPlan>) => setStrategyEdit({ platform: p, plan: { ...plan, ...patch } });
+    const shareOf = (t: string) => plan.mix.find((m) => m.type === t)?.share ?? 0;
+    const setShare = (t: (typeof POST_TYPES)[number], n: number) => set({ mix: [...plan.mix.filter((m) => m.type !== t), ...(n > 0 ? [{ type: t, share: n }] : [])] });
+    const total = plan.mix.reduce((a, m) => a + m.share, 0);
+    return <div className="mt-2 space-y-2">
+      <label className="block text-xs font-medium text-ink-2">In one line<input className={`${inputClass} mt-1`} maxLength={300} value={plan.summary} onChange={e => set({ summary: e.target.value })} /></label>
+      <label className="block text-xs font-medium text-ink-2">Tone<input className={`${inputClass} mt-1`} maxLength={200} value={plan.tone} onChange={e => set({ tone: e.target.value })} /></label>
+      <fieldset><legend className="text-xs font-medium text-ink-2">Kinds of post, % of the week {total !== 100 && <span className="font-normal text-ink-3">(now {total}%, saved as 100%)</span>}</legend>
+        <div className="mt-1 grid grid-cols-2 gap-1">{POST_TYPES.map((t) => <label key={t} className="flex items-center justify-between gap-2 text-xs text-ink-2">{t}<input type="number" min={0} max={100} step={5} aria-label={`${t} %`} className={`${inputClass} w-16 py-1`} value={shareOf(t)} onChange={e => setShare(t, Math.max(0, Math.min(100, Number(e.target.value) || 0)))} /></label>)}</div>
+      </fieldset>
+      <div className="grid grid-cols-3 gap-2">
+        <label className="block text-xs font-medium text-ink-2">Length<select className={`${inputClass} mt-1`} value={plan.length} onChange={e => set({ length: e.target.value as StrategyPlan["length"] })}>{LENGTHS.map((l) => <option key={l} value={l}>{l}</option>)}</select></label>
+        <label className="block text-xs font-medium text-ink-2">Hashtags<input type="number" min={0} max={15} className={`${inputClass} mt-1`} value={plan.hashtags} onChange={e => set({ hashtags: Number(e.target.value) || 0 })} /></label>
+        <label className="block text-xs font-medium text-ink-2">Post at<select className={`${inputClass} mt-1`} value={plan.bestHourIst} onChange={e => set({ bestHourIst: Number(e.target.value) })}>{Array.from({ length: 17 }, (_, i) => i + 6).map((h) => <option key={h} value={h}>{hourText(h)}</option>)}</select></label>
+      </div>
+      <label className="block text-xs font-medium text-ink-2">Avoid<input className={`${inputClass} mt-1`} maxLength={400} value={plan.avoid} onChange={e => set({ avoid: e.target.value })} /></label>
+      <div className="flex gap-2"><Button size="sm" disabled={busy || plan.mix.length === 0} onClick={() => void strategyCall("PUT", { platform: p, plan }, `${PLATFORM_NAME[p]} strategy saved.`)}>Save strategy</Button><Button size="sm" variant="ghost" onClick={() => setStrategyEdit(null)}>Cancel</Button></div>
+    </div>;
+  }
+
   async function send(submit: boolean) {
     if (when === "custom" && !customAt) { toast.error("Choose the post time.", { description: "Pick a date and time, or choose Tomorrow 9 AM." }); return; }
     if (hasInstagram && !mediaUrl) { toast.error("Instagram needs a picture.", { description: "Press Make picture with AI, paste a public image link, or untick Instagram." }); return; }
-    if (!story && !caption.trim()) { toast.error("Write the post first.", { description: "Type it in the box, or press Write with AI." }); return; }
+    const empty = platforms.find((p) => !(p === "instagram" && story) && !texts[p].trim());
+    if (empty) { toast.error(`Write the ${empty === "facebook" ? "Facebook" : "Instagram"} text first.`, { description: "Type it in the box, or press Write with AI." }); return; }
     setBusy(true);
     try {
       for (const platform of platforms) {
         const response = await fetch("/api/marketing/social-content", { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ platform, format: platform === "instagram" && story ? "story" : "post", topic, caption, mediaUrl: mediaUrl || null, scheduledAt: postAt || null, submit }) });
+          body: JSON.stringify({ platform, format: platform === "instagram" && story ? "story" : "post", topic, caption: texts[platform], mediaUrl: mediaUrl || null, scheduledAt: postAt || null, submit }) });
         const data = await response.json() as { error?: string };
         if (!response.ok) throw new Error(`${platform === "facebook" ? "Facebook" : "Instagram"}: ${data.error ?? "Could not save."}`);
       }
       toast.success(submit ? "Sent for approval." : "Saved as a draft.", { description: submit ? (postAt ? `Once approved it posts on ${formatIst(postAt + ":00+05:30")}.` : "Once approved, press Publish now.") : undefined });
-      setTopic(""); setCaption(""); setMediaUrl(""); setCustomAt("");
+      setTopic(""); setTexts({ facebook: "", instagram: "" }); setMediaUrl(""); setCustomAt("");
       await load(); setTab(submit ? "review" : "draft");
     } catch (e) { toastError(e, { fallback: "Could not save the post.", description: "Your text is still in the form. Fix what the message says and try again." }); }
     finally { setBusy(false); }
@@ -234,10 +316,12 @@ export default function SocialContentPage() {
     setBusy(true); setPlanNote({ text: "The AI is writing this week's posts and making their pictures… this takes up to a minute. Keep this page open.", warn: false });
     try {
       const response = await fetch("/api/marketing/social-content/settings", { method: "POST" });
-      const data = await response.json() as { error?: string; description?: string; created?: number; autopilot?: boolean; instagramSkipped?: boolean; aiPictures?: number; pictureProblem?: string | null };
+      const data = await response.json() as { error?: string; description?: string; created?: number; autopilot?: boolean; instagramSkipped?: boolean; aiPictures?: number; pictureProblem?: string | null;
+        resultsRead?: number; needsReconnect?: boolean; learned?: { platform: StrategyPlatform; outcome: "changed" | "proposed" | "kept" | "need-more"; have: number }[] };
+      const learnedText = (data.learned ?? []).map((l) => `${PLATFORM_NAME[l.platform]}: ${l.outcome === "changed" ? "strategy improved from results" : l.outcome === "proposed" ? "the AI suggests a better strategy (see Strategy)" : l.outcome === "kept" ? "strategy kept, it is working" : `needs ${3 - l.have} more post${3 - l.have === 1 ? "" : "s"} with results before it can learn`}.`).join(" ");
       if (!response.ok) { setPlanNote({ text: [data.error ?? "Could not plan the week.", data.description].filter(Boolean).join(" "), warn: true }); return; }
       const n = data.created ?? 0;
-      setPlanNote({ text: `${n} post${n === 1 ? "" : "s"} planned for the next 7 days. ${data.autopilot ? "They go out by themselves at their time (see Scheduled). Press Stop on any you do not want." : "They are waiting for your approval (see Waiting for approval)."}${data.aiPictures ? ` The AI made ${data.aiPictures === 1 ? "a picture" : `${data.aiPictures} pictures`} for them.` : ""}${data.instagramSkipped ? ` Instagram was skipped for posts without a picture${data.pictureProblem ? ` (${data.pictureProblem})` : ""}.` : ""}`, warn: Boolean(data.instagramSkipped) });
+      setPlanNote({ text: `${n} post${n === 1 ? "" : "s"} planned for the next 7 days. ${data.autopilot ? "They go out by themselves at their time (see Scheduled). Press Stop on any you do not want." : "They are waiting for your approval (see Waiting for approval)."}${data.aiPictures ? ` The AI made ${data.aiPictures === 1 ? "a picture" : `${data.aiPictures} pictures`} for them.` : ""}${data.instagramSkipped ? ` Instagram was skipped for posts without a picture${data.pictureProblem ? ` (${data.pictureProblem})` : ""}.` : ""}${data.resultsRead ? ` Read the results of ${data.resultsRead} post${data.resultsRead === 1 ? "" : "s"}.` : ""} ${learnedText}${data.needsReconnect ? " Reconnect your Facebook Page (Marketing Hub → Facebook Page) so the AI can also read reach and saves." : ""}`, warn: Boolean(data.instagramSkipped || data.needsReconnect) });
       await load();
       setTab(data.autopilot ? "scheduled" : "review");
     } catch (e) { toastError(e, { fallback: "Could not plan the week.", description: "Nothing was posted. Try again." }); }
@@ -297,7 +381,14 @@ export default function SocialContentPage() {
               <label className="block text-xs font-medium text-ink-2">Your own picture links (optional, one per line). Leave empty and the AI makes a picture for each post<textarea className={`${inputClass} mt-1 min-h-20 font-mono text-xs`} value={pictures} onChange={e => setPictures(e.target.value)} placeholder="https://… (a public image link)" /></label>
             </div>
           </div>}
-          {[["Comment replies", "AI answers comments on your posts"], ["Follower report", "Weekly growth and what worked"], ["Daily to-do", "5 quick things only a person may do"]].map(([title, text]) => <div key={title} className="grid gap-3 p-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-center">
+          <div className="space-y-3 p-3">
+            <div className="flex flex-wrap items-start justify-between gap-2">
+              <div><p className="text-sm font-semibold text-ink">Strategy for each platform</p><p className="text-xs text-ink-3">The AI writes a different post for each platform from its strategy. Every week it reads the results, keeps what worked and changes what did not{autopilot ? "" : " (it asks you first)"}.</p></div>
+              {state.canReview && STRATEGY_KEYS.some((p) => !state.strategies?.[p].active) && <Button size="sm" variant="outline" disabled={busy || state.settings.ai_paused || !state.aiReady} onClick={() => void strategyCall("POST", {}, "Strategies written.")}><Sparkles size={14} /> Write strategies</Button>}
+            </div>
+            <div className="grid gap-3 lg:grid-cols-3">{STRATEGY_KEYS.map((p) => strategyCard(p))}</div>
+          </div>
+          {[["Comment replies", "AI answers comments on your posts"], ["Daily to-do", "5 quick things only a person may do"]].map(([title, text]) => <div key={title} className="grid gap-3 p-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-center">
             <div><p className="text-sm font-semibold text-ink">{title}</p><p className="text-xs text-ink-3">{text}</p></div>
             <p className="text-xs text-ink-3">Coming next</p><span />
           </div>)}
@@ -330,7 +421,8 @@ export default function SocialContentPage() {
             {aiProblem && <p role="alert" className="mt-2 rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber-ink">{aiProblem}{!state.aiReady && <> <a className="font-medium underline" href="/settings?tab=integrations">Open Settings → Integrations</a></>}</p>}
           </div>
 
-          <label className="block text-xs font-medium text-ink-2">Post text<textarea className={`${inputClass} mt-1 min-h-36 resize-y`} value={caption} maxLength={2200} onChange={e => setCaption(e.target.value)} placeholder="Type the post here, or press Write with AI" /><span className="mt-1 block text-right font-normal text-ink-3">{caption.length}/2200</span></label>
+          {platforms.map((p) => <label key={p} className="block text-xs font-medium text-ink-2">{platforms.length > 1 ? `${p === "facebook" ? "Facebook" : "Instagram"} text` : "Post text"}<textarea className={`${inputClass} mt-1 ${platforms.length > 1 ? "min-h-28" : "min-h-36"} resize-y`} value={texts[p]} maxLength={2200} onChange={e => { const v = e.target.value; setTexts((cur) => ({ ...cur, [p]: v })); }} placeholder="Type the post here, or press Write with AI" /><span className="mt-1 block text-right font-normal text-ink-3">{texts[p].length}/2200</span></label>)}
+          {platforms.length > 1 && <p className="-mt-2 text-xs text-ink-3">Write with AI makes a different text for each place, following its strategy.</p>}
 
           {pictureBox("new", mediaUrl, setMediaUrl, topic, caption, `Picture ${hasInstagram ? "(needed for Instagram)" : "(optional)"}`)}
 
@@ -377,7 +469,7 @@ export default function SocialContentPage() {
             })}</ol>)}
           {tab !== "activity" && items.length === 0 && <div className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-ink-3">{tab === "review" ? "Nothing is waiting for approval." : tab === "scheduled" ? "No approved posts waiting to go out." : "Nothing here yet."}</div>}
           {tab !== "activity" && <div className="max-h-[850px] space-y-3 overflow-y-auto pr-1">{items.map(item => <div key={item.id} className="rounded-xl border border-hairline bg-paper p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2">{item.platform === "facebook" ? <Facebook size={17} className="text-[#1877f2]" /> : <Instagram size={17} className="text-[#c13584]" />}<span className="text-sm font-medium">{item.platform === "facebook" ? "Facebook" : "Instagram"} {item.format === "story" ? "Story" : "post"}</span>{item.origin !== "manual" && <Badge kind="muted">AI</Badge>}</div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2">{item.platform === "facebook" ? <Facebook size={17} className="text-[#1877f2]" /> : <Instagram size={17} className="text-[#c13584]" />}<span className="text-sm font-medium">{item.platform === "facebook" ? "Facebook" : "Instagram"} {item.format === "story" ? "Story" : "post"}</span>{item.origin !== "manual" && <Badge kind="muted">AI</Badge>}{item.post_type && <Badge kind="muted">{item.post_type}</Badge>}</div>
               <span className="text-xs text-ink-2">{item.status === "published" && item.published_at ? `Posted ${formatIst(item.published_at)}`
                 : item.scheduled_at ? (item.status === "approved" && new Date(item.scheduled_at).getTime() <= Date.now() ? "Posting in a few minutes" : `${item.status === "approved" ? "Posts" : "To post"} ${formatIst(item.scheduled_at)}`)
                 : item.status === "approved" ? "Approved — post by hand" : "No post time"}</span></div>
@@ -385,6 +477,7 @@ export default function SocialContentPage() {
               : <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-2">{item.caption || (item.format === "story" ? "Picture-only Story" : "No text")}</p>{item.media_url && (pagePhotoId(item.media_url) && !item.media_preview
                 ? <p className="mt-3 text-xs text-ink-3">AI picture saved in your Facebook Page&apos;s photos (Facebook did not send a preview just now).</p>
                 : <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={pagePhotoId(item.media_url) ? item.media_preview! : item.media_url} alt="Post picture" className="max-h-80 w-full object-contain" /></div>)}</>}
+            {item.status === "published" && (item.stats ? <p className="mt-2 text-xs text-ink-2">Results: {statsLine(item.stats) || "no numbers from Meta yet"}</p> : <p className="mt-2 text-xs text-ink-3">Results are read 2 days after posting, when the AI plans the week.</p>)}
             {item.error && <p className="mt-2 rounded-lg bg-rose-soft p-2 text-xs text-rose-ink">Meta said: {item.error} — fix it, then send for approval again.</p>}
             <div className="mt-4 flex flex-wrap gap-2 border-t border-hairline pt-3">
               {item.status === "review" && state.canReview && <><Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "approve")}><Check size={14} /> Approve</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void act(item.id, "return")}>Send back</Button></>}

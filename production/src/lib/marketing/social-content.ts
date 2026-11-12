@@ -11,6 +11,8 @@ export type SocialItem = {
   id: string; platform: SocialPlatform; format: SocialFormat; caption: string; media_url: string | null;
   topic: string; origin: string; status: SocialStatus; created_by: string | null; reviewed_by: string | null;
   reviewed_at: Date | null; published_at: Date | null; external_id: string | null; error: string | null; created_at: Date;
+  /** R-2705 / R-2706 (only in listSocial). */
+  post_type?: string | null; stats?: { reach: number | null; likes: number | null; comments: number | null; shares: number | null; saves: number | null } | null;
   scheduled_at: Date | null;
 };
 
@@ -30,7 +32,7 @@ export function canReviewSocial(role: string | null): boolean {
 export async function listSocial(session: TenantSession): Promise<SocialItem[]> {
   return withTenant(session, tx => tx.$queryRaw<SocialItem[]>`
     select id, platform, format, caption, media_url, topic, origin, status, created_by,
-      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at
+      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at, post_type, stats
     from public.social_content where tenant_id = ${session.tenantId}::uuid
     order by created_at desc limit 100`);
 }
@@ -41,10 +43,12 @@ export async function createSocial(session: TenantSession, input: {
   /** R-2513: "Send for approval" saves straight into review. R-2672: "approved" only for the AI
    *  autopilot, which the owner switched on (it then posts at scheduledAt). Never published here. */
   status?: "draft" | "review" | "approved";
+  /** R-2705: the kind of post and the strategy version it followed (for the weekly learning). */
+  postType?: string | null; strategyVersion?: number | null;
 }): Promise<string> {
   const rows = await withTenant(session, tx => tx.$queryRaw<{ id: string }[]>`
-    insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by, scheduled_at, status)
-    values (${session.tenantId}::uuid, ${input.platform}, ${input.format}, ${input.caption}, ${input.mediaUrl}, ${input.topic}, ${input.origin}, ${session.userId}::uuid, ${input.scheduledAt ?? null}::timestamptz, ${input.status ?? "draft"})
+    insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by, scheduled_at, status, post_type, strategy_version)
+    values (${session.tenantId}::uuid, ${input.platform}, ${input.format}, ${input.caption}, ${input.mediaUrl}, ${input.topic}, ${input.origin}, ${session.userId}::uuid, ${input.scheduledAt ?? null}::timestamptz, ${input.status ?? "draft"}, ${input.postType ?? null}, ${input.strategyVersion ?? null}::int)
     returning id`);
   return rows[0].id;
 }

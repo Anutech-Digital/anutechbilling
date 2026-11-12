@@ -484,4 +484,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2670metaleadforms", peek: "to_regclass('public.meta_lead_forms') is not null" },
   { key: "r2672socialautopilot", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content_settings' and column_name = 'autopilot') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content_settings' and column_name = 'picture_urls')" },
   { key: "r2687socialactivity", peek: "to_regclass('public.social_activity') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content_settings' and column_name = 'ai_paused')" },
+  { key: "r2705socialstrategy", peek: "to_regclass('public.social_strategy') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content' and column_name = 'stats')" },
 ];

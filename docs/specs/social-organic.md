@@ -3,6 +3,8 @@
 Started 5 Nov 2026 from Abhishek's request. Reshaped 12 Nov 2026 (v2): one place to grow the
 company's organic audience, where an AI agent does every action the platforms allow, and a person
 can watch it, change it, stop it, or do the same action by hand. Board goal card: `G-SOCIAL`.
+v3 (12 Nov 2026, Abhishek): AI pictures per post (R-2697), a strategy per platform, post results,
+and weekly learning (R-2705..R-2707).
 
 ## 1. Goal
 
@@ -45,6 +47,15 @@ the app, comments get an answer within a day, and the page shows the follower ch
 - Never auto-follow, auto-like, auto-DM, or comment on other people's pages.
 - Only owner changes modes and Stop all AI; owner/manager approve; marketing writes.
 - Tokens stay sealed in `tenant_secrets`; never sent to the browser. Times shown in IST.
+- **Same idea, not the same words (R-2705):** each platform has a strategy (kinds of post with %
+  share, tone, length, hashtags, posting hour, avoid). Topic and picture are shared; the text is
+  written per platform from its strategy, and each platform posts at its own hour.
+- **Learning (R-2707):** weekly, before planning, with 3+ posts with results (last 6 weeks) on a
+  platform, the AI keeps what worked and changes what did not. Autopilot → new version active;
+  Ask me first → it waits as proposed for **Use it / Keep old**. Owner/manager may edit any time
+  (a new version). Fewer results → no change, the plan note says how many more are needed.
+- **AI pictures (R-2697):** one picture per post, no words/logos/prices/real people, kept as an
+  unpublished photo on the Page; the fresh image link is read just before posting.
 
 ## 5. Data
 
@@ -53,6 +64,10 @@ the app, comments get an answer within a day, and the page shows the follower ch
 - New `social_activity` (R-2687): tenant_id, at, actor (`ai` / user id), platform, action, detail,
   content_id, result.
 - R-2689 `social_comments`; R-2690 `social_follower_snapshots` (one row a day per platform).
+- R-2705 `social_strategy` (tenant, platform, version, plan jsonb, reason, status active /
+  proposed / replaced / rejected; one active + one proposed per platform). `social_content` gains
+  `post_type`, `strategy_version`, `stats` jsonb (reach, likes, comments, shares, saves), `stats_at`.
+- R-2706 results are read 2+ days after posting (≤ 40 a run) when the week is planned.
 
 ## 6. Constraints
 
@@ -68,6 +83,9 @@ the app, comments get an answer within a day, and the page shows the follower ch
 | Must a person approve every post? | Replaced: per action **Off / Ask me first / Autopilot**, plus Stop all AI | Abhishek, 11–12 Nov 2026 |
 | Who may approve? | Owner and manager | decided in session, 5 Nov 2026 |
 | Posts a week | 3 default, 1–7 setting | decided in session, 11 Nov 2026 |
+| Same text on every platform? | No — same topic + picture, text per platform from its strategy | Abhishek, 12 Nov 2026 |
+| Strategy should update from data | Yes — weekly; keep what works, change what does not | Abhishek, 12 Nov 2026 |
+| Score of a post | likes + 2×comments + 3×shares + 3×saves; 3 results minimum to learn | decided in session, 12 Nov 2026 |
 
 ## 8. Cards graph
 
@@ -79,4 +97,8 @@ R-2687 (Social growth page: platforms + modes + activity list + Stop all AI)
    └─> R-2691 (daily to-do list)
 ```
 
-- Wave 1: R-2687. Wave 2: R-2688, R-2689. Wave 3: R-2690, R-2691.
+R-2697 (AI picture per post) → R-2705 (strategy per platform + per-platform text)
+   → R-2706 (post results) → R-2707 (weekly learning)
+```
+
+- Wave 1: R-2687. Wave 2: R-2688, R-2689. Wave 3: R-2690, R-2691. R-2697 → R-2705 → R-2706 → R-2707 in order.

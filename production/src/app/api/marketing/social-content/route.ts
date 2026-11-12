@@ -9,6 +9,8 @@ import { canReviewSocial, canWriteSocial, createSocial, instagramForPage, listSo
 import { listActivity, logPersonActivity } from "@/lib/marketing/social-activity";
 import { readLinkedInConnection } from "@/lib/integrations/linkedin/store";
 import { parseIstLocal, scheduleProblem } from "@/lib/marketing/social-schedule";
+import { planFor, readStrategies } from "@/lib/marketing/social-strategy.server";
+import { describePlan } from "@/lib/marketing/social-strategy";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,6 +25,8 @@ const draft = z.object({
   submit: z.boolean().default(false),
   /* R-2513: "Write with AI" only fills the caption box — nothing is saved until the person sends it. */
   previewOnly: z.boolean().default(false),
+  /* R-2705: Write with AI for these places — one text each, from each platform's strategy. */
+  platforms: z.array(z.enum(["facebook", "instagram"])).max(2).optional(),
 });
 
 export async function GET() {
@@ -38,17 +42,18 @@ export async function GET() {
     ]);
     const instagram = connection.pageId && connection.pageToken ? await instagramForPage(connection.pageId, connection.pageToken) : null;
     // R-2687: the account cards (followers today) and the activity list.
-    const [followers, activity, linkedin, photoLinks] = await Promise.all([
+    const [followers, activity, linkedin, photoLinks, strategies] = await Promise.all([
       connection.pageId && connection.pageToken ? metaFollowers(connection.pageId, connection.pageToken, instagram?.id ?? null) : Promise.resolve({ facebook: null, instagram: null }),
       listActivity(session, 60).catch(() => []),
       readLinkedInConnection(createAdminClientFor(session.userId), session.tenantId).catch(() => null),
       // R-2697: AI pictures kept on the Page — today's link to show them.
       connection.pageToken ? pagePhotoLinks(items.map((i) => i.media_url), connection.pageToken) : Promise.resolve(new Map<string, string>()),
+      readStrategies(session).catch(() => null), // R-2705
     ]);
     // R-2672: tell the screen up front whether AI can write, so Write with AI never fails silently.
     const aiReady = Boolean((await resolveGeminiConfig(createClient(), session.tenantId)).apiKey);
     return NextResponse.json({ items: items.map((i) => ({ ...i, media_preview: i.media_url ? photoLinks.get(i.media_url) ?? null : null })), settings: settings[0] ?? { auto_drafts: false, brief: "", autopilot: false, posts_per_week: 3, picture_urls: [], last_generated_on: null, ai_paused: false },
-      followers, activity,
+      followers, activity, strategies,
       linkedin: linkedin?.organizationUrn ? { name: linkedin.organizationName ?? "LinkedIn Page" } : null,
       canReview: canReviewSocial(role), canManage: role === "owner", aiReady,
       facebook: connection.pageId ? { name: connection.pageName, connected: true } : null,
@@ -80,15 +85,20 @@ export async function POST(req: Request) {
     const ai = await resolveGeminiConfig(createClient(), session.tenantId);
     if (!ai.apiKey) return NextResponse.json({ error: "AI is not set up yet.", description: "Add a Gemini key in Settings → Integrations, then press Write with AI again.", needsAiKey: true }, { status: 409 });
     let cap: string | null = null;
-    const result = await geminiJson<{ caption?: string }>({ apiKey: ai.apiKey, model: ai.model, tenantId: session.tenantId,
-      system: "You write honest, useful B2B social media posts for a cloud services reseller. Return JSON with one caption. No invented results, testimonials, prices, offers, or customer names. Avoid engagement bait. Include at most 3 relevant hashtags. This is a draft for human review.",
-      user: `Platform: ${input.platform}. Format: ${input.format}. Topic: ${input.topic}. Write a concise, professional caption.`,
+    /* R-2705: one text per place, each following that platform's strategy (same idea, not the same words). */
+    const places = [...new Set(input.platforms?.length ? input.platforms : [input.platform])];
+    const strategies = await readStrategies(session).catch(() => null);
+    const rules = places.map((p) => strategies ? describePlan(p, planFor(strategies, p).plan) : "").filter(Boolean).join("\n");
+    const result = await geminiJson<{ facebook?: string; instagram?: string }>({ apiKey: ai.apiKey, model: ai.model, tenantId: session.tenantId,
+      system: `You write honest, useful B2B social media posts for a cloud services reseller. Return JSON with one text per platform asked: {${places.map((p) => `"${p}":"…"`).join(",")}}. Each text follows its platform's strategy — the same idea, NOT the same words. No invented results, testimonials, prices, offers, or customer names. Avoid engagement bait. No links in Instagram text. The post has ONE picture: never say swipe, slides or carousel. This is a draft for human review.`,
+      user: `Format: ${input.format}. Topic: ${input.topic}.\n${rules || "Write a concise, professional caption."}`,
       temperature: 0.5, label: "marketing/social-draft", onCapReached: m => { cap = m; } });
     if (cap) return NextResponse.json({ error: cap }, { status: 429 });
-    caption = result?.caption?.trim().slice(0, 2200) ?? "";
+    const captions = Object.fromEntries(places.map((p) => [p, (result?.[p] ?? "").trim().slice(0, 2200)]));
+    caption = captions[input.platform] || Object.values(captions).find(Boolean) || "";
     if (!caption) return NextResponse.json({ error: "AI could not write a draft. Please try again or write it yourself." }, { status: 502 });
     origin = "ai";
-    if (input.previewOnly) return NextResponse.json({ caption });
+    if (input.previewOnly) return NextResponse.json({ caption, captions });
   }
   if (!caption && input.format === "post") return NextResponse.json({ error: "Write a caption." }, { status: 400 });
   try {
