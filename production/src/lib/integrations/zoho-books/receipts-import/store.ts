@@ -7,6 +7,7 @@
  */
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { readBooksStart, type BooksStartDb } from "@/lib/accounting/books-start";
+import { fyLabelOfYear, fyStartYear } from "@/lib/dates/ist";
 import { must, type FyImportDb } from "../fy-import/store";
 import { LEAVE_OUT, type AppBankAccount, type ReceiptsPlanContext } from "./plan";
 
@@ -20,7 +21,8 @@ interface InvRow {
 export async function readReceiptsContext(
   db: FyImportDb, tenantId: string, range: { dateStart: string; dateEnd: string }, accountMap: Record<string, string>,
 ): Promise<ReceiptsPlanContext> {
-  const [bs, tenant, invoices, accounts, booked] = await Promise.all([
+  const fy = fyLabelOfYear(fyStartYear(range.dateStart));   // R-2703: "2025-26" — the fy the scan rows carry
+  const [bs, tenant, invoices, accounts, booked, fyInvoices] = await Promise.all([
     readBooksStart(db as unknown as BooksStartDb, tenantId),
     db.from("tenants").select("books_locked_until").eq("id", tenantId).limit(1) as Res<Array<{ books_locked_until: string | null }>>,
     /* Only invoices that came from Zoho: an imported FY sale, or an opening invoice (to say why it is skipped). */
@@ -32,6 +34,10 @@ export async function readReceiptsContext(
       .eq("tenant_id", tenantId).order("name", { ascending: true }).limit(500) as Res<AppBankAccount[]>,
     fetchAllRows<{ zoho_payment_id: string; bank_txn_id: string | null; via_settlement: boolean | null }>((from, to) => db.from("zoho_fy_receipts")
       .select("zoho_payment_id, bank_txn_id, via_settlement").eq("tenant_id", tenantId).order("zoho_payment_id", { ascending: true }).range(from, to)),
+    /* R-2703: this year's Zoho invoices as read (imported or not) — only for the skip reason: an invoice
+       that is not among them belongs to another year, whatever its number says. */
+    fetchAllRows<{ zoho_id: string }>((from, to) => db.from("zoho_fy_scan")
+      .select("zoho_id").eq("tenant_id", tenantId).eq("kind", "invoices").eq("fy", fy).order("zoho_id", { ascending: true }).range(from, to)),
   ]);
   const t = must(tenant, "the company")[0];
   return {
@@ -40,12 +46,13 @@ export async function readReceiptsContext(
     booksStart: bs.start,
     lockedUntil: t?.books_locked_until ?? null,
     invoices: invoices.map((i) => ({
-      id: i.id, zohoInvoiceId: i.zoho_invoice_id, externalNumber: i.external_number, documentKind: i.document_kind, customerId: i.customer_id,
+      id: i.id, zohoInvoiceId: i.zoho_invoice_id, externalNumber: i.external_number, documentKind: i.document_kind, customerId: i.customer_id, voided: i.status === "void",
       due: i.status === "paid" || i.status === "void" ? 0 : Math.max(0, Number(i.net_payable ?? i.amount) - Number(i.paid_amount ?? 0)),
     })),
     bankAccounts: must(accounts, "the bank accounts"),
     booked: new Map(booked.map((b) => [b.zoho_payment_id, { banked: b.bank_txn_id !== null, viaSettlement: b.via_settlement === true }])),
     accountMap,
+    fyInvoiceIds: new Set(fyInvoices.map((r) => r.zoho_id)),
   };
 }
 

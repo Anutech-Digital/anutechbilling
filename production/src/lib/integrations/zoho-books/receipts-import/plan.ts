@@ -14,10 +14,25 @@
  *     LEAVES IT OUT (R-2501 fix, 6 Nov: Pardeep left out Kachha Khata + Petty Cash): its payments are
  *     listed as skipped "Left out by owner." and never mapped automatically. A suggestion is only made
  *     for the PREVIEW (shown in the dialog, changeable); the import uses only what the dialog sent.
+ *
+ * R-2703 (12 Nov 2026) — the reason for a line whose invoice is NOT an FY sale imported from Zoho says
+ * what that invoice is. Nothing more is BOOKED than before, except that a ₹0 line no longer blocks:
+ *   - a ₹0 line of a ₹ payment (paise only) books nothing and blocks nothing — on any invoice;
+ *   - an opening invoice here: already paid → "in the books already"; money still due → by hand (its
+ *     balance was taken when it was added — R-1739 stores what was due THAT day — so it may already
+ *     leave this receipt out; the import cannot know, a person can);
+ *   - this year's invoice that Zoho has (it is in the year's invoice scan) → "import FY sales first" —
+ *     the only case that says so (and when the year's invoices were not read at all);
+ *   - a credit / debit note; an EARLIER year's invoice (→ add it as an opening invoice); a LATER year's
+ *     (→ record the payment on that invoice in the app); an invoice numbered in this year that is not
+ *     among the year's Zoho invoices (→ check its date).
+ *   The year is Zoho's invoice date when the facts carry it (read from R-2703 on), else the "24-25" in
+ *   the number. import_zoho_fy_receipts (migration r2703) gives the same reasons.
  * Pure: no I/O.
  */
 import { OLD_BANK_CHARGES_PROBLEM, foreignOf, inrAmountOf, isRazorpayPayment, type ZohoReceiptFacts } from "./normalise";
 import { defaultCashAccountId, depositAccounts, type DepositAccount as AppBankAccount } from "@/lib/payments/deposit-accounts";
+import { fyLabelOfYear, fyStartYear } from "@/lib/dates/ist";
 
 export type { AppBankAccount };
 
@@ -38,6 +53,8 @@ export interface AppZohoInvoice {
   customerId: string | null;
   /** What is still due on it (net payable − paid). */
   due: number;
+  /** R-2703: void here (its due is 0, but it is not "paid"). */
+  voided?: boolean;
 }
 
 export interface ReceiptsPlanContext {
@@ -51,6 +68,9 @@ export interface ReceiptsPlanContext {
   booked: Map<string, { banked: boolean; viaSettlement?: boolean }>;
   /** Zoho deposit account id → the app account the owner chose, LEAVE_OUT, or "" (chosen: none). */
   accountMap: Record<string, string>;
+  /** R-2703: the Zoho invoice ids in this year's invoice scan (read from Zoho, imported or not).
+   *  Absent / empty = the year's invoices were not read yet. */
+  fyInvoiceIds?: ReadonlySet<string>;
 }
 
 export type ReceiptVerdict = "import" | "already" | "skip";
@@ -61,7 +81,7 @@ export interface PlannedReceipt {
   reason: string | null;
   customerId: string | null;
   bankAccountId: string | null;
-  /** App invoice id per Zoho line (same order as facts.lines). */
+  /** App invoice id per Zoho line (same order as facts.lines); null = a ₹0 line (R-2703: books nothing). */
   invoiceIds: (string | null)[];
 }
 
@@ -81,8 +101,26 @@ export interface ReceiptsPlan {
 /** One skip reason per KIND (amounts, invoice numbers, names and dates taken out) — the "Left out, and
  *  why" counts. R-2693: exported so the check's refusals are grouped the same way; also takes out ISO
  *  dates ("Dated 2025-03-31, …") and Razorpay ids (pay_…), so one kind is one line with its count. */
-export const skipReasonKey = (r: string) => r.replace(/₹[\d,.]+|INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}|\d{4}-\d{2}-\d{2}|pay_[A-Za-z0-9]+/g, "…");
+export const skipReasonKey = (r: string) => r.replace(/₹[\d,.]+|[A-Z]*INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}|\d{4}-\d{2}-\d{2}|pay_[A-Za-z0-9]+/g, "…");
 const digits = (s: string) => s.replace(/\D+/g, "");
+
+/** R-2703: the financial year (its April's year) a Zoho invoice belongs to — Zoho's invoice date when
+ *  the facts carry it, else the "24-25" in its number (two-digit years that follow each other); null =
+ *  not known. A number can lie (INV/25-26/1979 is dated 28 Jan 2025) — so the date wins. */
+export function invoiceYearOf(line: { invoiceNumber: string; invoiceDate?: string }): number | null {
+  const on = line.invoiceDate ?? "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(on)) return fyStartYear(on);
+  for (const m of line.invoiceNumber.matchAll(/(?<!\d)(\d{2})-(\d{2})(?!\d)/g)) {
+    if ((Number(m[1]) + 1) % 100 === Number(m[2])) return 2000 + Number(m[1]);
+  }
+  return null;
+}
+
+/** R-2703: Zoho's credit / debit note numbers (CDN-000004, CN-00012, DN-7). */
+const isNoteNumber = (n: string) => /^(CDN|CN|DN)[-/ ]?\d/i.test(n.trim());
+
+/** This year's invoice that is not in the app yet (Zoho has it; the sales import left it out or was not run). */
+const notImported = (no: string) => `${no} is not an FY sale imported from Zoho here — import FY sales first (Invoices → FY 2025-26 sales from Zoho).`;
 
 /**
  * The app account Zoho's deposit account most likely is — among the accounts Record payment offers
@@ -117,6 +155,7 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     if (i.zohoInvoiceId) byZoho.set(i.zohoInvoiceId, i);
     if (i.externalNumber) byNumber.set(i.externalNumber.trim().toUpperCase(), i);
   }
+  const fyYear = fyStartYear(ctx.fyStart);
   const ownAccounts = new Set(depositAccounts(ctx.bankAccounts).map((a) => a.id));
   const customerOf = new Map(ctx.invoices.map((i) => [i.id, i.customerId ?? ""]));
 
@@ -147,7 +186,10 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
   const rows: PlannedReceipt[] = facts.map((f) => {
     const dep = deposits.get(f.depositAccountId || "");
     const bankAccountId = dep?.appAccountId ?? null;
-    const invoiceIds = f.lines.map((l) => byZoho.get(l.zohoInvoiceId)?.id ?? null);
+    const fx = foreignOf(f);
+    /* R-2703: a ₹0 line of a ₹ payment (paise only) books nothing — on any invoice, known or not. */
+    const zeroLine = (l: ZohoReceiptFacts["lines"][number]) => !fx && l.settle === 0 && l.tds === 0;
+    const invoiceIds = f.lines.map((l) => (zeroLine(l) ? null : byZoho.get(l.zohoInvoiceId)?.id ?? null));
     const row = (verdict: ReceiptVerdict, reason: string | null, customerId: string | null = null): PlannedReceipt =>
       ({ facts: f, verdict, reason, customerId, bankAccountId, invoiceIds });
 
@@ -166,7 +208,6 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     }
     /* R-2694: a foreign payment read before it could be imported (no per-invoice foreign amounts) —
        Read again fetches only these (fy-import receiptFactsIncomplete). */
-    const fx = foreignOf(f);
     if (fx && !f.foreignLines && f.fxRate) {
       return row("skip", `Read from Zoho again — a ${fx.currency} payment can be imported now (₹ at the invoice's rate, exchange gain / loss booked).`);
     }
@@ -179,27 +220,49 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     for (let k = 0; k < f.lines.length; k++) {
       if (invoiceIds[k]) continue;
       const l = f.lines[k];
-      const other = byNumber.get(l.invoiceNumber.trim().toUpperCase());
+      if (zeroLine(l)) continue;
+      /* R-2703: what the invoice is, and what to do — never booked from here (the header says why). */
+      const no = l.invoiceNumber;
+      const other = byNumber.get(no.trim().toUpperCase());
       if (other?.documentKind === "opening_invoice") {
-        return row("skip", `${l.invoiceNumber} is an opening invoice here — its balance already leaves this receipt out (re-stated by R-2504 first).`);
+        if (other.voided) return row("skip", `${no} is an opening invoice that is void here — book this payment by hand.`);
+        if (other.due <= 0) return row("skip", `${no} is an opening invoice that is already paid here — this receipt is in the books already.`);
+        return row("skip", `${no} is an opening invoice here with ₹${other.due} still due — its balance was taken when it was added and may already leave this receipt out. If it does not, record this payment on it by hand (Invoices → ${no} → Record payment).`);
       }
-      return row("skip", `${l.invoiceNumber} is not an FY sale imported from Zoho here — import FY sales first (Invoices → FY 2025-26 sales from Zoho).`);
+      if (ctx.fyInvoiceIds?.has(l.zohoInvoiceId)) return row("skip", notImported(no));
+      if (isNoteNumber(no)) return row("skip", `${no} is a credit / debit note in Zoho, not an invoice — book this payment by hand.`);
+      const year = invoiceYearOf(l);
+      if (year !== null && year < fyYear) {
+        return row("skip", fx
+          ? `${no} is an invoice of FY ${fyLabelOfYear(year)} and this payment is in ${fx.currency} — book it by hand.`
+          : `${no} is an invoice of FY ${fyLabelOfYear(year)} — add it as an opening invoice, then record this payment on it.`);
+      }
+      if (year !== null && year > fyYear) {
+        return row("skip", `${no} is an invoice of FY ${fyLabelOfYear(year)} — record this payment on that invoice in the app.`);
+      }
+      if (ctx.fyInvoiceIds?.size) {
+        return row("skip", `${no} is not among the FY ${fyLabelOfYear(fyYear)} invoices read from Zoho — check its date in Zoho: an earlier year's invoice is added as an opening invoice, a later year's is paid in the app.`);
+      }
+      return row("skip", notImported(no));
     }
-    const custs = new Set(invoiceIds.map((id) => customerOf.get(id!) ?? ""));
+    const booking = invoiceIds.filter((id): id is string => id !== null);
+    if (!booking.length) return row("skip", "Zoho applies no whole rupee of this payment to an invoice — record it by hand.");
+    const custs = new Set(booking.map((id) => customerOf.get(id) ?? ""));
     if (custs.size !== 1 || custs.has("")) return row("skip", "Its invoices belong to different customers here.");
     const customerId = [...custs][0];
     /* R-2694: a foreign payment's lines are in its currency — the ₹ (at each invoice's own rate) and the
        "more than due" refusal are the import's (SQL knows the invoice's rate); here only ₹ lines. */
     const inrSettle = (k: number) => (fx ? Math.round((f.foreignLines?.[k]?.foreign ?? 0) * (f.fxRate ?? 0)) : f.lines[k].settle);
     for (let k = 0; !fx && k < f.lines.length; k++) {
-      const id = invoiceIds[k]!;
+      const id = invoiceIds[k];
+      if (!id) continue;
       const due = left.get(id) ?? 0;
       if (f.lines[k].settle > due + 1) return row("skip", `${f.lines[k].invoiceNumber} has only ₹${due} due here, but Zoho settles ₹${f.lines[k].settle} with this payment.`, customerId);
     }
     if (!bankAccountId) return row("skip", `Choose the app account for Zoho's "${f.depositAccountName || "no account"}".`, customerId);
     for (let k = 0; k < f.lines.length; k++) {
-      const id = invoiceIds[k]!;
-      left.set(id, Math.max(0, (left.get(id) ?? 0) - inrSettle(k)));
+      const id = invoiceIds[k];
+      if (id) left.set(id, Math.max(0, (left.get(id) ?? 0) - inrSettle(k)));
     }
     return row("import", null, customerId);
   });

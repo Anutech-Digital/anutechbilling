@@ -43,6 +43,10 @@ export interface ReceiptLine {
   settle: number;
   /** Zoho's TDS on this invoice, whole rupees (0 = none). */
   tds: number;
+  /** R-2703: Zoho's date of the invoice (YYYY-MM-DD) when the payment detail gives it — says which
+   *  year the invoice belongs to (a number can lie). Only for the skip reason; absent on facts read
+   *  before R-2703 (they are NOT read again for it — the number's "24-25" is used instead). */
+  invoiceDate?: string;
 }
 
 export interface ZohoReceiptFacts {
@@ -171,14 +175,17 @@ export function zohoReceiptFacts(d: ZohoFyDocDetail): ZohoReceiptFacts {
   const problems: string[] = [];
   const rawLines = Array.isArray(r.invoices) ? (r.invoices as Array<Record<string, unknown>>) : [];
   const kept = rawLines
-    .map((l) => ({ id: str(l.invoice_id), no: str(l.invoice_number), ap: toPaise(l.amount_applied), tp: toPaise(l.tax_amount_withheld) }))
+    .map((l) => ({ id: str(l.invoice_id), no: str(l.invoice_number), ap: toPaise(l.amount_applied), tp: toPaise(l.tax_amount_withheld), on: str(l.date) }))
     .filter((l) => l.ap !== 0 || l.tp !== 0);
   if (kept.some((l) => l.ap < 0 || l.tp < 0)) problems.push("A negative amount is applied to an invoice in Zoho — book it by hand.");
   const appliedPaise = kept.reduce((s, l) => s + l.ap, 0);
   const tdsPaise = kept.reduce((s, l) => s + l.tp, 0);
   const cash = apportion(kept.map((l) => l.ap));
   const tdsR = apportion(kept.map((l) => l.tp));
-  const lines: ReceiptLine[] = kept.map((l, k) => ({ zohoInvoiceId: l.id, invoiceNumber: l.no, settle: cash[k] + tdsR[k], tds: tdsR[k] }));
+  const lines: ReceiptLine[] = kept.map((l, k) => ({
+    zohoInvoiceId: l.id, invoiceNumber: l.no, settle: cash[k] + tdsR[k], tds: tdsR[k],
+    ...(/^\d{4}-\d{2}-\d{2}$/.test(l.on) ? { invoiceDate: l.on } : {}),
+  }));
   const amountPaise = toPaise(r.amount);
   const excessPaise = amountPaise - appliedPaise;
   const currency = str(r.currency_code).toUpperCase() || "INR";
