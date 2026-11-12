@@ -10,7 +10,7 @@
  *     "Domain Registration .com" subscription (1 × ₹1,200 a year), renewing in 18 days → the 8–30 tab.
  * The payment in step 5 runs inside a rolled-back transaction (nothing is left behind).
  */
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { CARD_TESTS_ON, E2E_TENANT_SQL, localDb, onlyInCardTests, onlyOne, openAppPage, pageAs, waitForHydrated } from "./card-steps";
 
 const CUST = "c2710000-0000-4000-8000-000000000001";
@@ -47,6 +47,13 @@ function seed(): void {
 const linked = () => db().one(`select coalesce(renewal_quote_id, '') from public.subscriptions where id = '${SUB}'`);
 const quoteRow = (id: string) => db().one(`select status || ',' || extension_months || ',' || subtotal from public.quotes where id = '${id}'`);
 
+/** The row button stays disabled until the role and the quote status load (R-2710) — wait for it. */
+async function clickWhenReady(button: Locator) {
+  await expect(button).toBeVisible({ timeout: 60_000 });
+  await expect(button).toBeEnabled({ timeout: 60_000 });
+  await button.click();
+}
+
 async function row(page: Page) {
   await openAppPage(page, "/renewals?bucket=d30", /Renewals/);
   const r = page.locator("tr", { hasText: NAME }).filter({ visible: true });
@@ -71,8 +78,8 @@ test.describe("R-2710 card test", () => {
   test("Step 2: click it → /quotes/Q-…/edit opens with the line filled in, a DRAFT linked to the subscription; nothing emailed", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await row(page);
-    await r.getByRole("button", { name: /Review renewal quote/ }).click();
-    await expect(page).toHaveURL(/\/quotes\/[^/]+\/edit$/, { timeout: 60_000 });
+    await clickWhenReady(r.getByRole("button", { name: /Review renewal quote/ }));
+    await expect(page).toHaveURL(/\/quotes\/[^/]+\/edit$/, { timeout: 120_000 });   // a cold dev server compiles the route + the editor
     const id = linked();
     expect(id).not.toBe("");
     expect(page.url()).toContain(`/quotes/${encodeURIComponent(id)}/edit`);
@@ -106,12 +113,12 @@ test.describe("R-2710 card test", () => {
     const page = await pageAs(browser, baseURL, "owner");
     const id = linked();
     let r = await row(page);
-    await r.getByRole("button", { name: /Change renewal quote/ }).click();
-    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit$`), { timeout: 60_000 });
+    await clickWhenReady(r.getByRole("button", { name: /Change renewal quote/ }));
+    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit$`), { timeout: 120_000 });
     expect(quoteRow(`${id}-R2`)).toBe("draft,36,3600");
     r = await row(page);
-    await r.getByRole("button", { name: /Change renewal quote/ }).click();
-    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit$`), { timeout: 60_000 });
+    await clickWhenReady(r.getByRole("button", { name: /Change renewal quote/ }));
+    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit$`), { timeout: 120_000 });
     expect(db().one(`select count(*) from public.quotes where revision_of = '${id}'`)).toBe("1");
   });
 
