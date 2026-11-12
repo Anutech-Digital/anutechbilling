@@ -37,6 +37,9 @@ import GstinVerifyCard from "@/components/features/gstin/gstin-verify-card";
 import { CountryCombobox } from "./country-combobox";
 import { GST_STATE_OPTIONS, STATE_NOT_KNOWN, STATE_NOT_KNOWN_LABEL, STATE_NOT_KNOWN_NOTE } from "@/lib/gst/gstin-state";
 import { useCustomerForm } from "./use-customer-form";
+import { useCustomers } from "@/lib/queries/customers";
+import { findCustomerMatches } from "@/lib/customers/duplicate-match";
+import { DuplicateCustomerHint } from "./duplicate-customer-hint";
 import { ScanCardPanel } from "./scan-card-panel";
 import { ContactPersonsTable } from "./contact-persons-table";
 import { GstTreatmentSelect, PanInput } from "./gst-treatment-fields";
@@ -181,6 +184,20 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
   const companyName = watch("name");
   const customerType = watch("customer_type") ?? "business";
   const isIndividual = customerType === "individual";
+
+  /* R-2715: "Looks like <existing customer> — Open it" while a NEW customer is typed — the same
+     rule as the Onboard dialog (lib/customers/duplicate-match.ts): Pvt Ltd = Private Limited,
+     punctuation/spacing ignored, same GSTIN, same business email domain. Each hit shows under the
+     field that found it, once. useCustomers also lists the name-only rows a sales role sees (R-1004). */
+  const { data: allCustomers } = useCustomers({ enabled: !isEdit });
+  const typedEmail = watch("contact_email");
+  const dupMatches = React.useMemo(
+    () => (isEdit || !allCustomers ? [] : findCustomerMatches(allCustomers, {
+      name: isIndividual ? "" : companyName, gstin: watchedGstin, email: typedEmail,
+    }, 5)),
+    [isEdit, allCustomers, isIndividual, companyName, watchedGstin, typedEmail],
+  );
+  const dupHref = (c: { id: string }) => `/customers/${c.id}`;
 
   // Display-name suggestions (Zoho-style) built live from the contact + company.
   const dnFirst = watch("contact_first_name")?.trim();
@@ -381,6 +398,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
                   Seeing "Delhi" where you expected Haryana catches a wrong paste before
                   it becomes a tax head. */}
               <FieldPill check={checkGstin(watchedGstin ?? "")} />
+              <DuplicateCustomerHint matches={dupMatches.filter((m) => m.reason === "gstin")} actionLabel="Open it" hrefFor={dupHref} />
               <div className="mt-2">
                 <GstinVerifyCard
                   gstin={watchedGstin ?? ""}
@@ -428,6 +446,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
           {!isIndividual && (
             <Row label="Company name" htmlFor="name" required hint="The business you invoice.">
               <Input id="name" placeholder="e.g. Acme Corp Pvt Ltd" error={errors.name?.message} {...register("name")} />
+              <DuplicateCustomerHint matches={dupMatches.filter((m) => m.reason === "name" || m.reason === "typing")} actionLabel="Open it" hrefFor={dupHref} />
             </Row>
           )}
 
@@ -488,6 +507,7 @@ export function CustomerFormPage({ customer }: CustomerFormPageProps) {
               onChange={(e) => setValue("contact_email", liveEmail(e.target.value), { shouldDirty: true })}
             />
             <FieldPill check={checkEmail(watch("contact_email") ?? "")} />
+            <DuplicateCustomerHint matches={dupMatches.filter((m) => m.reason === "email-domain")} actionLabel="Open it" hrefFor={dupHref} />
           </Row>
 
           <Row label="Phone" htmlFor="contact_phone">

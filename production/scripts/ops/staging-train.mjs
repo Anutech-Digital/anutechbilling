@@ -16,6 +16,9 @@
  *                                                   the DB step (that commit's deploy-db script, run from a temp
  *                                                   worktree of it) and the merge all use the same commit.
  *   --dry-run                                       explicit: never push (refused together with --push)
+ *   --db-wait                                       R-2719: only wait until Cloud SQL is free for the DB step
+ *                                                   (not 09:25–10:05 IST, no operation running), then exit 0;
+ *                                                   exit 7 when it is still busy after 30 min
  *
  * R-2106 (31 Oct 2026): twice on 29–30 Oct the newest-green rule picked a NEWER commit between the dry
  * run and the DB step (its migrations not on the staging DB yet, its cards not localhost-checked); on
@@ -42,9 +45,17 @@
  * prices, /login, consent route via OPTIONS) and prints one line per check + "SMOKE GREEN" or
  * "SMOKE RED: <checks>". It writes nothing; the merge/push above is unchanged.
  *
+ * R-2719 (12 Nov 2026): 09:32 IST the DB step failed with HTTP 409 — the daily Cloud SQL backup was
+ * running. Before it prints the DB step (and with `--db-wait`, the first command of the printed DB step)
+ * the train waits, a line every 30 s and at most 30 min, while it is 09:25–10:05 IST or
+ * `gcloud sql operations list` shows an operation that is not DONE (scripts/ops/staging-db-window.mjs —
+ * read-only). An explicit --dry-run never waits; it only warns. A run that may wait needs a long timeout
+ * (35 min) or the background — a 2-minute tool call would be cut off mid-wait.
+ *
  * Exit 0 = ok (dry run done / pushed / nothing new). 1 = error or refused. 2 = merge conflict.
  * 3 = DB step needed. 4 = pushed, but the migration check could not run. 5 = pushed, and the
  * staging DB is missing migrations. 6 = pushed, migrations fine, but the smoke is red.
+ * 7 = DB step needed but Cloud SQL is still busy after the 30-min wait — do NOT run the DB step yet.
  * Run from production/.
  */
 import { execFileSync } from "node:child_process";
@@ -55,27 +66,34 @@ import path from "node:path";
 import { REPO, REMOTE, BRANCH, WORKFLOW, ciDecision } from "./staging-gate.mjs";
 import { runCheck, colour, STAGING_URL } from "./migrations-health-check.mjs";
 import { runSmoke } from "./staging-smoke.mjs";
+import { waitForDbClear, busyReasons, listRunningOps } from "./staging-db-window.mjs";
 
 export const STAGING = "staging";
 export const MIGRATIONS_DIR = "production/supabase/migrations";
 export const PUSH_ARGS = ["push", REMOTE, "HEAD:staging"];
 
-/** argv (without node + script) → { dbDone, push, help, sha, dryRun }. */
+/** R-2719: the read-only wait the DB step starts with (first printed command of every DB step). */
+export const DB_WAIT_COMMAND = "node scripts/ops/staging-train.mjs --db-wait";
+export const EXIT_DB_BUSY = 7;
+
+/** argv (without node + script) → { dbDone, push, help, sha, dryRun, dbWait }. */
 export function parseArgs(argv) {
-  const out = { dbDone: false, push: false, help: false, sha: null, dryRun: false };
+  const out = { dbDone: false, push: false, help: false, sha: null, dryRun: false, dbWait: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--db-done") out.dbDone = true;
     else if (a === "--push") out.push = true;
     else if (a === "--dry-run") out.dryRun = true;
+    else if (a === "--db-wait") out.dbWait = true;
     else if (a === "--help" || a === "-h") out.help = true;
     else if (a === "--sha" || a.startsWith("--sha=")) {
       const v = a === "--sha" ? argv[++i] : a.slice("--sha=".length);
       if (!v || !/^[0-9a-f]{7,40}$/i.test(v)) throw new Error("--sha <commit> chahiye (7–40 hex)");
       out.sha = v.toLowerCase();
-    } else throw new Error(`Unknown argument ${a} (sirf --sha <commit> / --dry-run / --db-done / --push / --help)`);
+    } else throw new Error(`Unknown argument ${a} (sirf --sha <commit> / --dry-run / --db-done / --push / --db-wait / --help)`);
   }
   if (out.dryRun && out.push) throw new Error("--dry-run aur --push saath nahi — dry-run kabhi push nahi karta");
+  if (out.dbWait && (out.push || out.dbDone || out.dryRun || out.sha)) throw new Error("--db-wait akela chalta hai — sirf Cloud SQL khaali hone ka intezaar karta hai");
   return out;
 }
 
@@ -108,6 +126,7 @@ export function pinnedDbStepLines(sha, names, tmpDir) {
   const dir = String(tmpDir).replace(/\\/g, "/");
   return [
     `DB step — sirf commit ${sha.slice(0, 8)} ki ${name} (Git Bash, repo ke andar se):`,
+    `  ${DB_WAIT_COMMAND}   # production/ se — backup (09:25–10:05 IST) / chalte Cloud SQL operation ka intezaar; exit 7 = abhi mat chalao`,
     `  git worktree add --detach "${dir}" ${sha}`,
     `  bash "${dir}/${STAGING_SCRIPTS_DIR}/${name}"`,
     `  git worktree remove "${dir}"`,
@@ -250,14 +269,15 @@ export function dbStepLines(root, cwd = process.cwd(), list = (d) => (existsSync
   }
   const date = name.slice("deploy-db-".length, -".sh".length);
   return [
-    "PowerShell:",
+    `Pehle: ${DB_WAIT_COMMAND}   (backup 09:25–10:05 IST / chalta Cloud SQL operation → intezaar; exit 7 = abhi mat chalao)`,
+    "Phir PowerShell:",
     `  ${dbCommand(path.join(dir, name), cwd)}`,
     `(Naye migrations is file me hain? Jaancho: node scripts/ops/gen-deploy-db.mjs --date ${date} --check)`,
   ];
 }
 
 /** Final Hinglish summary lines. */
-export function summaryLines({ pick, cards, migrations, decision, merged, pushed }) {
+export function summaryLines({ pick, cards, migrations, decision, merged, pushed, dbBusy = false }) {
   const lines = ["", "── Staging train ──"];
   if (pick) lines.push(`Commit: ${pick.slice(0, 8)}`);
   lines.push(`Cards: ${cards.length ? cards.join(", ") : "—"}`);
@@ -265,6 +285,7 @@ export function summaryLines({ pick, cards, migrations, decision, merged, pushed
   let next;
   if (decision.action === "refuse") next = "CI hara hone do (ya laal theek karo), phir dobara chalao.";
   else if (decision.action === "nothing") next = "Kuch nahi — 2-3 ghante baad dobara.";
+  else if (decision.action === "db-step" && dbBusy) next = `Cloud SQL abhi vyast hai (backup 09:25–10:05 IST / chalta operation) — DB step ABHI MAT chalao. Pehle \`${DB_WAIT_COMMAND}\` (exit 0 aane tak), phir upar wala DB command, phir \`--db-done\`.`;
   else if (decision.action === "db-step") next = "Upar wala DB command chalao (Pardeep ki haan), phir `--db-done` ke saath train dobara.";
   else if (merged === null) next = "Error — upar ka message dekho, phir dobara.";
   else if (merged === false) next = "Merge CONFLICT — upar ki files theek karo (manager-pardeep par), phir dobara.";
@@ -335,8 +356,13 @@ async function main() {
     process.exit(1);
   }
   if (args.help) {
-    console.log("node scripts/ops/staging-train.mjs [--sha <commit>] [--dry-run | --db-done --push]   (bina --push = dry run)");
+    console.log("node scripts/ops/staging-train.mjs [--sha <commit>] [--dry-run | --db-done --push]   (bina --push = dry run)\nnode scripts/ops/staging-train.mjs --db-wait   (DB step se pehle: Cloud SQL khaali hone tak ruko)");
     return;
+  }
+  if (args.dbWait) {
+    /* R-2719: nothing but the wait — no git, no gh. */
+    const w = await waitForDbClear();
+    process.exit(w.clear ? 0 : EXIT_DB_BUSY);
   }
 
   const root = repoRoot();
@@ -408,9 +434,20 @@ async function main() {
     const db = args.sha
       ? pinnedDbStepLines(pick, git(["ls-tree", "--name-only", pick, `${STAGING_SCRIPTS_DIR}/`], { cwd: root }).split(/\r?\n/).filter(Boolean), path.join(os.tmpdir(), `staging-db-${pick.slice(0, 8)}`))
       : dbStepLines(root);
+    /* R-2719: never hand out a DB step that will hit HTTP 409. An explicit --dry-run only warns
+       (it is run to READ the plan); every other run waits here, 30 s a line, at most 30 min. */
+    let dbBusy = false;
+    if (args.dryRun) {
+      const ops = listRunningOps();
+      const reasons = busyReasons(Date.now(), ops.ok ? ops.ops : []);
+      if (reasons.length) console.log(`\n! Abhi DB step mat chalao — ${reasons.join("; ")}. Pehle: ${DB_WAIT_COMMAND}`);
+    } else {
+      console.log("");
+      dbBusy = !(await waitForDbClear()).clear;
+    }
     console.log(`\n${decision.message}\n${db.join("\n")}`);
-    for (const l of summaryLines({ pick, cards, migrations, decision })) console.log(l);
-    process.exit(decision.exitCode);
+    for (const l of summaryLines({ pick, cards, migrations, decision, dbBusy })) console.log(l);
+    process.exit(dbBusy ? EXIT_DB_BUSY : decision.exitCode);
   }
 
   /* Merge in a throwaway worktree — never the main checkout. No node_modules junction is created. */

@@ -493,4 +493,6 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2694zohofyforeignreceipts", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'zoho_fy_receipts' and column_name = 'fx_expense_id') and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_zoho_fy_receipts(text,jsonb,boolean)') and prosrc like '%R-2694 foreign receipt%') and to_regprocedure('public._zoho_fy_fx_line_sync(uuid,uuid[])') is not null" },
   { key: "r2698pffullwage", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'employees' and column_name = 'pf_full_wage')" },
   { key: "r2704bankmap", peek: "to_regprocedure('public.save_zoho_account_bank_choice(text,text,text)') is not null" },
+  { key: "r2711customerpayerlines", peek: "to_regprocedure('public.customer_payer_lines(uuid)') is not null" },
+  { key: "r2699salaryrevisions", peek: "to_regclass('public.employee_salary_revisions') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.pay_salary_with_arrears(uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer,integer)') and prosrc like '%is more than the%still due%')" },
 ];

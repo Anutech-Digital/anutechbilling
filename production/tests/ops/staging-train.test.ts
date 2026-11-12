@@ -18,6 +18,8 @@ import {
   PUSH_ARGS,
   resolvePinned,
   pinnedDbStepLines,
+  DB_WAIT_COMMAND,
+  EXIT_DB_BUSY,
   // @ts-expect-error — plain .mjs ops script, no types
 } from "../../scripts/ops/staging-train.mjs";
 
@@ -32,10 +34,10 @@ const run = (status: string, conclusion: string) => ({ status, conclusion });
 
 describe("staging train — args", () => {
   it("defaults to a dry run", () => {
-    expect(parseArgs([])).toEqual({ dbDone: false, push: false, help: false, sha: null, dryRun: false });
+    expect(parseArgs([])).toEqual({ dbDone: false, push: false, help: false, sha: null, dryRun: false, dbWait: false });
   });
   it("takes --db-done and --push", () => {
-    expect(parseArgs(["--push", "--db-done"])).toEqual({ dbDone: true, push: true, help: false, sha: null, dryRun: false });
+    expect(parseArgs(["--push", "--db-done"])).toEqual({ dbDone: true, push: true, help: false, sha: null, dryRun: false, dbWait: false });
   });
   it("rejects anything else (no --force, no branch names)", () => {
     expect(() => parseArgs(["--force"])).toThrow(/--force/);
@@ -157,9 +159,11 @@ describe("staging train — safety + text", () => {
   it("deploy-db command is relative to the checkout the train runs in (worktree, not main)", () => {
     const root = path.resolve("/w/tree");
     const lines = dbStepLines(root, path.join(root, "production"), () => ["deploy-db-2026-10-07.sh", "deploy-db-2026-10-01.sh"]);
-    expect(lines[1].trim()).toBe('& "C:\\Program Files\\Git\\bin\\bash.exe" "supabase/cloudsql/staging/deploy-db-2026-10-07.sh"');
+    /* R-2719: line 0 is now the Cloud SQL wait; the command and the check moved down by one. */
+    expect(lines[0]).toMatch(/^Pehle: node scripts\/ops\/staging-train\.mjs --db-wait/);
+    expect(lines[2].trim()).toBe('& "C:\\Program Files\\Git\\bin\\bash.exe" "supabase/cloudsql/staging/deploy-db-2026-10-07.sh"');
     expect(lines.join("\n")).not.toMatch(/new-reselleros/);
-    expect(lines[2]).toMatch(/gen-deploy-db\.mjs --date 2026-10-07 --check/);
+    expect(lines[3]).toMatch(/gen-deploy-db\.mjs --date 2026-10-07 --check/);
     expect(dbCommand(path.join(root, "production", "x.sh"), root)).toMatch(/"production\/x\.sh"$/);
   });
   it("deploy-db: no script → a clear error, not a made-up file name", () => {
@@ -169,7 +173,7 @@ describe("staging train — safety + text", () => {
   });
   it("deploy-db: the real repo has the file the train prints", () => {
     const root = path.resolve(__dirname, "../../..");
-    const line = dbStepLines(root, path.join(root, "production"))[1].trim();
+    const line = dbStepLines(root, path.join(root, "production"))[2].trim();
     const rel = /"([^"]+\.sh)"$/.exec(line)?.[1] ?? "";
     expect(rel).toMatch(/^supabase\/cloudsql\/staging\/deploy-db-\d{4}-\d{2}-\d{2}\.sh$/);
     expect(existsSync(path.join(root, "production", rel))).toBe(true);
@@ -244,5 +248,47 @@ describe("R-2106: --sha pins the train, --dry-run never pushes", () => {
   it("the script never runs `git worktree prune` (docs/WORKER-STEPS.md rule)", () => {
     const src = readFileSync(path.resolve(__dirname, "../../scripts/ops/staging-train.mjs"), "utf8");
     expect(src).not.toMatch(/["']worktree["'],\s*["']prune["']/);
+  });
+});
+
+/* R-2719 (12 Nov 2026): 09:32 IST the DB step failed with HTTP 409 — the daily Cloud SQL backup was running.
+   The wait itself is tested in staging-db-window.test.ts; here: the train's flag, printed steps and wiring. */
+describe("staging train — DB step waits for Cloud SQL (R-2719)", () => {
+  it("--db-wait is a flag of its own, refused together with a train run", () => {
+    expect(parseArgs(["--db-wait"])).toEqual({ dbDone: false, push: false, help: false, sha: null, dryRun: false, dbWait: true });
+    for (const extra of [["--push", "--db-done"], ["--dry-run"], ["--sha", "abcdef1"], ["--db-done"]]) {
+      expect(() => parseArgs(["--db-wait", ...extra])).toThrow(/--db-wait akela/);
+    }
+  });
+  it("every printed DB step names the wait command BEFORE the deploy-db script", () => {
+    const pinned = pinnedDbStepLines("a".repeat(40), ["deploy-db-2026-10-30.sh"], "C:/tmp/train-db");
+    const iWait = pinned.findIndex((l: string) => l.includes(DB_WAIT_COMMAND));
+    const iBash = pinned.findIndex((l: string) => /bash ".*deploy-db-2026-10-30\.sh"/.test(l));
+    expect(iWait).toBeGreaterThan(-1);
+    expect(iWait).toBeLessThan(iBash);
+    const root = path.resolve("/w/tree");
+    const plain: string[] = dbStepLines(root, path.join(root, "production"), () => ["deploy-db-2026-10-07.sh"]);
+    const pWait = plain.findIndex((l) => l.includes(DB_WAIT_COMMAND));
+    const pBash = plain.findIndex((l) => /bash\.exe" ".*deploy-db-2026-10-07\.sh"/.test(l));
+    expect(pWait).toBe(0);
+    expect(pBash).toBeGreaterThan(pWait);
+    expect(DB_WAIT_COMMAND).toBe("node scripts/ops/staging-train.mjs --db-wait");
+  });
+  it("still busy after the wait → the summary says do NOT run the DB step, exit code 7", () => {
+    const busy = summaryLines({ pick: D, cards: [], migrations: ["production/supabase/migrations/x.sql"], decision: { action: "db-step" }, dbBusy: true });
+    expect(busy.join("\n")).toMatch(/ABHI MAT chalao[\s\S]*--db-wait/);
+    const free = summaryLines({ pick: D, cards: [], migrations: ["production/supabase/migrations/x.sql"], decision: { action: "db-step" } });
+    expect(free.join("\n")).not.toMatch(/ABHI MAT/);
+    expect(EXIT_DB_BUSY).toBe(7);
+  });
+  it("wiring: the DB-step branch waits unless --dry-run, and --db-wait runs before any git/gh", () => {
+    const src = readFileSync(path.resolve(__dirname, "../../scripts/ops/staging-train.mjs"), "utf8");
+    const main = src.slice(src.indexOf("async function main()"));
+    expect(main.indexOf("if (args.dbWait)")).toBeGreaterThan(-1);
+    expect(main.indexOf("if (args.dbWait)")).toBeLessThan(main.indexOf("repoRoot()"));
+    const branch = main.slice(main.indexOf('if (decision.action === "db-step")'), main.indexOf("/* Merge in a throwaway worktree"));
+    expect(branch).toMatch(/if \(args\.dryRun\)[\s\S]*else[\s\S]*await waitForDbClear\(\)/);
+    expect(branch).toMatch(/process\.exit\(dbBusy \? EXIT_DB_BUSY : decision\.exitCode\)/);
+    expect(branch.indexOf("waitForDbClear")).toBeLessThan(branch.indexOf("db.join"));
   });
 });

@@ -4,7 +4,12 @@
  * that already exists should offer it (Pratik, 14 Oct).
  */
 import { describe, it, expect } from "vitest";
-import { duplicateSubscriptionText, findDuplicateSubscription, matchCustomers, type ExistingSub } from "./duplicate-subscription";
+import { duplicateSubscriptionText, findDuplicateSubscription, type ExistingSub } from "./duplicate-subscription";
+import { findCustomerMatches } from "@/lib/customers/duplicate-match";
+
+/* R-1443 cases, now on the shared rule (R-2715 moved the typeahead to lib/customers/duplicate-match.ts). */
+const matchCustomers = <T extends { id: string; name: string; domain?: string | null }>(list: readonly T[], typed: string, limit = 5) =>
+  findCustomerMatches(list, { name: typed }, limit).map((m) => m.customer);
 
 const subs: ExistingSub[] = [
   { id: "s1", customer_id: "c1", domain: "Acme.in", plan: "Google Workspace Business Starter", item_id: "gw-start", status: "active" },

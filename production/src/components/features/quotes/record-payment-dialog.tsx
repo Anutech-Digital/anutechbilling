@@ -346,6 +346,9 @@ interface RecordPaymentDialogProps {
     invoiceId?: string | null;
     /** R-2099: the sheet already called generate_invoice (issued, or refused and toasted). */
     invoiceAttempted?: boolean;
+    /** R-2715: the sheet offered "Issue GST invoice now" and the user left it UNTICKED — a caller
+     *  must not raise the invoice itself (lib/payments/record-payment-invoice.ts pageInvoiceStep). */
+    invoiceDeclined?: boolean;
   }) => void;
 }
 
@@ -1049,6 +1052,10 @@ export function RecordPaymentDialog({
          show "INV-… already exists" next to "Paid in full · GST invoice INV-… issued". */
       let issuedInvoiceId: string | null = null;
       let invoiceAttempted = false;
+      /* R-2715: the user UNTICKED an offered box = "not now", and the caller honours it. A box that was
+         offered off (no state on file) and never touched is not a choice: the caller still tries and
+         shows why it was refused, as before. */
+      const invoiceDeclined = invoiceOffer.offer && !issueInvoice && (issueTouched || invoiceOffer.defaultOn);
       try {
 
       /* ── ONE result toast (R-248) ──────────────────────────────────────────
@@ -1213,6 +1220,7 @@ export function RecordPaymentDialog({
           isFirstPayment: res.isFirstPayment,
           invoiceId: issuedInvoiceId,
           invoiceAttempted,
+          invoiceDeclined,
         });
       }
     },

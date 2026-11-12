@@ -21,7 +21,9 @@ describe("sheetHandledInvoice", () => {
     const dialog = readFileSync(join(root, "components/features/quotes/record-payment-dialog.tsx"), "utf8");
     expect(dialog).toMatch(/onRecorded\?\.\(\{[\s\S]*?invoiceId: issuedInvoiceId,[\s\S]*?invoiceAttempted,/);
     const page = readFileSync(join(root, "app/(app)/subscriptions/page.tsx"), "utf8");
-    const guard = page.indexOf("sheetHandledInvoice(res)");
+    /* R-2715: the page decides through pageInvoiceStep, whose "handled" step IS sheetHandledInvoice. */
+    const guard = page.indexOf("pageInvoiceStep(res)");
+    expect(page).toMatch(/step === "handled"/);
     const rpc = page.indexOf('rpc("generate_invoice"');
     expect(guard).toBeGreaterThan(0);
     expect(guard).toBeLessThan(rpc);

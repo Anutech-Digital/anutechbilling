@@ -7,8 +7,8 @@
  * the card): the row wraps, and the controls + Remove wrap TOGETHER as one group that never
  * squeezes below its own width.
  */
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { cartTotals, type CartLine } from "@/site/lib/money";
 
 const lines: CartLine[] = [{
@@ -25,6 +25,27 @@ vi.mock("./CartProvider", () => ({
 }));
 
 import { CartDrawer } from "./CartDrawer";
+
+/* R-2720: vitest runs without `globals`, so Testing Library's automatic cleanup is NOT registered.
+   The drawer's "View full cart" link is a real next/link: with no IntersectionObserver in jsdom it
+   waits on a requestIdleCallback fallback timer and then sets state. Left mounted, that timer fired
+   after the jsdom environment was torn down -> "ReferenceError: window is not defined" from React's
+   scheduler, an unhandled error that turned CI red with every test passing. Unmounting cancels it. */
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+describe("R-2720: the drawer test leaves no work behind", () => {
+  it("has a timer pending while mounted, and none once the drawer is unmounted", () => {
+    vi.useFakeTimers();
+    render(<CartDrawer />);
+    // The leak this file had: if this ever becomes 0 the drawer no longer needs the cleanup.
+    expect(vi.getTimerCount()).toBeGreaterThan(0);
+    cleanup();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+});
 
 describe("R-1626: a cart drawer line fits a 375px phone", () => {
   it("the line's bottom row wraps, and Remove stays in one group with the stepper", () => {
