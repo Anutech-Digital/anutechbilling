@@ -30,6 +30,7 @@ import { useConfirm } from "@/components/providers/confirm-provider";
 import { EmployeeProperty } from "@/components/features/payroll/employee-property";
 import { EmployeeDirectorLink } from "@/components/features/company/employee-director-link";
 import { EmployeeSalaryPayments } from "@/components/features/accounting/employee-salary-payments";
+import { SalaryRevisions } from "@/components/features/payroll/salary-revisions";
 
 const DOC_LABEL = new Map(EMPLOYEE_DOC_TYPES.map((d) => [d.value, d.label]));
 
@@ -115,6 +116,9 @@ export function EmployeeDetailDrawer({
                 <Field label="Emergency phone" value={employee.emergency_contact_phone} />
               </div>
             </div>
+
+            {/* R-2699: increments with the month they start from + history. */}
+            <SalaryRevisions employee={employee} canWrite={Boolean(onEdit)} />
 
             {/* R-2701: every booked salary month + loans / advances — "which months?" answered here. */}
             <div ref={salaryRef} className="scroll-mt-4">

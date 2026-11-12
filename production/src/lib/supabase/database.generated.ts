@@ -5404,6 +5404,79 @@ export type Database = {
           },
         ]
       }
+      employee_salary_revisions: {
+        Row: {
+          annual_ctc: number | null
+          basic_monthly: number | null
+          created_at: string
+          created_by: string | null
+          da_monthly: number
+          effective_from: string
+          employee_id: string
+          id: string
+          monthly_gross: number
+          note: string | null
+          prev_basic_monthly: number | null
+          prev_da_monthly: number
+          prev_monthly_gross: number
+          tenant_id: string
+        }
+        Insert: {
+          annual_ctc?: number | null
+          basic_monthly?: number | null
+          created_at?: string
+          created_by?: string | null
+          da_monthly?: number
+          effective_from: string
+          employee_id: string
+          id?: string
+          monthly_gross: number
+          note?: string | null
+          prev_basic_monthly?: number | null
+          prev_da_monthly?: number
+          prev_monthly_gross: number
+          tenant_id: string
+        }
+        Update: {
+          annual_ctc?: number | null
+          basic_monthly?: number | null
+          created_at?: string
+          created_by?: string | null
+          da_monthly?: number
+          effective_from?: string
+          employee_id?: string
+          id?: string
+          monthly_gross?: number
+          note?: string | null
+          prev_basic_monthly?: number | null
+          prev_da_monthly?: number
+          prev_monthly_gross?: number
+          tenant_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "employee_salary_revisions_employee_id_fkey"
+            columns: ["employee_id"]
+            isOneToOne: false
+            referencedRelation: "employees"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_salary_revisions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "tenants"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "employee_salary_revisions_tenant_id_fkey"
+            columns: ["tenant_id"]
+            isOneToOne: false
+            referencedRelation: "v_tenant_with_parent"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       employees: {
         Row: {
           address: string | null
@@ -11476,6 +11549,7 @@ export type Database = {
         Row: {
           advance_loan_id: string | null
           advance_recovered: number
+          arrears: number
           bank_account_id: string | null
           created_at: string
           employee_id: string
@@ -11499,12 +11573,14 @@ export type Database = {
           pf_employer: number
           pf_wage: number | null
           reconciled_txn_id: string | null
+          salary_in_force: number | null
           tds: number
           tenant_id: string
         }
         Insert: {
           advance_loan_id?: string | null
           advance_recovered?: number
+          arrears?: number
           bank_account_id?: string | null
           created_at?: string
           employee_id: string
@@ -11528,12 +11604,14 @@ export type Database = {
           pf_employer?: number
           pf_wage?: number | null
           reconciled_txn_id?: string | null
+          salary_in_force?: number | null
           tds?: number
           tenant_id: string
         }
         Update: {
           advance_loan_id?: string | null
           advance_recovered?: number
+          arrears?: number
           bank_account_id?: string | null
           created_at?: string
           employee_id?: string
@@ -11557,6 +11635,7 @@ export type Database = {
           pf_employer?: number
           pf_wage?: number | null
           reconciled_txn_id?: string | null
+          salary_in_force?: number | null
           tds?: number
           tenant_id?: string
         }
@@ -15756,6 +15835,16 @@ export type Database = {
         }
         Returns: undefined
       }
+      employee_salary_arrears: {
+        Args: { p_employee_id: string }
+        Returns: {
+          arrears: number
+          earned: number
+          new_gross: number
+          old_gross: number
+          period: string
+        }[]
+      }
       export_snapshots_for_offsite: { Args: { p_since: string }; Returns: Json }
       export_tenant_snapshot_for_offsite: {
         Args: { p_since: string; p_tenant: string }
@@ -16171,6 +16260,30 @@ export type Database = {
         Args: {
           p_advance_loan_id: string
           p_advance_recovered: number
+          p_bank_account_id: string
+          p_employee_id: string
+          p_esi: number
+          p_esi_employer?: number
+          p_gross: number
+          p_incentive?: number
+          p_lop_amount: number
+          p_lop_days: number
+          p_notes?: string
+          p_other: number
+          p_pay_date: string
+          p_period: string
+          p_pf: number
+          p_pf_employer?: number
+          p_pf_wage?: number
+          p_tds: number
+        }
+        Returns: string
+      }
+      pay_salary_with_arrears: {
+        Args: {
+          p_advance_loan_id: string
+          p_advance_recovered: number
+          p_arrears?: number
           p_bank_account_id: string
           p_employee_id: string
           p_esi: number
@@ -16785,9 +16898,25 @@ export type Database = {
         Returns: string
       }
       restore_tenant_backup: { Args: { p_id: string }; Returns: Json }
+      revise_employee_salary: {
+        Args: {
+          p_annual_ctc?: number
+          p_basic_monthly?: number
+          p_da_monthly?: number
+          p_effective_from: string
+          p_employee_id: string
+          p_monthly_gross: number
+          p_note?: string
+        }
+        Returns: string
+      }
       salary_expense_date: {
         Args: { p_pay_date: string; p_period: string }
         Returns: string
+      }
+      _salary_in_force_gross: {
+        Args: { p_employee_id: string; p_period: string }
+        Returns: number
       }
       save_package: {
         Args: {
@@ -16986,6 +17115,10 @@ export type Database = {
         Returns: number
       }
       undo_my_last_punch: { Args: never; Returns: string }
+      undo_salary_revision: {
+        Args: { p_revision_id: string }
+        Returns: undefined
+      }
       unreconcile_bank_receipt: {
         Args: { p_txn_id: string; p_undo_sale?: boolean }
         Returns: Json
