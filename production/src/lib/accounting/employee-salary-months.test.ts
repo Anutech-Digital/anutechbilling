@@ -5,7 +5,7 @@ import {
 } from "./employee-salary-months";
 
 const row = (over: Partial<SalaryMonthFacts>): SalaryMonthFacts => ({
-  id: "s1", period: "2026-09", pay_date: "2026-09-30",
+  id: "s1", period: "2026-09",
   gross: 30000, incentive: 0, lop_amount: 0, advance_recovered: 0,
   tds: 0, pf: 1800, esi: 0, other_deduction: 0, net: 28200,
   paid_amount: 0, paid_status: "unpaid", reconciled_txn_id: null, expense_id: null,
@@ -59,14 +59,14 @@ describe("R-2701 bookedMonthsText — names the months in plain words", () => {
 });
 
 describe("R-2701 deleteBlockedMessage — the delete refusal names the months", () => {
-  it("names the employee, the count and the months", () => {
-    expect(deleteBlockedMessage("prashant kumar", ["2026-09", "2026-10"])).toBe(
-      "Prashant Kumar can't be deleted: salary is booked for 2 months (Sep 2026 and Oct 2026). Deleting would break those payslips and their bank links. Use Start exit instead — it marks them as left; their history stays and payroll stops after their last working day.",
+  it("names the count and the months, and what to do instead", () => {
+    expect(deleteBlockedMessage(["2026-09", "2026-10"])).toBe(
+      "Salary is booked for 2 months (Sep 2026 and Oct 2026). Deleting would break those payslips and their bank links. Use Start exit instead — it marks them as left; their history stays and payroll stops after their last working day.",
     );
   });
 
   it("one month reads singular", () => {
-    expect(deleteBlockedMessage("Asha", ["2026-09"])).toContain("salary is booked for 1 month (Sep 2026)");
+    expect(deleteBlockedMessage(["2026-09"])).toContain("Salary is booked for 1 month (Sep 2026)");
   });
 });
 

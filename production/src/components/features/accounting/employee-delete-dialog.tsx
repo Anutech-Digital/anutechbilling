@@ -37,11 +37,11 @@ export function EmployeeDeleteDialog({
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{blocked ? `${name} can't be deleted` : `Delete ${name}?`}</DialogTitle>
+          <DialogTitle>{hist.isLoading || hist.isError ? "Delete employee" : blocked ? `${name} can't be deleted` : `Delete ${name}?`}</DialogTitle>
           <DialogDescription>
             {hist.isLoading ? "Checking salary records…"
               : hist.isError ? "Could not check salary records. Close this and try again."
-              : blocked ? deleteBlockedMessage(employee.name, periods)
+              : blocked ? deleteBlockedMessage(periods)
               : "This deletes the employee and their attendance and leave records. It cannot be undone."}
           </DialogDescription>
         </DialogHeader>

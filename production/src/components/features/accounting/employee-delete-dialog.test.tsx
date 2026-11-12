@@ -24,7 +24,8 @@ describe("R-2701 EmployeeDeleteDialog", () => {
     const onStartExit = vi.fn();
     const onShowSalary = vi.fn();
     render(<EmployeeDeleteDialog employee={emp} canStartExit onStartExit={onStartExit} onShowSalary={onShowSalary} onClose={() => {}} />);
-    expect(screen.getByText(/salary is booked for 2 months \(Sep 2026 and Oct 2026\)/)).toBeTruthy();
+    expect(screen.getByText(/Salary is booked for 2 months \(Sep 2026 and Oct 2026\)/)).toBeTruthy();
+    expect(screen.getByText("Prashant Kumar can't be deleted")).toBeTruthy();
     expect(screen.queryByRole("button", { name: "Delete employee" })).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Start exit" }));
     expect(onStartExit).toHaveBeenCalledTimes(1);

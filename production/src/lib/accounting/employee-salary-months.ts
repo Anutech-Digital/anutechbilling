@@ -9,14 +9,12 @@
  *   net         = the stored net (in-hand)
  */
 import { formatMonthLabel } from "@/lib/dates/ist";
-import { toTitleCase } from "@/lib/utils";
 import { salaryPayState, type SalaryPayState } from "@/lib/payroll/salary-status";
 
 /** The salary_payments columns this needs (a SalaryPayment row has them all). */
 export type SalaryMonthFacts = {
   id: string;
   period: string;
-  pay_date: string | null;
   gross: number;
   incentive: number;
   lop_amount: number;
@@ -37,7 +35,6 @@ export type SalaryMonthRow = {
   period: string;
   /** "Sep 2026" */
   month: string;
-  payDate: string | null;
   gross: number;
   deductions: number;
   net: number;
@@ -54,7 +51,6 @@ export function salaryMonthRows(rows: readonly SalaryMonthFacts[]): SalaryMonthR
       id: p.id,
       period: p.period,
       month: formatMonthLabel(p.period),
-      payDate: p.pay_date,
       gross: n(p.gross) + n(p.incentive),
       deductions: n(p.lop_amount) + n(p.advance_recovered) + n(p.tds) + n(p.pf) + n(p.esi) + n(p.other_deduction),
       net: n(p.net),
@@ -76,10 +72,10 @@ export function bookedMonthsText(periods: readonly string[]): string {
   return `${months.slice(0, -1).join(", ")} and ${months[months.length - 1]}`;
 }
 
-/** The delete refusal: who, how many months, which ones, and what to do instead. */
-export function deleteBlockedMessage(name: string, periods: readonly string[]): string {
+/** The delete refusal body (the title names the employee): how many months, which ones, what to do instead. */
+export function deleteBlockedMessage(periods: readonly string[]): string {
   const count = new Set(periods).size;
-  return `${toTitleCase(name.trim())} can't be deleted: salary is booked for ${count} month${count === 1 ? "" : "s"} (${bookedMonthsText(periods)}). `
+  return `Salary is booked for ${count} month${count === 1 ? "" : "s"} (${bookedMonthsText(periods)}). `
     + "Deleting would break those payslips and their bank links. Use Start exit instead — it marks them as left; their history stays and payroll stops after their last working day.";
 }
 

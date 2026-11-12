@@ -92,7 +92,7 @@ test.describe("R-2701 — employee salary months on the profile; delete refusal 
       await openEmployees(page);
       await openRowMenuDelete(page, BOOKED);
       const dialog = page.getByRole("dialog", { name: `${BOOKED} can't be deleted` });
-      await expect(dialog).toContainText("salary is booked for 2 months (Aug 2026 and Sep 2026)", { timeout: 60_000 });
+      await expect(dialog).toContainText("Salary is booked for 2 months (Aug 2026 and Sep 2026)", { timeout: 60_000 });
       await expect(dialog.getByRole("button", { name: "Start exit" })).toBeVisible();
       await expect(dialog.getByRole("button", { name: "Delete employee" })).toHaveCount(0);
       await dialog.getByRole("button", { name: "See salary months" }).click();

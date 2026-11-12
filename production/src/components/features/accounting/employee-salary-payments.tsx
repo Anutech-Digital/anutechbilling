@@ -70,10 +70,8 @@ export function EmployeeSalaryPayments({
                   </span>
                 </div>
                 <div className="mt-0.5 flex items-center justify-between gap-2 text-xs text-ink-3">
-                  <span className="font-mono tabular-nums">
-                    Gross {rupee(r.gross)} − deductions {rupee(r.deductions)}
-                    {r.payDate ? <span className="font-sans"> · paid on {formatDate(r.payDate)}</span> : null}
-                  </span>
+                  {/* No pay date here: it is the booking date, not proof of payment — the badge says paid or not. */}
+                  <span className="font-mono tabular-nums">Gross {rupee(r.gross)} − deductions {rupee(r.deductions)}</span>
                   <SalaryBankLinkAction link={link} canWrite={canWrite} />
                 </div>
               </li>
