@@ -23,6 +23,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { rupee, formatDate } from "@/lib/utils";
 import { downloadCSV } from "@/lib/csv";
+import { createLineMemo } from "@/lib/banking/line-memo";
 import { createClient } from "@/lib/supabase/client";
 import { useCustomers, useCreateCustomer } from "@/lib/queries/customers";
 import { useSubscriptions } from "@/lib/queries/subscriptions";
@@ -39,7 +40,7 @@ import {
   BULK_PAGE, newCustomerKey, rowsToBook, type BulkMatchRow, type PlanContext, type PlanRow,
 } from "@/lib/integrations/zoho-books/bulk-reconcile-plan";
 import { bookOnServer, isCleanPair, previewCounts, screenRows, type RefusedRow, type ScreenRow } from "@/lib/integrations/zoho-books/bulk-book-run";
-import { planAllWithZohoSales } from "@/lib/integrations/zoho-books/bulk-zoho-sales";
+import { planAllWithZohoSales, type PlanMemo } from "@/lib/integrations/zoho-books/bulk-zoho-sales";
 import { expectedPageCost, paceWaitMs, ZOHO_BUSY_WAIT_MS, type PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { busyStreak, zohoBusyText, type ZohoLimitHit } from "@/lib/integrations/zoho-books/zoho-limit";
 import { ZohoLimitNotice } from "@/components/features/integrations/zoho-limit-notice";
@@ -70,8 +71,6 @@ function saveProgress(accountId: string, p: Progress | null) {
     else window.sessionStorage.removeItem(storeKey(accountId));
   } catch { /* private window — the run still works, it just cannot be continued after a reload */ }
 }
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function post(body: unknown): Promise<{ ok: true; [k: string]: unknown } | ({ ok: false } & Failure)> {
   try {
@@ -119,6 +118,23 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const [undoing, setUndoing] = React.useState(false);
   const [undoNote, setUndoNote] = React.useState<string | null>(null);
   const stopRef = React.useRef(false);
+  /* R-2685: Pause answers at once — it wakes a pacing / "Zoho busy" wait (up to 65 s) and the sheet shows
+     Paused; a request already sent to Zoho is let finish and kept (its Zoho calls are spent), then the read stops. */
+  const wakeRef = React.useRef<(() => void) | null>(null);
+  const loopRef = React.useRef<Promise<void> | null>(null);
+  /* True while a read loop is still running (also after Pause, until its request is back) — Book waits for it. */
+  const [loopBusy, setLoopBusy] = React.useState(false);
+  const nap = (ms: number) => new Promise<void>((res) => {
+    const done = () => { window.clearTimeout(t); wakeRef.current = null; res(); };
+    const t = window.setTimeout(done, ms);
+    wakeRef.current = done;
+  });
+  const pause = () => { stopRef.current = true; wakeRef.current?.(); setPhase("paused"); };
+  /* R-2685: each row's own plan is remembered across pages (planAll memo) — the sheet no longer plans
+     every row again after each page of 8 (500 lines: ~48 s of main thread → each row once). */
+  const [planMemo] = React.useState<PlanMemo>(() => createLineMemo());
+  /* Stable, so the table's memoised rows are not all drawn again on each change. */
+  const toggleRow = React.useCallback((id: string, on: boolean) => setOverrides((o) => new Map(o).set(id, on)), []);
   const history = React.useRef<PaceEntry[]>([]);
   /* R-2652: busy answers in a row; at 3 the read stops with "Zoho's daily limit is reached". */
   const [streakCounter] = React.useState(() => busyStreak());
@@ -154,8 +170,8 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const plan: PlanRow[] = React.useMemo(() => {
     if (!ctx) return [];
     /* R-2419: the whole run at once — one new subscription per customer + domain + product. */
-    return planAllWithZohoSales(matches, ctx);   // R-2518: one sale per Zoho invoice
-  }, [matches, ctx]);
+    return planAllWithZohoSales(matches, ctx, planMemo);   // R-2518: one sale per Zoho invoice
+  }, [matches, ctx, planMemo]);
 
   const ticked = React.useMemo(() => {
     const s = new Set<string>();
@@ -173,6 +189,14 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
 
   /* ── 1. Look every line up in Zoho, paced ─────────────────────────────────────────── */
   const read = async (fresh: boolean) => {
+    /* R-2685: never two reads at once — while a paused read's request is still out, Continue / Start again
+       are disabled (loopBusy) and a call here does nothing; that read keeps its answer, then ends. */
+    if (loopRef.current) return;
+    const run = readLoop(fresh);
+    loopRef.current = run; setLoopBusy(true);
+    try { await run; } finally { if (loopRef.current === run) { loopRef.current = null; setLoopBusy(false); } }
+  };
+  const readLoop = async (fresh: boolean) => {
     stopRef.current = false;
     setFailure(null); setLimit(null); setBusyStreak(0); streakCounter.reset();
     setPhase("reading");
@@ -192,7 +216,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       const wait = paceWaitMs(history.current, Date.now(), expectedPageCost(history.current));
       if (wait > 0) {
         setPhase("waiting"); setWaitSec(Math.ceil(wait / 1000));
-        await sleep(wait);
+        await nap(wait);
         setPhase("reading");
         if (stopRef.current) { setPhase("paused"); return; }
       }
@@ -220,8 +244,10 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       if (hit) { streakCounter.reset(); setBusyStreak(0); setLimit(hit); setPhase("paused"); return; }
       if (r.stopped) {
         history.current.push({ at: Date.now(), calls: 1000 });
+        if (stopRef.current) { setPhase("paused"); return; }   // the busy mark stays: Continue waits Zoho's minute out
         setPhase("waiting"); setWaitSec(Math.ceil(ZOHO_BUSY_WAIT_MS / 1000));
-        await sleep(ZOHO_BUSY_WAIT_MS);
+        await nap(ZOHO_BUSY_WAIT_MS);
+        if (stopRef.current) { setPhase("paused"); return; }
         history.current = history.current.filter((h) => h.calls < 1000);
         setPhase("reading");
       }
@@ -345,7 +371,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
   const results = [...booked.values()].filter((b) => b.txnDate);
 
   return (
-    <Sheet open={open} onOpenChange={(o) => { if (!o) stopRef.current = true; onOpenChange(o); }}>
+    <Sheet open={open} onOpenChange={(o) => { if (!o) { stopRef.current = true; wakeRef.current?.(); } onOpenChange(o); }}>
       <SheetContent side="right" className="w-full sm:max-w-[1200px] p-0 flex flex-col overflow-x-hidden">
         <SheetHeader>
           <SheetTitle>Reconcile from Zoho — {accountName}</SheetTitle>
@@ -366,12 +392,13 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
               <div className="flex items-center justify-between gap-3 text-xs text-ink-2">
                 <span>
                   Checked {cursor} of {total} lines · {plan.length} found in Zoho · {notInZoho} not in Zoho (left out)
+                  {phase === "paused" && loopBusy && " · pausing — keeping the lines already asked from Zoho…"}
                   {phase === "waiting" && (busyStreakCount > 0 ? ` · ${zohoBusyText(busyStreakCount)}` : ` · waiting ${waitSec}s to stay under Zoho's limit`)}
                 </span>
                 <span className="flex gap-2">
-                  {reading && <Button size="sm" variant="default" onClick={() => { stopRef.current = true; }}>Pause</Button>}
-                  {!reading && !limit && phase !== "booking" && cursor < total && <Button size="sm" variant="default" onClick={() => void read(false)}>Continue ({total - cursor} left)</Button>}
-                  {!reading && phase !== "booking" && <Button size="sm" variant="default" onClick={() => void read(true)}>Start again</Button>}
+                  {reading && <Button size="sm" variant="default" onClick={pause}>Pause</Button>}
+                  {!reading && !limit && phase !== "booking" && cursor < total && <Button size="sm" variant="default" disabled={loopBusy} onClick={() => void read(false)}>Continue ({total - cursor} left)</Button>}
+                  {!reading && phase !== "booking" && <Button size="sm" variant="default" disabled={loopBusy} onClick={() => void read(true)}>Start again</Button>}
                 </span>
               </div>
               <div className="h-2 w-full rounded-full bg-hairline" role="progressbar" aria-label="Lines checked in Zoho" aria-valuemin={0} aria-valuemax={total} aria-valuenow={cursor}>
@@ -380,7 +407,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
             </div>
           )}
 
-          {limit && <ZohoLimitNotice hit={limit} disabled={reading || phase === "booking"} onTryAgain={() => void read(false)} />}
+          {limit && <ZohoLimitNotice hit={limit} disabled={reading || loopBusy || phase === "booking"} onTryAgain={() => void read(false)} />}
 
           {failure && (
             <div role="alert" className="rounded-md border border-rose/30 bg-rose-soft/40 px-3 py-2 text-xs">
@@ -408,7 +435,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
               ticked={ticked}
               booked={booked}
               disabled={phase === "booking"}
-              onToggle={(id, on) => setOverrides((o) => new Map(o).set(id, on))}
+              onToggle={toggleRow}
               onToggleAll={(on) => setOverrides(() => new Map(plan.filter((r) => r.book).map((r) => [r.txnId, on])))}
             />
           )}
@@ -440,7 +467,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
           preview={preview}
           selected={{ count: toBook.length, total: bookTotal }}
           progress={bookProgress}
-          disabled={reading || phase === "booking" || ctx === null}
+          disabled={reading || loopBusy || phase === "booking" || ctx === null}
           booking={phase === "booking"}
           onBook={(m) => void book(m)}
           onDownload={results.length > 0 || plan.length > 0 ? exportCsv : null}

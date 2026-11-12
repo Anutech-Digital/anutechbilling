@@ -61,87 +61,112 @@ export function ZohoBulkTable({ rows, ticked, booked, onToggle, onToggleAll, dis
         </tr>
       </thead>
       <tbody>
-        {rows.map((r) => {
-          const done = booked.get(r.txnId) ?? null;
-          const canTick = Boolean(r.book) && !done;
-          return (
-            <tr key={r.txnId} data-testid={`zoho-row-${r.txnId}`} className="border-b border-hairline align-top">
-              <td className="py-2 pl-1">
-                <input
-                  type="checkbox"
-                  aria-label={`Book the ${rupee(r.credit)} line of ${formatDate(r.txnDate)}`}
-                  checked={canTick && ticked.has(r.txnId)}
-                  disabled={disabled || !canTick}
-                  onChange={(e) => onToggle(r.txnId, e.target.checked)}
-                />
-              </td>
-              <td className="py-2 pr-2">
-                <div className="font-medium text-ink tabular-nums">{rupee(r.credit)}</div>
-                {/* R-2425: an export receipt shows what the bank converted — "$1,024 @ ₹93.60". */}
-                {r.remittance && <div className="text-ink-2 tabular-nums">{formatRemittance(r.remittance)}</div>}
-                <div className="text-ink-3">{formatDate(r.txnDate)}</div>
-                {r.tds > 0 && <div className="text-ink-3">+ TDS {rupee(r.tds)}</div>}
-              </td>
-              <td className="py-2 pr-2 break-words">
-                {r.kind === "several"
-                  ? <span className="text-ink-3">{r.zoho.candidates} possible payments</span>
-                  : (
-                    <>
-                      <div className="text-ink">Payment {r.zoho.paymentNumber ?? "—"}</div>
-                      <div className="text-ink-3">{r.zoho.invoiceNumbers.join(", ") || "No invoice"}</div>
-                      <div className="text-ink-3">{r.zoho.by === "utr" ? "Matched by UTR" : r.zoho.by === "fx_amount" ? `Matched by ${r.remittance?.currency ?? "foreign"} amount — ${r.zoho.notSure ? "not sure, check the line and the customer" : "check the customer"}` : "Matched by amount + date"}</div>
-                    </>
-                  )}
-              </td>
-              <td className="py-2 pr-2 break-words">
-                {r.customer
-                  ? (
-                    <>
-                      <div className="text-ink">{r.customer.name}</div>
-                      {r.customer.kind === "new"
-                        ? <div className="text-amber-ink">New from Zoho{r.customer.state ? ` · ${r.customer.state}` : ""}{r.customer.gstin ? ` · ${r.customer.gstin}` : ""}</div>
-                        : <div className="text-ink-3">In the app</div>}
-                      {r.payer?.differs && <div className="text-ink-3">Paid by {r.payer.name}{r.payer.record ? " (on the customer's behalf)" : ""}</div>}
-                    </>
-                  )
-                  : <span className="text-ink-3">—</span>}
-              </td>
-              <td className="py-2 pr-2">
-                {r.summary && <div className="mb-1 font-medium text-indigo-ink" data-testid={`zoho-summary-${r.txnId}`}>{r.summary}</div>}
-                <ul className="space-y-1">
-                  {r.lines.map((l, i) => (
-                    <li key={i}>
-                      <span className="text-ink">{l.qty} × {l.name}</span>
-                      {l.domain && <span className="text-ink-3"> · {l.domain}</span>}
-                      <span className="text-ink-3"> · {rupee(l.rate, { decimals: l.rate % 1 ? 2 : 0 })}</span>
-                      {!r.summary && <div className={ACTION_TONE[l.action]}>{l.text}</div>}
-                    </li>
-                  ))}
-                </ul>
-                {r.seatDiffs.length > 0 && (
-                  <ul className="mt-1 space-y-0.5 text-amber-ink">
-                    {r.seatDiffs.map((d) => (
-                      <li key={d.subId}>Seats differ: app {d.appSeats}, Zoho {d.zohoSeats} ({d.plan}{d.domain ? `, ${d.domain}` : ""})</li>
-                    ))}
-                  </ul>
-                )}
-              </td>
-              <td className="py-2 pr-2 break-words" data-testid={`zoho-check-${r.txnId}`}>
-                {done ? (
-                  <span className={done.outcome === "booked" ? "text-emerald-ink font-medium" : "text-amber-ink"}>{done.text}</span>
-                ) : r.problems.length > 0 ? (
-                  <ul className="space-y-0.5 text-rose-ink">{r.problems.map((p, i) => <li key={i}>{p}</li>)}</ul>
-                ) : (
-                  <span className="text-emerald-ink">Ready</span>
-                )}
-                {!done && r.notes.length > 0 && (
-                  <ul className="mt-1 space-y-0.5 text-ink-3">{r.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
-                )}
-              </td>
-            </tr>
-          );
-        })}
+        {rows.map((r) => (
+          <PlanTableRow key={r.txnId} r={r} done={booked.get(r.txnId) ?? null} on={ticked.has(r.txnId)} disabled={Boolean(disabled)} onToggle={onToggle} />
+        ))}
       </tbody>
     </table>
   );
 }
+
+/** R-2685: two plan rows that show the same — the sheet plans again after every page of 8 lines and the
+ *  run-wide passes hand out copies, so a row's object is new each time while what it shows is not. */
+export function samePlanRow(a: PlanRow, b: PlanRow): boolean {
+  if (a === b) return true;
+  const ka = Object.keys(a) as (keyof PlanRow)[];
+  if (ka.length !== Object.keys(b).length) return false;
+  return ka.every((k) => {
+    const x = a[k], y = b[k];
+    if (Object.is(x, y)) return true;
+    return Array.isArray(x) && Array.isArray(y) && x.length === y.length && x.every((v, i) => Object.is(v, y[i]));
+  });
+}
+
+interface RowProps {
+  r: PlanRow;
+  done: BookedRow | null;
+  on: boolean;
+  disabled: boolean;
+  onToggle: (txnId: string, on: boolean) => void;
+}
+
+/* R-2685: a row is drawn again only when what it shows changed — not for every page read in a 500-line run. */
+const PlanTableRow = React.memo(function PlanTableRow({ r, done, on, disabled, onToggle }: RowProps) {
+  const canTick = Boolean(r.book) && !done;
+  return (
+    <tr data-testid={`zoho-row-${r.txnId}`} className="border-b border-hairline align-top">
+      <td className="py-2 pl-1">
+        <input
+          type="checkbox"
+          aria-label={`Book the ${rupee(r.credit)} line of ${formatDate(r.txnDate)}`}
+          checked={canTick && on}
+          disabled={disabled || !canTick}
+          onChange={(e) => onToggle(r.txnId, e.target.checked)}
+        />
+      </td>
+      <td className="py-2 pr-2">
+        <div className="font-medium text-ink tabular-nums">{rupee(r.credit)}</div>
+        {/* R-2425: an export receipt shows what the bank converted — "$1,024 @ ₹93.60". */}
+        {r.remittance && <div className="text-ink-2 tabular-nums">{formatRemittance(r.remittance)}</div>}
+        <div className="text-ink-3">{formatDate(r.txnDate)}</div>
+        {r.tds > 0 && <div className="text-ink-3">+ TDS {rupee(r.tds)}</div>}
+      </td>
+      <td className="py-2 pr-2 break-words">
+        {r.kind === "several"
+          ? <span className="text-ink-3">{r.zoho.candidates} possible payments</span>
+          : (
+            <>
+              <div className="text-ink">Payment {r.zoho.paymentNumber ?? "—"}</div>
+              <div className="text-ink-3">{r.zoho.invoiceNumbers.join(", ") || "No invoice"}</div>
+              <div className="text-ink-3">{r.zoho.by === "utr" ? "Matched by UTR" : r.zoho.by === "fx_amount" ? `Matched by ${r.remittance?.currency ?? "foreign"} amount — ${r.zoho.notSure ? "not sure, check the line and the customer" : "check the customer"}` : "Matched by amount + date"}</div>
+            </>
+          )}
+      </td>
+      <td className="py-2 pr-2 break-words">
+        {r.customer
+          ? (
+            <>
+              <div className="text-ink">{r.customer.name}</div>
+              {r.customer.kind === "new"
+                ? <div className="text-amber-ink">New from Zoho{r.customer.state ? ` · ${r.customer.state}` : ""}{r.customer.gstin ? ` · ${r.customer.gstin}` : ""}</div>
+                : <div className="text-ink-3">In the app</div>}
+              {r.payer?.differs && <div className="text-ink-3">Paid by {r.payer.name}{r.payer.record ? " (on the customer's behalf)" : ""}</div>}
+            </>
+          )
+          : <span className="text-ink-3">—</span>}
+      </td>
+      <td className="py-2 pr-2">
+        {r.summary && <div className="mb-1 font-medium text-indigo-ink" data-testid={`zoho-summary-${r.txnId}`}>{r.summary}</div>}
+        <ul className="space-y-1">
+          {r.lines.map((l, i) => (
+            <li key={i}>
+              <span className="text-ink">{l.qty} × {l.name}</span>
+              {l.domain && <span className="text-ink-3"> · {l.domain}</span>}
+              <span className="text-ink-3"> · {rupee(l.rate, { decimals: l.rate % 1 ? 2 : 0 })}</span>
+              {!r.summary && <div className={ACTION_TONE[l.action]}>{l.text}</div>}
+            </li>
+          ))}
+        </ul>
+        {r.seatDiffs.length > 0 && (
+          <ul className="mt-1 space-y-0.5 text-amber-ink">
+            {r.seatDiffs.map((d) => (
+              <li key={d.subId}>Seats differ: app {d.appSeats}, Zoho {d.zohoSeats} ({d.plan}{d.domain ? `, ${d.domain}` : ""})</li>
+            ))}
+          </ul>
+        )}
+      </td>
+      <td className="py-2 pr-2 break-words" data-testid={`zoho-check-${r.txnId}`}>
+        {done ? (
+          <span className={done.outcome === "booked" ? "text-emerald-ink font-medium" : "text-amber-ink"}>{done.text}</span>
+        ) : r.problems.length > 0 ? (
+          <ul className="space-y-0.5 text-rose-ink">{r.problems.map((p, i) => <li key={i}>{p}</li>)}</ul>
+        ) : (
+          <span className="text-emerald-ink">Ready</span>
+        )}
+        {!done && r.notes.length > 0 && (
+          <ul className="mt-1 space-y-0.5 text-ink-3">{r.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+        )}
+      </td>
+    </tr>
+  );
+}, (a, b) => a.done === b.done && a.on === b.on && a.disabled === b.disabled && a.onToggle === b.onToggle && samePlanRow(a.r, b.r));

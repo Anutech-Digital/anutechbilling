@@ -9,6 +9,8 @@ import { join } from "node:path";
 import { describe, it, expect } from "vitest";
 
 const page = readFileSync(join(__dirname, "page.tsx"), "utf8");
+/* R-2685: the row and the phone card moved to bank-line-rows.tsx (memoised). */
+const rows = readFileSync(join(__dirname, "bank-line-rows.tsx"), "utf8");
 const chip = readFileSync(join(__dirname, "..", "..", "..", "..", "..", "components", "features", "banking", "invoice-match-chip.tsx"), "utf8");
 
 describe("bank list invoice-match chip (R-399)", () => {
@@ -23,7 +25,7 @@ describe("bank list invoice-match chip (R-399)", () => {
   it("is on both the desktop row and the phone card, and only for someone who can reconcile", () => {
     const passes = page.match(/invoiceMatch=\{canWrite \? invoiceChips\.get\(txn\.id\) : undefined\}/g) ?? [];
     expect(passes).toHaveLength(2);
-    const renders = page.match(/<InvoiceMatchChip match=\{invoiceMatch\} onOpen=\{onReconcile\} \/>/g) ?? [];
+    const renders = rows.match(/<InvoiceMatchChip match=\{invoiceMatch\} onOpen=\{onReconcile\} \/>/g) ?? [];
     expect(renders).toHaveLength(2);
   });
 
