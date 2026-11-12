@@ -9,7 +9,7 @@ import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/re
 
 vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({ invalidateQueries: vi.fn() }) }));
 
-import { ZohoFyReceiptsImportDialog, partFailedMessage, readStatusText } from "./zoho-fy-receipts-import-dialog";
+import { ZohoFyReceiptsImportDialog, partFailedMessage, readStatusText, accountedText, BOOKED_EARLIER_PREFIX } from "./zoho-fy-receipts-import-dialog";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -207,6 +207,25 @@ describe("R-2693 FY receipts — every payment accounted for", () => {
     fireEvent.click(await screen.findByRole("button", { name: /Check first/ }));
     const acc = await screen.findByTestId("fy-receipts-accounted");
     expect(acc.textContent).toBe("All 160 Zoho payments accounted for: 115 to record · 0 already recorded · 5 refused by the check · 40 left out before the check (reasons above).");
+  });
+});
+
+describe("R-2693 review fixes — sum line", () => {
+  it("a payment recorded earlier whose bank line failed to link is counted ONCE (already), not also as refused", () => {
+    const r = { imported: 0, already: 1, skipped: [{ number: "p1", reason: `${BOOKED_EARLIER_PREFIX}: lock timeout` }] };
+    expect(accountedText(1, 0, r)).toMatch(/^All 1 Zoho payments accounted for: 0 to record · 1 already recorded · 0 refused by the check/);
+  });
+
+  it("the check uses the counts of the plan the server checked (not an older preview)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      const b = JSON.parse(init.body) as Record<string, unknown>;
+      if (b.action === "preview") return { ok: true, json: async () => ({ ...preview, parts: 1 }) } as Response;
+      /* the scan grew to 161 since the preview (a new payment, left out) */
+      return { ok: true, json: async () => ({ ok: true, scanned: 161, leftOut: 41, result: { imported: 120, already: 0, banked: 0, bank_later: 120, skipped: [] } }) } as Response;
+    }));
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Check first/ }));
+    expect((await screen.findByTestId("fy-receipts-accounted")).textContent).toMatch(/^All 161 Zoho payments accounted for: 120 to record · 0 already recorded · 0 refused by the check · 41 left out/);
   });
 });
 

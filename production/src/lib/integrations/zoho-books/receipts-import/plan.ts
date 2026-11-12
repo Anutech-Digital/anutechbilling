@@ -65,7 +65,9 @@ export interface PlannedReceipt {
   invoiceIds: (string | null)[];
 }
 
-export interface ZohoDeposit { zohoAccountId: string; zohoName: string; count: number; amount: number; appAccountId: string | null; suggested: boolean; leftOut: boolean }
+/** R-2693: amountUnknown = payments of this account whose ₹ is not known (a foreign-currency one read
+ *  before R-2693 or with no Zoho rate) — not in `amount`. */
+export interface ZohoDeposit { zohoAccountId: string; zohoName: string; count: number; amount: number; amountUnknown?: number; appAccountId: string | null; suggested: boolean; leftOut: boolean }
 
 export interface ReceiptsPlan {
   rows: PlannedReceipt[];
@@ -77,8 +79,9 @@ export interface ReceiptsPlan {
 }
 
 /** One skip reason per KIND (amounts, invoice numbers, names and dates taken out) — the "Left out, and
- *  why" counts. R-2693: exported so the check's refusals are grouped the same way. */
-export const skipReasonKey = (r: string) => r.replace(/₹[\d,.]+|INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}/g, "…");
+ *  why" counts. R-2693: exported so the check's refusals are grouped the same way; also takes out ISO
+ *  dates ("Dated 2025-03-31, …") and Razorpay ids (pay_…), so one kind is one line with its count. */
+export const skipReasonKey = (r: string) => r.replace(/₹[\d,.]+|INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}|\d{4}-\d{2}-\d{2}|pay_[A-Za-z0-9]+/g, "…");
 const digits = (s: string) => s.replace(/\D+/g, "");
 
 /**
@@ -123,7 +126,11 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     const key = f.depositAccountId || "";
     const d = deposits.get(key) ?? { zohoAccountId: key, zohoName: f.depositAccountName || "(no account in Zoho)", count: 0, amount: 0, appAccountId: null, suggested: false, leftOut: false };
     d.count += 1;
-    d.amount += inrAmountOf(f) ?? 0;   // R-2693: a USD payment at Zoho's rate, never its dollars as ₹
+    /* R-2693: a USD payment at Zoho's rate, never its dollars as ₹; one whose ₹ is not known is counted
+       apart (the screen says so) — never silently added as ₹0. */
+    const inr = inrAmountOf(f);
+    if (inr === null) d.amountUnknown = (d.amountUnknown ?? 0) + 1;
+    else d.amount += inr;
     deposits.set(key, d);
   }
   for (const d of deposits.values()) {
