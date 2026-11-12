@@ -7,8 +7,13 @@
  *
  *   taxable  = Zoho total − Zoho tax − Zoho adjustment (round-off) — so shipping and a discount
  *              before tax are already inside it, as on the GSTR-1 Zoho filed
+ *              (R-2702: + the TDS when Zoho's total is net of the TDS on the invoice)
  *   tax      = Zoho tax_total
- *   amount   = Zoho total (what the customer owes — AR ties to Zoho)
+ *   amount   = Zoho total (what the customer owes — AR ties to Zoho); R-2702: + the TDS Zoho took
+ *              off its total — the sale is the full value, the TDS is the customer's deduction
+ *              (facts.tds / tdsSection, booked by the receipts import on the payment that closes it)
+ *   R-2702: an adjustment above one unit of the currency = its own line {kind "adjustment"}, no GST;
+ *           lines at different GST rates = one invoice, each line its own rate, the invoice the highest.
  *   head     = from the tax Zoho charged (IGST vs CGST + SGST — what was filed); with no tax, from
  *              the place of supply against the seller's state
  *
@@ -19,6 +24,7 @@
 import type { ZohoFyDocDetail } from "../fy-fetch";
 import { parsePlaceOfSupply } from "@/lib/import/zoho-opening-invoices";
 import { mapGstTreatment } from "../import-plan";
+import { tdsSectionOf } from "../purchase-import/normalise";
 
 /** Whole rupees from whole paise, rounded once (half up). */
 export function paiseToRupees(paise: number): number {
@@ -39,6 +45,9 @@ export interface SaleLine {
   /** This line's pre-tax amount, whole rupees (INR). */
   taxable: number;
   taxPercent: number | null;
+  /** R-2702: "adjustment" = Zoho's invoice adjustment shown as its own line — NOT taxable, no GST,
+   *  outside `taxable`; missing = a sold line. */
+  kind?: "adjustment";
 }
 
 export interface ZohoSaleFacts {
@@ -74,7 +83,19 @@ export interface ZohoSaleFacts {
   /** R-2650: amount − taxable − tax in whole rupees (Zoho's round-off / adjustment in ₹, plus the
    *  rounding of each figure). Optional: a scan saved before R-2650 has none. */
   roundOff?: number;
-  /** The one GST rate of the invoice; null when its lines carry different rates. */
+  /** R-2702: Zoho's invoice adjustment above one unit of its currency, whole ₹ (signed), shown as an
+   *  "adjustment" line with no GST; 0 = none (a smaller one stays inside roundOff, R-2650). Part of
+   *  roundOff: amount = taxable + tax + roundOff, |roundOff − adjustment| ≤ roundOffLimit. Optional: a
+   *  scan saved before R-2702 has none. */
+  adjustment?: number;
+  /** R-2702: TDS the customer deducted, shown on the invoice in Zoho, whole ₹ (0 = none). NOT a sale
+   *  reduction — `amount` is the full sale; the receipts import books it as the customer's TDS when
+   *  Zoho's payment closes the invoice. Optional: a scan saved before R-2702 has none. */
+  tds?: number;
+  /** R-2702: that TDS's section as Zoho names it ("194J", "194C", …), null when none is readable. */
+  tdsSection?: string | null;
+  /** The invoice's GST rate: the one rate of its lines; R-2702: with lines at different rates (each
+   *  line keeps its own taxPercent), the highest of them. null when it cannot be read. */
   taxRate: number | null;
   head: TaxHead;
   lines: SaleLine[];
@@ -125,6 +146,45 @@ export const NOT_A_SALE: Record<string, string> = {
   draft: "Draft in Zoho — never issued, not in revenue or GST.",
 };
 
+/** R-2702: the TDS section from Zoho's TDS fields — the readable names first; `tds_section` only when
+ *  it is a section, not one of Zoho's ids. null = none readable (the receipt's own default applies). */
+function tdsSectionFrom(raw: Record<string, unknown>): string | null {
+  for (const k of ["tds_tax_name", "tds_name", "tds_section_formatted"]) {
+    const s = tdsSectionOf(raw[k]);
+    if (s) return s;
+  }
+  const sec = str(raw.tds_section);
+  return /^\d{6,}$/.test(sec) || sec.length > 40 ? null : tdsSectionOf(sec);
+}
+
+/**
+ * R-2702: is Zoho's total of an invoice with TDS NET of it ("net": taxable + GST − TDS — Zoho's way when
+ * TDS is applied on the invoice) or the full value ("full")? Told by its lines (Σ line amounts = the
+ * taxable, ₹1 per line), else by its one GST rate (GST = rate × taxable), else by the GST being a slab
+ * of the taxable. null = neither reading fits — never guessed. Document-currency paise.
+ */
+export function tdsReading(d: ZohoFyDocDetail, adjustmentPaise: number, tdsPaise: number): "net" | "full" | null {
+  const full = d.totalPaise - d.taxTotalPaise - adjustmentPaise;
+  const net = full + tdsPaise;
+  const tol = 100 * Math.max(1, d.lines.length) + 100;
+  const pick = (okNet: boolean, okFull: boolean): "net" | "full" | null => (okNet === okFull ? null : okNet ? "net" : "full");
+  if (d.lines.length) {
+    const linesPaise = d.lines.reduce((a, l) => a + l.amountPaise, 0);
+    const byLines = pick(Math.abs(linesPaise - net) <= tol, Math.abs(linesPaise - full) <= tol);
+    if (byLines) return byLines;
+  }
+  const rates = [...new Set(d.lines.filter((l) => l.amountPaise !== 0).map((l) => l.taxPercent ?? 0))];
+  if (rates.length === 1 && rates[0] > 0) {
+    const r = rates[0] / 100;
+    return pick(Math.abs(d.taxTotalPaise - net * r) <= tol, Math.abs(d.taxTotalPaise - full * r) <= tol);
+  }
+  if (!d.lines.length && d.taxTotalPaise > 0) {
+    const slab = (taxable: number) => taxable > 0 && GST_RATES.some((g) => g > 0 && Math.abs(d.taxTotalPaise - (taxable * g) / 100) <= tol);
+    return pick(slab(net), slab(full));
+  }
+  return null;
+}
+
 /**
  * @param sellerStateCode the company's own GST state code (for a no-tax invoice's head)
  */
@@ -149,7 +209,17 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
   const adjustmentPaise = paiseOf(raw.adjustment) + paiseOf(raw.roundoff_value);
   const totalPaise = d.totalPaise;
   const taxPaise = d.taxTotalPaise;
-  const taxablePaise = totalPaise - taxPaise - adjustmentPaise;
+  /* R-2702: TDS shown on the invoice. Zoho's total is then usually NET of it (taxable + GST − TDS);
+     the sale is the full value either way — the TDS is the customer's deduction, booked on the receipt. */
+  const tdsPaise = d.tdsPaise > 0 ? d.tdsPaise : 0;
+  const tdsInTotal = tdsPaise > 0 ? tdsReading(d, adjustmentPaise, tdsPaise) : "full";
+  if (tdsPaise > 0 && currency !== "INR") {
+    problems.push(`Zoho has TDS on a ${currency} invoice — a buyer outside India deducts no Indian TDS. Book it by hand or ask the CA.`);
+  } else if (tdsInTotal === null) {
+    problems.push(`Zoho has TDS ₹${(tdsPaise / 100).toFixed(2)} on the invoice, but its total ₹${(totalPaise / 100).toFixed(2)} is neither taxable + GST nor taxable + GST − TDS by its lines or its GST rate. Book it by hand or ask the CA.`);
+  }
+  const tdsAddPaise = tdsInTotal === "net" ? tdsPaise : 0;
+  const taxablePaise = totalPaise + tdsAddPaise - taxPaise - adjustmentPaise;
 
   /* R-2650: ₹ figures. A foreign-currency invoice uses Zoho's OWN base-currency (bcy_*) figures
      when Zoho sends them — that is what Zoho filed in ₹ — else the rate × the document figures.
@@ -169,16 +239,32 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
     (useBcy && bcyAdj !== null ? Math.round(bcyAdj * 100) : inr(paiseOf(raw.adjustment)))
     + (useBcy && bcyRound !== null ? Math.round(bcyRound * 100) : inr(paiseOf(raw.roundoff_value)));
 
-  const amount = paiseToRupees(totalInr);
+  /* R-2702: the full sale = Zoho's total + the TDS it took off (a ₹ invoice only — foreign TDS is refused). */
+  const tdsAddInr = inr(tdsAddPaise);
+  const amount = paiseToRupees(totalInr + tdsAddInr);
   const tax = paiseToRupees(taxInr);
-  const taxable = paiseToRupees(totalInr - taxInr - adjustmentInr);
+  const taxable = paiseToRupees(totalInr + tdsAddInr - taxInr - adjustmentInr);
+  const tds = tdsPaise > 0 ? paiseToRupees(inr(tdsPaise)) : 0;
+  const tdsSection = tds > 0 ? tdsSectionFrom(raw) : null;
+  if (tds > 0 && tdsInTotal !== null) {
+    notes.push(`TDS ₹${tds}${tdsSection ? ` (${tdsSection})` : ""} on the invoice in Zoho — the customer's deduction: the sale is ₹${amount}; the TDS is booked with the receipt that closes it.`);
+  }
+  /* R-2702: an adjustment above one unit of the invoice's currency is Zoho's own line on the invoice
+     (a discount, a settlement) — kept as a visible "adjustment" line with no GST; a smaller one is a
+     round-off (R-2650). Taxable and GST stay Zoho's; the total equals Zoho's. */
+  const adjustment = Math.abs(adjustmentPaise) > 100 ? paiseToRupees(adjustmentInr) : 0;
   /* R-2650: what is left between the total and taxable + GST (Zoho's round-off/adjustment in ₹,
      plus at most ₹1 from rounding each figure once). The SQL import checks it with roundOffLimit. */
   const roundOff = amount - taxable - tax;
-  if (Math.abs(adjustmentPaise) > 100) {
-    problems.push(`Zoho has an adjustment of ${currency === "INR" ? "₹" : `${currency} `}${(adjustmentPaise / 100).toFixed(2)} on it — book it by hand or ask the CA.`);
-  } else if (Math.abs(roundOff) > roundOffLimit(currency, fx)) {
-    problems.push(`Zoho's ₹ figures leave ₹${Math.abs(roundOff)} between the total ₹${amount} and taxable ₹${taxable} + GST ₹${tax} — more than its round-off allows (₹${roundOffLimit(currency, fx)}). Book it by hand or ask the CA.`);
+  /* R-2702: with an adjustment, the taxable read from the total must be its lines' (₹1 per line) — an
+     adjustment that is really a hidden discount on the lines is never booked as a no-GST line. */
+  const linesInr = paiseToRupees(inr(d.lines.reduce((a, l) => a + l.amountPaise, 0)));
+  if (adjustment !== 0 && d.lines.length && Math.abs(linesInr - taxable) > d.lines.length + 1) {
+    problems.push(`Zoho's adjustment ₹${adjustment}: the taxable ₹${taxable} its total leaves is not its lines' ₹${linesInr}. Book it by hand or ask the CA.`);
+  } else if (Math.abs(roundOff - adjustment) > roundOffLimit(currency, fx)) {
+    problems.push(`Zoho's ₹ figures leave ₹${Math.abs(roundOff - adjustment)} between the total ₹${amount} and taxable ₹${taxable} + GST ₹${tax}${adjustment ? ` + adjustment ₹${adjustment}` : ""} — more than its round-off allows (₹${roundOffLimit(currency, fx)}). Book it by hand or ask the CA.`);
+  } else if (adjustment !== 0) {
+    notes.push(`Adjustment in Zoho: ${adjustment > 0 ? "+" : "−"}₹${Math.abs(adjustment)} — its own line on the invoice, no GST (total ₹${amount}).`);
   } else if (roundOff !== 0) {
     notes.push(`Round-off: total ₹${amount} = taxable ₹${taxable} + GST ₹${tax} ${roundOff > 0 ? "+" : "−"} ₹${Math.abs(roundOff)}.`);
   }
@@ -194,7 +280,6 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
   if (paiseOf(raw.tcs_amount) > 0) problems.push("Zoho collected TCS on the invoice — book it by hand or ask the CA.");
   if (totalPaise <= 0) problems.push("Total is ₹0.");
   if (taxablePaise < 0 || taxPaise < 0) problems.push("Taxable value or GST is below zero.");
-  if (d.tdsPaise > 0) problems.push("Zoho has TDS on the invoice itself — book it by hand or ask the CA.");
   const discount = paiseOf(raw.discount ?? raw.discount_amount);
   if (discount > 0 && raw.is_discount_before_tax === false) problems.push("Discount after tax — the taxable value cannot be read from Zoho.");
 
@@ -236,7 +321,7 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
       taxPercent: l.taxPercent,
     };
   });
-  const rates = [...new Set(lines.filter((l) => l.taxable !== 0).map((l) => l.taxPercent ?? 0))];
+  const rates = [...new Set(lines.filter((l) => l.taxable !== 0).map((l) => l.taxPercent ?? 0))].sort((a, b) => a - b);
   let taxRate: number | null;
   if (taxPaise === 0) taxRate = 0;
   else if (rates.length === 1) taxRate = rates[0];
@@ -246,8 +331,29 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
     taxRate = GST_RATES.includes(pct) && pct > 0 ? pct : null;
     if (taxRate === null) problems.push("The GST rate cannot be read from Zoho.");
   } else {
-    taxRate = null;
-    problems.push(`Lines carry different GST rates (${rates.sort((a, b) => a - b).join("%, ")}%) — one invoice here has one rate.`);
+    /* R-2702: lines at different rates (0% + 18% — an exempt / zero-rated line beside a taxed one).
+       One invoice, each line keeping its own rate, when Zoho's GST is those rates on those lines
+       (₹1 of rounding per line, + 1). The invoice carries the highest rate. */
+    const byLines = lines.reduce((a, l) => a + (l.taxable * (l.taxPercent ?? 0)) / 100, 0);
+    const odd = rates.filter((r) => !GST_RATES.includes(r));
+    if (odd.length) {
+      taxRate = null;
+      problems.push(`GST rate ${odd.join("%, ")}% on a line is not one this app stores — book it by hand.`);
+    } else if (Math.abs(byLines - tax) > lines.length + 1) {
+      taxRate = null;
+      problems.push(`Lines carry different GST rates (${rates.join("%, ")}%) but Zoho's GST ₹${tax} is not those rates on those lines (₹${Math.round(byLines)}) — book it by hand.`);
+    } else {
+      taxRate = rates[rates.length - 1];
+      notes.push(`Lines at ${rates.join("%, ")}% GST — each line keeps its own rate; the invoice shows ${taxRate}%.`);
+    }
+  }
+  /* R-2702: Zoho's adjustment as its own line — after the rates, so it never counts as a rate. */
+  if (adjustment !== 0) {
+    lines.push({
+      zohoItemId: "", name: (str(raw.adjustment_description) || "Adjustment").slice(0, 300),
+      description: "Adjustment in Zoho — no GST", hsn: "", qty: 1, rate: adjustment, taxable: adjustment, taxPercent: null,
+      kind: "adjustment",
+    });
   }
   if (taxRate !== null && taxPaise > 0 && taxRate === 0) problems.push("GST charged at a 0% rate.");
   else if (taxRate !== null && !GST_RATES.includes(taxRate)) problems.push(`GST rate ${taxRate}% is not one this app stores on an invoice — book it by hand.`);
@@ -274,6 +380,9 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
     tax,
     amount,
     roundOff,
+    adjustment,
+    tds,
+    tdsSection,
     taxRate,
     head,
     lines,
