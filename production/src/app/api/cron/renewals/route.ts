@@ -42,7 +42,7 @@ import { primaryContactEmail } from "@/lib/contacts/primary";
 import { decideCadence, CADENCE_TRIGGERS, reopensForNewTerm, effectiveGraceDays, serviceStopDate } from "@/lib/renewals/cadence";
 import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
 import { renderTemplate } from "@/lib/renewals/templates";
-import { createOrGetRenewalQuote, isRenewalQuoteHold } from "@/lib/renewals/create-renewal-quote";
+import { createOrGetRenewalQuote, isRenewalQuoteHold, draftRenewalQuoteBlock, markRenewalQuoteSent } from "@/lib/renewals/create-renewal-quote";
 import { flagsForQuoteKind, type QuoteDocumentKind } from "@/lib/pdf/quote-document-kind";
 import { splitBilledRenewalStep } from "@/lib/renewals/split-billed-renewal";
 import { createDomainRenewalQuote } from "@/lib/domains/renewal";
@@ -536,6 +536,16 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         }
 
         const renewalQuoteId = quoteResult.quoteId;
+        /* R-2710: a draft from "Review renewal quote" goes out with this reminder (and is marked sent
+           below) unless its discount / margin still waits for approval — then no email, retried. */
+        const draftBlock = await draftRenewalQuoteBlock(supabase, sub.tenant_id, renewalQuoteId);
+        if (draftBlock) {
+          detail.emailStatus = "(held: renewal quote waiting for approval — retried next run)";
+          result.emails_skipped += 1;
+          result.errors.push({ subscription_id: sub.id, message: draftBlock });
+          result.details.push(detail);
+          return;
+        }
         const renewalQuote = {
           amount:       quoteResult.amount,
           subtotal:     quoteResult.subtotal,
@@ -728,6 +738,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               last_reminder_sent_at_v2: new Date().toISOString(),
             })
             .eq("id", sub.id);
+          await markRenewalQuoteSent(supabase, sub.tenant_id, renewalQuoteId);   // R-2710: emailed → no longer a draft
           result.emails_sent += 1;
           detail.emailStatus = sendResult.status;
         } else {

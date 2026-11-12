@@ -158,6 +158,8 @@ export interface DomainRenewalQuoteInput {
   renewalDate: string;
   graceDays: number;
   existingQuoteId?: string | null;
+  /** R-2710: "draft" = a NEW quote for Review renewal quote to open in the editor; else 'sent' (the cron). */
+  status?: "draft";
   /** Injected in tests; the live read otherwise. */
   price?: (domain: string) => Promise<RenewalPrice>;
 }
@@ -258,6 +260,7 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
       total_cost: 0,
       tax_rate: taxRate,
       extension_months: 12,
+      ...(input.status === "draft" ? { status: "draft" } : {}),   // R-2710
       notes: `Domain renewal for ${input.domain} (subscription ${input.subscriptionId}), at ResellerClub's live renewal price of ₹${subtotal} + GST.`,
     } as unknown as Json,
   });

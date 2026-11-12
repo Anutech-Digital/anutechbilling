@@ -14,7 +14,8 @@ import { QuoteSendRefusedError, refusedFrom } from "@/lib/quotes/send-quote-emai
 import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 
 import { useQuote, useDeleteQuote, quoteDeleteBlockReason, useQuotesByLead, useCustomerStopped } from "@/lib/queries/quotes";
-import { canReviseQuote, nextRevision, revisionDraft } from "@/lib/quotes/revise";
+import { canReviseQuote } from "@/lib/quotes/revise";
+import { insertRevision } from "@/lib/quotes/start-revision";
 import { istToday } from "@/lib/dates/ist";
 import { withInvoiceIssued, rejectLeadOffer, lostActivityDetail, lossLabel, acceptHint } from "@/lib/quotes/quote-page-actions";
 import type { LossReasonCode } from "@/lib/leads/loss-reasons";
@@ -638,20 +639,8 @@ export default function QuoteDetailPage() {
   const startRevision = useMutation({
     mutationFn: async () => {
       if (!quote) throw new Error("The quote is still loading.");
-      const supabase = createClient();
-      const root = quote.revision_of || quote.id;
-      const { data: fam, error: famErr } = await supabase
-        .from("quotes").select("revision_no").eq("revision_of", root)
-        .order("revision_no", { ascending: false }).limit(1);
-      if (famErr) throw famErr;
-      const highest = Math.max(quote.revision_no ?? 1, fam?.[0]?.revision_no ?? 1);
-      const next = nextRevision({ id: root, revision_of: root, revision_no: highest });
-      const { data, error } = await supabase
-        .from("quotes")
-        .insert(revisionDraft(quote, next, istToday()))
-        .select("id").single();
-      if (error) throw error;
-      return data.id;
+      /* R-2710: the same insert the Renewals row's "Change renewal quote" uses (lib/quotes/start-revision.ts). */
+      return insertRevision(createClient(), quote);
     },
     onSuccess: (newId) => {
       qc.invalidateQueries({ queryKey: ["quotes"] });
