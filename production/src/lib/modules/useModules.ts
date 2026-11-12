@@ -1,0 +1,86 @@
+"use client";
+
+import * as React from "react";
+import { SYSTEM_MODULES, DEFAULT_ACTIVE_MODULE_IDS, type SystemModule } from "./registry";
+
+const STORAGE_KEY = "reselleros_active_modules_v1";
+
+export function useModules() {
+  const [activeModuleIds, setActiveModuleIds] = React.useState<string[]>(DEFAULT_ACTIVE_MODULE_IDS);
+  const [isLoaded, setIsLoaded] = React.useState(false);
+
+  // Load from localStorage on mount
+  React.useEffect(() => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) {
+          setActiveModuleIds(parsed);
+        }
+      }
+    } catch {
+      // Fallback to defaults
+    } finally {
+      setIsLoaded(true);
+    }
+  }, []);
+
+  const saveModules = React.useCallback((ids: string[]) => {
+    setActiveModuleIds(ids);
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
+    } catch {
+      // Ignore storage errors
+    }
+  }, []);
+
+  const isModuleActive = React.useCallback(
+    (moduleId: string) => {
+      return activeModuleIds.includes(moduleId);
+    },
+    [activeModuleIds],
+  );
+
+  const toggleModule = React.useCallback(
+    (moduleId: string) => {
+      const next = activeModuleIds.includes(moduleId)
+        ? activeModuleIds.filter((id) => id !== moduleId)
+        : [...activeModuleIds, moduleId];
+      saveModules(next);
+    },
+    [activeModuleIds, saveModules],
+  );
+
+  const activateAll = React.useCallback(() => {
+    saveModules(DEFAULT_ACTIVE_MODULE_IDS);
+  }, [saveModules]);
+
+  const totalMonthlyCostRupees = React.useMemo(() => {
+    return SYSTEM_MODULES.filter((m) => activeModuleIds.includes(m.id)).reduce(
+      (sum, m) => sum + m.priceMonthlyRupees,
+      0,
+    );
+  }, [activeModuleIds]);
+
+  const bundleSavingsRupees = React.useMemo(() => {
+    // If all 5 modules are taken, full bundle is ₹1999 (regular sum is 499+499+399+999+499 = ₹2895)
+    if (activeModuleIds.length === SYSTEM_MODULES.length) {
+      return 2895 - 1999; // ₹896 discount
+    }
+    return 0;
+  }, [activeModuleIds]);
+
+  return {
+    modules: SYSTEM_MODULES,
+    activeModuleIds,
+    isLoaded,
+    isModuleActive,
+    toggleModule,
+    activateAll,
+    totalMonthlyCostRupees: activeModuleIds.length === SYSTEM_MODULES.length ? 1999 : totalMonthlyCostRupees,
+    bundleSavingsRupees,
+    activeCount: activeModuleIds.length,
+    totalCount: SYSTEM_MODULES.length,
+  };
+}

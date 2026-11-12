@@ -22,6 +22,25 @@
       "autoPort": true
     },
     {
+      "name": "ResellerOS-local-latest",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "run",
+        "dev:local",
+        "--prefix",
+        "C:/Users/mso50/reselleros-deploy/production"
+      ],
+      "port": 3001
+    },
+    {
+      "name": "ResellerOS-local-ai",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        ".claude/local-ai-dev.mjs"
+      ],
+      "port": 3001
+    },
+    {
       "name": "website",
       "runtimeExecutable": "npm",
       "runtimeArgs": [

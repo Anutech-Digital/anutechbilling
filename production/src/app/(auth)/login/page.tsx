@@ -90,6 +90,11 @@ function LoginPageInner() {
   const configured = isSupabaseConfigured();
 
   async function onSubmit(values: FormData) {
+    if (process.env.NEXT_PUBLIC_DEMO_MODE === "true") {
+      toast.success("Welcome back (Dev Demo Mode)");
+      window.location.href = nextPath || "/dashboard";
+      return;
+    }
     const supabase = createClient();
     const { error } = await supabase.auth.signInWithPassword(values);
     if (error) {
@@ -210,6 +215,20 @@ function LoginPageInner() {
             <b>Please confirm your email first.</b> We sent a link to {unconfirmed} when you signed up.
           </p>
           <ResendVerification initialEmail={unconfirmed} />
+        </div>
+      )}
+
+      {process.env.NEXT_PUBLIC_DEMO_MODE === "true" && (
+        <div className="mb-4">
+          <Button
+            type="button"
+            className="w-full justify-center bg-emerald-600 hover:bg-emerald-700 text-white font-medium py-2.5 rounded-lg shadow-sm"
+            onClick={() => {
+              window.location.href = nextPath || "/dashboard";
+            }}
+          >
+            ⚡ 1-Click Enter Dashboard (Dev Demo)
+          </Button>
         </div>
       )}
 

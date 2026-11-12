@@ -19,6 +19,7 @@ import { ShortcutsSheet } from "@/components/shared/shortcuts-sheet";
 import { useGlobalKeys } from "@/lib/hooks/useKeyboard";
 import { MustChangePasswordGate } from "@/components/shared/must-change-password-gate";
 import { DemoBanner } from "@/components/layout/demo-banner";
+import { ModuleGate } from "@/components/shared/module-gate";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false);
@@ -58,7 +59,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <WorkspaceTabBar />
         {/* Phone: pad past the bottom tab bar AND the home indicator (pb-16 alone hid ~34px
             of the last rows on iPhone), plus room for the bulk bar / FAB above it. */}
-        <main className="flex-1 min-w-0 pb-[calc(var(--bottom-nav-h,56px)+1rem)] md:pb-0">{children}</main>
+        <main className="flex-1 min-w-0 pb-[calc(var(--bottom-nav-h,56px)+1rem)] md:pb-0">
+          <ModuleGate>{children}</ModuleGate>
+        </main>
       </div>
 
       {/* Sticky mobile bottom tab bar (phone only) */}

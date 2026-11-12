@@ -138,6 +138,44 @@ export function useCurrentUser() {
   return useQuery({
     queryKey: ["current-user"],
     queryFn: async (): Promise<CurrentUserInfo | null> => {
+      if (process.env.NEXT_PUBLIC_DEMO_MODE === "true") {
+        return {
+          userId: "fbb976f1-9090-4f10-9726-0901bd144e42-user",
+          authEmail: "admin@anutech.in",
+          isPlatformAdmin: true,
+          mustChangePassword: false,
+          fullName: "Admin (Owner)",
+          initials: "AO",
+          color: "#1668E3",
+          role: "owner",
+          canViewDeals: true,
+          tenantId: "fbb976f1-9090-4f10-9726-0901bd144e42",
+          tenantName: "Anutech Digital Pvt Ltd",
+          tenantLogoUrl: null,
+          tenantGstin: "07AABCA1234A1Z5",
+          tenantEmail: "support@anutech.in",
+          tenantPhone: "+91 98765 43210",
+          tenantAddress: "New Delhi, India",
+          tenantPinCode: "110001",
+          tenantState: "Delhi",
+          tenantStateCode: "07",
+          tenantContactName: "Pardeep",
+          tenantLutNumber: null,
+          tenantLutValidUpto: null,
+          tenantUpiVpa: "anutech@upi",
+          tenantUpiPayeeName: "Anutech Digital",
+          tenantRemitBankName: "HDFC Bank",
+          tenantRemitAccountName: "Anutech Digital Pvt Ltd",
+          tenantRemitAccountNumber: "50200012345678",
+          tenantRemitIfsc: "HDFC0001234",
+          tenantRemitBranch: "Connaught Place",
+          tenantGracePeriodDays: 15,
+          tenantSetupCompletedAt: new Date().toISOString(),
+          tenantGstinVerifiedAt: new Date().toISOString(),
+          tenantGstinVerification: null,
+        };
+      }
+
       const supabase = createClient();
 
       const { data: authData } = await supabase.auth.getUser();

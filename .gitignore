@@ -1,6 +1,7 @@
 # ===== Dependencies =====
 node_modules/
 **/node_modules/
+nm-broken-1022/
 .pnp
 .pnp.js
 .yarn/install-state.gz

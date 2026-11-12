@@ -263,6 +263,23 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
           makes the browser compute overflow-x as auto too, so one long label drew a left-right
           scrollbar under the menu. Labels truncate with a title tooltip instead. */}
       <nav className="flex-1 overflow-y-auto overflow-x-hidden px-2 py-3 space-y-0.5">
+        {!collapsed && (
+          <div className="px-1 mb-2.5">
+            <Link
+              href="/settings/modules"
+              onClick={onNavigate}
+              className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-900 transition-colors shadow-2xs"
+            >
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" />
+                <span className="text-xs font-semibold tracking-tight">Plugin Marketplace</span>
+              </div>
+              <span className="text-3xs font-mono bg-indigo-200 text-indigo-800 px-1.5 py-0.5 rounded font-bold">
+                5 Modules
+              </span>
+            </Link>
+          </div>
+        )}
         {/* Mobile-only quick-grid — surface My Expenses & top tools at the top of the "More" drawer */}
         <div className="md:hidden">
           <div className="px-3 py-1 text-3xs font-bold uppercase tracking-wider text-ink-3 mb-1.5">Quick Actions</div>
@@ -461,6 +478,11 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
             <DropdownMenuItem asChild>
               <Link href="/settings">
                 <Icon name="settings" size={14} /> Settings
+              </Link>
+            </DropdownMenuItem>
+            <DropdownMenuItem asChild>
+              <Link href="/settings/modules" className="text-indigo-600 font-medium">
+                <Icon name="cloud" size={14} /> Plugin Marketplace
               </Link>
             </DropdownMenuItem>
             <DropdownMenuItem>
