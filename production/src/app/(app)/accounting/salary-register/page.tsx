@@ -34,6 +34,7 @@ import { rupee, formatDate, toTitleCase } from "@/lib/utils";
 import { formatMonthLabel, fyStartYear, fyLabelOfYear, istToday } from "@/lib/dates/ist";
 import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines, useSalaryBankLines, type SalaryPayment } from "@/lib/queries/payroll";
 import { ctcFromEmployee } from "@/lib/payroll/ctc";
+import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { fyPayslipActuals } from "@/lib/payroll/ctc-register";
 import { form16Working, fyStartOfPeriod, fyLabelOf, taxYearFor, type Form16Working } from "@/lib/payroll/income-tax";
 import { logExport } from "@/lib/export-log";
@@ -173,7 +174,10 @@ function MonthRegister() {
   const ctcFy = fyStartYear(ctcMonth);
   const allPayQ = useSalaryPayments();
   const ctcEmployees = empQ.data ?? [];
-  const ctcOf = (e: (typeof ctcEmployees)[number]) => ctcFromEmployee(e, { asOf: ctcMonth });
+  /* R-2700: the company's gratuity policy decides whether the 4.81% provision is in the CTC —
+     the same rule as the employee form's CTC tab. */
+  const includeGratuity = usePayrollPolicy().data?.gratuity ?? true;
+  const ctcOf = (e: (typeof ctcEmployees)[number]) => ctcFromEmployee(e, { asOf: ctcMonth, includeGratuity });
   const fyActuals = fyPayslipActuals(allPayQ.data ?? [], ctcFy);
   const ctcRowsData = ctcEmployees.map((e) => ({ e, ctc: ctcOf(e), actual: fyActuals.byEmployee.get(e.id) }));
   const ctcTotals = ctcRowsData.reduce((t, r) => ({
