@@ -42,7 +42,11 @@ with t as (
          public.books_start_for(:'tenant_id'::uuid) as books_start,
          (select books_locked_until from public.tenants where id = :'tenant_id'::uuid) as locked_until
 ), scan as (
-  select s.zoho_id, s.number, s.doc_date, s.payload p
+  select s.zoho_id, s.number, s.doc_date, s.payload p,
+         -- a foreign-currency payment: its "Received in XXX in Zoho" problem (any position — review)
+         (select substring(x from '^Received in ([A-Z]{3}) in Zoho')
+            from jsonb_array_elements_text(case when jsonb_typeof(s.payload->'problems') = 'array' then s.payload->'problems' else '[]'::jsonb end) x
+           where x ~ '^Received in [A-Z]{3} in Zoho' limit 1) as fx_cur
     from public.zoho_fy_scan s, t
    where s.tenant_id = t.tenant_id and s.kind = 'customerpayments' and s.fy = '2025-26'
      and not exists (select 1 from public.zoho_fy_receipts r where r.tenant_id = t.tenant_id and r.zoho_payment_id = s.zoho_id)
@@ -53,7 +57,8 @@ with t as (
             from jsonb_array_elements(case when jsonb_typeof(sc.p->'lines') = 'array' then sc.p->'lines' else '[]'::jsonb end) l
            where not exists (select 1 from public.invoices i, t where i.tenant_id = t.tenant_id and i.zoho_invoice_id = l->>'zohoInvoiceId')
            limit 1) as missing_invoice,
-         (select count(distinct i.customer_id)
+         -- NULL customer counts as its own (the plan treats it as "different customers")
+         (select count(distinct coalesce(i.customer_id::text, '-'))
             from jsonb_array_elements(case when jsonb_typeof(sc.p->'lines') = 'array' then sc.p->'lines' else '[]'::jsonb end) l
             join public.invoices i on i.zoho_invoice_id = l->>'zohoInvoiceId'
             join t on i.tenant_id = t.tenant_id) as customers
@@ -68,11 +73,13 @@ with t as (
 select sc.number,
        sc.doc_date,
        sc.p->>'customerName'                                          as customer,
-       coalesce(sc.p->>'currency', substring(sc.p->'problems'->>0 from '^Received in ([A-Z]{3}) in Zoho'), 'INR') as currency,
-       case when coalesce(sc.p->>'currency', 'INR') = 'INR' and coalesce(sc.p->'problems'->>0, '') !~ '^Received in [A-Z]{3} in Zoho'
-            then (sc.p->>'amount')::numeric end                       as inr,
-       coalesce((sc.p->>'foreignAmount')::numeric,
-                case when sc.p->'problems'->>0 ~ '^Received in [A-Z]{3} in Zoho' then (sc.p->>'amount')::numeric end) as foreign_amount,
+       coalesce(nullif(sc.p->>'currency', ''), sc.fx_cur, 'INR')             as currency,
+       -- the ₹: INR as read; a foreign one read since R-2693 at Zoho's rate (amount; 0 = no rate);
+       -- one read before R-2693 stored its dollars as amount → not known (null), never dollars as ₹
+       case when coalesce(nullif(sc.p->>'currency', ''), sc.fx_cur, 'INR') = 'INR' then (sc.p->>'amount')::numeric
+            when sc.p ? 'currency' then nullif((sc.p->>'amount')::numeric, 0) end as inr,
+       case when sc.p ? 'currency' then (sc.p->>'foreignAmount')::numeric
+            when sc.fx_cur is not null then (sc.p->>'amount')::numeric end as foreign_amount,
        sc.p->>'depositAccountName'                                    as zoho_account,
        case
          when sc.p is null then 'Not read from Zoho yet (no detail) — Read from Zoho first.'
@@ -92,7 +99,7 @@ select sc.number,
   join line_check lc on lc.zoho_id = sc.zoho_id
   left join last_refusal lr on lr.zoho_id = sc.zoho_id
 ), kinds as (
-  select lr2.*, regexp_replace(lr2.reason, '₹[\d,.]+|INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}', '…', 'g') as reason_kind
+  select lr2.*, regexp_replace(lr2.reason, '₹[\d,.]+|INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}|\d{4}-\d{2}-\d{2}|pay_[A-Za-z0-9]+', '…', 'g') as reason_kind
     from left_rows lr2
 )
 select count(*) over (partition by reason_kind) as reason_count, reason_kind,

@@ -113,3 +113,21 @@ describe("R-2693 plan — every scanned payment accounted for, each left-out one
     expect(p.skipReasons).toEqual([{ reason: skipReasonKey(p.rows[0].reason!), count: 2 }]);
   });
 });
+
+describe("R-2693 review fixes", () => {
+  it("an old USD payment whose currency problem is NOT first is still shown as USD (never its dollars as ₹)", () => {
+    const old = facts("old2", { amount: 663, problems: ["A negative amount is applied to an invoice in Zoho — book it by hand.", "Received in USD in Zoho — book a foreign-currency receipt by hand."] });
+    expect(foreignOf(old)).toEqual({ currency: "USD", amount: 663, inr: null });
+  });
+
+  it("a deposit account with a foreign payment whose ₹ is not known counts it apart, never as ₹0 inside the total", () => {
+    const old = facts("old", { amount: 663, problems: ["Received in USD in Zoho — book a foreign-currency receipt by hand."] });
+    const p = buildReceiptsPlan([facts("inr"), old], ctx());
+    expect(p.deposits[0]).toMatchObject({ count: 2, amount: 1000, amountUnknown: 1 });
+  });
+
+  it("reasons with an ISO date or a Razorpay id group as one kind", () => {
+    expect(skipReasonKey("Dated 2025-03-31, outside the year.")).toBe(skipReasonKey("Dated 2024-12-01, outside the year."));
+    expect(skipReasonKey("Razorpay payment pay_ABC123 is already in the app")).toBe(skipReasonKey("Razorpay payment pay_Zx9 is already in the app"));
+  });
+});

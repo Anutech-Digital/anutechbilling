@@ -38,7 +38,7 @@ import { parseOnlyAccount } from "@/lib/integrations/zoho-books/fy-import/scan";
 import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { RECEIPTS_IMPORT_PART, partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts";
 import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb } from "@/lib/integrations/zoho-books/fy-import/store";
-import { foreignOf, type ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
+import { foreignOf, inrAmountOf, type ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
 import { RECEIPTS_IMPORT_ROLES, buildReceiptsPlan, toReceiptPick } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import { parseAccountMap, readReceiptsContext } from "@/lib/integrations/zoho-books/receipts-import/store";
 import { depositAccountLabel, depositAccounts } from "@/lib/payments/deposit-accounts";
@@ -154,7 +154,7 @@ export async function POST(req: NextRequest) {
       const skipped = left.slice(0, SKIPPED_LIST_MAX).map((r) => {
         const fx = foreignOf(r.facts);
         return { number: r.facts.number, date: r.facts.date, customer: r.facts.customerName,
-          amount: fx ? fx.inr : r.facts.amount, currency: fx?.currency ?? null, foreignAmount: fx?.amount ?? null, reason: r.reason };
+          amount: inrAmountOf(r.facts), currency: fx?.currency ?? null, foreignAmount: fx?.amount ?? null, reason: r.reason };
       });
       return NextResponse.json({
         ok: true, fy, scanned: counts.listed, counts: plan.counts, totals: plan.totals, parts,
@@ -178,7 +178,9 @@ export async function POST(req: NextRequest) {
       p_fy: fy, p_picks: slice, p_dry_run: dryRun,
     });
     if (error) return fail(400, (error as { message?: string }).message ?? "The import was refused.");
-    return NextResponse.json({ ok: true, fy, part, parts, result: data });
+    /* R-2693: the plan this part was cut from — the check's sum line ("all N accounted for") uses the SAME
+       scanned / left-out counts as the picks it checked, not an older preview's. */
+    return NextResponse.json({ ok: true, fy, part, parts, result: data, scanned: plan.counts.scanned, leftOut: plan.counts.skip });
   }
 
   if (action === "undo") {

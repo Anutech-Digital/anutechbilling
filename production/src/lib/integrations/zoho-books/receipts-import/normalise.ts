@@ -34,6 +34,7 @@
 import type { ZohoFyDocDetail } from "../fy-fetch";
 import { toPaise } from "../fy-fetch";
 import { paiseToRupees } from "../sales-import/normalise";
+import { isForeignCurrency } from "@/lib/currency";
 
 export interface ReceiptLine {
   zohoInvoiceId: string;
@@ -80,23 +81,33 @@ export interface ZohoReceiptFacts {
   /** R-2693: Zoho's currency_code ("INR" when none). Absent on facts read before R-2693. */
   currency?: string;
   /** R-2693: a foreign-currency payment's own amount in its currency (e.g. 663.05 USD); null for INR.
-   *  `amount` / `receivedPaise` are then the ₹ at Zoho's rate (0 when Zoho gives no rate). */
+   *  UNITS (review): for such a payment only `amount` / `receivedPaise` are ₹ (at Zoho's rate; 0 when
+   *  Zoho gives no rate) — `lines[].settle` / `tds` / `fee` stay in ITS currency as Zoho has them, and
+   *  `excess` is 0. It is never booked from these facts (its problem refuses it, here and in SQL);
+   *  the USD import (R-2693 part 2) must convert the lines itself. */
   foreignAmount?: number | null;
   /** R-2693: Zoho's exchange_rate (₹ per unit) on a foreign-currency payment; null for INR / no rate. */
   fxRate?: number | null;
 }
 
+/** "Received in USD in Zoho …" — the problem every foreign-currency payment carries (old and new facts). */
+const FOREIGN_PROBLEM = /^Received in ([A-Z]{3}) in Zoho/;
+
 /** R-2693: what a facts' left-out row shows for a foreign-currency payment — its currency, its own
  *  amount and the ₹ at Zoho's rate (null = not known). Facts read before R-2693 carry no currency
  *  field: their `amount` IS the foreign figure (Zoho's amount read as rupees), recognised by the
- *  "Received in XXX in Zoho" problem, so it is never shown as ₹. null = an INR payment. */
+ *  "Received in XXX in Zoho" problem (any of its problems — review: an older problem can come first),
+ *  so it is never shown as ₹. null = an INR payment. */
 export function foreignOf(f: Pick<ZohoReceiptFacts, "amount" | "problems" | "currency" | "foreignAmount">): { currency: string; amount: number; inr: number | null } | null {
   if (f.currency !== undefined) {
-    if (!f.currency || f.currency === "INR" || f.foreignAmount === null || f.foreignAmount === undefined) return null;
+    if (!isForeignCurrency(f.currency) || f.foreignAmount === null || f.foreignAmount === undefined) return null;
     return { currency: f.currency, amount: f.foreignAmount, inr: f.amount > 0 ? f.amount : null };
   }
-  const old = /^Received in ([A-Z]{3}) in Zoho/.exec(f.problems?.[0] ?? "");
-  return old ? { currency: old[1], amount: f.amount, inr: null } : null;
+  for (const p of f.problems ?? []) {
+    const old = FOREIGN_PROBLEM.exec(p);
+    if (old) return { currency: old[1], amount: f.amount, inr: null };
+  }
+  return null;
 }
 
 /** R-2693: the ₹ a payment counts for in totals — null when it is not known (a foreign payment read
