@@ -448,7 +448,7 @@ The real guards are the ratchet tests `src/app/api/admin-client-ratchet.test.ts`
 | `/api/marketing/neo/ask` | POST | ? | [api/marketing/neo/ask/route.ts](../production/src/app/api/marketing/neo/ask/route.ts) |
 | `/api/marketing/review-request` | POST | session + role | [api/marketing/review-request/route.ts](../production/src/app/api/marketing/review-request/route.ts) |
 | `/api/marketing/social-content` | GET, POST | ? | [api/marketing/social-content/route.ts](../production/src/app/api/marketing/social-content/route.ts) |
-| `/api/marketing/social-content/:id` | PATCH | ? | [api/marketing/social-content/[id]/route.ts](../production/src/app/api/marketing/social-content/%5Bid%5D/route.ts) |
+| `/api/marketing/social-content/:id` | PATCH, DELETE | ? | [api/marketing/social-content/[id]/route.ts](../production/src/app/api/marketing/social-content/%5Bid%5D/route.ts) |
 | `/api/marketing/social-content/settings` | POST, PUT, PATCH | ? | [api/marketing/social-content/settings/route.ts](../production/src/app/api/marketing/social-content/settings/route.ts) |
 | `/api/marketing/whatsapp/broadcast` | POST | session + role | [api/marketing/whatsapp/broadcast/route.ts](../production/src/app/api/marketing/whatsapp/broadcast/route.ts) |
 | `/api/marketing/whatsapp/reminders` | GET, PUT, PATCH, DELETE | session + role | [api/marketing/whatsapp/reminders/route.ts](../production/src/app/api/marketing/whatsapp/reminders/route.ts) |

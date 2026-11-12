@@ -57,7 +57,9 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     const current = before[0];
     if (!current) return NextResponse.json({ error: "Draft not found." }, { status: 404 });
     /* R-2672: "stop" takes a scheduled (approved) post — e.g. one the AI autopilot planned — back to Drafts before it goes out. */
-    const allowed = input.action === "save" ? ["draft", "review", "failed"] : input.action === "submit" ? ["draft", "failed"] : input.action === "stop" ? ["approved"] : ["review"];
+    /* R-2687: a scheduled (approved) post can be edited too — by an owner/manager only — and stays scheduled. */
+    if (input.action === "save" && current.status === "approved" && !canReviewSocial(role)) return NextResponse.json({ error: "Only an owner or manager can change a scheduled post.", description: "Ask them, or press Stop first." }, { status: 403 });
+    const allowed = input.action === "save" ? ["draft", "review", "failed", "approved"] : input.action === "submit" ? ["draft", "failed"] : input.action === "stop" ? ["approved"] : ["review"];
     if (!allowed.includes(current.status)) return NextResponse.json({ error: "This draft is no longer in that stage. Refresh the page." }, { status: 409 });
     const media = input.mediaUrl === undefined ? current.media_url : input.mediaUrl;
     const caption = input.caption === undefined ? current.caption : input.caption;
@@ -72,5 +74,34 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   } catch (error) {
     console.error("[social-content] action failed", error instanceof Error ? error.message : "unknown");
     return NextResponse.json({ error: "Could not update this draft." }, { status: 500 });
+  }
+}
+
+/**
+ * R-2687: delete a post that has not gone out (draft, waiting, scheduled, failed). A published post
+ * stays — it is on the Page. Owner / manager may delete any; the marketing person only their own.
+ */
+export async function DELETE(_req: Request, context: { params: Promise<{ id: string }> }) {
+  const session = await getTenantSession();
+  if (!session) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
+  const role = await socialRole(session);
+  if (!canWriteSocial(role)) return NextResponse.json({ error: "Marketing access required." }, { status: 403 });
+  const { id } = await context.params;
+  if (!UUID.test(id)) return NextResponse.json({ error: "Invalid post." }, { status: 400 });
+  try {
+    const rows = await withTenant(session, tx => tx.$queryRaw<{ status: string; platform: string; caption: string; created_by: string | null }[]>`
+      select status, platform, caption, created_by from public.social_content where id = ${id}::uuid and tenant_id = ${session.tenantId}::uuid limit 1`);
+    const current = rows[0];
+    if (!current) return NextResponse.json({ error: "Post not found. Refresh the page." }, { status: 404 });
+    if (["published", "publishing"].includes(current.status)) return NextResponse.json({ error: "This post is already on the Page.", description: "Delete it on Facebook / Instagram itself." }, { status: 409 });
+    if (!canReviewSocial(role) && current.created_by !== session.userId) return NextResponse.json({ error: "You can delete only your own posts.", description: "Ask the owner or a manager." }, { status: 403 });
+    await logPersonActivity(session, { platform: current.platform, action: "Deleted a post", detail: current.caption.slice(0, 120) });
+    const deleted = await withTenant(session, tx => tx.$executeRaw`
+      delete from public.social_content where id = ${id}::uuid and tenant_id = ${session.tenantId}::uuid and status not in ('published', 'publishing')`);
+    if (!deleted) return NextResponse.json({ error: "This post changed. Refresh the page." }, { status: 409 });
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error("[social-content] delete failed", error instanceof Error ? error.message : "unknown");
+    return NextResponse.json({ error: "Could not delete the post.", description: "Nothing changed. Try again." }, { status: 500 });
   }
 }

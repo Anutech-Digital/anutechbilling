@@ -61,6 +61,8 @@ export default function SocialContentPage() {
   const [pictures, setPictures] = React.useState("");
   const [aiProblem, setAiProblem] = React.useState<string | null>(null);
   const [planNote, setPlanNote] = React.useState<{ text: string; warn: boolean } | null>(null);
+  const [aiWriting, setAiWriting] = React.useState(false);
+  const [confirmDelete, setConfirmDelete] = React.useState<string | null>(null);
   const [showPostSettings, setShowPostSettings] = React.useState(false);
   /* R-2687: one control per AI action — Off / Ask me first / Autopilot (stored as auto_drafts + autopilot). */
   const postsMode: "off" | "ask" | "auto" = !autoDrafts ? "off" : autopilot ? "auto" : "ask";
@@ -97,7 +99,7 @@ export default function SocialContentPage() {
   }
 
   async function writeWithAi() {
-    setBusy(true); setAiProblem(null);
+    setBusy(true); setAiProblem(null); setAiWriting(true);
     try {
       const response = await fetch("/api/marketing/social-content", { method: "POST", headers: { "content-type": "application/json" },
         body: JSON.stringify({ platform: platforms[0], format: story ? "story" : "post", topic, caption: "", mediaUrl: null, ai: true, previewOnly: true }) });
@@ -107,7 +109,7 @@ export default function SocialContentPage() {
       setCaption(data.caption);
       toast.success("AI wrote the post. Read it, change anything, then send it for approval.");
     } catch (e) { toastError(e, { fallback: "AI could not write the post.", description: "Try a clearer topic, or write the post yourself." }); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setAiWriting(false); }
   }
 
   async function send(submit: boolean) {
@@ -142,6 +144,8 @@ export default function SocialContentPage() {
         : action === "submit" ? "Sent for approval." : action === "return" ? "Sent back to drafts." : action === "stop" ? "Stopped. It will not go out; it is in Drafts now." : "Saved.");
       setEditing(null); setConfirmPublish(null); await load();
       if (action === "approve") setTab("scheduled");
+      if (action === "submit") setTab("review");
+      if (action === "return" || action === "stop") setTab("draft");
       if (action === "publish") setTab("published");
     } catch (e) { toastError(e, { fallback: "Could not update draft.", description: "Refresh the page to see its current stage, then try again." }); }
     finally { setBusy(false); }
@@ -154,9 +158,21 @@ export default function SocialContentPage() {
         body: JSON.stringify({ autoDrafts, brief, autopilot, postsPerWeek, pictures }) });
       const data = await response.json() as { error?: string; description?: string };
       if (!response.ok) { setPlanNote({ text: [data.error ?? "Could not save.", data.description].filter(Boolean).join(" "), warn: true }); return; }
-      setPlanNote({ text: autoDrafts ? `Saved. Every Monday the AI plans ${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"}${autopilot ? " and posts them by itself" : " for you to approve"}.` : "Saved. The Monday plan is off — press Plan this week now whenever you want posts.", warn: false });
+      setPlanNote({ text: autoDrafts ? `Saved. Every Monday the AI plans ${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"}${autopilot ? ` and posts ${postsPerWeek === 1 ? "it" : "them"} by itself` : " for you to approve"}.` : "Saved. The Monday plan is off — press Plan this week now whenever you want posts.", warn: false });
       toast.success("AI posts settings saved."); await load();
     } catch (e) { toastError(e, { fallback: "Could not save settings.", description: "Nothing was saved. Try again." }); }
+    finally { setBusy(false); }
+  }
+
+  /** R-2687: delete a post that has not gone out. */
+  async function removePost(id: string) {
+    setBusy(true);
+    try {
+      const response = await fetch(`/api/marketing/social-content/${id}`, { method: "DELETE" });
+      const data = await response.json() as { error?: string; description?: string };
+      if (!response.ok) throw Object.assign(new Error(data.error ?? "Could not delete the post."), { description: data.description });
+      toast.success("Post deleted."); setConfirmDelete(null); await load();
+    } catch (e) { toastError(e, { fallback: "Could not delete the post.", description: "Nothing changed. Refresh the page and try again." }); }
     finally { setBusy(false); }
   }
 
@@ -175,7 +191,7 @@ export default function SocialContentPage() {
 
   /** R-2672: "Plan this week now" — the AI plans the week straight away (same as the Monday run). */
   async function planNow() {
-    setBusy(true); setPlanNote(null);
+    setBusy(true); setPlanNote({ text: "The AI is writing this week's posts… this takes about 30 seconds. Keep this page open.", warn: false });
     try {
       const response = await fetch("/api/marketing/social-content/settings", { method: "POST" });
       const data = await response.json() as { error?: string; description?: string; created?: number; autopilot?: boolean; instagramSkipped?: boolean };
@@ -270,6 +286,7 @@ export default function SocialContentPage() {
             <label className="block text-xs font-medium text-ink-2" htmlFor="social-topic">What is it about?</label>
             <input id="social-topic" className={`${inputClass} mt-1`} value={topic} maxLength={500} onChange={e => setTopic(e.target.value)} placeholder="Example: 3 Google Workspace tips for small teams" />
             <Button className="mt-2" variant="outline" disabled={busy} onClick={() => { if (topic.trim()) void writeWithAi(); else setAiProblem("Type what the post is about first, then press Write with AI."); }}><Sparkles size={15} /> Write with AI</Button>
+            {aiWriting && <p role="status" className="mt-2 text-xs text-ink-3">The AI is writing the post… about 10 seconds.</p>}
             {aiProblem && <p role="alert" className="mt-2 rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber-ink">{aiProblem}{!state.aiReady && <> <a className="font-medium underline" href="/settings?tab=integrations">Open Settings → Integrations</a></>}</p>}
           </div>
 
@@ -332,8 +349,11 @@ export default function SocialContentPage() {
               {item.status === "review" && state.canReview && <><Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "approve")}><Check size={14} /> Approve</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void act(item.id, "return")}>Send back</Button></>}
               {item.status === "review" && !state.canReview && <span className="self-center text-xs text-ink-3">Waiting for the owner or a manager.</span>}
               {["draft", "failed"].includes(item.status) && <Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "submit")}><Send size={14} /> Send for approval</Button>}
-              {["draft", "review", "failed"].includes(item.status) && editing !== item.id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setEditing(item.id); setEditCaption(item.caption); setEditMediaUrl(item.media_url ?? ""); setEditPostAt(item.scheduled_at ? toIstLocal(item.scheduled_at) : ""); }}>Edit</Button>}
+              {(["draft", "review", "failed"].includes(item.status) || (item.status === "approved" && state.canReview)) && editing !== item.id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setEditing(item.id); setEditCaption(item.caption); setEditMediaUrl(item.media_url ?? ""); setEditPostAt(item.scheduled_at ? toIstLocal(item.scheduled_at) : ""); }}>Edit</Button>}
               {item.status === "approved" && state.canReview && item.scheduled_at && confirmPublish !== item.id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(item.id, "stop")}>Stop</Button>}
+              {!["published", "publishing"].includes(item.status) && editing !== item.id && (confirmDelete === item.id
+                ? <><Button size="sm" variant="danger" disabled={busy} onClick={() => void removePost(item.id)}>Yes, delete</Button><Button size="sm" variant="ghost" onClick={() => setConfirmDelete(null)}>Cancel</Button></>
+                : <Button size="sm" variant="ghost" className="text-rose-ink" disabled={busy} onClick={() => setConfirmDelete(item.id)}>Delete</Button>)}
               {item.status === "approved" && state.canReview && (confirmPublish === item.id ? <><Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "publish")}><Send size={14} /> Yes, post now</Button><Button size="sm" variant="ghost" onClick={() => setConfirmPublish(null)}>Cancel</Button></> : <Button size="sm" variant={item.scheduled_at ? "outline" : "primary"} disabled={busy} onClick={() => setConfirmPublish(item.id)}>{item.scheduled_at ? "Post now instead" : "Publish now"}</Button>)}
             </div>
           </div>)}</div>}
