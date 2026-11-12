@@ -17,6 +17,8 @@
 --      before the raise (Sep) cannot carry them.
 --   6. Pay cut into a paid month refused. 6b. Gross edited after booking → arrears still from the
 --      salary stored at booking (salary_payments.salary_in_force).
+--   6c. Legacy rows (no stored salary): never more arrears than was underpaid. 6d. Exit month. 6e. Direct
+--      edits of gross / arrears columns refused.
 --   7. Undo: Asha's revision refused (Dec booked on it); Keshav's undone → back to 30k.
 --   8. Another company's owner: cannot revise Keshav, cannot read his arrears.
 --
@@ -231,6 +233,74 @@ begin
   select arrears into v_oct from public.employee_salary_arrears('c2699000-0000-4000-8000-0000000000e3') where period = '2026-10';
   if v_oct <> 6000 then raise exception 'FAIL 6b: Oct arrears % (want 6000 — stored salary at booking, not the edited 33,000)', v_oct; end if;
   raise notice 'PASS 6b: arrears from the salary stored at booking';
+end $$;
+
+-- ── 6c. Legacy rows (booked before this migration: salary_in_force null) ─────────────
+-- Meera: Sep paid 40,000; gross later edited DOWN to 30,000; revise to 36,000 from Sep → no
+-- arrears (she was already paid more). Kabir: Sep paid 30,000; gross edited UP to 33,000; revise
+-- to 36,000 from Sep → arrears on 33,000 → 36,000 only (never more than the real 6,000).
+reset role;
+insert into public.employees (id, tenant_id, name, monthly_gross, joining_date) values
+  ('c2699000-0000-4000-8000-0000000000e4', 'c2699000-0000-0000-0000-0000000000f0', 'R2699 Meera', 40000, '2025-01-01'),
+  ('c2699000-0000-4000-8000-0000000000e5', 'c2699000-0000-0000-0000-0000000000f0', 'R2699 Kabir', 30000, '2025-01-01');
+set local role authenticated;
+select public.pay_salary('c2699000-0000-4000-8000-0000000000e4', '2026-09', '2026-09-30', 40000, 0, 0, 0, null, 0, 0, 0, 0,
+                         'c2699000-0000-4000-8000-0000000000b1', null);
+select public.pay_salary('c2699000-0000-4000-8000-0000000000e5', '2026-09', '2026-09-30', 30000, 0, 0, 0, null, 0, 0, 0, 0,
+                         'c2699000-0000-4000-8000-0000000000b1', null);
+reset role;
+select set_config('app.r2699_salary_arrears', 'on', true);
+update public.salary_payments set salary_in_force = null, created_at = '2026-09-30T10:00:00Z'
+ where employee_id in ('c2699000-0000-4000-8000-0000000000e4', 'c2699000-0000-4000-8000-0000000000e5');
+select set_config('app.r2699_salary_arrears', '', true);
+update public.employees set monthly_gross = 30000 where id = 'c2699000-0000-4000-8000-0000000000e4';
+update public.employees set monthly_gross = 33000 where id = 'c2699000-0000-4000-8000-0000000000e5';
+set local role authenticated;
+do $$
+declare v_meera int; v_kabir int;
+begin
+  perform public.revise_employee_salary('c2699000-0000-4000-8000-0000000000e4', '2026-09-01', 36000, null, 0, null, null);
+  perform public.revise_employee_salary('c2699000-0000-4000-8000-0000000000e5', '2026-09-01', 36000, null, 0, null, null);
+  select coalesce(sum(arrears), 0) into v_meera from public.employee_salary_arrears('c2699000-0000-4000-8000-0000000000e4');
+  select coalesce(sum(arrears), 0) into v_kabir from public.employee_salary_arrears('c2699000-0000-4000-8000-0000000000e5');
+  if v_meera <> 0 then raise exception 'FAIL 6c-a: legacy month paid 40,000 now owes arrears % (want 0)', v_meera; end if;
+  if v_kabir <> 2727 then raise exception 'FAIL 6c-b: legacy month arrears % (want 2727 = 30,000 x 36/33 - 30,000)', v_kabir; end if;
+  raise notice 'PASS 6c: legacy rows never owe more than was underpaid';
+end $$;
+
+-- ── 6d. After Start exit, no revision after the last month ──────────────────────────
+do $$
+declare v_msg text;
+begin
+  perform public.start_employee_exit('c2699000-0000-4000-8000-0000000000e4', '2026-10-15', 'resigned');
+  begin perform public.revise_employee_salary('c2699000-0000-4000-8000-0000000000e4', '2026-11-01', 40000, null, 0, null, null);
+  exception when others then v_msg := sqlerrm; end;
+  if v_msg not like 'The new salary can''t start after Oct 2026 — that is R2699 Meera''s last month.' then raise exception 'FAIL 6d: %', v_msg; end if;
+  raise notice 'PASS 6d: no revision after the exit month';
+end $$;
+
+-- ── 6e. No change outside the RPCs ────────────────────────────────────────────────
+-- Owner edits Asha's gross directly (she has a revision) → refused; owner edits arrears /
+-- salary_in_force on a booked salary through the table → refused.
+do $$
+declare v_msg text; v_msg2 text; v_msg3 text;
+begin
+  begin update public.employees set monthly_gross = 50000 where id = 'c2699000-0000-4000-8000-0000000000e2';
+  exception when others then v_msg := sqlerrm; end;
+  if v_msg is distinct from 'R2699 Asha''s salary is set by salary revisions — change it with Revise salary in the employee profile.' then
+    raise exception 'FAIL 6e-a: %', v_msg;
+  end if;
+  begin update public.salary_payments set arrears = 0 where employee_id = 'c2699000-0000-4000-8000-0000000000e2' and period = '2026-12';
+  exception when others then v_msg2 := sqlerrm; end;
+  begin update public.salary_payments set salary_in_force = 20000 where employee_id = 'c2699000-0000-4000-8000-0000000000e2' and period = '2026-10';
+  exception when others then v_msg3 := sqlerrm; end;
+  if v_msg2 is distinct from 'Salary revision arrears on a booked salary can''t be edited — undo that salary and pay it again.'
+     or v_msg3 is distinct from v_msg2 then
+    raise exception 'FAIL 6e-b: % / %', v_msg2, v_msg3;
+  end if;
+  -- Other fields still save (name / phone) with the same salary.
+  update public.employees set phone = '9999999999', monthly_gross = monthly_gross where id = 'c2699000-0000-4000-8000-0000000000e2';
+  raise notice 'PASS 6e: salary and arrears columns change only through the RPCs';
 end $$;
 
 -- ── 7. Undo ─────────────────────────────────────────────────────────────────────────

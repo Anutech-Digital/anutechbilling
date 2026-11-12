@@ -98,7 +98,9 @@ comment on column public.salary_payments.salary_in_force is
   'R-2699: the employee''s monthly gross in force for this month when it was booked (arrears base).';
 -- Rows booked before this migration stay null (no backfill: an UPDATE would hit the books lock on
 -- locked months). Their base is the salary before the employee's FIRST revision (its prev), else
--- the employee's gross — no revision existed when they were booked.
+-- the employee's gross — no revision existed when they were booked — but never below the gross
+-- actually booked that month: a gross edited DOWN (Employees -> Edit) after the booking must not
+-- turn a month already paid at the higher salary into arrears (independent review, R-2699).
 
 create or replace function public.tg_salary_payment_in_force()
  returns trigger
@@ -119,6 +121,49 @@ drop trigger if exists trg_salary_payment_in_force on public.salary_payments;
 create trigger trg_salary_payment_in_force
   before insert on public.salary_payments
   for each row execute function public.tg_salary_payment_in_force();
+
+-- Guards (independent review, R-2699): once an employee has a revision, gross / Basic / DA change
+-- only through revise_employee_salary / undo_salary_revision (history stays true); and the arrears
+-- bookkeeping on salary_payments (arrears, salary_in_force) is written only by this migration's
+-- functions — not through the table's UPDATE grant.
+create or replace function public.tg_employee_salary_via_revision()
+ returns trigger
+ language plpgsql
+ set search_path to 'public'
+as $function$
+begin
+  if (new.monthly_gross is distinct from old.monthly_gross
+      or new.basic_monthly is distinct from old.basic_monthly
+      or new.da_monthly is distinct from old.da_monthly)
+     and coalesce(current_setting('app.r2699_salary_revision', true), '') <> 'on'
+     and exists (select 1 from public.employee_salary_revisions r where r.employee_id = old.id) then
+    raise exception '%''s salary is set by salary revisions — change it with Revise salary in the employee profile.', old.name
+      using errcode = 'P0001';
+  end if;
+  return new;
+end; $function$;
+drop trigger if exists trg_employee_salary_via_revision on public.employees;
+create trigger trg_employee_salary_via_revision
+  before update of monthly_gross, basic_monthly, da_monthly on public.employees
+  for each row execute function public.tg_employee_salary_via_revision();
+
+create or replace function public.tg_salary_arrears_columns_locked()
+ returns trigger
+ language plpgsql
+ set search_path to 'public'
+as $function$
+begin
+  if (new.arrears is distinct from old.arrears or new.salary_in_force is distinct from old.salary_in_force)
+     and coalesce(current_setting('app.r2699_salary_arrears', true), '') <> 'on' then
+    raise exception 'Salary revision arrears on a booked salary can''t be edited — undo that salary and pay it again.'
+      using errcode = 'P0001';
+  end if;
+  return new;
+end; $function$;
+drop trigger if exists trg_salary_arrears_columns_locked on public.salary_payments;
+create trigger trg_salary_arrears_columns_locked
+  before update of arrears, salary_in_force on public.salary_payments
+  for each row execute function public.tg_salary_arrears_columns_locked();
 
 -- Arrears per booked month (R-2699). SECURITY DEFINER: callers are payroll roles in the same
 -- tenant (checked here), so the private helper above can stay revoked from authenticated.
@@ -149,9 +194,11 @@ begin
         select sp.period::text as period,
                greatest(sp.gross - coalesce(sp.lop_amount, 0), 0)::integer as earned,
                coalesce(sp.salary_in_force,
-                        (select r.prev_monthly_gross from public.employee_salary_revisions r
-                          where r.employee_id = p_employee_id order by r.created_at limit 1),
-                        (select e.monthly_gross from public.employees e where e.id = p_employee_id)) as old_g,
+                        greatest(
+                          coalesce((select r.prev_monthly_gross from public.employee_salary_revisions r
+                                     where r.employee_id = p_employee_id order by r.created_at limit 1),
+                                   (select e.monthly_gross from public.employees e where e.id = p_employee_id)),
+                          sp.gross)) as old_g,
                public._salary_in_force_gross(p_employee_id, sp.period) as new_g
           from public.salary_payments sp
          where sp.employee_id = p_employee_id
@@ -228,9 +275,11 @@ begin
      nullif(trim(coalesce(p_note, '')), ''), public.current_user_id())
   returning id into v_id;
 
+  perform set_config('app.r2699_salary_revision', 'on', true);
   update public.employees
      set monthly_gross = v_gross, basic_monthly = p_basic_monthly, da_monthly = v_da, updated_at = now()
    where id = p_employee_id;
+  perform set_config('app.r2699_salary_revision', '', true);
   return v_id;
 end; $function$;
 revoke all on function public.revise_employee_salary(uuid, date, integer, integer, integer, integer, text) from public, anon;
@@ -269,10 +318,12 @@ begin
   if v_month is not null then
     raise exception 'Salary for % is already booked on this revision — undo that salary first.', v_month;
   end if;
+  perform set_config('app.r2699_salary_revision', 'on', true);
   update public.employees
      set monthly_gross = v_rev.prev_monthly_gross, basic_monthly = v_rev.prev_basic_monthly,
          da_monthly = v_rev.prev_da_monthly, updated_at = now()
    where id = v_rev.employee_id;
+  perform set_config('app.r2699_salary_revision', '', true);
   delete from public.employee_salary_revisions where id = p_revision_id;
 end; $function$;
 revoke all on function public.undo_salary_revision(uuid) from public, anon;
@@ -322,7 +373,9 @@ begin
                             p_bank_account_id, p_notes, greatest(coalesce(p_incentive, 0), 0) + v_arr,
                             p_esi_employer, p_pf_employer, p_pf_wage);
   if v_arr > 0 then
+    perform set_config('app.r2699_salary_arrears', 'on', true);
     update public.salary_payments set arrears = v_arr where id = v_id returning expense_id into v_exp;
+    perform set_config('app.r2699_salary_arrears', '', true);
     update public.expenses
        set description = description || ' (incl. salary revision arrears ₹' || v_arr || ')'
      where id = v_exp and tenant_id = v_tenant;
