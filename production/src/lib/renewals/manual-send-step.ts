@@ -11,7 +11,7 @@
  */
 import {
   decideCadence, effectiveGraceDays, renewalIsSettled, triggersForTerm,
-  type CadenceDecision, type CadenceTone,
+  type CadenceDecision, type CadenceTone, type RenewalState,
 } from "@/lib/renewals/cadence";
 import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
 import { isSplitBilled } from "@/lib/billing/instalments";
@@ -20,7 +20,8 @@ import type { BillingCycle } from "@/lib/supabase/database.types";
 export interface ManualStepSub {
   id: string;
   customer_id: string | null;
-  renewal_date: string;
+  /** Checked non-null by the caller; a null throws (no step without a renewal date). */
+  renewal_date: string | null;
   renewal_state: string | null;
   term_months: number | null;
 }
@@ -31,19 +32,21 @@ export interface ManualStep {
   /** The email tone for this send (Send now's template). */
   tone: CadenceTone;
   /** The renewal_state this send moves the subscription to. */
-  step: string;
+  step: RenewalState;
 }
 
 export async function manualRenewalStep(supabase: unknown, sub: ManualStepSub, tenantGraceDays: number | null | undefined): Promise<ManualStep> {
+  const renewalDate = sub.renewal_date;
+  if (!renewalDate) throw new Error(`subscription ${sub.id} has no renewal date`);
   const overrides = await readGraceOverrides(supabase, [sub.id], [sub.customer_id]);
   const graceDays = effectiveGraceDays({
     tenantGraceDays:  tenantGraceDays,
     trustedGraceDays: sub.customer_id ? overrides.trustedByCustomer.get(sub.customer_id) ?? null : null,
-    renewalDate:      sub.renewal_date,
+    renewalDate:      renewalDate,
     graceUntil:       overrides.bySubscription.get(sub.id)?.graceUntil ?? null,
   });
   const decision = decideCadence({
-    renewalDate:  sub.renewal_date,
+    renewalDate:  renewalDate,
     graceDays,
     currentState: (sub.renewal_state ?? "pending") as never,
     termMonths:   sub.term_months,
