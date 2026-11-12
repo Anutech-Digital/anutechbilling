@@ -547,15 +547,21 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
 
   /* R-2700: company policy, once it loads — gratuity + Basic % for the calculator; PF / PF basis
      only for a NEW employee (an existing one keeps their saved switches). */
+  /* Code review: a choice made in the dialog before the policy arrives is never overwritten. */
   const [policyApplied, setPolicyApplied] = React.useState(false);
+  const [pfTouched, setPfTouched] = React.useState(false);
+  const [basicPctTouched, setBasicPctTouched] = React.useState(false);
+  const [gratuityTouched, setGratuityTouched] = React.useState(false);
+  /* A Basic typed in Statutory & Access is used by the CTC split (it is not overwritten). */
+  const [basicByHand, setBasicByHand] = React.useState(false);
   React.useEffect(() => {
     if (policyApplied || !policyQ.data) return;
     setPolicyApplied(true);
     const d = newEmployeeDefaults(policyQ.data, false);
-    setIncludeGratuity(d.includeGratuity);
-    setBasicPct(d.basicPct);
-    if (!employee) { setPfApplicable(d.pfApplicable); setPfFullWage(d.pfFullWage); }
-  }, [policyApplied, policyQ.data, employee]);
+    if (!gratuityTouched) setIncludeGratuity(d.includeGratuity);
+    if (!basicPctTouched) setBasicPct(d.basicPct);
+    if (!employee && !pfTouched) { setPfApplicable(d.pfApplicable); setPfFullWage(d.pfFullWage); }
+  }, [policyApplied, policyQ.data, employee, pfTouched, basicPctTouched, gratuityTouched]);
 
   /* R-2698: the breakdown follows the Statutory switches — PF / ESI off means none here. */
   const ctcBreakdown = React.useMemo(() => ctcTabBreakdown({
@@ -568,25 +574,37 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
     ctcIncludesEmployer: policy.ctcIncludesEmployer,
     /* Review M1: typing back the CTC shown gives the same gross; a typed CTC keeps the saved Basic. */
     saved: employee?.monthly_gross ? { gross: employee.monthly_gross, basic: employee.basic_monthly, da: employee.da_monthly ?? 0 } : null,
+    keepSavedBasic: !basicPctTouched,
     calc: {
       isMetro,
       basicPct,
-      customBasicMonthly: Number(customBasic) || undefined,
+      customBasicMonthly: Number(customBasic) || (basicByHand ? Number(basicMonthly) || undefined : undefined),
       customHraMonthly: Number(customHra) || undefined,
       customConveyanceMonthly: Number(customConveyance) || 0,
       customMedicalMonthly: Number(customMedical) || 0,
       customSpecialMonthly: Number(customSpecial) || undefined,
       customPtMonthly: customPt !== "" ? Number(customPt) : undefined,
     },
-  }), [employee, ctcTyped, annualCtc, gross, basicMonthly, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt]);
+  }), [employee, ctcTyped, annualCtc, gross, basicMonthly, basicByHand, basicPctTouched, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt]);
   /* R-2700: a typed CTC fills Monthly Gross + Basic at once (no Apply press) unless the gross was
      typed by hand afterwards, or the salary is set by revisions (R-2699 — gross locked). */
+  /* Review M2 + code review: a split that is over budget, an empty CTC, or the CTC the saved salary
+     already gives never leaves a half-typed figure behind — the form goes back to the SAVED
+     gross / Basic (empty for a new employee). Runs on the figures, not the object, so typing a
+     Basic by hand is not overwritten. */
+  const fillGross = ctcBreakdown.grossMonthly;
+  const fillBasic = ctcBreakdown.basicMonthly;
+  const fillFromCtc = ctcTyped && ctcBreakdown.source === "ctc" && ctcBreakdown.annualCtc > 0 && !ctcBreakdown.overBudget;
   React.useEffect(() => {
-    /* Review M2: an over-budget split (Basic alone above what the CTC allows) is never filled. */
-    if (!ctcTyped || grossByHand || salaryByRevision || ctcBreakdown.overBudget) return;
-    setGross(ctcBreakdown.grossMonthly > 0 ? String(ctcBreakdown.grossMonthly) : "");
-    setBasicMonthly(ctcBreakdown.basicMonthly > 0 ? String(ctcBreakdown.basicMonthly) : "");
-  }, [ctcTyped, grossByHand, salaryByRevision, ctcBreakdown]);
+    if (!ctcTyped || grossByHand || salaryByRevision) return;
+    if (!fillFromCtc) {
+      setGross(employee?.monthly_gross ? String(employee.monthly_gross) : "");
+      if (!basicByHand) setBasicMonthly(employee?.basic_monthly != null ? String(employee.basic_monthly) : "");
+      return;
+    }
+    setGross(fillGross > 0 ? String(fillGross) : "");
+    if (!basicByHand) setBasicMonthly(fillBasic > 0 ? String(fillBasic) : "");
+  }, [ctcTyped, grossByHand, salaryByRevision, fillFromCtc, fillGross, fillBasic, basicByHand, employee]);
   // For a NEW employee, suggest ESI coverage from the wage ceiling until the
   // user decides for themselves — only when the company is ESI-registered (R-2700 policy).
   // Existing employees keep their saved value.
@@ -725,7 +743,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
               <Field htmlFor="payroll-monthly-gross-salary-base" label="Monthly Gross Salary (₹, Base for Pay Slip)">
                 <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} disabled={salaryByRevision} onChange={(e) => { if (ctcTyped) setGrossByHand(true); setGross(e.target.value); }} placeholder="e.g. 46997" />
                 {/* R-2700: one line — how this gross comes from the CTC (or that it is the saved / hand-typed one). */}
-                <p data-testid="ctc-formula" className="mt-1 text-xs text-ink-2">{ctcFormulaText(ctcBreakdown, salaryByRevision ? undefined : Number(gross) || 0)}</p>
+                <p data-testid="ctc-formula" className="mt-1 text-xs text-ink-2">{ctcFormulaText(ctcBreakdown, salaryByRevision ? undefined : Number(gross) || 0)}{salaryByRevision && ctcTyped ? " This employee's gross is set by salary revisions — use Revise salary to change it." : ""}</p>
                 {/* R-2699: an increment from a month goes through Revise salary (history + old salary for earlier months). */}
                 {salaryByRevision ? (
                   <p className="mt-1 text-xs text-amber-ink">This salary is set by salary revisions — change it with <b>Revise salary</b> in the employee profile (Basic and DA too).</p>
@@ -752,7 +770,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                       <Field htmlFor="payroll-basic-salary" label="Basic Salary %">
                         <select id="payroll-basic-salary"
                           value={basicPct}
-                          onChange={(e) => { setBasicPct(Number(e.target.value)); setCustomBasic(""); }}
+                          onChange={(e) => { setBasicPctTouched(true); setBasicByHand(false); setBasicPct(Number(e.target.value)); setCustomBasic(""); }}
                           className={selectCls}
                         >
                           {[...new Set([0.3, 0.4, 0.5, 0.6, policy.basicPct / 100])].sort((a, b) => a - b).map((p) => (
@@ -826,7 +844,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                           <input
                             type="checkbox"
                             checked={includeGratuity}
-                            onChange={(e) => setIncludeGratuity(e.target.checked)}
+                            onChange={(e) => { setGratuityTouched(true); setIncludeGratuity(e.target.checked); }}
                             className="rounded border-hairline accent-amber"
                           />
                           <span>Include Gratuity (4.81%)</span>
@@ -1008,7 +1026,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                   <input
                     type="checkbox"
                     checked={pfApplicable}
-                    onChange={(e) => setPfApplicable(e.target.checked)}
+                    onChange={(e) => { setPfTouched(true); setPfApplicable(e.target.checked); }}
                     className="mt-0.5 rounded border-hairline"
                   />
                   <span className="text-xs text-ink-2">
@@ -1024,18 +1042,18 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     {/* R-2698: per-employee PF basis — capped at the statutory ceiling (default) or full Basic + DA. */}
                     <div role="radiogroup" aria-label="PF wage" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
                       <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input type="radio" name="pf-basis" checked={!pfFullWage} onChange={() => setPfFullWage(false)} />
+                        <input type="radio" name="pf-basis" checked={!pfFullWage} onChange={() => { setPfTouched(true); setPfFullWage(false); }} />
                         Capped at the PF wage ceiling ({rupee(pfWageCeiling())} — PF max {rupee(Math.round(pfWageCeiling() * PF_EMPLOYER_RATE))}/mo each side)
                       </label>
                       <label className="flex items-center gap-1.5 cursor-pointer">
-                        <input type="radio" name="pf-basis" checked={pfFullWage} onChange={() => setPfFullWage(true)} />
+                        <input type="radio" name="pf-basis" checked={pfFullWage} onChange={() => { setPfTouched(true); setPfFullWage(true); }} />
                         Full Basic + DA (above the ceiling)
                       </label>
                     </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label htmlFor="payroll-basic-month" className="block text-xs font-medium text-ink-2 mb-1">Basic (₹/month)</label>
-                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => setBasicMonthly(e.target.value)} placeholder={gross ? String(Math.round((Number(gross) || 0) * 0.5)) : "e.g. 15000"} />
+                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => { setBasicByHand(e.target.value.trim() !== ""); setBasicMonthly(e.target.value); }} placeholder={gross ? String(Math.round((Number(gross) || 0) * 0.5)) : "e.g. 15000"} />
                       </div>
                       <div>
                         <label htmlFor="payroll-da-month" className="block text-xs font-medium text-ink-2 mb-1">DA (₹/month)</label>

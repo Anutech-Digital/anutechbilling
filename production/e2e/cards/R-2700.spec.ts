@@ -106,7 +106,7 @@ test.describe("R-2700 card test", () => {
     const dlg = page.getByRole("dialog", { name: "Edit employee" });
     await dlg.getByRole("button", { name: /CTC & Salary Breakdown/ }).click();
     await expect(dlg.locator("#payroll-monthly-gross-salary-base")).toHaveValue("30000");
-    await expect(dlg.getByTestId("ctc-formula")).toContainText("Monthly gross ₹30,000 is the saved salary");
+    await expect(dlg.getByTestId("ctc-formula")).toContainText("= (monthly gross ₹30,000");
     await dlg.getByRole("button", { name: "Cancel" }).click();
     expect(empRow("CT R2700 Old")).toBe("30000,null,true");
   });
