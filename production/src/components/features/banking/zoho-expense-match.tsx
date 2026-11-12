@@ -75,7 +75,7 @@ function MatchTable({ rows }: { rows: ZohoMatchRow[] }) {
               <td className="px-3 py-2 text-right font-mono tabular-nums text-ink">{rupee(r.cash)}</td>
               <td className="px-3 py-2 text-right">
                 {href && (
-                  <Link href={href} className="text-sm font-medium text-accent hover:underline whitespace-nowrap"
+                  <Link href={href} className="text-sm font-medium text-amber-ink hover:underline whitespace-nowrap"
                         aria-label={`Open the bank line for ${label}`}>
                     Open line
                   </Link>
