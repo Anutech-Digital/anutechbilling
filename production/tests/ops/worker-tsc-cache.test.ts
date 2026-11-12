@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
-import { restoreBuildInfo, restoreLine, buildInfoDistance, hasherKind, saveBuildInfo, dropBuildInfo, cacheFile, pruneCache, parseTscFlags, BUILD_INFO, TSC_FULL_STEP } from "../../scripts/ops/worker-tsc-cache.mjs";
+import { restoreBuildInfo, restoreLine, buildInfoDistance, hasherKind, saveBuildInfo, dropBuildInfo, cacheFile, pruneCache, parseTscFlags, nodeModulesTarget, BUILD_INFO, TSC_FULL_STEP } from "../../scripts/ops/worker-tsc-cache.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
 import { tscStepsFor, TSC_STEPS } from "../../scripts/ops/worker-lock.mjs";
 
@@ -269,5 +269,127 @@ describe("R-1960 --full-tsc keeps the old cold check", () => {
     expect(tscStepsFor({ full: true })).toEqual([TSC_STEPS[0], TSC_FULL_STEP]);
     expect(TSC_FULL_STEP).toBe("npx tsc --noEmit -p . --incremental false");
     expect(tscStepsFor()).toEqual(TSC_STEPS);
+  });
+});
+
+/* R-2718 (12 Nov 2026): tsc follows the node_modules junction to its REAL path, so every node_modules
+   file name in a build info carries the clone it was linked to. 12 Nov two clones were in use
+   (WORKER-SESSION-PROMPT said new-reselleros, WORKER-STEPS reselleros-deploy): a build info from the
+   other clone made all ~2,300 node_modules files (122 global) "new" — a full re-check, 1377–2488 s —
+   while the restore line said "5 file badli", and both kinds saved over each other under one key. */
+describe("R-2718 node_modules real path is part of the cache", () => {
+  const TSCONFIG_TYPES = JSON.stringify({
+    compilerOptions: { strict: true, noEmit: true, incremental: true, target: "ES2022", lib: ["es2022"], types: ["glob1"], module: "esnext", moduleResolution: "bundler" },
+    include: ["*.ts"],
+  });
+  function clone(name: string) {
+    const nm = path.join(tmp, name, "node_modules");
+    fs.mkdirSync(path.join(nm, "@types", "glob1"), { recursive: true });
+    fs.writeFileSync(path.join(nm, "@types", "glob1", "package.json"), JSON.stringify({ name: "@types/glob1", version: "1.0.0", types: "index.d.ts" }));
+    fs.writeFileSync(path.join(nm, "@types", "glob1", "index.d.ts"), "declare var glob1: number;\n");
+    return nm;
+  }
+  function linked(name: string, target: string) {
+    const wt = worktree(name);
+    fs.writeFileSync(path.join(wt, "tsconfig.json"), TSCONFIG_TYPES);
+    fs.writeFileSync(path.join(wt, "c.ts"), C + "export const g: number = glob1;\n");
+    fs.symlinkSync(target, path.join(wt, "node_modules"), "junction");
+    return wt;
+  }
+  const relink = (wt: string, target: string) => {
+    fs.rmSync(path.join(wt, "node_modules")); // the link only (no recursive delete through it)
+    fs.symlinkSync(target, path.join(wt, "node_modules"), "junction");
+  };
+  const tsc = (wt: string) => spawnSync(process.execPath, [TSC, "--noEmit", "-p", "."], { cwd: wt, encoding: "utf8" });
+  let modsA: string, modsB: string, nmCache: string;
+
+  beforeAll(() => {
+    modsA = clone("clone-a"); modsB = clone("clone-b");
+    nmCache = path.join(tmp, "nm-cache");
+  });
+
+  it("the build info names node_modules files by the junction's real path; the key follows it", () => {
+    const a = linked("wt-nm-a", modsA), b = linked("wt-nm-b", modsB), a2 = linked("wt-nm-a2", modsA);
+    expect(nodeModulesTarget(a)).toBe("../clone-a/node_modules");
+    expect(tsc(a).status).toBe(0);
+    const names: string[] = JSON.parse(fs.readFileSync(path.join(a, BUILD_INFO), "utf8")).fileNames;
+    expect(names.some((n) => n.startsWith("../clone-a/node_modules/@types/glob1/"))).toBe(true);
+    expect(cacheFile(a, nmCache)).toBe(cacheFile(a2, nmCache));
+    expect(cacheFile(b, nmCache)).not.toBe(cacheFile(a, nmCache));
+    /* a plain node_modules folder (or none) keeps the pre-R-2718 key */
+    expect(cacheFile(path.join(tmp, "wt-first"), cache)).toBe(cacheFile(path.join(tmp, "wt-first"), cache, { legacy: true }));
+  });
+
+  it("a build info from another clone's node_modules is flagged foreign = full re-check; own clone = 0", () => {
+    const wt = linked("wt-nm-foreign", modsA);
+    expect(tsc(wt).status).toBe(0);
+    const own = path.join(wt, BUILD_INFO);
+    expect(buildInfoDistance(wt, own)).toMatchObject({ changed: 0, foreign: 0, modules: 0, global: 0 });
+    relink(wt, modsB);
+    const d = buildInfoDistance(wt, own);
+    expect(d.foreign).toBeGreaterThan(0);
+    expect(d.global).toBeGreaterThan(0);
+    expect(restoreLine({ restored: false, reason: "own", own: d, shared: d })).toMatch(/doosre clone ke junction se, \d+ global — poora re-check/);
+  });
+
+  it("a changed GLOBAL node_modules file (e.g. @types after npm ci) counts as a global change", () => {
+    const mods = clone("clone-c");
+    const wt = linked("wt-nm-changed", mods);
+    expect(tsc(wt).status).toBe(0);
+    fs.writeFileSync(path.join(mods, "@types", "glob1", "index.d.ts"), "declare var glob1: number;\ndeclare var glob2: string;\n");
+    expect(buildInfoDistance(wt, path.join(wt, BUILD_INFO))).toMatchObject({ changed: 0, modules: 1, global: 1, foreign: 0 });
+  });
+
+  it("the pre-R-2718 shared file is used only when it was written through the same node_modules", () => {
+    const dir = path.join(tmp, "legacy-cache");
+    const src = linked("wt-nm-legacy-src", modsA);
+    expect(tsc(src).status).toBe(0);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.copyFileSync(path.join(src, BUILD_INFO), cacheFile(src, dir, { legacy: true })); // as saved before R-2718
+
+    const same = linked("wt-nm-legacy-same", modsA);
+    const r1 = restoreBuildInfo(same, { dir });
+    expect(r1).toMatchObject({ restored: true, legacy: true, shared: { foreign: 0 } });
+    expect(restoreLine(r1)).toMatch(/R-2718 se pehle wali key/);
+
+    const other = linked("wt-nm-legacy-other", modsB);
+    const r2 = restoreBuildInfo(other, { dir });
+    expect(r2).toMatchObject({ restored: false, reason: "empty", legacy: true });
+    expect(r2.shared.foreign).toBeGreaterThan(0);
+    expect(fs.existsSync(path.join(other, BUILD_INFO))).toBe(false);
+    expect(restoreLine(r2)).toMatch(/doosre clone ke node_modules se bani thi/);
+
+    /* and a green run saves under the NEW key, so the two clones no longer overwrite each other */
+    expect(tsc(other).status).toBe(0);
+    expect(saveBuildInfo(other, { dir }).to).toBe(cacheFile(other, dir));
+    expect(cacheFile(other, dir)).not.toBe(cacheFile(other, dir, { legacy: true }));
+  });
+
+  it("own vs shared: a shared build info from the other clone loses to the own one", () => {
+    const dir = path.join(tmp, "own-vs-foreign");
+    const b = linked("wt-nm-b-saver", modsB);
+    expect(tsc(b).status).toBe(0);
+    fs.mkdirSync(dir, { recursive: true });
+    /* simulate the old poisoning: B's build info stored where A will look */
+    const a = linked("wt-nm-a-own", modsA);
+    fs.copyFileSync(path.join(b, BUILD_INFO), cacheFile(a, dir));
+    expect(tsc(a).status).toBe(0);
+    fs.writeFileSync(path.join(a, "c.ts"), C + "export const g: number = glob1;\nexport const more = 1;\n");
+    const r = restoreBuildInfo(a, { dir });
+    expect(r).toMatchObject({ restored: false, reason: "own", own: { foreign: 0, changed: 1 } });
+    expect(r.shared.foreign).toBeGreaterThan(0);
+  });
+
+  it("type errors are still caught after the R-2718 restore (same tsc, only the starting point differs)", () => {
+    const dir = path.join(tmp, "nm-safety");
+    const first = linked("wt-nm-safe-first", modsA);
+    expect(tsc(first).status).toBe(0);
+    saveBuildInfo(first, { dir });
+    const wt = linked("wt-nm-safe", modsA);
+    fs.writeFileSync(path.join(wt, "a.ts"), "export function price(amount: number): string { return String(amount); }\n");
+    expect(restoreBuildInfo(wt, { dir }).restored).toBe(true);
+    const r = tsc(wt);
+    expect(r.status).not.toBe(0);
+    expect(`${r.stdout}${r.stderr}`).toMatch(/b\.ts\(2,\d+\): error TS2322/);
   });
 });
