@@ -209,6 +209,30 @@ describe("R-2501 receipts-import route", () => {
   });
 });
 
+/* R-2693 (p0): staging had 482 scanned payments not imported and no stored reason — the preview's
+   left-out list was cut at 500 without a word, and a USD payment showed its dollars as rupees. */
+describe("R-2693 nothing left out silently", () => {
+  it("every left-out payment is sent (600, not the first 500); the buckets add up to what was scanned", async () => {
+    st.facts = Array.from({ length: 600 }, (_, i) => fact({ zohoId: `s${i + 1}`, number: String(5000 + i),
+      lines: [{ zohoInvoiceId: `zmissing${i}`, invoiceNumber: `INV/25-26/${9000 + i}`, settle: 1180, tds: 0 }] }));
+    st.counts = { listed: 600, detailed: 600 };
+    const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.counts).toMatchObject({ scanned: 600, skip: 600 });
+    expect(body.skipped).toHaveLength(600);
+    expect(body.skippedMore).toBe(0);
+    expect(body.skipped[599].reason).toMatch(/INV\/25-26\/9599 is not an FY sale imported from Zoho here/);
+  });
+
+  it("a USD payment's left-out row carries its currency, its own amount and the ₹ at Zoho's rate", async () => {
+    st.facts = [fact({ zohoId: "pu1", number: "201", currency: "USD", foreignAmount: 663.05, fxRate: 88.2, amount: 58481, receivedPaise: 5848101,
+      problems: ["Received in USD in Zoho — not imported yet."] })];
+    st.counts = { listed: 1, detailed: 1 };
+    const body = await (await POST(req({ action: "preview", fy: "2025-26" }))).json();
+    expect(body.skipped[0]).toMatchObject({ number: "201", currency: "USD", foreignAmount: 663.05, amount: 58481 });
+    expect(body.skipped[0].reason).toMatch(/USD/);
+  });
+});
+
 describe("R-2607 the read runs on the server", () => {
   beforeEach(() => { bgst.state = null; bgst.requests = []; bgst.passes = []; bgst.tenantSeen = []; });
 
