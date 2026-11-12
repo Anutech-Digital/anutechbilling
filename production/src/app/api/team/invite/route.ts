@@ -25,6 +25,7 @@ import { z } from "zod";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { sendInternalEmail } from "@/lib/messaging";
 import { rateLimitShared } from "@/lib/security/rate-limit";
+import { maskEmail } from "@/lib/security/redact-contact";
 import { TEMP_PASSWORD_RATE, checkTypedTempPassword } from "@/lib/auth/temp-password";
 import { MUST_CHANGE_PASSWORD_KEY } from "@/lib/auth/must-change-password";
 import { initials } from "@/lib/utils";
@@ -309,7 +310,10 @@ export async function POST(request: NextRequest) {
        R-2517: NOT for the existing-login invite — its link is the proof of the invitee's mailbox,
        so it must not sit in the inviting company's own Sent folder (its Gmail / SMTP route). It
        goes out through the platform sender (SMTP / Resend), never through the tenant's route. */
-    ...(existingLogin ? {} : { route: { tenantId: me.tenant_id } }),
+    /* R-2696: no route, but still an email_log row under this company — before this, the
+       existing-login invite's failures left no trace at all (recordEmail needs a tenant). */
+    ...(existingLogin ? { logTenantId: me.tenant_id } : { route: { tenantId: me.tenant_id } }),
+    kind:    "team_invite",
     to:      email,
     from:    FROM_EMAIL,
     subject: `You've been invited to ${workspace} on ResellerOS`,
@@ -349,7 +353,7 @@ ${signupUrl}
       delete(): { eq(c: string, v: string): { eq(c: string, v: string): PromiseLike<{ error: unknown }> } };
     }).call(supabase, "membership_invites").delete().eq("tenant_id", me.tenant_id).eq("email", email);
     return NextResponse.json(
-      { error: `The invite email to ${email} could not be sent, so the invite was not saved (they can accept only through the link in that email). Next step: check the app's email setup, then invite them again.` },
+      { error: `The invite email to ${email} could not be sent, so the invite was not saved (they can accept only through the link in that email). Reason: ${mailFailureReason(emailRes.errorMessage)}. Next step: check the app's email setup, then invite them again.` },
       { status: 502, headers: NO_STORE },
     );
   }
@@ -445,6 +449,26 @@ async function createLoginWithTempPassword(admin: ReturnType<typeof createAdminC
     .is("accepted_at", null);
 
   return { ok: true, userId };
+}
+
+/**
+ * R-2696: the provider's reason for the owner's 502, readable. `Resend 403: {"message":"…"}` →
+ * `Resend 403 — …`; any address inside is masked (Resend names the account owner's address);
+ * no reason at all = stub mode (no mail sender set up).
+ */
+function mailFailureReason(raw: string | null | undefined): string {
+  const text = (raw ?? "").trim();
+  if (!text) return "no mail sender is set up (the email was only stubbed)";
+  let reason = text;
+  const m = /^(Resend \d{3}):\s*(\{[\s\S]*\})\s*$/.exec(text);
+  if (m) {
+    try {
+      const msg = (JSON.parse(m[2]) as { message?: unknown }).message;
+      if (typeof msg === "string" && msg.trim()) reason = `${m[1]} — ${msg.trim()}`;
+    } catch { /* cut off at 200 chars by send.ts — keep the raw text */ }
+  }
+  reason = reason.replace(/[^\s()<>"',;:]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, (a) => maskEmail(a));
+  return reason.replace(/[.\s]+$/, "").slice(0, 300);
 }
 
 /** "ravi.kumar@x.com" → "Ravi Kumar". The member can change it later. */
