@@ -3,7 +3,7 @@
 import * as React from "react";
 import { usePathname } from "next/navigation";
 import Link from "next/link";
-import { getModuleForRoute } from "@/lib/modules/registry";
+import { getModulesForRoute } from "@/lib/modules/registry";
 import { useModules } from "@/lib/modules/useModules";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -43,18 +43,20 @@ export function ModuleGate({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
-  const currentModule = getModuleForRoute(pathname);
+  const matchingModules = getModulesForRoute(pathname);
 
   // If route is not governed by any specific commercial module, allow
-  if (!currentModule) {
+  if (matchingModules.length === 0) {
     return <>{children}</>;
   }
 
-  const active = isModuleActive(currentModule.id);
-
-  if (active) {
+  // If any matching module is active (e.g. solo_free or invoicing for /invoices), allow access!
+  const isAllowed = matchingModules.some((m) => isModuleActive(m.id));
+  if (isAllowed) {
     return <>{children}</>;
   }
+
+  const currentModule = matchingModules[0];
 
   // Route belongs to a module that is currently DISABLED for this tenant:
   return (

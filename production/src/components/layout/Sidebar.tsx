@@ -33,6 +33,7 @@ import { useNavBadges } from "@/lib/hooks/useNavBadges";
 import { useCurrentUser, useIdentity } from "@/lib/hooks/useCurrentUser";
 import { roleLabel } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
+import { SYSTEM_MODULES } from "@/lib/modules/registry";
 
 // ============================================================
 // SidebarContent — shared between desktop + mobile
@@ -346,7 +347,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
                 <span className="text-xs font-semibold tracking-tight">Plugin Marketplace</span>
               </div>
               <span className="text-3xs font-mono bg-indigo-200 text-indigo-800 px-1.5 py-0.5 rounded font-bold">
-                5 Modules
+                {SYSTEM_MODULES.length} Modules
               </span>
             </Link>
           </div>

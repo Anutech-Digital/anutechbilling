@@ -1,13 +1,14 @@
 -- ============================================================================
 -- Migration: 20261112103000_modular_plugin_licensing.sql
 -- Purpose: Pluggable Modular Architecture Schema (DPDP compliant)
--- Allows ResellerOS to sell CRM, Invoicing, Subscriptions, Provisioning,
--- and TeamOps as individual plug-ins on top of the shared core database.
+-- Allows ResellerOS to offer Individual / Solo Free Forever tier, or sell
+-- CRM, Invoicing, Subscriptions, Provisioning, and TeamOps as individual plug-ins
+-- on top of the shared core database.
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS public.tenant_modules (
   tenant_id UUID NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
-  module_id TEXT NOT NULL CHECK (module_id IN ('crm', 'invoicing', 'subscriptions', 'provisioning', 'teamops')),
+  module_id TEXT NOT NULL CHECK (module_id IN ('solo_free', 'crm', 'invoicing', 'subscriptions', 'provisioning', 'teamops')),
   status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'trial', 'cancelled', 'past_due')),
   plan_tier TEXT NOT NULL DEFAULT 'standard',
   starts_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -80,12 +81,13 @@ AS $$
     AND (expires_at IS NULL OR expires_at > now());
 $$;
 
--- Safe Backfill: Ensure all existing tenants have all 5 modules active so nothing breaks
+-- Safe Backfill: Ensure all existing tenants have modules active so nothing breaks
 INSERT INTO public.tenant_modules (tenant_id, module_id, status, plan_tier)
 SELECT t.id, m.id, 'active', 'full_suite'
 FROM public.tenants t
 CROSS JOIN (
   VALUES 
+    ('solo_free'),
     ('crm'),
     ('invoicing'),
     ('subscriptions'),

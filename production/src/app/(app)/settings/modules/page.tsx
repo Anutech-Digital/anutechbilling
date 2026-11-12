@@ -20,6 +20,7 @@ export default function ModulesManagerPage() {
     totalCount,
     totalMonthlyCostRupees,
     bundleSavingsRupees,
+    isFreePlanOnly,
   } = useModules();
 
   return (
@@ -57,12 +58,20 @@ export default function ModulesManagerPage() {
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-indigo-700">Active Tenant Plan</span>
               <span className="text-xs font-mono bg-indigo-100 text-indigo-800 px-2 py-0.5 rounded-full font-medium">
-                {activeCount === totalCount ? "Full Suite" : "Custom A-la-carte"}
+                {isFreePlanOnly
+                  ? "Individual Free Plan"
+                  : activeCount === totalCount
+                  ? "Full Enterprise Suite"
+                  : "Custom A-la-carte"}
               </span>
             </div>
             <div className="mt-3 flex items-baseline gap-2">
-              <span className="text-3xl font-serif font-bold text-ink">₹{totalMonthlyCostRupees}</span>
-              <span className="text-xs text-ink-3">/ month</span>
+              <span className={`text-3xl font-serif font-bold ${isFreePlanOnly ? "text-emerald-600" : "text-ink"}`}>
+                ₹{totalMonthlyCostRupees}
+              </span>
+              <span className="text-xs text-ink-3">
+                {isFreePlanOnly ? "/ month (Free Forever)" : "/ month"}
+              </span>
             </div>
             {bundleSavingsRupees > 0 && (
               <p className="text-xs text-emerald-600 font-medium mt-1">
@@ -113,22 +122,27 @@ export default function ModulesManagerPage() {
         </Card>
       </div>
 
-      {/* 5 Pluggable Commercial Modules Grid */}
+      {/* Pluggable Modules Grid */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-ink">Commercial Modules (Plugins)</h2>
-          <span className="text-xs text-ink-3">Toggle switches to simulate client subscription tiers</span>
+          <h2 className="text-lg font-semibold text-ink">Modular Plugins & Tiers ({totalCount} Available)</h2>
+          <span className="text-xs text-ink-3">Toggle switches to customize tenant subscription tiers</span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {modules.map((m) => {
             const active = isModuleActive(m.id);
+            const isFreeTier = m.priceMonthlyRupees === 0 || m.id === "solo_free";
 
             return (
               <Card
                 key={m.id}
                 className={`p-5 transition-all duration-200 border-2 flex flex-col justify-between ${
-                  active ? "border-ink/20 shadow-sm bg-paper" : "border-hairline bg-paper-2/40 opacity-75"
+                  active
+                    ? isFreeTier
+                      ? "border-emerald-300 shadow-sm bg-gradient-to-br from-emerald-50/20 via-paper to-paper"
+                      : "border-ink/20 shadow-sm bg-paper"
+                    : "border-hairline bg-paper-2/40 opacity-75"
                 }`}
               >
                 <div>
@@ -136,13 +150,23 @@ export default function ModulesManagerPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-xs font-bold uppercase tracking-wider text-ink-3">{m.badge}</span>
                         <span
-                          className={`text-2xs px-1.5 py-0.5 rounded font-medium ${
-                            active ? "bg-emerald-100 text-emerald-800" : "bg-zinc-200 text-zinc-600"
+                          className={`text-xs font-bold uppercase tracking-wider ${
+                            isFreeTier ? "text-emerald-700" : "text-ink-3"
                           }`}
                         >
-                          {active ? "Active" : "Disabled"}
+                          {m.badge}
+                        </span>
+                        <span
+                          className={`text-2xs px-1.5 py-0.5 rounded font-medium ${
+                            active
+                              ? isFreeTier
+                                ? "bg-emerald-100 text-emerald-800 font-semibold"
+                                : "bg-emerald-100 text-emerald-800"
+                              : "bg-zinc-200 text-zinc-600"
+                          }`}
+                        >
+                          {active ? (isFreeTier ? "Active (Free)" : "Active") : "Disabled"}
                         </span>
                       </div>
                       <h3 className="font-serif text-lg font-semibold text-ink leading-tight">{m.name}</h3>
@@ -163,12 +187,23 @@ export default function ModulesManagerPage() {
                   <p className="text-xs text-ink-3 mt-2 line-clamp-2">{m.tagline}</p>
 
                   {/* Price */}
-                  <div className="mt-4 p-2.5 bg-paper-2 rounded-lg border border-hairline flex items-baseline justify-between">
-                    <span className="text-xs text-ink-3">Standalone Price</span>
-                    <div className="flex items-baseline gap-1">
-                      <span className="text-lg font-serif font-bold text-ink">₹{m.priceMonthlyRupees}</span>
-                      <span className="text-2xs text-ink-3">/mo</span>
-                    </div>
+                  <div
+                    className={`mt-4 p-2.5 rounded-lg border flex items-baseline justify-between ${
+                      isFreeTier ? "bg-emerald-50/60 border-emerald-200" : "bg-paper-2 border-hairline"
+                    }`}
+                  >
+                    <span className="text-xs text-ink-3">{isFreeTier ? "Pricing Tier" : "Standalone Price"}</span>
+                    {m.priceMonthlyRupees === 0 ? (
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-base font-serif font-bold text-emerald-600">FREE FOREVER</span>
+                        <span className="text-2xs text-emerald-700 font-medium">₹0/mo</span>
+                      </div>
+                    ) : (
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-lg font-serif font-bold text-ink">₹{m.priceMonthlyRupees}</span>
+                        <span className="text-2xs text-ink-3">/mo</span>
+                      </div>
+                    )}
                   </div>
 
                   {/* Key Features */}

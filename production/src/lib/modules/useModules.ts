@@ -56,20 +56,37 @@ export function useModules() {
     saveModules(DEFAULT_ACTIVE_MODULE_IDS);
   }, [saveModules]);
 
+  const paidModules = React.useMemo(
+    () => SYSTEM_MODULES.filter((m) => m.priceMonthlyRupees > 0),
+    [],
+  );
+
+  const allPaidModulesActive = React.useMemo(() => {
+    return paidModules.every((m) => activeModuleIds.includes(m.id));
+  }, [paidModules, activeModuleIds]);
+
   const totalMonthlyCostRupees = React.useMemo(() => {
+    // If all commercial paid modules are active, bundle cap is ₹1999
+    if (allPaidModulesActive) {
+      return 1999;
+    }
     return SYSTEM_MODULES.filter((m) => activeModuleIds.includes(m.id)).reduce(
       (sum, m) => sum + m.priceMonthlyRupees,
       0,
     );
-  }, [activeModuleIds]);
+  }, [allPaidModulesActive, activeModuleIds]);
 
   const bundleSavingsRupees = React.useMemo(() => {
-    // If all 5 modules are taken, full bundle is ₹1999 (regular sum is 499+499+399+999+499 = ₹2895)
-    if (activeModuleIds.length === SYSTEM_MODULES.length) {
+    // If all 5 commercial paid modules are taken, full bundle is ₹1999 (regular sum is 499+499+399+999+499 = ₹2895)
+    if (allPaidModulesActive) {
       return 2895 - 1999; // ₹896 discount
     }
     return 0;
-  }, [activeModuleIds]);
+  }, [allPaidModulesActive]);
+
+  const isFreePlanOnly = React.useMemo(() => {
+    return totalMonthlyCostRupees === 0 && activeModuleIds.includes("solo_free");
+  }, [totalMonthlyCostRupees, activeModuleIds]);
 
   return {
     modules: SYSTEM_MODULES,
@@ -78,8 +95,9 @@ export function useModules() {
     isModuleActive,
     toggleModule,
     activateAll,
-    totalMonthlyCostRupees: activeModuleIds.length === SYSTEM_MODULES.length ? 1999 : totalMonthlyCostRupees,
+    totalMonthlyCostRupees,
     bundleSavingsRupees,
+    isFreePlanOnly,
     activeCount: activeModuleIds.length,
     totalCount: SYSTEM_MODULES.length,
   };

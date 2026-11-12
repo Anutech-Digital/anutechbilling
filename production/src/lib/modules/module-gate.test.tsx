@@ -59,11 +59,12 @@ afterEach(() => {
 });
 
 describe("Modular Architecture - useModules Hook", () => {
-  it("initializes with all 5 commercial modules enabled and full bundle discount", () => {
+  it("initializes with all 6 modules enabled (including solo_free) and full bundle discount", () => {
     const { result } = renderHook(() => useModules());
 
     expect(result.current.isLoaded).toBe(true);
-    expect(result.current.activeCount).toBe(5);
+    expect(result.current.activeCount).toBe(6);
+    expect(result.current.isModuleActive("solo_free")).toBe(true);
     expect(result.current.isModuleActive("crm")).toBe(true);
     expect(result.current.isModuleActive("invoicing")).toBe(true);
     expect(result.current.isModuleActive("subscriptions")).toBe(true);
@@ -83,7 +84,7 @@ describe("Modular Architecture - useModules Hook", () => {
       result.current.toggleModule("crm");
     });
 
-    expect(result.current.activeCount).toBe(4);
+    expect(result.current.activeCount).toBe(5);
     expect(result.current.isModuleActive("crm")).toBe(false);
     expect(result.current.bundleSavingsRupees).toBe(0);
 
@@ -93,7 +94,17 @@ describe("Modular Architecture - useModules Hook", () => {
     // Verify written to localStorage
     const stored = JSON.parse(storageMock.getItem("reselleros_active_modules_v1") || "[]");
     expect(stored).not.toContain("crm");
-    expect(stored).toHaveLength(4);
+    expect(stored).toHaveLength(5);
+  });
+
+  it("computes isFreePlanOnly correctly when only solo_free is active", () => {
+    storageMock.setItem("reselleros_active_modules_v1", JSON.stringify(["solo_free"]));
+
+    const { result } = renderHook(() => useModules());
+    expect(result.current.activeCount).toBe(1);
+    expect(result.current.isFreePlanOnly).toBe(true);
+    expect(result.current.totalMonthlyCostRupees).toBe(0);
+    expect(result.current.bundleSavingsRupees).toBe(0);
   });
 
   it("rehydrates active modules from localStorage", () => {
@@ -121,7 +132,7 @@ describe("Modular Architecture - useModules Hook", () => {
       result.current.activateAll();
     });
 
-    expect(result.current.activeCount).toBe(5);
+    expect(result.current.activeCount).toBe(6);
     expect(result.current.isModuleActive("invoicing")).toBe(true);
     expect(result.current.totalMonthlyCostRupees).toBe(1999);
   });

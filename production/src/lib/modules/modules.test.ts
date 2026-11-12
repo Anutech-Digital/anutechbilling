@@ -2,15 +2,17 @@ import { describe, it, expect } from "vitest";
 import {
   SYSTEM_MODULES,
   getModuleForRoute,
+  getModulesForRoute,
   DEFAULT_ACTIVE_MODULE_IDS,
 } from "./registry";
 
 describe("Commercial Modular Architecture - Registry & Gating", () => {
-  it("defines all 5 commercial plug-and-play modules with DPDP-compliant metadata", () => {
-    expect(SYSTEM_MODULES).toHaveLength(5);
+  it("defines all 6 plug-and-play modules including Solo Free Forever pack", () => {
+    expect(SYSTEM_MODULES).toHaveLength(6);
 
     const ids = SYSTEM_MODULES.map((m) => m.id);
     expect(ids).toEqual([
+      "solo_free",
       "crm",
       "invoicing",
       "subscriptions",
@@ -20,32 +22,46 @@ describe("Commercial Modular Architecture - Registry & Gating", () => {
 
     expect(DEFAULT_ACTIVE_MODULE_IDS).toEqual(ids);
 
+    // Solo Free Tier validation
+    const soloFree = SYSTEM_MODULES.find((m) => m.id === "solo_free");
+    expect(soloFree).toBeDefined();
+    expect(soloFree?.priceMonthlyRupees).toBe(0);
+    expect(soloFree?.isFreeTier).toBe(true);
+    expect(soloFree?.badge).toBe("Free Forever");
+
     for (const mod of SYSTEM_MODULES) {
       expect(mod.name).toBeTruthy();
-      expect(mod.priceMonthlyRupees).toBeGreaterThan(0);
       expect(mod.features.length).toBeGreaterThan(0);
       expect(mod.coreRoutes.length).toBeGreaterThan(0);
       expect(mod.dbTables.length).toBeGreaterThan(0);
       expect(mod.commercialTarget).toBeTruthy();
+      if (mod.id !== "solo_free") {
+        expect(mod.priceMonthlyRupees).toBeGreaterThan(0);
+      }
     }
   });
 
-  describe("getModuleForRoute mapping", () => {
+  describe("getModulesForRoute & getModuleForRoute mapping", () => {
     it("maps CRM routes correctly", () => {
       expect(getModuleForRoute("/leads")?.id).toBe("crm");
       expect(getModuleForRoute("/leads/new")?.id).toBe("crm");
       expect(getModuleForRoute("/deals")?.id).toBe("crm");
-      expect(getModuleForRoute("/contacts")?.id).toBe("crm");
       expect(getModuleForRoute("/enquiries")?.id).toBe("crm");
       expect(getModuleForRoute("/whatsapp")?.id).toBe("crm");
     });
 
-    it("maps Invoicing & Books routes correctly", () => {
-      expect(getModuleForRoute("/invoices")?.id).toBe("invoicing");
-      expect(getModuleForRoute("/quotes")?.id).toBe("invoicing");
-      expect(getModuleForRoute("/accounting")?.id).toBe("invoicing");
-      expect(getModuleForRoute("/accounting/expenses")?.id).toBe("invoicing");
-      expect(getModuleForRoute("/payments")?.id).toBe("invoicing");
+    it("maps shared invoicing routes to both solo_free and invoicing", () => {
+      const invoiceMods = getModulesForRoute("/invoices").map((m) => m.id);
+      expect(invoiceMods).toContain("solo_free");
+      expect(invoiceMods).toContain("invoicing");
+
+      const quoteMods = getModulesForRoute("/quotes").map((m) => m.id);
+      expect(quoteMods).toContain("solo_free");
+      expect(quoteMods).toContain("invoicing");
+
+      // Accounting is exclusive to pro invoicing module
+      const accountingMods = getModulesForRoute("/accounting").map((m) => m.id);
+      expect(accountingMods).toEqual(["invoicing"]);
     });
 
     it("maps Subscriptions & Billing routes correctly", () => {
@@ -77,14 +93,36 @@ describe("Commercial Modular Architecture - Registry & Gating", () => {
     });
   });
 
-  describe("ModuleGate Protection & Safety Against Premature DB Calls", () => {
+  describe("ModuleGate Protection & Multi-Module Route Matching", () => {
+    it("allows solo_free tier users to access basic invoicing without paid invoicing module", () => {
+      const soloOnlyActive = ["solo_free"];
+
+      function isAllowed(route: string): boolean {
+        const matchingMods = getModulesForRoute(route);
+        if (matchingMods.length === 0) return true; // System route
+        return matchingMods.some((m) => soloOnlyActive.includes(m.id));
+      }
+
+      // Solo user can access invoices, quotes, payments, contacts
+      expect(isAllowed("/invoices")).toBe(true);
+      expect(isAllowed("/quotes")).toBe(true);
+      expect(isAllowed("/payments")).toBe(true);
+      expect(isAllowed("/contacts")).toBe(true);
+
+      // Solo user cannot access enterprise accounting or CRM sales pipeline
+      expect(isAllowed("/accounting")).toBe(false);
+      expect(isAllowed("/leads")).toBe(false);
+      expect(isAllowed("/deals")).toBe(false);
+      expect(isAllowed("/team")).toBe(false);
+    });
+
     it("ensures inactive modules gate protected routes", () => {
       const activeModules = ["invoicing", "subscriptions"]; // CRM is disabled
 
       function isAllowed(route: string): boolean {
-        const mod = getModuleForRoute(route);
-        if (!mod) return true; // System route
-        return activeModules.includes(mod.id);
+        const matchingMods = getModulesForRoute(route);
+        if (matchingMods.length === 0) return true; // System route
+        return matchingMods.some((m) => activeModules.includes(m.id));
       }
 
       // CRM routes must be locked

@@ -18,9 +18,32 @@ export interface SystemModule {
   features: string[];
   dbTables: string[];
   commercialTarget: string;
+  isFreeTier?: boolean;
 }
 
 export const SYSTEM_MODULES: SystemModule[] = [
+  {
+    id: "solo_free",
+    name: "Individual & Solo Freelancer Pack",
+    badge: "Free Forever",
+    tagline: "Essential Invoicing, UPI QR Payments & Client Contacts for Solo Creators",
+    description: "Built specifically for individual professionals, solo consultants, and freelancers. Create professional estimates and GST/non-GST invoices, collect direct UPI payments via QR code, and manage client contacts at ₹0 cost forever.",
+    priceMonthlyRupees: 0,
+    iconName: "invoices",
+    accentColor: "#10B981", // Emerald
+    isFreeTier: true,
+    coreRoutes: ["/invoices", "/quotes", "/payments", "/contacts", "/customers"],
+    features: [
+      "Tax Invoices & Proforma Estimates",
+      "Direct UPI QR Code & Online Payment Links",
+      "1-Click WhatsApp Document & Invoice Sharing",
+      "Client Master Directory (Individual & Business)",
+      "Automated 1% / 2% TDS Calculation (Sec 194C)",
+      "100% Free Forever — Zero Monthly Fees",
+    ],
+    dbTables: ["invoices", "quotes", "payments", "customers", "contacts"],
+    commercialTarget: "Individual freelancers, solo consultants, independent contractors, and micro-entrepreneurs who need clean billing without monthly subscription fees.",
+  },
   {
     id: "crm",
     name: "Reseller CRM & Sales Pipeline",
@@ -123,12 +146,19 @@ export const SYSTEM_MODULES: SystemModule[] = [
   },
 ];
 
-/** Return module corresponding to a given URL pathname */
+/** Return all modules corresponding to a given URL pathname */
+export function getModulesForRoute(pathname: string): SystemModule[] {
+  return SYSTEM_MODULES.filter((m) =>
+    m.coreRoutes.some((route) => pathname === route || pathname.startsWith(route + "/")),
+  );
+}
+
+/** Return primary module corresponding to a given URL pathname */
 export function getModuleForRoute(pathname: string): SystemModule | undefined {
   return SYSTEM_MODULES.find((m) =>
     m.coreRoutes.some((route) => pathname === route || pathname.startsWith(route + "/")),
   );
 }
 
-/** Default active modules for all tenants */
-export const DEFAULT_ACTIVE_MODULE_IDS = ["crm", "invoicing", "subscriptions", "provisioning", "teamops"];
+/** Default active modules for all tenants (includes Individual Free Pack) */
+export const DEFAULT_ACTIVE_MODULE_IDS = ["solo_free", "crm", "invoicing", "subscriptions", "provisioning", "teamops"];
