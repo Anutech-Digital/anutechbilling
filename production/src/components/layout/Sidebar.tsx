@@ -10,7 +10,7 @@
 
 import * as React from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 import { Icon } from "@/components/ui/icon";
 import { Avatar } from "@/components/ui/avatar";
@@ -25,7 +25,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { type UserRole, type NavItem } from "@/lib/nav";
-import { buildSidebarApps, appForPath, withoutDistributorOnly } from "@/lib/nav-apps";
+import { buildSidebarApps, appForPath, withoutDistributorOnly, type SidebarApp } from "@/lib/nav-apps";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import type { TenantWithParent } from "@/lib/supabase/database.types";
@@ -39,9 +39,41 @@ import { cn } from "@/lib/utils";
 // ============================================================
 function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigate?: () => void; collapsed?: boolean; onToggle?: () => void }) {
   const pathname    = usePathname();
+  const router      = useRouter();
   const navBadges   = useNavBadges();
   const { data: me } = useCurrentUser();
   const identity = useIdentity();
+
+  // Optimistic pending navigation state for instant 0ms button click feedback
+  const [pendingHref, setPendingHref] = React.useState<string | null>(null);
+
+  // Clear pending state whenever route transition completes
+  React.useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
+
+  // Eager prefetching on mouse hover or focus
+  const handlePrefetch = React.useCallback((href?: string) => {
+    if (href && href.startsWith("/") && !href.startsWith("//") && href !== pathname) {
+      try {
+        router.prefetch(href);
+      } catch {}
+    }
+  }, [router, pathname]);
+
+  // Instant tactile feedback on link click / pointer-down
+  const handleLinkAction = React.useCallback((href: string) => {
+    if (href && href.startsWith("/") && !href.startsWith("//") && href !== pathname) {
+      setPendingHref(href);
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new Event("app:navigation-start"));
+      }
+      try {
+        router.prefetch(href);
+      } catch {}
+    }
+  }, [router, pathname]);
+
   // Which accordion parents (items with children) are expanded. Defaults to
   // open when the current route is the parent or one of its children.
   const [openMenus, setOpenMenus] = React.useState<Record<string, boolean>>({});
@@ -82,41 +114,59 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
   const activeApp =
     model.apps.find((a) => a.id === (pickedApp ?? routeApp ?? lastRouteApp)) ?? model.apps[0];
 
+  // Pre-warm items when hovering over an app button
+  const handleAppHover = React.useCallback((app: SidebarApp) => {
+    if (!app?.items) return;
+    for (const item of app.items.slice(0, 3)) {
+      if (item.href && item.href.startsWith("/")) {
+        try {
+          router.prefetch(item.href);
+        } catch {}
+      }
+    }
+  }, [router]);
+
   // Reusable link (plain item + accordion children).
   const renderLink = (it: NavItem, child = false) => {
-    const isActive = pathname === it.href;
+    const isTargetActive = (pendingHref ?? pathname) === it.href;
+    const isPending = pendingHref === it.href && pathname !== it.href;
     const b = it.badge ?? navBadges[it.id as keyof typeof navBadges];
     return (
       <Link
         key={it.id}
         href={it.href as any}
-        onClick={onNavigate}
+        prefetch={true}
+        onMouseEnter={() => handlePrefetch(it.href)}
+        onFocus={() => handlePrefetch(it.href)}
+        onPointerDown={() => handleLinkAction(it.href)}
+        onClick={() => {
+          handleLinkAction(it.href);
+          onNavigate?.();
+        }}
         target={it.external ? "_blank" : undefined}
         rel={it.external ? "noopener noreferrer" : undefined}
         title={collapsed ? (it.hint ? `${it.label} — ${it.hint}` : it.label) : it.hint}
         className={cn(
-          "group relative flex items-center rounded-md text-sm transition-colors",
+          "group relative flex items-center rounded-md text-sm transition-all duration-100 select-none",
           collapsed ? "justify-center px-0 py-2" : child ? "gap-2 pl-8 pr-3 py-1.5 text-[13px]" : "gap-2.5 px-3 py-1.5",
-          isActive
-            ? "bg-amber-soft text-amber-ink font-medium"
-            : "text-ink-2 hover:bg-paper-2 hover:text-ink"
+          isTargetActive
+            ? "bg-amber-soft text-amber-ink font-medium shadow-2xs"
+            : "text-ink-2 hover:bg-paper-2 hover:text-ink active:scale-[0.98]"
         )}
-        aria-current={isActive ? "page" : undefined}
+        aria-current={isTargetActive ? "page" : undefined}
       >
         {child && !collapsed
-          ? <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0", isActive ? "bg-amber" : "bg-ink-3/40")} />
-          : <Icon name={it.icon} size={15} className={cn("flex-shrink-0", isActive ? "text-amber" : "text-ink-3 group-hover:text-ink-2")} />}
+          ? <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0 transition-colors", isTargetActive ? "bg-amber" : "bg-ink-3/40")} />
+          : <Icon name={it.icon} size={15} className={cn("flex-shrink-0 transition-colors", isTargetActive ? "text-amber" : "text-ink-3 group-hover:text-ink-2")} />}
         {!collapsed && <span className="flex-1 truncate" title={it.label}>{it.label}</span>}
+        {isPending && (
+          <span className="w-1.5 h-1.5 rounded-full bg-amber animate-ping shrink-0 ml-1" title="Loading..." />
+        )}
         {!collapsed && it.external && <Icon name="external" size={12} className="flex-shrink-0 text-ink-3" />}
-        {/* The expanded badge reads text-amber-ink, matching every other `bg-amber/15` badge
-            in the app (dashboard:865, mobile:404, platform:398). This one was the exception:
-            it measured 4.30:1 against the active row's amber-soft, under the 4.5 AA floor at
-            10px — and actually worse than that, because the badge's own 15% amber tint darkens
-            the very surface the measurement stopped at. */}
         {b && (collapsed ? (
           <span className="absolute top-1 right-2 w-1.5 h-1.5 rounded-full bg-amber" />
         ) : (
-          <span className={cn("text-3xs px-1.5 py-0.5 rounded-full tabular-nums flex-shrink-0", isActive ? "bg-amber/15 text-amber-ink" : "bg-paper-2 text-ink-3")}>
+          <span className={cn("text-3xs px-1.5 py-0.5 rounded-full tabular-nums flex-shrink-0", isTargetActive ? "bg-amber/15 text-amber-ink" : "bg-paper-2 text-ink-3")}>
             {b}
           </span>
         ))}
@@ -126,7 +176,8 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
 
   // A group item — accordion parent (has children, e.g. Reports) or plain link.
   const renderItem = (item: NavItem) => {
-    const active = pathname === item.href;
+    const active = (pendingHref ?? pathname) === item.href;
+    const isPending = pendingHref === item.href && pathname !== item.href;
     /* R-497: a heading-only row (the role may open some children, not the row itself — a
        sales user's Customers → Contacts). Expanded: a toggle button, open by default.
        Collapsed: just the children it holds, as icon rows. Never a link to the parent. */
@@ -139,7 +190,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
             type="button"
             onClick={() => setOpenMenus((m) => ({ ...m, [item.id]: !isOpen }))}
             aria-expanded={isOpen}
-            className="group w-full flex items-center gap-2.5 rounded-md text-sm transition-colors px-3 py-1.5 text-ink-2 hover:bg-paper-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+            className="group w-full flex items-center gap-2.5 rounded-md text-sm transition-colors px-3 py-1.5 text-ink-2 hover:bg-paper-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber active:scale-[0.98]"
           >
             <Icon name={item.icon} size={15} className="flex-shrink-0 text-ink-3 group-hover:text-ink-2" />
             <span className="flex-1 truncate text-left" title={item.label}>{item.label}</span>
@@ -160,15 +211,25 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
           <div className="flex items-center">
             <Link
               href={item.href as any}
-              onClick={onNavigate}
+              prefetch={true}
+              onMouseEnter={() => handlePrefetch(item.href)}
+              onFocus={() => handlePrefetch(item.href)}
+              onPointerDown={() => handleLinkAction(item.href)}
+              onClick={() => {
+                handleLinkAction(item.href);
+                onNavigate?.();
+              }}
               className={cn(
-                "group flex items-center gap-2.5 rounded-md text-sm transition-colors flex-1 px-3 py-1.5",
-                active ? "bg-amber-soft text-amber-ink font-medium" : "text-ink-2 hover:bg-paper-2 hover:text-ink"
+                "group flex items-center gap-2.5 rounded-md text-sm transition-all duration-100 flex-1 px-3 py-1.5 select-none",
+                active ? "bg-amber-soft text-amber-ink font-medium shadow-2xs" : "text-ink-2 hover:bg-paper-2 hover:text-ink active:scale-[0.98]"
               )}
               aria-current={active ? "page" : undefined}
             >
-              <Icon name={item.icon} size={15} className={cn("flex-shrink-0", active ? "text-amber" : "text-ink-3 group-hover:text-ink-2")} />
+              <Icon name={item.icon} size={15} className={cn("flex-shrink-0 transition-colors", active ? "text-amber" : "text-ink-3 group-hover:text-ink-2")} />
               <span className="flex-1 truncate" title={item.label}>{item.label}</span>
+              {isPending && (
+                <span className="w-1.5 h-1.5 rounded-full bg-amber animate-ping shrink-0 ml-1" title="Loading..." />
+              )}
             </Link>
             <button
               type="button"
@@ -267,8 +328,18 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
           <div className="px-1 mb-2.5">
             <Link
               href="/settings/modules"
-              onClick={onNavigate}
-              className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-900 transition-colors shadow-2xs"
+              prefetch={true}
+              onMouseEnter={() => handlePrefetch("/settings/modules")}
+              onFocus={() => handlePrefetch("/settings/modules")}
+              onPointerDown={() => handleLinkAction("/settings/modules")}
+              onClick={() => {
+                handleLinkAction("/settings/modules");
+                onNavigate?.();
+              }}
+              className={cn(
+                "flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg border border-indigo-200 bg-indigo-50/70 hover:bg-indigo-100/70 text-indigo-900 transition-all duration-100 shadow-2xs active:scale-[0.98]",
+                (pendingHref ?? pathname) === "/settings/modules" && "ring-2 ring-indigo-500 bg-indigo-100",
+              )}
             >
               <div className="flex items-center gap-2">
                 <span className="w-2 h-2 rounded-full bg-indigo-600 animate-pulse" />
@@ -298,14 +369,20 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
               <Link
                 key={m.href}
                 href={m.href as never}
-                onClick={onNavigate}
-                className="flex items-center gap-2 rounded-lg border border-hairline bg-amber-soft/40 px-3 py-2.5 text-sm font-semibold text-ink hover:bg-amber-soft active:bg-amber-soft/70"
+                prefetch={true}
+                onMouseEnter={() => handlePrefetch(m.href)}
+                onFocus={() => handlePrefetch(m.href)}
+                onPointerDown={() => handleLinkAction(m.href)}
+                onClick={() => {
+                  handleLinkAction(m.href);
+                  onNavigate?.();
+                }}
+                className={cn(
+                  "flex items-center gap-2 rounded-lg border border-hairline bg-amber-soft/40 px-3 py-2.5 text-sm font-semibold text-ink hover:bg-amber-soft active:bg-amber-soft/70 active:scale-[0.98] transition-all duration-100",
+                  (pendingHref ?? pathname) === m.href && "ring-2 ring-amber bg-amber-soft",
+                )}
               >
                 <Icon name={m.icon} size={16} className="text-amber shrink-0" />
-                {/* Same reason as the two below: a label clipped to an ellipsis has hidden part
-                    of itself, and `title` is the cheapest way to make it readable again. These
-                    four are short enough not to clip today, and the shortcut list is edited
-                    often enough that "today" is not the guarantee it sounds like. */}
                 <span className="truncate" title={m.label}>{m.label}</span>
               </Link>
             ))}
@@ -339,11 +416,16 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
                     key={app.id}
                     type="button"
                     aria-pressed={on}
-                    onClick={() => setPickedApp(app.id)}
+                    onMouseEnter={() => handleAppHover(app)}
+                    onFocus={() => handleAppHover(app)}
+                    onClick={() => {
+                      setPickedApp(app.id);
+                      handleAppHover(app);
+                    }}
                     title={collapsed ? app.label : undefined}
                     aria-label={collapsed ? app.label : undefined}
                     className={cn(
-                      "flex flex-col items-center gap-0.5 rounded-md px-1 py-1.5 text-xs transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber",
+                      "flex flex-col items-center gap-0.5 rounded-md px-1 py-1.5 text-xs transition-all duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber active:scale-95",
                       on ? "bg-amber-soft text-amber-ink font-semibold" : "text-ink-2 hover:bg-paper-2 hover:text-ink",
                     )}
                   >
@@ -366,14 +448,22 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
         {me?.isPlatformAdmin && (
           <Link
             href={"/platform" as never}
+            prefetch={true}
+            onMouseEnter={() => handlePrefetch("/platform")}
+            onFocus={() => handlePrefetch("/platform")}
+            onPointerDown={() => handleLinkAction("/platform")}
+            onClick={() => {
+              handleLinkAction("/platform");
+              onNavigate?.();
+            }}
             className={cn(
-              "group flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-colors mt-1 border-t border-hairline pt-3",
-              pathname.startsWith("/platform")
+              "group flex items-center gap-2.5 rounded-md px-3 py-2 text-sm transition-all duration-100 mt-1 border-t border-hairline pt-3 active:scale-[0.98]",
+              (pendingHref ?? pathname).startsWith("/platform")
                 ? "text-amber font-medium"
                 : "text-ink-2 hover:bg-paper-2 hover:text-ink",
             )}
           >
-            <Icon name="rocket" size={17} className={cn("flex-shrink-0", pathname.startsWith("/platform") ? "text-amber" : "text-ink-3 group-hover:text-ink-2")} />
+            <Icon name="rocket" size={17} className={cn("flex-shrink-0", (pendingHref ?? pathname).startsWith("/platform") ? "text-amber" : "text-ink-3 group-hover:text-ink-2")} />
             {!collapsed && <span className="flex-1 text-left">Platform · Signups</span>}
           </Link>
         )}

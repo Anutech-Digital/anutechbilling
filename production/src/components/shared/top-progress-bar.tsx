@@ -47,9 +47,11 @@ export function TopProgressBar() {
     }
   }, [pathname, searchParams, finishProgress, loading]);
 
-  // Intercept clicks on internal links to start progress immediately
+  // Intercept pointerdown and click on internal links to start progress immediately (0ms)
   React.useEffect(() => {
-    const handleClick = (e: MouseEvent) => {
+    const handleTrigger = (e: MouseEvent | PointerEvent) => {
+      // Don't intercept right clicks or secondary buttons
+      if ("button" in e && e.button !== 0) return;
       const target = (e.target as HTMLElement).closest("a");
       if (!target) return;
 
@@ -75,12 +77,14 @@ export function TopProgressBar() {
 
     window.addEventListener("app:navigation-start", handleStart);
     window.addEventListener("app:navigation-end", handleDone);
-    document.addEventListener("click", handleClick, { capture: true });
+    document.addEventListener("pointerdown", handleTrigger, { capture: true, passive: true });
+    document.addEventListener("click", handleTrigger, { capture: true });
 
     return () => {
       window.removeEventListener("app:navigation-start", handleStart);
       window.removeEventListener("app:navigation-end", handleDone);
-      document.removeEventListener("click", handleClick, { capture: true });
+      document.removeEventListener("pointerdown", handleTrigger, { capture: true });
+      document.removeEventListener("click", handleTrigger, { capture: true });
     };
   }, [pathname, startProgress, finishProgress]);
 
