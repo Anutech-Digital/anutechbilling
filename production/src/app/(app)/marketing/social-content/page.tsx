@@ -3,17 +3,18 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
-import { ArrowUpRight, Bot, Check, Facebook, Instagram, Linkedin, Send, Sparkles, User } from "lucide-react";
+import { ArrowUpRight, Bot, Check, Facebook, ImagePlus, Instagram, Linkedin, Send, Sparkles, User } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { MarketingPageHeader } from "@/components/features/marketing-hub/workspace-links";
 import { formatIst, quickTimes, toIstLocal } from "@/lib/marketing/social-schedule";
+import { pagePhotoId } from "@/lib/marketing/social-autopilot";
 
 type Platform = "facebook" | "instagram";
 type Item = { id: string; platform: Platform; format: "post" | "story"; caption: string; media_url: string | null;
   topic: string; origin: string; status: string; created_at: string; published_at: string | null; error: string | null;
-  scheduled_at: string | null };
+  scheduled_at: string | null; media_preview?: string | null };
 type Activity = { id: string; at: string; actor: "ai" | "person" | "system"; user_name: string | null; platform: string | null;
   action: string; detail: string; content_id: string | null; result: "ok" | "failed" | "waiting" };
 type State = { items: Item[]; canReview: boolean; canManage: boolean; aiReady: boolean;
@@ -63,6 +64,10 @@ export default function SocialContentPage() {
   const [planNote, setPlanNote] = React.useState<{ text: string; warn: boolean } | null>(null);
   const [aiWriting, setAiWriting] = React.useState(false);
   const [confirmDelete, setConfirmDelete] = React.useState<string | null>(null);
+  /* R-2697: AI pictures — which box is waiting for one, and today's link of each new picture. */
+  const [picturing, setPicturing] = React.useState<string | null>(null);
+  const [pictureProblem, setPictureProblem] = React.useState<{ target: string; text: string } | null>(null);
+  const [previews, setPreviews] = React.useState<Record<string, string>>({});
   const [showPostSettings, setShowPostSettings] = React.useState(false);
   /* R-2687: one control per AI action — Off / Ask me first / Autopilot (stored as auto_drafts + autopilot). */
   const postsMode: "off" | "ask" | "auto" = !autoDrafts ? "off" : autopilot ? "auto" : "ask";
@@ -112,9 +117,44 @@ export default function SocialContentPage() {
     finally { setBusy(false); setAiWriting(false); }
   }
 
+  /** R-2697: "Make picture with AI" — target "new" is the Post it yourself form, else the post being edited. */
+  async function makePicture(target: string, about: string, text: string) {
+    if (!about.trim() && !text.trim()) { setPictureProblem({ target, text: "Write the post (or what it is about) first, then make the picture." }); return; }
+    setBusy(true); setPicturing(target); setPictureProblem(null);
+    try {
+      const response = await fetch("/api/marketing/social-content/picture", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ topic: about, caption: text }) });
+      const data = await response.json() as { mediaUrl?: string; previewUrl?: string | null; error?: string; description?: string };
+      if (!response.ok || !data.mediaUrl) { setPictureProblem({ target, text: [data.error ?? "Could not make the picture.", data.description].filter(Boolean).join(" ") }); return; }
+      if (data.previewUrl) setPreviews((cur) => ({ ...cur, [data.mediaUrl!]: data.previewUrl! }));
+      if (target === "new") setMediaUrl(data.mediaUrl); else setEditMediaUrl(data.mediaUrl);
+      toast.success("Picture made.", { description: "It is kept hidden in your Facebook Page's photos until the post goes out." });
+    } catch (e) { toastError(e, { fallback: "Could not make the picture.", description: "Nothing was posted. Try again in a minute." }); }
+    finally { setBusy(false); setPicturing(null); }
+  }
+
+  /** R-2697: the picture box — a link, or an AI picture kept on the Page (shown with today's link). */
+  function pictureBox(target: string, value: string, setValue: (v: string) => void, about: string, text: string, label: string, knownPreview?: string | null) {
+    const isAi = Boolean(pagePhotoId(value));
+    const shown = isAi ? previews[value] ?? knownPreview ?? null : value;
+    return <div className="space-y-2">
+      {isAi
+        ? <p className="text-xs font-medium text-ink-2">{label}: AI picture <span className="font-normal text-ink-3">(kept hidden in your Facebook Page&apos;s photos)</span></p>
+        : <label className="block text-xs font-medium text-ink-2">{label}<input type="url" className={`${inputClass} mt-1`} value={value} onChange={e => setValue(e.target.value)} placeholder="https://… (a public image link)" /></label>}
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => void makePicture(target, about, text)}><ImagePlus size={14} /> {isAi ? "Make another picture" : "Make picture with AI"}</Button>
+        {value && <Button size="sm" variant="ghost" disabled={busy} onClick={() => setValue("")}>Remove picture</Button>}
+      </div>
+      {picturing === target && <p role="status" className="text-xs text-ink-3">The AI is drawing the picture… about 15 seconds.</p>}
+      {pictureProblem?.target === target && <p role="alert" className="rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber-ink">{pictureProblem.text}</p>}
+      {value && (shown
+        ? <div className="overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={shown} alt="Picture preview" className="max-h-60 w-full object-contain" /></div>
+        : isAi && <p className="text-xs text-ink-3">Picture saved. Facebook did not send a preview just now.</p>)}
+    </div>;
+  }
+
   async function send(submit: boolean) {
     if (when === "custom" && !customAt) { toast.error("Choose the post time.", { description: "Pick a date and time, or choose Tomorrow 9 AM." }); return; }
-    if (hasInstagram && !mediaUrl) { toast.error("Instagram needs a picture.", { description: "Paste a public image link, or untick Instagram." }); return; }
+    if (hasInstagram && !mediaUrl) { toast.error("Instagram needs a picture.", { description: "Press Make picture with AI, paste a public image link, or untick Instagram." }); return; }
     if (!story && !caption.trim()) { toast.error("Write the post first.", { description: "Type it in the box, or press Write with AI." }); return; }
     setBusy(true);
     try {
@@ -191,13 +231,13 @@ export default function SocialContentPage() {
 
   /** R-2672: "Plan this week now" — the AI plans the week straight away (same as the Monday run). */
   async function planNow() {
-    setBusy(true); setPlanNote({ text: "The AI is writing this week's posts… this takes about 30 seconds. Keep this page open.", warn: false });
+    setBusy(true); setPlanNote({ text: "The AI is writing this week's posts and making their pictures… this takes up to a minute. Keep this page open.", warn: false });
     try {
       const response = await fetch("/api/marketing/social-content/settings", { method: "POST" });
-      const data = await response.json() as { error?: string; description?: string; created?: number; autopilot?: boolean; instagramSkipped?: boolean };
+      const data = await response.json() as { error?: string; description?: string; created?: number; autopilot?: boolean; instagramSkipped?: boolean; aiPictures?: number; pictureProblem?: string | null };
       if (!response.ok) { setPlanNote({ text: [data.error ?? "Could not plan the week.", data.description].filter(Boolean).join(" "), warn: true }); return; }
       const n = data.created ?? 0;
-      setPlanNote({ text: `${n} post${n === 1 ? "" : "s"} planned for the next 7 days. ${data.autopilot ? "They go out by themselves at their time (see Scheduled). Press Stop on any you do not want." : "They are waiting for your approval (see Waiting for approval)."}${data.instagramSkipped ? " Instagram was skipped: add picture links below so Instagram posts are planned too." : ""}`, warn: Boolean(data.instagramSkipped) });
+      setPlanNote({ text: `${n} post${n === 1 ? "" : "s"} planned for the next 7 days. ${data.autopilot ? "They go out by themselves at their time (see Scheduled). Press Stop on any you do not want." : "They are waiting for your approval (see Waiting for approval)."}${data.aiPictures ? ` The AI made ${data.aiPictures === 1 ? "a picture" : `${data.aiPictures} pictures`} for them.` : ""}${data.instagramSkipped ? ` Instagram was skipped for posts without a picture${data.pictureProblem ? ` (${data.pictureProblem})` : ""}.` : ""}`, warn: Boolean(data.instagramSkipped) });
       await load();
       setTab(data.autopilot ? "scheduled" : "review");
     } catch (e) { toastError(e, { fallback: "Could not plan the week.", description: "Nothing was posted. Try again." }); }
@@ -254,7 +294,7 @@ export default function SocialContentPage() {
             <label className="block text-xs font-medium text-ink-2">What should the AI write about?<textarea className={`${inputClass} mt-1 min-h-20`} maxLength={1000} value={brief} onChange={e => setBrief(e.target.value)} placeholder="Your products, who you sell to, tone, and claims to avoid" /></label>
             <div className="grid gap-4 sm:grid-cols-[200px_minmax(0,1fr)]">
               <label className="block text-xs font-medium text-ink-2">Posts per week<select className={`${inputClass} mt-1`} value={postsPerWeek} onChange={e => setPostsPerWeek(Number(e.target.value))}>{[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
-              <label className="block text-xs font-medium text-ink-2">Picture links the AI may use (one per line, needed for Instagram)<textarea className={`${inputClass} mt-1 min-h-20 font-mono text-xs`} value={pictures} onChange={e => setPictures(e.target.value)} placeholder="https://… (a public image link)" /></label>
+              <label className="block text-xs font-medium text-ink-2">Your own picture links (optional, one per line). Leave empty and the AI makes a picture for each post<textarea className={`${inputClass} mt-1 min-h-20 font-mono text-xs`} value={pictures} onChange={e => setPictures(e.target.value)} placeholder="https://… (a public image link)" /></label>
             </div>
           </div>}
           {[["Comment replies", "AI answers comments on your posts"], ["Follower report", "Weekly growth and what worked"], ["Daily to-do", "5 quick things only a person may do"]].map(([title, text]) => <div key={title} className="grid gap-3 p-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-center">
@@ -292,8 +332,7 @@ export default function SocialContentPage() {
 
           <label className="block text-xs font-medium text-ink-2">Post text<textarea className={`${inputClass} mt-1 min-h-36 resize-y`} value={caption} maxLength={2200} onChange={e => setCaption(e.target.value)} placeholder="Type the post here, or press Write with AI" /><span className="mt-1 block text-right font-normal text-ink-3">{caption.length}/2200</span></label>
 
-          <label className="block text-xs font-medium text-ink-2">Picture link {hasInstagram ? "(needed for Instagram)" : "(optional)"}<input type="url" className={`${inputClass} mt-1`} value={mediaUrl} onChange={e => setMediaUrl(e.target.value)} placeholder="https://… (a public image link)" /></label>
-          {mediaUrl && <div className="overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={mediaUrl} alt="Picture preview" className="max-h-60 w-full object-contain" /></div>}
+          {pictureBox("new", mediaUrl, setMediaUrl, topic, caption, `Picture ${hasInstagram ? "(needed for Instagram)" : "(optional)"}`)}
 
           <fieldset><legend className="text-xs font-medium text-ink-2">When should it go out? (India time)</legend>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -342,8 +381,10 @@ export default function SocialContentPage() {
               <span className="text-xs text-ink-2">{item.status === "published" && item.published_at ? `Posted ${formatIst(item.published_at)}`
                 : item.scheduled_at ? (item.status === "approved" && new Date(item.scheduled_at).getTime() <= Date.now() ? "Posting in a few minutes" : `${item.status === "approved" ? "Posts" : "To post"} ${formatIst(item.scheduled_at)}`)
                 : item.status === "approved" ? "Approved — post by hand" : "No post time"}</span></div>
-            {editing === item.id ? <div className="mt-3 space-y-2"><textarea aria-label="Post text" className={`${inputClass} min-h-28`} value={editCaption} maxLength={2200} onChange={e => setEditCaption(e.target.value)} /><input type="url" aria-label="Picture link" className={inputClass} value={editMediaUrl} onChange={e => setEditMediaUrl(e.target.value)} placeholder="Picture link (https://…)" /><label className="block text-xs font-medium text-ink-2">Post time, India time<input type="datetime-local" className={`${inputClass} mt-1`} value={editPostAt} onChange={e => setEditPostAt(e.target.value)} /></label><div className="flex gap-2"><Button size="sm" disabled={busy} onClick={() => void act(item.id, "save", { caption: editCaption, mediaUrl: editMediaUrl || null, scheduledAt: editPostAt || null })}>Save changes</Button><Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button></div></div>
-              : <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-2">{item.caption || (item.format === "story" ? "Picture-only Story" : "No text")}</p>{item.media_url && <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={item.media_url} alt="Post picture" className="max-h-80 w-full object-contain" /></div>}</>}
+            {editing === item.id ? <div className="mt-3 space-y-2"><textarea aria-label="Post text" className={`${inputClass} min-h-28`} value={editCaption} maxLength={2200} onChange={e => setEditCaption(e.target.value)} />{pictureBox(item.id, editMediaUrl, setEditMediaUrl, item.topic, editCaption, "Picture", editMediaUrl === item.media_url ? item.media_preview : null)}<label className="block text-xs font-medium text-ink-2">Post time, India time<input type="datetime-local" className={`${inputClass} mt-1`} value={editPostAt} onChange={e => setEditPostAt(e.target.value)} /></label><div className="flex gap-2"><Button size="sm" disabled={busy} onClick={() => void act(item.id, "save", { caption: editCaption, mediaUrl: editMediaUrl || null, scheduledAt: editPostAt || null })}>Save changes</Button><Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button></div></div>
+              : <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-2">{item.caption || (item.format === "story" ? "Picture-only Story" : "No text")}</p>{item.media_url && (pagePhotoId(item.media_url) && !item.media_preview
+                ? <p className="mt-3 text-xs text-ink-3">AI picture saved in your Facebook Page&apos;s photos (Facebook did not send a preview just now).</p>
+                : <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={pagePhotoId(item.media_url) ? item.media_preview! : item.media_url} alt="Post picture" className="max-h-80 w-full object-contain" /></div>)}</>}
             {item.error && <p className="mt-2 rounded-lg bg-rose-soft p-2 text-xs text-rose-ink">Meta said: {item.error} — fix it, then send for approval again.</p>}
             <div className="mt-4 flex flex-wrap gap-2 border-t border-hairline pt-3">
               {item.status === "review" && state.canReview && <><Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "approve")}><Check size={14} /> Approve</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void act(item.id, "return")}>Send back</Button></>}

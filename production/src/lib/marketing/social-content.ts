@@ -2,6 +2,7 @@ import "server-only";
 import { withTenant, type TenantSession } from "@/server/db";
 import { createClient } from "@/lib/supabase/server";
 import { readFacebookPage } from "@/lib/integrations/facebook-page";
+import { pagePhotoId, pagePhotoRef } from "./social-autopilot";
 
 export type SocialPlatform = "facebook" | "instagram";
 export type SocialFormat = "post" | "story";
@@ -119,8 +120,42 @@ export async function metaFollowers(pageId: string, pageToken: string, instagram
   return { facebook: fb?.followers_count ?? fb?.fan_count ?? null, instagram: ig?.followers_count ?? null };
 }
 
+/**
+ * R-2697: keep a picture as a hidden (unpublished) photo on the Page — it does not show on the
+ * Page, works from localhost, and gives Instagram a public link. Returns pagePhotoRef(<id>).
+ */
+export async function uploadPagePhoto(pageId: string, pageToken: string, bytes: Buffer, mimeType: string): Promise<string> {
+  const form = new FormData();
+  form.set("published", "false");
+  form.set("access_token", pageToken);
+  form.set("source", new Blob([new Uint8Array(bytes)], { type: mimeType }), mimeType === "image/jpeg" ? "picture.jpg" : "picture.png");
+  const response = await fetch(`${GRAPH}/${encodeURIComponent(pageId)}/photos`, { method: "POST", body: form, cache: "no-store", signal: AbortSignal.timeout(60_000) });
+  const json = await response.json().catch(() => ({})) as { id?: string; error?: { message?: string } };
+  if (!response.ok || !json.id) throw new Error(json.error?.message?.slice(0, 300) || `Meta returned ${response.status}.`);
+  return pagePhotoRef(json.id);
+}
+
+/** R-2697: today's public link of each hidden Page photo (Meta's links expire after a few days). */
+export async function pagePhotoLinks(refs: readonly (string | null)[], pageToken: string): Promise<Map<string, string>> {
+  const ids = [...new Set(refs.map(pagePhotoId).filter((id): id is string => Boolean(id)))].slice(0, 40);
+  const links = new Map<string, string>();
+  if (!ids.length) return links;
+  /* One call per photo: Meta refuses the batch "ids" query from v26 on. */
+  await Promise.all(ids.map(async (id) => {
+    try {
+      const response = await fetch(`${GRAPH}/${id}?${new URLSearchParams({ fields: "images", access_token: pageToken })}`, { cache: "no-store", signal: AbortSignal.timeout(15_000) });
+      if (!response.ok) return;
+      const json = await response.json() as { images?: { source?: string; width?: number }[] };
+      const best = [...(json.images ?? [])].sort((a, b) => (b.width ?? 0) - (a.width ?? 0))[0]?.source;
+      if (best) links.set(pagePhotoRef(id), best);
+    } catch { /* the screen shows "no preview"; publishing reads it again */ }
+  }));
+  return links;
+}
+
 export function validMediaUrl(value: string | null): boolean {
   if (!value) return true;
+  if (pagePhotoId(value)) return true;
   try {
     const url = new URL(value);
     return url.protocol === "https:" && !!url.hostname && !/^(localhost|127\.|10\.|192\.168\.|169\.254\.|172\.(1[6-9]|2\d|3[01])\.|\[|.*\.local$)/i.test(url.hostname);
@@ -147,6 +182,12 @@ export async function publishWithPage(
 ): Promise<string> {
   if (!connection.pageId || !connection.pageToken) throw new Error("Connect your Facebook Page first.");
   const token = connection.pageToken;
+  /* R-2697: an AI picture kept on the Page — take today's link just before posting. */
+  if (pagePhotoId(item.media_url)) {
+    const link = (await pagePhotoLinks([item.media_url], token)).get(item.media_url!);
+    if (!link) throw new Error("The AI picture is no longer in your Facebook Page's photos. Edit the post and make a new picture.");
+    item = { ...item, media_url: link };
+  }
   if (item.platform === "facebook") {
     if (item.format !== "post") throw new Error("Facebook Stories are not available here yet.");
     if (item.media_url) return (await graphPost(`${connection.pageId}/photos`, { url: item.media_url, caption: item.caption, access_token: token })).id;

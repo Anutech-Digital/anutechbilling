@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePictureLinks, pictureFor, planSlots, planStatus } from "./social-autopilot";
+import { pagePhotoId, pagePhotoRef, parsePictureLinks, pictureFor, picturePrompt, planSlots, planStatus } from "./social-autopilot";
 import { toIstLocal } from "./social-schedule";
 
 describe("R-2672 AI autopilot — the week it plans", () => {
@@ -37,5 +37,32 @@ describe("R-2672 AI autopilot — the week it plans", () => {
 
   it("picture links: https only, one per line, no repeats", () => {
     expect(parsePictureLinks("https://x.com/a.jpg\n\nhttp://x.com/b.jpg\nhttps://x.com/a.jpg\nnot a link")).toEqual({ urls: ["https://x.com/a.jpg"], bad: ["http://x.com/b.jpg", "not a link"] });
+  });
+});
+
+describe("R-2697 AI picture kept on the Facebook Page", () => {
+  it("reads only a well-formed fbphoto reference", () => {
+    const ref = pagePhotoRef("122123456789");
+    expect(ref).toBe("https://www.facebook.com/photo/?fbid=122123456789&ros=ai");
+    expect(ref).toMatch(/^https:\/\//); // the database's media_url check only takes https links
+    expect(pagePhotoId(ref)).toBe("122123456789");
+    expect(pagePhotoId("https://example.com/a.jpg")).toBeNull();
+    expect(pagePhotoId("https://www.facebook.com/photo/?fbid=122123456789")).toBeNull(); // a pasted link stays a link
+    expect(pagePhotoId("https://www.facebook.com/photo/?fbid=12ab&ros=ai")).toBeNull();
+    expect(pagePhotoId(`${ref} `)).toBeNull();
+    expect(pagePhotoId(null)).toBeNull();
+    expect(() => pagePhotoRef("../x")).toThrow();
+  });
+  it("asks for a picture of the topic with no words, logos or real people", () => {
+    const p = picturePrompt("Backups for small offices", "Do you back up email? #GoogleWorkspace https://x.y/z");
+    expect(p).toContain("Backups for small offices");
+    expect(p).toContain("Do you back up email?");
+    expect(p).not.toContain("#GoogleWorkspace");
+    expect(p).not.toContain("https://");
+    expect(p).toMatch(/Do not put any words/);
+    expect(p).toMatch(/No recognisable real people/);
+  });
+  it("uses the post text when there is no topic", () => {
+    expect(picturePrompt("", "Five tips for safer passwords")).toContain("about: Five tips for safer passwords");
   });
 });

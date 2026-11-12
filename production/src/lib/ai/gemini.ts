@@ -669,14 +669,17 @@ export async function geminiImagenImage(args: {
     return { ok: false, code: "failed", message };
   };
 
+  /* R-2697: a Gemini image model ("gemini-…-image", e.g. gemini-2.5-flash-image) answers on
+     :generateContent with the picture as inline data; Imagen models answer on :predict. Many keys
+     have only the Gemini image models. */
+  const geminiImageModel = /^gemini-/i.test(args.model);
   try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(args.model)}:predict`, {
+    const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(args.model)}:${geminiImageModel ? "generateContent" : "predict"}`, {
       method: "POST",
       headers: { "content-type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        instances: [{ prompt: args.prompt }],
-        parameters: { sampleCount: 1, aspectRatio: args.aspectRatio, personGeneration: "allow_adult" },
-      }),
+      body: JSON.stringify(geminiImageModel
+        ? { contents: [{ role: "user", parts: [{ text: args.prompt }] }], generationConfig: { responseModalities: ["IMAGE"], imageConfig: { aspectRatio: args.aspectRatio } } }
+        : { instances: [{ prompt: args.prompt }], parameters: { sampleCount: 1, aspectRatio: args.aspectRatio, personGeneration: "allow_adult" } }),
       signal: AbortSignal.timeout(args.timeoutMs ?? 60_000),
     });
     if (!res.ok) {
@@ -687,7 +690,16 @@ export async function geminiImagenImage(args: {
       }
       return fail(failureReason(res.status, body));
     }
-    const data = (await res.json()) as { predictions?: Array<{ bytesBase64Encoded?: string; mimeType?: string; raiFilteredReason?: string }> };
+    const raw = (await res.json()) as {
+      predictions?: Array<{ bytesBase64Encoded?: string; mimeType?: string; raiFilteredReason?: string }>;
+      candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }>;
+      promptFeedback?: { blockReason?: string };
+    };
+    const inline = raw.candidates?.flatMap((c) => c.content?.parts ?? []).find((p) => p.inlineData?.data)?.inlineData;
+    const geminiBlock = raw.promptFeedback?.blockReason ?? raw.candidates?.find((c) => c.finishReason && c.finishReason !== "STOP")?.finishReason;
+    const data = geminiImageModel
+      ? { predictions: inline?.data ? [{ bytesBase64Encoded: inline.data, mimeType: inline.mimeType }] : geminiBlock ? [{ raiFilteredReason: geminiBlock }] : [] }
+      : raw;
     const first = data.predictions?.find((p) => p.bytesBase64Encoded);
     if (!first?.bytesBase64Encoded) {
       imagenBreaker.failures = 0; // Google answered; the prompt was the problem, not the service.

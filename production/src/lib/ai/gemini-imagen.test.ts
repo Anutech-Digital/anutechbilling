@@ -105,4 +105,24 @@ describe("geminiImagenImage", () => {
     expect(reserveMock).not.toHaveBeenCalled();
     expect(fetchMock).not.toHaveBeenCalled();
   });
+  it("R-2697: a Gemini image model is asked on :generateContent and its inline picture is returned", async () => {
+    fetchMock.mockResolvedValue(ok({ candidates: [{ finishReason: "STOP", content: { parts: [{ text: "here" }, { inlineData: { data: PNG_B64, mimeType: "image/png" } }] } }] }));
+    const r = await call({ model: "gemini-2.5-flash-image", aspectRatio: "1:1" });
+    expect(r).toMatchObject({ ok: true, mimeType: "image/png", model: "gemini-2.5-flash-image" });
+    if (r.ok) expect(r.bytes.toString()).toBe("fake-png-bytes");
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-image:generateContent");
+    expect((init.headers as Record<string, string>)["x-goog-api-key"]).toBe(SERVER_KEY);
+    const body = JSON.parse(init.body);
+    expect(body.contents[0].parts[0].text).toBe("A laptop on a desk, Delhi office");
+    expect(body.generationConfig).toEqual({ responseModalities: ["IMAGE"], imageConfig: { aspectRatio: "1:1" } });
+    expect(reserveMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("R-2697: a Gemini image model that refuses → 'blocked' with the reason", async () => {
+    fetchMock.mockResolvedValue(ok({ promptFeedback: { blockReason: "SAFETY" } }));
+    const r = await call({ model: "gemini-2.5-flash-image" });
+    expect(r).toMatchObject({ ok: false, code: "blocked" });
+    if (!r.ok) expect(r.message).toContain("SAFETY");
+  });
 });

@@ -51,3 +51,31 @@ export function parsePictureLinks(text: string): { urls: string[]; bad: string[]
   }
   return { urls: urls.slice(0, MAX_PICTURES), bad };
 }
+
+/**
+ * R-2697: an AI picture is kept as a hidden (unpublished) photo on the company's Facebook Page and
+ * stored on the post as its Facebook photo link plus "&ros=ai" (an https link, so the media_url
+ * check in the database accepts it — no migration). Meta's image link to it expires after a few
+ * days, so the fresh link is read at show time and again just before the post goes out.
+ */
+export const PAGE_PHOTO_PREFIX = "https://www.facebook.com/photo/?fbid=";
+export function pagePhotoId(value: string | null | undefined): string | null {
+  const m = /^https:\/\/www\.facebook\.com\/photo\/\?fbid=(\d{5,30})&ros=ai$/.exec(value ?? "");
+  return m ? m[1] : null;
+}
+export function pagePhotoRef(photoId: string): string {
+  if (!/^\d{5,30}$/.test(photoId)) throw new Error("Facebook did not return a photo id.");
+  return `${PAGE_PHOTO_PREFIX}${photoId}&ros=ai`;
+}
+
+/** R-2697: what Imagen is asked to draw for one post — never text, logos, prices or real people. */
+export function picturePrompt(topic: string, caption: string): string {
+  const clean = (s: string) => s.replace(/#[\p{L}\p{N}_]+/gu, "").replace(/https?:\/\/\S+/g, "").replace(/\s+/g, " ").trim();
+  const about = clean(topic) || clean(caption).slice(0, 300);
+  return [
+    `A clean, modern, professional square image for a business social media post about: ${about.slice(0, 400)}.`,
+    caption.trim() ? `The post says: ${clean(caption).slice(0, 500)}` : "",
+    "Bright natural light, simple uncluttered composition, office or technology setting where it fits.",
+    "Do not put any words, letters, numbers, prices, logos, brand names or watermarks in the image. No recognisable real people.",
+  ].filter(Boolean).join(" ");
+}

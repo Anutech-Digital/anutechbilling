@@ -4,17 +4,19 @@
  *
  * - autopilot ON  → each post is saved approved with its time; the social-publish cron posts it.
  * - autopilot OFF → each post waits in "Waiting for approval" with its time; a person approves.
- * Instagram needs a picture: it is planned only when the owner listed pictures; otherwise the
- * result says so (never a post that would fail at its time).
+ * Instagram needs a picture: the owner's picture links are used first; without them the AI makes
+ * one per post (R-2697). A post with no picture skips Instagram and the result says so.
  */
 import "server-only";
 import { withTenant, type TenantSession } from "@/server/db";
+import { istToday, utcDateISO } from "@/lib/dates/ist";
 import { geminiJson, resolveGeminiConfig } from "@/lib/ai/gemini";
 import { readFacebookPage } from "@/lib/integrations/facebook-page";
 import { createSocial, instagramForPage } from "@/lib/marketing/social-content";
 import { planSlots, planStatus, pictureFor } from "@/lib/marketing/social-autopilot";
 import type { createAdminClient } from "@/lib/supabase/server";
 import { logPersonActivity } from "@/lib/marketing/social-activity";
+import { makePostPicture } from "@/lib/marketing/social-picture.server";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -31,14 +33,15 @@ export async function readAutopilotSettings(session: TenantSession): Promise<Aut
 }
 
 export type PlanResult =
-  | { ok: true; created: number; autopilot: boolean; instagramSkipped: boolean; firstAt: Date | null }
+  | { ok: true; created: number; autopilot: boolean; instagramSkipped: boolean; firstAt: Date | null; aiPictures: number; pictureProblem: string | null }
   | { ok: false; reason: string; status: number };
 
 export async function planWeek(admin: Admin, session: TenantSession, opts: { force?: boolean; now?: Date } = {}): Promise<PlanResult> {
   const now = opts.now ?? new Date();
   const s = await readAutopilotSettings(session);
-  const today = new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
-  const last = s.last_generated_on ? new Date(s.last_generated_on).toISOString().slice(0, 10) : null;
+  const today = istToday(now);
+  /* a Postgres date comes back as UTC midnight of that day */
+  const last = s.last_generated_on ? (typeof s.last_generated_on === "string" ? s.last_generated_on.slice(0, 10) : utcDateISO(s.last_generated_on)) : null;
   if (!opts.force && (!s.auto_drafts || last === today)) return { ok: false, reason: "Weekly AI posts are off, or this week is already planned.", status: 409 };
   if (s.ai_paused) return { ok: false, reason: "The AI is stopped (Stop all AI). Press Resume AI first.", status: 409 };
   if (!s.brief.trim()) return { ok: false, reason: "Tell the AI what to write about first (the box under AI posts), then save.", status: 400 };
@@ -62,9 +65,14 @@ export async function planWeek(admin: Admin, session: TenantSession, opts: { for
 
   const slots = planSlots(now, posts.length);
   const status = planStatus(s.autopilot);
+  /* R-2697: no picture links from the owner → the AI makes one picture per post (kept on the Page).
+     A failed picture never stops the plan: that post goes to Facebook without a picture. */
+  const aiPictures = s.picture_urls.length ? [] : await Promise.all(posts.map((p) => makePostPicture(admin, session.tenantId, p).catch(() => null)));
+  const pictureProblem = aiPictures.find((r) => r && !r.ok);
   let created = 0;
   for (const [i, post] of posts.entries()) {
-    const picture = pictureFor(s.picture_urls, i);
+    const made = aiPictures[i];
+    const picture = pictureFor(s.picture_urls, i) ?? (made?.ok ? made.mediaUrl : null);
     const fbId = await createSocial(session, { platform: "facebook", format: "post", caption: post.caption, mediaUrl: picture, topic: post.topic, origin: "scheduled", scheduledAt: slots[i], status });
     created++;
     await logPersonActivity(session, { actor: "ai", platform: "facebook", action: s.autopilot ? "Planned a post (autopilot)" : "Wrote a post for approval", detail: post.topic, contentId: fbId, result: s.autopilot ? "ok" : "waiting" });
@@ -76,5 +84,7 @@ export async function planWeek(admin: Admin, session: TenantSession, opts: { for
   }
   await withTenant(session, (tx) => tx.$executeRaw`
     update public.social_content_settings set last_generated_on = ${today}::date where tenant_id = ${session.tenantId}::uuid`);
-  return { ok: true, created, autopilot: s.autopilot, instagramSkipped: Boolean(instagram) && s.picture_urls.length === 0, firstAt: slots[0] ?? null };
+  const pictured = s.picture_urls.length ? posts.length : aiPictures.filter((r) => r?.ok).length;
+  return { ok: true, created, autopilot: s.autopilot, instagramSkipped: Boolean(instagram) && pictured < posts.length, firstAt: slots[0] ?? null,
+    aiPictures: s.picture_urls.length ? 0 : pictured, pictureProblem: pictureProblem && !pictureProblem.ok ? pictureProblem.message : null };
 }

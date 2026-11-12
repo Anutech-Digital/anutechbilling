@@ -5,7 +5,7 @@ import { withTenant } from "@/server/db";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { geminiJson, resolveGeminiConfig } from "@/lib/ai/gemini";
 import { readFacebookPage } from "@/lib/integrations/facebook-page";
-import { canReviewSocial, canWriteSocial, createSocial, instagramForPage, listSocial, metaFollowers, socialRole, validMediaUrl } from "@/lib/marketing/social-content";
+import { canReviewSocial, canWriteSocial, createSocial, instagramForPage, listSocial, metaFollowers, pagePhotoLinks, socialRole, validMediaUrl } from "@/lib/marketing/social-content";
 import { listActivity, logPersonActivity } from "@/lib/marketing/social-activity";
 import { readLinkedInConnection } from "@/lib/integrations/linkedin/store";
 import { parseIstLocal, scheduleProblem } from "@/lib/marketing/social-schedule";
@@ -38,14 +38,16 @@ export async function GET() {
     ]);
     const instagram = connection.pageId && connection.pageToken ? await instagramForPage(connection.pageId, connection.pageToken) : null;
     // R-2687: the account cards (followers today) and the activity list.
-    const [followers, activity, linkedin] = await Promise.all([
+    const [followers, activity, linkedin, photoLinks] = await Promise.all([
       connection.pageId && connection.pageToken ? metaFollowers(connection.pageId, connection.pageToken, instagram?.id ?? null) : Promise.resolve({ facebook: null, instagram: null }),
       listActivity(session, 60).catch(() => []),
       readLinkedInConnection(createAdminClientFor(session.userId), session.tenantId).catch(() => null),
+      // R-2697: AI pictures kept on the Page — today's link to show them.
+      connection.pageToken ? pagePhotoLinks(items.map((i) => i.media_url), connection.pageToken) : Promise.resolve(new Map<string, string>()),
     ]);
     // R-2672: tell the screen up front whether AI can write, so Write with AI never fails silently.
     const aiReady = Boolean((await resolveGeminiConfig(createClient(), session.tenantId)).apiKey);
-    return NextResponse.json({ items, settings: settings[0] ?? { auto_drafts: false, brief: "", autopilot: false, posts_per_week: 3, picture_urls: [], last_generated_on: null, ai_paused: false },
+    return NextResponse.json({ items: items.map((i) => ({ ...i, media_preview: i.media_url ? photoLinks.get(i.media_url) ?? null : null })), settings: settings[0] ?? { auto_drafts: false, brief: "", autopilot: false, posts_per_week: 3, picture_urls: [], last_generated_on: null, ai_paused: false },
       followers, activity,
       linkedin: linkedin?.organizationUrn ? { name: linkedin.organizationName ?? "LinkedIn Page" } : null,
       canReview: canReviewSocial(role), canManage: role === "owner", aiReady,

@@ -8,7 +8,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getTenantSession } from "@/server/auth/session";
 import { withTenant } from "@/server/db";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { canReviewSocial, socialRole } from "@/lib/marketing/social-content";
 import { MAX_PICTURES, parsePictureLinks } from "@/lib/marketing/social-autopilot";
 import { planWeek } from "@/lib/marketing/social-autopilot.server";
@@ -59,7 +59,7 @@ export async function POST() {
   if (!session) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
   if (!canReviewSocial(await socialRole(session))) return NextResponse.json({ error: "Only the owner or a manager can plan the week.", description: "Ask them to press Plan this week now." }, { status: 403 });
   try {
-    const result = await planWeek(createAdminClient(), session, { force: true });
+    const result = await planWeek(createAdminClientFor(session.userId), session, { force: true });
     if (!result.ok) return NextResponse.json({ error: result.reason }, { status: result.status });
     return NextResponse.json(result);
   } catch (e) {
