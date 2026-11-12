@@ -38,6 +38,9 @@ import { ReceiptVoucherDialog } from "@/components/features/quotes/receipt-vouch
 import { isInterStateSupply, placeOfSupplyLabel } from "@/lib/gst/place-of-supply";
 import { supplierIdentity, supplierIdentityMessage } from "@/lib/invoices/supplier-identity";
 import { invoiceDisplayAmounts } from "@/lib/invoices/display-amounts";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
+import { UpiQrCard, UpiQrDialog } from "@/components/features/invoices/upi-qr-card";
+import { WhatsAppShareDialog } from "@/components/features/invoices/whatsapp-share-dialog";
 import { openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { invoiceLineItemsView } from "./invoice-line-items";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
@@ -72,6 +75,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const moneyDue = canWrite && (bucket === "pending" || bucket === "overdue");
   const statusBadge = invoiceStatusBadge(invoice);
   const [payOpen, setPayOpen] = React.useState(false);
+  const amountDue = invoiceAmountDue(invoice);
+  const [upiDialogOpen, setUpiDialogOpen] = React.useState(false);
+  const [waDialogOpen, setWaDialogOpen] = React.useState(false);
   /* R-337: over ₹5 Cr turnover, a B2B invoice with no gst_irn gets a reminder. A warning
      only — the app does not generate IRNs yet (R-044). Unknown turnover shows nothing. */
   const { data: turnover } = useTurnoverBracket();
@@ -198,12 +204,29 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                   View quote
                 </Button>
               )}
+              {amountDue > 0 && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  icon="rupee"
+                  onClick={() => setUpiDialogOpen(true)}
+                  title="Open Scan-to-Pay UPI QR"
+                >
+                  UPI QR
+                </Button>
+              )}
               {canWrite && (
                 <Button
                   size="sm"
                   variant="primary"
                   icon="whatsapp"
-                  onClick={() => openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never))}
+                  onClick={() => {
+                    if (customer?.contact_phone) {
+                      setWaDialogOpen(true);
+                    } else {
+                      openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never));
+                    }
+                  }}
                 >
                   WhatsApp
                 </Button>
@@ -236,6 +259,11 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           </header>
 
           <div className="p-4 space-y-4 flex-1">
+            {/* 💳 Dynamic UPI Scan-to-Pay Card */}
+            {amountDue > 0 && (
+              <UpiQrCard invoice={invoice} amountDue={amountDue} />
+            )}
+
             {/* 🔽 Collapsible Panel 1: Invoice Overview & Tax Summary */}
             <Card className="overflow-hidden">
               <button
@@ -426,6 +454,25 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           customerId={invoice.customer_id ?? quote.customer_id}
           askDomain={!quote.is_one_off}
           defaultDomain={quote.domain ?? undefined}
+        />
+      )}
+
+      {upiDialogOpen && (
+        <UpiQrDialog
+          open={upiDialogOpen}
+          onOpenChange={setUpiDialogOpen}
+          invoice={invoice}
+          amountDue={amountDue}
+        />
+      )}
+
+      {waDialogOpen && (
+        <WhatsAppShareDialog
+          open={waDialogOpen}
+          onOpenChange={setWaDialogOpen}
+          invoice={invoice}
+          customer={customer}
+          amountDue={amountDue}
         />
       )}
     </>

@@ -35,6 +35,7 @@ import { floorWorkspaceRow } from "@/lib/catalog/workspace-floor";
 import { rupee } from "@/lib/utils";
 import { cn } from "@/lib/utils";
 import { formatForeign } from "@/lib/currency";
+import { FREELANCER_SERVICE_TEMPLATES, type FreelancerServiceTemplate } from "./freelancer-templates";
 import type { QuoteLineItem, Item } from "@/lib/supabase/database.types";
 
 interface AddLineItemDialogProps {
@@ -168,6 +169,27 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
     onOpenChange(false);
   };
 
+  const addFreelancerTemplate = (tmpl: FreelancerServiceTemplate) => {
+    onAdd({
+      id: crypto.randomUUID(),
+      name: tmpl.name,
+      qty: tmpl.defaultQty,
+      rate: tmpl.suggestedRate,
+      cost: 0,
+    });
+    onOpenChange(false);
+  };
+
+  const customizeFreelancerTemplate = (tmpl: FreelancerServiceTemplate) => {
+    reset({
+      name: tmpl.name,
+      qty: tmpl.defaultQty,
+      rate: tmpl.suggestedRate,
+      cost: 0,
+    });
+    setTab("custom");
+  };
+
   const customRate = watch("rate") || 0;
   const customCost = watch("cost") || 0;
   const customMargin = customRate - customCost;
@@ -189,6 +211,7 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
             onChange={setTab}
             items={[
               { id: "catalog", label: `From catalog (${items?.length ?? 0})` },
+              { id: "freelance", label: "Solo / Freelancer Presets" },
               { id: "custom",  label: "Custom item" },
             ]}
           />
@@ -299,6 +322,82 @@ export function AddLineItemDialog({ open, onOpenChange, onAdd, currency, exchang
                 className="text-amber-ink underline hover:text-amber font-medium"
               >
                 Can't find it? Add custom →
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* FREELANCE PRESETS tab */}
+        {tab === "freelance" && (
+          <div className="min-w-0">
+            <div className="px-6 py-2.5 bg-paper-2 border-b border-hairline flex items-center justify-between text-xs text-ink-3">
+              <span>Ready-to-use professional services for solo freelancers & independent developers.</span>
+              <Badge variant="outline" className="text-3xs bg-primary/5 text-primary border-primary/20">
+                Solo Free Pack
+              </Badge>
+            </div>
+
+            <div className="max-h-[420px] overflow-y-auto min-w-0 divide-y divide-hairline">
+              {FREELANCER_SERVICE_TEMPLATES.map((tmpl) => (
+                <div
+                  key={tmpl.id}
+                  className="px-6 py-3.5 hover:bg-paper-2 transition-colors flex flex-col sm:flex-row sm:items-center justify-between gap-3"
+                >
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h4 className="font-medium text-sm text-ink">{tmpl.name}</h4>
+                      <Badge size="sm" variant="secondary" className="text-3xs shrink-0">
+                        {tmpl.category}
+                      </Badge>
+                    </div>
+                    <p className="text-2xs text-ink-3 leading-relaxed line-clamp-2">
+                      {tmpl.description}
+                    </p>
+                    <div className="flex items-center gap-3 text-3xs text-ink-3 font-mono pt-0.5">
+                      <span>SAC: {tmpl.hsnSac}</span>
+                      <span>•</span>
+                      <span>Qty: {tmpl.defaultQty}</span>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between sm:justify-end gap-3 shrink-0">
+                    <div className="text-right">
+                      <div className="font-serif font-bold text-sm text-ink">
+                        {rupee(tmpl.suggestedRate)}
+                      </div>
+                      <div className="text-3xs text-emerald font-medium">Service (100% Margin)</div>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => customizeFreelancerTemplate(tmpl)}
+                        className="text-xs h-8"
+                      >
+                        Customize
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="primary"
+                        icon="plus"
+                        onClick={() => addFreelancerTemplate(tmpl)}
+                        className="text-xs h-8"
+                      >
+                        Add
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="px-6 py-3 border-t border-hairline bg-paper-2 text-xs text-ink-3 flex justify-between items-center">
+              <span>Click "Add" to insert directly, or "Customize" to adjust rate and scope.</span>
+              <button
+                onClick={() => setTab("custom")}
+                className="text-amber-ink underline hover:text-amber font-medium"
+              >
+                Create blank custom line →
               </button>
             </div>
           </div>

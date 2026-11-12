@@ -58,6 +58,8 @@ import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { issueEinvoiceNotice, irnAgeingInvoices, irnAgeingNotice, isB2B } from "@/lib/compliance/einvoice";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
+import { invoiceAmountDue } from "@/lib/payments/amount-due";
+import { UpiQrDialog } from "@/components/features/invoices/upi-qr-card";
 import { useCustomers } from "@/lib/queries/customers";
 import { invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
@@ -992,6 +994,8 @@ function InvoiceRow({
   const [delOpen, setDelOpen] = React.useState(false);
   const [payOpen, setPayOpen] = React.useState(false);
   const [subPayOpen, setSubPayOpen] = React.useState(false);
+  const [upiOpen, setUpiOpen] = React.useState(false);
+  const amountDue = invoiceAmountDue(inv);
   const [cnOpen, setCnOpen] = React.useState(false);
   const [dnOpen, setDnOpen] = React.useState(false);
   const delProjectInvoice = useDeleteProjectInvoice();
@@ -1147,6 +1151,14 @@ function InvoiceRow({
                   <DropdownMenuItem className="gap-2.5 py-2 cursor-pointer" onClick={() => (isProject ? setPayOpen(true) : setSubPayOpen(true))}>
                     <Icon name="rupee" size={15} /> Record payment
                   </DropdownMenuItem>
+                  {amountDue > 0 && (
+                    <DropdownMenuItem
+                      className="gap-2.5 py-2 cursor-pointer font-medium text-primary"
+                      onClick={() => setUpiOpen(true)}
+                    >
+                      <Icon name="rupee" size={15} /> Show UPI QR
+                    </DropdownMenuItem>
+                  )}
                   <DropdownMenuItem
                     className="gap-2.5 py-2 cursor-pointer font-medium text-emerald"
                     onClick={() => openInvoiceWhatsApp(inv, invoiceCustomerPhone(inv, customers), waSender, (h) => router.push(h as never))}
@@ -1240,6 +1252,14 @@ function InvoiceRow({
           interState={inv.inter_state}
           isExport={(inv.tax_rate ?? 18) === 0}
         />
+        {upiOpen && (
+          <UpiQrDialog
+            open={upiOpen}
+            onOpenChange={setUpiOpen}
+            invoice={inv}
+            amountDue={amountDue}
+          />
+        )}
       </td>
     </tr>
     {expanded && (
