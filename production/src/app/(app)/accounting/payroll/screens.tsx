@@ -37,7 +37,7 @@ import { computePf, pfWage, pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payrol
 import { estimateMonthlyTds } from "@/lib/payroll/income-tax";
 import { calculateCtcBreakdown, ctcFromEmployee } from "@/lib/payroll/ctc";
 import { computePt } from "@/lib/payroll/pt";
-import { bookedStatutoryMonths, bookedStatutoryText, deleteBlockMessage, esiRuleNote, hasDeleteBlockers } from "@/lib/payroll/statutory";
+import { bookedStatutoryMonths, bookedStatutoryText, esiRuleNote } from "@/lib/payroll/statutory";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -52,7 +52,7 @@ import { SalaryStatusCell } from "./salary-status-cell";
 import { salaryPayState } from "@/lib/payroll/salary-status";
 import { toast } from "sonner";
 import {
-  useEmployees, useUpsertEmployee, useDeleteEmployee, fetchEmployeeDeleteBlockers, useSetEmployeePin, useCancelEmployeeExit,
+  useEmployees, useUpsertEmployee, useSetEmployeePin, useCancelEmployeeExit,
   useLeaveEntries, useCreateLeaveEntry, useDeleteLeaveEntry,
   useHolidays, useCreateHoliday, useDeleteHoliday,
   useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines,
@@ -78,6 +78,7 @@ import { AttendanceChanges } from "@/components/features/attendance/attendance-c
 import { CorrectionTrail } from "@/components/features/attendance/correction-trail";
 import type { CurrentUserInfo } from "@/lib/hooks/useCurrentUser";
 import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-detail-drawer";
+import { EmployeeDeleteDialog } from "@/components/features/accounting/employee-delete-dialog";
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { SalaryBreakdownDialog } from "@/components/features/accounting/salary-breakdown-dialog";
@@ -195,7 +196,6 @@ export function PayrollScreen() {
 export function EmployeesTab() {
   const q = useEmployees();
   const leaveQ = useLeaveEntries();
-  const del = useDeleteEmployee();
   const confirm = useConfirm();
   const myRole = useCurrentUser().data?.role;
   const canWrite = canWriteMoney(myRole);
@@ -208,6 +208,8 @@ export function EmployeesTab() {
   const [exitEmp, setExitEmp] = React.useState<Employee | null>(null);
   /* R-2380: the same person added twice → merge the duplicate into the one to keep. */
   const [mergeEmp, setMergeEmp] = React.useState<Employee | null>(null);
+  const [deleteEmp, setDeleteEmp] = React.useState<Employee | null>(null);
+  const [viewSalary, setViewSalary] = React.useState(false);
   const rows = q.data ?? [];
 
   const confirmCancelExit = async (e: Employee) => {
@@ -220,35 +222,9 @@ export function EmployeesTab() {
     }
   };
 
-  const confirmDelete = async (e: Employee) => {
-    /* R-2698: salary already booked → say so BEFORE the delete, naming the months, with the way
-       on (Start exit / Edit). It used to fail after "Remove" with a red error toast, which also
-       lit the Help icon as "an error was caught". A failed look-up falls through to the normal
-       confirm — the mutation checks again and the DB trigger refuses anyway. */
-    const blockers = await fetchEmployeeDeleteBlockers(e.id).catch(() => null);
-    if (blockers && hasDeleteBlockers(blockers)) {
-      const canExit = isOwner && !e.exit_date;
-      if (await confirm({
-        title: `${e.name} can't be deleted`,
-        body: deleteBlockMessage(e.name, blockers, canExit),
-        confirmLabel: canExit ? "Start exit" : "Edit employee",
-        cancelLabel: "Close",
-      })) {
-        if (canExit) setExitEmp(e); else setEdit(e);
-      }
-      return;
-    }
-    if (await confirm({
-      title: `Remove ${e.name}?`,
-      body: blockers
-        ? "This deletes the employee and their attendance/leave records. Nothing is booked against them (no salary, project labour or expense claim)."
-        : "This deletes the employee and their attendance/leave records. (Refused if salary, project labour or expense claims are booked against them.)",
-      confirmLabel: "Remove",
-      danger: true,
-    })) {
-      del.mutate({ id: e.id, name: e.name });
-    }
-  };
+  /* R-2698 + R-2701: ONE delete dialog — it checks what is booked first (salary months, project
+     labour, expense claims), names it, and offers Start exit / Edit employee + See salary months. */
+  const confirmDelete = (e: Employee) => setDeleteEmp(e);
 
   const paidLeaveTaken = (empId: string) => {
     const fy = fyStartISO();
@@ -390,11 +366,22 @@ export function EmployeesTab() {
       {offerEmp && <OfferLetterDialog employee={offerEmp} onClose={() => setOfferEmp(null)} />}
       {exitEmp && isOwner && <StartExitDialog employee={exitEmp} onClose={() => setExitEmp(null)} />}
       {mergeEmp && canWrite && <MergeEmployeeDialog employee={mergeEmp} employees={rows} onClose={() => setMergeEmp(null)} />}
+      {deleteEmp && canWrite && (
+        <EmployeeDeleteDialog
+          employee={deleteEmp}
+          isOwner={isOwner}
+          onStartExit={() => { setExitEmp(deleteEmp); setDeleteEmp(null); }}
+          onEdit={() => { setEdit(deleteEmp); setDeleteEmp(null); }}
+          onShowSalary={() => { setViewSalary(true); setViewEmp(deleteEmp); setDeleteEmp(null); }}
+          onClose={() => setDeleteEmp(null)}
+        />
+      )}
       <EmployeeDetailDrawer
         employee={viewEmp ? (rows.find((r) => r.id === viewEmp.id) ?? viewEmp) : null}
         open={viewEmp !== null}
-        onOpenChange={(o) => { if (!o) setViewEmp(null); }}
-        onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); } } : undefined}
+        focusSalary={viewSalary}
+        onOpenChange={(o) => { if (!o) { setViewEmp(null); setViewSalary(false); } }}
+        onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); setViewSalary(false); } } : undefined}
       />
     </>
   );

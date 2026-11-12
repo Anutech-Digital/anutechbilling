@@ -207,17 +207,28 @@ export async function fetchEmployeeDeleteBlockers(employeeId: string): Promise<D
   };
 }
 
+/** R-2701: the delete dialog's check (fetchEmployeeDeleteBlockers), read fresh each time it opens. */
+export function useEmployeeDeleteBlockers(employeeId: string | null) {
+  return useQuery({
+    queryKey: ["employee-delete-blockers", employeeId ?? "none"],
+    enabled: Boolean(employeeId),
+    queryFn: () => fetchEmployeeDeleteBlockers(employeeId!),
+    staleTime: 0,
+  });
+}
+
 /** Delete an employee. Blocked if they have salary / project labour / expense claims (Start exit
- *  or set Inactive instead, so payroll records stay intact). Fresh employees delete cleanly
+ *  instead, so payroll records stay intact). Fresh employees delete cleanly
  *  (their attendance/leave cascade away). */
 export function useDeleteEmployee() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (e: { id: string; name: string }) => {
+    mutationFn: async (e: { id: string; name: string; canExit?: boolean }) => {
       const supabase = createClient();
-      /* Back-stop (the screen checks first): never reach the DB guard's raw message. */
+      /* Back-stop (the delete dialog checks first): never reach the DB guard's raw message. R-2701:
+         the way on is the viewer's own (Start exit for the owner, Edit for anyone else), as in the dialog. */
       const blockers = await fetchEmployeeDeleteBlockers(e.id);
-      if (hasDeleteBlockers(blockers)) throw new Error(deleteBlockMessage(e.name, blockers, false));
+      if (hasDeleteBlockers(blockers)) throw new Error(deleteBlockMessage(e.name, blockers, e.canExit ?? false));
       const { error } = await supabase.from("employees").delete().eq("id", e.id);
       if (error) throw error;
     },
