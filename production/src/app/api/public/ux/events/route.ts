@@ -19,6 +19,7 @@ const MAX_EVENTS = 50;
 
 export async function POST(req: NextRequest) {
   const done = () => new NextResponse(null, { status: 204 });
+  if (process.env.NEXT_PUBLIC_DEMO_MODE === "true") return done();
   let body: { sid?: unknown; events?: unknown };
   try {
     const text = await req.text();
