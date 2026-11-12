@@ -764,6 +764,7 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   "/compliance/roc":         { tail: ["ROC / MCA"] },
   "/compliance/gst":         { tail: ["GST Returns"] },
   "/compliance/income-tax":  { tail: ["Income Tax & TDS"] },
+  "/employee-hub":           { tail: ["Employee Career & Tax Hub"], under: "Team" },
   "/performance":            { tail: ["Team Performance"], under: "Team" },
   "/assessments":            { tail: ["Reasoning Tests"], under: "Team" },
   "/attendance/kiosk":       { tail: ["Attendance Kiosk"], under: "Team" },

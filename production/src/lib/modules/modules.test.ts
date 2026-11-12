@@ -7,12 +7,13 @@ import {
 } from "./registry";
 
 describe("Commercial Modular Architecture - Registry & Gating", () => {
-  it("defines all 6 plug-and-play modules including Solo Free Forever pack", () => {
-    expect(SYSTEM_MODULES).toHaveLength(6);
+  it("defines all 7 plug-and-play modules including Solo Free & Salaried Pro Free packs", () => {
+    expect(SYSTEM_MODULES).toHaveLength(7);
 
     const ids = SYSTEM_MODULES.map((m) => m.id);
     expect(ids).toEqual([
       "solo_free",
+      "salaried_pro",
       "crm",
       "invoicing",
       "subscriptions",
@@ -29,13 +30,21 @@ describe("Commercial Modular Architecture - Registry & Gating", () => {
     expect(soloFree?.isFreeTier).toBe(true);
     expect(soloFree?.badge).toBe("Free Forever");
 
+    // Salaried Pro Tier validation
+    const salariedPro = SYSTEM_MODULES.find((m) => m.id === "salaried_pro");
+    expect(salariedPro).toBeDefined();
+    expect(salariedPro?.priceMonthlyRupees).toBe(0);
+    expect(salariedPro?.isFreeTier).toBe(true);
+    expect(salariedPro?.badge).toBe("Free Forever");
+    expect(salariedPro?.coreRoutes).toContain("/employee-hub");
+
     for (const mod of SYSTEM_MODULES) {
       expect(mod.name).toBeTruthy();
       expect(mod.features.length).toBeGreaterThan(0);
       expect(mod.coreRoutes.length).toBeGreaterThan(0);
       expect(mod.dbTables.length).toBeGreaterThan(0);
       expect(mod.commercialTarget).toBeTruthy();
-      if (mod.id !== "solo_free") {
+      if (mod.id !== "solo_free" && mod.id !== "salaried_pro") {
         expect(mod.priceMonthlyRupees).toBeGreaterThan(0);
       }
     }
@@ -81,6 +90,11 @@ describe("Commercial Modular Architecture - Registry & Gating", () => {
       expect(getModuleForRoute("/attendance")?.id).toBe("teamops");
       expect(getModuleForRoute("/tasks")?.id).toBe("teamops");
       expect(getModuleForRoute("/support")?.id).toBe("teamops");
+    });
+
+    it("maps Salaried Pro routes correctly", () => {
+      expect(getModuleForRoute("/employee-hub")?.id).toBe("salaried_pro");
+      expect(getModuleForRoute("/employee-hub/tax")?.id).toBe("salaried_pro");
     });
 
     it("exempts core system routes so platform remains accessible", () => {

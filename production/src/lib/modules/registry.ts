@@ -45,6 +45,28 @@ export const SYSTEM_MODULES: SystemModule[] = [
     commercialTarget: "Individual freelancers, solo consultants, independent contractors, and micro-entrepreneurs who need clean billing without monthly subscription fees.",
   },
   {
+    id: "salaried_pro",
+    name: "Salaried Pro — Individual Career & Tax Hub",
+    badge: "Free Forever",
+    tagline: "CTC & Tax Regime Calculator, Company Reimbursements & Rent Receipts",
+    description: "Built for individual salaried employees and corporate professionals. Compare Old vs New Tax Regime with FY 2025–26 rules, calculate exact monthly take-home salary, track monthly corporate expense claims, and generate 1-click HRA rent receipts for HR submission.",
+    priceMonthlyRupees: 0,
+    iconName: "user",
+    accentColor: "#6366F1", // Indigo
+    isFreeTier: true,
+    coreRoutes: ["/employee-hub"],
+    features: [
+      "Old vs New Tax Regime Comparator (FY 2025–26 Rules)",
+      "Standard Deduction (₹75k vs ₹50k) & Take-Home Estimator",
+      "Company Reimbursement & Corporate Claims Tracker",
+      "1-Click 12-Month HRA Rent Receipt Generator (PDF/Print)",
+      "Form 16 & Career Document Vault Checklist",
+      "100% Free Forever for Salaried Individuals — Zero Fees",
+    ],
+    dbTables: ["employee_tax_profiles", "reimbursement_claims", "rent_receipts", "employee_documents"],
+    commercialTarget: "Individual salaried employees, IT professionals, corporate executives, and job holders who need personal tax planning and expense management without running a business.",
+  },
+  {
     id: "crm",
     name: "Reseller CRM & Sales Pipeline",
     badge: "Sales & Growth",
@@ -160,5 +182,5 @@ export function getModuleForRoute(pathname: string): SystemModule | undefined {
   );
 }
 
-/** Default active modules for all tenants (includes Individual Free Pack) */
-export const DEFAULT_ACTIVE_MODULE_IDS = ["solo_free", "crm", "invoicing", "subscriptions", "provisioning", "teamops"];
+/** Default active modules for all tenants (includes Individual Free Packs) */
+export const DEFAULT_ACTIVE_MODULE_IDS = ["solo_free", "salaried_pro", "crm", "invoicing", "subscriptions", "provisioning", "teamops"];

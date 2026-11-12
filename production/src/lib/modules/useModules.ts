@@ -85,7 +85,10 @@ export function useModules() {
   }, [allPaidModulesActive]);
 
   const isFreePlanOnly = React.useMemo(() => {
-    return totalMonthlyCostRupees === 0 && activeModuleIds.includes("solo_free");
+    return (
+      totalMonthlyCostRupees === 0 &&
+      (activeModuleIds.includes("solo_free") || activeModuleIds.includes("salaried_pro"))
+    );
   }, [totalMonthlyCostRupees, activeModuleIds]);
 
   return {
