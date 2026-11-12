@@ -199,6 +199,11 @@ export function zohoReceiptFacts(d: ZohoFyDocDetail): ZohoReceiptFacts {
   if (foreign && excessPaise > 0) {
     problems.push(`${currency} ${(excessPaise / 100).toFixed(2)} of it is not applied to any invoice in Zoho (an advance in ${currency}) — book it from its bank line (Banking → Reconcile).`);
   }
+  /* review: a foreign payment through Razorpay / PayPal reaches the bank inside an INR settlement with the
+     gateway's fee — not an overseas remittance with its own line; a person books it. */
+  if (foreign && (isRazorpayPayment(str(r.payment_mode), str(r.account_name)) || /paypal/i.test(`${str(r.payment_mode)} ${str(r.account_name)}`))) {
+    problems.push(`Received in ${currency} through a payment gateway (Razorpay / PayPal) — book it by hand (it settles in ₹ with the gateway's fee).`);
+  }
   if (foreign && feePaise > 0 && feePaise >= amountPaise) {
     problems.push(`Zoho's bank charges on this ${currency} payment are not less than the money received — book it by hand.`);
   }

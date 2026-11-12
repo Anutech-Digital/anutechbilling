@@ -72,6 +72,11 @@ describe("R-2694 normalise — a USD payment is importable, with its figures to 
     expect(zohoReceiptFacts(detail(usd({ bank_charges: 663.05 }))).problems[0]).toMatch(/bank charges on this USD payment are not less than the money/);
   });
 
+  it("a USD payment through Razorpay / PayPal is left for a person (it settles in ₹ with the fee, no remittance line)", () => {
+    expect(zohoReceiptFacts(detail(usd({ payment_mode: "Razorpay", account_name: "Razorpay Clearing" }))).problems[0]).toMatch(/through a payment gateway/);
+    expect(zohoReceiptFacts(detail(usd({ account_name: "PayPal USD" }))).problems[0]).toMatch(/through a payment gateway/);
+  });
+
   it("an INR payment carries no foreign fields (unchanged)", () => {
     const f = zohoReceiptFacts(detail({ payment_id: "pi", amount: 1000, currency_code: "INR", invoices: [{ invoice_id: "zi1", invoice_number: "I1", amount_applied: 1000 }] }));
     expect(f.foreignLines).toBeUndefined();

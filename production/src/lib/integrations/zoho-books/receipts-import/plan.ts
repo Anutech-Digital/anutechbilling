@@ -191,8 +191,7 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     /* R-2694: a foreign payment's lines are in its currency — the ₹ (at each invoice's own rate) and the
        "more than due" refusal are the import's (SQL knows the invoice's rate); here only ₹ lines. */
     const inrSettle = (k: number) => (fx ? Math.round((f.foreignLines?.[k]?.foreign ?? 0) * (f.fxRate ?? 0)) : f.lines[k].settle);
-    for (let k = 0; k < f.lines.length; k++) {
-      if (fx) break;
+    for (let k = 0; !fx && k < f.lines.length; k++) {
       const id = invoiceIds[k]!;
       const due = left.get(id) ?? 0;
       if (f.lines[k].settle > due + 1) return row("skip", `${f.lines[k].invoiceNumber} has only ₹${due} due here, but Zoho settles ₹${f.lines[k].settle} with this payment.`, customerId);

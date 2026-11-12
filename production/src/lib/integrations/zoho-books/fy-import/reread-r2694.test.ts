@@ -4,11 +4,13 @@
  *   - facts with no `currency` (read before R-2693) → re-read;
  *   - a foreign payment with no per-invoice foreign amounts (`foreignLines`, read before R-2694) → re-read;
  *   - an INR payment that has `currency`, or a foreign one with `foreignLines` → kept (no Zoho call).
- * Other kinds are never touched by this rule. The Supabase client is a recording fake; names made up.
+ * Other kinds are never touched by this rule. The store reads the whole payload (the data gateway refuses a
+ * JSON path in a select). The Supabase client is a recording fake; names made up.
  */
 import { describe, it, expect } from "vitest";
 import { supabaseScanStore, type FyImportDb } from "./store";
 import { classifyListed, receiptFactsIncomplete, type KnownRow } from "./scan";
+import { parseSelect } from "@/server/postgrest/parse";
 
 describe("R-2694 receiptFactsIncomplete", () => {
   it("no currency (before R-2693) → incomplete; INR with currency → complete", () => {
@@ -51,7 +53,7 @@ function fakeDb(selectRows: Record<string, unknown>[]) {
 
 describe("R-2694 supabaseScanStore.addListed — targeted re-read of receipts", () => {
   const known = (id: string, cur: string | null, lines: string | null) =>
-    ({ zoho_id: id, zoho_status: "paid", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: "ZA", facts_version: 0, fx_cur: cur, fx_lines: lines });
+    ({ zoho_id: id, zoho_status: "paid", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: "ZA", facts_version: 0, payload: { currency: cur ?? undefined, foreignLines: lines ? JSON.parse(lines) : undefined } });
   const row = (id: string) => ({ zohoId: id, number: id, date: "2025-06-01", status: "paid", modified: "T1", accountId: "ZA" });
 
   it("customer payments: only the old INR (no currency) and the USD without foreignLines are re-read", async () => {
@@ -61,15 +63,16 @@ describe("R-2694 supabaseScanStore.addListed — targeted re-read of receipts", 
     ]);
     await supabaseScanStore(db, "t1", "customerpayments").addListed("2025-26", ["inr-old", "inr-new", "usd-part1", "usd-new"].map(row));
     const sel = calls[0].filters.find(([k]) => k === "select")![1];
-    expect(sel).toContain("fx_cur:payload->>currency");
-    expect(sel).toContain("fx_lines:payload->>foreignLines");
+    expect(sel).toContain(", payload");
+    expect(sel).not.toContain("->");   // the data gateway refuses JSON paths in a select
+    expect(() => parseSelect(sel)).not.toThrow();   // review: the real gateway parser (DATA_GATEWAY=1) takes it
     const ups = calls.filter((c) => c.op === "upsert");
     const fresh = ups.map((u) => u.arg as Array<Record<string, unknown>>).find((g) => g.some((r) => r.payload === null)) ?? [];
     expect(fresh.map((r) => r.zoho_id).sort()).toEqual(["inr-old", "usd-part1"]);
   });
 
   it("another kind (invoices) does not read payload fields and keeps an unchanged row", async () => {
-    const { db, calls } = fakeDb([{ ...known("i1", null, null), fx_cur: undefined, fx_lines: undefined }]);
+    const { db, calls } = fakeDb([{ ...known("i1", null, null), payload: undefined }]);
     await supabaseScanStore(db, "t1", "invoices").addListed("2025-26", [row("i1")]);
     const sel = calls[0].filters.find(([k]) => k === "select")![1];
     expect(sel).not.toContain("payload");

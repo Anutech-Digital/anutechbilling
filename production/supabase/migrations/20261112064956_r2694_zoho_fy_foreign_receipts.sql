@@ -398,12 +398,13 @@ begin
             from jsonb_array_elements(v_flines) x
            where x->>'zohoInvoiceId' = v_line->>'zohoInvoiceId'
            limit 1;
-          if coalesce(v_fline, 0) <= 0 then
-            v_reason := format('%s: the %s applied to it could not be read — read it from Zoho again.', v_inv.id, v_cur);
-            exit;
-          end if;
+          /* review: TDS first — a TDS-only line has no foreign money and must not loop on "read again" */
           if v_tds <> 0 then
             v_reason := format('%s: Zoho shows TDS on a %s payment — a foreign customer deducts no Indian TDS; book it by hand.', v_inv.id, v_cur);
+            exit;
+          end if;
+          if coalesce(v_fline, 0) <= 0 then
+            v_reason := format('%s: the %s applied to it could not be read — read it from Zoho again.', v_inv.id, v_cur);
             exit;
           end if;
           if v_icur <> v_cur or coalesce(v_inv.fx_rate, 0) <= 0 then
