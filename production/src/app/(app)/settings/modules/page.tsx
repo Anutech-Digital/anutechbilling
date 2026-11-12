@@ -3,11 +3,11 @@
 import * as React from "react";
 import Link from "next/link";
 import { useModules } from "@/lib/modules/useModules";
+import { getTierCumulativePriceRupees } from "@/lib/modules/registry";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
 
 export default function ModulesManagerPage() {
@@ -15,6 +15,9 @@ export default function ModulesManagerPage() {
     modules,
     isModuleActive,
     toggleModule,
+    selectTier,
+    currentTierLevel,
+    currentTierModule,
     activateAll,
     activeCount,
     totalCount,
@@ -122,17 +125,76 @@ export default function ModulesManagerPage() {
         </Card>
       </div>
 
+      {/* Progressive Tier Selection Ladder */}
+      <Card className="p-5 bg-gradient-to-r from-paper via-paper-2 to-paper border border-hairline space-y-3">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+          <div>
+            <span className="text-2xs font-bold uppercase tracking-wider text-indigo-700">Progressive Tier Hierarchy</span>
+            <h2 className="text-base font-serif font-semibold text-ink">
+              Sequential Packaging (Tier 1 → Tier 7)
+            </h2>
+            <p className="text-xs text-ink-3">
+              Higher versions automatically inherit all features of lower tiers. Selecting any higher tier automatically includes all tiers below it.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-ink-2 font-medium">Currently Active:</span>
+            <Badge className="bg-indigo-100 text-indigo-800 border-indigo-200 font-semibold">
+              {currentTierModule ? currentTierModule.tierLabel : `Tier ${currentTierLevel}`}
+            </Badge>
+          </div>
+        </div>
+
+        {/* Stepper buttons */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 pt-2">
+          {modules.map((m) => {
+            const isCurrent = m.tierLevel === currentTierLevel;
+            const isIncluded = m.tierLevel <= currentTierLevel;
+            const cumPrice = getTierCumulativePriceRupees(m.tierLevel);
+
+            return (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => {
+                  selectTier(m.tierLevel);
+                  toast.success(`Switched to ${m.tierLabel}! All lower tiers (1 to ${m.tierLevel}) included automatically.`);
+                }}
+                className={`p-2.5 rounded-lg border text-left transition-all ${
+                  isCurrent
+                    ? "bg-indigo-50 border-indigo-500 shadow-sm ring-1 ring-indigo-500"
+                    : isIncluded
+                    ? "bg-emerald-50/60 border-emerald-300 hover:bg-emerald-50"
+                    : "bg-paper border-hairline hover:border-ink/20 opacity-80"
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <span className="text-2xs font-bold font-mono text-ink-3">Tier {m.tierLevel}</span>
+                  {isIncluded && <span className="text-emerald-600 text-xs font-bold">✓</span>}
+                </div>
+                <p className="text-xs font-semibold text-ink truncate mt-1">
+                  {m.name.split("—")[0].split("&")[0].trim()}
+                </p>
+                <p className="text-2xs font-mono text-ink-3 mt-0.5">
+                  {cumPrice === 0 ? "FREE" : `₹${cumPrice}/mo`}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </Card>
+
       {/* Pluggable Modules Grid */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-ink">Modular Plugins & Tiers ({totalCount} Available)</h2>
-          <span className="text-xs text-ink-3">Toggle switches to customize tenant subscription tiers</span>
+          <h2 className="text-lg font-semibold text-ink">Modular Plugins & Tiers (Sequential Order)</h2>
+          <span className="text-xs text-ink-3">Higher versions inherit all lower tier capabilities</span>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {modules.map((m) => {
             const active = isModuleActive(m.id);
-            const isFreeTier = m.priceMonthlyRupees === 0 || m.id === "solo_free";
+            const isFreeTier = m.priceMonthlyRupees === 0 || m.isFreeTier;
 
             return (
               <Card
@@ -150,12 +212,8 @@ export default function ModulesManagerPage() {
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
-                        <span
-                          className={`text-xs font-bold uppercase tracking-wider ${
-                            isFreeTier ? "text-emerald-700" : "text-ink-3"
-                          }`}
-                        >
-                          {m.badge}
+                        <span className="text-2xs font-mono font-bold px-1.5 py-0.5 rounded bg-indigo-100 text-indigo-800">
+                          Tier {m.tierLevel} of 7
                         </span>
                         <span
                           className={`text-2xs px-1.5 py-0.5 rounded font-medium ${
@@ -177,7 +235,9 @@ export default function ModulesManagerPage() {
                       onCheckedChange={() => {
                         toggleModule(m.id);
                         toast.success(
-                          active ? `${m.name} deactivated` : `${m.name} activated on current tenant!`,
+                          active
+                            ? `${m.name} deactivated (stepped down to lower tier)`
+                            : `${m.name} activated! All lower tiers (1 to ${m.tierLevel}) included automatically.`,
                         );
                       }}
                       aria-label={`Toggle ${m.name}`}
@@ -185,6 +245,17 @@ export default function ModulesManagerPage() {
                   </div>
 
                   <p className="text-xs text-ink-3 mt-2 line-clamp-2">{m.tagline}</p>
+
+                  {/* Inherited capabilities callout */}
+                  {m.inheritedFromSummary && (
+                    <div className="mt-3 p-2 rounded-lg bg-emerald-50/70 border border-emerald-200/80 text-2xs text-emerald-800 flex items-start gap-1.5">
+                      <span className="text-emerald-600 font-bold shrink-0 mt-0.5">✓</span>
+                      <div>
+                        <span className="font-semibold">Inherited by Default: </span>
+                        <span className="text-emerald-700">{m.inheritedFromSummary}</span>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Price */}
                   <div
@@ -208,7 +279,9 @@ export default function ModulesManagerPage() {
 
                   {/* Key Features */}
                   <div className="mt-4 space-y-1.5">
-                    <span className="text-2xs font-semibold uppercase tracking-wider text-ink-3">Core Capabilities:</span>
+                    <span className="text-2xs font-semibold uppercase tracking-wider text-ink-3">
+                      {m.tierLevel === 1 ? "Core Capabilities:" : `✨ Extra Features in Tier ${m.tierLevel}:`}
+                    </span>
                     <ul className="space-y-1 text-xs text-ink-2">
                       {m.features.slice(0, 3).map((f, i) => (
                         <li key={i} className="flex items-center gap-1.5">
@@ -249,23 +322,32 @@ export default function ModulesManagerPage() {
                     )}
                   </div>
 
-                  {active ? (
-                    <Link href={m.coreRoutes[0]}>
-                      <Button variant="ghost" size="sm" className="text-xs">
-                        Open Module →
+                  <div className="flex items-center gap-2">
+                    {active ? (
+                      <Link href={m.coreRoutes[0]}>
+                        <Button variant="ghost" size="sm" className="text-xs">
+                          Open Module →
+                        </Button>
+                      </Link>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs border-indigo-300 text-indigo-800 bg-indigo-50 hover:bg-indigo-100"
+                        onClick={() => {
+                          selectTier(m.tierLevel);
+                          toast.success(`Upgraded to Tier ${m.tierLevel}! All lower tiers (1 to ${m.tierLevel}) included automatically.`);
+                        }}
+                      >
+                        ⚡ Select Tier {m.tierLevel}
                       </Button>
-                    </Link>
-                  ) : (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-xs border-amber-300 text-amber-800 bg-amber-50 hover:bg-amber-100"
-                      onClick={() => toggleModule(m.id)}
-                    >
-                      🔒 Enable Plugin
-                    </Button>
-                  )}
+                    )}
+                  </div>
                 </div>
+              </Card>
+            );
+          })}
+        </div>
               </Card>
             );
           })}

@@ -7,6 +7,8 @@
 
 export interface SystemModule {
   id: string;
+  tierLevel: number;
+  tierLabel: string;
   name: string;
   badge: string;
   tagline: string;
@@ -19,33 +21,14 @@ export interface SystemModule {
   dbTables: string[];
   commercialTarget: string;
   isFreeTier?: boolean;
+  inheritedFromSummary?: string;
 }
 
 export const SYSTEM_MODULES: SystemModule[] = [
   {
-    id: "solo_free",
-    name: "Individual & Solo Freelancer Pack",
-    badge: "Free Forever",
-    tagline: "Essential Invoicing, UPI QR Payments & Client Contacts for Solo Creators",
-    description: "Built specifically for individual professionals, solo consultants, and freelancers. Create professional estimates and GST/non-GST invoices, collect direct UPI payments via QR code, and manage client contacts at ₹0 cost forever.",
-    priceMonthlyRupees: 0,
-    iconName: "invoices",
-    accentColor: "#10B981", // Emerald
-    isFreeTier: true,
-    coreRoutes: ["/invoices", "/quotes", "/payments", "/contacts", "/customers"],
-    features: [
-      "Tax Invoices & Proforma Estimates",
-      "Direct UPI QR Code & Online Payment Links",
-      "1-Click WhatsApp Document & Invoice Sharing",
-      "Client Master Directory (Individual & Business)",
-      "Automated 1% / 2% TDS Calculation (Sec 194C)",
-      "100% Free Forever — Zero Monthly Fees",
-    ],
-    dbTables: ["invoices", "quotes", "payments", "customers", "contacts"],
-    commercialTarget: "Individual freelancers, solo consultants, independent contractors, and micro-entrepreneurs who need clean billing without monthly subscription fees.",
-  },
-  {
     id: "salaried_pro",
+    tierLevel: 1,
+    tierLabel: "Tier 1: Personal Career & Tax Hub",
     name: "Salaried Pro — Individual Career & Tax Hub",
     badge: "Free Forever",
     tagline: "CTC & Tax Regime Calculator, Company Reimbursements & Rent Receipts",
@@ -67,27 +50,34 @@ export const SYSTEM_MODULES: SystemModule[] = [
     commercialTarget: "Individual salaried employees, IT professionals, corporate executives, and job holders who need personal tax planning and expense management without running a business.",
   },
   {
-    id: "crm",
-    name: "Reseller CRM & Sales Pipeline",
-    badge: "Sales & Growth",
-    tagline: "High-velocity B2B Sales, Lead Tracking & WhatsApp Automation",
-    description: "Capture enquiries, nurture leads across Kanban stages, manage customer deals, and run WhatsApp broadcasts.",
-    priceMonthlyRupees: 499,
-    iconName: "leads",
-    accentColor: "#3B82F6", // Blue
-    coreRoutes: ["/leads", "/deals", "/contacts", "/enquiries", "/whatsapp", "/campaigns", "/lead-gen", "/marketing-hub", "/referrals", "/partners", "/online-orders"],
+    id: "solo_free",
+    tierLevel: 2,
+    tierLabel: "Tier 2: Solo Freelancer & Invoicing",
+    name: "Individual & Solo Freelancer Pack",
+    badge: "Free Forever",
+    tagline: "Essential Invoicing, UPI QR Payments & Client Contacts for Solo Creators",
+    description: "Built specifically for individual professionals, solo consultants, and freelancers. Create professional estimates and GST/non-GST invoices, collect direct UPI payments via QR code, and manage client contacts at ₹0 cost forever.",
+    priceMonthlyRupees: 0,
+    iconName: "invoices",
+    accentColor: "#10B981", // Emerald
+    isFreeTier: true,
+    inheritedFromSummary: "Includes everything in Tier 1 (Personal Tax Hub & Expense Tools)",
+    coreRoutes: ["/invoices", "/quotes", "/payments", "/contacts", "/customers"],
     features: [
-      "Visual Kanban Deal Pipeline",
-      "WhatsApp Business API Integration",
-      "Lead Source Attribution & Tracking",
-      "Enquiry Capture & Quick-Reply Forms",
-      "Contact & Interaction History",
+      "Tax Invoices & Proforma Estimates",
+      "Direct UPI QR Code & Online Payment Links",
+      "1-Click WhatsApp Document & Invoice Sharing",
+      "Client Master Directory (Individual & Business)",
+      "Automated 1% / 2% TDS Calculation (Sec 194C)",
+      "100% Free Forever — Zero Monthly Fees",
     ],
-    dbTables: ["leads", "deals", "contacts", "enquiries", "whatsapp_logs", "campaigns"],
-    commercialTarget: "Indian SMBs, Agencies, B2B sales teams requiring dedicated CRM without complex ERP bloat.",
+    dbTables: ["invoices", "quotes", "payments", "customers", "contacts"],
+    commercialTarget: "Individual freelancers, solo consultants, independent contractors, and micro-entrepreneurs who need clean billing without monthly subscription fees.",
   },
   {
     id: "invoicing",
+    tierLevel: 3,
+    tierLabel: "Tier 3: GST Business & Accounting",
     name: "GST Invoicing & Indian Finance",
     badge: "Finance & Tax",
     tagline: "100% GST-Compliant Billing, Quotes, UPI & Razorpay Checkout",
@@ -95,6 +85,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
     priceMonthlyRupees: 499,
     iconName: "invoices",
     accentColor: "#10B981", // Emerald
+    inheritedFromSummary: "Includes all Tier 1 & 2 features (Tax Hub, Invoicing, Quotes, UPI QR Payments)",
     coreRoutes: ["/invoices", "/quotes", "/payments", "/purchases", "/purchase-orders", "/accounting", "/reports", "/compliance"],
     features: [
       "GST Tax Invoices & Proforma Quotes",
@@ -107,7 +98,32 @@ export const SYSTEM_MODULES: SystemModule[] = [
     commercialTarget: "Freelancers, MSMEs, IT service companies wanting clean GST billing with payment gateway sync.",
   },
   {
+    id: "crm",
+    tierLevel: 4,
+    tierLabel: "Tier 4: Sales Pipeline & Growth CRM",
+    name: "Reseller CRM & Sales Pipeline",
+    badge: "Sales & Growth",
+    tagline: "High-velocity B2B Sales, Lead Tracking & WhatsApp Automation",
+    description: "Capture enquiries, nurture leads across Kanban stages, manage customer deals, and run WhatsApp broadcasts.",
+    priceMonthlyRupees: 499,
+    iconName: "leads",
+    accentColor: "#3B82F6", // Blue
+    inheritedFromSummary: "Includes all Tier 1, 2 & 3 features (Tax Hub, GST Invoicing, Ledger, Accounting)",
+    coreRoutes: ["/leads", "/deals", "/contacts", "/enquiries", "/whatsapp", "/campaigns", "/lead-gen", "/marketing-hub", "/referrals", "/partners", "/online-orders"],
+    features: [
+      "Visual Kanban Deal Pipeline",
+      "WhatsApp Business API Integration",
+      "Lead Source Attribution & Tracking",
+      "Enquiry Capture & Quick-Reply Forms",
+      "Contact & Interaction History",
+    ],
+    dbTables: ["leads", "deals", "contacts", "enquiries", "whatsapp_logs", "campaigns"],
+    commercialTarget: "Indian SMBs, Agencies, B2B sales teams requiring dedicated CRM without complex ERP bloat.",
+  },
+  {
     id: "subscriptions",
+    tierLevel: 5,
+    tierLabel: "Tier 5: Recurring SaaS & Retainers",
     name: "SubFlow — Recurring Billing Engine",
     badge: "Automation",
     tagline: "Automated Renewals, Proration & Dunning for Recurring Services",
@@ -115,6 +131,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
     priceMonthlyRupees: 399,
     iconName: "subscriptions",
     accentColor: "#8B5CF6", // Purple
+    inheritedFromSummary: "Includes all Tier 1 to 4 features (CRM Pipeline, WhatsApp, GST Billing, Accounting)",
     coreRoutes: ["/subscriptions", "/renewals"],
     features: [
       "Automated Monthly & Annual Billing Cycles",
@@ -127,27 +144,9 @@ export const SYSTEM_MODULES: SystemModule[] = [
     commercialTarget: "SaaS providers, retainer marketing agencies, IT AMC businesses.",
   },
   {
-    id: "provisioning",
-    name: "Cloud & Web Hosting Orchestrator",
-    badge: "Infrastructure",
-    tagline: "Automated DirectAdmin, ResellerClub Domain & Server Provisioning",
-    description: "Sell web hosting and domains with zero manual touch. Direct connection to DirectAdmin servers and ResellerClub registrar APIs.",
-    priceMonthlyRupees: 999,
-    iconName: "cloud",
-    accentColor: "#F59E0B", // Amber
-    coreRoutes: ["/hosting-domains", "/provisioning", "/products", "/items", "/projects"],
-    features: [
-      "Live ResellerClub Domain Search & Registration",
-      "DirectAdmin Automated Account Provisioning",
-      "Domain Management System (DMS) Engine Sync",
-      "Instant Server Health & Resource Allocation",
-      "Automated Hosting Trial Activation",
-    ],
-    dbTables: ["provisioning_jobs", "domains", "servers", "hosting_plans", "vendor_api_configs"],
-    commercialTarget: "Web hosting resellers, MSPs, and digital agencies selling hosting bundles.",
-  },
-  {
     id: "teamops",
+    tierLevel: 6,
+    tierLabel: "Tier 6: Workforce HRMS & Payroll",
     name: "TeamOps — HR, Attendance & Payroll",
     badge: "Workforce",
     tagline: "Attendance Tracking, Indian Statutory Payroll (PF, ESI, TDS) & Tasks",
@@ -155,6 +154,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
     priceMonthlyRupees: 499,
     iconName: "team",
     accentColor: "#EC4899", // Pink
+    inheritedFromSummary: "Includes all Tier 1 to 5 features (Subscriptions, CRM, WhatsApp, GST Billing)",
     coreRoutes: ["/team", "/attendance", "/performance", "/scorecard", "/tasks", "/support", "/accounting/payroll", "/accounting/employees", "/accounting/attendance", "/accounting/leave", "/accounting/loans", "/accounting/salary-register", "/assessments", "/academy"],
     features: [
       "Office & Remote Geo-Fenced Attendance",
@@ -165,6 +165,29 @@ export const SYSTEM_MODULES: SystemModule[] = [
     ],
     dbTables: ["team_members", "attendance", "payroll_runs", "tasks", "support_tickets", "scorecards"],
     commercialTarget: "Growing Indian businesses with 5–100 employees needing HR + task tracking without expensive HRMS tools.",
+  },
+  {
+    id: "provisioning",
+    tierLevel: 7,
+    tierLabel: "Tier 7: Cloud & Hosting Enterprise Suite",
+    name: "Cloud & Web Hosting Orchestrator",
+    badge: "Infrastructure",
+    tagline: "Automated DirectAdmin, ResellerClub Domain & Server Provisioning",
+    description: "Sell web hosting and domains with zero manual touch. Direct connection to DirectAdmin servers and ResellerClub registrar APIs.",
+    priceMonthlyRupees: 999,
+    iconName: "cloud",
+    accentColor: "#F59E0B", // Amber
+    inheritedFromSummary: "Includes all Tier 1 to 6 features (Full ResellerOS Commercial Suite)",
+    coreRoutes: ["/hosting-domains", "/provisioning", "/products", "/items", "/projects"],
+    features: [
+      "Live ResellerClub Domain Search & Registration",
+      "DirectAdmin Automated Account Provisioning",
+      "Domain Management System (DMS) Engine Sync",
+      "Instant Server Health & Resource Allocation",
+      "Automated Hosting Trial Activation",
+    ],
+    dbTables: ["provisioning_jobs", "domains", "servers", "hosting_plans", "vendor_api_configs"],
+    commercialTarget: "Web hosting resellers, MSPs, and digital agencies selling hosting bundles.",
   },
 ];
 
@@ -182,5 +205,41 @@ export function getModuleForRoute(pathname: string): SystemModule | undefined {
   );
 }
 
-/** Default active modules for all tenants (includes Individual Free Packs) */
-export const DEFAULT_ACTIVE_MODULE_IDS = ["solo_free", "salaried_pro", "crm", "invoicing", "subscriptions", "provisioning", "teamops"];
+/** Return all modules up to a given tier level (inclusive, progressive hierarchy) */
+export function getModulesUpToTier(tierLevel: number): SystemModule[] {
+  return SYSTEM_MODULES.filter((m) => m.tierLevel <= tierLevel);
+}
+
+/** Return all module IDs up to a given tier level (inclusive) */
+export function getModuleIdsUpToTier(tierLevel: number): string[] {
+  return SYSTEM_MODULES.filter((m) => m.tierLevel <= tierLevel).map((m) => m.id);
+}
+
+/** Calculate the highest active tier given a list of active module IDs */
+export function getHighestActiveTier(activeModuleIds: string[]): number {
+  const activeTiers = SYSTEM_MODULES.filter((m) => activeModuleIds.includes(m.id)).map(
+    (m) => m.tierLevel,
+  );
+  return activeTiers.length > 0 ? Math.max(...activeTiers) : 0;
+}
+
+/** Calculate the cumulative monthly price for all modules up to tierLevel */
+export function getTierCumulativePriceRupees(tierLevel: number): number {
+  if (tierLevel <= 2) return 0;
+  if (tierLevel >= 7) return 1999; // Full Enterprise Suite bundle cap
+  return SYSTEM_MODULES.filter((m) => m.tierLevel <= tierLevel).reduce(
+    (sum, m) => sum + m.priceMonthlyRupees,
+    0,
+  );
+}
+
+/** Default active modules for all tenants in strict ascending tier sequence */
+export const DEFAULT_ACTIVE_MODULE_IDS = [
+  "salaried_pro",
+  "solo_free",
+  "invoicing",
+  "crm",
+  "subscriptions",
+  "teamops",
+  "provisioning",
+];

@@ -4,50 +4,105 @@ import {
   getModuleForRoute,
   getModulesForRoute,
   DEFAULT_ACTIVE_MODULE_IDS,
+  getModulesUpToTier,
+  getModuleIdsUpToTier,
+  getHighestActiveTier,
+  getTierCumulativePriceRupees,
 } from "./registry";
 
 describe("Commercial Modular Architecture - Registry & Gating", () => {
-  it("defines all 7 plug-and-play modules including Solo Free & Salaried Pro Free packs", () => {
+  it("defines all 7 plug-and-play modules arranged in strict ascending tier sequence", () => {
     expect(SYSTEM_MODULES).toHaveLength(7);
 
     const ids = SYSTEM_MODULES.map((m) => m.id);
     expect(ids).toEqual([
-      "solo_free",
       "salaried_pro",
-      "crm",
+      "solo_free",
       "invoicing",
+      "crm",
       "subscriptions",
-      "provisioning",
       "teamops",
+      "provisioning",
     ]);
 
     expect(DEFAULT_ACTIVE_MODULE_IDS).toEqual(ids);
 
-    // Solo Free Tier validation
-    const soloFree = SYSTEM_MODULES.find((m) => m.id === "solo_free");
-    expect(soloFree).toBeDefined();
-    expect(soloFree?.priceMonthlyRupees).toBe(0);
-    expect(soloFree?.isFreeTier).toBe(true);
-    expect(soloFree?.badge).toBe("Free Forever");
+    // Verify strictly sequential tierLevel values (1 through 7)
+    const tierLevels = SYSTEM_MODULES.map((m) => m.tierLevel);
+    expect(tierLevels).toEqual([1, 2, 3, 4, 5, 6, 7]);
 
-    // Salaried Pro Tier validation
+    // Salaried Pro (Tier 1)
     const salariedPro = SYSTEM_MODULES.find((m) => m.id === "salaried_pro");
     expect(salariedPro).toBeDefined();
+    expect(salariedPro?.tierLevel).toBe(1);
     expect(salariedPro?.priceMonthlyRupees).toBe(0);
     expect(salariedPro?.isFreeTier).toBe(true);
     expect(salariedPro?.badge).toBe("Free Forever");
     expect(salariedPro?.coreRoutes).toContain("/employee-hub");
 
+    // Solo Free (Tier 2)
+    const soloFree = SYSTEM_MODULES.find((m) => m.id === "solo_free");
+    expect(soloFree).toBeDefined();
+    expect(soloFree?.tierLevel).toBe(2);
+    expect(soloFree?.priceMonthlyRupees).toBe(0);
+    expect(soloFree?.isFreeTier).toBe(true);
+    expect(soloFree?.badge).toBe("Free Forever");
+    expect(soloFree?.inheritedFromSummary).toBeTruthy();
+
+    // Verify all higher tiers inherit lower tiers
     for (const mod of SYSTEM_MODULES) {
       expect(mod.name).toBeTruthy();
+      expect(mod.tierLabel).toBeTruthy();
       expect(mod.features.length).toBeGreaterThan(0);
       expect(mod.coreRoutes.length).toBeGreaterThan(0);
       expect(mod.dbTables.length).toBeGreaterThan(0);
       expect(mod.commercialTarget).toBeTruthy();
-      if (mod.id !== "solo_free" && mod.id !== "salaried_pro") {
+      if (mod.tierLevel > 1) {
+        expect(mod.inheritedFromSummary).toBeTruthy();
+      }
+      if (mod.tierLevel > 2) {
         expect(mod.priceMonthlyRupees).toBeGreaterThan(0);
       }
     }
+  });
+
+  describe("Hierarchical Tier Inheritance Helpers", () => {
+    it("getModulesUpToTier and getModuleIdsUpToTier auto-include all lower tiers", () => {
+      // Tier 1: only salaried_pro
+      expect(getModuleIdsUpToTier(1)).toEqual(["salaried_pro"]);
+
+      // Tier 2: salaried_pro + solo_free
+      expect(getModuleIdsUpToTier(2)).toEqual(["salaried_pro", "solo_free"]);
+
+      // Tier 4 (CRM): includes Tier 1 (salaried), Tier 2 (solo), Tier 3 (invoicing), Tier 4 (crm)
+      expect(getModuleIdsUpToTier(4)).toEqual([
+        "salaried_pro",
+        "solo_free",
+        "invoicing",
+        "crm",
+      ]);
+
+      // Tier 7: all 7 modules
+      expect(getModuleIdsUpToTier(7)).toEqual(DEFAULT_ACTIVE_MODULE_IDS);
+    });
+
+    it("getHighestActiveTier accurately calculates current active tier level", () => {
+      expect(getHighestActiveTier(["salaried_pro"])).toBe(1);
+      expect(getHighestActiveTier(["salaried_pro", "solo_free"])).toBe(2);
+      expect(getHighestActiveTier(["salaried_pro", "solo_free", "invoicing", "crm"])).toBe(4);
+      expect(getHighestActiveTier(DEFAULT_ACTIVE_MODULE_IDS)).toBe(7);
+      expect(getHighestActiveTier([])).toBe(0);
+    });
+
+    it("getTierCumulativePriceRupees accurately calculates cumulative tier pricing", () => {
+      expect(getTierCumulativePriceRupees(1)).toBe(0); // Free
+      expect(getTierCumulativePriceRupees(2)).toBe(0); // Free
+      expect(getTierCumulativePriceRupees(3)).toBe(499); // GST Invoicing
+      expect(getTierCumulativePriceRupees(4)).toBe(998); // + CRM (499+499)
+      expect(getTierCumulativePriceRupees(5)).toBe(1397); // + SubFlow (499+499+399)
+      expect(getTierCumulativePriceRupees(6)).toBe(1896); // + TeamOps (499+499+399+499)
+      expect(getTierCumulativePriceRupees(7)).toBe(1999); // Full bundle cap (saves ₹896)
+    });
   });
 
   describe("getModulesForRoute & getModuleForRoute mapping", () => {

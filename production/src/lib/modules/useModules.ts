@@ -1,7 +1,13 @@
 "use client";
 
 import * as React from "react";
-import { SYSTEM_MODULES, DEFAULT_ACTIVE_MODULE_IDS, type SystemModule } from "./registry";
+import {
+  SYSTEM_MODULES,
+  DEFAULT_ACTIVE_MODULE_IDS,
+  getModuleIdsUpToTier,
+  getHighestActiveTier,
+  type SystemModule,
+} from "./registry";
 
 const STORAGE_KEY = "reselleros_active_modules_v1";
 export const MODULES_CHANGED_EVENT = "reselleros:modules-changed";
@@ -76,7 +82,48 @@ export function useModules() {
     [activeModuleIds],
   );
 
+  /**
+   * Select a full tier level (1 to 7).
+   * Automatically activates all lower tiers (1 to tierLevel) as per progressive hierarchy.
+   */
+  const selectTier = React.useCallback(
+    (tierLevel: number) => {
+      const next = getModuleIdsUpToTier(tierLevel);
+      saveModules(next);
+    },
+    [saveModules],
+  );
+
+  /**
+   * Toggle a module with automatic progressive hierarchy enforcement:
+   * - When activating a higher module, all modules below it are automatically included by default.
+   * - When deactivating a module, higher tiers that depend on it are stepped down.
+   */
   const toggleModule = React.useCallback(
+    (moduleId: string) => {
+      const target = SYSTEM_MODULES.find((m) => m.id === moduleId);
+      if (!target) return;
+
+      const isCurrentlyActive = activeModuleIds.includes(moduleId);
+      if (!isCurrentlyActive) {
+        // Activating this tier: auto-include all preceding lower tiers
+        const requiredLowerIds = getModuleIdsUpToTier(target.tierLevel);
+        const next = Array.from(new Set([...activeModuleIds, ...requiredLowerIds]));
+        saveModules(next);
+      } else {
+        // Deactivating this tier: remove this tier and all higher tiers that depend on it
+        const next = activeModuleIds.filter((id) => {
+          const item = SYSTEM_MODULES.find((m) => m.id === id);
+          return item ? item.tierLevel < target.tierLevel : false;
+        });
+        saveModules(next);
+      }
+    },
+    [activeModuleIds, saveModules],
+  );
+
+  /** Toggle an individual module without cascading tier changes (a-la-carte mode) */
+  const toggleSingleModule = React.useCallback(
     (moduleId: string) => {
       const next = activeModuleIds.includes(moduleId)
         ? activeModuleIds.filter((id) => id !== moduleId)
@@ -89,6 +136,14 @@ export function useModules() {
   const activateAll = React.useCallback(() => {
     saveModules(DEFAULT_ACTIVE_MODULE_IDS);
   }, [saveModules]);
+
+  const currentTierLevel = React.useMemo(() => {
+    return getHighestActiveTier(activeModuleIds);
+  }, [activeModuleIds]);
+
+  const currentTierModule = React.useMemo(() => {
+    return SYSTEM_MODULES.find((m) => m.tierLevel === currentTierLevel);
+  }, [currentTierLevel]);
 
   const paidModules = React.useMemo(
     () => SYSTEM_MODULES.filter((m) => m.priceMonthlyRupees > 0),
@@ -131,6 +186,10 @@ export function useModules() {
     isLoaded,
     isModuleActive,
     toggleModule,
+    toggleSingleModule,
+    selectTier,
+    currentTierLevel,
+    currentTierModule,
     activateAll,
     totalMonthlyCostRupees,
     bundleSavingsRupees,

@@ -77,25 +77,81 @@ describe("Modular Architecture - useModules Hook", () => {
     expect(result.current.bundleSavingsRupees).toBe(896);
   });
 
-  it("toggles a module off and updates pricing and localStorage accurately", () => {
+  it("selectTier activates all lower tiers automatically by default", () => {
     const { result } = renderHook(() => useModules());
 
-    // Disable CRM module
+    // Switch to Tier 4 (CRM)
+    act(() => {
+      result.current.selectTier(4);
+    });
+
+    expect(result.current.currentTierLevel).toBe(4);
+    expect(result.current.activeCount).toBe(4);
+    expect(result.current.isModuleActive("salaried_pro")).toBe(true); // Tier 1
+    expect(result.current.isModuleActive("solo_free")).toBe(true);    // Tier 2
+    expect(result.current.isModuleActive("invoicing")).toBe(true);    // Tier 3
+    expect(result.current.isModuleActive("crm")).toBe(true);          // Tier 4
+    expect(result.current.isModuleActive("subscriptions")).toBe(false); // Tier 5
+    expect(result.current.isModuleActive("teamops")).toBe(false);       // Tier 6
+    expect(result.current.isModuleActive("provisioning")).toBe(false);  // Tier 7
+
+    // Cumulative price for Tier 4: ₹499 (Invoicing) + ₹499 (CRM) = ₹998
+    expect(result.current.totalMonthlyCostRupees).toBe(998);
+  });
+
+  it("activating a higher tier module via toggleModule auto-includes all lower tiers", () => {
+    // Start with only Tier 1 (salaried_pro)
+    storageMock.setItem("reselleros_active_modules_v1", JSON.stringify(["salaried_pro"]));
+
+    const { result } = renderHook(() => useModules());
+    expect(result.current.activeCount).toBe(1);
+
+    // Toggle on CRM (Tier 4)
     act(() => {
       result.current.toggleModule("crm");
     });
 
+    // Auto-includes Tier 1 (salaried), Tier 2 (solo), Tier 3 (invoicing), Tier 4 (crm)
+    expect(result.current.activeCount).toBe(4);
+    expect(result.current.isModuleActive("salaried_pro")).toBe(true);
+    expect(result.current.isModuleActive("solo_free")).toBe(true);
+    expect(result.current.isModuleActive("invoicing")).toBe(true);
+    expect(result.current.isModuleActive("crm")).toBe(true);
+  });
+
+  it("toggles a module off in tier mode stepping down higher versions", () => {
+    const { result } = renderHook(() => useModules());
+
+    // Disable CRM module (Tier 4) from full tier
+    act(() => {
+      result.current.toggleModule("crm");
+    });
+
+    // Tiers 4, 5, 6, 7 are stepped down, leaving Tiers 1, 2, 3 active
+    expect(result.current.activeCount).toBe(3);
+    expect(result.current.isModuleActive("salaried_pro")).toBe(true);
+    expect(result.current.isModuleActive("solo_free")).toBe(true);
+    expect(result.current.isModuleActive("invoicing")).toBe(true);
+    expect(result.current.isModuleActive("crm")).toBe(false);
+    expect(result.current.isModuleActive("subscriptions")).toBe(false);
+    expect(result.current.currentTierLevel).toBe(3);
+
+    // Pricing for Tiers 1-3 = ₹499/mo
+    expect(result.current.totalMonthlyCostRupees).toBe(499);
+  });
+
+  it("toggleSingleModule allows a-la-carte toggling without cascading", () => {
+    const { result } = renderHook(() => useModules());
+
+    // Disable only CRM without cascading
+    act(() => {
+      result.current.toggleSingleModule("crm");
+    });
+
     expect(result.current.activeCount).toBe(6);
     expect(result.current.isModuleActive("crm")).toBe(false);
-    expect(result.current.bundleSavingsRupees).toBe(0);
-
-    // Pricing without CRM (₹499 removed from ₹2,895 regular total = ₹2,396)
+    expect(result.current.isModuleActive("subscriptions")).toBe(true);
     expect(result.current.totalMonthlyCostRupees).toBe(2396);
-
-    // Verify written to localStorage
-    const stored = JSON.parse(storageMock.getItem("reselleros_active_modules_v1") || "[]");
-    expect(stored).not.toContain("crm");
-    expect(stored).toHaveLength(6);
   });
 
   it("computes isFreePlanOnly correctly when only solo_free is active", () => {
