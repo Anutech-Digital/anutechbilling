@@ -11,6 +11,7 @@ import { useTaxPayments } from "@/lib/queries/tax-payments";
 import { splitItc, itcEligibility } from "@/lib/gst/itc";
 import { billItcEligibility, splitBillItc, mergeItcSplits } from "@/lib/gst/bill-itc";
 import { docGstRate, docHsnLines, type Advance, type HsnSourceLine } from "@/lib/gst/gstr1";
+import { docRates } from "@/lib/gst/line-rates";
 import { snapshotAdvanceGross, type AdvancePayment } from "@/lib/gst/advance-cash";
 import { allocateInstalmentPayments, splitPaymentAdvances, type AdvancePortion, type InstalmentInvoice } from "@/lib/gst/instalment-advances";
 import { isInterStateSupply, frozenParty } from "@/lib/gst/place-of-supply";
@@ -267,12 +268,18 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
     const amount       = i.amount ?? 0;
     const knownTax     = i.tax_amount ?? (i.taxable_value != null ? amount - i.taxable_value : null);
     const r            = docGstRate(i.tax_rate, i.taxable_value ?? (knownTax != null ? amount - knownTax : null), knownTax);
-    rateByInvoice.set(i.id, r);
-    const taxRate      = r.rate;
     // Prefer the breakdown persisted at issue time (migration 0116); fall
     // back to reverse-deriving at the row's rate for any legacy invoice.
-    const taxableValue = i.taxable_value ?? Math.round(amount * 100 / (100 + taxRate));
+    const taxableValue = i.taxable_value ?? Math.round(amount * 100 / (100 + r.rate));
     const gst          = i.tax_amount ?? (amount - taxableValue);
+    /* R-2717: lines at different GST rates (tax_rate NULL on the row, a rate on each line) —
+       the row shows the highest rate + the list; GSTR-1 splits it by rate from `lines`.
+       Its 11B advance has no single rate to back the tax out at → "rate missing", never the
+       slab that tax ÷ taxable happens to be nearest to. */
+    const lines        = docHsnLines(taxableValue, linesByInvoice.get(i.id), hsnByItem);
+    const shown        = docRates({ taxableValue, gst, taxRate: r.rate }, lines);
+    rateByInvoice.set(i.id, shown.rates ? { rate: 0, rateMissing: true } : r);
+    const taxRate      = shown.taxRate;
     const c = custOf(i.customer_id);
     /* R-043: the buyer as on the day of issue, frozen on the invoice — a later customer
        edit must not move a filed invoice between B2B / B2CL / B2CS. */
@@ -289,42 +296,53 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
       taxableValue,
       gst,
       taxRate,
-      rateMissing:   r.rateMissing,
+      ...(shown.rates ? { rates: shown.rates } : {}),
+      rateMissing:   shown.rates ? false : r.rateMissing,
       interState:    i.inter_state ?? false,
       docType:       "invoice",
-      lines:         docHsnLines(taxableValue, linesByInvoice.get(i.id), hsnByItem),
+      lines,
       gstTreatment:  i.gst_treatment ?? null,
     };
   });
 
   // Notes as SIGNED output rows — credit note negative, debit note positive.
-  const noteLines = (taxable: number, invoiceId: string | null | undefined) =>
-    docHsnLines(taxable, invoiceId ? linesByInvoice.get(invoiceId) : null, hsnByItem);
+  /* R-2717: a note that carries its OWN rate (every note before this card; a late-fee debit
+     note) keeps it — the invoice's line rates apply only to a note stored with no rate. */
+  const noteLines = (taxable: number, invoiceId: string | null | undefined, ownRate: number | null) =>
+    docHsnLines(taxable, invoiceId ? linesByInvoice.get(invoiceId) : null, hsnByItem)
+      .map((l) => (ownRate == null ? l : { hsn: l.hsn, description: l.description, taxable: l.taxable }));
   // R-1131: a note with no stored rate takes the rate its own tax ÷ taxable shows — never 18.
-  const noteRate = (n: { tax_rate: number | null; taxable_value: number | null; tax_amount: number | null }) => {
+  /* R-2717: a note on a mixed-rate invoice has no rate of its own (tax_rate NULL) — it is split
+     like the invoice it amends, by that invoice's line rates (`lines` carry them). */
+  const noteRate = (n: { tax_rate: number | null; taxable_value: number | null; tax_amount: number | null }, sign: 1 | -1, lines: ReturnType<typeof noteLines>) => {
     const r = docGstRate(n.tax_rate, n.taxable_value, n.tax_amount);
-    return { taxRate: r.rate, rateMissing: r.rateMissing };
+    const shown = n.tax_rate == null
+      ? docRates({ taxableValue: sign * (n.taxable_value ?? 0), gst: sign * (n.tax_amount ?? 0), taxRate: r.rate }, lines)
+      : { taxRate: r.rate };
+    return { taxRate: shown.taxRate, ...(shown.rates ? { rates: shown.rates } : {}), rateMissing: shown.rates ? false : r.rateMissing };
   };
   for (const n of creditNotes ?? []) {
     const c = noteParty(n.invoice_id, custOf(n.customer_id));
+    const lines = noteLines(-(n.taxable_value ?? 0), n.invoice_id, n.tax_rate);
     outputRows.push({
       invoiceId: n.id, invoiceDate: n.credit_date, customerName: n.customer_name ?? "—",
       customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
       amount: -(n.amount ?? 0), taxableValue: -(n.taxable_value ?? 0), gst: -(n.tax_amount ?? 0),
-      ...noteRate(n), interState: n.inter_state ?? false, docType: "credit_note",
+      ...noteRate(n, -1, lines), interState: n.inter_state ?? false, docType: "credit_note",
       lateCreditNote: isCreditNoteLate(n.invoice_id ? invoiceDateById.get(n.invoice_id) : null, n.credit_date),
-      lines: noteLines(-(n.taxable_value ?? 0), n.invoice_id),
+      lines,
       gstTreatment: noteTreatment(n.invoice_id),
     });
   }
   for (const n of debitNotes ?? []) {
     const c = noteParty(n.invoice_id, custOf(n.customer_id));
+    const lines = noteLines(n.taxable_value ?? 0, n.invoice_id, n.tax_rate);
     outputRows.push({
       invoiceId: n.id, invoiceDate: n.debit_date, customerName: n.customer_name ?? "—",
       customerGstin: c.gstin, customerStateCode: c.stateCode, customerState: c.state, customerCountry: c.country,
       amount: n.amount ?? 0, taxableValue: n.taxable_value ?? 0, gst: n.tax_amount ?? 0,
-      ...noteRate(n), interState: n.inter_state ?? false, docType: "debit_note",
-      lines: noteLines(n.taxable_value ?? 0, n.invoice_id),
+      ...noteRate(n, 1, lines), interState: n.inter_state ?? false, docType: "debit_note",
+      lines,
       gstTreatment: noteTreatment(n.invoice_id),
     });
   }

@@ -17,7 +17,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
-import { auditInvoiceGst, type GstIssue } from "@/lib/gst/mismatch";
+import { auditInvoiceGst, invoiceGstFacts, type GstIssue } from "@/lib/gst/mismatch";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { onlySaleInvoices } from "@/lib/accounting/sale-documents";
 import { isTaxInvoiceRow } from "@/lib/invoices/document-kind";
@@ -64,7 +64,7 @@ export function useGstHealth() {
       const [issued, customers] = await Promise.all([
         /* R-1739: an invoice imported from Zoho Books is not a GST document of ours. */
         fetchAllRows((a, b) => onlySaleInvoices(supabase.from("invoices")
-          .select("id, customer_id, taxable_value, tax_amount, tax_rate, inter_state, document_kind, gst_treatment"))
+          .select("id, customer_id, taxable_value, tax_amount, tax_rate, inter_state, document_kind, gst_treatment, line_items"))
           .order("id").range(a, b)),
         fetchAllRows((a, b) => supabase.from("customers")
           .select("id, name, state_code, gstin, country, gst_treatment")
@@ -84,13 +84,8 @@ export function useGstHealth() {
       for (const inv of invoices) {
         const customer = inv.customer_id ? byId.get(inv.customer_id) : undefined;
         const issues = auditInvoiceGst(
-          {
-            taxableValue: inv.taxable_value ?? 0,
-            taxAmount: inv.tax_amount ?? 0,
-            taxRate: inv.tax_rate ?? 0,
-            interState: Boolean(inv.inter_state),
-            gstTreatment: inv.gst_treatment,
-          },
+          /* R-2717: a mixed-rate invoice (tax_rate NULL, a rate per line) is checked per rate. */
+          invoiceGstFacts(inv),
           {
             stateCode: customer?.state_code,
             gstin: customer?.gstin,

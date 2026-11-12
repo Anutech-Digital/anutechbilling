@@ -33,6 +33,7 @@
 import { SAAS_HSN, SAAS_HSN_LABEL, sacLabel } from "./hsn";
 import { splitTaxHeads } from "./tax-split";
 import { isExportSupply, treatmentIsAlwaysInterState } from "./place-of-supply";
+import { lineOwnRate, lineWeight, rateSlices, type RateSlice } from "./line-rates";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 
 /** Inter-state B2C invoice above this value gets its own B2CL line (₹1L since 1 Aug 2024). */
@@ -58,8 +59,10 @@ export interface Gstr1Doc {
   /** Customer's country. Anything other than India (see isExportSupply) with no GSTIN is an
    *  export → EXP / CDNUR-EXP. Missing/empty = domestic (never silently zero-rate). */
   customerCountry?: string | null;
-  /** Per-line HSN/SAC share of the taxable value. Missing → whole document under SAAS_HSN. */
-  lines?: { hsn: string; description?: string; taxable: number }[];
+  /** Per-line HSN/SAC share of the taxable value. Missing → whole document under SAAS_HSN.
+   *  R-2717: `rate` = the line's own GST % (absent → the document's `taxRate`). Lines at
+   *  different rates split the document's rows by rate (lib/gst/line-rates.ts). */
+  lines?: { hsn: string; description?: string; taxable: number; rate?: number | null }[];
   /** R-1742: invoices.gst_treatment frozen at issue (a note takes its invoice's). Null =
    *  issued before R-1736 → a regular supply. Decides the B2B / CDNR invoice type. */
   gstTreatment?: string | null;
@@ -173,15 +176,30 @@ export function posFor(
 
 // ─── Section row shapes ─────────────────────────────────────────────────────
 
-export interface B2bRow { gstin: string; name: string; id: string; date: string; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads; invType: B2bInvType }
-export interface B2clRow { id: string; date: string; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads }
+/** R-2717: one GST rate of a document row — the portal's `itms` entry / one Offline Tool line. */
+export interface RateItem { rate: number; taxable: number; heads: TaxHeads }
+/** A document row is ONE row per document (GSTR-1A compares by document number). When its
+ *  lines carry different GST rates, `items` lists each rate's share and `rate` is the highest;
+ *  absent = one rate, the row's own `rate` / `taxable` / `heads`. */
+interface MultiRate { items?: RateItem[] }
+/** The rate items of a row — its `items`, or the one item a single-rate row is. */
+export function rowItems(r: { rate: number; taxable: number; heads: TaxHeads } & MultiRate): RateItem[] {
+  return r.items?.length ? r.items : [{ rate: r.rate, taxable: r.taxable, heads: r.heads }];
+}
+
+export interface B2bRow extends MultiRate { gstin: string; name: string; id: string; date: string; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads; invType: B2bInvType }
+export interface B2clRow extends MultiRate { id: string; date: string; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads }
 export interface B2csRow { pos: string; interState: boolean; rate: number; taxable: number; heads: TaxHeads }
-export interface CdnrRow { gstin: string; name: string; id: string; date: string; noteType: "C" | "D"; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads; invType: B2bInvType }
+export interface CdnrRow extends MultiRate { gstin: string; name: string; id: string; date: string; noteType: "C" | "D"; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads; invType: B2bInvType }
 /** UR Type: B2CL (large inter-state unregistered) or EXPWP / EXPWOP (export note, with / without IGST). */
 export type CdnurType = "B2CL" | "EXPWP" | "EXPWOP";
-export interface CdnurRow { urType: CdnurType; id: string; date: string; noteType: "C" | "D"; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads }
+export interface CdnurRow extends MultiRate { urType: CdnurType; id: string; date: string; noteType: "C" | "D"; value: number; pos: string; rate: number; taxable: number; heads: TaxHeads }
 /** Table 6A. WPAY = IGST charged (refund route), WOPAY = under LUT, no tax. */
-export interface ExpRow { exportType: "WPAY" | "WOPAY"; id: string; date: string; value: number; rate: number; taxable: number; igst: number }
+export interface ExpRow extends MultiRate { exportType: "WPAY" | "WOPAY"; id: string; date: string; value: number; rate: number; taxable: number; igst: number }
+/** The rate items of an export row (IGST only). */
+export function expItems(r: ExpRow): RateItem[] {
+  return r.items?.length ? r.items : [{ rate: r.rate, taxable: r.taxable, heads: { igst: r.igst, cgst: 0, sgst: 0 } }];
+}
 export interface HsnRow { hsn: string; description: string; rate: number; value: number; taxable: number; heads: TaxHeads }
 
 export interface Gstr1Sections {
@@ -208,18 +226,19 @@ const posStr = (p: { code: string; name: string }) => `${p.code}-${p.name}`;
  */
 export function hsnLines(
   taxableValue: number,
-  items: { hsn: string | null | undefined; description?: string; weight: number }[] | null | undefined,
-): { hsn: string; description?: string; taxable: number }[] {
+  items: { hsn: string | null | undefined; description?: string; weight: number; rate?: number | null }[] | null | undefined,
+): { hsn: string; description?: string; taxable: number; rate?: number }[] {
   const usable = (items ?? []).filter((i) => i.weight > 0);
   const totalW = usable.reduce((s, i) => s + i.weight, 0);
   if (!usable.length || totalW <= 0) return [{ hsn: SAAS_HSN, description: SAAS_HSN_LABEL, taxable: taxableValue }];
-  const out: { hsn: string; description?: string; taxable: number }[] = [];
+  const out: { hsn: string; description?: string; taxable: number; rate?: number }[] = [];
   let assigned = 0;
   usable.forEach((i, idx) => {
     const last = idx === usable.length - 1;
     const share = last ? taxableValue - assigned : Math.round((taxableValue * i.weight) / totalW);
     assigned += share;
-    out.push({ hsn: (i.hsn ?? "").trim() || SAAS_HSN, description: i.description, taxable: share });
+    /* R-2717: the line's own GST rate rides along; a line with none adds no key. */
+    out.push({ hsn: (i.hsn ?? "").trim() || SAAS_HSN, description: i.description, taxable: share, ...(i.rate != null ? { rate: i.rate } : {}) });
   });
   return out;
 }
@@ -227,7 +246,13 @@ export function hsnLines(
 /** A stored invoice line, as far as the HSN table cares. `hsn` is the line's OWN code
  *  (a project milestone line carries `project_sales.sac_code`, R-010); `item_id` points
  *  at the catalogue, whose `items.hsn` is the fallback. */
-export interface HsnSourceLine { item_id?: string | null; hsn?: string | null; name?: string; qty?: number; rate?: number }
+export interface HsnSourceLine {
+  item_id?: string | null; hsn?: string | null; name?: string; qty?: number; rate?: number;
+  /** R-2717: the line's own GST % (lib/gst/line-rates.ts). Absent → the invoice's rate. */
+  tax_rate?: number | null;
+  /** R-2702: a Zoho `adjustment` line is outside the taxable value — no HSN share. */
+  kind?: string | null;
+}
 
 /**
  * R-067 — the HSN/SAC a stored line is filed under: the line's own code first, the
@@ -251,9 +276,9 @@ export function docHsnLines(
   taxableValue: number,
   lines: HsnSourceLine[] | null | undefined,
   hsnByItem: ReadonlyMap<string, string | null>,
-): { hsn: string; description?: string; taxable: number }[] {
+): { hsn: string; description?: string; taxable: number; rate?: number }[] {
   return hsnLines(taxableValue, (lines ?? []).map((l) => ({
-    hsn: lineHsn(l, hsnByItem), description: l.name, weight: (l.qty ?? 0) * (l.rate ?? 0),
+    hsn: lineHsn(l, hsnByItem), description: l.name, weight: lineWeight(l), rate: lineOwnRate(l),
   })));
 }
 
@@ -275,16 +300,41 @@ export function buildGstr1(docs: Gstr1Doc[], seller: Seller): Gstr1Sections {
     const isNote = d.docType !== "invoice";
     const noteType: "C" | "D" = d.docType === "credit_note" ? "C" : "D";
 
+    /* R-2717: the document by GST rate. One rate (every invoice before this card) → one
+       slice with the document's own figures, and everything below is as it was. */
+    const lines: NonNullable<Gstr1Doc["lines"]> = d.lines?.length ? d.lines : [{ hsn: SAAS_HSN, description: SAAS_HSN_LABEL, taxable: d.taxableValue }];
+    const slices = rateSlices(d, lines);
+    const mixed = slices.length > 1;
+    const igstOnly = d.interState || isExport || isSezDoc(d);
+    const docRate = mixed ? slices[slices.length - 1].rate : d.taxRate;
+    const items = mixed ? sliceItems(slices, heads, igstOnly) : undefined;
+    const absItems = items?.map((it) => ({ rate: it.rate, taxable: Math.abs(it.taxable), heads: abs(it.heads) }));
+
     // HSN summary (Table 12) — signed, so it nets the same way 3B does.
-    const lines = d.lines?.length ? d.lines : [{ hsn: SAAS_HSN, description: SAAS_HSN_LABEL, taxable: d.taxableValue }];
     const lineTax = (share: number) => (d.taxableValue ? Math.round((d.gst * share) / d.taxableValue) : 0);
+    /* Mixed: a line's tax is its share of ITS rate's GST; the last line of a rate takes the
+       remainder, so the HSN rows of a rate add up to that rate's slice. */
+    const lineRate = (ln: { rate?: number | null }) => (mixed ? (ln.rate ?? d.taxRate) : d.taxRate);
+    const left = new Map(slices.map((sl) => [sl.rate, { gst: sl.gst, lines: lines.filter((ln) => lineRate(ln) === sl.rate).length }]));
     for (const ln of lines) {
-      const key = `${ln.hsn}|${d.taxRate}`;
-      const cur = hsnMap.get(key) ?? { hsn: ln.hsn, description: sacLabel(ln.hsn) ?? (ln.description ?? ""), rate: d.taxRate, value: 0, taxable: 0, heads: { igst: 0, cgst: 0, sgst: 0 } };
-      const tax = lines.length === 1 ? d.gst : lineTax(ln.taxable);
+      const rate = lineRate(ln);
+      const key = `${ln.hsn}|${rate}`;
+      const cur = hsnMap.get(key) ?? { hsn: ln.hsn, description: sacLabel(ln.hsn) ?? (ln.description ?? ""), rate, value: 0, taxable: 0, heads: { igst: 0, cgst: 0, sgst: 0 } };
+      let tax: number;
+      if (!mixed) tax = lines.length === 1 ? d.gst : lineTax(ln.taxable);
+      else {
+        const slice = slices.find((sl) => sl.rate === rate);
+        const l = left.get(rate);
+        if (!slice || !l) tax = 0;
+        else {
+          l.lines -= 1;
+          tax = l.lines === 0 ? l.gst : (slice.taxable ? Math.round((slice.gst * ln.taxable) / slice.taxable) : 0);
+          l.gst -= tax;
+        }
+      }
       cur.taxable += ln.taxable;
       cur.value += ln.taxable + tax;
-      cur.heads = addHeads(cur.heads, gstSplit({ gst: tax, interState: d.interState || isExport || isSezDoc(d) }));
+      cur.heads = addHeads(cur.heads, gstSplit({ gst: tax, interState: igstOnly }));
       if (!cur.description && ln.description) cur.description = ln.description;
       hsnMap.set(key, cur);
     }
@@ -292,40 +342,53 @@ export function buildGstr1(docs: Gstr1Doc[], seller: Seller): Gstr1Sections {
     if (d.customerGstin) {
       const p = pos ? posStr(pos) : "";
       const invType = b2bInvType(d);
-      if (isNote) cdnr.push({ gstin: d.customerGstin, name: d.customerName, id: d.id, date: d.date, noteType, value: Math.abs(d.amount), pos: p, rate: d.taxRate, taxable: Math.abs(d.taxableValue), heads: abs(heads), invType });
-      else b2b.push({ gstin: d.customerGstin, name: d.customerName, id: d.id, date: d.date, value: d.amount, pos: p, rate: d.taxRate, taxable: d.taxableValue, heads, invType });
+      if (isNote) cdnr.push({ gstin: d.customerGstin, name: d.customerName, id: d.id, date: d.date, noteType, value: Math.abs(d.amount), pos: p, rate: docRate, taxable: Math.abs(d.taxableValue), heads: abs(heads), invType, ...(absItems ? { items: absItems } : {}) });
+      else b2b.push({ gstin: d.customerGstin, name: d.customerName, id: d.id, date: d.date, value: d.amount, pos: p, rate: docRate, taxable: d.taxableValue, heads, invType, ...(items ? { items } : {}) });
       continue;
     }
     if (isExport) {
       /* Zero-rated export. WPAY when IGST was charged, WOPAY under LUT. The rate on a
          WOPAY line is 0 — nothing was levied (CA to confirm against the current tool). */
       const withPay = d.gst !== 0;
-      const rate = withPay ? d.taxRate : 0;
-      if (isNote) cdnur.push({ urType: withPay ? "EXPWP" : "EXPWOP", id: d.id, date: d.date, noteType, value: Math.abs(d.amount), pos: "", rate, taxable: Math.abs(d.taxableValue), heads: abs(heads) });
-      else exp.push({ exportType: withPay ? "WPAY" : "WOPAY", id: d.id, date: d.date, value: d.amount, rate, taxable: d.taxableValue, igst: heads.igst });
+      const rate = withPay ? docRate : 0;
+      if (isNote) cdnur.push({ urType: withPay ? "EXPWP" : "EXPWOP", id: d.id, date: d.date, noteType, value: Math.abs(d.amount), pos: "", rate, taxable: Math.abs(d.taxableValue), heads: abs(heads), ...(withPay && absItems ? { items: absItems } : {}) });
+      else exp.push({ exportType: withPay ? "WPAY" : "WOPAY", id: d.id, date: d.date, value: d.amount, rate, taxable: d.taxableValue, igst: heads.igst, ...(withPay && items ? { items } : {}) });
       continue;
     }
     if (!pos) { skipped.push(d.id); continue; }
     const p = posStr(pos);
     const large = d.interState && Math.abs(d.amount) > B2CL_THRESHOLD;
     if (large) {
-      if (isNote) cdnur.push({ urType: "B2CL", id: d.id, date: d.date, noteType, value: Math.abs(d.amount), pos: p, rate: d.taxRate, taxable: Math.abs(d.taxableValue), heads: abs(heads) });
-      else b2cl.push({ id: d.id, date: d.date, value: d.amount, pos: p, rate: d.taxRate, taxable: d.taxableValue, heads });
+      if (isNote) cdnur.push({ urType: "B2CL", id: d.id, date: d.date, noteType, value: Math.abs(d.amount), pos: p, rate: docRate, taxable: Math.abs(d.taxableValue), heads: abs(heads), ...(absItems ? { items: absItems } : {}) });
+      else b2cl.push({ id: d.id, date: d.date, value: d.amount, pos: p, rate: docRate, taxable: d.taxableValue, heads, ...(items ? { items } : {}) });
       continue;
     }
     // B2CS — consolidated per place of supply + rate; small unregistered notes net here (signed).
+    // R-2717: each rate of a mixed document adds to its own place-of-supply + rate bucket.
     if (isNote) notesNettedIntoB2cs++;
-    const key = `${p}|${d.taxRate}`;
-    const cur = b2csMap.get(key) ?? { pos: p, interState: d.interState, rate: d.taxRate, taxable: 0, heads: { igst: 0, cgst: 0, sgst: 0 } };
-    cur.taxable += d.taxableValue;
-    cur.heads = addHeads(cur.heads, heads);
-    b2csMap.set(key, cur);
+    for (const it of items ?? [{ rate: docRate, taxable: d.taxableValue, heads }]) {
+      const key = `${p}|${it.rate}`;
+      const cur = b2csMap.get(key) ?? { pos: p, interState: d.interState, rate: it.rate, taxable: 0, heads: { igst: 0, cgst: 0, sgst: 0 } };
+      cur.taxable += it.taxable;
+      cur.heads = addHeads(cur.heads, it.heads);
+      b2csMap.set(key, cur);
+    }
   }
 
   return { b2b, b2cl, b2cs: [...b2csMap.values()], cdnr, cdnur, exp, hsn: [...hsnMap.values()], skipped, notesNettedIntoB2cs };
 }
 
 function abs(h: TaxHeads): TaxHeads { return { igst: Math.abs(h.igst), cgst: Math.abs(h.cgst), sgst: Math.abs(h.sgst) }; }
+
+/** R-2717: rate slices → row items (signed). Heads per rate by the shared split; the highest
+ *  rate takes what is left of the document's own heads, so the items add up to the
+ *  document's IGST / CGST / SGST to the rupee. */
+function sliceItems(slices: RateSlice[], docTax: TaxHeads, igstOnly: boolean): RateItem[] {
+  const items = slices.map((sl) => ({ rate: sl.rate, taxable: sl.taxable, heads: gstSplit({ gst: sl.gst, interState: igstOnly }) }));
+  const others = items.slice(0, -1).reduce((a, it) => addHeads(a, it.heads), { igst: 0, cgst: 0, sgst: 0 });
+  items[items.length - 1].heads = { igst: docTax.igst - others.igst, cgst: docTax.cgst - others.cgst, sgst: docTax.sgst - others.sgst };
+  return items;
+}
 
 // ─── GST Offline Tool CSVs (one file per section, standard templates) ───────
 
@@ -345,13 +408,15 @@ export type CsvRow = (string | number)[];
 
 export function gstr1Csv(s: Gstr1Sections, adv?: AdvanceTables): Record<keyof typeof GSTR1_HEADERS, CsvRow[]> {
   return {
-    b2b:   s.b2b.map((r) => [r.gstin, r.name, r.id, gstDate(r.date), r.value, r.pos, "N", "", B2B_INV_TYPE_CSV[r.invType], "", r.rate, r.taxable, 0]),
-    b2cl:  s.b2cl.map((r) => [r.id, gstDate(r.date), r.value, r.pos, "", r.rate, r.taxable, 0, ""]),
+    /* R-2717: one line per GST rate of a document — the same number and value on each, as
+       the Offline Tool reads a multi-rate invoice. */
+    b2b:   s.b2b.flatMap((r) => rowItems(r).map((it) => [r.gstin, r.name, r.id, gstDate(r.date), r.value, r.pos, "N", "", B2B_INV_TYPE_CSV[r.invType], "", it.rate, it.taxable, 0])),
+    b2cl:  s.b2cl.flatMap((r) => rowItems(r).map((it) => [r.id, gstDate(r.date), r.value, r.pos, "", it.rate, it.taxable, 0, ""])),
     b2cs:  s.b2cs.map((r) => ["OE", r.pos, "", r.rate, r.taxable, 0, ""]),
-    cdnr:  s.cdnr.map((r) => [r.gstin, r.name, r.id, gstDate(r.date), r.noteType, r.pos, "N", B2B_INV_TYPE_CSV[r.invType], r.value, "", r.rate, r.taxable, 0]),
-    cdnur: s.cdnur.map((r) => [r.urType, r.id, gstDate(r.date), r.noteType, r.pos, r.urType, r.value, "", r.rate, r.taxable, 0]),
+    cdnr:  s.cdnr.flatMap((r) => rowItems(r).map((it) => [r.gstin, r.name, r.id, gstDate(r.date), r.noteType, r.pos, "N", B2B_INV_TYPE_CSV[r.invType], r.value, "", it.rate, it.taxable, 0])),
+    cdnur: s.cdnur.flatMap((r) => rowItems(r).map((it) => [r.urType, r.id, gstDate(r.date), r.noteType, r.pos, r.urType, r.value, "", it.rate, it.taxable, 0])),
     /* Services: no port code / shipping bill — the columns stay, empty. */
-    exp:   s.exp.map((r) => [r.exportType, r.id, gstDate(r.date), r.value, "", "", "", r.rate, r.taxable, 0]),
+    exp:   s.exp.flatMap((r) => expItems(r).map((it) => [r.exportType, r.id, gstDate(r.date), r.value, "", "", "", it.rate, it.taxable, 0])),
     at:    (adv?.at ?? []).map((r) => [r.pos, "", r.rate, r.advance, 0]),
     atadj: (adv?.atadj ?? []).map((r) => [r.pos, "", r.rate, r.advance, 0]),
     hsn:   s.hsn.map((r) => [r.hsn, r.description, "OTH-OTHERS", 0, r.value, r.rate, r.taxable, r.heads.igst, r.heads.cgst, r.heads.sgst, 0]),
@@ -363,6 +428,8 @@ export function gstr1Csv(s: Gstr1Sections, adv?: AdvanceTables): Record<keyof ty
 const itm = (num: number, r: { rate: number; taxable: number; heads: TaxHeads }) => ({
   num, itm_det: { rt: r.rate, txval: r.taxable, iamt: r.heads.igst, camt: r.heads.cgst, samt: r.heads.sgst, csamt: 0 },
 });
+/** R-2717: a document's `itms` — one per GST rate. */
+const itms = (r: Parameters<typeof rowItems>[0]) => rowItems(r).map((it, i) => itm(i + 1, it));
 const posCode = (pos: string) => pos.slice(0, 2);
 
 /** Portal JSON. `gstin` must be the company's real GSTIN — the caller refuses without one.
@@ -382,10 +449,10 @@ export function gstr1Json(s: Gstr1Sections, gstin: string, fp: string, adv?: Adv
     gstin, fp, version: "GSTR1_v3.0.4",
     b2b: byCtin(s.b2b).map(([ctin, rows]) => ({
       ctin,
-      inv: rows.map((r) => ({ inum: r.id, idt: jsonDate(r.date), val: r.value, pos: posCode(r.pos), rchrg: "N", inv_typ: r.invType, itms: [itm(1, r)] })),
+      inv: rows.map((r) => ({ inum: r.id, idt: jsonDate(r.date), val: r.value, pos: posCode(r.pos), rchrg: "N", inv_typ: r.invType, itms: itms(r) })),
     })),
     b2cl: byPos(s.b2cl).map(([pos, rows]) => ({
-      pos, inv: rows.map((r) => ({ inum: r.id, idt: jsonDate(r.date), val: r.value, itms: [itm(1, r)] })),
+      pos, inv: rows.map((r) => ({ inum: r.id, idt: jsonDate(r.date), val: r.value, itms: itms(r) })),
     })),
     b2cs: s.b2cs.map((r) => ({
       sply_ty: r.interState ? "INTER" : "INTRA", rt: r.rate, typ: "OE", pos: posCode(r.pos),
@@ -393,16 +460,16 @@ export function gstr1Json(s: Gstr1Sections, gstin: string, fp: string, adv?: Adv
     })),
     cdnr: byCtin(s.cdnr).map(([ctin, rows]) => ({
       ctin,
-      nt: rows.map((r) => ({ ntty: r.noteType, nt_num: r.id, nt_dt: jsonDate(r.date), pos: posCode(r.pos), rchrg: "N", inv_typ: r.invType, val: r.value, itms: [itm(1, r)] })),
+      nt: rows.map((r) => ({ ntty: r.noteType, nt_num: r.id, nt_dt: jsonDate(r.date), pos: posCode(r.pos), rchrg: "N", inv_typ: r.invType, val: r.value, itms: itms(r) })),
     })),
     cdnur: s.cdnur.map((r) => ({
       typ: r.urType, ntty: r.noteType, nt_num: r.id, nt_dt: jsonDate(r.date),
-      ...(r.urType === "B2CL" ? { pos: posCode(r.pos) } : {}), val: r.value, itms: [itm(1, r)],
+      ...(r.urType === "B2CL" ? { pos: posCode(r.pos) } : {}), val: r.value, itms: itms(r),
     })),
     exp: (["WPAY", "WOPAY"] as const)
       .map((t) => ({ exp_typ: t, inv: s.exp.filter((r) => r.exportType === t).map((r) => ({
         inum: r.id, idt: jsonDate(r.date), val: r.value,
-        itms: [{ txval: r.taxable, rt: r.rate, iamt: r.igst, csamt: 0 }],
+        itms: expItems(r).map((it) => ({ txval: it.taxable, rt: it.rate, iamt: it.heads.igst, csamt: 0 })),
       })) }))
       .filter((g) => g.inv.length > 0),
     at: advJson(adv?.at ?? []),
