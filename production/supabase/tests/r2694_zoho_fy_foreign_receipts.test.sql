@@ -14,7 +14,7 @@
 --   D. USD 100 @ 84 with Zoho bank charges USD 2: bank got USD 98 = ₹8,232 → matched at import;
 --      receipt ₹8,300, gain ₹100, charges ₹168 (8,300 + 100 − 168 = 8,232, no round-off)
 --   E. refused: facts read before R-2694 (no per-invoice USD), USD unused (advance), USD on a ₹ invoice,
---      foreign TDS
+--      foreign TDS, Zoho's rate more than 25% off the invoice's
 --   F. Check first writes nothing; G. Remove import takes the receipts AND the FX rows back
 -- Self-asserting; the whole file rolls back. Red without 20261112064956_r2694_zoho_fy_foreign_receipts.sql.
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 < this file
@@ -74,6 +74,8 @@ select 'b2694000-0000-0000-0000-0000000000f0', 'customerpayments', '2025-26', x.
     -- USD money on a ₹ invoice
     ('p7',  date '2025-06-10', pg_temp.usd('p7',  '2025-06-10', 'zi5', 100, 84, 0)),
     -- foreign TDS
+    -- Zoho's rate 120 vs the invoice's 83 (> 25% off — probably not this invoice's money)
+    ('p9',  date '2025-06-10', pg_temp.usd('p9',  '2025-06-10', 'zi4', 100, 120, 0)),
     ('p8',  date '2025-06-10', pg_temp.usd('p8',  '2025-06-10', 'zi4', 100, 84, 0,
             '{"lines": [{"zohoInvoiceId": "zi4", "invoiceNumber": "INV/25-26/R2694-4", "settle": 100, "tds": 5}]}'))
   ) as x(zid, dt, payload);
@@ -98,7 +100,7 @@ declare
   l1  constant uuid := 'b2694000-0000-0000-0000-0000000000b1';
   l2  constant uuid := 'b2694000-0000-0000-0000-0000000000b2';
   l3  constant uuid := 'b2694000-0000-0000-0000-0000000000b3';
-  all_ids constant text[] := array['p1', 'p2a', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8'];
+  all_ids constant text[] := array['p1', 'p2a', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9'];
   r jsonb;
   n int;
   why text;
@@ -126,7 +128,8 @@ begin
      or why not like '%p5: Received in USD — read it from Zoho again%'
      or why not like '%p6: USD 10 of it is not applied to any invoice in Zoho (an advance in USD)%'
      or why not like '%p7: % is in ₹ here, but this payment is in USD%'
-     or why not like '%p8: %Zoho shows TDS on a USD payment%' then
+     or why not like '%p8: %Zoho shows TDS on a USD payment%'
+     or why not like '%p9: Zoho''s rate on this payment (₹120) is more than 25% away from %''s rate (₹83)%' then
     raise exception 'FAIL F2: refusals %', why;
   end if;
   if exists (select 1 from public.expenses x where x.tenant_id = t) or exists (select 1 from public.zoho_fy_receipts z where z.tenant_id = t)
