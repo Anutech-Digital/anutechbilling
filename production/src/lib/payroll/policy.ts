@@ -122,8 +122,34 @@ export function payrollPolicySummary(p: PayrollPolicy, pfCeiling: number, esiCei
     p.ctcIncludesEmployer
       ? "CTC includes employer PF / ESI / gratuity — monthly gross = CTC ÷ 12 minus them"
       : "CTC = gross pay — employer PF / ESI / gratuity are paid on top",
-    `Basic: ${p.basicPct}% of the monthly salary`,
+    /* R-2700 review F3: under "includes" the Basic % is of CTC ÷ 12, not of the gross. */
+    p.ctcIncludesEmployer ? `Basic: ${p.basicPct}% of CTC ÷ 12` : `Basic: ${p.basicPct}% of the monthly gross`,
   ];
+}
+
+/** Above this Basic %, with the CTC including employer PF / ESI / gratuity, Basic alone can be
+ *  more than the gross a CTC allows (PF 12% + gratuity 4.81% + ESI 3.25% sit on top of it). */
+export const BASIC_PCT_FIT_LIMIT = 80;
+
+/** R-2700 review M2: the policy card's warning for a Basic % that will not fit every CTC. */
+export function basicPctWarning(p: Pick<PayrollPolicy, "basicPct" | "ctcIncludesEmployer">): string | null {
+  if (!p.ctcIncludesEmployer || p.basicPct <= BASIC_PCT_FIT_LIMIT) {
+    return p.basicPct > 60 ? "With Basic above 60%, HRA and allowances are lowered so the gross still fits the CTC." : null;
+  }
+  return `Basic above ${BASIC_PCT_FIT_LIMIT}% with employer PF / ESI / gratuity inside the CTC does not fit lower salaries — the CTC calculator will then fill nothing and ask for a lower Basic %.`;
+}
+
+/** R-2700 review F5: one line for the activity log — what changed, old → new. */
+export function policyChangeText(before: PayrollPolicy, after: PayrollPolicy): string {
+  const onOff = (v: boolean) => (v ? "on" : "off");
+  const parts: string[] = [];
+  if (before.pfDefault !== after.pfDefault) parts.push(`PF for new employees ${onOff(before.pfDefault)} → ${onOff(after.pfDefault)}`);
+  if (before.pfFullWageDefault !== after.pfFullWageDefault) parts.push(`PF basis ${before.pfFullWageDefault ? "full Basic + DA" : "capped"} → ${after.pfFullWageDefault ? "full Basic + DA" : "capped"}`);
+  if (before.esiDefault !== after.esiDefault) parts.push(`ESI ${onOff(before.esiDefault)} → ${onOff(after.esiDefault)}`);
+  if (before.gratuity !== after.gratuity) parts.push(`gratuity ${onOff(before.gratuity)} → ${onOff(after.gratuity)}`);
+  if (before.ctcIncludesEmployer !== after.ctcIncludesEmployer) parts.push(`CTC ${before.ctcIncludesEmployer ? "includes" : "excludes"} → ${after.ctcIncludesEmployer ? "includes" : "excludes"} employer PF / ESI / gratuity`);
+  if (before.basicPct !== after.basicPct) parts.push(`Basic ${before.basicPct}% → ${after.basicPct}%`);
+  return parts.length ? `Payroll policy changed: ${parts.join("; ")}` : "Payroll policy saved (no change)";
 }
 
 /** Defaults a NEW employee's form starts with. `esiApplicable` follows the ₹21,000 rule only

@@ -94,12 +94,37 @@ describe("R-2700 edge input", () => {
     expect(Number.isNaN(b.netTakeHomeMonthly)).toBe(false);
     expect(ctcFormulaText(b)).toMatch(/^Type the annual CTC/);
   });
-  it("Basic % + HRA + allowances above the CTC → warned, gross never silently above CTC", () => {
+  it("Basic 100% (includes): Basic alone is over the CTC → overBudget, the line says nothing is filled (no false equation)", () => {
     const b = ctcTabBreakdown({ ...base, calc: { asOf: NOV, basicPct: 1, isMetro: true } });
     expect(b.overBudget).toBe(true);
-    expect(ctcFormulaText(b)).toMatch(/more than this CTC allows/);
+    expect(ctcFormulaText(b)).toBe("Basic ₹30,000 is more than this CTC allows (monthly gross can be at most ₹25,558) — lower the Basic % or raise the CTC. Monthly gross is not filled.");
     const ok = ctcTabBreakdown(base);
     expect(ok.overBudget).toBe(false);
+    expect(ok.fittedToCtc).toBe(false);
+  });
+  it.each([0.6, 0.7, 0.8])("review M2: Basic %s (includes, HRA 40%% + allowances) → HRA / allowances lowered, gross + employer parts never above CTC/12", (basicPct) => {
+    for (const annualCtc of [180_000, 360_000, 600_000, 1_200_000]) {
+      const b = ctcTabBreakdown({ ...base, annualCtc, calc: { asOf: NOV, basicPct, customConveyanceMonthly: 1600, customMedicalMonthly: 1250 } });
+      expect(b.overBudget, `${basicPct} ${annualCtc}`).toBe(false);
+      expect(costFits(b), `${basicPct} ${annualCtc}`).toBeLessThanOrEqual(b.monthlyCtc);
+      expect(b.grossMonthly).toBe(b.basicMonthly + b.hraMonthly + b.conveyanceMonthly + b.medicalMonthly + b.specialAllowanceMonthly);
+    }
+    const b = ctcTabBreakdown({ ...base, calc: { asOf: NOV, basicPct: 0.6, customConveyanceMonthly: 1600, customMedicalMonthly: 1250 } });
+    expect(b.fittedToCtc).toBe(true);
+    expect(ctcFormulaText(b)).toMatch(/HRA \/ allowances lowered to fit the CTC\.$/);
+  });
+  it("review M2: Basic 100% (excludes) → gross = CTC/12 = Basic, allowances lowered to 0, true equation", () => {
+    const b = ctcTabBreakdown({ ...base, ctcIncludesEmployer: false, calc: { asOf: NOV, basicPct: 1, customConveyanceMonthly: 1600, customMedicalMonthly: 1250 } });
+    expect(b.overBudget).toBe(false);
+    expect(b.grossMonthly).toBe(30_000);
+    expect(b.basicMonthly).toBe(30_000);
+    expect(b.hraMonthly + b.conveyanceMonthly + b.medicalMonthly + b.specialAllowanceMonthly).toBe(0);
+    expect(ctcFormulaText(b)).toMatch(/^Monthly gross ₹30,000 = CTC ₹3,60,000 ÷ 12\./);
+  });
+  it("a typed HRA is never lowered — overBudget instead", () => {
+    const b = ctcTabBreakdown({ ...base, calc: { asOf: NOV, basicPct: 0.6, customHraMonthly: 12_000 } });
+    expect(b.hraMonthly).toBe(12_000);
+    expect(b.overBudget).toBe(true);
   });
   it("gross typed by hand after a CTC → the line says so", () => {
     const b = ctcTabBreakdown(base);
@@ -123,6 +148,23 @@ describe("R-2700 saved gross is shown as it is until a CTC is typed", () => {
     const b = ctcTabBreakdown({ ...saved, ctcIncludesEmployer: false });
     expect(b.annualCtc).toBe(360_000);
     expect(b.costToCompanyMonthly).toBeGreaterThan(30_000);
+  });
+  it("review M1: typing back the CTC the tab showed gives the same gross (30,000 → 3,90,252 → 30,000; no Basic: 4,13,304 → 30,000)", () => {
+    for (const s of [{ gross: 30_000, basic: 15_000, da: 0 }, { gross: 30_000, basic: null, da: 0 }]) {
+      const shown = ctcTabBreakdown({ ...saved, basic: s.basic, esiApplicable: false });
+      expect(shown.annualCtc).toBe(s.basic ? 390_252 : 413_304);
+      const typedBack = ctcTabBreakdown({ ...base, esiApplicable: false, ctcTyped: true, annualCtc: shown.annualCtc, gross: 30_000, basic: s.basic, saved: s });
+      expect(typedBack.grossMonthly).toBe(30_000);
+      expect(typedBack.basicMonthly).toBe(shown.basicMonthly);
+    }
+  });
+  it("review M1: a new CTC for an existing employee keeps the saved Basic", () => {
+    const b = ctcTabBreakdown({ ...base, annualCtc: 420_000, saved: { gross: 30_000, basic: 15_000, da: 0 } });
+    expect(b.source).toBe("ctc");
+    expect(b.basicMonthly).toBe(15_000);
+    expect(costFits(b)).toBeLessThanOrEqual(b.monthlyCtc);
+    // a typed Basic still wins
+    expect(ctcTabBreakdown({ ...base, annualCtc: 420_000, saved: { gross: 30_000, basic: 15_000, da: 0 }, calc: { asOf: NOV, customBasicMonthly: 18_000 } }).basicMonthly).toBe(18_000);
   });
   it("round trip: typed CTC → saved gross/Basic → reopened CTC within ₹12 a year", () => {
     for (const annualCtc of [360_000, 240_000, 600_000, 1_000_003]) {

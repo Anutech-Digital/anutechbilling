@@ -12,7 +12,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
-import { PAYROLL_POLICY_COLUMNS, parsePayrollPolicy, policyToRow, validatePayrollPolicyInput, type PayrollPolicyRow } from "@/lib/payroll/policy";
+import { PAYROLL_POLICY_COLUMNS, parsePayrollPolicy, policyChangeText, policyToRow, validatePayrollPolicyInput, type PayrollPolicyRow } from "@/lib/payroll/policy";
 
 async function me(supabase: ReturnType<typeof createClient>) {
   const { data: authData } = await supabase.auth.getUser();
@@ -45,9 +45,29 @@ export async function POST(request: NextRequest) {
   if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
 
   const admin = createAdminClientFor(u.userId) as unknown as SupabaseClient;
+  /* R-2700 review F5: who changed what — an activity_log row written BEFORE the change (as
+     ingest-key does), marked failed if the save fails, so an unrecorded change cannot happen. */
+  const { data: before } = await admin.from("attendance_settings").select(PAYROLL_POLICY_COLUMNS).eq("tenant_id", u.tenantId).maybeSingle();
+  const { data: audit, error: auditErr } = await admin
+    .from("activity_log")
+    .insert({
+      tenant_id: u.tenantId,
+      user_id: u.userId,
+      action: "payroll_policy_changed",
+      entity: "attendance_settings",
+      entity_id: u.tenantId,
+      label: policyChangeText(parsePayrollPolicy(before as PayrollPolicyRow | null), v.policy),
+    })
+    .select("id")
+    .single();
+  if (auditErr || !audit) return NextResponse.json({ error: "Could not save the payroll policy — nothing was changed." }, { status: 500 });
+
   const { error } = await admin
     .from("attendance_settings")
     .upsert({ tenant_id: u.tenantId, ...policyToRow(v.policy), updated_at: new Date().toISOString() }, { onConflict: "tenant_id" });
-  if (error) return NextResponse.json({ error: "Could not save the payroll policy — nothing was changed." }, { status: 500 });
+  if (error) {
+    await admin.from("activity_log").update({ action: "payroll_policy_change_failed", label: "Payroll policy NOT changed — the save failed" }).eq("id", (audit as { id: string }).id);
+    return NextResponse.json({ error: "Could not save the payroll policy — nothing was changed." }, { status: 500 });
+  }
   return NextResponse.json({ policy: v.policy });
 }

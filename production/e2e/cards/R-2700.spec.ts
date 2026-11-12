@@ -69,7 +69,7 @@ test.describe("R-2700 card test", () => {
     const summary = card.getByTestId("payroll-policy-summary");
     await expect(summary).toContainText("PF: on for new employees — 12% of Basic + DA up to ₹25,000", { timeout: 30_000 });
     await expect(summary).toContainText("CTC = gross pay — employer PF / ESI / gratuity are paid on top");
-    await expect(summary).toContainText("Basic: 40% of the monthly salary");
+    await expect(summary).toContainText("Basic: 40% of the monthly gross");
   });
 
   test("Step 2: Add employee → CTC 3,60,000 → Monthly Gross fills 30,000 (CTC ÷ 12), PF on from the policy; Save → saved 30,000 / Basic 12,000 / PF on", async ({ browser, baseURL }) => {
