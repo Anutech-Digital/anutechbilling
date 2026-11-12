@@ -24,7 +24,12 @@
 --    (is_renewal, not an extension, whole-year extension_months > 0; the save may also mark it sent)
 --    whose FIRST line's `years`
 --    changes and whose caller did not set extension_months itself, extension_months follows:
---    old months / old years × new years (12 → 36 for 1 → 3 years; 36 → 12 back). The quote PDF,
+--    new years × 12 (12 → 36 for 1 → 3 years; 36 → 12 back). The term comes from the line's years
+--    only: a line without years on an older 24-month renewal quote counts as that quote's own
+--    2 years (so 3 → 36, never 72), and a seats-only edit there leaves 24 alone. A multi-year line
+--    next to other renewing lines (3-year domain + yearly seats) is refused with the way out — one
+--    quote renews one term. The renew-domains worker sends the registrar extension_months / 12
+--    years (a 3-year renewal is never bought for 1). The quote PDF,
 --    email and accept page read the period from extension_months (lib/quotes/service-period.ts), so
 --    they say "3 Years" too. Sent quotes are never edited in place (a Revise copies the row, then
 --    its draft is edited here); plan-change / support-upgrade quotes (extension_months 0), month
@@ -211,10 +216,15 @@ security definer
 set search_path to 'public'
 as $function$
 /* R-2710: see the file header. Only the draft of a whole-year renewal quote, only when the first
-   line's years changed and the caller left extension_months alone. */
+   line's years changed and the caller left extension_months alone. The term comes from the line's
+   years only — never months × years: a line WITHOUT years on an older 24-month renewal quote is
+   that quote's own term (24 / 12 = 2 years), so picking 3 gives 36, not 72. */
 declare
-  v_old_years int;
-  v_new_years int;
+  v_old_explicit int;
+  v_new_explicit int;
+  v_old_years    int;
+  v_new_years    int;
+  v_renewing     int;
 begin
   if not coalesce(new.is_renewal, false) or coalesce(new.is_extension, false) then
     return new;
@@ -229,18 +239,31 @@ begin
   if new.extension_months is distinct from old.extension_months then
     return new;   -- the caller chose the months itself
   end if;
-  v_old_years := public.r2710_line_years(old.line_items);
-  v_new_years := public.r2710_line_years(new.line_items);
-  if v_old_years = v_new_years or old.extension_months % v_old_years <> 0 then
+  v_old_explicit := public.r2710_line_years(old.line_items);
+  v_new_explicit := public.r2710_line_years(new.line_items);
+  /* One renewal term per quote: a multi-year line next to other renewing lines (a 3-year domain +
+     yearly seats) cannot be one extension_months — refused with the way out. */
+  if coalesce(v_new_explicit, 1) >= 2 and jsonb_typeof(new.line_items) = 'array' then
+    select count(*) into v_renewing
+      from jsonb_array_elements(new.line_items) e
+     where jsonb_typeof(e) = 'object' and coalesce(e->>'one_time', '') <> 'true';
+    if v_renewing > 1 then
+      raise exception 'Renewal quote %: a line for % years must be the only renewing line on a renewal quote (one quote renews one term). Set it back to 1 year, or put the other items on their own quote.',
+        new.id, v_new_explicit using errcode = 'check_violation';
+    end if;
+  end if;
+  v_old_years := coalesce(v_old_explicit, old.extension_months / 12);
+  v_new_years := coalesce(v_new_explicit, case when v_old_explicit is not null then 1 else v_old_years end);
+  if v_new_years = v_old_years then
     return new;
   end if;
-  new.extension_months := old.extension_months / v_old_years * v_new_years;
+  new.extension_months := v_new_years * 12;
   return new;
 end;
 $function$;
 
-/* R-2710: the first line's registration years — its `years` when a whole number 1–10, else 1
-   (domainLineYears in lib/provisioning/products.ts). */
+/* R-2710: the first line's registration years — its `years` when a whole number 1–10, else NULL
+   (no years on the line; domainLineYears in lib/provisioning/products.ts reads that as 1). */
 create or replace function public.r2710_line_years(p_lines jsonb)
 returns int
 language sql
@@ -253,7 +276,6 @@ as $function$
          and coalesce(p_lines->0->>'years', '') ~ '^\d{1,2}$'
          and (p_lines->0->>'years')::int between 1 and 10
       then (p_lines->0->>'years')::int
-    else 1
   end;
 $function$;
 

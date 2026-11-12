@@ -74,6 +74,22 @@ export type RevisionSource = RevisableQuote & Pick<Quote,
   | "add_seats_subscription_id" | "add_seats_mrr_added">;
 
 /**
+ * R-2710: a renewal quote made for a whole multi-year term before its line carried `years` (24 / 36
+ * months, line without years) — its revision's first line says the years, so the editor's
+ * "Register for N years" shows 2 (not 1) and a change scales from the right yearly price (picking
+ * 3 from a shown "1" tripled a 2-year price). The term itself is extension_months, unchanged.
+ */
+export function renewalLinesWithYears(q: Pick<Quote, "line_items" | "is_renewal" | "is_extension" | "extension_months">): Quote["line_items"] {
+  const m = q.extension_months ?? 0;
+  const lines = q.line_items;
+  if (q.is_renewal !== true || q.is_extension === true || !Array.isArray(lines) || lines.length === 0) return lines;
+  if (!(m > 12 && m % 12 === 0 && m <= 120)) return lines;
+  const first = lines[0] as unknown as Record<string, unknown> | null;
+  if (!first || typeof first !== "object" || first.years != null) return lines;
+  return [{ ...first, years: m / 12 }, ...lines.slice(1)] as unknown as Quote["line_items"];
+}
+
+/**
  * The new DRAFT row for a revision: a copy of the quote's terms under the next family id.
  * It is opened in the draft editor; the old quote is replaced only when this one is SENT
  * (database trigger trg_quote_revision_sent). Validity keeps the same length as the original
@@ -96,7 +112,7 @@ export function revisionDraft(q: RevisionSource, next: RevisionId, todayIso: str
     plan: q.plan,
     seats: q.seats,
     amount: q.amount,
-    line_items: q.line_items,
+    line_items: renewalLinesWithYears(q),
     subtotal: q.subtotal,
     total_cost: q.total_cost,
     discount_pct: q.discount_pct,

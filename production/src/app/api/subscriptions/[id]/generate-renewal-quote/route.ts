@@ -72,7 +72,7 @@ export const POST = withRoute({
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, item_id, seats, mrr,
-       renewal_date, status, renewal_state, renewal_quote_id, term_months, term_amount, billing_cycle, start_date, billed_externally_until, auto_renew, vendor, domain`
+       renewal_date, status, renewal_state, renewal_quote_id, term_months, term_amount, billing_cycle, start_date, billed_externally_until, vendor, domain, auto_renew`
     )
     .eq("id", params.id)
     .single();

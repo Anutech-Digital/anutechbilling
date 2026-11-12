@@ -8,7 +8,10 @@ import { join } from "node:path";
 const src = readFileSync(join(process.cwd(), "src", "app", "api", "cron", "renewals", "route.ts"), "utf8");
 const live = src.slice(src.indexOf("async function handle("), src.indexOf("async function planOnly("));
 const dry = src.slice(src.indexOf("async function planOnly("));
-const sendNow = readFileSync(join(process.cwd(), "src", "app", "api", "renewals", "send-now", "route.ts"), "utf8");
+/* R-2710: Send now (and the quote editor's Save & send) take the grace + step from ONE helper,
+   lib/renewals/manual-send-step.ts — read both, and pin that Send now calls it. */
+const sendNowRoute = readFileSync(join(process.cwd(), "src", "app", "api", "renewals", "send-now", "route.ts"), "utf8");
+const sendNow = sendNowRoute + readFileSync(join(process.cwd(), "src", "lib", "renewals", "manual-send-step.ts"), "utf8");
 
 describe("renewals cron — grace over (R-1621)", () => {
   it("raises the owner's task and does not pause the subscription itself", () => {

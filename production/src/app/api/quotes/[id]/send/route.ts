@@ -24,6 +24,7 @@
 import { NextResponse } from "next/server";
 import { trustedOrigin } from "@/lib/app-url";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { advanceRenewalAfterQuoteEmail } from "@/lib/renewals/manual-send-step";
 import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import { isEmailConfigured } from "@/lib/email/send";
@@ -432,6 +433,13 @@ ${tenant.name}${tenant.phone ? `\n${tenant.phone}` : ""}${tenant.email ? `\n${te
          hours earlier: supabase-js does not throw, so the quote stays `draft` while the
          customer holds it and the next person sends it again. */
       if (statusErr) console.error(`[quotes/send] could not mark ${quote.id} sent:`, statusErr);
+    }
+
+    /* R-2710: a renewal quote emailed from the editor ("Save & send to customer") counts as the
+       renewal reminder Send now would have sent — the subscription moves to that step, so the
+       nightly cron does not mail the same quote again at the step it was already at. */
+    if (quote.is_renewal === true && quote.is_extension !== true && (quote.extension_months ?? 0) > 0) {
+      await advanceRenewalAfterQuoteEmail(supabase, quote.tenant_id, quote.id);
     }
 
     /* ── AND MOVE THE LEAD INTO "Quote Sent" ─────────────────────────────────
