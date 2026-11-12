@@ -16,6 +16,8 @@
 --   E. refused: facts read before R-2694 (no per-invoice USD), USD unused (advance), USD on a ₹ invoice,
 --      foreign TDS, Zoho's rate more than 25% off the invoice's
 --   F. Check first writes nothing; G. Remove import takes the receipts AND the FX rows back
+--   H. the 2-cent "whole ₹ due" rule at a fractional rate (₹83.47); Delete payment refused on an imported
+--      USD receipt and on an R-2565 Razorpay-fee receipt (Remove import only)
 -- Self-asserting; the whole file rolls back. Red without 20261112064956_r2694_zoho_fy_foreign_receipts.sql.
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 < this file
 
@@ -45,6 +47,12 @@ insert into public.zoho_fy_scan (tenant_id, kind, fy, zoho_id, number, doc_date,
 select 'b2694000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'zi' || g, 'INV/25-26/R2694-' || g, date '2025-06-01', 'sent',
        pg_temp.sale('INV/25-26/R2694-' || g, case when g = 5 then 'INR' else 'USD' end, case when g = 5 then null else 83 end), now()
   from generate_series(1, 5) g;
+-- zi6 / zi7 = USD 100 at a FRACTIONAL rate ₹83.47 (₹8,347 = 7,074 + 1,273): the 2-cent "whole ₹ due" rule
+insert into public.zoho_fy_scan (tenant_id, kind, fy, zoho_id, number, doc_date, zoho_status, payload, detailed_at)
+select 'b2694000-0000-0000-0000-0000000000f0', 'invoices', '2025-26', 'zi' || g, 'INV/25-26/R2694-' || g, date '2025-06-01', 'sent',
+       pg_temp.sale('INV/25-26/R2694-' || g, 'USD', 83.47) || jsonb_build_object('taxable', 7074, 'tax', 1273, 'amount', 8347,
+         'lines', jsonb_build_array(jsonb_build_object('name', 'Seat', 'hsn', '998315', 'qty', 1, 'rate', 7074, 'taxable', 7074))), now()
+  from generate_series(6, 7) g;
 
 -- Zoho USD payments as R-2694's normaliser stores them (₹ = amount at Zoho's rate; per-invoice USD in foreignLines)
 create function pg_temp.usd(zid text, dt date, inv text, usd numeric, rate numeric, chg numeric, extra jsonb default '{}') returns jsonb language sql as $f$
@@ -76,6 +84,16 @@ select 'b2694000-0000-0000-0000-0000000000f0', 'customerpayments', '2025-26', x.
     -- foreign TDS
     -- Zoho's rate 120 vs the invoice's 83 (> 25% off — probably not this invoice's money)
     ('p9',  date '2025-06-10', pg_temp.usd('p9',  '2025-06-10', 'zi4', 100, 120, 0)),
+    -- H: the 2-cent rule at ₹83.47 — USD 99.99 (₹8,346 at its rate, ₹1 off the ₹8,347 due: within
+    --    2 cents = ceil(83.47 × 0.02) = ₹2) settles it in full; USD 99.97 (₹8,344, ₹3 off) is a part payment
+    ('p10', date '2025-06-10', pg_temp.usd('p10', '2025-06-10', 'zi6', 99.99, 84, 0)),
+    ('p11', date '2025-06-10', pg_temp.usd('p11', '2025-06-10', 'zi7', 99.97, 84, 0)),
+    -- H: an INR Razorpay payment with its fee (R-2565) on the ₹ sale zi5
+    ('p12', date '2025-06-10', jsonb_build_object('zohoId', 'p12', 'number', 'R2694-p12', 'date', '2025-06-10', 'status', '', 'zohoCustomerId', 'zc',
+      'customerName', 'R2694 US Buyer', 'method', 'razorpay', 'zohoMode', 'Razorpay', 'reference', 'pay_R2694AAAAAAA12',
+      'depositAccountId', 'zrzp', 'depositAccountName', 'Razorpay Clearing', 'amount', 8300, 'receivedPaise', 830000,
+      'lines', jsonb_build_array(jsonb_build_object('zohoInvoiceId', 'zi5', 'invoiceNumber', 'INV/25-26/R2694-5', 'settle', 8300, 'tds', 0)),
+      'excess', 0, 'tds', 0, 'fee', 196, 'feeGst', 30, 'viaSettlement', true, 'problems', '[]'::jsonb, 'currency', 'INR')),
     ('p8',  date '2025-06-10', pg_temp.usd('p8',  '2025-06-10', 'zi4', 100, 84, 0,
             '{"lines": [{"zohoInvoiceId": "zi4", "invoiceNumber": "INV/25-26/R2694-4", "settle": 100, "tds": 5}]}'))
   ) as x(zid, dt, payload);
@@ -110,10 +128,12 @@ declare
   v_inv2 text;
   v_batch uuid;
   v_batch2 uuid;
+  v_batch3 uuid;
+  v_pay uuid;
 begin
   r := public.import_zoho_fy_sales('2025-26', (select jsonb_agg(jsonb_build_object('zoho_invoice_id', 'zi' || g,
-         'customer_id', 'b2694000-0000-0000-0000-0000000000c1') order by g) from generate_series(1, 5) g), false);
-  if (r->>'imported')::int <> 5 then raise exception 'SETUP: sales import %', r; end if;
+         'customer_id', 'b2694000-0000-0000-0000-0000000000c1') order by g) from generate_series(1, 7) g), false);
+  if (r->>'imported')::int <> 7 then raise exception 'SETUP: sales import %', r; end if;
   select i.id into v_inv1 from public.invoices i where i.tenant_id = t and i.zoho_invoice_id = 'zi1';
   select i.id into v_inv2 from public.invoices i where i.tenant_id = t and i.zoho_invoice_id = 'zi2';
   if not exists (select 1 from public.invoices i where i.id = v_inv1 and i.currency = 'USD' and i.fx_rate = 83 and coalesce(i.net_payable, i.amount) = 8300) then
@@ -237,7 +257,44 @@ begin
   select count(*) into n from public.expenses x where x.tenant_id = t and x.category = 'Exchange gain / loss (realised)';
   if n <> 4 then raise exception 'FAIL B10: % FX rows, expected 4 (one per Zoho payment)', n; end if;
 
-  -- G. Remove import: the second batch (p2b) then the first take their receipts AND FX rows back
+  -- H. The 2-cent rule at a fractional invoice rate (₹83.47): USD 99.99 → the whole ₹8,347 due, Paid;
+  --    USD 99.97 → ₹8,344 (99.97 × 83.47), ₹3 left due. Red if the rule is dropped (v_settle := v_part).
+  r := public.import_zoho_fy_receipts('2025-26', pg_temp.picks(array['p10', 'p11', 'p12']), false);
+  v_batch3 := (r->>'batch_id')::uuid;
+  if (r->>'imported')::int <> 3 then raise exception 'FAIL H1: %', r; end if;
+  select i.status::text as status, i.paid_amount into inv from public.invoices i where i.tenant_id = t and i.zoho_invoice_id = 'zi6';
+  if inv.status <> 'paid' or inv.paid_amount <> 8347 then raise exception 'FAIL H2: USD 99.99 at ₹83.47 within 2 cents should pay ₹8,347 in full: %', inv; end if;
+  select i.status::text as status, i.paid_amount into inv from public.invoices i where i.tenant_id = t and i.zoho_invoice_id = 'zi7';
+  if inv.status = 'paid' or inv.paid_amount <> 8344 then raise exception 'FAIL H3: USD 99.97 at ₹83.47 (3 cents short) should be a ₹8,344 part payment: %', inv; end if;
+  if not exists (select 1 from public.expenses x where x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p10')
+                   and x.amount = 8347 - 8399) then
+    raise exception 'FAIL H4: p10 FX should be 8,347 − round(99.99 × 84) = −52';
+  end if;
+
+  -- H. Payments → Delete payment on an imported receipt with side rows → refused (USD FX rows; R-2565 Razorpay fee)
+  select p.id into v_pay from public.payments p where p.tenant_id = t and p.invoice_id = (select i.id from public.invoices i where i.tenant_id = t and i.zoho_invoice_id = 'zi6');
+  begin
+    perform public.delete_payment(v_pay);
+    raise exception 'FAIL H5: an imported USD receipt was deleted by Delete payment';
+  exception when check_violation then
+    get stacked diagnostics why = message_text;
+    if why <> 'This receipt came from the Zoho import — use Remove import on Invoices → FY receipts from Zoho.' then raise exception 'FAIL H5b: %', why; end if;
+  end;
+  select p.id into v_pay from public.payments p where p.tenant_id = t and p.invoice_id = (select i.id from public.invoices i where i.tenant_id = t and i.zoho_invoice_id = 'zi5');
+  if not exists (select 1 from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p12' and z.fee_expense_id is not null) then
+    raise exception 'SETUP H6: p12 imported without its Razorpay fee';
+  end if;
+  begin
+    perform public.delete_payment(v_pay);
+    raise exception 'FAIL H6: an imported Razorpay-fee receipt was deleted by Delete payment';
+  exception when check_violation then
+    get stacked diagnostics why = message_text;
+    if why not like 'This receipt came from the Zoho import%' then raise exception 'FAIL H6b: %', why; end if;
+  end;
+  if (select count(*) from public.payments p where p.tenant_id = t and p.id = v_pay) <> 1 then raise exception 'FAIL H7: receipt gone'; end if;
+
+  -- G. Remove import: the third, second (p2b) then the first batch take their receipts AND FX rows back
+  r := public.remove_zoho_fy_receipts_import(v_batch3, 'R-2694 test undo');
   r := public.remove_zoho_fy_receipts_import(v_batch2, 'R-2694 test undo');
   r := public.remove_zoho_fy_receipts_import(v_batch, 'R-2694 test undo');
   if exists (select 1 from public.expenses x where x.tenant_id = t) then

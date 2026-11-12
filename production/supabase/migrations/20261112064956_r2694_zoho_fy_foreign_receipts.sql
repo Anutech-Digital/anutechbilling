@@ -40,7 +40,9 @@
 --     foreign branch; the zoho_fy_receipts row is written BEFORE the line is linked (the link reads it).
 --   _zoho_fy_receipt_link_line ← 20261105192600 (latest) + forex / charges in the round-off.
 --   tg_zoho_fy_receipt_fee_gone ← 20261107134000 + the two FX expenses.
---   new _zoho_fy_fx_line_sync + tg_zoho_fy_fx_line_bank / tg_zoho_fy_fx_line_pay.
+--   new _zoho_fy_fx_line_sync + tg_zoho_fy_fx_line_bank / tg_zoho_fy_fx_line_pay; tg_zoho_fy_fx_expense_line;
+--   tg_zoho_fy_receipt_payment_delete: Delete payment refuses a receipt the import booked with a currency
+--   or a Razorpay fee (R-2565) — Remove import takes it back with its side rows.
 -- Not changed: reconcile_bank_credit_fx_invoice, reconcile_bank_credit_split, bank_credit_pay_item,
 --   report_pnl / report_balance_sheet (read expenses by category / reconciled_txn_id as today).
 -- Follow-ups (card R-2694 followUp): a line whose ₹ is not Zoho's (bank rate ≠ Zoho's rate) is left for a
@@ -906,6 +908,34 @@ create trigger trg_zoho_fy_fx_expense_line
   before update of reconciled_txn_id on public.expenses
   for each row when (new.id like 'EXP-ZFX%')
   execute function public.tg_zoho_fy_fx_expense_line();
+
+-- ── A receipt the Zoho import booked with side rows is taken back only by Remove import ─────────────
+-- Independent review (BLOCK): Payments → Delete payment (delete_payment, R-1567) deleted an imported USD
+-- receipt — the invoice went back to overdue, EXP-ZFXD stayed in the P&L and the zoho_fy_receipts row
+-- pointed at a deleted payment ("already" forever). R-2565's Razorpay fee (EXP-RZPFEE) had the same hole.
+-- remove_zoho_fy_receipts_import deletes its zoho_fy_receipts rows BEFORE the payments, so it is not refused.
+create or replace function public.tg_zoho_fy_receipt_payment_delete()
+returns trigger
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+begin
+  /* R-2694 */
+  if exists (select 1 from public.zoho_fy_receipts z
+              where z.tenant_id = old.tenant_id and old.id = any (z.payment_ids)
+                and (z.currency is not null or z.fee_expense_id is not null)) then
+    raise exception 'This receipt came from the Zoho import — use Remove import on Invoices → FY receipts from Zoho.'
+      using errcode = 'check_violation';
+  end if;
+  return old;
+end;
+$function$;
+revoke all on function public.tg_zoho_fy_receipt_payment_delete() from public, anon, authenticated;
+drop trigger if exists trg_zoho_fy_receipt_payment_delete on public.payments;
+create trigger trg_zoho_fy_receipt_payment_delete
+  before delete on public.payments
+  for each row execute function public.tg_zoho_fy_receipt_payment_delete();
 
 -- ── _zoho_fy_receipt_link_line (from 20261105192600 — its latest body) + forex / charges ─────────
 create or replace function public._zoho_fy_receipt_link_line(p_tenant uuid, p_txn uuid, p_payment_ids uuid[], p_confidence text)
