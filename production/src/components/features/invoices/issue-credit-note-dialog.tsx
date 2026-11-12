@@ -25,6 +25,7 @@ import { useIssueDebitNote } from "@/lib/queries/debit-notes";
 import { createClient } from "@/lib/supabase/client";
 import { istToday } from "@/lib/dates/ist";
 import { creditNoteDeadlineWarning } from "@/lib/gst/credit-note-deadline";
+import { invoiceNoteMixedRates, mixedRateNoteSplit, noteMixedSplitText, type NoteMixedRates } from "@/lib/gst/line-rates";
 import type { CreditNoteReasonCode, DebitNoteReasonCode } from "@/lib/supabase/database.types";
 
 const CREDIT_REASONS: { value: CreditNoteReasonCode; label: string }[] = [
@@ -82,10 +83,27 @@ function useInvoiceDate(invoiceId: string, enabled: boolean) {
   });
 }
 
+/** R-2717: the invoice's GST rates when its LINES carry different rates (null = one rate) —
+ *  the note is then split like the invoice, the same rule as SQL invoice_note_gst_split. */
+function useInvoiceNoteRates(invoiceId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["invoices", "note-rates", invoiceId],
+    enabled,
+    staleTime: 5 * 60_000,
+    queryFn: async (): Promise<NoteMixedRates | null> => {
+      const { data, error } = await createClient().from("invoices")
+        .select("taxable_value, tax_amount, tax_rate, line_items").eq("id", invoiceId).maybeSingle();
+      if (error) throw error;
+      return data ? invoiceNoteMixedRates(data) : null;
+    },
+  });
+}
+
 export function IssueCreditNoteDialog({
   open, onOpenChange, invoiceId, customerName, amountDue, taxRate, interState, isExport, mode = "credit", invoiceDate, defaultReasonCode, defaultAmount, onIssued,
 }: Props) {
   const isDebit = mode === "debit";
+  const { data: mixedRates } = useInvoiceNoteRates(invoiceId, open);
   const { data: fetchedDate } = useInvoiceDate(invoiceId, open && !isDebit && invoiceDate === undefined);
   // GST s.34(2): a CREDIT note is time-limited (a debit note is not). Warn only — never block; the CA confirms.
   const lateWarning = isDebit ? null : creditNoteDeadlineWarning(invoiceDate ?? fetchedDate ?? null, istToday());
@@ -111,7 +129,10 @@ export function IssueCreditNoteDialog({
 
   const gross = Math.round(Number(amount) || 0);
   const rate = isExport ? 0 : (taxRate ?? 18);
-  const taxable = rate === 0 ? gross : Math.round((gross * 100) / (100 + rate));
+  /* R-2717: lines at different GST rates → the note is split like the invoice (its own
+     taxable : GST proportion), not backed out at one rate. */
+  const mixedSplit = mixedRates ? mixedRateNoteSplit(gross, mixedRates) : null;
+  const taxable = mixedSplit ? mixedSplit.taxable : rate === 0 ? gross : Math.round((gross * 100) / (100 + rate));
   const tax = gross - taxable;
   /* R-2219: a credit above the balance is allowed (a refund of money already received), but the
      owner sees what the extra means before issuing it — issue_credit_note_core turns it into
@@ -170,7 +191,9 @@ export function IssueCreditNoteDialog({
               placeholder="0"
             />
             <p className="mt-1 text-2xs text-ink-3">
-              {isExport
+              {mixedRates && mixedSplit
+                ? noteMixedSplitText({ rates: mixedRates.rates, interState: !!interState, taxable: rupee(taxable), tax: rupee(tax) })
+                : isExport
                 ? "Export (zero-rated) — no GST on the note."
                 : `Splits as ${interState ? "IGST" : "CGST + SGST"} @ ${rate}%: taxable ${rupee(taxable)} + tax ${rupee(tax)}.`}
             </p>

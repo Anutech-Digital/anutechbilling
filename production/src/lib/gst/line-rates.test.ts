@@ -3,7 +3,8 @@
    (INV/25-26/1248 kind) — ₹10,000 at 0% + ₹20,000 at 18%, GST ₹3,600, total ₹33,600. */
 import { describe, expect, it } from "vitest";
 import {
-  isMixedRate, lineOwnRate, lineRateShares, linesRateSlices, mixedRateNoteSplit, pdfTaxRows, rateLabel, rateSlices,
+  docRates, invoiceNoteMixedRates, isMixedRate, lineOwnRate, lineRateShares, linesRateSlices, mixedRateNoteSplit,
+  noteMixedSplitText, outputRateLabel, pdfTaxRows, rateLabel, rateSlices,
 } from "./line-rates";
 
 const mixedLines = [
@@ -90,6 +91,47 @@ describe("R-2717 noteSplit — a credit / debit note on a mixed-rate invoice", (
   it("is null when the invoice figures give no proportion", () => {
     expect(mixedRateNoteSplit(100, { taxableValue: null, taxAmount: 0 })).toBeNull();
     expect(mixedRateNoteSplit(100, { taxableValue: 0, taxAmount: 0 })).toBeNull();
+  });
+});
+
+describe("R-2717 invoiceNoteMixedRates — the same 'different rates?' test as SQL invoice_note_gst_split", () => {
+  const inv = (tax_rate: number | null, line_items: unknown) => ({ taxable_value: 30000, tax_amount: 3600, tax_rate, line_items });
+  it("0% + 18% lines → mixed, with the invoice's figures", () => {
+    expect(invoiceNoteMixedRates(inv(null, mixedLines))).toEqual({ taxableValue: 30000, taxAmount: 3600, rates: [0, 18] });
+  });
+  it("[0% line, line with no rate] on an 18% invoice is two rates (SQL test M)", () => {
+    expect(invoiceNoteMixedRates(inv(18, [{ qty: 1, rate: 10000, tax_rate: 0 }, { qty: 2, rate: 10000 }]))?.rates).toEqual([0, 18]);
+  });
+  it("one rate → null: no line rates, all the same rate, or only adjustment / ₹0 lines differ (SQL tests C0, N)", () => {
+    expect(invoiceNoteMixedRates(inv(18, [{ qty: 1, rate: 10000 }, { qty: 2, rate: 10000 }]))).toBeNull();
+    expect(invoiceNoteMixedRates(inv(null, [
+      { qty: 1, rate: 10000, tax_rate: 18 }, { qty: 2, rate: 10000, tax_rate: 18 },
+      { qty: 1, rate: -250, kind: "adjustment", tax_rate: 5 }, { qty: 1, rate: 0, tax_rate: 0 },
+    ]))).toBeNull();
+    expect(invoiceNoteMixedRates(inv(18, null))).toBeNull();
+    expect(invoiceNoteMixedRates(inv(18, "junk"))).toBeNull();
+  });
+  it("the dialog text names the rates and the split", () => {
+    expect(noteMixedSplitText({ rates: [0, 18], interState: true, taxable: "₹15,000", tax: "₹1,800" }))
+      .toBe("This invoice has lines at different GST rates (0% + 18%). The note is split like the invoice: taxable ₹15,000 + IGST ₹1,800.");
+  });
+});
+
+describe("R-2717 outputRateLabel / docRates — the GST output table's Tax cell", () => {
+  it("one rate → the words it always showed", () => {
+    expect(outputRateLabel({ isExport: false, gst: 180, interState: true, taxRate: 18 })).toBe("IGST 18%");
+    expect(outputRateLabel({ isExport: false, gst: 180, interState: false, taxRate: 18 })).toBe("CGST 9% + SGST 9%");
+    expect(outputRateLabel({ isExport: true, gst: 0, interState: false, taxRate: 0 })).toBe("Export · LUT (0%)");
+    expect(outputRateLabel({ isExport: true, gst: 180, interState: false, taxRate: 18 })).toBe("Export · IGST 18%");
+  });
+  it("several rates → every rate named", () => {
+    expect(outputRateLabel({ isExport: false, gst: 3600, interState: true, taxRate: 18, rates: [0, 18] })).toBe("IGST 0% + 18%");
+    expect(outputRateLabel({ isExport: false, gst: 3600, interState: false, taxRate: 18, rates: [0, 18] })).toBe("CGST + SGST 0% + 18%");
+    expect(outputRateLabel({ isExport: true, gst: 3600, interState: false, taxRate: 18, rates: [0, 18] })).toBe("Export · IGST 0% + 18%");
+  });
+  it("docRates: the highest rate + the list for a mixed document; its own rate otherwise", () => {
+    expect(docRates({ taxableValue: 30000, gst: 3600, taxRate: 12 }, [{ taxable: 10000, rate: 0 }, { taxable: 20000, rate: 18 }])).toEqual({ taxRate: 18, rates: [0, 18] });
+    expect(docRates({ taxableValue: 30000, gst: 5400, taxRate: 18 }, [{ taxable: 30000 }])).toEqual({ taxRate: 18 });
   });
 });
 

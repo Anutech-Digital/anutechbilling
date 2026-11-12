@@ -154,6 +154,35 @@ export function mixedRateNoteSplit(
   return { taxable, tax: gross - taxable };
 }
 
+/** A mixed-rate invoice as the credit / debit note dialog needs it. */
+export interface NoteMixedRates { taxableValue: number | null; taxAmount: number | null; rates: number[] }
+
+/**
+ * Does a note on this invoice follow its line rates? The TS twin of the test inside SQL
+ * `invoice_note_gst_split`: more than one distinct rate among the lines that carry value
+ * (qty × rate > 0, not an adjustment line); a line with no rate of its own counts as "the
+ * invoice's rate". Null = one rate → the note uses the invoice's rate as it always did.
+ */
+export function invoiceNoteMixedRates(inv: {
+  taxable_value: number | null; tax_amount: number | null; tax_rate: number | null; line_items?: unknown;
+}): NoteMixedRates | null {
+  const lines = Array.isArray(inv.line_items) ? (inv.line_items as RateSourceLine[]) : [];
+  const INVOICE_RATE = -1;
+  const rates = new Set<number>();
+  for (const l of lines) {
+    if (l && typeof l === "object" && lineWeight(l) > 0) rates.add(lineOwnRate(l) ?? INVOICE_RATE);
+  }
+  if (rates.size <= 1) return null;
+  const named = [...rates].map((r) => (r === INVOICE_RATE ? inv.tax_rate : r)).filter((r): r is number => r != null);
+  return { taxableValue: inv.taxable_value, taxAmount: inv.tax_amount, rates: [...new Set(named)].sort((a, b) => a - b) };
+}
+
+/** The dialog's line under the amount for a note on a mixed-rate invoice. */
+export function noteMixedSplitText(a: { rates: readonly number[]; interState: boolean; taxable: string; tax: string }): string {
+  return `This invoice has lines at different GST rates (${a.rates.map((r) => `${r}%`).join(" + ")}). `
+    + `The note is split like the invoice: taxable ${a.taxable} + ${a.interState ? "IGST" : "CGST + SGST"} ${a.tax}.`;
+}
+
 export interface PdfTaxRow { label: string; amount: number }
 
 /**

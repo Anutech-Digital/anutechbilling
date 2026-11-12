@@ -349,6 +349,10 @@ export type QuoteLineItem = {
    * development contract is not a SaaS subscription and must not inherit its code.
    */
   hsn?: string;
+  /** R-2717: this line's OWN GST % on an INVOICE whose lines carry different rates (a Zoho
+   *  0% + 18% invoice; `invoices.tax_rate` is then NULL). Absent → the document's rate.
+   *  Read only through lib/gst/line-rates.ts. Quotes do not write it. */
+  tax_rate?: number | null;
   /** BULK ORDER: when true, this one line expands into one subscription PER domain on payment. */
   bulk?: boolean;
   /** Per-domain breakdown for a bulk line. `qty` must equal the sum of these seats. */

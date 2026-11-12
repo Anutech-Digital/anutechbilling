@@ -36,7 +36,8 @@ import { isRenderableLogo } from "./logo";
 import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN, SAAS_HSN_LABEL } from "@/lib/gst/hsn";
 import type { PayMethods } from "./pay-methods";
-import { isExportSupply } from "@/lib/gst/place-of-supply";
+import { isExportSupply, treatmentIsAlwaysInterState } from "@/lib/gst/place-of-supply";
+import { lineOwnRate, lineWeight, linesRateSlices, pdfTaxRows } from "@/lib/gst/line-rates";
 import { exportEndorsement } from "@/lib/gst/export-lut";
 import { sezEndorsement } from "@/lib/gst/sez-endorsement";
 import { udyamPdfLine } from "@/lib/compliance/udyam";
@@ -515,6 +516,12 @@ export function InvoicePDF(props: InvoicePDFProps) {
   });
   const money = (inr: number) => (isForeign ? formatForeign(toForeign(inr), currency ?? "") : pdfRupee(inr));
 
+  /* R-2717: an invoice whose lines carry different GST rates prints the rate on each line and
+     one tax row per rate. Null for every single-rate invoice — nothing on it moves. An export
+     or SEZ supply is IGST whatever the row's flag says (same rule as GSTR-1 docHeads). */
+  const rateSlices = linesRateSlices({ taxableValue: taxable, gst: tax, taxRate }, lineItems);
+  const rateRows = pdfTaxRows(rateSlices, interState || isExport || treatmentIsAlwaysInterState(invoice.gst_treatment), money);
+
   const advances: InvoiceAdvanceAdjustment[] = invoice.adjusted_advances ?? [];
   const advancesTotal = advances.reduce((acc, a) => acc + a.amount, 0);
   /* R-1670 (2): an advance paid with TDS → bank money + a TDS line (same total). */
@@ -643,6 +650,12 @@ export function InvoicePDF(props: InvoicePDFProps) {
                       {pdfText(n)}
                     </Text>
                   ))}
+                  {/* R-2717: the line's own GST rate, only when the invoice carries several. */}
+                  {rateRows && lineWeight(li) > 0 && (
+                    <Text style={{ fontSize: 9, color: COLORS.ink3, marginTop: 2 }}>
+                      GST {lineOwnRate(li) ?? taxRate}%
+                    </Text>
+                  )}
                 </View>
                 <Text style={s.tdHsn}>{li.hsn ?? SAAS_HSN}</Text>
                 <Text style={s.tdQty}>{li.qty}</Text>
@@ -673,6 +686,15 @@ export function InvoicePDF(props: InvoicePDFProps) {
             {bos ? (
               /* R-1529: a Bill of Supply carries no CGST/SGST/IGST — not even a 0 row. */
               null
+            ) : rateRows ? (
+              /* R-2717: lines at different GST rates — one tax row per rate, each naming the
+                 taxable value it is charged on (the rows add up to the invoice's GST). */
+              rateRows.map((row) => (
+                <View key={row.label} style={s.totalRow}>
+                  <Text style={s.totalLabel}>{row.label}</Text>
+                  <Text style={s.totalValue}>{money(row.amount)}</Text>
+                </View>
+              ))
             ) : isExport ? (
               <View style={s.totalRow}>
                 <Text style={s.totalLabel}>Export — zero-rated (LUT), no GST</Text>
