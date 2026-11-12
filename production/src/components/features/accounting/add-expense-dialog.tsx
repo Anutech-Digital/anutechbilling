@@ -65,7 +65,10 @@ import { expenseCategoryError } from "@/lib/accounting/expense-category";
 import { istToday } from "@/lib/dates/ist";
 import { useEmployeeAdvances, EMPLOYEE_ADVANCE_METHOD } from "@/lib/queries/advances";
 import { OwnerPayCautionBox } from "@/components/features/accounting/owner-pay-caution";
-import { lastUsedCategory, moreNeeded } from "@/app/(app)/accounting/expenses/expense-form";
+import {
+  lastUsedCategory, moreNeeded, isZohoImportedExpense, salariesOffered, keepUntouchedOnEdit,
+  SALARY_OUTSIDE_PAYROLL_HELP, type StoredExpenseLike,
+} from "@/app/(app)/accounting/expenses/expense-form";
 import { buildExpenseNote, lineCategoryFromBill, paidFromBill, rcmSuggested } from "@/app/(app)/accounting/expenses/bill-autofill";
 
 /* R-1744: a small "AI" tag beside a field the bill reader filled. It goes away as soon as the
@@ -207,8 +210,13 @@ export function AddExpenseDialog({
   // Payroll module — they have no bill or line items, so we hide the items
   // editor when editing one. (New expenses can't be salaries — the category is
   // filtered out — so this only matters on edit.)
+  /* R-2683: a Zoho-imported row on Salaries is a bill, not a Payroll posting — it keeps its
+     items editor so the category can be changed back. Only such rows (and a row already on
+     Salaries) are offered Salaries; a new or hand-made expense never is. */
+  const zohoRow = isZohoImportedExpense(expense as StoredExpenseLike | null | undefined);
+  const offerSalaries = salariesOffered(expense as StoredExpenseLike | null | undefined);
   const isPayroll = Boolean(expense && (
-    expense.category === "Salaries" ||
+    (expense.category === "Salaries" && !zohoRow) ||
     expense.payment_method === "statutory" ||
     /\b(ESI|EPF|PF|Provident|Gratuity|Bonus|TDS)\b/i.test(expense.category)
   ));
@@ -946,9 +954,15 @@ export function AddExpenseDialog({
     }
 
     if (expense) {
+      /* R-2683: fields the user did not change keep what is stored — an unpaid row gets no
+         payment method, an imported row keeps its GST split, paid date and amount. */
       await update.mutateAsync({
         id: expense.id,
-        patch: { ...shared, category, channel: channelFor(category), campaign_id: campaignFor(category), line_items, amount: amountInr, gst_paid: gstAmt, description: derivedDescription },
+        patch: keepUntouchedOnEdit(
+          expense as StoredExpenseLike,
+          { ...shared, category, channel: channelFor(category), campaign_id: campaignFor(category), line_items, amount: amountInr, gst_paid: gstAmt, description: derivedDescription },
+          { gstHeadsFromBill: aiHeads !== null, itemised: showItems && catLines.length > 0 },
+        ),
       });
       await rememberNow();
       onClose();
@@ -1334,10 +1348,13 @@ export function AddExpenseDialog({
                 <SelectTrigger id="category"><SelectValue placeholder="Select…" /></SelectTrigger>
                 <SelectContent>
                   {EXPENSE_CATEGORIES
-                    .filter((c) => c !== "Salaries" || expense?.category === "Salaries")
+                    .filter((c) => c !== "Salaries" || offerSalaries)
                     .map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
                 </SelectContent>
               </Select>
+              {zohoRow && watch("category") === "Salaries" && (
+                <p className="mt-1 text-xs text-ink-3">{SALARY_OUTSIDE_PAYROLL_HELP}</p>
+              )}
               {categoryAuto && !categoryTouched && !aiFilled.category && (
                 <p className="mt-1 flex items-center gap-1 text-xs text-amber-ink">
                   <Icon name="sparkles" size={10} /> Picked automatically — change it if wrong.
@@ -1485,11 +1502,14 @@ export function AddExpenseDialog({
                               showing the first category as if it were chosen. */}
                           <option value="">Select…</option>
                           {EXPENSE_CATEGORIES
-                            .filter((c) => c !== "Salaries")
+                            .filter((c) => c !== "Salaries" || offerSalaries)
                             .map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
                         <AiMark field={`line-${i}-category`} on={!!l.aiCat} />
                         </div>
+                        {zohoRow && (l.category || headerCategory) === "Salaries" && (
+                          <p className="col-span-12 text-xs text-ink-3">{SALARY_OUTSIDE_PAYROLL_HELP}</p>
+                        )}
                       </div>
                     </div>
                   ))}
