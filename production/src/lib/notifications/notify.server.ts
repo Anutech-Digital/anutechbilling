@@ -21,7 +21,9 @@ export interface NotifyInput {
     // R-2303: team chat. chat_post_message (R-2295) writes chat.mention itself; chat.dm is for a DM bell.
     | "chat.mention" | "chat.dm"
     // R-2456: an auto-quote the customer-copy gate held back (no state / needs approval).
-    | "quote.not_sent";
+    | "quote.not_sent"
+    // R-2709: the AI's social posts wait for the marketing person's approval.
+    | "social.review";
   title: string;
   body?: string;
   href?: string;

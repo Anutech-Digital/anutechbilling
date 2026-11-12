@@ -2,7 +2,7 @@
 -- deploy-key: r2705socialstrategy
 -- R-2705 / R-2706 / R-2707 (G-SOCIAL): a strategy for each platform that the AI follows when it
 -- writes posts, the results of each post, and a new strategy version every week that keeps what
--- worked and changes what did not. Spec: docs/specs/social-organic.md (v3).
+-- worked and changes what did not. The marketing team runs it (R-2709). Spec: docs/specs/social-organic.md (v3).
 begin;
 
 -- One row per strategy version. Exactly one 'active' per company + platform; the AI's weekly
@@ -25,11 +25,11 @@ create unique index if not exists social_strategy_one_proposed on public.social_
 alter table public.social_strategy enable row level security;
 create policy social_strategy_team_read on public.social_strategy for select to authenticated
   using (tenant_id = (select public.current_tenant_id()) and (select public.current_user_has_role('owner','manager','marketing')));
-create policy social_strategy_lead_insert on public.social_strategy for insert to authenticated
-  with check (tenant_id = (select public.current_tenant_id()) and (select public.current_user_has_role('owner','manager')));
-create policy social_strategy_lead_update on public.social_strategy for update to authenticated
-  using (tenant_id = (select public.current_tenant_id()) and (select public.current_user_has_role('owner','manager')))
-  with check (tenant_id = (select public.current_tenant_id()) and (select public.current_user_has_role('owner','manager')));
+create policy social_strategy_team_insert on public.social_strategy for insert to authenticated
+  with check (tenant_id = (select public.current_tenant_id()) and (select public.current_user_has_role('owner','manager','marketing')));
+create policy social_strategy_team_update on public.social_strategy for update to authenticated
+  using (tenant_id = (select public.current_tenant_id()) and (select public.current_user_has_role('owner','manager','marketing')))
+  with check (tenant_id = (select public.current_tenant_id()) and (select public.current_user_has_role('owner','manager','marketing')));
 create policy zzz_service_role_all on public.social_strategy for all to service_role using (true) with check (true);
 revoke all on public.social_strategy from public, anon;
 grant select, insert, update on public.social_strategy to authenticated;

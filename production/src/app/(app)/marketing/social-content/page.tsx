@@ -130,7 +130,7 @@ export default function SocialContentPage() {
       // R-2672: the reason stays on screen under the button (a toast vanished before anyone read it).
       if (!response.ok || !data.caption) { setAiProblem([data.error ?? "AI could not write the post.", data.description].filter(Boolean).join(" ")); return; }
       setTexts((cur) => ({ ...cur, ...Object.fromEntries(platforms.map((p) => [p, data.captions?.[p] || data.caption || ""])) }));
-      toast.success("AI wrote the post. Read it, change anything, then send it for approval.");
+      toast.success("AI wrote the post. Read it, change anything, then press Schedule post.");
     } catch (e) { toastError(e, { fallback: "AI could not write the post.", description: "Try a clearer topic, or write the post yourself." }); }
     finally { setBusy(false); setAiWriting(false); }
   }
@@ -246,9 +246,9 @@ export default function SocialContentPage() {
         const data = await response.json() as { error?: string };
         if (!response.ok) throw new Error(`${platform === "facebook" ? "Facebook" : "Instagram"}: ${data.error ?? "Could not save."}`);
       }
-      toast.success(submit ? "Sent for approval." : "Saved as a draft.", { description: submit ? (postAt ? `Once approved it posts on ${formatIst(postAt + ":00+05:30")}.` : "Once approved, press Publish now.") : undefined });
+      toast.success(submit ? (postAt ? "Post scheduled." : "Saved. Publish it when you are ready.") : "Saved as a draft.", { description: submit ? (postAt ? `It posts by itself on ${formatIst(postAt + ":00+05:30")}.` : "Press Publish now on it in Scheduled.") : undefined });
       setTopic(""); setTexts({ facebook: "", instagram: "" }); setMediaUrl(""); setCustomAt("");
-      await load(); setTab(submit ? "review" : "draft");
+      await load(); setTab(submit ? "scheduled" : "draft");
     } catch (e) { toastError(e, { fallback: "Could not save the post.", description: "Your text is still in the form. Fix what the message says and try again." }); }
     finally { setBusy(false); }
   }
@@ -263,7 +263,7 @@ export default function SocialContentPage() {
       const item = state?.items.find(x => x.id === id);
       toast.success(action === "publish" ? "Posted to Meta."
         : action === "approve" ? (item?.scheduled_at ? `Approved. It posts on ${formatIst(item.scheduled_at)}.` : "Approved. Press Publish now when you are ready.")
-        : action === "submit" ? "Sent for approval." : action === "return" ? "Sent back to drafts." : action === "stop" ? "Stopped. It will not go out; it is in Drafts now." : "Saved.");
+        : action === "submit" ? "Post scheduled." : action === "return" ? "Sent back to drafts." : action === "stop" ? "Stopped. It will not go out; it is in Drafts now." : "Saved.");
       setEditing(null); setConfirmPublish(null); await load();
       if (action === "approve") setTab("scheduled");
       if (action === "submit") setTab("review");
@@ -321,7 +321,7 @@ export default function SocialContentPage() {
       const learnedText = (data.learned ?? []).map((l) => `${PLATFORM_NAME[l.platform]}: ${l.outcome === "changed" ? "strategy improved from results" : l.outcome === "proposed" ? "the AI suggests a better strategy (see Strategy)" : l.outcome === "kept" ? "strategy kept, it is working" : `needs ${3 - l.have} more post${3 - l.have === 1 ? "" : "s"} with results before it can learn`}.`).join(" ");
       if (!response.ok) { setPlanNote({ text: [data.error ?? "Could not plan the week.", data.description].filter(Boolean).join(" "), warn: true }); return; }
       const n = data.created ?? 0;
-      setPlanNote({ text: `${n} post${n === 1 ? "" : "s"} planned for the next 7 days. ${data.autopilot ? "They go out by themselves at their time (see Scheduled). Press Stop on any you do not want." : "They are waiting for your approval (see Waiting for approval)."}${data.aiPictures ? ` The AI made ${data.aiPictures === 1 ? "a picture" : `${data.aiPictures} pictures`} for them.` : ""}${data.instagramSkipped ? ` Instagram was skipped for posts without a picture${data.pictureProblem ? ` (${data.pictureProblem})` : ""}.` : ""}${data.resultsRead ? ` Read the results of ${data.resultsRead} post${data.resultsRead === 1 ? "" : "s"}.` : ""} ${learnedText}${data.needsReconnect ? " Reconnect your Facebook Page (Marketing Hub → Facebook Page) so the AI can also read reach and saves." : ""}`, warn: Boolean(data.instagramSkipped || data.needsReconnect) });
+      setPlanNote({ text: `${n} post${n === 1 ? "" : "s"} planned for the next 7 days. ${data.autopilot ? "They go out by themselves at their time (see Scheduled). Press Stop on any you do not want." : "They wait for the marketing team to approve them (see Waiting for approval)."}${data.aiPictures ? ` The AI made ${data.aiPictures === 1 ? "a picture" : `${data.aiPictures} pictures`} for them.` : ""}${data.instagramSkipped ? ` Instagram was skipped for posts without a picture${data.pictureProblem ? ` (${data.pictureProblem})` : ""}.` : ""}${data.resultsRead ? ` Read the results of ${data.resultsRead} post${data.resultsRead === 1 ? "" : "s"}.` : ""} ${learnedText}${data.needsReconnect ? " Reconnect your Facebook Page (Marketing Hub → Facebook Page) so the AI can also read reach and saves." : ""}`, warn: Boolean(data.instagramSkipped || data.needsReconnect) });
       await load();
       setTab(data.autopilot ? "scheduled" : "review");
     } catch (e) { toastError(e, { fallback: "Could not plan the week.", description: "Nothing was posted. Try again." }); }
@@ -403,7 +403,7 @@ export default function SocialContentPage() {
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         <Card><div className="space-y-5 p-1 md:p-2">
-          <div><h2 className="text-lg font-semibold">Post it yourself</h2><p className="mt-0.5 text-xs text-ink-3">Write a post by hand (or with one AI press). It follows the normal approval.</p></div>
+          <div><h2 className="text-lg font-semibold">Post it yourself</h2><p className="mt-0.5 text-xs text-ink-3">Write a post by hand (or with one AI press). It is scheduled straight away — no approval needed.</p></div>
 
           <fieldset><legend className="text-xs font-medium text-ink-2">Where</legend>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -437,7 +437,7 @@ export default function SocialContentPage() {
           </fieldset>
 
           <div className="flex flex-wrap items-center gap-2 border-t border-hairline pt-4">
-            <Button variant="primary" disabled={busy} onClick={() => void send(true)}><Send size={15} /> Send for approval</Button>
+            <Button variant="primary" disabled={busy} onClick={() => void send(true)}><Send size={15} /> {when === "manual" ? "Save to publish" : "Schedule post"}</Button>
             <Button variant="ghost" disabled={busy} onClick={() => void send(false)}>Save as draft</Button>
           </div>
           {platforms.length > 1 && <p className="-mt-2 text-xs text-ink-3">One post is made for each place you picked.</p>}
@@ -478,11 +478,11 @@ export default function SocialContentPage() {
                 ? <p className="mt-3 text-xs text-ink-3">AI picture saved in your Facebook Page&apos;s photos (Facebook did not send a preview just now).</p>
                 : <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={pagePhotoId(item.media_url) ? item.media_preview! : item.media_url} alt="Post picture" className="max-h-80 w-full object-contain" /></div>)}</>}
             {item.status === "published" && (item.stats ? <p className="mt-2 text-xs text-ink-2">Results: {statsLine(item.stats) || "no numbers from Meta yet"}</p> : <p className="mt-2 text-xs text-ink-3">Results are read 2 days after posting, when the AI plans the week.</p>)}
-            {item.error && <p className="mt-2 rounded-lg bg-rose-soft p-2 text-xs text-rose-ink">Meta said: {item.error} — fix it, then send for approval again.</p>}
+            {item.error && <p className="mt-2 rounded-lg bg-rose-soft p-2 text-xs text-rose-ink">Meta said: {item.error} — fix it, then press Schedule again.</p>}
             <div className="mt-4 flex flex-wrap gap-2 border-t border-hairline pt-3">
               {item.status === "review" && state.canReview && <><Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "approve")}><Check size={14} /> Approve</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void act(item.id, "return")}>Send back</Button></>}
-              {item.status === "review" && !state.canReview && <span className="self-center text-xs text-ink-3">Waiting for the owner or a manager.</span>}
-              {["draft", "failed"].includes(item.status) && <Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "submit")}><Send size={14} /> Send for approval</Button>}
+              {item.status === "review" && !state.canReview && <span className="self-center text-xs text-ink-3">Waiting for the marketing team.</span>}
+              {["draft", "failed"].includes(item.status) && <Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "submit")}><Send size={14} /> Schedule</Button>}
               {(["draft", "review", "failed"].includes(item.status) || (item.status === "approved" && state.canReview)) && editing !== item.id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setEditing(item.id); setEditCaption(item.caption); setEditMediaUrl(item.media_url ?? ""); setEditPostAt(item.scheduled_at ? toIstLocal(item.scheduled_at) : ""); }}>Edit</Button>}
               {item.status === "approved" && state.canReview && item.scheduled_at && confirmPublish !== item.id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(item.id, "stop")}>Stop</Button>}
               {!["published", "publishing"].includes(item.status) && editing !== item.id && (confirmDelete === item.id

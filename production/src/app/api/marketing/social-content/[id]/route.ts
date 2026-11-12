@@ -35,7 +35,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     const problem = scheduledAt ? scheduleProblem(scheduledAt) : null;
     if (problem) return NextResponse.json({ error: problem }, { status: 400 });
   }
-  if (["approve", "return", "publish", "stop"].includes(input.action) && !canReviewSocial(role)) return NextResponse.json({ error: "Only an owner or manager can review and publish." }, { status: 403 });
+  if (["approve", "return", "publish", "stop"].includes(input.action) && !canReviewSocial(role)) return NextResponse.json({ error: "Only the marketing team can approve and publish.", description: "Ask the owner to give you marketing access." }, { status: 403 });
   try {
     if (input.action === "publish") {
       const item = await claimApproved(session, id);
@@ -58,17 +58,19 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     if (!current) return NextResponse.json({ error: "Draft not found." }, { status: 404 });
     /* R-2672: "stop" takes a scheduled (approved) post — e.g. one the AI autopilot planned — back to Drafts before it goes out. */
     /* R-2687: a scheduled (approved) post can be edited too — by an owner/manager only — and stays scheduled. */
-    if (input.action === "save" && current.status === "approved" && !canReviewSocial(role)) return NextResponse.json({ error: "Only an owner or manager can change a scheduled post.", description: "Ask them, or press Stop first." }, { status: 403 });
+    if (input.action === "save" && current.status === "approved" && !canReviewSocial(role)) return NextResponse.json({ error: "Only the marketing team can change a scheduled post.", description: "Press Stop first, or ask the marketing team." }, { status: 403 });
     const allowed = input.action === "save" ? ["draft", "review", "failed", "approved"] : input.action === "submit" ? ["draft", "failed"] : input.action === "stop" ? ["approved"] : ["review"];
     if (!allowed.includes(current.status)) return NextResponse.json({ error: "This draft is no longer in that stage. Refresh the page." }, { status: 409 });
     const media = input.mediaUrl === undefined ? current.media_url : input.mediaUrl;
     const caption = input.caption === undefined ? current.caption : input.caption;
     if (current.platform === "instagram" && !media) return NextResponse.json({ error: "Instagram needs an image URL." }, { status: 400 });
     if (current.format === "post" && !caption) return NextResponse.json({ error: "Write a caption." }, { status: 400 });
-    const next = input.action === "submit" ? "review" : input.action === "approve" ? "approved" : input.action === "return" || input.action === "stop" ? "draft" : undefined;
-    const item = await updateSocial(session, id, { caption: input.caption, mediaUrl: input.mediaUrl, topic: input.topic, status: next, scheduledAt }, current.status as "draft" | "review" | "failed" | "approved", input.action === "approve" || input.action === "return" || input.action === "stop");
+    /* R-2709: a person's own post is scheduled straight away ("Schedule post") — nobody else approves it. */
+    if (input.action === "submit" && !canReviewSocial(role)) return NextResponse.json({ error: "Only the marketing team can schedule posts." }, { status: 403 });
+    const next = input.action === "submit" ? "approved" : input.action === "approve" ? "approved" : input.action === "return" || input.action === "stop" ? "draft" : undefined;
+    const item = await updateSocial(session, id, { caption: input.caption, mediaUrl: input.mediaUrl, topic: input.topic, status: next, scheduledAt }, current.status as "draft" | "review" | "failed" | "approved", input.action === "approve" || input.action === "return" || input.action === "stop" || input.action === "submit");
     if (!item) return NextResponse.json({ error: "Draft changed. Refresh the page." }, { status: 409 });
-    const verb: Record<string, string> = { save: "Edited a post", submit: "Sent a post for approval", approve: "Approved a post", return: "Sent a post back", stop: "Stopped a scheduled post" };
+    const verb: Record<string, string> = { save: "Edited a post", submit: "Scheduled a post", approve: "Approved a post", return: "Sent a post back", stop: "Stopped a scheduled post" };
     await logPersonActivity(session, { platform: current.platform, action: verb[input.action] ?? input.action, detail: (caption ?? "").slice(0, 120), contentId: id });
     return NextResponse.json({ item });
   } catch (error) {
@@ -94,7 +96,7 @@ export async function DELETE(_req: Request, context: { params: Promise<{ id: str
     const current = rows[0];
     if (!current) return NextResponse.json({ error: "Post not found. Refresh the page." }, { status: 404 });
     if (["published", "publishing"].includes(current.status)) return NextResponse.json({ error: "This post is already on the Page.", description: "Delete it on Facebook / Instagram itself." }, { status: 409 });
-    if (!canReviewSocial(role) && current.created_by !== session.userId) return NextResponse.json({ error: "You can delete only your own posts.", description: "Ask the owner or a manager." }, { status: 403 });
+    if (!canReviewSocial(role) && current.created_by !== session.userId) return NextResponse.json({ error: "You can delete only your own posts.", description: "Ask the marketing team." }, { status: 403 });
     await logPersonActivity(session, { platform: current.platform, action: "Deleted a post", detail: current.caption.slice(0, 120) });
     const deleted = await withTenant(session, tx => tx.$executeRaw`
       delete from public.social_content where id = ${id}::uuid and tenant_id = ${session.tenantId}::uuid and status not in ('published', 'publishing')`);

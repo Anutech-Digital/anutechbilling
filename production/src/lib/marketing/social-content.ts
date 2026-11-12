@@ -25,8 +25,13 @@ export async function socialRole(session: TenantSession): Promise<string | null>
 export function canWriteSocial(role: string | null): boolean {
   return role === "owner" || role === "manager" || role === "marketing";
 }
+/**
+ * R-2709 (Abhishek, 12 Nov 2026): approving and running social posts is the marketing person's
+ * job — marketing approves the AI's posts; owner and manager may too but need not. Resuming the AI
+ * and its settings stay with the owner (checked where they are used).
+ */
 export function canReviewSocial(role: string | null): boolean {
-  return role === "owner" || role === "manager";
+  return role === "owner" || role === "manager" || role === "marketing";
 }
 
 export async function listSocial(session: TenantSession): Promise<SocialItem[]> {

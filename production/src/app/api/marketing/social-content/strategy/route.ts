@@ -3,7 +3,7 @@
  * POST  {}                      — write the first strategy for platforms that have none (AI).
  * PUT   { platform, plan }      — a person changes a strategy → a new active version.
  * PATCH { platform, accept }    — Use it / Keep old on the AI's proposed change.
- * Who: owner or manager (marketing reads them on the page). 401 · 403 · 400 · 404 no proposal · 409 no AI key.
+ * Who: the marketing team, owner or manager (R-2709). 401 · 403 · 400 · 404 no proposal · 409 no AI key.
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -24,7 +24,7 @@ const Platform = z.enum(STRATEGY_PLATFORMS);
 async function lead() {
   const session = await getTenantSession();
   if (!session) return { error: NextResponse.json({ error: "Sign in again." }, { status: 401 }) } as const;
-  if (!canReviewSocial(await socialRole(session))) return { error: NextResponse.json({ error: "Only the owner or a manager can change the strategy.", description: "Ask them to change it." }, { status: 403 }) } as const;
+  if (!canReviewSocial(await socialRole(session))) return { error: NextResponse.json({ error: "Only the marketing team can change the strategy.", description: "Ask the owner to give you marketing access." }, { status: 403 }) } as const;
   return { session } as const;
 }
 

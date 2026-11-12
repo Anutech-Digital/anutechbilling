@@ -2,7 +2,7 @@
  * Social content → AI posts settings.
  * PUT  — save: weekly AI posts on/off, what to write about, ask-first or autopilot (R-2672),
  *        posts per week, picture links (Instagram needs a picture). Owner only.
- * POST — "Plan this week now": the AI plans the week straight away (owner or manager).
+ * POST — "Plan this week now": the AI plans the week straight away (marketing team, owner or manager — R-2709).
  */
 import { NextResponse } from "next/server";
 import { z } from "zod";
@@ -57,7 +57,7 @@ export async function PUT(req: Request) {
 export async function POST() {
   const session = await getTenantSession();
   if (!session) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
-  if (!canReviewSocial(await socialRole(session))) return NextResponse.json({ error: "Only the owner or a manager can plan the week.", description: "Ask them to press Plan this week now." }, { status: 403 });
+  if (!canReviewSocial(await socialRole(session))) return NextResponse.json({ error: "Only the marketing team can plan the week.", description: "Ask the owner to give you marketing access." }, { status: 403 });
   try {
     const result = await planWeek(createAdminClientFor(session.userId), session, { force: true });
     if (!result.ok) return NextResponse.json({ error: result.reason }, { status: result.status });
@@ -78,7 +78,7 @@ export async function PATCH(req: Request) {
   const parsed = z.object({ aiPaused: z.boolean() }).safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Choose Stop or Resume." }, { status: 400 });
   const role = await socialRole(session);
-  if (!canReviewSocial(role)) return NextResponse.json({ error: "Only the owner or a manager can stop the AI." }, { status: 403 });
+  if (!canReviewSocial(role)) return NextResponse.json({ error: "Only the marketing team can stop the AI." }, { status: 403 });
   if (!parsed.data.aiPaused && role !== "owner") return NextResponse.json({ error: "Only the owner can resume the AI.", description: "Ask the owner to press Resume AI." }, { status: 403 });
   try {
     await withTenant(session, tx => tx.$executeRaw`

@@ -45,7 +45,7 @@ the app, comments get an answer within a day, and the page shows the follower ch
   Autopilot (AI items go out at their time). Items a person writes always follow the normal approval flow.
 - Every AI or person action is written to the activity list (who, what, where, when, result).
 - Never auto-follow, auto-like, auto-DM, or comment on other people's pages.
-- Only owner changes modes and Stop all AI; owner/manager approve; marketing writes.
+- Only the owner changes modes and resumes the AI; marketing (and owner/manager) approve, schedule, stop and change strategies (R-2709).
 - Tokens stay sealed in `tenant_secrets`; never sent to the browser. Times shown in IST.
 - **Same idea, not the same words (R-2705):** each platform has a strategy (kinds of post with %
   share, tone, length, hashtags, posting hour, avoid). Topic and picture are shared; the text is
@@ -81,7 +81,7 @@ the app, comments get an answer within a day, and the page shows the follower ch
 | Question | Answer | Who, date |
 |---|---|---|
 | Must a person approve every post? | Replaced: per action **Off / Ask me first / Autopilot**, plus Stop all AI | Abhishek, 11–12 Nov 2026 |
-| Who may approve? | Owner and manager | decided in session, 5 Nov 2026 |
+| Who may approve? | **The marketing person** approves the AI's posts (owner/manager may, need not). A person's own post is scheduled straight away ("Schedule post"). AI posts waiting → bell to marketing (owner when none). Resume AI + AI settings stay owner-only (R-2709) | Abhishek, 12 Nov 2026 (was: owner and manager, 5 Nov) |
 | Posts a week | 3 default, 1–7 setting | decided in session, 11 Nov 2026 |
 | Same text on every platform? | No — same topic + picture, text per platform from its strategy | Abhishek, 12 Nov 2026 |
 | Strategy should update from data | Yes — weekly; keep what works, change what does not | Abhishek, 12 Nov 2026 |

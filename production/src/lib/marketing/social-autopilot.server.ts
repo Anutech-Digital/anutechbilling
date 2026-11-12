@@ -20,6 +20,7 @@ import { makePostPicture } from "@/lib/marketing/social-picture.server";
 import { refreshPostStats } from "@/lib/marketing/social-stats.server";
 import { ensureStrategies, learnStrategies, planFor, readStrategies } from "@/lib/marketing/social-strategy.server";
 import { DEFAULT_PLANS, atIstHour, describePlan, pickTypes } from "@/lib/marketing/social-strategy";
+import { notifyPeople } from "@/lib/notifications/notify.server";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -106,6 +107,14 @@ export async function planWeek(admin: Admin, session: TenantSession, opts: { for
       created++;
       await logPersonActivity(session, { actor: "ai", platform: "instagram", action: s.autopilot ? "Planned a post (autopilot)" : "Wrote a post for approval", detail: `${post.type}: ${post.topic}`, contentId: igId, result: s.autopilot ? "ok" : "waiting" });
     }
+  }
+  /* R-2709: "Ask me first" — tell the marketing person (the owner when there is none) that posts wait for them. */
+  if (!s.autopilot && created > 0) {
+    const marketing = await withTenant(session, (tx) => tx.$queryRaw<{ n: bigint }[]>`
+      select count(*) as n from public.users where tenant_id = ${session.tenantId}::uuid and role = 'marketing' and is_active`).catch(() => [{ n: BigInt(0) }]);
+    await notifyPeople({ tenantId: session.tenantId, kind: "social.review", title: `The AI wrote ${created} post${created === 1 ? "" : "s"} — waiting for your approval`,
+      body: "Open Social growth → Waiting for approval, read them, then Approve or Send back.", href: "/marketing/social-content" },
+      { roles: Number(marketing[0]?.n ?? 0) > 0 ? ["marketing"] : ["owner"] });
   }
   await withTenant(session, (tx) => tx.$executeRaw`
     update public.social_content_settings set last_generated_on = ${today}::date where tenant_id = ${session.tenantId}::uuid`);

@@ -21,7 +21,7 @@ const draft = z.object({
   topic: z.string().trim().max(500).default(""), ai: z.boolean().default(false),
   /* R-2510: post time as typed in the form ("2026-11-06T09:00", India time). */
   scheduledAt: z.string().trim().max(16).nullable().default(null),
-  /* R-2513: save and send for approval in one step (status review). */
+  /* R-2513 / R-2709: "Schedule post" — save and schedule in one step (approved; no approval needed). */
   submit: z.boolean().default(false),
   /* R-2513: "Write with AI" only fills the caption box — nothing is saved until the person sends it. */
   previewOnly: z.boolean().default(false),
@@ -67,7 +67,8 @@ export async function GET() {
 export async function POST(req: Request) {
   const session = await getTenantSession();
   if (!session) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
-  if (!canWriteSocial(await socialRole(session))) return NextResponse.json({ error: "Marketing access required." }, { status: 403 });
+  const role = await socialRole(session);
+  if (!canWriteSocial(role)) return NextResponse.json({ error: "Marketing access required." }, { status: 403 });
   const parsed = draft.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid draft." }, { status: 400 });
   const input = parsed.data;
@@ -103,8 +104,10 @@ export async function POST(req: Request) {
   if (!caption && input.format === "post") return NextResponse.json({ error: "Write a caption." }, { status: 400 });
   try {
     const id = await createSocial(session, { platform: input.platform, format: input.format, caption,
-      mediaUrl: input.mediaUrl, topic: input.topic, origin, scheduledAt, status: input.submit ? "review" : "draft" });
-    await logPersonActivity(session, { platform: input.platform, action: input.submit ? "Wrote a post and sent it for approval" : "Saved a draft", detail: caption.slice(0, 120), contentId: id, result: input.submit ? "waiting" : "ok" });
+      mediaUrl: input.mediaUrl, topic: input.topic, origin, scheduledAt,
+      /* R-2709: "Schedule post" — a person's own post needs nobody's approval. */
+      status: input.submit ? (canReviewSocial(role) ? "approved" : "review") : "draft" });
+    await logPersonActivity(session, { platform: input.platform, action: input.submit ? (scheduledAt ? "Scheduled a post" : "Saved a post to publish by hand") : "Saved a draft", detail: caption.slice(0, 120), contentId: id });
     return NextResponse.json({ id, caption }, { status: 201 });
   } catch (error) {
     console.error("[social-content] create failed", error instanceof Error ? error.message : "unknown");
