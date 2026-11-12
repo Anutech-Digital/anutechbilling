@@ -47,6 +47,7 @@ import {
   payerFromNarration, payerMatchesCustomer, type KnownPayer, type NarrationPayer, type PayerRelation,
 } from "@/lib/banking/customer-payer";
 import { tdsSectionGuess } from "@/lib/banking/tds-section";
+import type { LineMemo } from "@/lib/banking/line-memo";
 import { stateCodeFromGstin } from "@/lib/gst/gstin-state";
 import { GST_STATE_BY_CODE, formatDate, rupee } from "@/lib/utils";
 import { istToday } from "@/lib/dates/ist";
@@ -1006,10 +1007,16 @@ export function planFromResult(
  * would get across the run, only the newest line (Zoho period start, then bank date) makes it; the
  * older lines become charges on it.
  */
-export function planAll(rows: readonly BulkMatchRow[], ctx: PlanContext): PlanRow[] {
+export function planAll(rows: readonly BulkMatchRow[], ctx: PlanContext, memo?: LineMemo<Map<string, PlanRow | null>>): PlanRow[] {
   const opt = (r: BulkMatchRow, chargeOnNew?: ReadonlyMap<number, { label: string; date: string }>): PlanOptions =>
     ({ facts: r.facts, booksStart: r.booksStart ?? null, requireFacts: true, chargeOnNew, gstFiled: r.gstFiled ? new Set(r.gstFiled) : null, zohoSales: r.zohoSales ?? [] });
-  const plans = rows.map((r) => planFromResult(r.line, r.result, r.contact, ctx, opt(r)));
+  memo?.reset([ctx]);   // R-2685: rows planned once across pages — a kept plan depends on its row + ctx + demotion only; the passes below change rows in place → a copy
+  const own = (r: BulkMatchRow, d?: ReadonlyMap<number, { label: string; date: string }>): PlanRow | null => {
+    const kept = memo?.get(r, () => new Map<string, PlanRow | null>()), key = d ? JSON.stringify([...d]) : "";
+    let p = kept?.get(key); if (p === undefined) { p = planFromResult(r.line, r.result, r.contact, ctx, opt(r, d)); kept?.set(key, p); }
+    return p && memo ? { ...p, problems: [...p.problems] } : p;
+  };
+  const plans = rows.map((r) => own(r));
 
   type Cand = { row: number; idx: number; when: string; txn: string; label: string };
   const groups = new Map<string, Cand[]>();
@@ -1037,8 +1044,7 @@ export function planAll(rows: readonly BulkMatchRow[], ctx: PlanContext): PlanRo
   }
   return oneFxPayPerInvoice(r2621OnePayPerItem(plans.map((p, i) => {
     const d = demote.get(i);
-    const r = rows[i];
-    return d ? planFromResult(r.line, r.result, r.contact, ctx, opt(r, d)) : p;
+    return d ? own(rows[i], d) : p;
   }).filter((p): p is PlanRow => !!p)));
 }
 

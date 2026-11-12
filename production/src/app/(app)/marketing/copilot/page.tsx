@@ -68,7 +68,7 @@ function Copilot() {
       else toast.success("Plan drafted — check each step below.");
       go(r.planId, 1);
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Could not draft the plan. Try again.");
+      toast.error(e instanceof Error ? e.message : "Could not draft the plan.", { description: "Your line is kept. Press Draft again; if it keeps failing, shorten the line." });
     }
   };
 

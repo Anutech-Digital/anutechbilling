@@ -19,10 +19,10 @@ export async function GET(request: NextRequest) {
   /* S19: a company-wide account — owner / manager only (per-user Gmail and Contacts stay open). */
   const { data: me } = await createClient().from("users").select("role").eq("id", user.id).maybeSingle();
   if (!mayDo((me as { role?: string | null } | null)?.role, "integration.company")) {
-    return NextResponse.redirect(`${origin}/marketing/ads?google=role`);
+    return NextResponse.redirect(`${origin}/marketing/ads/accounts?platform=google-ads&google=role`);
   }
   const creds = googleOAuthCreds();
-  if (!creds) return NextResponse.redirect(`${origin}/marketing/ads?google=notconfigured`);
+  if (!creds) return NextResponse.redirect(`${origin}/marketing/ads/accounts?platform=google-ads&google=notconfigured`);
 
   const { data: prior } = await createAdminClient().from("user_google_tokens").select("scopes").eq("user_id", user.id).maybeSingle();
   const scopes = unionScopes(GOOGLE_ADS_SCOPES, (prior as { scopes?: string | null } | null)?.scopes);

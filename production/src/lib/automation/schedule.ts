@@ -34,6 +34,9 @@ export const JOB_CRON: Record<AutomationJob, string> = {
   "google-contacts-sync": "0 */6 * * *",
   "gbp-sync":             "30 2 * * *",
   "ads-sync":             "0 3 * * *",
+  "social-drafts":        "0 9 * * 1",
+  "social-publish":       "*/10 * * * *",
+  "meta-leads-pull":      "*/30 * * * *",
   "indiamart-leads":      "*/15 8-21 * * *",
   "lead-finder":          "30 3 * * *",
   "mrr-snapshot":         "30 0 1 * *",
@@ -42,7 +45,7 @@ export const JOB_CRON: Record<AutomationJob, string> = {
   "zoho-fy-read":         "* * * * *",
 };
 
-const DAYS: Record<string, string> = { "1-5": "Monday to Friday", "1-6": "Monday to Saturday" };
+const DAYS: Record<string, string> = { "1": "Monday", "1-5": "Monday to Friday", "1-6": "Monday to Saturday" };
 
 function clock(h: number, m: number): string {
   const ampm = h < 12 ? "am" : "pm";

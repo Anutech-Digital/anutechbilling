@@ -33,13 +33,16 @@ const h = vi.hoisted(() => {
     upsert(p: Record<string, unknown>) { this.o.op = "upsert"; this.o.payload = p; state.ops.push(this.o); return Promise.resolve({ error: null }); }
     delete() { this.o.op = "delete"; return this; }
     eq(c: string, v: unknown) { this.o.filters.push([c, v]); return this; }
+    is(c: string, v: unknown) { this.o.filters.push([c, v]); return this; }
+    in(c: string, v: unknown[]) { this.o.filters.push([c, v]); return this; }
     gte(c: string, v: unknown) { this.o.filters.push([c, v]); return this; }
+    lte(c: string, v: unknown) { this.o.filters.push([c, v]); return this; }
     async single() { state.ops.push(this.o); return { data: { id: "RUN1" }, error: null }; }
     async maybeSingle() { return { data: this.o.table === "users" ? { tenant_id: "T1" } : null, error: null }; }
     then(res: (v: unknown) => unknown, rej?: (e: unknown) => unknown) {
       state.ops.push(this.o);
       let out: unknown = { data: null, error: null, count: 0 };
-      if (this.o.table === "ad_accounts" && this.o.op === "select") out = { data: state.accounts, error: null };
+      if (this.o.table === "ad_accounts" && this.o.op === "select") out = { data: state.accounts.filter((account) => this.o.filters.every(([column, value]) => Array.isArray(value) ? value.includes(account[column]) : account[column] === value || (column === "archived_at" && value === null && account[column] === undefined))), error: null };
       return Promise.resolve(out).then(res, rej);
     }
   }
@@ -149,6 +152,19 @@ describe("spend sync opens the token server-side", () => {
     expect(r.errors).toEqual([]);
     expect(h.state.spendCalls).toEqual([PLAIN]);
     expect(accountUpdates().some((u) => "access_token" in u)).toBe(false);
+  });
+
+  it("syncs only the selected accounts, leaving other connected accounts alone", async () => {
+    h.state.accounts = [
+      { ...metaRow(PLAIN), id: "ACC1" },
+      { ...metaRow(PLAIN), id: "ACC2" },
+      { ...metaRow(PLAIN), id: "ACC3" },
+    ];
+    const { syncTenantAds } = await import("@/lib/marketing/ad-sync");
+    const r = await syncTenantAds(h.client as never, "T1", "manual", undefined, undefined, ["ACC1", "ACC3"]);
+    expect(r.accounts).toBe(2);
+    expect(h.state.spendCalls).toHaveLength(2);
+    expect(h.state.ops.filter((o) => o.table === "ad_accounts" && o.op === "select").some((o) => o.filters.some(([column, value]) => column === "id" && JSON.stringify(value) === '["ACC1","ACC3"]'))).toBe(true);
   });
 
   it("legacy plaintext row: still syncs, and that sync seals it (token not lost)", async () => {

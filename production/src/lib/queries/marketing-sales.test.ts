@@ -62,6 +62,7 @@ function world(withQuoteAdColumns: boolean) {
     leads: ["id", "tenant_id", "created_at", "source", "utm_source", "utm_medium", "utm_campaign", "referrer_url"],
     ad_accounts: ["id", "tenant_id", "platform"],
     ad_spend_daily: ["tenant_id", "ad_account_id", "day", "campaign_id", "campaign_name", "spend", "clicks", "impressions"],
+    linkedin_ad_metrics: ["tenant_id", "day", "campaign_name", "spend", "clicks", "impressions"],
     marketing_campaigns: ["id", "tenant_id", "code", "name"],
     expenses: ["id", "tenant_id", "campaign_id", "amount", "channel", "expense_date"],
   };

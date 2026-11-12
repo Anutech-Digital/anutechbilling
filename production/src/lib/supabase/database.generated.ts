@@ -744,6 +744,7 @@ export type Database = {
         Row: {
           access_token: string | null
           account_id: string
+          archived_at: string | null
           connected_user_id: string | null
           created_at: string
           currency: string
@@ -761,6 +762,7 @@ export type Database = {
         Insert: {
           access_token?: string | null
           account_id: string
+          archived_at?: string | null
           connected_user_id?: string | null
           created_at?: string
           currency?: string
@@ -778,6 +780,7 @@ export type Database = {
         Update: {
           access_token?: string | null
           account_id?: string
+          archived_at?: string | null
           connected_user_id?: string | null
           created_at?: string
           currency?: string
@@ -13413,9 +13416,24 @@ export type Database = {
       tenant_secrets: {
         Row: {
           created_at: string
+          facebook_page_access_token: string | null
+          facebook_page_connected_at: string | null
+          facebook_page_connected_by: string | null
+          facebook_page_id: string | null
+          facebook_page_name: string | null
+          facebook_page_pending_at: string | null
+          facebook_page_pending_token: string | null
           gemini_api_key: string | null
           gemini_model: string | null
           indiamart_crm_key: string | null
+          linkedin_ads_client_id: string | null
+          linkedin_ads_client_secret: string | null
+          linkedin_access_expires_at: string | null
+          linkedin_access_token: string | null
+          linkedin_connected_at: string | null
+          linkedin_connected_by: string | null
+          linkedin_organization_name: string | null
+          linkedin_organization_urn: string | null
           razorpay_key_id: string | null
           razorpay_key_secret: string | null
           razorpay_mode: string | null
@@ -13442,9 +13460,24 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          facebook_page_access_token?: string | null
+          facebook_page_connected_at?: string | null
+          facebook_page_connected_by?: string | null
+          facebook_page_id?: string | null
+          facebook_page_name?: string | null
+          facebook_page_pending_at?: string | null
+          facebook_page_pending_token?: string | null
           gemini_api_key?: string | null
           gemini_model?: string | null
           indiamart_crm_key?: string | null
+          linkedin_ads_client_id?: string | null
+          linkedin_ads_client_secret?: string | null
+          linkedin_access_expires_at?: string | null
+          linkedin_access_token?: string | null
+          linkedin_connected_at?: string | null
+          linkedin_connected_by?: string | null
+          linkedin_organization_name?: string | null
+          linkedin_organization_urn?: string | null
           razorpay_key_id?: string | null
           razorpay_key_secret?: string | null
           razorpay_mode?: string | null
@@ -13471,9 +13504,24 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          facebook_page_access_token?: string | null
+          facebook_page_connected_at?: string | null
+          facebook_page_connected_by?: string | null
+          facebook_page_id?: string | null
+          facebook_page_name?: string | null
+          facebook_page_pending_at?: string | null
+          facebook_page_pending_token?: string | null
           gemini_api_key?: string | null
           gemini_model?: string | null
           indiamart_crm_key?: string | null
+          linkedin_ads_client_id?: string | null
+          linkedin_ads_client_secret?: string | null
+          linkedin_access_expires_at?: string | null
+          linkedin_access_token?: string | null
+          linkedin_connected_at?: string | null
+          linkedin_connected_by?: string | null
+          linkedin_organization_name?: string | null
+          linkedin_organization_urn?: string | null
           razorpay_key_id?: string | null
           razorpay_key_secret?: string | null
           razorpay_mode?: string | null

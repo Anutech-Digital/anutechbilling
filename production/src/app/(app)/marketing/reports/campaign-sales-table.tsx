@@ -38,6 +38,7 @@ function Row({ r }: { r: CampaignSalesRow }) {
           <span className="font-medium text-ink">{rupee(r.revenue)}</span>
           {r.refunded > 0 && <p className="text-2xs text-ink-3">after {rupee(r.refunded)} refunded</p>}
         </td>
+        <td className={num}>{none ? "—" : rupee(r.revenue - r.spend)}</td>
         <td className={num}>{r.roas === null ? "—" : `${r.roas.toFixed(2)}×`}</td>
         <td className={num}>{r.cac === null ? "—" : rupee(r.cac)}</td>
       </tr>
@@ -51,6 +52,7 @@ function Row({ r }: { r: CampaignSalesRow }) {
           <td className={cn(num, "py-1.5 text-xs text-ink-3")}>—</td>
           <td className={cn(num, "py-1.5 text-xs")}>{k.paidOrders}</td>
           <td className={cn(num, "py-1.5 text-xs")}>{rupee(k.revenue)}</td>
+          <td className={cn(num, "py-1.5 text-xs text-ink-3")}>—</td>
           <td className={cn(num, "py-1.5 text-xs text-ink-3")}>—</td>
           <td className={cn(num, "py-1.5 text-xs text-ink-3")}>—</td>
         </tr>
@@ -80,7 +82,7 @@ export function CampaignSalesTable({ range }: { range: RangeKey }) {
         <p className="px-4 pb-4 text-sm text-ink-3">No campaign spend, leads or payments in this period.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[900px]">
+          <table className="w-full min-w-[1000px]">
             <thead className="bg-paper-2 border-y border-hairline-strong">
               <tr>
                 <th className={cn(th, "text-left")}>Campaign</th>
@@ -89,6 +91,7 @@ export function CampaignSalesTable({ range }: { range: RangeKey }) {
                 <th className={cn(th, "text-right")}>Leads</th>
                 <th className={cn(th, "text-right")}>Paid orders</th>
                 <th className={cn(th, "text-right")}>Revenue (ex GST)</th>
+                <th className={cn(th, "text-right")}>Revenue − spend</th>
                 <th className={cn(th, "text-right")}>ROAS</th>
                 <th className={cn(th, "text-right")}>CAC</th>
               </tr>
@@ -106,6 +109,7 @@ export function CampaignSalesTable({ range }: { range: RangeKey }) {
                 <td className={cn(num, "font-semibold")}>{data.adTotals.leads}</td>
                 <td className={cn(num, "font-semibold")}>{data.adTotals.paidOrders}</td>
                 <td className={cn(num, "font-semibold")}>{rupee(data.adTotals.revenue)}</td>
+                <td className={cn(num, "font-semibold")}>{rupee(data.adTotals.revenue - data.adTotals.spend)}</td>
                 <td className={cn(num, "font-semibold")}>{data.adTotals.roas === null ? "—" : `${data.adTotals.roas.toFixed(2)}×`}</td>
                 <td className={cn(num, "font-semibold")}>{data.adTotals.cac === null ? "—" : rupee(data.adTotals.cac)}</td>
               </tr>
