@@ -16,6 +16,8 @@
 --   D1. debit note ₹3,360 on a mixed invoice → ₹3,000 + ₹360, rate NULL (same rule; the undo of a credit note).
 --   M.  all or nothing: [0% line, line with NO rate] on an 18% invoice does not carry line rates →
 --       the old rule at the invoice's 18% (and bill_late_charges, which needs that, keeps working).
+--   M2. the same, pinned: [0% rated, 18% rated, one valued line with NO rate] on an 18% invoice →
+--       1,000 + 180 at 18 (red if the helper's `v_rated = v_valued` is dropped: 1,040 + 140, rate null).
 --   N.  every valued line at the same own rate (an adjustment line / a ₹0 line with another rate
 --       do not count) → ONE rate: that rate. N2: tax_rate NULL, every valued line at 0% → 0% (no
 --       GST on the note — red before: backed out at the 18% default).
@@ -68,6 +70,9 @@ select pg_temp.r2717_inv('TESTINV-R2717-MIXD', 33600, 30000, 3600, null,
   '[{"name":"Domain renewal","qty":1,"rate":10000,"amount":10000,"tax_rate":0},{"name":"Workspace","qty":2,"rate":10000,"amount":20000,"tax_rate":18}]');
 select pg_temp.r2717_inv('TESTINV-R2717-HALF', 33600, 30000, 3600, 18,
   '[{"name":"Domain renewal","qty":1,"rate":10000,"tax_rate":0},{"name":"Workspace","qty":2,"rate":10000}]');
+-- M2: two RATED lines at different rates + one valued line with NO rate, on an 18% invoice.
+select pg_temp.r2717_inv('TESTINV-R2717-THREE', 45400, 40000, 5400, 18,
+  '[{"name":"Domain renewal","qty":1,"rate":10000,"amount":10000,"tax_rate":0},{"name":"Workspace","qty":1,"rate":10000,"amount":10000,"tax_rate":18},{"name":"Old line, no rate","qty":2,"rate":10000}]');
 select pg_temp.r2717_inv('TESTINV-R2717-SAME', 35400, 30000, 5400, null,
   '[{"name":"A","qty":1,"rate":10000,"tax_rate":18},{"name":"B","qty":2,"rate":10000,"tax_rate":18},{"name":"Adjustment","qty":1,"rate":-250,"kind":"adjustment","tax_rate":5},{"name":"Free","qty":1,"rate":0,"tax_rate":0}]');
 select pg_temp.r2717_inv('TESTINV-R2717-ZERO', 10000, 10000, 0, null,
@@ -126,6 +131,14 @@ begin
   v := public.issue_credit_note('TESTINV-R2717-HALF', 1180, 'other', 'M', null);
   if (v->>'taxable_value')::int <> 1000 or (v->>'tax_amount')::int <> 180 or (v->>'tax_rate')::int is distinct from 18 then
     insert into r2717_fail values ('M: a 0% line + a line with NO rate on an 18% invoice, ₹1,180 credit → ' || v::text || ' (want the invoice rate: 1,000 + 180, rate 18)');
+  end if;
+
+  -- M2. all or nothing, pinned: rated lines at 0% AND 18% plus ONE valued line with no rate →
+  --     still the invoice's own 18% (1,000 + 180). Without `v_rated = v_valued` in the helper the
+  --     two rated lines alone would make it 'mixed' and split it 1,040 + 140 with no rate.
+  v := public.issue_credit_note('TESTINV-R2717-THREE', 1180, 'other', 'M2', null);
+  if (v->>'taxable_value')::int <> 1000 or (v->>'tax_amount')::int <> 180 or (v->>'tax_rate')::int is distinct from 18 then
+    insert into r2717_fail values ('M2: lines [0% rated, 18% rated, one valued line with NO rate] on an 18% invoice, ₹1,180 credit → ' || v::text || ' (want the invoice rate: 1,000 + 180, rate 18 — every valued line must carry a rate before line rates apply)');
   end if;
 
   -- N2. tax_rate NULL, every valued line at 0% → no GST on the note.

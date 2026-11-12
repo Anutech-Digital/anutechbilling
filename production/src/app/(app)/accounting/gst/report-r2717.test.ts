@@ -98,6 +98,20 @@ describe("R-2717: GST report by line rate", () => {
     expect(r.outputGST).toBe(3600 + 1800 - 1800 - 180);
   });
 
+  it("an advance received in an earlier period and adjusted on the mixed invoice (11B) has no single rate: rate 0, rateMissing", async () => {
+    // The invoice's frozen snapshot: ₹5,000 received 20 Oct 2025 (before the November range).
+    const adv = [{ payment_id: "p-adv", voucher_no: "RV-9", amount: 5000, received_at: "2025-10-20T06:00:00Z" }];
+    const rows = { ...ROWS, invoices: [{ ...ROWS.invoices[0], adjusted_advances: adv }, { ...ROWS.invoices[1], adjusted_advances: [{ ...adv[0], payment_id: "p-adv2", voucher_no: "RV-10" }] }] };
+    const r = await loadGstReport(client(rows), RANGE);
+    const mixedAdv = r.advances.find((a) => a.paymentId === "p-adv")!;
+    expect(mixedAdv).toMatchObject({ adjustedOn: "2025-11-10", gross: 5000, rate: 0, rateMissing: true });
+    // The same advance on the plain 18% invoice keeps that invoice's rate.
+    expect(r.advances.find((a) => a.paymentId === "p-adv2")).toMatchObject({ adjustedOn: "2025-11-12", rate: 18, rateMissing: false });
+    // Counted in the page's "rate missing" warning — the mixed INVOICE row itself is not.
+    expect(r.rateMissingDocs).toBe(1);
+    expect(r.outputRows.find((o) => o.invoiceId === "INV/25-26/1248")?.rateMissing).toBe(false);
+  });
+
   it("an old note carrying its own rate on a mixed invoice is NOT re-split by the invoice's lines", async () => {
     const rows = { ...ROWS, credit_notes: [{ ...ROWS.credit_notes[0], tax_rate: 18, taxable_value: 14237, tax_amount: 2563 }] };
     const r = await loadGstReport(client(rows), RANGE);

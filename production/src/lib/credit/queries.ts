@@ -13,7 +13,7 @@ import {
   type CreditInvoiceFacts, type CreditSummary, type OpenInvoice,
 } from "./activate-on-credit";
 import {
-  interestDebitNoteGross, interestDebitNoteNote,
+  interestDebitNoteGross, interestDebitNoteNote, lateInterestRefusal,
   type DatedPayment, type InterestNoteRow,
 } from "./late-interest";
 import { toIstDate } from "@/lib/dates/ist";
@@ -134,7 +134,8 @@ export function useUpdateCustomerCredit() {
 // ── R-368: late-payment interest ─────────────────────────────────────────────
 
 export interface LateInterestFacts {
-  invoice: { id: string; amount: number; net_payable: number | null; tax_rate: number | null; due_date: string | null };
+  /** R-2717: `line_items` only to see whether the lines carry different GST rates (lateInterestRefusal). */
+  invoice: { id: string; amount: number; net_payable: number | null; tax_rate: number | null; due_date: string | null; line_items?: unknown };
   payments: DatedPayment[];
   notes: InterestNoteRow[];
 }
@@ -150,7 +151,7 @@ export function useLateInterestFacts(quoteId: string | null | undefined, invoice
     queryFn: async (): Promise<LateInterestFacts | null> => {
       const supabase = createClient();
       const [inv, pays, notes] = await Promise.all([
-        supabase.from("invoices").select("id, amount, net_payable, tax_rate, due_date").eq("id", invoiceId!).maybeSingle(),
+        supabase.from("invoices").select("id, amount, net_payable, tax_rate, due_date, line_items").eq("id", invoiceId!).maybeSingle(),
         supabase.from("payments").select("amount, received_at").eq("quote_id", quoteId!).eq("status", "received"),
         supabase.from("debit_notes").select("amount, taxable_value, notes").eq("invoice_id", invoiceId!),
       ]);
@@ -177,7 +178,14 @@ export function useAddLateInterest() {
   return useMutation({
     mutationFn: async (input: { invoiceId: string; interest: number; taxRate: number | null; dueDate: string; asOf: string }) => {
       if (!Number.isInteger(input.interest) || input.interest <= 0) throw new Error("There is no interest to add.");
-      const { data, error } = await createClient().rpc("issue_debit_note", {
+      /* R-2717: read the invoice's lines again here, so the refusal does not depend on the
+         button being hidden — lines at different GST rates → no interest debit note. */
+      const supabase = createClient();
+      const inv = await supabase.from("invoices").select("line_items").eq("id", input.invoiceId).maybeSingle();
+      if (inv.error) throw new Error(inv.error.message);
+      const refusal = lateInterestRefusal(inv.data ?? {});
+      if (refusal) throw new Error(refusal);
+      const { data, error } = await supabase.rpc("issue_debit_note", {
         p_invoice_id: input.invoiceId,
         p_gross_amount: interestDebitNoteGross(input.interest, input.taxRate),
         p_reason_code: "additional_charge",
