@@ -61,6 +61,7 @@ test.describe("R-2700 card test", () => {
     const card = page.getByTestId("payroll-policy-card");
     const edit = card.getByRole("button", { name: "Edit policy" });
     await waitForHydrated(page, card.getByTestId("payroll-policy-summary"));
+    await expect(edit).toBeVisible({ timeout: 60_000 }); // the owner check loads after the summary
     await edit.click();
     await card.getByRole("checkbox", { name: /PF for new employees/ }).check();
     await card.getByRole("radio", { name: /Is the gross pay/ }).check();
