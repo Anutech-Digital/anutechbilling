@@ -491,4 +491,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2670metaleadforms", peek: "to_regclass('public.meta_lead_forms') is not null" },
   { key: "r2692socialapprovalguard", peek: "exists(select 1 from pg_trigger where tgname = 'trg_social_content_approval_guard' and tgrelid = to_regclass('public.social_content')) and to_regprocedure('public.ensure_social_automation_on(text)') is not null" },
   { key: "r2694zohofyforeignreceipts", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'zoho_fy_receipts' and column_name = 'fx_expense_id') and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_zoho_fy_receipts(text,jsonb,boolean)') and prosrc like '%R-2694 foreign receipt%') and to_regprocedure('public._zoho_fy_fx_line_sync(uuid,uuid[])') is not null" },
+  { key: "r2704bankmap", peek: "to_regprocedure('public.save_zoho_account_bank_choice(text,text,text)') is not null" },
 ];

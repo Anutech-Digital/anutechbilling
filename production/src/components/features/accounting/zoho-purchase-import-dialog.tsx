@@ -242,7 +242,9 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
                   const next = { ...accountsRef.current, [k]: v };
                   accountsRef.current = next;
                   setAccounts(next); setCheck({});
-                  void loadPreview();
+                  /* R-2704: remembered for this company — reopening starts from it. A failed save is said after the preview. */
+                  void loadPreview().then(() => call({ action: "saveAccount", zohoKey: k, choice: v })
+                    .catch((e) => setError(`Your choice is used now but was not saved for next time: ${(e as Error).message}`)));
                 }} />
               <MonthTable p={p} />
               {p.tdsBySection.length > 0 && (

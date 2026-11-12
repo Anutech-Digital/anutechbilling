@@ -19,6 +19,15 @@ const st = vi.hoisted(() => ({
   resets: [] as string[],
   refreshes: [] as string[],
   targets: new Map<string, { type: "vendor_bill" | "expense" }>(),
+  /* R-2704: saved paid-from choices (zoho_account_bank_map) and the maps the plans were built with. */
+  saved: {} as Record<string, string>,
+  savedUse: [] as string[],
+  mapsSeen: [] as Array<Record<string, string>>,
+}));
+
+vi.mock("@/lib/integrations/zoho-books/fy-import/account-choices", async (orig) => ({
+  ...(await orig<typeof import("@/lib/integrations/zoho-books/fy-import/account-choices")>()),
+  readAccountChoices: async (_db: unknown, _t: string, use: string) => { st.savedUse.push(use); return st.saved; },
 }));
 
 vi.mock("@/lib/integrations/zoho-books/store", () => ({
@@ -43,7 +52,7 @@ const ACCTS = vi.hoisted(() => [
 ]);
 vi.mock("@/lib/integrations/zoho-books/purchase-import/store", async (orig) => ({
   parseAccountMap: ((await orig()) as { parseAccountMap: unknown }).parseAccountMap,
-  readPurchaseContext: async (_db: unknown, _t: string, _r: unknown, accountMap: Record<string, string>) => ({
+  readPurchaseContext: async (_db: unknown, _t: string, _r: unknown, accountMap: Record<string, string>) => (st.mapsSeen.push(accountMap), {
     fyStart: "2025-04-01", fyEnd: "2026-03-31", booksStart: "2025-04-01", lockedUntil: null,
     vendors: [{ id: "v1", name: "Test Vendor", gstin: null, zohoContactId: "VZ1" }], categoryMap: { A1: "Software" }, imported: new Set<string>(),
     bankAccounts: ACCTS, accountMap,
@@ -88,6 +97,7 @@ beforeEach(() => {
   st.facts = { bills: [bill(), bill({ zohoId: "B2", status: "void" })], expenses: [], vendorpayments: [pay()] };
   st.rpcResult = { data: { dry_run: true, imported: 1 }, error: null };
   st.targets = new Map();
+  st.saved = {}; st.savedUse = []; st.mapsSeen = [];
 });
 
 describe("R-2502 purchase-import route", () => {
@@ -178,5 +188,27 @@ describe("R-2502 purchase-import route", () => {
     expect(st.resets).toEqual([]);
     await POST(req({ action: "restart", fy: "2025-26", kind: "expenses", fresh: true }));
     expect(st.resets).toEqual(["expenses"]);
+  });
+});
+
+describe("R-2704 purchase-import route — the paid-from choice is remembered per company", () => {
+  it("preview AND import start from the saved choices; what the dialog sends wins", async () => {
+    st.saved = { "M/S. EXCEL TECHNOLOGIES": "b2502000-0000-0000-0000-0000000000e1", "Director - Rakesh": "none" };
+    await POST(req({ action: "preview", fy: "2025-26" }));
+    expect(st.savedUse[0]).toBe("purchases");
+    expect(st.mapsSeen[0]).toEqual({ "M/S. EXCEL TECHNOLOGIES": "b2502000-0000-0000-0000-0000000000e1", "Director - Rakesh": "none" });
+    st.mapsSeen = [];
+    await POST(req({ action: "import", fy: "2025-26", kind: "bills", part: 0, accounts: { "Director - Rakesh": "b2502000-0000-0000-0000-0000000000e2" } }));
+    expect(st.mapsSeen[0]).toEqual({ "M/S. EXCEL TECHNOLOGIES": "b2502000-0000-0000-0000-0000000000e1", "Director - Rakesh": "b2502000-0000-0000-0000-0000000000e2" });
+  });
+
+  it("saveAccount remembers one choice (key = Zoho paid-through name) through save_zoho_account_bank_choice", async () => {
+    expect((await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "M/S. EXCEL TECHNOLOGIES", choice: "b2502000-0000-0000-0000-0000000000e1" }))).status).toBe(200);
+    expect(st.rpc[0]).toEqual({ fn: "save_zoho_account_bank_choice", args: { p_use: "purchases", p_key: "M/S. EXCEL TECHNOLOGIES", p_choice: "b2502000-0000-0000-0000-0000000000e1" } });
+    expect((await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "x", choice: "HDFC" }))).status).toBe(400);
+    st.rpcResult = { data: null, error: { message: "That account is not one of this company's open accounts." } };
+    const res = await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "x", choice: "none" }));
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/open accounts/);
   });
 });
