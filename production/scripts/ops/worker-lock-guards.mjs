@@ -304,7 +304,7 @@ export function enforceScope(card, mode, { lockDir, allowOutside = [], cardPath 
 /* ── R-2106 (31 Oct 2026): moved here from worker-lock.mjs (max-lines); worker-lock re-exports them. ── */
 
 /** worker-lock's normPath: slashes, ./, trailing / and production/ off ("../x" stays — repo-root files). */
-function claimPath(p) {
+export function claimPath(p) {
   let s = String(p).trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+$/, "");
   if (s.startsWith("production/")) s = s.slice("production/".length);
   return s;

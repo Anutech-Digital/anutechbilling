@@ -4,7 +4,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 // @ts-expect-error — plain .mjs ops script, no types
-import { LOCK_VERSION, hardPaths, softFolders, claimHardPaths, parseMoveFlags, liveFilesReader, isFileArea, isFileLock, worktreeChangedFiles } from "../scripts/ops/worker-lock-files.mjs";
+import { LOCK_VERSION, hardPaths, softFolders, claimHardPaths, claimFolders, parseMoveFlags, liveFilesReader, isFileArea, isFileLock, worktreeChangedFiles } from "../scripts/ops/worker-lock-files.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
 import { findConflicts, settleCiWaitLocks, LOCK_STATES } from "../scripts/ops/worker-lock.mjs";
 
@@ -150,10 +150,51 @@ describe("R-2718 live changed files of another worktree", () => {
 describe("R-2718 claim writes a v2 lock that older code still reads safely", () => {
   it("the claim stores lockVersion + moves; the folders stay in `areas` (scope, and hard for old readers)", () => {
     const src = fs.readFileSync(path.resolve("scripts/ops/worker-lock.mjs"), "utf8");
-    expect(src).toMatch(/lockVersion: LOCK_VERSION, areas: \[\.\.\.new Set\(\[\.\.\.keep, \.\.\.areas\.map\(normPath\)\]\)\], moves:/);
+    expect(src).toMatch(/const fileLock = v2 \? \{ lockVersion: LOCK_VERSION, folders: .*, moves: /);
+    expect(src).toMatch(/\.\.\.fileLock, areas: \[\.\.\.new Set\(\[\.\.\.keep, \.\.\.areas\.map\(normPath\)\]\)\]/);
     /* old findConflicts read areas + files: a v2 lock's folders are in areas, so an old reader is stricter, never looser */
     const l = v2("R-1", [PAYROLL, "src/lib/payroll/statutory.ts"]);
     const oldReader = [...(l.areas as string[]), ...(l.files as string[])];
     expect(oldReader).toContain(PAYROLL);
+  });
+});
+
+describe("R-2718 review fixes", () => {
+  it("the disk decides file vs folder at claim (Dockerfile = file, [id] = folder); by name when it does not exist yet", () => {
+    const wt = fs.mkdtempSync(path.join(os.tmpdir(), "r2718-fold-"));
+    fs.mkdirSync(path.join(wt, "production", "supabase", "functions", "foo"), { recursive: true });
+    fs.writeFileSync(path.join(wt, "production", "supabase", "functions", "foo", "Dockerfile"), "FROM x\n");
+    fs.mkdirSync(path.join(wt, "production", "src", "app", "api", "x", "[id]"), { recursive: true });
+    const areas = ["supabase/functions/foo/Dockerfile", "src/app/api/x/[id]", "src/lib/new-folder", "src/lib/new-file.ts"];
+    expect(claimFolders(areas, wt)).toEqual(["src/app/api/x/[id]", "src/lib/new-folder"]);
+    const folders = claimFolders(areas, wt);
+    expect(claimHardPaths(areas, [], folders)).toEqual(["supabase/functions/foo/Dockerfile", "src/lib/new-file.ts"]);
+    /* the lock's `folders` list wins over the name rule for others reading it */
+    const l = v2("R-1", areas, { folders });
+    expect(hardPaths(l)).toEqual(["supabase/functions/foo/Dockerfile", "src/lib/new-file.ts"]);
+    expect(cards(findConflicts("R-2", ["supabase/functions/foo/Dockerfile"], [l]))).toEqual(["R-1"]);
+    fs.rmSync(wt, { recursive: true, force: true });
+  });
+
+  it("fail closed: when another worktree's changes cannot be read, its soft folders count as hard", () => {
+    const l = v2("R-2698", [PAYROLL]);
+    expect(hardPaths(l, null)).toEqual([PAYROLL]);
+    const live = liveFilesReader({ read: () => null });
+    expect(cards(findConflicts("R-2701", [`${PAYROLL}/new.tsx`], [l], { live }))).toEqual(["R-2698"]);
+    /* a worktree folder that is gone (pushed + cleaned up) is not an error: its recorded files count */
+    expect(worktreeChangedFiles("C:/definitely/not/here")).toEqual([]);
+  });
+
+  it("other worktrees are read with --no-optional-locks (never take their index.lock)", () => {
+    const src = fs.readFileSync(path.resolve("scripts/ops/worker-lock-files.mjs"), "utf8");
+    expect(src).toMatch(/execFileSync\("git", \["--no-optional-locks", "-C", worktree/);
+  });
+
+  it("a re-claim of an OLD lock stays old; push records its files BEFORE the git push", () => {
+    const src = fs.readFileSync(path.resolve("scripts/ops/worker-lock.mjs"), "utf8");
+    expect(src).toMatch(/const v2 = !own \|\| isFileLock\(own\);/);
+    const push = src.slice(src.indexOf("async function pushWithTurn"), src.indexOf("R-1898 (25 Oct 2026)"));
+    expect(push.indexOf("pushedFiles")).toBeGreaterThan(0);
+    expect(push.indexOf("pushedFiles")).toBeLessThan(push.indexOf('sh("git push -q anutech HEAD:manager-pardeep"'));
   });
 });

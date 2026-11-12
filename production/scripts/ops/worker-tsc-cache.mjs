@@ -27,9 +27,9 @@
  * repo a probe gave the identical 8 errors incremental and with --full-tsc.
  *
  * Paths inside the build info are relative to the worktree's production/ folder (node_modules via
- * the junction resolves to ../../new-reselleros/production/node_modules), so every worktree at
- * <home>/reselleros-w-<card> reads it the same way. A worktree somewhere else still gets a correct
- * (just colder) run.
+ * the junction resolves to its REAL path, ../../reselleros-deploy/production/node_modules — R-2718: every
+ * worktree links there), so every worktree at <home>/reselleros-w-<card> reads it the same way. A worktree
+ * linked elsewhere gets its own cache key (nodeModulesTarget) and a correct (just colder) run.
  *
  * Only ever touched inside worker-lock's "heavy" turn, so two workers never read/write it at once;
  * the write is still tmp + rename so a crash cannot leave half a file.
@@ -76,6 +76,24 @@ function routeTypes(root) {
 export function nodeModulesTarget(root) {
   try { return path.relative(root, fs.realpathSync(path.join(root, "node_modules"))).replace(/\\/g, "/"); }
   catch { return ""; }
+}
+
+/**
+ * A node_modules file name from a build info that this worktree's tsc would NOT see under the same name.
+ * Case-insensitive: on Windows tsc writes build-info names lowercased. tsc's default libs come from the
+ * TypeScript that runs (normally inside the same node_modules), so its lib folder is never foreign.
+ */
+function isForeign(name, nm, tsLib) {
+  if (!nm) return false;
+  const n = name.toLowerCase();
+  return !n.startsWith(`${nm.toLowerCase()}/`) && !(tsLib && n.startsWith(`${tsLib.toLowerCase()}/`));
+}
+
+/** How many node_modules names in a build info are foreign — names only, no hashing (~0.2 s). null = unreadable. */
+export function foreignCount(root, file, { nm = nodeModulesTarget(root), tsLib = typescriptLibDir(root) } = {}) {
+  const info = readBuildInfo(file);
+  if (!info) return null;
+  return info.fileNames.filter((n) => !isProjectFile(n) && isForeign(n, nm, tsLib)).length;
 }
 
 /** The default lib folder (lib.es2022.d.ts …) of the TypeScript this worktree runs, relative like the build info. */
@@ -182,8 +200,7 @@ export function buildInfoDistance(root, file, { hash = versionHasher(root), disk
     const fi = info.fileInfos[i];
     const isGlobal = typeof fi === "object" && !!fi?.affectsGlobalScope;
     if (!isProjectFile(name)) {
-      /* tsc's default libs come from the TypeScript that runs (normally inside the same node_modules) */
-      if (nm && !name.startsWith(`${nm}/`) && !(tsLib && name.startsWith(`${tsLib}/`))) { foreign++; return; }
+      if (isForeign(name, nm, tsLib)) { foreign++; return; }
       const version = typeof fi === "string" ? fi : fi?.version;
       if (disk(name) === version) return;
       modules++; weight += 1 + (importers.get(i + 1) ?? 0);
@@ -230,6 +247,12 @@ export function restoreBuildInfo(root, { dir = TSC_CACHE_DIR, hash, nm } = {}) {
   const hasOwn = fs.existsSync(own);
   if (!src) return hasOwn ? { restored: false, reason: "own" } : { restored: false, reason: "empty" };
   const viaLegacy = src !== fresh;
+  /* No own build info, fresh key: names-only check (a worktree with a plain node_modules folder shares the
+     old key with pre-R-2718 junction worktrees' files) — a foreign file is no better than a cold run. */
+  if (!hasOwn && !viaLegacy) {
+    const foreign = foreignCount(root, src, { nm: nm ?? nodeModulesTarget(root) });
+    if (foreign) return { restored: false, reason: "empty", legacy: true, shared: { changed: 0, global: 1, foreign, modules: 0 } };
+  }
   let measured = {};
   if (hasOwn || viaLegacy) {
     const h = hash ?? versionHasher(root);

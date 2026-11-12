@@ -64,13 +64,13 @@ import { runRelatedSql } from "./worker-lock-sql.mjs";
 import { maskOwnMigrations, autoRenameLateMigrations, realAutoRenameDeps, checkMigrationClash } from "./worker-lock-migts.mjs";
 import { stashSnapshot, enforceStash, stashGit } from "./worker-lock-stash.mjs";
 import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
-import { LOCK_VERSION, hardPaths, softFolders, movesOf, claimHardPaths, parseMoveFlags, liveFilesReader, isFileLock } from "./worker-lock-files.mjs";
+import { LOCK_VERSION, hardPaths, softFolders, movesOf, claimHardPaths, claimFolders, parseMoveFlags, liveFilesReader, isFileLock } from "./worker-lock-files.mjs";
 import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue, turnGate, turnQueueLines, readTurnWaiters, joinTurnWait, leaveTurnWait, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
 const readQueue = () => readQueueIn(LOCK_DIR);
 const leaveQueue = (c) => leaveQueueIn(LOCK_DIR, c);
 export { PRIORITIES, normPriority, priorityRank, queueOrder, liveQueue, queueTurn, lockActivityAt, isStaleLock, lockBeat, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS, parseQueueFlags, worktreeIndexMtime, readQueue as readQueueDir, turnGate, turnQueueLines, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
 export { isDerived, withoutDerived, newestDeployDate, refreshDerived, rebaseResolvingDerived, MIGRATION_DERIVED } from "./worker-lock-derived.mjs";
-export { LOCK_VERSION, hardPaths, softFolders, claimHardPaths, parseMoveFlags, liveFilesReader, isFileArea, isFileLock, worktreeChangedFiles } from "./worker-lock-files.mjs";
+export { LOCK_VERSION, hardPaths, softFolders, claimHardPaths, claimFolders, parseMoveFlags, liveFilesReader, isFileArea, isFileLock, worktreeChangedFiles } from "./worker-lock-files.mjs";
 export { migrationDefines, relatedSqlTests, deployPeek, sqlTestSafe, relatedTestScript, runRelatedSql } from "./worker-lock-sql.mjs";
 
 export const LOCK_DIR = process.env.WORKER_LOCK_DIR || path.join(os.homedir(), ".claude", "worker-locks");
@@ -586,12 +586,14 @@ async function pushWithTurn(card, ciFlags = {}) {
     /* R-816 worker (10 Oct): on a detached worktree the branch name is empty and the old command became
        `git push anutech :manager-pardeep` — a branch DELETE (GitHub protection refused it). Push HEAD. */
     /* R-2718: the files this push really changes stay held in ci-wait (a v2 lock's folders are soft, and the
-       worktree — whose live diff counted until now — is cleaned up right after the push). */
-    let pushedFiles = [];
-    try { pushedFiles = withoutDerived(changedFiles()); } catch {}
+       worktree — whose live diff counted until now — is cleaned up right after the push). Written BEFORE the
+       push: the push moves anutech/manager-pardeep, after which the live diff is already empty. */
+    try {
+      const pushedFiles = withoutDerived(changedFiles());
+      if (pushedFiles.length) updateLock(card, (l) => ({ ...l, files: [...new Set([...(l.files ?? []), ...pushedFiles])] }));
+    } catch {}
     sh("git push -q anutech HEAD:manager-pardeep", pushEnv("push", card));
     console.log(pushDoneLine(card, plan));
-    try { if (pushedFiles.length) updateLock(card, (l) => ({ ...l, files: [...new Set([...(l.files ?? []), ...pushedFiles])] })); } catch {}
     /* R-1936: remember the sha so "worker-lock ci <CARD>" knows what to wait for. */
     let pushedSha = null;
     try { pushedSha = sh("git rev-parse HEAD").trim(); fs.writeFileSync(pushedNote(card), JSON.stringify({ card, sha: pushedSha, at: new Date().toISOString() })); } catch {}
@@ -1112,11 +1114,13 @@ export function reexportTarget(src) {
 }
 
 /**
- * Lock area for a path: the path itself. Before R-2718 a file under src/app or src/lib became its whole
- * folder — so prepared cards (lockAreas) locked folders and a card on a sibling file waited (R-2701 ~1 h).
+ * Scope area for a path: its folder for a file under src/app or src/lib, else the file itself. R-2718: prep
+ * writes the file AND this folder — the folder is soft (scope only), the file is the hard lock.
  */
 export function lockAreaFor(p) {
-  return normPath(p);
+  const n = normPath(p);
+  if (/\.[a-z]+$/i.test(n) && /^src\/(app|lib)\//.test(n)) { const d = n.split("/").slice(0, -1).join("/"); return tooBroad(d) ? n : d; }
+  return n;
 }
 
 function prep(card, paths) {
@@ -1135,7 +1139,8 @@ function prep(card, paths) {
       }
     }
     if (real === n) console.log(`✓ ${n}`);
-    areas.add(lockAreaFor(real)); if (real !== n) areas.add(lockAreaFor(n));
+    /* R-2718: the file itself (hard) + its folder (soft scope — new sibling files stay in scope) */
+    for (const p of real !== n ? [real, n] : [real]) { areas.add(normPath(p)); areas.add(lockAreaFor(p)); }
   }
   console.log(`\nlockAreas (card par likho): ${JSON.stringify([...areas])}`);
   if (missing) { console.error(`✗ ${card}: ${missing} path nahi mile — card theek karo, tab worker ko do.`); process.exit(1); }
@@ -1380,8 +1385,9 @@ function main(argv) {
     const moves = normaliseClaimAreas(rawMoves, worktree);
     const areas = normaliseClaimAreas([...rawPaths, ...moves], worktree, (l) => console.log(l));
     /* R-2718: only files + --move folders are held hard; other folders are scope only (soft). */
-    const hard = claimHardPaths(areas, moves);
-    const soft = areas.filter((a) => !hard.includes(a) && !isDerived(a));
+    const folders = claimFolders(areas, worktree);
+    const hard = claimHardPaths(areas, moves, folders);
+    const soft = folders.filter((a) => !hard.includes(a) && !isDerived(a));
     const live = liveFilesReader();
     const own0 = readLocks().find((l) => l.card === card) ?? null;
     /* R-1973: `claim <CARD> --fixes-red` (no paths) = take the slot back for a card in ci-wait / ci-red. */
@@ -1416,11 +1422,13 @@ function main(argv) {
       /* A re-claim keeps what the card already holds (its ci-wait files stay claimed). */
       const keep = own ? [...(own.areas ?? [])] : [];
       const at = new Date().toISOString();
-      /* R-2718: lockVersion 2 = file locks (claimed folders are soft scope; `moves` are hard folder locks). */
-      const keepMoves = own && isFileLock(own) ? (own.moves ?? []) : [];
-      fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), lockVersion: LOCK_VERSION, areas: [...new Set([...keep, ...areas.map(normPath)])], moves: [...new Set([...keepMoves, ...moves])], files: own?.files ?? [], claimedAt: own?.claimedAt ?? at, beatAt: at, state: LOCK_STATES.working, priority, stashAtClaim: own?.stashAtClaim ?? stashSnapshot(stashGit, at) }, null, 2));
+      /* R-2718: lockVersion 2 = file locks (`folders` = claimed folders, soft scope; `moves` = hard folder locks).
+         A re-claim of a pre-R-2718 lock stays old (whole folders hard) — it was promised them. */
+      const v2 = !own || isFileLock(own);
+      const fileLock = v2 ? { lockVersion: LOCK_VERSION, folders: [...new Set([...(own?.folders ?? []), ...folders])], moves: [...new Set([...(own?.moves ?? []), ...moves])] } : {};
+      fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), ...fileLock, areas: [...new Set([...keep, ...areas.map(normPath)])], files: own?.files ?? [], claimedAt: own?.claimedAt ?? at, beatAt: at, state: LOCK_STATES.working, priority, stashAtClaim: own?.stashAtClaim ?? stashSnapshot(stashGit, at) }, null, 2));
       console.log(`✓ ${card} ka lock laga (${priority}): ${areas.map(normPath).join(", ")}`);
-      if (soft.length) console.log(`  (R-2718: folder ${soft.join(", ")} = sirf scope; doosra card isme ALAG file par kaam kar sakta hai. Jo file tum badloge woh check par lock hoti hai. Folder rename/move karna hai to --move <folder>.)`);
+      if (v2 && soft.length) console.log(`  (R-2718: folder ${soft.join(", ")} = sirf scope; doosra card isme ALAG file par kaam kar sakta hai. Jo file tum badloge woh check par lock hoti hai. Folder rename/move karna hai to --move <folder>.)`);
     };
     const refuseSlot = ({ locks, q }) => {
       const busy = locks.filter((l) => l.card !== card && countsTowardCap(l)).map((l) => l.card);

@@ -80,8 +80,8 @@ describe("worker locks (two workers must never build in the same files)", () => 
     expect(reexportTarget('import x from "y";\nconst a = 1;\nexport { a } from "z";')).toBeNull();
   });
 
-  it("card prep: a file's lock area is the file itself (R-2718 — no longer its whole folder)", () => {
-    expect(lockAreaFor("production/src/app/(app)/deals/page.tsx")).toBe("src/app/(app)/deals/page.tsx");
+  it("card prep: a file's lock area is its folder; never broader than 3 parts", () => {
+    expect(lockAreaFor("production/src/app/(app)/deals/page.tsx")).toBe("src/app/(app)/deals");
     expect(lockAreaFor("src/lib/nav.ts")).toBe("src/lib/nav.ts");
     expect(lockAreaFor("src/components/layout/topbar.tsx")).toBe("src/components/layout/topbar.tsx");
   });

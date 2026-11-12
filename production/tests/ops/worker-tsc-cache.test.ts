@@ -4,7 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error — plain .mjs ops script, no types
-import { restoreBuildInfo, restoreLine, buildInfoDistance, hasherKind, saveBuildInfo, dropBuildInfo, cacheFile, pruneCache, parseTscFlags, nodeModulesTarget, BUILD_INFO, TSC_FULL_STEP } from "../../scripts/ops/worker-tsc-cache.mjs";
+import { restoreBuildInfo, restoreLine, buildInfoDistance, hasherKind, saveBuildInfo, dropBuildInfo, cacheFile, pruneCache, parseTscFlags, nodeModulesTarget, foreignCount, BUILD_INFO, TSC_FULL_STEP } from "../../scripts/ops/worker-tsc-cache.mjs";
 // @ts-expect-error — plain .mjs ops script, no types
 import { tscStepsFor, TSC_STEPS } from "../../scripts/ops/worker-lock.mjs";
 
@@ -391,5 +391,24 @@ describe("R-2718 node_modules real path is part of the cache", () => {
     const r = tsc(wt);
     expect(r.status).not.toBe(0);
     expect(`${r.stdout}${r.stderr}`).toMatch(/b\.ts\(2,\d+\): error TS2322/);
+  });
+});
+
+describe("R-2718 review fixes", () => {
+  it("names are compared case-insensitively (tsc lowercases build-info names on Windows)", () => {
+    const dir = fs.mkdtempSync(path.join(tmp, "case-"));
+    const f = path.join(dir, "x.tsbuildinfo");
+    fs.writeFileSync(f, JSON.stringify({ fileNames: ["../clone-a/node_modules/@types/x/index.d.ts", "../Other/node_modules/y.d.ts", "./a.ts"], fileInfos: ["1", "2", "3"] }));
+    expect(foreignCount(dir, f, { nm: "../Clone-A/node_modules", tsLib: "" })).toBe(1);
+  });
+
+  it("no own build info + a fresh-key file from another node_modules → not restored (names-only check)", () => {
+    const dir = fs.mkdtempSync(path.join(tmp, "plain-"));
+    const wt = worktree("wt-plain-nm");
+    fs.mkdirSync(path.join(wt, "node_modules"));
+    fs.writeFileSync(cacheFile(wt, dir), JSON.stringify({ fileNames: ["../../reselleros-deploy/production/node_modules/@types/node/index.d.ts", "./a.ts"], fileInfos: [{ version: "1", affectsGlobalScope: true }, "2"] }));
+    const r = restoreBuildInfo(wt, { dir });
+    expect(r).toMatchObject({ restored: false, reason: "empty", shared: { foreign: 1 } });
+    expect(fs.existsSync(path.join(wt, BUILD_INFO))).toBe(false);
   });
 });
