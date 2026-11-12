@@ -182,8 +182,8 @@ describe("R-2693 FY receipts — every payment accounted for", () => {
     stub({ imported: 120, already: 0, banked: 0, bank_later: 120, skipped: [] });
     render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
     const list = await screen.findByTestId("fy-receipts-left-out");
-    expect(list.textContent).toMatch(/201 · .* · Overseas Buyer LLC · USD 663\.05 \(₹58,481\) — Received in USD/);
-    expect(list.textContent).toMatch(/202 · .* · USD 663(\.00)? — Received in USD/);
+    expect(list.textContent).toMatch(/201 · .* · Overseas Buyer LLC · \$663\.05 \(₹58,481\) — Received in USD/);
+    expect(list.textContent).toMatch(/202 · .* · \$663\.00 — Received in USD/);
     expect(list.textContent).not.toMatch(/₹663/);
     expect(list.textContent).toMatch(/and 3 more not listed here/);
   });
@@ -196,7 +196,7 @@ describe("R-2693 FY receipts — every payment accounted for", () => {
     /* 0 + 0 + 250 refused + 40 left out ≠ 160 scanned — never hidden: the screen says the numbers do not add up */
     expect(acc.textContent).toMatch(/do not add up/);
     const groups = screen.getByTestId("fy-receipts-refused-reasons");
-    expect(groups.textContent).toMatch(/249 · .*has only ₹… due here/);
+    expect(groups.textContent).toMatch(/249 · … has only … due here/);
     expect(groups.textContent).toMatch(/1 · Its invoices belong to different customers here\./);
     expect(screen.getByText(/^R250$/)).toBeTruthy();
   });

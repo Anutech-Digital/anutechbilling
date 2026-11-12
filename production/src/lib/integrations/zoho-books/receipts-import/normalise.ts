@@ -77,6 +77,33 @@ export interface ZohoReceiptFacts {
    *  settlement (R-2099), so it is never matched alone to a bank line, fee or no fee. */
   viaSettlement: boolean;
   problems: string[];
+  /** R-2693: Zoho's currency_code ("INR" when none). Absent on facts read before R-2693. */
+  currency?: string;
+  /** R-2693: a foreign-currency payment's own amount in its currency (e.g. 663.05 USD); null for INR.
+   *  `amount` / `receivedPaise` are then the ₹ at Zoho's rate (0 when Zoho gives no rate). */
+  foreignAmount?: number | null;
+  /** R-2693: Zoho's exchange_rate (₹ per unit) on a foreign-currency payment; null for INR / no rate. */
+  fxRate?: number | null;
+}
+
+/** R-2693: what a facts' left-out row shows for a foreign-currency payment — its currency, its own
+ *  amount and the ₹ at Zoho's rate (null = not known). Facts read before R-2693 carry no currency
+ *  field: their `amount` IS the foreign figure (Zoho's amount read as rupees), recognised by the
+ *  "Received in XXX in Zoho" problem, so it is never shown as ₹. null = an INR payment. */
+export function foreignOf(f: Pick<ZohoReceiptFacts, "amount" | "problems" | "currency" | "foreignAmount">): { currency: string; amount: number; inr: number | null } | null {
+  if (f.currency !== undefined) {
+    if (!f.currency || f.currency === "INR" || f.foreignAmount === null || f.foreignAmount === undefined) return null;
+    return { currency: f.currency, amount: f.foreignAmount, inr: f.amount > 0 ? f.amount : null };
+  }
+  const old = /^Received in ([A-Z]{3}) in Zoho/.exec(f.problems?.[0] ?? "");
+  return old ? { currency: old[1], amount: f.amount, inr: null } : null;
+}
+
+/** R-2693: the ₹ a payment counts for in totals — null when it is not known (a foreign payment read
+ *  before R-2693, or one Zoho gives no rate for). */
+export function inrAmountOf(f: Pick<ZohoReceiptFacts, "amount" | "problems" | "currency" | "foreignAmount">): number | null {
+  const fx = foreignOf(f);
+  return fx ? fx.inr : f.amount;
 }
 
 const str = (v: unknown): string => (v === null || v === undefined ? "" : String(v).trim());
@@ -136,9 +163,20 @@ export function zohoReceiptFacts(d: ZohoFyDocDetail): ZohoReceiptFacts {
   const lines: ReceiptLine[] = kept.map((l, k) => ({ zohoInvoiceId: l.id, invoiceNumber: l.no, settle: cash[k] + tdsR[k], tds: tdsR[k] }));
   const amountPaise = toPaise(r.amount);
   const excessPaise = amountPaise - appliedPaise;
-  const currency = str(r.currency_code).toUpperCase();
+  const currency = str(r.currency_code).toUpperCase() || "INR";
+  const foreign = currency !== "INR";
+  /* R-2693: a foreign-currency payment's figures are in ITS currency; the ₹ is at Zoho's own rate. */
+  const rateRaw = Number(r.exchange_rate);
+  const fxRate = foreign && Number.isFinite(rateRaw) && rateRaw > 0 ? rateRaw : null;
+  const inrPaise = !foreign ? amountPaise : fxRate ? Math.round(amountPaise * fxRate) : 0;
 
-  if (currency && currency !== "INR") problems.push(`Received in ${currency} in Zoho — book a foreign-currency receipt by hand.`);
+  /* R-2693: until foreign-currency receipts are imported (part 2), the way to book one today is its bank
+     line — Banking → Reconcile (R-2427 / R-1678: the invoice's own rate, exchange gain / loss there). */
+  if (foreign) {
+    problems.push(fxRate
+      ? `Received in ${currency} in Zoho — foreign-currency payments are not imported yet; book it from its bank line (Banking → the inward ${currency} line → Reconcile, exchange gain / loss there).`
+      : `Received in ${currency} in Zoho with no exchange rate — foreign-currency payments are not imported yet; book it from its bank line (Banking → Reconcile).`);
+  }
   if (amountPaise <= 0) problems.push("Zoho shows no money received on this payment.");
   /* R-2565: Razorpay's fee (bank_charges) is booked as its Bank Charges expense; any other bank charge by hand. */
   const feePaise = toPaise(r.bank_charges);
@@ -170,14 +208,17 @@ export function zohoReceiptFacts(d: ZohoFyDocDetail): ZohoReceiptFacts {
     reference: str(r.reference_number).slice(0, 100),
     depositAccountId: str(r.account_id),
     depositAccountName: str(r.account_name),
-    amount: paiseToRupees(amountPaise),
-    receivedPaise: amountPaise,
+    amount: paiseToRupees(inrPaise),
+    receivedPaise: inrPaise,
     lines,
-    excess: Math.max(0, paiseToRupees(amountPaise) - cash.reduce((s, x) => s + x, 0)),
+    excess: foreign ? 0 : Math.max(0, paiseToRupees(amountPaise) - cash.reduce((s, x) => s + x, 0)),
     tds: paiseToRupees(tdsPaise),
     fee: feeRupees(feePaise),
     feeGst: feeGstOf(feeRupees(feePaise)),
     viaSettlement: razorpay,
     problems: [...new Set(problems)],
+    currency,
+    foreignAmount: foreign ? amountPaise / 100 : null,
+    fxRate,
   };
 }
