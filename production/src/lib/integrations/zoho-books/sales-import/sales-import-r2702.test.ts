@@ -95,6 +95,22 @@ describe("R-2702 (1) TDS on the invoice in Zoho", () => {
     expect(f.tdsSection).toBeNull();
   });
 
+  it("review: a descriptive Zoho TDS name gives its section (contractor → 194C, commission → 194H)", () => {
+    expect(zohoSaleFacts(detail({ rawOver: { tds_tax_name: "Payment to Contractors (Others)" } }), SELLER).tdsSection).toBe("194C");
+    expect(zohoSaleFacts(detail({ rawOver: { tds_tax_name: "Commission or Brokerage" } }), SELLER).tdsSection).toBe("194H");
+    expect(zohoSaleFacts(detail({ rawOver: { tds_tax_name: "Something else" } }), SELLER).tdsSection).toBeNull();
+  });
+
+  it("review: a small TDS (₹30) on a many-line invoice is still read — the tolerance stays under half the TDS", () => {
+    const lines = Array.from({ length: 40 }, (_, i) => ({ accountId: "a", accountName: "S", description: `l${i}`, hsnOrSac: "998315",
+      quantity: 1, amountPaise: 2_500_00, taxId: "g", taxName: "GST18", taxPercent: 18 }));
+    // taxable ₹1,00,000, GST ₹18,000, TDS ₹30 → Zoho net total ₹1,17,970
+    const f = zohoSaleFacts(detail({ lines, totalPaise: 1_17_970_00, tdsPaise: 30_00, rawOver: { line_items: [] } }), SELLER);
+    expect(f.problems).toEqual([]);
+    expect(f.amount).toBe(118000);
+    expect(f.tds).toBe(30);
+  });
+
   it("TDS on a foreign-currency invoice is refused (a foreign buyer deducts no Indian TDS)", () => {
     const f = zohoSaleFacts(detail({ currency: "USD", rawOver: { exchange_rate: 85 } }), SELLER);
     expect(f.problems.join(" ")).toMatch(/TDS on a USD invoice/);
@@ -140,6 +156,18 @@ describe("R-2702 (2) a Zoho adjustment", () => {
     expect(f.amount).toBe(118500);
     expect(f.adjustment).toBe(500);
     expect(f.lines[f.lines.length - 1]).toMatchObject({ kind: "adjustment", name: "Adjustment" });
+  });
+
+  it("review: Zoho's round-off is never folded into the adjustment line, nor pushes a small adjustment over", () => {
+    const small = zohoSaleFacts(detail({ number: "X1", tdsPaise: 0, totalPaise: 1_18_001_10,
+      rawOver: { tds_amount: 0, tds_tax_name: "", adjustment: 0.6, roundoff_value: 0.5 } }), SELLER);
+    expect(small.adjustment).toBe(0);
+    expect(small.lines.some((l) => l.kind === "adjustment")).toBe(false);
+    const big = zohoSaleFacts(detail({ number: "X2", tdsPaise: 0, totalPaise: 1_18_499_60,
+      rawOver: { tds_amount: 0, tds_tax_name: "", adjustment: 500, roundoff_value: -0.4 } }), SELLER);
+    expect(big.problems).toEqual([]);
+    expect(big.adjustment).toBe(500);
+    expect(big.lines.at(-1)?.taxable).toBe(500);
   });
 
   it("a round-off under one unit stays a round-off (R-2650), no line", () => {
