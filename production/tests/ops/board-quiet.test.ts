@@ -36,6 +36,22 @@ describe("board auto-free — sign of life (R-2719)", () => {
     expect(quietMin({ status: "doing", liveLog: ["31 Dec 23:50 IST x"] }, jan)).toBe(10);
   });
 
+  it("an object's `at` in board style or as epoch ms counts too (review: it was read as no time at all)", () => {
+    expect(quietMin({ status: "doing", claimedAt: minsAgo(120), liveLog: [{ at: "12 Nov 20:25 IST", text: "tests green" }] }, NOW)).toBe(5);
+    expect(quietMin({ status: "doing", claimedAt: minsAgo(120), liveLog: [{ at: NOW - 8 * 60_000, text: "x" }] }, NOW)).toBe(8);
+    expect(quietMin({ status: "doing", claimedAt: minsAgo(120), liveLog: [{ text: `${minsAgo(6)} no at field` }] }, NOW)).toBe(6);
+  });
+
+  it("only the time a line STARTS with is its heartbeat — a time mentioned in the text is not", () => {
+    // a stopped card whose last line talks about a later time must still be freed
+    const dead = { status: "doing", claimedAt: minsAgo(150), liveLog: ["coordinator: train 12 Nov 20:00 IST par chalegi"] };
+    expect(quietMin(dead, NOW)).toBe(150);
+    expect(shouldAutoFree(dead, NOW)).toBe(true);
+    expect(quietMin({ status: "doing", claimedAt: minsAgo(150), liveLog: [`w-x: pichhla push ${minsAgo(3)} par hua tha`] }, NOW)).toBe(150);
+    // the line's own stamp wins, in brackets too
+    expect(quietMin({ status: "doing", claimedAt: minsAgo(150), liveLog: [`[${minsAgo(9)}] w-x: CI ${minsAgo(40)} se chal raha`] }, NOW)).toBe(9);
+  });
+
   it("nowDoing update: nowDoingAt (or the card's updatedAt) is a sign of life", () => {
     expect(quietMin({ status: "doing", claimedAt: minsAgo(70), nowDoing: "tsc", nowDoingAt: minsAgo(3) }, NOW)).toBe(3);
     expect(quietMin({ status: "doing", claimedAt: minsAgo(70), updatedAt: minsAgo(9) }, NOW)).toBe(9);

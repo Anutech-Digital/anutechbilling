@@ -49,7 +49,8 @@
  * running. Before it prints the DB step (and with `--db-wait`, the first command of the printed DB step)
  * the train waits, a line every 30 s and at most 30 min, while it is 09:25–10:05 IST or
  * `gcloud sql operations list` shows an operation that is not DONE (scripts/ops/staging-db-window.mjs —
- * read-only). An explicit --dry-run never waits; it only warns.
+ * read-only). An explicit --dry-run never waits; it only warns. A run that may wait needs a long timeout
+ * (35 min) or the background — a 2-minute tool call would be cut off mid-wait.
  *
  * Exit 0 = ok (dry run done / pushed / nothing new). 1 = error or refused. 2 = merge conflict.
  * 3 = DB step needed. 4 = pushed, but the migration check could not run. 5 = pushed, and the
@@ -268,10 +269,10 @@ export function dbStepLines(root, cwd = process.cwd(), list = (d) => (existsSync
   }
   const date = name.slice("deploy-db-".length, -".sh".length);
   return [
-    "PowerShell:",
+    `Pehle: ${DB_WAIT_COMMAND}   (backup 09:25–10:05 IST / chalta Cloud SQL operation → intezaar; exit 7 = abhi mat chalao)`,
+    "Phir PowerShell:",
     `  ${dbCommand(path.join(dir, name), cwd)}`,
     `(Naye migrations is file me hain? Jaancho: node scripts/ops/gen-deploy-db.mjs --date ${date} --check)`,
-    `Usse PEHLE: ${DB_WAIT_COMMAND}   (backup 09:25–10:05 IST / chalta Cloud SQL operation → intezaar; exit 7 = abhi mat chalao)`,
   ];
 }
 

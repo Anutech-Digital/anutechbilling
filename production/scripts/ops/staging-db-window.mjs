@@ -5,7 +5,8 @@
  * the instance's daily automatic backup was running. Cloud SQL runs one operation at a time, so an
  * import during the backup (or during any other import / backup) is refused.
  *
- * Before the DB step the train now waits — a line every 30 s, at most 30 min — while
+ * Before the DB step the train now waits — a line every 30 s, at most 30 min (run it with a long
+ * timeout or in the background) — while
  *   - the time is inside the daily backup window, 09:25–10:05 IST, or
  *   - `gcloud sql operations list` shows an operation on the staging instance that is not DONE.
  * It only READS (operations list); it never starts, cancels or changes anything. gcloud missing or not
@@ -61,9 +62,21 @@ export function parseRunningOps(text) {
     .map((o) => ({ type: String(o.operationType ?? "?"), status: String(o.status ?? "?").toUpperCase(), startTime: String(o.startTime ?? o.insertTime ?? "") }));
 }
 
-/** Why the DB step must not start now; [] = free to go. `ops` = parseRunningOps output (or [] when unknown). */
-export function busyReasons(at, ops = []) {
+/** Milliseconds from an instant to the end of today's backup window; 0 outside the window. */
+export function msToWindowEnd(at) {
+  if (!inBackupWindow(at)) return 0;
+  const msOfIstDay = (new Date(at).getTime() + IST_OFFSET_MS) % 86_400_000;
+  return BACKUP_WINDOW_IST.toMin * 60_000 - msOfIstDay;
+}
+
+/**
+ * Why the DB step must not start now; [] = free to go. `ops` = parseRunningOps output ([] when unknown).
+ * `unreadAfterRunning` = this read failed and the last read that worked showed a running operation —
+ * it is still counted as running until a read that works shows it DONE.
+ */
+export function busyReasons(at, ops = [], { unreadAfterRunning = false } = {}) {
   const reasons = [];
+  if (unreadAfterRunning) reasons.push("operations abhi padhe nahi gaye, aur pichhli baar ek operation chal raha tha — DONE dikhne tak ruke hain");
   if (inBackupWindow(at)) reasons.push(`abhi ${istClock(at)} IST hai — roz ka Cloud SQL backup 09:25–10:05 IST chalta hai`);
   for (const o of ops) reasons.push(`Cloud SQL operation chal raha hai: ${o.type} (${o.status}${o.startTime ? `, shuru ${o.startTime}` : ""})`);
   return reasons;
@@ -99,6 +112,7 @@ export async function waitForDbClear({
   const start = new Date(now()).getTime();
   let warned = false;
   let polls = 0;
+  let lastReadRunning = false; // the last read that WORKED showed a running operation
   for (;;) {
     const at = new Date(now()).getTime();
     const waitedMs = at - start;
@@ -107,7 +121,8 @@ export async function waitForDbClear({
       warned = true;
       log(`! Cloud SQL operations padh nahi paaye (${res.error || "gcloud"}) — sirf ghadi dekh rahe hain. gcloud login jaancho.`);
     }
-    const reasons = busyReasons(at, res.ok ? res.ops : []);
+    if (res.ok) lastReadRunning = res.ops.length > 0;
+    const reasons = busyReasons(at, res.ok ? res.ops : [], { unreadAfterRunning: !res.ok && lastReadRunning });
     if (!reasons.length) {
       /* Never say "free" about operations that could not be read. */
       if (!res.ok) log("✓ Backup window (09:25–10:05 IST) nahi hai — DB step chala sakte ho; operations padhe nahi gaye, HTTP 409 aaye to gcloud login ke baad dobara.");
@@ -120,6 +135,14 @@ export async function waitForDbClear({
       return { clear: false, waitedMs, reasons, opsRead: res.ok };
     }
     polls++;
+    /* The clock alone says this wait cannot end in time (window ends after the max wait): say so now
+       instead of printing a line every 30 s for 30 minutes and failing anyway. */
+    const toEnd = msToWindowEnd(at);
+    if (toEnd > maxMs - waitedMs) {
+      const goAt = at + toEnd - maxMs;
+      log(`✗ DB step ABHI MAT chalao (HTTP 409 aayega) — abhi ${istClock(at)} IST, backup window 10:05 IST tak (${Math.ceil(toEnd / 60_000)} min); ${Math.round(maxMs / 60_000)} min ke intezaar me khaali nahi hoga. ${istClock(goAt)} IST ke baad dobara: node scripts/ops/staging-train.mjs --db-wait`);
+      return { clear: false, waitedMs, reasons, opsRead: res.ok };
+    }
     const left = Math.max(0, Math.round((maxMs - waitedMs) / 60_000));
     log(`⏳ DB step ruka hai — ${reasons.join("; ")}. ${Math.round(pollMs / 1000)} s me dobara dekhenge (${Math.round(waitedMs / 60_000)} min ruke, zyada se zyada ${left} min aur).`);
     await sleep(Math.min(pollMs, Math.max(1, maxMs - waitedMs)));

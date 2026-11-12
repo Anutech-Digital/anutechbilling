@@ -159,9 +159,11 @@ describe("staging train — safety + text", () => {
   it("deploy-db command is relative to the checkout the train runs in (worktree, not main)", () => {
     const root = path.resolve("/w/tree");
     const lines = dbStepLines(root, path.join(root, "production"), () => ["deploy-db-2026-10-07.sh", "deploy-db-2026-10-01.sh"]);
-    expect(lines[1].trim()).toBe('& "C:\\Program Files\\Git\\bin\\bash.exe" "supabase/cloudsql/staging/deploy-db-2026-10-07.sh"');
+    /* R-2719: line 0 is now the Cloud SQL wait; the command and the check moved down by one. */
+    expect(lines[0]).toMatch(/^Pehle: node scripts\/ops\/staging-train\.mjs --db-wait/);
+    expect(lines[2].trim()).toBe('& "C:\\Program Files\\Git\\bin\\bash.exe" "supabase/cloudsql/staging/deploy-db-2026-10-07.sh"');
     expect(lines.join("\n")).not.toMatch(/new-reselleros/);
-    expect(lines[2]).toMatch(/gen-deploy-db\.mjs --date 2026-10-07 --check/);
+    expect(lines[3]).toMatch(/gen-deploy-db\.mjs --date 2026-10-07 --check/);
     expect(dbCommand(path.join(root, "production", "x.sh"), root)).toMatch(/"production\/x\.sh"$/);
   });
   it("deploy-db: no script → a clear error, not a made-up file name", () => {
@@ -171,7 +173,7 @@ describe("staging train — safety + text", () => {
   });
   it("deploy-db: the real repo has the file the train prints", () => {
     const root = path.resolve(__dirname, "../../..");
-    const line = dbStepLines(root, path.join(root, "production"))[1].trim();
+    const line = dbStepLines(root, path.join(root, "production"))[2].trim();
     const rel = /"([^"]+\.sh)"$/.exec(line)?.[1] ?? "";
     expect(rel).toMatch(/^supabase\/cloudsql\/staging\/deploy-db-\d{4}-\d{2}-\d{2}\.sh$/);
     expect(existsSync(path.join(root, "production", rel))).toBe(true);
@@ -265,8 +267,11 @@ describe("staging train — DB step waits for Cloud SQL (R-2719)", () => {
     expect(iWait).toBeGreaterThan(-1);
     expect(iWait).toBeLessThan(iBash);
     const root = path.resolve("/w/tree");
-    const plain = dbStepLines(root, path.join(root, "production"), () => ["deploy-db-2026-10-07.sh"]).join("\n");
-    expect(plain).toMatch(/Usse PEHLE: node scripts\/ops\/staging-train\.mjs --db-wait/);
+    const plain: string[] = dbStepLines(root, path.join(root, "production"), () => ["deploy-db-2026-10-07.sh"]);
+    const pWait = plain.findIndex((l) => l.includes(DB_WAIT_COMMAND));
+    const pBash = plain.findIndex((l) => /bash\.exe" ".*deploy-db-2026-10-07\.sh"/.test(l));
+    expect(pWait).toBe(0);
+    expect(pBash).toBeGreaterThan(pWait);
     expect(DB_WAIT_COMMAND).toBe("node scripts/ops/staging-train.mjs --db-wait");
   });
   it("still busy after the wait → the summary says do NOT run the DB step, exit code 7", () => {

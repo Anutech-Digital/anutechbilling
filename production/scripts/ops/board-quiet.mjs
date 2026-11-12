@@ -8,8 +8,9 @@
  *
  * Rule now: quiet time counts from the NEWEST of
  *   - claimedAt,
- *   - every liveLog entry — an object's `at`, or a time inside a string line
- *     ("2026-11-12T15:11:21Z …" or the board style "12 Nov 20:41 IST …"),
+ *   - every liveLog entry — an object's `at`, or the time a string line STARTS with
+ *     ("2026-11-12T15:11:21Z …" or the board style "12 Nov 20:41 IST …"; a time mentioned
+ *     later in the text is not a heartbeat),
  *   - the nowDoing update: `nowDoingAt` (write it with every nowDoing change) or the card's `updatedAt`.
  * A time more than 10 minutes in the future (typo, wrong clock) is ignored, so a card cannot stay
  * claimed for ever.
@@ -24,6 +25,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { cardFromJson } from "./worker-lock.mjs";
 
 export const STALE_MIN = 30;
 export const AUTO_FREE_MIN = 60;
@@ -33,11 +35,13 @@ export function lastLifeMs(c, nowMs = Date.now()) {
   if (!c || typeof c !== "object") return 0;
   const AHEAD_OK = 10 * 60000;
   const MON = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
-  const ISO = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})/;
-  const IST = /\b(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* (\d{1,2}):(\d{2}) IST\b/i;
+  /* A line's own time is at its START ("<time> who: what"). A time mentioned later in the text
+     ("train 22:00 IST par chalegi") is not a heartbeat, so both patterns are anchored. */
+  const ISO = /^\W{0,3}(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2}))/;
+  const IST = /^\W{0,3}(\d{1,2}) (Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* (\d{1,2}):(\d{2}) IST\b/i;
   const fromText = (s) => {
     const iso = ISO.exec(s);
-    if (iso) return Date.parse(iso[0]);
+    if (iso) return Date.parse(iso[1]);
     const m = IST.exec(s);
     if (!m) return NaN;
     const d = Number(m[1]), mon = MON[m[2].toLowerCase()], hh = Number(m[3]), mm = Number(m[4]);
@@ -47,10 +51,20 @@ export function lastLifeMs(c, nowMs = Date.now()) {
     const at = (y) => Date.UTC(y, mon, d, hh, mm) - 330 * 60000;
     return at(year) > nowMs + AHEAD_OK ? at(year - 1) : at(year);
   };
-  const times = [c.claimedAt, c.nowDoingAt, c.updatedAt].map((v) => (typeof v === "string" ? Date.parse(v) : NaN));
+  /* A time field: an ISO string, a board-style "12 Nov 20:41 IST" string, or epoch milliseconds. */
+  const field = (v) => {
+    if (typeof v === "number") return v > 1e11 ? v : NaN;
+    if (typeof v !== "string") return NaN;
+    const t = Date.parse(v);
+    return Number.isNaN(t) ? fromText(v) : t;
+  };
+  const times = [field(c.claimedAt), field(c.nowDoingAt), field(c.updatedAt)];
   for (const x of Array.isArray(c.liveLog) ? c.liveLog : []) {
     if (typeof x === "string") times.push(fromText(x));
-    else if (x && typeof x === "object") times.push(typeof x.at === "string" ? Date.parse(x.at) : NaN, typeof x.text === "string" && !x.at ? fromText(x.text) : NaN);
+    else if (x && typeof x === "object") {
+      const t = field(x.at);
+      times.push(Number.isNaN(t) && typeof x.text === "string" ? fromText(x.text) : t);
+    }
   }
   let best = 0;
   for (const t of times) if (!Number.isNaN(t) && t <= nowMs + AHEAD_OK && t > best) best = t;
@@ -77,8 +91,7 @@ function main(argv) {
   for (const p of argv) {
     let c;
     try {
-      const raw = JSON.parse(fs.readFileSync(p, "utf8"));
-      c = raw && raw.data && typeof raw.data === "object" && !("title" in raw) ? { id: raw.id, ...raw.data } : raw;
+      c = cardFromJson(JSON.parse(fs.readFileSync(p, "utf8")));
     } catch (e) { console.error(`✗ ${p}: ${e.message}`); bad = 1; continue; }
     const m = quietMin(c);
     const last = lastLifeMs(c);

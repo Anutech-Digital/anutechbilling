@@ -101,14 +101,43 @@ describe("staging DB step — the wait (R-2719)", () => {
   });
 
   it("gives up after 30 min — clear:false, says do NOT run the DB step, never waits longer", async () => {
-    const f = fake(ist("09:25"), noOps); // window lasts 40 min
+    const running = () => ({ ok: true, ops: parseRunningOps(JSON.stringify([op("RUNNING", "IMPORT")])), error: "" });
+    const f = fake(ist("15:00"), running); // an operation that never finishes
     const r = await waitForDbClear(f.opts);
     expect(MAX_WAIT_MS).toBe(30 * 60_000);
     expect(r.clear).toBe(false);
     expect(r.waitedMs).toBe(MAX_WAIT_MS);
-    expect(r.reasons.join()).toMatch(/09:55 IST/);
+    expect(r.reasons.join()).toMatch(/IMPORT \(RUNNING/);
+    expect(f.sleeps).toHaveLength(60);
     expect(f.sleeps.reduce((a, b) => a + b, 0)).toBe(MAX_WAIT_MS);
     expect(f.logs.join("\n")).toMatch(/30 min ruke.*ABHI MAT chalao.*409[\s\S]*--db-wait/);
+  });
+
+  it("09:25–09:35 IST: the window ends after the 30 min, so it says so at once instead of waiting to fail", async () => {
+    const f = fake(ist("09:27"), noOps); // 38 min of window left
+    const r = await waitForDbClear(f.opts);
+    expect(r).toMatchObject({ clear: false, waitedMs: 0 });
+    expect(f.sleeps).toEqual([]);
+    expect(f.logs).toHaveLength(1);
+    expect(f.logs[0]).toMatch(/ABHI MAT chalao.*09:27 IST.*10:05 IST tak \(38 min\).*09:35 IST ke baad dobara.*--db-wait/);
+    // from 09:35 the wait fits: 30 min to 10:05
+    const fits = fake(ist("09:35"), noOps);
+    expect(await waitForDbClear(fits.opts)).toMatchObject({ clear: true, waitedMs: MAX_WAIT_MS });
+  });
+
+  it("a read that fails AFTER a running operation was seen keeps waiting — it never turns 'unknown' into 'go'", async () => {
+    const start = ist("15:00");
+    // poll 1: IMPORT running; polls 2–3: gcloud fails (timeout / token); poll 4: readable again, DONE
+    const f = fake(start, (t) => {
+      const n = Math.round((t - start) / POLL_MS);
+      if (n === 0) return { ok: true, ops: parseRunningOps(JSON.stringify([op("RUNNING", "IMPORT")])), error: "" };
+      if (n < 3) return { ok: false, ops: [], error: "timeout" };
+      return noOps();
+    });
+    const r = await waitForDbClear(f.opts);
+    expect(r).toMatchObject({ clear: true, waitedMs: 3 * POLL_MS, opsRead: true });
+    expect(f.logs.filter((l) => /pichhli baar ek operation chal raha tha/.test(l))).toHaveLength(2);
+    expect(busyReasons(start, [], { unreadAfterRunning: true })).toHaveLength(1);
   });
 
   it("gcloud cannot be read → one warning, the clock is still obeyed, and it never blocks outside the window", async () => {

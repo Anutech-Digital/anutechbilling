@@ -19,7 +19,9 @@ came back (CI wait, board not current, `claimedBy` case, `needsDecision` misuse)
   never overwrite. Times only from `date -u`.
 - `claimedBy` = lowercase person key (`pardeep` / `hitesh` / `abhishek` / `pawan`).
 - **liveLog + `nowDoing` at every real step, at least every 15 min** — "done … next …" so any
-  teammate's Claude can carry on. Silence 60 min → the board frees the card.
+  teammate's Claude can carry on. Silence 60 min → the board frees the card. liveLog lines are
+  `{at, text}` objects (`at` from `date -u`) — a plain string without its time does not count as a
+  heartbeat; set `nowDoingAt` with every `nowDoing` (R-2719).
 - `needsDecision` + `decisionAsk` ONLY when the work truly cannot go on without the owner (it
   shows a running card as "ruka"). Non-blocking recommendations → `followUps`.
 - The claim needs the card contract: `triage.verdict/why/at`, `kind`, `category`, `doneWhen`

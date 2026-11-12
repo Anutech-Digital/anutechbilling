@@ -33,7 +33,8 @@ import { fileURLToPath } from "node:url";
 import { cardContractGaps } from "./worker-lock.mjs";
 
 export const BOARD_URL = "https://claude.ai/artifact/84m2bpzzSYoir48DrhFD5n";
-export const PRIORITIES = ["p0", "p1", "p2"];
+/** Root CLAUDE.md "Card fields": priority p0–p3. */
+export const PRIORITIES = ["p0", "p1", "p2", "p3"];
 export const PEOPLE = ["pardeep", "hitesh", "abhishek", "pawan", "pratik"];
 
 const VALUE_FLAGS = {
@@ -152,7 +153,7 @@ export function writeFiles(dir, built, fsx = fs) {
   return { card: fwd(card), meta: fwd(meta) };
 }
 
-const HELP = `node scripts/ops/new-card.mjs --next <n> --next-version <v> --title "…" --priority p0|p1|p2 --kind <bug|feature|process|…> --why "…" --done-when "…"
+const HELP = `node scripts/ops/new-card.mjs --next <n> --next-version <v> --title "…" --priority p0|p1|p2|p3 --kind <bug|feature|process|…> --why "…" --done-when "…"
      [--goal G-XXXX] [--category <c>] [--owner pardeep] [--want "…"] [--area <a>] [--found-by <agent> | --from <person>] [--by <who takes the id>] [--out <dir>]
 Pehle: ArtifactData get (collection meta, doc nextId) → next + version. Ye script board par kuch nahi likhta — JSON chhaapta hai.`;
 
