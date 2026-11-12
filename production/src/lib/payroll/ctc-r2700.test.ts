@@ -97,7 +97,7 @@ describe("R-2700 edge input", () => {
   it("Basic 100% (includes): Basic alone is over the CTC → overBudget, the line says nothing is filled (no false equation)", () => {
     const b = ctcTabBreakdown({ ...base, calc: { asOf: NOV, basicPct: 1, isMetro: true } });
     expect(b.overBudget).toBe(true);
-    expect(ctcFormulaText(b)).toBe("Basic ₹30,000 is more than this CTC allows (monthly gross can be at most ₹25,558) — lower the Basic % or raise the CTC. Monthly gross is not filled.");
+    expect(ctcFormulaText(b)).toBe("Basic ₹30,000 is more than this CTC allows (monthly gross can be at most ₹25,558) — lower the Basic % or raise the CTC. Monthly gross is not filled from it.");
     const ok = ctcTabBreakdown(base);
     expect(ok.overBudget).toBe(false);
     expect(ok.fittedToCtc).toBe(false);
@@ -142,7 +142,7 @@ describe("R-2700 saved gross is shown as it is until a CTC is typed", () => {
     // the old path: the saved gross's CTC run back through the CTC-first calculator
     const old = calculateCtcBreakdown(ctcFromEmployee({ monthly_gross: 30_000, basic_monthly: null, da_monthly: 0, pf_applicable: true, esi_applicable: false }, { asOf: NOV }).annualCtc, { asOf: NOV, includeEsi: false });
     expect(old.grossMonthly).not.toBe(30_000);
-    expect(ctcFormulaText(b)).toMatch(/^Monthly gross ₹30,000 is the saved salary; CTC/);
+    expect(ctcFormulaText(b)).toBe("CTC ₹4,13,304 = (monthly gross ₹30,000 + employer PF ₹3,000 + gratuity ₹1,442) × 12. Type a different CTC to work the gross out from it.");
   });
   it("excludes policy: saved employee's CTC = gross × 12", () => {
     const b = ctcTabBreakdown({ ...saved, ctcIncludesEmployer: false });
@@ -173,5 +173,26 @@ describe("R-2700 saved gross is shown as it is until a CTC is typed", () => {
       expect(reopened.grossMonthly).toBe(typed.grossMonthly);
       expect(Math.abs(reopened.annualCtc - annualCtc)).toBeLessThanOrEqual(12);
     }
+  });
+});
+
+describe("R-2700 code-review fixes", () => {
+  it("DA is inside the CTC budget: PF / gratuity on Basic + DA, gross includes DA, cost never above CTC/12", () => {
+    const b = ctcTabBreakdown({ ...base, annualCtc: 600_000, da: 5_000 });
+    expect(b.daMonthly).toBe(5_000);
+    expect(b.gratuityMonthly).toBe(Math.round((b.basicMonthly + 5_000) * 15 / 312));
+    expect(costFits(b)).toBeLessThanOrEqual(b.monthlyCtc);
+    // what payroll / the register then say about that salary = the typed CTC (within rounding)
+    const back = ctcFromEmployee({ monthly_gross: b.grossMonthly, basic_monthly: b.basicMonthly, da_monthly: 5_000, pf_applicable: true, esi_applicable: true }, { asOf: NOV });
+    expect(Math.abs(back.annualCtc - 600_000)).toBeLessThanOrEqual(12);
+  });
+  it("a Basic % picked in the dialog wins over the saved Basic, and the label % is the real share", () => {
+    const savedEmp = { gross: 30_000, basic: 15_000, da: 0 };
+    const kept = ctcTabBreakdown({ ...base, annualCtc: 900_000, saved: savedEmp, calc: { asOf: NOV, basicPct: 0.4 } });
+    expect(kept.basicMonthly).toBe(15_000);
+    expect(Math.round(kept.basicPct * 100)).toBe(20);
+    const picked = ctcTabBreakdown({ ...base, annualCtc: 900_000, saved: savedEmp, keepSavedBasic: false, calc: { asOf: NOV, basicPct: 0.4 } });
+    expect(picked.basicMonthly).toBe(30_000);
+    expect(Math.round(picked.basicPct * 100)).toBe(40);
   });
 });
