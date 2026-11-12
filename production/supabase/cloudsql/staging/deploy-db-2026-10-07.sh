@@ -521,6 +521,7 @@ MIGS=(
   "r2694zohofyforeignreceipts|20261112064956_r2694_zoho_fy_foreign_receipts.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'zoho_fy_receipts' and column_name = 'fx_expense_id') and exists(select 1 from pg_proc where oid = to_regprocedure('public.import_zoho_fy_receipts(text,jsonb,boolean)') and prosrc like '%R-2694 foreign receipt%') and to_regprocedure('public._zoho_fy_fx_line_sync(uuid,uuid[])') is not null"
   "r2698pffullwage|20261112104228_r2698_employee_pf_full_wage.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'employees' and column_name = 'pf_full_wage')"
   "r2704bankmap|20261112112800_r2704_zoho_account_bank_map.sql|resellersos_migration|to_regprocedure('public.save_zoho_account_bank_choice(text,text,text)') is not null"
+  "r2711customerpayerlines|20261112152104_r2711_customer_payer_lines.sql|resellersos_migration|to_regprocedure('public.customer_payer_lines(uuid)') is not null"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER
