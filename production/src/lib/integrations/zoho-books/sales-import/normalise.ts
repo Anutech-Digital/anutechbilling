@@ -154,8 +154,23 @@ function tdsSectionFrom(raw: Record<string, unknown>): string | null {
     if (s) return s;
   }
   const sec = str(raw.tds_section);
-  return /^\d{6,}$/.test(sec) || sec.length > 40 ? null : tdsSectionOf(sec);
+  const bySec = /^\d{6,}$/.test(sec) || sec.length > 40 ? null : tdsSectionOf(sec);
+  if (bySec) return bySec;
+  /* Review: Zoho India often names the TDS by its nature only ("Payment to Contractors", "Commission or
+     Brokerage") — the section those names stand for; anything else stays null (never guessed). */
+  const name = ["tds_tax_name", "tds_name"].map((k) => str(raw[k]).toLowerCase()).join(" ");
+  for (const [re, s] of TDS_NAME_SECTION) if (re.test(name)) return s;
+  return null;
 }
+
+/** Zoho's descriptive TDS names → the app's section codes (lib/accounting/tds-rates.ts codes). */
+const TDS_NAME_SECTION: ReadonlyArray<readonly [RegExp, string]> = [
+  [/contractor/, "194C"],
+  [/commission|brokerage/, "194H"],
+  [/technical/, "194JA"],
+  [/professional/, "194JB"],
+  [/\brent\b/, "194I"],
+];
 
 /**
  * R-2702: is Zoho's total of an invoice with TDS NET of it ("net": taxable + GST − TDS — Zoho's way when
@@ -166,7 +181,10 @@ function tdsSectionFrom(raw: Record<string, unknown>): string | null {
 export function tdsReading(d: ZohoFyDocDetail, adjustmentPaise: number, tdsPaise: number): "net" | "full" | null {
   const full = d.totalPaise - d.taxTotalPaise - adjustmentPaise;
   const net = full + tdsPaise;
-  const tol = 100 * Math.max(1, d.lines.length) + 100;
+  /* ₹1 per line (+ ₹1), but under half the TDS so the two readings can never both fit (review: a ₹30
+     TDS on a 40-line invoice). */
+  const tolFor = (gap: number) => Math.max(1, Math.min(100 * Math.max(1, d.lines.length) + 100, Math.floor(gap / 2) - 1));
+  const tol = tolFor(tdsPaise);
   const pick = (okNet: boolean, okFull: boolean): "net" | "full" | null => (okNet === okFull ? null : okNet ? "net" : "full");
   if (d.lines.length) {
     const linesPaise = d.lines.reduce((a, l) => a + l.amountPaise, 0);
@@ -176,10 +194,11 @@ export function tdsReading(d: ZohoFyDocDetail, adjustmentPaise: number, tdsPaise
   const rates = [...new Set(d.lines.filter((l) => l.amountPaise !== 0).map((l) => l.taxPercent ?? 0))];
   if (rates.length === 1 && rates[0] > 0) {
     const r = rates[0] / 100;
-    return pick(Math.abs(d.taxTotalPaise - net * r) <= tol, Math.abs(d.taxTotalPaise - full * r) <= tol);
+    const tolR = tolFor(tdsPaise * r);
+    return pick(Math.abs(d.taxTotalPaise - net * r) <= tolR, Math.abs(d.taxTotalPaise - full * r) <= tolR);
   }
   if (!d.lines.length && d.taxTotalPaise > 0) {
-    const slab = (taxable: number) => taxable > 0 && GST_RATES.some((g) => g > 0 && Math.abs(d.taxTotalPaise - (taxable * g) / 100) <= tol);
+    const slab = (taxable: number) => taxable > 0 && GST_RATES.some((g) => g > 0 && Math.abs(d.taxTotalPaise - (taxable * g) / 100) <= tolFor((tdsPaise * g) / 100));
     return pick(slab(net), slab(full));
   }
   return null;
@@ -252,7 +271,10 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
   /* R-2702: an adjustment above one unit of the invoice's currency is Zoho's own line on the invoice
      (a discount, a settlement) — kept as a visible "adjustment" line with no GST; a smaller one is a
      round-off (R-2650). Taxable and GST stay Zoho's; the total equals Zoho's. */
-  const adjustment = Math.abs(adjustmentPaise) > 100 ? paiseToRupees(adjustmentInr) : 0;
+  /* Review: Zoho's `adjustment` ALONE decides (and is) the line — its `roundoff_value` stays a round-off,
+     never folded into the line nor able to push a small adjustment over the threshold. */
+  const adjOnlyInr = useBcy && bcyAdj !== null ? Math.round(bcyAdj * 100) : inr(paiseOf(raw.adjustment));
+  const adjustment = Math.abs(paiseOf(raw.adjustment)) > 100 ? paiseToRupees(adjOnlyInr) : 0;
   /* R-2650: what is left between the total and taxable + GST (Zoho's round-off/adjustment in ₹,
      plus at most ₹1 from rounding each figure once). The SQL import checks it with roundOffLimit. */
   const roundOff = amount - taxable - tax;
