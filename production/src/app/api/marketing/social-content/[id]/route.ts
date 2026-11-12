@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { logPersonActivity } from "@/lib/marketing/social-activity";
 import { z } from "zod";
 import { getTenantSession } from "@/server/auth/session";
 import { withTenant } from "@/server/db";
@@ -42,10 +43,12 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       try {
         const externalId = await publishSocial(session, item);
         await completePublish(session, id, externalId, null);
+        await logPersonActivity(session, { platform: item.platform, action: "Posted now", detail: item.caption.slice(0, 120), contentId: id });
         return NextResponse.json({ ok: true, externalId });
       } catch (error) {
         const message = error instanceof Error ? error.message.slice(0, 300) : "Meta publishing failed.";
         await completePublish(session, id, null, message);
+        await logPersonActivity(session, { platform: item.platform, action: "Post failed", detail: message, contentId: id, result: "failed" });
         return NextResponse.json({ error: message }, { status: 502 });
       }
     }
@@ -63,6 +66,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     const next = input.action === "submit" ? "review" : input.action === "approve" ? "approved" : input.action === "return" || input.action === "stop" ? "draft" : undefined;
     const item = await updateSocial(session, id, { caption: input.caption, mediaUrl: input.mediaUrl, topic: input.topic, status: next, scheduledAt }, current.status as "draft" | "review" | "failed" | "approved", input.action === "approve" || input.action === "return" || input.action === "stop");
     if (!item) return NextResponse.json({ error: "Draft changed. Refresh the page." }, { status: 409 });
+    const verb: Record<string, string> = { save: "Edited a post", submit: "Sent a post for approval", approve: "Approved a post", return: "Sent a post back", stop: "Stopped a scheduled post" };
+    await logPersonActivity(session, { platform: current.platform, action: verb[input.action] ?? input.action, detail: (caption ?? "").slice(0, 120), contentId: id });
     return NextResponse.json({ item });
   } catch (error) {
     console.error("[social-content] action failed", error instanceof Error ? error.message : "unknown");

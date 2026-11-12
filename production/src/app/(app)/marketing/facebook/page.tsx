@@ -122,7 +122,7 @@ export default function FacebookPage() {
               Instagram is not linked. In Facebook, open this Page&apos;s Settings → Linked accounts → Instagram and connect a professional account, then press Reconnect here.
             </div>}
             <div className="flex flex-col gap-3 border-t border-hairline pt-5 sm:flex-row sm:items-center sm:justify-between">
-              <div className="flex flex-wrap gap-2"><Button asChild variant="primary"><a href="/marketing/social-content">Open content studio</a></Button><Button asChild variant="outline"><a href={`https://business.facebook.com/latest/home?asset_id=${status.pageId}`} target="_blank" rel="noopener noreferrer">Meta Business Suite <ArrowUpRight size={15} aria-hidden="true" /></a></Button></div>
+              <div className="flex flex-wrap gap-2"><Button asChild variant="primary"><a href="/marketing/social-content">Open Social growth</a></Button><Button asChild variant="outline"><a href={`https://business.facebook.com/latest/home?asset_id=${status.pageId}`} target="_blank" rel="noopener noreferrer">Meta Business Suite <ArrowUpRight size={15} aria-hidden="true" /></a></Button></div>
               {status.canManage && <div className="flex flex-wrap items-center gap-2"><Button asChild variant="outline"><a href="/api/integrations/facebook-page/connect">Reconnect / change Page</a></Button><Button variant="ghost" onClick={() => setConfirmDisconnect(true)}>Disconnect</Button></div>}
             </div>
             {confirmDisconnect && (

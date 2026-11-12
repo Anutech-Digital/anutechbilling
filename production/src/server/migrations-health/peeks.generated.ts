@@ -483,4 +483,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "r2632crossfyrefused", peek: "exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_invoice_date(text,date,text)') and prosrc like '%An issued invoice keeps its number%')" },
   { key: "r2670metaleadforms", peek: "to_regclass('public.meta_lead_forms') is not null" },
   { key: "r2672socialautopilot", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content_settings' and column_name = 'autopilot') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content_settings' and column_name = 'picture_urls')" },
+  { key: "r2687socialactivity", peek: "to_regclass('public.social_activity') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content_settings' and column_name = 'ai_paused')" },
 ];

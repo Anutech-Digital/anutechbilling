@@ -517,7 +517,7 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/marketing/linkedin-ads": "LinkedIn Ads setup; opened from its Marketing Hub card and Ad accounts",
   "/marketing/listings": "Listings & marketplaces group page; opened from the Marketing Hub",
   "/marketing/paid-ads": "Paid ads group page; opened from the Marketing Hub",
-  "/marketing/social-content": "Social content studio (drafts, review, publish); opened from Social (organic) and Facebook Page",
+  "/marketing/social-content": "Social growth (AI agent, activity, posts); opened from Social (organic) and Facebook Page",
   "/marketing/social-organic": "Social (organic) group page; opened from the Marketing Hub",
   "/marketing/website-tracking": "Website & tracking group page; opened from the Marketing Hub",
   "/marketing/whatsapp-calling": "WhatsApp & calling group page; opened from the Marketing Hub",
@@ -976,6 +976,8 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   "/account":                { tail: ["Account"], under: "Personal" },
   /* R-2671: Sales › Marketing Hub › Paid ads › Manage ad accounts (it read "… › Ad accounts (live)"). */
   "/marketing/ads/accounts": { tail: ["Manage ad accounts"] },
+  /* R-2687: Sales › Marketing Hub › Social growth (it read only "… › Marketing Hub"). */
+  "/marketing/social-content": { tail: ["Social growth"] },
 };
 
 /** The crumb of every APP_NAV entry, from where it sits. */

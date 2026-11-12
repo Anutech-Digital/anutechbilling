@@ -3,7 +3,7 @@
 import * as React from "react";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
-import { ArrowUpRight, Bot, CalendarClock, Check, Facebook, Instagram, PenLine, Send, Sparkles } from "lucide-react";
+import { ArrowUpRight, Bot, Check, Facebook, Instagram, Linkedin, Send, Sparkles, User } from "lucide-react";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -14,12 +14,16 @@ type Platform = "facebook" | "instagram";
 type Item = { id: string; platform: Platform; format: "post" | "story"; caption: string; media_url: string | null;
   topic: string; origin: string; status: string; created_at: string; published_at: string | null; error: string | null;
   scheduled_at: string | null };
+type Activity = { id: string; at: string; actor: "ai" | "person" | "system"; user_name: string | null; platform: string | null;
+  action: string; detail: string; content_id: string | null; result: "ok" | "failed" | "waiting" };
 type State = { items: Item[]; canReview: boolean; canManage: boolean; aiReady: boolean;
-  facebook: { name: string } | null; instagram: { name: string; type: string | null } | null;
-  settings: { auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: string | null } };
+  facebook: { name: string } | null; instagram: { name: string; type: string | null } | null; linkedin: { name: string } | null;
+  followers: { facebook: number | null; instagram: number | null }; activity: Activity[];
+  settings: { auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: string | null; ai_paused: boolean } };
 
 /* R-2513: the queue is split the way the work is done — what waits for the approver comes first. */
 const TABS = [
+  { key: "activity", label: "Activity", match: () => false },
   { key: "review", label: "Waiting for approval", match: (i: Item) => i.status === "review" },
   { key: "scheduled", label: "Scheduled", match: (i: Item) => i.status === "approved" || i.status === "publishing" },
   { key: "draft", label: "Drafts", match: (i: Item) => i.status === "draft" },
@@ -36,7 +40,7 @@ export default function SocialContentPage() {
   const [state, setState] = React.useState<State | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
-  const [tab, setTab] = React.useState<TabKey>("review");
+  const [tab, setTab] = React.useState<TabKey>("activity");
   const [platforms, setPlatforms] = React.useState<Platform[]>(["facebook"]);
   const [story, setStory] = React.useState(false);
   const [topic, setTopic] = React.useState("");
@@ -57,6 +61,11 @@ export default function SocialContentPage() {
   const [pictures, setPictures] = React.useState("");
   const [aiProblem, setAiProblem] = React.useState<string | null>(null);
   const [planNote, setPlanNote] = React.useState<{ text: string; warn: boolean } | null>(null);
+  const [showPostSettings, setShowPostSettings] = React.useState(false);
+  /* R-2687: one control per AI action — Off / Ask me first / Autopilot (stored as auto_drafts + autopilot). */
+  const postsMode: "off" | "ask" | "auto" = !autoDrafts ? "off" : autopilot ? "auto" : "ask";
+  function setPostsMode(m: "off" | "ask" | "auto") { setAutoDrafts(m !== "off"); setAutopilot(m === "auto"); if (m !== "off" && !brief.trim()) setShowPostSettings(true); }
+  const settingsDirty = Boolean(state) && (autoDrafts !== state!.settings.auto_drafts || autopilot !== Boolean(state!.settings.autopilot) || postsPerWeek !== (state!.settings.posts_per_week || 3) || brief !== state!.settings.brief || pictures !== (state!.settings.picture_urls ?? []).join("\n"));
   const times = React.useMemo(() => quickTimes(), []);
 
   const load = React.useCallback(async () => {
@@ -70,8 +79,9 @@ export default function SocialContentPage() {
   React.useEffect(() => {
     void load().then((data) => {
       // Open on the tab that has work in it, so nobody lands on an empty list.
-      const first = TABS.find((t) => data.items.some(t.match));
-      if (first) setTab(first.key);
+      // R-2687: open on waiting work first; otherwise on the activity list.
+      const first = TABS.find((t) => t.key !== "activity" && t.key !== "published" && data.items.some(t.match));
+      setTab(first ? first.key : "activity");
     }).catch(e => setError(e.message));
   }, [load]);
 
@@ -150,6 +160,19 @@ export default function SocialContentPage() {
     finally { setBusy(false); }
   }
 
+  /** R-2687: "Stop all AI" / "Resume AI". */
+  async function setAiPaused(paused: boolean) {
+    setBusy(true);
+    try {
+      const response = await fetch("/api/marketing/social-content/settings", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ aiPaused: paused }) });
+      const data = await response.json() as { error?: string; description?: string };
+      if (!response.ok) throw Object.assign(new Error(data.error ?? "Could not change the AI switch."), { description: data.description });
+      toast.success(paused ? "All AI stopped." : "AI resumed.", { description: paused ? "Nothing the AI planned will be posted until you resume." : "Scheduled AI posts will go out at their time." });
+      await load(); setTab("activity");
+    } catch (e) { toastError(e, { fallback: "Could not change the AI switch.", description: "Nothing changed. Try again." }); }
+    finally { setBusy(false); }
+  }
+
   /** R-2672: "Plan this week now" — the AI plans the week straight away (same as the Monday run). */
   async function planNow() {
     setBusy(true); setPlanNote(null);
@@ -169,26 +192,71 @@ export default function SocialContentPage() {
   const items = state?.items.filter(TABS.find((t) => t.key === tab)!.match) ?? [];
 
   return <div className="mx-auto max-w-[1240px] space-y-6 p-4 md:p-6 lg:p-8">
-    <MarketingPageHeader title="Social content" description="Write a Facebook or Instagram post, get it approved, and it posts itself at the time you choose." />
+    <MarketingPageHeader title="Social growth" description="Grow your Facebook, Instagram and LinkedIn audience. Let the AI do the work, watch what it does, stop it any time — or do it yourself." />
     {error && <Card><div role="alert" className="flex items-center justify-between gap-3"><p className="text-sm text-rose-ink">{error}</p><Button onClick={() => void load()}>Try again</Button></div></Card>}
     {!state && !error && <Card><p className="p-6 text-sm text-ink-3">Loading…</p></Card>}
     {state && <>
-      <ol className="grid gap-3 sm:grid-cols-3" aria-label="How it works">
+      <section aria-label="Your accounts" className="grid gap-3 sm:grid-cols-3">
         {[
-          { icon: <PenLine size={18} />, title: "1. Write", text: "Type the post or let AI write it. Pick when it should go out." },
-          { icon: <Check size={18} />, title: "2. Approve", text: "The owner or a manager reads it and presses Approve." },
-          { icon: <CalendarClock size={18} />, title: "3. It posts itself", text: state.settings.autopilot ? "At the chosen time it appears on your Page. Autopilot is on, so AI posts go out without approval." : "At the chosen time it appears on your Page. Nothing posts without approval." },
-        ].map((s) => <li key={s.title} className="flex gap-3 rounded-xl border border-hairline bg-paper p-4"><span className="mt-0.5 text-amber-ink">{s.icon}</span><div><p className="text-sm font-semibold">{s.title}</p><p className="mt-0.5 text-xs leading-5 text-ink-3">{s.text}</p></div></li>)}
-      </ol>
+          { key: "facebook", label: "Facebook", icon: <Facebook size={18} className="text-[#1877f2]" aria-hidden="true" />, name: state.facebook?.name ?? null, count: state.followers.facebook, href: "/marketing/facebook", connect: "Connect Facebook Page" },
+          { key: "instagram", label: "Instagram", icon: <Instagram size={18} className="text-[#c13584]" aria-hidden="true" />, name: state.instagram ? `@${state.instagram.name}` : null, count: state.followers.instagram, href: "/marketing/facebook", connect: "Link Instagram to your Page" },
+          { key: "linkedin", label: "LinkedIn", icon: <Linkedin size={18} className="text-[#0a66c2]" aria-hidden="true" />, name: state.linkedin?.name ?? null, count: null, href: "/marketing/linkedin", connect: "Connect LinkedIn Page" },
+        ].map((a) => <div key={a.key} className="rounded-xl border border-hairline bg-paper p-4">
+          <div className="flex items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink">{a.icon}{a.label}</span>{a.name ? <Badge kind="success" dot>Connected</Badge> : <Badge kind="muted">Not connected</Badge>}</div>
+          {a.name ? <>
+            <p className="mt-2 truncate text-xs text-ink-3" title={a.name}>{a.name}</p>
+            <p className="mt-1 font-serif text-2xl tabular-nums text-ink">{a.count !== null ? a.count.toLocaleString("en-IN") : "—"}<span className="ml-1.5 font-sans text-xs text-ink-3">{a.count !== null ? "followers" : a.key === "linkedin" ? "followers shown soon" : "followers not shared by Meta"}</span></p>
+          </> : <a href={a.href} className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-ink underline">{a.connect} <ArrowUpRight size={13} aria-hidden="true" /></a>}
+        </div>)}
+      </section>
 
-      {(!state.facebook || !state.instagram) && <Card><div className="flex flex-wrap items-center justify-between gap-3 p-1">
-        <p className="text-sm text-ink-2">{!state.facebook ? "Connect your Facebook Page first — posts go out from it." : "Instagram is not linked yet. Link a professional Instagram account to your Facebook Page, then press Reconnect."}</p>
-        <Button asChild variant="outline"><a href="/marketing/facebook">{!state.facebook ? "Connect Facebook Page" : "Open connection"} <ArrowUpRight size={14} /></a></Button>
-      </div></Card>}
+      <Card><div className="space-y-4 p-1 md:p-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3"><Bot size={22} className="mt-0.5 shrink-0 text-amber-ink" aria-hidden="true" /><div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold">AI agent</h2>{state.settings.ai_paused ? <Badge kind="danger" dot>Stopped</Badge> : <Badge kind="success" dot>Running</Badge>}</div>
+            <p className="mt-1 text-sm text-ink-3">Choose what the AI does for each action. Everything it does shows in Activity, where you can stop it.</p>
+          </div></div>
+          {state.canReview && (state.settings.ai_paused
+            ? <Button variant="primary" disabled={busy || !state.canManage} title={state.canManage ? undefined : "Only the owner can resume the AI"} onClick={() => void setAiPaused(false)}>Resume AI</Button>
+            : <Button variant="danger" disabled={busy} onClick={() => void setAiPaused(true)}>Stop all AI</Button>)}
+        </div>
+        {state.settings.ai_paused && <p className="rounded-lg bg-rose-soft px-3 py-2 text-sm text-rose-ink">The AI is stopped. Nothing it planned will be posted, and it plans nothing new, until the owner presses Resume AI. Posts people wrote still go out.</p>}
+        {!state.aiReady && <p className="rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber-ink">AI is not set up yet. <a className="font-medium underline" href="/settings?tab=integrations">Add a Gemini key in Settings → Integrations (AI assistant → Setup)</a>, then come back.</p>}
+
+        <div className="divide-y divide-hairline rounded-xl border border-hairline">
+          <div className="grid gap-3 p-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-center">
+            <div><p className="text-sm font-semibold text-ink">Posts</p><p className="text-xs text-ink-3">{postsPerWeek} a week, Facebook{state.instagram ? " + Instagram" : ""}</p></div>
+            <div role="radiogroup" aria-label="AI posts" className="flex flex-wrap gap-2">
+              {([["off", "Off"], ["ask", "Ask me first"], ["auto", "Autopilot"]] as const).map(([m, label]) => <button key={m} type="button" role="radio" aria-checked={postsMode === m} disabled={!state.canManage} onClick={() => setPostsMode(m)} className={chip(postsMode === m)}>{label}</button>)}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {state.canReview && <Button size="sm" variant="outline" disabled={busy || state.settings.ai_paused} onClick={() => void planNow()}><Sparkles size={14} /> Plan this week now</Button>}
+              {state.canManage && <Button size="sm" variant="ghost" aria-expanded={showPostSettings} onClick={() => setShowPostSettings((v) => !v)}>{showPostSettings ? "Hide settings" : "Settings"}</Button>}
+            </div>
+          </div>
+          {state.canManage && showPostSettings && <div className="space-y-4 bg-paper-2/40 p-3">
+            <label className="block text-xs font-medium text-ink-2">What should the AI write about?<textarea className={`${inputClass} mt-1 min-h-20`} maxLength={1000} value={brief} onChange={e => setBrief(e.target.value)} placeholder="Your products, who you sell to, tone, and claims to avoid" /></label>
+            <div className="grid gap-4 sm:grid-cols-[200px_minmax(0,1fr)]">
+              <label className="block text-xs font-medium text-ink-2">Posts per week<select className={`${inputClass} mt-1`} value={postsPerWeek} onChange={e => setPostsPerWeek(Number(e.target.value))}>{[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
+              <label className="block text-xs font-medium text-ink-2">Picture links the AI may use (one per line, needed for Instagram)<textarea className={`${inputClass} mt-1 min-h-20 font-mono text-xs`} value={pictures} onChange={e => setPictures(e.target.value)} placeholder="https://… (a public image link)" /></label>
+            </div>
+          </div>}
+          {[["Comment replies", "AI answers comments on your posts"], ["Follower report", "Weekly growth and what worked"], ["Daily to-do", "5 quick things only a person may do"]].map(([title, text]) => <div key={title} className="grid gap-3 p-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-center">
+            <div><p className="text-sm font-semibold text-ink">{title}</p><p className="text-xs text-ink-3">{text}</p></div>
+            <p className="text-xs text-ink-3">Coming next</p><span />
+          </div>)}
+        </div>
+        {state.canManage && <div className="flex flex-wrap items-center justify-end gap-2">
+          {settingsDirty && <span className="text-xs text-amber-ink">Not saved yet</span>}
+          <Button disabled={busy || !settingsDirty} onClick={() => void saveSettings()}>Save AI settings</Button>
+        </div>}
+        {!state.canManage && <p className="text-xs text-ink-3">Only the owner can change these settings.</p>}
+        {planNote && <p role="status" className={planNote.warn ? "rounded-lg bg-amber-soft px-3 py-2 text-sm text-amber-ink" : "rounded-lg bg-paper-2 px-3 py-2 text-sm text-ink-2"}>{planNote.text}</p>}
+      </div></Card>
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         <Card><div className="space-y-5 p-1 md:p-2">
-          <h2 className="text-lg font-semibold">New post</h2>
+          <div><h2 className="text-lg font-semibold">Post it yourself</h2><p className="mt-0.5 text-xs text-ink-3">Write a post by hand (or with one AI press). It follows the normal approval.</p></div>
 
           <fieldset><legend className="text-xs font-medium text-ink-2">Where</legend>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -231,8 +299,28 @@ export default function SocialContentPage() {
           <div role="tablist" aria-label="Posts" className="flex flex-wrap gap-2">
             {TABS.map((t) => { const n = count(t.key); return <button key={t.key} role="tab" type="button" aria-selected={tab === t.key} className={chip(tab === t.key)} onClick={() => setTab(t.key)}>{t.label}{n > 0 && <span className={`rounded-full px-1.5 text-xs ${tab === t.key ? "bg-paper text-ink" : t.key === "review" || t.key === "failed" ? "bg-amber-soft text-amber-ink" : "bg-paper-2 text-ink-2"}`}>{n}</span>}</button>; })}
           </div>
-          {items.length === 0 && <div className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-ink-3">{tab === "review" ? "Nothing is waiting for approval." : tab === "scheduled" ? "No approved posts waiting to go out." : "Nothing here yet."}</div>}
-          <div className="max-h-[850px] space-y-3 overflow-y-auto pr-1">{items.map(item => <div key={item.id} className="rounded-xl border border-hairline bg-paper p-4">
+          {tab === "activity" && (state.activity.length === 0
+            ? <div className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-ink-3">Nothing has happened yet. Plan this week with the AI, or write a post yourself.</div>
+            : <ol aria-label="Activity" className="max-h-[850px] space-y-2 overflow-y-auto pr-1">{state.activity.map((a) => {
+              const post = a.content_id ? state.items.find((i) => i.id === a.content_id) : undefined;
+              return <li key={a.id} className="flex gap-3 rounded-lg border border-hairline bg-paper p-3">
+                <span className={`mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full ${a.actor === "ai" ? "bg-amber-soft text-amber-ink" : "bg-paper-2 text-ink-2"}`} aria-hidden="true">{a.actor === "ai" ? <Bot size={15} /> : <User size={15} />}</span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-ink"><span className="font-semibold">{a.actor === "ai" ? "AI" : a.actor === "system" ? "System" : a.user_name ?? "Someone"}</span> {a.action.charAt(0).toLowerCase() + a.action.slice(1)}{a.platform ? ` on ${a.platform === "facebook" ? "Facebook" : a.platform === "instagram" ? "Instagram" : "LinkedIn"}` : ""}</p>
+                  {a.detail && <p className="mt-0.5 truncate text-xs text-ink-3" title={a.detail}>{a.detail}</p>}
+                  <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-ink-3"><span>{formatIst(a.at)}</span>
+                    {a.result === "failed" && <Badge kind="danger" size="sm">Failed</Badge>}
+                    {post?.status === "review" && <Badge kind="warning" size="sm">Waiting for approval</Badge>}
+                    {post?.status === "approved" && post.scheduled_at && <Badge kind="info" size="sm">Posts {formatIst(post.scheduled_at)}</Badge>}
+                    {post?.status === "published" && <Badge kind="success" size="sm">Posted</Badge>}
+                    {post && <button type="button" className="underline hover:text-ink" onClick={() => setTab((TABS.find((t) => t.key !== "activity" && t.match(post))?.key ?? "draft") as TabKey)}>Open</button>}
+                    {post?.status === "approved" && post.scheduled_at && state.canReview && <button type="button" className="font-medium text-rose-ink underline" disabled={busy} onClick={() => void act(post.id, "stop")}>Stop</button>}
+                  </div>
+                </div>
+              </li>;
+            })}</ol>)}
+          {tab !== "activity" && items.length === 0 && <div className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-ink-3">{tab === "review" ? "Nothing is waiting for approval." : tab === "scheduled" ? "No approved posts waiting to go out." : "Nothing here yet."}</div>}
+          {tab !== "activity" && <div className="max-h-[850px] space-y-3 overflow-y-auto pr-1">{items.map(item => <div key={item.id} className="rounded-xl border border-hairline bg-paper p-4">
             <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2">{item.platform === "facebook" ? <Facebook size={17} className="text-[#1877f2]" /> : <Instagram size={17} className="text-[#c13584]" />}<span className="text-sm font-medium">{item.platform === "facebook" ? "Facebook" : "Instagram"} {item.format === "story" ? "Story" : "post"}</span>{item.origin !== "manual" && <Badge kind="muted">AI</Badge>}</div>
               <span className="text-xs text-ink-2">{item.status === "published" && item.published_at ? `Posted ${formatIst(item.published_at)}`
                 : item.scheduled_at ? (item.status === "approved" && new Date(item.scheduled_at).getTime() <= Date.now() ? "Posting in a few minutes" : `${item.status === "approved" ? "Posts" : "To post"} ${formatIst(item.scheduled_at)}`)
@@ -248,38 +336,11 @@ export default function SocialContentPage() {
               {item.status === "approved" && state.canReview && item.scheduled_at && confirmPublish !== item.id && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void act(item.id, "stop")}>Stop</Button>}
               {item.status === "approved" && state.canReview && (confirmPublish === item.id ? <><Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "publish")}><Send size={14} /> Yes, post now</Button><Button size="sm" variant="ghost" onClick={() => setConfirmPublish(null)}>Cancel</Button></> : <Button size="sm" variant={item.scheduled_at ? "outline" : "primary"} disabled={busy} onClick={() => setConfirmPublish(item.id)}>{item.scheduled_at ? "Post now instead" : "Publish now"}</Button>)}
             </div>
-          </div>)}</div>
+          </div>)}</div>}
         </div></Card>
       </div>
 
-      {(state.canManage || state.canReview) && <Card><div className="space-y-4 p-1 md:p-2">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="flex min-w-0 items-start gap-3"><Bot size={20} className="mt-0.5 shrink-0 text-amber-ink" aria-hidden="true" /><div className="min-w-0">
-            <h2 className="text-lg font-semibold">AI posts</h2>
-            <p className="mt-1 text-sm text-ink-3">Posting regularly is what grows followers. The AI plans posts for the next 7 days, spread over the week at 9 AM or 6 PM.</p>
-          </div></div>
-          {state.canReview && <Button variant="primary" disabled={busy} onClick={() => void planNow()}><Sparkles size={15} /> Plan this week now</Button>}
-        </div>
-        {!state.aiReady && <p className="rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber-ink">AI is not set up yet. <a className="font-medium underline" href="/settings?tab=integrations">Add a Gemini key in Settings → Integrations</a>, then come back.</p>}
-        {state.canManage ? <>
-          <label className="block text-xs font-medium text-ink-2">What should the AI write about?<textarea className={`${inputClass} mt-1 min-h-20`} maxLength={1000} value={brief} onChange={e => setBrief(e.target.value)} placeholder="Your products, who you sell to, tone, and claims to avoid" /></label>
-          <fieldset><legend className="text-xs font-medium text-ink-2">Before an AI post goes out</legend>
-            <div className="mt-2 grid gap-2 sm:grid-cols-2">
-              <button type="button" aria-pressed={!autopilot} onClick={() => setAutopilot(false)} className={`rounded-xl border p-3 text-left ${!autopilot ? "border-ink bg-paper-2" : "border-hairline"}`}><span className="block text-sm font-semibold text-ink">Ask me first</span><span className="mt-0.5 block text-xs text-ink-3">Each AI post waits in Waiting for approval. Nothing posts until someone presses Approve.</span></button>
-              <button type="button" aria-pressed={autopilot} onClick={() => setAutopilot(true)} className={`rounded-xl border p-3 text-left ${autopilot ? "border-ink bg-paper-2" : "border-hairline"}`}><span className="block text-sm font-semibold text-ink">Autopilot (post without asking)</span><span className="mt-0.5 block text-xs text-ink-3">AI posts go out by themselves at their time. You can still Stop any of them in Scheduled.</span></button>
-            </div>
-          </fieldset>
-          <div className="grid gap-4 sm:grid-cols-[200px_minmax(0,1fr)]">
-            <label className="block text-xs font-medium text-ink-2">Posts per week<select className={`${inputClass} mt-1`} value={postsPerWeek} onChange={e => setPostsPerWeek(Number(e.target.value))}>{[1, 2, 3, 4, 5, 6, 7].map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
-            <label className="block text-xs font-medium text-ink-2">Picture links the AI may use (one per line, needed for Instagram)<textarea className={`${inputClass} mt-1 min-h-20 font-mono text-xs`} value={pictures} onChange={e => setPictures(e.target.value)} placeholder="https://… (a public image link)" /></label>
-          </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-hairline pt-4">
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={autoDrafts} onChange={e => setAutoDrafts(e.target.checked)} /> Plan posts every Monday by itself</label>
-            <Button disabled={busy} onClick={() => void saveSettings()}>Save</Button>
-          </div>
-        </> : <p className="text-sm text-ink-2">{state.settings.autopilot ? "Autopilot is on: AI posts go out without approval." : "AI posts wait for approval."} Only the owner can change these settings.</p>}
-        {planNote && <p role="status" className={planNote.warn ? "rounded-lg bg-amber-soft px-3 py-2 text-sm text-amber-ink" : "rounded-lg bg-paper-2 px-3 py-2 text-sm text-ink-2"}>{planNote.text}</p>}
-      </div></Card>}
+
     </>}
   </div>;
 }

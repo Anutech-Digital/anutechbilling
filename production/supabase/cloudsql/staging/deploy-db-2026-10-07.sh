@@ -511,6 +511,7 @@ MIGS=(
   "r2632crossfyrefused|20261110010000_r2632_cross_fy_refused.sql|resellersos_migration|exists(select 1 from pg_proc where oid = to_regprocedure('public.correct_invoice_date(text,date,text)') and prosrc like '%An issued invoice keeps its number%')"
   "r2670metaleadforms|20261110120000_r2670_meta_lead_forms.sql|resellersos_migration|to_regclass('public.meta_lead_forms') is not null"
   "r2672socialautopilot|20261111090000_r2672_social_autopilot.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content_settings' and column_name = 'autopilot') and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content_settings' and column_name = 'picture_urls')"
+  "r2687socialactivity|20261112070000_r2687_social_activity.sql|resellersos_migration|to_regclass('public.social_activity') is not null and exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content_settings' and column_name = 'ai_paused')"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER

@@ -5,7 +5,9 @@ import { withTenant } from "@/server/db";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { geminiJson, resolveGeminiConfig } from "@/lib/ai/gemini";
 import { readFacebookPage } from "@/lib/integrations/facebook-page";
-import { canReviewSocial, canWriteSocial, createSocial, instagramForPage, listSocial, socialRole, validMediaUrl } from "@/lib/marketing/social-content";
+import { canReviewSocial, canWriteSocial, createSocial, instagramForPage, listSocial, metaFollowers, socialRole, validMediaUrl } from "@/lib/marketing/social-content";
+import { listActivity, logPersonActivity } from "@/lib/marketing/social-activity";
+import { readLinkedInConnection } from "@/lib/integrations/linkedin/store";
 import { parseIstLocal, scheduleProblem } from "@/lib/marketing/social-schedule";
 
 export const dynamic = "force-dynamic";
@@ -31,13 +33,21 @@ export async function GET() {
   try {
     const [items, settings, connection] = await Promise.all([
       listSocial(session),
-      withTenant(session, tx => tx.$queryRaw<{ auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: Date | null }[]>`select auto_drafts, brief, autopilot, posts_per_week, picture_urls, last_generated_on from public.social_content_settings where tenant_id = ${session.tenantId}::uuid`),
+      withTenant(session, tx => tx.$queryRaw<{ auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: Date | null; ai_paused: boolean }[]>`select auto_drafts, brief, autopilot, posts_per_week, picture_urls, last_generated_on, ai_paused from public.social_content_settings where tenant_id = ${session.tenantId}::uuid`),
       readFacebookPage(createAdminClientFor(session.userId), session.tenantId),
     ]);
     const instagram = connection.pageId && connection.pageToken ? await instagramForPage(connection.pageId, connection.pageToken) : null;
+    // R-2687: the account cards (followers today) and the activity list.
+    const [followers, activity, linkedin] = await Promise.all([
+      connection.pageId && connection.pageToken ? metaFollowers(connection.pageId, connection.pageToken, instagram?.id ?? null) : Promise.resolve({ facebook: null, instagram: null }),
+      listActivity(session, 60).catch(() => []),
+      readLinkedInConnection(createAdminClientFor(session.userId), session.tenantId).catch(() => null),
+    ]);
     // R-2672: tell the screen up front whether AI can write, so Write with AI never fails silently.
     const aiReady = Boolean((await resolveGeminiConfig(createClient(), session.tenantId)).apiKey);
-    return NextResponse.json({ items, settings: settings[0] ?? { auto_drafts: false, brief: "", autopilot: false, posts_per_week: 3, picture_urls: [], last_generated_on: null },
+    return NextResponse.json({ items, settings: settings[0] ?? { auto_drafts: false, brief: "", autopilot: false, posts_per_week: 3, picture_urls: [], last_generated_on: null, ai_paused: false },
+      followers, activity,
+      linkedin: linkedin?.organizationUrn ? { name: linkedin.organizationName ?? "LinkedIn Page" } : null,
       canReview: canReviewSocial(role), canManage: role === "owner", aiReady,
       facebook: connection.pageId ? { name: connection.pageName, connected: true } : null,
       instagram: instagram ? { name: instagram.username ?? "Instagram", type: null } : null });
@@ -82,6 +92,7 @@ export async function POST(req: Request) {
   try {
     const id = await createSocial(session, { platform: input.platform, format: input.format, caption,
       mediaUrl: input.mediaUrl, topic: input.topic, origin, scheduledAt, status: input.submit ? "review" : "draft" });
+    await logPersonActivity(session, { platform: input.platform, action: input.submit ? "Wrote a post and sent it for approval" : "Saved a draft", detail: caption.slice(0, 120), contentId: id, result: input.submit ? "waiting" : "ok" });
     return NextResponse.json({ id, caption }, { status: 201 });
   } catch (error) {
     console.error("[social-content] create failed", error instanceof Error ? error.message : "unknown");

@@ -12,6 +12,7 @@ import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { canReviewSocial, socialRole } from "@/lib/marketing/social-content";
 import { MAX_PICTURES, parsePictureLinks } from "@/lib/marketing/social-autopilot";
 import { planWeek } from "@/lib/marketing/social-autopilot.server";
+import { logPersonActivity } from "@/lib/marketing/social-activity";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -46,6 +47,7 @@ export async function PUT(req: Request) {
       on conflict (tenant_id) do update set auto_drafts = excluded.auto_drafts, brief = excluded.brief, autopilot = excluded.autopilot,
         posts_per_week = excluded.posts_per_week, picture_urls = excluded.picture_urls,
         updated_by = excluded.updated_by, updated_at = now()`);
+    await logPersonActivity(session, { action: "Changed AI settings", detail: !autoDrafts ? "AI posts: off" : autopilot ? `AI posts: autopilot, ${postsPerWeek} a week` : `AI posts: ask me first, ${postsPerWeek} a week` });
     return NextResponse.json({ ok: true, pictures: links.urls.length });
   } catch {
     return NextResponse.json({ error: "Could not save AI posts settings.", description: "Nothing was saved. Try again." }, { status: 500 });
@@ -63,5 +65,29 @@ export async function POST() {
   } catch (e) {
     console.error("[social-autopilot] plan failed", e instanceof Error ? e.message : "unknown");
     return NextResponse.json({ error: "Could not plan the week.", description: "Nothing was posted. Try again in a minute." }, { status: 502 });
+  }
+}
+
+/**
+ * R-2687: "Stop all AI" / "Resume AI". Stopping is allowed to the owner and managers (safety
+ * first); resuming only to the owner. While stopped nothing the AI planned is published.
+ */
+export async function PATCH(req: Request) {
+  const session = await getTenantSession();
+  if (!session) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
+  const parsed = z.object({ aiPaused: z.boolean() }).safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: "Choose Stop or Resume." }, { status: 400 });
+  const role = await socialRole(session);
+  if (!canReviewSocial(role)) return NextResponse.json({ error: "Only the owner or a manager can stop the AI." }, { status: 403 });
+  if (!parsed.data.aiPaused && role !== "owner") return NextResponse.json({ error: "Only the owner can resume the AI.", description: "Ask the owner to press Resume AI." }, { status: 403 });
+  try {
+    await withTenant(session, tx => tx.$executeRaw`
+      insert into public.social_content_settings (tenant_id, ai_paused, updated_by)
+      values (${session.tenantId}::uuid, ${parsed.data.aiPaused}, ${session.userId}::uuid)
+      on conflict (tenant_id) do update set ai_paused = excluded.ai_paused, updated_by = excluded.updated_by, updated_at = now()`);
+    await logPersonActivity(session, { action: parsed.data.aiPaused ? "Stopped all AI" : "Resumed AI", detail: parsed.data.aiPaused ? "Nothing the AI planned will be posted until resumed." : "" });
+    return NextResponse.json({ ok: true, aiPaused: parsed.data.aiPaused });
+  } catch {
+    return NextResponse.json({ error: "Could not change the AI switch.", description: "Nothing changed. Try again." }, { status: 500 });
   }
 }

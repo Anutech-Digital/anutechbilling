@@ -65,3 +65,21 @@ describe("R-2510 scheduled social publish", () => {
     expect(p.claim).not.toHaveBeenCalled();
   });
 });
+
+describe("R-2687 Stop all AI", () => {
+  it("while the company stopped the AI, its AI-planned posts wait; a person's post still goes; every result is logged", async () => {
+    const log = vi.fn(async () => {});
+    const p = ports([row({ id: "ai", origin: "scheduled" }), row({ id: "mine", origin: "manual" })], { aiPaused: vi.fn(async () => true), log });
+    expect(await runScheduledPublish(p, NOW)).toEqual({ due: 2, published: 1, failed: 0, skipped: 1 });
+    expect(p.publish).toHaveBeenCalledTimes(1);
+    expect(p.claim).not.toHaveBeenCalledWith("ai");
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({ id: "mine" }), "ok", "Posted");
+  });
+
+  it("a failed post is logged as failed with Meta's reason", async () => {
+    const log = vi.fn(async () => {});
+    const p = ports([row()], { publish: vi.fn(async () => { throw new Error("Token expired"); }), log });
+    await runScheduledPublish(p, NOW);
+    expect(log).toHaveBeenCalledWith(expect.objectContaining({ id: "p1" }), "failed", "Could not post: Token expired");
+  });
+});

@@ -14,19 +14,20 @@ import { readFacebookPage } from "@/lib/integrations/facebook-page";
 import { createSocial, instagramForPage } from "@/lib/marketing/social-content";
 import { planSlots, planStatus, pictureFor } from "@/lib/marketing/social-autopilot";
 import type { createAdminClient } from "@/lib/supabase/server";
+import { logPersonActivity } from "@/lib/marketing/social-activity";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
 export interface AutopilotSettings {
   auto_drafts: boolean; brief: string; last_generated_on: Date | string | null;
-  autopilot: boolean; posts_per_week: number; picture_urls: string[];
+  autopilot: boolean; posts_per_week: number; picture_urls: string[]; ai_paused: boolean;
 }
 
 export async function readAutopilotSettings(session: TenantSession): Promise<AutopilotSettings> {
   const rows = await withTenant(session, (tx) => tx.$queryRaw<AutopilotSettings[]>`
-    select auto_drafts, brief, last_generated_on, autopilot, posts_per_week, picture_urls
+    select auto_drafts, brief, last_generated_on, autopilot, posts_per_week, picture_urls, ai_paused
     from public.social_content_settings where tenant_id = ${session.tenantId}::uuid`);
-  return rows[0] ?? { auto_drafts: false, brief: "", last_generated_on: null, autopilot: false, posts_per_week: 3, picture_urls: [] };
+  return rows[0] ?? { auto_drafts: false, brief: "", last_generated_on: null, autopilot: false, posts_per_week: 3, picture_urls: [], ai_paused: false };
 }
 
 export type PlanResult =
@@ -39,6 +40,7 @@ export async function planWeek(admin: Admin, session: TenantSession, opts: { for
   const today = new Date(now.getTime() + 330 * 60_000).toISOString().slice(0, 10);
   const last = s.last_generated_on ? new Date(s.last_generated_on).toISOString().slice(0, 10) : null;
   if (!opts.force && (!s.auto_drafts || last === today)) return { ok: false, reason: "Weekly AI posts are off, or this week is already planned.", status: 409 };
+  if (s.ai_paused) return { ok: false, reason: "The AI is stopped (Stop all AI). Press Resume AI first.", status: 409 };
   if (!s.brief.trim()) return { ok: false, reason: "Tell the AI what to write about first (the box under AI posts), then save.", status: 400 };
   const connection = await readFacebookPage(admin, session.tenantId);
   if (!connection.pageId || !connection.pageToken) return { ok: false, reason: "Connect your Facebook Page first (Marketing Hub → Facebook Page).", status: 409 };
@@ -63,11 +65,13 @@ export async function planWeek(admin: Admin, session: TenantSession, opts: { for
   let created = 0;
   for (const [i, post] of posts.entries()) {
     const picture = pictureFor(s.picture_urls, i);
-    await createSocial(session, { platform: "facebook", format: "post", caption: post.caption, mediaUrl: picture, topic: post.topic, origin: "scheduled", scheduledAt: slots[i], status });
+    const fbId = await createSocial(session, { platform: "facebook", format: "post", caption: post.caption, mediaUrl: picture, topic: post.topic, origin: "scheduled", scheduledAt: slots[i], status });
     created++;
+    await logPersonActivity(session, { actor: "ai", platform: "facebook", action: s.autopilot ? "Planned a post (autopilot)" : "Wrote a post for approval", detail: post.topic, contentId: fbId, result: s.autopilot ? "ok" : "waiting" });
     if (instagram && picture) {
-      await createSocial(session, { platform: "instagram", format: "post", caption: post.caption, mediaUrl: picture, topic: post.topic, origin: "scheduled", scheduledAt: slots[i], status });
+      const igId = await createSocial(session, { platform: "instagram", format: "post", caption: post.caption, mediaUrl: picture, topic: post.topic, origin: "scheduled", scheduledAt: slots[i], status });
       created++;
+      await logPersonActivity(session, { actor: "ai", platform: "instagram", action: s.autopilot ? "Planned a post (autopilot)" : "Wrote a post for approval", detail: post.topic, contentId: igId, result: s.autopilot ? "ok" : "waiting" });
     }
   }
   await withTenant(session, (tx) => tx.$executeRaw`

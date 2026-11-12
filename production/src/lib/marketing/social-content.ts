@@ -107,6 +107,18 @@ export async function instagramForPage(pageId: string, pageToken: string): Promi
   return json.instagram_business_account ?? null;
 }
 
+/** R-2687: today's follower count of the Page and its Instagram account (null when Meta does not say). */
+export async function metaFollowers(pageId: string, pageToken: string, instagramId: string | null): Promise<{ facebook: number | null; instagram: number | null }> {
+  const get = async (id: string, fields: string) => {
+    try {
+      const r = await fetch(`${GRAPH}/${encodeURIComponent(id)}?${new URLSearchParams({ fields, access_token: pageToken })}`, { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+      return r.ok ? await r.json() as { followers_count?: number; fan_count?: number } : null;
+    } catch { return null; }
+  };
+  const [fb, ig] = await Promise.all([get(pageId, "followers_count,fan_count"), instagramId ? get(instagramId, "followers_count") : Promise.resolve(null)]);
+  return { facebook: fb?.followers_count ?? fb?.fan_count ?? null, instagram: ig?.followers_count ?? null };
+}
+
 export function validMediaUrl(value: string | null): boolean {
   if (!value) return true;
   try {
