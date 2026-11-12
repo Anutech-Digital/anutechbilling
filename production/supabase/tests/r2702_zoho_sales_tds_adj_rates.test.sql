@@ -13,7 +13,7 @@
 --   R2. Part payments: ₹50,000 stays money only (TDS not guessed); the ₹58,000 that closes it carries the TDS,
 --       gross = the invoice's whole taxable ₹1,00,000 @ 10% (review: not the payment's share).
 --   R3. A Zoho payment that itself withholds the TDS (settle ₹1,18,000, TDS ₹10,000): booked once, as before.
--- Self-asserting; the whole file rolls back. Red without 20261112130505_r2702_zoho_sales_tds_adj_rates.sql.
+-- Self-asserting; the whole file rolls back. Red without 20261112232406_r2702_zoho_sales_tds_adj_rates.sql.
 --   docker exec -i supabase_db_resellerosv3 psql -U postgres -v ON_ERROR_STOP=1 < this file
 
 begin;
