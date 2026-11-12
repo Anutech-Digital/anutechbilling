@@ -51,7 +51,7 @@ describe("R-2547 FY receipts dialog", () => {
     /* part 3 was never sent once part 2 failed */
     expect(bodies.some((b) => b.action === "import" && b.dryRun === false && b.part === 2)).toBe(false);
     expect(alert.textContent).toMatch(/Part 1 is done \(50 new receipts\)/);
-    expect(screen.getByText(/Recorded: 50 receipts/)).toBeTruthy();
+    expect(screen.getByText(/Recorded: 50 new receipts \(50 matched to bank lines · 0 wait/)).toBeTruthy();
 
     /* Carry on: starts at the failed part (part 1 is not sent again), no new check needed */
     const sent = bodies.length;
@@ -62,7 +62,7 @@ describe("R-2547 FY receipts dialog", () => {
     const again = bodies.slice(sent).filter((b) => b.action === "import");
     expect(again.map((b) => [b.part, b.dryRun])).toEqual([[1, false], [2, false]]);
     expect(screen.queryByTestId("fy-receipts-part-error")).toBeNull();
-    expect(screen.getByText(/Recorded: 100 receipts/)).toBeTruthy();
+    expect(screen.getByText(/Recorded: 100 new receipts \(100 matched to bank lines · 0 wait/)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Carry on/ })).toBeNull();
   });
 
