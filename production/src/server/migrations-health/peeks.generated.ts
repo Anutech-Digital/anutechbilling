@@ -489,4 +489,5 @@ export const MIGRATION_PEEKS: ReadonlyArray<{ readonly key: string; readonly pee
   { key: "linkedinadstenantcredentials", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'linkedin_ads_client_secret')" },
   { key: "r2510socialschedule", peek: "exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content' and column_name = 'scheduled_at') and to_regclass('public.social_content_due_idx') is not null" },
   { key: "r2670metaleadforms", peek: "to_regclass('public.meta_lead_forms') is not null" },
+  { key: "r2692socialapprovalguard", peek: "exists(select 1 from pg_trigger where tgname = 'trg_social_content_approval_guard' and tgrelid = to_regclass('public.social_content')) and to_regprocedure('public.ensure_social_automation_on(text)') is not null" },
 ];

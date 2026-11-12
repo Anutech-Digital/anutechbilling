@@ -517,6 +517,7 @@ MIGS=(
   "linkedinadstenantcredentials|20261112051527_linkedin_ads_tenant_credentials.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'tenant_secrets' and column_name = 'linkedin_ads_client_secret')"
   "r2510socialschedule|20261112051528_r2510_social_schedule.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'social_content' and column_name = 'scheduled_at') and to_regclass('public.social_content_due_idx') is not null"
   "r2670metaleadforms|20261112051529_r2670_meta_lead_forms.sql|resellersos_migration|to_regclass('public.meta_lead_forms') is not null"
+  "r2692socialapprovalguard|20261112060206_r2692_social_approval_guard.sql|resellersos_migration|exists(select 1 from pg_trigger where tgname = 'trg_social_content_approval_guard' and tgrelid = to_regclass('public.social_content')) and to_regprocedure('public.ensure_social_automation_on(text)') is not null"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER

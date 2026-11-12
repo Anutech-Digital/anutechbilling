@@ -116,10 +116,14 @@ export default function SocialContentPage() {
     try {
       const response = await fetch(`/api/marketing/social-content/${id}`, { method: "PATCH", headers: { "content-type": "application/json" },
         body: JSON.stringify({ action, ...patch }) });
-      const data = await response.json() as { error?: string };
+      const data = await response.json() as { error?: string; autoPostOn?: boolean | null };
       if (!response.ok) throw new Error(data.error ?? "Could not update draft.");
       const item = state?.items.find(x => x.id === id);
-      toast.success(action === "publish" ? "Posted to Meta."
+      /* R-2692: approved with a post time, but scheduled posting is off for the company. */
+      if (action === "approve" && item?.scheduled_at && data.autoPostOn !== undefined && data.autoPostOn !== true) toast.warning("Approved, but scheduled posting is off.", {
+        description: "This post will not go out on its own. The owner turns on Scheduled social posts in Automation, or press Publish now.",
+        action: { label: "Open Automation", onClick: () => { window.location.href = "/automation"; } } });
+      else toast.success(action === "publish" ? "Posted to Meta."
         : action === "approve" ? (item?.scheduled_at ? `Approved. It posts on ${formatIst(item.scheduled_at)}.` : "Approved. Press Publish now when you are ready.")
         : action === "submit" ? "Sent for approval." : action === "return" ? "Sent back to drafts." : "Saved.");
       setEditing(null); setConfirmPublish(null); await load();

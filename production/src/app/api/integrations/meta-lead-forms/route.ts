@@ -7,6 +7,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { facebookPageCaller } from "@/lib/integrations/facebook-page";
 import { listLeadForms, metaAdsUserToken, readChosenForms, untyped } from "@/lib/meta-leads/lead-forms.server";
+import { ensureSocialJobOn } from "@/lib/automation/social-jobs.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -48,7 +49,10 @@ export async function PUT(request: NextRequest) {
       const { error } = await db.from("meta_lead_forms").upsert(rows, { onConflict: "tenant_id,form_id", ignoreDuplicates: false });
       if (error) throw new Error(error.message);
     }
-    return NextResponse.json({ ok: true, chosen: await readChosenForms(caller.admin, caller.tenantId) });
+    /* R-2692: choosing forms asks for their leads every 30 minutes — the OWNER's choice turns meta-leads-pull on
+       (not over an owner's own OFF on /automation). */
+    const autoPullOn = ids.length ? await ensureSocialJobOn("meta-leads-pull") : undefined;
+    return NextResponse.json({ ok: true, chosen: await readChosenForms(caller.admin, caller.tenantId), ...(autoPullOn === undefined ? {} : { autoPullOn }) });
   } catch (error) {
     console.error("[meta-lead-forms] save failed", error instanceof Error ? error.message : "unknown");
     return NextResponse.json({ error: "Could not save the lead forms.", description: "Nothing changed. Try again." }, { status: 502 });

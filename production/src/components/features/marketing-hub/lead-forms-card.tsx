@@ -48,11 +48,15 @@ export function LeadFormsCard() {
     setSaving(true);
     try {
       const response = await fetch("/api/integrations/meta-lead-forms", { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ formIds: [...picked] }) });
-      const data = await response.json() as { error?: string; description?: string; chosen?: Chosen[] };
+      const data = await response.json() as { error?: string; description?: string; chosen?: Chosen[]; autoPullOn?: boolean | null };
       if (!response.ok) throw new Error(data.error ?? "Could not save the lead forms.");
       setState((s) => s ? { ...s, chosen: data.chosen ?? [] } : s);
       setChoosing(false);
-      toast.success(picked.size ? `${picked.size} lead form${picked.size === 1 ? "" : "s"} saved.` : "No lead form chosen.", { description: picked.size ? "Press Fetch leads now to bring the last 30 days in." : "Leads from Facebook forms will not come in." });
+      /* R-2692: forms saved, but the 30-minute pull is off for the company. */
+      if (picked.size && data.autoPullOn !== undefined && data.autoPullOn !== true) toast.warning(`${picked.size} lead form${picked.size === 1 ? "" : "s"} saved, but the 30-minute pull is off.`, {
+        description: "New leads come in only when you press Fetch leads now. The owner turns on Facebook lead-form leads in Automation.",
+        action: { label: "Open Automation", onClick: () => { window.location.href = "/automation"; } } });
+      else toast.success(picked.size ? `${picked.size} lead form${picked.size === 1 ? "" : "s"} saved.` : "No lead form chosen.", { description: picked.size ? "Press Fetch leads now to bring the last 30 days in." : "Leads from Facebook forms will not come in." });
     } catch (e) { toastError(e, { fallback: "Could not save the lead forms.", description: "Nothing changed. Try again." }); }
     finally { setSaving(false); }
   }

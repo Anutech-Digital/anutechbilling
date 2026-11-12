@@ -4,6 +4,7 @@ import { getTenantSession } from "@/server/auth/session";
 import { withTenant } from "@/server/db";
 import { canReviewSocial, canWriteSocial, claimApproved, completePublish, publishSocial, socialRole, updateSocial, validMediaUrl } from "@/lib/marketing/social-content";
 import { parseIstLocal, scheduleProblem } from "@/lib/marketing/social-schedule";
+import { ensureSocialJobOn } from "@/lib/automation/social-jobs.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -62,6 +63,12 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     const next = input.action === "submit" ? "review" : input.action === "approve" ? "approved" : input.action === "return" ? "draft" : undefined;
     const item = await updateSocial(session, id, { caption: input.caption, mediaUrl: input.mediaUrl, topic: input.topic, status: next, scheduledAt }, current.status as "draft" | "review" | "failed", input.action === "approve" || input.action === "return");
     if (!item) return NextResponse.json({ error: "Draft changed. Refresh the page." }, { status: 409 });
+    /* R-2692: approving a post WITH a post time asks for it to go out on its own — the OWNER's approval turns the
+       social-publish job on (not over an owner's own OFF on /automation). */
+    if (input.action === "approve" && item.scheduled_at) {
+      const autoPostOn = await ensureSocialJobOn("social-publish");
+      return NextResponse.json({ item, autoPostOn });
+    }
     return NextResponse.json({ item });
   } catch (error) {
     console.error("[social-content] action failed", error instanceof Error ? error.message : "unknown");

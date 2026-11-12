@@ -4,7 +4,7 @@ import { runScheduledPublish, type DueRow, type PublishPorts } from "./social-pu
 const NOW = new Date("2026-11-06T04:00:00Z");
 const row = (over: Partial<DueRow> = {}): DueRow => ({
   id: "p1", tenant_id: "t1", platform: "facebook", format: "post", caption: "Hello", media_url: null,
-  status: "approved", scheduled_at: "2026-11-06T03:30:00Z", ...over,
+  status: "approved", scheduled_at: "2026-11-06T03:30:00Z", reviewed_by: "u-manager", ...over,
 });
 
 function ports(rows: DueRow[], over: Partial<PublishPorts> = {}) {
@@ -57,6 +57,19 @@ describe("R-2510 scheduled social publish", () => {
     const p = ports([row({ id: "a" }), row({ id: "b" }), row({ id: "c", tenant_id: "t2" })]);
     await runScheduledPublish(p, NOW);
     expect(p.connection).toHaveBeenCalledTimes(2);
+  });
+
+  it("R-2692: an approved post with no approver on record is never published", async () => {
+    const p = ports([row({ id: "no-approver", reviewed_by: null }), row({ id: "ok" })]);
+    expect(await runScheduledPublish(p, NOW)).toMatchObject({ due: 1, published: 1 });
+    expect(p.claim).toHaveBeenCalledTimes(1);
+    expect(p.claim).toHaveBeenCalledWith("ok");
+  });
+
+  it("R-2692: asks the database only for the companies the cron may work on", async () => {
+    const p = ports([row()], { allowedTenants: () => ["t1", "t2"] });
+    await runScheduledPublish(p, NOW);
+    expect(p.listDue).toHaveBeenCalledWith(NOW, 25, ["t1", "t2"]);
   });
 
   it("a company outside the cron's allowed list is left alone", async () => {
