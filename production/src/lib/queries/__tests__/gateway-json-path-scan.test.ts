@@ -17,24 +17,43 @@ import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared, alwa
 import { listSourceFiles } from "@/lib/testing/walk-source";
 import { parseQuery } from "@/server/postgrest/parse";
 
-/** Builder methods whose FIRST argument is a column name the gateway parses as a filter/order key. */
+/** Builder methods whose FIRST string argument the gateway parses as a column / filter / order
+ *  key, plus `.or/.and` (a whole filter string) and `.select` (parse.ts refuses JSON paths there
+ *  too). A key held in a variable is not seen — keep keys literal. */
 const KEY_METHODS = [
   "eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "likeAllOf", "likeAnyOf", "ilikeAllOf", "ilikeAnyOf",
   "is", "in", "contains", "containedBy", "rangeGt", "rangeGte", "rangeLt", "rangeLte", "rangeAdjacent",
-  "overlaps", "textSearch", "match", "not", "filter", "order",
+  "overlaps", "textSearch", "not", "filter", "order", "or", "and", "select",
 ];
 const KEY_CALL = new RegExp(String.raw`\.(${KEY_METHODS.join("|")})\(\s*(["'\`])((?:(?!\2)[^\\]|\\.)*?)\2`, "g");
-/** `.or("a->>b.eq.1,…")` / `.and(…)`: the whole filter string is parsed by the gateway too. */
-const LOGIC_CALL = /\.(or|and)\(\s*(["'`])((?:(?!\2)[^\\]|\\.)*?)\2/g;
 
-/** Comments stripped: prose about the old query must not trip the scan. */
-const strip = (src: string) => src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+/** Comments blanked, string literals kept (a "/*" or "//" inside a string is not a comment):
+ *  prose about the old query must not trip the scan, and must not hide code after it. */
+function strip(src: string): string {
+  let out = "";
+  for (let i = 0; i < src.length; ) {
+    const ch = src[i];
+    if (ch === '"' || ch === "'" || ch === "`") {
+      let j = i + 1;
+      while (j < src.length && src[j] !== ch && !(ch !== "`" && src[j] === "\n")) j += src[j] === "\\" ? 2 : 1;
+      out += src.slice(i, j + 1);
+      i = j + 1;
+    } else if (ch === "/" && src[i + 1] === "*") {
+      const end = src.indexOf("*/", i + 2);
+      i = end < 0 ? src.length : end + 2;
+      out += " ";
+    } else if (ch === "/" && src[i + 1] === "/") {
+      const end = src.indexOf("\n", i);
+      i = end < 0 ? src.length : end;
+    } else { out += ch; i++; }
+  }
+  return out;
+}
 
 function jsonPathKeys(src: string): string[] {
   const code = strip(src);
   const hits: string[] = [];
   for (const m of code.matchAll(KEY_CALL)) if (m[3].includes("->")) hits.push(`.${m[1]}("${m[3]}")`);
-  for (const m of code.matchAll(LOGIC_CALL)) if (m[3].includes("->")) hits.push(`.${m[1]}("${m[3]}")`);
   return hits;
 }
 
@@ -44,6 +63,7 @@ describe("R-2711: client queries never filter on a JSON path (the data gateway r
   it("the gateway parser really refuses a JSON-path filter key (why this scan exists)", () => {
     expect(() => parseQuery(new URLSearchParams({ "payer->>customer_id": "eq.x" }))).toThrow(/bad filter key/);
     expect(() => parseQuery(new URLSearchParams({ customer_id: "eq.x" }))).not.toThrow();
+    expect(() => parseQuery(new URLSearchParams({ select: "id,payer->>customer_id" }))).toThrow();
   });
 
   it("the scan catches the old Known payers query (red on the R-2025 code)", () => {
@@ -56,10 +76,14 @@ describe("R-2711: client queries never filter on a JSON path (the data gateway r
     expect(jsonPathKeys(`q.order('meta->date').filter("data->x", "eq", 1).or("payer->>key.eq.a,id.eq.b")`)).toEqual([
       '.order("meta->date")', '.filter("data->x")', '.or("payer->>key.eq.a,id.eq.b")',
     ]);
-    expect(jsonPathKeys(`q.eq("customer_id", id).order("txn_date");\n  // old: .eq("payer->>customer_id", id)\n  /* .order("meta->date") */`)).toEqual([]);
+    expect(jsonPathKeys(`q.eq("customer_id", id).order("txn_date"); // old: .eq("payer->>customer_id", id)\n  /* .order("meta->date") */`)).toEqual([]);
+    // a "/*" inside a string is not a comment start: the code after it is still scanned
+    expect(jsonPathKeys(`fetch("/api/sb/*");\nq.eq("payer->>x", v);\n/** doc */`)).toEqual(['.eq("payer->>x")']);
+    expect(jsonPathKeys(`q.select("id, payer->>customer_id")`)).toEqual(['.select("id, payer->>customer_id")']);
+    expect(jsonPathKeys(`line.match("->"); s.split("->")`)).toEqual([]);
   });
 
-  it("no .eq/.filter/.in/.order/… key under src/ contains -> or ->>", () => {
+  it("no .eq/.filter/.order/.or/.select/… string under src/ contains -> or ->>", () => {
     const files = listSourceFiles("src", isCode).filter((f) => !f.split(path.sep).join("/").startsWith("src/server/postgrest/"));
     expect(files.length).toBeGreaterThan(500);
     const found = files.flatMap((f) => jsonPathKeys(readSource(f)).map((h) => `${f.split(path.sep).join("/")}: ${h}`));
