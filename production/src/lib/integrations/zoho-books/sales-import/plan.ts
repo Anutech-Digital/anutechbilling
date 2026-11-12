@@ -226,7 +226,8 @@ export function buildSalesPlan(all: ZohoSaleFacts[], ctx: PlanContext): SalesPla
       }
       if (out.customerId) {
         out.verdict = "import";
-        out.itemIds = f.lines.map((l) => itemByName.get(normName(l.name)) ?? null);
+        /* R-2702: Zoho's adjustment line is never a catalogue item (even one named "Adjustment"). */
+        out.itemIds = f.lines.map((l) => (l.kind === "adjustment" ? null : itemByName.get(normName(l.name)) ?? null));
       }
     }
     seen.add(f.zohoId);
