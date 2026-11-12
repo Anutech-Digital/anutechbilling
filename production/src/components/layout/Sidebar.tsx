@@ -25,7 +25,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { type UserRole, type NavItem } from "@/lib/nav";
-import { buildSidebarApps, appForPath, withoutDistributorOnly, type SidebarApp } from "@/lib/nav-apps";
+import { buildSidebarApps, appForPath, withoutDistributorOnly, filterSidebarModelForModules, type SidebarApp } from "@/lib/nav-apps";
 import { useQuery } from "@tanstack/react-query";
 import { createClient } from "@/lib/supabase/client";
 import type { TenantWithParent } from "@/lib/supabase/database.types";
@@ -34,6 +34,7 @@ import { useCurrentUser, useIdentity } from "@/lib/hooks/useCurrentUser";
 import { roleLabel } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
 import { SYSTEM_MODULES } from "@/lib/modules/registry";
+import { useModules } from "@/lib/modules/useModules";
 
 // ============================================================
 // SidebarContent — shared between desktop + mobile
@@ -98,11 +99,12 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
     },
     staleTime: 5 * 60 * 1000,
   });
+  const { activeModuleIds, isLoaded: modulesLoaded, activeCount, totalCount, isFreePlanOnly } = useModules();
   const isDistributor = hierarchy === undefined ? undefined : hierarchy?.tier === "distributor";
-  const model = React.useMemo(
-    () => withoutDistributorOnly(buildSidebarApps(role), role, isDistributor),
-    [role, isDistributor],
-  );
+  const model = React.useMemo(() => {
+    const base = withoutDistributorOnly(buildSidebarApps(role), role, isDistributor);
+    return filterSidebarModelForModules(base, modulesLoaded ? activeModuleIds : undefined);
+  }, [role, isDistributor, activeModuleIds, modulesLoaded]);
   const routeApp = appForPath(model, pathname);
   const [pickedApp, setPickedApp] = React.useState<string | null>(null);
   // The last app the route pointed at — so a pinned page (/dashboard) or a page outside the
@@ -347,7 +349,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
                 <span className="text-xs font-semibold tracking-tight">Plugin Marketplace</span>
               </div>
               <span className="text-3xs font-mono bg-indigo-200 text-indigo-800 px-1.5 py-0.5 rounded font-bold">
-                {SYSTEM_MODULES.length} Modules
+                {isFreePlanOnly ? "Free Tier" : `${activeCount}/${totalCount} Active`}
               </span>
             </Link>
           </div>

@@ -35,6 +35,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Icon } from "@/components/ui/icon";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
+import { useModules } from "@/lib/modules/useModules";
+import { getModulesForRoute } from "@/lib/modules/registry";
 import { cn } from "@/lib/utils";
 
 interface BottomNavItem {
@@ -55,6 +57,7 @@ const TAB_PAYMENTS:  BottomNavItem = { id: "payments",  href: "/payments",      
 const TAB_CUSTOMERS: BottomNavItem = { id: "customers", href: "/customers",     label: "Customers", icon: "users"  };
 const TAB_RENEWALS:  BottomNavItem = { id: "renewals",  href: "/renewals",      label: "Renewals",  icon: "refresh"};
 const TAB_MY_EXPENSES: BottomNavItem = { id: "my-expenses", href: "/my-expenses", label: "Expenses", icon: "wallet" };
+const TAB_EMPLOYEE_HUB: BottomNavItem = { id: "employee-hub", href: "/employee-hub", label: "Hub", icon: "award" };
 const TAB_MORE:      BottomNavItem = { id: "more",      href: "#",              label: "More",      icon: "more_h", action: "menu" };
 
 interface Props {
@@ -65,38 +68,49 @@ interface Props {
 export function MobileBottomNav({ onMoreClick }: Props) {
   const pathname = usePathname();
   const { data: me } = useCurrentUser();
+  const { activeModuleIds, isFreePlanOnly } = useModules();
 
   // Compute role-appropriate tabs. We start blank + push to keep the
   // intent explicit (vs filter on a master array). Sales explicitly
   // excludes Home (dashboard route is locked down) — showing it would
   // open the sidebar drawer redirect dance and confuse the rep.
-  const tabs: BottomNavItem[] = [];
-  if (me?.role === "sales" || me?.role === "sales_senior") {
-    tabs.push(TAB_LEADS);
-    /* The Deals tab is gone (17 Aug 2026). /leads now carries every OPEN lead
-       whatever stage it reached, so a second tab showed the same rows — and on a
-       phone a wasted tab out of five is expensive. The route still resolves for
-       anyone with it bookmarked. */
-    tabs.push(TAB_TASKS);
-    tabs.push(TAB_MY_EXPENSES);
-    tabs.push(TAB_MORE);
+  const rawTabs: BottomNavItem[] = [];
+  if (isFreePlanOnly && activeModuleIds.includes("salaried_pro")) {
+    rawTabs.push(TAB_HOME);
+    rawTabs.push(TAB_MY_EXPENSES);
+    rawTabs.push(TAB_EMPLOYEE_HUB);
+    rawTabs.push(TAB_MORE);
+  } else if (me?.role === "sales" || me?.role === "sales_senior") {
+    rawTabs.push(TAB_LEADS);
+    rawTabs.push(TAB_TASKS);
+    rawTabs.push(TAB_MY_EXPENSES);
+    rawTabs.push(TAB_MORE);
   } else {
     // owner / manager (default for unknown / loading state too — safest
     // surface while useCurrentUser settles). Money-first: an owner on their
     // phone wants cash-in / who-owes / renewals, not the rep pipeline.
     // Leads & Deals stay reachable from the More drawer.
-    tabs.push(TAB_HOME);
-    tabs.push(TAB_PAYMENTS);
-    tabs.push(TAB_CUSTOMERS);
-    tabs.push(TAB_RENEWALS);
-    tabs.push(TAB_MORE);
+    rawTabs.push(TAB_HOME);
+    rawTabs.push(TAB_PAYMENTS);
+    rawTabs.push(TAB_CUSTOMERS);
+    rawTabs.push(TAB_RENEWALS);
+    rawTabs.push(TAB_MORE);
   }
+
+  // Filter tabs dynamically based on active modules
+  const tabs = rawTabs.filter((tab) => {
+    if (tab.action === "menu") return true;
+    const modules = getModulesForRoute(tab.href);
+    if (modules.length === 0) return true;
+    return modules.some((m) => activeModuleIds.includes(m.id));
+  });
 
   // grid-cols-N — Tailwind needs an explicit class per N so JIT picks it up.
   const gridClass =
-    tabs.length === 5 ? "grid-cols-5" :
+    tabs.length >= 5 ? "grid-cols-5" :
     tabs.length === 4 ? "grid-cols-4" :
-    "grid-cols-3";
+    tabs.length === 3 ? "grid-cols-3" :
+    "grid-cols-2";
 
   return (
     <nav

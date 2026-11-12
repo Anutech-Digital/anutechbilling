@@ -22,6 +22,7 @@
  * items in buildSidebarApps() — the same place roles are applied.
  */
 import { APP_NAV, filterNavForRole, flattenNav, itemWithDescendants, type NavItem, type NavSection, type UserRole } from "@/lib/nav";
+import { getModulesForRoute } from "@/lib/modules/registry";
 
 export interface NavAppDef {
   id: string;
@@ -169,4 +170,104 @@ export function withoutDistributorOnly(
     .filter((a) => a.items.length > 0);
   const rows = apps.reduce((n, a) => n + a.items.length, 0);
   return { pinned: model.pinned.filter(keep), apps, flat: apps.length <= 1 || rows <= FLAT_MENU_MAX_ROWS };
+}
+
+export const EMPLOYEE_HUB_ITEM: NavItem = {
+  id: "employee-hub",
+  href: "/employee-hub",
+  label: "Employee Hub",
+  icon: "award",
+  hint: "FY 2025–26 tax comparator, corporate expense claims, HRA receipts & career vault",
+};
+
+/**
+ * Filter the sidebar apps model based on the tenant's active modules.
+ * If activeModuleIds is omitted/undefined, the model is returned as-is (e.g. for SSR / unit tests).
+ *
+ * Rules:
+ * 1. Routes with 0 matching modules in registry (e.g. /dashboard, /today, /settings) are core platform routes and always allowed.
+ * 2. Routes with matching modules require at least one of those modules to be in activeModuleIds.
+ * 3. Items with children are pruned: children are filtered, and parent is kept if parent is allowed OR has active children.
+ * 4. If salaried_pro is active, injects "Employee Hub" (/employee-hub) into the "Team" app.
+ * 5. Apps with 0 remaining items are removed.
+ * 6. Flat menu layout (model.flat = true) is automatically enabled when remaining apps <= 1 or total rows <= FLAT_MENU_MAX_ROWS.
+ */
+export function filterSidebarModelForModules(
+  model: SidebarModel,
+  activeModuleIds?: string[],
+): SidebarModel {
+  if (!activeModuleIds) return model;
+
+  const isRouteAllowed = (href: string) => {
+    const modules = getModulesForRoute(href);
+    if (modules.length === 0) return true;
+    return modules.some((m) => activeModuleIds.includes(m.id));
+  };
+
+  const filterItem = (item: NavItem): NavItem | null => {
+    let activeChildren: NavItem[] | undefined;
+    if (item.children && item.children.length > 0) {
+      activeChildren = item.children
+        .map(filterItem)
+        .filter((c): c is NavItem => c !== null);
+    }
+
+    const selfAllowed = isRouteAllowed(item.href);
+    const hasActiveChildren = activeChildren && activeChildren.length > 0;
+
+    if (!selfAllowed && !hasActiveChildren) {
+      return null;
+    }
+
+    return {
+      ...item,
+      children: hasActiveChildren ? activeChildren : item.children,
+    };
+  };
+
+  const filteredPinned = model.pinned
+    .map(filterItem)
+    .filter((i): i is NavItem => i !== null);
+
+  let apps = model.apps.map((app) => {
+    let items = app.items
+      .map(filterItem)
+      .filter((i): i is NavItem => i !== null);
+
+    // If salaried_pro is active, ensure Employee Hub is in Team app
+    if (app.id === "team" && activeModuleIds.includes("salaried_pro")) {
+      const alreadyHas = items.some((i) => i.id === "employee-hub" || i.href === "/employee-hub");
+      if (!alreadyHas) {
+        items = [EMPLOYEE_HUB_ITEM, ...items];
+      }
+    }
+
+    return {
+      ...app,
+      items,
+    };
+  });
+
+  // If Team app was completely pruned or wasn't present, but salaried_pro is active:
+  if (activeModuleIds.includes("salaried_pro")) {
+    const hasTeamApp = apps.some((a) => a.id === "team" && a.items.length > 0);
+    if (!hasTeamApp) {
+      apps.push({
+        id: "team",
+        label: "Team",
+        icon: "users",
+        items: [EMPLOYEE_HUB_ITEM],
+      });
+    }
+  }
+
+  // Filter out empty apps
+  const activeApps = apps.filter((a) => a.items.length > 0);
+  const totalRows = activeApps.reduce((sum, a) => sum + a.items.length, 0);
+
+  return {
+    pinned: filteredPinned,
+    apps: activeApps,
+    flat: activeApps.length <= 1 || totalRows <= FLAT_MENU_MAX_ROWS,
+  };
 }

@@ -59,12 +59,13 @@ afterEach(() => {
 });
 
 describe("Modular Architecture - useModules Hook", () => {
-  it("initializes with all 6 modules enabled (including solo_free) and full bundle discount", () => {
+  it("initializes with all 7 modules enabled (including solo_free and salaried_pro) and full bundle discount", () => {
     const { result } = renderHook(() => useModules());
 
     expect(result.current.isLoaded).toBe(true);
-    expect(result.current.activeCount).toBe(6);
+    expect(result.current.activeCount).toBe(7);
     expect(result.current.isModuleActive("solo_free")).toBe(true);
+    expect(result.current.isModuleActive("salaried_pro")).toBe(true);
     expect(result.current.isModuleActive("crm")).toBe(true);
     expect(result.current.isModuleActive("invoicing")).toBe(true);
     expect(result.current.isModuleActive("subscriptions")).toBe(true);
@@ -84,7 +85,7 @@ describe("Modular Architecture - useModules Hook", () => {
       result.current.toggleModule("crm");
     });
 
-    expect(result.current.activeCount).toBe(5);
+    expect(result.current.activeCount).toBe(6);
     expect(result.current.isModuleActive("crm")).toBe(false);
     expect(result.current.bundleSavingsRupees).toBe(0);
 
@@ -94,7 +95,7 @@ describe("Modular Architecture - useModules Hook", () => {
     // Verify written to localStorage
     const stored = JSON.parse(storageMock.getItem("reselleros_active_modules_v1") || "[]");
     expect(stored).not.toContain("crm");
-    expect(stored).toHaveLength(5);
+    expect(stored).toHaveLength(6);
   });
 
   it("computes isFreePlanOnly correctly when only solo_free is active", () => {
@@ -132,8 +133,9 @@ describe("Modular Architecture - useModules Hook", () => {
       result.current.activateAll();
     });
 
-    expect(result.current.activeCount).toBe(6);
+    expect(result.current.activeCount).toBe(7);
     expect(result.current.isModuleActive("invoicing")).toBe(true);
+    expect(result.current.isModuleActive("salaried_pro")).toBe(true);
     expect(result.current.totalMonthlyCostRupees).toBe(1999);
   });
 });

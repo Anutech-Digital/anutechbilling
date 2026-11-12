@@ -10,7 +10,7 @@ import { USER_ROLES } from "./auth/roles";
 import {
   FLAT_MENU_MAX_ROWS, NAV_APPS, PINNED_ITEM_IDS,
   appForPath, buildSidebarApps, paletteHrefs, sidebarHrefs,
-  DISTRIBUTOR_ONLY_ITEM_IDS, withoutDistributorOnly,
+  DISTRIBUTOR_ONLY_ITEM_IDS, withoutDistributorOnly, filterSidebarModelForModules,
 } from "./nav-apps";
 
 const sorted = (a: string[]) => [...new Set(a)].sort();
@@ -151,5 +151,72 @@ describe("distributor-only rows", () => {
   it("lists only real nav ids", () => {
     const all = new Set(APP_NAV.flatMap((s) => s.items.map((i) => i.id)));
     for (const id of DISTRIBUTOR_ONLY_ITEM_IDS) expect(all.has(id)).toBe(true);
+  });
+});
+
+describe("filterSidebarModelForModules (Dynamic menu & layout adjustment)", () => {
+  const base = buildSidebarApps("owner");
+  const getAppItemIds = (m: ReturnType<typeof buildSidebarApps>) => m.apps.flatMap((a) => a.items.map((i) => i.id));
+
+  it("leaves model untouched when activeModuleIds is undefined", () => {
+    const res = filterSidebarModelForModules(base, undefined);
+    expect(res).toBe(base);
+  });
+
+  it("hides CRM and Provisioning items when only solo_free is active, and flattens layout", () => {
+    const res = filterSidebarModelForModules(base, ["solo_free"]);
+    const itemIds = getAppItemIds(res);
+
+    // Invoicing/billing items allowed for solo_free
+    expect(itemIds).toContain("invoices");
+    expect(itemIds).toContain("quotes");
+    expect(itemIds).toContain("payments");
+    expect(itemIds).toContain("customers");
+
+    // CRM disabled -> leads, deals, whatsapp hidden
+    expect(itemIds).not.toContain("leads");
+    expect(itemIds).not.toContain("deals");
+    expect(itemIds).not.toContain("whatsapp");
+
+    // Provisioning disabled -> hosting-domains, provisioning hidden
+    expect(itemIds).not.toContain("hosting-domains");
+    expect(itemIds).not.toContain("provisioning");
+
+    // TeamOps disabled -> attendance-reg, payroll hidden
+    expect(itemIds).not.toContain("attendance-reg");
+    expect(itemIds).not.toContain("payroll");
+
+    // Clean flat layout triggered because total rows <= 12
+    expect(res.flat).toBe(true);
+  });
+
+  it("injects Employee Hub when salaried_pro is active and activates flat layout for salaried individual", () => {
+    const res = filterSidebarModelForModules(base, ["salaried_pro"]);
+    const itemIds = getAppItemIds(res);
+
+    // Employee Hub present
+    expect(itemIds).toContain("employee-hub");
+
+    // CRM, Invoicing, Provisioning hidden
+    expect(itemIds).not.toContain("leads");
+    expect(itemIds).not.toContain("invoices");
+    expect(itemIds).not.toContain("hosting-domains");
+
+    // Salaried individual sees clean flat menu
+    expect(res.flat).toBe(true);
+  });
+
+  it("keeps full 6-app switcher layout when all commercial modules are active", () => {
+    const res = filterSidebarModelForModules(base, [
+      "solo_free",
+      "salaried_pro",
+      "crm",
+      "invoicing",
+      "subscriptions",
+      "provisioning",
+      "teamops",
+    ]);
+    expect(res.flat).toBe(false);
+    expect(res.apps.length).toBeGreaterThanOrEqual(5);
   });
 });

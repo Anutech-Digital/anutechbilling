@@ -4,12 +4,13 @@ import * as React from "react";
 import { SYSTEM_MODULES, DEFAULT_ACTIVE_MODULE_IDS, type SystemModule } from "./registry";
 
 const STORAGE_KEY = "reselleros_active_modules_v1";
+export const MODULES_CHANGED_EVENT = "reselleros:modules-changed";
 
 export function useModules() {
   const [activeModuleIds, setActiveModuleIds] = React.useState<string[]>(DEFAULT_ACTIVE_MODULE_IDS);
   const [isLoaded, setIsLoaded] = React.useState(false);
 
-  // Load from localStorage on mount
+  // Load from localStorage on mount & listen for real-time cross-component updates
   React.useEffect(() => {
     try {
       const stored = localStorage.getItem(STORAGE_KEY);
@@ -24,12 +25,45 @@ export function useModules() {
     } finally {
       setIsLoaded(true);
     }
+
+    const handleModulesChanged = (e: Event) => {
+      const customEvent = e as CustomEvent<string[]>;
+      if (customEvent.detail && Array.isArray(customEvent.detail)) {
+        setActiveModuleIds(customEvent.detail);
+      }
+    };
+
+    const handleStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) {
+            setActiveModuleIds(parsed);
+          }
+        } catch {}
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener(MODULES_CHANGED_EVENT, handleModulesChanged);
+      window.addEventListener("storage", handleStorage);
+    }
+
+    return () => {
+      if (typeof window !== "undefined") {
+        window.removeEventListener(MODULES_CHANGED_EVENT, handleModulesChanged);
+        window.removeEventListener("storage", handleStorage);
+      }
+    };
   }, []);
 
   const saveModules = React.useCallback((ids: string[]) => {
     setActiveModuleIds(ids);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(ids));
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(MODULES_CHANGED_EVENT, { detail: ids }));
+      }
     } catch {
       // Ignore storage errors
     }

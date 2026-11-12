@@ -75,7 +75,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
     priceMonthlyRupees: 499,
     iconName: "leads",
     accentColor: "#3B82F6", // Blue
-    coreRoutes: ["/leads", "/deals", "/contacts", "/enquiries", "/whatsapp", "/campaigns", "/lead-gen"],
+    coreRoutes: ["/leads", "/deals", "/contacts", "/enquiries", "/whatsapp", "/campaigns", "/lead-gen", "/marketing-hub", "/referrals", "/partners", "/online-orders"],
     features: [
       "Visual Kanban Deal Pipeline",
       "WhatsApp Business API Integration",
@@ -95,7 +95,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
     priceMonthlyRupees: 499,
     iconName: "invoices",
     accentColor: "#10B981", // Emerald
-    coreRoutes: ["/invoices", "/quotes", "/payments", "/purchases", "/purchase-orders", "/accounting"],
+    coreRoutes: ["/invoices", "/quotes", "/payments", "/purchases", "/purchase-orders", "/accounting", "/reports", "/compliance"],
     features: [
       "GST Tax Invoices & Proforma Quotes",
       "Instant Razorpay & UPI Payment Links",
@@ -135,7 +135,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
     priceMonthlyRupees: 999,
     iconName: "cloud",
     accentColor: "#F59E0B", // Amber
-    coreRoutes: ["/hosting-domains", "/provisioning", "/products", "/items"],
+    coreRoutes: ["/hosting-domains", "/provisioning", "/products", "/items", "/projects"],
     features: [
       "Live ResellerClub Domain Search & Registration",
       "DirectAdmin Automated Account Provisioning",
@@ -155,7 +155,7 @@ export const SYSTEM_MODULES: SystemModule[] = [
     priceMonthlyRupees: 499,
     iconName: "team",
     accentColor: "#EC4899", // Pink
-    coreRoutes: ["/team", "/attendance", "/performance", "/scorecard", "/tasks", "/support", "/accounting/payroll"],
+    coreRoutes: ["/team", "/attendance", "/performance", "/scorecard", "/tasks", "/support", "/accounting/payroll", "/accounting/employees", "/accounting/attendance", "/accounting/leave", "/accounting/loans", "/accounting/salary-register", "/assessments", "/academy"],
     features: [
       "Office & Remote Geo-Fenced Attendance",
       "Indian Statutory Payroll (PF, ESI, TDS, ECR file output)",
