@@ -1,7 +1,7 @@
 -- R-2694 (R-2693 part 2): FY receipts import — a USD Zoho payment on a USD invoice is booked:
 --   receipt = the invoice's ₹ at ITS OWN rate (invoice Paid when Zoho settles it in full), exchange
---   gain / loss = receipts − USD × Zoho's rate (EXP-ZFXD-<zoho id>, "Exchange gain / loss (realised)"),
---   Zoho's bank charges × Zoho's rate (EXP-ZFXC-<zoho id>, Bank Charges); the bank line, now or later, is
+--   gain / loss = receipts − USD × Zoho's rate (EXP-ZFXD-<receipt id>, "Exchange gain / loss (realised)"),
+--   Zoho's bank charges × Zoho's rate (EXP-ZFXC-<receipt id>, Bank Charges); the bank line, now or later, is
 --   matched to the receipt and the FX is never booked a second time.
 --   A. USD 100 invoice booked at ₹83, Zoho payment USD 100 @ 84, no bank line yet → Paid, ₹100 gain once
 --   B. its remittance line (USD100.0@84 = ₹8,400) comes later: reconcile_bank_credit_fx_invoice refused
@@ -53,7 +53,7 @@ create function pg_temp.usd(zid text, dt date, inv text, usd numeric, rate numer
     'depositAccountId', 'zhdfc', 'depositAccountName', 'HDFC 4523', 'amount', round(usd * rate), 'receivedPaise', round((usd - chg) * rate * 100),
     'lines', jsonb_build_array(jsonb_build_object('zohoInvoiceId', inv, 'invoiceNumber', 'INV/25-26/R2694-' || right(inv, 1), 'settle', round(usd), 'tds', 0)),
     'excess', 0, 'tds', 0, 'fee', 0, 'feeGst', 0, 'viaSettlement', false, 'problems', '[]'::jsonb,
-    'currency', 'USD', 'foreignAmount', usd, 'fxRate', rate, 'foreignCharges', chg, 'foreignExcess', 0,
+    'currency', 'USD', 'foreignAmount', usd, 'fxRate', rate, 'foreignCharges', chg,
     'foreignLines', jsonb_build_array(jsonb_build_object('zohoInvoiceId', inv, 'invoiceNumber', 'INV/25-26/R2694-' || right(inv, 1), 'foreign', usd))) || extra;
 $f$;
 insert into public.zoho_fy_scan (tenant_id, kind, fy, zoho_id, number, doc_date, zoho_status, payload, detailed_at)
@@ -65,12 +65,12 @@ select 'b2694000-0000-0000-0000-0000000000f0', 'customerpayments', '2025-26', x.
     ('p3',  date '2025-06-10', pg_temp.usd('p3',  '2025-06-10', 'zi3', 100, 84, 2)),
     -- E: read by R-2693 part 1 (currency, but no per-invoice USD — its lines are whole dollars), with its problem
     ('p4',  date '2025-06-10', pg_temp.usd('p4',  '2025-06-10', 'zi4', 100, 84, 0)
-            - 'foreignLines' - 'foreignCharges' - 'foreignExcess'
+            - 'foreignLines' - 'foreignCharges'
             || jsonb_build_object('problems', jsonb_build_array('Received in USD in Zoho — foreign-currency payments are not imported yet; book it from its bank line (Banking → the inward USD line → Reconcile, exchange gain / loss there).'))),
     -- the same without the problem (no per-invoice USD) → "read it from Zoho again"
     ('p5',  date '2025-06-10', pg_temp.usd('p5',  '2025-06-10', 'zi4', 100, 84, 0) - 'foreignLines'),
     -- USD 10 unused (an advance in USD)
-    ('p6',  date '2025-06-10', pg_temp.usd('p6',  '2025-06-10', 'zi4', 100, 84, 0, '{"foreignExcess": 10}')),
+    ('p6',  date '2025-06-10', pg_temp.usd('p6',  '2025-06-10', 'zi4', 100, 84, 0, '{"foreignAmount": 110}')),
     -- USD money on a ₹ invoice
     ('p7',  date '2025-06-10', pg_temp.usd('p7',  '2025-06-10', 'zi5', 100, 84, 0)),
     -- foreign TDS
@@ -147,12 +147,13 @@ begin
   if inv.status <> 'paid' or inv.paid_amount <> 8300 then raise exception 'FAIL A2: invoice 1 %', inv; end if;
   select coalesce(sum(p.amount), 0)::int into n from public.payments p where p.tenant_id = t and p.invoice_id = v_inv1 and p.status = 'received';
   if n <> 8300 then raise exception 'FAIL A3: receipts on invoice 1 = ₹%, expected 8300 (its own rate)', n; end if;
-  select x.* into e from public.expenses x where x.tenant_id = t and x.id = 'EXP-ZFXD-p1';
+  select x.* into e from public.expenses x where x.tenant_id = t and x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p1');
   if not found or e.amount <> -100 or e.category <> 'Exchange gain / loss (realised)' or not e.paid or e.expense_date <> date '2025-06-10'
      or e.bank_account_id <> 'b2694000-0000-0000-0000-0000000000d1'::uuid or e.reconciled_txn_id is not null then
     raise exception 'FAIL A4: gain row %', row_to_json(e);
   end if;
-  select count(*) into n from public.expenses x where x.tenant_id = t and (x.id like 'EXP-%FX%' and x.id like '%p1%' or x.id like 'EXP-FXD-%');
+  select count(*) into n from public.expenses x where x.tenant_id = t and x.category = 'Exchange gain / loss (realised)'
+     and (x.id like 'EXP-FXD-%' or x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p1'));
   if n <> 1 then raise exception 'FAIL A5: % FX rows for p1, expected exactly one', n; end if;
   if not exists (select 1 from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p1'
                    and z.currency = 'USD' and z.foreign_amount = 100 and z.fx_rate = 84 and z.fx_difference = -100
@@ -161,9 +162,9 @@ begin
   end if;
 
   -- D. USD 100 with USD 2 charges @ 84: receipt 8,300; gain 100; charges 168; matched to the ₹8,232 line at import
-  if not exists (select 1 from public.expenses x where x.id = 'EXP-ZFXD-p3' and x.amount = -100 and x.reconciled_txn_id = l3)
-     or not exists (select 1 from public.expenses x where x.id = 'EXP-ZFXC-p3' and x.amount = 168 and x.category = 'Bank Charges' and x.reconciled_txn_id = l3) then
-    raise exception 'FAIL D1: p3 FX rows %', (select json_agg(row_to_json(x)) from public.expenses x where x.tenant_id = t and x.id like '%p3');
+  if not exists (select 1 from public.expenses x where x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p3') and x.amount = -100 and x.reconciled_txn_id = l3)
+     or not exists (select 1 from public.expenses x where x.id = (select z.fx_charges_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p3') and x.amount = 168 and x.category = 'Bank Charges' and x.reconciled_txn_id = l3) then
+    raise exception 'FAIL D1: p3 FX rows %', (select json_agg(row_to_json(x)) from public.expenses x where x.tenant_id = t and x.id like 'EXP-ZFX%');
   end if;
   if not exists (select 1 from public.bank_transactions b where b.id = l3 and b.matched_to_type = 'payment') then raise exception 'FAIL D2: p3 line not matched'; end if;
   if exists (select 1 from public.bank_receipt_round_offs o where o.bank_txn_id = l3) then raise exception 'FAIL D3: round-off on an exact line'; end if;
@@ -174,7 +175,7 @@ begin
   -- C. Part payment USD 40 @ 84: ₹3,320 (40 × 83), gain ₹40, ₹4,980 left
   select i.status::text as status, i.paid_amount into inv from public.invoices i where i.id = v_inv2;
   if inv.status = 'paid' or inv.paid_amount <> 3320 then raise exception 'FAIL C1: invoice 2 after USD 40 %', inv; end if;
-  if not exists (select 1 from public.expenses x where x.id = 'EXP-ZFXD-p2a' and x.amount = -40) then raise exception 'FAIL C2: part gain'; end if;
+  if not exists (select 1 from public.expenses x where x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p2a') and x.amount = -40) then raise exception 'FAIL C2: part gain'; end if;
 
   -- C. The other USD 60 arrives on the bank (@ 85 = ₹5,100) and is paid through R-2427 while USD 40's receipt
   --    still waits for its line → refused (that receipt may be this money)
@@ -197,8 +198,8 @@ begin
   if (r->>'imported')::int <> 1 or (r->>'banked')::int <> 1 or (r->>'fx_difference')::int <> -120 then raise exception 'FAIL C4: %', r; end if;
   select i.status::text as status, i.paid_amount into inv from public.invoices i where i.id = v_inv2;
   if inv.status <> 'paid' or inv.paid_amount <> 8300 then raise exception 'FAIL C5: invoice 2 %', inv; end if;
-  if not exists (select 1 from public.expenses x where x.id = 'EXP-ZFXD-p2b' and x.amount = -120 and x.reconciled_txn_id = l2) then
-    raise exception 'FAIL C6: second part gain %', (select row_to_json(x) from public.expenses x where x.id = 'EXP-ZFXD-p2b');
+  if not exists (select 1 from public.expenses x where x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p2b') and x.amount = -120 and x.reconciled_txn_id = l2) then
+    raise exception 'FAIL C6: second part gain %', (select row_to_json(x) from public.expenses x where x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p2b'));
   end if;
 
   -- B. p1's remittance arrives (USD100.0@84 = ₹8,400). R-2427 on the paid invoice → refused (nothing due), line untouched
@@ -218,7 +219,7 @@ begin
                    and b.matched_to_id in (select p.id::text from public.payments p where p.invoice_id = v_inv1)) then
     raise exception 'FAIL B3: p1 line not matched to its receipt';
   end if;
-  if not exists (select 1 from public.expenses x where x.id = 'EXP-ZFXD-p1' and x.amount = -100 and x.reconciled_txn_id = l1) then raise exception 'FAIL B4: gain not tied'; end if;
+  if not exists (select 1 from public.expenses x where x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p1') and x.amount = -100 and x.reconciled_txn_id = l1) then raise exception 'FAIL B4: gain not tied'; end if;
   if exists (select 1 from public.expenses x where x.tenant_id = t and x.id in ('EXP-FXD-' || l1::text, 'EXP-FXC-' || l1::text)) then
     raise exception 'FAIL B5: FX booked a second time on the line';
   end if;
@@ -228,11 +229,11 @@ begin
 
   -- B. Un-reconcile p1's line: the gain stays (belongs to the Zoho payment), untied; match again → tied again
   perform public.reconcile_bank_txn(l1, null, null, null);
-  if not exists (select 1 from public.expenses x where x.id = 'EXP-ZFXD-p1' and x.amount = -100 and x.reconciled_txn_id is null) then
-    raise exception 'FAIL B8: gain after un-reconcile %', (select row_to_json(x) from public.expenses x where x.id = 'EXP-ZFXD-p1');
+  if not exists (select 1 from public.expenses x where x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p1') and x.amount = -100 and x.reconciled_txn_id is null) then
+    raise exception 'FAIL B8: gain after un-reconcile %', (select row_to_json(x) from public.expenses x where x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p1'));
   end if;
   r := public.import_zoho_fy_receipts('2025-26', pg_temp.picks(array['p1']), false);
-  if not exists (select 1 from public.expenses x where x.id = 'EXP-ZFXD-p1' and x.reconciled_txn_id = l1) then raise exception 'FAIL B9: not tied again'; end if;
+  if not exists (select 1 from public.expenses x where x.id = (select z.fx_expense_id from public.zoho_fy_receipts z where z.tenant_id = t and z.zoho_payment_id = 'p1') and x.reconciled_txn_id = l1) then raise exception 'FAIL B9: not tied again'; end if;
   select count(*) into n from public.expenses x where x.tenant_id = t and x.category = 'Exchange gain / loss (realised)';
   if n <> 4 then raise exception 'FAIL B10: % FX rows, expected 4 (one per Zoho payment)', n; end if;
 

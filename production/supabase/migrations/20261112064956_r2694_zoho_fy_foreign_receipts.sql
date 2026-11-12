@@ -10,9 +10,9 @@
 --               and the whole ₹ due when the payment settles what is left (within 2 cents) — the invoice
 --               is Paid exactly when Zoho settles it in full; a part payment leaves the rest due at its rate.
 --   forex     = Σ receipts − applied USD × ZOHO's rate → ONE paid expense "Exchange gain / loss (realised)"
---               EXP-ZFXD-<zoho payment id> (< 0 = a gain), dated Zoho's payment date, on the deposit account.
+--               EXP-ZFXD-<first receipt id> (< 0 = a gain), dated Zoho's payment date, on the deposit account.
 --   charges   = Zoho's bank_charges (in the payment's currency, kept abroad by the remitting bank) × Zoho's
---               rate → ONE paid "Bank Charges" expense EXP-ZFXC-<zoho payment id>.
+--               rate → ONE paid "Bank Charges" expense EXP-ZFXC-<first receipt id>.
 --   bank line = what reached the bank = (USD − charges) × Zoho's rate → received_paise: the import's exact
 --               ₹ match (now, or "Import again" later) links the line to the receipts, as for a ₹ payment.
 --   Until a line holds them, both expenses are "paid, not yet in bank" (report_balance_sheet's
@@ -68,9 +68,9 @@ alter table public.zoho_fy_receipts add constraint zoho_fy_receipts_fx_check
 comment on column public.zoho_fy_receipts.currency is
   'R-2694: a foreign-currency Zoho payment''s currency (null = ₹). Its receipts are in ₹ at each invoice''s own rate.';
 comment on column public.zoho_fy_receipts.fx_difference is
-  'R-2694: receipts (₹ at the invoices'' rates) − applied foreign money × Zoho''s rate, booked as fx_expense_id (EXP-ZFXD-<zoho id>, "Exchange gain / loss (realised)"; < 0 = a gain).';
+  'R-2694: receipts (₹ at the invoices'' rates) − applied foreign money × Zoho''s rate, booked as fx_expense_id (EXP-ZFXD-<receipt id>, "Exchange gain / loss (realised)"; < 0 = a gain).';
 comment on column public.zoho_fy_receipts.fx_charges is
-  'R-2694: Zoho''s bank_charges × Zoho''s rate, booked as fx_charges_expense_id (EXP-ZFXC-<zoho id>, Bank Charges).';
+  'R-2694: Zoho''s bank_charges × Zoho''s rate, booked as fx_charges_expense_id (EXP-ZFXC-<receipt id>, Bank Charges).';
 
 create or replace function public.import_zoho_fy_receipts(p_fy text, p_picks jsonb, p_dry_run boolean default true)
 returns jsonb
@@ -83,7 +83,7 @@ declare
   /* R-2501 (+ follow-up 6 Nov: vouchers, 2b / 2c matching safety, round-off, TDS gross)
      R-2565: Razorpay fee (Zoho bank_charges) booked as the Bank Charges expense EXP-RZPFEE-<receipt>
      R-2694 foreign receipt: USD (any foreign) payments — ₹ at the invoices' rates, exchange gain / loss
-     and the remitting bank's charges as EXP-ZFXD / EXP-ZFXC-<zoho payment id> */
+     and the remitting bank's charges as EXP-ZFXD / EXP-ZFXC-<first receipt id> */
   v_tenant   uuid := public.current_tenant_id();
   v_start    date;
   v_lock     date;
@@ -154,6 +154,7 @@ declare
   v_flines   jsonb;
   v_fline    numeric;
   v_fsum     numeric;
+  v_fall     numeric;
   v_icur     text;
   v_part     integer;
   v_fxd      integer;
@@ -209,6 +210,7 @@ begin
     v_fchg := 0;
     v_flines := null;
     v_fsum := 0;
+    v_fall := 0;
     v_fxd := 0;
     v_fxc := 0;
 
@@ -278,8 +280,9 @@ begin
         v_via    := coalesce((v_p->>'viaSettlement')::boolean, false) or v_fee > 0;
         /* R-2694 foreign receipt: the payment's own currency figures (facts from R-2694's normaliser):
            foreignAmount, fxRate (Zoho's ₹ per unit), foreignCharges (Zoho's bank_charges, same currency),
-           foreignLines [{zohoInvoiceId, foreign}] (applied per invoice), foreignExcess (unused). What reaches
-           the bank — and so finds its line — is (money − charges) × Zoho's rate, worked out HERE. */
+           foreignLines [{zohoInvoiceId, foreign}] (applied per invoice; their sum vs the money = the unused
+           part — never trusted from a field of its own). What reaches the bank — and so finds its line — is
+           (money − charges) × Zoho's rate, worked out HERE. Every cast is inside this handler (review). */
         v_cur := upper(nullif(btrim(coalesce(v_p->>'currency', '')), ''));
         if v_cur = 'INR' then v_cur := null; end if;
         if v_cur is not null then
@@ -292,6 +295,8 @@ begin
           v_via    := false;
           v_excess := 0;
           v_paise  := case when v_zrate > 0 and v_famt > 0 then round((v_famt - v_fchg) * v_zrate * 100)::bigint end;
+          select coalesce(sum(nullif(x->>'foreign', '')::numeric), 0) into v_fall
+            from jsonb_array_elements(case when jsonb_typeof(v_flines) = 'array' then v_flines else '[]'::jsonb end) x;
         end if;
       exception when others then
         v_reason := 'Its date, amount or account could not be read — read it from Zoho again.';
@@ -308,9 +313,12 @@ begin
         v_reason := format('Received in %s — read it from Zoho again (read before foreign-currency payments could be imported).', v_cur);
       elsif v_cur is not null and (coalesce(v_zrate, 0) <= 0 or coalesce(v_famt, 0) <= 0) then
         v_reason := format('Received in %s in Zoho with no exchange rate or amount — book it from its bank line (Banking → Reconcile).', v_cur);
-      elsif v_cur is not null and coalesce(nullif(v_p->>'foreignExcess', '')::numeric, 0) > 0.005 then
+      elsif v_cur is not null and v_famt - v_fall > 0.01 then
         v_reason := format('%s %s of it is not applied to any invoice in Zoho (an advance in %s) — book it from its bank line (Banking → Reconcile).',
-                           v_cur, trim_scale(nullif(v_p->>'foreignExcess', '')::numeric), v_cur);
+                           v_cur, trim_scale(v_famt - v_fall), v_cur);
+      elsif v_cur is not null and v_fall - v_famt > 0.01 then
+        v_reason := format('Zoho applies %s %s to its invoices, but the payment is %s %s — its amounts do not add up; book it by hand.',
+                           v_cur, trim_scale(v_fall), v_cur, trim_scale(v_famt));
       elsif v_cur is not null and (v_fchg < 0 or v_fchg >= v_famt) then
         v_reason := format('Zoho''s bank charges (%s %s) on this payment of %s %s could not be booked — book it by hand.', v_cur, trim_scale(v_fchg), v_cur, trim_scale(v_famt));
       elsif v_date is null or v_date < v_fy_from or v_date > v_fy_to then
@@ -574,7 +582,7 @@ begin
       v_fxd_id := null;
       v_fxc_id := null;
       if v_cur is not null and v_fxd <> 0 then
-        v_fxd_id := 'EXP-ZFXD-' || v_zid;
+        v_fxd_id := 'EXP-ZFXD-' || v_pays[1]::text;   -- review: a receipt uuid (expenses.id is global, a Zoho id is not)
         insert into public.expenses
           (id, tenant_id, category, vendor_name, expense_date, amount, gst_paid, bill_type, payment_method, description,
            paid, paid_date, bank_account_id, notes)
@@ -587,7 +595,7 @@ begin
                   p_fy, v_sum_cash, v_cur, trim_scale(v_famt), trim_scale(v_zrate), v_fxd));
       end if;
       if v_cur is not null and v_fxc <> 0 then
-        v_fxc_id := 'EXP-ZFXC-' || v_zid;
+        v_fxc_id := 'EXP-ZFXC-' || v_pays[1]::text;
         insert into public.expenses
           (id, tenant_id, category, vendor_name, expense_date, amount, gst_paid, bill_type, payment_method, description,
            paid, paid_date, bank_account_id, notes)
@@ -675,7 +683,7 @@ end;
 $function$;
 
 comment on function public.import_zoho_fy_receipts(text, jsonb, boolean) is
-  'R-2501 + R-2565 + R-2694: FY customer payments from Zoho as receipts (+ Zoho''s TDS, excess → advance; a Razorpay payment''s fee (Zoho bank_charges) → Bank Charges expense EXP-RZPFEE-<receipt>, banked by its Razorpay settlement; a foreign-currency payment → ₹ at each invoice''s own rate + exchange gain / loss EXP-ZFXD-<zoho id> + remitting bank charges EXP-ZFXC-<zoho id>) on the FY sales imported from Zoho, matched to the bank line when it is in (else on a later run). Money from zoho_fy_scan; picks = Zoho id + app account. dry_run (default) writes nothing. Owner / accountant.';
+  'R-2501 + R-2565 + R-2694: FY customer payments from Zoho as receipts (+ Zoho''s TDS, excess → advance; a Razorpay payment''s fee (Zoho bank_charges) → Bank Charges expense EXP-RZPFEE-<receipt>, banked by its Razorpay settlement; a foreign-currency payment → ₹ at each invoice''s own rate + exchange gain / loss EXP-ZFXD-<receipt id> + remitting bank charges EXP-ZFXC-<receipt id>) on the FY sales imported from Zoho, matched to the bank line when it is in (else on a later run). Money from zoho_fy_scan; picks = Zoho id + app account. dry_run (default) writes nothing. Owner / accountant.';
 revoke all on function public.import_zoho_fy_receipts(text, jsonb, boolean) from public, anon;
 grant execute on function public.import_zoho_fy_receipts(text, jsonb, boolean) to authenticated, service_role;
 
@@ -819,12 +827,18 @@ begin
   if old.matched_to_type is not distinct from new.matched_to_type and old.matched_to_id is not distinct from new.matched_to_id then
     return new;
   end if;
+  /* review: nothing to do (and no scan) for a company with no imported foreign receipt */
+  if not exists (select 1 from public.zoho_fy_receipts z where z.tenant_id = new.tenant_id and z.currency is not null) then
+    return new;
+  end if;
   select coalesce(array_agg(distinct x), '{}') into v_ids from (
     select p.id as x from public.payments p
+     where p.tenant_id = new.tenant_id and p.bank_txn_id = new.id
+    union all
+    select p.id from public.payments p
      where p.tenant_id = new.tenant_id
-       and (p.bank_txn_id = new.id
-            or (old.matched_to_type = 'payment' and p.id::text = old.matched_to_id)
-            or (new.matched_to_type = 'payment' and p.id::text = new.matched_to_id))
+       and p.id in (public.bank_match_uuid(case when old.matched_to_type = 'payment' then old.matched_to_id end),
+                    public.bank_match_uuid(case when new.matched_to_type = 'payment' then new.matched_to_id end))
     union all
     select unnest(z.payment_ids) from public.zoho_fy_receipts z
      where z.tenant_id = new.tenant_id and z.currency is not null
