@@ -12,6 +12,7 @@
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { domainLineYears } from "@/lib/provisioning/products";
 import { isDomainRegistrationLine } from "@/lib/quotes/seat-lines";
+import { domainRenewalDescription, isDomainRenewalDescription } from "@/lib/domains/renewal-text";
 
 const clampYears = (y: number) => Math.max(1, Math.min(10, Math.trunc(Number.isFinite(y) ? y : 1)));
 
@@ -27,6 +28,9 @@ export function lineForYears(line: QuoteLineItem, years: number): QuoteLineItem 
     years: to > 1 ? to : undefined,
   };
   if (line.list_rate !== undefined) out.list_rate = scale(line.list_rate);
+  /* R-2710: a domain renewal line says its term ("Renewal, 1 year") — the text follows the years,
+     so the PDF never reads "1 year" next to a 3-year price. Any other text is the operator's. */
+  if (isDomainRenewalDescription(line.description)) out.description = domainRenewalDescription(to);
   return out;
 }
 

@@ -15,6 +15,8 @@
 --   YEARS     draft domain line 1 → 3 years: extension_months 12 → 36; 3 → 1 back to 12
 --   PAID      3-year renewal paid in full → renewal_date + 36 months, mrr = subtotal / 36,
 --             one subscription, nothing else rolled
+--   OLD 24    an older 24-month renewal quote (no years on its line): 3 years → 36 (not 72); seats-only keeps 24
+--   MIXED     a 3-year line next to other renewing lines is refused
 --   MARK SENT the draft saved as 'sent' in the same update (Save & mark sent) still follows the years
 --   LEFT      sent quote / extension quote / plan change (0 months) / month term / caller-set
 --             extension_months → extension_months untouched
@@ -153,6 +155,38 @@ update public.quotes set line_items = jsonb_set(line_items, '{0,years}', '3'), s
 insert into r2710_fail
 select 'MARK SENT: draft saved as sent with 3 years gave extension_months ' || extension_months || ', expected 36'
   from public.quotes where id = 'Q-R2710-MARK' and extension_months <> 36;
+
+-- OLD 24: a renewal quote made before R-2710 for a 24-month term (no years on its line) — its revision
+-- picks 3 years → 36 (never 24 × 3 = 72); a seats-only edit keeps 24; 1 year → 12
+insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, status, payment_status, line_items, is_renewal, is_extension, extension_months) values
+  ('Q-R2710-OLD24',  'e2710000-0000-0000-0000-0000000000a0', 'e2710000-0000-4000-8000-0000000000c1', 'R2710 Cust', 2832, 'draft', 'none', '[{"name":".com","qty":1,"rate":2400,"commitment":"annual_yearly"}]'::jsonb, true, false, 24),
+  ('Q-R2710-SEATS',  'e2710000-0000-0000-0000-0000000000a0', 'e2710000-0000-4000-8000-0000000000c1', 'R2710 Cust', 2832, 'draft', 'none', '[{"name":"Workspace","qty":5,"rate":2400,"commitment":"annual_yearly"}]'::jsonb, true, false, 24),
+  ('Q-R2710-ONE',    'e2710000-0000-0000-0000-0000000000a0', 'e2710000-0000-4000-8000-0000000000c1', 'R2710 Cust', 2832, 'draft', 'none', '[{"name":".com","qty":1,"rate":2400,"commitment":"annual_yearly","years":2}]'::jsonb, true, false, 24);
+update public.quotes set line_items = jsonb_set(line_items, '{0,years}', '3') where id = 'Q-R2710-OLD24';
+update public.quotes set line_items = jsonb_set(line_items, '{0,qty}', '6') where id = 'Q-R2710-SEATS';
+update public.quotes set line_items = line_items #- '{0,years}' where id = 'Q-R2710-ONE';
+insert into r2710_fail
+select 'OLD 24: ' || id || ' extension_months ' || extension_months
+  from public.quotes
+ where (id = 'Q-R2710-OLD24' and extension_months <> 36)
+    or (id = 'Q-R2710-SEATS' and extension_months <> 24)
+    or (id = 'Q-R2710-ONE'   and extension_months <> 12);
+
+-- MIXED: a 3-year domain line next to yearly seats on one renewal quote → refused with the way out
+insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, status, payment_status, line_items, is_renewal, is_extension, extension_months) values
+  ('Q-R2710-MIX', 'e2710000-0000-0000-0000-0000000000a0', 'e2710000-0000-4000-8000-0000000000c1', 'R2710 Cust', 2832, 'draft', 'none',
+   '[{"name":".com","qty":1,"rate":1200,"commitment":"annual_yearly"},{"name":"Workspace","qty":5,"rate":1200,"commitment":"annual_yearly"}]'::jsonb, true, false, 12);
+do $$
+declare v_err text;
+begin
+  begin
+    update public.quotes set line_items = jsonb_set(line_items, '{0,years}', '3') where id = 'Q-R2710-MIX';
+  exception when check_violation then v_err := sqlerrm;
+  end;
+  if v_err is null or v_err not like '%must be the only renewing line%' then
+    insert into r2710_fail values ('MIXED: 3-year domain + seats was not refused (' || coalesce(v_err, 'saved') || ')');
+  end if;
+end $$;
 
 do $$
 declare v_all text;
