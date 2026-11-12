@@ -26,7 +26,7 @@ export async function GET() {
   const u = await me(supabase);
   if (!u) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   // RLS keeps the read to the caller's own tenant row.
-  /* The payroll_* columns (migration 20261112221307) are not in database.generated.ts yet — the
+  /* The payroll_* columns (migration 20261112230147) are not in database.generated.ts yet — the
      next types regen picks them up; until then this one read/write goes untyped. */
   const { data, error } = await (supabase as unknown as SupabaseClient).from("attendance_settings").select(PAYROLL_POLICY_COLUMNS).maybeSingle();
   if (error) return NextResponse.json({ error: "Could not read the payroll policy" }, { status: 500 });
