@@ -76,7 +76,7 @@ export function parsePayrollPolicy(row: PayrollPolicyRow | null | undefined): Pa
 }
 
 /** Policy → the DB columns to write (only these — the row's attendance columns are never sent). */
-export function policyToRow(p: PayrollPolicy): Required<PayrollPolicyRow> {
+export function policyToRow(p: PayrollPolicy): { [K in keyof PayrollPolicyRow]-?: NonNullable<PayrollPolicyRow[K]> } {
   return {
     payroll_pf_default: p.pfDefault,
     payroll_pf_full_wage_default: p.pfFullWageDefault,

@@ -10,6 +10,7 @@
  * attendance settings (IPs, selfie, office hours, secrets) are never touched.
  */
 import { NextResponse, type NextRequest } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { PAYROLL_POLICY_COLUMNS, parsePayrollPolicy, policyToRow, validatePayrollPolicyInput, type PayrollPolicyRow } from "@/lib/payroll/policy";
 
@@ -25,7 +26,9 @@ export async function GET() {
   const u = await me(supabase);
   if (!u) return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
   // RLS keeps the read to the caller's own tenant row.
-  const { data, error } = await supabase.from("attendance_settings").select(PAYROLL_POLICY_COLUMNS).maybeSingle();
+  /* The payroll_* columns (migration 20261112153335) are not in database.generated.ts yet — the
+     next types regen picks them up; until then this one read/write goes untyped. */
+  const { data, error } = await (supabase as unknown as SupabaseClient).from("attendance_settings").select(PAYROLL_POLICY_COLUMNS).maybeSingle();
   if (error) return NextResponse.json({ error: "Could not read the payroll policy" }, { status: 500 });
   return NextResponse.json({ policy: parsePayrollPolicy(data as PayrollPolicyRow | null) });
 }
@@ -41,7 +44,7 @@ export async function POST(request: NextRequest) {
   const v = validatePayrollPolicyInput(body?.policy);
   if (!v.ok) return NextResponse.json({ error: v.error }, { status: 400 });
 
-  const admin = createAdminClientFor(u.userId);
+  const admin = createAdminClientFor(u.userId) as unknown as SupabaseClient;
   const { error } = await admin
     .from("attendance_settings")
     .upsert({ tenant_id: u.tenantId, ...policyToRow(v.policy), updated_at: new Date().toISOString() }, { onConflict: "tenant_id" });
