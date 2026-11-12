@@ -37,7 +37,7 @@ import { splitTaxHeads } from "@/lib/gst/tax-split";
 import { SAAS_HSN, SAAS_HSN_LABEL } from "@/lib/gst/hsn";
 import type { PayMethods } from "./pay-methods";
 import { isExportSupply, treatmentIsAlwaysInterState } from "@/lib/gst/place-of-supply";
-import { lineOwnRate, lineWeight, linesRateSlices, pdfTaxRows } from "@/lib/gst/line-rates";
+import { lineOwnRate, lineWeight, linesRateSlices, pdfTaxRows, type RateSourceLine } from "@/lib/gst/line-rates";
 import { exportEndorsement } from "@/lib/gst/export-lut";
 import { sezEndorsement } from "@/lib/gst/sez-endorsement";
 import { udyamPdfLine } from "@/lib/compliance/udyam";
@@ -656,7 +656,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
                   {/* R-2717: the line's own GST rate, only when the invoice carries several. */}
                   {rateRows && lineWeight(li) > 0 && (
                     <Text style={{ fontSize: 9, color: COLORS.ink3, marginTop: 2 }}>
-                      GST {lineOwnRate(li)}%
+                      GST {lineOwnRate(li as RateSourceLine)}%
                     </Text>
                   )}
                 </View>
