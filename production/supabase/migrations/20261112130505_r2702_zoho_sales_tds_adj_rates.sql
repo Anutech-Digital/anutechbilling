@@ -21,9 +21,10 @@
 --     The add-up rule (R-2650) is on what is left after it: |total − taxable − GST − adjustment| ≤ the
 --     round-off limit; the scan's adjustment must be its adjustment line's amount. lib/gst/gstr1.ts
 --     docHsnLines leaves the line out of the HSN table.
--- (3) LINES AT DIFFERENT GST RATES (0% + 18%): one invoice; each line keeps its own rate in line_items
---     (tax_rate); invoices.tax_rate = the highest (normalise.ts checks Zoho's GST is those rates on those
---     lines). Every line rate must be one this app stores.
+-- (3) LINES AT DIFFERENT GST RATES (0% + 18%): STILL REFUSED (coordinator, 12 Nov) — GSTR-1, the GST
+--     mismatch check, the invoice PDF and credit notes read ONE rate per invoice, so a 0% line would show
+--     at 18%. Per-line GST in those first (R-2717), then the import. Refused here too (not only by the
+--     scan's problem): "Lines at different GST rates — waits for per-line GST in reports, card R-2717."
 -- GST-FILED MONTHS (R-2621): unchanged on purpose — these ARE the invoices Zoho filed (import as filed,
 --   G-FY2526 D2/D7): taxable and GST are Zoho's figures, never re-computed, so a filed month gets no GST
 --   that was not filed. The books lock still refuses (unchanged).
@@ -73,7 +74,7 @@ declare
   v_adj      integer;
   v_adj_line integer;
   v_inv_tds  integer;
-  v_bad_rate text;
+  v_line_rates text;
   v_reason   text;
   v_clash    record;
   v_seen     text[] := array[]::text[];
@@ -168,11 +169,14 @@ begin
           into v_adj_line
           from jsonb_array_elements(case when jsonb_typeof(v_p->'lines') = 'array' then v_p->'lines' else '[]'::jsonb end) l
          where l->>'kind' = 'adjustment';
-        select string_agg(distinct l->>'taxPercent', ', ') into v_bad_rate
+        /* The sold lines' distinct GST rates (an adjustment line has none) — more than one = mixed. */
+        select case when count(distinct coalesce((l->>'taxPercent')::numeric, 0)) > 1
+                    then string_agg(distinct trim_scale(coalesce((l->>'taxPercent')::numeric, 0))::text, '%, '
+                                    order by trim_scale(coalesce((l->>'taxPercent')::numeric, 0))::text) end
+          into v_line_rates
           from jsonb_array_elements(case when jsonb_typeof(v_p->'lines') = 'array' then v_p->'lines' else '[]'::jsonb end) l
          where coalesce(l->>'kind', '') <> 'adjustment'
-           and nullif(l->>'taxPercent', '') is not null
-           and (l->>'taxPercent')::numeric not in (0, 3, 5, 12, 18, 28, 40);
+           and coalesce((l->>'taxable')::integer, 0) <> 0;
       exception when others then
         v_reason := 'Its date or amounts could not be read — read it from Zoho again.';
       end;
@@ -209,9 +213,9 @@ begin
         v_reason := format('Zoho''s TDS ₹%s on it is not below the sale ₹%s — read it from Zoho again or book it by hand.', v_inv_tds, v_amount);
       elsif v_inv_tds > 0 and upper(coalesce(nullif(btrim(v_p->>'currency'), ''), 'INR')) <> 'INR' then
         v_reason := 'Zoho has TDS on a foreign-currency invoice — book it by hand.';
-      elsif v_bad_rate is not null then
-        -- R-2702: each line keeps its own rate — every one must be a rate this app stores.
-        v_reason := format('GST rate %s%% on a line is not one this app stores on an invoice — book it by hand.', v_bad_rate);
+      elsif v_line_rates is not null then
+        -- R-2702: one rate per invoice until per-line GST in reports (R-2717).
+        v_reason := format('Lines at different GST rates (%s%%) — waits for per-line GST in reports, card R-2717.', v_line_rates);
       elsif v_round is not null and v_round <> v_amount - v_taxable - v_tax then
         v_reason := format('Taxable, GST and total do not add up: the round-off on the Zoho read (₹%s) is not total − taxable − GST (₹%s) — read it from Zoho again.',
                            v_round, v_amount - v_taxable - v_tax);
@@ -260,9 +264,8 @@ begin
              'amount',       coalesce((l->>'taxable')::integer, 0),
              'item_id',      it.id,
              'zoho_item_id', nullif(l->>'zohoItemId', ''),
-             /* R-2702: each line's own GST rate (lines at 0% + 18%); Zoho's adjustment line has none
-                and says so (kind "adjustment" — no GST, outside the taxable value, not in HSN). */
-             'tax_rate',     case when coalesce(l->>'kind', '') <> 'adjustment' then nullif(l->>'taxPercent', '')::numeric end,
+             /* R-2702: Zoho's adjustment line says so (kind "adjustment" — no GST, outside the taxable
+                value, not in HSN, never a catalogue item). */
              'kind',         case when l->>'kind' = 'adjustment' then 'adjustment' end
            )) order by x.ord), '[]'::jsonb)
       into v_lines
@@ -341,7 +344,7 @@ end;
 $function$;
 
 comment on function public.import_zoho_fy_sales(text, jsonb, boolean) is
-  'R-2499 / R-2536 / R-2650 / R-2702: FY sales from Zoho as Zoho''s own invoices (number, date, GST — a total off taxable + GST by Zoho''s round-off, up to one unit of the invoice currency in ₹ + ₹1, is kept as filed; R-2702: Zoho''s adjustment is its own no-GST line, TDS on the invoice leaves the sale at full value (the receipts import books the TDS), each line keeps its own GST rate; buyer GSTIN, place of supply, treatment and billing address as filed — empty stays empty). Money from zoho_fy_scan (server-read), picks = Zoho id + matched customer / items. dry_run (default) writes nothing. Owner / accountant.';
+  'R-2499 / R-2536 / R-2650 / R-2702: FY sales from Zoho as Zoho''s own invoices (number, date, GST — a total off taxable + GST by Zoho''s round-off, up to one unit of the invoice currency in ₹ + ₹1, is kept as filed; R-2702: Zoho''s adjustment is its own no-GST line, TDS on the invoice leaves the sale at full value (the receipts import books the TDS), lines at different GST rates still refused (R-2717); buyer GSTIN, place of supply, treatment and billing address as filed — empty stays empty). Money from zoho_fy_scan (server-read), picks = Zoho id + matched customer / items. dry_run (default) writes nothing. Owner / accountant.';
 revoke all on function public.import_zoho_fy_sales(text, jsonb, boolean) from public, anon;
 grant execute on function public.import_zoho_fy_sales(text, jsonb, boolean) to authenticated, service_role;
 

@@ -6,7 +6,8 @@
  *       (TDS shown but not taken off) is read too. Which one is told by the lines, else by the GST rate.
  *   (2) A Zoho adjustment (16): a visible "Adjustment" line with no GST; taxable and GST stay Zoho's, the
  *       total equals Zoho's.
- *   (3) Lines at different GST rates (7): each line keeps its own rate; the invoice carries the highest.
+ *   (3) Lines at different GST rates (7): coordinator 12 Nov — still left out, the reason names R-2717
+ *       (GSTR-1 / mismatch / PDF / credit notes read one rate per invoice; per-line GST there first).
  * Zoho is never called: details are Zoho-shaped (fy-fetch ZohoFyDocDetail). Names and figures are made up
  * in the shape of INV/25-26/0696 (TDS), 0065 (adjustment), 1248 (0% + 18%).
  */
@@ -190,16 +191,13 @@ describe("R-2702 (3) lines at different GST rates", () => {
     ...over,
   });
 
-  it("imports one invoice; each line keeps its rate; the invoice carries the highest", () => {
+  it("coordinator 12 Nov: stays left out, with the reason naming R-2717 (reports read one rate per invoice)", () => {
     const f = zohoSaleFacts(mixed({ totalPaise: 1_16_200_00 }), SELLER);
-    expect(f.problems).toEqual([]);
-    expect(f.taxable).toBe(100000);
-    expect(f.tax).toBe(16200);
-    expect(f.amount).toBe(116200);
-    expect(f.taxRate).toBe(18);
-    expect(f.lines.map((l) => l.taxPercent)).toEqual([18, 0]);
-    expect(f.notes.join(" ")).toMatch(/0%, 18%/);
-    expect(buildSalesPlan([f], ctx).rows[0].verdict).toBe("import");
+    expect(f.taxRate).toBeNull();
+    expect(f.problems).toEqual(["Lines at different GST rates (0%, 18%) — waits for per-line GST in reports, card R-2717."]);
+    const p = buildSalesPlan([f], ctx);
+    expect(p.rows[0].verdict).toBe("skip");
+    expect(p.rows[0].reason).toMatch(/R-2717/);
   });
 
   it("GST that is not the lines' own rates is still refused", () => {

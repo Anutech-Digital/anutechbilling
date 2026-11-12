@@ -2,7 +2,7 @@
 --   S1. TDS on the invoice (Zoho's total net of it): the sale is the FULL value (₹1,18,000), never ₹1,08,000.
 --   S2. A Zoho adjustment −₹250: its own line {kind "adjustment"} with no GST and no rate; taxable and GST
 --       Zoho's; total = Zoho's ₹1,17,750.
---   S3. Lines at 0% + 18%: one invoice, each line keeps its tax_rate; the invoice carries 18.
+--   S3. Lines at 0% + 18%: STILL refused (coordinator 12 Nov) with the R-2717 reason; nothing written.
 --   S4. refused: an adjustment with no adjustment line; TDS not below the sale; a line rate the app does not
 --       store; TDS on a foreign-currency invoice.
 --   R1. Receipts: Zoho's payment of the NET ₹1,08,000 (no TDS withheld on the payment) on the TDS invoice →
@@ -97,8 +97,8 @@ declare
 begin
   r := public.import_zoho_fy_sales('2025-26', (select jsonb_agg(jsonb_build_object('zoho_invoice_id', z, 'customer_id', c))
          from unnest(array['s1', 's1b', 's1c', 's2', 's3', 's4a', 's4b', 's4c', 's4d']) z), false);
-  if (r->>'imported')::int <> 5 then
-    raise exception 'R-2702 S: expected s1, s1b, s1c, s2, s3 imported, got % (skipped %)', r->>'imported', r->'skipped';
+  if (r->>'imported')::int <> 4 then
+    raise exception 'R-2702 S: expected s1, s1b, s1c, s2 imported, got % (skipped %)', r->>'imported', r->'skipped';
   end if;
 
   -- S1: the full sale, never net of TDS.
@@ -115,26 +115,20 @@ begin
   if jsonb_array_length(inv.line_items) <> 2
      or inv.line_items->1->>'kind' is distinct from 'adjustment' or (inv.line_items->1->>'amount')::int <> -250
      or inv.line_items->1 ? 'tax_rate' or inv.line_items->1 ? 'hsn' or inv.line_items->1 ? 'item_id'
-     or inv.line_items->0 ? 'kind' or (inv.line_items->0->>'tax_rate')::numeric <> 18 then
+     or inv.line_items->0 ? 'kind' or inv.line_items->0 ? 'tax_rate' then
     raise exception 'R-2702 S2: line_items %', inv.line_items;
-  end if;
-
-  -- S3: each line keeps its rate; the invoice shows the highest.
-  select amount, taxable_value, tax_amount, tax_rate, line_items into inv from public.invoices where tenant_id = t and zoho_invoice_id = 's3';
-  if inv.amount <> 116200 or inv.taxable_value <> 100000 or inv.tax_amount <> 16200 or inv.tax_rate <> 18
-     or (inv.line_items->0->>'tax_rate')::numeric <> 18 or (inv.line_items->1->>'tax_rate')::numeric <> 0 then
-    raise exception 'R-2702 S3: stored % / % / % rate % lines %', inv.amount, inv.taxable_value, inv.tax_amount, inv.tax_rate, inv.line_items;
   end if;
 
   -- S4: refusals, with reasons.
   select string_agg(s->>'zoho_invoice_id' || ': ' || (s->>'reason'), ' | ' order by s->>'zoho_invoice_id') into why from jsonb_array_elements(r->'skipped') s;
-  if why not like 's4a: Zoho''s adjustment ₹-250 is not its adjustment line ₹0%'
+  if why not like 's3: Lines at different GST rates (0%, 18%) — waits for per-line GST in reports, card R-2717.%'
+     or why not like '%s4a: Zoho''s adjustment ₹-250 is not its adjustment line ₹0%'
      or why not like '%s4b: Zoho''s TDS ₹118000 on it is not below the sale ₹118000%'
-     or why not like '%s4c: GST rate 0.25% on a line is not one this app stores%'
+     or why not like '%s4c: Lines at different GST rates (0.25%, 18%)%'
      or why not like '%s4d: Zoho has TDS on a foreign-currency invoice%' then
     raise exception 'R-2702 S4: reasons %', why;
   end if;
-  if exists (select 1 from public.invoices where tenant_id = t and zoho_invoice_id like 's4%') then
+  if exists (select 1 from public.invoices where tenant_id = t and (zoho_invoice_id like 's4%' or zoho_invoice_id = 's3')) then
     raise exception 'R-2702 S4: a refused invoice was written';
   end if;
 
