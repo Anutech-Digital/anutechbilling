@@ -9,7 +9,7 @@ import { render, cleanup, screen, fireEvent, waitFor } from "@testing-library/re
 
 vi.mock("@tanstack/react-query", () => ({ useQueryClient: () => ({ invalidateQueries: vi.fn() }) }));
 
-import { ZohoFyReceiptsImportDialog, partFailedMessage, readStatusText } from "./zoho-fy-receipts-import-dialog";
+import { ZohoFyReceiptsImportDialog, partFailedMessage, readStatusText, accountedText, BOOKED_EARLIER_PREFIX } from "./zoho-fy-receipts-import-dialog";
 
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
@@ -161,6 +161,71 @@ describe("R-2607 FY receipts dialog — server read", () => {
     }));
     render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
     expect(await screen.findByText("Read 900 of 2,576 — stopped.")).toBeTruthy();
+  });
+});
+
+/* R-2693 (p0) — nothing left out silently: Check first accounts for EVERY scanned payment (to record +
+   already + refused by the check + left out before it = scanned), groups the refusals by reason with a
+   count, lists all of them, and a USD payment shows its dollars (not as rupees). */
+describe("R-2693 FY receipts — every payment accounted for", () => {
+  const usdRow = { number: "201", date: "2025-12-02", customer: "Overseas Buyer LLC", amount: 58481, currency: "USD", foreignAmount: 663.05, reason: "Received in USD in Zoho — not imported yet." };
+  const oldUsdRow = { number: "202", date: "2025-12-03", customer: "Overseas Buyer LLC", amount: null, currency: "USD", foreignAmount: 663, reason: "Received in USD in Zoho — book a foreign-currency receipt by hand." };
+  const pv = { ...preview, parts: 1, skipped: [usdRow, oldUsdRow], skippedMore: 3 };
+  const refused = Array.from({ length: 250 }, (_, i) => ({ number: `R${i + 1}`, reason: i < 249 ? `INV/25-26/${1000 + i} has only ₹${i} due here, but Zoho settles ₹${i + 5} with this payment.` : "Its invoices belong to different customers here." }));
+  const stub = (result: Record<string, unknown>) => vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+    const b = JSON.parse(init.body) as Record<string, unknown>;
+    if (b.action === "preview") return { ok: true, json: async () => pv } as Response;
+    return { ok: true, json: async () => ({ ok: true, result }) } as Response;
+  }));
+
+  it("left-out list: a USD payment shows its dollars (+ ₹ at Zoho's rate when known); says how many more are not listed", async () => {
+    stub({ imported: 120, already: 0, banked: 0, bank_later: 120, skipped: [] });
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    const list = await screen.findByTestId("fy-receipts-left-out");
+    expect(list.textContent).toMatch(/201 · .* · Overseas Buyer LLC · \$663\.05 \(₹58,481\) — Received in USD/);
+    expect(list.textContent).toMatch(/202 · .* · \$663\.00 — Received in USD/);
+    expect(list.textContent).not.toMatch(/₹663/);
+    expect(list.textContent).toMatch(/and 3 more not listed here/);
+  });
+
+  it("Check first: every scanned payment accounted for; refusals grouped with a count and ALL listed (250, not 200)", async () => {
+    stub({ imported: 0, already: 0, banked: 0, bank_later: 0, skipped: refused });
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Check first/ }));
+    const acc = await screen.findByTestId("fy-receipts-accounted");
+    /* 0 + 0 + 250 refused + 40 left out ≠ 160 scanned — never hidden: the screen says the numbers do not add up */
+    expect(acc.textContent).toMatch(/do not add up/);
+    const groups = screen.getByTestId("fy-receipts-refused-reasons");
+    expect(groups.textContent).toMatch(/249 · … has only … due here/);
+    expect(groups.textContent).toMatch(/1 · Its invoices belong to different customers here\./);
+    expect(screen.getByText(/^R250$/)).toBeTruthy();
+  });
+
+  it("Check first: the sum line names each bucket when it adds up", async () => {
+    stub({ imported: 115, already: 0, banked: 100, bank_later: 15, skipped: refused.slice(0, 5) });
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Check first/ }));
+    const acc = await screen.findByTestId("fy-receipts-accounted");
+    expect(acc.textContent).toBe("All 160 Zoho payments accounted for: 115 to record · 0 already recorded · 5 refused by the check · 40 left out before the check (reasons above).");
+  });
+});
+
+describe("R-2693 review fixes — sum line", () => {
+  it("a payment recorded earlier whose bank line failed to link is counted ONCE (already), not also as refused", () => {
+    const r = { imported: 0, already: 1, skipped: [{ number: "p1", reason: `${BOOKED_EARLIER_PREFIX}: lock timeout` }] };
+    expect(accountedText(1, 0, r)).toMatch(/^All 1 Zoho payments accounted for: 0 to record · 1 already recorded · 0 refused by the check/);
+  });
+
+  it("the check uses the counts of the plan the server checked (not an older preview)", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init: { body: string }) => {
+      const b = JSON.parse(init.body) as Record<string, unknown>;
+      if (b.action === "preview") return { ok: true, json: async () => ({ ...preview, parts: 1 }) } as Response;
+      /* the scan grew to 161 since the preview (a new payment, left out) */
+      return { ok: true, json: async () => ({ ok: true, scanned: 161, leftOut: 41, result: { imported: 120, already: 0, banked: 0, bank_later: 120, skipped: [] } }) } as Response;
+    }));
+    render(<ZohoFyReceiptsImportDialog open onOpenChange={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /Check first/ }));
+    expect((await screen.findByTestId("fy-receipts-accounted")).textContent).toMatch(/^All 161 Zoho payments accounted for: 120 to record · 0 already recorded · 0 refused by the check · 41 left out/);
   });
 });
 

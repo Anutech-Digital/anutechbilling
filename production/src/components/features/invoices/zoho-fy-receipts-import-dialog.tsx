@@ -27,7 +27,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { formatDate, rupee } from "@/lib/utils";
-import { LEAVE_OUT, type ZohoDeposit } from "@/lib/integrations/zoho-books/receipts-import/plan";
+import { formatForeign, isForeignCurrency } from "@/lib/currency";
+import { LEAVE_OUT, skipReasonKey, type ZohoDeposit } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
 
 const API = "/api/integrations/zoho-books/receipts-import";
@@ -64,12 +65,54 @@ interface Preview {
   deposits: ZohoDeposit[];
   accounts: { id: string; name: string }[];
   skipReasons: { reason: string; count: number }[];
-  skipped: { number: string; date: string; customer: string; amount: number; reason: string | null }[];
+  /* R-2693: amount = ₹ (null = not known, a foreign payment read before R-2693); currency / foreignAmount
+     for a foreign-currency payment (optional: an older server sends none). skippedMore = not listed. */
+  skipped: LeftOutRow[];
+  skippedMore?: number;
   batches: ImportBatch[];
   canRemove: boolean;
 }
+interface LeftOutRow { number: string; date: string; customer: string; amount: number | null; currency?: string | null; foreignAmount?: number | null; reason: string | null }
+
+/** R-2693 — a left-out payment's money: a foreign-currency one in its own currency (+ the ₹ at Zoho's
+ *  rate when known), never its dollars shown as rupees. */
+export function leftOutMoney(s: Pick<LeftOutRow, "amount" | "currency" | "foreignAmount">): string {
+  if (isForeignCurrency(s.currency) && s.currency && s.foreignAmount !== null && s.foreignAmount !== undefined) {
+    return `${formatForeign(s.foreignAmount, s.currency)}${s.amount ? ` (${rupee(s.amount)})` : ""}`;
+  }
+  return s.amount === null ? "—" : rupee(s.amount);
+}
+
+/**
+ * R-2693 — the check's sum line: every scanned Zoho payment is in exactly one bucket — to record,
+ * already recorded, refused by the check (the database's own reasons) or left out before the check
+ * (the preview's reasons). When the buckets do not make the scanned count, it says so — never hidden.
+ */
+/** The SQL import's one double-count: a payment recorded earlier whose bank line could not be linked is
+ *  counted as already AND listed with this reason (import_zoho_fy_receipts) — not a second payment. */
+export const BOOKED_EARLIER_PREFIX = "Booked earlier; its bank line could not be matched";
+
+export function accountedText(scanned: number, leftOut: number, r: Pick<PartResult, "imported" | "already" | "skipped">): string {
+  const n = (x: number) => x.toLocaleString("en-IN");
+  const refused = r.skipped.filter((s) => !(s.reason ?? "").startsWith(BOOKED_EARLIER_PREFIX)).length;
+  const sum = r.imported + r.already + refused + leftOut;
+  const parts = `${n(r.imported)} to record · ${n(r.already)} already recorded · ${n(refused)} refused by the check · ${n(leftOut)} left out before the check`;
+  return sum === scanned
+    ? `All ${n(scanned)} Zoho payments accounted for: ${parts} (reasons above).`
+    : `${n(scanned)} Zoho payments read, but the numbers do not add up (${parts} = ${n(sum)}) — press Check first again; if it stays, tell support.`;
+}
+
+/** R-2693 — the check's refusals by kind (same grouping as "Left out, and why"), most first. */
+export function refusalGroups(skipped: readonly { reason: string }[]): { reason: string; count: number }[] {
+  const by = new Map<string, number>();
+  for (const s of skipped) { const k = skipReasonKey(s.reason ?? ""); by.set(k, (by.get(k) ?? 0) + 1); }
+  return [...by.entries()].map(([reason, count]) => ({ reason, count })).sort((a, b) => b.count - a.count);
+}
+
 /** R-2565: withFee / fee = Razorpay payments booked with their fee as Bank Charges (they wait for their Razorpay settlement line). */
-interface PartResult { imported: number; already: number; banked: number; bankLater: number; withFee: number; fee: number; skipped: { number: string; reason: string }[] }
+/* R-2693: scanned / leftOut = the counts of the plan the server cut the parts from (the last part's;
+   absent from an older server → the preview's), so the sum line never mixes two snapshots. */
+interface PartResult { imported: number; already: number; banked: number; bankLater: number; withFee: number; fee: number; skipped: { number: string; reason: string }[]; scanned?: number; leftOut?: number }
 
 /** R-2565 — the Razorpay fee line for the summary / check result: shown apart, never taken off the receipts. */
 export function razorpayFeeText(count: number, fee: number): string | null {
@@ -183,11 +226,13 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     const parts = preview?.parts ?? 0;
     for (let part = from; part < parts && !stop.current; part++) {
       try {
-        const r = await call<{ result: { imported: number; already: number; banked: number; bank_later: number; with_fee?: number; fee?: number; skipped: { number: string; reason: string }[] } }>(
+        const r = await call<{ scanned?: number; leftOut?: number; result: { imported: number; already: number; banked: number; bank_later: number; with_fee?: number; fee?: number; skipped: { number: string; reason: string }[] } }>(
           { action: "import", part, dryRun, accounts });
         sum.imported += r.result.imported; sum.already += r.result.already; sum.banked += r.result.banked; sum.bankLater += r.result.bank_later;
         sum.withFee += r.result.with_fee ?? 0; sum.fee += r.result.fee ?? 0;
         sum.skipped.push(...r.result.skipped);
+        if (r.scanned !== undefined) sum.scanned = r.scanned;
+        if (r.leftOut !== undefined) sum.leftOut = r.leftOut;
       } catch (e) {
         throw new PartFailed(partFailedMessage(part, parts, (e as Error).message, dryRun ? null : sum), sum, part);
       }
@@ -309,7 +354,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
                   <ul className="space-y-1.5">
                     {preview.deposits.map((d) => (
                       <li key={d.zohoAccountId} className="flex items-center gap-2 flex-wrap text-xs">
-                        <span className="text-ink-2 min-w-48">Zoho: <b className="text-ink">{d.zohoName}</b> · {d.count} · {rupee(d.amount)}</span>
+                        <span className="text-ink-2 min-w-48">Zoho: <b className="text-ink">{d.zohoName}</b> · {d.count} · {rupee(d.amount)}{d.amountUnknown ? ` + ${d.amountUnknown} foreign-currency ₹ not known` : ""}</span>
                         <label htmlFor={`acct-${d.zohoAccountId}`} className="sr-only">App account for Zoho&apos;s {d.zohoName}</label>
                         <select
                           id={`acct-${d.zohoAccountId}`}
@@ -342,15 +387,16 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
                   </ul>
                   <details className="mt-1 text-xs">
                     <summary className="cursor-pointer text-ink-3">Show the payments left out</summary>
-                    <ul className="max-h-48 overflow-y-auto mt-1 space-y-0.5">
-                      {preview.skipped.map((s) => (
-                        <li key={s.number + s.date}><span className="font-mono">{s.number}</span> · {formatDate(s.date)} · {s.customer} · {rupee(s.amount)} — {s.reason}</li>
+                    <ul className="max-h-48 overflow-y-auto mt-1 space-y-0.5" data-testid="fy-receipts-left-out">
+                      {preview.skipped.map((s, i) => (
+                        <li key={`${s.number}-${s.date}-${i}`}><span className="font-mono">{s.number}</span> · {formatDate(s.date)} · {s.customer} · {leftOutMoney(s)} — {s.reason}</li>
                       ))}
+                      {(preview.skippedMore ?? 0) > 0 && <li className="text-ink-3">… and {preview.skippedMore!.toLocaleString("en-IN")} more not listed here (counted above).</li>}
                     </ul>
                   </details>
                 </div>
               )}
-              {check && <PartSummary title="Check result (nothing saved)" r={check} />}
+              {check && <PartSummary title="Check result (nothing saved)" r={check} accounted={accountedText(check.scanned ?? preview.counts.scanned, check.leftOut ?? preview.counts.skip, check)} />}
               {done && <PartSummary title="Recorded" r={done} />}
               {preview.batches.length > 0 && (
                 <div>
@@ -382,8 +428,9 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
   );
 }
 
-function PartSummary({ title, r }: { title: string; r: PartResult }) {
+function PartSummary({ title, r, accounted }: { title: string; r: PartResult; accounted?: string }) {
   const feeText = razorpayFeeText(r.withFee, r.fee);
+  const groups = refusalGroups(r.skipped);
   return (
     <div className="rounded-md border border-hairline px-3 py-2 text-xs" role="status">
       <p className="font-semibold text-ink">
@@ -391,10 +438,17 @@ function PartSummary({ title, r }: { title: string; r: PartResult }) {
         {r.bankLater ? ` · ${r.bankLater} wait for their bank line` : ""}{r.already ? ` · ${r.already} already recorded` : ""}{r.skipped.length ? ` · ${r.skipped.length} refused` : ""}
       </p>
       {feeText && <p className="text-ink-2" data-testid="fy-receipts-part-fee">{feeText}</p>}
+      {accounted && <p className="text-ink-2" data-testid="fy-receipts-accounted">{accounted}</p>}
       {r.skipped.length > 0 && (
-        <ul className="mt-1 max-h-32 overflow-y-auto text-ink-2">
-          {r.skipped.slice(0, 200).map((s, i) => <li key={`${s.number}-${i}`}><span className="font-mono">{s.number}</span> — {s.reason}</li>)}
-        </ul>
+        <>
+          {/* R-2693: the refusals by kind with a count, then every one (was cut at 200 without a word). */}
+          <ul className="mt-1 max-h-32 overflow-y-auto text-ink-2" data-testid="fy-receipts-refused-reasons">
+            {groups.map((g) => <li key={g.reason}><b>{g.count.toLocaleString("en-IN")}</b> · {g.reason}</li>)}
+          </ul>
+          <ul className="mt-1 max-h-32 overflow-y-auto text-ink-2">
+            {r.skipped.map((s, i) => <li key={`${s.number}-${i}`}><span className="font-mono">{s.number}</span> — {s.reason}</li>)}
+          </ul>
+        </>
       )}
     </div>
   );

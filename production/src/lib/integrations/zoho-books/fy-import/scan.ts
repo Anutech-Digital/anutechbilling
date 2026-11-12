@@ -67,6 +67,20 @@ export interface KnownRow {
   accountId?: string | null;
   /** The facts version its detail was made with (null = before R-2653 = 0). */
   factsVersion?: number | null;
+  /** R-2694: its stored facts lack what today's import needs (receiptFactsIncomplete) — read it again. */
+  factsIncomplete?: boolean;
+}
+
+/**
+ * R-2694 — a stored customer payment whose facts the foreign-receipt import cannot use: no `currency`
+ * (read before R-2693), or a foreign one with no per-invoice foreign amounts (`foreignLines`, read before
+ * R-2694). Only these are read again — not a SCAN_FACTS_VERSION bump for every payment (Zoho calls).
+ * Takes the two payload fields as text (the store reads `payload->>currency` / `payload->>foreignLines`).
+ */
+export function receiptFactsIncomplete(p: { currency: string | null | undefined; foreignLines: string | null | undefined }): boolean {
+  const cur = (p.currency ?? "").trim().toUpperCase();
+  if (!cur) return true;
+  return cur !== "INR" && !p.foreignLines;
 }
 
 export type ListedVerdict = "fresh" | "kept" | "seen" | "skip";
@@ -97,6 +111,7 @@ export function classifyListed(prev: KnownRow | null | undefined, row: ListedRow
 function changedSince(prev: KnownRow, row: ListedRow, fy: string, factsVersion: number): boolean {
   if (!prev.hasDetail || prev.status !== row.status || prev.fy !== fy) return true;
   if ((prev.factsVersion ?? 0) < factsVersion) return true;
+  if (prev.factsIncomplete) return true;   /* R-2694 */
   const mod = row.modified ?? "";
   if (!mod) return false;
   if (prev.modified) return prev.modified !== mod;

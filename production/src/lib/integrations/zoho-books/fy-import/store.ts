@@ -7,7 +7,7 @@
  */
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { FyReadKind } from "../fy-fetch";
-import { classifyListed, factsVersionOf, type ScanFacts, type ScanStore, type ScanRun, type ListedRow } from "./scan";
+import { classifyListed, factsVersionOf, receiptFactsIncomplete, type ScanFacts, type ScanStore, type ScanRun, type ListedRow } from "./scan";
 
 type Res<T = unknown> = PromiseLike<{ data: T | null; error: { message?: string; code?: string } | null }>;
 /** The slice of the Supabase query builder used here (the new tables are not in the generated types yet). */
@@ -47,16 +47,29 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
     async addListed(fy, rows: ListedRow[], run) {
       if (!rows.length) return;
       const onlyAccount = run?.onlyAccount ?? null;
-      const known = must(await (scan().select("zoho_id, zoho_status, fy, zoho_modified, detailed_at, deposit_account_id, facts_version").eq("tenant_id", tenantId).eq("kind", kind)
+      /* R-2694: for customer payments also the two payload fields the foreign-receipt import needs — a
+         stored detail without them is read again (only those rows; no facts-version bump for all). */
+      const receipts = kind === "customerpayments";
+      /* review: the in-process data gateway (DATA_GATEWAY=1, src/server/postgrest/parse.ts) refuses JSON
+         paths in a select — the whole payload is read (one listed page, receipts only). */
+      const cols = "zoho_id, zoho_status, fy, zoho_modified, detailed_at, deposit_account_id, facts_version"
+        + (receipts ? ", payload" : "");
+      const known = must(await (scan().select(cols).eq("tenant_id", tenantId).eq("kind", kind)
         .in("zoho_id", rows.map((x) => x.zohoId)) as Res<Array<{
           zoho_id: string; zoho_status: string; fy: string; zoho_modified: string | null; detailed_at: string | null;
           deposit_account_id: string | null; facts_version: number | null;
+          payload?: { currency?: unknown; foreignLines?: unknown } | null;
         }>>), "the Zoho read");
+      const fxOf = (p: { currency?: unknown; foreignLines?: unknown } | null | undefined) => ({
+        currency: typeof p?.currency === "string" ? p.currency : null,
+        foreignLines: Array.isArray(p?.foreignLines) ? "y" : null,
+      });
       const prev = new Map(known.map((k) => [k.zoho_id, {
         status: k.zoho_status, fy: k.fy, modified: k.zoho_modified, detailedAt: k.detailed_at,
         /* saveDetail sets payload + detailed_at together; a fresh row nulls both. */
         hasDetail: k.detailed_at !== null,
         accountId: k.deposit_account_id, factsVersion: k.facts_version,
+        factsIncomplete: receipts && k.detailed_at !== null && receiptFactsIncomplete(fxOf(k.payload)),
       }]));
       /* R-2653: never stamped before this read's start (another server's clock may be behind). */
       const startMs = Date.parse(run?.listStartedAt ?? "");
