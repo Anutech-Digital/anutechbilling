@@ -48,6 +48,7 @@ import { downloadPayslipPDF } from "@/lib/pdf";
 import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
 import { toastError } from "@/lib/errors/toast-error";
 import { periodLabel } from "@/lib/payroll/period-label";
+import { salaryInForce, revisionMonth, revisionsByEmployee, arrearsPayableIn } from "@/lib/payroll/salary-revision";
 import { SalaryStatusCell } from "./salary-status-cell";
 import { salaryPayState } from "@/lib/payroll/salary-status";
 import { toast } from "sonner";
@@ -56,6 +57,7 @@ import {
   useLeaveEntries, useCreateLeaveEntry, useDeleteLeaveEntry,
   useHolidays, useCreateHoliday, useDeleteHoliday,
   useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines,
+  useSalaryRevisions, useSalaryArrears, type SalaryRevision,
   useStatutoryDues, usePayStatutoryDues,
   useAttendance, useAttendanceNetwork, useSetAttendanceNetwork, getSelfieUrl, useSetAttendanceAnywhere, useCorrectAttendance,
   LEAVE_TYPE_LABEL,
@@ -478,6 +480,10 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const canSetPin = myRole === "owner" || myRole === "manager";
   const [name, setName] = React.useState(employee?.name ?? "");
   const [gross, setGross] = React.useState(String(employee?.monthly_gross ?? ""));
+  /* R-2699: once an employee has a salary revision, salary changes go through Revise salary only
+     (history + the old salary for earlier months); this form keeps the saved gross / Basic / DA. */
+  const revisionsQ = useSalaryRevisions(Boolean(employee));
+  const salaryByRevision = Boolean(employee) && (revisionsQ.data ?? []).some((r) => r.employee_id === employee?.id);
   const [joined, setJoined] = React.useState(employee?.joining_date ?? "");
   const [allowance, setAllowance] = React.useState(String(employee?.leave_allowance ?? 18));
   const [active, setActive] = React.useState(employee?.is_active ?? true);
@@ -574,15 +580,16 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   async function submit() {
     if (!name.trim() || !pinValid) return;
     const id = await save.mutateAsync({
-      id: employee?.id, name: name.trim(), monthly_gross: Math.round(Number(gross) || 0),
+      id: employee?.id, name: name.trim(),
+      monthly_gross: salaryByRevision && employee ? employee.monthly_gross : Math.round(Number(gross) || 0),
       joining_date: joined || null, leave_allowance: Math.round(Number(allowance) || 0), is_active: active,
       email: email.trim() || null, phone: phone.trim() || null, designation: designation.trim() || null,
       date_of_birth: dob || null, address: address.trim() || null,
       emergency_contact_name: ecName.trim() || null, emergency_contact_phone: ecPhone.trim() || null,
       pan: pan.trim().toUpperCase() || null, pf_no: pfNo.trim() || null, esi_no: esiNo.trim() || null,
       esi_applicable: esiApplicable, pf_applicable: pfApplicable, pf_full_wage: pfFullWage,
-      basic_monthly: basicMonthly.trim() === "" ? null : Math.round(Number(basicMonthly) || 0),
-      da_monthly: Math.round(Number(daMonthly) || 0),
+      basic_monthly: salaryByRevision && employee ? employee.basic_monthly : basicMonthly.trim() === "" ? null : Math.round(Number(basicMonthly) || 0),
+      da_monthly: salaryByRevision && employee ? (employee.da_monthly ?? 0) : Math.round(Number(daMonthly) || 0),
     });
     if (pin && id && canSetPin) await setPin.mutateAsync({ employeeId: id, pin });
     onClose();
@@ -697,7 +704,13 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
               </div>
 
               <Field htmlFor="payroll-monthly-gross-salary-base" label="Monthly Gross Salary (₹, Base for Pay Slip)">
-                <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} onChange={(e) => setGross(e.target.value)} placeholder="e.g. 46997" />
+                <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} disabled={salaryByRevision} onChange={(e) => setGross(e.target.value)} placeholder="e.g. 46997" />
+                {/* R-2699: an increment from a month goes through Revise salary (history + old salary for earlier months). */}
+                {salaryByRevision ? (
+                  <p className="mt-1 text-xs text-amber-ink">This salary is set by salary revisions — change it with <b>Revise salary</b> in the employee profile (Basic and DA too).</p>
+                ) : employee ? (
+                  <p className="mt-1 text-xs text-ink-3">For an increment from a given month, use <b>Revise salary</b> in the employee profile — earlier months keep the old salary and the change is kept in history.</p>
+                ) : null}
               </Field>
 
               {/* Custom Component Override Accordion Toggle */}
@@ -1122,8 +1135,22 @@ export function PayrollTab() {
   );
   const totalNet = (payQ.data ?? []).reduce((s, p) => s + p.net, 0);
   const acctName = new Map((accountsQ.data ?? []).map((a) => [a.id, a.name]));
+  /* R-2699: the salary in force for THIS month — a revision from a later month does not apply yet. */
+  const revQ = useSalaryRevisions();
+  const revsByEmp = React.useMemo(() => revisionsByEmployee(revQ.data ?? []), [revQ.data]);
+  const monthGross = React.useCallback(
+    (e: Employee) => salaryInForce(e, revsByEmp.get(e.id) ?? [], period).monthly_gross,
+    [revsByEmp, period],
+  );
+  /* A failed revisions read must not open Pay salary on the employee's forward salary. */
+  React.useEffect(() => {
+    if (payFor && revQ.isError) {
+      toastError(revQ.error, { fallback: "Could not load salary revisions — try again." });
+      setPayFor(null);
+    }
+  }, [payFor, revQ.isError, revQ.error]);
   // Summary: full monthly cost (all active gross) vs what's actually been run.
-  const estimatedMonthly = employees.reduce((s, e) => s + e.monthly_gross, 0);
+  const estimatedMonthly = employees.reduce((s, e) => s + monthGross(e), 0);
   const runCount = employees.filter((e) => paidByEmp.has(e.id)).length;
 
   // Attendance this month: days present vs working days so far (Sundays + company
@@ -1225,7 +1252,7 @@ export function PayrollTab() {
                         {employeeSubline(e) && <div className="text-xs text-ink-3 mt-0.5">{employeeSubline(e)}</div>}
                       </td>
                       <td className="px-4 py-3 text-right font-mono text-ink-2">
-                        {p ? rupee(p.gross) : e.monthly_gross > 0 ? rupee(e.monthly_gross) : <span className="text-ink-3">—</span>}
+                        {p ? rupee(p.gross) : monthGross(e) > 0 ? rupee(monthGross(e)) : <span className="text-ink-3">—</span>}
                       </td>
                       <td className="px-4 py-3 text-right font-mono">
                         {p ? (() => {
@@ -1333,7 +1360,7 @@ export function PayrollTab() {
                           <button type="button" onClick={() => setBreakdownFor({ name: toTitleCase(e.name), p })} className="hover:text-amber-ink" title="How the net is worked out">
                             {rupee(p.net)}
                           </button>
-                        ) : e.monthly_gross > 0 ? rupee(e.monthly_gross) : <span className="text-ink-3">—</span>}
+                        ) : monthGross(e) > 0 ? rupee(monthGross(e)) : <span className="text-ink-3">—</span>}
                       </div>
                     </div>
                     <div className="text-xs text-ink-3 mb-2">
@@ -1378,7 +1405,12 @@ export function PayrollTab() {
           </ul>
         </>
       )}
-      {payFor && canWrite && <PaySalaryDialog employee={payFor} period={period} onClose={() => setPayFor(null)} />}
+      {payFor && canWrite && revQ.isSuccess && (
+        <PaySalaryDialog
+          employee={payFor} period={period} onClose={() => setPayFor(null)}
+          revisions={revsByEmp.get(payFor.id) ?? []}
+        />
+      )}
       {lopFor && canWrite && <AdjustSalaryLopDialog name={toTitleCase(lopFor.name)} salary={lopFor.p} onClose={() => setLopFor(null)} />}
       <SalaryBreakdownDialog name={breakdownFor?.name ?? ""} record={breakdownFor?.p ?? null} onClose={() => setBreakdownFor(null)} />
       {editFor && canWrite && <EmployeeDialog employee={editFor} onClose={() => setEditFor(null)} />}
@@ -1609,7 +1641,16 @@ function PayrollRowMenu({ e, p, canWrite, me, paidVia, onYear, onEdit, onUndo, o
   );
 }
 
-function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; period: string; onClose: () => void }) {
+function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: Employee; period: string; onClose: () => void; revisions: readonly SalaryRevision[] }) {
+  /* R-2699: the salary in force for THIS month (a later revision does not apply yet; an earlier
+     one does). PF proration, LOP day-rate and "Pay full month" all use it (R-2698 FU1). */
+  const inForce = salaryInForce(employee, revisions, period);
+  const monthGross = inForce.monthly_gross;
+  const revisedThisMonth = inForce.revision && revisionMonth(inForce.revision) === period ? inForce.revision : null;
+  const arrearsQ = useSalaryArrears(employee.id);
+  const arrearsInfo = arrearsQ.data ?? null;
+  /* Arrears ride only on a month after the months they are for — never a backlog month before the raise. */
+  const arrearsHere = arrearsPayableIn(arrearsInfo, period);
   const accountsQ = useBankAccounts();
   const loansQ = useEmployeeLoans();
   const attQ = useAttendance(period);
@@ -1632,9 +1673,15 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
   const payPeriod = exitPay
     ? { elapsed: Math.min(monthSoFar.elapsed, exitPay.days), daysInMonth: monthSoFar.daysInMonth, complete: false }
     : monthSoFar;
-  const proratedDefault = prorateSalary(employee.monthly_gross, payPeriod.elapsed, payPeriod.daysInMonth);
-  const [gross, setGross]   = React.useState(String(payPeriod.complete ? employee.monthly_gross : proratedDefault));
+  const proratedDefault = prorateSalary(monthGross, payPeriod.elapsed, payPeriod.daysInMonth);
+  const [gross, setGross]   = React.useState(String(payPeriod.complete ? monthGross : proratedDefault));
   const [bonus, setBonus]   = React.useState("0");
+  /* R-2699: arrears from a revision dated into already-paid months — prefilled, never above what is due. */
+  const [arrears, setArrears] = React.useState("0");
+  const [arrearsEdited, setArrearsEdited] = React.useState(false);
+  React.useEffect(() => {
+    if (!arrearsEdited && arrearsInfo) setArrears(String(arrearsHere ? arrearsInfo.outstanding : 0));
+  }, [arrearsInfo, arrearsEdited, arrearsHere]);
   const [lopDays, setLopDays] = React.useState("0");
   const [lopAmt, setLopAmt]   = React.useState("0");
   const [advId, setAdvId]     = React.useState("");
@@ -1661,7 +1708,9 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
 
   const n = (s: string) => Math.max(0, Math.round(Number(s) || 0));
   const grossN = n(gross), bonusN = n(bonus), lopN = n(lopAmt), advN = n(advAmt), tdsN = n(tds), pfN = n(pf), esiN = n(esi), otherN = n(other);
-  const earned = Math.max(0, grossN - lopN) + bonusN;
+  const arrearsN = n(arrears);
+  const arrearsTooMuch = arrearsN > (arrearsHere ? arrearsInfo?.outstanding ?? 0 : 0);
+  const earned = Math.max(0, grossN - lopN) + bonusN + arrearsN;
   const net = earned - advN - tdsN - pfN - esiN - otherN;
 
   // ── ESI (auto) — employee 0.75% (deducted from net) + employer 3.25% (extra
@@ -1695,7 +1744,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
   //    salary month (₹15,000 till Sep 2026, ₹25,000 from Oct 2026 — lib/payroll/pf.ts), or on
   //    the full Basic + DA when the employee's PF basis says so (R-2698). A part-month salary
   //    (prorated "Salary to pay") prorates Basic + DA the same way (monthlyGross).
-  const pfWageNow = pfWage({ gross: grossN, lopAmount: lopN, basic: employee.basic_monthly, da: employee.da_monthly, monthlyGross: employee.monthly_gross });
+  const pfWageNow = pfWage({ gross: grossN, lopAmount: lopN, basic: inForce.basic_monthly, da: inForce.da_monthly, monthlyGross: monthGross });
   const pfCalc = computePf(pfWageNow.base, employee.pf_applicable, period, { capped: !employee.pf_full_wage });
   React.useEffect(() => {
     if (!pfEdited) setPf(String(pfCalc.employee));
@@ -1704,7 +1753,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
 
   const selectedAdv = advances.find((a) => a.id === advId);
   const advTooMuch = advN > 0 && selectedAdv ? advN > selectedAdv.outstanding : false;
-  const valid = grossN > 0 && net >= 0 && Boolean(accountId) && !advTooMuch && (advN === 0 || Boolean(advId));
+  const valid = grossN > 0 && net >= 0 && Boolean(accountId) && !advTooMuch && !arrearsTooMuch && (advN === 0 || Boolean(advId));
 
   // Auto-fill LOP amount from days. A day is valued at monthly ÷ actual days in
   // the month, so full attendance reconciles to exactly the full salary and
@@ -1712,7 +1761,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
   function onLopDays(v: string) {
     setLopDays(v);
     const d = Number(v) || 0;
-    setLopAmt(String(Math.round((employee.monthly_gross / payPeriod.daysInMonth) * d)));
+    setLopAmt(String(Math.round((monthGross / payPeriod.daysInMonth) * d)));
   }
 
   // Suggested LOP from attendance + unpaid leave. Non-working days (Sunday
@@ -1775,6 +1824,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
       advanceRecovered: advN, advanceLoanId: advN > 0 ? advId : null,
       tds: tdsN, pf: pfN, esi: esiN, esiEmployer: esiEmployerN, pfEmployer: pfEmployerN, other: otherN, bankAccountId: accountId,
       pfWage: employee.pf_applicable ? pfCalc.base : null,
+      arrears: arrearsN,
     });
     onClose();
   }
@@ -1799,8 +1849,8 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
                     : proratedDefault > 0
                     ? <>Prorated to <b>{payPeriod.elapsed} of {payPeriod.daysInMonth} days</b> (till today) — days not yet worked aren&apos;t paid.</>
                     : <>This month hasn&apos;t started yet — enter an amount to pay in advance.</>}
-                  {!exitPay && grossN !== employee.monthly_gross && (
-                    <>{" "}<button type="button" className="text-amber-ink font-medium hover:underline" onClick={() => setGross(String(employee.monthly_gross))}>Pay full month ({rupee(employee.monthly_gross)})</button></>
+                  {!exitPay && grossN !== monthGross && (
+                    <>{" "}<button type="button" className="text-amber-ink font-medium hover:underline" onClick={() => setGross(String(monthGross))}>Pay full month ({rupee(monthGross)})</button></>
                   )}
                 </p>
               )}
@@ -1809,6 +1859,15 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
                   Full month · {payPeriod.daysInMonth} days ({periodLabel(period)}). Absences are deducted below as LOP.
                 </p>
               )}
+              {monthGross !== employee.monthly_gross ? (
+                <p className="text-xs text-ink-3 mt-1" data-testid="pay-salary-in-force">
+                  Salary for {periodLabel(period)}: {rupee(monthGross)}/month — the revised {rupee(employee.monthly_gross)} applies from a later month.
+                </p>
+              ) : revisedThisMonth ? (
+                <p className="text-xs text-emerald mt-1" data-testid="pay-salary-in-force">
+                  Revised from {periodLabel(period)}: {rupee(revisedThisMonth.prev_monthly_gross)} → {rupee(revisedThisMonth.monthly_gross)}/month.
+                </p>
+              ) : null}
             </div>
             <div>
               <label htmlFor="payroll-pay-from" className="block text-xs font-medium text-ink-2 mb-1">Pay from</label>
@@ -1828,6 +1887,27 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
               </div>
             </div>
             <p className="text-xs text-ink-3">One-time bonus/incentive for this month — added to net pay + the Salaries expense, shown separately on the payslip.</p>
+            {arrearsInfo && (arrearsHere || arrearsN > 0) && (
+              <div className="rounded border border-amber/40 bg-amber-soft/30 px-2.5 py-2 space-y-1.5" data-testid="pay-salary-arrears">
+                <div className="grid grid-cols-2 gap-3 items-end">
+                  <div>
+                    <label htmlFor="payroll-arrears" className="block text-xs font-medium text-ink-2 mb-1">Salary revision arrears (₹)</label>
+                    <Input id="payroll-arrears" type="number" min={0} max={arrearsInfo.outstanding} value={arrears} onChange={(e) => { setArrearsEdited(true); setArrears(e.target.value); }} />
+                  </div>
+                  <p className="text-xs text-ink-3 pb-1">Due {rupee(arrearsInfo.outstanding)} for {arrearsInfo.monthsLabel}{arrearsInfo.paid > 0 ? ` (${rupee(arrearsInfo.paid)} already paid)` : ""}.</p>
+                </div>
+                {arrearsTooMuch && <p className="text-xs text-rose">Max {rupee(arrearsInfo.outstanding)}.</p>}
+                <p className="text-xs text-amber-ink">
+                  Those months were paid at the old salary and stay as booked; the difference is added to this salary and booked in {periodLabel(period)}. PF / ESI on arrears are not added automatically — add them below if due.
+                </p>
+              </div>
+            )}
+            {arrearsInfo && !arrearsHere && arrearsInfo.outstanding > 0 && arrearsN === 0 && (
+              <p className="text-xs text-ink-3">Salary revision arrears of {rupee(arrearsInfo.outstanding)} ({arrearsInfo.monthsLabel}) are paid with a salary for a month after {periodLabel(arrearsInfo.lastMonth ?? period)}.</p>
+            )}
+            {arrearsInfo && arrearsInfo.overpaid > 0 && (
+              <p className="text-xs text-amber-ink">Revision arrears paid {rupee(arrearsInfo.overpaid)} more than is due now (a month was redone at the new salary) — recover it under Other if needed.</p>
+            )}
           </div>
 
           {(suggestedLopUnapplied || monthIncomplete) && (
@@ -1954,6 +2034,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
           <div className="rounded-md bg-paper-2/50 p-3 text-sm space-y-1">
             <Row label="Salary earned (gross − LOP)" value={rupee(Math.max(0, grossN - lopN))} />
             {bonusN > 0 && <Row label="+ Bonus / Incentive" value={`+${rupee(bonusN)}`} />}
+            {arrearsN > 0 && <Row label="+ Salary revision arrears" value={`+${rupee(arrearsN)}`} />}
             {advN > 0 && <Row label="− Advance recovery" value={`−${rupee(advN)}`} />}
             {(tdsN + pfN + esiN + otherN) > 0 && <Row label="− TDS / PF / ESI / other" value={`−${rupee(tdsN + pfN + esiN + otherN)}`} />}
             <div className="flex items-center justify-between pt-1 border-t border-hairline font-semibold text-ink">

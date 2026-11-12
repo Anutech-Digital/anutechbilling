@@ -20,6 +20,9 @@ import { monthBounds } from "@/lib/dates/ist";
 import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
 import { resolveSalaryBankLines, salariesNeedingBankLine, type BankLineFacts, type BankLineRef } from "@/lib/payroll/salary-bank-link";
 import { bookedSalaryMonths, deleteBlockMessage, hasDeleteBlockers, type DeleteBlockers } from "@/lib/payroll/statutory";
+import { arrearsSummary, type ArrearsSummary, type SalaryRevision } from "@/lib/payroll/salary-revision";
+
+export type { SalaryRevision } from "@/lib/payroll/salary-revision";
 
 /** R-607: no pin_hash — members cannot read it (20261010010000). Use `pin_set`. */
 export type Employee = Omit<Database["public"]["Tables"]["employees"]["Row"], "pin_hash">;
@@ -573,6 +576,93 @@ export function useEmployeeSalaryHistory(employeeId: string | null) {
   });
 }
 
+// ── R-2699: salary revisions (increment with an effective-from month) ───────────────
+/** Every salary revision of the company (payroll roles only — RLS). Small: a few per employee. */
+export function useSalaryRevisions(enabled = true) {
+  return useQuery({
+    queryKey: ["salary-revisions"],
+    enabled,
+    queryFn: async (): Promise<SalaryRevision[]> => {
+      const supabase = createClient();
+      const rows = await fetchAllRows((from, to) => supabase
+        .from("employee_salary_revisions")
+        .select("id, employee_id, effective_from, monthly_gross, basic_monthly, da_monthly, prev_monthly_gross, prev_basic_monthly, prev_da_monthly, annual_ctc, note, created_by, created_at")
+        .order("effective_from", { ascending: true }).order("id", { ascending: true })
+        .range(from, to));
+      return rows as SalaryRevision[];
+    },
+  });
+}
+
+/** Arrears per booked month (employee_salary_arrears) less what was already paid. */
+export function useSalaryArrears(employeeId: string | null) {
+  return useQuery({
+    queryKey: ["salary-payments", "arrears", employeeId ?? "none"],
+    enabled: Boolean(employeeId),
+    queryFn: async (): Promise<ArrearsSummary> => {
+      const supabase = createClient();
+      const [{ data: months, error }, paidRows] = await Promise.all([
+        supabase.rpc("employee_salary_arrears", { p_employee_id: employeeId! }),
+        fetchAllRows((from, to) => supabase.from("salary_payments").select("id, arrears")
+          .eq("employee_id", employeeId!).gt("arrears", 0).order("id", { ascending: true }).range(from, to)),
+      ]);
+      if (error) throw error;
+      const paid = paidRows.reduce((s, r) => s + (r.arrears ?? 0), 0);
+      return arrearsSummary((months ?? []).map((m) => ({ period: m.period, arrears: m.arrears })), paid);
+    },
+  });
+}
+
+function invalidateRevisions(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["salary-revisions"] });
+  qc.invalidateQueries({ queryKey: ["salary-payments", "arrears"] });
+  qc.invalidateQueries({ queryKey: ["employees"] });
+}
+
+export function useReviseSalary() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (input: {
+      employeeId: string; effectiveMonth: string; monthlyGross: number;
+      basicMonthly: number | null; daMonthly: number; annualCtc: number | null; note: string | null;
+    }) => {
+      const supabase = createClient();
+      const { data, error } = await supabase.rpc("revise_employee_salary", {
+        p_employee_id: input.employeeId,
+        p_effective_from: `${input.effectiveMonth}-01`,
+        p_monthly_gross: input.monthlyGross,
+        p_basic_monthly: input.basicMonthly ?? undefined,
+        p_da_monthly: input.daMonthly,
+        p_annual_ctc: input.annualCtc ?? undefined,
+        p_note: input.note ?? undefined,
+      });
+      if (error) throw error;
+      return data as string;
+    },
+    onSuccess: () => {
+      invalidateRevisions(qc);
+      toast.success("Salary revised");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not revise the salary." }),
+  });
+}
+
+export function useUndoSalaryRevision() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async (revisionId: string) => {
+      const supabase = createClient();
+      const { error } = await supabase.rpc("undo_salary_revision", { p_revision_id: revisionId });
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      invalidateRevisions(qc);
+      toast.success("Salary revision undone");
+    },
+    onError: (err) => toastError(err, { fallback: "Could not undo the salary revision." }),
+  });
+}
+
 export function usePaySalary() {
   const qc = useQueryClient();
   return useMutation({
@@ -582,9 +672,11 @@ export function usePaySalary() {
       tds: number; pf: number; esi: number; esiEmployer?: number; pfEmployer?: number; other: number; bankAccountId: string; notes?: string | null;
       /** The PF wage the form computed (Basic + DA prorated) — kept on the payslip for the ECR. */
       pfWage?: number | null;
+      /** R-2699: salary-revision arrears paid with this salary (pay_salary_with_arrears). */
+      arrears?: number;
     }) => {
       const supabase = createClient();
-      const { error } = await supabase.rpc("pay_salary", {
+      const args = {
         p_employee_id:       input.employeeId,
         p_period:            input.period,
         p_pay_date:          input.payDate,
@@ -603,7 +695,13 @@ export function usePaySalary() {
         p_other:             input.other,
         p_bank_account_id:   input.bankAccountId,
         p_notes:             input.notes ?? null,
-      });
+      };
+      const arrears = Math.max(0, Math.round(input.arrears ?? 0));
+      /* R-2699: arrears go through the wrapper (one transaction, outstanding re-checked); without
+         arrears the old pay_salary path is unchanged. */
+      const { error } = arrears > 0
+        ? await supabase.rpc("pay_salary_with_arrears", { ...args, p_arrears: arrears })
+        : await supabase.rpc("pay_salary", args);
       if (error) throw error;
     },
     onSuccess: () => {
