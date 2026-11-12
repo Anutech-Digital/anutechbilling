@@ -19,6 +19,7 @@ import { createServerClient } from "@supabase/ssr";
 import { cookies } from "next/headers";
 import type { Database } from "./database.types";
 import { actorHeaders } from "./admin-actor";
+import { createSupabaseFetch } from "./fetch-wrapper";
 
 /* Next 15: cookies() returns a Promise. createClient() stays SYNCHRONOUS (≈390 call sites
    use `const supabase = createClient()`), and the await moves into the cookie callbacks —
@@ -46,6 +47,9 @@ export function createClient() {
             // Middleware refreshes the session, so this is safe to ignore here.
           }
         },
+      },
+      global: {
+        fetch: createSupabaseFetch(),
       },
     },
   );
@@ -93,8 +97,7 @@ function adminClient(headers: Record<string, string>) {
       // queries must always hit the DB — never cache them.
       global: {
         headers,
-        fetch: (input: RequestInfo | URL, init?: RequestInit) =>
-          fetch(input, { ...init, cache: "no-store" }),
+        fetch: createSupabaseFetch(headers),
       },
     },
   );
