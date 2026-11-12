@@ -206,6 +206,13 @@ describe("R-2702 (3) lines at different GST rates", () => {
     expect(f.problems.join(" ")).toMatch(/different GST rates/);
   });
 
+  it("review c: a NO-GST invoice is rate 0 whatever its lines say — the SQL import applies the same rule", () => {
+    const f = zohoSaleFacts(mixed({ totalPaise: 1_00_000_00, taxTotalPaise: 0, taxes: [] }), SELLER);
+    expect(f.problems).toEqual([]);
+    expect(f.taxRate).toBe(0);
+    expect(buildSalesPlan([f], ctx).rows[0].verdict).toBe("import");
+  });
+
   it("a line rate this app does not store is refused", () => {
     const f = zohoSaleFacts(mixed({ totalPaise: 1_16_200_00 + 25_00, taxTotalPaise: 16_225_00,
       taxes: [{ name: "IGST", amountPaise: 16_225_00 }],
