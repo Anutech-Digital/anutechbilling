@@ -12,8 +12,8 @@
  *   amount   = Zoho total (what the customer owes — AR ties to Zoho); R-2702: + the TDS Zoho took
  *              off its total — the sale is the full value, the TDS is the customer's deduction
  *              (facts.tds / tdsSection, booked by the receipts import on the payment that closes it)
- *   R-2702: an adjustment above one unit of the currency = its own line {kind "adjustment"}, no GST;
- *           lines at different GST rates = one invoice, each line its own rate, the invoice the highest.
+ *   R-2702: an adjustment above one unit of the currency = its own line {kind "adjustment"}, no GST.
+ *           Lines at different GST rates stay left out until per-line GST in reports (R-2717).
  *   head     = from the tax Zoho charged (IGST vs CGST + SGST — what was filed); with no tax, from
  *              the place of supply against the seller's state
  *
@@ -94,8 +94,8 @@ export interface ZohoSaleFacts {
   tds?: number;
   /** R-2702: that TDS's section as Zoho names it ("194J", "194C", …), null when none is readable. */
   tdsSection?: string | null;
-  /** The invoice's GST rate: the one rate of its lines; R-2702: with lines at different rates (each
-   *  line keeps its own taxPercent), the highest of them. null when it cannot be read. */
+  /** The one GST rate of the invoice; null when its lines carry different rates (left out until
+   *  per-line GST in reports, R-2717) or it cannot be read. */
   taxRate: number | null;
   head: TaxHead;
   lines: SaleLine[];
@@ -353,21 +353,11 @@ export function zohoSaleFacts(d: ZohoFyDocDetail, sellerStateCode: string | null
     taxRate = GST_RATES.includes(pct) && pct > 0 ? pct : null;
     if (taxRate === null) problems.push("The GST rate cannot be read from Zoho.");
   } else {
-    /* R-2702: lines at different rates (0% + 18% — an exempt / zero-rated line beside a taxed one).
-       One invoice, each line keeping its own rate, when Zoho's GST is those rates on those lines
-       (₹1 of rounding per line, + 1). The invoice carries the highest rate. */
-    const byLines = lines.reduce((a, l) => a + (l.taxable * (l.taxPercent ?? 0)) / 100, 0);
-    const odd = rates.filter((r) => !GST_RATES.includes(r));
-    if (odd.length) {
-      taxRate = null;
-      problems.push(`GST rate ${odd.join("%, ")}% on a line is not one this app stores — book it by hand.`);
-    } else if (Math.abs(byLines - tax) > lines.length + 1) {
-      taxRate = null;
-      problems.push(`Lines carry different GST rates (${rates.join("%, ")}%) but Zoho's GST ₹${tax} is not those rates on those lines (₹${Math.round(byLines)}) — book it by hand.`);
-    } else {
-      taxRate = rates[rates.length - 1];
-      notes.push(`Lines at ${rates.join("%, ")}% GST — each line keeps its own rate; the invoice shows ${taxRate}%.`);
-    }
+    /* R-2702 (coordinator, 12 Nov): still left out — GSTR-1, the GST mismatch check, the invoice PDF and
+       credit notes read ONE rate per invoice, so a 0% line would show at 18%. Per-line GST in those
+       reports first (R-2717), then this import. */
+    taxRate = null;
+    problems.push(`Lines at different GST rates (${rates.join("%, ")}%) — waits for per-line GST in reports, card R-2717.`);
   }
   /* R-2702: Zoho's adjustment as its own line — after the rates, so it never counts as a rate. */
   if (adjustment !== 0) {
