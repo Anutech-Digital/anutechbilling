@@ -169,6 +169,24 @@ describe("R-2683 — pure helpers", () => {
     expect(isPayrollExpense({ category: "Salaries" })).toBe(true);
   });
 
+  it("keepUntouchedOnEdit (review F1): paid → unpaid clears the method and bank; staying unpaid keeps them", () => {
+    const ctx = { gstHeadsFromBill: false, itemised: false };
+    const flipped = keepUntouchedOnEdit({ paid: true, payment_method: "upi", bank_account_id: "B1" }, { paid: false, payment_method: "upi", bank_account_id: null }, ctx);
+    expect(flipped.payment_method).toBeNull();
+    expect(flipped.bank_account_id).toBeNull();
+    const stays = keepUntouchedOnEdit({ paid: false, payment_method: "statutory", bank_account_id: null }, { paid: false, payment_method: "bank_transfer", bank_account_id: null }, ctx);
+    expect(stays.payment_method).toBe("statutory");
+  });
+
+  it("keepUntouchedOnEdit (review F2): another vendor re-works the GST split even with the same GST total", () => {
+    const ctx = { gstHeadsFromBill: false, itemised: false };
+    const stored = { vendor_id: "V-DL", vendor_name: "Delhi Vendor", igst: 0, cgst: 90, sgst: 90, gst_paid: 180, bill_type: "gst" };
+    const same = keepUntouchedOnEdit(stored, { vendor_id: "V-DL", vendor_name: " delhi vendor ", igst: null, cgst: null, sgst: null, gst_paid: 180, bill_type: "gst" }, ctx);
+    expect([same.igst, same.cgst, same.sgst]).toEqual([0, 90, 90]);
+    const other = keepUntouchedOnEdit(stored, { vendor_id: "V-MH", vendor_name: "Mumbai Vendor", igst: null, cgst: null, sgst: null, gst_paid: 180, bill_type: "gst" }, ctx);
+    expect([other.igst, other.cgst, other.sgst]).toEqual([null, null, null]);
+  });
+
   it("keepUntouchedOnEdit: a paid row's method is the user's (paying is a real change)", () => {
     const p = keepUntouchedOnEdit({ paid: false, payment_method: null }, { paid: true, payment_method: "upi" }, { gstHeadsFromBill: false, itemised: false });
     expect(p.payment_method).toBe("upi");

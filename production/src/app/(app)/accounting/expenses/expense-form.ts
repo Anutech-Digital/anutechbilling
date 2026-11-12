@@ -59,6 +59,8 @@ export interface StoredExpenseLike {
   category?: string | null;
   payment_method?: string | null;
   zoho_doc_id?: string | null;
+  vendor_id?: string | null;
+  vendor_name?: string | null;
   paid?: boolean | null;
   paid_date?: string | null;
   expense_date?: string | null;
@@ -88,6 +90,8 @@ export function salariesOffered(e: StoredExpenseLike | null | undefined): boolea
 
 /** The patch fields keepUntouchedOnEdit looks at (a subset of the expenses Update type). */
 export interface EditPatchLike {
+  vendor_id?: string | null;
+  vendor_name?: string | null;
   paid?: boolean | null;
   payment_method?: string | null;
   bank_account_id?: string | null;
@@ -115,8 +119,10 @@ const sameLines = (a: EditPatchLike["line_items"], b: EditPatchLike["line_items"
 
 /**
  * The Edit expense patch with every field the user did not change put back to what is stored.
- * - Unpaid (stays or becomes unpaid): no payment method or bank is written — the stored ones stay.
- * - GST split (IGST/CGST/SGST): kept unless a bill was just read for it, or GST / bill type changed.
+ * - Stays unpaid: no payment method or bank is written — the stored ones stay. Paid → unpaid
+ *   (review F1): both are cleared, an unpaid row carries no payment method.
+ * - GST split (IGST/CGST/SGST): kept unless a bill was just read for it, or GST / bill type /
+ *   vendor changed (review F2: another vendor can sit in another state — IGST vs CGST+SGST).
  * - Paid date: kept on a row that was and stays paid when its date is unchanged.
  * - Amount: kept when the items, GST, currency and rate are unchanged (an imported bill's amount
  *   can carry GST Zoho could not claim, which the item total does not show).
@@ -128,11 +134,13 @@ export function keepUntouchedOnEdit<P extends EditPatchLike>(
 ): P {
   const out: P = { ...patch };
   if (out.paid === false) {
-    out.payment_method = stored.payment_method ?? null;
-    out.bank_account_id = stored.bank_account_id ?? null;
+    out.payment_method = stored.paid ? null : (stored.payment_method ?? null);
+    out.bank_account_id = stored.paid ? null : (stored.bank_account_id ?? null);
   }
   const gstSame = Number(out.gst_paid ?? 0) === Number(stored.gst_paid ?? 0) && (out.bill_type ?? null) === (stored.bill_type ?? null);
-  if (!ctx.gstHeadsFromBill && gstSame) {
+  const name = (v: string | null | undefined) => (v ?? "").trim().toLowerCase();
+  const vendorSame = (out.vendor_id ?? null) === (stored.vendor_id ?? null) && name(out.vendor_name) === name(stored.vendor_name);
+  if (!ctx.gstHeadsFromBill && gstSame && vendorSame) {
     out.igst = stored.igst ?? null;
     out.cgst = stored.cgst ?? null;
     out.sgst = stored.sgst ?? null;
