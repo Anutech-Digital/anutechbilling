@@ -65,9 +65,9 @@ Tum ResellerOS ke WORKER ho: sirf upar wala ek card banao, apne alag folder (wor
 4. WORKTREE (apna alag folder, main folder ko mat chhuo):
    cd C:\Users\mso50\new-reselleros && git fetch -q anutech
    git worktree add C:/Users/mso50/reselleros-w-<card lowercase> -b w-<card lowercase> anutech/manager-pardeep
-   cmd //c mklink /J "C:\Users\mso50\reselleros-w-<card>\production\node_modules" "C:\Users\mso50\new-reselleros\production\node_modules"
+   cmd //c mklink /J "C:\Users\mso50\reselleros-w-<card>\production\node_modules" "C:\Users\mso50\reselleros-deploy\production\node_modules"   (R-2718: HAMESHA reselleros-deploy wala — sab worktrees ek hi node_modules se; doosre clone se tsc cache bekaar ho jaata tha, push tsc 20-40 min)
    production/.env.local main folder se copy karo.
-   LOCK (zaroori, code se PEHLE): card par `lockAreas` ho to wahi use karo (manager ne `worker-lock.mjs prep` se pakke kiye hain). Na ho to card ke files/doneWhen se folder ya file chuno ("src" ya "src/app" jaisa bada nahi). Phir worktree ke production/ me:
+   LOCK (zaroori, code se PEHLE): card par `lockAreas` ho to wahi use karo (manager ne `worker-lock.mjs prep` se pakke kiye hain). Na ho to card ke files/doneWhen se FILES chuno (R-2718: file lock hoti hai; folder sirf scope hai — doosra card usi folder ki alag file le sakta hai; folder rename/move karna ho to `--move <folder>`; "src" ya "src/app" jaisa bada nahi). Phir worktree ke production/ me:
    node scripts/ops/worker-lock.mjs claim <CARD> C:/Users/mso50/reselleros-w-<card> "<folder1>" "<folder2>" --card <CARDFILE>
    Exit 6 = card contract adhoora / --card nahi diya → kuch mat banao, field card par likhwao (manager), card dobara save karo. Exit 3 (pehle se 4 worker) ya Exit 2 (TAKRAAV) aaye to KUCH mat banao: card par nowDoing "Ruka: <dusra card> same files par", worktree hatao (step 9), owner ko batao, ruk jao. Lock file kabhi delete/edit mat karo. AUTO me: card ko wapas status "list" karo (claim hatao), worktree hatao, aur agla card try karo (step 3).
    DEV SERVER MAT CHALAO (RAM bachao — 6 Oct ko 8 servers se computer hang hua). Browser jaanch manager karega.

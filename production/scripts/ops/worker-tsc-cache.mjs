@@ -27,9 +27,9 @@
  * repo a probe gave the identical 8 errors incremental and with --full-tsc.
  *
  * Paths inside the build info are relative to the worktree's production/ folder (node_modules via
- * the junction resolves to ../../new-reselleros/production/node_modules), so every worktree at
- * <home>/reselleros-w-<card> reads it the same way. A worktree somewhere else still gets a correct
- * (just colder) run.
+ * the junction resolves to its REAL path, ../../reselleros-deploy/production/node_modules — R-2718: every
+ * worktree links there), so every worktree at <home>/reselleros-w-<card> reads it the same way. A worktree
+ * linked elsewhere gets its own cache key (nodeModulesTarget) and a correct (just colder) run.
  *
  * Only ever touched inside worker-lock's "heavy" turn, so two workers never read/write it at once;
  * the write is still tmp + rename so a crash cannot leave half a file.
@@ -65,18 +65,63 @@ function routeTypes(root) {
 }
 
 /**
- * TypeScript version + tsconfig.json + the generated route types. tsc ignores a build info from
- * another TS version or other compiler options anyway; the route types are global, so a mismatch
- * there means a full re-check (see the header) — a different key avoids that useless copy.
+ * R-2718 (12 Nov 2026): where this worktree's node_modules really is, relative to its production/
+ * folder ("../../reselleros-deploy/production/node_modules"), "" when there is none. tsc follows the
+ * junction to its real path, so EVERY node_modules file name in the build info carries this prefix.
+ * Two worktrees whose junctions point at different clones (WORKER-SESSION-PROMPT said new-reselleros,
+ * WORKER-STEPS said reselleros-deploy) see each other's 2,300 node_modules files — 122 of them global
+ * (@types/node, react) — as NEW, so tsc re-checks everything (12 Nov: 1377–2488 s pushes while the
+ * restore line said "5 file badli"). And each saved over the other's cache under the same key.
  */
-export function cacheKey(root) {
-  let cfg = "";
-  try { cfg = fs.readFileSync(path.join(root, "tsconfig.json"), "utf8"); } catch {}
-  return crypto.createHash("sha256").update(`${typescriptVersion(root)}\n${cfg}\n${routeTypes(root)}`).digest("hex").slice(0, 12);
+export function nodeModulesTarget(root) {
+  try { return path.relative(root, fs.realpathSync(path.join(root, "node_modules"))).replace(/\\/g, "/"); }
+  catch { return ""; }
 }
 
-export function cacheFile(root, dir = TSC_CACHE_DIR) {
-  return path.join(dir, `tsc-${cacheKey(root)}.tsbuildinfo`);
+/**
+ * A node_modules file name from a build info that this worktree's tsc would NOT see under the same name.
+ * Case-insensitive: on Windows tsc writes build-info names lowercased. tsc's default libs come from the
+ * TypeScript that runs (normally inside the same node_modules), so its lib folder is never foreign.
+ */
+function isForeign(name, nm, tsLib) {
+  if (!nm) return false;
+  const n = name.toLowerCase();
+  return !n.startsWith(`${nm.toLowerCase()}/`) && !(tsLib && n.startsWith(`${tsLib.toLowerCase()}/`));
+}
+
+/** How many node_modules names in a build info are foreign — names only, no hashing (~0.2 s). null = unreadable. */
+export function foreignCount(root, file, { nm = nodeModulesTarget(root), tsLib = typescriptLibDir(root) } = {}) {
+  const info = readBuildInfo(file);
+  if (!info) return null;
+  return info.fileNames.filter((n) => !isProjectFile(n) && isForeign(n, nm, tsLib)).length;
+}
+
+/** The default lib folder (lib.es2022.d.ts …) of the TypeScript this worktree runs, relative like the build info. */
+function typescriptLibDir(root) {
+  for (const from of [path.join(root, "package.json"), import.meta.url]) {
+    try { return path.relative(root, fs.realpathSync(path.dirname(createRequire(from).resolve("typescript/lib/lib.d.ts")))).replace(/\\/g, "/"); }
+    catch {}
+  }
+  return "";
+}
+
+/**
+ * TypeScript version + tsconfig.json + the generated route types (+ R-2718: the node_modules real
+ * path when it is not the worktree's own folder). tsc ignores a build info from another TS version or
+ * other compiler options anyway; the route types are global, so a mismatch there means a full
+ * re-check (see the header) — a different key avoids that useless copy. Same for a build info written
+ * through a junction to another clone. A plain node_modules folder ("node_modules") keeps the old key.
+ */
+export function cacheKey(root, { legacy = false } = {}) {
+  let cfg = "";
+  try { cfg = fs.readFileSync(path.join(root, "tsconfig.json"), "utf8"); } catch {}
+  const nm = legacy ? "" : nodeModulesTarget(root);
+  const extra = nm && nm !== "node_modules" ? `\nnode_modules=${nm}` : "";
+  return crypto.createHash("sha256").update(`${typescriptVersion(root)}\n${cfg}\n${routeTypes(root)}${extra}`).digest("hex").slice(0, 12);
+}
+
+export function cacheFile(root, dir = TSC_CACHE_DIR, { legacy = false } = {}) {
+  return path.join(dir, `tsc-${cacheKey(root, { legacy })}.tsbuildinfo`);
 }
 
 /**
@@ -133,9 +178,15 @@ function diskHashes(root, hash) {
  *   weight  — each changed file counted with its direct importers (referencedMap), because tsc
  *             re-checks the importers of a file whose exported types changed (a hub like ist.ts
  *             costs far more than a leaf).
+ * R-2718 (12 Nov 2026): node_modules files count too (~1.2 s more for ~2,300 files / 21 MB):
+ *   foreign — node_modules files under ANOTHER real path than this worktree's (`nm`, see
+ *             nodeModulesTarget): tsc sees them all as new — flagged as a global change (full re-check);
+ *   modules — node_modules files of the same path whose text changed (e.g. after `npm ci`); a changed
+ *             global one (@types/node) is a global change as well.
+ * Before R-2718 both were invisible here: the restore line said "5 file badli" for a 1377 s run.
  * null = unreadable (tsc would ignore it and run cold).
  */
-export function buildInfoDistance(root, file, { hash = versionHasher(root), disk = diskHashes(root, hash), alsoOnDisk = [] } = {}) {
+export function buildInfoDistance(root, file, { hash = versionHasher(root), disk = diskHashes(root, hash), alsoOnDisk = [], nm = nodeModulesTarget(root), tsLib = typescriptLibDir(root) } = {}) {
   const info = readBuildInfo(file);
   if (!info) return null;
   /* referencedMap: [fileId, fileIdsList index] pairs, both 1-based — file → the files it imports. */
@@ -143,22 +194,31 @@ export function buildInfoDistance(root, file, { hash = versionHasher(root), disk
   for (const [, list] of Array.isArray(info.referencedMap) ? info.referencedMap : []) {
     for (const ref of info.fileIdsList?.[list - 1] ?? []) importers.set(ref, (importers.get(ref) ?? 0) + 1);
   }
-  let changed = 0, global = 0, project = 0, weight = 0;
+  let changed = 0, global = 0, project = 0, weight = 0, foreign = 0, modules = 0;
   const known = new Set();
   info.fileNames.forEach((name, i) => {
-    if (!isProjectFile(name)) return;
-    project++; known.add(name);
     const fi = info.fileInfos[i];
+    const isGlobal = typeof fi === "object" && !!fi?.affectsGlobalScope;
+    if (!isProjectFile(name)) {
+      if (isForeign(name, nm, tsLib)) { foreign++; return; }
+      const version = typeof fi === "string" ? fi : fi?.version;
+      if (disk(name) === version) return;
+      modules++; weight += 1 + (importers.get(i + 1) ?? 0);
+      if (isGlobal) global++;
+      return;
+    }
+    project++; known.add(name);
     const version = typeof fi === "string" ? fi : fi?.version;
     if (disk(name) === version) return;
     changed++; weight += 1 + (importers.get(i + 1) ?? 0);
-    if (typeof fi === "object" && fi?.affectsGlobalScope) global++;
+    if (isGlobal) global++;
   });
   for (const name of alsoOnDisk) {
     if (known.has(name) || disk(name) === null) continue;
     changed++; weight++;
   }
-  return { changed, global, project, weight };
+  if (foreign) global++;
+  return { changed, global, project, weight, foreign, modules };
 }
 
 /** Lower = less for tsc to re-check. A changed global file means a full re-check. */
@@ -177,22 +237,39 @@ function distanceScore(d) {
  * closer one is used; a tie keeps the own one. Either choice is only a starting point — tsc still
  * hashes every file and re-checks what changed, so a wrong pick is slower, never more lenient.
  */
-export function restoreBuildInfo(root, { dir = TSC_CACHE_DIR, hash } = {}) {
+export function restoreBuildInfo(root, { dir = TSC_CACHE_DIR, hash, nm } = {}) {
   const own = path.join(root, BUILD_INFO);
-  const src = cacheFile(root, dir);
-  const hasOwn = fs.existsSync(own), hasShared = fs.existsSync(src);
-  if (!hasShared) return hasOwn ? { restored: false, reason: "own" } : { restored: false, reason: "empty" };
+  /* R-2718: the key now carries the node_modules real path. The shared file saved under the OLD key
+     (before R-2718) is still used — but only after measuring shows it was written through the same
+     node_modules (no foreign files); so the first push after R-2718 does not run cold. */
+  const fresh = cacheFile(root, dir), legacy = cacheFile(root, dir, { legacy: true });
+  const src = fs.existsSync(fresh) ? fresh : legacy !== fresh && fs.existsSync(legacy) ? legacy : null;
+  const hasOwn = fs.existsSync(own);
+  if (!src) return hasOwn ? { restored: false, reason: "own" } : { restored: false, reason: "empty" };
+  const viaLegacy = src !== fresh;
+  /* No own build info, fresh key: names-only check (a worktree with a plain node_modules folder shares the
+     old key with pre-R-2718 junction worktrees' files) — a foreign file is no better than a cold run. */
+  if (!hasOwn && !viaLegacy) {
+    const foreign = foreignCount(root, src, { nm: nm ?? nodeModulesTarget(root) });
+    if (foreign) return { restored: false, reason: "empty", legacy: true, shared: { changed: 0, global: 1, foreign, modules: 0 } };
+  }
   let measured = {};
-  if (hasOwn) {
+  if (hasOwn || viaLegacy) {
     const h = hash ?? versionHasher(root);
     const disk = diskHashes(root, h);
+    const mods = nm ?? nodeModulesTarget(root);
     const names = (file) => (readBuildInfo(file)?.fileNames ?? []).filter(isProjectFile);
     measured = {
-      own: buildInfoDistance(root, own, { hash: h, disk, alsoOnDisk: names(src) }),
-      shared: buildInfoDistance(root, src, { hash: h, disk, alsoOnDisk: names(own) }),
+      ...(hasOwn ? { own: buildInfoDistance(root, own, { hash: h, disk, nm: mods, alsoOnDisk: names(src) }) } : {}),
+      shared: buildInfoDistance(root, src, { hash: h, disk, nm: mods, alsoOnDisk: hasOwn ? names(own) : [] }),
       hashKind: h.kind ?? "custom",
+      ...(viaLegacy ? { legacy: true } : {}),
     };
-    if (distanceScore(measured.own) <= distanceScore(measured.shared)) return { restored: false, reason: "own", ...measured };
+    /* A pre-R-2718 file written through another clone's node_modules is no better than nothing. */
+    if (viaLegacy && (!measured.shared || measured.shared.foreign)) {
+      return hasOwn ? { restored: false, reason: "own", ...measured } : { restored: false, reason: "empty", ...measured };
+    }
+    if (hasOwn && distanceScore(measured.own) <= distanceScore(measured.shared)) return { restored: false, reason: "own", ...measured };
   }
   try { fs.copyFileSync(src, own); return { restored: true, reason: "shared", from: src, ...measured }; }
   catch (e) { return { restored: false, reason: hasOwn ? "own" : `copy failed: ${e.message}`, copyFailed: e.message, ...measured }; }
@@ -200,10 +277,13 @@ export function restoreBuildInfo(root, { dir = TSC_CACHE_DIR, hash } = {}) {
 
 /** One line for the gate's log: which build info tsc starts from and how far it is. */
 export function restoreLine(r) {
-  const d = (x) => (x ? `${x.changed} file badli${x.global ? `, ${x.global} global — poora re-check` : ""}` : "padhi nahi gayi");
+  const d = (x) => (x
+    ? `${x.changed} file badli${x.modules ? `, ${x.modules} node_modules file badli` : ""}${x.foreign ? `, ${x.foreign} node_modules file doosre clone ke junction se` : ""}${x.global ? `, ${x.global} global — poora re-check` : ""}`
+    : "padhi nahi gayi");
   const warn = r.hashKind === "sha256" ? "; DHYAN: tsc ka hash nahi mila, ginti galat ho sakti hai" : "";
   const both = r.own !== undefined || r.shared !== undefined ? ` [apni: ${d(r.own)}; shared: ${d(r.shared)}${warn}]` : "";
-  if (r.restored) return `  tsc: incremental — shared cache se shuru (${r.from})${both}`;
+  if (r.restored) return `  tsc: incremental — shared cache se shuru (${r.from}${r.legacy ? ", R-2718 se pehle wali key" : ""})${both}`;
+  if (r.legacy && r.reason === "empty") return `  tsc: incremental — purani shared cache doosre clone ke node_modules se bani thi, kaam ki nahi; is baar poora chalega${both}`;
   if (r.reason === "own") return `  tsc: incremental — is worktree ki apni build info${r.copyFailed ? ` (shared copy nahi hui: ${r.copyFailed})` : ""}${both}`;
   return `  tsc: incremental — in route types ka shared cache nahi (${r.reason}), is baar poora chalega`;
 }

@@ -19,13 +19,14 @@ import { statutoryDues, type DuesSummary } from "@/lib/accounting/tds-deductor";
 import { monthBounds } from "@/lib/dates/ist";
 import { fetchCogsBillTds } from "@/lib/queries/cogs-bill-tds";
 import { resolveSalaryBankLines, salariesNeedingBankLine, type BankLineFacts, type BankLineRef } from "@/lib/payroll/salary-bank-link";
+import { bookedSalaryMonths, deleteBlockMessage, hasDeleteBlockers, type DeleteBlockers } from "@/lib/payroll/statutory";
 
 /** R-607: no pin_hash — members cannot read it (20261010010000). Use `pin_set`. */
 export type Employee = Omit<Database["public"]["Tables"]["employees"]["Row"], "pin_hash">;
 
 /** Every employees column a member may read: all but pin_hash. Kept explicit because
  *  `select("*")` now fails with "permission denied" (column grants). */
-const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set, attendance_anywhere, exit_date, exit_reason, resignation_date, exit_note, exit_started_at";
+const EMPLOYEE_COLUMNS = "id, tenant_id, name, monthly_gross, joining_date, leave_allowance, pan, pf_no, esi_no, is_active, notes, created_at, updated_at, email, phone, designation, date_of_birth, address, emergency_contact_name, emergency_contact_phone, esi_applicable, pf_applicable, pf_full_wage, biometric_id, attendance_consent_at, attendance_consent_source, face_enrolled_at, face_ref_path, basic_monthly, da_monthly, pin_set, attendance_anywhere, exit_date, exit_reason, resignation_date, exit_note, exit_started_at";
 export type LeaveEntry = Database["public"]["Tables"]["leave_entries"]["Row"];
 export type SalaryPayment = Database["public"]["Tables"]["salary_payments"]["Row"];
 export type Attendance = Database["public"]["Tables"]["attendance"]["Row"];
@@ -68,7 +69,7 @@ export function useUpsertEmployee() {
     mutationFn: async (input: {
       id?: string; name: string; monthly_gross: number; joining_date?: string | null;
       leave_allowance?: number; pan?: string | null; pf_no?: string | null; esi_no?: string | null;
-      esi_applicable?: boolean; pf_applicable?: boolean; is_active?: boolean; notes?: string | null;
+      esi_applicable?: boolean; pf_applicable?: boolean; pf_full_wage?: boolean; is_active?: boolean; notes?: string | null;
       basic_monthly?: number | null; da_monthly?: number;
       email?: string | null; phone?: string | null; designation?: string | null;
       date_of_birth?: string | null; address?: string | null;
@@ -188,21 +189,47 @@ export function useCancelEmployeeExit() {
   });
 }
 
-/** Delete an employee. Blocked if they have salary history (deactivate instead
- *  so payroll records stay intact). Fresh employees delete cleanly (their
- *  attendance/leave cascade away). */
+/** R-2698: what ties an employee to the books — booked salary months (oldest first), project
+ *  labour and expense claims, the same three things tg_employee_delete_guard refuses on — so
+ *  the delete screen names them instead of failing with a red error after the click. */
+export async function fetchEmployeeDeleteBlockers(employeeId: string): Promise<DeleteBlockers> {
+  const supabase = createClient();
+  const [sal, lab, claims] = await Promise.all([
+    supabase.from("salary_payments").select("period").eq("employee_id", employeeId).order("period", { ascending: true }),
+    supabase.from("project_labour").select("id", { count: "exact", head: true }).eq("employee_id", employeeId),
+    supabase.from("expense_claims").select("id", { count: "exact", head: true }).eq("employee_id", employeeId),
+  ]);
+  for (const r of [sal, lab, claims]) if (r.error) throw r.error;
+  return {
+    salaryMonths: bookedSalaryMonths((sal.data ?? []) as { period: string }[]),
+    projectLabour: lab.count ?? 0,
+    expenseClaims: claims.count ?? 0,
+  };
+}
+
+/** R-2701: the delete dialog's check (fetchEmployeeDeleteBlockers), read fresh each time it opens. */
+export function useEmployeeDeleteBlockers(employeeId: string | null) {
+  return useQuery({
+    queryKey: ["employee-delete-blockers", employeeId ?? "none"],
+    enabled: Boolean(employeeId),
+    queryFn: () => fetchEmployeeDeleteBlockers(employeeId!),
+    staleTime: 0,
+  });
+}
+
+/** Delete an employee. Blocked if they have salary / project labour / expense claims (Start exit
+ *  instead, so payroll records stay intact). Fresh employees delete cleanly
+ *  (their attendance/leave cascade away). */
 export function useDeleteEmployee() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (id: string) => {
+    mutationFn: async (e: { id: string; name: string; canExit?: boolean }) => {
       const supabase = createClient();
-      const { count, error: cErr } = await supabase
-        .from("salary_payments").select("id", { count: "exact", head: true }).eq("employee_id", id);
-      if (cErr) throw cErr;
-      if ((count ?? 0) > 0) {
-        throw new Error("This employee has salary payments on record. Set them Inactive (Edit) instead of deleting, so your payroll history stays intact.");
-      }
-      const { error } = await supabase.from("employees").delete().eq("id", id);
+      /* Back-stop (the delete dialog checks first): never reach the DB guard's raw message. R-2701:
+         the way on is the viewer's own (Start exit for the owner, Edit for anyone else), as in the dialog. */
+      const blockers = await fetchEmployeeDeleteBlockers(e.id);
+      if (hasDeleteBlockers(blockers)) throw new Error(deleteBlockMessage(e.name, blockers, e.canExit ?? false));
+      const { error } = await supabase.from("employees").delete().eq("id", e.id);
       if (error) throw error;
     },
     onSuccess: () => {

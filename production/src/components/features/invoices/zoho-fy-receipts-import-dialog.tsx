@@ -114,6 +114,24 @@ export function refusalGroups(skipped: readonly { reason: string }[]): { reason:
    absent from an older server → the preview's), so the sum line never mixes two snapshots. */
 interface PartResult { imported: number; already: number; banked: number; bankLater: number; withFee: number; fee: number; skipped: { number: string; reason: string }[]; scanned?: number; leftOut?: number }
 
+/**
+ * R-2704 — the check / import count line, adding up: every NEW receipt is either matched to its bank line
+ * or waits for it (imported = matched + waiting). The SQL's `banked` also counts an EARLIER receipt whose
+ * bank line came in since (import_zoho_fy_receipts "already" path) — said apart, under already recorded.
+ * Staging 12 Nov: "62 receipts · 49 matched · 14 wait" = 48 new matched + 14 waiting + 1 earlier one matched now.
+ */
+export function receiptsCountText(r: Pick<PartResult, "imported" | "banked" | "bankLater" | "already">): string {
+  const n = (x: number) => x.toLocaleString("en-IN");
+  const newMatched = Math.max(0, r.imported - r.bankLater);
+  const earlierMatched = Math.max(0, r.banked - newMatched);
+  const fresh = `${n(r.imported)} new receipt${r.imported === 1 ? "" : "s"}`
+    + (r.imported > 0 ? ` (${n(newMatched)} matched to bank lines · ${n(r.bankLater)} wait for their bank line)` : "");
+  const already = r.already > 0
+    ? ` · ${n(r.already)} already recorded${earlierMatched > 0 ? ` (${n(earlierMatched)} of them matched to ${earlierMatched === 1 ? "its bank line" : "their bank lines"} now)` : ""}`
+    : "";
+  return fresh + already;
+}
+
 /** R-2565 — the Razorpay fee line for the summary / check result: shown apart, never taken off the receipts. */
 export function razorpayFeeText(count: number, fee: number): string | null {
   if (!count || !fee) return null;
@@ -189,6 +207,18 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
       setAccounts(Object.fromEntries(p.deposits.flatMap((d): [string, string][] =>
         d.leftOut ? [[d.zohoAccountId, LEAVE_OUT]] : d.appAccountId ? [[d.zohoAccountId, d.appAccountId]] : map[d.zohoAccountId] === "" ? [[d.zohoAccountId, ""]] : [])));
     } catch (e) { setError((e as Error).message); } finally { setBusy(null); }
+  }, []);
+
+  /* R-2704: save one Zoho account's choice for this company. A failed save is said, but the screen still
+     uses the choice now (the import sends what the screen shows). */
+  /* One save at a time, in the order chosen (two quick changes never land out of order). Payments Zoho gave
+     no deposit account ("" key) are not remembered — there is no Zoho account to remember them by. */
+  const saveChain = React.useRef<Promise<void>>(Promise.resolve());
+  const saveAccountChoice = React.useCallback((zohoKey: string, choice: string) => {
+    if (!zohoKey) return saveChain.current;
+    saveChain.current = saveChain.current.then(() => call({ action: "saveAccount", zohoKey, choice }).then(() => {},
+      (e) => setError(`Your choice is used now but was not saved for next time: ${(e as Error).message}`)));
+    return saveChain.current;
   }, []);
 
   /* R-2607: follow the server's read while this window is open — each "step" is one server pass
@@ -363,7 +393,10 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
                           onChange={(e) => {
                             /* R-2547: another account choice = another plan — the old part message / carry-on point no longer fit. */
                             const next = { ...accounts, [d.zohoAccountId]: e.target.value };
-                            setAccounts(next); setPartError(null); setResumeAt(null); void loadPreview(next);
+                            setAccounts(next); setPartError(null); setResumeAt(null);
+                            /* R-2704: remembered for this company — reopening starts from it ("Choose…" forgets it). */
+                            void saveAccountChoice(d.zohoAccountId, e.target.value);
+                            void loadPreview(next);
                           }}
                           className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
                         >
@@ -434,8 +467,8 @@ function PartSummary({ title, r, accounted }: { title: string; r: PartResult; ac
   return (
     <div className="rounded-md border border-hairline px-3 py-2 text-xs" role="status">
       <p className="font-semibold text-ink">
-        {title}: {r.imported.toLocaleString("en-IN")} receipts · {r.banked} matched to bank lines
-        {r.bankLater ? ` · ${r.bankLater} wait for their bank line` : ""}{r.already ? ` · ${r.already} already recorded` : ""}{r.skipped.length ? ` · ${r.skipped.length} refused` : ""}
+        {/* R-2704: new = matched + waiting; an earlier receipt matched now is counted under already recorded. */}
+        {title}: {receiptsCountText(r)}{r.skipped.length ? ` · ${r.skipped.length} refused` : ""}
       </p>
       {feeText && <p className="text-ink-2" data-testid="fy-receipts-part-fee">{feeText}</p>}
       {accounted && <p className="text-ink-2" data-testid="fy-receipts-accounted">{accounted}</p>}

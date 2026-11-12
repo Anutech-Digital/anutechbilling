@@ -24,8 +24,9 @@ const st = vi.hoisted(() => ({
   held: "member_elsewhere" as unknown,
   ex: { data: "invited" as unknown, error: null as null | { message: string; code?: string } },
   inserts: [] as Array<Record<string, unknown>>,
-  emails: [] as Array<{ to: string; text: string; subject: string; route?: unknown }>,
+  emails: [] as Array<{ to: string; text: string; subject: string; route?: unknown; logTenantId?: string; kind?: string }>,
   emailStatus: "sent" as string,
+  emailError: null as string | null,
   deletes: [] as Array<Array<[string, string]>>,
 }));
 
@@ -34,7 +35,7 @@ vi.mock("@/lib/security/rate-limit", () => ({
 }));
 
 vi.mock("@/lib/messaging", () => ({
-  sendInternalEmail: async (e: { to: string; text: string; subject: string; route?: unknown }) => { st.emails.push(e); return { status: st.emailStatus }; },
+  sendInternalEmail: async (e: { to: string; text: string; subject: string; route?: unknown; logTenantId?: string; kind?: string }) => { st.emails.push(e); return { status: st.emailStatus, errorMessage: st.emailError }; },
 }));
 
 function chain(result: () => unknown) {
@@ -94,7 +95,7 @@ const call = (body: unknown) =>
 
 beforeEach(() => {
   st.rpcCalls = []; st.held = "member_elsewhere"; st.ex = { data: "invited", error: null };
-  st.inserts = []; st.emails = []; st.emailStatus = "sent"; st.deletes = [];
+  st.inserts = []; st.emails = []; st.emailStatus = "sent"; st.emailError = null; st.deletes = [];
 });
 
 const EMAIL = "ravi@betatraders.test";
@@ -137,6 +138,37 @@ describe("R-2477: invite a login that works in another company", () => {
     expect(error).toMatch(/could not be sent, so the invite was not saved/);
     expect(error).toMatch(/Next step/);
     expect(st.deletes).toEqual([[["tenant_id", T1], ["email", EMAIL]]]);
+  });
+
+  it("R-2696: the link email is logged under the inviting company (email_log row) with kind team_invite", async () => {
+    await call({ email: EMAIL, role: "sales" });
+    expect(st.emails[0]).toMatchObject({ logTenantId: T1, kind: "team_invite" });
+    expect(st.emails[0].route).toBeUndefined();
+  });
+
+  it("R-2696: the 502 names the provider's reason, with addresses in it masked", async () => {
+    st.emailStatus = "failed";
+    st.emailError = 'Resend 403: {"statusCode":403,"message":"You can only send testing emails to your own email address (owner@anutech.in). To send emails to other recipients, please verify a domain at resend.com/domains","name":"validation_error"}';
+    const r = await call({ email: EMAIL, role: "sales" });
+    expect(r.status).toBe(502);
+    const { error } = await r.json() as { error: string };
+    expect(error).toMatch(/Reason: Resend 403 — You can only send testing emails/);
+    expect(error).toMatch(/verify a domain/);
+    expect(error).not.toContain("owner@anutech.in");
+    expect(error).toContain("o***@anutech.in");
+    expect(error).toMatch(/Next step/);
+  });
+
+  it("R-2696: a stubbed send says why (staging allowlist / no mail sender)", async () => {
+    st.emailStatus = "stubbed";
+    st.emailError = "not sent — staging-allowlist (staging mails only the team)";
+    const r = await call({ email: EMAIL, role: "sales" });
+    const { error } = await r.json() as { error: string };
+    expect(error).toMatch(/Reason: not sent — staging-allowlist/);
+    st.emailError = null;
+    const r2 = await call({ email: EMAIL, role: "sales" });
+    const { error: e2 } = await r2.json() as { error: string };
+    expect(e2).toMatch(/Reason: no mail sender is set up/);
   });
 
   it("the plain invite still goes through the company's own mail route", async () => {

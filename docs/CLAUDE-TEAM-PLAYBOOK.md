@@ -55,6 +55,9 @@ memory. That is how every teammate's Claude stays updated.
   *Repeat wala kaam = skill; zaroori baat = khud note karo aur sabko batao.*
 - **Coach him** (he asked for it): at session start and wrap-up add 1–3 lines on what to do next and
   why; offer at most 1–2 process speed-ups per update (real ones become G-PROCESS cards with numbers).
+- **Real users' reports come first (12 Nov 2026, R-2708).** Bug reports from our real, paying users
+  (Hitesh, Pratik) go to the top of the queue, money p0 still first; audit before fixing. Rules: Lessons log, 12 Nov.
+  *Asli users ki report sabse upar.*
 - Page tweaks from screenshots: collect all of them first ("aur kuch is page par?"), then ONE card.
 
 ### Owner bahar / so raha hai (7 Nov 2026, Pardeep — R-2573)
@@ -380,3 +383,10 @@ Format: `- <date>: what went wrong → the rule it created (card).`
   `gh api repos/<repo>/check-runs/<job id>/annotations` names the failing test. `e2e-smoke` is non-blocking (red on green
   runs too) — never read it as the cause. Taking a card id: `get` meta/nextId AND check the card does not exist yet
   (R-2676/R-2677 were made without a bump).
+- 12 Nov 2026 (R-2708, G-PROCESS) — Real users' reports first (Pardeep, 12 Nov 2026). Bug reports from
+  our real, paying users — Hitesh (owner) and Pratik (sales/renewals) — go to the top of the queue
+  (money p0 still first). Find them in the staging `feedback` table (reporter_email hitesh@… / pratik@…,
+  read-only query, or /admin/feedback). Before fixing: a deep audit — does it still happen on current code,
+  root cause, already fixed by a later card?, and the right fix for the user's whole work flow (one way to do
+  a thing, fewest steps, next-step button). Then one card per real problem. After the fix reaches staging,
+  check it with the reporter's own steps and mark the feedback fixed.

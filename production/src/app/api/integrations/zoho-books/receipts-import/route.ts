@@ -25,6 +25,9 @@
  *              comes from the scan in the database. NO suggestion here (R-2501 fix): only the accounts the
  *              dialog sent (what it showed) are used — a Zoho account it did not send is skipped.
  *              Already-booked payments with no bank line yet are sent again: the SQL matches their bank line if it has come in since.
+ *   saveAccount → R-2704: { zohoKey: <Zoho deposit account id>, choice: <app account id> | "none" | "" } —
+ *              save_zoho_account_bank_choice remembers it for this company ("" forgets); the next
+ *              preview starts from the saved choices (what the dialog sends still wins).
  *   undo     → { batchId, reason } — remove_zoho_fy_receipts_import (OWNER only, while nothing in the
  *              batch was touched since; R-2501 follow-up).
  * Zoho is never written to.
@@ -35,6 +38,7 @@ import { fyDateRange } from "@/lib/integrations/zoho-books/fy-fetch";
 import { supabaseBgStore } from "@/lib/integrations/zoho-books/fy-import/bg-store";
 import { companyReadPass } from "@/lib/integrations/zoho-books/fy-import/read-job.server";
 import { parseOnlyAccount } from "@/lib/integrations/zoho-books/fy-import/scan";
+import { parseSaveChoice, readAccountChoices, withSavedChoices } from "@/lib/integrations/zoho-books/fy-import/account-choices";
 import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { RECEIPTS_IMPORT_PART, partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts";
 import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb } from "@/lib/integrations/zoho-books/fy-import/store";
@@ -120,10 +124,27 @@ export async function POST(req: NextRequest) {
     }
   }
 
+  if (action === "saveAccount") {
+    const c = parseSaveChoice(body, "receipts");
+    if (!c) return fail(400, "Choose an app account for this Zoho account, or Leave these out.");
+    const supabase = createClient();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error } = await (supabase as any).rpc("save_zoho_account_bank_choice", { p_use: c.use, p_key: c.key, p_choice: c.choice });
+    if (error) return fail(400, (error as { message?: string }).message ?? "The choice was not saved.");
+    return NextResponse.json({ ok: true });
+  }
+
   if (action === "preview" || action === "import") {
-    const accountMap = parseAccountMap(body.accounts);
-    let plan, counts, run, ctx;
+    const sent = parseAccountMap(body.accounts);
+    let plan, counts, run, ctx, accountMap = sent;
     try {
+      /* R-2704: the preview starts from this company's saved choices (reopen keeps them); the dialog's
+         own map wins. The import still maps ONLY what the dialog sent (it showed the saved ones first). */
+      /* A failed read of the saved choices only loses the defaults — the preview still works (suggestions). */
+      if (action === "preview") {
+        const saved = await readAccountChoices(db, caller.tenantId, "receipts").catch(() => ({}));
+        accountMap = withSavedChoices(parseAccountMap(saved), sent);
+      }
       [counts, run] = await Promise.all([store.counts(fy), store.readRun(fy)]);
       if (!run?.listDone || counts.detailed < counts.listed || counts.listed === 0) {
         return fail(409, "Read the year from Zoho first (Read from Zoho) — it is not complete yet.");

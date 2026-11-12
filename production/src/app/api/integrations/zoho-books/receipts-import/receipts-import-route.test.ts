@@ -21,6 +21,14 @@ const st = vi.hoisted(() => ({
   resets: 0,
   /* R-2653: Read again keeps the scan — refresh(fy, { onlyAccount }) instead of reset. */
   refreshes: [] as Array<string | null>,
+  /* R-2704: the company's saved Zoho account → app account choices (zoho_account_bank_map). */
+  saved: {} as Record<string, string>,
+  savedUse: [] as string[],
+}));
+
+vi.mock("@/lib/integrations/zoho-books/fy-import/account-choices", async (orig) => ({
+  ...(await orig<typeof import("@/lib/integrations/zoho-books/fy-import/account-choices")>()),
+  readAccountChoices: async (_db: unknown, _t: string, use: string) => { st.savedUse.push(use); return st.saved; },
 }));
 
 vi.mock("@/lib/integrations/zoho-books/store", () => ({
@@ -98,6 +106,7 @@ function req(body: unknown) {
 
 beforeEach(() => {
   st.role = "owner"; st.run = { nextPage: 3, listDone: true }; st.counts = { listed: 2, detailed: 2 }; st.rpc = []; st.resets = 0; st.refreshes = [];
+  st.saved = {}; st.savedUse = [];
   st.booked = new Map(); st.accountMapSeen = null;
   st.facts = [fact({}), fact({ zohoId: "p2", number: "102", problems: ["Zoho took bank charges off this payment and it is not a Razorpay payment — book it by hand."] })];
   st.rpcResult = { data: { dry_run: true, imported: 1 }, error: null };
@@ -279,5 +288,36 @@ describe("R-2607 the read runs on the server", () => {
     st.role = "manager";
     expect((await POST(req({ action: "start", fy: "2025-26" }))).status).toBe(403);
     expect(bgst.requests).toEqual([]);
+  });
+});
+
+describe("R-2704 receipts-import route — the Zoho account choice is remembered per company", () => {
+  it("preview starts from the company's saved choice (reopen keeps it); what the dialog sends wins", async () => {
+    st.saved = { za: "22222222-2222-4222-8222-222222222222" };
+    await POST(req({ action: "preview", fy: "2025-26" }));
+    expect(st.savedUse).toEqual(["receipts"]);
+    expect(st.accountMapSeen).toEqual({ za: "22222222-2222-4222-8222-222222222222" });
+    await POST(req({ action: "preview", fy: "2025-26", accounts: { za: "none" } }));
+    expect(st.accountMapSeen).toEqual({ za: "none" });
+  });
+
+  it("import uses only what the dialog sent (the dialog shows the saved choice first) — no saved map behind the screen", async () => {
+    st.saved = { za: "11111111-1111-4111-8111-111111111111" };
+    expect((await POST(req({ action: "import", fy: "2025-26", part: 0 }))).status).toBe(409);
+    expect(st.savedUse).toEqual([]);
+  });
+
+  it("saveAccount remembers one choice through save_zoho_account_bank_choice; junk and a manager refused", async () => {
+    const res = await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "za", choice: "11111111-1111-4111-8111-111111111111" }));
+    expect(res.status).toBe(200);
+    expect(st.rpc[0]).toEqual({ fn: "save_zoho_account_bank_choice", args: { p_use: "receipts", p_key: "za", p_choice: "11111111-1111-4111-8111-111111111111" } });
+    await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "za", choice: "none" }));
+    await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "za", choice: "" }));
+    expect(st.rpc.map((r) => r.args.p_choice)).toEqual(["11111111-1111-4111-8111-111111111111", "none", ""]);
+    expect((await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "za", choice: "x' or 1=1" }))).status).toBe(400);
+    expect((await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "", choice: "none" }))).status).toBe(400);
+    st.role = "manager";
+    expect((await POST(req({ action: "saveAccount", fy: "2025-26", zohoKey: "za", choice: "none" }))).status).toBe(403);
+    expect(st.rpc).toHaveLength(3);
   });
 });

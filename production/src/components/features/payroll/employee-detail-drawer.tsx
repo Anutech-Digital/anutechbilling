@@ -29,6 +29,7 @@ import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dial
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { EmployeeProperty } from "@/components/features/payroll/employee-property";
 import { EmployeeDirectorLink } from "@/components/features/company/employee-director-link";
+import { EmployeeSalaryPayments } from "@/components/features/accounting/employee-salary-payments";
 
 const DOC_LABEL = new Map(EMPLOYEE_DOC_TYPES.map((d) => [d.value, d.label]));
 
@@ -42,13 +43,15 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export function EmployeeDetailDrawer({
-  employee, open, onOpenChange, onEdit,
+  employee, open, onOpenChange, onEdit, focusSalary = false,
 }: {
   employee: Employee | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** Left out for a read-only viewer (R-254: billing sees employees, cannot save them). */
   onEdit?: () => void;
+  /** R-2701: opened from the delete refusal — scroll to "Salary & payments". */
+  focusSalary?: boolean;
 }) {
   const { data: docs, isLoading } = useEmployeeDocuments(open ? employee?.id : null);
   const upload = useUploadEmployeeDocument();
@@ -57,6 +60,13 @@ export function EmployeeDetailDrawer({
   const [docType, setDocType] = React.useState("aadhaar");
   const [viewing, setViewing] = React.useState<EmployeeDocument | null>(null);
   const fileRef = React.useRef<HTMLInputElement>(null);
+  const salaryRef = React.useRef<HTMLDivElement>(null);
+  const employeeId = employee?.id;
+  React.useEffect(() => {
+    if (!open || !focusSalary || !employeeId) return;
+    const t = window.setTimeout(() => salaryRef.current?.scrollIntoView({ block: "start" }), 50);
+    return () => window.clearTimeout(t);
+  }, [open, focusSalary, employeeId]);
 
   const onFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -104,6 +114,11 @@ export function EmployeeDetailDrawer({
                 <Field label="Emergency contact" value={employee.emergency_contact_name} />
                 <Field label="Emergency phone" value={employee.emergency_contact_phone} />
               </div>
+            </div>
+
+            {/* R-2701: every booked salary month + loans / advances — "which months?" answered here. */}
+            <div ref={salaryRef} className="scroll-mt-4">
+              <EmployeeSalaryPayments employee={{ id: employee.id, name: employee.name }} canWrite={Boolean(onEdit)} />
             </div>
 
             {/* R-1852: a whole-time / managing director on the payroll → Director's Remuneration on the P&L. */}

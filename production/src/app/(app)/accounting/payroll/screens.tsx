@@ -37,6 +37,7 @@ import { computePf, pfWage, pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payrol
 import { estimateMonthlyTds } from "@/lib/payroll/income-tax";
 import { calculateCtcBreakdown, ctcFromEmployee } from "@/lib/payroll/ctc";
 import { computePt } from "@/lib/payroll/pt";
+import { bookedStatutoryMonths, bookedStatutoryText, esiRuleNote } from "@/lib/payroll/statutory";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
@@ -51,7 +52,7 @@ import { SalaryStatusCell } from "./salary-status-cell";
 import { salaryPayState } from "@/lib/payroll/salary-status";
 import { toast } from "sonner";
 import {
-  useEmployees, useUpsertEmployee, useDeleteEmployee, useSetEmployeePin, useCancelEmployeeExit,
+  useEmployees, useUpsertEmployee, useSetEmployeePin, useCancelEmployeeExit,
   useLeaveEntries, useCreateLeaveEntry, useDeleteLeaveEntry,
   useHolidays, useCreateHoliday, useDeleteHoliday,
   useSalaryPayments, usePaySalary, useDeleteSalaryPayment, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines,
@@ -77,6 +78,7 @@ import { AttendanceChanges } from "@/components/features/attendance/attendance-c
 import { CorrectionTrail } from "@/components/features/attendance/correction-trail";
 import type { CurrentUserInfo } from "@/lib/hooks/useCurrentUser";
 import { EmployeeDetailDrawer } from "@/components/features/payroll/employee-detail-drawer";
+import { EmployeeDeleteDialog } from "@/components/features/accounting/employee-delete-dialog";
 import { OfferLetterDialog } from "@/components/features/payroll/offer-letter-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { SalaryBreakdownDialog } from "@/components/features/accounting/salary-breakdown-dialog";
@@ -194,7 +196,6 @@ export function PayrollScreen() {
 export function EmployeesTab() {
   const q = useEmployees();
   const leaveQ = useLeaveEntries();
-  const del = useDeleteEmployee();
   const confirm = useConfirm();
   const myRole = useCurrentUser().data?.role;
   const canWrite = canWriteMoney(myRole);
@@ -207,6 +208,8 @@ export function EmployeesTab() {
   const [exitEmp, setExitEmp] = React.useState<Employee | null>(null);
   /* R-2380: the same person added twice → merge the duplicate into the one to keep. */
   const [mergeEmp, setMergeEmp] = React.useState<Employee | null>(null);
+  const [deleteEmp, setDeleteEmp] = React.useState<Employee | null>(null);
+  const [viewSalary, setViewSalary] = React.useState(false);
   const rows = q.data ?? [];
 
   const confirmCancelExit = async (e: Employee) => {
@@ -219,16 +222,9 @@ export function EmployeesTab() {
     }
   };
 
-  const confirmDelete = async (e: Employee) => {
-    if (await confirm({
-      title: `Remove ${e.name}?`,
-      body: "This deletes the employee and their attendance/leave records. (Blocked if they have salary payments — deactivate those instead.)",
-      confirmLabel: "Remove",
-      danger: true,
-    })) {
-      del.mutate(e.id);
-    }
-  };
+  /* R-2698 + R-2701: ONE delete dialog — it checks what is booked first (salary months, project
+     labour, expense claims), names it, and offers Start exit / Edit employee + See salary months. */
+  const confirmDelete = (e: Employee) => setDeleteEmp(e);
 
   const paidLeaveTaken = (empId: string) => {
     const fy = fyStartISO();
@@ -370,11 +366,22 @@ export function EmployeesTab() {
       {offerEmp && <OfferLetterDialog employee={offerEmp} onClose={() => setOfferEmp(null)} />}
       {exitEmp && isOwner && <StartExitDialog employee={exitEmp} onClose={() => setExitEmp(null)} />}
       {mergeEmp && canWrite && <MergeEmployeeDialog employee={mergeEmp} employees={rows} onClose={() => setMergeEmp(null)} />}
+      {deleteEmp && canWrite && (
+        <EmployeeDeleteDialog
+          employee={deleteEmp}
+          isOwner={isOwner}
+          onStartExit={() => { setExitEmp(deleteEmp); setDeleteEmp(null); }}
+          onEdit={() => { setEdit(deleteEmp); setDeleteEmp(null); }}
+          onShowSalary={() => { setViewSalary(true); setViewEmp(deleteEmp); setDeleteEmp(null); }}
+          onClose={() => setDeleteEmp(null)}
+        />
+      )}
       <EmployeeDetailDrawer
         employee={viewEmp ? (rows.find((r) => r.id === viewEmp.id) ?? viewEmp) : null}
         open={viewEmp !== null}
-        onOpenChange={(o) => { if (!o) setViewEmp(null); }}
-        onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); } } : undefined}
+        focusSalary={viewSalary}
+        onOpenChange={(o) => { if (!o) { setViewEmp(null); setViewSalary(false); } }}
+        onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); setViewSalary(false); } } : undefined}
       />
     </>
   );
@@ -493,6 +500,14 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [esiApplicable, setEsiApplicable] = React.useState<boolean>(employee?.esi_applicable ?? false);
   const [esiTouched, setEsiTouched] = React.useState(false);
   const [pfApplicable, setPfApplicable] = React.useState<boolean>(employee?.pf_applicable ?? false);
+  /* R-2698: PF basis — false = capped at the month's statutory ceiling, true = full Basic + DA. */
+  const [pfFullWage, setPfFullWage] = React.useState<boolean>(employee?.pf_full_wage ?? false);
+  /* A switch change only reaches the NEXT salary booked — name the booked months that keep their PF / ESI. */
+  const statutoryChanged = Boolean(employee) && (
+    esiApplicable !== employee?.esi_applicable || pfApplicable !== employee?.pf_applicable
+    || (pfApplicable && pfFullWage !== (employee?.pf_full_wage ?? false)));
+  const salaryHistoryQ = useEmployeeSalaryHistory(employee?.id ?? null);
+  const bookedStatutory = bookedStatutoryMonths(salaryHistoryQ.data ?? []);
   /* PF wage components — PF is on Basic + DA, not gross (lib/payroll/pf.ts). */
   const [basicMonthly, setBasicMonthly] = React.useState(employee?.basic_monthly != null ? String(employee.basic_monthly) : "");
   const [daMonthly, setDaMonthly] = React.useState(String(employee?.da_monthly ?? 0));
@@ -506,6 +521,17 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [annualCtc, setAnnualCtc] = React.useState<string>(
     employee?.monthly_gross ? String(ctcFromEmployee(employee).annualCtc) : "600000"
   );
+  /* R-2698: turning PF / ESI off must not move the employer share into gross. Until the owner
+     types a CTC, an existing employee's CTC follows their SAVED gross + the current switches,
+     so "Apply Salary Structure" keeps the gross they already have. */
+  const [ctcTyped, setCtcTyped] = React.useState(false);
+  React.useEffect(() => {
+    if (ctcTyped || !employee?.monthly_gross) return;
+    setAnnualCtc(String(ctcFromEmployee({
+      monthly_gross: employee.monthly_gross, basic_monthly: employee.basic_monthly, da_monthly: employee.da_monthly,
+      pf_applicable: pfApplicable, esi_applicable: esiApplicable, pf_full_wage: pfFullWage,
+    }).annualCtc));
+  }, [ctcTyped, employee, pfApplicable, esiApplicable, pfFullWage]);
   const [isMetro, setIsMetro] = React.useState(false);
   const [basicPct, setBasicPct] = React.useState<number>(0.5);
   const [customBasic, setCustomBasic] = React.useState<string>("");
@@ -514,13 +540,12 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [customMedical, setCustomMedical] = React.useState<string>("1250");
   const [customSpecial, setCustomSpecial] = React.useState<string>("");
   const [customPt, setCustomPt] = React.useState<string>(""); // empty = PT slab from lib/payroll/pt.ts
-  const [capPfCeiling, setCapPfCeiling] = React.useState<boolean>(true);
   const [includeGratuity, setIncludeGratuity] = React.useState<boolean>(true);
   const [showCustomControls, setShowCustomControls] = React.useState<boolean>(false);
 
   const ctcBreakdown = React.useMemo(() => {
     const val = Number(annualCtc) || (Number(gross) > 0
-      ? ctcFromEmployee({ monthly_gross: Number(gross), basic_monthly: basicMonthly !== "" ? Number(basicMonthly) : null, da_monthly: Number(daMonthly) || 0, pf_applicable: pfApplicable, esi_applicable: esiApplicable }).annualCtc
+      ? ctcFromEmployee({ monthly_gross: Number(gross), basic_monthly: basicMonthly !== "" ? Number(basicMonthly) : null, da_monthly: Number(daMonthly) || 0, pf_applicable: pfApplicable, esi_applicable: esiApplicable, pf_full_wage: pfFullWage }).annualCtc
       : 600000);
     return calculateCtcBreakdown(val, {
       isMetro,
@@ -531,10 +556,13 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
       customMedicalMonthly: Number(customMedical) || 0,
       customSpecialMonthly: Number(customSpecial) || undefined,
       customPtMonthly: customPt !== "" ? Number(customPt) : undefined,
-      capPfWageCeiling: capPfCeiling,
+      /* R-2698: the breakdown follows the Statutory switches — PF / ESI off means none here. */
+      capPfWageCeiling: !pfFullWage,
+      includePf: pfApplicable,
+      includeEsi: esiApplicable,
       includeGratuity,
     });
-  }, [annualCtc, gross, basicMonthly, daMonthly, pfApplicable, esiApplicable, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt, capPfCeiling, includeGratuity]);
+  }, [annualCtc, gross, basicMonthly, daMonthly, pfApplicable, esiApplicable, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt, pfFullWage, includeGratuity]);
   // For a NEW employee, suggest ESI coverage from the wage ceiling until the
   // user decides for themselves. Existing employees keep their saved value.
   React.useEffect(() => {
@@ -552,7 +580,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
       date_of_birth: dob || null, address: address.trim() || null,
       emergency_contact_name: ecName.trim() || null, emergency_contact_phone: ecPhone.trim() || null,
       pan: pan.trim().toUpperCase() || null, pf_no: pfNo.trim() || null, esi_no: esiNo.trim() || null,
-      esi_applicable: esiApplicable, pf_applicable: pfApplicable,
+      esi_applicable: esiApplicable, pf_applicable: pfApplicable, pf_full_wage: pfFullWage,
       basic_monthly: basicMonthly.trim() === "" ? null : Math.round(Number(basicMonthly) || 0),
       da_monthly: Math.round(Number(daMonthly) || 0),
     });
@@ -653,7 +681,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     min={0}
                     placeholder="e.g. 600000"
                     value={annualCtc}
-                    onChange={(e) => setAnnualCtc(e.target.value)}
+                    onChange={(e) => { setCtcTyped(true); setAnnualCtc(e.target.value); }}
                   />
                 </Field>
                 <Field htmlFor="payroll-city-hra-standard" label="City HRA Standard">
@@ -770,15 +798,6 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                           />
                           <span>Include Gratuity (4.81%)</span>
                         </label>
-                        <label className="flex items-center gap-2 cursor-pointer text-xs text-ink-2 font-medium">
-                          <input
-                            type="checkbox"
-                            checked={capPfCeiling}
-                            onChange={(e) => setCapPfCeiling(e.target.checked)}
-                            className="rounded border-hairline accent-amber"
-                          />
-                          <span>Cap PF at the wage ceiling ({rupee(Math.round(pfWageCeiling() * PF_EMPLOYER_RATE))}/mo today)</span>
-                        </label>
                       </div>
                     </div>
                   </div>
@@ -794,6 +813,12 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                         <Badge kind="info" size="sm">Annual {rupee(ctcBreakdown.annualCtc)}</Badge>
                       </div>
                       <span className="text-xs text-ink-3 block mt-0.5">Itemized Indian Wage Code &amp; Statutory Breakdown</span>
+                      {/* R-2698: say which switches this breakdown uses — they are set in Statutory & Access. */}
+                      <span data-testid="ctc-statutory-switches" className="text-xs text-ink-2 block mt-0.5">
+                        PF: <b>{pfApplicable ? (pfFullWage ? "on — full Basic + DA" : `on — capped at ${rupee(pfWageCeiling())}`) : "off"}</b>
+                        {" · "}ESI: <b>{esiApplicable ? "on" : "off"}</b>
+                        {" · "}<button type="button" className="text-primary font-medium hover:underline" onClick={() => setEmpTab("statutory")}>Change in Statutory &amp; Access</button>
+                      </span>
                     </div>
                     <Button
                       type="button"
@@ -802,9 +827,10 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                       onClick={() => {
                         setGross(String(ctcBreakdown.grossMonthly));
                         setBasicMonthly(String(ctcBreakdown.basicMonthly));
-                        setPfApplicable(true);
-                        if (ctcBreakdown.employerEsiMonthly > 0) setEsiApplicable(true);
-                        toast.success(`Applied Monthly Gross ${rupee(ctcBreakdown.grossMonthly)} & PF/ESI settings!`);
+                        /* R-2698: this used to switch PF (and ESI) back ON — an owner who had just
+                           turned them off in Statutory & Access got them back. The switches live
+                           only there now. */
+                        toast.success(`Applied monthly gross ${rupee(ctcBreakdown.grossMonthly)} and Basic ${rupee(ctcBreakdown.basicMonthly)}. PF / ESI stay as set in Statutory & Access.`);
                       }}
                       className="text-xs font-extrabold"
                     >
@@ -880,10 +906,15 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                         <Badge kind="success" size="sm" className="font-mono font-bold">{rupee(ctcBreakdown.netTakeHomeMonthly)}/mo</Badge>
                       </div>
                       <div className="space-y-1.5 text-ink-2 text-xs">
-                        <div className="flex items-center justify-between text-rose-700">
-                          <span>Employee PF (12%):</span>
-                          <span className="font-mono font-bold">-{rupee(ctcBreakdown.employeePfMonthly)}</span>
-                        </div>
+                        {ctcBreakdown.employeePfMonthly > 0 && (
+                          <div className="flex items-center justify-between text-rose-700">
+                            <span>Employee PF (12%):</span>
+                            <span className="font-mono font-bold">-{rupee(ctcBreakdown.employeePfMonthly)}</span>
+                          </div>
+                        )}
+                        {ctcBreakdown.employeePfMonthly === 0 && ctcBreakdown.employeeEsiMonthly === 0 && (
+                          <p className="text-ink-3">No PF / ESI deducted.</p>
+                        )}
                         {ctcBreakdown.employeeEsiMonthly > 0 && (
                           <div className="flex items-center justify-between text-rose-700">
                             <span>Employee ESI (0.75%):</span>
@@ -927,6 +958,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                   />
                   <span className="text-xs text-ink-2">
                     <b className="text-ink">ESI applicable</b> — deduct 0.75% from salary + accrue 3.25% employer share each month.
+                    <span data-testid="esi-rule" className="block text-ink-3 mt-0.5">{esiRuleNote(Number(gross) || 0)}</span>
                   </span>
                 </label>
 
@@ -944,9 +976,20 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 {pfApplicable && (
                   <div className="rounded-md border border-hairline p-3 space-y-2">
                     <p className="text-xs text-ink-2">
-                      <b className="text-ink">What PF is charged on</b> — Basic + DA (not HRA / allowances), up to the ceiling.
+                      <b className="text-ink">What PF is charged on</b> — Basic + DA (not HRA / allowances).
                       {basicMonthly.trim() === "" && <span className="block text-amber-ink mt-0.5">Basic is empty → PF is charged on the full gross (old method). Fill it in and the next salary uses the right base.</span>}
                     </p>
+                    {/* R-2698: per-employee PF basis — capped at the statutory ceiling (default) or full Basic + DA. */}
+                    <div role="radiogroup" aria-label="PF wage" className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-ink-2">
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="radio" name="pf-basis" checked={!pfFullWage} onChange={() => setPfFullWage(false)} />
+                        Capped at the PF wage ceiling ({rupee(pfWageCeiling())} — PF max {rupee(Math.round(pfWageCeiling() * PF_EMPLOYER_RATE))}/mo each side)
+                      </label>
+                      <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="radio" name="pf-basis" checked={pfFullWage} onChange={() => setPfFullWage(true)} />
+                        Full Basic + DA (above the ceiling)
+                      </label>
+                    </div>
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label htmlFor="payroll-basic-month" className="block text-xs font-medium text-ink-2 mb-1">Basic (₹/month)</label>
@@ -961,6 +1004,14 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                       <p className="text-xs text-rose">Basic + DA is more than gross — please check.</p>
                     )}
                   </div>
+                )}
+                {statutoryChanged && (
+                  <p data-testid="statutory-from-now" className="text-xs text-ink-2 rounded-md bg-paper-2 border border-hairline px-3 py-2">
+                    Applies to salaries you pay from now on.
+                    {bookedStatutory.length > 0 && (
+                      <> Already booked with PF / ESI — not changed: {bookedStatutoryText(bookedStatutory)}. To correct a booked month, remove that salary in Payroll and pay it again.</>
+                    )}
+                  </p>
                 )}
               </div>
 
@@ -1641,9 +1692,11 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
 
   // ── PF (auto) — employee 12% (deducted from net) + employer 12% (extra company
   //    cost, NOT deducted). Computed on the wage capped at the ceiling for THIS
-  //    salary month (₹15,000 till Sep 2026, ₹25,000 from Oct 2026 — lib/payroll/pf.ts).
-  const pfWageNow = pfWage({ gross: grossN, lopAmount: lopN, basic: employee.basic_monthly, da: employee.da_monthly });
-  const pfCalc = computePf(pfWageNow.base, employee.pf_applicable, period);
+  //    salary month (₹15,000 till Sep 2026, ₹25,000 from Oct 2026 — lib/payroll/pf.ts), or on
+  //    the full Basic + DA when the employee's PF basis says so (R-2698). A part-month salary
+  //    (prorated "Salary to pay") prorates Basic + DA the same way (monthlyGross).
+  const pfWageNow = pfWage({ gross: grossN, lopAmount: lopN, basic: employee.basic_monthly, da: employee.da_monthly, monthlyGross: employee.monthly_gross });
+  const pfCalc = computePf(pfWageNow.base, employee.pf_applicable, period, { capped: !employee.pf_full_wage });
   React.useEffect(() => {
     if (!pfEdited) setPf(String(pfCalc.employee));
   }, [pfCalc.employee, pfEdited]);
@@ -1883,7 +1936,7 @@ function PaySalaryDialog({ employee, period, onClose }: { employee: Employee; pe
                   <span>Total PF challan this month (employee + employer)</span>
                   <span className="font-mono text-ink font-semibold">{rupee(n(pf) + pfEmployerN)}</span>
                 </div>
-                <div className={pfWageNow.assumed ? "text-amber-ink" : "text-ink-3"}>{pfWageNow.note} PF wage {rupee(pfCalc.base)} (ceiling {rupee(pfCalc.ceiling)} for {period}). Admin/EDLI ~1% not included.</div>
+                <div className={pfWageNow.assumed ? "text-amber-ink" : "text-ink-3"}>{pfWageNow.note} PF wage {rupee(pfCalc.base)} {employee.pf_full_wage ? <>(full Basic + DA — this employee&apos;s PF basis; ceiling {rupee(pfCalc.ceiling)} not applied)</> : <>(ceiling {rupee(pfCalc.ceiling)} for {period})</>}. Admin/EDLI ~1% not included.</div>
               </div>
             )}
           </div>

@@ -64,11 +64,13 @@ import { runRelatedSql } from "./worker-lock-sql.mjs";
 import { maskOwnMigrations, autoRenameLateMigrations, realAutoRenameDeps, checkMigrationClash } from "./worker-lock-migts.mjs";
 import { stashSnapshot, enforceStash, stashGit } from "./worker-lock-stash.mjs";
 import { isDerived, withoutDerived, refreshDerived, rebaseResolvingDerived, realDerivedDeps, settleLocks } from "./worker-lock-derived.mjs";
+import { LOCK_VERSION, hardPaths, softFolders, movesOf, claimHardPaths, claimFolders, parseMoveFlags, liveFilesReader, isFileLock } from "./worker-lock-files.mjs";
 import { normPriority, DEFAULT_PRIORITY, queueTurn, lockBeat, readQueue as readQueueIn, leaveQueue as leaveQueueIn, parseQueueFlags, releaseIfStale, waitInQueue, turnGate, turnQueueLines, readTurnWaiters, joinTurnWait, leaveTurnWait, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
 const readQueue = () => readQueueIn(LOCK_DIR);
 const leaveQueue = (c) => leaveQueueIn(LOCK_DIR, c);
 export { PRIORITIES, normPriority, priorityRank, queueOrder, liveQueue, queueTurn, lockActivityAt, isStaleLock, lockBeat, STALE_MS, STALE_CI_MS, QUEUE_STALE_MS, parseQueueFlags, worktreeIndexMtime, readQueue as readQueueDir, turnGate, turnQueueLines, pushHolderEntry, lineOf } from "./worker-lock-queue.mjs";
 export { isDerived, withoutDerived, newestDeployDate, refreshDerived, rebaseResolvingDerived, MIGRATION_DERIVED } from "./worker-lock-derived.mjs";
+export { LOCK_VERSION, hardPaths, softFolders, claimHardPaths, claimFolders, parseMoveFlags, liveFilesReader, isFileArea, isFileLock, worktreeChangedFiles } from "./worker-lock-files.mjs";
 export { migrationDefines, relatedSqlTests, deployPeek, sqlTestSafe, relatedTestScript, runRelatedSql } from "./worker-lock-sql.mjs";
 
 export const LOCK_DIR = process.env.WORKER_LOCK_DIR || path.join(os.homedir(), ".claude", "worker-locks");
@@ -188,13 +190,31 @@ export function claimSlot(card, locks, { fixesRed = false, max = maxWorkersAt(Da
  * R-2105: files derived from the migrations folder (deploy-db-*.sh, peeks.generated.ts) never clash —
  * push regenerates them after the rebase (worker-lock-derived.mjs).
  */
-export function findConflicts(card, mine, locks) {
+/*
+ * R-2718: `mine` = the paths I hold HARD (claim: my files + --move folders; check: the files I changed).
+ * Theirs = hardPaths(): an old lock's every path (folders hard, as before); a v2 lock's files, --move
+ * folders, recorded `files` and `live(lock)` (its worktree's changed files now) — its other folders
+ * are soft and block nobody. A --move folder also clashes with a soft folder on the other side (`moves`
+ * = mine vs their soft folders; `soft` = my soft folders vs their --move folders): a folder being
+ * renamed must not move under a card working in it. Against an OLD lock (no lockVersion) my soft
+ * folders still clash with its paths, exactly as before — it was promised its whole folders.
+ */
+export function findConflicts(card, mine, locks, { live = () => [], moves = [], soft = [] } = {}) {
   const out = [];
+  const seen = new Set();
+  const add = (c) => { const k = `${c.card}|${c.mine}|${c.theirs}`; if (!seen.has(k)) { seen.add(k); out.push(c); } };
   for (const l of locks) {
     if (l.card === card) continue;
-    const theirs = withoutDerived([...(l.areas ?? []), ...(l.files ?? [])]);
+    const theirs = withoutDerived(hardPaths(l, live(l)));
     for (const m of withoutDerived(mine)) for (const t of theirs) {
-      if (pathsOverlap(m, t)) out.push({ card: l.card, mine: normPath(m), theirs: normPath(t) });
+      if (pathsOverlap(m, t)) add({ card: l.card, mine: normPath(m), theirs: normPath(t) });
+    }
+    for (const m of moves) for (const t of softFolders(l)) {
+      if (pathsOverlap(m, t)) add({ card: l.card, mine: normPath(m), theirs: normPath(t) });
+    }
+    /* my soft folders vs their --move folders; vs an OLD lock's paths too — it was promised whole folders */
+    for (const m of soft) for (const t of isFileLock(l) ? movesOf(l) : theirs) {
+      if (pathsOverlap(m, t)) add({ card: l.card, mine: normPath(m), theirs: normPath(t) });
     }
   }
   return out;
@@ -565,6 +585,13 @@ async function pushWithTurn(card, ciFlags = {}) {
     catch { console.error("✗ secret-scan ne push roka — upar wali file:line se value hatao (env var use karo). Asli secret kabhi push hua ho to ROTATE karo."); process.exit(6); }
     /* R-816 worker (10 Oct): on a detached worktree the branch name is empty and the old command became
        `git push anutech :manager-pardeep` — a branch DELETE (GitHub protection refused it). Push HEAD. */
+    /* R-2718: the files this push really changes stay held in ci-wait (a v2 lock's folders are soft, and the
+       worktree — whose live diff counted until now — is cleaned up right after the push). Written BEFORE the
+       push: the push moves anutech/manager-pardeep, after which the live diff is already empty. */
+    try {
+      const pushedFiles = withoutDerived(changedFiles());
+      if (pushedFiles.length) updateLock(card, (l) => ({ ...l, files: [...new Set([...(l.files ?? []), ...pushedFiles])] }));
+    } catch {}
     sh("git push -q anutech HEAD:manager-pardeep", pushEnv("push", card));
     console.log(pushDoneLine(card, plan));
     /* R-1936: remember the sha so "worker-lock ci <CARD>" knows what to wait for. */
@@ -926,8 +953,9 @@ export function ciWaitVerdict(lock, { gh, isAncestor, now = Date.now() }) {
  * sha (or a later sha containing it) → that lock is removed, exactly what `ci <CARD>` green would have
  * done. Returns the locks still standing. `remove(card)` and `print(line)` are injected for tests.
  */
-export function settleCiWaitLocks(card, mine, locks, { gh, isAncestor, remove, print = () => {} }) {
-  return settleLocks(card, mine, locks, { findConflicts, verdict: (l) => ciWaitVerdict(l, { gh, isAncestor }), remove, print });
+export function settleCiWaitLocks(card, mine, locks, { gh, isAncestor, remove, print = () => {}, live, moves, soft }) {
+  const find = (c, m, ls) => findConflicts(c, m, ls, { live, moves, soft });
+  return settleLocks(card, mine, locks, { findConflicts: find, verdict: (l) => ciWaitVerdict(l, { gh, isAncestor }), remove, print });
 }
 
 /**
@@ -1085,7 +1113,10 @@ export function reexportTarget(src) {
   return m && lines.every((l) => /^export\s/.test(l) || /^import\s/.test(l)) ? m[1] : null;
 }
 
-/** Lock area for a path: its folder for a file under src/app or src/lib, else the file itself. */
+/**
+ * Scope area for a path: its folder for a file under src/app or src/lib, else the file itself. R-2718: prep
+ * writes the file AND this folder — the folder is soft (scope only), the file is the hard lock.
+ */
 export function lockAreaFor(p) {
   const n = normPath(p);
   if (/\.[a-z]+$/i.test(n) && /^src\/(app|lib)\//.test(n)) { const d = n.split("/").slice(0, -1).join("/"); return tooBroad(d) ? n : d; }
@@ -1108,7 +1139,8 @@ function prep(card, paths) {
       }
     }
     if (real === n) console.log(`✓ ${n}`);
-    areas.add(lockAreaFor(real)); if (real !== n) areas.add(lockAreaFor(n));
+    /* R-2718: the file itself (hard) + its folder (soft scope — new sibling files stay in scope) */
+    for (const p of real !== n ? [real, n] : [real]) { areas.add(normPath(p)); areas.add(lockAreaFor(p)); }
   }
   console.log(`\nlockAreas (card par likho): ${JSON.stringify([...areas])}`);
   if (missing) { console.error(`✗ ${card}: ${missing} path nahi mile — card theek karo, tab worker ko do.`); process.exit(1); }
@@ -1345,9 +1377,18 @@ function main(argv) {
 
   if (cmd === "claim") {
     const { rest: ciRest, fixesRed } = parseCiFlags(rest);
-    const { rest: claimArgs, wait, priority: askedPriority, waitMin } = parseQueueFlags(ciRest);
+    const { rest: queueRest, wait, priority: askedPriority, waitMin } = parseQueueFlags(ciRest);
+    /* R-2718: `--move <folder>` = this card renames/moves that folder → a hard folder lock. */
+    const { rest: claimArgs, moves: rawMoves } = parseMoveFlags(queueRest);
     /* R-2106: one form for every path (commas split, worktree prefix + production/ off) — printed when it changed anything. */
-    const [worktree, ...rawAreas] = claimArgs, areas = normaliseClaimAreas(rawAreas, worktree, (l) => console.log(l));
+    const [worktree, ...rawPaths] = claimArgs;
+    const moves = normaliseClaimAreas(rawMoves, worktree);
+    const areas = normaliseClaimAreas([...rawPaths, ...moves], worktree, (l) => console.log(l));
+    /* R-2718: only files + --move folders are held hard; other folders are scope only (soft). */
+    const folders = claimFolders(areas, worktree);
+    const hard = claimHardPaths(areas, moves, folders);
+    const soft = folders.filter((a) => !hard.includes(a) && !isDerived(a));
+    const live = liveFilesReader();
     const own0 = readLocks().find((l) => l.card === card) ?? null;
     /* R-1973: `claim <CARD> --fixes-red` (no paths) = take the slot back for a card in ci-wait / ci-red. */
     const reclaim = fixesRed && own0 && !countsTowardCap(own0) && !worktree;
@@ -1361,13 +1402,13 @@ function main(argv) {
     const clash = checkMigrationClash(card, worktree, readLocks());
     if (!clash.ok) { console.error(clash.message); process.exit(2); }
     const priority = normPriority(askedPriority) ?? normPriority(cardPriority(cardFlags.cardPath)) ?? DEFAULT_PRIORITY;
-    const settle = (locks) => (reclaim ? locks : settleCiWaitLocks(card, areas, locks, realSettleDeps()));
+    const settle = (locks) => (reclaim ? locks : settleCiWaitLocks(card, hard, locks, { ...realSettleDeps(), live, moves, soft }));
     /* One look at the slots, the queue and the files. Never exits. */
     const look = () => {
       const locks = settle(readLocks());
       const slot = claimSlot(card, locks, { fixesRed });
       const q = slot.overCap ? { turn: true, ahead: [] } : queueTurn(card, readQueue(), Date.now());
-      const conflicts = reclaim ? [] : findConflicts(card, areas, locks);
+      const conflicts = reclaim ? [] : findConflicts(card, hard, locks, { live, moves, soft });
       return { locks, slot, q, conflicts, own: locks.find((l) => l.card === card) ?? null };
     };
     const grant = ({ slot, own }) => {
@@ -1381,8 +1422,13 @@ function main(argv) {
       /* A re-claim keeps what the card already holds (its ci-wait files stay claimed). */
       const keep = own ? [...(own.areas ?? [])] : [];
       const at = new Date().toISOString();
-      fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), areas: [...new Set([...keep, ...areas.map(normPath)])], files: own?.files ?? [], claimedAt: own?.claimedAt ?? at, beatAt: at, state: LOCK_STATES.working, priority, stashAtClaim: own?.stashAtClaim ?? stashSnapshot(stashGit, at) }, null, 2));
+      /* R-2718: lockVersion 2 = file locks (`folders` = claimed folders, soft scope; `moves` = hard folder locks).
+         A re-claim of a pre-R-2718 lock stays old (whole folders hard) — it was promised them. */
+      const v2 = !own || isFileLock(own);
+      const fileLock = v2 ? { lockVersion: LOCK_VERSION, folders: [...new Set([...(own?.folders ?? []), ...folders])], moves: [...new Set([...(own?.moves ?? []), ...moves])] } : {};
+      fs.writeFileSync(lockFile(card), JSON.stringify({ card, worktree: path.resolve(worktree), ...fileLock, areas: [...new Set([...keep, ...areas.map(normPath)])], files: own?.files ?? [], claimedAt: own?.claimedAt ?? at, beatAt: at, state: LOCK_STATES.working, priority, stashAtClaim: own?.stashAtClaim ?? stashSnapshot(stashGit, at) }, null, 2));
       console.log(`✓ ${card} ka lock laga (${priority}): ${areas.map(normPath).join(", ")}`);
+      if (v2 && soft.length) console.log(`  (R-2718: folder ${soft.join(", ")} = sirf scope; doosra card isme ALAG file par kaam kar sakta hai. Jo file tum badloge woh check par lock hoti hai. Folder rename/move karna hai to --move <folder>.)`);
     };
     const refuseSlot = ({ locks, q }) => {
       const busy = locks.filter((l) => l.card !== card && countsTowardCap(l)).map((l) => l.card);
@@ -1414,7 +1460,11 @@ function main(argv) {
     enforceStash(card, me); // R-2356: exit 10 on a stash made since claim
     /* R-2105: derived files (deploy-db-*.sh, peeks.generated.ts) stay out of the lock — push regenerates them. */
     const files = withoutDerived(changedFiles());
-    const conflicts = findConflicts(card, files, settleCiWaitLocks(card, files, readLocks(), realSettleDeps()));
+    /* R-2718: my changed files (+ my --move folders) against each other card's files — v2 locks by their
+       claimed files, recorded files and their worktree's live changes; old locks by every path as before. */
+    const fl = { live: liveFilesReader(), moves: isFileLock(me) ? movesOf(me) : [], soft: softFolders(me) };
+    const mineHard = [...files, ...fl.moves];
+    const conflicts = findConflicts(card, mineHard, settleCiWaitLocks(card, mineHard, readLocks(), { ...realSettleDeps(), ...fl }), fl);
     if (conflicts.length) report(conflicts);
     const clash = checkMigrationClash(card, process.cwd(), readLocks()); // R-2614
     if (!clash.ok) { console.error(clash.message); process.exit(2); }
