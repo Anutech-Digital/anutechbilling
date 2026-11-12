@@ -483,7 +483,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   /* R-2699: once an employee has a salary revision, salary changes go through Revise salary only
      (history + the old salary for earlier months); this form keeps the saved gross / Basic / DA. */
   const revisionsQ = useSalaryRevisions(Boolean(employee));
-  const salaryByRevision = Boolean(employee) && (revisionsQ.data ?? []).some((r) => r.employee_id === employee?.id);
+  const salaryByRevision = Boolean(employee) && (!revisionsQ.isSuccess || (revisionsQ.data ?? []).some((r) => r.employee_id === employee?.id));
   const [joined, setJoined] = React.useState(employee?.joining_date ?? "");
   const [allowance, setAllowance] = React.useState(String(employee?.leave_allowance ?? 18));
   const [active, setActive] = React.useState(employee?.is_active ?? true);
