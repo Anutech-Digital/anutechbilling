@@ -1,5 +1,5 @@
 -- R-2699 — salary revision / increment with an effective-from month, history, arrears.
--- Migration: 20261112141307_r2699_salary_revisions.sql
+-- Migration: 20261112182538_r2699_salary_revisions.sql
 --
 -- Owner's case (Excel owner, 12 Nov): ₹30,000 → ₹36,000 from Dec 2026 — Nov at the old salary,
 -- Dec at the new one, history kept. A revision dated into already-paid months never changes

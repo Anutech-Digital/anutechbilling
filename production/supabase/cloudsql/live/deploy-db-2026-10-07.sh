@@ -522,6 +522,7 @@ MIGS=(
   "r2698pffullwage|20261112104228_r2698_employee_pf_full_wage.sql|resellersos_migration|exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'employees' and column_name = 'pf_full_wage')"
   "r2704bankmap|20261112112800_r2704_zoho_account_bank_map.sql|resellersos_migration|to_regprocedure('public.save_zoho_account_bank_choice(text,text,text)') is not null"
   "r2711customerpayerlines|20261112152104_r2711_customer_payer_lines.sql|resellersos_migration|to_regprocedure('public.customer_payer_lines(uuid)') is not null"
+  "r2699salaryrevisions|20261112182538_r2699_salary_revisions.sql|resellersos_migration|to_regclass('public.employee_salary_revisions') is not null and exists(select 1 from pg_proc where oid = to_regprocedure('public.pay_salary_with_arrears(uuid,text,date,integer,numeric,integer,integer,uuid,integer,integer,integer,integer,uuid,text,integer,integer,integer,integer,integer)') and prosrc like '%is more than the%still due%')"
 )
 # ── R-2480: migrations whose function/view a LATER listed migration redefines. key | later keys | rest ──
 # rest = the migration's own peek with its prosrc checks on those functions read as true: "are its OTHER
