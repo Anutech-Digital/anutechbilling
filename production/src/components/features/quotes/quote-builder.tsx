@@ -1410,6 +1410,14 @@ function QuoteBuilderBody() {
     requiredApproval(lineEconomics(lineItems)),
   ).allowed, [editOf, sourceQuote, lineItems]);
   const sendPlan = saveAndSendPlan({ recipient: sendRecipient, sendAllowed });
+  /* R-2710: editing a renewal quote (a whole-term renewal, not an extension / plan change) — the
+     footer's next step is "Save & send to customer". */
+  const renewalEdit = !!editOf && sourceQuote?.is_renewal === true && sourceQuote.is_extension !== true
+    && (sourceQuote.extension_months ?? 0) > 0;
+  /* It must not promise an email it will not send (saveAndSendLabel's rule). */
+  const RENEWAL_SEND_LABEL: Record<typeof sendPlan, string> = {
+    email: "Save & send to customer", "mark-sent": "Save & mark sent", "needs-approval": "Save & ask for approval",
+  };
   const [emailing, setEmailing] = React.useState(false);
 
   /** Email an already-saved quote; on failure keep a "Try again" on the toast. */
@@ -2080,7 +2088,8 @@ function QuoteBuilderBody() {
                   )}
                   {/* R-468 (2): warn — not block — before a second subscription to a product
                       this customer already has (lib/quotes/same-product.ts). */}
-                  {!isInvoiceMode && sameProductSubscriptions(customerId, lineItems, allSubscriptions ?? []).slice(0, 1).map((s) => (
+                  {/* R-2710: not on a renewal quote — paying it RENEWS that subscription, it makes no second one. */}
+                  {!isInvoiceMode && !renewalEdit && sameProductSubscriptions(customerId, lineItems, allSubscriptions ?? []).slice(0, 1).map((s) => (
                     <div key={s.id} role="status" className="mt-2 flex items-start gap-2 rounded-md border border-amber/50 bg-amber-soft/50 px-3 py-2">
                       <Icon name="alert" size={14} className="mt-0.5 shrink-0 text-amber-ink" />
                       <div className="min-w-0 text-2xs leading-snug text-ink-2">
@@ -3319,18 +3328,35 @@ function QuoteBuilderBody() {
           {/* R-1726: ONE send button — the three ways to send (email / WhatsApp / mark sent) are
               its menu. Ctrl+Enter still runs the usual send (email when there is an address,
               else mark sent) — the item it runs carries the shortcut hint. */}
+          {/* R-2710 (Pratik, 12 Nov): a renewal quote opened from Renewals → "Review renewal quote"
+              is checked here and sent with ONE click — the usual send (email when there is an
+              address, R-408: it turns 'sent' only after the mail went). The other ways stay on ▾. */}
+          {renewalEdit && (
+            <Button
+              variant="primary"
+              icon="send"
+              data-renewal-send
+              loading={createQuote.isPending || emailing}
+              disabled={sendDisabled}
+              onClick={() => void handleSubmit("sent", "send-now")}
+              title={sendPlan === "email" && sendRecipient ? `Save and email the renewal quote to ${sendRecipient} with its accept / pay link` : sendPlan === "mark-sent" ? "No customer email — saves it as sent without emailing (use ▾ to email or WhatsApp it)" : "The discount / margin needs approval — saved as a draft, nothing is emailed yet"}
+            >
+              {RENEWAL_SEND_LABEL[sendPlan]}
+            </Button>
+          )}
           <DropdownMenu modal={false}>
             <DropdownMenuTrigger asChild>
               <Button
-                variant="primary"
-                icon="send"
+                variant={renewalEdit ? "default" : "primary"}
+                icon={renewalEdit ? undefined : "send"}
                 data-send-menu
-                loading={createQuote.isPending || emailing}
-                disabled={sendDisabled}
+                aria-label={renewalEdit ? "Other ways to send" : undefined}
+                loading={renewalEdit ? false : createQuote.isPending || emailing}
+                disabled={sendDisabled || (renewalEdit && (createQuote.isPending || emailing))}
                 title={sendPlan === "email" && sendRecipient ? `Ctrl+Enter emails the quote to ${sendRecipient}` : sendPlan === "mark-sent" ? "No customer email — Ctrl+Enter marks it sent without emailing" : undefined}
               >
-                Send
-                <Icon name="chevron_down" size={14} className="ml-1" />
+                {!renewalEdit && "Send"}
+                <Icon name="chevron_down" size={14} className={renewalEdit ? undefined : "ml-1"} />
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" side="top" className="min-w-[15rem]">

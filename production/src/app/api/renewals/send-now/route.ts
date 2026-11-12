@@ -37,7 +37,7 @@ import {
 import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
 import { formatIstDate } from "@/lib/dates/ist";
 import { renderTemplate } from "@/lib/renewals/templates";
-import { createOrGetRenewalQuote, isRenewalQuoteHold } from "@/lib/renewals/create-renewal-quote";
+import { createOrGetRenewalQuote, isRenewalQuoteHold, draftRenewalQuoteBlock, markRenewalQuoteSent } from "@/lib/renewals/create-renewal-quote";
 import { flagsForQuoteKind } from "@/lib/pdf/quote-document-kind";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { isEmailConfigured } from "@/lib/email/send";
@@ -229,6 +229,12 @@ export async function POST(req: Request) {
     );
   }
   const renewalQuoteId = quoteResult.quoteId;
+  /* R-2710: a draft from "Review renewal quote" (maybe edited since) passes the quote's own approval
+     gate (R-1669) before it is emailed as is. */
+  const draftBlock = await draftRenewalQuoteBlock(supabase, sub.tenant_id, renewalQuoteId);
+  if (draftBlock) {
+    return NextResponse.json({ error: draftBlock }, { status: 409 });
+  }
   const renewalQuote = {
     amount:       quoteResult.amount,
     subtotal:     quoteResult.subtotal,
@@ -373,6 +379,7 @@ export async function POST(req: Request) {
         last_reminder_sent_at_v2: new Date().toISOString(),
       })
       .eq("id", sub.id);
+    await markRenewalQuoteSent(supabase, sub.tenant_id, renewalQuoteId);   // R-2710: emailed → no longer a draft
   }
 
   return NextResponse.json({
