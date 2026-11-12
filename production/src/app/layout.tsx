@@ -1,3 +1,4 @@
+import * as React from "react";
 import type { Metadata, Viewport } from "next";
 import { SentryBoot } from "@/components/shared/sentry-boot";
 import { appSans as fontSans, appSerif as fontSerif, appMono as fontMono } from "@/lib/fonts";
@@ -8,6 +9,7 @@ import { PLATFORM_OPERATOR } from "@/lib/platform";
 import { Toaster } from "@/components/ui/toaster";
 import { UxObserver } from "@/components/shared/ux-observer";
 import { Providers } from "@/components/providers";
+import { TopProgressBar } from "@/components/shared/top-progress-bar";
 
 
 
@@ -84,6 +86,9 @@ export default function RootLayout({
             serving". Mounted in the ROOT layout so (public)/ and (auth)/ crashes report
             too; (app)/layout.tsx is "use client" and could not have read env at all. */}
         <SentryBoot />
+        <React.Suspense fallback={null}>
+          <TopProgressBar />
+        </React.Suspense>
         <Providers>{children}</Providers>
         <Toaster />
         {/* Friction signals while a person is active — lib/ux/signals.ts (3 Oct 2026). */}
