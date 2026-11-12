@@ -18,7 +18,9 @@
 import { describe, it, expect } from "vitest";
 import { a11yReport } from "@/lib/testing/a11y-report"; // R-2564: in-process, shared read cache (was a node spawn per file)
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
+import { listSourceFiles } from "@/lib/testing/walk-source"; // R-2649: one walk, no stat per entry
+import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared fresh read cache
 
 /** Measured 23 Oct 2026 after R-1135 (was 75: 73 pardeep + 2 shared). Only ever lower it. */
 const INK4_BODY_BASELINE = 0;
@@ -77,5 +79,31 @@ describe("R-1135 — ink4-body ratchet", () => {
       total,
       `ink4-body is ${total}; limit ${INK4_BODY_BASELINE}. Use text-ink-3 for real text (node scripts/a11y-count.mjs --owner pardeep lists the lines).`,
     ).toBeLessThanOrEqual(INK4_BODY_BASELINE);
+  });
+});
+
+/**
+ * R-2682 (12 Nov 2026) — the same rule as token-contrast-r2261.test.tsx ("no screen uses
+ * text-accent"), here because THIS file runs on every push (push-guard-suites.mjs) and that one
+ * (a render test) runs in CI only: R-2655's "Open line" link used `text-accent` and CI was red for
+ * three pushes. `accent` is amber-soft, a BACKGROUND colour (~1.05:1 as text on paper); a link or
+ * any text uses `text-amber-ink`. `text-accent-foreground` (text ON an accent background) is fine.
+ */
+describe("R-2682 — no screen uses text-accent as a text colour (push guard)", () => {
+  const TEXT_ACCENT = /(?<![\w-])text-accent(?![\w-])/;
+  const src = join(process.cwd(), "src");
+
+  it("no .tsx under src/ has the text-accent class", () => {
+    const screens = listSourceFiles(src, (name) => name.endsWith(".tsx") && !name.endsWith(".test.tsx"));
+    expect(screens.length).toBeGreaterThan(500); // the scan is not blind
+    const hits = screens.filter((f) => TEXT_ACCENT.test(readSource(f))).map((f) => relative(src, f).split(sep).join("/"));
+    expect(hits, "use text-amber-ink — accent is a background token (R-2262)").toEqual([]);
+  });
+
+  it("the pattern catches the class and leaves its neighbours alone", () => {
+    expect(TEXT_ACCENT.test(`className="text-sm font-medium text-accent hover:underline"`)).toBe(true);
+    expect(TEXT_ACCENT.test(`className="hover:text-accent"`)).toBe(true);
+    expect(TEXT_ACCENT.test(`className="bg-accent text-accent-foreground"`)).toBe(false);
+    expect(TEXT_ACCENT.test(`className="text-amber-ink"`)).toBe(false);
   });
 });

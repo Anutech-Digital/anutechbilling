@@ -7,10 +7,9 @@
  * requests, quote / invoice links and the auth callback redirect.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { readdirSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { allowedHosts, appUrl, authRedirectUrl, isAllowedHost, normalizeHost, trustedOrigin } from "./app-url";
-import { isPrismaGenerated } from "@/lib/testing/prisma-generated";
+import { listSourceFiles } from "@/lib/testing/walk-source"; // R-2649: one walk for both scans
 import { readSource } from "@/lib/testing/source-cache"; // R-2564: shared fresh read cache
 
 function h(init: Record<string, string>): Headers {
@@ -139,13 +138,13 @@ const ALLOWED_READERS = new Set([
   "src/app/api/attendance/device/_server.ts", // logged only
 ]);
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const name of readdirSync(dir)) {
-    const p = join(dir, name);
-    if (statSync(p).isDirectory()) { if (!isPrismaGenerated(p)) walk(p, out); } // R-2564: the generated Prisma client is not our code (36 MB)
-    else if (/\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name)) out.push(p);
-  }
-  return out;
+/** src/ .ts/.tsx files, tests excluded; the generated Prisma client is skipped (R-2564: not our code,
+    36 MB). R-2649: walked once for both scans below (they ran two full walks with a stat per entry);
+    nothing in this file writes under src/, so one list serves both. */
+let srcFiles: string[] | undefined;
+function walk(dir: string): string[] {
+  srcFiles ??= listSourceFiles(dir, (name) => /\.(ts|tsx)$/.test(name) && !/\.test\.tsx?$/.test(name));
+  return srcFiles;
 }
 
 describe("R-723 scan — no new raw-host links", () => {

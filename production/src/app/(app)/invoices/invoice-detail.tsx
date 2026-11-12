@@ -118,6 +118,9 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      invoices table's ⋯ menu, which shows from 1280px — on a laptop / tablet there was no way
      to issue one (and so no way to refund after a cancel). */
   const [cnOpen, setCnOpen] = React.useState(false);
+  /* R-2632: "Credit note instead" from Correct date opens the credit note as a cancellation of the whole
+     invoice (Correct date only shows on an invoice with no notes, so the whole amount is creditable). */
+  const [cnReason, setCnReason] = React.useState<"cancellation" | undefined>(undefined);
   const canCreditNote = canWrite && invoice.status !== "draft" && invoice.status !== "void";
   /* R-1520: set by the TDS banner's "Record TDS" — opens Record payment in TDS mode. */
   const [tdsOnly, setTdsOnly] = React.useState<{ section: string; ratePct: number } | null>(null);
@@ -299,7 +302,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                 </Button>
               )}
               {canCreditNote && (
-                <Button size="sm" variant="outline" icon="receipt" onClick={() => setCnOpen(true)}>
+                <Button size="sm" variant="outline" icon="receipt" onClick={() => { setCnReason(undefined); setCnOpen(true); }}>
                   Credit note
                 </Button>
               )}
@@ -307,13 +310,13 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
               <CorrectInvoiceDateButton invoice={invoice} role={me?.role} facts={{
                 hasNotes: (creditNotesForBadge?.length ?? 0) + (debitNotesForBadge?.length ?? 0) > 0,
                 onNetwork: (network.data ?? []).some((d) => d.sellerInvoiceId === invoice.id && d.status !== "cancelled"),
-              }} />
+              }} onCreditNoteInstead={canCreditNote ? () => { setCnReason("cancellation"); setCnOpen(true); } : undefined} />
               {canWrite && (
                 <Button
                   size="sm"
                   variant="primary"
                   icon="whatsapp"
-                  onClick={() => openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never))}
+                  onClick={() => openInvoiceWhatsApp(invoice, customer?.contact_phone, waSender, (h) => router.push(h as never), customer?.country)}
                 >
                   WhatsApp
                 </Button>
@@ -576,6 +579,8 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
           interState={invoice.inter_state}
           isExport={(invoice.tax_rate ?? 18) === 0}
           invoiceDate={invoice.invoice_date}
+          defaultReasonCode={cnReason}
+          defaultAmount={cnReason === "cancellation" ? invoice.amount : undefined}
         />
       )}
       {payOpen && !quote && instalment?.quoteId && (

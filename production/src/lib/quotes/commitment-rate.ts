@@ -65,8 +65,14 @@ export function convertRateForCommitment(args: {
   cost: number | null | undefined;
   from: LineCommitment | null | undefined;
   to: LineCommitment;
+  /** R-2637: a foreign-currency (USD) line — its ₹ rate keeps paise, never rounded to whole rupees. */
+  keepPaise?: boolean;
 }): RateConversion {
-  const rate = Math.max(0, Math.round(args.rate ?? 0));
+  /* R-2637: a rate with paise (a USD price in ₹: $2 @ 95.10 = ₹190.20) keeps them — rounding it to
+     whole rupees here put the per-unit drift back. Whole-rupee (INR) rates round exactly as before. */
+  const raw = Math.max(0, args.rate ?? 0);
+  const paise = args.keepPaise === true || !Number.isInteger(raw);
+  const rate = paise ? Math.round(raw * 1e6) / 1e6 : raw;
   const cost = Math.max(0, Math.round(args.cost ?? 0));
 
   const wasAnnual = isAnnualTier(args.from);
@@ -77,7 +83,7 @@ export function convertRateForCommitment(args: {
      and the quote total is recomputed from qty x rate anyway. */
   const factor = isAnnual ? 12 : 1 / 12;
   return {
-    rate: Math.max(0, Math.round(rate * factor)),
+    rate: Math.max(0, paise ? Math.round(rate * factor * 1e6) / 1e6 : Math.round(rate * factor)),
     cost: Math.max(0, Math.round(cost * factor)),
     converted: true,
   };

@@ -58,13 +58,18 @@ import {
 import { TabBar, type TabBarItem } from "@/components/ui/tabs";
 import { ConfirmIssueDialog } from "@/components/features/invoices/confirm-issue-dialog";
 import { issueConsequences, bulkIssueConsequences } from "@/lib/invoices/issue-consequences";
+import { pendingQuoteToIssuable, pendingQuotesToIssuable } from "@/lib/invoices/pending-issuable";
+import { useInvoiceIssueDate, useInvoiceIssueDates } from "@/lib/invoices/issue-date";
+import { useTenantLuts } from "@/lib/queries/tenant-luts";
+import { useGstRegistration } from "@/lib/compliance/gst-registration-query";
+import { billOfSupplyStatus } from "@/lib/quotes/bill-of-supply";
 import { EinvoiceBanner } from "@/components/features/invoices/einvoice-banner";
 import { useTurnoverBracket } from "@/lib/compliance/turnover";
 import { issueEinvoiceNotice, irnAgeingInvoices, irnAgeingNotice, isB2B } from "@/lib/compliance/einvoice";
 import { invoiceIrnGstin } from "@/lib/invoices/invoice-buyer";
 import { rupee, formatDate, daysBetween, cleanDisplayName } from "@/lib/utils";
 import { useCustomers } from "@/lib/queries/customers";
-import { invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
+import { invoiceCustomerCountry, invoiceCustomerPhone, openInvoiceWhatsApp } from "./invoice-whatsapp";
 import { useWhatsAppSender } from "@/lib/hooks/useWhatsAppSender";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
@@ -242,41 +247,54 @@ function InvoicesPageInner() {
   const { data: series } = useDocumentSeries();
   const invoiceSeries = series?.invoice ?? null;
 
-  /** A pending quote in the shape `issueConsequences` needs. */
-  const toIssuable = React.useCallback(
-    (q: {
-      id: string; customer_name?: string | null; amount?: number | null;
-      payment_terms_days?: number | null;
-      /* Decorated by useQuotesAwaitingInvoice. Absent (undefined) means "not asked", and
-         issue-consequences then says nothing rather than warning about a GSTIN nobody
-         looked for. */
-      customer_gstin?: string | null;
-      part_action?: PendingPartAction;
-    }) => ({
-      id: q.id,
-      customerName: q.customer_name ?? null,
-      /* R-2057: a part's invoice is for the part, not the year. */
-      amount: q.part_action?.kind === "part" ? q.part_action.amount ?? q.amount ?? null : q.amount ?? null,
-      paymentTermsDays: q.payment_terms_days ?? null,
-      customerGstin: q.customer_gstin ?? null,
-    }),
-    [],
-  );
-
   const singleQuote = React.useMemo(
     () => (confirmSingle ? pending?.find((q) => q.id === confirmSingle) ?? null : null),
     [confirmSingle, pending],
   );
+  /* R-2647: the same facts the quote page's confirm gets (R-2635/R-2636) — the date generate_invoice
+     will really use (latest receipt day, first open day) and the LUT of that date's FY — so a customer
+     abroad reads "export … 0% under LUT" / "WITH payment of IGST", never "B2C". */
+  const singleIssueDate = useInvoiceIssueDate({
+    tenantId: me?.tenantId, receiptDay: singleQuote?.latest_receipt_day ?? null, enabled: confirmSingle !== null,
+  });
+  const singleLuts = useTenantLuts(confirmSingle !== null || confirmBulk);
+  const tenantLuts = singleLuts.data;
+  const gstRegistration = useGstRegistration();
+  const billOfSupply = !!billOfSupplyStatus(gstRegistration.data?.saved);
+  /* Held (Issue disabled, no lines) while the server's date or the LUTs are still loading — the
+     number's FY and the LUT block depend on them. A failed read stops holding: no date line, no ARN. */
+  const singleFactsLoading = singleIssueDate.loading || singleLuts.isLoading;
   const singleConsequences = React.useMemo(
-    () => (singleQuote ? issueConsequences({ quote: toIssuable(singleQuote), series: invoiceSeries }) : null),
-    [singleQuote, invoiceSeries, toIssuable],
+    () => (singleQuote && !singleFactsLoading ? issueConsequences({
+      quote: pendingQuoteToIssuable(singleQuote, {
+        invoiceDate: singleIssueDate.date ?? undefined,
+        invoiceDateWhy: singleIssueDate.why,
+        luts: tenantLuts,
+        billOfSupply,
+      }),
+      series: invoiceSeries,
+    }) : null),
+    [singleQuote, singleFactsLoading, invoiceSeries, singleIssueDate.date, singleIssueDate.why, tenantLuts, billOfSupply],
   );
+  /* R-2651: the bulk confirm gets the same facts per selected quote — its own server date (from its
+     latest receipt day) and the LUTs — and is held (no lines, Issue disabled) while they load. */
+  const bulkRows = React.useMemo(
+    () => (confirmBulk && pending ? pending.filter((q) => pendingSelected.has(q.id)) : []),
+    [confirmBulk, pending, pendingSelected],
+  );
+  const bulkIssueDates = useInvoiceIssueDates({
+    tenantId: me?.tenantId,
+    receiptDays: bulkRows.filter((q) => q.part_action?.kind !== "part").map((q) => q.latest_receipt_day ?? null),
+    enabled: confirmBulk,
+  });
+  const bulkFactsLoading = bulkIssueDates.loading || singleLuts.isLoading;
   const bulkConsequences = React.useMemo(() => {
-    if (!confirmBulk || !pending) return null;
-    const selected = pending.filter((q) => pendingSelected.has(q.id));
-    if (selected.length === 0) return null;
-    return bulkIssueConsequences({ quotes: selected.map(toIssuable), series: invoiceSeries });
-  }, [confirmBulk, pending, pendingSelected, invoiceSeries, toIssuable]);
+    if (bulkRows.length === 0 || bulkFactsLoading) return null;
+    return bulkIssueConsequences({
+      quotes: pendingQuotesToIssuable(bulkRows, { dateFor: bulkIssueDates.dateFor, luts: tenantLuts, billOfSupply }),
+      series: invoiceSeries,
+    });
+  }, [bulkRows, bulkFactsLoading, bulkIssueDates.dateFor, tenantLuts, billOfSupply, invoiceSeries]);
 
   /* R-337: "IRN needed" banner in the issue dialog for B2B (GSTIN) buyers above ₹5 Cr. */
   const singleEinvoice = React.useMemo(
@@ -285,9 +303,8 @@ function InvoicesPageInner() {
   );
   const bulkEinvoice = React.useMemo(() => {
     if (!confirmBulk || !pending) return null;
-    const selected = pending.filter((q) => pendingSelected.has(q.id));
-    return issueEinvoiceNotice(bracket, selected.filter((q) => isB2B(q.customer_gstin)).length, selected.length);
-  }, [confirmBulk, pending, pendingSelected, bracket]);
+    return issueEinvoiceNotice(bracket, bulkRows.filter((q) => isB2B(q.customer_gstin)).length, bulkRows.length);
+  }, [confirmBulk, pending, bulkRows, bracket]);
 
   /* Lifted out of the pending-card IIFE so the confirmation can call it. Unchanged
      otherwise — including that it issues one at a time and counts failures, which is
@@ -299,8 +316,11 @@ function InvoicesPageInner() {
     }
     setGenerating(true);
     let ok = 0, fail = 0;
+    /* R-2651: only the rows the confirm listed — a quote invoiced elsewhere meanwhile has left `pending`. */
     for (const id of pendingSelected) {
-      const act = pending?.find((q) => q.id === id)?.part_action;
+      const row = pending?.find((q) => q.id === id);
+      if (!row) continue;
+      const act = row.part_action;
       try {
         if (act?.kind === "short") { fail++; continue; }   // not paid in full — no tax invoice yet
         if (act?.kind === "part") {
@@ -820,7 +840,7 @@ function InvoicesPageInner() {
             const selectedInvoices = rows.filter((r) => selected.has(r.id));
             const first = selectedInvoices[0];
             if (!first) return;
-            if (!openInvoiceWhatsApp(first, invoiceCustomerPhone(first, customers), waSender, (h) => router.push(h as never))) return;
+            if (!openInvoiceWhatsApp(first, invoiceCustomerPhone(first, customers), waSender, (h) => router.push(h as never), invoiceCustomerCountry(first, customers))) return;
             /* ── THE BUTTON USED TO SAY "Bulk WhatsApp" AND SEND ONE ─────────
                It opened `selectedInvoices[0]` and nothing else, so selecting twelve invoices
                and clicking it messaged one customer while the label said it had done all
@@ -1007,11 +1027,11 @@ function InvoicesPageInner() {
       />
 
       <ConfirmIssueDialog
-        open={confirmBulk && bulkConsequences !== null}
+        open={confirmBulk && bulkRows.length > 0}
         onOpenChange={(v) => { if (!v) setConfirmBulk(false); }}
         consequences={bulkConsequences}
         einvoiceNotice={bulkEinvoice}
-        confirmLabel={`Issue ${pendingSelected.size} invoice${pendingSelected.size === 1 ? "" : "s"}`}
+        confirmLabel={`Issue ${bulkRows.length} invoice${bulkRows.length === 1 ? "" : "s"}`}
         busy={generating}
         onConfirm={() => { void issueSelected(); }}
       />
@@ -1293,7 +1313,7 @@ function InvoiceRow({
                   </DropdownMenuItem>
                   <DropdownMenuItem
                     className="gap-2.5 py-2 cursor-pointer font-medium text-emerald"
-                    onClick={() => openInvoiceWhatsApp(inv, invoiceCustomerPhone(inv, customers), waSender, (h) => router.push(h as never))}
+                    onClick={() => openInvoiceWhatsApp(inv, invoiceCustomerPhone(inv, customers), waSender, (h) => router.push(h as never), invoiceCustomerCountry(inv, customers))}
                   >
                     <Icon name="whatsapp" size={15} /> Send / remind on WhatsApp
                   </DropdownMenuItem>

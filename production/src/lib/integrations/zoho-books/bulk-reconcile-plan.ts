@@ -58,8 +58,9 @@ import {
 } from "@/lib/banking/inward-remittance";
 import { lutFor } from "@/lib/gst/export-lut";
 import { formatForeign } from "@/lib/currency";
-import type { FindZohoResult, ZohoMatchLine, ZohoPaymentMatch } from "./payment-match";
+import { FX_DATE_WINDOW_DAYS, type FindZohoResult, type ZohoMatchLine, type ZohoPaymentMatch } from "./payment-match";
 import { fmtDay, openingParts, type OpeningPart } from "./opening-from-zoho";
+import { oneFxPayPerInvoice } from "./fx-one-pay";
 import { fyInNumber, fyOf, isLastYearInvoice, oldNumberSeries } from "./zoho-fy";
 import { r2621Check, r2621OnePayPerItem, type R2621PlanFacts, type R2621RowFacts } from "./zoho-sale-filed";
 export { fyInNumber, fyOf, isLastYearInvoice, oldNumberSeries } from "./zoho-fy";
@@ -345,6 +346,9 @@ export interface PlanRow {
     paymentId: string | null;
     paymentNumber: string | null;
     by: ZohoPaymentMatch["by"] | null;
+    /** R-2658: why a pair by "fx_amount" is not sure, and when it was paired (payment-match.ts). */
+    notSure?: string | null;
+    matchedAt?: string | null;
     amount: number | null;
     /** R-2425: the Zoho payment's currency when it is not INR (amount is in it); null = INR. */
     currency?: string | null;
@@ -587,6 +591,10 @@ export function planRow(
   const lineFx = remittance && zohoCur === remittance.currency ? remittance.rate : null;
   if (!remittance && payCur) {
     fxProblems.push(`The Zoho payment is in ${payCur} (${formatForeign(match.payment.amount, payCur)}), but the bank line has no foreign amount and rate in its narration. Reconcile this line by hand.`);
+  }
+  /* R-2658: say why a line with no customer name in its narration was paired with this payment. */
+  if (match.by === "fx_amount" && remittance) {
+    notes.push(`Matched by ${remittance.currency} amount: Zoho payment ${match.payment.number || match.payment.zohoId}${match.payment.date ? ` (${fmtDay(match.payment.date)})` : ""} is the only ${formatForeign(match.payment.amount, remittance.currency, Number.isInteger(match.payment.amount) ? 0 : 2)} payment in Zoho within ${FX_DATE_WINDOW_DAYS} days of this bank line. The bank's narration has no customer name — check the customer.${match.notSure ? ` Not sure: ${match.notSure}` : ""}`);
   }
 
   /* 2. Lines and what each does to subscriptions. */
@@ -974,6 +982,7 @@ export function planRow(
     txnId: line.id, txnDate: line.txnDate, credit: line.credit, description: line.description, kind: "match", summary,
     zoho: {
       paymentId: match.payment.zohoId, paymentNumber: match.payment.number || null, by: match.by,
+      notSure: match.notSure ?? null, matchedAt: match.matchedAt ?? null,
       amount: match.payment.amount, currency: payCur, invoiceNumbers, candidates: 1,
     },
     remittance,
@@ -1026,11 +1035,11 @@ export function planAll(rows: readonly BulkMatchRow[], ctx: PlanContext): PlanRo
       demote.set(c.row, m);
     }
   }
-  return r2621OnePayPerItem(plans.map((p, i) => {
+  return oneFxPayPerInvoice(r2621OnePayPerItem(plans.map((p, i) => {
     const d = demote.get(i);
     const r = rows[i];
     return d ? planFromResult(r.line, r.result, r.contact, ctx, opt(r, d)) : p;
-  }).filter((p): p is PlanRow => !!p));
+  }).filter((p): p is PlanRow => !!p)));
 }
 
 /** The rows "Book selected" sends: ticked, bookable, not booked already (in this run or before). */

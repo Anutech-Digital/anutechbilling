@@ -6,7 +6,8 @@
  * the day it was raised instead of the day the money came). The database decides everything through
  * correct_invoice_date() (migration 20261109132649): owner or accountant only; neither the old nor the new
  * month GST-filed (R-2621's one rule: GST returns filed up to / books lock / GSTR-1 marked filed); same
- * financial year (another year needs a new number — R-2632); no IRN, no Zoho-imported sale, no foreign
+ * financial year (R-2632: another year would need a new number, and an issued number is never changed — the
+ * dialog says so and offers "Credit note instead": a credit note on this invoice + a fresh invoice in that year); no IRN, no Zoho-imported sale, no foreign
  * currency, no credit/debit note, not sent on the business network. The due date moves by the same days,
  * and the change is kept in the activity log with the reason. This dialog only collects the date and the
  * reason; every refusal comes back from the server in plain words.
@@ -23,7 +24,7 @@ import { Input } from "@/components/ui/input";
 import { FormField } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { createClient } from "@/lib/supabase/client";
-import { fyBounds, istToday } from "@/lib/dates/ist";
+import { fyBounds, fyLabel, istToday } from "@/lib/dates/ist";
 import { formatDate } from "@/lib/utils";
 import { canDeleteMoney } from "@/lib/auth/roles";
 import { toastError } from "@/lib/errors/toast-error";
@@ -62,11 +63,20 @@ export function correctDateBounds(invoiceDate: string, todayIst: string): { min:
   return { min: fy.start, max: fy.end < todayIst ? fy.end : todayIst };
 }
 
+/** R-2632: what to do when the right date is in ANOTHER financial year. The invoice number belongs to its FY
+ *  (CGST Rule 46) and is never changed, so the date cannot cross the year: a credit note on this invoice
+ *  (money already received becomes the customer's credit) and a fresh invoice dated in the right year. */
+export function otherYearNote(invoiceDate: string): string {
+  return `Right date in another financial year? Invoice numbers belong to their year (this one to FY ${fyLabel(invoiceDate)}) and an issued number never changes. Issue a credit note for this invoice (money already received on it becomes the customer's credit), then raise a fresh invoice dated in the right year.`;
+}
+
 /** Why Save is not ready yet (shown under the button) — null when it is. */
 export function correctDateHint(current: string, date: string, reason: string, bounds: { min: string; max: string }): string | null {
   if (!date) return "Pick the correct date.";
   if (date === current) return "Pick a date different from the one on the invoice.";
-  if (date < bounds.min || date > bounds.max) return `Pick a date between ${formatDate(bounds.min)} and ${formatDate(bounds.max)}.`;
+  /* R-2632: min is always 1 Apr of the invoice's year, so an earlier date is another financial year. */
+  if (date < bounds.min) return `Pick a date between ${formatDate(bounds.min)} and ${formatDate(bounds.max)} — an earlier financial year needs a credit note and a fresh invoice (see below).`;
+  if (date > bounds.max) return `Pick a date between ${formatDate(bounds.min)} and ${formatDate(bounds.max)}.`;
   if (reason.trim().length < 5) return "Write why (at least 5 characters) — it is kept in the activity log.";
   return null;
 }
@@ -95,8 +105,10 @@ function useCorrectInvoiceDate() {
 
 const fmt = (d: string) => formatDate(d);
 
-export function CorrectInvoiceDateButton({ invoice, role, facts }: {
+export function CorrectInvoiceDateButton({ invoice, role, facts, onCreditNoteInstead }: {
   invoice: CorrectableInvoice; role: string | null | undefined; facts?: CorrectDateFacts;
+  /** R-2632: opens the credit note sheet (passed only when this user may issue one). */
+  onCreditNoteInstead?: () => void;
 }) {
   const [open, setOpen] = React.useState(false);
   if (!canCorrectInvoiceDate(invoice, role, facts)) return null;
@@ -105,20 +117,33 @@ export function CorrectInvoiceDateButton({ invoice, role, facts }: {
       <Button size="sm" variant="outline" icon="calendar" onClick={() => setOpen(true)} data-testid="correct-invoice-date">
         Correct date
       </Button>
-      {open && <CorrectInvoiceDateSheet invoice={invoice} open={open} onOpenChange={setOpen} />}
+      {open && (
+        <CorrectInvoiceDateSheet
+          invoice={invoice}
+          open={open}
+          onOpenChange={setOpen}
+          onCreditNoteInstead={onCreditNoteInstead}
+        />
+      )}
     </>
   );
 }
 
 function CorrectInvoiceDateSheet({
-  invoice, open, onOpenChange,
-}: { invoice: CorrectableInvoice; open: boolean; onOpenChange: (v: boolean) => void }) {
+  invoice, open, onOpenChange, onCreditNoteInstead,
+}: { invoice: CorrectableInvoice; open: boolean; onOpenChange: (v: boolean) => void; onCreditNoteInstead?: () => void }) {
   const current = invoice.invoice_date!.slice(0, 10);
   const bounds = correctDateBounds(current, istToday());
   const [date, setDate] = React.useState(current);
   const [reason, setReason] = React.useState("");
   const save = useCorrectInvoiceDate();
   const hint = correctDateHint(current, date, reason, bounds);
+  /* R-2632: the other-year route is folded away (a cancellation must not sit next to Save on every
+     same-year fix) — opened by its link, or by itself when a date outside this year is typed. */
+  const fy = fyBounds(current);
+  const outsideYear = !!date && (date < fy.start || date > fy.end);
+  const [otherYearOpen, setOtherYearOpen] = React.useState(false);
+  const showOtherYear = otherYearOpen || outsideYear;
   const ready = hint === null;
 
   async function submit() {
@@ -170,6 +195,25 @@ function CorrectInvoiceDateSheet({
               className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink placeholder:text-ink-4 focus:outline-none focus:ring-2 focus:ring-amber resize-y"
             />
           </FormField>
+
+          {/* R-2632: the next step when the right date is in another financial year. The credit note sheet
+              opens ON TOP of this one (as Cancel subscription does), so Cancel there comes back here. */}
+          {showOtherYear ? (
+            <div className="rounded-md border border-hairline px-3 py-2 text-2xs text-ink-2 leading-relaxed space-y-2" data-testid="correct-invoice-date-other-year">
+              <p>{otherYearNote(current)}</p>
+              {onCreditNoteInstead && (
+                <Button type="button" size="sm" variant="outline" icon="receipt" onClick={onCreditNoteInstead}
+                  data-testid="correct-invoice-date-credit-note">
+                  Credit note instead
+                </Button>
+              )}
+            </div>
+          ) : (
+            <button type="button" onClick={() => setOtherYearOpen(true)} data-testid="correct-invoice-date-other-year-link"
+              className="text-2xs text-ink-2 underline underline-offset-2 hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded-sm">
+              Right date in another financial year?
+            </button>
+          )}
 
           <div className="rounded-md bg-amber-soft/40 border border-amber/30 px-3 py-2 text-2xs text-amber-ink leading-relaxed">
             The amount, lines and payments stay as they are; the invoice moves to the new month in GSTR-1 and the P&amp;L.

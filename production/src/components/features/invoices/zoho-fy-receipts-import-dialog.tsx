@@ -35,18 +35,26 @@ const FY = "2025-26";
 /** R-2607: between two server passes of the open dialog (each pass reads up to ~40 s itself). */
 const STEP_GAP_MS = 5_000;
 /** R-2607: the server's read — progress, whether it is still asked for, why it stopped. */
-interface ReadState { listed: number; detailed: number; complete: boolean; running?: boolean; error?: string | null }
+/* R-2653: onlyAccount = the last Read again was limited to this Zoho deposit account. */
+interface ReadState { listed: number; detailed: number; complete: boolean; running?: boolean; error?: string | null; onlyAccount?: string | null }
 
-/** R-2607 — the read's progress line. */
-export function readStatusText(r: ReadState): string {
+/** R-2607 — the read's progress line. R-2653: `onlyName` = the read was limited to that Zoho account. */
+export function readStatusText(r: ReadState, onlyName?: string | null): string {
   const n = (x: number) => x.toLocaleString("en-IN");
-  if (r.complete) return `Read all ${n(r.listed)} payments.`;
+  const only = onlyName ? ` (Read again: only ${onlyName})` : "";
+  if (r.complete) return `Read all ${n(r.listed)} payments.${only}`;
   if (r.running) {
-    const where = r.listed ? `Read ${n(r.detailed)} of ${n(r.listed)}` : "Reading the list from Zoho";
-    return `${where} — on the server; you can close this window and come back.`;
+    /* R-2653: Read again keeps what is read — while it checks Zoho's list everything listed is still read. */
+    const where = !r.listed ? "Reading the list from Zoho"
+      : r.detailed >= r.listed ? "Checking Zoho for new or changed payments"
+        : `Read ${n(r.detailed)} of ${n(r.listed)}`;
+    return `${where}${only} — on the server; you can close this window and come back.`;
   }
   return r.listed ? `Read ${n(r.detailed)} of ${n(r.listed)} — stopped.` : "Not read yet.";
 }
+
+/** R-2653 — the "Read again" choice: all accounts, or only the payments deposited to one Zoho account. */
+export const ALL_ACCOUNTS = "";
 
 interface Preview {
   /* R-2565: withFee / fee — Razorpay payments whose fee Zoho took off (optional: an older server sends none). */
@@ -113,6 +121,9 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
   const [read, setRead] = React.useState<ReadState | null>(null);
   const [preview, setPreview] = React.useState<Preview | null>(null);
   const [accounts, setAccounts] = React.useState<Record<string, string>>({});
+  /* R-2653: Read again — all accounts (default) or one Zoho deposit account (e.g. Razorpay Clearing). */
+  const [onlyAccount, setOnlyAccount] = React.useState<string>(ALL_ACCOUNTS);
+  const [depositNames, setDepositNames] = React.useState<Record<string, string>>({});
   const [check, setCheck] = React.useState<PartResult | null>(null);
   const [done, setDone] = React.useState<PartResult | null>(null);
   const stop = React.useRef(false);
@@ -126,6 +137,9 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     try {
       const p = await call<Preview>({ action: "preview", accounts: map });
       setPreview(p);
+      /* R-2653: the Zoho deposit accounts the "Read again" choice offers (kept while a read runs). */
+      /* ("" = payments Zoho gave no account — not something a read can be limited to.) */
+      setDepositNames((prev) => ({ ...prev, ...Object.fromEntries(p.deposits.filter((d) => d.zohoAccountId).map((d) => [d.zohoAccountId, d.zohoName])) }));
       /* The screen's choice = what the server used (owner's pick, Leave these out, else its suggestion)
          — and exactly what the import sends: the import maps nothing the screen did not show. An
          account the owner set to "Choose…" stays "" (no suggestion fills it later). */
@@ -156,7 +170,8 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
     const again = !!(read?.complete || preview);
     setBusy("read"); setError(null); setPartError(null); setResumeAt(null); setPreview(null); setCheck(null); setDone(null);
     try {
-      if (again) await call({ action: "restart" });
+      /* R-2653: Read again keeps what is read — only new / changed payments (of the chosen account) are read. */
+      if (again) await call({ action: "restart", onlyAccount: onlyAccount || null });
       setRead(await call<ReadState>({ action: "start" }));
     } catch (e) { setError((e as Error).message); setBusy(null); return; }
     await followRead(accounts);
@@ -246,12 +261,33 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
             <Button type="button" icon="download" loading={busy === "read"} disabled={!!busy && busy !== "read"} onClick={readZoho}>
               {read?.complete || preview ? "Read from Zoho again" : "Read from Zoho"}
             </Button>
+            {(read?.complete || preview) && Object.keys(depositNames).length > 0 && (
+              <label className="flex items-center gap-2 text-xs text-ink-2">
+                Read again
+                <select
+                  data-testid="fy-receipts-only-account"
+                  className="rounded-md border border-hairline bg-paper px-2 py-1 text-xs text-ink focus:outline-none focus:ring-2 focus:ring-amber/40"
+                  value={onlyAccount}
+                  disabled={!!busy}
+                  onChange={(e) => setOnlyAccount(e.target.value)}
+                >
+                  <option value={ALL_ACCOUNTS}>All accounts</option>
+                  {Object.entries(depositNames).map(([id, name]) => <option key={id} value={id}>Only {name}</option>)}
+                </select>
+              </label>
+            )}
             {read && (
               <span className="text-xs text-ink-2" role="status">
-                {readStatusText(read)}
+                {readStatusText(read, read.onlyAccount ? depositNames[read.onlyAccount] ?? read.onlyAccount : null)}
               </span>
             )}
           </div>
+          {onlyAccount && (read?.complete || preview) && (
+            <p className="text-xs text-ink-2" data-testid="fy-receipts-only-hint">
+              Only payments deposited to {depositNames[onlyAccount] ?? "this account"} are checked in Zoho. Payments to other
+              accounts stay as last read — choose All accounts to check them too.
+            </p>
+          )}
 
           {partError && <p role="alert" data-testid="fy-receipts-part-error" className="text-xs text-rose-ink">{partError}</p>}
           {error && <p role="alert" className="text-xs text-rose-ink">{error}</p>}

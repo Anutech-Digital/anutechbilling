@@ -23,7 +23,7 @@
  */
 
 import { fyStartISO } from "@/lib/dates/ist";
-import { checkStatement } from "./statement-check";
+import { checkStatement, inDateOrder } from "./statement-check";
 import { signedRound } from "./statement-parse";
 
 export type StatementLine = {
@@ -65,9 +65,12 @@ export function openingBalanceFromStatement(
     };
   }
 
-  /* Statements come newest-first from some banks. Put them oldest-first, keeping the
-     file's order within a day (that order is the only record of intra-day sequence). */
-  const ordered = lines[0].txn_date > lines[lines.length - 1].txn_date ? [...lines].reverse() : lines;
+  /* Statements come newest-first from some banks, and HDFC card files print two blocks
+     (Domestic, then International) each in date order. Put them in date order, oldest first,
+     keeping the file's order within a day (that order is the only record of intra-day
+     sequence) — R-2665: walking the file as printed picked the wrong first line and raised
+     false breaks where the second block's dates jump back. */
+  const ordered = inDateOrder(lines);
 
   /* `at`: the line's date (where the day-level check would see it); `day`: the day printed out of
      order — the previous line's day when the break is on a new day's first line (the day before

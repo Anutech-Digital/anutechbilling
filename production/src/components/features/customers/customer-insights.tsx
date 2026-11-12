@@ -29,6 +29,7 @@ import { Card } from "@/components/ui/card";
 import { Avatar } from "@/components/ui/avatar";
 import { Textarea } from "@/components/ui/textarea";
 import { formatDate, formatPhone, initials, rupee, daysBetween, cn } from "@/lib/utils";
+import { whatsAppLink } from "@/lib/phone";
 import { isExportSupply } from "@/lib/gst/place-of-supply";
 import { gstTreatmentOption } from "@/lib/gst/customer-gst-treatment";
 import type { PrimaryContact } from "@/components/features/customers/customer-links";
@@ -396,7 +397,9 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
 
   const sendLink = draft
     ? channel === "whatsapp" && phone
-      ? `https://wa.me/${phone.replace(/^\+/, "")}?text=${encodeURIComponent(draft.message)}`
+      /* R-2641: lib/phone adds the customer's country code. A masked phone gives "#" (the click
+         reveals it); a number lib/phone cannot read gives no Send link, not a blank tab. */
+      ? (isMaskedContact(phone) ? "#" : whatsAppLink(phone, customer.country, draft.message))
       : customer.contact_email
         ? `mailto:${customer.contact_email}?subject=${encodeURIComponent(draft.subject || `Regarding ${customer.name}`)}&body=${encodeURIComponent(draft.message)}`
         : null
@@ -464,7 +467,7 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
                               { table: "customers", id: customer.id, field: wa ? "contact_phone" : "contact_email" },
                               wa ? "whatsapp" : "email",
                               (real) => wa
-                                ? `https://wa.me/${real.replace(/\D/g, "")}?text=${encodeURIComponent(draft.message)}`
+                                ? whatsAppLink(real, customer.country, draft.message)
                                 : `mailto:${real}?subject=${encodeURIComponent(draft.subject || `Regarding ${customer.name}`)}&body=${encodeURIComponent(draft.message)}`,
                               wa);
                           }}
@@ -485,12 +488,17 @@ export function NextBestActionCard({ nba, customer }: { nba: Nba; customer: Cust
 }
 
 /** Quick contact action buttons (Call / WhatsApp / Email) — real deep-links. */
-export function CustomerContactActions({ phone: rawPhone, email: rawEmail }: { phone: string | null | undefined; email: string | null | undefined }) {
+export function CustomerContactActions({ phone: rawPhone, email: rawEmail, country }: {
+  phone: string | null | undefined; email: string | null | undefined;
+  /** R-2641: the customer's country — its dialling code goes in front of a bare number. */
+  country?: string | null;
+}) {
   /* R-1009: a masked value (a role without can_view_contact_details) gets no deep link — a
      tel: to "••••••3210" can only fail. The masked text itself stays on the card above. */
   const rawTel = rawPhone?.replace(/\s+/g, "");
   const phone = rawTel && !isMaskedContact(rawTel) ? rawTel : undefined;
   const email = rawEmail && !isMaskedContact(rawEmail) ? rawEmail : undefined;
+  const waHref = whatsAppLink(phone, country);
   if (!phone && !email) return null;
   return (
     <div className="flex flex-wrap gap-2">
@@ -499,9 +507,9 @@ export function CustomerContactActions({ phone: rawPhone, email: rawEmail }: { p
           <a href={`tel:${phone}`}><Icon name="phone" size={13} className="mr-1.5" />Call</a>
         </Button>
       )}
-      {phone && (
+      {waHref && (
         <Button asChild size="sm" variant="default">
-          <a href={`https://wa.me/${phone.replace(/^\+/, "")}`} target="_blank" rel="noopener noreferrer">
+          <a href={waHref} target="_blank" rel="noopener noreferrer">
             <Icon name="whatsapp" size={13} className="mr-1.5" />WhatsApp
           </a>
         </Button>
@@ -759,7 +767,7 @@ export function CustomerIdentityRail({ c, contact, onAddContact }: {
         </div>
         {(phone || contact.email) && (
         <div className="mt-3 pt-3 border-t border-hairline">
-          <CustomerContactActions phone={phone} email={contact.email} />
+          <CustomerContactActions phone={phone} email={contact.email} country={c.country} />
         </div>
         )}
       </Card>

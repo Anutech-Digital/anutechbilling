@@ -21,6 +21,7 @@ import {
   DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { phoneDigitsForCountry } from "@/lib/phone";
 import type { LeadListRow } from "@/lib/leads/list-page";
 import { STICK_R_ACTIONS } from "@/components/features/leads/lead-list-grid";
 import { isMaskedContact, usableContact, type ContactPurpose } from "@/lib/contacts/reveal-client";
@@ -39,10 +40,12 @@ export function openWhatsApp(rawNumber: string, text?: string) {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-/** The number wa.me wants: digits, with 91 in front of a 10-digit Indian number. */
-export function waFrom(phone: string): string {
-  const d = (phone || "").replace(/\D/g, "");
-  return d.startsWith("91") ? d : (d.length === 10 ? `91${d}` : d);
+/**
+ * The number wa.me wants: international digits from lib/phone (R-2641) — the lead's country
+ * code when known, India (91) when not. A number it cannot read is passed on as plain digits.
+ */
+export function waFrom(phone: string, country?: string | null): string {
+  return phoneDigitsForCountry(phone, country) ?? (phone || "").replace(/\D/g, "");
 }
 
 // ============================================================

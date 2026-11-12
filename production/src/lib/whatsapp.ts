@@ -33,6 +33,7 @@
  * the bank-credit matcher is for.
  */
 import { rupee, formatDate, toWhatsAppDigits } from "@/lib/utils";
+import { phoneDigitsForCountry } from "@/lib/phone";
 import { buildUpiIntent } from "@/lib/payments/upi";
 import type { Invoice, Lead } from "@/lib/supabase/database.types";
 
@@ -50,15 +51,13 @@ export interface WhatsAppSender {
 }
 
 /**
- * Format phone number into international WhatsApp E.164 format (e.g. 919876543210)
+ * Format phone number into international WhatsApp E.164 format (e.g. 919876543210).
+ * R-2639: a bare number gets the dialling code of `country` (India / empty → 91); a number
+ * written with its code keeps it. Unusable input → its digits as typed ("" when none).
  */
-export function formatWhatsAppPhone(phone: string | null | undefined): string {
+export function formatWhatsAppPhone(phone: string | null | undefined, country?: string | null): string {
   if (!phone) return "";
-  const cleaned = phone.replace(/\D/g, "");
-  if (cleaned.length === 10) {
-    return `91${cleaned}`;
-  }
-  return cleaned;
+  return phoneDigitsForCountry(phone, country) ?? phone.replace(/\D/g, "");
 }
 
 /**
@@ -109,7 +108,7 @@ export function getInvoiceWhatsAppUrl(
   phone?: string | null,
   sender?: WhatsAppSender | null,
 ): string {
-  const targetPhone = formatWhatsAppPhone(phone || "");
+  const targetPhone = formatWhatsAppPhone(phone || "", invoice.customer_country);
   const amount = invoice.net_payable || invoice.amount || 0;
   const amountStr = rupee(amount);
   const invNumber = invoice.id || "";
@@ -145,10 +144,13 @@ export function invoiceWhatsAppTarget(
   invoice: Partial<Invoice>,
   phone: string | null | undefined,
   sender?: WhatsAppSender | null,
+  /** R-2639: the customer's country now — used when the invoice has no country snapshot (older rows). */
+  customerCountry?: string | null,
 ): InvoiceWhatsAppTarget {
-  const digits = toWhatsAppDigits(phone);
+  const digits = toWhatsAppDigits(phone, invoice.customer_country ?? customerCountry);
   if (!digits) return { ok: false, reason: "no_phone" };
-  return { ok: true, url: getInvoiceWhatsAppUrl(invoice, digits, sender) };
+  // "+": the digits already carry the code — never read them as a national number again.
+  return { ok: true, url: getInvoiceWhatsAppUrl(invoice, `+${digits}`, sender) };
 }
 
 /**
@@ -159,7 +161,7 @@ export function getLeadWhatsAppUrl(
   phone?: string | null,
   sender?: WhatsAppSender | null,
 ): string {
-  const targetPhone = formatWhatsAppPhone(phone || lead.contact_phone || "");
+  const targetPhone = formatWhatsAppPhone(phone || lead.contact_phone || "", lead.country);
   const company = lead.company || "your business";
   const plan = lead.plan || "Google Workspace";
   const seats = lead.seats ? `${lead.seats} users` : "";
@@ -184,8 +186,9 @@ export function getRenewalWhatsAppUrl(
   expiryDate: string,
   phone?: string | null,
   sender?: WhatsAppSender | null,
+  country?: string | null,
 ): string {
-  const targetPhone = formatWhatsAppPhone(phone || "");
+  const targetPhone = formatWhatsAppPhone(phone || "", country);
 
   const message = `Namaste 👋,
 

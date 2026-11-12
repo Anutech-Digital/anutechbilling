@@ -307,7 +307,7 @@ export function TaxInvoiceDialog({
       `${amountLabel}: ${money(netPayable)}${dueLine}\n\n` +
       `I am attaching the PDF. Please let me know if you have any questions.\n\n` +
       `Thank you,\n${tenantName}`;
-    const digits = toWhatsAppDigits(customerPhone);
+    const digits = toWhatsAppDigits(customerPhone, customerCountry); // R-2639: +1 for a US buyer, not +91
     if (!digits) {
       toast.error("No phone number for this customer", {
         description: "Add a phone on the customer profile to send on WhatsApp.",

@@ -99,6 +99,7 @@ import { lineNoteLines, useOwnerBookingNotes, type LineNoteLines } from "@/lib/b
 import { useLineBookings, type LineBooking } from "@/lib/banking/line-booking";
 import { downloadCSV } from "@/lib/csv";
 import { ZohoBulkReconcileButton } from "@/components/features/banking/zoho-bulk-reconcile";
+import { RazorpaySettlementBatchButton } from "@/components/features/banking/razorpay-settlement-batch";
 import { istToday } from "@/lib/dates/ist";
 
 /* R-1869: one filter system — status tabs, Money in / out, a Filters panel (date, amount, matched
@@ -569,7 +570,8 @@ export default function BankAccountDetailPage() {
             {/* R-2611: the "Money out · no vendor yet" lines in one table — tick and book them at once. */}
             <BulkExpenseButton accountName={account.name} transactions={transactions} ids={noVendorIds} />
             {/* R-2402: bulk "Reconcile from Zoho" — owner / accountant, when Zoho has payments for these lines. */}
-            {zohoIds && zohoIds.size > 0 && (role === "owner" || role === "accountant") && <ZohoBulkReconcileButton accountId={account.id} accountName={account.name} count={zohoIds.size} />}
+            {/* R-2654: + a month of Razorpay settlement lines at once (owner / accountant — the run books fee expenses). */}
+            {(role === "owner" || role === "accountant") && <>{zohoIds && zohoIds.size > 0 && <ZohoBulkReconcileButton accountId={account.id} accountName={account.name} count={zohoIds.size} />}<RazorpaySettlementBatchButton accountId={account.id} accountName={account.name} transactions={transactions ?? []} /></>}
             <Button
               icon="sparkles"
               variant="default"

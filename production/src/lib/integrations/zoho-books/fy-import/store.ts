@@ -7,7 +7,7 @@
  */
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { FyReadKind } from "../fy-fetch";
-import type { ScanFacts, ScanStore, ScanRun, ListedRow } from "./scan";
+import { classifyListed, factsVersionOf, type ScanFacts, type ScanStore, type ScanRun, type ListedRow } from "./scan";
 
 type Res<T = unknown> = PromiseLike<{ data: T | null; error: { message?: string; code?: string } | null }>;
 /** The slice of the Supabase query builder used here (the new tables are not in the generated types yet). */
@@ -25,29 +25,56 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
   const runs = () => db.from("zoho_fy_scan_runs");
   return {
     async readRun(fy) {
-      const r = await (runs().select("next_page, list_done").eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy).limit(1) as Res<Array<{ next_page: number; list_done: boolean }>>);
+      const r = await (runs().select("next_page, list_done, list_started_at, only_account_id").eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy).limit(1) as
+        Res<Array<{ next_page: number; list_done: boolean; list_started_at: string | null; only_account_id: string | null }>>);
       const row = must(r, "the Zoho read")[0];
-      return row ? { nextPage: row.next_page, listDone: row.list_done } : null;
+      return row ? { nextPage: row.next_page, listDone: row.list_done, listStartedAt: row.list_started_at ?? null, onlyAccount: row.only_account_id ?? null } : null;
     },
     async saveRun(fy, run: ScanRun) {
-      const r = await (runs().upsert(
-        { tenant_id: tenantId, kind, fy, next_page: run.nextPage, list_done: run.listDone, updated_at: new Date().toISOString() },
-        { onConflict: "tenant_id,kind,fy" }) as Res);
+      const row = { next_page: run.nextPage, list_done: run.listDone, updated_at: new Date().toISOString() };
+      /* No run stored yet (readRun gave null): create it. */
+      if (run.listStartedAt === undefined) {
+        const r = await (runs().upsert({ tenant_id: tenantId, kind, fy, ...row }, { onConflict: "tenant_id,kind,fy" }) as Res);
+        if (r.error) throw new Error("Could not save the Zoho read.");
+        return;
+      }
+      /* R-2653: only the SAME read moves the run on — a Read again (refresh) or a fresh start since this
+         pass read the run wins; the old pass's save then changes nothing (0 rows). */
+      const q = runs().update(row).eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy);
+      const r = await ((run.listStartedAt === null ? q.is("list_started_at", null) : q.eq("list_started_at", run.listStartedAt)) as Res);
       if (r.error) throw new Error("Could not save the Zoho read.");
     },
-    async addListed(fy, rows: ListedRow[]) {
+    async addListed(fy, rows: ListedRow[], run) {
       if (!rows.length) return;
-      const known = must(await (scan().select("zoho_id, zoho_status, fy").eq("tenant_id", tenantId).eq("kind", kind)
-        .in("zoho_id", rows.map((x) => x.zohoId)) as Res<Array<{ zoho_id: string; zoho_status: string; fy: string }>>), "the Zoho read");
-      const prev = new Map(known.map((k) => [k.zoho_id, k]));
-      const now = new Date().toISOString();
+      const onlyAccount = run?.onlyAccount ?? null;
+      const known = must(await (scan().select("zoho_id, zoho_status, fy, zoho_modified, detailed_at, deposit_account_id, facts_version").eq("tenant_id", tenantId).eq("kind", kind)
+        .in("zoho_id", rows.map((x) => x.zohoId)) as Res<Array<{
+          zoho_id: string; zoho_status: string; fy: string; zoho_modified: string | null; detailed_at: string | null;
+          deposit_account_id: string | null; facts_version: number | null;
+        }>>), "the Zoho read");
+      const prev = new Map(known.map((k) => [k.zoho_id, {
+        status: k.zoho_status, fy: k.fy, modified: k.zoho_modified, detailedAt: k.detailed_at,
+        /* saveDetail sets payload + detailed_at together; a fresh row nulls both. */
+        hasDetail: k.detailed_at !== null,
+        accountId: k.deposit_account_id, factsVersion: k.facts_version,
+      }]));
+      /* R-2653: never stamped before this read's start (another server's clock may be behind). */
+      const startMs = Date.parse(run?.listStartedAt ?? "");
+      const now = new Date(Number.isFinite(startMs) ? Math.max(Date.now(), startMs) : Date.now()).toISOString();
+      const version = factsVersionOf(kind);
       const fresh: Record<string, unknown>[] = [];
       const kept: Record<string, unknown>[] = [];
+      const seen: string[] = [];
       for (const x of rows) {
-        const p = prev.get(x.zohoId);
-        const base = { tenant_id: tenantId, kind, fy, zoho_id: x.zohoId, number: x.number.slice(0, 60), doc_date: x.date || null, zoho_status: x.status, listed_at: now };
-        /* New, or its status changed in Zoho since it was read (draft → sent, sent → void): read the detail again. */
-        if (!p || p.zoho_status !== x.status || p.fy !== fy) fresh.push({ ...base, payload: null, detailed_at: null });
+        const verdict = classifyListed(prev.get(x.zohoId), x, fy, onlyAccount, version);
+        if (verdict === "skip") continue;
+        if (verdict === "seen") { seen.push(x.zohoId); continue; }
+        const base = {
+          tenant_id: tenantId, kind, fy, zoho_id: x.zohoId, number: x.number.slice(0, 60), doc_date: x.date || null, zoho_status: x.status, listed_at: now,
+          zoho_modified: x.modified || prev.get(x.zohoId)?.modified || null, deposit_account_id: x.accountId || null,
+        };
+        /* New, or changed since it was read (status, FY, facts version, last_modified_time): read the detail again. */
+        if (verdict === "fresh") fresh.push({ ...base, payload: null, detailed_at: null });
         else kept.push(base);
       }
       /* Two shapes → two upserts, so a kept payload is never nulled. */
@@ -56,6 +83,26 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
         const r = await (scan().upsert(group, { onConflict: "tenant_id,kind,zoho_id" }) as Res);
         if (r.error) throw new Error("Could not save the Zoho read.");
       }
+      /* R-2653: outside this read's deposit account — only "still in Zoho's list" (not requeued); facts,
+         status and modified time stay as they were, so a read of all accounts still checks it. */
+      if (seen.length) {
+        const r = await (scan().update({ listed_at: now }).eq("tenant_id", tenantId).eq("kind", kind).in("zoho_id", seen) as Res);
+        if (r.error) throw new Error("Could not save the Zoho read.");
+      }
+    },
+    async requeueUnlisted(fy, since) {
+      /* Their detail is read again: a 404 drops the ones deleted in Zoho, the rest are kept (never a blind delete). */
+      const r = await (scan().update({ payload: null, detailed_at: null }).eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy)
+        .lt("listed_at", since).select("zoho_id") as Res<Array<{ zoho_id: string }>>);
+      return must(r, "the Zoho read").length;
+    },
+    async refresh(fy, opts) {
+      /* R-2653: keep every stored detail; list again from page 1 (only new / changed documents get a
+         detail call). The rows stay — the ones not listed again are re-checked when the list finishes. */
+      const r = await (runs().upsert(
+        { tenant_id: tenantId, kind, fy, next_page: 1, list_done: false, list_started_at: opts.nowIso, only_account_id: opts.onlyAccount, updated_at: opts.nowIso },
+        { onConflict: "tenant_id,kind,fy" }) as Res);
+      if (r.error) throw new Error("Could not start the Zoho read again.");
     },
     async pendingDetails(fy, limit) {
       const r = await (scan().select("zoho_id").eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy).is("payload", null)
@@ -63,7 +110,11 @@ export function supabaseScanStore<F extends ScanFacts>(db: FyImportDb, tenantId:
       return must(r, "the Zoho read").map((x) => x.zoho_id);
     },
     async saveDetail(fy, zohoId, facts: F) {
-      const r = await (scan().update({ payload: facts, detailed_at: new Date().toISOString(), zoho_status: facts.status, number: facts.number.slice(0, 60), doc_date: facts.date || null })
+      const r = await (scan().update({
+        payload: facts, detailed_at: new Date().toISOString(), zoho_status: facts.status, number: facts.number.slice(0, 60), doc_date: facts.date || null,
+        /* R-2653: which normaliser made these facts — a newer one reads the detail again on Read again. */
+        facts_version: factsVersionOf(kind),
+      })
         .eq("tenant_id", tenantId).eq("kind", kind).eq("fy", fy).eq("zoho_id", zohoId) as Res);
       if (r.error) throw new Error("Could not save the Zoho read.");
     },

@@ -352,6 +352,11 @@ Never use `fetch()` directly in components. Always go through Supabase or a type
     and `margin.ts` convert to integer paise so a division rounds once instead of drifting,
     then convert back. That is a local unit for arithmetic, not the storage unit.
   - Rule of thumb: if it came out of the database or is going into it, it is rupees.
+  - **One exception — a USD quote line's ₹ `rate` keeps paise (R-2637, 9 Nov 2026):** $2 @ 95.10
+    is stored as `rate: 190.2`, and the ₹ LINE total is `round(qty × rate)` once
+    (`lineInr` / `linesInrSubtotal` in `lib/quotes/foreign-totals.ts`), so 10 seats = ₹1,902, not
+    10 × ₹190. Totals and every money column stay whole rupees. Read a line `rate` as numeric
+    (never `::int`), and round at the line total, not the unit. Rule D6 in `docs/specs/money-rules.md`.
 - **Number format**: Indian lakh/crore (e.g., ₹4,90,644 not $490,644)
 - **Date format**: `DD MMM YYYY` (e.g., 15 May 2026), IST timezone
 - **Phone format**: `+91 98765 43210` with space groupings

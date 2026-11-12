@@ -20,14 +20,30 @@ export function invoiceCustomerPhone(
   return customers.find((c) => c.id === invoice.customer_id)?.contact_phone ?? null;
 }
 
-/** Opens the reminder chat, or explains why it cannot. Returns true when WhatsApp opened. */
+/**
+ * R-2641: the customer's country now, from the cached customer list — an older invoice has no
+ * `customer_country` snapshot, and without it a US customer's number got India's 91.
+ */
+export function invoiceCustomerCountry(
+  invoice: Pick<Invoice, "customer_id">,
+  customers: readonly Pick<Customer, "id" | "country">[] | null | undefined,
+): string | null {
+  if (!invoice.customer_id || !customers) return null;
+  return customers.find((c) => c.id === invoice.customer_id)?.country ?? null;
+}
+
+/**
+ * Opens the reminder chat, or explains why it cannot. Returns true when WhatsApp opened.
+ * `customerCountry` (R-2641): used when the invoice itself has no saved country.
+ */
 export function openInvoiceWhatsApp(
   invoice: Partial<Invoice>,
   phone: string | null | undefined,
   sender: WhatsAppSender | null | undefined,
   goTo: (href: string) => void,
+  customerCountry?: string | null,
 ): boolean {
-  const target = invoiceWhatsAppTarget(invoice, phone, sender);
+  const target = invoiceWhatsAppTarget(invoice, phone, sender, customerCountry);
   if (!target.ok) {
     const customerId = invoice.customer_id;
     toast.error("No phone number for this customer", {

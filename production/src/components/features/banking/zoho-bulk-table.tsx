@@ -89,7 +89,7 @@ export function ZohoBulkTable({ rows, ticked, booked, onToggle, onToggleAll, dis
                     <>
                       <div className="text-ink">Payment {r.zoho.paymentNumber ?? "—"}</div>
                       <div className="text-ink-3">{r.zoho.invoiceNumbers.join(", ") || "No invoice"}</div>
-                      <div className="text-ink-3">{r.zoho.by === "utr" ? "Matched by UTR" : "Matched by amount + date"}</div>
+                      <div className="text-ink-3">{r.zoho.by === "utr" ? "Matched by UTR" : r.zoho.by === "fx_amount" ? `Matched by ${r.remittance?.currency ?? "foreign"} amount — ${r.zoho.notSure ? "not sure, check the line and the customer" : "check the customer"}` : "Matched by amount + date"}</div>
                     </>
                   )}
               </td>

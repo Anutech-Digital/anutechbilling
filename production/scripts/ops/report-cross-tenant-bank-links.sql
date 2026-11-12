@@ -20,8 +20,11 @@
 -- query_to_xml (read-only; table / column names come from the catalog or the fixed lists below and
 -- are quoted with %I / %L), so a table the DB does not have is skipped — section 0b lists every
 -- skipped check and every table where row security could hide rows from this login.
--- Only tables whose primary key is a single `id` column (uuid or text) with a `tenant_id` are read,
--- so an id names exactly one record.
+-- Sections A and D look a record up by matched_to_id, so they read only tables whose primary key is
+-- a single `id` column (uuid or text) with a `tenant_id` — an id names exactly one record. Section B
+-- (R-2667) reads every table with a uuid `tenant_id`, whatever its key — also a composite one such
+-- as zoho_fy_receipts (tenant_id, zoho_payment_id): the company is the row's own tenant_id and
+-- linked_id names the key columns ('zoho_payment_id=…'). B's row-security rows in 0b cover those.
 --
 -- SECTIONS of part 1 (column `section`; 0 rows in total = clean):
 --   A forward   bank_transactions.matched_to_type / matched_to_id point at a record of ANOTHER company
@@ -120,6 +123,21 @@ tbl as (
     join pg_catalog.pg_index pk on pk.indrelid = c.oid and pk.indisprimary and pk.indnatts = 1 and pk.indkey[0] = ida.attnum
    where c.relkind in ('r', 'p')
 ),
+/* R-2667: source tables for the reverse check (B) — any public table with a uuid tenant_id, whatever
+   its key: a single `id`, a composite primary key (zoho_fy_receipts: tenant_id + zoho_payment_id) or
+   none. B needs no key to find a link — the company is the row's own tenant_id; the key only labels
+   the row (link_ok's key_expr). Partitions are left out: their parent's check already reads them. */
+src as (
+  select c.oid as relid, c.relname::text as tbl,
+         c.relrowsecurity
+           and not (select bypass from me)
+           and (c.relforcerowsecurity or not pg_catalog.pg_has_role(current_user, c.relowner, 'USAGE')) as may_hide_rows
+    from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+    join pg_catalog.pg_attribute tna on tna.attrelid = c.oid and tna.attname = 'tenant_id' and not tna.attisdropped
+                                    and tna.atttypid = 'uuid'::regtype
+   where c.relkind in ('r', 'p') and not c.relispartition
+),
 /* Every single-column foreign key to bank_transactions(id) from a public table. */
 fk_cols as (
   select cl.relname::text as source_table, a.attname::text as link_column
@@ -137,9 +155,22 @@ reverse_map as (
 ),
 /* The link column, if it exists as uuid. */
 link_ok as (
-  select r.source_table, r.link_column
+  select r.source_table, r.link_column,
+         /* linked_id: a single-column key = its value (the record id, as before R-2667); a composite
+            key = its columns other than tenant_id (that is linked_tenant_id) as 'column=value',
+            joined with ' / ' (zoho_fy_receipts → 'zoho_payment_id=…'); no primary key = the row's
+            ctid (place on disk, good for this run only). */
+         coalesce((select case when count(*) = 1 then max(format('x.%I::text', ka.attname))
+                               else string_agg(format('%L || x.%I::text', ka.attname || '=', ka.attname),
+                                               $j$ || ' / ' || $j$ order by k.ord)
+                                      filter (where ka.attname <> 'tenant_id') end
+                     from pg_catalog.pg_index pk
+                     cross join lateral unnest(pk.indkey::int2[]) with ordinality k(attnum, ord)
+                     join pg_catalog.pg_attribute ka on ka.attrelid = pk.indrelid and ka.attnum = k.attnum
+                    where pk.indrelid = s.relid and pk.indisprimary and k.ord <= pk.indnkeyatts),
+                  $c$'ctid=' || x.ctid::text$c$) as key_expr
     from reverse_map r
-    join tbl s on s.tbl = r.source_table
+    join src s on s.tbl = r.source_table
     join pg_catalog.pg_attribute a on a.attrelid = s.relid and a.attname = r.link_column
                                   and not a.attisdropped and a.atttypid = 'uuid'::regtype
 )
@@ -153,7 +184,7 @@ select check_kind, table_name, detail, ran, may_hide_rows from (
          (l.source_table is not null), coalesce(t.may_hide_rows, false)
     from reverse_map r
     left join link_ok l on l.source_table = r.source_table and l.link_column = r.link_column
-    left join tbl t on t.tbl = r.source_table
+    left join src t on t.tbl = r.source_table
   union all
   select 'D any table', t.tbl, 'row security', true, t.may_hide_rows
     from tbl t
@@ -223,6 +254,21 @@ tbl as (
     join pg_catalog.pg_index pk on pk.indrelid = c.oid and pk.indisprimary and pk.indnatts = 1 and pk.indkey[0] = ida.attnum
    where c.relkind in ('r', 'p')
 ),
+/* R-2667: source tables for the reverse check (B) — any public table with a uuid tenant_id, whatever
+   its key: a single `id`, a composite primary key (zoho_fy_receipts: tenant_id + zoho_payment_id) or
+   none. B needs no key to find a link — the company is the row's own tenant_id; the key only labels
+   the row (link_ok's key_expr). Partitions are left out: their parent's check already reads them. */
+src as (
+  select c.oid as relid, c.relname::text as tbl,
+         c.relrowsecurity
+           and not (select bypass from me)
+           and (c.relforcerowsecurity or not pg_catalog.pg_has_role(current_user, c.relowner, 'USAGE')) as may_hide_rows
+    from pg_catalog.pg_class c
+    join pg_catalog.pg_namespace n on n.oid = c.relnamespace and n.nspname = 'public'
+    join pg_catalog.pg_attribute tna on tna.attrelid = c.oid and tna.attname = 'tenant_id' and not tna.attisdropped
+                                    and tna.atttypid = 'uuid'::regtype
+   where c.relkind in ('r', 'p') and not c.relispartition
+),
 /* Every single-column foreign key to bank_transactions(id) from a public table. */
 fk_cols as (
   select cl.relname::text as source_table, a.attname::text as link_column
@@ -240,9 +286,22 @@ reverse_map as (
 ),
 /* The link column, if it exists as uuid. */
 link_ok as (
-  select r.source_table, r.link_column
+  select r.source_table, r.link_column,
+         /* linked_id: a single-column key = its value (the record id, as before R-2667); a composite
+            key = its columns other than tenant_id (that is linked_tenant_id) as 'column=value',
+            joined with ' / ' (zoho_fy_receipts → 'zoho_payment_id=…'); no primary key = the row's
+            ctid (place on disk, good for this run only). */
+         coalesce((select case when count(*) = 1 then max(format('x.%I::text', ka.attname))
+                               else string_agg(format('%L || x.%I::text', ka.attname || '=', ka.attname),
+                                               $j$ || ' / ' || $j$ order by k.ord)
+                                      filter (where ka.attname <> 'tenant_id') end
+                     from pg_catalog.pg_index pk
+                     cross join lateral unnest(pk.indkey::int2[]) with ordinality k(attnum, ord)
+                     join pg_catalog.pg_attribute ka on ka.attrelid = pk.indrelid and ka.attnum = k.attnum
+                    where pk.indrelid = s.relid and pk.indisprimary and k.ord <= pk.indnkeyatts),
+                  $c$'ctid=' || x.ctid::text$c$) as key_expr
     from reverse_map r
-    join tbl s on s.tbl = r.source_table
+    join src s on s.tbl = r.source_table
     join pg_catalog.pg_attribute a on a.attrelid = s.relid and a.attname = r.link_column
                                   and not a.attisdropped and a.atttypid = 'uuid'::regtype
 )
@@ -276,11 +335,11 @@ checks as materialized (   -- materialized: each check runs once (inlined, the w
   select 'B reverse: another company''s record points at this line', l.source_table || '.' || l.link_column,
          format($q$
            select t.id as bank_txn_id, t.tenant_id as line_tenant_id, t.txn_date, t.credit, t.debit,
-                  t.matched_to_type as match_type, x.id::text as linked_id, x.tenant_id as linked_tenant_id
+                  t.matched_to_type as match_type, %s as linked_id, x.tenant_id as linked_tenant_id
              from public.%I x
              join public.bank_transactions t on t.id = x.%I
             where x.tenant_id is distinct from t.tenant_id
-         $q$, l.source_table, l.link_column)
+         $q$, l.key_expr, l.source_table, l.link_column)
     from link_ok l
   union all
   -- D: any other match type with an id → another company's record in any table.

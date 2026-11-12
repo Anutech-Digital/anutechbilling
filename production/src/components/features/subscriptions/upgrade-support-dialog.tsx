@@ -59,14 +59,16 @@ export default function UpgradeSupportDialog({ sub, catalog, open, onOpenChange 
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ to_tier: toTier }),
       });
-      const json = (await res.json().catch(() => null)) as { quoteId?: string; amount?: number; error?: string } | null;
+      const json = (await res.json().catch(() => null)) as { quoteId?: string; amount?: number; error?: string; taxWarning?: string | null } | null;
       if (!res.ok || !json?.quoteId) {
         const msg = json?.error ?? "Could not create the upgrade quote.";
         setSubmitError(msg);
         toast.error(msg, { description: "No quote was made." });
         return;
       }
-      toast.success(`Upgrade quote ${json.quoteId} created (${rupee(json.amount ?? 0)} incl. GST) — opening it now`);
+      /* R-2648: a customer abroad with no LUT for this FY — the quote charges IGST; say so with the next step. */
+      toast.success(`Upgrade quote ${json.quoteId} created (${rupee(json.amount ?? 0)} incl. GST) — opening it now`,
+        json.taxWarning ? { description: json.taxWarning, duration: 12_000 } : undefined);
       onOpenChange(false);
       router.push(`/quotes/${json.quoteId}`);
     } catch (err) {

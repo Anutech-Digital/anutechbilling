@@ -2,7 +2,7 @@
 -- Migration 20261109132649_r2173_correct_invoice_date. Self-asserting, ONE transaction, rolled back.
 -- RED without the migration (correct_invoice_date does not exist).
 --
---   E. (runs first, nothing filed yet) a new date in another financial year -> refused (R-2632), nothing changed.
+--   E. (runs first, nothing filed yet) a new date in another financial year -> refused for good (R-2632: credit note + fresh invoice), nothing changed.
 --   A. GST filed up to Aug 2026 (owner). The accountant moves a PAID 30 Oct invoice to 15 Sep: invoice_date and
 --      due_date move by the same days, paid status/amount/paid_date unchanged, one activity_log
 --      invoice.date_corrected with old/new/reason; report_pnl_monthly moves the revenue from Oct to Sep.
@@ -114,7 +114,7 @@ set local role authenticated;
 
 -- ── E. Another financial year (nothing filed yet) ──────────────────────────────────────────────────
 select pg_temp.as_user('b2173000-0000-0000-0000-0000000000a1');
-select pg_temp.refused('INV-R2173-E', '2026-03-20', 'Receipt was in March', '%financial year FY2627%needs a new number%R-2632%');
+select pg_temp.refused('INV-R2173-E', '2026-03-20', 'Receipt was in March', '%financial year FY2627%needs a new number%credit note for this invoice%');
 
 -- ── Owner files GST up to Aug 2026; GSTR-1 for Jul is also marked; books locked to Jun ─────────────
 select public.set_gst_filed_through('2026-08-15');

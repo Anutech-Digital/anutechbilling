@@ -29,6 +29,8 @@ import { FY_CALLS_PER_REQUEST } from "@/lib/integrations/zoho-books/config";
 import { ZOHO_CALLS_PER_MIN } from "@/lib/integrations/zoho-books/zoho-pace";
 import type { MonthTotals, PaidThroughAccount, PaymentToReconcile } from "@/lib/integrations/zoho-books/purchase-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
+import { readUntilDone, type ZohoLimitHit } from "@/lib/integrations/zoho-books/zoho-limit";
+import { ZohoBusyLine, ZohoLimitNotice } from "@/components/features/integrations/zoho-limit-notice";
 
 const API = "/api/integrations/zoho-books/purchase-import";
 const FY = "2025-26";
@@ -90,8 +92,14 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
   accountsRef.current = accounts;
   const [check, setCheck] = React.useState<Partial<Record<Kind, PartResult>>>({});
   const [done, setDone] = React.useState<Partial<Record<Kind, PartResult>>>({});
+  /* R-2652: Zoho busy answers in a row (shown while retrying) and the stop when its limit is reached. */
+  const [busyStreak, setBusyStreak] = React.useState(0);
+  const [limit, setLimit] = React.useState<ZohoLimitHit | null>(null);
   const stop = React.useRef(false);
-  React.useEffect(() => () => { stop.current = true; }, []);
+  /* Set on mount too (R-2652 review): React strict mode mounts twice, and a stale `true` would stop every read. */
+  React.useEffect(() => { stop.current = false; return () => { stop.current = true; }; }, []);
+  /* A closed dialog forgets an old "limit reached" notice (its date would be stale next time). */
+  React.useEffect(() => { if (!open) setLimit(null); }, [open]);
 
   const loadPreview = React.useCallback(async () => {
     setBusy("preview"); setError(null);
@@ -100,21 +108,23 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
     finally { setBusy(null); }
   }, []);
 
-  async function readZoho() {
+  /* R-2652: Try again after Zoho's limit carries on from where the read stopped (never a restart that wipes the scan). */
+  async function readZoho(resume = false) {
     /* "Read again" after a finished read starts over (Zoho may have changed); a read that stopped
        half-way (error, closed dialog) carries on from where the server's scan stands. */
-    const again = Boolean(preview) || KINDS.every(({ kind }) => read[kind]?.complete);
-    setBusy("read"); setError(null); setPreview(null); setCheck({}); setDone({});
+    const again = !resume && (Boolean(preview) || KINDS.every(({ kind }) => read[kind]?.complete));
+    setBusy("read"); setError(null); setPreview(null); setCheck({}); setDone({}); setLimit(null); setBusyStreak(0);
     try {
       for (const { kind } of KINDS) {
         if (stop.current) break;
         if (again) await call({ action: "restart", kind });
-        for (;;) {
-          const r = await call<{ listed: number; detailed: number; complete: boolean; busy: boolean }>({ action: "read", kind });
-          setRead((p) => ({ ...p, [kind]: r }));
-          if (r.complete || stop.current) break;
-          await sleep(r.busy ? 60_000 : READ_GAP_MS);
-        }
+        /* R-2652: a busy answer is retried a minute later; 3 in a row → stop and say Zoho's limit is reached. */
+        const end = await readUntilDone({
+          step: () => call<{ listed: number; detailed: number; complete: boolean; busy: boolean }>({ action: "read", kind }),
+          onAnswer: (r) => setRead((p) => ({ ...p, [kind]: r })), onBusy: setBusyStreak, shouldStop: () => stop.current,
+          gapMs: READ_GAP_MS, sleep,
+        });
+        if (end.end === "limit") { setLimit(end.hit); setBusyStreak(0); setBusy(null); return; }
       }
     } catch (e) { setError((e as Error).message); setBusy(null); return; }
     setBusy(null);
@@ -175,9 +185,10 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
 
         <div className="space-y-4 text-sm max-h-[70vh] overflow-y-auto">
           <div className="flex items-center gap-3 flex-wrap">
-            <Button type="button" icon="download" loading={busy === "read"} disabled={!!busy && busy !== "read"} onClick={readZoho}>
+            {/* R-2652: while the limit notice shows, its Try again is the one way on (no second button). */}
+            {!limit && <Button type="button" icon="download" loading={busy === "read"} disabled={!!busy && busy !== "read"} onClick={() => void readZoho()}>
               {preview ? "Read from Zoho again" : "Read from Zoho"}
-            </Button>
+            </Button>}
             {KINDS.map(({ kind, label }) => read[kind] && (
               <span key={kind} className="text-xs text-ink-2" role="status">
                 {read[kind]!.complete ? `${n(read[kind]!.listed)} ${label}` : `${label}: ${n(read[kind]!.detailed)} of ${n(read[kind]!.listed)}`}
@@ -185,6 +196,8 @@ export function ZohoPurchaseImportDialog({ open, onOpenChange }: { open: boolean
             ))}
           </div>
 
+          {busy === "read" && <ZohoBusyLine streak={busyStreak} />}
+          {limit && <ZohoLimitNotice hit={limit} disabled={!!busy} onTryAgain={() => void readZoho(true)} />}
           {error && <p role="alert" className="text-xs text-rose-ink">{error}</p>}
 
           {p && (

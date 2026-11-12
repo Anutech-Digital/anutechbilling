@@ -16,6 +16,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { toast } from "sonner";
 import { toastError } from "@/lib/errors/toast-error";
 import { createClient } from "@/lib/supabase/client";
@@ -24,6 +25,7 @@ import { balanceSheetFromRpc, rpcRowOrThrow, type BalanceSheetRpcRow } from "@/l
 import { fetchLoansGivenAsset } from "@/lib/queries/loans-given";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import { OPENING_INVOICE_KIND } from "@/lib/accounting/sale-documents";
+import { loansCurrentFromRpc, type LoansCurrent, type LoansCurrentRpcRow } from "@/lib/accounting/loans-current-split";
 
 export type BalanceSheetItem = {
   id:         string;
@@ -45,6 +47,9 @@ export interface BalanceSheetAuto {
   /** R-544: principal still owed on loans given to outside parties (an asset). Optional so
    *  fixtures stay valid; absent = 0. */
   loansGiven?:     number;
+  /** R-2674: the part of employeeLoans / loansGiven due back within 12 months (current assets),
+   *  from loans_current_split(). Absent (older database) = none of it is current, as before. */
+  loansCurrent?:   LoansCurrent | null;
   prepaidAdvances: number;   // vendor advances paid but not yet consumed (a current asset)
   fixedAssets:     number;   // NET BLOCK: registered assets at cost − accumulated depreciation to as_of (lib/accounting/depreciation.ts, R-1578) + EMI purchases not yet registered, at cost
   /** R-1578: the two halves of `fixedAssets` — cost (incl. unregistered EMI purchases) and the
@@ -154,6 +159,29 @@ export async function loansGivenUnlessMissing(read: () => Promise<number>): Prom
   }
 }
 
+/**
+ * R-2674: the current part of the two loan lines. null ONLY when loans_current_split() is not on
+ * this database yet (PGRST202 / 42883) — the sheet then shows the loans as non-current, as it did
+ * before. Any other failure is thrown (LoadError), never a silently wrong current ratio.
+ */
+export async function loansCurrentUnlessMissing(read: () => Promise<LoansCurrentRpcRow | null>): Promise<LoansCurrent | null> {
+  try {
+    return loansCurrentFromRpc(await read());
+  } catch (e) {
+    const code = (e as { code?: unknown } | null)?.code;
+    if (code === "PGRST202" || code === "42883") return null;
+    throw e;
+  }
+}
+
+/** R-2674: loans_current_split() for today (IST, the server's day — the same day report_balance_sheet uses). */
+export async function fetchLoansCurrentSplit(supabase: ReturnType<typeof createClient>): Promise<LoansCurrentRpcRow | null> {
+  // Untyped: loans_current_split is newer than database.generated.ts.
+  const { data, error } = await (supabase as unknown as SupabaseClient).rpc("loans_current_split", {});
+  if (error) throw error;
+  return (data ?? null) as LoansCurrentRpcRow | null;
+}
+
 // ── Auto figures from app records ───────────────────────────────────────────
 /**
  * S17 (28 Sep 2026): ek RPC, ek round trip.
@@ -184,15 +212,16 @@ export function useBalanceSheetAuto() {
     queryKey: ["balance-sheet", "auto"],
     queryFn: async (): Promise<BalanceSheetAuto> => {
       const supabase = createClient();
-      const [res, loansGiven, openingBalanceAdjustments] = await Promise.all([
+      const [res, loansGiven, openingBalanceAdjustments, loansCurrent] = await Promise.all([
         supabase.rpc("report_balance_sheet", {}),
         /* R-544: before migration 20261010140000 is applied the RPC does not exist and
            there are no loans given — 0 is the true figure then, not a guess. R-1581: only
            then; any other failure fails the query (LoadError), never a silent ₹0 asset. */
         loansGivenUnlessMissing(fetchLoansGivenAsset),
         fetchOpeningBalanceAdjustments(supabase),
+        loansCurrentUnlessMissing(() => fetchLoansCurrentSplit(supabase)),
       ]);
-      return { ...balanceSheetFromRpc(rpcRowOrThrow<BalanceSheetRpcRow>(res, "report_balance_sheet")), loansGiven, openingBalanceAdjustments };
+      return { ...balanceSheetFromRpc(rpcRowOrThrow<BalanceSheetRpcRow>(res, "report_balance_sheet")), loansGiven, openingBalanceAdjustments, loansCurrent };
     },
     staleTime: 30_000,
   });

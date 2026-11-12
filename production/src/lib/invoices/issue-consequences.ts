@@ -33,6 +33,10 @@ import {
   formatDocumentNumber, seriesGap,
   type Consequence, type SeriesState,
 } from "@/lib/actions/consequence";
+import { isExportSupply, isZeroRatedSupply, overseasCountryMissing } from "@/lib/gst/place-of-supply";
+import { fyCodeOfYear, fyLabel, fyStartYear, istToday } from "@/lib/dates/ist";
+import { EXPORT_LUT_ENDORSEMENT, exportLutRefusal, lutFor, lutFyLabel, type TenantLut } from "@/lib/gst/export-lut";
+import type { InvoiceDateWhy } from "./issue-date";
 
 
 export interface QuoteToInvoice {
@@ -59,6 +63,15 @@ export interface QuoteToInvoice {
   dueDate?: string | null;
   /** The company is not GST-registered (R-1529): a Bill of Supply from the BOS- series. */
   billOfSupply?: boolean;
+  /* ── R-2635: the export truth (R-2171 item 3). Each optional; left out, nothing is said. ── */
+  /** Why `invoiceDate` is that day (issue-date.ts). Absent = "(today)", as before. */
+  invoiceDateWhy?: InvoiceDateWhy;
+  /** The customer's country. Empty = India (money-rules G5). `undefined` = not loaded. */
+  customerCountry?: string | null;
+  /** The customer's GST treatment (sez_without_payment is zero-rated too, R-2515). */
+  customerTreatment?: string | null;
+  /** The company's LUTs per FY (R-2444). `undefined` = not loaded → no ARN is claimed. */
+  luts?: readonly TenantLut[] | null;
 }
 
 
@@ -88,11 +101,17 @@ export function issueConsequences(args: {
      BOS- series (R-1529, next_document_number). The INV counter says nothing about that
      series, so no number is predicted — the series is named instead. */
   const bos = quote.billOfSupply === true;
+  /* R-2635: next_document_number takes the FY from the invoice DATE — a receipt-dated invoice of an
+     earlier FY takes that year's series, not the series row passed in (this FY's). */
+  const otherFy = !bos && series !== null && quote.invoiceDate !== undefined
+    && series.fiscalYear !== fyCodeOfYear(fyStartYear(quote.invoiceDate));
   const predictedNumber = bos
     ? "Bill of Supply"
-    : series
-      ? formatDocumentNumber(series, next)
-      : `${quote.id} → the first invoice of this financial year`;
+    : otherFy
+      ? `the next number of the FY ${fyLabel(quote.invoiceDate as string)} series`
+      : series
+        ? formatDocumentNumber(series, next)
+        : `${quote.id} → the first invoice of this financial year`;
 
   /* Most consequential first, because this is read in a hurry. The two facts that
      were not on screen at all before are the two at the top. */
@@ -100,17 +119,18 @@ export function issueConsequences(args: {
     tone: "fact",
     text: bos
       ? "Issued as a Bill of Supply (your company is not GST-registered), with the next BOS- number. That number is used up either way — deleting it later retires it rather than freeing it."
-      : series
-        ? `Takes invoice number ${predictedNumber}. That number is used up either way — deleting the invoice later retires it rather than freeing it.`
-        : `This is the first invoice of the financial year for this business, so it opens the series.`,
+      : otherFy
+        ? `Takes ${predictedNumber} (the invoice is dated in that year). That number is used up either way — deleting the invoice later retires it rather than freeing it.`
+        : series
+          ? `Takes invoice number ${predictedNumber}. That number is used up either way — deleting the invoice later retires it rather than freeing it.`
+          : `This is the first invoice of the financial year for this business, so it opens the series.`,
   });
 
-  if (quote.invoiceDate) {
-    out.push({
-      tone: "fact",
-      text: `Dated ${formatDate(quote.invoiceDate)} (today). The date cannot be changed afterwards.`,
-    });
-  }
+  const dated = invoiceDateFact(quote);
+  if (dated) out.push({ tone: "fact", text: `${dated} The date cannot be changed afterwards.` });
+
+  const { zeroRated, overseasNoCountry, lines: supplyLines } = supplyFacts(quote);
+  out.push(...supplyLines);
 
   const gstin = quote.customerGstin?.trim();
   if (gstin) {
@@ -179,7 +199,7 @@ export function issueConsequences(args: {
      `undefined` — the caller did not tell us — says nothing rather than guessing.
      Silence is right there: a made-up warning on every invoice is a warning nobody
      reads, and this one has to be readable on the day it is true. */
-  if (quote.customerGstin !== undefined && !quote.customerGstin?.trim()) {
+  if (quote.customerGstin !== undefined && !quote.customerGstin?.trim() && !zeroRated && !overseasNoCountry) {
     out.push({
       tone: "warning",
       text:
@@ -196,8 +216,92 @@ export function issueConsequences(args: {
 
   return {
     predictedNumber,
-    predictedIsCertain: !bos && series !== null,
+    predictedIsCertain: !bos && series !== null && !otherFy,
     consequences: out,
+  };
+}
+
+/**
+ * "Dated 26 Aug 2026 — the day the money came in …" (R-2635): generate_invoice dates it on the latest
+ * receipt's day (R-2095); R-2631: never in a GST-filed month or inside locked books. Null when the
+ * date is not known (not passed / still loading). One wording for the single and bulk confirm (R-2651).
+ */
+function invoiceDateFact(quote: QuoteToInvoice): string | null {
+  if (!quote.invoiceDate) return null;
+  const why = quote.invoiceDateWhy === "receipt"
+    ? " — the day the money came in (the latest receipt), not today"
+    : quote.invoiceDateWhy === "first_open"
+      ? " — the first open day: GST for the days before it is already filed or the books are locked"
+      : " (today)";
+  return `Dated ${formatDate(quote.invoiceDate)}${why}.`;
+}
+
+/**
+ * R-2635 (R-2171 item 3): a customer abroad (or an SEZ unit supplied without payment of tax) is a
+ * zero-rated supply under the LUT of the invoice date's FY (R-2444, R-2515) — never "B2C". Same rules
+ * the server applies (supply_is_zero_rated, trg_invoices_zz_export_lut). R-2620: Overseas with no
+ * country reads as India — the server refuses it. Shared by the single and the bulk confirm (R-2651).
+ */
+function supplyFacts(quote: QuoteToInvoice): { zeroRated: boolean; overseasNoCountry: boolean; lines: Consequence[] } {
+  const bos = quote.billOfSupply === true;
+  const lines: Consequence[] = [];
+  const zeroRated = !bos && quote.customerCountry !== undefined
+    && isZeroRatedSupply({ country: quote.customerCountry, treatment: quote.customerTreatment ?? null });
+  if (zeroRated) lines.push(zeroRatedLine(quote));
+  const overseasNoCountry = !bos && quote.customerCountry !== undefined
+    && overseasCountryMissing({ treatment: quote.customerTreatment ?? null, country: quote.customerCountry });
+  if (overseasNoCountry) {
+    lines.push({
+      tone: "warning",
+      text: `${quote.customerName || "This customer"} is marked Overseas but has no country, so nothing can be issued yet — ` +
+        "the app cannot tell a 0% export from an Indian sale. Open the customer, pick its country, then issue.",
+    });
+  }
+  return { zeroRated, overseasNoCountry, lines };
+}
+
+/** R-2635: the one line for a zero-rated (export / SEZ without payment) invoice. */
+function zeroRatedLine(quote: QuoteToInvoice): Consequence {
+  const who = quote.customerName || "this customer";
+  const country = (quote.customerCountry ?? "").trim();
+  const exportSale = isExportSupply(quote.customerCountry);
+  const what = exportSale
+    ? `an export invoice to ${who} (${country})`
+    : `a zero-rated SEZ invoice (without payment of tax) to ${who}`;
+  /* R-2636: generate_invoice issues an export whose quote charges GST as export WITH payment of IGST
+     (never CGST+SGST, never re-priced — the customer accepted that amount). Said before the click. */
+  if (exportSale && quote.taxAmount != null && quote.taxAmount > 0) {
+    return {
+      tone: "warning",
+      text: `This is ${what}, but the quote charges ${rupee(quote.taxAmount)} GST — not 0% under your LUT — so it is issued as an export ` +
+        `WITH payment of IGST (${rupee(quote.taxAmount)} IGST, GSTR-1 table 6A WPAY), never CGST+SGST. The amount the customer agreed to is kept. ` +
+        `To bill it at 0% instead, make a new quote for this customer at 0% GST (its country sets 0%) and issue that one.`,
+    };
+  }
+  /* SEZ without payment: a quote that still charges GST is invoiced with it (IGST — SEZ is always inter-state). */
+  if (quote.taxAmount != null && quote.taxAmount > 0) {
+    return {
+      tone: "warning",
+      text: `This is ${what}, but the quote charges ${rupee(quote.taxAmount)} GST, so the invoice will too — not 0% under your LUT. ` +
+        `To bill it at 0%, make a new quote for this customer (its SEZ without payment treatment sets 0%) and issue that one instead.`,
+    };
+  }
+  const date = quote.invoiceDate ?? null;
+  const known = date !== null && quote.luts !== undefined;
+  const refusal = known ? exportLutRefusal(quote.luts, date) : null;
+  if (refusal) {
+    /* The server (trg_invoices_zz_export_lut) refuses it — so the Issue button is held
+       (ConfirmIssueDialog blocks a warning that says "nothing can be issued"). */
+    const words = exportSale ? refusal : refusal.replace(/An export( sale)? at 0% GST/g, "A 0% SEZ supply");
+    return { tone: "warning", text: `This is ${what} at 0% GST, so nothing can be issued until the LUT is on file. ${words}` };
+  }
+  const lut = known ? lutFor(quote.luts, date) : null;
+  const under = `0% GST${lut && date ? ` under LUT ${lut.arn} (FY ${lutFyLabel(date)})` : " under your LUT"}`;
+  return {
+    tone: "fact",
+    text: isExportSupply(quote.customerCountry)
+      ? `Issued as ${what}: ${under}, with the line "${EXPORT_LUT_ENDORSEMENT}". No GSTIN is needed for a buyer abroad.`
+      : `Issued as ${what}: ${under}.`,
   };
 }
 
@@ -214,19 +318,70 @@ export function bulkIssueConsequences(args: {
   const n = quotes.length;
   const total = quotes.reduce((s, q) => s + (q.amount ?? 0), 0);
 
+  /* R-1633: a business that is not GST-registered issues Bills of Supply from its own BOS- series —
+     the INV counter says nothing about it, so no INV number is named (as in the single confirm). */
+  const bos = quotes.some((q) => q.billOfSupply === true);
   const first = (series?.lastNumber ?? 0) + 1;
   const last = first + Math.max(0, n - 1);
-  const range = series
-    ? n === 1
-      ? formatDocumentNumber(series, first)
-      : `${formatDocumentNumber(series, first)} … ${formatDocumentNumber(series, last)}`
-    : "the first numbers of this financial year";
+  /* R-2651 (as R-2635 for one): next_document_number takes the FY from each invoice's DATE — when a
+     receipt-dated invoice falls in another FY, the one range of this FY's series would be wrong. */
+  const seriesFy = series?.fiscalYear ?? fyCodeOfYear(fyStartYear(istToday()));
+  const otherFy = !bos && quotes.some(
+    (q) => q.invoiceDate !== undefined && fyCodeOfYear(fyStartYear(q.invoiceDate)) !== seriesFy,
+  );
+  const fys = [...new Set(quotes.flatMap((q) => (q.invoiceDate ? [fyLabel(q.invoiceDate)] : [])))].sort();
+  const undated = quotes.some((q) => q.invoiceDate === undefined);
+  const range = bos
+    ? "the next Bill of Supply (BOS-) numbers"
+    : otherFy
+      ? `the next numbers of the series of each invoice date's financial year (FY ${fys.join(", FY ")}` +
+        `${undated ? "; the ones with no date shown take the series of the day they are issued" : ""})`
+      : series
+        ? n === 1
+          ? formatDocumentNumber(series, first)
+          : `${formatDocumentNumber(series, first)} … ${formatDocumentNumber(series, last)}`
+        : "the first numbers of this financial year";
+
+  /* R-2651: per quote, the SAME date and export / LUT / IGST lines its single confirm shows — the bulk
+     confirm said nothing about them. A quote its single confirm would hold (₹0, no LUT for the date's
+     FY, Overseas with no country) holds the whole bulk issue (the dialog's "nothing can be issued")
+     and is named first, so it can be unticked. When every date is the same, it is said once. */
+  const dateFacts = quotes.map(invoiceDateFact);
+  const oneDate = dateFacts.every((d) => d !== null && d === dateFacts[0]) ? dateFacts[0] : null;
+  const held: Consequence[] = [];
+  const perQuote: Consequence[] = [];
+  quotes.forEach((q, i) => {
+    const { zeroRated, lines } = supplyFacts(q);
+    const words = [...lines.map((c) => c.text)];
+    let blocks = lines.some((c) => c.tone === "warning" && /nothing can be issued/i.test(c.text));
+    /* A failed date / LUT read cannot prove the LUT is on file — the server would refuse it mid-run. */
+    if (zeroRated && !blocks && !(q.taxAmount != null && q.taxAmount > 0) && (q.invoiceDate === undefined || q.luts === undefined)) {
+      words.push("Its invoice date or your LUT could not be read, so nothing can be issued in this bulk run — issue it from its own Generate button.");
+      blocks = true;
+    }
+    if (total > 0 && !(q.amount != null && q.amount > 0)) {
+      words.push("This quote has no amount, so no invoice can be issued from it.");
+      blocks = true;
+    }
+    const dated = oneDate ? null : dateFacts[i];
+    if (!dated && words.length === 0) return;
+    const line: Consequence = {
+      tone: blocks || lines.some((c) => c.tone === "warning") ? "warning" : "fact",
+      text: `${q.id}${q.customerName ? ` · ${q.customerName}` : ""}: ${[dated, ...words].filter(Boolean).join(" ")}` +
+        `${blocks ? ` Untick ${q.id} to issue the others.` : ""}`,
+    };
+    (blocks ? held : perQuote).push(line);
+  });
 
   const out: Consequence[] = [
     {
       tone: "fact",
       text: `Issues ${n} invoice${n === 1 ? "" : "s"} and uses ${n === 1 ? "number" : "numbers"} ${range}.`,
     },
+    ...held,
+    ...(oneDate ? [{ tone: "fact" as const, text: `All ${n === 1 ? "of it" : n}: ${oneDate}` }] : []),
+    ...perQuote,
+    ...(quotes.some((q) => q.invoiceDate) ? [{ tone: "fact" as const, text: "The dates cannot be changed afterwards." }] : []),
     {
       tone: "fact",
       text: "None of them can be edited afterwards. Each mistake needs its own credit note.",
@@ -249,5 +404,5 @@ export function bulkIssueConsequences(args: {
     });
   }
 
-  return { predictedNumber: range, predictedIsCertain: series !== null, consequences: out };
+  return { predictedNumber: range, predictedIsCertain: !bos && series !== null && !otherFy, consequences: out };
 }
