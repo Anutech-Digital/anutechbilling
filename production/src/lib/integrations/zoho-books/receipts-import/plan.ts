@@ -16,7 +16,7 @@
  *     for the PREVIEW (shown in the dialog, changeable); the import uses only what the dialog sent.
  * Pure: no I/O.
  */
-import { OLD_BANK_CHARGES_PROBLEM, isRazorpayPayment, type ZohoReceiptFacts } from "./normalise";
+import { OLD_BANK_CHARGES_PROBLEM, inrAmountOf, isRazorpayPayment, type ZohoReceiptFacts } from "./normalise";
 import { defaultCashAccountId, depositAccounts, type DepositAccount as AppBankAccount } from "@/lib/payments/deposit-accounts";
 
 export type { AppBankAccount };
@@ -76,7 +76,9 @@ export interface ReceiptsPlan {
   skipReasons: { reason: string; count: number }[];
 }
 
-const reasonKey = (r: string) => r.replace(/₹[\d,.]+|INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}/g, "…");
+/** One skip reason per KIND (amounts, invoice numbers, names and dates taken out) — the "Left out, and
+ *  why" counts. R-2693: exported so the check's refusals are grouped the same way. */
+export const skipReasonKey = (r: string) => r.replace(/₹[\d,.]+|INV\S*|"[^"]*"|\d{1,2} \w{3} \d{4}/g, "…");
 const digits = (s: string) => s.replace(/\D+/g, "");
 
 /**
@@ -121,7 +123,7 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
     const key = f.depositAccountId || "";
     const d = deposits.get(key) ?? { zohoAccountId: key, zohoName: f.depositAccountName || "(no account in Zoho)", count: 0, amount: 0, appAccountId: null, suggested: false, leftOut: false };
     d.count += 1;
-    d.amount += f.amount;
+    d.amount += inrAmountOf(f) ?? 0;   // R-2693: a USD payment at Zoho's rate, never its dollars as ₹
     deposits.set(key, d);
   }
   for (const d of deposits.values()) {
@@ -197,7 +199,7 @@ export function buildReceiptsPlan(facts: readonly ZohoReceiptFacts[], ctx: Recei
       const fee = r.facts.fee ?? 0;   // facts read before R-2565 carry no fee
       if (fee > 0) { counts.withFee += 1; totals.fee += fee; }
     }
-    if (r.verdict === "skip" && r.reason) why.set(reasonKey(r.reason), (why.get(reasonKey(r.reason)) ?? 0) + 1);
+    if (r.verdict === "skip" && r.reason) why.set(skipReasonKey(r.reason), (why.get(skipReasonKey(r.reason)) ?? 0) + 1);
   }
   return {
     rows, counts, totals,

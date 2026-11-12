@@ -38,7 +38,7 @@ import { parseOnlyAccount } from "@/lib/integrations/zoho-books/fy-import/scan";
 import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { RECEIPTS_IMPORT_PART, partCount, partOf } from "@/lib/integrations/zoho-books/fy-import/parts";
 import { readImportBatches, readScannedFacts, supabaseScanStore, type FyImportDb } from "@/lib/integrations/zoho-books/fy-import/store";
-import type { ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
+import { foreignOf, type ZohoReceiptFacts } from "@/lib/integrations/zoho-books/receipts-import/normalise";
 import { RECEIPTS_IMPORT_ROLES, buildReceiptsPlan, toReceiptPick } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import { parseAccountMap, readReceiptsContext } from "@/lib/integrations/zoho-books/receipts-import/store";
 import { depositAccountLabel, depositAccounts } from "@/lib/payments/deposit-accounts";
@@ -53,6 +53,8 @@ const KIND = "customerpayments" as const;
 const ROLE_MSG = "Only the owner or an accountant can import FY receipts from Zoho.";
 /** R-2607: the dialog's own server pass — under maxDuration (60 s) with room for the counts. */
 const STEP_BUDGET_MS = 40_000;
+/** R-2693: left-out payments listed in one preview (a year has ~2,600 payments; the counts always cover all). */
+const SKIPPED_LIST_MAX = 5_000;
 const READING_MSG = "The server is reading Zoho right now — wait until it says it has read all payments, then read again.";
 
 function fail(status: number, error: string) {
@@ -145,11 +147,18 @@ export async function POST(req: NextRequest) {
       let batches;
       try { batches = await readImportBatches(db, caller.tenantId, KIND, fy); }
       catch { return fail(500, "Could not read what is already imported. Refresh and try again."); }
-      const skipped = plan.rows.filter((r) => r.verdict === "skip").slice(0, 500)
-        .map((r) => ({ number: r.facts.number, date: r.facts.date, customer: r.facts.customerName, amount: r.facts.amount, reason: r.reason }));
+      /* R-2693: every left-out payment is listed (was cut at 500 without a word); a foreign-currency one
+         with its currency + own amount, and the ₹ at Zoho's rate only when known (null — never its
+         dollars as rupees). Above SKIPPED_LIST_MAX the screen says how many more are not listed. */
+      const left = plan.rows.filter((r) => r.verdict === "skip");
+      const skipped = left.slice(0, SKIPPED_LIST_MAX).map((r) => {
+        const fx = foreignOf(r.facts);
+        return { number: r.facts.number, date: r.facts.date, customer: r.facts.customerName,
+          amount: fx ? fx.inr : r.facts.amount, currency: fx?.currency ?? null, foreignAmount: fx?.amount ?? null, reason: r.reason };
+      });
       return NextResponse.json({
         ok: true, fy, scanned: counts.listed, counts: plan.counts, totals: plan.totals, parts,
-        deposits: plan.deposits, skipReasons: plan.skipReasons, skipped, batches,
+        deposits: plan.deposits, skipReasons: plan.skipReasons, skipped, skippedMore: left.length - skipped.length, batches,
         /* Remove import is the OWNER's (remove_zoho_fy_receipts_import checks the same) — the screen
            offers it only to the owner (button = action). */
         canRemove: caller.role === "owner",
