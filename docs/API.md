@@ -33,8 +33,8 @@ The real guards are the ratchet tests `src/app/api/admin-client-ratchet.test.ts`
 | inbound secret | 4 |
 | platform admin | 9 |
 | public | 25 |
-| session | 56 |
-| session + role | 127 |
+| session | 55 |
+| session + role | 128 |
 | sign-in flow | 11 |
 | signed token | 15 |
 | webhook signature | 6 |
@@ -374,7 +374,7 @@ The real guards are the ratchet tests `src/app/api/admin-client-ratchet.test.ts`
 | `/api/integrations/google-reseller/subscriptions` | GET | session | [api/integrations/google-reseller/subscriptions/route.ts](../production/src/app/api/integrations/google-reseller/subscriptions/route.ts) |
 | `/api/integrations/linkedin` | GET, DELETE | ? | [api/integrations/linkedin/route.ts](../production/src/app/api/integrations/linkedin/route.ts) |
 | `/api/integrations/linkedin-ads` | GET, POST | session + role | [api/integrations/linkedin-ads/route.ts](../production/src/app/api/integrations/linkedin-ads/route.ts) |
-| `/api/integrations/linkedin-ads/callback` | GET | session | [api/integrations/linkedin-ads/callback/route.ts](../production/src/app/api/integrations/linkedin-ads/callback/route.ts) |
+| `/api/integrations/linkedin-ads/callback` | GET | session + role | [api/integrations/linkedin-ads/callback/route.ts](../production/src/app/api/integrations/linkedin-ads/callback/route.ts) |
 | `/api/integrations/linkedin-ads/connect` | GET | session + role | [api/integrations/linkedin-ads/connect/route.ts](../production/src/app/api/integrations/linkedin-ads/connect/route.ts) |
 | `/api/integrations/linkedin/callback` | GET | ? | [api/integrations/linkedin/callback/route.ts](../production/src/app/api/integrations/linkedin/callback/route.ts) |
 | `/api/integrations/linkedin/connect` | GET | ? | [api/integrations/linkedin/connect/route.ts](../production/src/app/api/integrations/linkedin/connect/route.ts) |
