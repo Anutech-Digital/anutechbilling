@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   DEFAULT_PAYROLL_POLICY, parsePayrollPolicy, policyToRow, validatePayrollPolicyInput,
-  newEmployeeDefaults, payrollPolicySummary, BASIC_PCT_ERROR,
+  newEmployeeDefaults, payrollPolicySummary, BASIC_PCT_ERROR, basicPctWarning, policyChangeText,
 } from "./policy";
 
 describe("R-2700 parsePayrollPolicy", () => {
@@ -74,5 +74,23 @@ describe("R-2700 the policy never changes a salary that is booked", () => {
       const src = readFileSync(join(root, f), "utf8");
       expect(src, f).not.toMatch(/payroll\/policy|PayrollPolicy|payroll-policy/);
     }
+  });
+});
+
+describe("R-2700 review fixes (F3, M2 warning, F5 log line)", () => {
+  it("F3: Basic % is of CTC ÷ 12 under includes, of the gross under excludes", () => {
+    expect(payrollPolicySummary(DEFAULT_PAYROLL_POLICY, 25_000, 21_000)[4]).toBe("Basic: 50% of CTC ÷ 12");
+    expect(payrollPolicySummary({ ...DEFAULT_PAYROLL_POLICY, ctcIncludesEmployer: false }, 25_000, 21_000)[4]).toBe("Basic: 50% of the monthly gross");
+  });
+  it("M2: the card warns for a Basic % that will not fit", () => {
+    expect(basicPctWarning({ basicPct: 50, ctcIncludesEmployer: true })).toBeNull();
+    expect(basicPctWarning({ basicPct: 70, ctcIncludesEmployer: true })).toMatch(/HRA and allowances are lowered/);
+    expect(basicPctWarning({ basicPct: 90, ctcIncludesEmployer: true })).toMatch(/does not fit lower salaries/);
+    expect(basicPctWarning({ basicPct: 100, ctcIncludesEmployer: false })).toMatch(/HRA and allowances are lowered/);
+  });
+  it("F5: activity line names each change old → new", () => {
+    expect(policyChangeText(DEFAULT_PAYROLL_POLICY, { ...DEFAULT_PAYROLL_POLICY, pfDefault: true, basicPct: 40, ctcIncludesEmployer: false }))
+      .toBe("Payroll policy changed: PF for new employees off → on; CTC includes → excludes employer PF / ESI / gratuity; Basic 50% → 40%");
+    expect(policyChangeText(DEFAULT_PAYROLL_POLICY, DEFAULT_PAYROLL_POLICY)).toBe("Payroll policy saved (no change)");
   });
 });

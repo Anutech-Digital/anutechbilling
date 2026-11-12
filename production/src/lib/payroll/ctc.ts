@@ -83,8 +83,13 @@ export interface CtcBreakdown {
   /** CTC/12 that went into neither gross nor the employer parts (rounding; negative = the
    *  typed components cost more than the CTC). 0 when employerOnTop. */
   unallocatedMonthly: number;
-  /** Basic + HRA + conveyance + medical alone are more than this CTC allows. */
+  /** Basic alone (after HRA / allowances were lowered) is more than this CTC allows — the form
+   *  must not fill this gross. */
   overBudget: boolean;
+  /** HRA / conveyance / medical were lowered so the gross fits the CTC (R-2700 review M2). */
+  fittedToCtc: boolean;
+  /** The most gross this CTC allows (null for a saved salary). */
+  maxGrossMonthly: number | null;
 }
 
 /** Gratuity provision — 15 days' wage per year on a 26-day month, per month (≈4.81% of Basic + DA). */
@@ -99,7 +104,7 @@ function assemble(m: {
   specialAllowanceMonthly: number; daMonthly: number; grossMonthly: number;
   employerPfMonthly: number; employerEpsMonthly: number; employerEsiMonthly: number; gratuityMonthly: number;
   employeePfMonthly: number; employeeEsiMonthly: number; professionalTaxMonthly: number;
-}, annualCtc = m.monthlyCtc * 12, extra: { employerOnTop?: boolean; overBudget?: boolean } = {}): CtcBreakdown {
+}, annualCtc = m.monthlyCtc * 12, extra: { employerOnTop?: boolean; overBudget?: boolean; fittedToCtc?: boolean; maxGrossMonthly?: number | null } = {}): CtcBreakdown {
   const totalEmployerContributionMonthly = m.employerPfMonthly + m.employerEsiMonthly + m.gratuityMonthly;
   const employerOnTop = extra.employerOnTop ?? false;
   const costToCompanyMonthly = m.grossMonthly + totalEmployerContributionMonthly;
@@ -153,6 +158,8 @@ function assemble(m: {
     costToCompanyMonthly,
     unallocatedMonthly: employerOnTop ? 0 : m.monthlyCtc - costToCompanyMonthly,
     overBudget: extra.overBudget ?? false,
+    fittedToCtc: extra.fittedToCtc ?? false,
+    maxGrossMonthly: extra.maxGrossMonthly ?? null,
   };
 }
 
@@ -196,16 +203,17 @@ export function calculateCtcBreakdown(
     : Math.round(monthlyCtc * basicPct);
 
   // 2. HRA (Custom ₹ override or % calculation)
-  const hraMonthly = opts?.customHraMonthly !== undefined && opts.customHraMonthly > 0
+  const hraTyped = opts?.customHraMonthly !== undefined && opts.customHraMonthly > 0;
+  let hraMonthly = hraTyped && opts?.customHraMonthly !== undefined
     ? Math.round(opts.customHraMonthly)
     : Math.round(basicMonthly * hraPct);
 
   // 3. Conveyance & Medical Allowances
-  const conveyanceMonthly = opts?.customConveyanceMonthly !== undefined
+  let conveyanceMonthly = opts?.customConveyanceMonthly !== undefined
     ? Math.max(0, Math.round(opts.customConveyanceMonthly))
     : (monthlyCtc >= 25000 ? 1600 : 0);
 
-  const medicalMonthly = opts?.customMedicalMonthly !== undefined
+  let medicalMonthly = opts?.customMedicalMonthly !== undefined
     ? Math.max(0, Math.round(opts.customMedicalMonthly))
     : (monthlyCtc >= 25000 ? 1250 : 0);
 
@@ -225,13 +233,30 @@ export function calculateCtcBreakdown(
   //    included — and its employer share is itself part of the CTC. With no typed special
   //    allowance, take the largest gross whose cost still fits in the monthly CTC.
   //    R-2700: when the policy puts employer costs ON TOP, the whole CTC/12 is the gross.
-  const fixedEarnings = basicMonthly + hraMonthly + conveyanceMonthly + medicalMonthly;
+  //    R-2700 review M2: Basic + HRA + allowances must fit in the gross the CTC allows. When they
+  //    do not (a high Basic %), medical, then conveyance, then an untyped HRA are lowered to fit
+  //    (fittedToCtc); if Basic alone is more than that, overBudget — the form then fills nothing.
+  let fixedEarnings = basicMonthly + hraMonthly + conveyanceMonthly + medicalMonthly;
   let specialAllowanceMonthly: number;
   let overBudget = false;
+  let fittedToCtc = false;
+  let maxGrossMonthly: number | null = null;
+  const fitInto = (target: number) => {
+    maxGrossMonthly = target;
+    let over = fixedEarnings - target;
+    if (over <= 0) return;
+    fittedToCtc = true;
+    const cut = (v: number) => { const c = Math.min(v, over); over -= c; return v - c; };
+    medicalMonthly = cut(medicalMonthly);
+    conveyanceMonthly = cut(conveyanceMonthly);
+    if (!hraTyped) hraMonthly = cut(hraMonthly);
+    fixedEarnings = basicMonthly + hraMonthly + conveyanceMonthly + medicalMonthly;
+    overBudget = monthlyCtc > 0 && over > 0;
+  };
   if (opts?.customSpecialMonthly !== undefined && opts.customSpecialMonthly >= 0) {
     specialAllowanceMonthly = Math.round(opts.customSpecialMonthly);
   } else if (!ctcIncludesEmployer) {
-    overBudget = fixedEarnings > monthlyCtc;
+    fitInto(monthlyCtc);
     specialAllowanceMonthly = Math.max(0, monthlyCtc - fixedEarnings);
   } else {
     const room = monthlyCtc - employerPfMonthly - gratuityMonthly;
@@ -243,7 +268,7 @@ export function calculateCtcBreakdown(
       while (g > 0 && g + computeEsi(g).employer > room) g--;
       if (computeEsi(g).applicable) gross = g; // still within the ESI ceiling with ESI paid
     }
-    overBudget = monthlyCtc > 0 && fixedEarnings > gross;
+    fitInto(Math.max(0, gross));
     specialAllowanceMonthly = Math.max(0, gross - fixedEarnings);
   }
 
@@ -259,7 +284,7 @@ export function calculateCtcBreakdown(
     // 8. Employee deductions — ESI from esi.ts, PT from pt.ts (a typed PT wins).
     employeePfMonthly, employeeEsiMonthly: esi.employee,
     professionalTaxMonthly: computePt(grossMonthly, { custom: opts?.customPtMonthly }).monthly,
-  }, annualCtc, { employerOnTop: !ctcIncludesEmployer, overBudget });
+  }, annualCtc, { employerOnTop: !ctcIncludesEmployer, overBudget, fittedToCtc, maxGrossMonthly });
 }
 
 /** The employee-master fields a salary structure is made of. */
@@ -337,6 +362,9 @@ export interface CtcTabInput {
   includeGratuity: boolean;
   /** Company payroll policy (lib/payroll/policy.ts). */
   ctcIncludesEmployer: boolean;
+  /** The employee's SAVED salary (null for a new employee). R-2700 review M1: typing back the
+   *  CTC the tab showed must give the same gross, and a typed CTC keeps the saved Basic. */
+  saved?: { gross: number; basic: number | null; da: number } | null;
   /** The calculator's component choices (Basic %, HRA, allowances, PT). */
   calc?: Pick<NonNullable<Parameters<typeof calculateCtcBreakdown>[1]>,
     "isMetro" | "basicPct" | "customBasicMonthly" | "customHraMonthly" | "customConveyanceMonthly"
@@ -357,18 +385,27 @@ export type CtcTabBreakdown = CtcBreakdown & {
  */
 export function ctcTabBreakdown(i: CtcTabInput): CtcTabBreakdown {
   const gross = Math.max(0, Math.round(Number.isFinite(i.gross) ? i.gross : 0));
-  if (!i.ctcTyped && gross > 0) {
-    return {
-      ...ctcFromEmployee(
-        { monthly_gross: gross, basic_monthly: i.basic, da_monthly: i.da, pf_applicable: i.pfApplicable, esi_applicable: i.esiApplicable, pf_full_wage: i.pfFullWage },
-        { asOf: i.calc?.asOf, includeGratuity: i.includeGratuity, ctcIncludesEmployer: i.ctcIncludesEmployer, ptMonthly: i.calc?.customPtMonthly },
-      ),
-      source: "saved",
-    };
+  const asSaved = (g: number, basic: number | null, da: number): CtcTabBreakdown => ({
+    ...ctcFromEmployee(
+      { monthly_gross: g, basic_monthly: basic, da_monthly: da, pf_applicable: i.pfApplicable, esi_applicable: i.esiApplicable, pf_full_wage: i.pfFullWage },
+      { asOf: i.calc?.asOf, includeGratuity: i.includeGratuity, ctcIncludesEmployer: i.ctcIncludesEmployer, ptMonthly: i.calc?.customPtMonthly },
+    ),
+    source: "saved",
+  });
+  if (!i.ctcTyped && gross > 0) return asSaved(gross, i.basic, i.da);
+  const saved = i.saved && i.saved.gross > 0 ? i.saved : null;
+  if (saved) {
+    // The CTC typed is the one the saved salary already gives → nothing to re-split.
+    const shown = asSaved(Math.round(saved.gross), saved.basic, saved.da);
+    if (Math.round(i.annualCtc) === shown.annualCtc) return shown;
   }
+  // A typed CTC keeps the employee's saved Basic (PF / gratuity are on it) unless one was typed.
+  const keepBasic = saved?.basic && saved.basic > 0 && !(i.calc?.customBasicMonthly && i.calc.customBasicMonthly > 0)
+    ? Math.round(saved.basic) : undefined;
   return {
     ...calculateCtcBreakdown(i.ctcTyped ? i.annualCtc : 0, {
       ...i.calc,
+      ...(keepBasic !== undefined ? { customBasicMonthly: keepBasic } : {}),
       capPfWageCeiling: !i.pfFullWage,
       includePf: i.pfApplicable,
       includeEsi: i.esiApplicable,
@@ -396,7 +433,7 @@ export function ctcFormulaText(b: CtcTabBreakdown, grossInForm?: number): string
       ? `Monthly gross ${rupee(b.grossMonthly)} is the saved salary; CTC = gross × 12.`
       : `Monthly gross ${rupee(b.grossMonthly)} is the saved salary; CTC ${rupee(b.annualCtc)} = (gross${employerParts.map((p) => ` + ${p}`).join("")}) × 12.`;
     if (b.employerOnTop && employerParts.length) line += ` On top: ${employerParts.join(" + ")} (cost ${rupee(b.costToCompanyMonthly)}/mo).`;
-    line += " Type a CTC to work the gross out from it.";
+    line += " Type a different CTC to work the gross out from it.";
   } else if (b.employerOnTop) {
     line = `Monthly gross ${rupee(b.grossMonthly)} = CTC ${rupee(b.annualCtc)} ÷ 12.`;
     if (employerParts.length) line += ` On top: ${employerParts.join(" + ")} (cost ${rupee(b.costToCompanyMonthly)}/mo).`;
@@ -405,8 +442,11 @@ export function ctcFormulaText(b: CtcTabBreakdown, grossInForm?: number): string
     line += b.unallocatedMonthly > 0 ? ` − ${rupee(b.unallocatedMonthly)} rounding.` : ".";
   }
   if (b.overBudget) {
-    line += ` Basic + HRA + allowances (${rupee(b.basicMonthly + b.hraMonthly + b.conveyanceMonthly + b.medicalMonthly)}) are more than this CTC allows — lower the Basic % or the allowances.`;
-  } else if (b.source === "ctc" && !b.employerOnTop && b.unallocatedMonthly < 0) {
+    // R-2700 review M2: never print an equation that is not true — say what does not fit instead.
+    return `Basic ${rupee(b.basicMonthly)} is more than this CTC allows (monthly gross can be at most ${rupee(b.maxGrossMonthly ?? 0)}) — lower the Basic % or raise the CTC. Monthly gross is not filled.`;
+  }
+  if (b.fittedToCtc) line += " HRA / allowances lowered to fit the CTC.";
+  if (b.source === "ctc" && !b.employerOnTop && b.unallocatedMonthly < 0) {
     line += ` The typed components cost ${rupee(-b.unallocatedMonthly)}/mo more than the CTC.`;
   }
   if (grossInForm !== undefined && b.source === "ctc" && Math.round(grossInForm) !== b.grossMonthly) {

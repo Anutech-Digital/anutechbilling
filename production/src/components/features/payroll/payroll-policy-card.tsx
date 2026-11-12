@@ -16,7 +16,7 @@ import { Icon } from "@/components/ui/icon";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { usePayrollPolicy, useSavePayrollPolicy } from "@/lib/queries/payroll-policy";
 import {
-  BASIC_PCT_MAX, BASIC_PCT_MIN, DEFAULT_PAYROLL_POLICY, payrollPolicySummary, validatePayrollPolicyInput, type PayrollPolicy,
+  BASIC_PCT_MAX, BASIC_PCT_MIN, DEFAULT_PAYROLL_POLICY, basicPctWarning, payrollPolicySummary, validatePayrollPolicyInput, type PayrollPolicy,
 } from "@/lib/payroll/policy";
 import { pfWageCeiling } from "@/lib/payroll/pf";
 import { ESI_WAGE_CEILING } from "@/lib/payroll/esi";
@@ -56,6 +56,7 @@ export function PayrollPolicyCard() {
           {!editing && (
             <ul className="mt-2 space-y-0.5 text-xs text-ink-2" data-testid="payroll-policy-summary">
               {payrollPolicySummary(saved, pfCeiling, ESI_WAGE_CEILING).map((line) => <li key={line}>{line}</li>)}
+              {basicPctWarning(saved) && <li className="text-amber-ink">{basicPctWarning(saved)}</li>}
             </ul>
           )}
         </div>
@@ -104,6 +105,8 @@ export function PayrollPolicyCard() {
               className="mt-1 w-28" onChange={(e) => setPctText(e.target.value)} />
           </label>
           {!check.ok && <p role="alert" className="text-xs text-rose-700">{check.error}</p>}
+          {/* R-2700 review M2: a Basic % that will not fit every CTC is said here, not found later. */}
+          {check.ok && basicPctWarning(check.policy) && <p data-testid="policy-basic-warning" className="text-xs text-amber-ink">{basicPctWarning(check.policy)}</p>}
           <div className="flex gap-2">
             <Button type="submit" variant="primary" size="sm" disabled={!check.ok || save.isPending}>{save.isPending ? "Saving…" : "Save policy"}</Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setEditing(false)}>Cancel</Button>

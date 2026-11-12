@@ -18,6 +18,12 @@ const st = vi.hoisted(() => ({
   sessionUserId: null as string | null,
   row: null as Record<string, unknown> | null,
   upserts: [] as Array<{ v: Record<string, unknown>; opts: unknown }>,
+  audits: [] as Array<Record<string, unknown>>,
+  auditUpdates: [] as Array<Record<string, unknown>>,
+  adminEq: [] as Array<[string, string]>,
+  order: [] as string[],
+  auditFails: false,
+  upsertFails: false,
 }));
 
 function userClient() {
@@ -38,9 +44,27 @@ function userClient() {
 vi.mock("@/lib/supabase/server", () => ({
   createClient: () => userClient(),
   createAdminClientFor: () => ({
-    from: () => ({
-      upsert: async (v: Record<string, unknown>, opts: unknown) => { st.upserts.push({ v, opts }); return { error: null }; },
-    }),
+    from: (table: string) => {
+      if (table === "activity_log") {
+        const q = {
+          insert(v: Record<string, unknown>) { st.audits.push(v); st.order.push("audit"); return q; },
+          select() { return q; },
+          async single() { return st.auditFails ? { data: null, error: { message: "no" } } : { data: { id: "log-1" }, error: null }; },
+          update(v: Record<string, unknown>) { st.auditUpdates.push(v); return { eq: async () => ({ error: null }) }; },
+        };
+        return q;
+      }
+      const q = {
+        select() { return q; },
+        eq(c: string, v: string) { st.adminEq.push([c, v]); return q; },
+        async maybeSingle() { return { data: st.row, error: null }; },
+        upsert: async (v: Record<string, unknown>, opts: unknown) => {
+          st.order.push("upsert"); st.upserts.push({ v, opts });
+          return { error: st.upsertFails ? { message: "boom" } : null };
+        },
+      };
+      return q;
+    },
   }),
 }));
 
@@ -49,7 +73,10 @@ import { GET, POST } from "./route";
 const good = { pfDefault: true, pfFullWageDefault: false, esiDefault: true, gratuity: false, ctcIncludesEmployer: false, basicPct: 40 };
 const post = (body: unknown) => POST({ json: async () => body } as unknown as NextRequest);
 
-beforeEach(() => { st.sessionUserId = null; st.row = null; st.upserts = []; });
+beforeEach(() => {
+  st.sessionUserId = null; st.row = null; st.upserts = []; st.audits = []; st.auditUpdates = []; st.adminEq = []; st.order = [];
+  st.auditFails = false; st.upsertFails = false;
+});
 
 describe("R-2700 /api/payroll/policy", () => {
   it("signed out → 401 both ways", async () => {
@@ -88,5 +115,22 @@ describe("R-2700 /api/payroll/policy", () => {
     expect(v).toMatchObject({ payroll_pf_default: true, payroll_gratuity: false, payroll_ctc_includes_employer: false, payroll_basic_pct: 40 });
     expect(v).not.toHaveProperty("allowed_ips");
     expect(v).not.toHaveProperty("require_selfie");
+  });
+  it("review F5: the activity log row (old → new) is written BEFORE the save, for the owner's tenant", async () => {
+    st.sessionUserId = OWNER;
+    await post({ policy: good });
+    expect(st.order).toEqual(["audit", "upsert"]);
+    expect(st.adminEq).toContainEqual(["tenant_id", T1]);
+    expect(st.audits[0]).toMatchObject({ tenant_id: T1, user_id: OWNER, action: "payroll_policy_changed" });
+    expect(String(st.audits[0].label)).toBe("Payroll policy changed: PF for new employees off → on; gratuity on → off; CTC includes → excludes employer PF / ESI / gratuity; Basic 50% → 40%");
+  });
+  it("review F5: log write fails → nothing saved; save fails → the log row says NOT changed", async () => {
+    st.sessionUserId = OWNER;
+    st.auditFails = true;
+    expect((await post({ policy: good })).status).toBe(500);
+    expect(st.upserts).toHaveLength(0);
+    st.auditFails = false; st.upsertFails = true;
+    expect((await post({ policy: good })).status).toBe(500);
+    expect(st.auditUpdates[0]).toMatchObject({ action: "payroll_policy_change_failed" });
   });
 });
