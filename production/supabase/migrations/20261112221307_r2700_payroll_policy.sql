@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from information_schema.columns where table_schema = 'public' and table_name = 'attendance_settings' and column_name = 'payroll_ctc_includes_employer')
 -- deploy-key: r2700payrollpolicy
--- 20261112153335_r2700_payroll_policy.sql
+-- 20261112221307_r2700_payroll_policy.sql
 --
 -- R-2700 (12 Nov 2026, Hitesh item 8): the company's payroll policy — ESI / PF / gratuity and
 -- how a CTC is split — set once, used as defaults for NEW employees and by the CTC calculator.
