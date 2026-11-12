@@ -10,7 +10,8 @@
 --
 -- SECURITY INVOKER on purpose: the caller's own RLS on bank_transactions decides what it sees
 -- (tenant isolation read + the personal-session wall), exactly as the old direct read did — no new
--- privileged surface. The explicit tenant filter is belt and braces and lets the index below work.
+-- privileged surface. The explicit tenant filter repeats that RLS read rule (same rows) and lets
+-- the existing (tenant_id, txn_date) index serve the read.
 -- Read-only; no money is written or computed. Test: supabase/tests/r2711_customer_payer_lines.test.sql
 
 create or replace function public.customer_payer_lines(p_customer_id uuid)
@@ -34,8 +35,5 @@ comment on function public.customer_payer_lines(uuid) is
 
 revoke all on function public.customer_payer_lines(uuid) from public, anon;
 grant execute on function public.customer_payer_lines(uuid) to authenticated, service_role;
-
--- Only lines with a payer answer are indexed (a handful per tenant), so this stays tiny.
-create index if not exists bank_transactions_payer_customer_idx
-  on public.bank_transactions (tenant_id, (payer ->> 'customer_id'))
-  where payer is not null;
+-- No new index: bank_txn_date_idx (tenant_id, txn_date desc) already narrows to the tenant, and a
+-- plain CREATE INDEX would block bank_transactions writes during the DB step for no real gain.
