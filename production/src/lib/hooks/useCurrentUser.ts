@@ -140,7 +140,7 @@ export function useCurrentUser() {
     queryFn: async (): Promise<CurrentUserInfo | null> => {
       if (process.env.NEXT_PUBLIC_DEMO_MODE === "true") {
         return {
-          userId: "fbb976f1-9090-4f10-9726-0901bd144e42-user",
+          userId: "7ef532b0-f0ea-4e26-a035-938349d6e2c9",
           authEmail: "admin@anutech.in",
           isPlatformAdmin: true,
           mustChangePassword: false,
@@ -152,7 +152,7 @@ export function useCurrentUser() {
           tenantId: "fbb976f1-9090-4f10-9726-0901bd144e42",
           tenantName: "Anutech Digital Pvt Ltd",
           tenantLogoUrl: null,
-          tenantGstin: "07AABCA1234A1Z5",
+          tenantGstin: "07ABDCA0298H1ZP",
           tenantEmail: "support@anutech.in",
           tenantPhone: "+91 98765 43210",
           tenantAddress: "New Delhi, India",
