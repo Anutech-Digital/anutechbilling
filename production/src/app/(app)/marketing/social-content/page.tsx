@@ -183,7 +183,10 @@ export default function SocialContentPage() {
           <label className="block text-xs font-medium text-ink-2">Post text<textarea className={`${inputClass} mt-1 min-h-36 resize-y`} value={caption} maxLength={2200} onChange={e => setCaption(e.target.value)} placeholder="Type the post here, or press Write with AI" /><span className="mt-1 block text-right font-normal text-ink-3">{caption.length}/2200</span></label>
 
           <label className="block text-xs font-medium text-ink-2">Picture link {hasInstagram ? "(needed for Instagram)" : "(optional)"}<input type="url" className={`${inputClass} mt-1`} value={mediaUrl} onChange={e => setMediaUrl(e.target.value)} placeholder="https://… (a public image link)" /></label>
-          {mediaUrl && <div className="overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={mediaUrl} alt="Picture preview" className="max-h-60 w-full object-contain" /></div>}
+          {mediaUrl && <div className="overflow-hidden rounded-lg border border-hairline bg-paper-2">
+            {/* eslint-disable-next-line @next/next/no-img-element -- any public https link the user types; next/image needs a fixed host list */}
+            <img src={mediaUrl} alt="Picture preview" className="max-h-60 w-full object-contain" />
+          </div>}
 
           <fieldset><legend className="text-xs font-medium text-ink-2">When should it go out? (India time)</legend>
             <div className="mt-2 flex flex-wrap gap-2">
@@ -213,7 +216,10 @@ export default function SocialContentPage() {
                 : item.scheduled_at ? (item.status === "approved" && new Date(item.scheduled_at).getTime() <= Date.now() ? "Posting in a few minutes" : `${item.status === "approved" ? "Posts" : "To post"} ${formatIst(item.scheduled_at)}`)
                 : item.status === "approved" ? "Approved — post by hand" : "No post time"}</span></div>
             {editing === item.id ? <div className="mt-3 space-y-2"><textarea aria-label="Post text" className={`${inputClass} min-h-28`} value={editCaption} maxLength={2200} onChange={e => setEditCaption(e.target.value)} /><input type="url" aria-label="Picture link" className={inputClass} value={editMediaUrl} onChange={e => setEditMediaUrl(e.target.value)} placeholder="Picture link (https://…)" /><label className="block text-xs font-medium text-ink-2">Post time, India time<input type="datetime-local" className={`${inputClass} mt-1`} value={editPostAt} onChange={e => setEditPostAt(e.target.value)} /></label><div className="flex gap-2"><Button size="sm" disabled={busy} onClick={() => void act(item.id, "save", { caption: editCaption, mediaUrl: editMediaUrl || null, scheduledAt: editPostAt || null })}>Save changes</Button><Button size="sm" variant="ghost" onClick={() => setEditing(null)}>Cancel</Button></div></div>
-              : <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-2">{item.caption || (item.format === "story" ? "Picture-only Story" : "No text")}</p>{item.media_url && <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-paper-2"><img src={item.media_url} alt="Post picture" className="max-h-80 w-full object-contain" /></div>}</>}
+              : <><p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-ink-2">{item.caption || (item.format === "story" ? "Picture-only Story" : "No text")}</p>{item.media_url && <div className="mt-3 overflow-hidden rounded-lg border border-hairline bg-paper-2">
+                {/* eslint-disable-next-line @next/next/no-img-element -- any public https link the user typed; next/image needs a fixed host list */}
+                <img src={item.media_url} alt="Post picture" className="max-h-80 w-full object-contain" />
+              </div>}</>}
             {item.error && <p className="mt-2 rounded-lg bg-rose-soft p-2 text-xs text-rose-ink">Meta said: {item.error} — fix it, then send for approval again.</p>}
             <div className="mt-4 flex flex-wrap gap-2 border-t border-hairline pt-3">
               {item.status === "review" && state.canReview && <><Button size="sm" variant="primary" disabled={busy} onClick={() => void act(item.id, "approve")}><Check size={14} /> Approve</Button><Button size="sm" variant="outline" disabled={busy} onClick={() => void act(item.id, "return")}>Send back</Button></>}
