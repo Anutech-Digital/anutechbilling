@@ -2,14 +2,14 @@
  * R-2701 (12 Nov 2026, Hitesh's report item 7): "employee can't be removed, salary already booked"
  * — but nobody could see WHICH months. Read-only helpers for the employee profile's
  * "Salary & payments" section and the delete refusal. No money logic: the figures are the stored
- * salary_payments columns; the paid state is the one salary-status helper (R-1831).
+ * salary_payments columns; the paid state is drawn by the Salary Register's own SalaryStatusCell (R-1831).
  *
  *   gross       = gross + bonus (incentive)
- *   deductions  = LOP + advance recovered + TDS + PF + ESI + other   (pay_salary: net = earned − …)
+ *   deductions  = LOP (at most the gross) + advance recovered + TDS + PF + ESI + other
+ *                 (pay_salary: earned = greatest(gross − LOP, 0) + bonus; net = earned − the rest)
  *   net         = the stored net (in-hand)
  */
 import { formatMonthLabel } from "@/lib/dates/ist";
-import { salaryPayState, type SalaryPayState } from "@/lib/payroll/salary-status";
 
 /** The salary_payments columns this needs (a SalaryPayment row has them all). */
 export type SalaryMonthFacts = {
@@ -38,7 +38,6 @@ export type SalaryMonthRow = {
   gross: number;
   deductions: number;
   net: number;
-  status: SalaryPayState;
 };
 
 const n = (x: number | null | undefined) => Number(x) || 0;
@@ -52,10 +51,15 @@ export function salaryMonthRows(rows: readonly SalaryMonthFacts[]): SalaryMonthR
       period: p.period,
       month: formatMonthLabel(p.period),
       gross: n(p.gross) + n(p.incentive),
-      deductions: n(p.lop_amount) + n(p.advance_recovered) + n(p.tds) + n(p.pf) + n(p.esi) + n(p.other_deduction),
+      deductions: Math.min(n(p.lop_amount), n(p.gross)) + n(p.advance_recovered) + n(p.tds) + n(p.pf) + n(p.esi) + n(p.other_deduction),
       net: n(p.net),
-      status: salaryPayState(p),
     }));
+}
+
+/** The nets to look up an unlinked bank line for (the Salary Register's rule, R-1895): unpaid salaries
+ *  ("Paid — link bank line") and a Paid salary with no bank line on record (its Match). */
+export function waitingSalaryNets(rows: readonly Pick<SalaryMonthFacts, "net" | "paid_amount" | "paid_status" | "reconciled_txn_id">[]): number[] {
+  return rows.filter((p) => p.paid_amount === 0 || (p.paid_status === "paid" && !p.reconciled_txn_id)).map((p) => p.net);
 }
 
 const MAX_NAMED = 6;
@@ -87,4 +91,9 @@ export function employeeLoansFor<T extends { employee_name: string; disbursed_on
   return loans
     .filter((l) => nameKey(l.employee_name) === key)
     .sort((a, b) => b.disbursed_on.localeCompare(a.disbursed_on));
+}
+
+/** What this employee still owes on loans / salary advances (whole rupees). */
+export function outstandingLoanTotal(loans: readonly { outstanding: number }[]): number {
+  return loans.reduce((sum, l) => sum + Math.max(0, n(l.outstanding)), 0);
 }

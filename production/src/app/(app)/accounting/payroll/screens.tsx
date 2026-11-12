@@ -378,7 +378,7 @@ export function EmployeesTab() {
         open={viewEmp !== null}
         focusSalary={viewSalary}
         onOpenChange={(o) => { if (!o) { setViewEmp(null); setViewSalary(false); } }}
-        onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); } } : undefined}
+        onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); setViewSalary(false); } } : undefined}
       />
     </>
   );

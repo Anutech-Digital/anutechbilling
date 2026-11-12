@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
-  salaryMonthRows, bookedMonthsText, deleteBlockedMessage, employeeLoansFor,
+  salaryMonthRows, bookedMonthsText, deleteBlockedMessage, employeeLoansFor, waitingSalaryNets, outstandingLoanTotal,
   type SalaryMonthFacts,
 } from "./employee-salary-months";
 
@@ -27,17 +27,32 @@ describe("R-2701 salaryMonthRows — one line per booked month for the employee 
     expect(rows[1]).toMatchObject({ month: "Aug 2026", gross: 30000, deductions: 1800, net: 28200 });
   });
 
-  it("paid state comes from the one salary-status helper (paid / partial / not paid yet)", () => {
-    const rows = salaryMonthRows([
-      row({ id: "p", period: "2026-07", paid_status: "paid", paid_amount: 28200 }),
-      row({ id: "h", period: "2026-08", paid_amount: 10000 }),
-      row({ id: "n", period: "2026-09" }),
-    ]);
-    expect(rows.map((r) => r.status.label)).toEqual(["Not paid yet", "Partial", "Paid"]);
+  it("LOP above the gross counts only up to the gross (pay_salary: earned = greatest(gross − LOP, 0) + bonus) — still adds up to net", () => {
+    const [r] = salaryMonthRows([row({ gross: 30000, lop_amount: 31000, incentive: 5000, pf: 0, net: 5000 })]);
+    expect(r).toMatchObject({ gross: 35000, deductions: 30000, net: 5000 });
+    expect(r.gross - r.deductions).toBe(r.net);
   });
 
   it("no salary → empty list", () => {
     expect(salaryMonthRows([])).toEqual([]);
+  });
+});
+
+describe("R-2701 waitingSalaryNets — the Salary Register's rule for which nets may have an unlinked bank line", () => {
+  it("unpaid salaries and Paid ones with no bank line on record; not part-paid or linked", () => {
+    expect(waitingSalaryNets([
+      row({ net: 100 }),
+      row({ net: 200, paid_status: "paid", paid_amount: 200, reconciled_txn_id: null }),
+      row({ net: 300, paid_status: "paid", paid_amount: 300, reconciled_txn_id: "t1" }),
+      row({ net: 400, paid_status: "partial", paid_amount: 50 }),
+    ])).toEqual([100, 200]);
+  });
+});
+
+describe("R-2701 outstandingLoanTotal", () => {
+  it("adds what is still due; a repaid (0 or negative) loan adds nothing", () => {
+    expect(outstandingLoanTotal([{ outstanding: 5000 }, { outstanding: 0 }, { outstanding: -10 }, { outstanding: 2500 }])).toBe(7500);
+    expect(outstandingLoanTotal([])).toBe(0);
   });
 });
 

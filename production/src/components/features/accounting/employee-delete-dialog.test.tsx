@@ -5,17 +5,24 @@ import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import { render, cleanup, screen, fireEvent } from "@testing-library/react";
 
 const mutate = vi.hoisted(() => vi.fn());
-const history = vi.hoisted(() => ({ data: [] as { period: string }[] | undefined, isLoading: false, isError: false }));
+const refetch = vi.hoisted(() => vi.fn());
+const history = vi.hoisted(() => ({ data: [] as { period: string }[] | undefined, isLoading: false, isError: false, refetch }));
 vi.mock("@/lib/queries/payroll", () => ({
   useDeleteEmployee: () => ({ mutate, isPending: false }),
   useEmployeeSalaryHistory: () => history,
 }));
+const loans = vi.hoisted(() => ({ data: [] as { employee_name: string; disbursed_on: string; outstanding: number }[] | undefined, isLoading: false, isError: false, refetch: () => {} }));
+vi.mock("@/lib/queries/employee-loans", () => ({ useEmployeeLoans: () => loans }));
 
 import { EmployeeDeleteDialog } from "./employee-delete-dialog";
 
 const emp = { id: "e-1", name: "prashant kumar", exit_date: null };
 
-beforeEach(() => { mutate.mockClear(); history.data = []; history.isLoading = false; history.isError = false; });
+beforeEach(() => {
+  mutate.mockClear(); refetch.mockClear();
+  history.data = []; history.isLoading = false; history.isError = false;
+  loans.data = []; loans.isLoading = false; loans.isError = false;
+});
 afterEach(cleanup);
 
 describe("R-2701 EmployeeDeleteDialog", () => {
@@ -63,10 +70,22 @@ describe("R-2701 EmployeeDeleteDialog", () => {
     expect(screen.getByText(/Checking salary records/)).toBeTruthy();
   });
 
-  it("salary check failed → no Delete button (never delete blind)", () => {
+  it("salary check failed → no Delete button (never delete blind); Try again re-reads", () => {
     history.data = undefined; history.isError = true;
     render(<EmployeeDeleteDialog employee={emp} canStartExit onStartExit={() => {}} onShowSalary={() => {}} onClose={() => {}} />);
     expect(screen.queryByRole("button", { name: "Delete employee" })).toBeNull();
     expect(screen.getByText(/Could not check salary records/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("no salary but a salary advance still due → the confirm names what they owe (kept on the Loans page)", () => {
+    loans.data = [
+      { employee_name: "Prashant Kumar", disbursed_on: "2026-10-01", outstanding: 10000 },
+      { employee_name: "Someone Else", disbursed_on: "2026-10-01", outstanding: 999 },
+    ];
+    render(<EmployeeDeleteDialog employee={emp} canStartExit onStartExit={() => {}} onShowSalary={() => {}} onClose={() => {}} />);
+    expect(screen.getByText(/They still owe ₹10,000 on loans or salary advances/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Delete employee" })).toBeTruthy();
   });
 });
