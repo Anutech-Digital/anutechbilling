@@ -1912,6 +1912,12 @@ export type Database = {
           office_lng: number | null
           office_radius_m: number
           late_grace_minutes: number
+          payroll_basic_pct: number
+          payroll_ctc_includes_employer: boolean
+          payroll_esi_default: boolean
+          payroll_gratuity: boolean
+          payroll_pf_default: boolean
+          payroll_pf_full_wage_default: boolean
           presence_secret: string | null
           require_device: boolean
           require_face_match: boolean
@@ -1932,6 +1938,12 @@ export type Database = {
           office_lng?: number | null
           office_radius_m?: number
           late_grace_minutes?: number
+          payroll_basic_pct?: number
+          payroll_ctc_includes_employer?: boolean
+          payroll_esi_default?: boolean
+          payroll_gratuity?: boolean
+          payroll_pf_default?: boolean
+          payroll_pf_full_wage_default?: boolean
           presence_secret?: string | null
           require_device?: boolean
           require_face_match?: boolean
@@ -1952,6 +1964,12 @@ export type Database = {
           office_lng?: number | null
           office_radius_m?: number
           late_grace_minutes?: number
+          payroll_basic_pct?: number
+          payroll_ctc_includes_employer?: boolean
+          payroll_esi_default?: boolean
+          payroll_gratuity?: boolean
+          payroll_pf_default?: boolean
+          payroll_pf_full_wage_default?: boolean
           presence_secret?: string | null
           require_device?: boolean
           require_face_match?: boolean
