@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "dev:local": "node scripts/dev-local.mjs",
+    "dev:ros": "node scripts/dev-ros.mjs",
     "localhost:update": "node scripts/ops/localhost-update.mjs",
     "localhost:ready": "node scripts/ops/localhost-ready.mjs",
     "card:check": "node scripts/ops/card-check.mjs",

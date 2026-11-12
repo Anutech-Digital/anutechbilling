@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
   const origin = originFromRequest(request);
   const url = new URL(request.url);
   const done = (status: string, extra = "") => {
-    const res = NextResponse.redirect(`${origin}/marketing/ads?meta=${status}${extra}`);
+    const res = NextResponse.redirect(`${origin}/marketing/ads/accounts?platform=meta-ads&meta=${status}${extra}`);
     res.cookies.delete("meta_ads_oauth_state");
     return res;
   };
@@ -46,14 +46,21 @@ export async function GET(request: NextRequest) {
     const admin = createAdminClient();
     const sealed = sealMetaToken(accessToken);
     for (const a of accounts) {
-      await admin.from("ad_accounts").upsert({
+      const { data: existing, error: existingError } = await admin.from("ad_accounts")
+        .select("enabled, archived_at").eq("tenant_id", me.tenant_id).eq("platform", "meta-ads").eq("account_id", a.id).maybeSingle();
+      if (existingError) throw existingError;
+      const { error: accountError } = await admin.from("ad_accounts").upsert({
         tenant_id: me.tenant_id, platform: "meta-ads", account_id: a.id, name: a.name, currency: a.currency,
-        connected_user_id: user.id, access_token: sealed, token_expires_at: expiresAt, updated_at: new Date().toISOString(),
+        connected_user_id: user.id, access_token: sealed, token_expires_at: expiresAt, archived_at: null, updated_at: new Date().toISOString(),
         // A closed/disabled account (status ≠ 1) is kept but not synced.
-        enabled: a.status === 1,
+        enabled: (a.status === 1) && (existing && !existing.archived_at ? existing.enabled : true),
       }, { onConflict: "tenant_id,platform,account_id" });
+      if (accountError) throw accountError;
     }
-    try { await syncTenantAds(admin, me.tenant_id, "connect"); }
+    try {
+      const sync = await syncTenantAds(admin, me.tenant_id, "connect");
+      if (sync.errors.length) throw new Error(sync.errors[0]);
+    }
     catch (e) { return done("connected_syncfailed", `&why=${encodeURIComponent((e as Error).message.slice(0, 300))}`); }
     return done("connected");
   } catch (e) {

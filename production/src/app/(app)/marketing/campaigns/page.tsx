@@ -53,7 +53,7 @@ export default function MarketingCampaignsPage() {
   const blank = (): Draft => {
     const s = new Date(); const e = new Date(); e.setDate(e.getDate() + 30);
     const iso = (d: Date) => todayIso(d);
-    return { name: "", code: "", start_date: iso(s), end_date: iso(e), budget: 0, target_leads: null, target_won: null, cancelled: false, notes: null };
+    return { name: "", code: "", start_date: iso(s), end_date: iso(e), budget: 0, target_leads: null, target_won: null, cancelled: false, notes: null, ad_platform: null, ads_manager_url: null };
   };
 
   return (
@@ -165,11 +165,13 @@ function CampaignCard({ r, today, onEdit }: { r: CampaignRow; today: string; onE
         <Stat label="ROAS" value={m.roas !== null ? `${m.roas}×` : "—"} />
       </div>
       {r.notes && <p className="text-xs text-ink-2 italic">{r.notes}</p>}
+      {r.ad_platform && <p className="text-xs text-ink-3">Platform: {platformLabel(r.ad_platform)}</p>}
 
       <div className="flex flex-wrap items-center gap-2 border-t border-hairline pt-2">
         <Link href={`/marketing/links?campaign=${encodeURIComponent(r.code)}` as Route}>
           <Button variant="outline" size="sm" icon="globe">Create tracking link</Button>
         </Link>
+        {r.ads_manager_url && <a href={r.ads_manager_url} target="_blank" rel="noreferrer"><Button variant="outline" size="sm">Open in Ads Manager</Button></a>}
         <Button variant="ghost" size="sm" onClick={onEdit}>Edit</Button>
         <Button variant="ghost" size="sm" onClick={() => setOpen((o) => !o)}>{open ? "Hide details" : `Details (${r.expenses.length} expenses · ${r.leadList.length} leads)`}</Button>
         <span className="flex-1" />
@@ -229,7 +231,8 @@ function EditDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) {
   const code = codeTouched ? d.code : campaignCode(d.name);
   const problem = d.name.trim().length < 2 ? "Enter a name."
     : !/^[a-z0-9]+(-[a-z0-9]+)*$/.test(code) ? "Code: lowercase letters, numbers and - (e.g. diwali-2026)."
-    : d.end_date < d.start_date ? "End date cannot be before the start date." : null;
+    : d.end_date < d.start_date ? "End date cannot be before the start date."
+    : d.ads_manager_url && !/^https?:\/\//i.test(d.ads_manager_url.trim()) ? "Ads Manager link must start with https:// or http://." : null;
   const num = (v: string) => (v.trim() === "" ? null : Math.max(0, Math.round(Number(v) || 0)));
 
   return (
@@ -255,6 +258,19 @@ function EditDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) {
             <FormField label="Target leads" htmlFor="mc_tl"><Input id="mc_tl" type="number" min={0} value={d.target_leads ?? ""} onChange={(e) => setD({ ...d, target_leads: num(e.target.value) })} /></FormField>
             <FormField label="Target deals" htmlFor="mc_tw"><Input id="mc_tw" type="number" min={0} value={d.target_won ?? ""} onChange={(e) => setD({ ...d, target_won: num(e.target.value) })} /></FormField>
           </div>
+          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+            <FormField label="Paid ads platform" htmlFor="mc_platform">
+              <select id="mc_platform" className="h-10 w-full rounded-md border border-hairline bg-paper px-3 text-sm" value={d.ad_platform ?? ""} onChange={(e) => setD({ ...d, ad_platform: (e.target.value || null) as Draft["ad_platform"] })}>
+                <option value="">Not a paid ad</option>
+                <option value="google-ads">Google Ads</option>
+                <option value="meta-ads">Meta Ads</option>
+                <option value="linkedin-ads">LinkedIn Ads</option>
+              </select>
+            </FormField>
+            <FormField label="Campaign Manager link" htmlFor="mc_manager_url">
+              <Input id="mc_manager_url" type="url" value={d.ads_manager_url ?? ""} onChange={(e) => setD({ ...d, ads_manager_url: e.target.value || null })} placeholder="https://… exact campaign" />
+            </FormField>
+          </div>
           <FormField label="Note" htmlFor="mc_notes">
             <Input id="mc_notes" value={d.notes ?? ""} onChange={(e) => setD({ ...d, notes: e.target.value || null })} placeholder="e.g. Facebook + Google, Workspace Starter 20% off" />
           </FormField>
@@ -268,11 +284,15 @@ function EditDialog({ draft, onClose }: { draft: Draft; onClose: () => void }) {
         <DialogFooter>
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button disabled={!!problem || save.isPending} onClick={async () => {
-            await save.mutateAsync({ ...d, name: d.name.trim(), code, notes: d.notes?.trim() || null });
+            await save.mutateAsync({ ...d, name: d.name.trim(), code, notes: d.notes?.trim() || null, ads_manager_url: d.ads_manager_url?.trim() || null });
             onClose();
           }}>{save.isPending ? "Saving…" : "Save"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
+}
+
+function platformLabel(platform: NonNullable<MarketingCampaign["ad_platform"]>) {
+  return platform === "google-ads" ? "Google Ads" : platform === "meta-ads" ? "Meta Ads" : "LinkedIn Ads";
 }

@@ -26,7 +26,7 @@ describe("R-069: Add Lead reaches the Review step before saving", () => {
   });
 
   it("the Next and Save buttons are different DOM nodes (distinct keys)", () => {
-    const footer = SRC.slice(SRC.indexOf("<SheetFooter>"), SRC.indexOf("</SheetFooter>"));
+    const footer = SRC.slice(SRC.indexOf("<SheetFooter"), SRC.indexOf("</SheetFooter>")); // the footer may carry a className (pb-16, 2 Nov)
     expect(footer).toMatch(/key="step-next"/);
     expect(footer).toMatch(/key="step-save"/);
   });

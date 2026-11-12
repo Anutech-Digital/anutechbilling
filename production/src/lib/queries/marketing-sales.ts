@@ -121,7 +121,7 @@ export async function fetchCampaignSalesInput(db: Db, range: Pick<DateRange, "st
   }
 
   // Ad platforms' own numbers. Primary key (ad_account_id, day, campaign_id) is the total order.
-  const [accounts, days, campaigns, expenses] = await Promise.all([
+  const [accounts, days, campaigns, expenses, linkedInDays] = await Promise.all([
     fetchAllRows<{ id: string; platform: string }>((a, z) => scoped(loose.from("ad_accounts").select("id, platform"))
       .order("id", { ascending: true }).range(a, z) as PageQuery<{ id: string; platform: string }>),
     fetchAllRows<{ ad_account_id: string; day: string; campaign_id: string; campaign_name: string; spend: number | string; clicks: number; impressions: number }>((a, z) =>
@@ -134,13 +134,23 @@ export async function fetchCampaignSalesInput(db: Db, range: Pick<DateRange, "st
     fetchAllRows<SalesCampaignExpense>((a, z) => scoped(loose.from("expenses").select("id, campaign_id, amount, channel"))
       .not("campaign_id", "is", null).gte("expense_date", range.start).lt("expense_date", range.end)
       .order("id", { ascending: true }).range(a, z) as PageQuery<SalesCampaignExpense>),
+    // LinkedIn is entered manually until LinkedIn approves Advertising API access.
+    fetchAllRows<{ day: string; campaign_name: string; spend: number | string; clicks: number; impressions: number }>((a, z) =>
+      scoped(loose.from("linkedin_ad_metrics").select("day, campaign_name, spend, clicks, impressions"))
+        .gte("day", range.start).lt("day", range.end)
+        .order("day", { ascending: true }).order("campaign_name", { ascending: true })
+        .range(a, z) as PageQuery<{ day: string; campaign_name: string; spend: number | string; clicks: number; impressions: number }>),
   ]);
   const platformOf = new Map(accounts.map((a) => [a.id, a.platform]));
   const spendDays: SalesSpendDay[] = days.flatMap((d) => {
     const platform = platformOf.get(d.ad_account_id);
-    return platform ? [{ platform, day: d.day, campaign_id: d.campaign_id, campaign_name: d.campaign_name,
+    return platform && (platform !== "linkedin-ads" || d.campaign_id.startsWith("group:")) ? [{ platform, day: d.day, campaign_id: d.campaign_id, campaign_name: d.campaign_name,
       spend: Number(d.spend) || 0, clicks: d.clicks ?? 0, impressions: d.impressions ?? 0 }] : [];
   });
+  for (const d of linkedInDays) {
+    spendDays.push({ platform: "linkedin-ads", day: d.day, campaign_id: d.campaign_name, campaign_name: d.campaign_name,
+      spend: Number(d.spend) || 0, clicks: d.clicks ?? 0, impressions: d.impressions ?? 0 });
+  }
 
   return {
     range: { start: range.start, end: range.end },

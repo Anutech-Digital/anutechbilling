@@ -202,6 +202,9 @@ JOBS=(
   "resellersos-google-contacts-sync|0 */6 * * *|/api/cron/google-contacts-sync|Two-way Google Contacts sync"
   "resellersos-gbp-sync|30 2 * * *|/api/cron/gbp-sync|Google Business Profile reviews + performance sync"
   "resellersos-ads-sync|0 3 * * *|/api/cron/ads-sync|Google Ads + Meta Ads daily spend sync"
+  "resellersos-social-drafts|0 9 * * 1|/api/cron/social-drafts|Prepare weekly Facebook and Instagram drafts for human review"
+  "resellersos-social-publish|*/10 * * * *|/api/cron/social-publish|Publish approved Facebook and Instagram posts at their post time"
+  "resellersos-meta-leads-pull|*/30 * * * *|/api/cron/meta-leads-pull|Bring Facebook and Instagram lead-form leads into Sales leads"
   # R-524: "Try the demo" sample workspace — fresh sample rows nightly. Does nothing while DEMO_ENABLED is off.
   "resellersos-demo-reset|30 2 * * *|/api/cron/demo-reset|Reset the read-only demo workspace sample data"
   # R-2607: the FY read from Zoho an owner asked for (Invoices → FY receipts from Zoho). Does nothing when nobody asked.

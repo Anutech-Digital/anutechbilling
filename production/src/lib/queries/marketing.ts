@@ -203,7 +203,7 @@ export async function fetchMarketingReport(supabase: SupabaseClient<Database>, r
         const [{ data: accs }, { data: daily }] = await Promise.all([
           supabase.from("ad_accounts").select("id, platform"),
           // Primary key (ad_account_id, day, campaign_id) is the total order.
-          settle(fetchAllRows((from, to) => supabase.from("ad_spend_daily").select("ad_account_id, spend, clicks")
+          settle(fetchAllRows((from, to) => supabase.from("ad_spend_daily").select("ad_account_id, campaign_id, spend, clicks")
             .gte("day", range.start).lt("day", range.end)
             .order("ad_account_id", { ascending: true }).order("day", { ascending: true }).order("campaign_id", { ascending: true })
             .range(from, to))),
@@ -212,7 +212,7 @@ export async function fetchMarketingReport(supabase: SupabaseClient<Database>, r
         const reported = new Map<string, number>();
         for (const r of daily ?? []) {
           const p = platformOf.get(r.ad_account_id);
-          if (!p) continue;
+          if (!p || (p === "linkedin-ads" && !r.campaign_id.startsWith("group:"))) continue;
           reported.set(p, (reported.get(p) ?? 0) + Number(r.spend));
           adClicks = (adClicks ?? 0) + (Number(r.clicks) || 0);
         }

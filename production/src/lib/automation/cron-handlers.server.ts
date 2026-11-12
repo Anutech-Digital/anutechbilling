@@ -46,6 +46,9 @@ export const CRON_ROUTES: Record<AutomationJob, Loader> = {
   "mrr-snapshot":         () => import("@/app/api/cron/mrr-snapshot/route"),
   "backup":               () => import("@/app/api/cron/backup/route"),
   "demo-reset":           () => import("@/app/api/cron/demo-reset/route"),
+  "social-drafts":        () => import("@/app/api/cron/social-drafts/route"),
+  "social-publish":       () => import("@/app/api/cron/social-publish/route"),
+  "meta-leads-pull":      () => import("@/app/api/cron/meta-leads-pull/route"),
   "zoho-fy-read":         () => import("@/app/api/cron/zoho-fy-read/route"),
 };
 

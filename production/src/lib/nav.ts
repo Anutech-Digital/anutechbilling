@@ -509,6 +509,18 @@ const TEAM_CHAT: UserRole[] = [...STAFF, "marketing"];
  */
 export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/quotes/new": "Opened by the New quote / Send quote buttons on Quotes, leads and deals",
+  /* G-SOCIAL (5 Nov 2026): Marketing Hub tool pages — each opens from its card on /marketing (tool-catalog.ts / hub-navigation.ts) */
+  "/marketing/ads/accounts": "Manage ad accounts; opened from Ad accounts (live) on the Marketing Hub",
+  "/marketing/email": "Email tool page; opened from its Marketing Hub card",
+  "/marketing/facebook": "Facebook Page connection; opened from the Social (organic) cards on the Marketing Hub",
+  "/marketing/linkedin": "LinkedIn Company Page; opened from its Marketing Hub card",
+  "/marketing/linkedin-ads": "LinkedIn Ads setup; opened from its Marketing Hub card and Ad accounts",
+  "/marketing/listings": "Listings & marketplaces group page; opened from the Marketing Hub",
+  "/marketing/paid-ads": "Paid ads group page; opened from the Marketing Hub",
+  "/marketing/social-content": "Social content studio (drafts, review, publish); opened from Social (organic) and Facebook Page",
+  "/marketing/social-organic": "Social (organic) group page; opened from the Marketing Hub",
+  "/marketing/website-tracking": "Website & tracking group page; opened from the Marketing Hub",
+  "/marketing/whatsapp-calling": "WhatsApp & calling group page; opened from the Marketing Hub",
   "/customers/new": "Opened by Add company on Companies",
   "/setup": "First-run wizard; reached from onboarding and Settings",
   "/mobile": "Install-as-app guide; linked from the account menu",
@@ -922,6 +934,7 @@ export const APP_NAV: NavSection[] = [
 /** Pages that are not nav entries: detail pages, sub-pages, and routes kept alive for
  *  bookmarks. `tail` is appended to the crumb of whatever they sit under. */
 const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
+  "/marketing/facebook": { tail: ["Facebook Page"], under: "/marketing" },
   // NB: /deals is an APP_NAV entry again (30 Sep 2026), so its crumb comes from the nav
   //     ("Sell / Deals") — an entry here would override that with a stale title.
   // R-497: /contacts is a Customers accordion row, so its crumb comes from the nav.

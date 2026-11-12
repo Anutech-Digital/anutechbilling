@@ -49,7 +49,7 @@ export function blankLeadValues<S extends string>(defaultStage: S | undefined) {
     requirement: "", project_timeline: "", plan: "",
     seats: undefined, value: undefined,
     stage: (defaultStage ?? "new") as S | "new",
-    source: "manual", priority: "medium" as const,
+    source: "manual", utm_campaign: "", priority: "medium" as const,
     follow_up_date: "", expected_close_date: "", owner_id: "",
     subscription_type: "" as const, billing_cycle: "" as const, current_provider: "", notes: "",
   };

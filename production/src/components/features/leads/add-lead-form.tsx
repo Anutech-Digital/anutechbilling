@@ -140,7 +140,7 @@ const PLAN_PRICE_PER_SEAT_PM: Record<string, number> = {
 const STEP_LABELS = ["Contact", "Enquiry", "Review"] as const;
 const STEP_FIELDS = [
   ["company", "contact_name", "contact_email", "contact_phone", "gstin", "state_code"],
-  ["enquiry_type", "plan", "seats", "value", "requirement", "project_timeline", "stage", "source", "priority",
+  ["enquiry_type", "plan", "seats", "value", "requirement", "project_timeline", "stage", "source", "utm_campaign", "priority",
    "subscription_type", "billing_cycle", "current_provider", "follow_up_date", "expected_close_date", "owner_id", "notes"],
 ] as const;
 
@@ -258,6 +258,7 @@ const schema = z.object({
   value:         optionalIntField(100_000_000, 0, "Deal value can't be negative."),
   stage:         z.enum(["new", "contact", "quote", "demo", "trial", "won", "lost"]),
   source:        z.string(),
+  utm_campaign:  z.string().max(255, "Keep the campaign name under 255 characters."),
   priority:      z.enum(["low", "medium", "high"]),
   follow_up_date: z.string().optional().or(z.literal("")),
   /* Plain YYYY-MM-DD (the column is `date`). Required-ness and "not in the past" depend on
@@ -375,6 +376,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
           value:          editingLead.value         ?? undefined,
           stage:         (editingLead.stage  as FormData["stage"]) ?? "new",
           source:         canonicalSource(editingLead.source) || "manual",
+          utm_campaign:   editingLead.utm_campaign ?? "",
           priority:      (editingLead.priority as LeadPriority) ?? "medium",
           follow_up_date: editingLead.follow_up_date ?? "",
           expected_close_date: editingLead.expected_close_date ?? "",
@@ -630,6 +632,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
         value:          editingLead.value         ?? undefined,
         stage:         (editingLead.stage  as FormData["stage"]) ?? "new",
         source:         canonicalSource(editingLead.source) || "manual",
+        utm_campaign:   editingLead.utm_campaign ?? "",
         priority:      (editingLead.priority as LeadPriority) ?? "medium",
         follow_up_date: editingLead.follow_up_date ?? "",
         expected_close_date: editingLead.expected_close_date ?? "",
@@ -709,6 +712,8 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
       const seatsVal = !project && (data.seats !== undefined && data.seats !== null && !Number.isNaN(data.seats) && data.seats > 0) ? data.seats : null;
       const valueVal = (data.value !== undefined && data.value !== null && !Number.isNaN(data.value) && data.value > 0) ? data.value : null;
 
+      const paidSource = ["google-ads", "meta-ads", "linkedin-ads"].includes(data.source);
+      const sourceChanged = isEditing && canonicalSource(editingLead?.source) !== data.source;
       const sharedPatch = {
         /* `leads.company` DB me NOT NULL hai, aur form ab use optional maanta hai.
            Isliye yahan khaali string — wahi shakl jo inbound raasta pehle se likhta hai
@@ -729,6 +734,9 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
         value:          valueVal,
         stage:          data.stage,
         source:         isEditing ? sourceForSave(data.source, editingLead?.source) : data.source,
+        utm_campaign:   paidSource ? (data.utm_campaign.trim() || null) : sourceChanged ? null : (editingLead?.utm_campaign ?? null),
+        utm_source:     paidSource ? (!sourceChanged && editingLead?.utm_source ? editingLead.utm_source : data.source) : sourceChanged ? null : (editingLead?.utm_source ?? null),
+        utm_medium:     paidSource ? (!sourceChanged && editingLead?.utm_medium ? editingLead.utm_medium : "cpc") : sourceChanged ? null : (editingLead?.utm_medium ?? null),
         priority:       data.priority,
         follow_up_date: data.follow_up_date || null,
         expected_close_date: data.expected_close_date || null,
@@ -1372,6 +1380,14 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
             </FormField>
           </div>
 
+          {["google-ads", "meta-ads", "linkedin-ads"].includes(source) && (
+            <FormField label="Ad campaign" htmlFor="utm_campaign">
+              <Input id="utm_campaign" placeholder="Campaign name" {...register("utm_campaign")} />
+              <p className="mt-1 text-xs text-ink-3">Use the exact campaign name shown in Ad accounts so spend and revenue match.</p>
+              {errors.utm_campaign && <p className="mt-1 text-xs text-danger">{errors.utm_campaign.message}</p>}
+            </FormField>
+          )}
+
           {/* New vs switching — is the prospect already subscribed elsewhere? A licence
               question only; a custom-software project has nothing to switch from. */}
           {!isProject && (
@@ -1538,7 +1554,7 @@ export function AddLeadForm({ open, onOpenChange, editingLead, defaultStage }: A
 
           </div>  {/* close scrollable form body */}
 
-          <SheetFooter>
+          <SheetFooter className="pb-16">
             <Button
               type="button"
               variant="ghost"
