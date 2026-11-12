@@ -41,12 +41,13 @@ describe("R-2653 supabaseScanStore — Read again", () => {
   });
 
   it("addListed: changed → payload nulled; unchanged → payload untouched; other account → only listed_at; new other account → not stored", async () => {
+    /* R-2694: INR facts that carry their currency (complete) — an old one without it is re-read (reread-r2694.test.ts). */
     const known = [
-      { zoho_id: "p-same", zoho_status: "paid", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: "ZA-RZP", facts_version: null },
-      { zoho_id: "p-edit", zoho_status: "paid", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: "ZA-RZP", facts_version: null },
-      { zoho_id: "p-hdfc", zoho_status: "paid", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: "ZA-HDFC", facts_version: null },
+      { zoho_id: "p-same", zoho_status: "paid", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: "ZA-RZP", facts_version: null, fx_cur: "INR", fx_lines: null },
+      { zoho_id: "p-edit", zoho_status: "paid", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: "ZA-RZP", facts_version: null, fx_cur: "INR", fx_lines: null },
+      { zoho_id: "p-hdfc", zoho_status: "paid", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: "ZA-HDFC", facts_version: null, fx_cur: "INR", fx_lines: null },
       /* read while it was in Razorpay Clearing, now moved to HDFC in Zoho → its facts must be read again */
-      { zoho_id: "p-moved", zoho_status: "paid", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: "ZA-RZP", facts_version: null },
+      { zoho_id: "p-moved", zoho_status: "paid", fy: "2025-26", zoho_modified: "T1", detailed_at: "2026-11-01T00:00:00Z", deposit_account_id: "ZA-RZP", facts_version: null, fx_cur: "INR", fx_lines: null },
     ];
     const { db, calls } = fakeDb(known);
     const row = (id: string, modified: string, accountId: string) => ({ zohoId: id, number: id, date: "2025-06-01", status: "paid", modified, accountId });
