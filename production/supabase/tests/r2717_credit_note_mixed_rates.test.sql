@@ -14,8 +14,12 @@
 --   C2. the other half → again ₹15,000 + ₹1,800: the two notes are the invoice's exact figures;
 --       the unpaid invoice is settled (Paid) — R-1566's rule, unchanged.
 --   D1. debit note ₹3,360 on a mixed invoice → ₹3,000 + ₹360, rate NULL (same rule; the undo of a credit note).
---   M.  [0% line, line with no rate] on an 18% invoice is two rates → the invoice's proportion.
---   N.  every line at the same own rate / an adjustment line with a rate → ONE rate, old rule.
+--   M.  all or nothing: [0% line, line with NO rate] on an 18% invoice does not carry line rates →
+--       the old rule at the invoice's 18% (and bill_late_charges, which needs that, keeps working).
+--   N.  every valued line at the same own rate (an adjustment line / a ₹0 line with another rate
+--       do not count) → ONE rate: that rate. N2: tax_rate NULL, every valued line at 0% → 0% (no
+--       GST on the note — red before: backed out at the 18% default).
+--   T.  the helper refuses an invoice of another company (fail-closed tenant check).
 --   R.  mixed lines but no taxable / GST on the invoice → refused, nothing written.
 --   E.  invoice_note_gst_split is internal (no anon / authenticated execute).
 
@@ -66,6 +70,8 @@ select pg_temp.r2717_inv('TESTINV-R2717-HALF', 33600, 30000, 3600, 18,
   '[{"name":"Domain renewal","qty":1,"rate":10000,"tax_rate":0},{"name":"Workspace","qty":2,"rate":10000}]');
 select pg_temp.r2717_inv('TESTINV-R2717-SAME', 35400, 30000, 5400, null,
   '[{"name":"A","qty":1,"rate":10000,"tax_rate":18},{"name":"B","qty":2,"rate":10000,"tax_rate":18},{"name":"Adjustment","qty":1,"rate":-250,"kind":"adjustment","tax_rate":5},{"name":"Free","qty":1,"rate":0,"tax_rate":0}]');
+select pg_temp.r2717_inv('TESTINV-R2717-ZERO', 10000, 10000, 0, null,
+  '[{"name":"Export line","qty":1,"rate":10000,"amount":10000,"tax_rate":0},{"name":"Free","qty":1,"rate":0,"amount":0,"tax_rate":18}]');
 select pg_temp.r2717_inv('TESTINV-R2717-NOFIG', 33600, null, null, null,
   '[{"name":"Domain renewal","qty":1,"rate":10000,"tax_rate":0},{"name":"Workspace","qty":2,"rate":10000,"tax_rate":18}]');
 
@@ -116,10 +122,16 @@ begin
     insert into r2717_fail values ('D1: net payable ' || (v->>'new_net_payable') || ' (want 36,960)');
   end if;
 
-  -- M. [0% line, line with no rate] on an 18% invoice = two rates.
-  v := public.issue_credit_note('TESTINV-R2717-HALF', 3360, 'other', 'M', null);
-  if (v->>'taxable_value')::int <> 3000 or (v->>'tax_amount')::int <> 360 or (v->'tax_rate') <> 'null'::jsonb then
-    insert into r2717_fail values ('M: 0% line + a line at the invoice rate, ₹3,360 credit → ' || v::text || ' (want 3,000 + 360, rate null)');
+  -- M. all or nothing: one valued line has no rate → the invoice's own 18%, as before.
+  v := public.issue_credit_note('TESTINV-R2717-HALF', 1180, 'other', 'M', null);
+  if (v->>'taxable_value')::int <> 1000 or (v->>'tax_amount')::int <> 180 or (v->>'tax_rate')::int is distinct from 18 then
+    insert into r2717_fail values ('M: a 0% line + a line with NO rate on an 18% invoice, ₹1,180 credit → ' || v::text || ' (want the invoice rate: 1,000 + 180, rate 18)');
+  end if;
+
+  -- N2. tax_rate NULL, every valued line at 0% → no GST on the note.
+  v := public.issue_credit_note('TESTINV-R2717-ZERO', 4000, 'other', 'N2', null);
+  if (v->>'taxable_value')::int <> 4000 or (v->>'tax_amount')::int <> 0 or (v->>'tax_rate')::int is distinct from 0 then
+    insert into r2717_fail values ('N2: NULL-rate invoice whose valued lines are all 0%, ₹4,000 credit → ' || v::text || ' (want 4,000 + 0, rate 0 — not the 18% default)');
   end if;
 
   -- N. one rate on every valued line (adjustment + ₹0 lines do not count) → the old rule.
@@ -154,6 +166,25 @@ begin
   end if;
 end $$;
 reset role;
+select set_config('request.jwt.claims', '', true);
+
+-- T. the helper's own tenant check (it is service-only, but fails closed all the same).
+insert into auth.users (id, email) values ('e2717000-0000-4000-8000-0000000000b2', 'r2717-other@example.test');
+insert into public.tenants (id, name, email, state_code, doc_code)
+  values ('e2717000-0000-0000-0000-0000000000b0', 'R2717 Other Co', 'r2717-other@example.in', '07', 'R2717B');
+insert into public.users (id, tenant_id, email, full_name, role, is_active) values
+  ('e2717000-0000-4000-8000-0000000000b2', 'e2717000-0000-0000-0000-0000000000b0', 'r2717-other@example.in', 'R2717 Other', 'owner', true);
+do $$
+declare v_msg text;
+begin
+  perform set_config('request.jwt.claims', json_build_object('sub', 'e2717000-0000-4000-8000-0000000000b2', 'role', 'authenticated')::text, true);
+  begin
+    perform * from public.invoice_note_gst_split('TESTINV-R2717-MIXD', 100);
+  exception when others then v_msg := sqlerrm; end;
+  if v_msg is null or v_msg not like '%not in the caller%tenant%' then
+    insert into r2717_fail values ('T: invoice_note_gst_split answered for another company''s invoice: ' || coalesce(v_msg, 'ran'));
+  end if;
+end $$;
 select set_config('request.jwt.claims', '', true);
 
 -- ── What was stored ──────────────────────────────────────────────────────────────────────

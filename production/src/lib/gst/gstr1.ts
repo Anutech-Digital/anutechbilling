@@ -33,7 +33,7 @@
 import { SAAS_HSN, SAAS_HSN_LABEL, sacLabel } from "./hsn";
 import { splitTaxHeads } from "./tax-split";
 import { isExportSupply, treatmentIsAlwaysInterState } from "./place-of-supply";
-import { lineOwnRate, lineWeight, rateSlices, type RateSlice } from "./line-rates";
+import { lineOwnRate, lineWeight, rateSlices, shareByWeight, sliceHeads, type RateSlice } from "./line-rates";
 import { GST_STATE_BY_CODE } from "@/lib/utils";
 
 /** Inter-state B2C invoice above this value gets its own B2CL line (₹1L since 1 Aug 2024). */
@@ -60,7 +60,7 @@ export interface Gstr1Doc {
    *  export → EXP / CDNUR-EXP. Missing/empty = domestic (never silently zero-rate). */
   customerCountry?: string | null;
   /** Per-line HSN/SAC share of the taxable value. Missing → whole document under SAAS_HSN.
-   *  R-2717: `rate` = the line's own GST % (absent → the document's `taxRate`). Lines at
+   *  R-2717: `rate` = the line's own GST % (absent on any line → the document is one-rate, `taxRate`). Lines at
    *  different rates split the document's rows by rate (lib/gst/line-rates.ts). */
   lines?: { hsn: string; description?: string; taxable: number; rate?: number | null }[];
   /** R-1742: invoices.gst_treatment frozen at issue (a note takes its invoice's). Null =
@@ -229,18 +229,14 @@ export function hsnLines(
   items: { hsn: string | null | undefined; description?: string; weight: number; rate?: number | null }[] | null | undefined,
 ): { hsn: string; description?: string; taxable: number; rate?: number }[] {
   const usable = (items ?? []).filter((i) => i.weight > 0);
-  const totalW = usable.reduce((s, i) => s + i.weight, 0);
-  if (!usable.length || totalW <= 0) return [{ hsn: SAAS_HSN, description: SAAS_HSN_LABEL, taxable: taxableValue }];
-  const out: { hsn: string; description?: string; taxable: number; rate?: number }[] = [];
-  let assigned = 0;
-  usable.forEach((i, idx) => {
-    const last = idx === usable.length - 1;
-    const share = last ? taxableValue - assigned : Math.round((taxableValue * i.weight) / totalW);
-    assigned += share;
-    /* R-2717: the line's own GST rate rides along; a line with none adds no key. */
-    out.push({ hsn: (i.hsn ?? "").trim() || SAAS_HSN, description: i.description, taxable: share, ...(i.rate != null ? { rate: i.rate } : {}) });
-  });
-  return out;
+  if (!usable.length) return [{ hsn: SAAS_HSN, description: SAAS_HSN_LABEL, taxable: taxableValue }];
+  /* R-2717: the share arithmetic is lib/gst/line-rates.ts shareByWeight (unchanged: round by
+     weight, the last line takes the remainder) — one copy for the HSN table and the rate
+     slices. The line's own GST rate rides along; a line with none adds no key. */
+  const shares = shareByWeight(taxableValue, usable.map((i) => i.weight));
+  return usable.map((i, idx) => ({
+    hsn: (i.hsn ?? "").trim() || SAAS_HSN, description: i.description, taxable: shares[idx], ...(i.rate != null ? { rate: i.rate } : {}),
+  }));
 }
 
 /** A stored invoice line, as far as the HSN table cares. `hsn` is the line's OWN code
@@ -248,7 +244,7 @@ export function hsnLines(
  *  at the catalogue, whose `items.hsn` is the fallback. */
 export interface HsnSourceLine {
   item_id?: string | null; hsn?: string | null; name?: string; qty?: number; rate?: number;
-  /** R-2717: the line's own GST % (lib/gst/line-rates.ts). Absent → the invoice's rate. */
+  /** R-2717: the line's own GST % (lib/gst/line-rates.ts). All valued lines must carry it, else the invoice is one-rate. */
   tax_rate?: number | null;
   /** R-2702: a Zoho `adjustment` line is outside the taxable value — no HSN share. */
   kind?: string | null;
@@ -306,15 +302,16 @@ export function buildGstr1(docs: Gstr1Doc[], seller: Seller): Gstr1Sections {
     const slices = rateSlices(d, lines);
     const mixed = slices.length > 1;
     const igstOnly = d.interState || isExport || isSezDoc(d);
-    const docRate = mixed ? slices[slices.length - 1].rate : d.taxRate;
-    const items = mixed ? sliceItems(slices, heads, igstOnly) : undefined;
+    /* One slice: its rate is the document's — `d.taxRate`, or the one rate ALL its lines carry. */
+    const docRate = slices[slices.length - 1].rate;
+    const items = mixed ? sliceItems(slices, igstOnly) : undefined;
     const absItems = items?.map((it) => ({ rate: it.rate, taxable: Math.abs(it.taxable), heads: abs(it.heads) }));
 
     // HSN summary (Table 12) — signed, so it nets the same way 3B does.
     const lineTax = (share: number) => (d.taxableValue ? Math.round((d.gst * share) / d.taxableValue) : 0);
     /* Mixed: a line's tax is its share of ITS rate's GST; the last line of a rate takes the
        remainder, so the HSN rows of a rate add up to that rate's slice. */
-    const lineRate = (ln: { rate?: number | null }) => (mixed ? (ln.rate ?? d.taxRate) : d.taxRate);
+    const lineRate = (ln: { rate?: number | null }) => (mixed ? (ln.rate ?? docRate) : docRate);
     const left = new Map(slices.map((sl) => [sl.rate, { gst: sl.gst, lines: lines.filter((ln) => lineRate(ln) === sl.rate).length }]));
     for (const ln of lines) {
       const rate = lineRate(ln);
@@ -383,11 +380,9 @@ function abs(h: TaxHeads): TaxHeads { return { igst: Math.abs(h.igst), cgst: Mat
 /** R-2717: rate slices → row items (signed). Heads per rate by the shared split; the highest
  *  rate takes what is left of the document's own heads, so the items add up to the
  *  document's IGST / CGST / SGST to the rupee. */
-function sliceItems(slices: RateSlice[], docTax: TaxHeads, igstOnly: boolean): RateItem[] {
-  const items = slices.map((sl) => ({ rate: sl.rate, taxable: sl.taxable, heads: gstSplit({ gst: sl.gst, interState: igstOnly }) }));
-  const others = items.slice(0, -1).reduce((a, it) => addHeads(a, it.heads), { igst: 0, cgst: 0, sgst: 0 });
-  items[items.length - 1].heads = { igst: docTax.igst - others.igst, cgst: docTax.cgst - others.cgst, sgst: docTax.sgst - others.sgst };
-  return items;
+function sliceItems(slices: RateSlice[], igstOnly: boolean): RateItem[] {
+  const heads = sliceHeads(slices, igstOnly);   // the same per-rate heads the invoice PDF prints
+  return slices.map((sl, i) => ({ rate: sl.rate, taxable: sl.taxable, heads: heads[i] }));
 }
 
 // ─── GST Offline Tool CSVs (one file per section, standard templates) ───────

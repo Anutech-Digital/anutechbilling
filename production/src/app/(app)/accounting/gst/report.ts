@@ -272,13 +272,16 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
     // back to reverse-deriving at the row's rate for any legacy invoice.
     const taxableValue = i.taxable_value ?? Math.round(amount * 100 / (100 + r.rate));
     const gst          = i.tax_amount ?? (amount - taxableValue);
-    /* R-2717: lines at different GST rates (tax_rate NULL on the row, a rate on each line) —
-       the row shows the highest rate + the list; GSTR-1 splits it by rate from `lines`.
-       Its 11B advance has no single rate to back the tax out at → "rate missing", never the
-       slab that tax ÷ taxable happens to be nearest to. */
+    /* R-2717: an invoice whose lines ALL carry a GST rate is filed by them. One rate → that is
+       the row's rate. Different rates (tax_rate NULL on the row) → the row shows the highest
+       rate + the list, and GSTR-1 splits it by rate from `lines`; its 11B advance then has no
+       single rate to back the tax out at → "rate missing", never the slab that tax ÷ taxable
+       happens to be nearest to. */
     const lines        = docHsnLines(taxableValue, linesByInvoice.get(i.id), hsnByItem);
     const shown        = docRates({ taxableValue, gst, taxRate: r.rate }, lines);
-    rateByInvoice.set(i.id, shown.rates ? { rate: 0, rateMissing: true } : r);
+    const byLines      = lines.every((l) => l.rate != null);
+    const rateMissing  = byLines ? false : r.rateMissing;
+    rateByInvoice.set(i.id, shown.rates ? { rate: 0, rateMissing: true } : { rate: shown.taxRate, rateMissing });
     const taxRate      = shown.taxRate;
     const c = custOf(i.customer_id);
     /* R-043: the buyer as on the day of issue, frozen on the invoice — a later customer
@@ -297,7 +300,7 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
       gst,
       taxRate,
       ...(shown.rates ? { rates: shown.rates } : {}),
-      rateMissing:   shown.rates ? false : r.rateMissing,
+      rateMissing,
       interState:    i.inter_state ?? false,
       docType:       "invoice",
       lines,
@@ -313,13 +316,13 @@ export async function loadGstReport(supabase: ReturnType<typeof createClient>, r
       .map((l) => (ownRate == null ? l : { hsn: l.hsn, description: l.description, taxable: l.taxable }));
   // R-1131: a note with no stored rate takes the rate its own tax ÷ taxable shows — never 18.
   /* R-2717: a note on a mixed-rate invoice has no rate of its own (tax_rate NULL) — it is split
-     like the invoice it amends, by that invoice's line rates (`lines` carry them). */
+     like the invoice it amends, by that invoice's line rates (`lines` carry them; a note with
+     its own rate had them stripped in noteLines, so docRates gives its own rate back). */
   const noteRate = (n: { tax_rate: number | null; taxable_value: number | null; tax_amount: number | null }, sign: 1 | -1, lines: ReturnType<typeof noteLines>) => {
     const r = docGstRate(n.tax_rate, n.taxable_value, n.tax_amount);
-    const shown = n.tax_rate == null
-      ? docRates({ taxableValue: sign * (n.taxable_value ?? 0), gst: sign * (n.tax_amount ?? 0), taxRate: r.rate }, lines)
-      : { taxRate: r.rate };
-    return { taxRate: shown.taxRate, ...(shown.rates ? { rates: shown.rates } : {}), rateMissing: shown.rates ? false : r.rateMissing };
+    const shown = docRates({ taxableValue: sign * (n.taxable_value ?? 0), gst: sign * (n.tax_amount ?? 0), taxRate: r.rate }, lines);
+    const byLines = lines.every((l) => "rate" in l && l.rate != null);
+    return { taxRate: shown.taxRate, ...(shown.rates ? { rates: shown.rates } : {}), rateMissing: byLines ? false : r.rateMissing };
   };
   for (const n of creditNotes ?? []) {
     const c = noteParty(n.invoice_id, custOf(n.customer_id));

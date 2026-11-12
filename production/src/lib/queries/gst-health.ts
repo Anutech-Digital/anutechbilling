@@ -61,15 +61,20 @@ export function useGstHealth() {
          PostgREST's 1000-row cap, so the audit checked only the first 1000 invoices and a
          customer past row 1000 looked like "no state on record". A failed page throws
          instead of reading as an empty customer list. */
-      const [issued, customers] = await Promise.all([
+      const [issued, customers, noRate] = await Promise.all([
         /* R-1739: an invoice imported from Zoho Books is not a GST document of ours. */
         fetchAllRows((a, b) => onlySaleInvoices(supabase.from("invoices")
-          .select("id, customer_id, taxable_value, tax_amount, tax_rate, inter_state, document_kind, gst_treatment, line_items"))
+          .select("id, customer_id, taxable_value, tax_amount, tax_rate, inter_state, document_kind, gst_treatment"))
           .order("id").range(a, b)),
         fetchAllRows((a, b) => supabase.from("customers")
           .select("id, name, state_code, gstin, country, gst_treatment")
           .order("id").range(a, b)),
+        /* R-2717: the lines of ONLY the invoices with no single rate (tax_rate NULL — a rate
+           per line) — not every invoice's line array just to find those few. */
+        fetchAllRows((a, b) => onlySaleInvoices(supabase.from("invoices").select("id, line_items"))
+          .is("tax_rate", null).order("id").range(a, b)),
       ]);
+      const linesOfNoRate = new Map(noRate.map((r) => [r.id, r.line_items]));
       /* R-1529: a Bill of Supply carries no GST by law — auditing its 0% as a GST finding
          would be noise. Tax Invoices only. */
       const invoices = issued.filter(isTaxInvoiceRow);
@@ -84,8 +89,8 @@ export function useGstHealth() {
       for (const inv of invoices) {
         const customer = inv.customer_id ? byId.get(inv.customer_id) : undefined;
         const issues = auditInvoiceGst(
-          /* R-2717: a mixed-rate invoice (tax_rate NULL, a rate per line) is checked per rate. */
-          invoiceGstFacts(inv),
+          /* R-2717: an invoice with no single rate (tax_rate NULL, a rate per line) is checked per rate. */
+          invoiceGstFacts({ ...inv, line_items: linesOfNoRate.get(inv.id) }),
           {
             stateCode: customer?.state_code,
             gstin: customer?.gstin,

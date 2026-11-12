@@ -2,26 +2,33 @@
 -- deploy-key: r2717notelinerates
 -- R-2717 — a credit / debit note on an invoice whose LINES carry different GST rates.
 --
--- An invoice can now carry a GST rate per line (invoices.line_items[].tax_rate; a Zoho invoice
--- with a 0% line and an 18% line). Such an invoice has invoices.tax_rate NULL — no single rate.
--- issue_credit_note_core and issue_debit_note backed the note's tax out at
--- `coalesce(invoice.tax_rate, 18)`: a ₹16,800 credit on ₹30,000 + ₹3,600 GST became
--- ₹14,237 + ₹2,563 at "18%" instead of ₹15,000 + ₹1,800 — GST reversed that was never charged.
+-- An invoice can now carry a GST rate per line (a Zoho invoice with a 0% line and an 18% line).
+-- It "carries line rates" when EVERY line with value has its own invoices.line_items[].tax_rate
+-- (all or nothing — one line without a rate and it is an ordinary one-rate invoice); on such a
+-- line `amount` is the line's taxable value. Lines at different rates → invoices.tax_rate NULL.
+-- (Definition and the TS twins: src/lib/gst/line-rates.ts — lineRateSet / noteSplitRule.)
 --
--- What changes (and nothing else in either function — bodies are r1563's issue_credit_note_core
--- and r2178's issue_debit_note with ONLY the rate block replaced):
+-- issue_credit_note_core and issue_debit_note backed the note's tax out at
+-- `coalesce(invoice.tax_rate, 18)`: a ₹16,800 credit on ₹30,000 + ₹3,600 GST (0% + 18% lines)
+-- became ₹14,237 + ₹2,563 at "18%" instead of ₹15,000 + ₹1,800 — GST reversed that was never charged.
+--
+-- What changes (and nothing else in either function — the bodies are r1563's
+-- issue_credit_note_core and r2178's issue_debit_note with ONLY the rate block replaced;
+-- auth.role() is written public.current_request_role(), R-2487):
 --   1. invoice_note_gst_split(invoice, gross) — the one rule both notes use:
---        · lines at ONE rate (every invoice before this card): the old rule, unchanged —
+--        · no line rates (every invoice before this card): the old rule, unchanged —
 --          rate = coalesce(invoices.tax_rate, 18), taxable = round(gross × 100 / (100 + rate)).
---        · lines at DIFFERENT rates: the note follows the invoice it amends — taxable =
+--        · line rates, all ONE rate: the same rule at that rate (never the 18% default on a
+--          0% or 5% invoice whose tax_rate is NULL).
+--        · line rates, DIFFERENT rates: the note follows the invoice it amends — taxable =
 --          round(gross × invoice taxable ÷ (invoice taxable + invoice GST)), GST = the rest,
---          rate NULL. The GST report then splits the note by the invoice's line rates
---          (src/lib/gst/line-rates.ts; the TS twin of this split is mixedRateNoteSplit).
+--          rate NULL. The GST report then splits the note by the invoice's line rates.
 --        · different rates but no taxable / GST on the invoice → refused (never guessed at 18%).
---      "Different rates" = more than one distinct rate among lines with value (qty × rate > 0,
---      not a Zoho adjustment line); a line with no rate of its own counts as the invoice's rate.
 --   2. credit_notes.tax_rate / debit_notes.tax_rate may be NULL (= follows the invoice's lines).
 --
+-- Late payment charges (bill_late_charges) are NOT changed: they need invoices.tax_rate and keep
+-- refusing an invoice that has none ("has no GST rate stored…") — so a mixed-rate invoice carries
+-- no late fee until that rule is decided (card follow-up).
 -- Money rules: G17 (a Zoho sale is kept as filed — the invoice's own taxable / GST drive the split).
 
 alter table public.credit_notes alter column tax_rate drop not null;
@@ -40,30 +47,51 @@ security definer
 set search_path = public
 as $$
 /* R-2717: taxable + GST of a credit / debit note of p_gross on this invoice. Internal — called
-   by issue_credit_note_core / issue_debit_note, which have already checked role and tenant. */
+   by issue_credit_note_core / issue_debit_note (service_role only; they check role and tenant,
+   and the tenant check is repeated here, fail closed). */
 declare
-  v_inv   record;
-  v_rates integer;
+  v_inv     record;
+  v_caller  uuid := public.current_tenant_id();
+  v_valued  integer;   -- lines that carry value
+  v_rated   integer;   -- … of which carry their own GST rate
+  v_rates   integer;   -- distinct rates among those
+  v_line    numeric;   -- the one line rate, when there is exactly one
 begin
-  select i.tax_rate, i.taxable_value, i.tax_amount, i.line_items
+  select i.tenant_id, i.tax_rate, i.taxable_value, i.tax_amount, i.line_items
     into v_inv
     from public.invoices i where i.id = p_invoice_id;
   if not found then raise exception 'Invoice % not found', p_invoice_id using errcode = 'no_data_found'; end if;
+  if v_caller is not null and v_inv.tenant_id <> v_caller then
+    raise exception 'Invoice % is not in the caller''s tenant', p_invoice_id using errcode = 'insufficient_privilege';
+  end if;
 
-  /* Distinct GST rates among the lines that carry value. −1 stands for "the invoice's rate"
-     (a line with no usable rate of its own), so [0%, no rate] is two rates and [no rate,
-     no rate] is one — the same reading as lineOwnRate / rateSlices in lib/gst/line-rates.ts. */
-  select count(distinct coalesce(
-           case when jsonb_typeof(l->'tax_rate') = 'number' and (l->>'tax_rate')::numeric >= 0
-                then (l->>'tax_rate')::numeric end, -1))
-    into v_rates
-    from jsonb_array_elements(case when jsonb_typeof(v_inv.line_items) = 'array' then v_inv.line_items else '[]'::jsonb end) l
-   where jsonb_typeof(l) = 'object'
-     and coalesce(l->>'kind', '') <> 'adjustment'
-     and coalesce(case when jsonb_typeof(l->'qty')  = 'number' then (l->>'qty')::numeric  end, 0)
-       * coalesce(case when jsonb_typeof(l->'rate') = 'number' then (l->>'rate')::numeric end, 0) > 0;
+  /* The lines that carry value, and their own GST rates. A line's value: its `amount` when it
+     carries a rate of its own and an amount (the line's taxable, as filed), else qty × rate;
+     a Zoho adjustment line has none. Same reading as lineWeight / lineOwnRate / lineRateSet
+     in src/lib/gst/line-rates.ts. */
+  select count(*), count(x.own), count(distinct x.own), min(x.own)
+    into v_valued, v_rated, v_rates, v_line
+    from (
+      -- Each number is read through its own CASE on jsonb_typeof, so text in a line can never reach a cast.
+      select r.own,
+             case when coalesce(l->>'kind', '') = 'adjustment' then 0
+                  when r.own is not null and r.amt is not null then r.amt
+                  else coalesce(r.qty, 0) * coalesce(r.unit, 0)
+             end as val
+        from jsonb_array_elements(case when jsonb_typeof(v_inv.line_items) = 'array' then v_inv.line_items else '[]'::jsonb end) l
+       cross join lateral (
+         select case when jsonb_typeof(l->'tax_rate') = 'number' then (l->>'tax_rate')::numeric end as own_raw,
+                case when jsonb_typeof(l->'amount') = 'number' then (l->>'amount')::numeric end as amt,
+                case when jsonb_typeof(l->'qty')    = 'number' then (l->>'qty')::numeric    end as qty,
+                case when jsonb_typeof(l->'rate')   = 'number' then (l->>'rate')::numeric   end as unit
+       ) n
+       cross join lateral (select case when n.own_raw >= 0 then n.own_raw end as own, n.amt, n.qty, n.unit) r
+       where jsonb_typeof(l) = 'object'
+    ) x
+   where x.val > 0;
 
-  if v_rates > 1 then
+  -- Carries line rates = every valued line has one (all or nothing).
+  if v_valued > 0 and v_rated = v_valued and v_rates > 1 then
     if v_inv.taxable_value is null or v_inv.tax_amount is null
        or v_inv.taxable_value < 0 or v_inv.tax_amount < 0
        or v_inv.taxable_value + v_inv.tax_amount <= 0 then
@@ -77,8 +105,11 @@ begin
     return;
   end if;
 
-  -- One rate: the rule issue_credit_note / issue_debit_note always used.
-  rate := coalesce(v_inv.tax_rate, 18);
+  /* One rate: the rule issue_credit_note / issue_debit_note always used. The rate is the one
+     every valued line carries (a whole number — notes store an integer rate), else
+     invoices.tax_rate, else 18 as before. */
+  rate := coalesce(case when v_valued > 0 and v_rated = v_valued and v_rates = 1 and v_line = trunc(v_line) then v_line::integer end,
+                   v_inv.tax_rate, 18);
   if rate = 0 then
     taxable := p_gross;
     tax     := 0;
@@ -91,7 +122,7 @@ end;
 $$;
 
 comment on function public.invoice_note_gst_split(text, integer) is
-  'R-2717: taxable + GST + rate of a credit / debit note of that gross on the invoice. One line rate → invoices.tax_rate (else 18%) as before; lines at different GST rates → the invoice''s own taxable : GST proportion, rate NULL. Internal (issue_credit_note_core / issue_debit_note).';
+  'R-2717: taxable + GST + rate of a credit / debit note of that gross on the invoice. No line rates → invoices.tax_rate (else 18%) as before; every valued line at one rate → that rate; lines at different GST rates → the invoice''s own taxable : GST proportion, rate NULL. Internal (issue_credit_note_core / issue_debit_note).';
 
 revoke all on function public.invoice_note_gst_split(text, integer) from public, anon, authenticated;
 grant execute on function public.invoice_note_gst_split(text, integer) to service_role;
@@ -136,13 +167,13 @@ declare
 begin
   /* R-718: role gate (Pardeep's role table, 11 Oct 2026). Trusted = service_role or a direct
      DB session with no request role (R-454 / R-714 / R-717); everyone else needs the role. */
-  if not (coalesce(auth.role(), '') = 'service_role'
-          or (auth.role() is null
+  if not (coalesce(public.current_request_role(), '') = 'service_role'
+          or (public.current_request_role() is null
               and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
      and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing') then
     raise exception 'Only an owner, manager, accountant or billing user can issue a credit note' using errcode = '42501';
   end if;
-  v_is_service := auth.role() = 'service_role';
+  v_is_service := public.current_request_role() = 'service_role';
   if not v_is_service then
     v_caller_tenant := public.current_tenant_id();
     if v_caller_tenant is null then raise exception 'No tenant context'; end if;
@@ -298,13 +329,13 @@ declare
 begin
   /* R-718: role gate (Pardeep's role table, 11 Oct 2026). Trusted = service_role or a direct
      DB session with no request role (R-454 / R-714 / R-717); everyone else needs the role. */
-  if not (coalesce(auth.role(), '') = 'service_role'
-          or (auth.role() is null
+  if not (coalesce(public.current_request_role(), '') = 'service_role'
+          or (public.current_request_role() is null
               and session_user::text not in ('authenticator', 'anon', 'authenticated', 'app_runtime')))
      and not public.current_user_has_role('owner', 'manager', 'accountant', 'billing') then
     raise exception 'Only an owner, manager, accountant or billing user can issue a debit note' using errcode = '42501';
   end if;
-  v_is_service := auth.role() = 'service_role';
+  v_is_service := public.current_request_role() = 'service_role';
   if not v_is_service then
     v_caller_tenant := public.current_tenant_id();
     if v_caller_tenant is null then raise exception 'No tenant context'; end if;

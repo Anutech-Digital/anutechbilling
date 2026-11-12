@@ -144,6 +144,23 @@ describe("R-2717 GSTR-1 by line rate", () => {
     expect(r.docs[0]).toMatchObject({ table: "B2B", num: "INV/25-26/1248", taxable: 30000, rates: [0, 18] });
   });
 
+  it("every line at ONE own rate (tax_rate NULL on the row) → filed at that rate, not at the fallback", () => {
+    const five = mixed({ taxRate: 18, gst: 1500, amount: 31500, lines: docHsnLines(30000, storedLines.map((l) => ({ ...l, tax_rate: 5 })), noItems) });
+    const s = buildGstr1([five], seller);
+    expect(s.b2b[0]).toMatchObject({ rate: 5, taxable: 30000, heads: { igst: 1500, cgst: 0, sgst: 0 } });
+    expect(s.b2b[0].items).toBeUndefined();
+    expect(s.hsn.map((h) => h.rate)).toEqual([5, 5]);
+  });
+
+  it("all or nothing: one valued line without a rate → an ordinary one-rate invoice at its own rate", () => {
+    const half = mixed({ taxRate: 18, gst: 5400, amount: 35400, lines: docHsnLines(30000, [storedLines[0], { name: "Workspace", hsn: "998313", qty: 2, rate: 10000 }], noItems) });
+    const s = buildGstr1([half], seller);
+    expect(s.b2b[0]).toMatchObject({ rate: 18, taxable: 30000 });
+    expect(s.b2b[0].items).toBeUndefined();
+    expect(gstr1Csv(s).b2b).toHaveLength(1);
+    expect(s.hsn.map((h) => [h.rate, h.taxable])).toEqual([[18, 10000], [18, 20000]]);
+  });
+
   it("a single-rate invoice is untouched: no items, its own rate, one CSV line", () => {
     const plain: Gstr1Doc = { ...mixed(), taxRate: 18, gst: 5400, amount: 35400, lines: docHsnLines(30000, storedLines.map(({ tax_rate: _t, ...l }) => l), noItems) };
     const s = buildGstr1([plain], seller);

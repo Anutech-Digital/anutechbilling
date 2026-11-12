@@ -48,6 +48,15 @@ describe("R-2717 GST mismatch check by line rate", () => {
     expect(invoiceGstFacts({ taxable_value: null, tax_amount: null, tax_rate: null, inter_state: null, line_items: "junk" }).rates).toBeUndefined();
   });
 
+  it("tax_rate NULL but every line at ONE rate → checked at that rate (not at 0%)", () => {
+    const five = invoiceGstFacts({ taxable_value: 30000, tax_amount: 1500, tax_rate: null, inter_state: true, line_items: lines.map((l) => ({ ...l, tax_rate: 5 })) });
+    expect(five.taxRate).toBe(5);
+    expect(five.rates).toBeUndefined();
+    expect(codes(five)).not.toContain("tax_arithmetic");
+    // One valued line without a rate → the row's own rate (all or nothing).
+    expect(invoiceGstFacts({ taxable_value: 30000, tax_amount: 5400, tax_rate: 18, inter_state: true, line_items: [lines[0], { qty: 2, rate: 10000 }] }).taxRate).toBe(18);
+  });
+
   it("a single-rate invoice is checked exactly as before (one slice = no `rates` effect)", () => {
     const one: InvoiceGstFacts = { taxableValue: 30000, taxAmount: 5400, taxRate: 18, interState: true, rates: [{ rate: 18, taxable: 30000 }] };
     expect(auditInvoiceGst(one, BUYER, SELLER)).toEqual([]);

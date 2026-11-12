@@ -20,6 +20,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { SAAS_HSN } from "@/lib/gst/hsn";
+import { invoiceRateText } from "@/lib/gst/line-rates";
 import { useQuoteByInvoiceId } from "@/lib/queries/quotes";
 import { usePaymentsByQuote, totalReceived, useInstalmentLink } from "@/lib/queries/payments";
 import { RecordSubscriptionPaymentContainer } from "./record-invoice-payment";
@@ -405,7 +406,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
                     ) : null}
                     {/* R-043: the place of supply and tax head FROZEN on the invoice (Rule 46 name + code), not today's customer. */}
                     <div><span className="text-ink-3">Place of Supply:</span> {placeOfSupplyLabel({ posCode: invoice.pos_state_code, interState: invoice.inter_state ?? !!interState, isExport: invoice.pos_state_code === "96", country: invoice.customer_country })}</div>
-                    <div><span className="text-ink-3">Tax Total:</span> {rupee(tax)} ({taxRate}%)</div>
+                    <div><span className="text-ink-3">Tax Total:</span> {rupee(tax)} ({invoiceRateText(invoice, taxRate)})</div>
                   </div>
                 </div>
               )}

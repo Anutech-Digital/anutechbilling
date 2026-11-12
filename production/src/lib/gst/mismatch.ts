@@ -109,7 +109,8 @@ export function invoiceGstFacts(inv: InvoiceGstRow): InvoiceGstFacts {
   const lines = Array.isArray(inv.line_items) ? (inv.line_items as RateSourceLine[]) : null;
   const slices = linesRateSlices({ taxableValue, gst: taxAmount, taxRate }, lines);
   return {
-    taxableValue, taxAmount, taxRate,
+    /* One slice: the row's rate, or the one rate ALL its lines carry (tax_rate may be NULL). */
+    taxableValue, taxAmount, taxRate: isMixedRate(slices) ? taxRate : slices[0].rate,
     ...(isMixedRate(slices) ? { rates: slices.map((s) => ({ rate: s.rate, taxable: s.taxable })) } : {}),
     interState: Boolean(inv.inter_state),
     gstTreatment: inv.gst_treatment,

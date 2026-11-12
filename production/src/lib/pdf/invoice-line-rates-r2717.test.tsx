@@ -73,6 +73,14 @@ describe("R-2717 invoice PDF with lines at different GST rates", () => {
     expect(text).not.toMatch(/IGST @/);
   });
 
+  it("tax_rate NULL but every line at 5% → one 'IGST @ 5%' row, never the 18% default", () => {
+    const five = { ...mixedInvoice, tax_amount: 1500, amount: 31500, net_payable: 31500, line_items: lines.map((l) => ({ ...l, tax_rate: 5 })) } as unknown as Invoice;
+    const text = printed(five);
+    expect(text).toContain("IGST @ 5%");
+    expect(text).not.toContain("IGST @ 18%");
+    expect(text).not.toMatch(/IGST @ 5% on/);
+  });
+
   it("a single-rate invoice prints as before: one IGST row, no GST % on the lines", () => {
     const one = { ...mixedInvoice, tax_rate: 18, tax_amount: 5400, amount: 35400, net_payable: 35400, line_items: lines.map((l) => ({ ...l, tax_rate: undefined })) } as unknown as Invoice;
     const text = printed(one);

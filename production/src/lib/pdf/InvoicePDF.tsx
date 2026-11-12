@@ -521,6 +521,9 @@ export function InvoicePDF(props: InvoicePDFProps) {
      or SEZ supply is IGST whatever the row's flag says (same rule as GSTR-1 docHeads). */
   const rateSlices = linesRateSlices({ taxableValue: taxable, gst: tax, taxRate }, lineItems);
   const rateRows = pdfTaxRows(rateSlices, interState || isExport || treatmentIsAlwaysInterState(invoice.gst_treatment), money);
+  /* One rate: `taxRate` as always — or, when every line carries the same rate of its own (the
+     row's tax_rate may then be NULL), that rate, never the "?? 18" default. */
+  const shownRate = rateSlices[0].rate;
 
   const advances: InvoiceAdvanceAdjustment[] = invoice.adjusted_advances ?? [];
   const advancesTotal = advances.reduce((acc, a) => acc + a.amount, 0);
@@ -653,7 +656,7 @@ export function InvoicePDF(props: InvoicePDFProps) {
                   {/* R-2717: the line's own GST rate, only when the invoice carries several. */}
                   {rateRows && lineWeight(li) > 0 && (
                     <Text style={{ fontSize: 9, color: COLORS.ink3, marginTop: 2 }}>
-                      GST {lineOwnRate(li) ?? taxRate}%
+                      GST {lineOwnRate(li)}%
                     </Text>
                   )}
                 </View>
@@ -702,17 +705,17 @@ export function InvoicePDF(props: InvoicePDFProps) {
               </View>
             ) : interState ? (
               <View style={s.totalRow}>
-                <Text style={s.totalLabel}>IGST @ {taxRate}%</Text>
+                <Text style={s.totalLabel}>IGST @ {shownRate}%</Text>
                 <Text style={s.totalValue}>{money(igst)}</Text>
               </View>
             ) : (
               <>
                 <View style={s.totalRow}>
-                  <Text style={s.totalLabel}>CGST @ {taxRate / 2}%</Text>
+                  <Text style={s.totalLabel}>CGST @ {shownRate / 2}%</Text>
                   <Text style={s.totalValue}>{money(cgst)}</Text>
                 </View>
                 <View style={s.totalRow}>
-                  <Text style={s.totalLabel}>SGST @ {taxRate / 2}%</Text>
+                  <Text style={s.totalLabel}>SGST @ {shownRate / 2}%</Text>
                   <Text style={s.totalValue}>{money(sgst)}</Text>
                 </View>
               </>
