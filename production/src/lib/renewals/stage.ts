@@ -11,12 +11,13 @@
  * invoice, follow-up / risk facts). Tested in stage-r2738.test.ts.
  *
  * Stage, first match wins:
- *   stopped   Service stopped                         (status / renewal_state suspended)
+ *   stopped   Service stopped / Cancelled             (status / renewal_state suspended; status cancelled)
  *   ending    Won't renew · ends <date>               (auto_renew = false)
  *   renewed   Renewed                                 (the renewal is PAID — never on raise: R-2735 / money rule N7)
  *   invoiced  Invoiced · ₹x due | ₹x overdue Nd       (the renewal's tax invoice is raised and something is still due)
  *   draft     Draft part quote · <period> / Draft renewal quote   (ownerRule2: the editor was closed unsaved)
- *   sent      Renewal quote sent · <period>           (renewal quote / the part's quote with the customer, unpaid)
+ *   sent      Renewal quote sent · <period>           (renewal quote / the part's quote with the customer, unpaid;
+ *                                                     a linked renewal quote not loaded or closed counts as sent, R-2232)
  *   part-due  Part not billed (<Mon>) / N parts not billed        (billed in parts, the next term's part started, nothing raised)
  *   due       Due in Nd / Due today / Overdue Nd      (nothing sent yet)
  *
@@ -35,7 +36,7 @@
  *   draft             Continue        — reopens THAT quote (R-2232: never a second one)
  *   sent              Follow up
  *   invoiced          Record payment
- *   ending / renewed / stopped  none
+ *   ending / renewed / stopped  none — except Record payment while the renewal invoice is unpaid
  * Retired as row labels: Review / Change renewal quote, Send renewal quote, Bill renewal · part 1
  * of next year / term.
  * Grace over (past the date and the grace, unpaid): "Renew anyway" (owner / manager, vendor hold)
@@ -48,7 +49,9 @@ import { canRenewAnyway, type VendorHoldState } from "@/lib/renewals/vendor-hold
 import { RENEWAL_FUTURE_DAYS, RENEWAL_UPCOMING_DAYS, RENEWAL_URGENT_DAYS } from "@/lib/renewals/buckets";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { formatDate, rupee } from "@/lib/utils";
+import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { isSettledRenewed } from "@/app/(app)/renewals/row-action";
+import { daysBetweenIst, renewalDueText } from "@/app/(app)/renewals/last-docs";
 import { isGraceOver } from "@/components/features/renewals/renewal-actions-rules";
 
 // ─── Input ──────────────────────────────────────────────────────────────────
@@ -131,11 +134,17 @@ export interface RenewalStage {
   tone: StageTone;
   /** A second line only when the chip shows the period instead of the day count ("Overdue 3d"). */
   note: string | null;
-  /** IST days to the date that counts (the part's due date for a part, else renewal_date); null = no date. */
+  /** IST days to the date that counts for the chip (the part's due date for a part, else renewal_date); null = no date. */
   days: number | null;
+  /** IST days to renewal_date — grace over, Won't renew vs Cancel are judged on it; null = no date. */
+  renewalDays: number | null;
+  /** Billed in parts: IST days to the start of the next term's first part (ownerRule's 7-day window); else null. */
+  partDays: number | null;
   split: boolean;
   /** The open document / invoice the stage is about (for Continue / Follow up / Record payment). */
   quoteId: string | null;
+  /** sent / draft: the quote's status (Change renewal only on sent / viewed, R-2710); "unknown" = linked but not loaded. */
+  quoteStatus: string | null;
   invoiceId: string | null;
   /** part-due: how many parts have started unbilled. */
   partsBehind: number;
@@ -145,17 +154,10 @@ export interface RenewalStage {
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const OPEN_DOC = new Set(["sent", "viewed", "accepted"]);
 
-/** Whole calendar days from one IST date to another (YYYY-MM-DD); negative = in the past. */
-export function istDays(fromIst: string, toDate: string): number {
-  return Math.round((Date.parse(`${toDate.slice(0, 10)}T00:00:00Z`) - Date.parse(`${fromIst.slice(0, 10)}T00:00:00Z`)) / 86_400_000);
-}
-
-/** "Due in 5d" / "Due today" / "Overdue 3d" — one wording (queue.ts renewalDueText). */
-export function dueWords(days: number): string {
-  if (days < 0) return `Overdue ${-days}d`;
-  if (days === 0) return "Due today";
-  return `Due in ${days}d`;
-}
+/** Whole IST calendar days from today to a date (last-docs.ts daysBetweenIst — one copy). */
+export const istDays = daysBetweenIst;
+/** "Due in 5d" / "Due today" / "Overdue 3d" — the one wording (last-docs.ts renewalDueText). */
+export const dueWords = renewalDueText;
 
 /** Red when overdue or ≤7 days, amber 8–30, grey after (audit §5.1). */
 export function daysTone(days: number | null): StageTone {
@@ -165,9 +167,16 @@ export function daysTone(days: number | null): StageTone {
   return "muted";
 }
 
-function money(amount: number, currency: string | null | undefined): string {
-  if (currency && currency.toUpperCase() === "USD") return `$${Math.round(amount).toLocaleString("en-US")}`;
-  return rupee(Math.round(amount));
+/** ₹ for INR (no currency = INR), the invoice's own currency otherwise; paise kept below ₹1 so a balance never reads "₹0". */
+export function stageMoney(amount: number, currency: string | null | undefined): string {
+  const code = (currency ?? "INR").toUpperCase();
+  const decimals = Math.abs(amount) < 1 ? 2 : 0;
+  if (code === "INR") return rupee(amount, { decimals });
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: code, maximumFractionDigits: decimals, minimumFractionDigits: decimals }).format(amount);
+  } catch {
+    return `${code} ${amount.toFixed(decimals)}`;
+  }
 }
 
 const isSplit = (sub: StageSub) => isSplitBilled((sub.billing_cycle ?? null) as BillingCycle | null);
@@ -189,27 +198,36 @@ function stageFlags(f: StageFlagInput | undefined): StageFlag[] {
 /**
  * The row's ONE stage. First match wins (see the file header). `doc` / `invoice` that are paid,
  * closed or zero are ignored here, so a page that passes a stale one cannot make a row "owe".
+ * A linked renewal quote the page did not pass as open (not loaded / closed) counts as sent —
+ * R-2232's rule (renewalRowAction): a second renewal quote is never offered.
  */
 export function renewalStage(input: StageInput): RenewalStage {
   const { sub, todayIst } = input;
   const split = isSplit(sub);
   const renewalDays = sub.renewal_date ? istDays(todayIst, sub.renewal_date) : null;
-  const base = { split, quoteId: null, invoiceId: null, partsBehind: 0, note: null };
-  const live = (s: Omit<RenewalStage, "flags">): RenewalStage => ({ ...s, flags: stageFlags(input.flags) });
+  const partDays = split && sub.renewal_date
+    ? istDays(todayIst, followingTermStart({ term_months: sub.term_months ?? 12, start_date: sub.start_date ?? null, renewal_date: sub.renewal_date }))
+    : null;
+  const flags = stageFlags(input.flags);
+  const invoice = input.invoice && input.invoice.amountDue > 0 ? input.invoice : null;
+  const base = { split, renewalDays, partDays, quoteId: null, quoteStatus: null, invoiceId: invoice?.id ?? null, partsBehind: 0, note: null };
 
-  if (sub.status === "suspended" || sub.renewal_state === "suspended") {
-    return { ...base, key: "stopped", label: "Service stopped", tone: "danger", days: renewalDays, flags: [] };
+  /* Stopped / Won't renew keep their chip, but money still owed on the renewal stays visible (flags + Record payment). */
+  if (sub.status === "suspended" || sub.renewal_state === "suspended" || sub.status === "cancelled") {
+    const label = sub.status === "cancelled" ? "Cancelled" : "Service stopped";
+    return { ...base, key: "stopped", label, tone: "danger", days: renewalDays, flags };
   }
   if (sub.auto_renew === false) {
     const label = sub.renewal_date ? `Won't renew · ends ${formatDate(sub.renewal_date)}` : "Won't renew";
-    return { ...base, key: "ending", label, tone: "warning", days: renewalDays, flags: [] };
+    return { ...base, key: "ending", label, tone: "warning", days: renewalDays, flags };
   }
 
   const d = input.doc ?? null;
   const doc = d && (OPEN_DOC.has(d.status) || d.status === "draft") && d.paymentStatus !== "received" ? d : null;
-  const invoice = input.invoice && input.invoice.amountDue > 0 ? input.invoice : null;
 
-  if (input.renewalPaid || d?.paymentStatus === "received") return { ...base, key: "renewed", label: "Renewed", tone: "success", days: renewalDays, flags: [] };
+  if (input.renewalPaid || d?.paymentStatus === "received") {
+    return { ...base, invoiceId: null, key: "renewed", label: "Renewed", tone: "success", days: renewalDays, flags: [] };
+  }
   /* A settled 'renewed' state counts only when no renewal document is still unpaid (pre-R-2735 rows rolled on raise). */
   if (!doc && !invoice && isSettledRenewed(sub, istNoon(todayIst))) {
     return { ...base, key: "renewed", label: "Renewed", tone: "success", days: renewalDays, flags: [] };
@@ -218,28 +236,30 @@ export function renewalStage(input: StageInput): RenewalStage {
   if (invoice) {
     const ref = invoice.kind === "part" && invoice.dueDate ? invoice.dueDate : sub.renewal_date;
     const days = ref ? istDays(todayIst, ref) : null;
-    const amt = money(invoice.amountDue, invoice.currency);
+    const amt = stageMoney(invoice.amountDue, invoice.currency);
     const label = days != null && days < 0 ? `Invoiced · ${amt} overdue ${-days}d` : `Invoiced · ${amt} due`;
-    return live({ ...base, key: "invoiced", label, tone: daysTone(days), days, invoiceId: invoice.id, note: invoice.period ?? null });
+    return { ...base, key: "invoiced", label, tone: daysTone(days), days, note: invoice.period ?? null, flags };
   }
 
-  if (doc) {
-    const ref = doc.kind === "part" && doc.dueDate ? doc.dueDate : sub.renewal_date;
+  /* R-2232: a linked renewal quote that is not open here (not loaded / closed) is treated as sent. */
+  const linked: StageDoc | null = sub.renewal_quote_id
+    ? { kind: "renewal", quoteId: sub.renewal_quote_id, status: d && d.quoteId === sub.renewal_quote_id ? d.status : "unknown" }
+    : null;
+  const sentDoc = doc ?? linked;
+  if (sentDoc) {
+    const ref = sentDoc.kind === "part" && sentDoc.dueDate ? sentDoc.dueDate : sub.renewal_date;
     const days = ref ? istDays(todayIst, ref) : null;
-    const period = doc.period?.trim() || null;
-    if (doc.status === "draft") {
-      const word = doc.kind === "part" ? "Draft part quote" : "Draft renewal quote";
-      return live({
-        ...base, key: "draft", label: period ? `${word} · ${period}` : word,
-        tone: daysTone(days), days, quoteId: doc.quoteId, note: days != null ? dueWords(days) : null,
-      });
+    const period = sentDoc.period?.trim() || null;
+    const common = {
+      ...base, tone: daysTone(days), days, quoteId: sentDoc.quoteId, quoteStatus: sentDoc.status,
+      note: days != null ? dueWords(days) : null, flags,
+    };
+    if (sentDoc.status === "draft") {
+      const word = sentDoc.kind === "part" ? "Draft part quote" : "Draft renewal quote";
+      return { ...common, key: "draft", label: period ? `${word} · ${period}` : word };
     }
     /* ownerRule (13 Nov): "renewal quote sent with this period" — the period on the chip, the day count under it. */
-    return live({
-      ...base, key: "sent",
-      label: period ? `Renewal quote sent · ${period}` : "Renewal quote sent",
-      tone: daysTone(days), days, quoteId: doc.quoteId, note: days != null ? dueWords(days) : null,
-    });
+    return { ...common, key: "sent", label: period ? `Renewal quote sent · ${period}` : "Renewal quote sent" };
   }
 
   if (split && sub.renewal_date) {
@@ -251,15 +271,15 @@ export function renewalStage(input: StageInput): RenewalStage {
     }, todayIst);
     if (behind) {
       const label = behind.count === 1 ? `Part not billed (${MONTHS[Number(behind.from.slice(5, 7)) - 1]})` : `${behind.count} parts not billed`;
-      return live({ ...base, key: "part-due", label, tone: "danger", days: renewalDays, partsBehind: behind.count });
+      return { ...base, key: "part-due", label, tone: "danger", days: renewalDays, partsBehind: behind.count, flags };
     }
   }
 
-  return live({
+  return {
     ...base, key: "due",
     label: renewalDays == null ? "No renewal date" : dueWords(renewalDays),
-    tone: daysTone(renewalDays), days: renewalDays,
-  });
+    tone: daysTone(renewalDays), days: renewalDays, flags,
+  };
 }
 
 // ─── Primary button + ⋯ menu ────────────────────────────────────────────────
@@ -328,30 +348,37 @@ const btn = (kind: PrimaryKind, label: string, opensEditor: boolean, stage: Rene
 
 /**
  * ONE primary button + the ⋯ list for a stage. `sub` is the same subscription renewalStage read
- * (grace and Won't-renew need its dates).
+ * (grace needs its renewal_date / grace_until).
+ * Early Bill next part on a split row (⋯, ownerRule 3) is R-2519's bill-ahead: the Bill next part
+ * preview bills the earliest period with no invoice and no request, so the billing job does not
+ * raise that period again.
  */
 export function renewalPrimary(stage: RenewalStage, sub: StageSub, ctx: PrimaryContext): RowActions {
   const canQuote = canOpenQuotes(ctx.role);
   const followUp = ctx.offers.followup ? btn("follow-up", FOLLOW_UP, false, stage) : null;
-  const days = stage.days ?? 0;
-  const graceOver = (stage.key === "due" || stage.key === "part-due" || stage.key === "draft" || stage.key === "sent" || stage.key === "invoiced")
-    && isGraceOver(sub, stage.days ?? 0, ctx.tenantGraceDays);
+  const pay = () => btn("record-payment", RECORD_PAYMENT, false, stage);
 
+  /* Ended rows: no next step, except money still owed on the renewal (a stopped row unpaid, R-1621). */
+  if (stage.key === "renewed") return { primary: null, menu: ["view-subscription"], graceOver: false };
+  if (stage.key === "stopped") return { primary: stage.invoiceId ? pay() : null, menu: ["view-subscription"], graceOver: false };
+  if (stage.key === "ending") {
+    return { primary: stage.invoiceId ? pay() : null, menu: ctx.canEndSubscription ? ["undo-wont-renew"] : [], graceOver: false };
+  }
+
+  /* Grace is judged on renewal_date (+ grace_until), never on a part's own due date. */
+  const graceOver = stage.renewalDays != null && isGraceOver(sub, stage.renewalDays, ctx.tenantGraceDays);
   let primary: PrimaryAction | null = null;
   const menu: MenuItem[] = [];
   switch (stage.key) {
-    case "stopped":
-    case "renewed":
-      return { primary: null, menu: ["view-subscription"], graceOver: false };
-    case "ending":
-      return { primary: null, menu: ctx.canEndSubscription ? ["undo-wont-renew"] : [], graceOver: false };
     case "due":
       if (stage.split) {
-        /* ownerRule: inside the 7-day window the part is the next step; earlier only in ⋯ (early billing). */
-        primary = days <= BILL_PART_WINDOW_DAYS ? btn("bill-part", BILL_NEXT_PART, canQuote, stage) : followUp;
-      } else {
+        /* ownerRule: inside the 7-day window before the part starts it is the next step; earlier only in ⋯ (early billing). */
+        primary = stage.partDays != null && stage.partDays <= BILL_PART_WINDOW_DAYS ? btn("bill-part", BILL_NEXT_PART, canQuote, stage) : followUp;
+      } else if (stage.renewalDays != null) {
         primary = btn("send-renewal", SEND_RENEWAL, canQuote, stage);
         if (canQuote) menu.push("send-as-is");
+      } else {
+        primary = followUp;   // no renewal date: nothing to send for (the page lists it to be fixed, R-2586)
       }
       break;
     case "part-due":
@@ -365,13 +392,14 @@ export function renewalPrimary(stage: RenewalStage, sub: StageSub, ctx: PrimaryC
       if (canQuote && !stage.split) menu.push("send-as-is");
       break;
     case "sent":
-      primary = followUp ?? btn("record-payment", RECORD_PAYMENT, false, stage);
+      primary = followUp ?? pay();
       if (primary.kind !== "record-payment") menu.push("record-payment");
-      if (canQuote && !stage.split) menu.push("change-renewal");
+      /* R-2710: Revise only a sent / viewed quote — an accepted one is refused there. */
+      if (canQuote && !stage.split && (stage.quoteStatus === "sent" || stage.quoteStatus === "viewed")) menu.push("change-renewal");
       menu.push("resend");
       break;
     case "invoiced":
-      primary = btn("record-payment", RECORD_PAYMENT, false, stage);
+      primary = pay();
       menu.push("resend-invoice");
       break;
   }
@@ -385,9 +413,9 @@ export function renewalPrimary(stage: RenewalStage, sub: StageSub, ctx: PrimaryC
   return { primary, menu: [...new Set(menu)], graceOver };
 }
 
-/** Which dialog "Customer not renewing" opens: Won't renew before the date, Cancel after it. */
+/** Which dialog "Customer not renewing" opens: Won't renew before the renewal date, Cancel after it. */
 export function notRenewingDialog(stage: RenewalStage): "non-renewing" | "cancel" {
-  return (stage.days ?? 0) < 0 ? "cancel" : "non-renewing";
+  return stage.renewalDays != null && stage.renewalDays < 0 ? "cancel" : "non-renewing";
 }
 
 // ─── Bulk "Send renewal" ────────────────────────────────────────────────────
@@ -396,13 +424,14 @@ export function notRenewingDialog(stage: RenewalStage): "non-renewing" | "cancel
 export const BULK_LATER_REASON = "renews in 91+ days — too early to send";
 
 /**
- * Bulk Send renewal takes a row only when its own button is Send renewal (never a split row —
+ * Bulk Send renewal takes a row only when it is waiting for its whole-term renewal (never a split row —
  * R-808, never one already sent / invoiced / renewed — R-2232) and it is not 91+ days out (R-2586).
  * Otherwise the reason names the row's own state / button.
  */
-export function bulkSendDecision(stage: RenewalStage, actions: RowActions): { send: true } | { send: false; reason: string } {
-  if (actions.primary?.kind === "send-renewal") {
-    return (stage.days ?? 0) > RENEWAL_FUTURE_DAYS ? { send: false, reason: BULK_LATER_REASON } : { send: true };
+export function bulkSendDecision(stage: RenewalStage): { send: true } | { send: false; reason: string } {
+  /* due, or a whole-term draft (the send-now path sends THAT draft, R-2232) — the same rows for every role. */
+  if (!stage.split && stage.renewalDays != null && (stage.key === "due" || stage.key === "draft")) {
+    return stage.renewalDays > RENEWAL_FUTURE_DAYS ? { send: false, reason: BULK_LATER_REASON } : { send: true };
   }
   if (stage.split && stage.key !== "renewed" && stage.key !== "ending" && stage.key !== "stopped") {
     return { send: false, reason: `billed in parts — use ${BILL_NEXT_PART}` };

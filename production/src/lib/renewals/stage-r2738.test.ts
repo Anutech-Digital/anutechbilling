@@ -40,9 +40,11 @@ describe("R-2738 renewalStage — one chip, first match wins", () => {
     expect(daysTone(31)).toBe("muted");
   });
 
-  it("stopped and ending win over everything (no flags)", () => {
+  it("stopped / cancelled and ending win over everything; flags stay (money owed stays visible)", () => {
     const s = stage(annual({ status: "suspended" }), { renewalPaid: true, flags: { atRisk: { reasons: ["x"] } } });
-    expect(s).toMatchObject({ key: "stopped", label: "Service stopped", flags: [] });
+    expect(s).toMatchObject({ key: "stopped", label: "Service stopped" });
+    expect(s.flags.map((f) => f.key)).toEqual(["atRisk"]);
+    expect(stage(annual({ status: "cancelled", renewal_date: "2026-11-01" })).label).toBe("Cancelled");
     const e = stage(annual({ auto_renew: false }), { doc: { kind: "renewal", quoteId: "Q-1", status: "sent" } });
     expect(e.key).toBe("ending");
     expect(e.label).toMatch(/^Won't renew · ends /);
@@ -136,7 +138,7 @@ describe("R-2738 renewalPrimary — ONE button + ⋯", () => {
     const a = act(stage(far), far);
     expect(a.primary).toMatchObject({ kind: "follow-up", label: FOLLOW_UP });
     expect(a.menu[0]).toBe("bill-part");
-    const near = quarterly({ renewal_date: "2026-11-21" });    // 7 days
+    const near = quarterly({ renewal_date: "2026-11-20" });    // the part starts 21 Nov: 7 days
     const b = act(stage(near), near);
     expect(b.primary).toMatchObject({ kind: "bill-part", label: BILL_NEXT_PART, opensEditor: true });
     expect(b.menu).not.toContain("bill-part");
@@ -240,15 +242,78 @@ describe("R-2738 renewalPrimary — ONE button + ⋯", () => {
 describe("R-2738 bulk Send renewal", () => {
   it("takes only Send renewal rows ≤ 90 days; split / sent / renewed rows are named", () => {
     const due = annual();
-    expect(bulkSendDecision(stage(due), act(stage(due), due))).toEqual({ send: true });
+    expect(bulkSendDecision(stage(due))).toEqual({ send: true });
     const later = annual({ renewal_date: "2027-03-01" });
-    expect(bulkSendDecision(stage(later), act(stage(later), later))).toEqual({ send: false, reason: BULK_LATER_REASON });
+    expect(bulkSendDecision(stage(later))).toEqual({ send: false, reason: BULK_LATER_REASON });
     const split = quarterly({ renewal_date: "2026-11-20" });
-    expect(bulkSendDecision(stage(split), act(stage(split), split))).toEqual({ send: false, reason: `billed in parts — use ${BILL_NEXT_PART}` });
+    expect(bulkSendDecision(stage(split))).toEqual({ send: false, reason: `billed in parts — use ${BILL_NEXT_PART}` });
     const sent = annual({ renewal_quote_id: "Q-1" });
     const ss = stage(sent, { doc: { kind: "renewal", quoteId: "Q-1", status: "sent" } });
-    expect(bulkSendDecision(ss, act(ss, sent))).toEqual({ send: false, reason: "Renewal quote sent" });
+    expect(bulkSendDecision(ss)).toEqual({ send: false, reason: "Renewal quote sent" });
     const paid = stage(due, { renewalPaid: true });
-    expect(bulkSendDecision(paid, act(paid, due))).toEqual({ send: false, reason: "Renewed" });
+    expect(bulkSendDecision(paid)).toEqual({ send: false, reason: "Renewed" });
+  });
+});
+
+describe("R-2738 review fixes", () => {
+  it("R-2232: a linked renewal quote not passed as open (not loaded / closed) is 'sent' — never a fresh Send renewal", () => {
+    const sub = annual({ renewal_quote_id: "Q-1" });
+    const notLoaded = stage(sub);
+    expect(notLoaded).toMatchObject({ key: "sent", quoteId: "Q-1", quoteStatus: "unknown" });
+    expect(act(notLoaded, sub).primary?.kind).toBe("follow-up");
+    expect(act(notLoaded, sub).menu).not.toContain("change-renewal");
+    expect(bulkSendDecision(notLoaded).send).toBe(false);
+    const closed = stage(sub, { doc: { kind: "renewal", quoteId: "Q-1", status: "expired" } });
+    expect(closed).toMatchObject({ key: "sent", quoteStatus: "expired" });
+  });
+
+  it("R-2710: Change renewal only on sent / viewed, not on accepted", () => {
+    const sub = annual({ renewal_quote_id: "Q-1" });
+    const acc = stage(sub, { doc: { kind: "renewal", quoteId: "Q-1", status: "accepted" } });
+    expect(act(acc, sub).menu).not.toContain("change-renewal");
+    const viewed = stage(sub, { doc: { kind: "renewal", quoteId: "Q-1", status: "viewed" } });
+    expect(act(viewed, sub).menu).toContain("change-renewal");
+  });
+
+  it("grace and Won't-renew vs Cancel are judged on renewal_date, not a part's due date", () => {
+    const sub = flex({ renewal_date: "2026-10-25" });   // 20 days past, grace 3
+    const s = stage(sub, { doc: { kind: "part", quoteId: "Q-P", status: "sent", dueDate: "2026-11-19" } });
+    expect(s.days).toBe(5);
+    expect(s.renewalDays).toBe(-20);
+    const a = act(s, sub, { ...owner, vendorHold: "hold" });
+    expect(a.graceOver).toBe(true);
+    expect(a.menu).toContain("renew-anyway");
+    expect(notRenewingDialog(s)).toBe("cancel");
+  });
+
+  it("no renewal date: no Send renewal, no Bill next part, not taken by bulk", () => {
+    const y = annual({ renewal_date: null });
+    expect(stage(y).label).toBe("No renewal date");
+    expect(act(stage(y), y).primary?.kind).toBe("follow-up");
+    expect(bulkSendDecision(stage(y)).send).toBe(false);
+    const q = quarterly({ renewal_date: null });
+    expect(act(stage(q), q).primary?.kind).toBe("follow-up");
+  });
+
+  it("stopped / Won't renew with the renewal invoice unpaid → Record payment", () => {
+    const st = annual({ status: "suspended" });
+    const s = stage(st, { invoice: { id: "INV-9", kind: "renewal", amountDue: 92040 } });
+    expect(act(s, st).primary).toMatchObject({ kind: "record-payment", invoiceId: "INV-9" });
+    const e = annual({ auto_renew: false });
+    expect(act(stage(e, { invoice: { id: "INV-8", kind: "renewal", amountDue: 5 } }), e).primary?.kind).toBe("record-payment");
+  });
+
+  it("money: paise below ₹1 kept, other currencies in their own sign", () => {
+    expect(stage(annual(), { invoice: { id: "I", kind: "renewal", amountDue: 0.4 } }).label).toMatch(/^Invoiced · ₹0\.40 due$/);
+    expect(stage(annual(), { invoice: { id: "I", kind: "renewal", amountDue: 1200, currency: "EUR" } }).label).toBe("Invoiced · €1,200 due");
+  });
+
+  it("ownerRule window is measured to the part's start (followingTermStart), whole-term draft is bulk-sendable", () => {
+    const q = quarterly({ renewal_date: "2026-11-21" });
+    const s = stage(q);
+    expect(s.partDays).not.toBeNull();
+    expect(act(s, q).primary?.kind).toBe(s.partDays! <= 7 ? "bill-part" : "follow-up");
+    const w = annual({ renewal_quote_id: "Q-W" });
+    expect(bulkSendDecision(stage(w, { doc: { kind: "renewal", quoteId: "Q-W", status: "draft" } }))).toEqual({ send: true });
   });
 });
