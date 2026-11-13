@@ -189,9 +189,9 @@ test.describe("R-2733 card test", () => {
       await add.getByRole("button", { name: /Custom Edit Basic %/ }).click();
       await add.locator("#payroll-basic-salary").selectOption("0.4");
       await fillKept(add.locator("#payroll-monthly-gross-salary-base"), "20000");
+      // (the Statutory Basic box shows only with PF on — a new employee here has PF off by policy, so read the card)
       await expect(add).toContainText("Basic Salary (40%):");
-      await add.getByRole("button", { name: /Statutory & Access/ }).first().click();
-      await expect(add.locator("#payroll-basic-month")).toHaveValue("8000");
+      await expect(add).toContainText("₹8,000");
       await add.getByRole("button", { name: "Cancel" }).click();
 
       // LOW 4 — existing employee: Statutory Basic 9,000 → Custom Basic 11,000 → cleared → 9,000 (not the saved 12,000)
