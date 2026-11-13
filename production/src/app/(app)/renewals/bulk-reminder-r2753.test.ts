@@ -88,6 +88,12 @@ describe("R-2753 plan: every row in scope is emailed or skipped with its reason"
     expect(plan.send.length + plan.skipped.length).toBe(rows.length);   // nobody dropped without a word
   });
 
+  it("a subscription stopped by its status (the row's 'Service stopped' chip) is skipped too, not emailed", () => {
+    const plan = reminderPlan([row("Stopped by status", 10, { status: "suspended" })], { today: TODAY, emailOf });
+    expect(plan.send).toEqual([]);
+    expect(reasonOf(plan, "Stopped by status")).toBe(REMINDER_SKIP.stopped);
+  });
+
   it("contacts not read yet → not counted as 'no email' (the send route still checks)", () => {
     const plan = reminderPlan([row("Unknown", 5)], { today: TODAY, emailOf: () => undefined });
     expect(ids(plan.send)).toEqual(["Unknown"]);
@@ -105,8 +111,8 @@ describe("R-2753 plan: every row in scope is emailed or skipped with its reason"
 describe("R-2753 page wiring: one button, no floating email button, no 'none due' toast", () => {
   const page = readFileSync(join(process.cwd(), "src/app/(app)/renewals/page.tsx"), "utf8");
   it("the one reminder button acts on the ticked rows, else the open tab's rows", () => {
-    expect(page).toContain("reminderScope(selectedRows.length,");
-    expect(page).toMatch(/selectedRows\.length > 0 \? selectedRows : visibleRows/);
+    expect(page).toContain("reminderScope(tickedShown.length,");
+    expect(page).toMatch(/tickedShown\.length > 0 \? tickedShown : visibleRows/);
     expect(page).toContain("reminderButtonLabel(scope)");
     expect(page).not.toContain('"Bulk reminder"');
   });
@@ -117,6 +123,8 @@ describe("R-2753 page wiring: one button, no floating email button, no 'none due
   });
   it("the plan reads the row's contact email and paid quote", () => {
     expect(page).toMatch(/reminderPlan\(scopeRows, \{[^}]*emailOf/);
+    /* the button waits for the contacts — a no-email customer is never counted while they load */
+    expect(page).toContain("disabled={bulkSending || contactsLoading || scope.count === 0}");
     expect(page).not.toContain('toast.info("No renewals due in the next 30 days');
     expect(page).not.toContain('toast.info("None of the selected renewals is due for a reminder"');
   });

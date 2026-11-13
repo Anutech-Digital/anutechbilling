@@ -51,15 +51,25 @@ export function RenewalReminderDialog<T extends RenewalRowLike>({
   async function run(rows: T[]) {
     if (sending || rows.length === 0) return;
     setSending(true);
-    const r = await onSend(rows);
-    const failedIds = new Set(r.failed.map((f) => f.row.sub.id));
-    setResult((prev) => ({
-      /* a retry adds to the names already reminded */
-      sent: [...(prev?.sent ?? []), ...rows.filter((x) => !failedIds.has(x.sub.id))],
-      failed: r.failed,
-      stub: (prev?.stub ?? false) || r.stub,
-    }));
-    setSending(false);
+    try {
+      const r = await onSend(rows);
+      const failedIds = new Set(r.failed.map((f) => f.row.sub.id));
+      setResult((prev) => ({
+        /* a retry adds to the names already reminded */
+        sent: [...(prev?.sent ?? []), ...rows.filter((x) => !failedIds.has(x.sub.id))],
+        failed: r.failed,
+        stub: (prev?.stub ?? false) || r.stub,
+      }));
+    } catch {
+      /* the send loop catches per row; anything else → every row shown as not sent, with a retry */
+      setResult((prev) => ({
+        sent: prev?.sent ?? [],
+        failed: rows.map((row) => ({ row, name: row.sub.customer_name, reason: "The send did not go through — check your internet and retry." })),
+        stub: prev?.stub ?? false,
+      }));
+    } finally {
+      setSending(false);
+    }
   }
 
   const title = result
@@ -113,13 +123,16 @@ export function RenewalReminderDialog<T extends RenewalRowLike>({
                 <section aria-label="Will be emailed">
                   <p className="mb-1 text-sm text-ink-2">Will be emailed: <b className="text-ink">{send.length}</b></p>
                   <ul className="max-h-56 overflow-y-auto rounded-md border border-hairline divide-y divide-hairline text-sm">
-                    {send.map((r) => (
+                    {send.map((r) => {
+                      const email = emailOf?.(r);
+                      return (
                       <li key={r.sub.id} className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5 px-3 py-2">
                         <span className="min-w-0 flex-1 font-medium text-ink break-words">{r.sub.customer_name}</span>
-                        {emailOf?.(r) && <span className="text-xs text-ink-3 break-all">{emailOf(r)}</span>}
+                        {email && <span className="text-xs text-ink-3 break-all">{email}</span>}
                         {r.daysUntil < 0 && <span className="text-xs text-amber-ink">past the date, in grace</span>}
                       </li>
-                    ))}
+                      );
+                    })}
                   </ul>
                 </section>
               )}

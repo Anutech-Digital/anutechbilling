@@ -587,7 +587,8 @@ export default function RenewalsPage() {
   const listed = React.useMemo(() => (subs ?? [])
     .filter(onRenewalsPage)
     .map((s) => withRenewalQuote(s, openRenewalMap)), [subs, openRenewalMap]);
-  const { data: contacts } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
+  /* R-2753: isLoading — the Remind button waits for the contacts, so a customer with no email is never counted in "Email N". */
+  const { data: contacts, isLoading: contactsLoading } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
   const { data: quoteInfo } = useRenewalQuoteInfo(listed.map((s) => s.renewal_quote_id));
   /* R-2404: owner / next follow-up / promise per renewal — Payment Follow-up's rows for these subscriptions. */
   const { data: fuData } = useRenewalFollowups(listed.map((s) => s.id), listed.map((s) => s.customer_id ?? ""));
@@ -855,25 +856,21 @@ export default function RenewalsPage() {
      offered two 8–30 customers). The dialog lists who is emailed and who is skipped with the
      reason; nobody is emailed before "Email N" (R-239), and the result stays in the dialog. */
   const visibleRows = tile ? tileShown : shown[bucketTab];
-  const scope = reminderScope(selectedRows.length, tile ? TILE_LABEL[tile] : QUEUE_TAB_LABEL[bucketTab], visibleRows.length);
+  /* only ticked rows still on screen — a tick hidden by a later search / filter is not reminded */
+  const tickedShown = visibleRows.filter((i) => selected.has(i.sub.id));
+  const scope = reminderScope(tickedShown.length, tile ? TILE_LABEL[tile] : QUEUE_TAB_LABEL[bucketTab], visibleRows.length);
   /* undefined = contacts not read yet (the send route still checks); null = no email on file. */
   const emailOf = (i: QueueItem): string | null | undefined =>
     !i.sub.customer_id ? null : contacts ? contacts.get(i.sub.customer_id)?.email ?? null : undefined;
   function openReminder() {
     if (bulkSending) return;
-    const scopeRows = selectedRows.length > 0 ? selectedRows : visibleRows;
+    const scopeRows = tickedShown.length > 0 ? tickedShown : visibleRows;
     /* R-1124 in grace → emailed; R-2225 Won't renew, R-2431 flex, R-808 split-billed, past grace,
        no email, reminded today → skipped and named (reminders.ts reminderPlan). */
     const plan = reminderPlan(scopeRows, { today, tenantGraceDays: graceDays, emailOf, isPaid: (i) => i.status.key === "renewed" });
     setReminder({ scope, ...plan });
   }
 
-  /* The dialog's send: the existing send-now route per row (R-1642 reasons per failure). */
-  async function sendReminderRows(rows: QueueItem[]): Promise<BulkReminderResult<QueueItem>> {
-    const result = await sendAll(rows);
-    if (result.failed.length === 0) setSelected(new Set());
-    return result;
-  }
 
   /* R-2403: Send renewal quote on the ticked rows — each through the row's own send-now route,
      only rows whose button is Send renewal quote; the rest are named in the confirm. */
@@ -895,11 +892,12 @@ export default function RenewalsPage() {
     await runSend(send, RENEWAL_QUOTE_VERBS, (failed) => void sendQuotes(failed, []));
   }
 
-  /* Each row through the existing send-now route, one after another; then the lists refresh. */
+  /* Each row through the existing send-now route, one after another; then the lists refresh and,
+     when every row went, the ticks clear. */
   async function sendAll<T extends RenewalRowLike>(targets: T[]): Promise<BulkReminderResult<T>> {
     setBulkSending(true);
     try {
-      return await sendBulkReminders(targets, async (subscriptionId) => {
+      const result = await sendBulkReminders(targets, async (subscriptionId) => {
         const res = await fetch("/api/renewals/send-now", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -907,6 +905,8 @@ export default function RenewalsPage() {
         });
         return { ok: res.ok, json: await readJsonSafe(res) };
       });
+      if (result.failed.length === 0) setSelected(new Set());
+      return result;
     } finally {
       setBulkSending(false);
       qc.invalidateQueries({ queryKey: ["subscriptions"] });
@@ -920,7 +920,6 @@ export default function RenewalsPage() {
     retryFailed: (failed: T[]) => void,
   ) {
     const result = await sendAll(targets);
-    if (result.failed.length === 0) setSelected(new Set());
     const m = bulkReminderReport(result, verbs);
     const failedRows = result.failed.map((f) => f.row);
     const retry = { label: "Retry failed", onClick: () => retryFailed(failedRows) };
@@ -991,12 +990,14 @@ export default function RenewalsPage() {
           </p>
         </div>
 
-        {/* Header actions — hidden on mobile to avoid overflow. R-2753: no floating email button on
-            a phone (it was the biggest control over the Forecast); the row actions stay. */}
-        <div className="hidden md:flex shrink-0 items-center gap-2">
+        {/* Header actions. R-2753: no floating email button on a phone (it was the biggest control
+            over the Forecast) — the one Remind button stays here, small, on every size; Export is
+            desktop only. */}
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             variant="default"
             size="sm"
+            className="hidden md:inline-flex"
             onClick={handleExport}
           >
             <Icon name="download" size={14} />
@@ -1006,7 +1007,8 @@ export default function RenewalsPage() {
           <Button
             variant="primary"
             size="sm"
-            disabled={bulkSending || scope.count === 0}
+            disabled={bulkSending || contactsLoading || scope.count === 0}
+            title={contactsLoading ? "Reading each customer's email…" : undefined}
             onClick={openReminder}
             data-testid="renewals-remind"
           >
@@ -1209,7 +1211,8 @@ export default function RenewalsPage() {
         </BulkBarButton>
       </BulkActionBar>
 
-      <RenewalReminderDialog state={reminder} onClose={() => setReminder(null)} onSend={sendReminderRows} emailOf={emailOf} />
+      {/* The dialog's send = the existing send-now route per row (R-1642 reasons per failure). */}
+      <RenewalReminderDialog state={reminder} onClose={() => setReminder(null)} onSend={(rows) => sendAll(rows)} emailOf={emailOf} />
     </div>
   );
 }

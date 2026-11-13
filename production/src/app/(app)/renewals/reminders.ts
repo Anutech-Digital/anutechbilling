@@ -30,6 +30,8 @@ export interface RenewalSubLike {
   auto_renew?: boolean | null;
   /** R-2753: when the last renewal reminder went out (send-now and the nightly run stamp it). */
   last_reminder_sent_at_v2?: string | null;
+  /** R-2753: 'suspended' = service stopped (classify.ts isStopped reads both fields). */
+  status?: string | null;
 }
 
 export interface RenewalRowLike {
@@ -151,7 +153,7 @@ export const REMINDER_SKIP = {
   tooEarly: "renews in more than 30 days — reminders start 30 days before",
   pastGrace: "past the renewal date and the grace — use Send renewal quote, or call them",
   noEmail: "no email on file — add a contact on the customer page",
-  remindedToday: "already reminded today",
+  remindedToday: "already reminded today — the row's Send renewal quote sends it again",
 } as const;
 
 export interface ReminderPlanOptions<T extends RenewalRowLike> {
@@ -181,7 +183,7 @@ export function reminderPlan<T extends RenewalRowLike>(
   for (const r of rows) {
     const s = r.sub;
     if (s.auto_renew === false) { skip(r, REMINDER_SKIP.wontRenew); continue; }
-    if (s.renewal_state === "suspended") { skip(r, REMINDER_SKIP.stopped); continue; }
+    if (s.renewal_state === "suspended" || s.status === "suspended") { skip(r, REMINDER_SKIP.stopped); continue; }
     if (opts.isPaid?.(r) || isTerminalRenewal(s.renewal_state, s.renewal_date, s.term_months, today)) { skip(r, REMINDER_SKIP.renewed); continue; }
     if (!s.renewal_date) { skip(r, REMINDER_SKIP.noDate); continue; }
     if (isFlexNextPart(s, r.daysUntil)) { skip(r, REMINDER_SKIP.flex); continue; }
@@ -202,7 +204,10 @@ export function reminderPlan<T extends RenewalRowLike>(
 /** The skipped rows grouped by reason, in first-seen order — the dialog shows one group per reason. */
 export function groupSkips<T extends RenewalRowLike>(skipped: readonly BulkReminderSkip<T>[]): { reason: string; rows: T[] }[] {
   const by = new Map<string, T[]>();
-  for (const s of skipped) by.set(s.reason, [...(by.get(s.reason) ?? []), s.row]);
+  for (const s of skipped) {
+    const list = by.get(s.reason);
+    if (list) list.push(s.row); else by.set(s.reason, [s.row]);
+  }
   return [...by].map(([reason, rows]) => ({ reason, rows }));
 }
 
