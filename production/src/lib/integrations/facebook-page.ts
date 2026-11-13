@@ -12,10 +12,21 @@ export function facebookPageRedirectUri(origin: string): string {
   return `${origin}/api/integrations/facebook-page/callback`;
 }
 
+/**
+ * R-2706: reach and Instagram saves need read_insights + instagram_manage_insights. Meta refuses
+ * the WHOLE login ("Invalid Scopes") when the Meta app has not added them to its use cases, so they
+ * are asked only when META_INSIGHTS_SCOPES=1 (set it after adding both in the Meta app dashboard).
+ * Without them likes, comments and shares are still read.
+ */
+export function facebookPageScopes(env: Record<string, string | undefined> = process.env): string {
+  const base = "pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,leads_retrieval,pages_manage_ads,pages_manage_metadata";
+  return env.META_INSIGHTS_SCOPES?.trim() === "1" ? `${base},read_insights,instagram_manage_insights` : base;
+}
+
 export function facebookPageAuthUrl(appId: string, origin: string, state: string): string {
   const params = new URLSearchParams({
     client_id: appId, redirect_uri: facebookPageRedirectUri(origin), state,
-    scope: "pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,leads_retrieval,pages_manage_ads,pages_manage_metadata,read_insights,instagram_manage_insights", response_type: "code",
+    scope: facebookPageScopes(), response_type: "code",
   });
   return `https://www.facebook.com/${VERSION}/dialog/oauth?${params}`;
 }
