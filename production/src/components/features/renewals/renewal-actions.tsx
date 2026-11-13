@@ -416,7 +416,9 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
       switch (kind) {
         /* R-2710: the editor needs canOpenQuotes AND the generate route's money roles (set.canReview's rule). */
         case "send-renewal": return void (canQuotes && !!me?.role && MONEY_RECORD_ROLES.includes(me.role as UserRole) ? onReview() : onSendNow());
-        case "send-as-is": case "resend": return void onSendNow();
+        case "send-as-is": return void onSendNow();
+        /* code-review: send-now refuses split-billed subs — a part proforma is resent from its own page. */
+        case "resend": return stage.split && stage.quoteId ? router.push(`/quotes/${encodeURIComponent(stage.quoteId)}` as never) : void onSendNow();
         case "bill-part": return setDialog("bill-next");
         case "continue": return stage.quoteId ? router.push(`/quotes/${encodeURIComponent(stage.quoteId)}/edit` as never) : undefined;
         case "follow-up": return onFollowup?.();

@@ -113,7 +113,10 @@ test.describe("R-2758 card test", () => {
     const r = await rowOf(page, "CT R2758 Ending Plan");
     await expect(r.getByTestId("stage-chip")).toContainText("Won't renew · ends");
     await expect(r.getByTestId("stage-primary")).toHaveCount(0);
-    await r.getByRole("button", { name: /More renewal actions/ }).click();
-    await expect(page.getByRole("menuitem", { name: /Undo Won't renew/ })).toBeVisible();
+    /* the ⋯ items need the signed-in role (Undo Won't renew is for owner / manager / accountant) — wait for it on a slow dev server */
+    const more = r.getByRole("button", { name: /More renewal actions/ });
+    await expect(more).toBeVisible({ timeout: 60_000 });
+    await more.click();
+    await expect(page.getByRole("menuitem", { name: /Undo Won't renew/ })).toBeVisible({ timeout: 30_000 });
   });
 });

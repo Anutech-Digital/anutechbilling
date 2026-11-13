@@ -534,7 +534,7 @@ const SELECT_CLS = "bg-paper border border-hairline rounded-md text-xs px-2.5 py
 export default function RenewalsPage() {
   const { data: subs, isLoading, error, refetch } = useSubscriptions();
   /* R-453: an open renewal quote whose link-back is missing still shows "Open quote". */
-  const { data: openRenewals } = useOpenRenewalQuotes();
+  const { data: openRenewals, isLoading: openRenewalsLoading } = useOpenRenewalQuotes();
   const openRenewalMap = React.useMemo(() => openRenewalQuoteMap(openRenewals ?? []), [openRenewals]);
   const quoteStatusMap = React.useMemo(() => openRenewalQuoteStatus(openRenewals ?? []), [openRenewals]);
   const { data: me } = useCurrentUser();
@@ -579,7 +579,7 @@ export default function RenewalsPage() {
     .map((s) => withRenewalQuote(s, openRenewalMap)), [subs, openRenewalMap]);
   /* R-2753: isLoading — the Remind button waits for the contacts, so a customer with no email is never counted in "Email N". */
   const { data: contacts, isLoading: contactsLoading } = useRenewalContacts(listed.map((s) => s.customer_id ?? "").filter(Boolean));
-  const { data: quoteInfo } = useRenewalQuoteInfo(listed.map((s) => s.renewal_quote_id));
+  const { data: quoteInfo, isLoading: quoteInfoLoading } = useRenewalQuoteInfo(listed.map((s) => s.renewal_quote_id));
   /* R-2404: owner / next follow-up / promise per renewal — Payment Follow-up's rows for these subscriptions. */
   const { data: fuData } = useRenewalFollowups(listed.map((s) => s.id), listed.map((s) => s.customer_id ?? ""));
   const { data: names } = useUserNames();
@@ -704,7 +704,8 @@ export default function RenewalsPage() {
     /* R-2758 (R-2738): ONE stage per row — only once the documents are read (no flip after load),
        only this renewal's quote / invoice (stage-input.ts). */
     const input = stageInputFor({
-      sub: r.sub, todayIst, docs, docsLoading: lastDocsQ.isLoading,
+      /* code-review: also wait for the paid / linked-quote facts, and never guess when the documents read failed. */
+      sub: r.sub, todayIst, docs, docsLoading: lastDocsQ.isLoading || docsState.failed || quoteInfoLoading || openRenewalsLoading,
       linkedStatus: r.sub.renewal_quote_id ? quoteStatusMap.get(r.sub.renewal_quote_id) ?? null : null,
       linkedQuote: linkedQuote ?? null,
       renewalPaid: paid(r),
@@ -719,7 +720,7 @@ export default function RenewalsPage() {
     const stage = input ? renewalStage(input) : null;
     return {
       stage,
-      payHref: stage ? stagePayHref(stage, docs) : null,
+      payHref: stage ? stagePayHref(stage, docs, canOpenQuotes(me?.role)) : null,
       sub: r.sub,
       daysUntil: r.daysUntil,
       status,

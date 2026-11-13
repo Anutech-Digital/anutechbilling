@@ -61,4 +61,11 @@ describe("R-2758 stageButtons", () => {
     expect(b.menu).toContain("renew-anyway");
     expect(b.primary?.label).toBe("Send renewal");
   });
+
+  it("vendor hold inside the grace: owner still has Renew anyway (in ⋯), a non-owner role does not", () => {
+    const late = { ...sub, renewal_date: "2026-11-12" };
+    const s = renewalStage({ sub: late, todayIst: TODAY });
+    expect(stageButtons(s, late, ctx({ vendorHold: "hold", tenantGraceDays: 7 }), all).menu).toContain("renew-anyway");
+    expect(stageButtons(s, late, ctx({ vendorHold: "hold", tenantGraceDays: 7, role: "accountant" }), all).menu).not.toContain("renew-anyway");
+  });
 });

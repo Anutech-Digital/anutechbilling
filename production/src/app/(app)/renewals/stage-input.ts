@@ -44,14 +44,18 @@ export interface StageRowFacts {
 
 const VOID = new Set(["void", "cancelled"]);
 
+const invoicesOf = (docs: LastDocs): LastInvoice[] => (docs.invoices.length ? docs.invoices : docs.invoice ? [docs.invoice] : []);
+
+const paymentFacts = (i: LastInvoice) => ({
+  status: i.status, amount: i.amount, net_payable: i.netPayable, paid_amount: i.paidAmount,
+  adjusted_advances: i.adjustedAdvances, written_off_at: i.writtenOffAt,
+  credit_noted: i.notes === undefined ? undefined : i.notes?.credit ?? 0,
+  debit_noted: i.notes?.debit ?? 0,
+});
+
 /** Money still to collect on an invoice, in paise-rounded rupees; settled / void / credited = 0. */
 export function invoiceOwed(i: LastInvoice): number {
-  const facts = {
-    status: i.status, amount: i.amount, net_payable: i.netPayable, paid_amount: i.paidAmount,
-    adjusted_advances: i.adjustedAdvances, written_off_at: i.writtenOffAt,
-    credit_noted: i.notes === undefined ? undefined : i.notes?.credit ?? 0,
-    debit_noted: i.notes?.debit ?? 0,
-  };
+  const facts = paymentFacts(i);
   if (VOID.has((i.status ?? "").toLowerCase())) return 0;
   if (i.notes && fullyCredited(facts)) return 0;
   const state = invoicePaymentState(facts);
@@ -73,7 +77,7 @@ export function renewalTermStart(sub: StageSub): string | null {
 /** The renewal's own invoice with money due: raised from the linked renewal quote, or for a part of the next term. */
 export function renewalInvoice(sub: StageRowSub, docs: LastDocs | undefined): { invoice: LastInvoice; owed: number } | null {
   if (!docs) return null;
-  const list = docs.invoices.length ? docs.invoices : docs.invoice ? [docs.invoice] : [];
+  const list = invoicesOf(docs);
   const start = renewalTermStart(sub);
   const split = isSplitBilled((sub.billing_cycle ?? null) as BillingCycle | null);
   for (const i of list) {
@@ -84,6 +88,14 @@ export function renewalInvoice(sub: StageRowSub, docs: LastDocs | undefined): { 
     if (owed > 0) return { invoice: i, owed };
   }
   return null;
+}
+
+/** Billed in parts: an invoice for a part of the next term is paid (R-2735: the renewal is paid). */
+export function renewalPartPaid(sub: StageRowSub, docs: LastDocs | undefined): boolean {
+  if (!docs || !isSplitBilled((sub.billing_cycle ?? null) as BillingCycle | null)) return false;
+  const start = renewalTermStart(sub);
+  if (!start) return false;
+  return invoicesOf(docs).some((i) => !!i.part?.start && i.part.start >= start && invoicePaymentState(paymentFacts(i)) === "paid");
 }
 
 /** The renewal's open document: the sent renewal quote / part proforma, else the linked renewal quote when its status is read. */
@@ -109,17 +121,20 @@ export function stageInputFor(f: StageRowFacts): StageInput | null {
   const invoice: StageInvoice | null = inv
     ? {
       id: inv.invoice.id, kind: inv.invoice.part ? "part" : "renewal", amountDue: inv.owed,
-      currency: inv.invoice.currency, dueDate: inv.invoice.part?.start ?? null, period: inv.invoice.period,
+      /* code-review: overdue days count from the invoice's own due date (as the row's invoice line does). */
+      currency: inv.invoice.currency, dueDate: inv.invoice.dueDate ?? inv.invoice.part?.start ?? null, period: inv.invoice.period,
     }
     : null;
-  return { sub: f.sub, todayIst: f.todayIst, renewalPaid: f.renewalPaid, doc: renewalDoc(f), invoice, flags: f.flags };
+  /* stage.ts contract (R-2735): a paid invoice for the next term's part is the renewal paid, too. */
+  const renewalPaid = f.renewalPaid || renewalPartPaid(f.sub, f.docs);
+  return { sub: f.sub, todayIst: f.todayIst, renewalPaid, doc: renewalDoc(f), invoice, flags: f.flags };
 }
 
 /** Record payment's target: the open quote's own dialog (?pay=1), else the invoice's source quote, else the invoice page. */
-export function payHref(stage: { quoteId: string | null; invoiceId: string | null }, docs: LastDocs | undefined): string | null {
-  if (stage.quoteId) return `/quotes/${encodeURIComponent(stage.quoteId)}?pay=1`;
+export function payHref(stage: { quoteId: string | null; invoiceId: string | null }, docs: LastDocs | undefined, canQuotes = true): string | null {
+  /* code-review: a role that cannot open /quotes (billing, R-237) records on the invoice page. */
+  if (stage.quoteId && canQuotes) return `/quotes/${encodeURIComponent(stage.quoteId)}?pay=1`;
   if (!stage.invoiceId) return null;
-  const list = docs ? (docs.invoices.length ? docs.invoices : docs.invoice ? [docs.invoice] : []) : [];
-  const src = list.find((i) => i.id === stage.invoiceId)?.sourceQuoteId;
-  return src ? `/quotes/${encodeURIComponent(src)}?pay=1` : `/invoices/${encodeURIComponent(stage.invoiceId)}`;
+  const src = docs ? invoicesOf(docs).find((i) => i.id === stage.invoiceId)?.sourceQuoteId : null;
+  return src && canQuotes ? `/quotes/${encodeURIComponent(src)}?pay=1` : `/invoices/${encodeURIComponent(stage.invoiceId)}`;
 }

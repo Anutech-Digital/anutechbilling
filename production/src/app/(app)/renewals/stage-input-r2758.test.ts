@@ -4,7 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { renewalStage } from "@/lib/renewals/stage";
-import { invoiceOwed, payHref, renewalInvoice, stageInputFor, type StageRowFacts } from "./stage-input";
+import { invoiceOwed, payHref, renewalInvoice, renewalPartPaid, stageInputFor, type StageRowFacts } from "./stage-input";
 import type { LastDocs, LastInvoice } from "./last-docs";
 
 const TODAY = "2026-11-14";
@@ -96,5 +96,24 @@ describe("R-2758 payHref", () => {
     const i = inv({ id: "INV-9", sourceQuoteId: "Q-9" });
     expect(payHref({ quoteId: null, invoiceId: "INV-9" }, docs({ invoices: [i] }))).toBe("/quotes/Q-9?pay=1");
     expect(payHref({ quoteId: null, invoiceId: "INV-8" }, docs())).toBe("/invoices/INV-8");
+  });
+});
+
+describe("R-2758 code-review fixes", () => {
+  it("billed in parts: the next term's part invoice PAID = the renewal is paid (not 'Part not billed' again)", () => {
+    const i = inv({ id: "INV-PP", status: "paid", paidAmount: 1180, part: { start: "2026-12-01", endExclusive: "2027-01-01" } });
+    expect(renewalPartPaid(monthly, docs({ invoice: i, invoices: [i] }))).toBe(true);
+    const s = renewalStage(stageInputFor(facts({ sub: monthly, docs: docs({ invoice: i, invoices: [i] }) }))!);
+    expect(s.key).toBe("renewed");
+  });
+  it("a billing role (no /quotes) records on the invoice page", () => {
+    const i = inv({ id: "INV-9", sourceQuoteId: "Q-9" });
+    expect(payHref({ quoteId: null, invoiceId: "INV-9" }, docs({ invoices: [i] }), false)).toBe("/invoices/INV-9");
+  });
+  it("overdue days count from the invoice's own due date, not the part start", () => {
+    const i = inv({ id: "INV-D", dueDate: "2026-12-15", part: { start: "2026-12-01", endExclusive: "2027-01-01" } });
+    const input = stageInputFor(facts({ sub: monthly, todayIst: "2026-12-05", docs: docs({ invoice: i, invoices: [i] }) }))!;
+    expect(input.invoice?.dueDate).toBe("2026-12-15");
+    expect(renewalStage(input).label).toBe("Invoiced · ₹1,180 due");
   });
 });

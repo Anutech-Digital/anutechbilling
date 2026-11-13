@@ -13,6 +13,7 @@ import {
   renewalPrimary, MENU_LABEL, FOLLOW_UP,
   type MenuItem, type PrimaryAction, type PrimaryContext, type PrimaryKind, type RenewalStage, type StageSub,
 } from "@/lib/renewals/stage";
+import { canRenewAnyway } from "@/lib/renewals/vendor-hold";
 
 export type StageMenuItem = MenuItem | "open-quote";
 export type StageRunKind = PrimaryKind | StageMenuItem;
@@ -44,5 +45,12 @@ export function stageButtons(stage: RenewalStage, sub: StageSub, ctx: PrimaryCon
     return true;
   });
   if (stage.key === "quote-closed" && perms.canQuotes && stage.quoteId) menu.unshift("open-quote");
+  /* code-review: the row's old vendor-hold badge let owner / manager Renew anyway inside the grace too —
+     kept, now as a ⋯ item (renewalPrimary adds it only once grace is over). */
+  if (ctx.vendorHold === "hold" && canRenewAnyway(ctx.role) && stage.key !== "renewed" && stage.key !== "stopped" && stage.key !== "ending"
+    && !menu.includes("renew-anyway")) {
+    const at = menu.indexOf("not-renewing");
+    menu.splice(at < 0 ? menu.length : at, 0, "renew-anyway");
+  }
   return { primary, menu, graceOver: r.graceOver };
 }
