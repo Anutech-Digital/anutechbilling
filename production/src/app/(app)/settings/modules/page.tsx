@@ -348,10 +348,6 @@ export default function ModulesManagerPage() {
             );
           })}
         </div>
-              </Card>
-            );
-          })}
-        </div>
       </div>
 
       {/* World-Class Security & DPDP Compliance Architecture Footer */}
