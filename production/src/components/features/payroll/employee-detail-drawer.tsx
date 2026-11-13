@@ -11,6 +11,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import type { Route } from "next";
 
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
@@ -108,10 +109,10 @@ export function EmployeeDetailDrawer({
                 <div className="flex items-center gap-1">
                   {scorecard?.href ? (
                     <Button asChild size="sm" variant="ghost" icon="award">
-                      <Link href={scorecard.href}>Scorecard</Link>
+                      <Link href={scorecard.href as Route}>Scorecard</Link>
                     </Button>
                   ) : scorecard ? (
-                    <span className="text-xs text-ink-3">No scorecard — no login linked</span>
+                    <span className="text-xs text-ink-3">No scorecard — no active login linked</span>
                   ) : null}
                   {onEdit && <Button size="sm" variant="ghost" icon="edit" onClick={onEdit}>Edit</Button>}
                 </div>

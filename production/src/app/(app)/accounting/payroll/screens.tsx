@@ -10,6 +10,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { Card } from "@/components/ui/card";
@@ -419,7 +420,7 @@ export function EmployeesTab() {
         focusSalary={viewSalary}
         onOpenChange={(o) => { if (!o) { setViewEmp(null); setViewSalary(false); } }}
         onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); setViewSalary(false); } } : undefined}
-        scorecard={canSeeScores && viewEmp ? { href: scores.has(viewEmp.id) ? scorecardHref(scores.get(viewEmp.id)!.userId) : null } : undefined}
+        scorecard={canSeeScores && viewEmp && perf.data ? { href: scores.has(viewEmp.id) ? scorecardHref(scores.get(viewEmp.id)!.userId) : null } : undefined}
       />
     </>
   );
@@ -440,11 +441,11 @@ function EmployeeScoreCell({ name, score, loading, failed, onRetry }: {
     );
   }
   if (!score) {
-    return <span className="text-ink-3" title="No score — no login is linked to this employee." aria-label={`${name}: no score, no login linked`}>—</span>;
+    return <span className="text-ink-3" title="No score — this employee has no active login linked." aria-label={`${name}: no score, no active login linked`}>—</span>;
   }
   return (
     <Link
-      href={scorecardHref(score.userId)}
+      href={scorecardHref(score.userId) as Route}
       title="Open scorecard (this month)"
       aria-label={`${name}: score ${score.score} — open scorecard`}
       className="font-mono font-semibold tabular-nums text-amber-ink underline-offset-2 hover:underline"
