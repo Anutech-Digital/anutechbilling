@@ -37,6 +37,7 @@ import { validateGstin } from "@/lib/utils";
 import { stateCodeFromGstin, gstinContradictsState } from "./gstin-state";
 import { isInterStateSupply, isExportSupply, treatmentIsAlwaysInterState } from "./place-of-supply";
 import { SAAS_GST_RATE } from "./hsn";
+import { isMixedRate, linesRateSlices, type RateSourceLine } from "./line-rates";
 
 export type GstIssueCode =
   /** The GSTIN on file is not a real GSTIN — wrong length, wrong shape, or bad checksum. */
@@ -77,10 +78,43 @@ export interface InvoiceGstFacts {
   taxableValue: number;
   taxAmount: number;
   taxRate: number;
+  /** R-2717: the invoice by GST rate when its LINES carry different rates (lib/gst/line-rates.ts
+   *  `linesRateSlices`). Absent or one entry = a single-rate invoice, checked on `taxRate`. */
+  rates?: readonly { rate: number; taxable: number }[];
   /** What the invoice actually claims: true = IGST, false = CGST + SGST. */
   interState: boolean;
   /** R-1736: the GST treatment frozen on the invoice (null = issued before R-1736). */
   gstTreatment?: string | null;
+}
+
+/** The invoice columns the audit reads (lib/queries/gst-health.ts selects exactly these). */
+export interface InvoiceGstRow {
+  taxable_value: number | null;
+  tax_amount: number | null;
+  tax_rate: number | null;
+  inter_state: boolean | null;
+  gst_treatment?: string | null;
+  line_items?: unknown;
+}
+
+/**
+ * R-2717: an invoice row → the facts the audit checks. A mixed-rate invoice has `tax_rate`
+ * NULL and a rate on each line; its `rates` come from the lines (lib/gst/line-rates.ts), so
+ * the arithmetic is checked per rate instead of against a single rate it does not have.
+ */
+export function invoiceGstFacts(inv: InvoiceGstRow): InvoiceGstFacts {
+  const taxableValue = inv.taxable_value ?? 0;
+  const taxAmount = inv.tax_amount ?? 0;
+  const taxRate = inv.tax_rate ?? 0;
+  const lines = Array.isArray(inv.line_items) ? (inv.line_items as RateSourceLine[]) : null;
+  const slices = linesRateSlices({ taxableValue, gst: taxAmount, taxRate }, lines);
+  return {
+    /* One slice: the row's rate, or the one rate ALL its lines carry (tax_rate may be NULL). */
+    taxableValue, taxAmount, taxRate: isMixedRate(slices) ? taxRate : slices[0].rate,
+    ...(isMixedRate(slices) ? { rates: slices.map((s) => ({ rate: s.rate, taxable: s.taxable })) } : {}),
+    interState: Boolean(inv.inter_state),
+    gstTreatment: inv.gst_treatment,
+  };
 }
 
 export interface PartyGstFacts {
@@ -211,14 +245,24 @@ export function auditInvoiceGst(
   }
 
   // ── The arithmetic ────────────────────────────────────────────────────────
-  const expected = Math.round((invoice.taxableValue * invoice.taxRate) / 100);
+  /* R-2717: an invoice whose lines carry different GST rates is checked rate by rate — each
+     rate's share of the taxable value at its own rate. One rate → the check as it always was. */
+  const mixed = invoice.rates && invoice.rates.length > 1 ? invoice.rates : null;
+  const mixedLabel = mixed ? mixed.map((r) => `${r.taxable} at ${r.rate}%`).join(" + ") : "";
+  const expected = mixed
+    ? mixed.reduce((s, r) => s + Math.round((r.taxable * r.rate) / 100), 0)
+    : Math.round((invoice.taxableValue * invoice.taxRate) / 100);
   if (Math.abs(tax - expected) > TAX_TOLERANCE) {
     issues.push({
       code: "tax_arithmetic",
       severity: "critical",
-      headline: `The tax on this invoice is not ${invoice.taxRate}% of the taxable value.`,
-      detail:
-        `Taxable ${invoice.taxableValue} at ${invoice.taxRate}% is ${expected}, but the ` +
+      headline: mixed
+        ? `The tax on this invoice is not its lines' GST rates (${mixed.map((r) => `${r.rate}%`).join(" + ")}) applied to their taxable values.`
+        : `The tax on this invoice is not ${invoice.taxRate}% of the taxable value.`,
+      detail: mixed
+        ? `Taxable ${mixedLabel} is ${expected}, but the invoice charges ${tax}. One of the ` +
+          `numbers is wrong, and the invoice has already gone out.`
+        : `Taxable ${invoice.taxableValue} at ${invoice.taxRate}% is ${expected}, but the ` +
         `invoice charges ${tax}. One of the three numbers is wrong, and the invoice has ` +
         `already gone out.`,
       /* Here the risk IS the difference, not the whole tax — the head is fine, the sum is
@@ -231,11 +275,16 @@ export function auditInvoiceGst(
      the right rate there, not a rate to question. */
   const sezZeroRated = (invoice.gstTreatment ?? customer.gstTreatment) === "sez_without_payment"
     && invoice.taxRate === 0 && tax === 0;
-  if (invoice.taxRate !== SAAS_GST_RATE && !sezZeroRated) {
+  /* R-2717: on a mixed invoice the question is asked of each line rate — the 18% lines are
+     not questioned, and the other rates are named (the same "worth a look" a 0% invoice gets). */
+  const oddRates = mixed ? mixed.filter((r) => r.rate !== SAAS_GST_RATE).map((r) => `${r.rate}%`) : [];
+  if (mixed ? oddRates.length > 0 : (invoice.taxRate !== SAAS_GST_RATE && !sezZeroRated)) {
     issues.push({
       code: "unexpected_rate",
       severity: "warning",
-      headline: `Charged at ${invoice.taxRate}% where this business's services attract ${SAAS_GST_RATE}%.`,
+      headline: mixed
+        ? `Some lines are charged at ${oddRates.join(", ")} where this business's services attract ${SAAS_GST_RATE}%.`
+        : `Charged at ${invoice.taxRate}% where this business's services attract ${SAAS_GST_RATE}%.`,
       /* A warning, not critical: a tenant may legitimately sell something on another rate,
          and calling every such line an error is how a checker gets ignored. */
       detail:

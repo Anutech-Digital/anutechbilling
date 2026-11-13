@@ -34,6 +34,7 @@ import { rupee, formatDate, toTitleCase } from "@/lib/utils";
 import { formatMonthLabel, fyStartYear, fyLabelOfYear, istToday } from "@/lib/dates/ist";
 import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines, useSalaryBankLines, type SalaryPayment } from "@/lib/queries/payroll";
 import { ctcFromEmployee } from "@/lib/payroll/ctc";
+import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { fyPayslipActuals } from "@/lib/payroll/ctc-register";
 import { form16Working, fyStartOfPeriod, fyLabelOf, taxYearFor, type Form16Working } from "@/lib/payroll/income-tax";
 import { logExport } from "@/lib/export-log";
@@ -173,7 +174,12 @@ function MonthRegister() {
   const ctcFy = fyStartYear(ctcMonth);
   const allPayQ = useSalaryPayments();
   const ctcEmployees = empQ.data ?? [];
-  const ctcOf = (e: (typeof ctcEmployees)[number]) => ctcFromEmployee(e, { asOf: ctcMonth });
+  /* R-2700: the company payroll policy — gratuity on/off and whether the CTC includes the
+     employer's PF / ESI / gratuity — the same rule as the employee form's CTC tab (review F1). */
+  const payrollPolicy = usePayrollPolicy().data;
+  const includeGratuity = payrollPolicy?.gratuity ?? true;
+  const ctcIncludesEmployer = payrollPolicy?.ctcIncludesEmployer ?? true;
+  const ctcOf = (e: (typeof ctcEmployees)[number]) => ctcFromEmployee(e, { asOf: ctcMonth, includeGratuity, ctcIncludesEmployer });
   const fyActuals = fyPayslipActuals(allPayQ.data ?? [], ctcFy);
   const ctcRowsData = ctcEmployees.map((e) => ({ e, ctc: ctcOf(e), actual: fyActuals.byEmployee.get(e.id) }));
   const ctcTotals = ctcRowsData.reduce((t, r) => ({
@@ -295,7 +301,9 @@ function MonthRegister() {
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-serif font-bold text-ink">Cost to Company (CTC) Salary Matrix</h2>
-              <p className="text-xs text-ink-3">Each employee&apos;s monthly gross from Payroll, plus the company&apos;s cost on top (employer PF, employer ESI, gratuity) = CTC. &quot;Actual FY {fyLabelOfYear(ctcFy)}&quot; = what this year&apos;s payslips really paid.</p>
+              <p className="text-xs text-ink-3">{ctcIncludesEmployer
+                ? <>Each employee&apos;s monthly gross from Payroll, plus the company&apos;s cost on top (employer PF, employer ESI, gratuity) = CTC.</>
+                : <>CTC = each employee&apos;s monthly gross × 12 (company payroll policy); employer PF, employer ESI and gratuity are paid on top of it.</>} &quot;Actual FY {fyLabelOfYear(ctcFy)}&quot; = what this year&apos;s payslips really paid.</p>
             </div>
             <Button variant="outline" size="sm" icon="download" onClick={exportCtcRegisterCsv}>
               Export CTC Register CSV

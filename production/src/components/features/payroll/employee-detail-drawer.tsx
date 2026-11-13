@@ -25,6 +25,7 @@ import {
 } from "@/lib/queries/payroll";
 import { rupee, formatDate } from "@/lib/utils";
 import { ctcFromEmployee } from "@/lib/payroll/ctc";
+import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { EmployeeProperty } from "@/components/features/payroll/employee-property";
@@ -57,6 +58,7 @@ export function EmployeeDetailDrawer({
   const { data: docs, isLoading } = useEmployeeDocuments(open ? employee?.id : null);
   const upload = useUploadEmployeeDocument();
   const del = useDeleteEmployeeDocument();
+  const payrollPolicy = usePayrollPolicy();
   const confirm = useConfirm();
   const [docType, setDocType] = React.useState("aadhaar");
   const [viewing, setViewing] = React.useState<EmployeeDocument | null>(null);
@@ -132,7 +134,8 @@ export function EmployeeDetailDrawer({
             {employee && (() => {
               /* R-1585: the employee's own structure (gross, Basic, DA, PF/ESI flags) — monthly
                  gross × 12 is not the CTC. */
-              const ctc = ctcFromEmployee(employee);
+              /* R-2700: the company's gratuity + CTC policy, same as the CTC register and the employee form. */
+              const ctc = ctcFromEmployee(employee, { includeGratuity: payrollPolicy.data?.gratuity ?? true, ctcIncludesEmployer: payrollPolicy.data?.ctcIncludesEmployer ?? true });
               return (
                 <div className="rounded-xl border border-hairline bg-paper p-3.5 space-y-3">
                   <div className="flex items-center justify-between pb-2 border-b border-hairline">

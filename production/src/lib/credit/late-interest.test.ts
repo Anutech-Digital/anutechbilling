@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   LATE_INTEREST_RATE_PCT, LATE_INTEREST_NOTE_PREFIX,
   lateInterest, interestAlreadyCharged, interestPrincipal, interestToAdd,
-  interestDebitNoteGross, interestDebitNoteNote, mayAddLateInterest, lateInterestView,
+  interestDebitNoteGross, interestDebitNoteNote, mayAddLateInterest, lateInterestView, lateInterestRefusal,
 } from "./late-interest";
 
 const DUE = "2026-10-01";
@@ -149,6 +149,27 @@ describe("the debit note", () => {
     expect(mayAddLateInterest("sales")).toBe(false);
     expect(mayAddLateInterest("manager")).toBe(false);
     expect(mayAddLateInterest(null)).toBe(false);
+  });
+});
+
+describe("R-2717 lateInterestRefusal — no interest debit note on an invoice with lines at different GST rates", () => {
+  const mixed = [{ qty: 1, rate: 10000, amount: 10000, tax_rate: 0 }, { qty: 2, rate: 10000, amount: 20000, tax_rate: 18 }];
+  it("0% + 18% lines → refused, with the sentence the user sees", () => {
+    expect(lateInterestRefusal({ line_items: mixed })).toBe(
+      "This invoice has lines at different GST rates (0% + 18%), so late interest cannot be added as one debit note yet. Ask your accountant which GST rate the interest carries.",
+    );
+  });
+  it("why: at 'the invoice rate ?? 18' the note is ₹118 for ₹100 interest, but a note on such an invoice is split like the invoice", () => {
+    // issue_debit_note → invoice_note_gst_split: 118 × 30,000 ÷ 33,600 = ₹105 taxable, not the ₹100 interest.
+    expect(interestDebitNoteGross(100, null)).toBe(118);
+    expect(Math.round((118 * 30000) / 33600)).toBe(105);
+  });
+  it("an ordinary invoice, one rate on every line, or one valued line with no rate → interest as before", () => {
+    expect(lateInterestRefusal({ line_items: [{ qty: 3, rate: 10000 }] })).toBeNull();
+    expect(lateInterestRefusal({ line_items: mixed.map((l) => ({ ...l, tax_rate: 18 })) })).toBeNull();
+    expect(lateInterestRefusal({ line_items: [mixed[0], { qty: 2, rate: 10000 }] })).toBeNull();
+    expect(lateInterestRefusal({ line_items: null })).toBeNull();
+    expect(lateInterestRefusal({})).toBeNull();
   });
 });
 

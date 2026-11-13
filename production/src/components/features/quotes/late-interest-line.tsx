@@ -16,7 +16,7 @@ import { rupee } from "@/lib/utils";
 import { toIstDate } from "@/lib/dates/ist";
 import { formatIstDate } from "@/lib/trials/start-from-quote";
 import {
-  LATE_INTEREST_RATE_PCT, lateInterestView, mayAddLateInterest, interestDebitNoteGross,
+  LATE_INTEREST_RATE_PCT, lateInterestView, mayAddLateInterest, interestDebitNoteGross, lateInterestRefusal,
 } from "@/lib/credit/late-interest";
 import { useLateInterestFacts, useAddLateInterest } from "@/lib/credit/queries";
 
@@ -34,7 +34,9 @@ export function LateInterestLine({ quoteId, invoiceId, role }: Props) {
   const view = facts ? lateInterestView({ invoice: facts.invoice, payments: facts.payments, notes: facts.notes, today }) : null;
   if (!facts || !view) return null;
 
-  const canAdd = mayAddLateInterest(role) && view.toAdd > 0;
+  /* R-2717: lines at different GST rates → the interest is shown, the reason is said, no button. */
+  const refusal = lateInterestRefusal(facts.invoice);
+  const canAdd = mayAddLateInterest(role) && view.toAdd > 0 && !refusal;
   const gross = interestDebitNoteGross(view.toAdd, facts.invoice.tax_rate);
 
   const onAdd = async () => {
@@ -69,6 +71,9 @@ export function LateInterestLine({ quoteId, invoiceId, role }: Props) {
         <Button size="sm" variant="default" icon="plus" onClick={onAdd} loading={add.isPending}>
           Add {rupee(view.toAdd)} + GST
         </Button>
+      )}
+      {refusal && mayAddLateInterest(role) && view.toAdd > 0 && (
+        <span data-testid="late-interest-refused" className="basis-full text-ink-3">{refusal}</span>
       )}
     </div>
   );
