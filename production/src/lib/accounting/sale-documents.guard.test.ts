@@ -115,6 +115,8 @@ const SQL_NOT_SALE: Record<string, string> = {
   waive_late_charges: "late fee",
   roll_paid_renewal_terms: "R-2735: is a renewal part's own tax invoice paid — moves renewal_date, not GST or revenue",
   tg_r2735_invoice_paid_renews: "R-2735: invoice turned paid → renew its marked part's subscription — not GST or revenue",
+  unroll_unpaid_renewal_terms: "R-2749: is a renewal part's own tax invoice still paid — moves renewal_date back, not GST or revenue",
+  tg_r2749_wont_renew_open_part: "R-2749: is the renewal part's own invoice unpaid — refuses Won't renew, not GST or revenue",
   // R-1739's own functions
   _opening_invoice_settle: "keeps an opening invoice's paid amount",
   _record_opening_invoice_payment: "payment on an opening invoice",
