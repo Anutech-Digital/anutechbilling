@@ -48,7 +48,7 @@ describe("R-1445 isTermLine: who gets the 'Register for' picker", () => {
   it("a Workspace line is not", () => {
     expect(isTermLine({ ...base, item_id: "gw", name: "Google Workspace Starter", domain: "acme.in" }, domainIds)).toBe(false);
   });
-  it("a bulk line is not", () => {
-    expect(isTermLine({ ...base, bulk: true }, domainIds)).toBe(false);
+  it("a bulk Workspace line is not (R-2712: a bulk DOMAIN line is — domain-term-r2712.test.ts)", () => {
+    expect(isTermLine({ ...base, item_id: "gw", name: "Google Workspace Starter", bulk: true }, domainIds)).toBe(false);
   });
 });

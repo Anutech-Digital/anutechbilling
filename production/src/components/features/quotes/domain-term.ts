@@ -12,7 +12,6 @@
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { domainLineYears } from "@/lib/provisioning/products";
 import { isDomainRegistrationLine } from "@/lib/quotes/seat-lines";
-import { isDomainPlan } from "@/lib/quotes/bulk";
 
 const clampYears = (y: number) => Math.max(1, Math.min(10, Math.trunc(Number.isFinite(y) ? y : 1)));
 
@@ -37,12 +36,11 @@ export function lineForYears(line: QuoteLineItem, years: number): QuoteLineItem 
  * catalogue names its domain items ".in", ".com", and those had no picker.
  *
  * R-2712: a BULK line of a domain item gets it too (it was refused outright, so "Bulk / many
- * domains" could never be more than 1 year). A bulk Workspace line still does not.
+ * domains" could never be more than 1 year) — by the same two rules. A bulk Workspace line still
+ * does not, nor a Flexible (monthly) bulk line: years are whole-year terms.
  */
 export function isTermLine(line: QuoteLineItem, domainItemIds: ReadonlySet<string>): boolean {
-  if (line.bulk) {
-    return isDomainPlan({ vendor: line.item_id && domainItemIds.has(line.item_id) ? "domain" : null, name: line.name });
-  }
-  if (isDomainRegistrationLine(line)) return true;
+  if (line.bulk && line.commitment === "monthly") return false;
+  if (isDomainRegistrationLine(line.bulk ? { ...line, bulk: false } : line)) return true;
   return !!line.item_id && domainItemIds.has(line.item_id);
 }

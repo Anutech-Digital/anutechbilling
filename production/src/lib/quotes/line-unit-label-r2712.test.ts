@@ -9,15 +9,15 @@ const bulk = (years: number | undefined, seats: number[]) => ({
 });
 
 describe("R-2712 lineUnitLabel on a multi-year bulk line", () => {
-  it("one seat per domain → 'Per domain for 3 years'", () => {
-    expect(lineUnitLabel(bulk(3, [1, 1, 1]), false)).toBe("Per domain for 3 years");
-  });
-  it("several seats on a domain → 'Per seat for 3 years'", () => {
+  it("3 years → 'Per seat for 3 years' (the same unit word as at 1 year)", () => {
+    expect(lineUnitLabel(bulk(3, [1, 1, 1]), false)).toBe("Per seat for 3 years");
     expect(lineUnitLabel(bulk(3, [2, 1]), false)).toBe("Per seat for 3 years");
   });
   it("split billing (per invoice) adds no term", () => {
-    expect(lineUnitLabel(bulk(3, [1, 1]), true)).toBe("Per domain");
-    expect(lineUnitLabel(bulk(3, [2, 1]), true)).toBe("Per seat");
+    expect(lineUnitLabel(bulk(3, [1, 1]), true)).toBe("Per seat");
+  });
+  it("a Flexible (monthly) bulk line that still carries years is not 'for 3 years'", () => {
+    expect(lineUnitLabel({ ...bulk(3, [1, 1]), commitment: "monthly" }, false)).toBe("Per seat per year");
   });
   it("a 1-year bulk line is unchanged", () => {
     expect(lineUnitLabel(bulk(undefined, [1, 1]), false)).toBe("Per seat per year");

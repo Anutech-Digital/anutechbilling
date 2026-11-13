@@ -15,10 +15,14 @@ vi.mock("@/lib/dates/ist", async (orig) => ({ ...(await orig<typeof import("@/li
 
 import { BulkDomainsDialog } from "./bulk-domains-dialog";
 
-const item = (id: string, name: string, vendor: Item["vendor"], msrp: number, wholesale: number) =>
-  ({ id, name, vendor, msrp, wholesale, item_type: "subscription" }) as unknown as Item;
-/* Catalogue prices are per month: 100 × 12 = ₹1,200 a year list; cost 50 × 12 = ₹600 a year. */
-const CATALOG = [item("it-in", ".in", "domain", 100, 50), item("it-gws", "Google Workspace Business Starter", "google", 200, 150)];
+const item = (id: string, name: string, vendor: Item["vendor"], msrp: number, wholesale: number, prices?: unknown) =>
+  ({ id, name, vendor, msrp, wholesale, item_type: "subscription", prices: prices ?? null }) as unknown as Item;
+/* .in is priced per YEAR (billing_unit unit_year, R-526): ₹1,200 list, ₹600 cost — never × 12.
+   Zoho Mail is per seat per MONTH: 200 × 12 = ₹2,400 a year, cost 150 × 12 = ₹1,800. */
+const CATALOG = [
+  item("it-in", ".in", "domain", 1200, 600, { billing_unit: "unit_year" }),
+  item("it-gws", "Zoho Mail Lite", "zoho", 200, 150),
+];
 
 function open() {
   const added: QuoteLineItem[] = [];
@@ -66,10 +70,12 @@ describe("R-2712 Bulk dialog — Register for N years + Start date", () => {
     expect(screen.getByTestId("bulk-summary").textContent).toContain("/yr (ex-GST)");
     expect(screen.getByTestId("bulk-summary").textContent).toContain("starts 13 Nov 2026 and renews 13 Nov 2027");
     fireEvent.click(screen.getByRole("button", { name: "Add bulk line (1)" }));
-    expect([added[0].rate, added[0].years, added[0].start_date]).toEqual([1200, undefined, "2026-11-13"]);
+    /* A per-year item comes in at its yearly price and cost — it was × 12 (₹14,400 / ₹7,200). */
+    expect((screen.getByLabelText("Rate (₹/seat/year)") as HTMLInputElement).value).toBe("1200");
+    expect([added[0].rate, added[0].cost, added[0].years, added[0].start_date]).toEqual([1200, 600, undefined, "2026-11-13"]);
   });
 
-  it("a Workspace plan has no years picker — and years picked earlier for a domain plan do not carry over", () => {
+  it("a seat plan (Zoho Mail) has no years picker — and years picked earlier for a domain plan do not carry over", () => {
     const added = open();
     pick("it-in");
     type("Register for", "5");
@@ -78,7 +84,7 @@ describe("R-2712 Bulk dialog — Register for N years + Start date", () => {
     expect(screen.getByLabelText("Start date")).toBeTruthy();
     type("Domain 1", "acme.in");
     fireEvent.click(screen.getByRole("button", { name: "Add bulk line (1)" }));
-    expect([added[0].rate, added[0].years, added[0].start_date]).toEqual([2400, undefined, "2026-11-13"]);
+    expect([added[0].rate, added[0].cost, added[0].years, added[0].start_date]).toEqual([2400, 1800, undefined, "2026-11-13"]);
   });
 
   it("start date cleared → today, and the summary says so (the builder dates an undated line today anyway)", () => {

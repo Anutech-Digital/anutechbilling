@@ -14,6 +14,9 @@ describe("R-2712 isTermLine on bulk lines", () => {
   it("a bulk line whose name says domain / registration → yes", () => {
     expect(isTermLine(buildBulkLine({ id: "l1", item_id: "it-x", name: "Domain registration .com", cost: 600 }, 800, DOMAINS), DOMAIN_ITEMS)).toBe(true);
   });
+  it("a Flexible (monthly) bulk domain line → no: years are whole-year terms", () => {
+    expect(isTermLine(buildBulkLine({ id: "l1", item_id: "it-in", name: ".in", cost: 600 }, 70, DOMAINS, "monthly"), DOMAIN_ITEMS)).toBe(false);
+  });
   it("a bulk Workspace line → no (seats, not a registration)", () => {
     expect(isTermLine(buildBulkLine({ id: "l1", item_id: "it-gws", name: "Google Workspace Business Starter", cost: 1800 }, 2400, DOMAINS), DOMAIN_ITEMS)).toBe(false);
   });
