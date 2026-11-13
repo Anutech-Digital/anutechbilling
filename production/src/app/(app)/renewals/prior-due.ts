@@ -22,13 +22,15 @@ export interface PriorDueSub {
   renewal_quote_id?: string | null;
 }
 
-/** The unpaid amount of the previous term, 0 when nothing is owed. */
+/** The unpaid amount of the previous term, 0 when nothing is owed. R-2752: under ₹1 is paise
+ *  rounding (GST split), never "still unpaid". */
 export function priorTermDue(sub: Pick<PriorDueSub, "outstanding_amount" | "written_off_at">): number {
-  return subscriptionDue({
+  const due = subscriptionDue({
     customer_id: null,
     outstanding_amount: sub.outstanding_amount,
     written_off_at: sub.written_off_at ?? null,
   });
+  return due >= 1 ? due : 0;
 }
 
 /** The warning text, or null when the previous term is paid. */

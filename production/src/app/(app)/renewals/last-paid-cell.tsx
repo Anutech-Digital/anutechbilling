@@ -9,7 +9,7 @@ import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
-import { lastPaidSummary, NEVER_PAID, type LastPaid, type PaidLine } from "./last-paid";
+import { lastPaidSummary, NEVER_PAID, PAID_NO_RECEIPT, type LastPaid, type PaidLine } from "./last-paid";
 
 function DocLink({ line, canInvoices, canQuotes }: { line: PaidLine; canInvoices: boolean; canQuotes: boolean }) {
   const s = lastPaidSummary(line);
@@ -20,8 +20,10 @@ function DocLink({ line, canInvoices, canQuotes }: { line: PaidLine; canInvoices
     : <span className="font-mono">{s.doc}</span>;
 }
 
-export function LastPaidLine({ paid, loading, failed, canInvoices, canQuotes, className }: {
+export function LastPaidLine({ paid, paidInvoiceId, loading, failed, canInvoices, canQuotes, className }: {
   paid: LastPaid | undefined;
+  /** R-2752: the row's invoice that reads "Paid" (last-docs paidInvoiceOf) — shown when no receipt is linked. */
+  paidInvoiceId?: string | null;
   /** The read is still running — show nothing rather than a false "never paid". */
   loading: boolean;
   /** The read failed — say so; never a false "never paid". */
@@ -32,6 +34,18 @@ export function LastPaidLine({ paid, loading, failed, canInvoices, canQuotes, cl
 }) {
   if (loading) return null;
   if (failed) return <p className={cn("text-2xs text-ink-3", className)}>Last paid: couldn&apos;t load — reload the page</p>;
+  if (!paid && paidInvoiceId) {
+    /* R-2752: never "never paid" next to "Invoice … · Paid" — settled another way (advance, credit, old books) */
+    return (
+      <p className={cn("break-words text-2xs text-ink-3", className)} data-testid="renewal-last-paid-no-receipt">
+        Last paid{" "}
+        {canInvoices
+          ? <Link href={invoiceHref(paidInvoiceId) as never} className="font-mono underline underline-offset-2 hover:text-ink">{paidInvoiceId}</Link>
+          : <span className="font-mono">{paidInvoiceId}</span>}
+        {" "}{PAID_NO_RECEIPT}
+      </p>
+    );
+  }
   if (!paid) return <p className={cn("text-2xs text-ink-3", className)}>Last paid {NEVER_PAID}</p>;
   const s = lastPaidSummary(paid.last);
   const full = `Last paid: ${s.doc ?? "—"} · ${s.date} · ${s.amount} · ${s.method}${s.shared ? ` (${s.shared})` : ""}`;

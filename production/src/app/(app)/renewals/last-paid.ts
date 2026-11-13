@@ -15,13 +15,19 @@
  * (status 'refunded') never becomes "last paid".
  * One quote can make SEVERAL subscriptions (two domains on one quote — subscriptions.quote_id is
  * not unique), so a payment on it is not this subscription's alone: the line says "covers N
- * subscriptions" instead of passing the whole amount off as this one's. Pure — tested in last-paid-r2422.test.ts;
+ * subscriptions" instead of passing the whole amount off as this one's.
+ * R-2752 (user audit 14 Nov): a billed part's proforma (quotes.subscription_billing_id →
+ * subscription_billings) is one of its documents too — the same link last-docs.ts uses. Without it
+ * Greentin Behind read "never paid" next to "Invoice INV-F588-27-0060 · Paid" (the UPI payment was
+ * recorded on the part proforma Q-F588-27-0062). Pure — tested in last-paid-r2422.test.ts;
  * the batched read is last-paid-data.ts.
  */
 import { rupee, formatDate } from "@/lib/utils";
 import { paymentMethodLabel } from "@/lib/payments/method-label";
 
 export const NEVER_PAID = "— never paid in the app";
+/** R-2752: the invoice is marked Paid but no receipt is linked in the app. */
+export const PAID_NO_RECEIPT = "— Paid, no receipt in the app";
 export const HISTORY_SIZE = 3;
 
 export interface LastPaidInput {
@@ -29,8 +35,12 @@ export interface LastPaidInput {
   /** Every subscription made from one of those quotes (not only the rows on screen) — to count who shares a payment. */
   quoteSiblings?: ReadonlyArray<{ id: string; quote_id: string | null }>;
   /** quotes linked to a subscription by renewal_subscription_id / add_seats_subscription_id (+ the subs' own quotes, for their invoice_id). */
-  linkedQuotes: ReadonlyArray<{ id: string; renewal_subscription_id: string | null; add_seats_subscription_id: string | null; invoice_id: string | null }>;
-  billings: ReadonlyArray<{ subscription_id: string; invoice_id: string | null }>;
+  linkedQuotes: ReadonlyArray<{
+    id: string; renewal_subscription_id: string | null; add_seats_subscription_id: string | null; invoice_id: string | null;
+    /** R-2752: a billed part's proforma → the subscription of that billing row. */
+    subscription_billing_id?: string | null;
+  }>;
+  billings: ReadonlyArray<{ id?: string; subscription_id: string; invoice_id: string | null }>;
   invoices: ReadonlyArray<{ id: string; quote_id: string | null }>;
   payments: ReadonlyArray<{
     id: string; amount: number; method: string; status: string; received_at: string;
@@ -71,9 +81,12 @@ export function linkedDocs(input: Pick<LastPaidInput, "subs" | "linkedQuotes" | 
     if (s.quote_id) addTo(quoteSubs, s.quote_id, s.id);
     if (s.renewal_quote_id) addTo(quoteSubs, s.renewal_quote_id, s.id);
   }
+  const billingSub = new Map(input.billings.filter((b) => b.id).map((b) => [b.id as string, b.subscription_id]));
   for (const q of input.linkedQuotes) {
     if (q.renewal_subscription_id) addTo(quoteSubs, q.id, q.renewal_subscription_id);
     if (q.add_seats_subscription_id) addTo(quoteSubs, q.id, q.add_seats_subscription_id);
+    const partOf = q.subscription_billing_id ? billingSub.get(q.subscription_billing_id) : undefined;
+    if (partOf) addTo(quoteSubs, q.id, partOf);
   }
   for (const b of input.billings) if (b.invoice_id) addTo(invoiceSubs, b.invoice_id, b.subscription_id);
   /* An invoice raised from a linked quote — either side of the link. */

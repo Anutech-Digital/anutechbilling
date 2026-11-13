@@ -88,7 +88,7 @@ import { LastPaidLine } from "./last-paid-cell";
 import type { LastPaid } from "./last-paid";
 import { useRenewalLastDocs } from "./last-docs-data";
 import { LastDocsLines, SentDueLines } from "./last-docs-cell";
-import type { LastDocs } from "./last-docs";
+import { paidInvoiceOf, type LastDocs } from "./last-docs";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import {
   renewalFollowup, renewalDecision, showDecision, filterByFollowup, bulkAssignRequests, bulkAssignReport,
@@ -327,9 +327,18 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
   /* R-2404: owner, next date, promise, notes, "confirmed" — Payment Follow-up's dialog, for this renewal.
      R-2422: it, Nudge and Voice note sit behind the row's ONE next-step button + ⋯ (RenewalActions). */
   const followupFor = (sub: Subscription) => (sub.customer_id ? () => { const it = byId.get(sub.id); if (it) onFollowup(it); } : undefined);
-  const lastPaidFor = (sub: Subscription, className?: string) => (
-    <LastPaidLine paid={lastPaid.data?.get(sub.id)} loading={lastPaid.loading} failed={lastPaid.failed} canInvoices={canInvoices} canQuotes={canQuotes} className={className} />
-  );
+  /* R-2752: paid facts agree — an invoice the row shows as Paid is never next to "never paid" (wait
+     for the docs too before saying "never paid") */
+  const lastPaidFor = (item: QueueItem, className?: string) => {
+    const paid = lastPaid.data?.get(item.sub.id);
+    return (
+      <LastPaidLine
+        paid={paid} paidInvoiceId={paidInvoiceOf(item.docs, todayIst)?.id ?? null}
+        loading={lastPaid.loading || (!paid && docsState.loading)} failed={lastPaid.failed}
+        canInvoices={canInvoices} canQuotes={canQuotes} className={className}
+      />
+    );
+  };
   /* R-2728: the last quote sent + last invoice, clickable. A draft renewal quote keeps R-2232's
      "Renewal quote Q-x not sent yet" line; otherwise these lines replace "Renewal sent Q-x · due …". */
   const todayIst = istToday();
@@ -377,7 +386,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                     {sub.plan} · {sub.seats} seats
                   </p>
                   <ContactLine contact={contact} />
-                  {lastPaidFor(sub, "mt-0.5")}
+                  {lastPaidFor(item, "mt-0.5")}
                 </div>
                 <AmountCell amount={amount} frequency={frequency} className="text-right shrink-0" />
               </div>
@@ -476,7 +485,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                       <p className="truncate font-semibold text-ink" title={sub.customer_name}>{sub.customer_name}</p>
                     )}
                     <ContactLine contact={contact} />
-                    {lastPaidFor(sub, "mt-0.5")}
+                    {lastPaidFor(item, "mt-0.5")}
                     {atRisk && <AtRiskMark reason={riskReason} />}
                   </td>
 

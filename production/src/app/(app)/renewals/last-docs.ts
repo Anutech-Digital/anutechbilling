@@ -491,7 +491,17 @@ export function priorDueInvoiceGap(docs: LastDocs | undefined, priorDue: number,
   const owed = docs?.owedInvoiceId ?? null;
   if (owed && shown.some((i) => i.id === owed)) return null;
   if (owed) return `Older invoice ${owed} still has money due`;
-  return "No unpaid invoice linked to this subscription for the previous term";
+  /* R-2752: the balance is only subscriptions.outstanding_amount — the customer's statement (the
+     ledger: invoices − payments) does not carry it, which is why the customer page can say "All clear" */
+  return "Balance on the subscription, no invoice — not in the customer's statement";
+}
+
+/**
+ * R-2752 — the newest shown invoice that reads "Paid" (same words as its own line), for the Last
+ * paid line when no receipt is linked: an invoice marked Paid is never next to "never paid".
+ */
+export function paidInvoiceOf(docs: LastDocs | undefined, todayIst: string): LastInvoice | null {
+  return (docs?.invoices ?? []).find((i) => invoiceStatusWords(i, todayIst).text === "Paid") ?? null;
 }
 
 /* "Nov 2026" = periodDate("2026-11-01") without its day — the paper's own formatter (service-period.ts). */
