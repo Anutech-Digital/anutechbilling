@@ -257,7 +257,8 @@ export function calculateCtcBreakdown(
     conveyanceMonthly = cut(conveyanceMonthly);
     if (!hraTyped) hraMonthly = cut(hraMonthly);
     fixedEarnings = basicMonthly + daMonthly + hraMonthly + conveyanceMonthly + medicalMonthly;
-    overBudget = monthlyCtc > 0 && over > 0;
+    // R-2722: a typed CTC under ₹6/yr rounds to CTC/12 = 0 — a kept Basic still does not fit it.
+    overBudget = annualCtc > 0 && over > 0;
   };
   if (opts?.customSpecialMonthly !== undefined && opts.customSpecialMonthly >= 0) {
     specialAllowanceMonthly = Math.round(opts.customSpecialMonthly);
@@ -512,7 +513,7 @@ export function ctcFormulaText(b: CtcTabBreakdown, grossInForm?: number): string
 }
 
 /** The salary the Edit / Add employee form held when a CTC started being typed (strings, as in the form). */
-export interface CtcFormBase { gross: string; basic: string }
+export interface CtcFormBase { gross: string; basic: string; da: string }
 
 /**
  * R-2722: what the form's Monthly Gross / Basic boxes hold while a CTC is being typed. ONE rule,
@@ -532,9 +533,10 @@ export function ctcFormFill(i: {
   if (!i.ctcTyped || i.grossByHand || i.salaryByRevision) return null;
   const b = i.breakdown;
   const withBasic = (gross: string, basic: string) => (i.basicByHand ? { gross } : { gross, basic });
-  if (!(b.source === "ctc" && b.annualCtc > 0 && !b.overBudget)) return withBasic(i.base.gross, i.base.basic);
+  // A CTC too small to give any gross (typing "5" on the way to 5,00,000) fills nothing either.
+  if (!(b.source === "ctc" && b.annualCtc > 0 && !b.overBudget && b.grossMonthly > 0)) return withBasic(i.base.gross, i.base.basic);
   return withBasic(
-    b.grossMonthly > 0 ? String(b.grossMonthly) : "",
+    String(b.grossMonthly),
     b.basicAssumed ? i.base.basic : b.basicMonthly > 0 ? String(b.basicMonthly) : "",
   );
 }
