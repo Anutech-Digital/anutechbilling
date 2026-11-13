@@ -120,9 +120,10 @@ test.describe("R-2699 — salary revision from a month; earlier months keep the 
     try {
       await revise(page, PAID, "2026-09", "36000");
       const rdlg = page.getByRole("dialog", { name: `Revise salary — ${PAID}` });
-      // R-2722: booked (not paid — no bank line linked); this planted row has no salary_in_force (booked before revisions).
+      // R-2722: booked (not paid — no bank line linked). The R-2699 trigger stores salary_in_force on
+      // insert, so this row is not a "booked before salary revisions" month (that line: unit test ctc-r2722).
       await expect(rdlg).toContainText("September 2026 is already booked at the old salary");
-      await expect(rdlg.getByTestId("revise-legacy-months")).toHaveText("September 2026 was booked before salary revisions — check the old salary used for it.");
+      await expect(rdlg.getByTestId("revise-legacy-months")).toHaveCount(0);
       await expect(rdlg).toContainText("₹6,000");
       await rdlg.getByRole("button", { name: "Save revision from September 2026" }).click();
       await expect(page.getByRole("dialog").getByTestId("salary-revisions")).toContainText("From September 2026", { timeout: 60_000 });
