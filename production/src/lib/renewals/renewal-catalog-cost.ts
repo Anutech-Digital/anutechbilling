@@ -18,9 +18,10 @@
  *   2. else the one active row whose name IS the plan name (case and spaces ignored);
  *   3. else the one confident match — the same pick the editor's "Use cost ₹X" offers first
  *      (matchCatalogItemForPlan, and only if suggestCatalogMatches keeps it: never another tier).
- * The cost is the row's tier for the renewal's term (annual tier for whole years, monthly tier for a
- * month), × years for a multi-year term, × seats for the line total — the same arithmetic the quote
- * builder stores (catalogLineListRate). Nothing found, or the row has no ₹ wholesale → cost 0 = unknown
+ * The cost is the row's per-seat-month cost for the renewal's commitment — the volume slab for these
+ * seats on the annual tier, the monthly tier for a one-month (Flexible) term, as the quote builder's own
+ * cost fill reads it — × the term's months (so × years for 24 / 36), × seats for the line total. A name
+ * / match pick stays inside the subscription's vendor. Nothing found, or the row has no ₹ wholesale → cost 0 = unknown
  * (approval-economics reads it as "cost unknown" and the approval stays). Never a guess, never an FX
  * conversion here (a USD-only wholesale stays unknown).
  */
@@ -28,7 +29,9 @@ import { catalogPlanName } from "@/lib/subscriptions/plan-match";
 import { matchCatalogItemForPlan } from "@/lib/quotes/lead-plan-match";
 import { suggestCatalogMatches } from "@/lib/quotes/typed-line-catalog-match";
 import { catalogLineListRate, catalogYearlyPrice } from "@/lib/quotes/catalog-line";
-import { billingUnitOf } from "@/lib/catalog/billing-unit";
+import { billingUnitOf, unitYearMultiplier } from "@/lib/catalog/billing-unit";
+import { headlinePrice } from "@/lib/catalog/headline-price";
+import { slabPricing } from "@/lib/quotes/volume-tiers";
 import type { RenewalCost } from "./renewal-cost";
 
 /** The catalogue columns the renewal paths read. */
@@ -56,13 +59,16 @@ const norm = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/
  */
 export function pickRenewalCatalogItem<T extends RenewalCatalogRow>(
   rows: readonly T[],
-  sub: { itemId?: string | null; plan: string | null | undefined },
+  sub: { itemId?: string | null; plan: string | null | undefined; vendor?: string | null },
 ): RenewalCatalogPick<T> | null {
   if (sub.itemId) {
     const byId = rows.find((r) => r.id === sub.itemId);
     if (byId) return { row: byId, how: "item_id" };
   }
-  const active = rows.filter((r) => r.is_active !== false && norm(r.name) !== "");
+  /* A name / match pick stays inside the subscription's own vendor when it is known: a Zoho or
+     hosting row that shares words with the plan is never a Workspace licence's cost. */
+  const vendor = sub.vendor && sub.vendor !== "other" ? sub.vendor : null;
+  const active = rows.filter((r) => r.is_active !== false && norm(r.name) !== "" && (!vendor || r.vendor === vendor));
   const plan = catalogPlanName(sub.plan ?? "");
   if (!norm(plan)) return null;
 
@@ -100,13 +106,33 @@ export function renewalCatalogCost(
   if (months <= 0) return unknown("the renewal term is not known, so the cost cannot be totalled");
   if (seats <= 0) return unknown("the subscription has no seat count");
 
-  const it = { msrp: row.msrp ?? 0, wholesale: row.wholesale ?? 0, prices: (row.prices ?? null) as never, name: row.name, vendor: row.vendor, item_type: row.item_type };
-  const annual = months % 12 === 0;
-  const unitCost = catalogLineListRate(it, annual ? "annual_yearly" : "monthly").cost;   // ₹ per seat per year (annual) / per month
-  if (!Number.isFinite(unitCost) || unitCost <= 0) return unknown("the catalogue has no wholesale price (₹) for this plan");
+  const it = pricingRow(row);
+  /* renewalTerm's commitment: one month = the monthly (Flexible) tier; anything longer is the annual
+     commitment, billed whole or in parts — its annual tier, per month × months. */
+  const monthly = months === 1;
+  let perSeatMonth: number;
+  if (unitYearMultiplier(billingUnitOf(it)) === 12 && headlinePrice(it).unit !== "yr") {
+    /* A per-month row: the quote builder's own cost fill (quote-builder.tsx fillUnknownCosts) — the
+       volume slab for these seats on the annual tier, the monthly tier on a Flexible line. */
+    const prices = it.prices as { monthly?: { wholesale?: number } } | null;
+    perSeatMonth = monthly ? (prices?.monthly?.wholesale ?? it.wholesale) : slabPricing(it, seats).wholesalePerSeatMonth;
+  } else {
+    /* A row priced per year / as a yearly total (support "(Yearly)"): its year, per month. */
+    const perYearOrMonth = catalogLineListRate(it, monthly ? "monthly" : "annual_yearly").cost;
+    perSeatMonth = monthly ? perYearOrMonth : perYearOrMonth / 12;
+  }
+  if (!Number.isFinite(perSeatMonth) || perSeatMonth <= 0) return unknown("the catalogue has no wholesale price (₹) for this plan");
 
-  const perSeat = Math.round(annual ? unitCost * (months / 12) : unitCost * months);
+  const perSeat = Math.round(perSeatMonth * months);
   return { perSeat, total: perSeat * seats, known: true, reason: null };
+}
+
+/** The catalogue row in the shape the pricing helpers read (a null price column = 0 = not set). */
+function pricingRow(row: RenewalCatalogRow) {
+  return {
+    msrp: row.msrp ?? 0, wholesale: row.wholesale ?? 0, prices: (row.prices ?? null) as never,
+    name: row.name, vendor: row.vendor, item_type: row.item_type,
+  };
 }
 
 /**
@@ -121,6 +147,7 @@ export function pickDomainCatalogItem<T extends RenewalCatalogRow>(
     const byId = rows.find((r) => r.id === sub.itemId);
     if (byId) return { row: byId, how: "item_id" };
   }
+  if (!sub.tld.replace(/^\.+/, "")) return null;
   const tld = `.${sub.tld.replace(/^\.+/, "").toLowerCase()}`;
   const hits = rows.filter((r) =>
     r.vendor === "domain" && r.is_active !== false &&
@@ -134,7 +161,7 @@ export function pickDomainCatalogItem<T extends RenewalCatalogRow>(
  */
 export function domainRenewalCatalogCost(row: RenewalCatalogRow | null | undefined, years = 1): RenewalCost {
   if (!row) return unknown("no catalogue item for this domain extension");
-  const it = { msrp: row.msrp ?? 0, wholesale: row.wholesale ?? 0, prices: (row.prices ?? null) as never, name: row.name, vendor: row.vendor, item_type: row.item_type };
+  const it = pricingRow(row);
   if (billingUnitOf(it) !== "unit_year") return unknown("the domain's catalogue item is not priced per year");
   const perYear = catalogYearlyPrice(it).cost;
   if (!Number.isFinite(perYear) || perYear <= 0) return unknown("the domain's catalogue item has no wholesale price (₹)");

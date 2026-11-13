@@ -244,11 +244,12 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
      this extension, priced per year. It was always 0 ("not known here"), so every domain renewal quote
      read "margin unknown" and went to the owner for approval. Not found / unread → 0 = unknown as before. */
   const tld = splitDomain(input.domain)?.tld ?? "";
-  const { data: catalogRows } = await supabase
+  const { data: catalogRows, error: catalogErr } = await supabase
     .from("items")
     .select(RENEWAL_CATALOG_COLUMNS)
     .eq("tenant_id", input.tenantId);
-  const catalogPick = Array.isArray(catalogRows) && tld
+  if (catalogErr) console.error(`[domain-renewals] subscription ${input.subscriptionId}: catalogue not read — ${catalogErr.message}`);
+  const catalogPick = Array.isArray(catalogRows) && (tld || input.itemId)
     ? pickDomainCatalogItem(catalogRows as RenewalCatalogRow[], { itemId: input.itemId ?? null, tld })
     : null;
   const cost = domainRenewalCatalogCost(catalogPick?.row ?? null, 1);
@@ -264,8 +265,9 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
     qty: 1,
     rate: subtotal,
     cost: cost.perSeat,   // R-2736: the catalogue's yearly cost (0 = unknown)
-    /* R-2736: the row the cost came from, so the editor's Register-for picker and margin read it. */
-    ...(catalogPick?.row.id ? { item_id: catalogPick.row.id } : {}),
+    /* No item_id (R-2736 review): a linked line is re-priced from the catalogue on Duplicate / Revise,
+       and this line's price is ResellerClub's live renewal price. The name already gives it the
+       Register-for picker (isDomainRegistrationLine). */
     commitment: "annual_yearly",
     // No `domain` on this line: provisioning reads a line's domain as one to REGISTER.
   }];

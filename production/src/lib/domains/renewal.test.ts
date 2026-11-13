@@ -186,12 +186,13 @@ describe("R-2736 the domain renewal line's cost comes from the catalogue", () =>
   const IN = { id: "SCN-R2712-DOMAIN-IN", name: "SCN R2712 Domain .in", vendor: "domain", msrp: 800, wholesale: 600, prices: { billing_unit: "unit_year" }, is_active: true };
   const COIN = { id: "CO", name: "Domain .co.in", vendor: "domain", msrp: 700, wholesale: 500, prices: { billing_unit: "unit_year" }, is_active: true };
 
-  it("domain renewal cost: the one Domain row for .in → cost ₹600, item_id, total_cost; price stays live", async () => {
+  it("domain renewal cost: the one Domain row for .in → cost ₹600, total_cost; price stays live; no item_id", async () => {
     const { db, calls } = fakeDb({ items: [IN, COIN] });
     await createDomainRenewalQuote({ ...base(db), price: async () => ({ ok: true, rupees: 899 }) });
     const q = calls.made[0].p_quote;
     const [line] = q.line_items as { rate: number; cost: number; item_id?: string }[];
-    expect(line).toMatchObject({ rate: 899, cost: 600, item_id: "SCN-R2712-DOMAIN-IN" });
+    expect(line).toMatchObject({ rate: 899, cost: 600 });
+    expect(line.item_id).toBeUndefined();   // no re-pricing of the live price by the editor
     expect(q.total_cost).toBe(600);
     expect(q.subtotal).toBe(899);
   });
