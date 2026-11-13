@@ -19,7 +19,7 @@ import path from "node:path";
 
 import snapshot from "./__fixtures__/nav-before-s30.json";
 import {
-  APP_NAV, ROLE_HOME, SCREEN_TITLES, allowedRoutesForRole, isRouteAllowed, filterNavForRole, flattenNav,
+  APP_NAV, NOT_IN_NAV, ROLE_HOME, SCREEN_TITLES, allowedRoutesForRole, isRouteAllowed, filterNavForRole, flattenNav,
   getCrumb, groupDirectory, sectionCrumb, type NavItem, type UserRole,
 } from "./nav";
 import { USER_ROLES } from "./auth/roles";
@@ -57,7 +57,10 @@ const ADDED_30OCT_PERSONAL_HOME = ["/money", "/assets", "/support/my", "/upgrade
  *  directory row for owner / manager — the same roles as every other row there. */
 const ADDED_S28 = ["/marketing/whatsapp/reminders"];
 /** New in S29/S30, owner/manager only. Everything else must match the snapshot exactly. */
-const ADDED_FOR_OWNER_MANAGER = ["/today", "/activity", "/purchases/inbox", "/scorecard", ...ADDED_S28];
+/** R-2725 (13 Nov 2026, Hitesh): /scorecard left the menu again — the Score is a column on
+ *  Employees & Users and the profile has a Scorecard button. The page still opens for owner /
+ *  manager (middleware does not gate them); it was never in another role's list. */
+const ADDED_FOR_OWNER_MANAGER = ["/today", "/activity", "/purchases/inbox", ...ADDED_S28];
 /** New in S33 (Trial Balance, Day Book) — same roles that already see P&L / Balance Sheet. */
 const ADDED_FOR_BOOKS = ["/accounting/trial-balance", "/accounting/day-book"];
 const BOOKS_ROLES = ["owner", "manager", "billing", "accountant"];
@@ -246,8 +249,20 @@ describe("1. every old href is still in the nav", () => {
     expect(all.has(href), `${href} fell out of APP_NAV — it would be reachable only by URL`).toBe(true);
   });
 
-  it("adds the three orphans the old nav never linked", () => {
-    for (const h of ["/activity", "/purchases/inbox", "/scorecard"]) expect(all).toContain(h);
+  it("adds the orphans the old nav never linked", () => {
+    for (const h of ["/activity", "/purchases/inbox"]) expect(all).toContain(h);
+  });
+
+  it("R-2725: Scorecards is not a menu row — it opens from Employees & Users, and keeps its crumb", () => {
+    expect(all).not.toContain("/scorecard");
+    expect(flattenNav(APP_NAV).some((e) => e.item.label === "Scorecards")).toBe(false);
+    expect(NOT_IN_NAV["/scorecard"]).toMatch(/Employees/);
+    expect(getCrumb("/scorecard").slice(-2)).toEqual(["Employees & Users", "Scorecards"]);
+    // Same access as its old menu row: owner + manager open it (old links work), nobody else.
+    for (const role of USER_ROLES) {
+      expect(allowedRoutesForRole(role as UserRole)).not.toContain("/scorecard");
+      expect(isRouteAllowed(role as UserRole, "/scorecard"), role).toBe(role === "owner" || role === "manager");
+    }
   });
 });
 
