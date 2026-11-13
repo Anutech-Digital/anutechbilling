@@ -32,6 +32,7 @@ import {
   renewalLineStart, startsOnCard, customerHasLiveSubscription, renewalSendStep, viewerMayApproveInEditor, RENEWAL_OPEN_APPROVAL_LABEL,
   RENEWAL_APPROVAL_CHECK_FAILED_LABEL,
 } from "@/lib/quotes/renewal-editor";
+import { renewalPeriodLabel, lineStartsAddsInfo } from "@/lib/quotes/renewal-period-label";
 import {
   sendQuoteEmail, quoteRecipient, saveAndSendPlan,
   quoteEmailOutcome, quoteEmailErrorOutcome, markedSentOutcome, needsApprovalOutcome,
@@ -1066,6 +1067,9 @@ function QuoteBuilderBody() {
   const cycleLabel = ({ yearly: "Billed yearly", half_yearly: "Billed half-yearly", quarterly: "Billed quarterly", monthly: "Billed monthly" } as Record<string, string>)[effectiveCycle] ?? "Billed yearly";
   const billingUnit        = cycleUnitLabel(effectiveCycle);
   const showPerInvoice     = billingN > 1;
+  /* R-2746: a renewal / extension draft names WHICH period it buys, over the lines (the lines' own
+     dates, R-2727) — and a line's fixed Starts then shows only when it differs. */
+  const renewalLabel = renewalPeriodLabel(lineItems, editedQuotePeriod);
   /* R-806: what one payment covers — from the lines' own dates/term, never assumed. */
   const servicePeriodLabel = servicePeriodText(quoteServicePeriod({
     lines:    lineItems,
@@ -2514,7 +2518,10 @@ function QuoteBuilderBody() {
         <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-hairline">
           <div>
             <div className="text-sm font-semibold">Line Items</div>
-            <div className="text-xs text-ink-3 mt-0.5">{lineItems.length} item{lineItems.length === 1 ? "" : "s"}</div>
+            <div className="text-xs text-ink-3 mt-0.5">
+              {lineItems.length} item{lineItems.length === 1 ? "" : "s"}
+              {renewalLabel && <span className="text-ink-2 tabular-nums" data-testid="renewal-period-label"> · {renewalLabel.text}</span>}
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <Button size="sm" variant="default" icon="package" onClick={() => setPackageOpen(true)}>
@@ -2593,7 +2600,8 @@ function QuoteBuilderBody() {
               /* R-2727 / R-2713: a renewal line's start is the renewal period's (fixed); the phone
                  card shows Starts outside "More" when the date matters. */
               const lineStart = renewalLineStart(line, editedQuotePeriod);
-              const startsUp = startsOnCard(line, editedQuotePeriod, customerLive);
+              const showStarts = lineStartsAddsInfo(lineStart, renewalLabel);   // R-2746
+              const startsUp = showStarts && startsOnCard(line, editedQuotePeriod, customerLive);
               /* A div, not a <label>: on a renewal line LineStartsField renders read-only text, so the
                  date input (when there is one) carries its own aria-label (a11y guard label-no-for). */
               const startsField = (
@@ -2688,12 +2696,12 @@ function QuoteBuilderBody() {
                       lead the card (2 Oct 2026). */}
                   <details className="group rounded-md border border-hairline/70 px-2.5 py-1.5">
                     <summary className="cursor-pointer list-none flex items-center justify-between gap-2 text-2xs text-ink-3">
-                      <span>More{startsUp ? "" : <> · starts {lineStart.kind === "fixed" ? (lineStart.date ? formatDate(lineStart.date) : "—") : line.start_date ? formatDate(line.start_date) : "on payment"}</>} · {isSupportSkuId(line.item_id) ? "own service" : costUnknown(line) ? "margin unknown" : `margin ${lineMargin.marginPct}%`}</span>
+                      <span>More{startsUp || !showStarts ? "" : <> · starts {lineStart.kind === "fixed" ? (lineStart.date ? formatDate(lineStart.date) : "—") : line.start_date ? formatDate(line.start_date) : "on payment"}</>} · {isSupportSkuId(line.item_id) ? "own service" : costUnknown(line) ? "margin unknown" : `margin ${lineMargin.marginPct}%`}</span>
                       <Icon name="chevron_down" size={12} className="transition-transform group-open:rotate-180" />
                     </summary>
                     <div className="mt-2 space-y-2">
                     <div className="grid grid-cols-2 gap-2">
-                    {!startsUp && startsField}
+                    {showStarts && !startsUp && startsField}
                     {!line.bulk && (
                       <label className="block col-span-2">
                         <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Domain (optional)</span>
@@ -2848,6 +2856,8 @@ function QuoteBuilderBody() {
                           </select>
                         </div>
                         <OneTimeLicenceNote line={line} className="basis-full order-last" />
+                        {/* R-2746: hidden when it only repeats the "Renewal · …" label's start. */}
+                        {lineStartsAddsInfo(renewalLineStart(line, editedQuotePeriod), renewalLabel) && (
                         <div className="flex items-center gap-1">
                           <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Starts</span>
                           {/* R-2727: a renewal line shows the renewal period's start (fixed). */}
@@ -2859,6 +2869,7 @@ function QuoteBuilderBody() {
                             textClassName="text-2xs px-1.5 py-0.5 tabular-nums text-ink"
                           />
                         </div>
+                        )}
                         {/* Per-line domain — this subscription provisions against it
                             (Google Workspace / M365 / Zoho). Optional. Bulk lines carry
                             their own per-domain list instead. */}

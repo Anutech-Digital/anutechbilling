@@ -139,6 +139,7 @@ import {
   extensionTitle, isMonthExtension, isOneTimeQuote, oneTimeLineNote,
   quoteLinePeriodContext, renewedSubscription,
 } from "@/lib/quotes/service-period";
+import { renewalPeriodLabel } from "@/lib/quotes/renewal-period-label";
 import { cn } from "@/lib/utils";
 import type { Quote, QuoteLineItem, Payment, BillingCycle } from "@/lib/supabase/database.types";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
@@ -971,6 +972,8 @@ export default function QuoteDetailPage() {
       : PAYMENT_META[paymentBadge]
     : null;
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
+  /* R-2746: "Renewal · <from> – <to>" over the lines — the same dates as each line's Subscription period. */
+  const renewalLabel = renewalPeriodLabel(items, periodCtx);
   /* R-2423: WHAT this quote is (quote-kind.ts — stored facts only, no stamp when they do not say)
      and which subscription it is for. */
   const leadPart = leadBillingId ? partFacts?.get(leadBillingId) ?? null : null;
@@ -2186,7 +2189,15 @@ export default function QuoteDetailPage() {
       </Card>
 
       {/* Line items */}
-      <Card title="Line items" sub={`${items.length} item${items.length === 1 ? "" : "s"}`} flush>
+      {/* R-2746: the period a renewal / extension quote buys, above its lines (the lines' own dates). */}
+      <Card
+        title="Line items"
+        sub={<>
+          {`${items.length} item${items.length === 1 ? "" : "s"}`}
+          {renewalLabel && <span className="text-ink-2 tabular-nums" data-testid="renewal-period-label"> · {renewalLabel.text}</span>}
+        </>}
+        flush
+      >
         {/* Phone (S32, 1 Oct 2026): this page opens from the WhatsApp link, so it is
             read on a phone first. Five columns squeezed the item name to one word
             per line; under md each line is a row of name + amount, qty × rate below. */}
