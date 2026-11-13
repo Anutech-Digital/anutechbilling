@@ -286,7 +286,7 @@ describe("R-2403 the page wires the one queue", () => {
     }
     expect(page).toMatch(/<BulkActionBar count=\{selectedRows\.length\} noun="renewal"/);
     expect(page).toContain("bulkQuoteTargets(selectedRows,");
-    expect(page).toContain("bulkReminderPlan(selectedRows, today, graceDays)");   // R-2431: send + named skips
+    expect(page).toContain("selectedRows.length > 0 ? selectedRows : visibleRows");   // R-2753: the one Remind button acts on the ticked rows
     expect(page.match(/"\/api\/renewals\/send-now"/g)?.length).toBe(1);   // the existing route, one call site
   });
 });
