@@ -99,7 +99,8 @@ test.describe("R-2758 card test", () => {
     await expect(r.getByTestId("stage-chip")).toContainText("Quote sent");
     await expect(r.getByTestId("stage-chip")).toHaveAttribute("title", /^Renewal quote sent/);
     await expect(r.getByTestId("stage-primary")).toHaveText(/Follow up/);
-    await expect(r.getByText("Quote sent", { exact: true })).toHaveCount(0);
+    /* exactly one "Quote sent" — the stage chip itself, no second decision chip */
+    await expect(r.getByText("Quote sent", { exact: true })).toHaveCount(1);
   });
 
   test("Step 3: invoiced, unpaid → 'Invoiced · ₹1,180 due' + Record payment (opens the quote's own dialog)", async ({ browser, baseURL }) => {
