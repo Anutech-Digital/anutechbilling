@@ -1,6 +1,6 @@
 -- deploy-peek: exists(select 1 from pg_proc where oid = to_regprocedure('public.create_renewal_quote(uuid,uuid,jsonb)') and prosrc like '%R-2710%') and exists(select 1 from pg_trigger where tgname = 'quotes_r2710_renewal_term_follows_years' and tgrelid = to_regclass('public.quotes'))
 -- deploy-key: r2710renewalreviewdraftyears
--- 20261112123439_r2710_renewal_review_draft_and_years.sql
+-- 20261113060034_r2710_renewal_review_draft_and_years.sql
 --
 -- R-2710 (12 Nov 2026, Pratik — Excel renewals: "renewal button daba ne pr editable usme khul na
 -- chahiye"). Two database halves of "Review renewal quote → edit → Save & send":

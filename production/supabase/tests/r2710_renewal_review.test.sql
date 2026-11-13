@@ -1,7 +1,7 @@
 \set ON_ERROR_STOP on
 -- R-2710 (p0 money, Pratik 12 Nov): "Review renewal quote" makes the renewal quote as a DRAFT to
 -- edit; a renewal quote whose domain line is changed to 3 years renews the subscription for 3 years.
--- Migration: 20261112123439_r2710_renewal_review_draft_and_years (create_renewal_quote status,
+-- Migration: 20261113060034_r2710_renewal_review_draft_and_years (create_renewal_quote status,
 -- quotes_r2710_renewal_term_follows_years).
 -- Self-asserting, ONE transaction, rolled back — safe anywhere:
 --
