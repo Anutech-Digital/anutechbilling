@@ -31,6 +31,7 @@ import { RENEWAL_URGENT_DAYS, RENEWAL_UPCOMING_DAYS, RENEWAL_FUTURE_DAYS, RENEWA
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { expiredGraceText, isStopped, type RenewalGroups } from "./classify";
 import { isSettledRenewed } from "./row-action";
+import { renewalDueText } from "./last-docs";
 import { renewalActionSet, type RenewalActionSub } from "@/components/features/renewals/renewal-actions-rules";
 
 // ─── Tabs ───────────────────────────────────────────────────────────────────
@@ -122,7 +123,8 @@ export function resolveBucket(
 
 // ─── One status per row ─────────────────────────────────────────────────────
 
-export type RowStatusKey = "stopped" | "non-renewing" | "renewed" | "bills-not-raised" | "overdue" | "due";
+/* R-2728: "quote-sent" — the renewal quote (or the renewal's part proforma) is with the customer, unpaid. */
+export type RowStatusKey = "stopped" | "non-renewing" | "renewed" | "quote-sent" | "bills-not-raised" | "overdue" | "due";
 
 export interface RowStatus {
   key: RowStatusKey;
@@ -133,9 +135,13 @@ export interface RowStatus {
   note: string | null;
 }
 
+/** R-2728: the row status (and status filter value) once the renewal quote / part bill went to the customer. */
+export const RENEWAL_QUOTE_SENT = "Renewal quote sent";
+
 /** Status filter options (the chip labels are per row; the filter groups them). */
 export const STATUS_FILTER_LABEL: Record<RowStatusKey, string> = {
   overdue: "Overdue",
+  "quote-sent": RENEWAL_QUOTE_SENT,
   "bills-not-raised": "Bill not raised",
   due: "Due",
   renewed: "Renewed",
@@ -158,8 +164,12 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 /**
  * The row's ONE status. First match wins:
- *   Service stopped → Non-renewing · ends <date> → Renewed (paid: settled, or its renewal quote
- *   is paid) → billed in parts and a part is due: "<Mon> bill not raised" / "N bills not raised"
+ *   Service stopped → Non-renewing · ends <date> → Renewed (its renewal quote is paid) →
+ *   R-2728 "Renewal quote sent" for the renewal's part proforma that Bill next part raised and is
+ *   unpaid (it beats the 'renewed' state Bill next part's roll leaves — the money is not in) →
+ *   Renewed (settled — a stale open renewal quote does not undo it) → billed in parts and a part
+ *   is due → R-2728 "Renewal quote sent" (the renewal quote is with the customer, unpaid; past the
+ *   date it keeps the grace line, and the date cell says "Overdue Nd"): "<Mon> bill not raised" / "N bills not raised"
  *   → past the date: "Overdue Nd" (+ the grace line only when the grace is > 0 days)
  *   → "Due today" / "Due in Nd".
  * A stale 'renewed' state on a row whose date has passed is NOT "Renewed": the new term was not
@@ -168,30 +178,34 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 export function renewalRowStatus(
   sub: StatusSub,
   daysUntil: number,
-  opts: { tenantGraceDays: number; today?: Date; renewalPaid?: boolean },
+  opts: { tenantGraceDays: number; today?: Date; renewalPaid?: boolean; quoteSent?: { quoteId: string; kind: "renewal" | "part" } | null },
 ): RowStatus {
   const today = opts.today ?? new Date();
   if (isStopped({ ...sub, mrr: 0 })) return { key: "stopped", label: "Service stopped", tone: "danger", note: null };
   if (sub.auto_renew === false) return { key: "non-renewing", label: nonRenewingLabel(sub), tone: "warning", note: null };
-  if (opts.renewalPaid || isSettledRenewed(sub, today)) return { key: "renewed", label: "Renewed", tone: "success", note: null };
+  if (opts.renewalPaid) return { key: "renewed", label: "Renewed", tone: "success", note: null };
+  /* R-2728: past the date and in / out of grace — the overdue line, also under "Renewal quote sent". */
+  const graceNote = (): string | null => {
+    if (daysUntil >= 0 || !sub.renewal_date) return null;
+    const grace = effectiveGraceDays({ tenantGraceDays: opts.tenantGraceDays, renewalDate: sub.renewal_date, graceUntil: sub.grace_until ?? null });
+    /* R-2403: with no grace at all, "Grace over" on every row was noise (audit problem 2). */
+    return grace > 0 ? expiredGraceText(sub, daysUntil, opts.tenantGraceDays) : null;
+  };
+  const sent: RowStatus = { key: "quote-sent", label: RENEWAL_QUOTE_SENT, tone: "info", note: null };
+  /* R-2728: Bill next part's roll leaves renewal_state 'renewed' while the part proforma is unpaid — not Renewed. */
+  if (opts.quoteSent?.kind === "part") return sent;
+  if (isSettledRenewed(sub, today)) return { key: "renewed", label: "Renewed", tone: "success", note: null };
 
   const behind = billsNotRaised(sub, today);
   /* R-2095 kept: more than one part behind → Bill next part bills them one by one, oldest first. */
   if (behind) return { key: "bills-not-raised", label: behind.label, tone: "danger", note: behind.count > 1 ? `From ${formatDate(behind.from)} — billed oldest first` : null };
 
-  if (daysUntil < 0) {
-    const days = Math.abs(daysUntil);
-    const grace = sub.renewal_date
-      ? effectiveGraceDays({ tenantGraceDays: opts.tenantGraceDays, renewalDate: sub.renewal_date, graceUntil: sub.grace_until ?? null })
-      : 0;
-    /* R-2403: with no grace at all, "Grace over" on every row was noise (audit problem 2). */
-    const note = grace > 0 ? expiredGraceText(sub, daysUntil, opts.tenantGraceDays) : null;
-    return { key: "overdue", label: `Overdue ${days}d`, tone: "danger", note };
-  }
-  if (daysUntil === 0) return { key: "due", label: "Due today", tone: "danger", note: null };
+  if (opts.quoteSent) return { ...sent, note: graceNote() };
+  if (daysUntil < 0) return { key: "overdue", label: renewalDueText(daysUntil), tone: "danger", note: graceNote() };
+  if (daysUntil === 0) return { key: "due", label: renewalDueText(0), tone: "danger", note: null };
   return {
     key: "due",
-    label: `Due in ${daysUntil}d`,
+    label: renewalDueText(daysUntil),
     tone: daysUntil <= RENEWAL_URGENT_DAYS ? "danger" : daysUntil <= RENEWAL_UPCOMING_DAYS ? "warning" : "muted",
     note: null,
   };
@@ -393,7 +407,8 @@ export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: "select" | "customer" | "pro
   { key: "select", width: 36 },
   { key: "customer", width: null },
   { key: "product", width: null },
-  { key: "date", width: 104 },
+  /* R-2728: +16px — a "Renewal quote sent" row's date also carries its due words and "Expired 12 days ago". */
+  { key: "date", width: 120 },
   { key: "amount", width: 128 },
   { key: "status", width: 140 },
   { key: "actions", width: 224 },

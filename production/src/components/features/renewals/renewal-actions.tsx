@@ -33,7 +33,7 @@ import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
-import { MONEY_RECORD_ROLES, type UserRole } from "@/lib/auth/roles";
+import { MONEY_RECORD_ROLES, canRecordMoney, type UserRole } from "@/lib/auth/roles";
 import { toastError } from "@/lib/errors/toast-error";
 import { useOpenRenewalQuotes } from "@/lib/queries/subscriptions";
 import { queryKeys } from "@/lib/queries/keys";
@@ -54,7 +54,7 @@ import {
 import { AiDraftButton } from "@/components/shared/ai-draft-button";
 import { useVoiceNoteSend } from "@/components/shared/voice-note-button";
 import {
-  renewalActionSet, renewalNextStep, billPartDialogTitle, FOLLOW_UP, BILL_NEXT_PART,
+  renewalActionSet, renewalNextStep, billPartDialogTitle, FOLLOW_UP, BILL_NEXT_PART, RECORD_PAYMENT,
   type RenewalActionSub, type RenewalButtonKind, type RenewalMenuItem,
 } from "./renewal-actions-rules";
 
@@ -76,7 +76,7 @@ export interface RenewalActionsSub extends RenewalActionSub {
   customer_id?: string | null;
 }
 
-export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false }: {
+export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false, recordPaymentQuoteId }: {
   sub: RenewalActionsSub;
   /** IST days to the renewal date; negative = past it. */
   daysUntil: number;
@@ -88,6 +88,8 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   onFollowup?: () => void;
   /** R-2422: offer Nudge (AI draft) and Voice note in the ⋯ menu (Renewals). */
   messaging?: boolean;
+  /** R-2728: the renewal quote / part proforma with the customer, unpaid → ⋯ "Record payment" (/quotes/<id>?pay=1). */
+  recordPaymentQuoteId?: string;
 }) {
   const qc = useQueryClient();
   const router = useRouter();
@@ -268,8 +270,13 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   const button = step.button;
   /* R-2519: billed in parts and Bill next part is not the row's button → it is in the ⋯ menu
      (bill a period ahead, or re-bill one whose proforma was cancelled). */
-  const menuKeys: RenewalMenuItem[] = splitBilled && sub.status === "active" && button?.kind !== "generate"
+  const baseMenu: RenewalMenuItem[] = splitBilled && sub.status === "active" && button?.kind !== "generate"
     ? ["bill-ahead", ...step.menu] : step.menu;
+  /* R-2728: the quote's own Record payment dialog (R-243 ?pay=1) — only for roles that can open it and record money. */
+  const payQuote = recordPaymentQuoteId && canQuotes && canRecordMoney(me?.role) ? recordPaymentQuoteId : null;
+  const menuKeys: RenewalMenuItem[] = payQuote
+    ? [...baseMenu.filter((k) => k === "bill-ahead" || k === "secondary"), "record-payment", ...baseMenu.filter((k) => k !== "bill-ahead" && k !== "secondary")]
+    : baseMenu;
 
   const notRenewingButton = set.notRenewing && (
     <Button
@@ -301,6 +308,13 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
           ? "Email the customer the renewal quote as it is, with its accept / pay link (asks first)"
           : "Create the renewal quote and open it — nothing is emailed until you send it"}>
         <Icon name={set.secondary?.kind === "send-now" ? "mail" : "plus"} size={15} /> {set.secondary?.label}
+      </DropdownMenuItem>
+    ),
+    "record-payment": (
+      <DropdownMenuItem key="record-payment" className={ITEM}
+        onClick={() => payQuote && router.push(`/quotes/${encodeURIComponent(payQuote)}?pay=1` as never)}
+        title={`Record the customer's payment against ${payQuote ?? "the quote"} — its own Record payment dialog opens`}>
+        <Icon name="rupee" size={15} /> {RECORD_PAYMENT}
       </DropdownMenuItem>
     ),
     followup: (

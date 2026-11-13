@@ -228,7 +228,10 @@ export const FOLLOW_UP = "Follow-up";
 /** What the ⋯ menu may hold, in the order it shows (the ending action last). */
 /* R-2519: "bill-ahead" — Bill next part (proforma preview) for a subscription billed in parts whose
    next part is not due yet, or whose cancelled proforma left a period to bill again. */
-export type RenewalMenuItem = "bill-ahead" | "secondary" | "followup" | "nudge" | "voice" | "not-renewing";
+/* R-2728: "record-payment" — a renewal quote / part bill with the customer: its quote's Record payment (?pay=1). */
+export type RenewalMenuItem = "bill-ahead" | "secondary" | "record-payment" | "followup" | "nudge" | "voice" | "not-renewing";
+
+export const RECORD_PAYMENT = "Record payment";
 
 export interface RenewalNextStep {
   /** The ONE visible button: the R-2401 rule's primary, else Follow-up; null = nothing to do here. */
