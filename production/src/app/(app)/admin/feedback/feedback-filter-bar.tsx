@@ -23,7 +23,9 @@ import {
   TYPE_FILTERS,
   TYPE_FILTER_LABEL,
   activeFilterChips,
+  filtersInScope,
   hasAnyFilter,
+  panelFilterCount,
   removeFilter,
   type FacetOption,
   type FeedbackFacets,
@@ -54,11 +56,6 @@ function chipCls(on: boolean): string {
     (on ? "border-amber bg-amber-soft text-amber-ink" : "border-hairline text-ink-2 hover:bg-paper-2");
 }
 
-/** How many of the panel's filters are on — shown on the Filters button. */
-function panelCount(f: FeedbackFilters): number {
-  return [f.workspace, f.reporter, f.page, f.from || f.to, f.type !== "all", f.severity !== "all", f.card !== "all"].filter(Boolean).length;
-}
-
 export function FeedbackFilterBar({ filters: f, onChange, onClear, scope, facets, total, sinceLabel }: FeedbackFilterBarProps) {
   const set = (patch: Partial<FeedbackFilters>) => onChange({ ...f, ...patch, pageNo: 1 });
 
@@ -76,9 +73,9 @@ export function FeedbackFilterBar({ filters: f, onChange, onClear, scope, facets
     return () => clearTimeout(t);
   }, [text]);
 
-  const count = panelCount(f);
+  const count = panelFilterCount(f, scope);
   const filtersLabel = count > 0 ? `Filters (${count})` : "Filters";
-  const chips = activeFilterChips(scope === "all" ? f : { ...f, workspace: "" }, facets);
+  const chips = activeFilterChips(filtersInScope(f, scope), facets);
 
   return (
     <div className="space-y-2" data-testid="feedback-filter-bar">
@@ -161,7 +158,7 @@ export function FeedbackFilterBar({ filters: f, onChange, onClear, scope, facets
             <Icon name="x" size={11} />
           </button>
         ))}
-        {hasAnyFilter(f) && (
+        {hasAnyFilter(f, scope) && (
           <button type="button" onClick={onClear} className="font-medium text-primary hover:underline">
             Clear all filters
           </button>

@@ -17,8 +17,12 @@ import {
   escapeLikeText,
   feedbackFilterOps,
   feedbackFiltersToParams,
+  filtersInScope,
   hasAnyFilter,
   isRealReporter,
+  panelFilterCount,
+  reporterKey,
+  reporterNameRegex,
   nextVisitMemory,
   pageRange,
   parseFeedbackFilters,
@@ -186,7 +190,7 @@ describe("filters", () => {
     const ops = feedbackFilterOps(F({ reporter: "hitesh@exceltechnologies.in", status: "open" }), { scope: "all" });
     expect(ops[0]).toEqual({ k: "eq", col: "status", v: "open" });
     expect(ors(ops)[0]).toBe(
-      'reporter_email.ilike."hitesh@exceltechnologies.in",and(reporter_email.is.null,reporter_name.ilike."hitesh@exceltechnologies.in")',
+      `reporter_email.ilike."hitesh@exceltechnologies.in",and(or(reporter_email.is.null,reporter_email.eq.""),reporter_name.imatch.${quoteLogicValue(reporterNameRegex("hitesh@exceltechnologies.in"))})`,
     );
   });
 
@@ -231,6 +235,57 @@ describe("filters", () => {
     expect(() => parseQuery(rec.params)).not.toThrow();
     const has = applyFeedbackOps(new Recorder(), feedbackFilterOps(F({ card: "has" }), { scope: "all" }));
     expect(() => parseQuery(has.params)).not.toThrow();
+  });
+});
+
+describe("review fixes (independent review of a22b0458)", () => {
+  it("a day that does not exist is ignored, not rolled over (2026-02-31 is not 3 March)", () => {
+    const f = parseFeedbackFilters(new URLSearchParams("from=2026-02-31&to=2026-04-31"));
+    expect(f.from).toBe("");
+    expect(f.to).toBe("");
+    expect(feedbackFilterOps(f, { scope: "mine" })).toEqual([]);
+    expect(parseFeedbackFilters(new URLSearchParams("from=2028-02-29&to=2026-11-30"))).toMatchObject({ from: "2028-02-29", to: "2026-11-30" });
+  });
+
+  it("a reporter with no email — null OR empty — and a double-spaced name: the picker's entry finds their reports", () => {
+    const rows = [
+      { tenant_id: "t1", reporter_name: "Walk  In   Tester", reporter_email: "", route_pattern: null, page_path: null },
+      { tenant_id: "t1", reporter_name: " walk in tester ", reporter_email: null, route_pattern: null, page_path: null },
+    ];
+    const { reporters } = buildFacets(rows);
+    expect(reporters).toEqual([{ value: "walk in tester", label: "Walk In Tester", count: 2 }]);
+    for (const r of rows) expect(reporterKey(r)).toBe(reporters[0].value);
+
+    // The value survives the address unchanged, and the filter it builds covers null AND empty emails.
+    const f = parseFeedbackFilters(feedbackFiltersToParams(F({ reporter: reporters[0].value })));
+    expect(f.reporter).toBe("walk in tester");
+    const [expr] = ors(feedbackFilterOps(f, { scope: "mine" }));
+    expect(expr).toContain('and(or(reporter_email.is.null,reporter_email.eq.""),reporter_name.imatch.');
+
+    // The name pattern (POSIX; [[:space:]] read as a space class here) matches both spellings and nothing longer.
+    const posix = reporterNameRegex(f.reporter);
+    expect(posix).toBe("^[[:space:]]*walk[[:space:]]+in[[:space:]]+tester[[:space:]]*$");
+    const js = new RegExp(posix.split("[[:space:]]").join("[ ]"), "i");
+    for (const r of rows) expect(js.test(r.reporter_name)).toBe(true);
+    expect(js.test("Walk In Tester Jr")).toBe(false);
+    // Regex characters in a name are literal.
+    expect(reporterNameRegex("a.b (c)")).toBe("^[[:space:]]*a[.]b[[:space:]]+[(]c[)][[:space:]]*$");
+    // …and it is still grammar the data gateway accepts.
+    const rec = applyFeedbackOps(new Recorder(), feedbackFilterOps(F({ reporter: "a.b (c), \"x\"" }), { scope: "mine" }));
+    expect(() => parseQuery(rec.params)).not.toThrow();
+    expect(JSON.stringify(parseQuery(rec.params).scopes.get("")!.filters)).not.toContain('"column":"tenant_id"');
+  });
+
+  it("'This workspace': ?ws= filters nothing, so it is not shown or counted as a filter", () => {
+    const f = parseFeedbackFilters(new URLSearchParams({ ws: OTHER_TENANT }));
+    expect(hasAnyFilter(f, "mine")).toBe(false);
+    expect(panelFilterCount(f, "mine")).toBe(0);
+    expect(activeFilterChips(filtersInScope(f, "mine"))).toEqual([]);
+    // On "All workspaces" it is a real filter.
+    expect(hasAnyFilter(f, "all")).toBe(true);
+    expect(panelFilterCount(f, "all")).toBe(1);
+    expect(activeFilterChips(filtersInScope(f, "all")).map((c) => c.key)).toEqual(["workspace"]);
+    expect(panelFilterCount(F({ reporter: "x", from: "2026-11-01", to: "2026-11-02", card: "has" }), "mine")).toBe(3);
   });
 });
 

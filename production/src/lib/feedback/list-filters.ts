@@ -20,7 +20,7 @@
  * or free text that is escaped (`\`, `%`, `_`; `*` — PostgREST's alias for `%` — becomes `_`)
  * and double-quoted inside or(), so it can never add a condition of its own.
  */
-import { addDaysISO, istDayStartUtc } from "@/lib/dates/ist";
+import { addDaysISO, istDayStartUtc, utcDateISO } from "@/lib/dates/ist";
 
 export const FEEDBACK_PAGE_SIZE = 50;
 /** Longest search text kept, and the most words searched (each word must match). */
@@ -109,7 +109,9 @@ function text(raw: string | null, max: number): string {
 }
 function day(raw: string | null): string {
   if (!raw || !DAY_RE.test(raw)) return "";
-  return Number.isNaN(Date.parse(`${raw}T00:00:00Z`)) ? "" : raw;
+  const t = Date.parse(`${raw}T00:00:00Z`);
+  /* A day that does not exist (2026-02-31) parses, rolled over to 3 March — the round trip catches it. */
+  return Number.isNaN(t) || utcDateISO(new Date(t)) !== raw ? "" : raw;
 }
 
 /** The URL → filters. Unknown or malformed values become the default, never an error. */
@@ -247,6 +249,26 @@ export function statusFilterOf(row: { status: string; agent_claimed_at?: string 
   return "open";
 }
 
+/** Characters with a meaning in a POSIX regular expression. */
+const REGEX_SPECIAL = new Set(".*+?^${}()|[]" + String.fromCharCode(92));
+
+/**
+ * A reporter picked by NAME (their reports carry no email — null or empty): the same words in
+ * the same order, any case, any run of spaces between and around them. That is exactly what
+ * `reporterKey` folds away, so the picker's entry and this filter always agree.
+ */
+export function reporterNameRegex(key: string): string {
+  const literal = (w: string) => [...w].map((ch) => (REGEX_SPECIAL.has(ch) ? `[${ch === "^" || ch === "]" || ch === String.fromCharCode(92) ? String.fromCharCode(92) + ch : ch}]` : ch)).join("");
+  const words = key.split(" ").filter(Boolean).map(literal);
+  return `^[[:space:]]*${words.join("[[:space:]]+")}[[:space:]]*$`;
+}
+
+/** The Reporter picker's value for a report: the email, else the name — lower case, single-spaced. "" = neither. */
+export function reporterKey(row: { reporter_name: string | null; reporter_email: string | null }): string {
+  const fold = (s: string | null) => (s ?? "").split(/[ \t\r\n]+/).filter(Boolean).join(" ").toLowerCase();
+  return fold(row.reporter_email) || fold(row.reporter_name);
+}
+
 export function feedbackFilterOps(f: FeedbackFilters, opts: FeedbackOpsOptions): FeedbackOp[] {
   const ops: FeedbackOp[] = [];
 
@@ -265,7 +287,7 @@ export function feedbackFilterOps(f: FeedbackFilters, opts: FeedbackOpsOptions):
   if (f.reporter) {
     ops.push({
       k: "or",
-      expr: `reporter_email.ilike.${exactly(escapeLikeText(f.reporter))},and(reporter_email.is.null,reporter_name.ilike.${exactly(escapeLikeText(f.reporter))})`,
+      expr: `reporter_email.ilike.${exactly(escapeLikeText(f.reporter))},and(or(reporter_email.is.null,reporter_email.eq.""),reporter_name.imatch.${exactly(reporterNameRegex(f.reporter))})`,
     });
   }
   if (f.page) {
@@ -374,9 +396,9 @@ export function buildFacets(rows: readonly FacetSourceRow[], tenantNames?: Reado
   };
   for (const r of rows) {
     const email = (r.reporter_email ?? "").trim().toLowerCase();
-    const name = (r.reporter_name ?? "").trim();
-    if (email) bump(reporters, email, name ? `${name} · ${email}` : email);
-    else if (name) bump(reporters, name.toLowerCase(), name);
+    const name = (r.reporter_name ?? "").split(/[ \t\r\n]+/).filter(Boolean).join(" ");
+    const key = reporterKey(r);
+    if (key) bump(reporters, key, email ? (name ? `${name} · ${email}` : email) : name);
     const pg = r.route_pattern ?? r.page_path;
     if (pg) bump(pages, pg, pg);
     if (tenantNames) bump(workspaces, r.tenant_id, tenantNames.get(r.tenant_id) ?? "(unknown workspace)");
@@ -421,9 +443,21 @@ export function removeFilter(f: FeedbackFilters, key: FilterChipKey): FeedbackFi
   return next;
 }
 
-/** Anything narrower than the default view (sort and page number do not count). */
-export function hasAnyFilter(f: FeedbackFilters): boolean {
+/** The filters as they apply in a scope: "This workspace" has no workspace filter, whatever the address says. */
+export function filtersInScope(f: FeedbackFilters, scope: FeedbackScope): FeedbackFilters {
+  return scope === "all" || !f.workspace ? f : { ...f, workspace: "" };
+}
+
+/** How many of the Filters panel's filters are on in this scope — the number on the Filters button. */
+export function panelFilterCount(f: FeedbackFilters, scope: FeedbackScope): number {
+  const g = filtersInScope(f, scope);
+  return [g.workspace, g.reporter, g.page, g.from || g.to, g.type !== "all", g.severity !== "all", g.card !== "all"].filter(Boolean).length;
+}
+
+/** Anything narrower than the default view in this scope (sort and page number do not count). */
+export function hasAnyFilter(input: FeedbackFilters, scope: FeedbackScope = "all"): boolean {
   const d = DEFAULT_FEEDBACK_FILTERS;
+  const f = filtersInScope(input, scope);
   return f.q !== d.q || f.status !== d.status || f.type !== d.type || f.severity !== d.severity ||
     f.reporter !== d.reporter || f.workspace !== d.workspace || f.page !== d.page || f.from !== d.from ||
     f.to !== d.to || f.card !== d.card || f.real || f.fresh;

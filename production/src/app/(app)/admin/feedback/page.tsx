@@ -195,7 +195,7 @@ export default function AdminFeedbackPage() {
   const pageCount = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
   const firstShown = data && data.total > 0 ? (data.page - 1) * data.pageSize + 1 : 0;
   const lastShown = data ? Math.min(data.total, (data.page - 1) * data.pageSize + rows.length) : 0;
-  const filtered = hasAnyFilter(filters);
+  const filtered = hasAnyFilter(filters, scope);
   /* A page number past the end (rows were closed, or an old link): go to the last page. */
   const pastEnd = Boolean(data) && rows.length === 0 && (data?.total ?? 0) > 0 && filters.pageNo > pageCount;
   React.useEffect(() => {
