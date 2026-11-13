@@ -18,8 +18,8 @@ import {
 
 function DocLink({ id, href }: { id: string; href: string | null }) {
   return href
-    ? <Link href={href as never} className="whitespace-nowrap font-mono underline underline-offset-2 hover:text-ink">{id}</Link>
-    : <span className="whitespace-nowrap font-mono">{id}</span>;
+    ? <Link href={href as never} className="font-mono underline underline-offset-2 hover:text-ink">{id}</Link>
+    : <span className="font-mono">{id}</span>;
 }
 
 export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, todayIst, priorDue = 0, className }: {
@@ -44,7 +44,7 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
      bounded to the column (w-full min-w-0 — the Actions cell is a flex-col items-start, which gave it
      its max-content width and let the text run past the column).
      R-2747: every line WRAPS (break-words), never cut — at 1568px the table's Actions column cut
-     "Overdue 10d · ₹33,232 due" to "Ove…". A document number never splits (whitespace-nowrap). */
+     "Overdue 10d · ₹33,232 due" to "Ove…". A long document number may break too (never runs past the column). */
   return (
     <div className={cn("w-full min-w-0 max-w-full space-y-0.5 text-2xs text-ink-2", className)} data-testid="renewal-last-docs">
       {quote && (

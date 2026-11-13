@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
-import { invoiceStatusWords, priorDueInvoiceGap, type LastDocs, type LastInvoice, type LastQuote } from "./last-docs";
+import { invoiceStatusWords, lastDocsBySubscription, priorDueInvoiceGap, type LastDocs, type LastInvoice, type LastQuote } from "./last-docs";
 
 const TODAY = "2026-11-13";
 const li = (over: Partial<LastInvoice>): LastInvoice => ({
@@ -30,16 +30,40 @@ describe("R-2747 (b) previous term unpaid — the invoice line, or why there is 
     expect(priorDueInvoiceGap(docs({ invoice: li({ dueDate: "2026-11-03" }) }), 25488, TODAY)).toBeNull();
     expect(priorDueInvoiceGap(docs({ invoice: li({ dueDate: "2026-11-20", paidAmount: 5000 }) }), 25488, TODAY)).toBeNull();
   });
-  it("no quote, no invoice (SCN Kochi / SCN Delhi: balance only on the subscription) → says so", () => {
-    expect(priorDueInvoiceGap(undefined, 25488, TODAY)).toBe("No invoice in the app for this amount — it is only on the subscription");
-    expect(priorDueInvoiceGap(docs({}), 19258, TODAY)).toBe("No invoice in the app for this amount — it is only on the subscription");
+  it("no quote, no invoice (SCN Kochi / SCN Delhi: balance only on the subscription) → says so; a renewal quote changes nothing", () => {
+    const text = "No unpaid invoice linked to this subscription for the previous term";
+    expect(priorDueInvoiceGap(undefined, 25488, TODAY)).toBe(text);
+    expect(priorDueInvoiceGap(docs({}), 19258, TODAY)).toBe(text);
+    /* a renewal quote covers only the new term — never implied to bill the old balance */
+    expect(priorDueInvoiceGap(docs({ quote: lq }), 25488, TODAY)).toBe(text);
   });
-  it("a quote but no invoice → no invoice raised yet", () => {
-    expect(priorDueInvoiceGap(docs({ quote: lq }), 25488, TODAY)).toBe("No invoice raised for this amount yet");
+  it("the last invoice is paid / cancelled and nothing older is owed → no unpaid invoice linked (never pretend one)", () => {
+    const text = "No unpaid invoice linked to this subscription for the previous term";
+    expect(priorDueInvoiceGap(docs({ invoice: li({ status: "paid", paidAmount: 11800 }) }), 25488, TODAY)).toBe(text);
+    expect(priorDueInvoiceGap(docs({ invoice: li({ status: "void" }) }), 25488, TODAY)).toBe(text);
   });
-  it("the last invoice is paid / cancelled → no unpaid invoice for this amount (never pretend one)", () => {
-    expect(priorDueInvoiceGap(docs({ invoice: li({ status: "paid", paidAmount: 11800 }) }), 25488, TODAY)).toBe("No unpaid invoice in the app for this amount");
-    expect(priorDueInvoiceGap(docs({ invoice: li({ status: "void" }) }), 25488, TODAY)).toBe("No unpaid invoice in the app for this amount");
+  it("review: a newer PAID invoice is shown but an older linked one still owes → names that older invoice", () => {
+    const d = docs({ invoice: li({ id: "INV-2", status: "paid", paidAmount: 11800 }), owedInvoiceId: "INV-1" });
+    expect(priorDueInvoiceGap(d, 25488, TODAY)).toBe("Older invoice INV-1 still has money due");
+  });
+  it("lastDocsBySubscription records the newest owed linked invoice even when a newer paid one is shown", () => {
+    const SUB = "c2747000-0000-4000-8000-0000000000a1";
+    const out = lastDocsBySubscription({
+      subs: [{ id: SUB, quote_id: "Q-1", renewal_quote_id: "Q-2", start_date: "2025-10-01" }],
+      quotes: [
+        { id: "Q-1", status: "accepted", payment_status: "invoiced", created_at: "2025-10-01T05:00:00Z", created_date: "2025-10-01", expires_date: null, invoice_id: "INV-1", renewal_subscription_id: null, add_seats_subscription_id: null, subscription_billing_id: null, superseded_by: null },
+        { id: "Q-2", status: "accepted", payment_status: "paid", created_at: "2026-10-01T05:00:00Z", created_date: "2026-10-01", expires_date: null, invoice_id: "INV-2", renewal_subscription_id: SUB, add_seats_subscription_id: null, subscription_billing_id: null, superseded_by: null },
+      ],
+      billings: [],
+      invoices: [
+        { id: "INV-1", quote_id: "Q-1", invoice_date: "2025-10-01", status: "pending", amount: 25488, paid_amount: 0, currency: "INR", created_at: "2025-10-01T05:00:00Z", due_date: "2025-10-15" },
+        { id: "INV-2", quote_id: "Q-2", invoice_date: "2026-10-01", status: "paid", amount: 11800, paid_amount: 11800, currency: "INR", created_at: "2026-10-01T05:00:00Z", due_date: null },
+      ],
+    });
+    const d = out.get(SUB)!;
+    expect(d.invoice?.id).toBe("INV-2");
+    expect(d.owedInvoiceId).toBe("INV-1");
+    expect(priorDueInvoiceGap(d, 25488, TODAY)).toBe("Older invoice INV-1 still has money due");
   });
 });
 

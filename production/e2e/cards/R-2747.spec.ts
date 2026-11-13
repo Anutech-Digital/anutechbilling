@@ -11,7 +11,7 @@
  *     "Overdue 10d · ₹33,232 due" (the owner's T-M3-19Oct text) — must show IN FULL at 1280 and 1568;
  *   · B "CT R2747 Prior Due Plan" — ₹25,488 on subscriptions.outstanding_amount, no quote, no invoice
  *     (as SCN Kochi Hosting in scenario money-owed-archived) → "Previous term ₹25,488 still unpaid"
- *     + "No invoice in the app for this amount — it is only on the subscription";
+ *     + "No unpaid invoice linked to this subscription for the previous term";
  *   · C "CT R2747 Cancelled Plan" — its only invoice voided → grey "Cancelled".
  */
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -121,7 +121,7 @@ test.describe("R-2747 card test", () => {
       const r = await rowOf(page, "CT R2747 Prior Due Plan");
       await expect(r.getByText("Previous term ₹25,488 still unpaid")).toBeVisible({ timeout: 60_000 });
       const docs = await onlyOne(r.getByTestId("renewal-last-docs"), "last docs");
-      await expect(docs.getByTestId("renewal-prior-due-no-invoice")).toHaveText("No invoice in the app for this amount — it is only on the subscription", { timeout: 60_000 });
+      await expect(docs.getByTestId("renewal-prior-due-no-invoice")).toHaveText("No unpaid invoice linked to this subscription for the previous term", { timeout: 60_000 });
       await expect(docs.getByTestId("renewal-last-invoice-status")).toHaveCount(0);
       expect(await fitsUncut(docs)).toEqual({ lines: true, insideCell: true, noEllipsis: true, nothingHidden: true, pageFits: true });
     });
