@@ -258,12 +258,17 @@ export async function createOrGetRenewalQuote(
           "which no longer exists — falling back to matching on the plan NAME",
       );
     }
-    const { data } = await supabase
+    /* rev-r2736 F3: an ACTIVE row, of the subscription's vendor when it is known — an archived copy or
+       another vendor's row with the same name is not this licence's cost. */
+    const vendor = input.vendor && input.vendor !== "other" ? input.vendor : null;
+    let byName = supabase
       .from("items")
       .select(RENEWAL_CATALOG_COLUMNS)
       .eq("tenant_id", input.tenantId)
       .eq("name", catalogPlanName(input.plan))   // R-2095: an old "(N seats)" suffix
-      .maybeSingle();
+      .eq("is_active", true);
+    if (vendor) byName = byName.eq("vendor", vendor as never);
+    const { data } = await byName.maybeSingle();
     if (data) return { row: data as RenewalCatalogRow, how: "name" };
     const { data: rows, error: rowsErr } = await supabase
       .from("items")

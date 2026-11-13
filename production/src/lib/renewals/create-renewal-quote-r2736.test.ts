@@ -25,7 +25,9 @@ function fakeDb(catalog: Row[], opts: { listError?: boolean } = {}) {
         if (table === "items") {
           const id = filters.find(([c]) => c === "id")?.[1];
           const name = filters.find(([c]) => c === "name")?.[1];
-          const hit = catalog.filter((r) => (id !== undefined ? r.id === id : r.name === name));
+          /* every eq filter applies (tenant_id is the fake catalogue itself) */
+          const hit = catalog.filter((r) => filters.every(([c, v]) => c === "tenant_id" || r[c] === v));
+          void id; void name;
           return { data: hit.length === 1 ? hit[0] : null, error: null };
         }
         return { data: null, error: null };
@@ -103,6 +105,16 @@ describe("R-2736 renewal line cost from the catalogue", () => {
     const { db, rpc } = fakeDb([GW_STD]);
     await createOrGetRenewalQuote(input(db, { vendor: "microsoft" }));
     expect(quoteOf(rpc).line_items[0].cost).toBe(0);
+  });
+
+  it("rev-r2736 F3: the exact-name read takes only an ACTIVE row of the subscription vendor", async () => {
+    const exactOff: Row = { id: "OFF", name: "Google Workspace Business Standard", vendor: "google", msrp: 736, wholesale: 999, prices: {}, is_active: false };
+    const { db, rpc, itemReads } = fakeDb([exactOff, GW_STD]);
+    await createOrGetRenewalQuote(input(db, { vendor: "google" }));
+    expect(quoteOf(rpc).line_items[0].cost).toBe(7440);   // not the inactive row 999 x 12
+    const nameRead = itemReads.find((f) => f.some(([c]) => c === "name"));
+    expect(nameRead).toContainEqual(["is_active", true]);
+    expect(nameRead).toContainEqual(["vendor", "google"]);
   });
 
   it("every items read is tenant-scoped", async () => {

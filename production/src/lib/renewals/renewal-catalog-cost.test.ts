@@ -39,7 +39,7 @@ describe("pickRenewalCatalogItem", () => {
   });
 
   it("r2736 ambiguous no guess: two rows containing the plan name → nothing", () => {
-    const flex = row({ id: "F", name: "Google Workspace Business Standard Flexible", wholesale: 700 });
+    const flex = row({ id: "F", name: "Google Workspace Business Standard (Yearly)", wholesale: 700 });
     const ann = row({ id: "A", name: "Google Workspace Business Standard Annual", wholesale: 620 });
     expect(pickRenewalCatalogItem([flex, ann], { plan: "Google Workspace Business Standard" })).toBeNull();
   });
@@ -147,5 +147,57 @@ describe("domain renewal cost", () => {
     expect(domainRenewalCatalogCost(null).known).toBe(false);
     expect(domainRenewalCatalogCost({ ...IN, prices: {} }).known).toBe(false);   // no billing unit = per seat-month
     expect(domainRenewalCatalogCost({ ...IN, wholesale: 0 }).known).toBe(false);
+  });
+});
+
+/* R-2736 independent review rev-r2736 F1: a confident match must be the SAME tier, with no extra qualifier. */
+describe("R-2736 F1 — a match never picks another tier or an archived / flexible / voice / support row", () => {
+  const ent = (id: string, name: string) => row({ id, name, msrp: 1500, wholesale: 1200 });
+  it("'Business Standard' never → 'Enterprise Standard'", () => {
+    expect(pickRenewalCatalogItem([ent("ES", "Google Workspace Enterprise Standard")], { plan: "Google Workspace Business Standard" })).toBeNull();
+  });
+  it("'Business Plus' never → 'Enterprise Plus'", () => {
+    expect(pickRenewalCatalogItem([ent("EP", "Google Workspace Enterprise Plus")], { plan: "Google Workspace Business Plus" })).toBeNull();
+  });
+  it("'Business Starter' never → '… Starter Archived User'", () => {
+    expect(pickRenewalCatalogItem([ent("AU", "Google Workspace Business Starter Archived User")], { plan: "Google Workspace Business Starter" })).toBeNull();
+  });
+  it("plan 'Google Workspace' (no tier) + one Starter row → nothing", () => {
+    expect(pickRenewalCatalogItem([GW_STR], { plan: "Google Workspace" })).toBeNull();
+  });
+  it("inactive exact row + active Enterprise Standard → nothing", () => {
+    const exactOff = row({ id: "X", name: "Google Workspace Business Standard", wholesale: 620, is_active: false });
+    expect(pickRenewalCatalogItem([exactOff, ent("ES", "Google Workspace Enterprise Standard")], { plan: "Google Workspace Business Standard" })).toBeNull();
+  });
+  it("flexible / voice rows are not the annual licence", () => {
+    expect(pickRenewalCatalogItem([ent("F", "Google Workspace Business Standard Flexible")], { plan: "Google Workspace Business Standard" })).toBeNull();
+    expect(pickRenewalCatalogItem([ent("V", "Google Voice Standard")], { plan: "Google Workspace Business Standard" })).toBeNull();
+  });
+  it("…but a plan that says Flexible may match its Flexible row", () => {
+    const f = ent("F", "E2E Google Workspace Business Standard Flexible");
+    expect(pickRenewalCatalogItem([f, GW_STD], { plan: "Google Workspace Business Standard Flexible" })?.row).toBe(f);
+  });
+  it("the E2E-prefix case (Q-F588-27-0156) still matches, next to the other-tier rows", () => {
+    expect(pickRenewalCatalogItem([GW_STR, GW_STD, ent("ES", "Google Workspace Enterprise Standard")], { plan: "Google Workspace Business Standard" })?.row).toBe(GW_STD);
+  });
+});
+
+/* rev-r2736 F4: a domain renewal is costed from the Renewal row, else Registration — never Transfer. */
+describe("R-2736 F4 — domain row: Renewal, then Registration, never Transfer", () => {
+  const d = (id: string, name: string, wholesale: number) => row({ id, name, vendor: "domain", msrp: wholesale + 200, wholesale, prices: { billing_unit: "unit_year" } });
+  const REN = d("REN", "Domain Renewal .in", 650);
+  const REG = d("REG", "Domain Registration .in", 600);
+  const TRF = d("TRF", "Domain Transfer .in", 550);
+  it("renewal row wins over registration and transfer", () => {
+    expect(pickDomainCatalogItem([TRF, REG, REN], { tld: "in" })?.row).toBe(REN);
+  });
+  it("no renewal row → registration", () => {
+    expect(pickDomainCatalogItem([TRF, REG], { tld: "in" })?.row).toBe(REG);
+  });
+  it("only a transfer row → nothing", () => {
+    expect(pickDomainCatalogItem([TRF], { tld: "in" })).toBeNull();
+  });
+  it("two renewal rows → nothing", () => {
+    expect(pickDomainCatalogItem([REN, { ...REN, id: "REN2" }], { tld: "in" })).toBeNull();
   });
 });
