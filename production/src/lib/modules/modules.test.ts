@@ -39,6 +39,8 @@ describe("Commercial Modular Architecture - Registry & Gating", () => {
     expect(salariedPro?.isFreeTier).toBe(true);
     expect(salariedPro?.badge).toBe("Free Forever");
     expect(salariedPro?.coreRoutes).toContain("/employee-hub");
+    expect(salariedPro?.features.some((f) => f.includes("Personal Daily Spends"))).toBe(true);
+    expect(salariedPro?.features.some((f) => f.includes("Savings Bank Statement"))).toBe(true);
 
     // Solo Free (Tier 2)
     const soloFree = SYSTEM_MODULES.find((m) => m.id === "solo_free");

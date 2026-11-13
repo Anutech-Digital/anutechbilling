@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { toast } from "sonner";
+import { PersonalExpensesSection } from "@/components/features/employee-hub/personal-expenses-section";
+import { BankStatementImportSection } from "@/components/features/employee-hub/bank-statement-import-section";
 
 // ============================================================================
 // Types & Defaults
@@ -73,7 +75,7 @@ const VAULT_CHECKLIST = [
 ];
 
 export default function EmployeeHubPage() {
-  const [activeTab, setActiveTab] = React.useState<"tax" | "claims" | "receipts" | "vault">("tax");
+  const [activeTab, setActiveTab] = React.useState<"tax" | "expenses" | "bank-import" | "claims" | "receipts" | "vault">("tax");
 
   // --------------------------------------------------------------------------
   // Tab 1: Tax Regime State & Calculations
@@ -318,10 +320,20 @@ export default function EmployeeHubPage() {
             onClick={() => {
               if (activeTab === "claims") copyHrSummary();
               else if (activeTab === "receipts") window.print();
+              else if (activeTab === "expenses") toast.info("Record your personal spends below or import from CSV!");
+              else if (activeTab === "bank-import") toast.info("Upload your bank statement CSV to auto-parse salary & expenses!");
               else toast.success("Tax calculation is live and updates dynamically!");
             }}
           >
-            {activeTab === "claims" ? "Export HR Claims" : activeTab === "receipts" ? "Print Rent Receipts" : "Tax Summary Live"}
+            {activeTab === "claims"
+              ? "Export HR Claims"
+              : activeTab === "receipts"
+              ? "Print Rent Receipts"
+              : activeTab === "expenses"
+              ? "Personal Spends Active"
+              : activeTab === "bank-import"
+              ? "Bank CSV Parser"
+              : "Tax Summary Live"}
           </Button>
         </div>
       </div>
@@ -330,19 +342,43 @@ export default function EmployeeHubPage() {
       <div className="flex items-center gap-2 border-b border-hairline pb-2 overflow-x-auto">
         <button
           onClick={() => setActiveTab("tax")}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 ${
+          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
             activeTab === "tax"
               ? "bg-indigo-50 text-indigo-700 font-semibold"
               : "text-ink-2 hover:text-ink hover:bg-paper-2"
           }`}
         >
           <Icon name="rupee" size={16} />
-          Tax Regime Comparator (FY 2025–26)
+          Tax Regime (FY 2025–26)
+        </button>
+
+        <button
+          onClick={() => setActiveTab("expenses")}
+          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
+            activeTab === "expenses"
+              ? "bg-indigo-50 text-indigo-700 font-semibold"
+              : "text-ink-2 hover:text-ink hover:bg-paper-2"
+          }`}
+        >
+          <Icon name="tag" size={16} />
+          Personal Expenses &amp; Budget
+        </button>
+
+        <button
+          onClick={() => setActiveTab("bank-import")}
+          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
+            activeTab === "bank-import"
+              ? "bg-indigo-50 text-indigo-700 font-semibold"
+              : "text-ink-2 hover:text-ink hover:bg-paper-2"
+          }`}
+        >
+          <Icon name="upload-cloud" size={16} />
+          Bank Statement Importer
         </button>
 
         <button
           onClick={() => setActiveTab("claims")}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 ${
+          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
             activeTab === "claims"
               ? "bg-indigo-50 text-indigo-700 font-semibold"
               : "text-ink-2 hover:text-ink hover:bg-paper-2"
@@ -354,26 +390,26 @@ export default function EmployeeHubPage() {
 
         <button
           onClick={() => setActiveTab("receipts")}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 ${
+          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
             activeTab === "receipts"
               ? "bg-indigo-50 text-indigo-700 font-semibold"
               : "text-ink-2 hover:text-ink hover:bg-paper-2"
           }`}
         >
           <Icon name="receipt" size={16} />
-          HRA Rent Receipt Generator
+          HRA Rent Receipts
         </button>
 
         <button
           onClick={() => setActiveTab("vault")}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 ${
+          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
             activeTab === "vault"
               ? "bg-indigo-50 text-indigo-700 font-semibold"
               : "text-ink-2 hover:text-ink hover:bg-paper-2"
           }`}
         >
           <Icon name="file" size={16} />
-          Career & Tax Vault
+          Career &amp; Tax Vault
         </button>
       </div>
 
@@ -678,6 +714,25 @@ export default function EmployeeHubPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* ==================================================================== */}
+      {/* TAB: PERSONAL EXPENSES & BUDGET TRACKER                              */}
+      {/* ==================================================================== */}
+      {activeTab === "expenses" && (
+        <PersonalExpensesSection
+          monthlySalaryRupees={taxCalculations.newMonthlyInHand}
+          onNavigateToBankImport={() => setActiveTab("bank-import")}
+        />
+      )}
+
+      {/* ==================================================================== */}
+      {/* TAB: PERSONAL BANK STATEMENT IMPORTER (CSV/EXCEL)                    */}
+      {/* ==================================================================== */}
+      {activeTab === "bank-import" && (
+        <BankStatementImportSection
+          onNavigateToExpenses={() => setActiveTab("expenses")}
+        />
       )}
 
       {/* ==================================================================== */}
