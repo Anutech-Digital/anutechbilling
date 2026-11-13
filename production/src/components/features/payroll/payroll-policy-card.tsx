@@ -40,13 +40,19 @@ export function PayrollPolicyCard() {
   const [draft, setDraft] = React.useState<PayrollPolicy>(saved);
   const [pctText, setPctText] = React.useState(String(saved.basicPct));
   const pfCeiling = pfWageCeiling();
+  /* R-2733: the employee form's "change it in Payroll policy" link lands here (#payroll-policy) —
+     the card renders after hydration, so the browser's own jump to the hash can miss it. */
+  const cardRef = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (window.location.hash === "#payroll-policy") cardRef.current?.scrollIntoView({ block: "start" });
+  }, []);
 
   const startEdit = () => { setDraft(saved); setPctText(String(saved.basicPct)); setEditing(true); };
   const check = validatePayrollPolicyInput({ ...draft, basicPct: pctText });
   const set = (patch: Partial<PayrollPolicy>) => setDraft((d) => ({ ...d, ...patch }));
 
   return (
-    <Card className="mb-4 p-4" data-testid="payroll-policy-card">
+    <Card ref={cardRef} id="payroll-policy" className="mb-4 p-4 scroll-mt-20" data-testid="payroll-policy-card">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="text-sm font-semibold text-ink flex items-center gap-2">
