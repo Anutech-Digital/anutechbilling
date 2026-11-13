@@ -20,6 +20,7 @@
 import { utcDateISO } from "@/lib/dates/ist";
 import { domainLineYears } from "@/lib/provisioning/products";
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
+import { storedLinePeriod } from "@/lib/quotes/stored-line-period";
 
 export type QuoteServicePeriod =
   | { kind: "range"; from: string; to: string }
@@ -220,6 +221,9 @@ export interface LinePeriodLine {
   /** R-2712: years paid for on a multi-year line (R-156); a new sale's period runs that long. */
   years?: number | null;
   domains?: Array<{ domain: string; seats: number }> | null;
+  /** R-2744: the period the invoice stored for this line at issue (stored-line-period.ts) — read
+   *  only when the context says `storedPeriods`. */
+  service_period?: unknown;
 }
 
 export interface LinePeriodContext {
@@ -239,6 +243,9 @@ export interface LinePeriodContext {
   startFallback?: string | null;
   /** quotes.domain, else the renewed subscription's domain. A line's own domain wins. */
   domain?: string | null;
+  /** R-2744: an issued invoice's lines carry the period stored at issue (withStoredLinePeriods) —
+   *  print that, never a period worked out again from today's quote / subscription. */
+  storedPeriods?: boolean;
 }
 
 export interface LinePeriod { from: string; to: string; months: number | null }
@@ -289,6 +296,8 @@ function validMonths(m: number | null | undefined): m is number {
 
 /** The dates one line's money covers, or null when they are not certain. */
 export function lineServicePeriod(line: LinePeriodLine, ctx: LinePeriodContext): LinePeriod | null {
+  /* R-2744: a stamped invoice prints what it stored at issue (null = no period on this line). */
+  if (ctx.storedPeriods === true) return storedLinePeriod(line) ?? null;
   if (ctx.isOneOff === true || !isTermLine(line)) return null;
 
   // 1. Add-seats: the window the line names.
