@@ -15,550 +15,159 @@
  *
  * The screen says this in as many words, because a status of "queued" that an owner
  * reads as "being fixed" is worse than no status at all — they would stop chasing it.
+ *
+ * ─── R-2726 (13 Nov 2026): SEARCH, FILTERS, SORTING, COMPACT ROWS ───────────
+ * Pardeep: "isme bug search ka option hona chahiye, saare filter hona chahiye, sorting honi
+ * chahiye". The page was one endless list of 290 long report bodies and a real user's report
+ * was missed in it. Now: a search box, filters, sort, one line per report (opens to the full
+ * report and its buttons), 50 a page — all done by the database, and kept in the address so a
+ * reload or a shared link shows the same list. The default view is every status, newest
+ * first: a new report must be the first thing on the page whatever state it is in.
+ *
+ * Access did not change: "This workspace" reads through the browser client under RLS;
+ * "All workspaces" is drawn only for the platform owner and its route re-checks that on the
+ * server before it reads anything (see /api/admin/feedback/platform).
  */
 "use client";
 
 import * as React from "react";
 import { toast } from "sonner";
-import { toastError } from "@/lib/errors/toast-error";
 
 import { Card } from "@/components/ui/card";
 import { loadErrorBody } from "@/components/shared/load-error";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TabBar } from "@/components/ui/tabs";
 import { EmptyState } from "@/components/shared/empty-state";
-import { formatDate } from "@/lib/utils";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { FeedbackAutoSendToggle } from "@/components/feedback/auto-send-toggle";
 import {
-  useFeedbackList,
-  useFeedbackCounts,
+  useFeedbackPage,
+  useFeedbackFacets,
   useFeedbackStatuses,
-  usePlatformFeedbackList,
-  useTriageFeedback,
-  useDispatchFeedback,
-  useUpdateFeedbackStatus,
-  useMarkFeedbackChecked,
-  useUnmarkFeedbackChecked,
-  feedbackScreenshotUrl,
-  type FeedbackWithShots,
-  type FeedbackStatus,
+  usePlatformFeedbackPage,
+  usePlatformFeedbackFacets,
 } from "@/lib/queries/feedback";
 import { parseFixedNote, newlyFixedIds } from "@/lib/feedback/fixed-note";
-import { buildCheckPrompt, buildFixFooter } from "./feedback-prompts";
-import { PlatformAiStatus, SendToAiButton, SendAllOpenButton } from "./platform-ai";
-import { RecheckTypeScore } from "./recheck";
-import { UrgentToggle, UrgentStrip, urgentAtOf } from "./urgent-toggle";
-import { isUrgent, mayMarkUrgent } from "@/lib/feedback/urgent";
-
-const STATUS_TABS: { id: string; label: string }[] = [
-  { id: "open", label: "Open" },
-  { id: "agent_queued", label: "Queued for agent" },
-  { id: "fixed", label: "Fixed" },
-  { id: "all", label: "All" },
-];
-
-const TYPE_BADGE: Record<string, { kind: "danger" | "info" | "warning"; label: string }> = {
-  bug: { kind: "danger", label: "Bug" },
-  feature: { kind: "info", label: "Feature" },
-  ui_improvement: { kind: "warning", label: "UI polish" },
-};
-
-/** What the buttons on a report do, by status — shown under them. */
-const ACTION_HELP: Record<string, string> = {
-  open: "Run AI Auto-Fix sends it to the AI worker — it becomes a card on the work board (urgent: in a few minutes; others: within 30 min). Copy Directive gives you the fix instructions to paste into Claude Code yourself. Mark fixed or Won't fix closes it.",
-  agent_queued: "Waiting for the AI worker — it becomes a card on the work board (urgent: in a few minutes; others: within 30 min), and the fix is made from there. Reopen takes it back to Open.",
-  fixed: "Done, waiting for a browser test? Check in browser copies a prompt — open a new Claude Code session and paste it. It re-tests this screen, marks it ✓ checked here when it works (or fixes it), notes the result on the work board, then archives itself. Saw it working yourself? Press ✓ Mark checked (Undo check takes it back). Reopen sends it back to Open.",
-  wont_fix: "Closed without a fix. Reopen if it matters again.",
-  duplicate: "Closed as a duplicate of another report. Reopen if it is different.",
-};
-
-/** Severity band → colour. Bands, not a gradient: an operator reads three groups, not 100 shades. */
-function severityKind(score: number | null): "danger" | "warning" | "muted" {
-  if (score === null) return "muted";
-  if (score >= 60) return "danger";
-  if (score >= 36) return "warning";
-  return "muted";
-}
+import {
+  DEFAULT_FEEDBACK_FILTERS,
+  STATUS_FILTERS,
+  STATUS_FILTER_LABEL,
+  feedbackFiltersToParams,
+  hasAnyFilter,
+  nextVisitMemory,
+  parseFeedbackFilters,
+  type FeedbackFilters,
+  type FeedbackScope,
+  type StatusFilter,
+  type VisitMemory,
+} from "@/lib/feedback/list-filters";
+import { mayMarkUrgent } from "@/lib/feedback/urgent";
+import { SendAllOpenButton } from "./platform-ai";
+import { FeedbackFilterBar } from "./feedback-filter-bar";
+import { FeedbackRowItem, whenIst, type FeedbackListRow } from "./feedback-row";
 
 /**
- * 6 Oct 2026: "Could not reach the clipboard" on Copy Directive — some browsers and embedded
- * views refuse navigator.clipboard (no permission, not focused). The old textarea +
- * execCommand("copy") path still works in most of them, so try it before giving up; when both
- * fail the caller opens the directive and selects it, so Ctrl+C is all that is left.
+ * The filters and the scope, held in the address (R-272 mechanics, same as useUrlState): read
+ * from `window` after mount — not useSearchParams(), which fails the build without a Suspense
+ * boundary — and written with history.replaceState, so there is no page load and Back still
+ * leaves the page. `ready` is false until the address was read, so the list is not fetched
+ * once for the default view and again for the real one.
  */
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    try {
-      const ta = document.createElement("textarea");
-      ta.value = text;
-      ta.setAttribute("readonly", "");
-      ta.style.position = "fixed";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand("copy");
-      document.body.removeChild(ta);
-      return ok;
-    } catch {
-      return false;
-    }
-  }
-}
-
-/** Selects an element's text so the user only has to press Ctrl+C. */
-function selectText(el: HTMLElement | null) {
-  if (!el) return;
-  el.scrollIntoView({ block: "center", behavior: "smooth" });
-  const range = document.createRange();
-  range.selectNodeContents(el);
-  const sel = window.getSelection();
-  sel?.removeAllRanges();
-  sel?.addRange(range);
-}
-
-function ScreenshotThumb({ path, name }: { path: string; name: string | null }) {
-  const [url, setUrl] = React.useState<string | null>(null);
-  const [failed, setFailed] = React.useState(false);
+function useFeedbackUrl() {
+  const [state, setState] = React.useState<{ filters: FeedbackFilters; scope: FeedbackScope; ready: boolean }>(
+    { filters: DEFAULT_FEEDBACK_FILTERS, scope: "mine", ready: false },
+  );
 
   React.useEffect(() => {
-    let alive = true;
-    feedbackScreenshotUrl(path)
-      .then((u) => { if (alive) { if (u) setUrl(u); else setFailed(true); } })
-      .catch(() => { if (alive) setFailed(true); });
-    return () => { alive = false; };
-  }, [path]);
+    const read = () => {
+      const p = new URLSearchParams(window.location.search);
+      setState({ filters: parseFeedbackFilters(p), scope: p.get("scope") === "all" ? "all" : "mine", ready: true });
+    };
+    read();
+    window.addEventListener("popstate", read);
+    return () => window.removeEventListener("popstate", read);
+  }, []);
 
-  if (failed) {
-    // Says what is wrong rather than showing a broken image frame.
-    return (
-      <div className="w-24 h-16 rounded border border-hairline bg-paper-2 flex items-center justify-center text-3xs text-ink-3 text-center px-1">
-        Could not load
-      </div>
-    );
-  }
-  if (!url) return <Skeleton className="w-24 h-16 rounded" />;
+  const write = React.useCallback((filters: FeedbackFilters, scope: FeedbackScope) => {
+    setState({ filters, scope, ready: true });
+    const p = feedbackFiltersToParams(filters);
+    if (scope === "all") p.set("scope", "all");
+    const qs = p.toString();
+    /* `null`, not window.history.state: Next's router skips a replaceState that carries its own
+       state object (it treats it as its own call) and would later write its remembered address
+       back — seen in the card test: reporter + status vanished from the address after a re-render.
+       With null it records the new address, so a reload or a shared link shows this list. */
+    window.history.replaceState(null, "", `${window.location.pathname}${qs ? `?${qs}` : ""}${window.location.hash}`);
+  }, []);
 
-  return (
-    <a href={url} target="_blank" rel="noopener noreferrer" title={name ?? "Screenshot"}>
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={url}
-        alt={name ?? "Reported screen"}
-        className="w-24 h-16 object-cover rounded border border-hairline hover:border-primary transition-colors"
-      />
-    </a>
-  );
+  return { ...state, write };
 }
 
 /**
- * R-356: the fixed report's one-line receipt — "Fixed by AI · R-354 · 279cb0d2 · what
- * changed · when" — plus a link to the screen the bug was filed on, so the owner can look.
+ * "New since my last visit" — per viewer and per browser (localStorage). Returns the time
+ * this viewer last opened the page before the current visit, or null on a first visit.
  */
-function AiFixedStrip({ note, resolvedAt, pagePath }: { note: string; resolvedAt: string | null; pagePath: string | null }) {
-  const n = parseFixedNote(note);
-  const href = pagePath && pagePath.startsWith("/") && !pagePath.startsWith("//") ? pagePath : null;
-  return (
-    <div data-testid="ai-fixed-strip" className="mt-1 text-xs text-ink-2 bg-emerald-soft/40 border border-emerald/30 rounded-md px-2 py-1.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5">
-      <span className="font-semibold text-emerald-ink">🤖 Fixed by AI</span>
-      {n.card && <><span aria-hidden className="text-ink-3">·</span><span className="font-mono font-semibold text-ink">{n.card}</span></>}
-      {n.commit && <><span aria-hidden className="text-ink-3">·</span><span className="font-mono text-ink-3">{n.commit}</span></>}
-      <span aria-hidden className="text-ink-3">·</span>
-      <span className="min-w-0 break-words">{n.text}</span>
-      {resolvedAt && <><span aria-hidden className="text-ink-3">·</span><span className="text-ink-3" title={formatDate(resolvedAt, "long")}>{formatDate(resolvedAt, "relative")}</span></>}
-      {href && (
-        <a href={href} target="_blank" rel="noopener noreferrer" className="ml-auto font-medium text-primary hover:underline inline-flex items-center gap-1">
-          Open the page <Icon name="external" size={12} />
-        </a>
-      )}
-    </div>
-  );
-}
-
-function FeedbackCard({ row, userId, meName, justFixed = false, canUrgent = false }: { row: FeedbackWithShots; userId: string | null; meName: string; justFixed?: boolean; canUrgent?: boolean }) {
-  const [open, setOpen] = React.useState(false);
-  const directiveRef = React.useRef<HTMLPreElement>(null);
-  /* Copy failed: open the details and select the directive, after the panel has rendered. */
-  const showForManualCopy = () => {
-    setOpen(true);
-    setTimeout(() => selectText(directiveRef.current), 50);
-  };
-
-  const triage = useTriageFeedback();
-  const dispatch = useDispatchFeedback();
-  const setStatus = useUpdateFeedbackStatus();
-  const markChecked = useMarkFeedbackChecked();
-  const unmarkChecked = useUnmarkFeedbackChecked();
-
-  const type = row.inferred_type ?? row.reported_type;
-  const badge = TYPE_BADGE[type] ?? TYPE_BADGE.bug;
-  const untriaged = row.triage_status !== "triaged" || !row.directive;
-
-  const handleCopy = async () => {
-    if (!row.directive) {
-      toast.error("There is no directive yet.", { description: "Open Details and press Re-check type & score." });
-      return;
-    }
-    /* R-200: the last step tells the fixing session to mark THIS report fixed in this app,
-       so the person who filed it sees "done · waiting for browser test" without asking. */
-    const footer = buildFixFooter(row.id, window.location.origin);
-    const ok = await copyToClipboard(`${row.directive}\n${footer}`);
-    if (ok) toast.success("Directive copied — paste it into Claude Code.");
-    else {
-      showForManualCopy();
-      toast.warning("Browser blocked copying.", { description: "The directive is open and selected below — press Ctrl+C." });
-    }
-  };
-
-  /* R-188: "I saw it working" — so a second visit does not have to remember. */
-  const handleMarkChecked = async () => {
+function useLastVisit(userId: string | null | undefined): string | null {
+  const [since, setSince] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    if (!userId) return;
+    const key = `feedback:last-visit:${userId}`;
     try {
-      await markChecked.mutateAsync({ id: row.id, byName: meName });
-      toast.success("Marked as checked.", {
-        description: "The report now shows who checked it and when.",
-        action: { label: "Undo", onClick: () => void handleUnmarkChecked() },
-        duration: 10_000,
-      });
-    } catch (err) {
-      toast.error("Could not mark it checked.", {
-        description: `${err instanceof Error ? err.message : "Unknown error"} — reload the page and try again.`,
-      });
+      const prev = JSON.parse(window.localStorage.getItem(key) ?? "null") as VisitMemory | null;
+      const next = nextVisitMemory(prev, new Date());
+      window.localStorage.setItem(key, JSON.stringify(next));
+      setSince(next.since);
+    } catch {
+      /* Storage blocked or a damaged value: the chip simply stays off. */
+      setSince(null);
     }
-  };
-
-  const handleUnmarkChecked = async () => {
-    try {
-      await unmarkChecked.mutateAsync({ id: row.id });
-      toast.success("Check removed.", { description: "It shows \"waiting for browser test\" again." });
-    } catch (err) {
-      toast.error("Could not remove the check.", {
-        description: `${err instanceof Error ? err.message : "Unknown error"} — reload the page and try again.`,
-      });
-    }
-  };
-
-  const handleCopyCheck = async () => {
-    const ok = await copyToClipboard(buildCheckPrompt(row, window.location.origin));
-    if (ok) toast.success("Check + fix prompt copied.", { description: "Open a new Claude Code session and paste it — it checks in a browser, fixes it if still broken, writes the result on the board and archives itself." });
-    else toast.warning("Browser blocked copying.", { description: "Press Copy again, or ask Claude in chat to check this report." });
-  };
-
-  const handleRunTriage = async () => {
-    try {
-      const { mode } = await triage.mutateAsync(row.id);
-      toast.success(
-        mode === "gemini" ? "Triaged with Gemini." : "Triaged with the built-in engine.",
-        { description: mode === "stub" ? "No Gemini key is configured, so the deterministic engine ran." : undefined },
-      );
-    } catch (err) {
-      toastError(err, {
-        fallback: "Triage failed.",
-        description: "The report is unchanged. Press Re-check type & score again in a moment.",
-      });
-    }
-  };
-
-  /**
-   * The 1-click path: make sure a directive exists, put it on the clipboard, and record
-   * that it was handed out. Deliberately does not claim a fix is underway.
-   */
-  const handleAutoFix = async () => {
-    try {
-      if (untriaged) await triage.mutateAsync(row.id);
-
-      // Re-read from the row we have; after a triage the list refetches, but the copy
-      // must not depend on that race. Fall back to triggering a copy of what we hold.
-      const directive = row.directive;
-      const copied = directive ? await copyToClipboard(directive) : false;
-
-      await dispatch.mutateAsync({ id: row.id, userId });
-
-      /* Says where the report went: it leaves the Open tab, and on 5 Oct three reports
-         "vanished" for the person who pressed it. */
-      if (!copied && directive) showForManualCopy();
-      toast.success(copied ? "Moved to Queued for agent — directive copied." : "Moved to Queued for agent.", {
-        description: copied
-          ? "Not fixed yet: paste it into Claude Code to make the fix. The report waits in the Queued for agent tab."
-          : "Not fixed yet. The browser blocked copying — the AI worker will still put it on the board (urgent: in a few minutes; others: within 30 min).",
-        duration: 10_000,
-      });
-    } catch (err) {
-      toastError(err, {
-        fallback: "Could not queue this report.",
-        description: "It is still in the Open tab. Press the button again.",
-      });
-    }
-  };
-
-  const handleStatus = async (status: FeedbackStatus) => {
-    try {
-      await setStatus.mutateAsync({ id: row.id, status });
-      toast.success(status === "fixed" ? "Marked fixed." : status === "wont_fix" ? "Marked won't fix." : "Reopened.");
-    } catch (err) {
-      toastError(err, {
-        fallback: "Could not update the status.",
-        description: "The report keeps its old status. Refresh and try again.",
-      });
-    }
-  };
-
-  const busy = triage.isPending || dispatch.isPending || setStatus.isPending || markChecked.isPending || unmarkChecked.isPending;
-  /* A note can survive a Reopen → re-queue; if it names a card, the queued strip shows it. */
-  // R-357: the worker's claim (agent_card) names the card once the claim migration is applied.
-  const claimedCard = (row as { agent_card?: string | null }).agent_card ?? null;
-  const queuedCard = row.status === "agent_queued" ? claimedCard ?? parseFixedNote(row.resolution_note).card : null;
-
-  return (
-    <Card
-      data-testid={`feedback-card-${row.id}`}
-      className={"p-4 space-y-3 transition-shadow " + (justFixed ? "ring-2 ring-emerald border-emerald/40" : "")}
-    >
-      <div className="flex items-start gap-3">
-        <div
-          className="flex-shrink-0 w-11 h-11 rounded-lg bg-paper-2 border border-hairline flex flex-col items-center justify-center"
-          title={row.severity_score === null ? "Not triaged yet" : `Severity ${row.severity_score} of 100`}
-        >
-          <span className="text-sm font-bold leading-none text-ink">{row.severity_score ?? "—"}</span>
-          <span className="text-3xs uppercase tracking-wide text-ink-3 mt-0.5">sev</span>
-        </div>
-
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <Badge kind={badge.kind} size="sm">{badge.label}</Badge>
-            {row.inferred_type && row.inferred_type !== row.reported_type && (
-              <Badge kind="outline" size="sm" title={`The reporter filed this as "${row.reported_type}"`}>
-                filed as {row.reported_type}
-              </Badge>
-            )}
-            <Badge kind={severityKind(row.severity_score)} size="sm">
-              {row.reported_severity}
-            </Badge>
-            {row.triage_mode && (
-              <Badge kind="muted" size="sm" title={row.triage_mode === "stub" ? "No Gemini key configured — the built-in engine ran" : "Triaged by Gemini"}>
-                {row.triage_mode}
-              </Badge>
-            )}
-            {row.status === "agent_queued" && <Badge kind="info" size="sm">queued for agent</Badge>}
-            {row.status === "fixed" && <Badge kind="success" size="sm">fixed</Badge>}
-            {row.status === "fixed" && (row.checked_at
-              ? <Badge kind="success" size="sm">✓ checked {formatDate(row.checked_at)}{row.checked_by_name ? ` · ${row.checked_by_name}` : ""}</Badge>
-              : <Badge kind="warning" size="sm">done · waiting for browser test</Badge>)}
-            {row.status === "wont_fix" && <Badge kind="muted" size="sm">won&apos;t fix</Badge>}
-          </div>
-
-          <p className="mt-1.5 text-sm font-medium text-ink">
-            {row.problem_summary || row.title}
-          </p>
-          {/* R-200 / R-356: what the AI did, which card + commit, and when (all from the note
-              /api/agent/feedback-fixed stores — no extra columns). */}
-          {row.status === "fixed" && row.resolution_note && (
-            <AiFixedStrip note={row.resolution_note} resolvedAt={row.resolved_at} pagePath={row.page_path} />
-          )}
-          {/* R-356: a queued report says the AI worker has it, not just a chip. */}
-          {/* R-397: an urgent report says so first — "⚡ Urgent · AI worker has it · R-xxx". */}
-          {row.status === "agent_queued" && isUrgent(row) && <UrgentStrip card={queuedCard} urgentAt={urgentAtOf(row)} />}
-          {row.status === "agent_queued" && !isUrgent(row) && (
-            <p data-testid="ai-queued-strip" className="mt-1 text-xs text-ink-2 bg-paper-2 border border-hairline rounded-md px-2 py-1">
-              🤖 AI worker has it{queuedCard ? <> · card <b className="font-mono">{queuedCard}</b></> : null}
-              {row.dispatched_at ? <> · queued {formatDate(row.dispatched_at, "relative")}</> : null}
-              {queuedCard ? null : <span className="text-ink-3"> · card id shows here once it is fixed</span>}
-            </p>
-          )}
-
-          <p className="mt-1 text-xs text-ink-3 flex items-center gap-2 flex-wrap">
-            <span className="font-mono">{row.route_pattern ?? row.page_path ?? "screen unknown"}</span>
-            <span aria-hidden className="text-ink-3">·</span>
-            <span>{row.reporter_name ?? "Unknown reporter"}</span>
-            {row.filed_via === "ai-chat" && <Badge kind="info" size="sm">🤖 AI-drafted after chat</Badge>}
-            <span aria-hidden className="text-ink-3">·</span>
-            <span>{formatDate(row.created_at)}</span>
-            {row.status === "fixed" && row.resolved_at && (
-              <>
-                <span aria-hidden className="text-ink-3">·</span>
-                <span className="text-emerald">fixed {formatDate(row.resolved_at)}</span>
-              </>
-            )}
-            {row.screenshots.length > 0 && (
-              <>
-                <span aria-hidden className="text-ink-3">·</span>
-                <span className="inline-flex items-center gap-1"><Icon name="camera" size={12} />{row.screenshots.length}</span>
-              </>
-            )}
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => setOpen((v) => !v)}
-          className="flex-shrink-0 text-xs font-medium text-ink-3 hover:text-ink inline-flex items-center gap-1"
-          aria-expanded={open}
-        >
-          {open ? "Hide" : "Details"}
-          <Icon name={open ? "chevron_up" : "chevron_down"} size={14} />
-        </button>
-      </div>
-
-      <div className="flex items-center gap-2 flex-wrap">
-        {/* 6 Oct 2026 (Pardeep, Fixed tab): Auto-Fix on a fixed / won't-fix / already queued
-            report only re-queued it. It is for open reports; Reopen first to send one again. */}
-        {row.status === "open" && (
-          <Button variant="primary" size="sm" onClick={handleAutoFix} disabled={busy} title="Send to the AI worker — it becomes a card on the work board (urgent: in a few minutes; others: within 30 min)">
-            <Icon name="sparkles" size={14} className="mr-1.5" />
-            Run AI Auto-Fix
-          </Button>
-        )}
-        {/* R-397: owner/manager (or platform owner) only; hidden until the urgent migration is applied. */}
-        {canUrgent && <UrgentToggle row={row} disabled={busy} />}
-        {row.status === "fixed" ? (
-          <Button size="sm" variant="outline" onClick={handleCopyCheck} disabled={busy} title="Copies a prompt: re-test this in a browser, fix it if still broken">
-            <Icon name="copy" size={14} className="mr-1.5" />
-            Check in browser
-          </Button>
-        ) : null}
-        {row.status === "fixed" && !row.checked_at ? (
-          <Button size="sm" variant="ghost" onClick={handleMarkChecked} disabled={busy} title="You saw it working — mark it so you do not check it again">
-            ✓ Mark checked
-          </Button>
-        ) : null}
-        {row.status === "fixed" && row.checked_at ? (
-          <Button size="sm" variant="ghost" onClick={handleUnmarkChecked} disabled={busy} title="Pressed by mistake? Take the check back">
-            Undo check
-          </Button>
-        ) : null}
-        {row.status === "fixed" ? null : (
-          <Button size="sm" variant="outline" onClick={handleCopy} disabled={busy || !row.directive} title="Copies the fix instructions to paste into Claude Code yourself">
-            <Icon name="copy" size={14} className="mr-1.5" />
-            Copy Directive
-          </Button>
-        )}
-        <span className="flex-1" />
-        {row.status !== "fixed" && (
-          <Button size="sm" variant="ghost" onClick={() => handleStatus("fixed")} disabled={busy}>
-            Mark fixed
-          </Button>
-        )}
-        {/* Offered from EVERY non-open state, not just "fixed". A report that was queued
-            for an agent which then failed, stalled, or was never actually run has to be
-            able to come back — otherwise the only exits from `agent_queued` are "fixed"
-            and "won't fix", and somebody eventually picks one of those to clear the row.
-            A queue you can only leave by lying about the outcome stops being a queue. */}
-        {row.status !== "open" && (
-          <Button size="sm" variant="ghost" onClick={() => handleStatus("open")} disabled={busy} title="Send it back to Open">
-            Reopen
-          </Button>
-        )}
-        {row.status !== "wont_fix" && (
-          <Button size="sm" variant="ghost" onClick={() => handleStatus("wont_fix")} disabled={busy} title="Close it without a fix">
-            Won&apos;t fix
-          </Button>
-        )}
-      </div>
-
-      {/* Pardeep, 6 Oct 2026: "isko aur badiya informatic banao jisse user ko sab kuch clear ho
-          sake wo kya kar sakta hai" — one line per state saying what the buttons do. */}
-      <p className="flex gap-1.5 text-xs text-ink-3 leading-relaxed">
-        <Icon name="info" size={13} className="flex-shrink-0 mt-0.5" />
-        <span>{ACTION_HELP[row.status] ?? ""}</span>
-      </p>
-
-      {open && (
-        <div className="pt-3 border-t border-hairline space-y-4">
-          {/* R-393: re-running triage is a rare fix-up, so it lives here, not in the row. */}
-          {(row.status === "open" || row.status === "agent_queued") && (
-            <RecheckTypeScore onRun={() => void handleRunTriage()} disabled={busy} />
-          )}
-          <div>
-            <h4 className="text-xs font-bold uppercase tracking-wider text-ink-3 mb-1.5">{row.filed_via === "ai-chat" ? "What the AI wrote (after the chat), filed by the reporter" : "What the reporter wrote"}</h4>
-            {row.filed_via === "ai-chat" && row.ai_chat_summary && (
-              <p className="text-xs text-ink-2 mb-1.5"><b>Chat:</b> {row.ai_chat_summary}</p>
-            )}
-            <pre className="text-xs text-ink whitespace-pre-wrap font-mono bg-paper-2 border border-hairline rounded-md p-3 max-h-56 overflow-y-auto">
-              {row.body}
-            </pre>
-          </div>
-
-          {row.screenshots.length > 0 && (
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-ink-3 mb-1.5">Screenshots</h4>
-              <div className="flex gap-2 flex-wrap">
-                {row.screenshots.map((s) => (
-                  <ScreenshotThumb key={s.id} path={s.file_path} name={s.file_name} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {row.triage_notes.length > 0 && (
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-ink-3 mb-1.5">What the triage noticed</h4>
-              <ul className="space-y-1">
-                {row.triage_notes.map((n, i) => (
-                  <li key={i} className="text-xs text-ink-2 flex gap-2">
-                    <span aria-hidden className="text-ink-3 flex-shrink-0">•</span>
-                    <span>{n}</span>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {row.target_files.length > 0 && (
-            <div>
-              <h4 className="text-xs font-bold uppercase tracking-wider text-ink-3 mb-1.5">Target files</h4>
-              <ul className="space-y-0.5">
-                {row.target_files.map((f) => (
-                  <li key={f} className="text-xs font-mono text-ink-2">{f}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <h4 className="text-xs font-bold uppercase tracking-wider text-ink-3">AI agent directive</h4>
-              {row.directive && (
-                <button type="button" onClick={handleCopy} className="text-xs font-medium text-primary hover:underline">
-                  Copy
-                </button>
-              )}
-            </div>
-            {row.directive ? (
-              <pre ref={directiveRef} className="text-2xs leading-relaxed text-ink whitespace-pre-wrap font-mono bg-paper-2 border border-hairline rounded-md p-3 max-h-96 overflow-y-auto">
-                {row.directive}
-              </pre>
-            ) : (
-              <p className="text-xs text-ink-3">
-                No directive yet — press <b>Re-check type &amp; score</b> above to make one.
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-    </Card>
-  );
+  }, [userId]);
+  return since;
 }
 
 export default function AdminFeedbackPage() {
   const { data: me, isLoading: meLoading } = useCurrentUser();
-  const [tab, setTab] = React.useState("open");
+  const { filters, scope: urlScope, ready, write } = useFeedbackUrl();
+  const since = useLastVisit(me?.userId);
 
-  const filter = tab === "all" ? {} : { status: tab as FeedbackStatus };
-  const { data, isLoading, error } = useFeedbackList(filter);
-  const { data: counts } = useFeedbackCounts();
+  /* ── Every workspace, for the platform owner ───────────────────────────────
+     A tester with his own tenant filed a bug on 22 Aug and nobody could read it:
+     feedback is RLS-scoped to the signed-in workspace, so this page could only ever
+     show ANUTECH's own reports. Reporting worked, reading did not.
+
+     The flag here only decides whether the toggle is DRAWN and whether the request is
+     made. The route re-checks the authenticated email against the same founder allowlist
+     before it touches the service role, so ?scope=all typed by anyone else changes nothing:
+     they keep their own workspace's list. */
+  const isPlatform = Boolean(me?.isPlatformAdmin);
+  const scope: FeedbackScope = isPlatform && urlScope === "all" ? "all" : "mine";
+
+  const mine = useFeedbackPage(filters, since, ready && !meLoading && scope === "mine");
+  const platform = usePlatformFeedbackPage(filters, since, ready && scope === "all");
+  const mineFacets = useFeedbackFacets(ready && !meLoading && scope === "mine");
+  const platformFacets = usePlatformFeedbackFacets(ready && scope === "all");
   const { data: statuses } = useFeedbackStatuses();
+
+  const active = scope === "all" ? platform : mine;
+  const data = active.data;
+  const rows: FeedbackListRow[] = data?.rows ?? [];
+  const facets = scope === "all" ? platformFacets.data?.facets : mineFacets.data;
+  const isLoading = !ready || meLoading || active.isLoading;
+  const error = active.error as Error | null;
+
+  const setFilters = (next: FeedbackFilters) => write(next, urlScope);
+  const setStatus = (status: StatusFilter) => write({ ...filters, status, pageNo: 1 }, urlScope);
 
   /* R-356: the AI marks a report fixed from outside this page. When a poll (every 30 s,
      visible tab only) or coming back to the tab sees a report turn fixed WITH an AI note,
-     say so — the card leaves Open on its own, and the toast says where it went. A note-less
+     say so — the row changes on its own, and the toast says where it went. A note-less
      fix is the owner's own "Mark fixed", which already has its own toast. */
   const prevStatuses = React.useRef<Record<string, string> | null>(null);
   const [justFixed, setJustFixed] = React.useState<Set<string>>(() => new Set());
+  const showFixed = React.useRef<() => void>(() => undefined);
+  showFixed.current = () => setStatus("fixed");
   React.useEffect(() => {
     if (!statuses) return;
     const next: Record<string, string> = {};
@@ -569,7 +178,7 @@ export default function AdminFeedbackPage() {
     const first = parseFixedNote(statuses[fresh[0]].resolution_note);
     toast.success(fresh.length === 1 ? "Fixed by AI — moved to Fixed" : `${fresh.length} reports fixed by AI — moved to Fixed`, {
       description: [first.card, first.commit, first.text].filter(Boolean).join(" · ").slice(0, 200),
-      action: { label: "Show", onClick: () => setTab("fixed") },
+      action: { label: "Show", onClick: () => showFixed.current() },
       duration: 10_000,
     });
     setJustFixed(new Set(fresh));
@@ -581,22 +190,22 @@ export default function AdminFeedbackPage() {
     return () => clearTimeout(t);
   }, [justFixed]);
 
-  /* ── Every workspace, for the platform owner ───────────────────────────────
-     A tester with his own tenant filed a bug on 22 Aug and nobody could read it:
-     feedback is RLS-scoped to the signed-in workspace, so this page could only ever
-     show ANUTECH's own reports. Reporting worked, reading did not.
-
-     The flag here only decides whether the toggle is DRAWN. The route re-checks the
-     authenticated email against the same founder allowlist before it touches the
-     service role, so flipping this in a browser gets you a 403 and nothing else. */
-  const [scope, setScope] = React.useState<"mine" | "all">("mine");
-  const platform = usePlatformFeedbackList(Boolean(me?.isPlatformAdmin) && scope === "all");
-
-  const rows = data ?? [];
-  const untriagedCount = rows.filter((r) => r.triage_status !== "triaged").length;
+  const untriagedCount = rows.filter((r) => r.isOwnWorkspace !== false && r.triage_status !== "triaged").length;
+  const total = data?.total;
+  const pageCount = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;
+  const firstShown = data && data.total > 0 ? (data.page - 1) * data.pageSize + 1 : 0;
+  const lastShown = data ? Math.min(data.total, (data.page - 1) * data.pageSize + rows.length) : 0;
+  const filtered = hasAnyFilter(filters, scope);
+  /* A page number past the end (rows were closed, or an old link): go to the last page. */
+  const pastEnd = Boolean(data) && rows.length === 0 && (data?.total ?? 0) > 0 && filters.pageNo > pageCount;
+  React.useEffect(() => {
+    if (pastEnd) write({ ...filters, pageNo: pageCount }, urlScope);
+  }, [pastEnd, pageCount, filters, urlScope, write]);
+  /* Duplicate is rare: the tab shows only when something is in it (or it is the one selected). */
+  const tabs = STATUS_FILTERS.filter((s) => s !== "duplicate" || filters.status === "duplicate" || (data?.counts.duplicate ?? 0) > 0);
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto space-y-5">
+    <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto space-y-4">
       <div>
         <h1 className="text-2xl md:text-3xl font-serif text-ink">Feedback &amp; AI Fixes</h1>
         <p className="text-sm text-ink-3 mt-1">
@@ -608,14 +217,15 @@ export default function AdminFeedbackPage() {
 
       <FeedbackAutoSendToggle />
 
-      {/* Only the platform owner sees this. Everyone else gets the page exactly as before. */}
-      {me?.isPlatformAdmin && (
+      {/* Only the platform owner sees this. Everyone else gets their own workspace's list. */}
+      {isPlatform && (
         <div className="flex flex-wrap items-center gap-2">
           {(["mine", "all"] as const).map((s) => (
             <button
               key={s}
               type="button"
-              onClick={() => setScope(s)}
+              aria-pressed={scope === s}
+              onClick={() => write({ ...filters, workspace: "", pageNo: 1 }, s)}
               className={
                 "rounded-md border px-2.5 py-1 text-[12px] font-medium transition-colors " +
                 (scope === s
@@ -630,15 +240,10 @@ export default function AdminFeedbackPage() {
             Testers on their own workspace file reports here too — they are invisible on
             &ldquo;This workspace&rdquo;.
           </span>
+          {scope === "all" && (
+            <span className="ml-auto"><SendAllOpenButton rows={[]} count={platformFacets.data?.openToSend ?? 0} /></span>
+          )}
         </div>
-      )}
-
-      {scope === "all" && me?.isPlatformAdmin && (
-        <PlatformFeedbackList
-          rows={platform.data ?? []}
-          isLoading={platform.isLoading}
-          error={platform.error as Error | null}
-        />
       )}
 
       {/* Said once, at the top, rather than left for someone to infer from a status chip. */}
@@ -649,40 +254,53 @@ export default function AdminFeedbackPage() {
           It does <b>not</b> change any code by itself — this app runs on a server with no access to the
           repository. The AI worker picks up queued reports (urgent: in a few minutes; others: within 30 min) and puts each one on the
           work board as a card; the fix is made from there. You can also paste the directive into
-          Claude Code yourself.
+          Claude Code yourself. Click a row to open the full report and its buttons.
         </p>
       </div>
 
+      <FeedbackFilterBar
+        filters={filters}
+        onChange={setFilters}
+        onClear={() => write({ ...DEFAULT_FEEDBACK_FILTERS, sort: filters.sort }, urlScope)}
+        scope={scope}
+        facets={facets}
+        total={isLoading ? undefined : total}
+        sinceLabel={since ? whenIst(since) : null}
+      />
+
       <TabBar
-        value={tab}
-        onChange={setTab}
-        items={STATUS_TABS.map((t) => ({
-          ...t,
-          count: t.id === tab ? rows.length : counts?.[t.id],
-        }))}
+        value={filters.status}
+        onChange={(id) => setStatus(id as StatusFilter)}
+        items={tabs.map((s) => ({ id: s, label: STATUS_FILTER_LABEL[s], count: data?.counts[s] }))}
       />
 
       {untriagedCount > 0 && (
         <p className="text-xs text-amber-ink bg-amber-soft border border-amber/30 rounded-md px-3 py-2">
-          {untriagedCount} report(s) in this view have no directive yet. Open <b>Details</b> and press <b>Re-check type &amp; score</b>, or{" "}
+          {untriagedCount} report(s) on this page have no directive yet. Open the row and press <b>Re-check type &amp; score</b>, or{" "}
           <b>Run AI Auto-Fix</b>, which triages first.
         </p>
       )}
 
-      {(isLoading || meLoading) && (
-        <div className="space-y-3">
-          {[0, 1, 2].map((i) => <Skeleton key={i} className="h-28 w-full rounded-lg" />)}
+      {isLoading && (
+        <div className="space-y-1.5">
+          {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-9 w-full rounded-md" />)}
         </div>
       )}
 
-      {error && (
+      {/* An error must not read as "no reports". */}
+      {error && scope === "all" && (
+        <Card className="p-4 text-[13px] text-ink-2">
+          <b className="text-ink">Could not load other workspaces.</b> {loadErrorBody(error)}
+        </Card>
+      )}
+      {error && scope === "mine" && (
         <Card className="p-6">
           <EmptyState
             icon="alert"
             title="Could not load the feedback queue"
             body={
               <>
-                {error instanceof Error ? error.message : "Unknown error."}
+                {loadErrorBody(error)}
                 <br />
                 If this says the table does not exist, migration{" "}
                 <code className="font-mono text-2xs">20260819120000_feedback_triage</code> has not been applied yet.
@@ -696,127 +314,69 @@ export default function AdminFeedbackPage() {
         <Card className="p-6">
           <EmptyState
             icon="bug"
-            title={tab === "open" ? "Nothing open" : "Nothing here"}
+            title={filtered ? (filters.status === "open" && !filters.q ? "Nothing open" : "No reports match") : "No reports yet"}
             body={
-              tab === "open"
-                ? "No open reports. Anyone on the team can file one from any screen with Ctrl + Shift + B."
-                : "No reports with this status."
+              filtered ? (
+                <>
+                  Nothing matches this search and these filters.{" "}
+                  {(data?.counts.all ?? 0) > 0 && filters.status !== "all"
+                    ? `The All tab has ${data?.counts.all} with the same search.`
+                    : "Change or clear the filters to see more."}
+                </>
+              ) : "Anyone on the team can file one from any screen with Ctrl + Shift + B."
             }
           />
         </Card>
       )}
 
       {!isLoading && !error && rows.length > 0 && (
-        <div className="space-y-3">
-          {rows.map((row) => (
-            <FeedbackCard key={row.id} row={row} userId={me?.userId ?? null} meName={me?.fullName ?? "Owner"} justFixed={justFixed.has(row.id)} canUrgent={Boolean(me?.isPlatformAdmin) || mayMarkUrgent(me?.role)} />
-          ))}
+        <Card className="p-0 overflow-hidden">
+          {/* Column names for the one-line rows (laptop and wider; a phone wraps the row). */}
+          <div aria-hidden className="hidden md:flex items-center gap-x-3 px-3 py-1.5 border-b border-hairline bg-paper-2/60 text-2xs font-semibold uppercase tracking-wide text-ink-3">
+            <span className="w-[7.5rem] flex-shrink-0">Filed (IST)</span>
+            <span className="w-32 flex-shrink-0">Reporter</span>
+            {scope === "all" && <span className="w-32 flex-shrink-0">Workspace</span>}
+            <span className="w-40 flex-shrink-0">Page</span>
+            <span className="flex-1 min-w-0">Report</span>
+            <span className="w-9 flex-shrink-0 text-right" title="Severity score, 0–100">Sev</span>
+            <span className="w-[7.5rem] flex-shrink-0">Status</span>
+            <span className="w-14 flex-shrink-0">Card</span>
+            <span className="w-[4.25rem] flex-shrink-0" />
+          </div>
+          <ul className="divide-y divide-hairline" data-testid="feedback-rows">
+            {rows.map((row) => (
+              <FeedbackRowItem
+                key={row.id}
+                row={row}
+                userId={me?.userId ?? null}
+                meName={me?.fullName ?? "Owner"}
+                showWorkspace={scope === "all"}
+                justFixed={justFixed.has(row.id)}
+                canUrgent={isPlatform || mayMarkUrgent(me?.role)}
+              />
+            ))}
+          </ul>
+        </Card>
+      )}
+
+      {!isLoading && !error && data && data.total > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-ink-2">
+          <span data-testid="feedback-page-range" className="tabular-nums">
+            {rows.length > 0 ? `Showing ${firstShown}–${lastShown} of ${data.total}` : `Page ${data.page} is past the end — ${data.total} in all`}
+          </span>
+          {pageCount > 1 && (
+            <span className="inline-flex items-center gap-2">
+              <Button size="sm" variant="outline" disabled={data.page <= 1} onClick={() => write({ ...filters, pageNo: Math.max(1, data.page - 1) }, urlScope)}>
+                Previous
+              </Button>
+              <span className="tabular-nums">Page {data.page} of {pageCount}</span>
+              <Button size="sm" variant="outline" disabled={data.page >= pageCount} onClick={() => write({ ...filters, pageNo: Math.min(pageCount, data.page + 1) }, urlScope)}>
+                Next
+              </Button>
+            </span>
+          )}
         </div>
       )}
     </div>
-  );
-}
-
-
-/**
- * Other workspaces' reports.
- *
- * Every mutation on this page (triage, auto-fix, mark fixed) goes through the browser
- * client, so RLS would refuse a row belonging to another tenant. Rather than render
- * buttons that fail, this list offers what genuinely works across a tenant boundary:
- * reading the report, copying its directive, and (R-366) "Send to AI" — a server route
- * that re-checks the platform allowlist and queues the row with the service role.
- */
-function PlatformFeedbackList({
-  rows, isLoading, error,
-}: {
-  rows: import("@/lib/queries/feedback").PlatformFeedbackRow[];
-  isLoading: boolean;
-  error: Error | null;
-}) {
-  if (isLoading) return <Card className="p-4 text-[13px] text-ink-3">Loading every workspace…</Card>;
-
-  /* An error must not read as "no reports". */
-  if (error) {
-    return (
-      <Card className="p-4 text-[13px] text-ink-2">
-        <b className="text-ink">Could not load other workspaces.</b> {loadErrorBody(error)}
-      </Card>
-    );
-  }
-
-  const others = rows.filter((r) => !r.isOwnWorkspace);
-  if (others.length === 0) {
-    return (
-      <Card className="p-4 text-[13px] text-ink-2">
-        No reports from other workspaces yet.
-      </Card>
-    );
-  }
-
-  return (
-    <Card className="p-0 overflow-hidden">
-      <div className="px-4 py-2.5 border-b border-hairline bg-paper-2/50">
-        <p className="text-[12px] text-ink-2">
-          <b className="text-ink">{others.length} report{others.length === 1 ? "" : "s"} from other workspaces.</b>{" "}
-          Send to AI puts a report in the AI worker&apos;s queue; triage and Mark fixed stay with
-          that workspace.
-        </p>
-        <div className="mt-1.5"><SendAllOpenButton rows={rows} /></div>
-      </div>
-      <ul className="divide-y divide-hairline">
-        {others.map((r) => (
-          <li key={r.id} className="px-4 py-3">
-            <div className="flex flex-wrap items-baseline gap-2">
-              <span className="rounded bg-paper-2 border border-hairline px-1.5 py-0.5 text-3xs font-medium text-ink-2">
-                {r.tenantName}
-              </span>
-              <span className="text-[13px] font-medium text-ink">{r.title ?? "(no title)"}</span>
-              {r.severity_score != null && (
-                <span className="text-2xs text-ink-3 tabular-nums">{r.severity_score}/100</span>
-              )}
-            </div>
-            <PlatformAiStatus row={r} />
-            <p className="mt-1 text-[12px] text-ink-2 leading-snug">{r.body}</p>
-            <p className="mt-1 text-2xs text-ink-3">
-              {r.reporter_name ?? "someone"} &middot; {r.reporter_email ?? "no email"}
-              {r.filed_via === "ai-chat" ? " · 🤖 AI-drafted after chat" : ""}
-              {r.page_path ? ` · ${r.page_path}` : ""} &middot; {new Date(r.created_at).toLocaleString("en-IN")}
-            </p>
-            {r.screenshots.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-2">
-                {r.screenshots.map((sh) =>
-                  sh.url ? (
-                    <a key={sh.id} href={sh.url} target="_blank" rel="noopener noreferrer">
-                      {/* eslint-disable-next-line @next/next/no-img-element -- next.config images.unoptimized: next/image would serve it unchanged (R-331: this disable sat one line too high) */}
-                      <img src={sh.url} alt={sh.fileName} className="h-20 rounded border border-hairline" />
-                    </a>
-                  ) : (
-                    <span key={sh.id} className="text-2xs text-ink-3">
-                      {sh.fileName} — could not be loaded
-                    </span>
-                  ),
-                )}
-              </div>
-            )}
-            <SendToAiButton row={r} />
-            {/* R-397: the platform owner may mark another workspace's report urgent. */}
-            <UrgentToggle row={r} className="mt-2 mr-2 py-0.5 text-2xs" />
-            {r.directive && (
-              <button
-                type="button"
-                onClick={async () => {
-                  if (await copyToClipboard(r.directive!)) toast.success("Directive copied — paste it into Claude Code.");
-                  else toast.warning("Browser blocked copying.", { description: "Select the directive text and press Ctrl+C." });
-                }}
-                className="mt-2 rounded border border-hairline px-2 py-0.5 text-2xs text-ink-2 hover:bg-paper-2"
-              >
-                Copy directive
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-    </Card>
   );
 }
