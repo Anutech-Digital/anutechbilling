@@ -180,7 +180,10 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
      `invoices.line_items`, and this read of the quote alone is why the dialog and the PDF
      printed "No line items recorded on the parent quote." over a correct ₹5,00,000 + GST:
      right money, a document that did not say what was sold (CGST Rule 46(g)). */
-  const lineItems = quote?.line_items ?? invoice.line_items ?? [];
+  const lineItems = React.useMemo(
+    () => quote?.line_items ?? invoice.line_items ?? [],
+    [quote?.line_items, invoice.line_items],
+  );
   /* R-2744: the Tax Invoice view prints the period each line stored at issue (same as the PDF);
      an invoice issued before R-2744 keeps the computed period. */
   const printed = React.useMemo(
