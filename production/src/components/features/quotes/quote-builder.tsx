@@ -16,6 +16,8 @@ import * as React from "react";
 import { convertRateForCommitment, isAnnualTier } from "@/lib/quotes/commitment-rate";
 import { quoteServicePeriod, servicePeriodText } from "@/lib/quotes/service-period";
 import { defaultLeadQuoteNotes, pricingValidityLine } from "@/lib/quotes/default-quote-notes";
+import { editorStaffNote, joinEditorNotes, splitNotesForEditor, type EditorNotes } from "@/lib/quotes/editor-notes";
+import { BACK_TO_RENEWALS_LABEL, RETURN_TO_PARAM, renewalsReturnTo } from "@/lib/renewals/back-to-renewals";
 import { useQuotePeriodContext } from "@/components/features/quotes/use-quote-period-context";
 import { isMixedTerm, ONE_TERM_MESSAGE } from "@/lib/quotes/single-term";
 import { storedLineRate, quoteTotalsDivisor, lineAmountSuffix, lineRateUnitSuffix } from "@/lib/quotes/line-rate-unit";
@@ -304,6 +306,8 @@ function QuoteBuilderBody() {
     return m ? decodeURIComponent(m[1]) : null;
   }, [pathname]);
   const prefillFrom = duplicateOf ?? editOf;
+  /* R-2754: opened from Renewals (?returnTo=/renewals?bucket=…) → "Back to Renewals" + return after save. */
+  const backToRenewals = editOf ? renewalsReturnTo(searchParams.get(RETURN_TO_PARAM)) : null;
   const urlCustomer       = searchParams.get("customer");  // Customer 360 → "Add service"
   // Invoice mode (?invoice=1): the same builder, but on save it generates a GST
   // invoice immediately (a "direct invoice") instead of just saving a quote.
@@ -567,6 +571,10 @@ function QuoteBuilderBody() {
   const [leadCountry, setLeadCountry] = React.useState(leadCountryInit);
   React.useEffect(() => { if (leadCountryInit) setLeadCountry(leadCountryInit); }, [leadCountryInit]);
   const [notes, setNotes] = React.useState("");
+  /* R-2754: the stored notes split for the box — the box holds only what the customer reads;
+     the system sentence that names the subscription by id (and any "Staff only" part) is held
+     here and stored again on save, so the Renewals link (open-renewal-quotes.ts) survives. */
+  const [notesParts, setNotesParts] = React.useState<EditorNotes>({ customer: "", hidden: "", original: "" });
   const [lineItems, setLineItems] = React.useState<QuoteLineItem[]>([]);
   /* R-388 — a line's cost has three states, and `cost: number` alone cannot say which:
        • PENDING  (costPendingRef): never known — prefilled before/without a catalogue row.
@@ -879,7 +887,15 @@ function QuoteBuilderBody() {
     if (sourceQuote.billing_cycle)        setBillingCycle(sourceQuote.billing_cycle);
     if (sourceQuote.payment_terms_days != null) setPaymentTermsDays(sourceQuote.payment_terms_days);
     if (sourceQuote.terms_conditions)     setTermsConditions(sourceQuote.terms_conditions);
-    if (sourceQuote.notes)                setNotes(sourceQuote.notes);
+    if (sourceQuote.notes) {
+      const parts = splitNotesForEditor(
+        sourceQuote.notes,
+        Array.isArray(sourceQuote.line_items) ? (sourceQuote.line_items as QuoteLineItem[]) : [],
+        { plan: sourceQuote.plan ?? null, extensionMonths: sourceQuote.extension_months ?? null },
+      );
+      setNotesParts(parts);
+      setNotes(parts.customer);
+    }
 
     /* ── The fields this effect used to leave behind ─────────────────────────────
        Harmless while this only ever DUPLICATED (a fresh quote starting at INR and a
@@ -1456,6 +1472,7 @@ function QuoteBuilderBody() {
   const sendPlan = saveAndSendPlan({ recipient: sendRecipient, sendAllowed });
   /* R-2710: editing a renewal quote (a whole-term renewal, not an extension / plan change) — the
      footer's next step is "Save & send to customer". */
+  const staffNote = editorStaffNote(notesParts);
   const renewalEdit = !!editOf && sourceQuote?.is_renewal === true && sourceQuote.is_extension !== true
     && (sourceQuote.extension_months ?? 0) > 0;
   /* It must not promise an email it will not send (saveAndSendLabel's rule). */
@@ -1710,7 +1727,7 @@ function QuoteBuilderBody() {
         payment_terms_days: isInvoiceMode ? paymentTermsDays : null,
         terms_conditions:   termsConditions.trim() || null,
         status:        saveStatus,
-        notes:         notes || null,
+        notes:         joinEditorNotes(notesParts, notes),
         expires_date:  addDaysISO(istToday(), validityDays),
         /* R-389 (F7): licence lines only — support / one-time services are not seats
            (Q-FBB9-27-0013 saved 27 for 25 Workspace seats). A quote with no licence line
@@ -1852,6 +1869,14 @@ function QuoteBuilderBody() {
       }
 
       const suffix = afterAction === "email" || afterAction === "whatsapp" ? `?send=${afterAction}` : "";
+      /* R-2754: opened from Renewals → back to the same Renewals tab (the quote stays one click away). */
+      if (!suffix && backToRenewals) {
+        toast.success(`${quote.id} saved`, {
+          action: { label: "Open quote", onClick: () => router.push(`/quotes/${quote.id}` as never) },
+        });
+        router.push(backToRenewals as never);
+        return;
+      }
       router.push(`/quotes/${quote.id}${suffix}` as any);
     } catch {
       // toast in hook
@@ -1892,6 +1917,12 @@ function QuoteBuilderBody() {
 
   return (
     <div className="p-4 md:p-6 lg:p-8 max-w-[1240px] mx-auto flex flex-col gap-4" onPointerDownCapture={markTouched} onKeyDownCapture={markTouched}>
+      {/* R-2754: opened from Renewals → one click back to the same tab (the app's back-link look). */}
+      {backToRenewals && (
+        <Link href={backToRenewals as never} data-back-to-renewals className="inline-flex min-h-9 items-center gap-1 self-start text-sm text-ink-3 hover:text-ink">
+          <Icon name="arrow_left" size={14} /> {BACK_TO_RENEWALS_LABEL}
+        </Link>
+      )}
       {/* Page head */}
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3">
@@ -3017,6 +3048,12 @@ function QuoteBuilderBody() {
                 rows={6}
               />
               <p className="text-2xs text-ink-3 mt-1">Shown on customer-facing {isInvoiceMode ? "invoice" : "quote"} PDF.</p>
+              {/* R-2754: what is kept out of the box — staff only, ids taken out. */}
+              {staffNote && (
+                <p className="text-2xs text-ink-3 mt-1" data-staff-note>
+                  <span className="font-medium text-ink-2">Staff note (not shown to the customer):</span> {staffNote}
+                </p>
+              )}
 
               {/* Terms & Conditions (Zoho-style) — document-level, separate from notes. */}
               <div className="mt-4">
