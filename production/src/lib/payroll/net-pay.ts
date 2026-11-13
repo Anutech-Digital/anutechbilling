@@ -8,8 +8,8 @@
  * table's "In-hand / month" and the CTC tab's "Monthly Net Pay" both read it, so neither can
  * disagree with what Pay salary books.
  *
- * Professional Tax is NOT in it: Pay salary deducts no PT by itself (it goes under Other) and the
- * app has no state-wise PT slab yet (pt.ts). The screens say "PT not included" rather than guess.
+ * Professional Tax is NOT in it: the owner's rule (13 Nov 2026) is that PT does not apply, and Pay
+ * salary deducts none. The CTC register and the employee drawer read this same net.
  */
 import { computePf, pfWage, type PfContribution, type PfWage } from "./pf";
 import { computeEsi, esiStickyCovered, type EsiContribution } from "./esi";
@@ -124,7 +124,7 @@ export function monthNetPay(
   const net = Math.max(0, gross - pf - esi - tds);
   const inr = (n: number) => "₹" + n.toLocaleString("en-IN");
   const parts = [pf > 0 ? `PF ${inr(pf)}` : null, esi > 0 ? `ESI ${inr(esi)}` : null, tds > 0 ? `TDS ${inr(tds)}` : null].filter(Boolean);
-  const explain = `${inr(net)} = gross ${inr(gross)}${parts.length ? " − " + parts.join(" − ") : ""} (full month, as Pay salary works it out). PT and other deductions not included.`;
+  const explain = `Full month: ${inr(net)} = gross ${inr(gross)}${parts.length ? " − " + parts.join(" − ") : ""}, as Pay salary works it out for a full month (LOP / advances / bonus change it).`;
   return { period, gross, pf, esi, tds, net, explain };
 }
 

@@ -40,7 +40,6 @@ import { salaryAutoDeductions, monthNetPay, payslipsByEmployee, fyFirstPeriod, a
 import { ctcTabBreakdown, ctcFormulaText, ctcFormFill, applyStructureBlockedReason, type CtcFormBase } from "@/lib/payroll/ctc";
 import { DEFAULT_PAYROLL_POLICY, newEmployeeDefaults } from "@/lib/payroll/policy";
 import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
-import { computePt } from "@/lib/payroll/pt";
 import { bookedStatutoryMonths, bookedStatutoryText, esiRuleNote } from "@/lib/payroll/statutory";
 import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
@@ -253,7 +252,7 @@ export function EmployeesTab() {
     /* Code review: in the exit month Pay salary pays only up to the last working day — a full-month figure would not match it. */
     if (exitPayDays(e, inHandPeriod)) return <span className="text-ink-3" title={`Exit month — Pay salary for ${periodLabel(inHandPeriod)} pays up to the last working day; see the figure there.`}>Exit month</span>;
     const n = inHand.get(e.id);
-    if (n) return <span className="font-mono tabular-nums text-ink-2" title={`${periodLabel(inHandPeriod)}: ${n.explain}`} data-testid="employee-in-hand">{rupee(n.net)}</span>;
+    if (n) return <span className="font-mono tabular-nums text-ink-2" title={`${periodLabel(inHandPeriod)} — ${n.explain}`} data-testid="employee-in-hand">{rupee(n.net)}</span>;
     if (inHandFailed) return <span className="text-ink-3" title="Payslips did not load — in-hand pay is not shown.">—</span>;
     if (!payslipsQ.isSuccess || !revisionsQ.isSuccess) return <span className="text-ink-3" aria-label="Loading">…</span>;
     return <span className="text-ink-3" title={e.is_active ? "No salary set yet." : "Not on payroll."}>—</span>;
@@ -304,7 +303,7 @@ export function EmployeesTab() {
                   <th className="text-left px-4 py-3 whitespace-nowrap">Employee</th>
                   {/* R-2733: this is the monthly GROSS (base for the pay slip) — not the CTC, which also has employer PF / ESI / gratuity. */}
                   <th className="text-right px-2 py-3 whitespace-nowrap" title="Monthly gross salary — the base for the pay slip, before PF / ESI / TDS. Not the CTC: the CTC also has the employer's PF / ESI / gratuity.">Gross / month</th>
-                  <th className="text-right px-2 py-3 whitespace-nowrap" title={`What the employee gets for ${periodLabel(inHandPeriod)} (full month) as Pay salary works it out: gross − employee PF − employee ESI − TDS. PT, LOP, advances and other deductions are not included.`}>In-hand / month</th>
+                  <th className="text-right px-2 py-3 whitespace-nowrap" title={`Full month of ${periodLabel(inHandPeriod)}: gross − employee PF − employee ESI − TDS, as Pay salary works it out for a full month. Pay salary before the month ends pre-fills only the days so far, and LOP / advances / bonus change it.`}>In-hand / month</th>
                   <th className="text-left px-4 py-3 whitespace-nowrap">Joined</th>
                   <th className="text-right px-4 py-3 whitespace-nowrap">Paid leave left (FY)</th>
                   {canSeeScores && (
@@ -661,7 +660,6 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [customConveyance, setCustomConveyance] = React.useState<string>("1600");
   const [customMedical, setCustomMedical] = React.useState<string>("1250");
   const [customSpecial, setCustomSpecial] = React.useState<string>("");
-  const [customPt, setCustomPt] = React.useState<string>(""); // empty = PT slab from lib/payroll/pt.ts
   const [includeGratuity, setIncludeGratuity] = React.useState<boolean>(true);
   const [showCustomControls, setShowCustomControls] = React.useState<boolean>(false);
 
@@ -710,9 +708,9 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
       customConveyanceMonthly: Number(customConveyance) || 0,
       customMedicalMonthly: Number(customMedical) || 0,
       customSpecialMonthly: Number(customSpecial) || undefined,
-      customPtMonthly: customPt !== "" ? Number(customPt) : undefined,
+      customPtMonthly: 0, // R-2733: PT does not apply (owner)
     },
-  }), [employee, ctcBase, ctcTyped, annualCtc, gross, basicMonthly, basicByHand, basicPctTouched, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt]);
+  }), [employee, ctcBase, ctcTyped, annualCtc, gross, basicMonthly, basicByHand, basicPctTouched, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial]);
   /* R-2700: a typed CTC fills Monthly Gross + Basic at once (no Apply press) unless the gross was
      typed by hand afterwards, or the salary is set by revisions (R-2699 — gross locked). */
   /* Review M2 + code review: a split that is over budget, an empty CTC, or the CTC the saved salary
@@ -761,13 +759,16 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const basicLocked = noCtc && salaryByRevision;
   /* Code review: a Basic set from a % follows the gross typed after it (never a Basic above it). */
   const [basicPctOfGross, setBasicPctOfGross] = React.useState<number | null>(null);
+  const [basicBeforeCustom, setBasicBeforeCustom] = React.useState<string | null>(null);
   function setBasicFromPct(pct: number, grossText = gross) {
     if (!noCtc || basicLocked) return;
+    // Review LOW 3: a % picked before any gross is remembered and applied when the gross is typed.
+    setBasicPctOfGross(pct);
     const b = basicFromPct(pct, Number(grossText) || 0, Number(daMonthly) || 0);
     if (b === null) return;
     // A CTC typed then cleared is no CTC — leave the CTC fill rule so it cannot put the old Basic back.
     if (ctcCleared) setCtcTyped(false);
-    setBasicMonthly(String(b)); setBasicByHand(false); setBasicPctOfGross(pct);
+    setBasicMonthly(String(b)); setBasicByHand(false);
   }
   // For a NEW employee, suggest ESI coverage from the wage ceiling until the
   // user decides for themselves — only when the company is ESI-registered (R-2700 policy).
@@ -932,7 +933,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                 <span className="font-mono text-sm font-extrabold text-ink">{formNet ? rupee(formNet.net) : employee && salaryHistoryQ.isError ? "—" : employee && !salaryHistoryQ.isSuccess ? "…" : "—"}</span>
                 <p className="basis-full text-xs text-ink-3">
                   {formNet
-                    ? `${periodLabel(netPeriod)}: ${formNet.explain}`
+                    ? `${periodLabel(netPeriod)} — ${formNet.explain}`
                     : employee && salaryHistoryQ.isError
                       ? "Payslips did not load — net pay is not shown."
                       : "Type the Monthly or Annual CTC (or the Monthly Gross) — the take-home works out from it."}
@@ -981,7 +982,11 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                               if (ctcCleared) setCtcTyped(false);
                               setBasicPctOfGross(null);
                               const typed = e.target.value.trim() !== "";
-                              setBasicMonthly(typed ? e.target.value : ctcBase.basic);
+                              /* Review LOW 4: emptied → back to the Basic the form held just before the Custom Basic
+                                 was typed (a Basic typed in Statutory & Access this session stays), not the saved one. */
+                              if (typed && customBasic.trim() === "") setBasicBeforeCustom(basicMonthly);
+                              setBasicMonthly(typed ? e.target.value : (basicBeforeCustom ?? ctcBase.basic));
+                              if (!typed) setBasicBeforeCustom(null);
                               setBasicByHand(typed);
                             }
                           }}
@@ -1045,15 +1050,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                         />
                       </Field>
 
-                      <Field htmlFor="payroll-professional-tax-mo" label="Professional Tax (₹/mo)">
-                        <Input id="payroll-professional-tax-mo"
-                          type="number"
-                          min={0}
-                          value={customPt}
-                          onChange={(e) => setCustomPt(e.target.value)}
-                          placeholder={`Auto: ${rupee(computePt(ctcBreakdown.grossMonthly).monthly)} (PT slab)`}
-                        />
-                      </Field>
+                      {/* R-2733 (owner, 13 Nov): Professional Tax does not apply — no PT box; net = gross − PF − ESI − TDS. */}
 
                       <div className="flex flex-col justify-center space-y-1.5 pt-2">
                         <label className="flex items-center gap-2 cursor-pointer text-xs text-ink-2 font-medium">
@@ -1195,7 +1192,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     <div className="bg-paper p-3.5 rounded-xl border border-emerald-200/60 shadow-2xs space-y-2.5">
                       <div className="flex items-center justify-between pb-2 border-b border-hairline">
                         <span className="font-extrabold text-emerald-900 uppercase tracking-wider text-3xs">3. Employee Net In-Hand</span>
-                        {/* R-2733: the same net as "Monthly Net Pay" above and Pay salary (lib/payroll/net-pay.ts) — PT is not deducted by Pay salary, so not here either. */}
+                        {/* R-2733: the same net as "Monthly Net Pay" above and Pay salary (lib/payroll/net-pay.ts). Professional Tax does not apply (owner). */}
                         <Badge kind="success" size="sm" className="font-mono font-bold">{formNet ? `${rupee(formNet.net)}/mo` : "—"}</Badge>
                       </div>
                       <div className="space-y-1.5 text-ink-2 text-xs">
@@ -1223,7 +1220,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                         {formNet && formNet.pf === 0 && formNet.esi === 0 && (
                           <p className="text-ink-3">No PF / ESI deducted.</p>
                         )}
-                        <p className="pt-2 border-t border-emerald-200 text-ink-3">PT and other deductions are not included — add them in Pay salary under Other.</p>
+                        <p className="pt-2 border-t border-emerald-200 text-ink-3">Net = gross − employee PF − employee ESI − TDS (full month).</p>
                       </div>
                     </div>
                   </div>
@@ -1292,7 +1289,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label htmlFor="payroll-basic-month" className="block text-xs font-medium text-ink-2 mb-1">Basic (₹/month)</label>
-                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setBasicByHand(e.target.value.trim() !== ""); setBasicMonthly(e.target.value); }} placeholder={gross ? String(Math.round((Number(gross) || 0) * 0.5)) : "e.g. 15000"} />
+                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setBasicPctOfGross(null); setBasicByHand(e.target.value.trim() !== ""); setBasicMonthly(e.target.value); }} placeholder={gross ? String(Math.round((Number(gross) || 0) * 0.5)) : "e.g. 15000"} />
                       </div>
                       <div>
                         <label htmlFor="payroll-da-month" className="block text-xs font-medium text-ink-2 mb-1">DA (₹/month)</label>

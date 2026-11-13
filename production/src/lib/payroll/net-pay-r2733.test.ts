@@ -52,7 +52,8 @@ describe("R-2733 monthNetPay = the net Pay salary works out (full month, nothing
   it("30,000 / Basic 15,000, PF capped: net 28,200 (PF 1,800; no ESI above 21,000; TDS nil under 87A)", () => {
     const n = monthNetPay(emp(), [], "2026-11", []);
     expect(n).toMatchObject({ gross: 30_000, pf: 1_800, esi: 0, tds: 0, net: 28_200 });
-    expect(n?.explain).toContain("PT and other deductions not included");
+    expect(n?.explain).toMatch(/^Full month: ₹28,200 = gross ₹30,000 − PF ₹1,800, as Pay salary/);
+    expect(n?.explain).not.toMatch(/\bPT\b|Professional/);
   });
 
   it("is exactly the Pay salary dialog's own arithmetic (pfWage → computePf, computeEsi, estimateMonthlyTds)", () => {
@@ -148,5 +149,43 @@ describe("R-2733 helpers", () => {
     expect(m.get("a")?.length).toBe(2);
     expect(fyFirstPeriod("2026-11")).toBe("2026-04");
     expect(fyFirstPeriod("2027-02")).toBe("2026-04");
+  });
+});
+
+describe("R-2733 review fixes (owner: PT does not apply; LOW 2-4)", () => {
+  const read = (p: string) => readFileSync(path.join(__dirname, p), "utf8");
+  const screens = read("../../app/(app)/accounting/payroll/screens.tsx");
+  const register = read("../../app/(app)/accounting/salary-register/page.tsx");
+  const drawer = read("../../components/features/payroll/employee-detail-drawer.tsx");
+
+  it("1: CTC register + profile drawer show the shared net (no old PT-subtracting netTakeHome); no PT box on the CTC tab", () => {
+    for (const src of [register, drawer]) {
+      expect(src).toContain("monthNetPay(");
+      expect(src).not.toMatch(/netTakeHomeMonthly|professionalTaxMonthly/);
+    }
+    expect(register).not.toContain("Prof. Tax (PT)");
+    expect(screens).not.toContain('id="payroll-professional-tax-mo"');
+    expect(screens).not.toMatch(/PT and other deductions/);
+  });
+
+  it("2: In-hand says it is a FULL month (Pay salary mid-month pre-fills days so far)", () => {
+    expect(screens).toMatch(/title=\{`Full month of \$\{periodLabel\(inHandPeriod\)\}/);
+    const n = monthNetPay(emp(), [], "2026-11", [])!;
+    expect(n.explain.startsWith("Full month:")).toBe(true);
+  });
+
+  it("3: a Basic % picked before the gross is remembered and applied when the gross arrives", () => {
+    const fn = screens.slice(screens.indexOf("function setBasicFromPct"), screens.indexOf("// For a NEW employee, suggest ESI"));
+    // remembered BEFORE the "no gross yet" early return
+    expect(fn.indexOf("setBasicPctOfGross(pct)")).toBeGreaterThan(-1);
+    expect(fn.indexOf("setBasicPctOfGross(pct)")).toBeLessThan(fn.indexOf("if (b === null) return"));
+    expect(screens).toContain("if (basicPctOfGross !== null) setBasicFromPct(basicPctOfGross, e.target.value)");
+    // the rule it applies: 40% of a gross typed later
+    expect(basicFromPct(0.4, 20_000, 0)).toBe(8_000);
+  });
+
+  it("4: clearing Custom Basic restores the Basic held just before it (a Statutory-tab Basic of this session), not the saved one", () => {
+    expect(screens).toContain("if (typed && customBasic.trim() === \"\") setBasicBeforeCustom(basicMonthly);");
+    expect(screens).toContain("setBasicMonthly(typed ? e.target.value : (basicBeforeCustom ?? ctcBase.basic));");
   });
 });

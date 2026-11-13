@@ -64,7 +64,7 @@ test.describe("R-2733 card test", () => {
       const row = employeeRow(page);
       await expect(row).toContainText("₹30,000", { timeout: 60_000 });
       await expect(row.getByTestId("employee-in-hand")).toHaveText("₹27,000", { timeout: 60_000 });
-      await expect(row.getByTestId("employee-in-hand")).toHaveAttribute("title", /PT and other deductions not included/);
+      await expect(row.getByTestId("employee-in-hand")).toHaveAttribute("title", /^\w+ \d{4} — Full month: ₹27,000 = gross ₹30,000 − PF ₹3,000/);
       // fits 1280: no sideways scroll on the page, the Actions column is on screen
       const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
       expect(overflow).toBeLessThanOrEqual(0);
@@ -114,7 +114,7 @@ test.describe("R-2733 card test", () => {
       expect(g).toBeGreaterThan(0);
       expect(g).toBeLessThan(25000);
       await expect(dlg.getByTestId("ctc-monthly-net-pay")).toContainText(`gross ₹${g.toLocaleString("en-IN")}`);
-      await expect(dlg.getByTestId("ctc-monthly-net-pay")).toContainText("PT and other deductions not included");
+      await expect(dlg.getByTestId("ctc-monthly-net-pay")).toContainText("Full month:");
       await dlg.getByRole("button", { name: "Cancel" }).click();
       expect(saved()).toBe("30000,null");
     } finally {
@@ -173,6 +173,58 @@ test.describe("R-2733 card test", () => {
       await expect(dlg.getByTestId("apply-structure-blocked")).toHaveText("Basic is more than this CTC allows — lower the Basic % or raise the CTC first.");
       await dlg.getByRole("button", { name: "Cancel" }).click();
       expect(saved()).toBe("30000,12000");
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test("Step 6 (review LOW 3 + 4): Basic % before the gross applies when the gross is typed (new employee); clearing Custom Basic gives back the Statutory-tab Basic typed this session", async ({ browser, baseURL }) => {
+    const page = await pageAs(browser, baseURL, "owner");
+    try {
+      // LOW 3 — Add employee: pick 40% first, then type the gross
+      await openAppPage(page, "/accounting/employees", /Employees/);
+      await (await onlyOne(page.getByRole("main").getByRole("button", { name: "Add employee", exact: true }).filter({ visible: true }), "Add employee")).click();
+      const add = page.getByRole("dialog", { name: "Add employee" });
+      await add.getByRole("button", { name: /CTC & Salary Breakdown/ }).click();
+      await add.getByRole("button", { name: /Custom Edit Basic %/ }).click();
+      await add.locator("#payroll-basic-salary").selectOption("0.4");
+      await fillKept(add.locator("#payroll-monthly-gross-salary-base"), "20000");
+      await expect(add).toContainText("Basic Salary (40%):");
+      await add.getByRole("button", { name: /Statutory & Access/ }).first().click();
+      await expect(add.locator("#payroll-basic-month")).toHaveValue("8000");
+      await add.getByRole("button", { name: "Cancel" }).click();
+
+      // LOW 4 — existing employee: Statutory Basic 9,000 → Custom Basic 11,000 → cleared → 9,000 (not the saved 12,000)
+      const dlg = await openCtcTab(page);
+      await dlg.getByRole("button", { name: /Statutory & Access/ }).first().click();
+      await fillKept(dlg.locator("#payroll-basic-month"), "9000");
+      await dlg.getByRole("button", { name: /CTC & Salary Breakdown/ }).click();
+      await dlg.getByRole("button", { name: /Custom Edit Basic %/ }).click();
+      await fillKept(dlg.locator("#payroll-custom-basic-mo"), "11000");
+      await dlg.locator("#payroll-custom-basic-mo").fill("");
+      await dlg.getByRole("button", { name: /Statutory & Access/ }).first().click();
+      await expect(dlg.locator("#payroll-basic-month")).toHaveValue("9000");
+      await dlg.getByRole("button", { name: "Cancel" }).click();
+      expect(saved()).toBe("30000,12000");
+    } finally {
+      await page.context().close();
+    }
+  });
+
+  test("Step 7 (owner: PT does not apply): profile drawer and CTC register show the same net as In-hand — ₹28,560 (30,000 − PF 1,440 on Basic 12,000), no PT", async ({ browser, baseURL }) => {
+    const page = await pageAs(browser, baseURL, "owner");
+    try {
+      await openAppPage(page, "/accounting/employees", /Employees/);
+      const row = employeeRow(page);
+      await expect(row.getByTestId("employee-in-hand")).toHaveText("₹28,560", { timeout: 60_000 });
+      await row.locator("td").first().click(); // the row itself opens the profile drawer
+      await expect(page.getByTestId("drawer-net-pay")).toHaveText("₹28,560", { timeout: 60_000 });
+      await expect(page.getByRole("dialog")).not.toContainText("PT -");
+
+      await openAppPage(page, "/accounting/salary-register", /Salary/);
+      await page.getByRole("button", { name: /CTC \(Cost to Company\) Master Register/ }).click();
+      const reg = page.locator("table tbody tr").filter({ hasText: NAME });
+      await expect(reg).toContainText("₹28,560", { timeout: 60_000 });
     } finally {
       await page.context().close();
     }
