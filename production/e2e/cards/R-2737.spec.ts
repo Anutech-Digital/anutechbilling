@@ -190,7 +190,8 @@ test.describe("R-2737 card test", () => {
     const r = await rowOf(page, "CT R2737 Cancelled Plan");
     const docs = await onlyOne(r.getByTestId("renewal-last-docs"), "last docs");
     await expect(await onlyOne(docs.getByRole("link", { name: "INV-CT2737-G2" }), "void invoice link")).toBeVisible({ timeout: 60_000 });
-    const status = docs.getByTestId("renewal-last-invoice-status");
+    /* R-2748: the row now also lists the invoice before it (G1, Paid) — read G2's own line */
+    const status = docs.locator("[data-invoice-id='INV-CT2737-G2']").getByTestId("renewal-last-invoice-status");
     await expect(status).toHaveText("Cancelled");
     await expect(status).toHaveClass(/text-ink-3/);
   });
