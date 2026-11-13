@@ -41,7 +41,9 @@ describe("R-2759 code-review fixes", () => {
   it("compact chip: the period leaves the chip (Product & period says it); day count / amount is line 2", async () => {
     const { compactStage } = await import("./row-cells");
     expect(compactStage({ key: "sent", label: "Renewal quote sent · 1 Dec 2026 – 30 Nov 2027", note: "Overdue 3d" }))
-      .toEqual({ chip: "Renewal quote sent", line2: "Overdue 3d" });
+      .toEqual({ chip: "Quote sent", line2: "Overdue 3d" });
+    expect(compactStage({ key: "quote-closed", label: "Renewal quote expired", note: "Due in 4d" }).chip).toBe("Quote expired");
+    expect(compactStage({ key: "draft", label: "Draft part quote · Dec 2026", note: null }).chip).toBe("Draft quote");
     expect(compactStage({ key: "invoiced", label: "Invoiced · ₹23,010 overdue 43d", note: "Oct 2026" }))
       .toEqual({ chip: "Invoiced", line2: "₹23,010 overdue 43d" });
     expect(compactStage({ key: "ending", label: "Won't renew · ends 24 Nov 2026", note: null }))

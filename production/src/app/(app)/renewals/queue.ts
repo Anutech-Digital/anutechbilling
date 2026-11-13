@@ -409,16 +409,16 @@ export function bulkQuoteConfirm(
    ☐ · Customer · Product & period · Due · Amount · Status · Last invoice · Action. */
 export const QUEUE_TABLE_MIN_VIEWPORT_PX = 1260;
 export const QUEUE_TABLE_BUDGET_PX = 936;
-export const QUEUE_FLEX_MIN_PX = 116;
+export const QUEUE_FLEX_MIN_PX = 108;
 export type QueueColKey = "select" | "customer" | "product" | "due" | "amount" | "status" | "invoice" | "actions";
 export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: QueueColKey; label: string; width: number | null; align?: "right" }> = [
   { key: "select", label: "", width: 32 },
   { key: "customer", label: "Customer", width: null },
   { key: "product", label: "Product & period", width: null },
-  { key: "due", label: "Due", width: 88 },
-  { key: "amount", label: "Amount", width: 108, align: "right" },
-  { key: "status", label: "Status", width: 144 },
-  { key: "invoice", label: "Last invoice", width: 144 },
+  { key: "due", label: "Due", width: 84 },
+  { key: "amount", label: "Amount", width: 112, align: "right" },
+  { key: "status", label: "Status", width: 152 },
+  { key: "invoice", label: "Last invoice", width: 156 },
   /* "Record payment" + ⋯ on one line (the card spec checks no cell overflows) */
   { key: "actions", label: "Action", width: 184 },
 ];

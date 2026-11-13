@@ -97,8 +97,11 @@ async function fits(page: Page): Promise<void> {
 
 async function rowsShort(page: Page): Promise<void> {
   for (const plan of [LONG_PLAN, "CT R2759 Quarterly Plan", "CT R2759 Sent Plan"]) {
-    const h = await page.locator("tr", { hasText: plan }).filter({ visible: true }).evaluate((tr) => tr.getBoundingClientRect().height);
-    expect(h, `${plan} row height`).toBeLessThanOrEqual(76);
+    const r = await page.locator("tr", { hasText: plan }).filter({ visible: true }).evaluate((tr) => ({
+      h: tr.getBoundingClientRect().height,
+      cells: [...tr.querySelectorAll("td")].map((td) => Math.round(([...td.children] as HTMLElement[]).reduce((m, c) => Math.max(m, c.getBoundingClientRect().height), 0)) + ":" + (td as HTMLElement).innerText.replace(/s+/g, " ").slice(0, 30)),
+    }));
+    expect(r.h, `${plan} row height — cells ${r.cells.join(" | ")}`).toBeLessThanOrEqual(76);
   }
 }
 
@@ -129,7 +132,8 @@ test.describe("R-2759 card test", () => {
     const page = await pageAs(browser, baseURL, "owner");
     await openAt(page, 1280, 800);
     const row = page.locator("tr", { hasText: "CT R2759 Quarterly Plan" }).filter({ visible: true });
-    await expect(row.getByRole("link", { name: NAME })).toHaveAttribute("title", NAME);
+    /* the full name, then the owner / follow-up facts the row no longer shows */
+    await expect(row.getByRole("link", { name: NAME })).toHaveAttribute("title", new RegExp(`^${NAME} — No owner yet`));
     const status = row.getByTestId("renewal-last-invoice-status");
     await expect(status).toHaveText("Overdue 43d · ₹23,010");
     const cut = await status.evaluate((el) => el.scrollWidth > el.clientWidth + 1);
