@@ -92,27 +92,35 @@ describe("invoiceStoredLinePeriods / withStoredLinePeriods", () => {
     expect(invoiceStoredLinePeriods({ line_items: null })).toBeNull();
   });
 
-  it("stamped invoice + same number of printed lines → each printed line carries its stored period, the context says so", () => {
-    const out = withStoredLinePeriods([{ name: "A" }, { name: "Setup" }], stamped, ctx);
-    expect(out.lines).toEqual([{ name: "A", service_period: p }, { name: "Setup", service_period: null }]);
+  it("stamped invoice → its OWN frozen lines (with their stored periods) are printed, the context says so", () => {
+    const out = withStoredLinePeriods([{ name: "A (quote, edited)" }, { name: "Setup" }, { name: "Added later" }], stamped, ctx);
+    expect(out.lines).toBe(stamped.line_items);
     expect(out.ctx).toEqual({ ...ctx, storedPeriods: true });
   });
 
-  it("not stamped, printed line count differs, or no context → printed lines and context untouched (same objects)", () => {
+  it("stamped invoice whose quote no longer matches (R-375: no surface context) → still its stored periods, the quote's domain kept", () => {
+    const quoteCtx = { ...ctx, renewalTermDate: "2027-03-01" };
+    const out = withStoredLinePeriods([{ name: "A" }], stamped, null, quoteCtx);
+    expect(out.ctx).toEqual({ ...quoteCtx, storedPeriods: true });
+    expect(withStoredLinePeriods([{ name: "A" }], stamped, null).ctx).toEqual({ storedPeriods: true });
+  });
+
+  it("not stamped → printed lines and context untouched (same objects), whatever the counts", () => {
     const lines = [{ name: "A" }, { name: "Setup" }];
-    for (const [inv, printed, c] of [
-      [{ line_items: [{ name: "A" }, { name: "Setup" }] }, lines, ctx],
-      [stamped, [{ name: "A" }], ctx],
-      [stamped, lines, null],
+    for (const [inv, c] of [
+      [{ line_items: [{ name: "A" }, { name: "Setup" }] }, ctx],
+      [{ line_items: [{ name: "A", service_period: p }, { name: "Setup" }] }, ctx],
+      [{ line_items: null }, null],
     ] as const) {
-      const out = withStoredLinePeriods(printed as typeof lines, inv, c);
-      expect(out.lines).toBe(printed);
+      const out = withStoredLinePeriods(lines, inv, c, ctx);
+      expect(out.lines).toBe(lines);
       expect(out.ctx).toBe(c);
     }
   });
 
   it("lineServicePeriod with stored periods prints the stored dates even when the live inputs say otherwise", () => {
-    const { lines, ctx: c } = withStoredLinePeriods([{ name: "A", commitment: "annual_yearly" }], { line_items: [{ service_period: p }] }, {
+    const inv = { line_items: [{ name: "A", commitment: "annual_yearly", service_period: p }] };
+    const { lines, ctx: c } = withStoredLinePeriods([{ name: "A" }], inv, {
       ...ctx, renewalTermDate: "2027-03-01", // quote edited after issue
     });
     expect(lineServicePeriod(lines[0], c!)).toEqual(p);
@@ -120,7 +128,8 @@ describe("invoiceStoredLinePeriods / withStoredLinePeriods", () => {
   });
 
   it("a stored null prints no period line, even on a line the live rule would date", () => {
-    const { lines, ctx: c } = withStoredLinePeriods([{ name: "A", commitment: "annual_yearly" }], { line_items: [{ service_period: null }] }, ctx);
+    const inv = { line_items: [{ name: "A", commitment: "annual_yearly", service_period: null }] };
+    const { lines, ctx: c } = withStoredLinePeriods([{ name: "A" }], inv, ctx);
     expect(lineServicePeriod(lines[0], c!)).toBeNull();
     expect(lineDetailNotes(lines[0] as QuoteLineItem, c)).toEqual(["Domain: x.in"]);
   });
@@ -171,6 +180,17 @@ describe("invoice PDF (buildInvoicePdfProps) — stored periods win, old invoice
     expect(p.periodContext?.domain).toBe("x.in");
   });
 
+  it("quote re-ordered / given an extra line / re-priced after issue: the stamped invoice prints its own lines and periods", () => {
+    const reordered = { ...quote, line_items: [lines[1], lines[0], { id: "c", name: "Late extra", qty: 1, rate: 0, commitment: "monthly" }] } as unknown as Quote;
+    const p1 = buildInvoicePdfProps({ invoice: stampedInvoice, quote: reordered, customer: null, tenant, subscriptionDomain: facts, periodRuleFrom: RULE_FROM });
+    expect(p1.lineItems.map((l) => l.name)).toEqual(["Business Starter", "Archive add-on"]);
+    expect(periods(p1)).toEqual(["Subscription period: 1 Year (01/12/2026 – 30/11/2027)", "Subscription period: 1 Year (01/12/2026 – 30/11/2027)"]);
+    const repriced = { ...quote, amount: 99999, subtotal: 84745 } as unknown as Quote;
+    const stampedFigures = { ...stampedInvoice, taxable_value: 11000, tax_amount: 1980 } as Invoice;
+    const p2 = buildInvoicePdfProps({ invoice: stampedFigures, quote: repriced, customer: null, tenant, subscriptionDomain: facts, periodRuleFrom: RULE_FROM });
+    expect(periods(p2)).toEqual(["Subscription period: 1 Year (01/12/2026 – 30/11/2027)", "Subscription period: 1 Year (01/12/2026 – 30/11/2027)"]);
+  });
+
   it("an invoice without stored periods: props byte-identical to before this card (no extra keys)", () => {
     const plain = buildInvoicePdfProps({ invoice: invoice(lines), quote, customer: null, tenant, subscriptionDomain: facts, periodRuleFrom: RULE_FROM });
     expect(plain.periodContext).not.toHaveProperty("storedPeriods");
@@ -178,8 +198,8 @@ describe("invoice PDF (buildInvoicePdfProps) — stored periods win, old invoice
     expect(JSON.stringify(plain.lineItems)).not.toContain("service_period");
   });
 
-  it("an instalment / part invoice (its own figures, not the quote's) still prints no period", () => {
-    const part = { ...stampedInvoice, amount: 5000, taxable_value: 4237, tax_amount: 763 } as Invoice;
+  it("an instalment / part invoice (its own figures, unstamped) still prints no period", () => {
+    const part = { ...invoice(lines), amount: 5000, taxable_value: 4237, tax_amount: 763 } as Invoice; // own lines → never stamped (trigger PART)
     const p = buildInvoicePdfProps({ invoice: part, quote, customer: null, tenant, subscriptionDomain: facts, periodRuleFrom: RULE_FROM });
     expect(p.periodContext).toBeNull();
   });
