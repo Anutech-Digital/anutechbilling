@@ -1,6 +1,7 @@
 /**
  * R-2510 (G-SOCIAL): every 10 minutes, publish the APPROVED Facebook / Instagram posts whose post
- * time has come. A draft or a post in review is never touched — a person approves every post.
+ * time has come. A draft or a post in review is never touched. R-2689 / R-2690: then, per company,
+ * save today's followers (once a day) and read new comments (lib/marketing/social-engagement.server).
  * Rule and order: lib/marketing/social-publish-run.ts.
  */
 import { NextResponse } from "next/server";
@@ -11,6 +12,7 @@ import { publishWithPage } from "@/lib/marketing/social-content";
 import { runScheduledPublish, type DueRow } from "@/lib/marketing/social-publish-run";
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { logSystemActivity } from "@/lib/marketing/social-activity";
+import { engagementSweep } from "@/lib/marketing/social-engagement.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -58,7 +60,16 @@ async function handle(_req: Request) {
       },
       log: (row, result, detail) => logSystemActivity(admin, row.tenant_id, { actor: row.origin === "scheduled" ? "ai" : "system", platform: row.platform, action: result === "ok" ? "Posted" : "Post failed", detail: `${detail} — ${row.caption.slice(0, 80)}`, contentId: row.id, result }),
     });
-    return NextResponse.json(result);
+    /* R-2689 / R-2690: followers once a day and new comments (every ~25 min) for each company that
+       uses social posting. One company's failure never stops the others (engagementSweep never throws). */
+    const { data: companies } = await admin.from("social_content_settings").select("tenant_id").limit(200);
+    let swept = 0;
+    for (const c of (companies ?? []) as { tenant_id: string }[]) {
+      if (!(await cronTenantAllowed(c.tenant_id))) continue;
+      await engagementSweep(admin, c.tenant_id);
+      swept++;
+    }
+    return NextResponse.json({ ...result, swept });
   } catch (e) {
     console.error("[social-publish] run failed", e instanceof Error ? e.message : "unknown");
     return NextResponse.json({ error: "Scheduled social publishing failed." }, { status: 503 });

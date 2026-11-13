@@ -21,6 +21,7 @@ import { refreshPostStats } from "@/lib/marketing/social-stats.server";
 import { ensureStrategies, learnStrategies, planFor, readStrategies } from "@/lib/marketing/social-strategy.server";
 import { DEFAULT_PLANS, atIstHour, describePlan, pickTypes } from "@/lib/marketing/social-strategy";
 import { notifyPeople } from "@/lib/notifications/notify.server";
+import { makeWeeklyReport } from "@/lib/marketing/social-report.server";
 
 type Admin = ReturnType<typeof createAdminClient>;
 
@@ -108,6 +109,8 @@ export async function planWeek(admin: Admin, session: TenantSession, opts: { for
       await logPersonActivity(session, { actor: "ai", platform: "instagram", action: s.autopilot ? "Planned a post (autopilot)" : "Wrote a post for approval", detail: `${post.type}: ${post.topic}`, contentId: igId, result: s.autopilot ? "ok" : "waiting" });
     }
   }
+  /* R-2690: the weekly report is written with the plan (never stops the plan). */
+  await makeWeeklyReport(session, ai, s.brief, now).catch((e) => console.error("[social-report] weekly failed", e instanceof Error ? e.message : "unknown"));
   /* R-2709: "Ask me first" — tell the marketing person (the owner when there is none) that posts wait for them. */
   if (!s.autopilot && created > 0) {
     const marketing = await withTenant(session, (tx) => tx.$queryRaw<{ n: bigint }[]>`

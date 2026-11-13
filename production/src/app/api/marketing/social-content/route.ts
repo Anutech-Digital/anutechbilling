@@ -11,6 +11,9 @@ import { readLinkedInConnection } from "@/lib/integrations/linkedin/store";
 import { parseIstLocal, scheduleProblem } from "@/lib/marketing/social-schedule";
 import { planFor, readStrategies } from "@/lib/marketing/social-strategy.server";
 import { describePlan } from "@/lib/marketing/social-strategy";
+import { followerRows, latestReport, readTodo } from "@/lib/marketing/social-report.server";
+import { followerTrend } from "@/lib/marketing/social-engagement";
+import { istToday } from "@/lib/dates/ist";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -37,7 +40,7 @@ export async function GET() {
   try {
     const [items, settings, connection] = await Promise.all([
       listSocial(session),
-      withTenant(session, tx => tx.$queryRaw<{ auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: Date | null; ai_paused: boolean }[]>`select auto_drafts, brief, autopilot, posts_per_week, picture_urls, last_generated_on, ai_paused from public.social_content_settings where tenant_id = ${session.tenantId}::uuid`),
+      withTenant(session, tx => tx.$queryRaw<{ auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: Date | null; ai_paused: boolean; comment_mode: string; comments_problem: string | null }[]>`select auto_drafts, brief, autopilot, posts_per_week, picture_urls, last_generated_on, ai_paused, comment_mode, comments_problem from public.social_content_settings where tenant_id = ${session.tenantId}::uuid`),
       readFacebookPage(createAdminClientFor(session.userId), session.tenantId),
     ]);
     const instagram = connection.pageId && connection.pageToken ? await instagramForPage(connection.pageId, connection.pageToken) : null;
@@ -50,10 +53,28 @@ export async function GET() {
       connection.pageToken ? pagePhotoLinks(items.map((i) => i.media_url), connection.pageToken) : Promise.resolve(new Map<string, string>()),
       readStrategies(session).catch(() => null), // R-2705
     ]);
+    // R-2690: today's follower count is saved whenever the page is opened (the cron also saves it daily).
+    const today = istToday();
+    const saveFollowers = (["facebook", "instagram"] as const).filter((p) => followers[p] !== null);
+    for (const p of saveFollowers) {
+      await withTenant(session, tx => tx.$executeRaw`
+        insert into public.social_followers (tenant_id, platform, day, followers) values (${session.tenantId}::uuid, ${p}, ${today}::date, ${followers[p]}::int)
+        on conflict (tenant_id, platform, day) do update set followers = excluded.followers`).catch(() => undefined);
+    }
+    const [rows, report, comments, todo] = await Promise.all([
+      followerRows(session).catch(() => []),
+      latestReport(session).catch(() => null),
+      withTenant(session, tx => tx.$queryRaw<{ id: string; platform: string; author: string; message: string; commented_at: Date | null; kind: string | null; status: string; ai_reply: string | null; reply: string | null; replied_by: string | null; replied_at: Date | null; error: string | null; content_id: string | null }[]>`
+        select id, platform, author, message, commented_at, kind, status, ai_reply, reply, replied_by, replied_at, error, content_id
+        from public.social_comments where tenant_id = ${session.tenantId}::uuid and status <> 'ignored'
+        order by coalesce(commented_at, created_at) desc limit 60`).catch(() => []),
+      readTodo(session).catch(() => null),
+    ]);
+    const trends = Object.fromEntries((["facebook", "instagram", "linkedin"] as const).map((p) => [p, followerTrend(rows, p, today)]));
     // R-2672: tell the screen up front whether AI can write, so Write with AI never fails silently.
     const aiReady = Boolean((await resolveGeminiConfig(createClient(), session.tenantId)).apiKey);
-    return NextResponse.json({ items: items.map((i) => ({ ...i, media_preview: i.media_url ? photoLinks.get(i.media_url) ?? null : null })), settings: settings[0] ?? { auto_drafts: false, brief: "", autopilot: false, posts_per_week: 3, picture_urls: [], last_generated_on: null, ai_paused: false },
-      followers, activity, strategies,
+    return NextResponse.json({ items: items.map((i) => ({ ...i, media_preview: i.media_url ? photoLinks.get(i.media_url) ?? null : null })), settings: settings[0] ?? { auto_drafts: false, brief: "", autopilot: false, posts_per_week: 3, picture_urls: [], last_generated_on: null, ai_paused: false, comment_mode: "ask", comments_problem: null },
+      followers, activity, strategies, trends, report, comments, todo,
       linkedin: linkedin?.organizationUrn ? { name: linkedin.organizationName ?? "LinkedIn Page" } : null,
       canReview: canReviewSocial(role), canManage: role === "owner", aiReady,
       facebook: connection.pageId ? { name: connection.pageName, connected: true } : null,

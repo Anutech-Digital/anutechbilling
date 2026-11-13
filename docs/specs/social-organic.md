@@ -54,6 +54,16 @@ the app, comments get an answer within a day, and the page shows the follower ch
   platform, the AI keeps what worked and changes what did not. Autopilot → new version active;
   Ask me first → it waits as proposed for **Use it / Keep old**. Owner/manager may edit any time
   (a new version). Fewer results → no change, the plan note says how many more are needed.
+- **Comments (R-2689):** Off / Ask me first (default) / Autopilot. The AI writes a reply to each new
+  comment; on Autopilot it sends questions/praise itself, never complaints (a person answers) or
+  spam. Checked every ~25 min by the social-publish cron and by "Check comments now". Needs Meta
+  `pages_read_user_content`, `pages_manage_engagement`, `instagram_manage_comments` (switched on with
+  `META_COMMENT_SCOPES=1` after adding them in the Meta app); without them the page says so.
+- **Followers + weekly report (R-2690):** today's count is saved daily (cron + page open); cards show
+  the change over 7 / 30 days and a 30-day line. The weekly plan writes a report (followers, posts,
+  best post, comments answered) with the AI's advice from real numbers only; "Make report now" too.
+- **Daily to-do (R-2691):** 5 things only a person may do (invites, commenting on others' posts,
+  sharing to groups, real photos, reviews), made once a day; ticks are saved and logged in Activity.
 - **AI pictures (R-2697):** one picture per post, no words/logos/prices/real people, kept as an
   unpublished photo on the Page; the fresh image link is read just before posting.
 
@@ -68,6 +78,11 @@ the app, comments get an answer within a day, and the page shows the follower ch
   proposed / replaced / rejected; one active + one proposed per platform). `social_content` gains
   `post_type`, `strategy_version`, `stats` jsonb (reach, likes, comments, shares, saves), `stats_at`.
 - R-2706 results are read 2+ days after posting (≤ 40 a run) when the week is planned.
+- R-2689 `social_comments` (platform, external_id, author, message, kind, status new/draft/replied/
+  ignored/failed, ai_reply, reply, replied_by ai/person); `social_followers` (one row per day per
+  platform); `social_reports` (per week); `social_todo` (per day, items jsonb).
+  `social_content_settings` gains `comment_mode`, `comments_checked_at`, `comments_problem`,
+  `followers_checked_on`. Migration 20261113083000.
 
 ## 6. Constraints
 

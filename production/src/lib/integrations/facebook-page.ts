@@ -16,11 +16,18 @@ export function facebookPageRedirectUri(origin: string): string {
  * R-2706: reach and Instagram saves need read_insights + instagram_manage_insights. Meta refuses
  * the WHOLE login ("Invalid Scopes") when the Meta app has not added them to its use cases, so they
  * are asked only when META_INSIGHTS_SCOPES=1 (set it after adding both in the Meta app dashboard).
- * Without them likes, comments and shares are still read.
+ * R-2689: comments need pages_read_user_content + pages_manage_engagement + instagram_manage_comments
+ * — asked only when META_COMMENT_SCOPES=1, for the same reason.
  */
 export function facebookPageScopes(env: Record<string, string | undefined> = process.env): string {
   const base = "pages_show_list,pages_read_engagement,pages_manage_posts,instagram_basic,instagram_content_publish,leads_retrieval,pages_manage_ads,pages_manage_metadata";
-  return env.META_INSIGHTS_SCOPES?.trim() === "1" ? `${base},read_insights,instagram_manage_insights` : base;
+  const on = (k: string) => env[k]?.trim() === "1";
+  return [
+    base,
+    on("META_INSIGHTS_SCOPES") ? "read_insights,instagram_manage_insights" : "",
+    /* R-2689: reading and answering comments (and Facebook post reactions/comments counts). */
+    on("META_COMMENT_SCOPES") ? "pages_read_user_content,pages_manage_engagement,instagram_manage_comments" : "",
+  ].filter(Boolean).join(",");
 }
 
 export function facebookPageAuthUrl(appId: string, origin: string, state: string): string {

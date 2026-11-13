@@ -14,4 +14,10 @@ describe("Facebook Page connect scopes", () => {
   it("asks them when META_INSIGHTS_SCOPES=1", () => {
     expect(facebookPageScopes({ META_INSIGHTS_SCOPES: "1" })).toMatch(/,read_insights,instagram_manage_insights$/);
   });
+  it("asks the comment permissions only when META_COMMENT_SCOPES=1", () => {
+    expect(facebookPageScopes({})).not.toContain("pages_read_user_content");
+    const s = facebookPageScopes({ META_COMMENT_SCOPES: "1" });
+    expect(s).toContain(",pages_read_user_content,pages_manage_engagement,instagram_manage_comments");
+    expect(s).not.toContain("read_insights");
+  });
 });

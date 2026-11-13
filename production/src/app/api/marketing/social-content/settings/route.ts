@@ -75,18 +75,34 @@ export async function POST() {
 export async function PATCH(req: Request) {
   const session = await getTenantSession();
   if (!session) return NextResponse.json({ error: "Sign in again." }, { status: 401 });
-  const parsed = z.object({ aiPaused: z.boolean() }).safeParse(await req.json().catch(() => null));
+  const parsed = z.object({ aiPaused: z.boolean().optional(), commentMode: z.enum(["off", "ask", "auto"]).optional() })
+    .refine((v) => v.aiPaused !== undefined || v.commentMode !== undefined).safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Choose Stop or Resume." }, { status: 400 });
   const role = await socialRole(session);
+  /* R-2689: comment replies Off / Ask me first / Autopilot — the marketing team chooses. */
+  if (parsed.data.commentMode !== undefined) {
+    if (!canReviewSocial(role)) return NextResponse.json({ error: "Only the marketing team can change comment replies." }, { status: 403 });
+    try {
+      await withTenant(session, tx => tx.$executeRaw`
+        insert into public.social_content_settings (tenant_id, comment_mode, updated_by)
+        values (${session.tenantId}::uuid, ${parsed.data.commentMode}, ${session.userId}::uuid)
+        on conflict (tenant_id) do update set comment_mode = excluded.comment_mode, updated_by = excluded.updated_by, updated_at = now()`);
+      await logPersonActivity(session, { action: "Changed comment replies", detail: parsed.data.commentMode === "off" ? "Comment replies: off" : parsed.data.commentMode === "auto" ? "Comment replies: autopilot (complaints still wait for a person)" : "Comment replies: ask me first" });
+      return NextResponse.json({ ok: true, commentMode: parsed.data.commentMode });
+    } catch {
+      return NextResponse.json({ error: "Could not change comment replies.", description: "Nothing changed. Try again." }, { status: 500 });
+    }
+  }
+  const aiPaused = parsed.data.aiPaused!;
   if (!canReviewSocial(role)) return NextResponse.json({ error: "Only the marketing team can stop the AI." }, { status: 403 });
-  if (!parsed.data.aiPaused && role !== "owner") return NextResponse.json({ error: "Only the owner can resume the AI.", description: "Ask the owner to press Resume AI." }, { status: 403 });
+  if (!aiPaused && role !== "owner") return NextResponse.json({ error: "Only the owner can resume the AI.", description: "Ask the owner to press Resume AI." }, { status: 403 });
   try {
     await withTenant(session, tx => tx.$executeRaw`
       insert into public.social_content_settings (tenant_id, ai_paused, updated_by)
-      values (${session.tenantId}::uuid, ${parsed.data.aiPaused}, ${session.userId}::uuid)
+      values (${session.tenantId}::uuid, ${aiPaused}, ${session.userId}::uuid)
       on conflict (tenant_id) do update set ai_paused = excluded.ai_paused, updated_by = excluded.updated_by, updated_at = now()`);
-    await logPersonActivity(session, { action: parsed.data.aiPaused ? "Stopped all AI" : "Resumed AI", detail: parsed.data.aiPaused ? "Nothing the AI planned will be posted until resumed." : "" });
-    return NextResponse.json({ ok: true, aiPaused: parsed.data.aiPaused });
+    await logPersonActivity(session, { action: aiPaused ? "Stopped all AI" : "Resumed AI", detail: aiPaused ? "Nothing the AI planned will be posted until resumed." : "" });
+    return NextResponse.json({ ok: true, aiPaused });
   } catch {
     return NextResponse.json({ error: "Could not change the AI switch.", description: "Nothing changed. Try again." }, { status: 500 });
   }

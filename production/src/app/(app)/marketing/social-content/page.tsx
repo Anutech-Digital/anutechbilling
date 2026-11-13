@@ -33,12 +33,32 @@ type Activity = { id: string; at: string; actor: "ai" | "person" | "system"; use
 type State = { items: Item[]; canReview: boolean; canManage: boolean; aiReady: boolean;
   facebook: { name: string } | null; instagram: { name: string; type: string | null } | null; linkedin: { name: string } | null;
   followers: { facebook: number | null; instagram: number | null }; activity: Activity[]; strategies: Strategies | null;
-  settings: { auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: string | null; ai_paused: boolean } };
+  trends: Record<StrategyPlatform, Trend> | null; report: { report: Report; summary: string; created_at: string } | null;
+  comments: Comment[]; todo: TodoItem[] | null;
+  settings: { auto_drafts: boolean; brief: string; autopilot: boolean; posts_per_week: number; picture_urls: string[]; last_generated_on: string | null; ai_paused: boolean;
+    comment_mode: "off" | "ask" | "auto"; comments_problem: string | null } };
+/* R-2689 / R-2690 / R-2691 */
+type Trend = { now: number | null; change7: number | null; change30: number | null; series: { day: string; followers: number }[] };
+type Report = { weekStart: string; followers: Record<StrategyPlatform, { now: number | null; change7: number | null }>; posts: { facebook: number; instagram: number };
+  best: { platform: string; caption: string; score: number } | null; comments: { received: number; answered: number } };
+type Comment = { id: string; platform: Platform; author: string; message: string; commented_at: string | null; kind: string | null; status: "new" | "draft" | "replied" | "failed";
+  ai_reply: string | null; reply: string | null; replied_by: "ai" | "person" | null; replied_at: string | null; error: string | null; content_id: string | null };
+type TodoItem = { id: string; text: string; why: string; done: boolean; doneBy?: string | null };
+const signed = (n: number) => (n > 0 ? `+${n.toLocaleString("en-IN")}` : n.toLocaleString("en-IN"));
+/** R-2690: a tiny line of the last 30 days' followers. */
+function Sparkline({ series }: { series: Trend["series"] }) {
+  if (series.length < 2) return null;
+  const vals = series.map((p) => p.followers);
+  const lo = Math.min(...vals), hi = Math.max(...vals), span = hi - lo || 1;
+  const pts = vals.map((v, i) => `${(i / (vals.length - 1)) * 100},${28 - ((v - lo) / span) * 24}`).join(" ");
+  return <svg viewBox="0 0 100 30" preserveAspectRatio="none" className="mt-2 h-8 w-full" role="img" aria-label={`Followers over the last ${series.length} days: from ${vals[0]} to ${vals[vals.length - 1]}`}><polyline points={pts} fill="none" stroke="currentColor" strokeWidth="2" vectorEffect="non-scaling-stroke" className="text-amber-ink" /></svg>;
+}
 
 /* R-2513: the queue is split the way the work is done — what waits for the approver comes first. */
 const STRATEGY_KEYS: StrategyPlatform[] = ["facebook", "instagram", "linkedin"];
 const TABS = [
   { key: "activity", label: "Activity", match: () => false },
+  { key: "comments", label: "Comments", match: () => false },
   { key: "review", label: "Waiting for approval", match: (i: Item) => i.status === "review" },
   { key: "scheduled", label: "Scheduled", match: (i: Item) => i.status === "approved" || i.status === "publishing" },
   { key: "draft", label: "Drafts", match: (i: Item) => i.status === "draft" },
@@ -85,6 +105,9 @@ export default function SocialContentPage() {
   const [previews, setPreviews] = React.useState<Record<string, string>>({});
   /* R-2705 / R-2707: strategy editing. */
   const [strategyEdit, setStrategyEdit] = React.useState<{ platform: StrategyPlatform; plan: StrategyPlan } | null>(null);
+  /* R-2689: the reply being written per comment (starts as the AI's draft). */
+  const [replyText, setReplyText] = React.useState<Record<string, string>>({});
+  const [todoBusy, setTodoBusy] = React.useState(false);
   const [showPostSettings, setShowPostSettings] = React.useState(false);
   /* R-2687: one control per AI action — Off / Ask me first / Autopilot (stored as auto_drafts + autopilot). */
   const postsMode: "off" | "ask" | "auto" = !autoDrafts ? "off" : autopilot ? "auto" : "ask";
@@ -233,6 +256,39 @@ export default function SocialContentPage() {
     </div>;
   }
 
+  /** R-2689 / R-2690 / R-2691: one helper for the comment, to-do and report buttons. */
+  async function call(url: string, method: string, body: Record<string, unknown> | null, done: string | null, fallback: string) {
+    setBusy(true);
+    try {
+      const response = await fetch(url, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+      const data = await response.json() as { error?: string; description?: string; added?: number; drafted?: number; sent?: number };
+      if (!response.ok) throw Object.assign(new Error(data.error ?? fallback), { description: data.description });
+      if (done) toast.success(done, data.added !== undefined ? { description: `${data.added} new comment${data.added === 1 ? "" : "s"}${data.drafted ? `, ${data.drafted} repl${data.drafted === 1 ? "y" : "ies"} written by the AI` : ""}${data.sent ? `, ${data.sent} sent by the AI` : ""}.` } : undefined);
+      await load();
+      return true;
+    } catch (e) {
+      toastError(e, { fallback, description: "Nothing changed. Try again." });
+      await load().catch(() => undefined); // e.g. a comment check that found a missing Meta permission shows its note
+      return false;
+    }
+    finally { setBusy(false); }
+  }
+  async function openTodo(fresh: boolean) {
+    setTodoBusy(true);
+    try {
+      const response = await fetch("/api/marketing/social-content/today", fresh ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ make: "todo" }) } : { cache: "no-store" });
+      const data = await response.json() as { items?: TodoItem[]; error?: string; description?: string };
+      if (!response.ok || !data.items) throw Object.assign(new Error(data.error ?? "Could not make today's list."), { description: data.description });
+      setState((cur) => cur ? { ...cur, todo: data.items! } : cur);
+    } catch (e) { toastError(e, { fallback: "Could not make today's list.", description: "Try again in a minute." }); }
+    finally { setTodoBusy(false); }
+  }
+  async function tick(id: string, done: boolean) {
+    setState((cur) => cur && cur.todo ? { ...cur, todo: cur.todo.map((t) => t.id === id ? { ...t, done } : t) } : cur);
+    const response = await fetch("/api/marketing/social-content/today", { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ id, done }) }).catch(() => null);
+    if (!response?.ok) { toast.error("Could not save the tick.", { description: "Refresh the page and tick it again." }); await load(); }
+  }
+
   async function send(submit: boolean) {
     if (when === "custom" && !customAt) { toast.error("Choose the post time.", { description: "Pick a date and time, or choose Tomorrow 9 AM." }); return; }
     if (hasInstagram && !mediaUrl) { toast.error("Instagram needs a picture.", { description: "Press Make picture with AI, paste a public image link, or untick Instagram." }); return; }
@@ -328,7 +384,8 @@ export default function SocialContentPage() {
     finally { setBusy(false); }
   }
 
-  const count = (key: TabKey) => state?.items.filter(TABS.find((t) => t.key === key)!.match).length ?? 0;
+  const waitingComments = state?.comments.filter((c) => c.status !== "replied") ?? [];
+  const count = (key: TabKey) => key === "comments" ? waitingComments.length : state?.items.filter(TABS.find((t) => t.key === key)!.match).length ?? 0;
   const items = state?.items.filter(TABS.find((t) => t.key === tab)!.match) ?? [];
 
   return <div className="mx-auto max-w-[1240px] space-y-6 p-4 md:p-6 lg:p-8">
@@ -346,8 +403,48 @@ export default function SocialContentPage() {
           {a.name ? <>
             <p className="mt-2 truncate text-xs text-ink-3" title={a.name}>{a.name}</p>
             <p className="mt-1 font-serif text-2xl tabular-nums text-ink">{a.count !== null ? a.count.toLocaleString("en-IN") : "—"}<span className="ml-1.5 font-sans text-xs text-ink-3">{a.count !== null ? "followers" : a.key === "linkedin" ? "followers shown soon" : "followers not shared by Meta"}</span></p>
+            {(() => { const t = state.trends?.[a.key as StrategyPlatform]; if (!t || t.now === null) return null; return <>
+              <p className="mt-1 text-xs text-ink-3">{t.change7 !== null ? <><span className={t.change7 > 0 ? "font-semibold text-emerald-ink" : t.change7 < 0 ? "font-semibold text-rose-ink" : "text-ink-2"}>{signed(t.change7)}</span> this week{t.change30 !== null ? ` · ${signed(t.change30)} in 30 days` : ""}</> : "Counting from today — the change shows after a week."}</p>
+              <Sparkline series={t.series} />
+            </>; })()}
           </> : <a href={a.href} className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-ink underline">{a.connect} <ArrowUpRight size={13} aria-hidden="true" /></a>}
         </div>)}
+      </section>
+
+      <section aria-label="Today and this week" className="grid items-start gap-5 lg:grid-cols-2">
+        <Card><div className="space-y-3 p-1 md:p-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div><h2 className="text-lg font-semibold">Today&apos;s 5 things</h2><p className="mt-0.5 text-xs text-ink-3">Meta and LinkedIn do not let software do these — a person does them in about 10 minutes.</p></div>
+            {state.canReview && state.todo && <Button size="sm" variant="ghost" disabled={todoBusy} onClick={() => void openTodo(true)}>New list</Button>}
+          </div>
+          {!state.todo ? <div className="rounded-lg border border-dashed border-hairline p-6 text-center">
+              <p className="text-sm text-ink-3">Today&apos;s list is not made yet.</p>
+              {state.canReview && <Button className="mt-3" size="sm" variant="outline" disabled={todoBusy} onClick={() => void openTodo(false)}><Sparkles size={14} /> {todoBusy ? "Making the list…" : "Make today's list"}</Button>}
+            </div>
+            : <ul className="space-y-2">{state.todo.map((t) => <li key={t.id}>
+                <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-hairline bg-paper p-3">
+                  <input type="checkbox" className="mt-1 size-4 shrink-0" checked={t.done} disabled={!state.canReview} onChange={(e) => void tick(t.id, e.target.checked)} />
+                  <span className="min-w-0"><span className={`block text-sm ${t.done ? "text-ink-3 line-through" : "text-ink"}`}>{t.text}</span>{t.why && <span className="mt-0.5 block text-xs text-ink-3">{t.why}</span>}{t.done && t.doneBy && <span className="mt-0.5 block text-xs text-emerald-ink">Done by {t.doneBy}</span>}</span>
+                </label>
+              </li>)}</ul>}
+          {state.todo && <p className="text-xs text-ink-3">{state.todo.filter((t) => t.done).length} of {state.todo.length} done today.</p>}
+        </div></Card>
+
+        <Card><div className="space-y-3 p-1 md:p-2">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div><h2 className="text-lg font-semibold">This week</h2><p className="mt-0.5 text-xs text-ink-3">{state.report ? `Report of the week from ${formatIst(state.report.report.weekStart + "T00:00:00+05:30").split(",")[0]} · made ${formatIst(state.report.created_at)}` : "The AI writes a report every week with the plan."}</p></div>
+            {state.canReview && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void call("/api/marketing/social-content/today", "POST", { make: "report" }, "Report made.", "Could not make the report.")}>Make report now</Button>}
+          </div>
+          {!state.report ? <p className="rounded-lg border border-dashed border-hairline p-6 text-center text-sm text-ink-3">No report yet. Press Make report now.</p> : <>
+            <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+              {(["facebook", "instagram"] as const).map((p) => { const f = state.report!.report.followers[p]; return <div key={p} className="rounded-lg bg-paper-2 p-2"><dt className="text-xs text-ink-3">{PLATFORM_NAME[p]} followers</dt><dd className="text-sm font-semibold tabular-nums text-ink">{f.now ?? "—"}{f.change7 !== null && <span className="ml-1 text-xs font-normal text-ink-3">({signed(f.change7)})</span>}</dd></div>; })}
+              <div className="rounded-lg bg-paper-2 p-2"><dt className="text-xs text-ink-3">Posts out</dt><dd className="text-sm font-semibold tabular-nums text-ink">{state.report.report.posts.facebook + state.report.report.posts.instagram}</dd></div>
+              <div className="rounded-lg bg-paper-2 p-2"><dt className="text-xs text-ink-3">Comments answered</dt><dd className="text-sm font-semibold tabular-nums text-ink">{state.report.report.comments.answered} of {state.report.report.comments.received}</dd></div>
+            </dl>
+            {state.report.report.best && <p className="text-xs text-ink-2"><span className="font-semibold">Best post</span> ({PLATFORM_NAME[state.report.report.best.platform as StrategyPlatform] ?? state.report.report.best.platform}, score {state.report.report.best.score}): {state.report.report.best.caption}</p>}
+            {state.report.summary && <p className="rounded-lg bg-amber-soft/50 p-3 text-sm text-ink-2"><span className="font-semibold text-ink">AI: </span>{state.report.summary}</p>}
+          </>}
+        </div></Card>
       </section>
 
       <Card><div className="space-y-4 p-1 md:p-2">
@@ -388,10 +485,16 @@ export default function SocialContentPage() {
             </div>
             <div className="grid gap-3 lg:grid-cols-3">{STRATEGY_KEYS.map((p) => strategyCard(p))}</div>
           </div>
-          {[["Comment replies", "AI answers comments on your posts"], ["Daily to-do", "5 quick things only a person may do"]].map(([title, text]) => <div key={title} className="grid gap-3 p-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-center">
-            <div><p className="text-sm font-semibold text-ink">{title}</p><p className="text-xs text-ink-3">{text}</p></div>
-            <p className="text-xs text-ink-3">Coming next</p><span />
-          </div>)}
+          <div className="space-y-2 p-3">
+            <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)_auto] md:items-center">
+              <div><p className="text-sm font-semibold text-ink">Comment replies</p><p className="text-xs text-ink-3">AI answers comments on your posts. Complaints always wait for a person.</p></div>
+              <div role="radiogroup" aria-label="AI comment replies" className="flex flex-wrap gap-2">
+                {([["off", "Off"], ["ask", "Ask me first"], ["auto", "Autopilot"]] as const).map(([m, label]) => <button key={m} type="button" role="radio" aria-checked={state.settings.comment_mode === m} disabled={!state.canReview || busy} onClick={() => void call("/api/marketing/social-content/settings", "PATCH", { commentMode: m }, m === "off" ? "Comment replies are off." : m === "auto" ? "The AI now answers comments by itself." : "The AI writes replies; you send them.", "Could not change comment replies.")} className={chip(state.settings.comment_mode === m)}>{label}</button>)}
+              </div>
+              {state.canReview && <Button size="sm" variant="outline" disabled={busy || state.settings.comment_mode === "off"} onClick={() => void call("/api/marketing/social-content/comments", "POST", { action: "check" }, "Comments checked.", "Could not check comments.")}>Check comments now</Button>}
+            </div>
+            {state.settings.comments_problem && <p className="rounded-lg bg-amber-soft px-3 py-2 text-xs text-amber-ink">{state.settings.comments_problem}</p>}
+          </div>
         </div>
         {state.canManage && <div className="flex flex-wrap items-center justify-end gap-2">
           {settingsDirty && <span className="text-xs text-amber-ink">Not saved yet</span>}
@@ -445,7 +548,7 @@ export default function SocialContentPage() {
 
         <Card><div className="space-y-4 p-1 md:p-2">
           <div role="tablist" aria-label="Posts" className="flex flex-wrap gap-2">
-            {TABS.map((t) => { const n = count(t.key); return <button key={t.key} role="tab" type="button" aria-selected={tab === t.key} className={chip(tab === t.key)} onClick={() => setTab(t.key)}>{t.label}{n > 0 && <span className={`rounded-full px-1.5 text-xs ${tab === t.key ? "bg-paper text-ink" : t.key === "review" || t.key === "failed" ? "bg-amber-soft text-amber-ink" : "bg-paper-2 text-ink-2"}`}>{n}</span>}</button>; })}
+            {TABS.map((t) => { const n = count(t.key); return <button key={t.key} role="tab" type="button" aria-selected={tab === t.key} className={chip(tab === t.key)} onClick={() => setTab(t.key)}>{t.label}{n > 0 && <span className={`rounded-full px-1.5 text-xs ${tab === t.key ? "bg-paper text-ink" : t.key === "review" || t.key === "failed" || t.key === "comments" ? "bg-amber-soft text-amber-ink" : "bg-paper-2 text-ink-2"}`}>{n}</span>}</button>; })}
           </div>
           {tab === "activity" && (state.activity.length === 0
             ? <div className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-ink-3">Nothing has happened yet. Plan this week with the AI, or write a post yourself.</div>
@@ -467,8 +570,29 @@ export default function SocialContentPage() {
                 </div>
               </li>;
             })}</ol>)}
-          {tab !== "activity" && items.length === 0 && <div className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-ink-3">{tab === "review" ? "Nothing is waiting for approval." : tab === "scheduled" ? "No approved posts waiting to go out." : "Nothing here yet."}</div>}
-          {tab !== "activity" && <div className="max-h-[850px] space-y-3 overflow-y-auto pr-1">{items.map(item => <div key={item.id} className="rounded-xl border border-hairline bg-paper p-4">
+          {tab === "comments" && (state.comments.length === 0
+            ? <div className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-ink-3">No comments yet. They show here a few minutes after people comment on your posts{state.settings.comment_mode === "off" ? " (comment replies are Off)" : ""}.</div>
+            : <ul aria-label="Comments" className="max-h-[850px] space-y-3 overflow-y-auto pr-1">{state.comments.map((c) => {
+              const open = c.status !== "replied";
+              const text = replyText[c.id] ?? c.ai_reply ?? "";
+              return <li key={c.id} className="rounded-xl border border-hairline bg-paper p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="flex items-center gap-2 text-sm font-medium text-ink">{c.platform === "facebook" ? <Facebook size={16} className="text-[#1877f2]" aria-hidden="true" /> : <Instagram size={16} className="text-[#c13584]" aria-hidden="true" />}{c.author}</span>
+                  <span className="flex items-center gap-2 text-xs text-ink-3">{c.kind === "complaint" && <Badge kind="warning" size="sm">Complaint — answer yourself</Badge>}{c.kind === "spam" && <Badge kind="muted" size="sm">Looks like spam</Badge>}{c.commented_at ? formatIst(c.commented_at) : ""}</span>
+                </div>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-ink-2">{c.message}</p>
+                {open ? <div className="mt-3 space-y-2">
+                  <label className="block text-xs font-medium text-ink-2">{c.ai_reply ? "Reply (written by the AI — change anything)" : "Your reply"}<textarea className={`${inputClass} mt-1 min-h-20`} maxLength={800} value={text} onChange={(e) => { const v = e.target.value; setReplyText((cur) => ({ ...cur, [c.id]: v })); }} placeholder={c.status === "new" ? "The AI has not read this yet — write a reply, or press Check comments now." : "Write a reply"} /></label>
+                  {c.status === "failed" && c.error && <p className="rounded-lg bg-rose-soft p-2 text-xs text-rose-ink">Meta said: {c.error}</p>}
+                  {state.canReview && <div className="flex flex-wrap gap-2">
+                    <Button size="sm" variant="primary" disabled={busy || !text.trim()} onClick={() => void call("/api/marketing/social-content/comments", "POST", { action: "send", id: c.id, text }, "Reply sent.", "Could not send the reply.").then((ok) => { if (ok) setReplyText((cur) => { const n = { ...cur }; delete n[c.id]; return n; }); })}><Send size={14} /> Send reply</Button>
+                    <Button size="sm" variant="ghost" disabled={busy} onClick={() => void call("/api/marketing/social-content/comments", "POST", { action: "ignore", id: c.id }, "Comment ignored.", "Could not ignore the comment.")}>No reply needed</Button>
+                  </div>}
+                </div> : <p className="mt-3 rounded-lg bg-paper-2 p-2 text-xs text-ink-2"><span className="font-semibold">{c.replied_by === "ai" ? "AI replied" : "You replied"}{c.replied_at ? ` · ${formatIst(c.replied_at)}` : ""}: </span>{c.reply}</p>}
+              </li>;
+            })}</ul>)}
+          {tab !== "activity" && tab !== "comments" && items.length === 0 && <div className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-ink-3">{tab === "review" ? "Nothing is waiting for approval." : tab === "scheduled" ? "No approved posts waiting to go out." : "Nothing here yet."}</div>}
+          {tab !== "activity" && tab !== "comments" && <div className="max-h-[850px] space-y-3 overflow-y-auto pr-1">{items.map(item => <div key={item.id} className="rounded-xl border border-hairline bg-paper p-4">
             <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2">{item.platform === "facebook" ? <Facebook size={17} className="text-[#1877f2]" /> : <Instagram size={17} className="text-[#c13584]" />}<span className="text-sm font-medium">{item.platform === "facebook" ? "Facebook" : "Instagram"} {item.format === "story" ? "Story" : "post"}</span>{item.origin !== "manual" && <Badge kind="muted">AI</Badge>}{item.post_type && <Badge kind="muted">{item.post_type}</Badge>}</div>
               <span className="text-xs text-ink-2">{item.status === "published" && item.published_at ? `Posted ${formatIst(item.published_at)}`
                 : item.scheduled_at ? (item.status === "approved" && new Date(item.scheduled_at).getTime() <= Date.now() ? "Posting in a few minutes" : `${item.status === "approved" ? "Posts" : "To post"} ${formatIst(item.scheduled_at)}`)

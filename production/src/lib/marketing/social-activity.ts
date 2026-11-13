@@ -12,6 +12,8 @@ export type ActivityResult = "ok" | "failed" | "waiting";
 export interface ActivityLine {
   actor: ActivityActor; platform?: string | null; action: string; detail?: string;
   contentId?: string | null; result?: ActivityResult;
+  /** R-2689: a person's action written through the service role (e.g. a comment reply). */
+  userId?: string | null;
 }
 export interface ActivityRow {
   id: string; at: string; actor: ActivityActor; user_name: string | null; platform: string | null;
@@ -35,7 +37,7 @@ export async function logPersonActivity(session: TenantSession, line: Omit<Activ
 /** An AI / system line from a cron (service role). Never throws. */
 export async function logSystemActivity(admin: SupabaseClient, tenantId: string, line: ActivityLine): Promise<void> {
   const { error } = await admin.from("social_activity").insert({
-    tenant_id: tenantId, actor: line.actor, platform: line.platform ?? null, action: clip(line.action, 60),
+    tenant_id: tenantId, actor: line.actor, user_id: line.userId ?? null, platform: line.platform ?? null, action: clip(line.action, 60),
     detail: clip(line.detail, 500), content_id: line.contentId ?? null, result: line.result ?? "ok",
   });
   if (error) console.error("[social-activity] system line not written", error.message);
