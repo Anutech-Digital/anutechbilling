@@ -56,6 +56,7 @@ import {
   reminderPlan,
   reminderScope,
   reminderButtonLabel,
+  type BulkReminderResult,
   matchesRenewalSearch,
   readJsonSafe,
   sendBulkReminders,
