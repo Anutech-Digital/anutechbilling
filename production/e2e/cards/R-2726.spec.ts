@@ -50,7 +50,9 @@ function seed(): void {
     insert into public.feedback ${cols}, agent_card) values
       ${row(OWN_FIXED, E2E_TENANT_SQL, `${TOKEN} Invoice PDF logo is cut`, `${TOKEN} BODY-OWN-FIXED logo cropped`, "QA Bot R2726", "qa.r2726@example.test", "fixed", "2026-11-10T05:00:00Z", ", 'R-9726'")};
     insert into public.feedback ${cols}, dispatched_at) values
-      ${row(OWN_QUEUED, E2E_TENANT_SQL, `${TOKEN} Scorecards filter resets`, `${TOKEN} BODY-OWN-QUEUED filter resets on reload`, "Hitesh R2726", HITESH, "agent_queued", "2026-11-11T05:00:00Z", ", '2026-11-11T05:10:00Z'")};`);
+      ${row(OWN_QUEUED, E2E_TENANT_SQL, `${TOKEN} Scorecards filter resets`, `${TOKEN} BODY-OWN-QUEUED filter resets on reload`, "Hitesh R2726", HITESH, "agent_queued", "2026-11-11T05:00:00Z", ", '2026-11-11T05:10:00Z'")};
+    -- the fixed one was filed on another screen, so "scorecards" (which also matches the page path) does not find it
+    update public.feedback set page_path = '/invoices', route_pattern = '/invoices' where id = '${OWN_FIXED}';`);
   if (otherTenantExists()) {
     db.psql(`insert into public.feedback ${cols}) values
       ${row(OTHER_WS, `'${OTHER_TENANT}'`, `${TOKEN} Scorecards export fails`, `${TOKEN} BODY-OTHER-WS export button does nothing`, "Hitesh R2726", HITESH, "open", "2026-11-12T07:00:00Z")};`);
