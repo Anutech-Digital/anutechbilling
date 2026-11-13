@@ -1,4 +1,4 @@
--- deploy-peek: exists(select 1 from pg_trigger where tgname = 'trg_invoice_stamp_line_periods' and tgrelid = 'public.invoices'::regclass and not tgisinternal)
+-- deploy-peek: exists(select 1 from pg_trigger where tgname = 'trg_invoice_stamp_line_periods' and tgrelid = to_regclass('public.invoices') and not tgisinternal)
 -- deploy-key: r2744invoicelineperiod
 -- 20261113210500_r2744_invoice_line_service_period.sql
 --
