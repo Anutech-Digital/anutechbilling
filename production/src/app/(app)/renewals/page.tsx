@@ -91,8 +91,8 @@ import { LastDocsLines, SentDueLines } from "./last-docs-cell";
 import { paidInvoiceOf, type LastDocs } from "./last-docs";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import {
-  renewalFollowup, renewalDecision, showDecision, filterByFollowup, bulkAssignRequests, bulkAssignReport,
-  DECISION_LABEL, DECISION_TONE, NO_FOLLOWUP_FILTERS, ASSIGN_NEEDS_ROLE,
+  renewalFollowup, renewalDecision, filterByFollowup, bulkAssignRequests, bulkAssignReport,
+  NO_FOLLOWUP_FILTERS, ASSIGN_NEEDS_ROLE,
   type RenewalFollowup, type RenewalDecision, type FollowupFilters,
 } from "./followup";
 import { FollowupDialog } from "@/components/features/collections/followup-dialog";
@@ -104,10 +104,11 @@ import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
 import { isNonRenewing } from "@/lib/subscriptions/non-renewing";
-import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 import { RenewalActions } from "@/components/features/renewals/renewal-actions";
-import { isGraceOver } from "@/components/features/renewals/renewal-actions-rules";
 import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/collapsible-kpi-strip";
+import { renewalStage, type RenewalStage, type StageFlag, type FlagKey } from "@/lib/renewals/stage";
+import { vendorHoldState } from "@/lib/renewals/vendor-hold";
+import { stageInputFor, payHref as stagePayHref } from "./stage-input";
 
 // ─── Vendor logo pill ─────────────────────────────────────────────────────────
 
@@ -154,12 +155,32 @@ function RowActionLine({ action, canQuotes, className }: { action: RowAction; ca
 
 // ─── Row pieces ───────────────────────────────────────────────────────────────
 
-function StatusChip({ status, size }: { status: RowStatus; size?: "sm" }) {
+/** R-2758 (R-2738): the row's ONE chip = its stage; facts (at risk, vendor hold, previous term unpaid,
+    promise broken, follow-up due) are small icons after it — never a second chip. null = documents
+    still loading: a placeholder, so the chip never flips from a guess (userAudit14Nov). */
+const FLAG_ICON: Record<FlagKey, React.ComponentProps<typeof Icon>["name"]> = {
+  atRisk: "alert", vendorHold: "lock", priorTermUnpaid: "rupee", promiseBroken: "x_circle", followUpDue: "phone",
+};
+
+function StageChip({ stage, size }: { stage: RenewalStage | null; size?: "sm" }) {
+  if (!stage) return <Skeleton className="h-5 w-24" aria-label="Loading status" data-testid="stage-chip-loading" />;
   return (
-    <div className="min-w-0">
-      <Badge kind={status.tone} size={size} dot>{status.label}</Badge>
-      {status.note && <p className="mt-1 text-2xs font-medium text-rose-600">{status.note}</p>}
+    <div className="min-w-0" data-testid="stage-chip" data-stage={stage.key}>
+      <div className="flex min-w-0 flex-wrap items-center gap-1">
+        <Badge kind={stage.tone} size={size} dot>{stage.label}</Badge>
+        {stage.flags.map((f) => <StageFlagIcon key={f.key} flag={f} />)}
+      </div>
+      {stage.note && <p className="mt-1 text-2xs text-ink-3 tabular-nums">{stage.note}</p>}
     </div>
+  );
+}
+
+function StageFlagIcon({ flag }: { flag: StageFlag }) {
+  return (
+    <span role="img" aria-label={flag.reason} title={flag.reason} data-flag={flag.key}
+      className={cn("inline-flex h-5 w-5 items-center justify-center rounded-full", flag.key === "followUpDue" ? "bg-amber-50 text-amber-700" : "bg-rose-50 text-rose-600")}>
+      <Icon name={FLAG_ICON[flag.key]} size={11} />
+    </span>
   );
 }
 
@@ -194,36 +215,27 @@ function AmountCell({ amount, frequency, className }: { amount: RenewalAmount; f
   );
 }
 
-function AtRiskMark({ reason }: { reason: string }) {
-  return (
-    <span className="inline-flex items-center gap-0.5 text-2xs font-medium text-rose-600" title={reason}>
-      <Icon name="alert" size={11} className="shrink-0" />At risk
-    </span>
-  );
-}
-
 /**
  * R-2404: where the customer's decision stands, who works the renewal and when they follow up
  * next, the promise to pay. Under the ONE status chip; "Paid" / "Won't renew" are that chip already.
  */
-function FollowupLine({ followup, decision, names, statusKey }: { followup: RenewalFollowup; decision: RenewalDecision; names: Map<string, UserName> | undefined; statusKey: RowStatusKey }) {
+function FollowupLine({ followup, names }: { followup: RenewalFollowup; names: Map<string, UserName> | undefined }) {
   const owner = followup.ownerId ? names?.get(followup.ownerId)?.label ?? "a colleague" : null;
-  /* R-2728: the "Renewal quote sent" chip already says "Quote sent" — one fact, one place. */
-  const decisionShown = showDecision(decision) && !(decision === "quote-sent" && statusKey === "quote-sent");
+  /* R-2758 (R-2738): the stage chip is the ONE status — no second "decision" chip; a follow-up that is
+     due and a broken promise are the chip's flag icons. */
   return (
     <div className="mt-1.5 space-y-0.5 text-2xs">
-      {decisionShown && <Badge kind={DECISION_TONE[decision]} size="sm">{DECISION_LABEL[decision]}</Badge>}
       <p className={cn("truncate", owner ? "text-ink-2" : "text-ink-3")} title={owner ? `Owner: ${owner}` : "No owner yet"}>
         <Icon name="user" size={10} className="mr-0.5 inline shrink-0" />{owner ?? "No owner"}
       </p>
-      {followup.nextFollowUpOn && (
-        <p className={cn("tabular-nums", followup.followUpDue ? "font-medium text-rose-600" : "text-ink-3")}>
+      {followup.nextFollowUpOn && !followup.followUpDue && (
+        <p className="tabular-nums text-ink-3">
           Next: {formatDate(followup.nextFollowUpOn)}
         </p>
       )}
-      {followup.promisedOn && followup.promiseStatus !== "kept" && (
-        <p className={cn("tabular-nums", followup.promiseBroken ? "font-medium text-rose-600" : "text-ink-2")}>
-          {followup.promiseBroken ? "Promise broken" : "Promised"} · {formatDate(followup.promisedOn)}
+      {followup.promisedOn && followup.promiseStatus !== "kept" && !followup.promiseBroken && (
+        <p className="tabular-nums text-ink-2">
+          Promised · {formatDate(followup.promisedOn)}
           {followup.promisedAmount ? ` · ${rupee(followup.promisedAmount)}` : ""}
         </p>
       )}
@@ -289,6 +301,10 @@ interface QueueItem {
   commitment: Commitment;
   /** R-2728: last quote sent / last invoice / the renewal quote with the customer (last-docs.ts). */
   docs: LastDocs | undefined;
+  /** R-2758 (R-2738): the row's ONE stage (chip + button); null while its documents load. */
+  stage: RenewalStage | null;
+  /** R-2758: where Record payment goes (the open quote's dialog, else the invoice's). */
+  payHref: string | null;
 }
 
 interface RenewalQueueProps {
@@ -353,16 +369,13 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
       ? <SentDueLines sent={item.docs.sent} daysUntil={item.daysUntil} todayIst={todayIst} className={className} />
       : null
   );
-  /* R-2728: a sent renewal quote / part bill → ⋯ Record payment (the quote's own dialog, ?pay=1). */
-  const payQuoteOf = (item: QueueItem) => (item.status.key === "quote-sent" ? item.docs?.sent?.quoteId : undefined);
 
   return (
     <>
       {/* Cards — viewports < 1280px (phones and small laptops), two per row from md. */}
       <ul className="xl:hidden p-3 space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
         {rows.map((item) => {
-          const { sub, daysUntil: days, status, amount, frequency, contact, atRisk, riskReason, followup, decision } = item;
-          const priorDue = priorTermDueText(sub);  // R-1703
+          const { sub, daysUntil: days, amount, frequency, contact, followup, stage } = item;
           const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
           return (
             <li key={sub.id} className="bg-paper border border-hairline rounded-lg p-3">
@@ -387,36 +400,22 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
 
               <div className="flex items-start justify-between gap-2 mb-2">
                 <div className="min-w-0">
-                  <StatusChip status={status} size="sm" />
-                  <FollowupLine followup={followup} decision={decision} names={names} statusKey={status.key} />
+                  <StageChip stage={stage} size="sm" />
+                  <FollowupLine followup={followup} names={names} />
                 </div>
                 <div className="shrink-0 text-right">
                   <p className="text-xs text-ink-2">{sub.renewal_date ? formatDate(sub.renewal_date) : "—"}</p>
                   {sentDue(item)}
-                  {atRisk && <AtRiskMark reason={riskReason} />}
                 </div>
               </div>
 
-              {/* R-1796: unpaid past the renewal date — the vendor renewal waits for the payment.
-                  R-2401: grace over → it sits next to Cancel in the actions below. */}
-              {!isGraceOver(sub, days, graceDays) && (
-                <div className="mb-2 empty:hidden">
-                  <VendorHoldBadge sub={sub} />
-                </div>
-              )}
-
-              {priorDue && (
-                <p role="status" className="mb-2 flex items-center gap-1 text-xs font-medium text-rose-600">
-                  <Icon name="alert" size={12} className="shrink-0" />
-                  {priorDue}
-                </p>
-              )}
-
+              {/* R-2758: vendor hold, previous term unpaid and at risk are the stage chip's flag icons;
+                  Renew anyway (grace over) is in the row's ⋯. */}
               {/* R-2232: "Renewal quote Q-x not sent yet" — never a second Generate. R-2728: last quote / invoice. */}
               {docsFor(item, action, "mb-2 text-xs")}
 
               <div className="pt-2 border-t border-hairline/60">
-                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging recordPaymentQuoteId={payQuoteOf(item)} />
+                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} />
               </div>
             </li>
           );
@@ -454,8 +453,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
           </thead>
           <tbody>
             {rows.map((item) => {
-              const { sub, daysUntil: days, status, amount, frequency, contact, atRisk, riskReason, followup, decision } = item;
-              const priorDue = priorTermDueText(sub);  // R-1703
+              const { sub, daysUntil: days, amount, frequency, contact, followup, stage } = item;
               const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
               return (
                 <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20">
@@ -480,7 +478,6 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                     )}
                     <ContactLine contact={contact} />
                     {lastPaidFor(item, "mt-0.5")}
-                    {atRisk && <AtRiskMark reason={riskReason} />}
                   </td>
 
                   {/* Product · seats · vendor */}
@@ -506,29 +503,19 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                   {/* Renewal amount for the term */}
                   <td className="px-3 py-3 text-right">
                     <AmountCell amount={amount} frequency={frequency} />
-                    {priorDue && (
-                      <p role="status" className="mt-1 text-2xs font-medium text-rose-600" title="Paying the renewal quote covers only the new term — record the earlier amount separately under Payments → Subscription dues.">
-                        {priorDue}
-                      </p>
-                    )}
                   </td>
 
                   {/* ONE status */}
                   <td className="px-3 py-3">
-                    <StatusChip status={status} />
-                    <FollowupLine followup={followup} decision={decision} names={names} statusKey={status.key} />
+                    <StageChip stage={stage} />
+                    <FollowupLine followup={followup} names={names} />
                   </td>
 
                   {/* Actions */}
                   <td className="px-3 py-3">
                     <div className="flex flex-col items-start gap-1.5">
                       {docsFor(item, action, "text-2xs")}
-                      {!isGraceOver(sub, days, graceDays) && (
-                        <div className="empty:hidden">
-                          <VendorHoldBadge sub={sub} />
-                        </div>
-                      )}
-                      <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging recordPaymentQuoteId={payQuoteOf(item)} />
+                      <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} />
                     </div>
                   </td>
                 </tr>
@@ -715,7 +702,25 @@ export default function RenewalsPage() {
     const customerOwnerId = r.sub.customer_id ? fuData?.ownerByCustomer.get(r.sub.customer_id) ?? null : null;
     const followup = renewalFollowup(r.sub.id, fuData?.rows ?? [], { customerOwnerId, today: todayIst, paid: status.key === "renewed" });
     const linkedQuote = quoteOf(r.sub);
+    /* R-2758 (R-2738): ONE stage per row — only once the documents are read (no flip after load),
+       only this renewal's quote / invoice (stage-input.ts). */
+    const input = stageInputFor({
+      sub: r.sub, todayIst, docs, docsLoading: lastDocsQ.isLoading,
+      linkedStatus: r.sub.renewal_quote_id ? quoteStatusMap.get(r.sub.renewal_quote_id) ?? null : null,
+      linkedQuote: linkedQuote ?? null,
+      renewalPaid: paid(r),
+      flags: {
+        atRisk: atRiskIds.has(r.sub.id) ? { reasons: risk.reasons.filter((x) => x !== "Seat usage not checked") } : null,
+        vendorHold: vendorHoldState(r.sub, today),
+        priorTermUnpaid: priorTermDueText(r.sub),
+        promiseBroken: followup.promiseBroken ? { promisedOn: followup.promisedOn } : null,
+        followUpDue: followup.followUpDue ? { nextFollowUpOn: followup.nextFollowUpOn } : null,
+      },
+    });
+    const stage = input ? renewalStage(input) : null;
     return {
+      stage,
+      payHref: stage ? stagePayHref(stage, docs) : null,
       sub: r.sub,
       daysUntil: r.daysUntil,
       status,

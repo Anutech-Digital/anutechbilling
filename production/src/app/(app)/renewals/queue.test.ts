@@ -277,7 +277,9 @@ describe("R-2403 the page wires the one queue", () => {
     expect(page).toContain("amount: renewalAmount(r.sub, quoteOf(r.sub)),");
     expect(page).not.toContain(">/mo<");
     expect(page).not.toMatch(/renewalStateLabel|expiredGraceText|Expired \{Math\.abs/);
-    expect(page.match(/<StatusChip status=\{status\}/g)?.length).toBe(2);
+    /* R-2758 (R-2738): the ONE chip is the stage (lib/renewals/stage.ts) — no decision chip beside it. */
+    expect(page.match(/<StageChip stage=\{stage\}/g)?.length).toBe(2);
+    expect(page).not.toMatch(/StatusChip|DECISION_LABEL|<VendorHoldBadge/);
   });
   it("sort + filters + bulk Send renewal quote / Send reminder on the ticked rows", () => {
     expect(page).toContain("sortQueue(filterQueue(");
