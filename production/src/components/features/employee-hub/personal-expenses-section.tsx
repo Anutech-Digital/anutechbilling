@@ -174,6 +174,100 @@ export function PersonalExpensesSection({ onNavigateToBankImport }: Props) {
     setAmountRupees(500);
   };
 
+  // Edit Transaction State
+  const [editingTxn, setEditingTxn] = React.useState<PersonalTransaction | null>(null);
+  const [editDescription, setEditDescription] = React.useState("");
+  const [editAmount, setEditAmount] = React.useState<number>(0);
+  const [editCategory, setEditCategory] = React.useState<string>("");
+  const [editDate, setEditDate] = React.useState("");
+  const [editPaymentMode, setEditPaymentMode] = React.useState<PersonalTransaction["paymentMode"]>("UPI");
+  const [editBankId, setEditBankId] = React.useState<string>("");
+
+  const handleStartEdit = (txn: PersonalTransaction) => {
+    setEditingTxn(txn);
+    setEditDescription(txn.description);
+    setEditAmount(txn.amountRupees);
+    setEditCategory(txn.category);
+    setEditDate(txn.date);
+    setEditPaymentMode(txn.paymentMode);
+    setEditBankId(txn.bankAccountId || "");
+  };
+
+  const handleQuickChangeCategory = (id: string, newCategory: string) => {
+    const target = transactions.find((t) => t.id === id);
+    if (!target || target.category === newCategory) return;
+
+    const oldCat = target.category;
+    const updated = transactions.map((t) => {
+      if (t.id === id) {
+        return { ...t, category: newCategory };
+      }
+      return t;
+    });
+
+    saveTransactions(updated);
+    setTransactions(updated);
+    toast.success(`Category updated from "${oldCat}" to "${newCategory}"`);
+  };
+
+  const handleSaveEdit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingTxn) return;
+    if (!editDescription.trim()) {
+      toast.error("Please enter a description.");
+      return;
+    }
+    if (editAmount <= 0) {
+      toast.error("Please enter an amount greater than ₹0.");
+      return;
+    }
+
+    const roundedAmt = Math.round(editAmount);
+    const oldBankId = editingTxn.bankAccountId;
+    const oldAmount = editingTxn.amountRupees;
+    const isIncome = editingTxn.type === "income";
+
+    const updatedTxns = transactions.map((t) => {
+      if (t.id === editingTxn.id) {
+        return {
+          ...t,
+          description: editDescription.trim(),
+          amountRupees: roundedAmt,
+          category: editCategory,
+          date: editDate,
+          paymentMode: editPaymentMode,
+          bankAccountId: editBankId || undefined,
+        };
+      }
+      return t;
+    });
+
+    saveTransactions(updatedTxns);
+    setTransactions(updatedTxns);
+
+    // Reconcile bank balances if amount or bank account changed
+    if (oldBankId || editBankId) {
+      let updatedAccounts = [...bankAccounts];
+      if (oldBankId) {
+        const revertDelta = isIncome ? -oldAmount : oldAmount;
+        updatedAccounts = updatedAccounts.map((a) =>
+          a.id === oldBankId ? { ...a, balanceRupees: Math.max(0, a.balanceRupees + revertDelta) } : a
+        );
+      }
+      if (editBankId) {
+        const applyDelta = isIncome ? roundedAmt : -roundedAmt;
+        updatedAccounts = updatedAccounts.map((a) =>
+          a.id === editBankId ? { ...a, balanceRupees: Math.max(0, a.balanceRupees + applyDelta) } : a
+        );
+      }
+      saveBankAccounts(updatedAccounts);
+      setBankAccounts(updatedAccounts);
+    }
+
+    toast.success(`Updated entry: "${editDescription.trim()}" (${editCategory})`);
+    setEditingTxn(null);
+  };
+
   const handleDeleteTransaction = (id: string) => {
     const target = transactions.find((t) => t.id === id);
     const updated = transactions.filter((t) => t.id !== id);
@@ -462,16 +556,41 @@ export function PersonalExpensesSection({ onNavigateToBankImport }: Props) {
                         <span className="text-xs font-semibold text-ink truncate">
                           {item.description}
                         </span>
-                        <Badge
-                          variant="outline"
-                          className={`text-2xs py-0 px-1.5 font-medium ${
-                            isIncome
-                              ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-                              : "bg-paper-2 text-ink-3 border-hairline"
-                          }`}
+                        {/* Quick Category Selector Dropdown */}
+                        <Select
+                          value={item.category}
+                          onValueChange={(newCat) => handleQuickChangeCategory(item.id, newCat)}
                         >
-                          {item.category}
-                        </Badge>
+                          <SelectTrigger
+                            className={`h-5 px-1.5 py-0 text-3xs font-medium border rounded gap-1 w-auto max-w-[160px] cursor-pointer shadow-none ${
+                              isIncome
+                                ? "bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100"
+                                : "bg-paper-2 text-ink-2 border-hairline hover:bg-paper-3 hover:border-indigo-300"
+                            }`}
+                            title="Click to change category"
+                          >
+                            <SelectValue>{item.category}</SelectValue>
+                          </SelectTrigger>
+                          <SelectContent className="max-h-60 text-xs">
+                            {isIncome
+                              ? PERSONAL_INCOME_CATEGORIES.map((c) => (
+                                  <SelectItem key={c.category} value={c.category} className="text-xs">
+                                    <span className="flex items-center gap-1.5">
+                                      <Icon name={c.icon} size={12} style={{ color: c.color }} />
+                                      {c.category}
+                                    </span>
+                                  </SelectItem>
+                                ))
+                              : PERSONAL_EXPENSE_CATEGORIES.map((c) => (
+                                  <SelectItem key={c.category} value={c.category} className="text-xs">
+                                    <span className="flex items-center gap-1.5">
+                                      <Icon name={c.icon} size={12} style={{ color: c.color }} />
+                                      {c.category}
+                                    </span>
+                                  </SelectItem>
+                                ))}
+                          </SelectContent>
+                        </Select>
                       </div>
                       <div className="flex items-center gap-2 text-2xs text-ink-3 mt-0.5">
                         <span>{formatDate(item.date)}</span>
@@ -487,8 +606,8 @@ export function PersonalExpensesSection({ onNavigateToBankImport }: Props) {
                     </div>
                   </div>
 
-                  {/* Amount and Delete */}
-                  <div className="flex items-center gap-3 shrink-0">
+                  {/* Amount and Actions */}
+                  <div className="flex items-center gap-2 shrink-0">
                     <div className="text-right">
                       <div
                         className={`text-sm font-semibold font-mono ${
@@ -501,6 +620,15 @@ export function PersonalExpensesSection({ onNavigateToBankImport }: Props) {
                         {isIncome ? "Credit (Income)" : "Debit (Expense)"}
                       </span>
                     </div>
+
+                    <button
+                      type="button"
+                      onClick={() => handleStartEdit(item)}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-ink-3 hover:text-indigo-600 transition-opacity"
+                      title="Edit transaction details"
+                    >
+                      <Icon name="pencil" size={14} />
+                    </button>
 
                     <button
                       type="button"
@@ -697,6 +825,146 @@ export function PersonalExpensesSection({ onNavigateToBankImport }: Props) {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Transaction Modal */}
+      <Dialog open={Boolean(editingTxn)} onOpenChange={(open) => !open && setEditingTxn(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-serif text-lg">Edit Transaction</DialogTitle>
+            <DialogDescription className="text-xs">
+              Update category, amount, description, or connected bank account.
+            </DialogDescription>
+          </DialogHeader>
+
+          {editingTxn && (
+            <form onSubmit={handleSaveEdit} className="space-y-4 py-2">
+              <div className="grid grid-cols-2 gap-3">
+                <FormField label="Date">
+                  <Input
+                    type="date"
+                    value={editDate}
+                    onChange={(e) => setEditDate(e.target.value)}
+                    className="h-8 text-xs bg-paper"
+                    required
+                  />
+                </FormField>
+
+                <FormField label="Category">
+                  {editingTxn.type === "expense" ? (
+                    <Select
+                      value={editCategory}
+                      onValueChange={(val) => setEditCategory(val)}
+                    >
+                      <SelectTrigger className="h-8 text-xs bg-paper">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PERSONAL_EXPENSE_CATEGORIES.map((c) => (
+                          <SelectItem key={c.category} value={c.category}>
+                            {c.category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    <Select
+                      value={editCategory}
+                      onValueChange={(val) => setEditCategory(val)}
+                    >
+                      <SelectTrigger className="h-8 text-xs bg-paper">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PERSONAL_INCOME_CATEGORIES.map((c) => (
+                          <SelectItem key={c.category} value={c.category}>
+                            {c.category}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  )}
+                </FormField>
+              </div>
+
+              <FormField label="Description / Narration">
+                <Input
+                  value={editDescription}
+                  onChange={(e) => setEditDescription(e.target.value)}
+                  className="h-8 text-xs bg-paper"
+                  required
+                />
+              </FormField>
+
+              <div className="grid grid-cols-2 gap-3">
+                <FormField label="Amount (₹ Whole Rupees)">
+                  <Input
+                    type="number"
+                    min="1"
+                    step="1"
+                    value={editAmount || ""}
+                    onChange={(e) => setEditAmount(Number(e.target.value))}
+                    className="h-8 text-xs bg-paper font-mono font-bold"
+                    required
+                  />
+                </FormField>
+
+                <FormField label="Connected Bank">
+                  <Select value={editBankId} onValueChange={setEditBankId}>
+                    <SelectTrigger className="h-8 text-xs bg-paper">
+                      <SelectValue placeholder="No bank linked" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="">None (Unlinked)</SelectItem>
+                      {bankAccounts.map((b) => (
+                        <SelectItem key={b.id} value={b.id}>
+                          {b.bankName} (••••{b.accountNumberLast4})
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </FormField>
+              </div>
+
+              <FormField label="Payment Mode">
+                <Select
+                  value={editPaymentMode}
+                  onValueChange={(val) => setEditPaymentMode(val as PersonalTransaction["paymentMode"])}
+                >
+                  <SelectTrigger className="h-8 text-xs bg-paper">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="UPI">UPI (GPay / PhonePe / Paytm)</SelectItem>
+                    <SelectItem value="Net Banking">Net Banking / NEFT / IMPS</SelectItem>
+                    <SelectItem value="Debit Card">Debit Card</SelectItem>
+                    <SelectItem value="Credit Card">Credit Card</SelectItem>
+                    <SelectItem value="Cash">Cash</SelectItem>
+                  </SelectContent>
+                </Select>
+              </FormField>
+
+              <DialogFooter className="pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setEditingTxn(null)}
+                  className="text-xs"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  size="sm"
+                  className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
+                >
+                  Update Transaction
+                </Button>
+              </DialogFooter>
+            </form>
+          )}
         </DialogContent>
       </Dialog>
     </div>
