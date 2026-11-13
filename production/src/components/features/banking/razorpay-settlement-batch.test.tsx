@@ -7,7 +7,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { razorpayMonths } from "./razorpay-settlement-batch";
+import { razorpayMonths, feeDatedLaterText } from "./razorpay-settlement-batch";
 
 const mutateAsync = vi.fn(async () => ({ runId: "R1", booked: [{ txnId: "L1", settlementId: "setl_A", amount: 1156, fee: 24 }], refused: [] }));
 vi.mock("@/lib/queries/razorpay-settlement", () => ({
@@ -57,5 +57,20 @@ describe("R-2654 the sheet", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: /Undo this run/ })).toBeTruthy());
     expect(window.sessionStorage.getItem("ros_rzp_month_run_v1:acc")).toContain("R1");
     expect(await screen.findByText(/This run reconciled 1 line \(₹1,156, fees ₹24\)/)).toBeTruthy();
+  });
+});
+
+describe("R-2745 feeDatedLaterText — fees of GST-filed months are dated on the first open day", () => {
+  it("names the lines, the fee total, the day(s) and why; the bank lines keep their dates", () => {
+    const why = "GST returns are filed up to October 2025 (Accounting → Overview → GST returns filed up to)";
+    expect(feeDatedLaterText([
+      { txnId: "L1", settlementId: "setl_A", amount: 1156, fee: 24, feeDate: "2025-11-01", feeDateWhy: why },
+      { txnId: "L2", settlementId: "setl_B", amount: 2313, fee: 47, feeDate: "2025-11-01", feeDateWhy: why },
+      { txnId: "L3", settlementId: "setl_C", amount: 1156, fee: 24, feeDate: "2025-11-05", feeDateWhy: null },
+    ])).toBe(`Razorpay fees of 2 lines (₹71) are dated 01 Nov 2025 — the first open day: ${why}. The bank lines keep their own dates.`);
+  });
+  it("says nothing when no fee moved (open month, or a run before R-2745)", () => {
+    expect(feeDatedLaterText([{ txnId: "L1", settlementId: "setl_A", amount: 1156, fee: 24 }])).toBe("");
+    expect(feeDatedLaterText([{ txnId: "L1", settlementId: "setl_A", amount: 1156, fee: 24, feeDate: "2025-10-20", feeDateWhy: null }])).toBe("");
   });
 });

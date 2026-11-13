@@ -22,6 +22,10 @@ export interface SettlementReconciled {
   fee_booked_now: number;
   fee_gst_now: number;
   fee_expense_id: string | null;
+  /** R-2745: the fee expense's day — the first open (not GST-filed) day; null when no fee was booked now */
+  fee_expense_date: string | null;
+  /** R-2745: why that day is not the bank line's day (R-2621 gst_filed_why); null when it did not move */
+  fee_date_why: string | null;
 }
 
 async function call<T>(url: string, init?: RequestInit): Promise<T> {
@@ -82,7 +86,7 @@ export type { MonthBatchLookup, MonthBatch, BatchRow };
 
 export interface MonthRunResult {
   runId: string | null;
-  booked: Array<{ txnId: string; settlementId: string; amount: number; fee: number }>;
+  booked: Array<{ txnId: string; settlementId: string; amount: number; fee: number; feeDate?: string | null; feeDateWhy?: string | null }>;
   refused: Array<{ txnId: string; message: string }>;
 }
 export interface MonthUndoResult {

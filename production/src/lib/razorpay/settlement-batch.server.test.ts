@@ -11,7 +11,7 @@ vi.mock("@/lib/crypto/tenant-secrets", () => ({ decryptTenantSecrets: (row: unkn
 import { loadMonthBatch, runMonthBatch, undoMonthRun, cachedGetter } from "./settlement-batch.server";
 
 type Row = Record<string, unknown>;
-const db = vi.hoisted(() => ({ tables: {} as Record<string, Row[]>, rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>, rpcError: null as null | { message: string; code?: string } }));
+const db = vi.hoisted(() => ({ tables: {} as Record<string, Row[]>, rpc: [] as Array<{ fn: string; args: Record<string, unknown> }>, rpcError: null as null | { message: string; code?: string }, rpcExtra: null as Record<string, unknown> | null }));
 
 function fakeClient() {
   return {
@@ -43,7 +43,7 @@ function fakeClient() {
         const line = db.tables.bank_transactions.find((l) => l.id === args.p_txn_id);
         if (line) line.matched_to_type = "payment";
         const s = args.p_settlement as { id: string; fee_paise: number };
-        return { data: { settlement_id: s.id, fee: Math.round(s.fee_paise / 100), run_id: args.p_run_id }, error: null };
+        return { data: { settlement_id: s.id, fee: Math.round(s.fee_paise / 100), run_id: args.p_run_id, ...(db.rpcExtra ?? {}) }, error: null };
       }
       if (fn === "undo_bank_recon_run") return { data: { run_id: args.p_run_id, undone: 2, left: [] }, error: null };
       return { data: null, error: { message: `unexpected rpc ${fn}` } };
@@ -100,6 +100,7 @@ beforeEach(() => {
   calls = [];
   db.rpc = [];
   db.rpcError = null;
+  db.rpcExtra = null;
   db.tables = {
     bank_transactions: [
       line("L1", "2025-10-03", 1156, "UTRA00000001"),
@@ -273,5 +274,19 @@ describe("R-2654 review cases", () => {
     const r = await runMonthBatch(args({ txnIds: ids }));
     if (r.state !== "done") throw new Error("not done");
     expect(r.result.refused.length).toBe(15);
+  });
+});
+
+describe("R-2745 runMonthBatch — the fee expense day comes back with each booked line", () => {
+  it("passes fee_expense_date / fee_date_why from the RPC through as feeDate / feeDateWhy (null when the day did not move)", async () => {
+    const why = "GST returns are filed up to October 2025 (Accounting → Overview → GST returns filed up to)";
+    db.rpcExtra = { fee_expense_date: "2025-11-01", fee_date_why: why };
+    const r = await runMonthBatch(args({ txnIds: ["L1"] }));
+    if (r.state !== "done") throw new Error(JSON.stringify(r));
+    expect(r.result.booked).toEqual([{ txnId: "L1", settlementId: "setl_A", amount: 1156, fee: 24, feeDate: "2025-11-01", feeDateWhy: why }]);
+    db.rpcExtra = { fee_expense_date: "2025-10-04", fee_date_why: null };
+    const r2 = await runMonthBatch(args({ txnIds: ["L2"], runId: r.result.runId }));
+    if (r2.state !== "done") throw new Error(JSON.stringify(r2));
+    expect(r2.result.booked[0]).toMatchObject({ txnId: "L2", feeDate: "2025-10-04", feeDateWhy: null });
   });
 });

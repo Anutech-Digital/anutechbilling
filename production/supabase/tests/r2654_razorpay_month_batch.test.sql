@@ -312,12 +312,16 @@ update public.tenants set books_locked_until = '2026-10-31' where id = 'dddddddd
 select set_config('request.jwt.claims', '{"sub":"aaaaaaaa-0000-0000-0000-000000265401","role":"authenticated"}', true);
 set local role authenticated;
 do $$
-declare v_run uuid; v_ok boolean := false;
+declare v_run uuid; v_ok boolean := false; v_msg text;
 begin
   v_run := public.razorpay_batch_run_start('bbbbbbbb-0000-0000-0000-000000265401');
   begin
     perform public.reconcile_razorpay_settlement_in_run(v_run, '11111111-0000-0000-0000-000000265401', pg_temp.setl1());
-  exception when others then v_ok := true;
+  exception when others then
+    v_ok := true;
+    /* R-2745 (R-2654 checker gap): the refusal IS the books lock, not some other error. */
+    get stacked diagnostics v_msg = message_text;
+    if v_msg not ilike '%lock%' then raise exception 'FAIL G1: refused for another reason: %', v_msg; end if;
   end;
   if not v_ok then raise exception 'FAIL G1: a line inside locked books was booked'; end if;
   if exists (select 1 from public.bank_transactions where id = '11111111-0000-0000-0000-000000265401' and matched_to_type is not null)

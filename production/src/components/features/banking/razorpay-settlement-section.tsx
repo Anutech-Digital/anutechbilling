@@ -68,9 +68,12 @@ export function RazorpaySettlementSection({ line, onDone, onFooterSave }: {
     try {
       const done = await rec.mutateAsync({ txnId: line.id, settlementId: plan?.settlement.id ?? settlementId, picks });
       toast.success(`Settlement reconciled: ${done.payments} payment${done.payments === 1 ? "" : "s"}, Razorpay fee ${rupee(done.fee)} booked`, {
-        description: done.fee_booked_now < done.fee
-          ? `${rupee(done.fee - done.fee_booked_now)} of the fee was already booked on single payments.`
-          : `The fee is in Bank Charges; its GST (${rupee(done.fee_gst_now)}) is input credit when the Razorpay vendor has its GSTIN.`,
+        description: done.fee_date_why && done.fee_expense_date
+          /* R-2745: the fee expense went on the first open day (the line's month is GST-filed) — say so. */
+          ? `The fee is in Bank Charges dated ${formatDate(done.fee_expense_date)} — the first open day: ${done.fee_date_why}. The bank line keeps its own date.`
+          : done.fee_booked_now < done.fee
+            ? `${rupee(done.fee - done.fee_booked_now)} of the fee was already booked on single payments.`
+            : `The fee is in Bank Charges; its GST (${rupee(done.fee_gst_now)}) is input credit when the Razorpay vendor has its GSTIN.`,
       });
       onDone();
     } catch (e) {

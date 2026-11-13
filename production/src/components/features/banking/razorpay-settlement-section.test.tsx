@@ -13,9 +13,11 @@ vi.mock("@/lib/queries/razorpay-settlement", () => ({
     state.enabledSeen.push(enabled);
     return { data: enabled ? state.data : undefined, isLoading: false, isError: false, refetch: vi.fn() };
   },
-  useReconcileRazorpaySettlement: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useReconcileRazorpaySettlement: () => ({ mutateAsync: rec.mutateAsync, isPending: false }),
 }));
-vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+const rec = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
+const toastMock = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+vi.mock("sonner", () => ({ toast: toastMock }));
 /* R-2418: fee_charged of the matched app payments. */
 const charged = vi.hoisted(() => ({ ids: [] as string[][], data: [] as (number | null)[] }));
 vi.mock("@/lib/queries/online-fee-report", () => ({
@@ -84,5 +86,24 @@ describe("RazorpaySettlementSection", () => {
     expect(charged.ids.at(-1)).toEqual(["a1", "p9"]);
     expect(screen.getByText("Fee recovered from customers").nextElementSibling?.textContent).toBe("₹30");
     expect(screen.getByText("Fee absorbed by us").nextElementSibling?.textContent).toBe("₹41");
+  });
+
+  it("R-2745: when the fee expense went on the first open day (GST-filed month) the toast says the day and why", async () => {
+    state.data = { state: "plan", plan };
+    const onDone = vi.fn();
+    rec.mutateAsync.mockResolvedValueOnce({
+      settlement_id: "setl_A", payments: 2, gross: 3540, refunds: 0, fee: 71, fee_booked_now: 71, fee_gst_now: 11,
+      fee_expense_id: "EXP-RZPFEE-STL-setl_A", fee_expense_date: "2025-11-01",
+      fee_date_why: "GST returns are filed up to October 2025 (Accounting → Overview → GST returns filed up to)",
+    });
+    render(<RazorpaySettlementSection line={{ id: "L1", credit: 3469 }} onDone={onDone} />);
+    fireEvent.click(screen.getByRole("button", { name: /Fetch settlement/ }));
+    fireEvent.change(screen.getByLabelText("App payment for pay_2"), { target: { value: "p9" } });
+    fireEvent.click(screen.getByRole("button", { name: /Reconcile settlement/ }));
+    await vi.waitFor(() => expect(onDone).toHaveBeenCalled());
+    const call = toastMock.success.mock.calls.at(-1) as [string, { description: string }];
+    expect(call[0]).toMatch(/Razorpay fee ₹71 booked/);
+    expect(call[1].description).toMatch(/dated 01 Nov 2025 — the first open day: GST returns are filed up to October 2025/);
+    expect(call[1].description).toMatch(/The bank line keeps its own date/);
   });
 });

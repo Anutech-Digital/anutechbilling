@@ -72,6 +72,14 @@ function StatusCell({ row }: { row: BatchRow }) {
 }
 
 const plural = (n: number) => `${n} line${n === 1 ? "" : "s"}`;
+/* R-2745: fee expenses of GST-filed months are dated on the first open day — the lines keep their own dates. */
+export function feeDatedLaterText(booked: MonthRunResult["booked"]): string {
+  const moved = booked.filter((b) => b.feeDateWhy && b.feeDate);
+  if (!moved.length) return "";
+  const days = [...new Set(moved.map((b) => b.feeDate as string))].sort();
+  const fees = moved.reduce((s, b) => s + b.fee, 0);
+  return `Razorpay fees of ${plural(moved.length)} (${rupee(fees)}) are dated ${days.map((d) => formatDate(d)).join(", ")} — the first open day: ${moved[0].feeDateWhy}. The bank lines keep their own dates.`;
+}
 
 export function RazorpaySettlementBatch({ accountId, accountName, months, open, onOpenChange }: {
   accountId: string;
@@ -192,6 +200,7 @@ export function RazorpaySettlementBatch({ accountId, accountName, months, open, 
         {lastRun && (
           <div className="mt-4 rounded-md border border-hairline px-3 py-2 text-sm" role="status">
             <p>{`This run reconciled ${plural(lastRun.booked.length)}${lastRun.booked.length ? ` (${rupee(lastRun.booked.reduce((s, b) => s + b.amount, 0))}, fees ${rupee(lastRun.booked.reduce((s, b) => s + b.fee, 0))})` : ""}.`}</p>
+            {lastRun.booked.some((b) => b.feeDateWhy) && <p className="text-ink-2">{feeDatedLaterText(lastRun.booked)}</p>}
             {lastRun.refused.map((r) => <p key={r.txnId} className="text-warning-ink">{`${dateOf(r.txnId)}${r.message}`}</p>)}
           </div>
         )}

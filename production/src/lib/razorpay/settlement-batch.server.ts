@@ -175,7 +175,8 @@ const rpcOf = (db: UserDb): Rpc => (db as unknown as { rpc: Rpc }).rpc.bind(db);
 export interface RunResult {
   /** the run these lines were booked on — null when a new run booked nothing */
   runId: string | null;
-  booked: Array<{ txnId: string; settlementId: string; amount: number; fee: number }>;
+  /** R-2745: feeDate / feeDateWhy — the fee expense's day when it moved to the first open (not GST-filed) day */
+  booked: Array<{ txnId: string; settlementId: string; amount: number; fee: number; feeDate?: string | null; feeDateWhy?: string | null }>;
   refused: Array<{ txnId: string; message: string }>;
 }
 
@@ -215,8 +216,11 @@ export async function runMonthBatch(args: MonthArgs & {
       result.refused.push({ txnId: r.txnId, message: userMessage(error, "Could not reconcile this line — nothing was saved for it. Try again.") });
       continue;
     }
-    const d = (data ?? {}) as { settlement_id?: string; fee?: number };
-    result.booked.push({ txnId: r.txnId, settlementId: d.settlement_id ?? plan.settlement.id, amount: r.amount, fee: Number(d.fee) || 0 });
+    const d = (data ?? {}) as { settlement_id?: string; fee?: number; fee_expense_date?: string | null; fee_date_why?: string | null };
+    result.booked.push({
+      txnId: r.txnId, settlementId: d.settlement_id ?? plan.settlement.id, amount: r.amount, fee: Number(d.fee) || 0,
+      feeDate: d.fee_expense_date ?? null, feeDateWhy: d.fee_date_why ?? null,
+    });
   }
   /* Review: a new run that booked nothing is not offered for Undo. */
   if (started && !result.booked.length) result.runId = null;
