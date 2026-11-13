@@ -82,23 +82,26 @@ test.describe("R-2727 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: Review renewal quote → editor: the domain line's Starts shows the renewal start billing uses (ON the renewal date for an app-made subscription), not an empty dd-mm-yyyy box", async ({ browser, baseURL }) => {
+  /* R-2746: the renewal start now shows ONCE, in the "Renewal · <from> – <to>" label over the lines;
+     the line's read-only Starts (same date) is no longer repeated. */
+  test("Step 1: Review renewal quote → editor: the renewal start billing uses (ON the renewal date for an app-made subscription) shows over the lines, not an empty dd-mm-yyyy box", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const id = await reviewQuote(page);
     await openEditor(page, id);
-    const start = await onlyOne(page.getByTestId("renewal-line-start").filter({ visible: true }), "renewal line Starts");
+    const label = await onlyOne(page.getByTestId("renewal-period-label").filter({ visible: true }), "renewal period label");
     expect(isAppMadeRow()).toBe("true");
     expect(renewalStart()).toBe(db().one(`select (public.ist_today() + 18)::text`));
-    await expect(start).toHaveText(formatDate(renewalStart()), { timeout: 60_000 });
+    await expect(label).toContainText(`Renewal · ${formatDate(renewalStart())} – `, { timeout: 60_000 });
+    await expect(page.getByTestId("renewal-line-start").filter({ visible: true })).toHaveCount(0);
     await expect(page.getByRole("textbox", { name: `Start date for ${PLAN}` })).toHaveCount(0);
   });
 
-  test("Step 2 (R-2713 part 1): at phone width the renewal line's Starts is on the card, without opening 'More'", async ({ browser, baseURL }) => {
+  test("Step 2 (R-2713 part 1): at phone width the renewal start is on screen without opening 'More'", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.setViewportSize({ width: 390, height: 844 });
     await openEditor(page, linked());
-    const start = await onlyOne(page.getByTestId("renewal-line-start").filter({ visible: true }), "renewal line Starts (phone)");
-    await expect(start).toHaveText(formatDate(renewalStart()));
+    const label = await onlyOne(page.getByTestId("renewal-period-label").filter({ visible: true }), "renewal period label (phone)");
+    await expect(label).toContainText(`Renewal · ${formatDate(renewalStart())} – `);
   });
 
   test("Step 3: a MANAGER on the same quote (owner must approve: cost unknown) → 'Save & ask for approval' really asks → pending, owner tier, nothing sent", async ({ browser, baseURL }) => {
