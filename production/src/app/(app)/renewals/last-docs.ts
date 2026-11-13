@@ -164,6 +164,8 @@ export interface LastDocs {
   quote: LastQuote | null;
   invoice: LastInvoice | null;
   sent: SentRenewal | null;
+  /** R-2747: the newest linked invoice with money still to collect (may be older than `invoice`); null = none. */
+  owedInvoiceId?: string | null;
 }
 
 /** Never sent to the customer, or taken back. */
@@ -253,6 +255,7 @@ export function lastDocsBySubscription(input: LastDocsInput): Map<string, LastDo
     const owed = bestOwed.get(sid);
     if (VOID_INVOICE.has(i.status) && owed) bestInvoice.set(sid, owed);
   }
+  for (const [sid, i] of bestOwed) out.get(sid)!.owedInvoiceId = i.id;
   /* invoice → the quotes raised it, per subscription (a combined invoice can carry several subscriptions' quotes) */
   const quotesOfInvoice = new Map<string, string[]>();
   for (const qq of input.quotes) if (qq.invoice_id) quotesOfInvoice.set(qq.invoice_id, [...(quotesOfInvoice.get(qq.invoice_id) ?? []), qq.id]);
@@ -422,6 +425,8 @@ export function invoiceStatusWords(i: LastInvoice, todayIst: string): { text: st
 /**
  * R-2747 — a row says "Previous term ₹x still unpaid" (prior-due.ts) but shows no unpaid invoice:
  * say plainly why, never invent one. null = nothing owed, or the shown invoice already says it.
+ * Only invoices LINKED to the subscription (its quotes / billed parts) are known here, so the words
+ * say "linked" — an invoice raised by hand for the customer, or imported, may still exist.
  * (Seen on SCN Kochi Hosting / SCN Delhi Traders: the balance is only on
  * subscriptions.outstanding_amount — no quote, no invoice linked to the subscription.)
  */
@@ -430,9 +435,12 @@ export function priorDueInvoiceGap(docs: LastDocs | undefined, priorDue: number,
   const invoice = docs?.invoice ?? null;
   if (invoice) {
     const { tone } = invoiceStatusWords(invoice, todayIst);
-    return tone === "warn" || tone === "danger" ? null : "No unpaid invoice in the app for this amount";
+    if (tone === "warn" || tone === "danger") return null;
   }
-  return docs?.quote ? "No invoice raised for this amount yet" : "No invoice in the app for this amount — it is only on the subscription";
+  /* a newer paid invoice is shown, but an older linked one still has money due — name it */
+  const owed = docs?.owedInvoiceId ?? null;
+  if (owed && owed !== invoice?.id) return `Older invoice ${owed} still has money due`;
+  return "No unpaid invoice linked to this subscription for the previous term";
 }
 
 /* "Nov 2026" = periodDate("2026-11-01") without its day — the paper's own formatter (service-period.ts). */
