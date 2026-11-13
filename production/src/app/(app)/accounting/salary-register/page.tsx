@@ -32,7 +32,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { EmptyState } from "@/components/shared/empty-state";
 import { rupee, formatDate, toTitleCase } from "@/lib/utils";
 import { formatMonthLabel, fyStartYear, fyLabelOfYear, istToday } from "@/lib/dates/ist";
-import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines, useSalaryBankLines, type SalaryPayment } from "@/lib/queries/payroll";
+import { useEmployees, useSalaryPayments, useEmployeeSalaryHistory, useUnlinkedSalaryBankLines, useSalaryBankLines, useSalaryRevisions, type SalaryPayment } from "@/lib/queries/payroll";
+import { monthNetPay, payslipsByEmployee } from "@/lib/payroll/net-pay";
+import { revisionsByEmployee } from "@/lib/payroll/salary-revision";
 import { ctcFromEmployee } from "@/lib/payroll/ctc";
 import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { fyPayslipActuals } from "@/lib/payroll/ctc-register";
@@ -181,14 +183,24 @@ function MonthRegister() {
   const ctcIncludesEmployer = payrollPolicy?.ctcIncludesEmployer ?? true;
   const ctcOf = (e: (typeof ctcEmployees)[number]) => ctcFromEmployee(e, { asOf: ctcMonth, includeGratuity, ctcIncludesEmployer });
   const fyActuals = fyPayslipActuals(allPayQ.data ?? [], ctcFy);
-  const ctcRowsData = ctcEmployees.map((e) => ({ e, ctc: ctcOf(e), actual: fyActuals.byEmployee.get(e.id) }));
+  /* R-2733 (owner: PT does not apply): Net Take Home = the net Pay salary works out for a full
+     month (lib/payroll/net-pay.ts — the Employees table's In-hand and the CTC tab read the same),
+     gross − employee PF − ESI − TDS. Not shown until the payslips + revisions have loaded. */
+  const revQ = useSalaryRevisions();
+  const netReady = allPayQ.isSuccess && revQ.isSuccess;
+  const slipsByEmp = React.useMemo(() => payslipsByEmployee(allPayQ.data ?? []), [allPayQ.data]);
+  const revsByEmp = React.useMemo(() => revisionsByEmployee(revQ.data ?? []), [revQ.data]);
+  const ctcRowsData = ctcEmployees.map((e) => ({
+    e, ctc: ctcOf(e), actual: fyActuals.byEmployee.get(e.id),
+    net: netReady ? monthNetPay(e, revsByEmp.get(e.id) ?? [], ctcMonth, slipsByEmp.get(e.id) ?? []) : null,
+  }));
   const ctcTotals = ctcRowsData.reduce((t, r) => ({
     annualCtc: t.annualCtc + r.ctc.annualCtc, monthlyCtc: t.monthlyCtc + r.ctc.monthlyCtc, gross: t.gross + r.ctc.grossMonthly,
-    employer: t.employer + r.ctc.totalEmployerContributionMonthly, net: t.net + r.ctc.netTakeHomeMonthly,
+    employer: t.employer + r.ctc.totalEmployerContributionMonthly, net: t.net + (r.net?.net ?? 0),
   }), { annualCtc: 0, monthlyCtc: 0, gross: 0, employer: 0, net: 0 });
 
   const exportCtcRegisterCsv = () => {
-    const ctcRows = ctcRowsData.map(({ e, ctc, actual }) => [
+    const ctcRows = ctcRowsData.map(({ e, ctc, actual, net }) => [
       toTitleCase(e.name),
       e.designation ?? "",
       ctc.annualCtc,
@@ -202,8 +214,8 @@ function MonthRegister() {
       ctc.gratuityMonthly,
       ctc.employeePfMonthly,
       ctc.employeeEsiMonthly,
-      ctc.professionalTaxMonthly,
-      ctc.netTakeHomeMonthly,
+      net?.tds ?? "",
+      net?.net ?? "",
       actual?.months ?? 0,
       actual?.earned ?? 0,
       actual?.employerPf ?? 0,
@@ -222,7 +234,7 @@ function MonthRegister() {
       [
         "Employee", "Designation", "Annual CTC (₹)", "Monthly CTC (₹)", "Gross Salary (₹/mo)",
         "Basic", "DA", "Other allowances", "Employer PF", "Employer ESI",
-        "Gratuity Provision", "Employee PF", "Employee ESI", "Prof. Tax (PT)", "Net Take Home (₹/mo)",
+        "Gratuity Provision", "Employee PF", "Employee ESI", "TDS (s.192 est.)", "Net Take Home (₹/mo, full month)",
         `Months paid (${fyTag})`, `Salary earned (${fyTag})`, `Employer PF paid (${fyTag})`, `Employer ESI paid (${fyTag})`, `Actual cost (${fyTag})`,
       ],
       ctcRows
@@ -328,7 +340,7 @@ function MonthRegister() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-hairline">
-                {ctcRowsData.map(({ e, ctc, actual }) => (
+                {ctcRowsData.map(({ e, ctc, actual, net }) => (
                   <tr key={e.id} className="hover:bg-paper-2/40 transition-colors">
                     <td className="px-3 py-2.5">
                       <div className="font-bold text-ink">{toTitleCase(e.name)}</div>
@@ -343,7 +355,7 @@ function MonthRegister() {
                     <td className="px-3 py-2.5 text-right font-mono text-amber-700">{num(ctc.employerPfMonthly)}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-amber-700">{num(ctc.employerEsiMonthly)}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-amber-700">{num(ctc.gratuityMonthly)}</td>
-                    <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-700 text-sm">{rupee(ctc.netTakeHomeMonthly)}</td>
+                    <td className="px-3 py-2.5 text-right font-mono font-bold text-emerald-700 text-sm" title={net?.explain}>{net ? rupee(net.net) : <span className="text-ink-3 font-normal">{netReady ? "—" : "…"}</span>}</td>
                     <td className="px-3 py-2.5 text-right font-mono text-ink-2">
                       {actual ? <>{rupee(actual.cost)}<div className="text-3xs text-ink-3">{actual.months} mo · salary {rupee(actual.earned)}</div></> : <span className="text-ink-3">—</span>}
                     </td>
@@ -366,7 +378,7 @@ function MonthRegister() {
               </tbody>
             </table>
           </Card>
-          <p className="text-xs text-ink-3">PF on Basic + DA at this month&apos;s ceiling, ESI only when the employee is ESI-covered and gross ≤ ₹21,000, PT from the app&apos;s PT slab. Actual = salary earned (gross − LOP + bonus) + employer PF + employer ESI on this FY&apos;s payslips.</p>
+          <p className="text-xs text-ink-3">PF on Basic + DA at this month&apos;s ceiling, ESI only when the employee is ESI-covered and gross ≤ ₹21,000, Net Take Home = gross − employee PF − ESI − TDS for a full month, as Pay salary works it out (Professional Tax does not apply). Actual = salary earned (gross − LOP + bonus) + employer PF + employer ESI on this FY&apos;s payslips.</p>
         </div>
       ) : (
         <>

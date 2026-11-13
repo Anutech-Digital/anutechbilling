@@ -21,12 +21,15 @@ import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  useEmployeeDocuments, useUploadEmployeeDocument, useDeleteEmployeeDocument,
+  useEmployeeDocuments, useUploadEmployeeDocument, useDeleteEmployeeDocument, useEmployeeSalaryHistory, useSalaryRevisions,
   getEmployeeDocUrl, EMPLOYEE_DOC_TYPES,
   type Employee, type EmployeeDocument,
 } from "@/lib/queries/payroll";
 import { rupee, formatDate } from "@/lib/utils";
 import { ctcFromEmployee } from "@/lib/payroll/ctc";
+import { monthNetPay } from "@/lib/payroll/net-pay";
+import { revisionsByEmployee } from "@/lib/payroll/salary-revision";
+import { istMonth } from "@/lib/dates/ist";
 import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { DocViewerDialog } from "@/components/features/documents/doc-viewer-dialog";
 import { useConfirm } from "@/components/providers/confirm-provider";
@@ -64,6 +67,15 @@ export function EmployeeDetailDrawer({
   const upload = useUploadEmployeeDocument();
   const del = useDeleteEmployeeDocument();
   const payrollPolicy = usePayrollPolicy();
+  /* R-2733 (owner: PT does not apply): the net shown here is the one Pay salary works out for a
+     full month (lib/payroll/net-pay.ts) — same as the Employees table and the CTC register. */
+  const netHistoryQ = useEmployeeSalaryHistory(open && employee ? employee.id : null);
+  const netRevisionsQ = useSalaryRevisions(open && Boolean(employee));
+  const netPeriod = istMonth();
+  const net = employee && netHistoryQ.isSuccess && netRevisionsQ.isSuccess
+    ? monthNetPay(employee, revisionsByEmployee(netRevisionsQ.data).get(employee.id) ?? [], netPeriod, netHistoryQ.data)
+    : null;
+  const netFailed = netHistoryQ.isError || netRevisionsQ.isError;
   const confirm = useConfirm();
   const [docType, setDocType] = React.useState("aadhaar");
   const [viewing, setViewing] = React.useState<EmployeeDocument | null>(null);
@@ -188,10 +200,12 @@ export function EmployeeDetailDrawer({
                       <span className="font-bold block uppercase text-3xs tracking-wider mb-1 text-emerald-800">3. Employee Net In-Hand Take Home</span>
                       <div className="flex items-center justify-between font-extrabold text-sm text-emerald-700">
                         <span>Net Payout / Month:</span>
-                        <span className="font-mono">{rupee(ctc.netTakeHomeMonthly)}</span>
+                        <span className="font-mono" data-testid="drawer-net-pay">{net ? rupee(net.net) : netFailed ? "—" : "…"}</span>
                       </div>
                       <div className="text-xs text-emerald-700 mt-1">
-                        Deductions: Employee PF -{rupee(ctc.employeePfMonthly)}{ctc.employeeEsiMonthly > 0 && <> · ESI -{rupee(ctc.employeeEsiMonthly)}</>} · PT -{rupee(ctc.professionalTaxMonthly)}
+                        {net
+                          ? <>Full month: Employee PF -{rupee(net.pf)}{net.esi > 0 && <> · ESI -{rupee(net.esi)}</>} · TDS -{rupee(net.tds)} — as Pay salary works it out.</>
+                          : netFailed ? "Payslips did not load — net pay is not shown." : "Working out the net…"}
                       </div>
                     </div>
                   </div>

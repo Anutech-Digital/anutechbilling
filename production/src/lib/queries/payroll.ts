@@ -558,6 +558,25 @@ export function useUnreconciledSalaries() {
   });
 }
 
+/** R-2733: every employee's payslips from `fromPeriod` (the FY's first month) — ONE paged read for
+ *  the Employees table's "In-hand / month" (TDS so far + ESI contribution period), never a query
+ *  per row. Only the fields lib/payroll/net-pay.ts reads. */
+export type PayslipFactsRow = Pick<SalaryPayment, "employee_id" | "period" | "gross" | "lop_amount" | "incentive" | "tds" | "esi">;
+export function usePayslipsSince(fromPeriod: string, enabled = true) {
+  return useQuery({
+    queryKey: ["salary-payments", "since", fromPeriod],
+    enabled,
+    queryFn: async (): Promise<PayslipFactsRow[]> => {
+      const supabase = createClient();
+      return fetchAllRows<PayslipFactsRow>((from, to) => supabase
+        .from("salary_payments").select("employee_id, period, gross, lop_amount, incentive, tds, esi")
+        .gte("period", fromPeriod)
+        .order("period", { ascending: true }).order("id", { ascending: true })
+        .range(from, to));
+    },
+  });
+}
+
 /** Every salary payment for ONE employee, oldest→newest. Feeds the per-employee
  *  full-year payroll calendar (click an employee's name on the payroll page). */
 export function useEmployeeSalaryHistory(employeeId: string | null) {
