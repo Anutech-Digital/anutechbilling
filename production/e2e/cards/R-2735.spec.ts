@@ -104,7 +104,7 @@ test.describe("R-2735 card test", () => {
       await expect(dlg).toBeVisible({ timeout: 10_000 });
     }).toPass({ timeout: 60_000 });
     const create = dlg.getByRole("button", { name: /^Create proforma$/ });
-    await expect(create).toBeEnabled({ timeout: 60_000 });
+    await expect(create).toBeEnabled({ timeout: 150_000 });   // the preview (GET) can take 40 s+ on a busy dev server
     await create.click();
     await expect(page.locator("[data-sonner-toast]").filter({ hasText: /only when it is paid/ })).toHaveCount(1, { timeout: 60_000 });
 

@@ -44,7 +44,7 @@ describe("renewalQuoteBlockedReason", () => {
     ["monthly", "monthly"], ["quarterly", "quarterly"], ["half_yearly", "half-yearly"],
   ] as const)("billed %s → refused, with the reason", (cycle, word) => {
     expect(renewalQuoteBlockedReason(cycle)).toBe(
-      `This subscription is billed ${word}, so each part gets its own invoice on its date. A renewal quote would bill the next term twice. It renews when the new term's first part is paid, and the next parts are invoiced on their dates.`,
+      `This subscription is billed ${word}, so each part gets its own invoice on its date. A renewal quote would bill the next term twice. It renews on its own once the new term's first part is paid, and the next parts are invoiced on their dates.`,
     );
   });
 
