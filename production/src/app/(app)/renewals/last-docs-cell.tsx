@@ -13,7 +13,7 @@ import { cn, formatDate } from "@/lib/utils";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import {
   daysBetweenIst, invoiceStatusWords, priorDueInvoiceGap, quoteExpiryText, quoteStateLabel, renewalDueText,
-  type DocTone, type LastDocs, type SentRenewal,
+  type DocTone, type LastDocs, type LastInvoice, type SentRenewal,
 } from "./last-docs";
 
 function DocLink({ id, href }: { id: string; href: string | null }) {
@@ -36,11 +36,10 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
   if (loading) return null;
   if (failed) return <p className={cn("text-2xs text-ink-3", className)}>Last quote / invoice: couldn&apos;t load — reload the page</p>;
   const quote = docs?.quote ?? null;
-  const invoice = docs?.invoice ?? null;
+  const invoices = docs?.invoice ? [docs.invoice] : [];
   const gap = priorDueInvoiceGap(docs, priorDue, todayIst);
-  if (!quote && !invoice && !gap) return null;
+  if (!quote && invoices.length === 0 && !gap) return null;
   const quoteState = quote ? quoteStateLabel(quote, todayIst) : "";
-  const invState = invoice ? invoiceStatusWords(invoice, todayIst) : null;
   /* R-2737: line 2 says the period the document covers (else the invoice's date). The block is
      bounded to the column (w-full min-w-0 — the Actions cell is a flex-col items-start, which gave it
      its max-content width and let the text run past the column).
@@ -61,24 +60,31 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
           {quote.period && <p className="break-words tabular-nums text-ink-3" data-testid="renewal-last-quote-period">for {quote.period}</p>}
         </div>
       )}
-      {invoice && invState && (
-        <div
-          data-doc-line="invoice"
-          title={`Last invoice: ${invoice.id}${invoice.date ? ` · dated ${formatDate(invoice.date)}` : ""} · ${invState.text}${invoice.period ? ` · for ${invoice.period}` : ""}`}
-        >
-          <p className={cn("break-words", invState.tone === "muted" && "text-ink-3")}>
-            <span className="text-ink-3">Invoice </span>
-            <DocLink id={invoice.id} href={canInvoices ? invoiceHref(invoice.id) : null} />
-            {" · "}<span className={TONE[invState.tone]} data-testid="renewal-last-invoice-status">{invState.text}</span>
-          </p>
-          {(invoice.period || invoice.date) && (
-            <p className="break-words tabular-nums text-ink-3" data-testid="renewal-last-invoice-period">
-              {invoice.period ? `for ${invoice.period}` : `dated ${formatDate(invoice.date)}`}
-            </p>
-          )}
-        </div>
-      )}
+      {invoices.map((inv) => <InvoiceLine key={inv.id} invoice={inv} canInvoices={canInvoices} todayIst={todayIst} />)}
       {gap && <p className="break-words text-ink-3" data-testid="renewal-prior-due-no-invoice">{gap}</p>}
+    </div>
+  );
+}
+
+/** One invoice: "Invoice <no.> · <state>" (state coloured by TONE) + "for <period>" (else its date).
+ *  Fed by a list in LastDocsLines so more than one invoice can be shown with the same words. */
+function InvoiceLine({ invoice, canInvoices, todayIst }: { invoice: LastInvoice; canInvoices: boolean; todayIst: string }) {
+  const state = invoiceStatusWords(invoice, todayIst);
+  return (
+    <div
+      data-doc-line="invoice"
+      title={`Last invoice: ${invoice.id}${invoice.date ? ` · dated ${formatDate(invoice.date)}` : ""} · ${state.text}${invoice.period ? ` · for ${invoice.period}` : ""}`}
+    >
+      <p className={cn("break-words", state.tone === "muted" && "text-ink-3")}>
+        <span className="text-ink-3">Invoice </span>
+        <DocLink id={invoice.id} href={canInvoices ? invoiceHref(invoice.id) : null} />
+        {" · "}<span className={TONE[state.tone]} data-testid="renewal-last-invoice-status">{state.text}</span>
+      </p>
+      {(invoice.period || invoice.date) && (
+        <p className="break-words tabular-nums text-ink-3" data-testid="renewal-last-invoice-period">
+          {invoice.period ? `for ${invoice.period}` : `dated ${formatDate(invoice.date)}`}
+        </p>
+      )}
     </div>
   );
 }
