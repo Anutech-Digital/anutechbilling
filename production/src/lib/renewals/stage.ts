@@ -15,7 +15,8 @@
  *   ending    Won't renew · ends <date>               (auto_renew = false)
  *   renewed   Renewed                                 (the renewal is PAID — never on raise: R-2735 / money rule N7)
  *   invoiced  Invoiced · ₹x due | ₹x overdue Nd       (the renewal's tax invoice is raised and something is still due)
- *   draft     Draft part quote · <period> / Draft renewal quote   (ownerRule2: the editor was closed unsaved)
+ *   draft     Draft part quote · <period>             (ownerRule2: the part's quote editor was closed unsaved;
+ *                                                     a whole-term draft stays "due" — userAudit14Nov)
  *   sent      Renewal quote sent · <period>           (renewal quote / the part's quote with the customer, unpaid;
  *                                                     a linked renewal quote not loaded or closed counts as sent, R-2232)
  *   part-due  Part not billed (<Mon>) / N parts not billed        (billed in parts, the next term's part started, nothing raised)
@@ -40,7 +41,7 @@
  * Retired as row labels: Review / Change renewal quote, Send renewal quote, Bill renewal · part 1
  * of next year / term.
  * Grace over (past the date and the grace, unpaid): "Renew anyway" (owner / manager, vendor hold)
- * and "Cancel" move INTO ⋯ — no more buttons side by side (P3).
+ * and "Customer not renewing" (its Cancel dialog after the date) are inside ⋯ — no more buttons side by side (P3).
  */
 import { isSplitBilled } from "@/lib/billing/instalments";
 import type { BillingCycle } from "@/lib/supabase/database.types";
@@ -250,13 +251,16 @@ export function renewalStage(input: StageInput): RenewalStage {
     const ref = sentDoc.kind === "part" && sentDoc.dueDate ? sentDoc.dueDate : sub.renewal_date;
     const days = ref ? istDays(todayIst, ref) : null;
     const period = sentDoc.period?.trim() || null;
-    const common = {
-      ...base, tone: daysTone(days), days, quoteId: sentDoc.quoteId, quoteStatus: sentDoc.status,
-      note: days != null ? dueWords(days) : null, flags,
-    };
+    /* userAudit14Nov: a part's day count says which date it counts from ("Overdue 44d · part due 1 Oct 2026"). */
+    const when = days == null ? null : sentDoc.kind === "part" && ref !== sub.renewal_date ? `${dueWords(days)} · part due ${formatDate(ref)}` : dueWords(days);
+    const common = { ...base, tone: daysTone(days), days, quoteId: sentDoc.quoteId, quoteStatus: sentDoc.status, note: when, flags };
+    if (sentDoc.status === "draft" && sentDoc.kind === "renewal") {
+      /* userAudit14Nov: opening the editor makes a draft — nothing went to the customer, so the row stays "due"
+         (its Send renewal reopens THAT draft, R-2232). */
+      return { ...common, key: "due", label: renewalDays == null ? "No renewal date" : dueWords(renewalDays), tone: daysTone(renewalDays), days: renewalDays, note: null };
+    }
     if (sentDoc.status === "draft") {
-      const word = sentDoc.kind === "part" ? "Draft part quote" : "Draft renewal quote";
-      return { ...common, key: "draft", label: period ? `${word} · ${period}` : word };
+      return { ...common, key: "draft", label: period ? `Draft part quote · ${period}` : "Draft part quote" };
     }
     /* ownerRule (13 Nov): "renewal quote sent with this period" — the period on the chip, the day count under it. */
     return { ...common, key: "sent", label: period ? `Renewal quote sent · ${period}` : "Renewal quote sent" };
@@ -303,10 +307,10 @@ export interface PrimaryAction {
   invoiceId: string | null;
 }
 
-/** ⋯ items, in the order they show; the ending ones last. */
+/** ⋯ items, in the order they show; the ending one last. */
 export type MenuItem =
   | "send-as-is" | "bill-part" | "record-payment" | "change-renewal" | "resend" | "resend-invoice"
-  | "follow-up" | "nudge" | "voice" | "renew-anyway" | "not-renewing" | "cancel" | "undo-wont-renew" | "view-subscription";
+  | "follow-up" | "nudge" | "voice" | "renew-anyway" | "not-renewing" | "undo-wont-renew" | "view-subscription";
 
 export const MENU_LABEL: Record<MenuItem, string> = {
   "send-as-is": "Send as is (no changes)",
@@ -320,7 +324,6 @@ export const MENU_LABEL: Record<MenuItem, string> = {
   voice: "Voice",
   "renew-anyway": "Renew anyway",
   "not-renewing": "Customer not renewing",
-  cancel: "Cancel subscription",
   "undo-wont-renew": "Undo won't renew",
   "view-subscription": "View subscription",
 };
@@ -339,7 +342,7 @@ export interface RowActions {
   /** The ONE button; null = nothing to do on this row. */
   primary: PrimaryAction | null;
   menu: MenuItem[];
-  /** Past the date and the grace, unpaid — Renew anyway / Cancel are in the menu. */
+  /** Past the date and the grace, unpaid — Renew anyway (owner / manager) is in the menu. */
   graceOver: boolean;
 }
 
@@ -385,11 +388,8 @@ export function renewalPrimary(stage: RenewalStage, sub: StageSub, ctx: PrimaryC
       primary = btn("bill-part", BILL_NEXT_PART, canQuote, stage);
       break;
     case "draft":
-      /* R-2232: Continue reopens the same quote; without the editor the whole-term draft is sent as is. */
-      if (canQuote) primary = btn("continue", CONTINUE, true, stage);
-      else if (!stage.split && stage.quoteId) primary = btn("send-renewal", SEND_RENEWAL, false, stage);
-      else primary = followUp;
-      if (canQuote && !stage.split) menu.push("send-as-is");
+      /* ownerRule2 / R-2232: Continue reopens the same part quote; a role without the editor follows up. */
+      primary = canQuote ? btn("continue", CONTINUE, true, stage) : followUp;
       break;
     case "sent":
       primary = followUp ?? pay();
@@ -409,7 +409,8 @@ export function renewalPrimary(stage: RenewalStage, sub: StageSub, ctx: PrimaryC
   if (ctx.offers.followup && primary?.kind !== "follow-up") menu.push("follow-up");
   if (ctx.offers.messaging) menu.push("nudge", "voice");
   if (graceOver && canRenewAnyway(ctx.role) && ctx.vendorHold === "hold") menu.push("renew-anyway");
-  if (ctx.canEndSubscription) menu.push(graceOver ? "cancel" : "not-renewing");
+  /* userAudit14Nov: ONE way to stop a renewal — "Customer not renewing" (Won't renew before the date, Cancel after: notRenewingDialog). */
+  if (ctx.canEndSubscription) menu.push("not-renewing");
   return { primary, menu: [...new Set(menu)], graceOver };
 }
 

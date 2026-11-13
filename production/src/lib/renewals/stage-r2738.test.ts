@@ -60,7 +60,8 @@ describe("R-2738 renewalStage — one chip, first match wins", () => {
     /* Bill next part no longer moves renewal_date: the date passed, partsDue still counts the part by date. */
     const sub = flex({ renewal_date: "2026-11-10" });
     const s = stage(sub, { doc: { kind: "part", quoteId: "Q-P1", status: "sent", dueDate: "2026-11-11", period: "Nov 2026" } });
-    expect(s).toMatchObject({ key: "sent", label: "Renewal quote sent · Nov 2026", note: "Overdue 3d", days: -3, quoteId: "Q-P1" });
+    expect(s).toMatchObject({ key: "sent", label: "Renewal quote sent · Nov 2026", days: -3, quoteId: "Q-P1" });
+    expect(s.note).toMatch(/^Overdue 3d · part due /);
   });
 
   it("stale 'renewed' state (rolled on raise before R-2735) + unpaid part → sent, not Renewed", () => {
@@ -160,6 +161,9 @@ describe("R-2738 renewalPrimary — ONE button + ⋯", () => {
     expect(act(s, sub, billing).primary?.kind).toBe("follow-up");
     const w = annual({ renewal_quote_id: "Q-W" });
     const ws = stage(w, { doc: { kind: "renewal", quoteId: "Q-W", status: "draft" } });
+    /* userAudit14Nov: a whole-term draft (made by opening the editor) stays "due" — Send renewal reopens THAT quote */
+    expect(ws).toMatchObject({ key: "due", label: "Due in 16d", quoteId: "Q-W", quoteStatus: "draft" });
+    expect(act(ws, w).primary).toMatchObject({ kind: "send-renewal", label: SEND_RENEWAL, quoteId: "Q-W", opensEditor: true });
     expect(act(ws, w, billing).primary).toMatchObject({ kind: "send-renewal", quoteId: "Q-W", opensEditor: false });
   });
 
@@ -197,8 +201,8 @@ describe("R-2738 renewalPrimary — ONE button + ⋯", () => {
     const a = act(s, sub, { ...owner, vendorHold: "hold" });
     expect(a.graceOver).toBe(true);
     expect(a.primary?.kind).toBe("follow-up");
-    expect(a.menu.slice(-2)).toEqual(["renew-anyway", "cancel"]);
-    expect(a.menu).not.toContain("not-renewing");
+    expect(a.menu.slice(-2)).toEqual(["renew-anyway", "not-renewing"]);   // userAudit14Nov: one way to stop (Cancel dialog after the date)
+    expect(notRenewingDialog(s)).toBe("cancel");
     expect(act(s, sub, { ...owner, role: "sales", vendorHold: "hold" }).menu).not.toContain("renew-anyway");
     expect(act(s, sub, { ...owner, vendorHold: "overridden" }).menu).not.toContain("renew-anyway");
     /* inside the grace: not over, Customer not renewing (→ Cancel dialog after the date) */
@@ -315,5 +319,26 @@ describe("R-2738 review fixes", () => {
     expect(act(s, q).primary?.kind).toBe(s.partDays! <= 7 ? "bill-part" : "follow-up");
     const w = annual({ renewal_quote_id: "Q-W" });
     expect(bulkSendDecision(stage(w, { doc: { kind: "renewal", quoteId: "Q-W", status: "draft" } }))).toEqual({ send: true });
+  });
+});
+
+describe("R-2738 userAudit14Nov notes", () => {
+  it("a part's day count names the date it counts from", () => {
+    const sub = quarterly({ renewal_date: "2026-10-31" });
+    const s = stage(sub, { doc: { kind: "part", quoteId: "Q-P", status: "sent", dueDate: "2026-10-01", period: "Oct – Dec 2026" } });
+    expect(s.label).toBe("Renewal quote sent · Oct – Dec 2026");
+    expect(s.note).toMatch(/^Overdue 44d · part due /);
+  });
+
+  it("Won't renew: no primary (not Follow up), ⋯ Undo won't renew only", () => {
+    const e = annual({ auto_renew: false });
+    expect(act(stage(e), e)).toEqual({ primary: null, menu: ["undo-wont-renew"], graceOver: false });
+  });
+
+  it("one way to stop a renewal: 'Customer not renewing' on every live row incl. overdue flex, never a separate Cancel", () => {
+    const f = flex({ renewal_date: "2026-10-01" });
+    const a = act(stage(f), f);
+    expect(a.menu).toContain("not-renewing");
+    expect(a.menu as string[]).not.toContain("cancel");
   });
 });
