@@ -106,6 +106,10 @@ export async function selectFacebookPage(admin: Admin, tenantId: string, userId:
   });
   const { error } = await admin.from("tenant_secrets").upsert(row, { onConflict: "tenant_id" });
   if (error) throw error;
+  /* R-2689: a new connection may carry the permissions that were missing — drop the old "permission
+     missing" note and let the next run check comments straight away. */
+  const untyped = admin as unknown as { from: (t: string) => { update: (v: Record<string, unknown>) => { eq: (k: string, v: string) => PromiseLike<unknown> } } };
+  await Promise.resolve(untyped.from("social_content_settings").update({ comments_problem: null, comments_checked_at: null }).eq("tenant_id", tenantId)).catch(() => undefined);
 }
 
 export async function disconnectFacebookPage(admin: Admin, tenantId: string): Promise<void> {
