@@ -7,48 +7,33 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Icon } from "@/components/ui/icon";
 import { rupee } from "@/lib/utils";
-import { toast } from "sonner";
 import { BudgetOverviewSection } from "@/components/features/employee-hub/budget-overview-section";
 import {
   PersonalExpensesSection,
-  type PersonalExpense,
+  type PersonalTransaction,
 } from "@/components/features/employee-hub/personal-expenses-section";
 import { BankAccountsSection } from "@/components/features/employee-hub/bank-accounts-section";
-import { SalaryIncomeSetupSection } from "@/components/features/employee-hub/salary-income-setup-section";
 import { SalariedDocumentVaultSection } from "@/components/features/employee-hub/salaried-document-vault-section";
 import { ItrFilingAssistant } from "@/components/features/employee-hub/itr-filing-assistant";
 import {
   loadBankAccounts,
-  loadIncome,
   loadBudget,
+  loadTransactions,
+  saveTransactions,
   type SalariedBankAccount,
-  type SalariedIncome,
   type SalariedBudget,
   STORAGE_EXPENSES_KEY,
 } from "@/lib/employee-hub/personal-finance-store";
 
-export type HubTab = "budget" | "expenses" | "banks" | "income" | "vault" | "tax";
+export type HubTab = "budget" | "expenses" | "banks" | "vault" | "tax";
 
 export default function EmployeeHubPage() {
   const [activeTab, setActiveTab] = React.useState<HubTab>("budget");
 
   // Financial States
   const [bankAccounts, setBankAccounts] = React.useState<SalariedBankAccount[]>(loadBankAccounts);
-  const [income, setIncome] = React.useState<SalariedIncome>(loadIncome);
   const [budget, setBudget] = React.useState<SalariedBudget>(loadBudget);
-  const [expenses, setExpenses] = React.useState<PersonalExpense[]>(() => {
-    if (typeof window === "undefined") return [];
-    try {
-      const stored = localStorage.getItem(STORAGE_EXPENSES_KEY);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {
-      // ignore
-    }
-    return [];
-  });
+  const [transactions, setTransactions] = React.useState<PersonalTransaction[]>(loadTransactions);
 
   // Sync state from URL and storage events
   React.useEffect(() => {
@@ -56,40 +41,31 @@ export default function EmployeeHubPage() {
       const syncTabFromUrl = () => {
         const params = new URLSearchParams(window.location.search);
         const tabParam = params.get("tab");
-        if (tabParam && ["budget", "expenses", "banks", "income", "vault", "tax"].includes(tabParam)) {
+        if (tabParam && ["budget", "expenses", "banks", "vault", "tax"].includes(tabParam)) {
           setActiveTab(tabParam as HubTab);
         } else if (tabParam === "bank-import") {
           setActiveTab("banks");
+        } else if (tabParam === "income") {
+          setActiveTab("expenses");
         }
       };
 
       const syncData = () => {
         setBankAccounts(loadBankAccounts());
-        setIncome(loadIncome());
         setBudget(loadBudget());
-        try {
-          const stored = localStorage.getItem(STORAGE_EXPENSES_KEY);
-          if (stored) {
-            const parsed = JSON.parse(stored);
-            if (Array.isArray(parsed)) setExpenses(parsed);
-          }
-        } catch {
-          // ignore
-        }
+        setTransactions(loadTransactions());
       };
 
       syncTabFromUrl();
       window.addEventListener("popstate", syncTabFromUrl);
       window.addEventListener("salaried_pro_expenses_updated", syncData);
       window.addEventListener("salaried_pro_banks_updated", syncData);
-      window.addEventListener("salaried_pro_income_updated", syncData);
       window.addEventListener("salaried_pro_budget_updated", syncData);
 
       return () => {
         window.removeEventListener("popstate", syncTabFromUrl);
         window.removeEventListener("salaried_pro_expenses_updated", syncData);
         window.removeEventListener("salaried_pro_banks_updated", syncData);
-        window.removeEventListener("salaried_pro_income_updated", syncData);
         window.removeEventListener("salaried_pro_budget_updated", syncData);
       };
     }
@@ -110,28 +86,28 @@ export default function EmployeeHubPage() {
     return bankAccounts.reduce((sum, a) => sum + a.balanceRupees, 0);
   }, [bankAccounts]);
 
+  const totalIncome = React.useMemo(() => {
+    return transactions
+      .filter((t) => t.type === "income")
+      .reduce((sum, t) => sum + t.amountRupees, 0);
+  }, [transactions]);
+
   const totalSpent = React.useMemo(() => {
-    return expenses.reduce((sum, e) => sum + e.amountRupees, 0);
-  }, [expenses]);
+    return transactions
+      .filter((t) => t.type !== "income")
+      .reduce((sum, t) => sum + t.amountRupees, 0);
+  }, [transactions]);
 
-  const monthlyTotalIncome = income.monthlyInHand + income.otherMonthlyIncome;
-  const remainingBudget = Math.max(0, budget.monthlyTargetBudget - totalSpent);
-  const isOverBudget = totalSpent > budget.monthlyTargetBudget;
+  const netSavings = totalIncome - totalSpent;
+  const savingsRatePct = totalIncome > 0 ? Math.max(0, Math.round((netSavings / totalIncome) * 100)) : 0;
 
-  const handleExpensesImported = (newItems: PersonalExpense[]) => {
-    const updated = [...newItems, ...expenses];
-    setExpenses(updated);
-    if (typeof window !== "undefined") {
-      try {
-        localStorage.setItem(STORAGE_EXPENSES_KEY, JSON.stringify(updated));
-        window.dispatchEvent(new Event("salaried_pro_expenses_updated"));
-      } catch {
-        // ignore
-      }
-    }
+  const handleTransactionsImported = (newItems: PersonalTransaction[]) => {
+    const combined = [...newItems, ...transactions];
+    setTransactions(combined);
+    saveTransactions(combined);
   };
 
-  const handleOpenAddExpense = () => {
+  const handleOpenAddRecord = () => {
     setActiveTab("expenses");
     if (typeof window !== "undefined") {
       setTimeout(() => {
@@ -155,7 +131,7 @@ export default function EmployeeHubPage() {
             </Badge>
           </div>
           <p className="text-sm text-ink-3 mt-1.5 max-w-3xl">
-            Clean, stress-free money management for job holders: track your salary in-hand, manage daily expenses, set category budgets, and import bank statements with automatic UPI categorization.
+            Clean, stress-free money management for salaried individuals: record daily income and expenses manually, set category budgets, and import bank statements with automatic salary &amp; UPI categorization.
           </p>
         </div>
 
@@ -169,11 +145,11 @@ export default function EmployeeHubPage() {
           <Button
             variant="primary"
             size="sm"
-            onClick={handleOpenAddExpense}
+            onClick={handleOpenAddRecord}
             className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
           >
             <Icon name="plus" size={14} />
-            + Record Expense
+            + Record Entry
           </Button>
         </div>
       </div>
@@ -197,20 +173,20 @@ export default function EmployeeHubPage() {
           </span>
         </Card>
 
-        {/* Card 2: Monthly In-Hand Income */}
+        {/* Card 2: Total Inflow / Income */}
         <Card
-          onClick={() => handleTabChange("income")}
+          onClick={() => handleTabChange("expenses")}
           className="p-4 border-2 border-emerald-100 hover:border-emerald-300 transition-all cursor-pointer bg-gradient-to-br from-emerald-50/40 via-paper to-paper"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs text-ink-3 font-medium">Monthly In-Hand</span>
+            <span className="text-xs text-ink-3 font-medium">Total Monthly Inflow</span>
             <Icon name="wallet" size={16} className="text-emerald-600" />
           </div>
           <div className="text-2xl font-serif font-bold text-emerald-700 mt-1.5 font-mono">
-            {rupee(monthlyTotalIncome)}
+            {rupee(totalIncome)}
           </div>
           <span className="text-2xs text-ink-3 mt-1 block">
-            {income.employerName} • Day {income.salaryDayOfMonth}
+            {transactions.filter((t) => t.type === "income").length} income credits recorded
           </span>
         </Card>
 
@@ -220,47 +196,37 @@ export default function EmployeeHubPage() {
           className="p-4 border-2 border-rose-100 hover:border-rose-300 transition-all cursor-pointer bg-gradient-to-br from-rose-50/40 via-paper to-paper"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs text-ink-3 font-medium">Total Spends This Month</span>
+            <span className="text-xs text-ink-3 font-medium">Total Monthly Spends</span>
             <Icon name="tag" size={16} className="text-rose-600" />
           </div>
           <div className="text-2xl font-serif font-bold text-rose-950 mt-1.5 font-mono">
             {rupee(totalSpent)}
           </div>
           <span className="text-2xs text-ink-3 mt-1 block">
-            {expenses.length} transactions recorded
+            {transactions.filter((t) => t.type !== "income").length} expense debits recorded
           </span>
         </Card>
 
-        {/* Card 4: Remaining Budget */}
+        {/* Card 4: Net Surplus / Savings */}
         <Card
           onClick={() => handleTabChange("budget")}
-          className={`p-4 border-2 transition-all cursor-pointer bg-gradient-to-br from-paper to-paper ${
-            isOverBudget
-              ? "border-rose-200 bg-rose-50/20"
-              : "border-amber-100 hover:border-amber-300 bg-amber-50/30"
-          }`}
+          className="p-4 border-2 border-amber-100 hover:border-amber-300 transition-all cursor-pointer bg-gradient-to-br from-amber-50/30 via-paper to-paper"
         >
           <div className="flex items-center justify-between">
-            <span className="text-xs text-ink-3 font-medium">Remaining Budget</span>
-            <span
-              className={`text-2xs font-semibold px-2 py-0.5 rounded ${
-                isOverBudget
-                  ? "bg-rose-100 text-rose-800"
-                  : "bg-emerald-100 text-emerald-800"
-              }`}
-            >
-              {isOverBudget ? "Over Budget" : "On Track"}
+            <span className="text-xs text-ink-3 font-medium">Net Monthly Savings</span>
+            <span className="text-2xs font-semibold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+              {savingsRatePct}% Saved
             </span>
           </div>
           <div
             className={`text-2xl font-serif font-bold mt-1.5 font-mono ${
-              isOverBudget ? "text-rose-600" : "text-ink"
+              netSavings >= 0 ? "text-ink" : "text-rose-600"
             }`}
           >
-            {isOverBudget ? rupee(totalSpent - budget.monthlyTargetBudget) : rupee(remainingBudget)}
+            {rupee(netSavings)}
           </div>
           <span className="text-2xs text-ink-3 mt-1 block">
-            {isOverBudget ? "Exceeded target cap" : `of ${rupee(budget.monthlyTargetBudget)} monthly cap`}
+            {netSavings >= 0 ? "Surplus remaining after all spends" : "Deficit (spends exceeded income)"}
           </span>
         </Card>
       </div>
@@ -288,7 +254,7 @@ export default function EmployeeHubPage() {
           }`}
         >
           <Icon name="tag" size={16} />
-          Daily Expenses ({expenses.length})
+          Income &amp; Expenses Ledger ({transactions.length})
         </button>
 
         <button
@@ -301,18 +267,6 @@ export default function EmployeeHubPage() {
         >
           <Icon name="building" size={16} />
           Bank Accounts &amp; Statement Import
-        </button>
-
-        <button
-          onClick={() => handleTabChange("income")}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
-            activeTab === "income"
-              ? "bg-indigo-50 text-indigo-700 font-semibold"
-              : "text-ink-2 hover:text-ink hover:bg-paper-2"
-          }`}
-        >
-          <Icon name="wallet" size={16} />
-          Salary &amp; Income Setup
         </button>
 
         <span className="text-ink-3 mx-1">|</span>
@@ -347,19 +301,18 @@ export default function EmployeeHubPage() {
       {/* ==================================================================== */}
       {activeTab === "budget" && (
         <BudgetOverviewSection
-          expenses={expenses}
+          expenses={transactions}
           onNavigateToExpenses={() => handleTabChange("expenses")}
           onNavigateToBanks={() => handleTabChange("banks")}
-          onAddExpenseClick={handleOpenAddExpense}
+          onAddExpenseClick={handleOpenAddRecord}
         />
       )}
 
       {/* ==================================================================== */}
-      {/* TAB 2: DAILY EXPENSES LEDGER                                         */}
+      {/* TAB 2: INCOME & EXPENSES LEDGER                                      */}
       {/* ==================================================================== */}
       {activeTab === "expenses" && (
         <PersonalExpensesSection
-          monthlySalaryRupees={monthlyTotalIncome}
           onNavigateToBankImport={() => handleTabChange("banks")}
         />
       )}
@@ -369,35 +322,25 @@ export default function EmployeeHubPage() {
       {/* ==================================================================== */}
       {activeTab === "banks" && (
         <BankAccountsSection
-          onExpensesImported={handleExpensesImported}
+          onExpensesImported={handleTransactionsImported}
           onNavigateToExpenses={() => handleTabChange("expenses")}
         />
       )}
 
       {/* ==================================================================== */}
-      {/* TAB 4: SALARY & INCOME SETUP                                         */}
-      {/* ==================================================================== */}
-      {activeTab === "income" && (
-        <SalaryIncomeSetupSection
-          onIncomeSaved={(inc) => setIncome(inc)}
-          onNavigateToOverview={() => handleTabChange("budget")}
-        />
-      )}
-
-      {/* ==================================================================== */}
-      {/* TAB 5: DIGITAL DOCUMENT VAULT (OPTIONAL ADVANCED)                    */}
+      {/* TAB 4: DIGITAL DOCUMENT VAULT (OPTIONAL ADVANCED)                    */}
       {/* ==================================================================== */}
       {activeTab === "vault" && (
         <SalariedDocumentVaultSection onNavigateToItr={() => handleTabChange("tax")} />
       )}
 
       {/* ==================================================================== */}
-      {/* TAB 6: ITR-1 ASSISTANT (OPTIONAL ADVANCED)                           */}
+      {/* TAB 5: ITR-1 ASSISTANT (OPTIONAL ADVANCED)                           */}
       {/* ==================================================================== */}
       {activeTab === "tax" && (
         <ItrFilingAssistant
-          initialSalaryGross={income.monthlyInHand * 12}
-          initialOtherIncome={income.otherMonthlyIncome * 12}
+          initialSalaryGross={totalIncome > 0 ? totalIncome * 12 : 1020000}
+          initialOtherIncome={0}
         />
       )}
     </div>

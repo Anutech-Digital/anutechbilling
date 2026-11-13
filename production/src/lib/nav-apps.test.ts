@@ -211,7 +211,6 @@ describe("filterSidebarModelForModules (Dynamic menu & layout adjustment)", () =
       "sp-budget",
       "sp-expenses",
       "sp-banks",
-      "sp-income",
       "sp-vault",
       "sp-tax",
     ]);

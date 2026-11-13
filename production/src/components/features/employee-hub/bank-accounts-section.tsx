@@ -18,18 +18,20 @@ import { istToday } from "@/lib/dates/ist";
 import { toast } from "sonner";
 import {
   type SalariedBankAccount,
+  type PersonalTransaction,
+  type PersonalExpenseCategory,
+  type PersonalIncomeCategory,
+  PERSONAL_EXPENSE_CATEGORIES,
+  PERSONAL_INCOME_CATEGORIES,
   loadBankAccounts,
   saveBankAccounts,
+  loadTransactions,
+  saveTransactions,
   STORAGE_BANKS_KEY,
 } from "@/lib/employee-hub/personal-finance-store";
-import {
-  type PersonalExpense,
-  type PersonalExpenseCategory,
-  PERSONAL_EXPENSE_CATEGORIES,
-} from "./personal-expenses-section";
 
 interface Props {
-  onExpensesImported: (newExpenses: PersonalExpense[]) => void;
+  onExpensesImported: (newTxns: PersonalTransaction[]) => void;
   onNavigateToExpenses: () => void;
 }
 
@@ -40,7 +42,8 @@ export interface ParsedBankTxn {
   debit: number;
   credit: number;
   balance: number | null;
-  detectedCategory: PersonalExpenseCategory | "Salary Income";
+  type: "expense" | "income";
+  detectedCategory: string;
   isSalary: boolean;
   selected: boolean;
 }
@@ -59,18 +62,31 @@ const SAMPLE_HDFC_CSV = `Date,Narration,Chq/Ref No,Withdrawal (Dr),Deposit (Cr),
 
 // Indian banking statement parser heuristic
 function categorizeNarration(narration: string, debit: number, credit: number): {
-  cat: PersonalExpenseCategory | "Salary Income";
+  cat: string;
+  type: "expense" | "income";
   isSalary: boolean;
 } {
   const norm = narration.toUpperCase();
 
-  if (credit > 0 && (norm.includes("SALARY") || norm.includes("PAYROLL") || norm.includes("CMS") || credit >= 30000)) {
-    return { cat: "Salary Income", isSalary: true };
+  if (credit > 0) {
+    if (norm.includes("SALARY") || norm.includes("PAYROLL") || norm.includes("CMS") || credit >= 30000) {
+      return { cat: "Salary", type: "income", isSalary: true };
+    }
+    if (norm.includes("DIVIDEND") || norm.includes("INTR") || norm.includes("INTEREST")) {
+      return { cat: "Interest & Dividends", type: "income", isSalary: false };
+    }
+    if (norm.includes("REFUND") || norm.includes("CASHBACK") || norm.includes("REVERSAL")) {
+      return { cat: "Refund & Cashback", type: "income", isSalary: false };
+    }
+    if (norm.includes("BONUS") || norm.includes("INCENTIVE")) {
+      return { cat: "Bonus / Incentive", type: "income", isSalary: false };
+    }
+    return { cat: "Other Income", type: "income", isSalary: false };
   }
 
   if (debit > 0) {
     if (norm.includes("RENT") || norm.includes("LANDLORD") || norm.includes("MAINTENANCE")) {
-      return { cat: "Housing & Rent", isSalary: false };
+      return { cat: "Housing & Rent", type: "expense", isSalary: false };
     }
     if (
       norm.includes("SWIGGY") ||
@@ -81,7 +97,7 @@ function categorizeNarration(narration: string, debit: number, credit: number): 
       norm.includes("BIGBASKET") ||
       norm.includes("INSTAMART")
     ) {
-      return { cat: "Food & Groceries", isSalary: false };
+      return { cat: "Food & Groceries", type: "expense", isSalary: false };
     }
     if (
       norm.includes("PETROL") ||
@@ -93,7 +109,7 @@ function categorizeNarration(narration: string, debit: number, credit: number): 
       norm.includes("FASTAG") ||
       norm.includes("METRO")
     ) {
-      return { cat: "Fuel & Commute", isSalary: false };
+      return { cat: "Fuel & Commute", type: "expense", isSalary: false };
     }
     if (
       norm.includes("AIRTEL") ||
@@ -104,10 +120,10 @@ function categorizeNarration(narration: string, debit: number, credit: number): 
       norm.includes("BESCOM") ||
       norm.includes("TATA POWER")
     ) {
-      return { cat: "Utilities & Bills", isSalary: false };
+      return { cat: "Utilities & Bills", type: "expense", isSalary: false };
     }
     if (norm.includes("AMAZON") || norm.includes("FLIPKART") || norm.includes("MYNTRA") || norm.includes("ECOM")) {
-      return { cat: "Shopping & Lifestyle", isSalary: false };
+      return { cat: "Shopping & Lifestyle", type: "expense", isSalary: false };
     }
     if (
       norm.includes("NETFLIX") ||
@@ -116,7 +132,7 @@ function categorizeNarration(narration: string, debit: number, credit: number): 
       norm.includes("HOTSTAR") ||
       norm.includes("YOUTUBE")
     ) {
-      return { cat: "Subscriptions & OTT", isSalary: false };
+      return { cat: "Subscriptions & OTT", type: "expense", isSalary: false };
     }
     if (
       norm.includes("APOLLO") ||
@@ -125,7 +141,7 @@ function categorizeNarration(narration: string, debit: number, credit: number): 
       norm.includes("HOSPITAL") ||
       norm.includes("PRACTO")
     ) {
-      return { cat: "Health & Medical", isSalary: false };
+      return { cat: "Health & Medical", type: "expense", isSalary: false };
     }
     if (
       norm.includes("EMI") ||
@@ -134,7 +150,7 @@ function categorizeNarration(narration: string, debit: number, credit: number): 
       norm.includes("HDFC LIFE") ||
       norm.includes("LIC")
     ) {
-      return { cat: "EMI & Loans", isSalary: false };
+      return { cat: "EMI & Loans", type: "expense", isSalary: false };
     }
     if (
       norm.includes("CAFE") ||
@@ -143,11 +159,11 @@ function categorizeNarration(narration: string, debit: number, credit: number): 
       norm.includes("INOX") ||
       norm.includes("BAR")
     ) {
-      return { cat: "Entertainment & Dining", isSalary: false };
+      return { cat: "Entertainment & Dining", type: "expense", isSalary: false };
     }
   }
 
-  return { cat: debit > 0 ? "Miscellaneous" : "Salary Income", isSalary: credit > 0 };
+  return { cat: debit > 0 ? "Miscellaneous" : "Other Income", type: debit > 0 ? "expense" : "income", isSalary: false };
 }
 
 function parseCSVLine(line: string): string[] {
@@ -171,71 +187,78 @@ function parseCSVLine(line: string): string[] {
 
 export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }: Props) {
   const [accounts, setAccounts] = React.useState<SalariedBankAccount[]>(loadBankAccounts);
-  const [selectedBankId, setSelectedBankId] = React.useState<string>(accounts[0]?.id || "acc-hdfc");
+  const [selectedBankId, setSelectedBankId] = React.useState<string>("acc-hdfc");
 
-  // Add Account Modal
-  const [addAccountOpen, setAddAccountOpen] = React.useState(false);
-  const [newBankName, setNewBankName] = React.useState("HDFC Bank");
-  const [newAccountType, setNewAccountType] = React.useState<SalariedBankAccount["accountType"]>("Salary Account");
-  const [newLast4, setNewLast4] = React.useState("");
-  const [newBalance, setNewBalance] = React.useState("");
-
-  // Edit Balance Modal
-  const [editBalanceOpen, setEditBalanceOpen] = React.useState(false);
-  const [editingAccountId, setEditingAccountId] = React.useState<string | null>(null);
-  const [updatedBalance, setUpdatedBalance] = React.useState("");
-
-  // Statement Parser State
-  const [csvText, setCsvText] = React.useState("");
+  // Statement Parsing State
+  const [csvText, setCsvText] = React.useState<string>("");
   const [parsedRows, setParsedRows] = React.useState<ParsedBankTxn[]>([]);
   const [fileName, setFileName] = React.useState<string>("");
 
-  // Total balance across accounts
+  // Account Dialogs
+  const [addAccountOpen, setAddAccountOpen] = React.useState(false);
+  const [editBalanceOpen, setEditBalanceOpen] = React.useState(false);
+  const [editingAccountId, setEditingAccountId] = React.useState<string | null>(null);
+  const [updatedBalance, setUpdatedBalance] = React.useState<string>("");
+
+  // New Account Form
+  const [newBankName, setNewBankName] = React.useState<string>("HDFC Bank");
+  const [newAccountType, setNewAccountType] = React.useState<SalariedBankAccount["accountType"]>("Daily UPI / Savings");
+  const [newLast4, setNewLast4] = React.useState<string>("");
+  const [newInitialBalance, setNewInitialBalance] = React.useState<string>("25000");
+
+  // Sync with global store changes
+  React.useEffect(() => {
+    const handleSync = () => {
+      setAccounts(loadBankAccounts());
+    };
+    window.addEventListener("salaried_pro_banks_updated", handleSync);
+    return () => window.removeEventListener("salaried_pro_banks_updated", handleSync);
+  }, []);
+
   const totalBalance = React.useMemo(() => {
     return accounts.reduce((sum, a) => sum + a.balanceRupees, 0);
   }, [accounts]);
 
-  const saveAndSync = (updated: SalariedBankAccount[]) => {
-    setAccounts(updated);
-    saveBankAccounts(updated);
+  const saveAndSync = (newAccounts: SalariedBankAccount[]) => {
+    setAccounts(newAccounts);
+    saveBankAccounts(newAccounts);
   };
 
   const handleAddAccount = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newBankName.trim() || !newLast4.trim()) {
-      toast.error("Please fill in bank name and last 4 digits.");
+    if (!newLast4.trim() || newLast4.length !== 4) {
+      toast.error("Please enter the last 4 digits of your account number.");
       return;
     }
-    const bal = parseInt(newBalance, 10) || 0;
+
+    const bal = Math.round(parseFloat(newInitialBalance.replace(/[^\d.-]/g, "")) || 0);
+
     const newAcc: SalariedBankAccount = {
       id: `acc-${Date.now()}`,
-      bankName: newBankName.trim(),
+      bankName: newBankName,
       accountType: newAccountType,
-      accountNumberLast4: newLast4.slice(-4),
-      balanceRupees: Math.max(0, bal),
-      isPrimarySalary: accounts.length === 0 || newAccountType === "Salary Account",
+      accountNumberLast4: newLast4.trim(),
+      balanceRupees: bal,
+      isPrimarySalary: newAccountType === "Salary Account",
     };
+
     const updated = [...accounts, newAcc];
     saveAndSync(updated);
+    toast.success(`Added ${newBankName} account successfully!`);
     setAddAccountOpen(false);
     setNewLast4("");
-    setNewBalance("");
-    toast.success(`Added ${newAcc.bankName} (••••${newAcc.accountNumberLast4})`);
   };
 
-  const handleUpdateBalance = (e: React.FormEvent) => {
+  const handleSaveBalance = (e: React.FormEvent) => {
     e.preventDefault();
     if (!editingAccountId) return;
-    const bal = parseInt(updatedBalance, 10);
-    if (isNaN(bal) || bal < 0) {
-      toast.error("Please enter a valid balance.");
-      return;
-    }
+
+    const bal = Math.round(parseFloat(updatedBalance.replace(/[^\d.-]/g, "")) || 0);
     const updated = accounts.map((a) => (a.id === editingAccountId ? { ...a, balanceRupees: bal } : a));
     saveAndSync(updated);
+    toast.success("Bank balance updated.");
     setEditBalanceOpen(false);
     setEditingAccountId(null);
-    toast.success("Bank account balance updated.");
   };
 
   // CSV Parsing
@@ -265,7 +288,7 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
 
         if (debit <= 0 && credit <= 0) continue;
 
-        const { cat, isSalary } = categorizeNarration(narration, debit, credit);
+        const { cat, type, isSalary } = categorizeNarration(narration, debit, credit);
 
         rows.push({
           id: `txn-${Date.now()}-${i}`,
@@ -274,6 +297,7 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
           debit: Math.round(debit),
           credit: Math.round(credit),
           balance: balance !== null ? Math.round(balance) : null,
+          type,
           detectedCategory: cat,
           isSalary,
           selected: true,
@@ -302,7 +326,7 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
     reader.readAsText(file);
   };
 
-  // Import parsed rows into user's expenses and adjust bank balance
+  // Import parsed rows into user's ledger (both Income and Expense) and adjust bank balance
   const handleImportToLedger = () => {
     const selectedRows = parsedRows.filter((r) => r.selected);
     if (selectedRows.length === 0) {
@@ -310,28 +334,45 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
       return;
     }
 
-    const newExpenses: PersonalExpense[] = [];
+    const newTxns: PersonalTransaction[] = [];
     let netDebitTotal = 0;
     let netCreditTotal = 0;
+    let debitCount = 0;
+    let creditCount = 0;
 
     for (const r of selectedRows) {
-      if (r.debit > 0) {
-        newExpenses.push({
-          id: `pe-stmt-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+      if (r.credit > 0) {
+        newTxns.push({
+          id: `tx-stmt-cr-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+          type: "income",
           date: r.date,
-          category: (r.detectedCategory === "Salary Income" ? "Miscellaneous" : r.detectedCategory) as PersonalExpenseCategory,
+          category: r.detectedCategory,
+          description: r.narration,
+          amountRupees: r.credit,
+          paymentMode: "Net Banking",
+          bankAccountId: selectedBankId,
+          tags: ["Bank Statement", "Credit"],
+        });
+        netCreditTotal += r.credit;
+        creditCount++;
+      } else if (r.debit > 0) {
+        newTxns.push({
+          id: `tx-stmt-dr-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`,
+          type: "expense",
+          date: r.date,
+          category: r.detectedCategory,
           description: r.narration,
           amountRupees: r.debit,
           paymentMode: "UPI",
+          bankAccountId: selectedBankId,
           tags: ["Bank Statement"],
         });
         netDebitTotal += r.debit;
-      } else if (r.credit > 0) {
-        netCreditTotal += r.credit;
+        debitCount++;
       }
     }
 
-    // Update target bank balance
+    // 1. Update target bank balance
     const targetAcc = accounts.find((a) => a.id === selectedBankId) || accounts[0];
     if (targetAcc) {
       const netChange = netCreditTotal - netDebitTotal;
@@ -340,11 +381,14 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
       saveAndSync(updatedAccounts);
     }
 
-    // Save expenses
-    onExpensesImported(newExpenses);
+    // 2. Save transactions to ledger store
+    const existing = loadTransactions();
+    const combined = [...newTxns, ...existing];
+    saveTransactions(combined);
+    onExpensesImported(newTxns);
 
     toast.success(
-      `Imported ${newExpenses.length} expenses to ledger! Bank balance updated (+${rupee(netCreditTotal)}, -${rupee(netDebitTotal)}).`
+      `Imported ${creditCount} income credits (+${rupee(netCreditTotal)}) and ${debitCount} expense debits (-${rupee(netDebitTotal)}) into your ledger!`
     );
 
     // Clear preview
@@ -439,7 +483,7 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
               </span>
             </h3>
             <p className="text-xs text-ink-3 mt-0.5">
-              Upload your bank statement CSV. The system auto-categorizes UPI spends and updates your ledger and bank balance.
+              Upload your bank statement CSV. The system auto-categorizes both Income (Salary credits) and Expenses (UPI/debits), and automatically updates your balance.
             </p>
           </div>
 
@@ -459,39 +503,41 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
           </div>
         </div>
 
-        {/* Upload Box */}
-        {parsedRows.length === 0 ? (
-          <div className="border-2 border-dashed border-indigo-200 rounded-lg p-8 text-center space-y-3 bg-white/70">
-            <div className="w-12 h-12 rounded-full bg-indigo-50 text-indigo-600 mx-auto flex items-center justify-center">
-              <Icon name="upload_cloud" size={24} />
+        {/* Upload Dropzone */}
+        <div className="border-2 border-dashed border-indigo-200 rounded-xl p-6 text-center bg-white/60 hover:bg-white transition-all">
+          <input
+            type="file"
+            id="statement-upload"
+            accept=".csv,text/csv"
+            onChange={handleFileUpload}
+            className="hidden"
+          />
+          <label htmlFor="statement-upload" className="cursor-pointer block space-y-2">
+            <div className="w-12 h-12 mx-auto rounded-full bg-indigo-50 flex items-center justify-center text-indigo-600">
+              <Icon name="upload-cloud" size={24} />
             </div>
             <div>
-              <p className="text-sm font-semibold text-ink">Drag and drop your Bank Statement (.csv)</p>
-              <p className="text-xs text-ink-3 mt-0.5">
-                Download your monthly statement from HDFC NetBanking, SBI Yono, or ICICI iMobile as CSV
-              </p>
+              <span className="text-sm font-semibold text-indigo-600 hover:underline">
+                Click to upload Bank CSV Statement
+              </span>
+              <span className="text-sm text-ink-3"> or drag and drop</span>
             </div>
-            <div className="pt-2">
-              <label className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-indigo-600 text-white text-xs font-medium cursor-pointer hover:bg-indigo-700 transition-colors">
-                <Icon name="file" size={14} />
-                Browse CSV File
-                <input
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={handleFileUpload}
-                  className="hidden"
-                />
-              </label>
-            </div>
-          </div>
-        ) : (
-          /* Parsed Rows Preview Table */
-          <div className="space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-indigo-50/60 p-3 rounded-md border border-indigo-100">
+            <p className="text-2xs text-ink-3">
+              Standard Indian Net Banking CSV exports (Date, Narration, Ref, Debit, Credit, Balance)
+            </p>
+          </label>
+        </div>
+
+        {/* Parsed Statement Preview Table */}
+        {parsedRows.length > 0 && (
+          <div className="space-y-3 pt-2">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
-                <Icon name="check" size={16} className="text-emerald-600" />
                 <span className="text-xs font-semibold text-ink">
-                  {fileName} ({parsedRows.length} transactions detected)
+                  Parsed {parsedRows.length} transactions from {fileName}
+                </span>
+                <span className="text-2xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                  {parsedRows.filter((r) => r.selected).length} selected
                 </span>
               </div>
 
@@ -499,10 +545,7 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => {
-                    setParsedRows([]);
-                    setCsvText("");
-                  }}
+                  onClick={() => setParsedRows([])}
                   className="text-xs h-8"
                 >
                   Clear
@@ -536,8 +579,8 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
                     <th className="p-3">Date</th>
                     <th className="p-3">Narration / UPI Payee</th>
                     <th className="p-3">Auto-Detected Category</th>
-                    <th className="p-3 text-right">Debit (₹)</th>
-                    <th className="p-3 text-right">Credit (₹)</th>
+                    <th className="p-3 text-right">Debit (Expense ₹)</th>
+                    <th className="p-3 text-right">Credit (Income ₹)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-hairline bg-paper">
@@ -563,29 +606,40 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
                       <td className="p-3 font-mono text-ink-2 whitespace-nowrap">{r.date}</td>
                       <td className="p-3">
                         <div className="font-medium text-ink">{r.narration}</div>
-                        {r.isSalary && (
+                        {r.isSalary ? (
                           <span className="text-2xs font-semibold px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-800">
                             Monthly Salary Credit
                           </span>
-                        )}
+                        ) : r.credit > 0 ? (
+                          <span className="text-2xs font-semibold px-1.5 py-0.2 rounded bg-emerald-50 text-emerald-700">
+                            Income Inflow
+                          </span>
+                        ) : null}
                       </td>
                       <td className="p-3">
                         <select
                           value={r.detectedCategory}
                           onChange={(e) => {
-                            const val = e.target.value as PersonalExpenseCategory;
+                            const val = e.target.value;
                             setParsedRows(
                               parsedRows.map((row, i) => (i === idx ? { ...row, detectedCategory: val } : row))
                             );
                           }}
                           className="px-2 py-1 text-xs border rounded border-hairline bg-paper text-ink"
                         >
-                          {r.isSalary && <option value="Salary Income">Salary Income</option>}
-                          {PERSONAL_EXPENSE_CATEGORIES.map((c) => (
-                            <option key={c.category} value={c.category}>
-                              {c.category}
-                            </option>
-                          ))}
+                          {r.credit > 0 ? (
+                            PERSONAL_INCOME_CATEGORIES.map((c) => (
+                              <option key={c.category} value={c.category}>
+                                {c.category}
+                              </option>
+                            ))
+                          ) : (
+                            PERSONAL_EXPENSE_CATEGORIES.map((c) => (
+                              <option key={c.category} value={c.category}>
+                                {c.category}
+                              </option>
+                            ))
+                          )}
                         </select>
                       </td>
                       <td className="p-3 text-right font-mono font-semibold text-rose-600">
@@ -623,7 +677,8 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
                 <option value="ICICI Bank">ICICI Bank</option>
                 <option value="Axis Bank">Axis Bank</option>
                 <option value="Kotak Mahindra Bank">Kotak Mahindra Bank</option>
-                <option value="Other Bank">Other Bank</option>
+                <option value="Punjab National Bank">Punjab National Bank</option>
+                <option value="Bank of Baroda">Bank of Baroda</option>
               </select>
             </div>
 
@@ -634,32 +689,33 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
                 onChange={(e) => setNewAccountType(e.target.value as SalariedBankAccount["accountType"])}
                 className="w-full px-3 py-2 border rounded border-hairline bg-paper"
               >
-                <option value="Salary Account">Salary Account (Primary Income)</option>
-                <option value="Daily UPI / Savings">Daily UPI / Living Expenses</option>
-                <option value="Emergency Fund">Emergency Fund / Savings Buffer</option>
+                <option value="Salary Account">Salary Account (Primary Salary Credit)</option>
+                <option value="Daily UPI / Savings">Daily UPI / Savings</option>
+                <option value="Emergency Fund">Emergency Fund</option>
               </select>
             </div>
 
             <div>
               <label className="font-medium text-ink block mb-1">Account Number (Last 4 Digits)</label>
               <Input
-                type="text"
-                placeholder="4892"
                 maxLength={4}
                 value={newLast4}
                 onChange={(e) => setNewLast4(e.target.value.replace(/\D/g, ""))}
-                className="font-mono"
+                placeholder="4892"
+                className="h-8 text-xs font-mono"
+                required
               />
             </div>
 
             <div>
-              <label className="font-medium text-ink block mb-1">Current Bank Balance (₹)</label>
+              <label className="font-medium text-ink block mb-1">Current Balance (₹ Whole Rupees)</label>
               <Input
                 type="number"
+                value={newInitialBalance}
+                onChange={(e) => setNewInitialBalance(e.target.value)}
                 placeholder="50000"
-                value={newBalance}
-                onChange={(e) => setNewBalance(e.target.value)}
-                className="font-mono"
+                className="h-8 text-xs font-mono font-bold"
+                required
               />
             </div>
 
@@ -667,8 +723,8 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
               <Button type="button" variant="outline" size="sm" onClick={() => setAddAccountOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white">
-                Add Account
+              <Button type="submit" size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                Save Account
               </Button>
             </DialogFooter>
           </form>
@@ -682,14 +738,16 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
             <DialogTitle>Update Account Balance</DialogTitle>
           </DialogHeader>
 
-          <form onSubmit={handleUpdateBalance} className="space-y-4 text-xs pt-2">
+          <form onSubmit={handleSaveBalance} className="space-y-4 text-xs pt-2">
             <div>
-              <label className="font-medium text-ink block mb-1">Current Balance in Whole Rupees (₹)</label>
+              <label className="font-medium text-ink block mb-1">Current Balance (₹)</label>
               <Input
                 type="number"
                 value={updatedBalance}
                 onChange={(e) => setUpdatedBalance(e.target.value)}
-                className="font-mono text-sm"
+                placeholder="100000"
+                className="h-9 text-sm font-mono font-bold"
+                required
               />
             </div>
 
@@ -697,8 +755,8 @@ export function BankAccountsSection({ onExpensesImported, onNavigateToExpenses }
               <Button type="button" variant="outline" size="sm" onClick={() => setEditBalanceOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" size="sm">
-                Save Balance
+              <Button type="submit" size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                Update Balance
               </Button>
             </DialogFooter>
           </form>

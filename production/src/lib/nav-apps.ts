@@ -193,9 +193,9 @@ export const SALARIED_PRO_CHILDREN: NavItem[] = [
   {
     id: "sp-expenses",
     href: "/employee-hub?tab=expenses",
-    label: "Daily Expenses & Spends",
+    label: "Income & Expenses Ledger",
     icon: "tag",
-    hint: "Record UPI spends, cash flow & daily living expenses",
+    hint: "Record manual salary credits & daily UPI spends",
   },
   {
     id: "sp-banks",
@@ -203,13 +203,6 @@ export const SALARIED_PRO_CHILDREN: NavItem[] = [
     label: "Bank Accounts & Statement Import",
     icon: "building",
     hint: "HDFC, SBI, ICICI accounts with 1-click statement CSV parser",
-  },
-  {
-    id: "sp-income",
-    href: "/employee-hub?tab=income",
-    label: "Salary & Income Setup",
-    icon: "wallet",
-    hint: "Monthly in-hand salary, credit day & employer profile",
   },
   {
     id: "sp-vault",
@@ -232,7 +225,7 @@ export const EMPLOYEE_HUB_ITEM: NavItem = {
   href: "/employee-hub",
   label: "Salaried Pro Hub",
   icon: "award",
-  hint: "Budget & spending limit, daily expenses, bank accounts, statement import, income & ITR assistant",
+  hint: "Budget & spending limit, income & daily expenses ledger, bank accounts & statement import, vault & ITR assistant",
   children: SALARIED_PRO_CHILDREN,
 };
 

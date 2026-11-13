@@ -15,21 +15,17 @@ import {
 } from "@/components/ui/dialog";
 import { rupee } from "@/lib/utils";
 import {
-  type PersonalExpense,
+  type PersonalTransaction,
   type PersonalExpenseCategory,
   PERSONAL_EXPENSE_CATEGORIES,
-} from "./personal-expenses-section";
-import {
   type SalariedBudget,
   loadBudget,
   saveBudget,
-  type SalariedIncome,
-  loadIncome,
 } from "@/lib/employee-hub/personal-finance-store";
 import { toast } from "sonner";
 
 interface Props {
-  expenses: PersonalExpense[];
+  expenses: PersonalTransaction[];
   onNavigateToExpenses: () => void;
   onNavigateToBanks: () => void;
   onAddExpenseClick: () => void;
@@ -42,7 +38,6 @@ export function BudgetOverviewSection({
   onAddExpenseClick,
 }: Props) {
   const [budget, setBudget] = React.useState<SalariedBudget>(loadBudget);
-  const [income] = React.useState<SalariedIncome>(loadIncome);
   const [editBudgetOpen, setEditBudgetOpen] = React.useState(false);
   const [tempBudgetAmount, setTempBudgetAmount] = React.useState<number>(budget.monthlyTargetBudget);
   const [tempCatBudgets, setTempCatBudgets] = React.useState<Record<PersonalExpenseCategory, number>>(
@@ -56,9 +51,18 @@ export function BudgetOverviewSection({
     return () => window.removeEventListener("salaried_pro_budget_updated", handler);
   }, []);
 
-  // Compute spend totals
+  // Compute spend totals (only debits / expenses, not income credits)
   const totalSpent = React.useMemo(() => {
-    return expenses.reduce((sum, e) => sum + e.amountRupees, 0);
+    return expenses
+      .filter((e) => e.type !== "income")
+      .reduce((sum, e) => sum + e.amountRupees, 0);
+  }, [expenses]);
+
+  // Compute income totals from ledger credits
+  const totalIncome = React.useMemo(() => {
+    return expenses
+      .filter((e) => e.type === "income")
+      .reduce((sum, e) => sum + e.amountRupees, 0);
   }, [expenses]);
 
   const targetBudget = budget.monthlyTargetBudget;
@@ -67,11 +71,13 @@ export function BudgetOverviewSection({
   const isOverBudget = totalSpent > targetBudget;
   const isNearLimit = !isOverBudget && budgetSpentPct >= 85;
 
-  // Category breakdown
+  // Category breakdown for expenses
   const categorySpends = React.useMemo(() => {
     const map: Record<string, number> = {};
     for (const exp of expenses) {
-      map[exp.category] = (map[exp.category] || 0) + exp.amountRupees;
+      if (exp.type !== "income") {
+        map[exp.category] = (map[exp.category] || 0) + exp.amountRupees;
+      }
     }
     return map;
   }, [expenses]);
@@ -82,6 +88,8 @@ export function BudgetOverviewSection({
     let wants = 0;
 
     for (const exp of expenses) {
+      if (exp.type === "income") continue;
+
       if (
         exp.category === "Housing & Rent" ||
         exp.category === "Food & Groceries" ||
@@ -96,14 +104,14 @@ export function BudgetOverviewSection({
       }
     }
 
-    const totalIncome = income.monthlyInHand;
-    const needsPct = totalIncome > 0 ? Math.round((needs / totalIncome) * 100) : 0;
-    const wantsPct = totalIncome > 0 ? Math.round((wants / totalIncome) * 100) : 0;
-    const savings = Math.max(0, totalIncome - (needs + wants));
-    const savingsPct = totalIncome > 0 ? Math.round((savings / totalIncome) * 100) : 0;
+    const effectiveIncome = totalIncome > 0 ? totalIncome : (targetBudget || 85000);
+    const needsPct = effectiveIncome > 0 ? Math.round((needs / effectiveIncome) * 100) : 0;
+    const wantsPct = effectiveIncome > 0 ? Math.round((wants / effectiveIncome) * 100) : 0;
+    const savings = Math.max(0, effectiveIncome - (needs + wants));
+    const savingsPct = effectiveIncome > 0 ? Math.round((savings / effectiveIncome) * 100) : 0;
 
-    return { needs, wants, savings, needsPct, wantsPct, savingsPct };
-  }, [expenses, income.monthlyInHand]);
+    return { needs, wants, savings, needsPct, wantsPct, savingsPct, effectiveIncome };
+  }, [expenses, totalIncome, targetBudget]);
 
   const handleSaveBudget = (e: React.FormEvent) => {
     e.preventDefault();
@@ -161,165 +169,159 @@ export function BudgetOverviewSection({
                 setTempCatBudgets(budget.categoryBudgets);
                 setEditBudgetOpen(true);
               }}
-              className="gap-1.5"
+              className="gap-1.5 text-xs"
             >
               <Icon name="sliders" size={14} />
-              Set Budget Limit
+              Set Budget Goals
             </Button>
             <Button
               variant="primary"
               size="sm"
               onClick={onAddExpenseClick}
-              className="gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white"
+              className="gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
             >
               <Icon name="plus" size={14} />
-              + Add Expense
+              + Record Spend
             </Button>
           </div>
         </div>
 
-        {/* Progress Bar */}
+        {/* Progress Bar Gauge */}
         <div className="mt-4 space-y-2">
-          <div className="w-full bg-paper-2 h-3.5 rounded-full overflow-hidden flex border border-hairline">
+          <div className="w-full bg-paper-2 h-3.5 rounded-full overflow-hidden border border-hairline p-0.5">
             <div
-              className={`h-full transition-all duration-500 rounded-full ${
+              className={`h-full rounded-full transition-all duration-500 ${
                 isOverBudget
                   ? "bg-rose-500"
                   : isNearLimit
                   ? "bg-amber-500"
-                  : "bg-emerald-500"
+                  : "bg-indigo-600"
               }`}
               style={{ width: `${Math.min(100, budgetSpentPct)}%` }}
             />
           </div>
 
-          <div className="flex justify-between text-xs text-ink-3 font-mono">
-            <span>₹0 Spent</span>
-            <span className="font-medium text-ink">
-              {budgetSpentPct}% Used ({rupee(remainingBudget)} left)
-            </span>
-            <span>Target: {rupee(targetBudget)}</span>
+          <div className="flex items-center justify-between text-2xs text-ink-3">
+            <span>₹0</span>
+            <span>50% ({rupee(Math.round(targetBudget * 0.5))})</span>
+            <span>Target Cap: {rupee(targetBudget)}</span>
           </div>
         </div>
       </Card>
 
-      {/* 50-30-20 Indian Salaried Budget Breakdown */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <Card className="p-4 border-l-4 border-l-indigo-500 bg-paper">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-ink-2">Needs (Rent, Bills, Food)</span>
-            <span className="text-2xs font-mono px-2 py-0.5 rounded bg-indigo-50 text-indigo-700 font-semibold">
-              Target: 50%
-            </span>
+      {/* 50 / 30 / 20 Rule Analysis */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-semibold text-ink">50-30-20 Rule Budget Health</h3>
+            <p className="text-2xs text-ink-3">
+              Standard personal finance allocation benchmark based on your total monthly income ({rupee(rule503020.effectiveIncome)})
+            </p>
           </div>
-          <div className="text-2xl font-serif font-bold text-ink mt-2">
-            {rupee(rule503020.needs)}
-          </div>
-          <div className="flex items-center justify-between text-xs text-ink-3 mt-1">
-            <span>{rule503020.needsPct}% of Take-Home</span>
-            <span className={rule503020.needsPct <= 50 ? "text-emerald-600 font-medium" : "text-amber-600"}>
-              {rule503020.needsPct <= 50 ? "Optimal" : "Slightly High"}
-            </span>
-          </div>
-        </Card>
+          <Badge variant="outline" className="text-2xs bg-paper-2">
+            Indian Financial Benchmark
+          </Badge>
+        </div>
 
-        <Card className="p-4 border-l-4 border-l-amber-500 bg-paper">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-ink-2">Wants (Dining, Shopping, OTT)</span>
-            <span className="text-2xs font-mono px-2 py-0.5 rounded bg-amber-50 text-amber-700 font-semibold">
-              Target: 30%
-            </span>
-          </div>
-          <div className="text-2xl font-serif font-bold text-ink mt-2">
-            {rupee(rule503020.wants)}
-          </div>
-          <div className="flex items-center justify-between text-xs text-ink-3 mt-1">
-            <span>{rule503020.wantsPct}% of Take-Home</span>
-            <span className={rule503020.wantsPct <= 30 ? "text-emerald-600 font-medium" : "text-rose-600"}>
-              {rule503020.wantsPct <= 30 ? "In Control" : "Over 30% Limit"}
-            </span>
-          </div>
-        </Card>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          {/* Needs Card */}
+          <Card className="p-4 border border-indigo-100 bg-indigo-50/15">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-indigo-900">Needs (Target 50%)</span>
+              <span className={`text-2xs font-semibold px-2 py-0.5 rounded ${rule503020.needsPct <= 50 ? "bg-emerald-100 text-emerald-800" : "bg-rose-100 text-rose-800"}`}>
+                {rule503020.needsPct}% of Income
+              </span>
+            </div>
+            <div className="text-xl font-serif font-bold text-ink mt-2 font-mono">
+              {rupee(rule503020.needs)}
+            </div>
+            <p className="text-2xs text-ink-3 mt-1">
+              Rent, Groceries, Electricity, Fuel, Health, EMIs
+            </p>
+          </Card>
 
-        <Card className="p-4 border-l-4 border-l-emerald-500 bg-paper">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-ink-2">Monthly Surplus / Savings</span>
-            <span className="text-2xs font-mono px-2 py-0.5 rounded bg-emerald-50 text-emerald-700 font-semibold">
-              Target: 20%+
-            </span>
-          </div>
-          <div className="text-2xl font-serif font-bold text-emerald-600 mt-2">
-            {rupee(rule503020.savings)}
-          </div>
-          <div className="flex items-center justify-between text-xs text-ink-3 mt-1">
-            <span>{rule503020.savingsPct}% Savings Rate</span>
-            <span className="text-emerald-600 font-medium">Ready for SIP &amp; Buffer</span>
-          </div>
-        </Card>
+          {/* Wants Card */}
+          <Card className="p-4 border border-amber-100 bg-amber-50/15">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-amber-900">Wants (Target 30%)</span>
+              <span className={`text-2xs font-semibold px-2 py-0.5 rounded ${rule503020.wantsPct <= 30 ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                {rule503020.wantsPct}% of Income
+              </span>
+            </div>
+            <div className="text-xl font-serif font-bold text-ink mt-2 font-mono">
+              {rupee(rule503020.wants)}
+            </div>
+            <p className="text-2xs text-ink-3 mt-1">
+              Dining, Shopping, Movies, OTT &amp; Subscriptions
+            </p>
+          </Card>
+
+          {/* Savings / Surplus */}
+          <Card className="p-4 border border-emerald-100 bg-emerald-50/15">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold text-emerald-900">Savings &amp; Surplus (Target 20%)</span>
+              <span className={`text-2xs font-semibold px-2 py-0.5 rounded ${rule503020.savingsPct >= 20 ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"}`}>
+                {rule503020.savingsPct}% of Income
+              </span>
+            </div>
+            <div className="text-xl font-serif font-bold text-emerald-700 mt-2 font-mono">
+              {rupee(rule503020.savings)}
+            </div>
+            <p className="text-2xs text-ink-3 mt-1">
+              Retained in your bank accounts &amp; investments
+            </p>
+          </Card>
+        </div>
       </div>
 
-      {/* Category-Wise Progress Bars */}
-      <Card className="p-5 space-y-4">
+      {/* Category-wise Budgets & Breakdown */}
+      <Card className="p-5 border border-border space-y-4">
         <div className="flex items-center justify-between border-b border-hairline pb-3">
           <div>
-            <h3 className="text-sm font-semibold text-ink">Category-Wise Spends &amp; Caps</h3>
-            <p className="text-xs text-ink-3">Track where your salary goes each month</p>
+            <h3 className="text-sm font-semibold text-ink">Category-Wise Spends vs Limits</h3>
+            <p className="text-2xs text-ink-3">Track where your money is actually going against your customized limits</p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" size="sm" onClick={onNavigateToExpenses} className="gap-1.5 text-xs">
-              <Icon name="tag" size={14} />
-              View All Spends ({expenses.length})
-            </Button>
-            <Button variant="outline" size="sm" onClick={onNavigateToBanks} className="gap-1.5 text-xs">
-              <Icon name="upload_cloud" size={14} />
-              Import Bank Statement
-            </Button>
-          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={onNavigateToExpenses}
+            className="text-xs text-indigo-600 hover:text-indigo-800"
+          >
+            View Full Ledger &rarr;
+          </Button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {PERSONAL_EXPENSE_CATEGORIES.map((catItem) => {
-            const spent = categorySpends[catItem.category] || 0;
-            const catBudget = budget.categoryBudgets[catItem.category] || 5000;
-            const pct = catBudget > 0 ? Math.min(100, Math.round((spent / catBudget) * 100)) : 0;
-            const isCatOver = spent > catBudget;
+          {PERSONAL_EXPENSE_CATEGORIES.map((cat) => {
+            const spent = categorySpends[cat.category] || 0;
+            const cap = budget.categoryBudgets[cat.category] || 5000;
+            const pct = cap > 0 ? Math.min(100, Math.round((spent / cap) * 100)) : 0;
+            const isOver = spent > cap;
 
             return (
-              <div
-                key={catItem.category}
-                className="p-3 rounded-lg border border-hairline bg-paper hover:bg-paper-2/30 transition-colors space-y-2"
-              >
+              <div key={cat.category} className="p-3 rounded-lg border border-hairline bg-paper space-y-2">
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="w-7 h-7 rounded-md flex items-center justify-center text-white text-xs"
-                      style={{ backgroundColor: catItem.color }}
-                    >
-                      <Icon name={catItem.icon} size={14} />
-                    </div>
-                    <div>
-                      <span className="text-xs font-semibold text-ink block">{catItem.category}</span>
-                      <span className="text-2xs text-ink-3">Cap: {rupee(catBudget)}</span>
-                    </div>
-                  </div>
-
+                  <span className="text-xs font-medium text-ink flex items-center gap-1.5">
+                    <span
+                      className="w-2.5 h-2.5 rounded-full inline-block"
+                      style={{ backgroundColor: cat.color }}
+                    />
+                    {cat.category}
+                  </span>
                   <div className="text-right">
-                    <span className={`text-xs font-bold font-mono ${isCatOver ? "text-rose-600" : "text-ink"}`}>
+                    <span className={`text-xs font-mono font-semibold ${isOver ? "text-rose-600" : "text-ink"}`}>
                       {rupee(spent)}
                     </span>
-                    <span className="text-2xs text-ink-3 block">
-                      {pct}% of cap
-                    </span>
+                    <span className="text-2xs text-ink-3"> / {rupee(cap)}</span>
                   </div>
                 </div>
 
                 <div className="w-full bg-paper-2 h-2 rounded-full overflow-hidden">
                   <div
-                    className="h-full rounded-full transition-all"
-                    style={{
-                      width: `${pct}%`,
-                      backgroundColor: isCatOver ? "#EF4444" : catItem.color,
-                    }}
+                    className={`h-full rounded-full transition-all duration-300 ${
+                      isOver ? "bg-rose-500" : pct >= 85 ? "bg-amber-500" : "bg-indigo-600"
+                    }`}
+                    style={{ width: `${pct}%` }}
                   />
                 </div>
               </div>
@@ -328,55 +330,58 @@ export function BudgetOverviewSection({
         </div>
       </Card>
 
-      {/* Edit Budget Goals Dialog */}
+      {/* Edit Budget Dialog */}
       <Dialog open={editBudgetOpen} onOpenChange={setEditBudgetOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Configure Monthly Budget Goals</DialogTitle>
+            <DialogTitle>Set Monthly Spending Limits</DialogTitle>
           </DialogHeader>
 
           <form onSubmit={handleSaveBudget} className="space-y-4 text-xs pt-2">
             <div>
               <label className="font-semibold text-ink block mb-1">
-                Total Monthly Target Spending Limit (₹)
+                Overall Monthly Spending Cap (₹ Whole Rupees)
               </label>
               <Input
                 type="number"
                 value={tempBudgetAmount}
-                onChange={(e) => setTempBudgetAmount(Number(e.target.value) || 0)}
-                className="font-mono text-sm"
+                onChange={(e) => setTempBudgetAmount(Number(e.target.value))}
+                className="h-9 font-mono font-bold text-sm"
+                required
               />
-              <span className="text-2xs text-ink-3 mt-1 block">
-                Total cap for all living expenses this month.
-              </span>
+              <p className="text-2xs text-ink-3 mt-1">
+                Your target maximum expenditure for this month.
+              </p>
             </div>
 
-            <div className="space-y-2 pt-2 border-t border-hairline max-h-60 overflow-y-auto pr-1">
+            <div className="border-t border-hairline pt-3 space-y-3">
               <span className="font-semibold text-ink block">Category Limits (₹)</span>
-              {PERSONAL_EXPENSE_CATEGORIES.map((c) => (
-                <div key={c.category} className="flex items-center justify-between gap-3 py-1">
-                  <span className="text-ink-2">{c.category}</span>
-                  <Input
-                    type="number"
-                    value={tempCatBudgets[c.category] || 0}
-                    onChange={(e) =>
-                      setTempCatBudgets({
-                        ...tempCatBudgets,
-                        [c.category]: Number(e.target.value) || 0,
-                      })
-                    }
-                    className="w-28 text-right font-mono text-xs h-8"
-                  />
-                </div>
-              ))}
+              <div className="grid grid-cols-2 gap-3">
+                {PERSONAL_EXPENSE_CATEGORIES.map((cat) => (
+                  <div key={cat.category}>
+                    <label className="text-2xs text-ink-2 block mb-1 truncate">{cat.category}</label>
+                    <Input
+                      type="number"
+                      value={tempCatBudgets[cat.category] ?? 0}
+                      onChange={(e) =>
+                        setTempCatBudgets({
+                          ...tempCatBudgets,
+                          [cat.category]: Number(e.target.value),
+                        })
+                      }
+                      className="h-7 text-xs font-mono"
+                    />
+                  </div>
+                ))}
+              </div>
             </div>
 
-            <DialogFooter className="pt-3">
+            <DialogFooter className="pt-2">
               <Button type="button" variant="outline" size="sm" onClick={() => setEditBudgetOpen(false)}>
                 Cancel
               </Button>
-              <Button type="submit" variant="primary" size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white">
-                Save Budget
+              <Button type="submit" size="sm" className="bg-indigo-600 hover:bg-indigo-700 text-white">
+                Save Budget Goals
               </Button>
             </DialogFooter>
           </form>

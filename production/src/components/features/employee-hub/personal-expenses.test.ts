@@ -110,4 +110,37 @@ describe("Salaried Pro — Personal Expenses & Bank Statement Parsing", () => {
     const savingsRate = Math.round((netSavings / monthlySalary) * 100);
     expect(savingsRate).toBe(71); // 71% savings rate
   });
+
+  it("handles both income credits and expense debits in the financial ledger", () => {
+    interface Txn {
+      type: "income" | "expense";
+      amountRupees: number;
+      category: string;
+    }
+
+    const ledger: Txn[] = [
+      { type: "income", amountRupees: 85000, category: "Salary" },
+      { type: "income", amountRupees: 4500, category: "Freelance / Side Gig" },
+      { type: "expense", amountRupees: 22000, category: "Housing & Rent" },
+      { type: "expense", amountRupees: 6450, category: "Food & Groceries" },
+      { type: "expense", amountRupees: 3500, category: "Fuel & Commute" },
+    ];
+
+    const totalIncome = ledger
+      .filter((t) => t.type === "income")
+      .reduce((sum, t) => sum + t.amountRupees, 0);
+
+    const totalExpense = ledger
+      .filter((t) => t.type === "expense")
+      .reduce((sum, t) => sum + t.amountRupees, 0);
+
+    expect(totalIncome).toBe(89500);
+    expect(totalExpense).toBe(31950);
+
+    const surplus = totalIncome - totalExpense;
+    expect(surplus).toBe(57550);
+
+    const savingsRate = Math.round((surplus / totalIncome) * 100);
+    expect(savingsRate).toBe(64); // 64% savings
+  });
 });
