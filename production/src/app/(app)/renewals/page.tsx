@@ -309,7 +309,6 @@ interface QueueItem {
 
 interface RenewalQueueProps {
   rows: QueueItem[];
-  graceDays: number;
   strong: boolean;
   selected: ReadonlySet<string>;
   onSelect: (ids: string[], on: boolean) => void;
@@ -323,7 +322,7 @@ interface RenewalQueueProps {
   docsState: { loading: boolean; failed: boolean };
 }
 
-function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, onFollowup, names, lastPaid, docsState }: RenewalQueueProps) {
+function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup, names, lastPaid, docsState }: RenewalQueueProps) {
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
      home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
@@ -1166,7 +1165,6 @@ export default function RenewalsPage() {
         <div className="border-t border-hairline">
           <RenewalQueue
             rows={tile ? tileShown : shown[bucketTab]}
-            graceDays={graceDays}
             strong={tile ? tile === "overdue" || tile === "due30" : bucketTab === "overdue" || bucketTab === "due7"}
             selected={selected}
             onSelect={onSelect}

@@ -57,8 +57,7 @@ export function invoiceOwed(i: LastInvoice): number {
   const state = invoicePaymentState(facts);
   if (state !== "unpaid" && state !== "partial") return 0;
   const due = invoiceAmountDue({
-    status: i.status, due_date: i.dueDate, amount: i.amount, net_payable: i.netPayable,
-    paid_amount: i.paidAmount, written_off_at: i.writtenOffAt, adjusted_advances: i.adjustedAdvances,
+    status: i.status, amount: i.amount, net_payable: i.netPayable, paid_amount: i.paidAmount, written_off_at: i.writtenOffAt,
   });
   /* rev-r2738 SAFE note: float dust (0.004) is not "₹0 due" + Record payment. */
   const paise = Math.round(due * 100) / 100;
