@@ -173,9 +173,11 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
   const totalSeats = domains.reduce((s, d) => s + d.seats, 0);
   const lineNet = rate * totalSeats * termYears; // ex-GST, the whole term (R-2712); GST added at quote level
   /* R-2712: the day each subscription comes up for renewal — start + the years paid for. A
-     cleared date means today: the builder dates a line with no start today when it is added. */
-  const startIso = isoDateOf(startDate) ?? istToday();
-  const renewsOn = addMonthsIso(startIso, 12 * termYears);
+     start date that cannot be read is refused (never quietly "today"). A past start is a real
+     back-dated sale and stays allowed; a renewal date that is ALREADY past gets a warning. */
+  const startIso = isoDateOf(startDate);
+  const renewsOn = startIso ? addMonthsIso(startIso, 12 * termYears) : null;
+  const renewalPast = renewsOn != null && renewsOn < istToday();
 
   function handleAdd() {
     if (!item) {
@@ -208,6 +210,12 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
     if (domains.length === 0 || totalSeats <= 0) {
       toast.error("Add domains with seats first.", {
         description: "Type at least one domain with 1 or more seats, or upload a CSV.",
+      });
+      return;
+    }
+    if (!startIso) {
+      toast.error("Pick a start date.", {
+        description: "Choose the day these subscriptions start in the Start date box — a past date is fine.",
       });
       return;
     }
@@ -353,14 +361,21 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
             </div>
             {/* R-2712: one fact, said once — when each subscription starts and comes up for renewal. */}
             <p className="mt-0.5 text-2xs text-ink-3">
-              Each subscription starts {periodDate(startIso)} and renews {periodDate(renewsOn)}.
+              {startIso && renewsOn
+                ? <>Each subscription starts {periodDate(startIso)} and renews {periodDate(renewsOn)}.</>
+                : <span role="alert" className="text-rose">Pick a start date.</span>}
             </p>
+            {renewalPast && renewsOn && (
+              <p role="status" className="mt-0.5 text-2xs text-amber-ink" data-testid="bulk-renewal-past">
+                Renewal date {periodDate(renewsOn)} is already past — each subscription will be due for renewal as soon as it is created.
+              </p>
+            )}
           </div>
         </div>
 
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button type="button" variant="primary" disabled={!item || rate <= 0 || totalSeats <= 0} onClick={handleAdd}>
+          <Button type="button" variant="primary" disabled={!item || rate <= 0 || totalSeats <= 0 || !startIso} onClick={handleAdd}>
             Add bulk line ({domains.length})
           </Button>
         </DialogFooter>

@@ -36,16 +36,15 @@ describe("R-2712 buildBulkLine — years + start date", () => {
     expect("list_rate" in line).toBe(false);
   });
 
-  it("years out of range become a whole number 1–10", () => {
+  it("years must be a whole number 1–10 — anything else is 1 year, as the database reads it", () => {
     const y = (years: number) => buildBulkLine(PLAN, 800, THREE, "annual_yearly", { years });
-    expect(y(0).rate).toBe(800);
-    expect(y(0).years).toBeUndefined();
-    expect(y(-2).rate).toBe(800);
-    expect(y(Number.NaN).rate).toBe(800);
-    expect(y(2.9).years).toBe(2);
-    expect(y(2.9).rate).toBe(1600);
-    expect(y(11).years).toBe(10);
-    expect(y(11).rate).toBe(8000);
+    for (const bad of [0, -2, Number.NaN, 2.9, 11, Number.POSITIVE_INFINITY]) {
+      expect(y(bad).rate).toBe(800);
+      expect(y(bad).cost).toBe(600);
+      expect(y(bad).years).toBeUndefined();
+    }
+    expect([y(2).years, y(2).rate]).toEqual([2, 1600]);
+    expect([y(10).years, y(10).rate]).toEqual([10, 8000]);
   });
 
   it("a past start date is kept (the client already paid); a blank or impossible one is left out", () => {

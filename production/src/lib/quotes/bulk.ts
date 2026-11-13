@@ -11,6 +11,7 @@
 import type { QuoteLineItem, LineCommitment } from "@/lib/supabase/database.types";
 import { isDomainRegistrationLine } from "./seat-lines";
 import { isoDateOf } from "./service-period";
+import { domainLineYears } from "@/lib/provisioning/products";
 
 export interface DomainSeat {
   domain: string;
@@ -43,14 +44,12 @@ export function dedupeDomains(rows: Array<{ domain: string; seats: number }>): D
 
 /** R-2712: what the Bulk dialog may add to the line — the registration term and when it starts. */
 export interface BulkLineTerm {
-  /** "Register for N years": a whole number 1–10 (anything else is brought into that range). */
+  /** "Register for N years": a whole number 1–10; anything else is 1 year — the rule the
+   *  database trigger and domainLineYears apply to a line's `years`. */
   years?: number;
   /** YYYY-MM-DD the subscriptions start on (a past date is fine). Blank / not a real date → left out. */
   startDate?: string | null;
 }
-
-const clampYears = (y: number | undefined) =>
-  Math.max(1, Math.min(10, Math.trunc(typeof y === "number" && Number.isFinite(y) ? y : 1)));
 
 /**
  * R-2712: does this plan get "Register for N years" in the Bulk dialog? The normal line's rule
@@ -81,7 +80,7 @@ export function buildBulkLine(
 ): QuoteLineItem {
   const domains = dedupeDomains(rawDomains);
   const qty = domains.reduce((s, d) => s + d.seats, 0);
-  const years = commitment === "monthly" ? 1 : clampYears(term.years);
+  const years = commitment === "monthly" ? 1 : domainLineYears({ years: term.years });
   const startDate = isoDateOf(term.startDate);
   const line: QuoteLineItem = {
     id: plan.id,

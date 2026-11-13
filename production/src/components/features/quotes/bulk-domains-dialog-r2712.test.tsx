@@ -87,14 +87,39 @@ describe("R-2712 Bulk dialog — Register for N years + Start date", () => {
     expect([added[0].rate, added[0].cost, added[0].years, added[0].start_date]).toEqual([2400, 1800, undefined, "2026-11-13"]);
   });
 
-  it("start date cleared → today, and the summary says so (the builder dates an undated line today anyway)", () => {
+  it("start date cleared → refused with 'Pick a start date.' — never quietly today", () => {
     const added = open();
     pick("it-in");
     type("Start date", "2026-09-01");
     type("Start date", "");
     type("Domain 1", "a1.in");
-    expect(screen.getByTestId("bulk-summary").textContent).toContain("starts 13 Nov 2026 and renews 13 Nov 2027");
+    expect(screen.getByTestId("bulk-summary").textContent).toContain("Pick a start date.");
+    expect(screen.getByTestId("bulk-summary").textContent).not.toContain("renews");
+    const add = screen.getByRole("button", { name: "Add bulk line (1)" }) as HTMLButtonElement;
+    expect(add.disabled).toBe(true);
+    fireEvent.click(add);
+    expect(added).toHaveLength(0);
+    type("Start date", "2026-09-01");
+    expect(add.disabled).toBe(false);
+  });
+
+  it("a past start is allowed; a renewal date already past shows a plain warning and still adds", () => {
+    const added = open();
+    pick("it-in");
+    type("Domain 1", "a1.in");
+    /* Back-dated, renewal still ahead (1 Sep 2026 + 1 year): no warning. */
+    type("Start date", "2026-09-01");
+    expect(screen.queryByTestId("bulk-renewal-past")).toBeNull();
+    /* 1 Apr 2024 + 2 years = 1 Apr 2026, before today (13 Nov 2026): warning. */
+    type("Start date", "2024-04-01");
+    type("Register for", "2");
+    expect(screen.getByTestId("bulk-renewal-past").textContent)
+      .toBe("Renewal date 1 Apr 2026 is already past — each subscription will be due for renewal as soon as it is created.");
+    /* 3 years → 1 Apr 2027: ahead again, the warning goes. */
+    type("Register for", "3");
+    expect(screen.queryByTestId("bulk-renewal-past")).toBeNull();
+    type("Register for", "2");
     fireEvent.click(screen.getByRole("button", { name: "Add bulk line (1)" }));
-    expect(added[0].start_date).toBe("2026-11-13");
+    expect([added[0].start_date, added[0].years]).toEqual(["2024-04-01", 2]);
   });
 });
