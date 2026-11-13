@@ -34,17 +34,25 @@ export function PublicShell({
 }
 
 /** The public website header (site-header.tsx). Kept under this name so the
- *  pages that import it did not have to change. */
+ *  pages that import it did not have to change. Same links as before:
+ *  Pricing, About, Sign in. */
 export function PublicTopBar() {
   return <SiteHeader />;
 }
 
-/** The public website footer (site-footer.tsx). The `mt-16` keeps the gap the
- *  old footer had above it. */
+/** The public website footer, restyled only — its text and links are the
+ *  ones this footer always had. */
 export function PublicFooter() {
   return (
     <div className="mt-16">
-      <SiteFooter />
+      <SiteFooter
+        links={[
+          { href: "/privacy", label: "Privacy" },
+          { href: "/terms", label: "Terms" },
+          { href: "/about", label: "About" },
+        ]}
+        note={`© ${new Date().getFullYear()} Excel Technologies Pvt Ltd · Mumbai, India`}
+      />
     </div>
   );
 }
@@ -110,8 +118,8 @@ export function FooterMeta() {
   return (
     <p className="text-[12px] text-ink-3 italic border-t border-hairline pt-6 mt-8">
       This document is provided for transparency and compliance with the DPDP
-      Act 2023. It is not a substitute for legal advice. ANUTECH DIGITAL PVT
-      LTD reserves the right to update this policy as our practices or
+      Act 2023. It is not a substitute for legal advice. Excel Technologies Pvt
+      Ltd reserves the right to update this policy as our practices or
       applicable law evolves.
     </p>
   );

@@ -37,7 +37,7 @@ export default async function HomePage({
   return (
     // raiseBackToTop: the WhatsApp button below already sits bottom-right.
     <SiteTheme raiseBackToTop>
-      <SiteHeader />
+      <SiteHeader showStartFree />
       <main className="relative">
         <Hero />
         <TrustRibbon />
@@ -48,7 +48,16 @@ export default async function HomePage({
         <BetaPricing />
         <FinalCta />
       </main>
-      <SiteFooter />
+      <SiteFooter
+        showBrand
+        links={[
+          { href: "/pricing", label: "Pricing" },
+          { href: "/about", label: "About" },
+          { href: "/privacy", label: "Privacy" },
+          { href: "/terms", label: "Terms" },
+        ]}
+        note="Excel Technologies Pvt Ltd · Mumbai, India · Made with care for Indian resellers"
+      />
 
       {/* Floating WhatsApp Chat Widget for Instant B2B Trust */}
       <a

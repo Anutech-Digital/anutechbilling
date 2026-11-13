@@ -6,7 +6,10 @@
  * Hosting, Email…; linking them would only produce 404s):
  *   - md and up    nav links inline, Sign in + Start free, theme switch
  *   - below md     links move into a drawer behind the menu button
- *   - below sm     Sign in and Start free move into the drawer too
+ *   - below sm     Sign in (and Start free) move into the drawer too
+ *
+ * Theme only: the links are the ones these pages already had. "Start free"
+ * was only ever in the landing page's header, so only that page asks for it.
  */
 "use client";
 
@@ -22,7 +25,12 @@ const NAV: ReadonlyArray<{ href: string; label: string }> = [
   { href: "/about", label: "About" },
 ];
 
-export function SiteHeader() {
+interface SiteHeaderProps {
+  /** The landing page's header had a "Start free" button; the others did not. */
+  showStartFree?: boolean;
+}
+
+export function SiteHeader({ showStartFree = false }: SiteHeaderProps) {
   const pathname = usePathname();
   const [open, setOpen] = React.useState(false);
 
@@ -62,9 +70,11 @@ export function SiteHeader() {
         <Link href="/login" className="site-btn-outline hidden justify-center sm:inline-flex">
           Sign in
         </Link>
-        <Button asChild variant="cta" className="hidden h-11 px-5 text-[15px] sm:inline-flex">
-          <Link href="/signup">Start free</Link>
-        </Button>
+        {showStartFree && (
+          <Button asChild variant="cta" className="hidden h-11 px-5 text-[15px] sm:inline-flex">
+            <Link href="/signup">Start free</Link>
+          </Button>
+        )}
         <SiteThemeToggle />
         <button
           type="button"
@@ -97,9 +107,11 @@ export function SiteHeader() {
               <Link href="/login" className="site-btn-outline flex min-h-[50px] flex-[1_1_200px] justify-center">
                 Sign in
               </Link>
-              <Button asChild variant="cta" className="h-[50px] flex-[1_1_200px] text-base">
-                <Link href="/signup">Start free</Link>
-              </Button>
+              {showStartFree && (
+                <Button asChild variant="cta" className="h-[50px] flex-[1_1_200px] text-base">
+                  <Link href="/signup">Start free</Link>
+                </Button>
+              )}
             </div>
           </nav>
         </div>
