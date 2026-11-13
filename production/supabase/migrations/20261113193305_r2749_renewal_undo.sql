@@ -28,9 +28,13 @@
 --   Called by: invoices_r2749_unpaid_part_unrenews (a marked part's invoice leaves 'paid') and
 --   subscription_billings_r2749_part_released_unrenews (a marked part's invoice link is cleared / replaced —
 --   the full credit note path). delete_payment already refuses once a part invoice exists.
--- * Won't renew (auto_renew → false, every path: drawer, Cancel → At end of term, portal) is REFUSED while the
---   renewal part of the current renewal_date is billed and unpaid (live proforma or unpaid invoice): "Cancel
---   proforma … first". Chosen over letting it lapse: a lapsed sub with a paid proforma is money for a term
+--   HELD instead of moved (one 'held' row, listed in the report for the owner): the subscription is not active /
+--   paused (a cancelled / expired sub keeps its recorded end), a quote is linked on renewal_quote_id (it prices
+--   the term after the current date — moving under it would bill the wrong term), or a seat cut is scheduled
+--   for the end of the current term (moving the date would move / cancel the cut, R-2613).
+-- * Won't renew (auto_renew → false on an active / paused sub, every path: drawer, Cancel → At end of term,
+--   portal) is REFUSED while the renewal part of the current renewal_date is billed and unpaid (live proforma, or
+--   a draft / pending / overdue part invoice): "Cancel … first". Cancel subscription → Now is not held. Chosen over letting it lapse: a lapsed sub with a paid proforma is money for a term
 --   that never starts.
 -- * subscriptions_r2749_reactivated_renews: status back to active / paused → roll_paid_renewal_terms (a paid
 --   part that waited on an expired sub — old data, or expired by hand — renews then).
@@ -49,15 +53,18 @@ create table if not exists public.subscription_renewal_moves (
   tenant_id       uuid not null references public.tenants(id) on delete cascade,
   subscription_id uuid not null references public.subscriptions(id) on delete cascade,
   billing_id      uuid references public.subscription_billings(id) on delete set null,
-  direction       text not null check (direction in ('forward', 'back')),
+  direction       text not null,
   from_date       date not null,
   to_date         date not null,
   invoice_id      text,
   why             text,
   created_at      timestamptz not null default now()
 );
+alter table public.subscription_renewal_moves drop constraint if exists subscription_renewal_moves_direction_check;
+alter table public.subscription_renewal_moves add constraint subscription_renewal_moves_direction_check
+  check (direction in ('forward', 'back', 'held'));
 comment on table public.subscription_renewal_moves is
-  'R-2749: every automatic move of subscriptions.renewal_date by a renewal part — forward when the part was paid (R-2735), back when that payment was undone. Written only by security-definer functions.';
+  'R-2749: every automatic move of subscriptions.renewal_date by a renewal part — forward when the part was paid (R-2735), back when that payment was undone, held when it was undone but the date was left (not active / quote linked / seat cut scheduled). Written only by security-definer functions.';
 create index if not exists subscription_renewal_moves_sub_idx
   on public.subscription_renewal_moves (subscription_id, to_date, id);
 create index if not exists subscription_renewal_moves_tenant_idx
@@ -152,9 +159,14 @@ security definer
 set search_path = public
 as $$
 /* R-2749: a renewal part's payment was undone → move renewal_date back to the term's renews_from, once.
-   Walks back the chain of logged 'forward' moves that ends at the CURRENT renewal_date (a 'back' row, or no
-   row, ends it — a hand-changed date is never touched). The oldest term in that chain whose part is no longer
-   paid decides: renewal_date goes back to its renews_from (newer terms rolled on top wait behind it again).
+   Walks back the chain of ACTIVE 'forward' moves (not yet reversed by a later 'back' of the same term) that
+   ends at the CURRENT renewal_date — no such row (a hand-changed date) ends it, so a hand-changed date is never
+   touched. The oldest term in that chain whose part is no longer paid decides: renewal_date goes back to its
+   renews_from (newer terms rolled on top wait behind it again), renewal_state 'pending', reminders reset.
+   HELD (date left, one 'held' row for the report — the owner decides): the subscription is not active / paused
+   (cancelled / expired — its recorded end stays), a renewal / extension / plan-change quote is linked on
+   renewal_quote_id (it prices the term after the current date), or a seat cut is scheduled for the end of the
+   current term (moving the date would move or cancel it, R-2613).
    Returns the number of terms moved back. */
 declare
   v_trusted boolean;
@@ -165,6 +177,8 @@ declare
   v_chain   bigint[] := '{}';
   v_upto    integer := 0;
   v_target  date;
+  v_oldest  record;
+  v_hold    text;
   v_n       integer;
   v_paid    boolean;
 begin
@@ -174,7 +188,7 @@ begin
   if v_caller is null and not v_trusted then
     raise exception 'No company on this login — only a user of the subscription''s company can change it' using errcode = '28000';
   end if;
-  select s.id, s.tenant_id, s.renewal_date into v_sub
+  select s.id, s.tenant_id, s.renewal_date, s.status::text as status, s.renewal_quote_id into v_sub
     from public.subscriptions s where s.id = p_subscription_id for update;
   if not found or v_sub.renewal_date is null then
     return 0;
@@ -185,12 +199,17 @@ begin
 
   v_date := v_sub.renewal_date;
   for i in 1..24 loop
-    select m.id, m.direction, m.from_date, m.to_date into v_m
+    select m.id, m.billing_id, m.from_date, m.to_date into v_m
       from public.subscription_renewal_moves m
-     where m.subscription_id = v_sub.id and m.tenant_id = v_sub.tenant_id and m.to_date = v_date
+     where m.subscription_id = v_sub.id and m.tenant_id = v_sub.tenant_id
+       and m.direction = 'forward' and m.to_date = v_date
+       and not exists (select 1 from public.subscription_renewal_moves r
+                        where r.subscription_id = m.subscription_id and r.tenant_id = m.tenant_id
+                          and r.direction = 'back' and r.id > m.id
+                          and r.from_date = m.to_date and r.to_date = m.from_date)
      order by m.id desc
      limit 1;
-    exit when not found or v_m.direction <> 'forward';
+    exit when not found;
     v_chain := v_chain || v_m.id;
     select exists (
       select 1 from public.subscription_billings b
@@ -201,6 +220,7 @@ begin
     if not v_paid then
       v_upto := i;            -- walking back = older; the last hit is the OLDEST unpaid term
       v_target := v_m.from_date;
+      v_oldest := v_m;
     end if;
     v_date := v_m.from_date;
   end loop;
@@ -208,10 +228,32 @@ begin
     return 0;
   end if;
 
+  v_hold := case
+    when v_sub.status not in ('active', 'paused') then 'subscription is ' || v_sub.status || ' — its end date is kept'
+    when v_sub.renewal_quote_id is not null then 'quote ' || v_sub.renewal_quote_id || ' is linked for the next term'
+    when exists (select 1 from public.subscription_seat_reductions r
+                  where r.tenant_id = v_sub.tenant_id and r.subscription_id = v_sub.id
+                    and r.status = 'scheduled' and r.timing = 'end_of_term' and r.effective_date = v_sub.renewal_date)
+      then 'a seat cut is scheduled for ' || to_char(v_sub.renewal_date, 'DD Mon YYYY')
+  end;
+  if v_hold is not null then
+    if not exists (select 1 from public.subscription_renewal_moves h
+                    where h.subscription_id = v_sub.id and h.tenant_id = v_sub.tenant_id and h.direction = 'held'
+                      and h.id > v_oldest.id and h.from_date = v_sub.renewal_date and h.to_date = v_target) then
+      insert into public.subscription_renewal_moves (tenant_id, subscription_id, billing_id, direction, from_date, to_date, invoice_id, why)
+      values (v_sub.tenant_id, v_sub.id, v_oldest.billing_id, 'held', v_sub.renewal_date, v_target, null,
+              coalesce(nullif(btrim(p_why), ''), 'renewal part payment undone') || ' — NOT moved back: ' || v_hold);
+    end if;
+    return 0;
+  end if;
+
   update public.subscriptions
      set renewal_date = v_target,
-         renewal_state = 'pending'
-   where id = v_sub.id and tenant_id = v_sub.tenant_id and renewal_date = v_sub.renewal_date;
+         renewal_state = 'pending',
+         reminder_count = 0,
+         last_reminder_sent_at_v2 = null
+   where id = v_sub.id and tenant_id = v_sub.tenant_id and renewal_date = v_sub.renewal_date
+     and renewal_quote_id is null;
   get diagnostics v_n = row_count;
   if v_n = 0 then
     return 0;
@@ -288,8 +330,10 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-/* R-2749: Won't renew (auto_renew → false) is refused while the part that renews the CURRENT renewal_date is
-   billed and unpaid — its payment would bill a term that never starts. Cancel that proforma first. */
+/* R-2749: Won't renew (auto_renew → false on a running subscription) is refused while the part that renews the
+   CURRENT renewal_date is billed and unpaid — a live proforma, or an unpaid (draft / pending / overdue) part
+   invoice; its payment would bill a term that never starts. Cancel that document first. Cancel subscription
+   (status → cancelled in the same update) is not held here. A void invoice is not open. */
 declare
   v_doc text;
   v_from date;
@@ -305,8 +349,8 @@ begin
        order by q2.created_at desc limit 1) q on true
    where b.subscription_id = new.id and b.tenant_id = new.tenant_id
      and b.renews_from = new.renewal_date and b.renews_to is not null
-     and coalesce(i.status::text, '') <> 'paid'
-     and (b.invoice_id is not null or q.id is not null)
+     and ((b.invoice_id is not null and i.status::text in ('draft', 'pending', 'overdue'))
+          or (b.invoice_id is null and q.id is not null))
    order by b.term_start, b.period_index
    limit 1;
   if found then
@@ -323,7 +367,7 @@ drop trigger if exists subscriptions_r2749_wont_renew_open_part on public.subscr
 create trigger subscriptions_r2749_wont_renew_open_part
   before update of auto_renew on public.subscriptions
   for each row
-  when (new.auto_renew is false and old.auto_renew is distinct from false)
+  when (new.auto_renew is false and old.auto_renew is distinct from false and new.status in ('active', 'paused'))
   execute function public.tg_r2749_wont_renew_open_part();
 
 -- ── 5. Made active again → a paid part that waited renews ────────────────────────────────────────────
