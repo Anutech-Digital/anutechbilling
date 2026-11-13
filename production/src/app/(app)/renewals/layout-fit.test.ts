@@ -25,11 +25,11 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
     expect(page).not.toMatch(/"hidden xl:block"|"xl:hidden/);
   });
 
-  it("column budget: fixed columns + flexible minimums ≤ the ~924px card, Action inside it", () => {
+  it("column budget: fixed columns + flexible minimums ≤ the ~936px card (974 measured at 1280, minus a Windows scrollbar and 20px), Action inside it", () => {
     const fixed = QUEUE_TABLE_COLS.reduce((s, c) => s + (c.width ?? 0), 0);
     const flex = QUEUE_TABLE_COLS.filter((c) => c.width == null);
     expect(flex.map((c) => c.key)).toEqual(["customer", "product"]);
-    expect(QUEUE_TABLE_BUDGET_PX).toBeLessThanOrEqual(924);
+    expect(QUEUE_TABLE_BUDGET_PX).toBeLessThanOrEqual(936);
     expect(fixed + flex.length * QUEUE_FLEX_MIN_PX).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
     expect(QUEUE_TABLE_COLS.map((c) => c.key)).toEqual(["select", "customer", "product", "due", "amount", "status", "invoice", "actions"]);
     expect(QUEUE_TABLE_COLS.map((c) => c.label)).toEqual(["", "Customer", "Product & period", "Due", "Amount", "Status", "Last invoice", "Action"]);
@@ -43,15 +43,17 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
   });
 
   it("two lines per cell: names / ids / periods truncate with a tooltip; money and status never truncate", () => {
-    expect(cells).toMatch(/className="block truncate font-semibold text-ink hover:underline" title=\{name\}/);
+    expect(cells).toMatch(/className="block truncate font-semibold text-ink hover:underline" title=\{nameTitle\}/);
     expect(cells).toMatch(/truncate text-ink" title=\{line1\}/);
     /* the invoice state (money + status) wraps, never cut */
     expect(cells).toMatch(/className=\{cn\("break-words tabular-nums", TONE\[state\.tone\]\)\} data-testid="renewal-last-invoice-status"/);
-    /* the stage chip wraps inside the table (Badge is whitespace-nowrap by default) */
-    expect(page).toContain('className={compact ? "h-auto whitespace-normal text-left" : undefined}');
+    /* the stage chip may wrap in the table (Badge is whitespace-nowrap by default); its period is in
+       Product & period and its day count / amount is line 2 (compactStage) */
+    expect(page).toContain('className={compact ? "max-w-full whitespace-normal text-left" : undefined}');
     expect(page).toContain("<StageChip stage={stage} compact />");
-    /* the amount never wraps or cuts */
-    expect(page).toContain('<p className="whitespace-nowrap font-medium tabular-nums text-ink">{amount.text}</p>');
+    expect(page).toContain("const c = compact ? compactStage(stage)");
+    /* the amount is never cut (it may wrap) */
+    expect(page).toContain('<p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>');
   });
 
   it("the table row carries no Last paid / emails sent / follow-up / vendor-hold / prior-due lines (flags + drawer)", () => {
@@ -64,7 +66,7 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
 
   it("R-2422: Action is ONE button + ⋯ on one line", () => {
     const actions = QUEUE_TABLE_COLS.find((c) => c.key === "actions")!;
-    expect(actions.width).toBeLessThanOrEqual(176);
+    expect(actions.width).toBeLessThanOrEqual(184);
     expect(page).not.toContain("extra={");
     expect(page).not.toMatch(/<AiDraftButton|<VoiceNoteButton/);
     const uses = page.match(/<RenewalActions [^>]*\/>/g) ?? [];
@@ -74,7 +76,7 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
 
   it("the card layout keeps payment frequency + Last paid; one batched Last paid read", () => {
     expect((page.match(/<AmountCell amount=\{amount\} frequency=\{frequency\}/g) ?? []).length).toBe(1);
-    expect(page).toContain("term={nextTermWords(sub)} frequency={frequency}");
+    expect(page).toContain("term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency}");
     expect((page.match(/useRenewalLastPaid\(/g) ?? []).length).toBe(1);
     expect(page).toContain("useRenewalLastPaid(listed)");
   });

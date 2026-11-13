@@ -32,3 +32,20 @@ describe("R-2759 row cells", () => {
     expect(lastInvoiceOf(undefined)).toEqual({ invoice: null, earlier: [] });
   });
 });
+
+describe("R-2759 code-review fixes", () => {
+  it("short term for the table line", async () => {
+    const { nextTermShort } = await import("./row-cells");
+    expect(nextTermShort({ renewal_date: "2026-11-30", start_date: "2025-12-01", term_months: 12 })).toBe("1 Dec 26 – 30 Nov 27");
+  });
+  it("compact chip: the period leaves the chip (Product & period says it); day count / amount is line 2", async () => {
+    const { compactStage } = await import("./row-cells");
+    expect(compactStage({ key: "sent", label: "Renewal quote sent · 1 Dec 2026 – 30 Nov 2027", note: "Overdue 3d" }))
+      .toEqual({ chip: "Renewal quote sent", line2: "Overdue 3d" });
+    expect(compactStage({ key: "invoiced", label: "Invoiced · ₹23,010 overdue 43d", note: "Oct 2026" }))
+      .toEqual({ chip: "Invoiced", line2: "₹23,010 overdue 43d" });
+    expect(compactStage({ key: "ending", label: "Won't renew · ends 24 Nov 2026", note: null }))
+      .toEqual({ chip: "Won't renew", line2: "ends 24 Nov 2026" });
+    expect(compactStage({ key: "due", label: "Due in 6d", note: null })).toEqual({ chip: "Due in 6d", line2: null });
+  });
+});
