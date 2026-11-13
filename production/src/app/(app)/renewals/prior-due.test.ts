@@ -41,7 +41,7 @@ describe("R-1703: 'Previous term ₹X still unpaid'", () => {
 
   it("the Renewals rows (phone + desktop) and the quote page render it", () => {
     const renewals = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
-    expect(renewals).toMatch(/import \{ priorTermDueText \} from "\.\/prior-due"/);
+    expect(renewals).toMatch(/import \{ (priorTermDue, )?priorTermDueText \} from "\.\/prior-due"/);  // R-2747: also priorTermDue
     expect(renewals.match(/const priorDue = priorTermDueText\(sub\)/g)?.length).toBe(2);
     expect(renewals.match(/\{priorDue\}/g)?.length).toBe(2);
 

@@ -419,6 +419,22 @@ export function invoiceStatusWords(i: LastInvoice, todayIst: string): { text: st
   return { text: `Unpaid · ${money}`, tone: "warn" };
 }
 
+/**
+ * R-2747 — a row says "Previous term ₹x still unpaid" (prior-due.ts) but shows no unpaid invoice:
+ * say plainly why, never invent one. null = nothing owed, or the shown invoice already says it.
+ * (Seen on SCN Kochi Hosting / SCN Delhi Traders: the balance is only on
+ * subscriptions.outstanding_amount — no quote, no invoice linked to the subscription.)
+ */
+export function priorDueInvoiceGap(docs: LastDocs | undefined, priorDue: number, todayIst: string): string | null {
+  if (!(priorDue > 0)) return null;
+  const invoice = docs?.invoice ?? null;
+  if (invoice) {
+    const { tone } = invoiceStatusWords(invoice, todayIst);
+    return tone === "warn" || tone === "danger" ? null : "No unpaid invoice in the app for this amount";
+  }
+  return docs?.quote ? "No invoice raised for this amount yet" : "No invoice in the app for this amount — it is only on the subscription";
+}
+
 /* "Nov 2026" = periodDate("2026-11-01") without its day — the paper's own formatter (service-period.ts). */
 const monYear = (iso: string) => periodDate(`${iso.slice(0, 7)}-01`).replace(/^1 /, "");
 const dayMonYear = (iso: string) => periodDate(iso.slice(0, 10));

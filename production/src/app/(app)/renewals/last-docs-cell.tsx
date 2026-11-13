@@ -5,41 +5,47 @@
  * "Expires in N days" for a "Renewal quote sent" row. Rules and words: ./last-docs.ts.
  * R-2737: the invoice line says its real state (Overdue Nd / Cancelled / USD …) and both lines the
  * period the document covers.
+ * R-2747: the lines wrap (never cut), and a "Previous term ₹x still unpaid" row with no unpaid
+ * invoice says why.
  */
 import Link from "next/link";
 import { cn, formatDate } from "@/lib/utils";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import {
-  daysBetweenIst, invoiceStatusWords, quoteExpiryText, quoteStateLabel, renewalDueText,
+  daysBetweenIst, invoiceStatusWords, priorDueInvoiceGap, quoteExpiryText, quoteStateLabel, renewalDueText,
   type DocTone, type LastDocs, type SentRenewal,
 } from "./last-docs";
 
 function DocLink({ id, href }: { id: string; href: string | null }) {
   return href
-    ? <Link href={href as never} className="font-mono underline underline-offset-2 hover:text-ink">{id}</Link>
-    : <span className="font-mono">{id}</span>;
+    ? <Link href={href as never} className="whitespace-nowrap font-mono underline underline-offset-2 hover:text-ink">{id}</Link>
+    : <span className="whitespace-nowrap font-mono">{id}</span>;
 }
 
-export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, todayIst, className }: {
+export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, todayIst, priorDue = 0, className }: {
   docs: LastDocs | undefined;
   loading: boolean;
   failed: boolean;
   canQuotes: boolean;
   canInvoices: boolean;
   todayIst: string;
+  /** R-2747: the row's "Previous term ₹x still unpaid" amount (prior-due.ts priorTermDue); 0 = none. */
+  priorDue?: number;
   className?: string;
 }) {
   if (loading) return null;
   if (failed) return <p className={cn("text-2xs text-ink-3", className)}>Last quote / invoice: couldn&apos;t load — reload the page</p>;
   const quote = docs?.quote ?? null;
   const invoice = docs?.invoice ?? null;
-  if (!quote && !invoice) return null;
+  const gap = priorDueInvoiceGap(docs, priorDue, todayIst);
+  if (!quote && !invoice && !gap) return null;
   const quoteState = quote ? quoteStateLabel(quote, todayIst) : "";
   const invState = invoice ? invoiceStatusWords(invoice, todayIst) : null;
-  /* R-2737: line 2 says the period the document covers (else the invoice's date). Every line is cut
-     with an ellipsis inside the column (w-full min-w-0 — the Actions cell is a flex-col items-start,
-     which gave this block its max-content width and let the text run past the column); the full
-     words are in the title. */
+  /* R-2737: line 2 says the period the document covers (else the invoice's date). The block is
+     bounded to the column (w-full min-w-0 — the Actions cell is a flex-col items-start, which gave it
+     its max-content width and let the text run past the column).
+     R-2747: every line WRAPS (break-words), never cut — at 1568px the table's Actions column cut
+     "Overdue 10d · ₹33,232 due" to "Ove…". A document number never splits (whitespace-nowrap). */
   return (
     <div className={cn("w-full min-w-0 max-w-full space-y-0.5 text-2xs text-ink-2", className)} data-testid="renewal-last-docs">
       {quote && (
@@ -47,12 +53,12 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
           data-doc-line="quote"
           title={`Last quote sent: ${quote.id} · ${formatDate(quote.date)} · ${quoteState}${quote.period ? ` · for ${quote.period}` : ""}`}
         >
-          <p className="truncate">
+          <p className="break-words">
             <span className="text-ink-3">Quote </span>
             <DocLink id={quote.id} href={canQuotes ? `/quotes/${encodeURIComponent(quote.id)}` : null} />
             {" · "}<span className="tabular-nums">{formatDate(quote.date)}</span>{" · "}{quoteState}
           </p>
-          {quote.period && <p className="truncate tabular-nums text-ink-3" data-testid="renewal-last-quote-period">for {quote.period}</p>}
+          {quote.period && <p className="break-words tabular-nums text-ink-3" data-testid="renewal-last-quote-period">for {quote.period}</p>}
         </div>
       )}
       {invoice && invState && (
@@ -60,18 +66,19 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
           data-doc-line="invoice"
           title={`Last invoice: ${invoice.id}${invoice.date ? ` · dated ${formatDate(invoice.date)}` : ""} · ${invState.text}${invoice.period ? ` · for ${invoice.period}` : ""}`}
         >
-          <p className={cn("truncate", invState.tone === "muted" && "text-ink-3")}>
+          <p className={cn("break-words", invState.tone === "muted" && "text-ink-3")}>
             <span className="text-ink-3">Invoice </span>
             <DocLink id={invoice.id} href={canInvoices ? invoiceHref(invoice.id) : null} />
             {" · "}<span className={TONE[invState.tone]} data-testid="renewal-last-invoice-status">{invState.text}</span>
           </p>
           {(invoice.period || invoice.date) && (
-            <p className="truncate tabular-nums text-ink-3" data-testid="renewal-last-invoice-period">
+            <p className="break-words tabular-nums text-ink-3" data-testid="renewal-last-invoice-period">
               {invoice.period ? `for ${invoice.period}` : `dated ${formatDate(invoice.date)}`}
             </p>
           )}
         </div>
       )}
+      {gap && <p className="break-words text-ink-3" data-testid="renewal-prior-due-no-invoice">{gap}</p>}
     </div>
   );
 }

@@ -66,7 +66,7 @@ import {
   type RenewalRowLike,
 } from "./reminders";
 import { renewalRisk } from "./risk";
-import { priorTermDueText } from "./prior-due";
+import { priorTermDue, priorTermDueText } from "./prior-due";
 import { openRenewalQuoteMap, openRenewalQuoteStatus, withRenewalQuote } from "./open-renewal-quotes";
 import { renewalRowAction, type RowAction } from "./row-action";
 import { GraceOverCard } from "./grace-over-card";
@@ -341,7 +341,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
     return (
       <>
         {keepActionLine && <RowActionLine action={action} canQuotes={canQuotes} className={className} />}
-        <LastDocsLines docs={item.docs} loading={docsState.loading} failed={docsState.failed} canQuotes={canQuotes} canInvoices={canInvoices} todayIst={todayIst} className={className} />
+        <LastDocsLines docs={item.docs} loading={docsState.loading} failed={docsState.failed} canQuotes={canQuotes} canInvoices={canInvoices} todayIst={todayIst} priorDue={priorTermDue(item.sub)} className={className} />
       </>
     );
   };

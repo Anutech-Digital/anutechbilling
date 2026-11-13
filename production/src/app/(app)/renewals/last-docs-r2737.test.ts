@@ -263,14 +263,14 @@ describe("R-2737 which invoice + which period source", () => {
 describe("R-2737 (d) the cell never widens the table; one batched read", () => {
   const cell = readFileSync("src/app/(app)/renewals/last-docs-cell.tsx", "utf8");
   const data = readFileSync("src/app/(app)/renewals/last-docs-data.ts", "utf8");
-  it("the wrapper is bounded (w-full min-w-0) and every line truncates with the full text in a title", () => {
+  it("the wrapper is bounded (w-full min-w-0) and every line stays inside the column, the full text in a title", () => {
     const block = cell.slice(cell.indexOf("export function LastDocsLines"), cell.indexOf("export function SentDueLines"));
     expect(block).toMatch(/"w-full min-w-0 max-w-full[^"]*"[^>]*data-testid="renewal-last-docs"/);
-    /* every text line inside the docs block is cut inside the column */
+    /* every text line inside the docs block stays inside the column — R-2747: it wraps, never cut */
     const docsBlock = block.slice(block.indexOf('data-testid="renewal-last-docs"'));
     const paras = docsBlock.match(/<p className=[^>]*>/g) ?? [];
-    expect(paras.length).toBe(4);
-    for (const p of paras) expect(p).toMatch(/truncate/);
+    expect(paras.length).toBe(5);
+    for (const p of paras) expect(p).toMatch(/break-words/);
     /* the full words live in a title on each document */
     expect((block.match(/title=\{`Last (quote sent|invoice):/g) ?? []).length).toBe(2);
     expect(cell).not.toContain("invoicePaidText");
