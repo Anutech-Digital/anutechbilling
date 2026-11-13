@@ -21,8 +21,9 @@ import Link from "next/link";
 import { cn, formatDate } from "@/lib/utils";
 import { Icon } from "@/components/ui/icon";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
-import { followingTermStart } from "@/lib/billing/subscription-schedule";
-import { addDaysIso, addMonthsIso } from "@/lib/quotes/service-period";
+import { termEndInclusive } from "@/lib/billing/schedule";
+import type { RenewalStage } from "@/lib/renewals/stage";
+import { renewalTermStart } from "./stage-input";
 import {
   invoiceStatusWords, invoiceTotalWords, periodWords, quoteStateLabel,
   type DocTone, type LastDocs, type LastInvoice, type LastQuote,
@@ -31,12 +32,42 @@ import type { RowContact } from "./queue-data";
 
 // ─── Pure helpers ───────────────────────────────────────────────────────────
 
-/** The term the renewal is for, in words ("1 Dec 2026 – 30 Nov 2027"); null = no renewal date. */
-export function nextTermWords(sub: { renewal_date: string | null; term_months?: number | null; start_date?: string | null }): string | null {
-  if (!sub.renewal_date) return null;
+const MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+/** "1 Dec 26" — the table's short date (the full one is the tooltip). */
+const shortDate = (iso: string) => `${Number(iso.slice(8, 10))} ${MON[Number(iso.slice(5, 7)) - 1]} ${iso.slice(2, 4)}`;
+
+type TermSub = { renewal_date: string | null; term_months?: number | null; start_date?: string | null };
+
+/** The term the renewal is for: start + inclusive end (the billing engine's termEndInclusive); null = no renewal date. */
+export function nextTerm(sub: TermSub): { start: string; end: string; months: number } | null {
+  const start = renewalTermStart(sub);
+  if (!start) return null;
   const months = sub.term_months && sub.term_months > 0 ? sub.term_months : 12;
-  const start = followingTermStart({ term_months: months, start_date: sub.start_date ?? null, renewal_date: sub.renewal_date });
-  return periodWords(start, addDaysIso(addMonthsIso(start, months), -1), months);
+  return { start, end: termEndInclusive(start, months), months };
+}
+
+/** In words ("1 Dec 2026 – 30 Nov 2027"); null = no renewal date. */
+export function nextTermWords(sub: TermSub): string | null {
+  const t = nextTerm(sub);
+  return t ? periodWords(t.start, t.end, t.months) : null;
+}
+
+/** The table's short form ("1 Dec 26 – 30 Nov 27"). */
+export function nextTermShort(sub: TermSub): string | null {
+  const t = nextTerm(sub);
+  return t ? `${shortDate(t.start)} – ${shortDate(t.end)}` : null;
+}
+
+/**
+ * The table's two status lines (code-review R-2759): the chip without the period (Product & period
+ * already says it) and, under it, the day count / amount — so the chip never wraps past two lines and
+ * "Overdue 3d" is on screen, not only in a tooltip.
+ */
+export function compactStage(stage: Pick<RenewalStage, "key" | "label" | "note">): { chip: string; line2: string | null } {
+  const at = stage.label.indexOf(" · ");
+  if ((stage.key === "invoiced" || stage.key === "ending") && at > 0) return { chip: stage.label.slice(0, at), line2: stage.label.slice(at + 3) };
+  if ((stage.key === "sent" || stage.key === "draft" || stage.key === "quote-closed") && at > 0) return { chip: stage.label.slice(0, at), line2: stage.note };
+  return { chip: stage.label, line2: stage.key === "invoiced" ? null : stage.note };
 }
 
 /** Under the date: "in 6d" / "today" / "6d ago"; null = no date. */
@@ -61,23 +92,25 @@ const TONE: Record<DocTone, string> = {
   muted: "text-ink-3",
 };
 
-export function CustomerCell({ name, customerId, contact }: { name: string; customerId: string | null; contact: RowContact | undefined }) {
+/** `more`: facts the table row no longer shows (owner, next follow-up) — the name's tooltip until the drawer (R-2740). */
+export function CustomerCell({ name, customerId, contact, more }: { name: string; customerId: string | null; contact: RowContact | undefined; more?: string | null }) {
+  const nameTitle = more ? `${name} — ${more}` : name;
   const parts = [contact?.phone, contact?.email].filter(Boolean) as string[];
   return (
     <div className="min-w-0" data-cell="customer">
       {customerId ? (
-        <Link href={`/customers/${customerId}` as never} className="block truncate font-semibold text-ink hover:underline" title={name}>{name}</Link>
+        <Link href={`/customers/${customerId}` as never} className="block truncate font-semibold text-ink hover:underline" title={nameTitle}>{name}</Link>
       ) : (
-        <p className="truncate font-semibold text-ink" title={name}>{name}</p>
+        <p className="truncate font-semibold text-ink" title={nameTitle}>{name}</p>
       )}
       {parts.length ? (
         <p className="mt-0.5 flex min-w-0 items-center gap-2 text-2xs text-ink-3" title={parts.join(" · ")}>
           {contact?.phone && (
-            <a href={`tel:${contact.phone.replace(/\s+/g, "")}`} className="inline-flex shrink-0 items-center gap-1 hover:text-ink">
-              <Icon name="phone" size={11} className="shrink-0" />{contact.phone}
+            <a href={`tel:${contact.phone.replace(/\s+/g, "")}`} className="inline-flex min-w-0 items-center gap-1 hover:text-ink">
+              <Icon name="phone" size={11} className="shrink-0" /><span className="truncate">{contact.phone}</span>
             </a>
           )}
-          {contact?.email && (
+          {contact?.email && !contact.phone && (
             <a href={`mailto:${contact.email}`} className="inline-flex min-w-0 items-center gap-1 hover:text-ink">
               <Icon name="mail" size={11} className="shrink-0" /><span className="truncate">{contact.email}</span>
             </a>
@@ -90,14 +123,17 @@ export function CustomerCell({ name, customerId, contact }: { name: string; cust
   );
 }
 
-export function ProductCell({ plan, seats, vendor, term, frequency }: { plan: string | null; seats: number | null; vendor: string | null; term: string | null; frequency: string | null }) {
+export function ProductCell({ plan, seats, vendor, term, termShort, frequency }: {
+  plan: string | null; seats: number | null; vendor: string | null; term: string | null; termShort: string | null; frequency: string | null;
+}) {
   const vendorWord = vendor ? vendor[0].toUpperCase() + vendor.slice(1) : null;
   const line1 = [plan, seats != null ? `${seats} seats` : null, vendorWord].filter(Boolean).join(" · ");
-  const line2 = [term, frequency].filter(Boolean).join(" · ");
+  /* line 2 = the period (short); the full period + how it is paid are its tooltip */
+  const title2 = [term ? `Renews for ${term}` : null, frequency].filter(Boolean).join(" · ");
   return (
     <div className="min-w-0" data-cell="product">
       <p className="truncate text-ink" title={line1}>{line1}</p>
-      {line2 && <p className="mt-0.5 truncate text-2xs text-ink-3 tabular-nums" title={line2}>{line2}</p>}
+      {termShort && <p className="mt-0.5 truncate text-2xs text-ink-3 tabular-nums" title={title2}>{termShort}</p>}
     </div>
   );
 }

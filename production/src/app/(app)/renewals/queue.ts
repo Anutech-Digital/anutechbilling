@@ -403,20 +403,22 @@ export function bulkQuoteConfirm(
  */
 /* R-2759 (R-2739b, 14 Nov): the table now shows from a 1260px window (QUEUE_TABLE_MIN_VIEWPORT_PX) — a
    1280 laptop has a 1264–1276px inner width, so the old xl (1280px) switch showed it the card list.
-   At 1260 with the sidebar open the card is ~924px. Eight columns, every cell at most two lines:
+   Measured (R-2759 card spec): the table box is 974px at a 1280 window with an overlay scrollbar; a
+   classic Windows scrollbar takes ~17px and a 1260 window 20px more → ~936px is the budget. Eight
+   columns, every cell at most two lines:
    ☐ · Customer · Product & period · Due · Amount · Status · Last invoice · Action. */
 export const QUEUE_TABLE_MIN_VIEWPORT_PX = 1260;
-export const QUEUE_TABLE_BUDGET_PX = 924;
-export const QUEUE_FLEX_MIN_PX = 104;
+export const QUEUE_TABLE_BUDGET_PX = 936;
+export const QUEUE_FLEX_MIN_PX = 116;
 export type QueueColKey = "select" | "customer" | "product" | "due" | "amount" | "status" | "invoice" | "actions";
 export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: QueueColKey; label: string; width: number | null; align?: "right" }> = [
   { key: "select", label: "", width: 32 },
   { key: "customer", label: "Customer", width: null },
   { key: "product", label: "Product & period", width: null },
-  { key: "due", label: "Due", width: 96 },
+  { key: "due", label: "Due", width: 88 },
   { key: "amount", label: "Amount", width: 108, align: "right" },
-  { key: "status", label: "Status", width: 152 },
-  { key: "invoice", label: "Last invoice", width: 152 },
-  /* "Record payment" + ⋯ on one line */
-  { key: "actions", label: "Action", width: 176 },
+  { key: "status", label: "Status", width: 144 },
+  { key: "invoice", label: "Last invoice", width: 144 },
+  /* "Record payment" + ⋯ on one line (the card spec checks no cell overflows) */
+  { key: "actions", label: "Action", width: 184 },
 ];

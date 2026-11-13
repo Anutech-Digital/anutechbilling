@@ -109,29 +109,7 @@ import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/c
 import { renewalStage, type RenewalStage, type StageFlag, type FlagKey } from "@/lib/renewals/stage";
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { stageInputFor, payHref as stagePayHref } from "./stage-input";
-import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords } from "./row-cells";
-
-// ─── Vendor logo pill ─────────────────────────────────────────────────────────
-
-function VendorPill({ vendor }: { vendor: string }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    google:    { label: "Google",    cls: "bg-blue-50 text-blue-700" },
-    microsoft: { label: "Microsoft", cls: "bg-indigo-50 text-indigo-700" },
-    zoho:      { label: "Zoho",      cls: "bg-amber-50 text-amber-700" },
-    other:     { label: "Other",     cls: "bg-muted text-muted-foreground" },
-  };
-  const v = map[vendor] ?? { label: vendor ? vendor[0].toUpperCase() + vendor.slice(1) : "Other", cls: map.other.cls };
-  return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-2 py-0.5 text-2xs font-medium",
-        v.cls,
-      )}
-    >
-      {v.label}
-    </span>
-  );
-}
+import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage } from "./row-cells";
 
 // ─── R-2232: the row's renewal-quote line ("Renewal sent Q-x · due …") ─────────
 
@@ -166,13 +144,16 @@ const FLAG_ICON: Record<FlagKey, React.ComponentProps<typeof Icon>["name"]> = {
 function StageChip({ stage, size, compact = false }: { stage: RenewalStage | null; size?: "sm"; compact?: boolean }) {
   if (!stage) return <Skeleton className="h-5 w-24" aria-label="Loading status" data-testid="stage-chip-loading" />;
   /* R-2759: in the table the chip may wrap (a status is never cut) and its note is the tooltip — two lines at most. */
+  /* R-2759: in the table the chip drops the period (Product & period says it); its day count / amount is
+     line 2 — two lines, nothing only in a tooltip. */
+  const c = compact ? compactStage(stage) : { chip: stage.label, line2: stage.note };
   return (
-    <div className="min-w-0" data-testid="stage-chip" data-stage={stage.key} title={compact && stage.note ? `${stage.label} · ${stage.note}` : undefined}>
+    <div className="min-w-0" data-testid="stage-chip" data-stage={stage.key} title={compact ? [stage.label, stage.note].filter(Boolean).join(" · ") : undefined}>
       <div className="flex min-w-0 flex-wrap items-center gap-1">
-        <Badge kind={stage.tone} size={size} dot className={compact ? "h-auto whitespace-normal text-left" : undefined}>{stage.label}</Badge>
+        <Badge kind={stage.tone} size={size} dot className={compact ? "max-w-full whitespace-normal text-left" : undefined}>{c.chip}</Badge>
         {stage.flags.map((f) => <StageFlagIcon key={f.key} flag={f} />)}
       </div>
-      {stage.note && !compact && <p className="mt-1 text-2xs text-ink-3 tabular-nums">{stage.note}</p>}
+      {c.line2 && <p className="mt-1 break-words text-2xs text-ink-3 tabular-nums" data-testid="stage-line2">{c.line2}</p>}
     </div>
   );
 }
@@ -221,6 +202,18 @@ function AmountCell({ amount, frequency, className }: { amount: RenewalAmount; f
  * R-2404: where the customer's decision stands, who works the renewal and when they follow up
  * next, the promise to pay. Under the ONE status chip; "Paid" / "Won't renew" are that chip already.
  */
+/** R-2759: the table row's owner / next follow-up / promise, as the customer name's tooltip (the drawer, R-2740, will show them). */
+function followupWords(followup: RenewalFollowup, names: Map<string, UserName> | undefined): string {
+  const owner = followup.ownerId ? names?.get(followup.ownerId)?.label ?? "a colleague" : null;
+  return [
+    owner ? `Owner: ${owner}` : "No owner yet",
+    followup.nextFollowUpOn ? `Next follow-up ${formatDate(followup.nextFollowUpOn)}` : null,
+    followup.promisedOn && followup.promiseStatus !== "kept"
+      ? `${followup.promiseBroken ? "Promise broken" : "Promised"} ${formatDate(followup.promisedOn)}${followup.promisedAmount ? ` · ${rupee(followup.promisedAmount)}` : ""}`
+      : null,
+  ].filter(Boolean).join(" · ");
+}
+
 function FollowupLine({ followup, names }: { followup: RenewalFollowup; names: Map<string, UserName> | undefined }) {
   const owner = followup.ownerId ? names?.get(followup.ownerId)?.label ?? "a colleague" : null;
   /* R-2758 (R-2738): the stage chip is the ONE status — no second "decision" chip; a follow-up that is
@@ -464,14 +457,14 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                       onChange={(e) => onSelect([sub.id], e.target.checked)}
                     />
                   </td>
-                  <td className="min-w-0 px-2 py-2.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} /></td>
+                  <td className="min-w-0 px-2 py-2.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
                   <td className="min-w-0 px-2 py-2.5">
-                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} frequency={frequency} />
+                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} />
                   </td>
                   <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} /></td>
                   <td className="px-2 py-2.5 text-right">
-                    <p className="whitespace-nowrap font-medium tabular-nums text-ink">{amount.text}</p>
-                    <p className="mt-0.5 whitespace-nowrap text-2xs text-ink-3">{amount.gst}</p>
+                    <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
+                    <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.gst}>{amount.gst}</p>
                   </td>
                   <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} compact /></td>
                   <td className="min-w-0 px-2 py-2.5">

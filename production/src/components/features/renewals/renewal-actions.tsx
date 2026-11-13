@@ -579,7 +579,7 @@ function StageActions({ stage, sub, name, layout, strong, busy, disabled, ctx, c
         <Button
           variant={strong && primary.kind !== "follow-up" ? "primary" : "default"}
           size="sm"
-          className={cn("min-w-0", grow)}
+          className={cn("shrink-0", grow)}
           loading={busy}
           disabled={disabled}
           onClick={() => onRun(primary.kind)}
