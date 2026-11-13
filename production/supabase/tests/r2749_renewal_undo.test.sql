@@ -229,6 +229,111 @@ begin
   raise notice 'PASS 7: paid part on an expired sub renews when it is made active again';
 end $$;
 
+-- ── 9. Cascade undone NEWEST first, then the older term → back to the start (a 'back' row of the newer
+--       term must not hide the older term's forward move) ──────────────────────────────────────────────
+do $$
+declare v_s uuid; v_b2 uuid; v_b3 uuid; r2 jsonb; r3 jsonb;
+begin
+  v_s := pg_temp.sub(9, 'monthly', 3, '2026-04-01', '2026-06-30');
+  v_b2 := pg_temp.part(v_s, 9, '2026-07-01', 1, '2026-07-01', 1, '2026-06-30', '2026-09-30');
+  v_b3 := pg_temp.part(v_s, 10, '2026-10-01', 1, '2026-10-01', 1, '2026-09-30', '2026-12-31');
+  r2 := public.bill_subscription_instalment(v_b2, false);
+  perform pg_temp.pay(r2->>'quote_id', 1180, 'R2749-9A');
+  r3 := public.bill_subscription_instalment(v_b3, false);
+  perform pg_temp.pay(r3->>'quote_id', 1180, 'R2749-9B');
+  if pg_temp.st(v_s) <> '2026-12-31 renewed' then raise exception 'FAIL 9: setup → %', pg_temp.st(v_s); end if;
+  update public.invoices set status = 'pending', paid_date = null
+   where id = (select invoice_id from public.subscription_billings where id = v_b3);
+  if pg_temp.st(v_s) <> '2026-09-30 pending' then raise exception 'FAIL 9: newer term undone → %', pg_temp.st(v_s); end if;
+  update public.invoices set status = 'pending', paid_date = null
+   where id = (select invoice_id from public.subscription_billings where id = v_b2);
+  if pg_temp.st(v_s) <> '2026-06-30 pending' then
+    raise exception 'FAIL 9: then the older term undone → % (want 2026-06-30 pending)', pg_temp.st(v_s); end if;
+  raise notice 'PASS 9: newer then older undone → back to the start';
+end $$;
+
+-- ── 10. HELD: a quote linked on renewal_quote_id / a seat cut scheduled / a cancelled sub → date kept,
+--        ONE 'held' row for the report (even when the undo fires twice); undo also resets reminders ───────
+do $$
+declare v_s uuid; v_b uuid; r jsonb; v_inv text; v_held int;
+begin
+  -- 10a. linked renewal quote
+  v_s := pg_temp.sub(10, 'quarterly', 12, '2025-10-01', '2026-09-30');
+  v_b := pg_temp.part(v_s, 11, '2026-10-01', 1, '2026-10-01', 3, '2026-09-30', '2027-09-30');
+  r := public.bill_subscription_instalment(v_b, false);
+  perform pg_temp.pay(r->>'quote_id', 1180, 'R2749-10A');
+  insert into public.quotes (id, tenant_id, customer_id, customer_name, status, payment_status, amount, subtotal, tax_rate, line_items,
+                             is_renewal, renewal_subscription_id)
+  values ('Q-R2749-REN', 'b2749000-0000-0000-0000-0000000000f1', 'b2749000-0000-0000-0000-000000000110', 'R2749 C10', 'sent', 'none',
+          4720, 4000, 18, '[]'::jsonb, true, v_s);
+  update public.subscriptions set renewal_quote_id = 'Q-R2749-REN' where id = v_s;
+  v_inv := (select invoice_id from public.subscription_billings where id = v_b);
+  update public.invoices set status = 'pending', paid_date = null where id = v_inv;
+  update public.invoices set status = 'overdue' where id = v_inv;
+  perform public.unroll_unpaid_renewal_terms(v_s, 'retry');
+  select count(*) into v_held from public.subscription_renewal_moves where subscription_id = v_s and direction = 'held';
+  if pg_temp.st(v_s) <> '2027-09-30 renewed' or v_held <> 1 then
+    raise exception 'FAIL 10a: linked quote → % / held rows % (want date kept + ONE held row)', pg_temp.st(v_s), v_held; end if;
+
+  -- 10b. seat cut scheduled for the end of the current term
+  v_s := pg_temp.sub(11, 'quarterly', 12, '2025-10-01', '2026-09-30');
+  update public.subscriptions set seats = 5 where id = v_s;
+  v_b := pg_temp.part(v_s, 12, '2026-10-01', 1, '2026-10-01', 3, '2026-09-30', '2027-09-30');
+  r := public.bill_subscription_instalment(v_b, false);
+  perform pg_temp.pay(r->>'quote_id', 1180, 'R2749-10B');
+  insert into public.subscription_seat_reductions (tenant_id, subscription_id, idempotency_key, timing, status, seats_before,
+                                                   seats_removed, seats_after, effective_date)
+  values ('b2749000-0000-0000-0000-0000000000f1', v_s, 'r2749-10b', 'end_of_term', 'scheduled', 5, 2, 3, '2027-09-30');
+  update public.invoices set status = 'pending', paid_date = null
+   where id = (select invoice_id from public.subscription_billings where id = v_b);
+  if pg_temp.st(v_s) <> '2027-09-30 renewed'
+     or (select status from public.subscription_seat_reductions where idempotency_key = 'r2749-10b' and subscription_id = v_s) <> 'scheduled' then
+    raise exception 'FAIL 10b: seat cut scheduled → % (want date + cut kept)', pg_temp.st(v_s); end if;
+
+  -- 10c. cancelled subscription keeps its recorded end
+  v_s := pg_temp.sub(12, 'quarterly', 12, '2025-10-01', '2026-09-30');
+  v_b := pg_temp.part(v_s, 13, '2026-10-01', 1, '2026-10-01', 3, '2026-09-30', '2027-09-30');
+  r := public.bill_subscription_instalment(v_b, false);
+  perform pg_temp.pay(r->>'quote_id', 1180, 'R2749-10C');
+  update public.subscriptions set status = 'cancelled', auto_renew = false where id = v_s;
+  update public.invoices set status = 'pending', paid_date = null
+   where id = (select invoice_id from public.subscription_billings where id = v_b);
+  if pg_temp.st(v_s) <> '2027-09-30 renewed'
+     or not exists (select 1 from public.subscription_renewal_moves where subscription_id = v_s and direction = 'held') then
+    raise exception 'FAIL 10c: cancelled sub → % (want end kept + held row)', pg_temp.st(v_s); end if;
+
+  -- 10d. a back move resets reminders (sub 2 was moved back then forward; move it back again after reminders)
+  update public.subscriptions set reminder_count = 2, last_reminder_sent_at_v2 = now()
+   where id = 'b2749000-0000-0000-0000-000000000202';
+  update public.invoices set status = 'pending', paid_date = null
+   where id = (select invoice_id from public.subscription_billings where id = 'b2749000-0000-0000-0000-000000000302');
+  if (select reminder_count || ' ' || coalesce(last_reminder_sent_at_v2::text, '-') from public.subscriptions
+       where id = 'b2749000-0000-0000-0000-000000000202') <> '0 -' then
+    raise exception 'FAIL 10d: back move kept the reminders of the rolled-forward date'; end if;
+  raise notice 'PASS 10: linked quote / scheduled seat cut / cancelled sub → held (one row); a back move resets reminders';
+end $$;
+
+-- ── 11. Cancel subscription (status + auto_renew in one update) with an open part → allowed;
+--        a VOID part invoice is not an open part ─────────────────────────────────────────────────────
+do $$
+declare v_s uuid; v_b uuid; r jsonb;
+begin
+  v_s := pg_temp.sub(13, 'quarterly', 12, '2025-10-01', '2026-09-30');
+  v_b := pg_temp.part(v_s, 14, '2026-10-01', 1, '2026-10-01', 3, '2026-09-30', '2027-09-30');
+  r := public.bill_subscription_instalment(v_b, false);
+  update public.subscriptions set status = 'cancelled', auto_renew = false where id = v_s;
+  if (select status::text from public.subscriptions where id = v_s) <> 'cancelled' then raise exception 'FAIL 11: cancel refused'; end if;
+
+  v_s := pg_temp.sub(14, 'quarterly', 12, '2025-10-01', '2026-09-30');
+  v_b := pg_temp.part(v_s, 15, '2026-10-01', 1, '2026-10-01', 3, '2026-09-30', '2027-09-30');
+  r := public.bill_subscription_instalment(v_b, false);
+  perform pg_temp.pay(r->>'quote_id', 1180, 'R2749-11');
+  update public.invoices set status = 'void', paid_date = null
+   where id = (select invoice_id from public.subscription_billings where id = v_b);
+  update public.subscriptions set auto_renew = false where id = v_s;   -- void invoice: not open → allowed
+  raise notice 'PASS 11: cancel with an open part allowed; a void part invoice does not block Won''t renew';
+end $$;
+
 -- ── 8. Grants + RLS ───────────────────────────────────────────────────────────────────────────────
 do $$
 begin

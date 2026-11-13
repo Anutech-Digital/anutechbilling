@@ -21,7 +21,8 @@
 --   1. COUNT per company.
 --   2. ROWS: one per subscription, with why (proforma unpaid / invoice unpaid / not billed / no part laid).
 --   3. MOVES (R-2749): every automatic move of renewal_date by a renewal part since R-2735 — 'forward' when the
---      part was paid, 'back' when that payment was undone (full credit note / un-reconcile) — newest first.
+--      part was paid, 'back' when that payment was undone (full credit note / un-reconcile), 'held' when it was
+--      undone but the date was left (sub not active, quote linked, seat cut scheduled — owner decides) — newest first.
 --
 -- R-2749 (14 Nov 2026) fixes: monthly flex subscriptions (1-month term billed monthly, every month a term) are
 -- included; the CURRENT term is the newest laid term that starts BEFORE renewal_date (on an anniversary-shaped
@@ -115,7 +116,7 @@ select o.tenant_id, count(*) over (partition by o.tenant_id) as rows_in_company,
  order by o.tenant_id, o.renewal_date, o.id;
 
 \echo
-\echo '=== 3. Moves of renewal_date by a renewal part (R-2749): forward = part paid, back = payment undone ==='
+\echo '=== 3. Moves of renewal_date by a renewal part (R-2749): forward = part paid, back = payment undone, held = undone but date left (owner decides) ==='
 select m.tenant_id, m.subscription_id, s.customer_name, s.plan, m.direction, m.from_date, m.to_date,
        m.invoice_id, m.why, m.created_at at time zone 'Asia/Kolkata' as moved_at_ist,
        s.renewal_date as renewal_date_now, s.renewal_state::text as renewal_state_now
