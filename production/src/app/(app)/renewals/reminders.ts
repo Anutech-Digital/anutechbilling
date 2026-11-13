@@ -11,6 +11,9 @@ import { decideCadence, effectiveGraceDays, renewalIsSettled, renewalStateLabel,
 import { describeError } from "@/lib/errors/toast-error";
 import { cleanDisplayName } from "@/lib/utils";
 import { isFlexNextPart, FLEX_PART_SKIP_REASON } from "@/lib/renewals/buckets";
+import { isSplitBilled } from "@/lib/billing/instalments";
+import type { BillingCycle } from "@/lib/supabase/database.types";
+import { toIstDate } from "@/lib/dates/ist";
 
 export interface RenewalSubLike {
   id: string;
@@ -25,6 +28,8 @@ export interface RenewalSubLike {
   grace_until?: string | null;
   /** R-2225: false = Won't renew — never reminded. */
   auto_renew?: boolean | null;
+  /** R-2753: when the last renewal reminder went out (send-now and the nightly run stamp it). */
+  last_reminder_sent_at_v2?: string | null;
 }
 
 export interface RenewalRowLike {
@@ -114,6 +119,98 @@ export function bulkReminderConfirm(targets: RenewalRowLike[], skipped: readonly
     title: `Email ${n} customer${n === 1 ? "" : "s"}?`,
     body: `Each gets its renewal reminder for the step it is due (renewing in the next 30 days, or lapsed and still in grace).\n${names}${more}.${lapsedLine}${skipped.length > 0 ? `\n${bulkReminderSkipLine(skipped)}` : ""}`,
   };
+}
+
+/* ── R-2753: ONE reminder button — the ticked rows, else the open tab's rows ─────────────
+   14 Nov owner-style audit: on the Overdue tab the header "Bulk reminder" offered "Email 2
+   customers" — both from the 8–30 tab, one with no email at all — while the 3 overdue rows were
+   never in it; ticking rows + the bar's "Send reminder" flashed a missable toast; two buttons did
+   one job. Now the one button acts on exactly what the owner is looking at, and every row it
+   leaves out is named with the reason (nothing is dropped without a word). */
+
+/** What the reminder button acts on: the ticked rows, or (none ticked) the open tab / pressed tile. */
+export type ReminderScope = { kind: "selected"; count: number } | { kind: "tab"; label: string; count: number };
+
+export function reminderScope(selectedCount: number, tabLabel: string, tabCount: number): ReminderScope {
+  return selectedCount > 0 ? { kind: "selected", count: selectedCount } : { kind: "tab", label: tabLabel, count: tabCount };
+}
+
+/** The button's label says what it acts on: "Remind 3 selected" / "Remind 3 in Overdue". */
+export function reminderButtonLabel(scope: ReminderScope): string {
+  return scope.kind === "selected" ? `Remind ${scope.count} selected` : `Remind ${scope.count} in ${scope.label}`;
+}
+
+/** Why a row in scope gets no reminder email — listed, grouped, in the dialog. */
+export const REMINDER_SKIP = {
+  wontRenew: "customer said they won't renew",
+  stopped: "service stopped (suspended)",
+  renewed: "already renewed",
+  noDate: "no renewal date",
+  flex: FLEX_PART_SKIP_REASON,
+  split: "billed in parts — each part's bill goes out on its own date",
+  tooEarly: "renews in more than 30 days — reminders start 30 days before",
+  pastGrace: "past the renewal date and the grace — use Send renewal quote, or call them",
+  noEmail: "no email on file — add a contact on the customer page",
+  remindedToday: "already reminded today",
+} as const;
+
+export interface ReminderPlanOptions<T extends RenewalRowLike> {
+  today?: Date;
+  tenantGraceDays?: number;
+  /** The row's contact email; `undefined` = contacts not read yet (then not counted as missing). */
+  emailOf?: (row: T) => string | null | undefined;
+  /** The row's renewal quote is paid (R-2403) — renewed, not reminded. */
+  isPaid?: (row: T) => boolean;
+}
+
+/**
+ * R-2753: every row in scope is either emailed (`send`) or `skipped` with its reason — the old
+ * bulkReminderPlan dropped Won't renew / renewed / out-of-window rows without a word, which on a
+ * ticked or tab scope looks as if the button ignored them. The send rule is unchanged (≤30 days,
+ * or lapsed and still in grace — R-1124), plus what send-now refuses anyway: split-billed (R-808)
+ * and no contact email (it answers 400 "no contact").
+ */
+export function reminderPlan<T extends RenewalRowLike>(
+  rows: readonly T[], opts: ReminderPlanOptions<T> = {},
+): { send: T[]; skipped: BulkReminderSkip<T>[] } {
+  const today = opts.today ?? new Date();
+  const todayIst = toIstDate(today);
+  const send: T[] = [];
+  const skipped: BulkReminderSkip<T>[] = [];
+  const skip = (row: T, reason: string) => { skipped.push({ row, reason }); };
+  for (const r of rows) {
+    const s = r.sub;
+    if (s.auto_renew === false) { skip(r, REMINDER_SKIP.wontRenew); continue; }
+    if (s.renewal_state === "suspended") { skip(r, REMINDER_SKIP.stopped); continue; }
+    if (opts.isPaid?.(r) || isTerminalRenewal(s.renewal_state, s.renewal_date, s.term_months, today)) { skip(r, REMINDER_SKIP.renewed); continue; }
+    if (!s.renewal_date) { skip(r, REMINDER_SKIP.noDate); continue; }
+    if (isFlexNextPart(s, r.daysUntil)) { skip(r, REMINDER_SKIP.flex); continue; }
+    if (isSplitBilled((s.billing_cycle ?? null) as BillingCycle | null)) { skip(r, REMINDER_SKIP.split); continue; }
+    if (r.daysUntil > 30) { skip(r, REMINDER_SKIP.tooEarly); continue; }
+    if (r.daysUntil < 0) {
+      const grace = effectiveGraceDays({ tenantGraceDays: opts.tenantGraceDays ?? 0, renewalDate: s.renewal_date, graceUntil: s.grace_until ?? null });
+      if (-r.daysUntil > grace) { skip(r, REMINDER_SKIP.pastGrace); continue; }
+    }
+    const email = opts.emailOf?.(r);
+    if (email !== undefined && !email?.trim()) { skip(r, REMINDER_SKIP.noEmail); continue; }
+    if (s.last_reminder_sent_at_v2 && toIstDate(s.last_reminder_sent_at_v2) === todayIst) { skip(r, REMINDER_SKIP.remindedToday); continue; }
+    send.push(r);
+  }
+  return { send, skipped };
+}
+
+/** The skipped rows grouped by reason, in first-seen order — the dialog shows one group per reason. */
+export function groupSkips<T extends RenewalRowLike>(skipped: readonly BulkReminderSkip<T>[]): { reason: string; rows: T[] }[] {
+  const by = new Map<string, T[]>();
+  for (const s of skipped) by.set(s.reason, [...(by.get(s.reason) ?? []), s.row]);
+  return [...by].map(([reason, rows]) => ({ reason, rows }));
+}
+
+/** The dialog's title: whom it emails, or plainly that nobody is due (a dialog — not a 3-second toast). */
+export function reminderDialogTitle(sendCount: number, scope: ReminderScope): string {
+  const where = scope.kind === "selected" ? `${scope.count} selected` : scope.label;
+  if (sendCount === 0) return `No reminder to send · ${where}`;
+  return `Email ${sendCount} customer${sendCount === 1 ? "" : "s"} · ${where}`;
 }
 
 /** The step the send-now route will send — the same decideCadence call it makes. */
