@@ -16,6 +16,7 @@ import {
 import { BankAccountsSection } from "@/components/features/employee-hub/bank-accounts-section";
 import { SalariedDocumentVaultSection } from "@/components/features/employee-hub/salaried-document-vault-section";
 import { ItrFilingAssistant } from "@/components/features/employee-hub/itr-filing-assistant";
+import { RecordTransactionDialog } from "@/components/features/employee-hub/record-transaction-dialog";
 import {
   loadBankAccounts,
   loadBudget,
@@ -57,6 +58,10 @@ function EmployeeHubContent() {
   const [budget, setBudget] = React.useState<SalariedBudget>(loadBudget);
   const [transactions, setTransactions] = React.useState<PersonalTransaction[]>(loadTransactions);
 
+  // Global Record Transaction Modal
+  const [recordModalOpen, setRecordModalOpen] = React.useState(false);
+  const [recordModalType, setRecordModalType] = React.useState<"expense" | "income">("expense");
+
   // Sync state from storage events
   React.useEffect(() => {
     if (typeof window !== "undefined") {
@@ -66,14 +71,21 @@ function EmployeeHubContent() {
         setTransactions(loadTransactions());
       };
 
+      const handleOpenFromEvent = () => {
+        setRecordModalType("expense");
+        setRecordModalOpen(true);
+      };
+
       window.addEventListener("salaried_pro_expenses_updated", syncData);
       window.addEventListener("salaried_pro_banks_updated", syncData);
       window.addEventListener("salaried_pro_budget_updated", syncData);
+      window.addEventListener("salaried_pro_open_add_expense", handleOpenFromEvent);
 
       return () => {
         window.removeEventListener("salaried_pro_expenses_updated", syncData);
         window.removeEventListener("salaried_pro_banks_updated", syncData);
         window.removeEventListener("salaried_pro_budget_updated", syncData);
+        window.removeEventListener("salaried_pro_open_add_expense", handleOpenFromEvent);
       };
     }
   }, []);
@@ -83,6 +95,11 @@ function EmployeeHubContent() {
     if (typeof window !== "undefined") {
       window.dispatchEvent(new Event("app:tab-change"));
     }
+  };
+
+  const handleOpenAddRecord = (type: "expense" | "income" = "expense") => {
+    setRecordModalType(type);
+    setRecordModalOpen(true);
   };
 
   // Top Metric Calculations
@@ -109,15 +126,6 @@ function EmployeeHubContent() {
     const combined = [...newItems, ...transactions];
     setTransactions(combined);
     saveTransactions(combined);
-  };
-
-  const handleOpenAddRecord = () => {
-    setActiveTab("expenses");
-    if (typeof window !== "undefined") {
-      setTimeout(() => {
-        window.dispatchEvent(new Event("salaried_pro_open_add_expense"));
-      }, 50);
-    }
   };
 
   return (
@@ -149,11 +157,11 @@ function EmployeeHubContent() {
           <Button
             variant="primary"
             size="sm"
-            onClick={handleOpenAddRecord}
+            onClick={() => handleOpenAddRecord("expense")}
             className="gap-2 bg-indigo-600 hover:bg-indigo-700 text-white"
           >
             <Icon name="plus" size={14} />
-            + Record Entry
+            Record Entry
           </Button>
         </div>
       </div>
@@ -347,6 +355,13 @@ function EmployeeHubContent() {
           initialOtherIncome={0}
         />
       )}
+
+      {/* Global Record Transaction Modal (Instant anywhere) */}
+      <RecordTransactionDialog
+        open={recordModalOpen}
+        onOpenChange={setRecordModalOpen}
+        defaultType={recordModalType}
+      />
     </div>
   );
 }

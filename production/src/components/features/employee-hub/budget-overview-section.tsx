@@ -181,7 +181,7 @@ export function BudgetOverviewSection({
               className="gap-1.5 text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
             >
               <Icon name="plus" size={14} />
-              + Record Spend
+              Record Spend
             </Button>
           </div>
         </div>
