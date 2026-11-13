@@ -18,7 +18,7 @@ const li = (over: Partial<LastInvoice>): LastInvoice => ({
   sourceQuoteId: null, part: null, period: null, notes: undefined, ...over,
 });
 const lq: LastQuote = { id: "Q-1", date: "2026-10-01", status: "sent", payment_status: "none", expires_date: null, invoice_id: null, part: null, period: null };
-const docs = (over: Partial<LastDocs>): LastDocs => ({ quote: null, invoice: null, sent: null, ...over });
+const docs = (over: Partial<LastDocs>): LastDocs => ({ quote: null, invoice: null, invoices: [], sent: null, ...over });
 
 describe("R-2747 (b) previous term unpaid — the invoice line, or why there is none", () => {
   it("nothing owed on the previous term → no extra words", () => {
@@ -63,7 +63,9 @@ describe("R-2747 (b) previous term unpaid — the invoice line, or why there is 
     const d = out.get(SUB)!;
     expect(d.invoice?.id).toBe("INV-2");
     expect(d.owedInvoiceId).toBe("INV-1");
-    expect(priorDueInvoiceGap(d, 25488, TODAY)).toBe("Older invoice INV-1 still has money due");
+    /* R-2748: the row now shows both (newest first), so the owed one is on screen — no extra words */
+    expect(d.invoices.map((i) => i.id)).toEqual(["INV-2", "INV-1"]);
+    expect(priorDueInvoiceGap(d, 25488, TODAY)).toBeNull();
   });
 });
 

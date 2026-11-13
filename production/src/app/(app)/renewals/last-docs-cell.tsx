@@ -7,12 +7,15 @@
  * period the document covers.
  * R-2747: the lines wrap (never cut), and a "Previous term ₹x still unpaid" row with no unpaid
  * invoice says why.
+ * R-2748: the last TWO invoices, newest first, each "Invoice <no.> · ₹total · <state>" and
+ * "for <period> · from Q-… · <quote state>".
  */
 import Link from "next/link";
 import { cn, formatDate } from "@/lib/utils";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import {
-  daysBetweenIst, invoiceStatusWords, priorDueInvoiceGap, quoteExpiryText, quoteStateLabel, renewalDueText,
+  daysBetweenIst, invoiceStatusWords, invoiceTotalWords, priorDueInvoiceGap, quoteExpiryText, quoteStateLabel, renewalDueText,
+  sourceQuoteState,
   type DocTone, type LastDocs, type LastInvoice, type SentRenewal,
 } from "./last-docs";
 
@@ -35,8 +38,9 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
 }) {
   if (loading) return null;
   if (failed) return <p className={cn("text-2xs text-ink-3", className)}>Last quote / invoice: couldn&apos;t load — reload the page</p>;
-  const quote = docs?.quote ?? null;
-  const invoices = docs?.invoice ? [docs.invoice] : [];
+  const invoices = docs?.invoices?.length ? docs.invoices : docs?.invoice ? [docs.invoice] : [];
+  /* R-2748: one fact one place — the newest quote sent is not repeated when it is an invoice's own quote */
+  const quote = docs?.quote && !invoices.some((i) => i.sourceQuoteId === docs.quote?.id) ? docs.quote : null;
   const gap = priorDueInvoiceGap(docs, priorDue, todayIst);
   if (!quote && invoices.length === 0 && !gap) return null;
   const quoteState = quote ? quoteStateLabel(quote, todayIst) : "";
@@ -60,29 +64,49 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
           {quote.period && <p className="break-words tabular-nums text-ink-3" data-testid="renewal-last-quote-period">for {quote.period}</p>}
         </div>
       )}
-      {invoices.map((inv) => <InvoiceLine key={inv.id} invoice={inv} canInvoices={canInvoices} todayIst={todayIst} />)}
+      {invoices.map((inv, n) => (
+        <InvoiceLine key={inv.id} invoice={inv} label={n === 0 ? "Last invoice" : "Invoice before it"} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} />
+      ))}
       {gap && <p className="break-words text-ink-3" data-testid="renewal-prior-due-no-invoice">{gap}</p>}
     </div>
   );
 }
 
-/** One invoice: "Invoice <no.> · <state>" (state coloured by TONE) + "for <period>" (else its date).
- *  Fed by a list in LastDocsLines so more than one invoice can be shown with the same words. */
-function InvoiceLine({ invoice, canInvoices, todayIst }: { invoice: LastInvoice; canInvoices: boolean; todayIst: string }) {
+/** One invoice: "Invoice <no.> · ₹total · <state>" (state coloured by TONE) + "for <period>" (else its
+ *  date) "· from Q-… · <state>". Fed by a list in LastDocsLines (R-2748: the last two). */
+function InvoiceLine({ invoice, label, canInvoices, canQuotes, todayIst }: {
+  invoice: LastInvoice;
+  label: string;
+  canInvoices: boolean;
+  canQuotes: boolean;
+  todayIst: string;
+}) {
   const state = invoiceStatusWords(invoice, todayIst);
+  const total = invoiceTotalWords(invoice);
+  const src = invoice.sourceQuote ?? null;
+  const srcState = src ? sourceQuoteState(src, todayIst) : "";
   return (
     <div
       data-doc-line="invoice"
-      title={`Last invoice: ${invoice.id}${invoice.date ? ` · dated ${formatDate(invoice.date)}` : ""} · ${state.text}${invoice.period ? ` · for ${invoice.period}` : ""}`}
+      data-invoice-id={invoice.id}
+      title={`${label}: ${invoice.id}${invoice.date ? ` · dated ${formatDate(invoice.date)}` : ""} · ${total} · ${state.text}${invoice.period ? ` · for ${invoice.period}` : ""}${src ? ` · from ${src.id} (${srcState})` : ""}`}
     >
       <p className={cn("break-words", state.tone === "muted" && "text-ink-3")}>
         <span className="text-ink-3">Invoice </span>
         <DocLink id={invoice.id} href={canInvoices ? invoiceHref(invoice.id) : null} />
+        {" · "}<span className="tabular-nums" data-testid="renewal-invoice-total">{total}</span>
         {" · "}<span className={TONE[state.tone]} data-testid="renewal-last-invoice-status">{state.text}</span>
       </p>
-      {(invoice.period || invoice.date) && (
-        <p className="break-words tabular-nums text-ink-3" data-testid="renewal-last-invoice-period">
-          {invoice.period ? `for ${invoice.period}` : `dated ${formatDate(invoice.date)}`}
+      {(invoice.period || invoice.date || src) && (
+        <p className="break-words tabular-nums text-ink-3">
+          {(invoice.period || invoice.date) && (
+            <span data-testid="renewal-last-invoice-period">{invoice.period ? `for ${invoice.period}` : `dated ${formatDate(invoice.date)}`}</span>
+          )}
+          {src && (
+            <span data-testid="renewal-invoice-quote">
+              {(invoice.period || invoice.date) ? " · " : ""}from <DocLink id={src.id} href={canQuotes ? `/quotes/${encodeURIComponent(src.id)}` : null} />{" · "}{srcState}
+            </span>
+          )}
         </p>
       )}
     </div>
