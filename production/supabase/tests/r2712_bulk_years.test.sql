@@ -25,6 +25,12 @@
 --   K. The helper never errors on a malformed line.
 --   L. vendor_cost_per_seat_month: cost ₹600 a year × 3 (line cost 1,800) → 50 a month, not 150 —
 --      on a bulk row and on a normal multi-year row; a 1-year row keeps round(cost / 12).
+--      One division, rounded once: cost ₹30 for 2 years → round(30 / 24) = 1 (÷ 12 then ÷ 2,
+--      each rounded, gave 2).
+--   N. Reviewer's case: a normal 1-year line (qty 1, ₹1,000, no domain of its own) whose row
+--      borrowed the customer's domain + a 3-year bulk line listing that domain with the SAME
+--      seats → the normal row keeps its line: renewal + 1 year, mrr 83, term_amount 1,000.00;
+--      the bulk line's other domain is still 3 years. Filed in line order, as the filers do.
 --   M. A normal 1-year line (5 seats, no domain of its own) whose row borrowed the customer's
 --      domain, next to a bulk 3-year line that also lists that domain → the row keeps ITS line.
 
@@ -267,17 +273,19 @@ select pg_temp.r2712_q('TESTQ-R2712-L', '[
   {"name":"Domain .in","qty":1,"rate":2400,"cost":1800,"commitment":"annual_yearly","bulk":true,"years":3,"start_date":"2026-09-01",
    "domains":[{"domain":"l1.in","seats":1}]},
   {"name":"Domain l2.in","qty":1,"rate":2400,"cost":1800,"commitment":"annual_yearly","years":3,"start_date":"2026-09-01","domain":"l2.in"},
-  {"name":"Domain l3.in","qty":1,"rate":800,"cost":600,"commitment":"annual_yearly","start_date":"2026-09-01","domain":"l3.in"}]');
+  {"name":"Domain l3.in","qty":1,"rate":800,"cost":600,"commitment":"annual_yearly","start_date":"2026-09-01","domain":"l3.in"},
+  {"name":"Domain l4.in","qty":1,"rate":80,"cost":30,"commitment":"annual_yearly","years":2,"start_date":"2026-09-01","domain":"l4.in"}]');
 do $$
 declare v text;
 begin
   perform pg_temp.r2712_file('TESTQ-R2712-L', 0);
   perform pg_temp.r2712_file('TESTQ-R2712-L', 1);
   perform pg_temp.r2712_file('TESTQ-R2712-L', 2);
+  perform pg_temp.r2712_file('TESTQ-R2712-L', 3);
   select string_agg(domain || '=' || coalesce(vendor_cost_per_seat_month::text, 'null') || '/' || renewal_date, ' ' order by domain) into v
     from public.subscriptions where quote_id = 'TESTQ-R2712-L';
-  if v is distinct from 'l1.in=50/2029-09-01 l2.in=50/2029-09-01 l3.in=50/2027-09-01' then
-    raise exception 'FAIL L: monthly vendor cost per seat = % (want 50 on all three)', v;
+  if v is distinct from 'l1.in=50/2029-09-01 l2.in=50/2029-09-01 l3.in=50/2027-09-01 l4.in=1/2028-09-01' then
+    raise exception 'FAIL L: monthly vendor cost per seat = % (want 50 on three, and 1 on l4 — one division, one rounding)', v;
   end if;
 end $$;
 
@@ -294,6 +302,24 @@ begin
   perform pg_temp.r2712_file('TESTQ-R2712-M', 1);   -- cust.com is taken (R-829): only m2.com is filed
   perform pg_temp.r2712_want('M normal row, borrowed domain', 'TESTQ-R2712-M', 'cust.com', '2027-09-01|12|417|5000.00');
   perform pg_temp.r2712_want('M bulk row', 'TESTQ-R2712-M', 'm2.com', '2029-09-01|12|67|800.00');
+end $$;
+
+-- ── N. same seats: a normal row with a borrowed, bulk-listed domain keeps its own line ──────
+select pg_temp.r2712_q('TESTQ-R2712-N', '[
+  {"name":"Plan N","qty":1,"rate":1000,"commitment":"annual_yearly","start_date":"2026-09-01"},
+  {"name":"Plan N","qty":2,"rate":2400,"commitment":"annual_yearly","bulk":true,"years":3,"start_date":"2026-09-01",
+   "domains":[{"domain":"custn.com","seats":1},{"domain":"n2.com","seats":1}]}]');
+do $$
+declare v_n int;
+begin
+  perform set_config('r2712.borrowed_domain', 'custn.com', true);   -- record_payment: the customer's domain
+  perform pg_temp.r2712_file('TESTQ-R2712-N', 0);
+  perform set_config('r2712.borrowed_domain', '', true);
+  perform pg_temp.r2712_file('TESTQ-R2712-N', 1);   -- custn.com is taken (R-829): only n2.com is filed
+  perform pg_temp.r2712_want('N normal row, borrowed domain, same seats', 'TESTQ-R2712-N', 'custn.com', '2027-09-01|12|83|1000.00');
+  perform pg_temp.r2712_want('N bulk row', 'TESTQ-R2712-N', 'n2.com', '2029-09-01|12|67|800.00');
+  select count(*) into v_n from public.subscriptions where quote_id = 'TESTQ-R2712-N';
+  if v_n <> 2 then raise exception 'FAIL N: % rows (want 2)', v_n; end if;
 end $$;
 
 -- ── K. the helper on malformed lines ────────────────────────────────────────────────────────
