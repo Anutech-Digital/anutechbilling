@@ -60,7 +60,7 @@ export default function FacebookPage() {
       });
       const data = await response.json() as { error?: string };
       if (!response.ok) throw new Error(data.error ?? "Could not connect this Page.");
-      toast.success("Facebook Page connected.");
+      toast.success("Facebook Page connected.", { description: "Your other Pages are saved too — switch them on in Social growth → Manage Pages.", action: { label: "Open Social growth", onClick: () => { window.location.href = "/marketing/social-content"; } } });
       await load();
     } catch (e) { toastError(e, { fallback: "Could not connect this Page.", description: "Choose the Page again, or press Connect Facebook Page to sign in again." }); }
     finally { setBusy(false); }
@@ -89,7 +89,7 @@ export default function FacebookPage() {
           <div className="space-y-5 p-1 md:p-2">
             <div className="flex items-start gap-3">
               <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-[#e8f1ff] text-[#1877f2]"><Facebook size={22} aria-hidden="true" /></div>
-              <div><h2 className="text-lg font-semibold text-ink">Choose a Page</h2><p className="mt-1 text-sm text-ink-3">Select the Facebook Page to connect to this workspace.</p></div>
+              <div><h2 className="text-lg font-semibold text-ink">Choose your main Page</h2><p className="mt-1 text-sm text-ink-3">Pick the company&apos;s main Page (used for leads and ads). {status.pages.length > 1 ? `All ${status.pages.length} Pages below are saved too — after this, switch on the ones to grow in Social growth → Manage Pages.` : ""}</p></div>
             </div>
             {status.pages.length === 0 ? (
               <div className="rounded-lg border border-hairline bg-paper-2 p-4 text-sm text-ink-2">No Pages were found for this Facebook account. Sign in with an account that manages a Page.</div>
@@ -97,7 +97,7 @@ export default function FacebookPage() {
               <div className="space-y-2">{status.pages.map((page) => (
                 <div key={page.id} className="flex flex-col gap-3 rounded-lg border border-hairline p-4 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0"><p className="font-medium text-ink">{page.name}</p><p className="mt-0.5 text-xs text-ink-3">Page ID {page.id}</p></div>
-                  <Button variant="primary" disabled={busy} onClick={() => void choose(page.id)}>Connect Page</Button>
+                  <Button variant="primary" disabled={busy} onClick={() => void choose(page.id)}>Make main Page</Button>
                 </div>
               ))}</div>
             )}
