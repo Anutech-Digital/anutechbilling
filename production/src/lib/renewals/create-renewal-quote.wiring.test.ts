@@ -40,13 +40,12 @@ describe("the cost comes from the catalogue", () => {
     expect(code).not.toContain("0.83");
   });
 
-  it("reads the wholesale column, not only the msrp", () => {
-    expect(code).toContain('.select("msrp, wholesale")');
+  it("reads the wholesale column, not only the msrp (R-2736: the shared column list)", () => {
+    expect(code).toContain(".select(RENEWAL_CATALOG_COLUMNS)");
   });
 
-  it("prices through the tested helper", () => {
-    expect(code).toContain("renewalCost({");
-    expect(code).toContain("wholesalePerSeatMonth:");
+  it("prices through the tested helper (R-2736: renewalCatalogCost, tier-aware)", () => {
+    expect(code).toContain("renewalCatalogCost(catalogItem, {");
     // The term, so a monthly renewal is not costed for twelve months.
     expect(code).toMatch(/termMonths:\s*term\.termMonths/);
   });

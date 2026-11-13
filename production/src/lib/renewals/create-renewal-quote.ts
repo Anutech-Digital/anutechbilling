@@ -30,7 +30,10 @@ import { quoteStartTaxRate } from "@/lib/quotes/bill-of-supply";
 import { grossAmount } from "@/lib/quotes/amounts";
 import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { renewalTerm } from "@/lib/renewals/renewal-term";
-import { renewalCost } from "@/lib/renewals/renewal-cost";
+import {
+  RENEWAL_CATALOG_COLUMNS, pickRenewalCatalogItem, renewalCatalogCost,
+  type RenewalCatalogPick, type RenewalCatalogRow,
+} from "@/lib/renewals/renewal-catalog-cost";
 import { istToday, toIstDate } from "@/lib/dates/ist";
 import { loadScheduledSeatCuts, renewalSeatCut } from "@/lib/renewals/scheduled-seat-cut";
 import { composeQuoteNotes } from "@/lib/quotes/customer-notes";
@@ -234,15 +237,18 @@ export async function createOrGetRenewalQuote(
      stop. See lib/renewals/renewal-term.ts. */
   /* By ID first — it survives a rename, the name does not. See CreateRenewalQuoteInput.itemId.
      The name lookup is kept as the fallback for rows written before item_id existed. */
-  const catalogItem = await (async () => {
+  /* R-2736: by item_id, else the exact plan name, else the ONE confident catalogue match
+     (pickRenewalCatalogItem — the editor's "Use cost ₹X" pick). Q-F588-27-0156 had no item_id and its
+     row is "E2E Google Workspace Business Standard", so it went out at cost 0 and needed approval. */
+  const catalogPick = await (async (): Promise<RenewalCatalogPick<RenewalCatalogRow> | null> => {
     if (input.itemId) {
       const { data } = await supabase
         .from("items")
-        .select("msrp, wholesale")
+        .select(RENEWAL_CATALOG_COLUMNS)
         .eq("tenant_id", input.tenantId)
         .eq("id", input.itemId)
         .maybeSingle();
-      if (data) return data;
+      if (data) return { row: data as RenewalCatalogRow, how: "item_id" };
       /* Loud: an item_id that resolves to nothing means the catalogue row was deleted under a
          live subscription, which is a bigger problem than this renewal. */
       console.error(
@@ -252,19 +258,28 @@ export async function createOrGetRenewalQuote(
     }
     const { data } = await supabase
       .from("items")
-      .select("msrp, wholesale")
+      .select(RENEWAL_CATALOG_COLUMNS)
       .eq("tenant_id", input.tenantId)
       .eq("name", catalogPlanName(input.plan))   // R-2095: an old "(N seats)" suffix
       .maybeSingle();
-    return data;
+    if (data) return { row: data as RenewalCatalogRow, how: "name" };
+    const { data: rows, error: rowsErr } = await supabase
+      .from("items")
+      .select(RENEWAL_CATALOG_COLUMNS)
+      .eq("tenant_id", input.tenantId);
+    if (rowsErr || !Array.isArray(rows)) return null;   // unread → cost unknown, the approval stays
+    return pickRenewalCatalogItem(rows as RenewalCatalogRow[], { itemId: null, plan: input.plan });
   })();
+  const catalogItem = catalogPick?.row ?? null;
 
   const term = renewalTerm({
     mrr: input.mrr,
     termMonths: input.termMonths ?? null,
     termAmount: input.termAmount ?? null,
     seats: input.seats,
-    catalogPerSeatMonth: (catalogItem as { msrp?: number | null } | null)?.msrp ?? null,
+    /* R-2736: only a row found by id / exact name checks the PRICE — a name match is trusted for the
+       cost (a missing cost only keeps the approval), never to refuse a customer's renewal. */
+    catalogPerSeatMonth: catalogPick && catalogPick.how !== "match" ? catalogPick.row.msrp ?? null : null,
   });
 
   if (!term.ok) {
@@ -293,10 +308,11 @@ export async function createOrGetRenewalQuote(
      margin because it was DEFINED to be 17%. On Business Starter the real wholesale is
      ₹110/seat/month and the guess said about ₹224. Now it is read from the catalogue,
      for the term the renewal actually covers, or admitted as unknown. */
-  const cost = renewalCost({
-    wholesalePerSeatMonth: (catalogItem as { wholesale?: number | null } | null)?.wholesale ?? null,
-    termMonths:            term.termMonths,
-    seats:                 quoteSeats,   // R-2583
+  /* R-2736: the row's tier for this term (annual / monthly), × years, × the quote's seats — the
+     arithmetic the quote builder stores (lib/renewals/renewal-catalog-cost.ts). */
+  const cost = renewalCatalogCost(catalogItem, {
+    termMonths: term.termMonths,
+    seats:      quoteSeats,   // R-2583
   });
   if (!cost.known) {
     /* Not fatal — a bespoke plan legitimately has no catalogue row, and the customer
@@ -315,7 +331,8 @@ export async function createOrGetRenewalQuote(
     name:       catalogPlanName(input.plan),   // R-2095
     /* R-2710: the subscription's catalogue item, so the editor knows the line (a Domain-vendor
        item gets "Register for N years", R-1445). Not read by record_payment for a renewal. */
-    ...(input.itemId ? { item_id: input.itemId } : {}),
+    /* R-2736: or the row the catalogue pick found, so the editor and the margin read the same row. */
+    ...(input.itemId ? { item_id: input.itemId } : catalogPick?.row.id ? { item_id: catalogPick.row.id } : {}),
     /* R-2710: a whole multi-year term (24 / 36 months) says its years, so the editor's picker shows
        "2 yrs" (not 1) and a change scales from the right yearly price; the database keeps
        extension_months = months / years × new years (quotes_r2710_renewal_term_follows_years). */
