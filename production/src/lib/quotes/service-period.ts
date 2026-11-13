@@ -26,6 +26,14 @@ export type QuoteServicePeriod =
 export interface QuotePeriodLine {
   name?: string | null;
   commitment?: string | null;
+  /** R-2712: a line registered for several years (R-156) — its rate covers them all. */
+  years?: number | null;
+}
+
+/** R-2712: a line's paid years — a whole number 2–10, else 1 (the rule of domainLineYears). */
+function lineYears(line: { years?: number | null }): number {
+  const y = Number(line.years);
+  return Number.isInteger(y) && y >= 2 && y <= 10 ? y : 1;
 }
 
 export interface QuotePeriodInput {
@@ -97,7 +105,12 @@ export function quoteServicePeriod(input: QuotePeriodInput): QuoteServicePeriod 
 
   // 4. New quote: the commitment.
   if (allMonthly) return { kind: "months", months: 1 };
-  if (allAnnual) return { kind: "months", months: 12 };
+  if (allAnnual) {
+    /* R-2712: multi-year lines (`years`) are paid for the whole term now. Lines of different
+       lengths on one quote have no single period — say nothing rather than "12 months". */
+    const years = new Set(termLines.map(lineYears));
+    return years.size === 1 ? { kind: "months", months: 12 * [...years][0] } : null;
+  }
   return null;
 }
 
@@ -207,6 +220,8 @@ export interface LinePeriodLine {
   start_date?: string | null;
   domain?: string | null;
   bulk?: boolean | null;
+  /** R-2712: years paid for on a multi-year line (R-156); a new sale's period runs that long. */
+  years?: number | null;
   domains?: Array<{ domain: string; seats: number }> | null;
 }
 
@@ -293,7 +308,10 @@ export function lineServicePeriod(line: LinePeriodLine, ctx: LinePeriodContext):
   if (termMonths == null) return null;
   const from = isoOf(line.start_date) ?? isoOf(ctx.startFallback);
   if (!from) return null;
-  return { from, to: addDaysIso(addMonthsIso(from, termMonths), -1), months: termMonths };
+  /* R-2712: a yearly line registered for several years (`years`) is paid for all of them now —
+     it printed "1 Year" under a 3-year price. Its subscription renews on from + years. */
+  const months = termMonths === 12 ? 12 * lineYears(line) : termMonths;
+  return { from, to: addDaysIso(addMonthsIso(from, months), -1), months };
 }
 
 /** "2026-10-27" → "27/10/2026". A calendar date — no timezone shift. */

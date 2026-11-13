@@ -12,6 +12,7 @@
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { domainLineYears } from "@/lib/provisioning/products";
 import { isDomainRegistrationLine } from "@/lib/quotes/seat-lines";
+import { isDomainPlan } from "@/lib/quotes/bulk";
 
 const clampYears = (y: number) => Math.max(1, Math.min(10, Math.trunc(Number.isFinite(y) ? y : 1)));
 
@@ -34,9 +35,14 @@ export function lineForYears(line: QuoteLineItem, years: number): QuoteLineItem 
  * Does this line get the "Register for N years" picker? The existing rule (a domain purchase,
  * or a name saying domain / registration) OR a catalogue item from the Domain vendor — the
  * catalogue names its domain items ".in", ".com", and those had no picker.
+ *
+ * R-2712: a BULK line of a domain item gets it too (it was refused outright, so "Bulk / many
+ * domains" could never be more than 1 year). A bulk Workspace line still does not.
  */
 export function isTermLine(line: QuoteLineItem, domainItemIds: ReadonlySet<string>): boolean {
-  if (line.bulk) return false;
+  if (line.bulk) {
+    return isDomainPlan({ vendor: line.item_id && domainItemIds.has(line.item_id) ? "domain" : null, name: line.name });
+  }
   if (isDomainRegistrationLine(line)) return true;
   return !!line.item_id && domainItemIds.has(line.item_id);
 }

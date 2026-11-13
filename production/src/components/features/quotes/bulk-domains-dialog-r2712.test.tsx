@@ -1,0 +1,94 @@
+// @vitest-environment jsdom
+/* R-2712 (Pratik, 16 Oct) — "Bulk / many domains" gets a Start date and, for a domain plan,
+   "Register for 1–10 years". The line it adds carries start_date + years and the whole term's
+   rate; a Workspace plan gets the start date only. */
+import { describe, it, expect, vi, afterEach } from "vitest";
+import * as React from "react";
+import { render, cleanup, screen, fireEvent } from "@testing-library/react";
+import type { Item, QuoteLineItem } from "@/lib/supabase/database.types";
+
+vi.mock("sonner", () => ({ toast: { success: vi.fn(), warning: vi.fn(), error: vi.fn() } }));
+vi.mock("@/lib/supabase/client", () => ({
+  createClient: () => ({ from: () => ({ select: () => ({ eq: async () => ({ data: [] }) }) }) }),
+}));
+vi.mock("@/lib/dates/ist", async (orig) => ({ ...(await orig<typeof import("@/lib/dates/ist")>()), istToday: () => "2026-11-13" }));
+
+import { BulkDomainsDialog } from "./bulk-domains-dialog";
+
+const item = (id: string, name: string, vendor: Item["vendor"], msrp: number, wholesale: number) =>
+  ({ id, name, vendor, msrp, wholesale, item_type: "subscription" }) as unknown as Item;
+/* Catalogue prices are per month: 100 × 12 = ₹1,200 a year list; cost 50 × 12 = ₹600 a year. */
+const CATALOG = [item("it-in", ".in", "domain", 100, 50), item("it-gws", "Google Workspace Business Starter", "google", 200, 150)];
+
+function open() {
+  const added: QuoteLineItem[] = [];
+  render(<BulkDomainsDialog open onOpenChange={() => {}} catalog={CATALOG} customerId="" onAdd={(l) => added.push(l)} />);
+  return added;
+}
+const pick = (id: string) => fireEvent.change(screen.getByLabelText("Plan"), { target: { value: id } });
+const type = (label: string, value: string) => fireEvent.change(screen.getByLabelText(label), { target: { value } });
+
+afterEach(cleanup);
+
+describe("R-2712 Bulk dialog — Register for N years + Start date", () => {
+  it("domain plan: 3 domains, ₹800 a year, 3 years from 1 Sep 2026 → one line of ₹7,200 with years + start", () => {
+    const added = open();
+    pick("it-in");
+    type("Rate (₹/seat/year)", "800");
+    type("Start date", "2026-09-01");
+    type("Register for", "3");
+    type("Domain 1", "a1.in");
+    fireEvent.click(screen.getByRole("button", { name: "Add domain" }));
+    type("Domain 2", "a2.in");
+    fireEvent.click(screen.getByRole("button", { name: "Add domain" }));
+    type("Domain 3", "a3.in");
+
+    const summary = screen.getByTestId("bulk-summary").textContent ?? "";
+    expect(summary).toContain("₹7,200");
+    expect(summary).toContain("for 3 years, billed once (ex-GST)");
+    expect(summary).toContain("Each subscription starts 1 Sep 2026 and renews 1 Sep 2029.");
+
+    fireEvent.click(screen.getByRole("button", { name: "Add bulk line (3)" }));
+    expect(added).toHaveLength(1);
+    const line = added[0];
+    expect([line.qty, line.rate, line.cost, line.years, line.start_date]).toEqual([3, 2400, 1800, 3, "2026-09-01"]);
+    expect(line.qty * line.rate).toBe(7200);
+    expect(line.bulk).toBe(true);
+    expect(line.domains?.map((d) => d.domain)).toEqual(["a1.in", "a2.in", "a3.in"]);
+  });
+
+  it("defaults: start = today, 1 year → the line is the old 1-year line plus today's start date", () => {
+    const added = open();
+    pick("it-in");
+    expect((screen.getByLabelText("Start date") as HTMLInputElement).value).toBe("2026-11-13");
+    expect((screen.getByLabelText("Register for") as HTMLSelectElement).value).toBe("1");
+    type("Domain 1", "a1.in");
+    expect(screen.getByTestId("bulk-summary").textContent).toContain("/yr (ex-GST)");
+    expect(screen.getByTestId("bulk-summary").textContent).toContain("starts 13 Nov 2026 and renews 13 Nov 2027");
+    fireEvent.click(screen.getByRole("button", { name: "Add bulk line (1)" }));
+    expect([added[0].rate, added[0].years, added[0].start_date]).toEqual([1200, undefined, "2026-11-13"]);
+  });
+
+  it("a Workspace plan has no years picker — and years picked earlier for a domain plan do not carry over", () => {
+    const added = open();
+    pick("it-in");
+    type("Register for", "5");
+    pick("it-gws");
+    expect(screen.queryByLabelText("Register for")).toBeNull();
+    expect(screen.getByLabelText("Start date")).toBeTruthy();
+    type("Domain 1", "acme.in");
+    fireEvent.click(screen.getByRole("button", { name: "Add bulk line (1)" }));
+    expect([added[0].rate, added[0].years, added[0].start_date]).toEqual([2400, undefined, "2026-11-13"]);
+  });
+
+  it("start date cleared → today, and the summary says so (the builder dates an undated line today anyway)", () => {
+    const added = open();
+    pick("it-in");
+    type("Start date", "2026-09-01");
+    type("Start date", "");
+    type("Domain 1", "a1.in");
+    expect(screen.getByTestId("bulk-summary").textContent).toContain("starts 13 Nov 2026 and renews 13 Nov 2027");
+    fireEvent.click(screen.getByRole("button", { name: "Add bulk line (1)" }));
+    expect(added[0].start_date).toBe("2026-11-13");
+  });
+});

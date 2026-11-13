@@ -18,6 +18,13 @@ export function lineUnitLabel(line: SeatLineLike, perPeriod: boolean): string {
     const years = domainLineYears(line);
     return perPeriod ? "Per domain" : years > 1 ? `Per domain for ${years} years` : "Per domain per year";
   }
+  /* R-2712: a bulk line registered for several years (the Bulk dialog offers that for domain
+     plans only) — its rate is the whole term, and with one seat per domain it is per domain. */
+  if (line.bulk && line.commitment && domainLineYears(line) > 1) {
+    const domains = (line as { domains?: ReadonlyArray<unknown> | null }).domains?.length ?? 0;
+    const unit = domains > 0 && Number(line.qty) === domains ? "Per domain" : "Per seat";
+    return perPeriod ? unit : `${unit} for ${domainLineYears(line)} years`;
+  }
   if (isSeatLine(line)) return `Per seat${yearly}`;
   if (!line.commitment) return "One-time";
   return `Flat fee${yearly}`;
