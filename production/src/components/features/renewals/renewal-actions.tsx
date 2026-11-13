@@ -61,6 +61,12 @@ import {
 import { AiDraftButton } from "@/components/shared/ai-draft-button";
 import { useVoiceNoteSend } from "@/components/shared/voice-note-button";
 import {
+import { quoteEditHrefFromRenewals } from "@/lib/renewals/back-to-renewals";
+
+/** R-2754: the Renewals URL this button was clicked on (keeps the tab) — the editor links back to it. */
+function hereUrl(): string | null {
+  return typeof window === "undefined" ? null : `${window.location.pathname}${window.location.search}`;
+}
   renewalActionSet, renewalNextStep, billPartDialogTitle, FOLLOW_UP, BILL_NEXT_PART, RECORD_PAYMENT,
   type RenewalActionSub, type RenewalButtonKind, type RenewalMenuItem,
 } from "./renewal-actions-rules";
@@ -223,7 +229,7 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
         await onChange(json.quoteId);
         return;
       }
-      router.push(`/quotes/${encodeURIComponent(json.quoteId)}/edit` as never);
+      router.push(quoteEditHrefFromRenewals(json.quoteId, hereUrl()) as never);
     } catch (err) {
       toastError(err, { fallback: "Could not open the renewal quote", action: { label: "Retry", onClick: () => void onReview() } });
     } finally {
@@ -247,7 +253,7 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
       }
       refresh();
       if (r.created) toast.success(`Revision ${r.quoteId} created as a draft`, { description: "The customer's old quote is replaced when you send this one." });
-      router.push(`/quotes/${encodeURIComponent(r.quoteId)}/edit` as never);
+      router.push(quoteEditHrefFromRenewals(r.quoteId, hereUrl()) as never);
     } catch (err) {
       toastError(err, { fallback: "Couldn't start the revision." });
     } finally {

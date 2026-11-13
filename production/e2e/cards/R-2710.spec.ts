@@ -79,7 +79,7 @@ test.describe("R-2710 card test", () => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await row(page);
     await clickWhenReady(r.getByRole("button", { name: /Review renewal quote/ }));
-    await expect(page).toHaveURL(/\/quotes\/[^/]+\/edit$/, { timeout: 120_000 });   // a cold dev server compiles the route + the editor
+    await expect(page).toHaveURL(/\/quotes\/[^/]+\/edit(?:\?returnTo=%2Frenewals[^/]*)?$/, { timeout: 120_000 });   // R-2754: ?returnTo=<Renewals tab>; a cold dev server compiles the route + the editor
     const id = linked();
     expect(id).not.toBe("");
     expect(page.url()).toContain(`/quotes/${encodeURIComponent(id)}/edit`);
@@ -114,11 +114,11 @@ test.describe("R-2710 card test", () => {
     const id = linked();
     let r = await row(page);
     await clickWhenReady(r.getByRole("button", { name: /Change renewal quote/ }));
-    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit$`), { timeout: 120_000 });
+    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit(?:\\?returnTo=%2Frenewals[^/]*)?$`), { timeout: 120_000 });
     expect(quoteRow(`${id}-R2`)).toBe("draft,36,3600");
     r = await row(page);
     await clickWhenReady(r.getByRole("button", { name: /Change renewal quote/ }));
-    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit$`), { timeout: 120_000 });
+    await expect(page).toHaveURL(new RegExp(`/quotes/${id}-R2/edit(?:\\?returnTo=%2Frenewals[^/]*)?$`), { timeout: 120_000 });
     expect(db().one(`select count(*) from public.quotes where revision_of = '${id}'`)).toBe("1");
   });
 
