@@ -42,7 +42,14 @@ import { readJsonSafe, sendNowConfirm, sendNowStep, sentToastText } from "@/app/
 import { openRenewalQuoteMap, openRenewalQuoteStatus } from "@/app/(app)/renewals/open-renewal-quotes";
 import { NonRenewingDialog } from "@/components/features/subscriptions/non-renewing-dialog";
 import { CancelSubscriptionDialog } from "@/components/features/subscriptions/cancel-subscription-dialog";
-import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
+import { VendorHoldBadge, useRenewAnyway } from "@/components/features/subscriptions/vendor-hold-badge";
+import { useSetNonRenewing } from "@/components/features/subscriptions/use-non-renewing";
+import { subscriptionOpenHref } from "@/app/(app)/subscriptions/open-link";
+import { canOpenInvoices } from "@/lib/invoices/access";
+import { vendorHoldState } from "@/lib/renewals/vendor-hold";
+import { notRenewingDialog, type PrimaryContext, type PrimaryKind, type RenewalStage } from "@/lib/renewals/stage";
+import { stageButtons, STAGE_MENU_LABEL, type StageMenuItem, type StageRunKind } from "./stage-actions";
+import { Skeleton } from "@/components/ui/skeleton";
 import { BillNextPartDialog, type BillNextChoice } from "./bill-next-part-dialog";
 import { isSplitBilled } from "@/lib/billing/instalments";
 import { createClient } from "@/lib/supabase/client";
@@ -76,7 +83,7 @@ export interface RenewalActionsSub extends RenewalActionSub {
   customer_id?: string | null;
 }
 
-export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false, recordPaymentQuoteId }: {
+export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, onFollowup, messaging = false, recordPaymentQuoteId, stage, payHref }: {
   sub: RenewalActionsSub;
   /** IST days to the renewal date; negative = past it. */
   daysUntil: number;
@@ -90,6 +97,14 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   messaging?: boolean;
   /** R-2728: the renewal quote / part proforma with the customer, unpaid → ⋯ "Record payment" (/quotes/<id>?pay=1). */
   recordPaymentQuoteId?: string;
+  /**
+   * R-2758 (R-2738 model): the row's ONE stage — the button and ⋯ come from renewalPrimary(stage).
+   * undefined = the older rules (Payment Follow-up rows); null = the row's documents are still
+   * loading → a placeholder, never a button that could act on a half-known row.
+   */
+  stage?: RenewalStage | null;
+  /** R-2758: where Record payment goes (stage-input.ts payHref); null = nothing to pay. */
+  payHref?: string | null;
 }) {
   const qc = useQueryClient();
   const router = useRouter();
@@ -124,6 +139,18 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   /* R-2519: billed in parts → "Bill next part" opens the proforma preview first (seats, rate, periods). */
   const splitBilled = isSplitBilled((sub.billing_cycle ?? null) as BillingCycle | null);
   const voice = useVoiceNoteSend({ customerId: sub.customer_id ?? "", purpose: "renewal", customerName: name });
+  /* R-2758: grace over → Renew anyway is a ⋯ item (same prompt + RPC as the badge); Undo Won't renew. */
+  const renewAnyway = useRenewAnyway({ ...sub, customer_name: name, plan: sub.plan });
+  const setNonRenewing = useSetNonRenewing();
+
+  async function onUndoWontRenew() {
+    const ok = await confirm({
+      title: `Undo Won't renew for ${name}?`,
+      body: "It comes back to Renewals as a normal renewal — the renewal quote and reminders go out as usual.",
+      confirmLabel: "Undo Won't renew", icon: "refresh",
+    });
+    if (ok) setNonRenewing.mutate({ id: sub.id, on: false });
+  }
 
   const refresh = () => {
     void qc.invalidateQueries({ queryKey: ["subscriptions"] });
@@ -343,6 +370,89 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
     ),
   };
 
+  const dialogs = (
+    <>
+      {dialog === "bill-next" && (
+        <BillNextPartDialog
+          sub={{ id: sub.id, customer_name: name, plan: sub.plan }}
+          titleFor={(firstStart) => billPartDialogTitle(sub, button && button.kind === "generate" ? button.label : BILL_NEXT_PART, firstStart)}
+          open
+          busy={busy === "generate"}
+          onOpenChange={(v) => { if (!v) setDialog(null); }}
+          onConfirm={(choice) => void onGenerate(choice)}
+        />
+      )}
+      {dialog === "nudge" && sub.customer_id && (
+        <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" onClose={() => setDialog(null)} />
+      )}
+      {dialog === "non-renewing" && (
+        <NonRenewingDialog
+          sub={{ id: sub.id, customer_name: name, plan: sub.plan ?? "Subscription", renewal_date: sub.renewal_date }}
+          open
+          onOpenChange={(v) => { if (!v) setDialog(null); }}
+        />
+      )}
+      {dialog === "cancel" && (
+        <CancelSubscriptionDialog
+          /* renewal_date left out: the renewal date has passed, so "At end of term" is not offered. */
+          sub={{
+            id: sub.id, customer_name: name, plan: sub.plan ?? "Subscription",
+            outstanding_amount: sub.outstanding_amount ?? 0, start_date: sub.start_date,
+            quote_id: sub.quote_id, renewal_quote_id: sub.renewal_quote_id,
+            status: sub.status as React.ComponentProps<typeof CancelSubscriptionDialog>["sub"]["status"],
+            auto_renew: sub.auto_renew ?? true,
+          }}
+          open
+          onOpenChange={(v) => { if (!v) setDialog(null); }}
+        />
+      )}
+    </>
+  );
+
+  /* R-2758 (R-2738): the row's ONE button + ⋯ from its stage (renewalPrimary). */
+  if (stage !== undefined) {
+    const onRun = (kind: StageRunKind) => {
+      if (!stage) return;
+      switch (kind) {
+        /* R-2710: the editor needs canOpenQuotes AND the generate route's money roles (set.canReview's rule). */
+        case "send-renewal": return void (canQuotes && !!me?.role && MONEY_RECORD_ROLES.includes(me.role as UserRole) ? onReview() : onSendNow());
+        case "send-as-is": case "resend": return void onSendNow();
+        case "bill-part": return setDialog("bill-next");
+        case "continue": return stage.quoteId ? router.push(`/quotes/${encodeURIComponent(stage.quoteId)}/edit` as never) : undefined;
+        case "follow-up": return onFollowup?.();
+        case "record-payment": return payHref ? router.push(payHref as never) : undefined;
+        case "change-renewal": return void onChange(stage.quoteId ?? undefined);
+        case "resend-invoice": return stage.invoiceId ? router.push(`/invoices/${encodeURIComponent(stage.invoiceId)}` as never) : undefined;
+        case "open-quote": return stage.quoteId ? router.push(`/quotes/${encodeURIComponent(stage.quoteId)}` as never) : undefined;
+        case "nudge": return setDialog("nudge");
+        case "voice": return void voice.send();
+        case "renew-anyway": return void renewAnyway.run();
+        case "not-renewing": return setDialog(notRenewingDialog(stage));
+        case "undo-wont-renew": return void onUndoWontRenew();
+        case "view-subscription": return router.push(subscriptionOpenHref({ id: sub.id, customer_name: sub.customer_name }) as never);
+      }
+    };
+    return (
+      <>
+        <StageActions
+          stage={stage} name={name} layout={layout} strong={strong}
+          busy={busy !== null || renewAnyway.busy || setNonRenewing.isPending}
+          disabled={busy !== null || factsLoading}
+          ctx={{
+            role: me?.role, canEndSubscription: mayMarkNonRenewing(me?.role), tenantGraceDays: graceDays,
+            offers: { followup: !!onFollowup, messaging: !!messaging && !!sub.customer_id }, vendorHold: vendorHoldState(sub),
+          }}
+          sub={sub}
+          canQuotes={canQuotes}
+          canPay={!!payHref && canRecordMoney(me?.role) && (payHref.startsWith("/quotes/") ? canQuotes : canOpenInvoices(me?.role))}
+          canInvoices={canOpenInvoices(me?.role)}
+          onRun={onRun}
+        />
+        {dialogs}
+      </>
+    );
+  }
+
   return (
     <>
       <div className={cn("flex flex-wrap items-center gap-1.5", layout === "card" && "w-full")}>
@@ -404,40 +514,103 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
         )}
       </div>
 
-      {dialog === "bill-next" && (
-        <BillNextPartDialog
-          sub={{ id: sub.id, customer_name: name, plan: sub.plan }}
-          titleFor={(firstStart) => billPartDialogTitle(sub, button && button.kind === "generate" ? button.label : BILL_NEXT_PART, firstStart)}
-          open
-          busy={busy === "generate"}
-          onOpenChange={(v) => { if (!v) setDialog(null); }}
-          onConfirm={(choice) => void onGenerate(choice)}
-        />
-      )}
-      {dialog === "nudge" && sub.customer_id && (
-        <AiDraftButton customerId={sub.customer_id} channel="whatsapp" purpose="renewal" onClose={() => setDialog(null)} />
-      )}
-      {dialog === "non-renewing" && (
-        <NonRenewingDialog
-          sub={{ id: sub.id, customer_name: name, plan: sub.plan ?? "Subscription", renewal_date: sub.renewal_date }}
-          open
-          onOpenChange={(v) => { if (!v) setDialog(null); }}
-        />
-      )}
-      {dialog === "cancel" && (
-        <CancelSubscriptionDialog
-          /* renewal_date left out: the renewal date has passed, so "At end of term" is not offered. */
-          sub={{
-            id: sub.id, customer_name: name, plan: sub.plan ?? "Subscription",
-            outstanding_amount: sub.outstanding_amount ?? 0, start_date: sub.start_date,
-            quote_id: sub.quote_id, renewal_quote_id: sub.renewal_quote_id,
-            status: sub.status as React.ComponentProps<typeof CancelSubscriptionDialog>["sub"]["status"],
-            auto_renew: sub.auto_renew ?? true,
-          }}
-          open
-          onOpenChange={(v) => { if (!v) setDialog(null); }}
-        />
-      )}
+      {dialogs}
     </>
+  );
+}
+
+// ─── R-2758: the stage row's ONE button + ⋯ ──────────────────────────────────
+
+const PRIMARY_ICON: Record<PrimaryKind, React.ComponentProps<typeof Icon>["name"]> = {
+  "send-renewal": "edit", "bill-part": "plus", continue: "edit", "follow-up": "phone", "record-payment": "rupee",
+};
+
+const PRIMARY_TITLE: Record<PrimaryKind, string> = {
+  "send-renewal": "Open the renewal quote to check seats, rate and term, then send it from there (nothing is emailed yet)",
+  "bill-part": "Bill the next part — check seats, rate and periods first (proforma, then the tax invoice when paid)",
+  continue: "Open the part quote you started — nothing has gone to the customer yet",
+  "follow-up": "Log a call / promise / next date for this renewal",
+  "record-payment": "Record the customer's payment for this renewal",
+};
+
+const MENU_ICON: Record<StageMenuItem, React.ComponentProps<typeof Icon>["name"]> = {
+  "send-as-is": "mail", "bill-part": "plus", "record-payment": "rupee", "change-renewal": "edit", resend: "mail",
+  "resend-invoice": "mail", "follow-up": "phone", nudge: "sparkles", voice: "whatsapp", "renew-anyway": "refresh",
+  "not-renewing": "x", "undo-wont-renew": "refresh", "view-subscription": "eye", "open-quote": "file",
+};
+
+const MENU_TITLE: Partial<Record<StageMenuItem, string>> = {
+  "send-as-is": "Email the customer the renewal quote as it is, with its accept / pay link (asks first)",
+  "bill-part": "Make the next period's proforma now — check seats, rate and how many periods first",
+  "change-renewal": "The customer already has this quote — make a revision to edit and send; the old one stops accepting once it is sent",
+  resend: "Email the renewal quote again (asks first)",
+  "resend-invoice": "Open the invoice to send it or its payment link again",
+  nudge: "AI drafts a WhatsApp renewal message — you edit and send it yourself",
+  voice: "Send a Hindi voice-note renewal reminder on WhatsApp (asks first)",
+  "renew-anyway": "Owner / manager: renew at the vendor before payment (reason goes to the activity log)",
+  "not-renewing": "Before the renewal date: mark Won't renew. After it: cancel with a reason.",
+  "undo-wont-renew": "The customer will renew after all — back to a normal renewal",
+  "open-quote": "The renewal quote is closed — open it to revise it, or to release it before a new renewal",
+};
+
+function StageActions({ stage, sub, name, layout, strong, busy, disabled, ctx, canQuotes, canPay, canInvoices, onRun }: {
+  stage: RenewalStage | null;
+  sub: RenewalActionsSub;
+  name: string;
+  layout: "card" | "table";
+  strong: boolean;
+  busy: boolean;
+  disabled: boolean;
+  ctx: PrimaryContext;
+  canQuotes: boolean;
+  canPay: boolean;
+  canInvoices: boolean;
+  onRun: (kind: StageRunKind) => void;
+}) {
+  /* Documents still loading: a placeholder — never a button that could act on a half-known row. */
+  if (!stage) return <Skeleton className="h-8 w-28" aria-label="Loading the next step" data-testid="stage-action-loading" />;
+  const { primary, menu } = stageButtons(stage, sub, ctx, { canQuotes, canPay, canInvoices });
+  const grow = layout === "card" ? "flex-1" : undefined;
+  return (
+    <div className={cn("flex min-w-0 items-center gap-1.5", layout === "card" && "w-full")} data-testid="stage-actions">
+      {primary && (
+        <Button
+          variant={strong && primary.kind !== "follow-up" ? "primary" : "default"}
+          size="sm"
+          className={cn("min-w-0", grow)}
+          loading={busy}
+          disabled={disabled}
+          onClick={() => onRun(primary.kind)}
+          title={PRIMARY_TITLE[primary.kind]}
+          data-testid="stage-primary"
+        >
+          <Icon name={PRIMARY_ICON[primary.kind]} size={12} />
+          {primary.label}
+        </Button>
+      )}
+      {menu.length > 0 && (
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              aria-label={`More renewal actions for ${name}${sub.plan ? ` — ${sub.plan}` : ""}`}
+              title="More actions"
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-hairline text-ink-3 hover:bg-paper-2 hover:text-ink data-[state=open]:bg-paper-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+            >
+              <Icon name="more_h" size={16} />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[13rem]">
+            {menu.map((k) => (
+              <DropdownMenuItem key={k} disabled={disabled && k !== "follow-up" && k !== "view-subscription"}
+                className={cn("gap-2.5 py-2 cursor-pointer", k === "not-renewing" && "text-rose-700")}
+                onClick={() => onRun(k)} title={MENU_TITLE[k]}>
+                <Icon name={MENU_ICON[k]} size={15} /> {STAGE_MENU_LABEL[k]}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+    </div>
   );
 }
