@@ -475,6 +475,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
               renewalDate:     sub.renewal_date!,
               graceDays,
               existingQuoteId: sub.renewal_quote_id,
+              itemId:          sub.item_id ?? null,   // R-2736: the line cost from its catalogue row
             })
           : await createOrGetRenewalQuote({
           supabase,

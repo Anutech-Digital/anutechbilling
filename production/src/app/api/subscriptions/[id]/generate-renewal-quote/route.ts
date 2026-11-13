@@ -248,6 +248,7 @@ export const POST = withRoute({
         renewalDate:     sub.renewal_date,
         graceDays:       tenant.grace_period_days ?? 0,
         existingQuoteId: sub.renewal_quote_id,
+        itemId:          sub.item_id ?? null,   // R-2736: the line cost from its catalogue row
         status:          "draft",
       })
     : await createOrGetRenewalQuote({
