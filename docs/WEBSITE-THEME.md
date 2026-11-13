@@ -4,6 +4,12 @@
 
 This link is the source of truth for the public website's look. It always shows the latest version — no files to download or keep in sync. Open it, click **Play** to try menus, toggles, forms and the light/dark switch, and leave comments on the design for questions.
 
+## Scope — read before touching anything
+- **This theme is for the public frontend pages only.** Never apply it to the logged-in app (dashboard, leads, quotes, invoices, settings, everything under `production/src/app/(app)/`). The app keeps its own design system.
+- **Theme only — content never changes.** Restyle colours, fonts, spacing and behaviour; keep every heading, sentence, link and button label word for word.
+- In code it is scoped to the `.site-theme` wrapper (`production/src/app/(public)/_components/site-theme.tsx`, styles in `globals.css`). A page gets the theme only by rendering inside that wrapper.
+- Applied today: `/`, `/pricing`, `/about`, `/privacy`, `/terms`.
+
 ## Pages (19)
 - Homepage: Home
 - Product pages: ResellerOS, Business email, Domains, Web hosting, SSL
