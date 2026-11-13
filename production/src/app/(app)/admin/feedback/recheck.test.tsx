@@ -18,6 +18,14 @@ function builder(table: string) {
     select: () => b,
     order: () => b,
     limit: () => b,
+    range: () => b,
+    or: () => b,
+    gte: () => b,
+    gt: () => b,
+    lt: () => b,
+    /* R-2726: the status tabs filter in the query — is(null) / not(is null) split "queued" from "AI worker has it". */
+    is: (col: string, v: unknown) => { filters.push((r) => (r[col] ?? null) === v); return b; },
+    not: (col: string) => { filters.push((r) => (r[col] ?? null) !== null); return b; },
     eq: (col: string, v: unknown) => { filters.push((r) => r[col] === v); return b; },
     in: (col: string, vs: unknown[]) => { filters.push((r) => vs.includes(r[col])); return b; },
     then: (ok: (v: { data: unknown[]; error: null }) => unknown) =>
@@ -50,6 +58,7 @@ const row = (over: Record<string, unknown> = {}) => ({
 let qc: QueryClient;
 const fetchMock = vi.fn(async () => new Response(JSON.stringify({ mode: "stub" }), { status: 200 }));
 beforeEach(() => {
+  window.history.replaceState(null, "", "/admin/feedback");
   db.rows = [row()];
   qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   fetchMock.mockClear();
@@ -61,12 +70,19 @@ const renderPage = () =>
   render(<QueryClientProvider client={qc}><AdminFeedbackPage /></QueryClientProvider>);
 
 describe("Re-check type & score lives in Details (R-393)", () => {
-  it("the action row has no Re-triage / Triage button", async () => {
+  it("the row has no Re-triage / Triage button; opened, the main buttons have none either", async () => {
     renderPage();
     const card = await screen.findByTestId(`feedback-card-${ID}`);
+    // R-2726: a closed row is one line — no action buttons at all.
     expect(within(card).queryByRole("button", { name: /triage/i })).toBeNull();
     expect(within(card).queryByRole("button", { name: /Re-check type & score/ })).toBeNull();
+    fireEvent.click(within(card).getByRole("button", { name: /Details/ }));
     expect(within(card).getByRole("button", { name: /Run AI Auto-Fix/ })).toBeTruthy();
+    expect(within(card).queryByRole("button", { name: /triage/i })).toBeNull();
+    // The one triage control is the Re-check item, below the report text.
+    const body = within(card).getByTestId("feedback-body");
+    const item = within(card).getByTestId("recheck-type-score");
+    expect(body.compareDocumentPosition(item) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("Details shows the item with its hint, and it calls the same triage mutation", async () => {

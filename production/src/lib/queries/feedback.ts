@@ -34,6 +34,19 @@ import { forgetBrowserSession } from "@/lib/auth/browser-auth";
 import type { Database } from "@/lib/supabase/database.types";
 import { fetchAllRows } from "@/lib/ops/fetch-all";
 import type { FeedbackSeverity, FeedbackType } from "@/lib/feedback/triage";
+import {
+  FACET_COLUMNS,
+  FEEDBACK_PAGE_SIZE,
+  buildFacets,
+  feedbackFiltersToParams,
+  feedbackPageQueries,
+  looseFeedbackQuery,
+  tallyStatuses,
+  type FacetSourceRow,
+  type FeedbackFacets,
+  type FeedbackFilters,
+  type StatusCounts,
+} from "@/lib/feedback/list-filters";
 
 export type FeedbackRow = Database["public"]["Tables"]["feedback"]["Row"];
 export type FeedbackScreenshotRow = Database["public"]["Tables"]["feedback_screenshots"]["Row"];
@@ -46,21 +59,17 @@ export interface FeedbackWithShots extends FeedbackRow {
   screenshots: FeedbackScreenshotRow[];
 }
 
-export interface FeedbackListFilter {
-  /** Omit for everything. */
-  status?: FeedbackStatus;
-  /** Omit for everything. Matches the INFERRED type, not what the reporter picked. */
-  type?: FeedbackType;
+/** One page of the list, with the tab counts for the same search/filters (R-2726). */
+export interface FeedbackPage<R> {
+  rows: R[];
+  /** Rows matching every filter, across all pages. */
+  total: number;
+  /** Per status tab, for the filters WITHOUT the status. */
+  counts: StatusCounts;
+  page: number;
+  pageSize: number;
 }
 
-/**
- * The admin queue.
- *
- * Ordered by severity first and recency second, which is the order somebody clearing a
- * queue actually wants — newest-first buries a ₹-bearing report from Tuesday under
- * three cosmetic ones from this morning. `nullsLast` matters: an untriaged row has no
- * score yet and must not sort as if it were a zero.
- */
 /**
  * R-356 (7 Oct 2026): an open page went stale. The AI marked a report fixed at 05:47Z
  * (/api/agent/feedback-fixed), but Pardeep's open tab still showed it under Open with
@@ -91,27 +100,7 @@ export async function fetchFeedbackStatuses(supabase: SupabaseClient<Database>):
   return data as FeedbackStatusRow[];
 }
 
-/**
- * How many reports sit in each status — for the tab counts (5 Oct 2026). "Run AI Auto-Fix"
- * moves a report from Open to Queued for agent, and with a count only on the open tab the
- * three queued reports looked like they had vanished. Same query-key prefix as the list, so
- * every mutation that refreshes the list refreshes these too.
- */
-export function useFeedbackCounts() {
-  return useQuery({
-    queryKey: STATUS_KEY,
-    queryFn: fetchStatuses,
-    select: (rows): Record<string, number> => {
-      const out: Record<string, number> = { all: 0 };
-      for (const r of rows) { out[r.status] = (out[r.status] ?? 0) + 1; out.all += 1; }
-      return out;
-    },
-    staleTime: 15_000,
-    ...LIVE,
-  });
-}
-
-/** id → {status, AI note} for every report in the workspace — same fetch as the counts (R-356). */
+/** id → {status, AI note} for every report in the workspace (R-356: the "Fixed by AI" notice). */
 export function useFeedbackStatuses() {
   return useQuery({
     queryKey: STATUS_KEY,
@@ -122,25 +111,32 @@ export function useFeedbackStatuses() {
   });
 }
 
-export function useFeedbackList(filter: FeedbackListFilter = {}) {
+/**
+ * R-2726 — one page of THIS workspace's reports: searched, filtered, sorted and paged by the
+ * database (50 a page), plus the tab counts for the same filters.
+ *
+ * Access is what it always was: the browser client under the RLS policy `feedback_select`
+ * (tenant_id = current_tenant_id()). The filters only narrow that; in this scope no tenant
+ * step is ever built (lib/feedback/list-filters), so ?ws= in the address does nothing here.
+ * `since` is the viewer's own "last visit" time, read only when the "New" chip is on.
+ */
+export function useFeedbackPage(filters: FeedbackFilters, since: string | null, enabled = true) {
   return useQuery({
-    queryKey: ["feedback", filter.status ?? "all", filter.type ?? "all"],
-    queryFn: async (): Promise<FeedbackWithShots[]> => {
+    queryKey: ["feedback", "page", "mine", feedbackFiltersToParams({ ...filters, workspace: "" }).toString(), filters.fresh ? since : null],
+    enabled,
+    queryFn: async (): Promise<FeedbackPage<FeedbackWithShots>> => {
       const supabase = createClient();
+      const queries = feedbackPageQueries((cols) => supabase.from("feedback").select(cols), filters, { scope: "mine", since });
 
-      let q = supabase
-        .from("feedback")
-        .select("*")
-        .order("severity_score", { ascending: false, nullsFirst: false })
-        .order("created_at", { ascending: false });
-
-      if (filter.status) q = q.eq("status", filter.status);
-      if (filter.type) q = q.eq("inferred_type", filter.type);
-
-      const { data, error } = await q;
-      if (error) throw error;
-      const rows = (data ?? []) as FeedbackRow[];
-      if (rows.length === 0) return [];
+      const [pageRes, countRows] = await Promise.all([
+        queries.page(),
+        fetchAllRows<{ status: string; agent_claimed_at: string | null }>((a, b) => queries.counts(a, b) as never),
+      ]);
+      if (pageRes.error) throw pageRes.error;
+      const rows = (pageRes.data ?? []) as FeedbackRow[];
+      const counts = tallyStatuses(countRows);
+      const paging = { total: counts[filters.status], counts, page: filters.pageNo, pageSize: FEEDBACK_PAGE_SIZE };
+      if (rows.length === 0) return { rows: [], ...paging };
 
       // One follow-up query rather than an embed — this codebase has been bitten by
       // PostgREST relationship ambiguity (PGRST201) turning a working page into an
@@ -158,10 +154,26 @@ export function useFeedbackList(filter: FeedbackListFilter = {}) {
         byParent.set(s.feedback_id, list);
       }
 
-      return rows.map((r) => ({ ...r, screenshots: byParent.get(r.id) ?? [] }));
+      return { rows: rows.map((r) => ({ ...r, screenshots: byParent.get(r.id) ?? [] })), ...paging };
     },
     staleTime: 15_000,
+    placeholderData: (prev) => prev,
     ...LIVE,
+  });
+}
+
+/** The Reporter / Page picker choices for this workspace — every report RLS lets the viewer read. */
+export function useFeedbackFacets(enabled = true) {
+  return useQuery({
+    queryKey: ["feedback", "facets", "mine"],
+    enabled,
+    queryFn: async (): Promise<FeedbackFacets> => {
+      const supabase = createClient();
+      const rows = await fetchAllRows<FacetSourceRow>((a, b) =>
+        looseFeedbackQuery(supabase.from("feedback").select(FACET_COLUMNS)).order("id", { ascending: true }).range(a, b) as never);
+      return buildFacets(rows);
+    },
+    staleTime: 60_000,
   });
 }
 
@@ -457,23 +469,55 @@ export interface PlatformFeedbackRow extends FeedbackRow {
   screenshots: { id: string; fileName: string; url: string | null }[];
 }
 
+async function platformGet<T>(qs: string): Promise<T> {
+  const res = await fetch(`/api/admin/feedback/platform${qs ? `?${qs}` : ""}`);
+  const json = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    /* The route writes its own next step; showing it beats a bare status code. */
+    throw new Error([json.error, json.nextStep].filter(Boolean).join(" ") || "Could not load");
+  }
+  return json as T;
+}
+
 /**
+ * R-2726 — one page of EVERY workspace's reports, filtered/sorted/paged by the route.
  * `enabled` is the caller's job: the toggle that turns this on is only rendered for a
- * platform owner, so a reseller never fires a request that can only 403.
+ * platform owner, so a reseller never fires a request that can only 403 (and the 403 is
+ * the same whatever the filters say).
  */
-export function usePlatformFeedbackList(enabled: boolean) {
+export function usePlatformFeedbackPage(filters: FeedbackFilters, since: string | null, enabled: boolean) {
   return useQuery({
-    queryKey: ["feedback", "platform"],
+    queryKey: ["feedback", "platform", "page", feedbackFiltersToParams(filters).toString(), filters.fresh ? since : null],
     enabled,
-    queryFn: async (): Promise<PlatformFeedbackRow[]> => {
-      const res = await fetch("/api/admin/feedback/platform");
-      const json = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        /* The route writes its own next step; showing it beats a bare status code. */
-        throw new Error([json.error, json.nextStep].filter(Boolean).join(" ") || "Could not load");
-      }
-      return (json.rows ?? []) as PlatformFeedbackRow[];
+    queryFn: async (): Promise<FeedbackPage<PlatformFeedbackRow>> => {
+      const params = feedbackFiltersToParams(filters);
+      if (filters.fresh && since) params.set("since", since);
+      const json = await platformGet<Partial<FeedbackPage<PlatformFeedbackRow>>>(params.toString());
+      const rows = json.rows ?? [];
+      return {
+        rows,
+        total: json.total ?? rows.length,
+        counts: json.counts ?? tallyStatuses(rows),
+        page: json.page ?? filters.pageNo,
+        pageSize: json.pageSize ?? FEEDBACK_PAGE_SIZE,
+      };
     },
     staleTime: 30_000,
+    placeholderData: (prev) => prev,
+  });
+}
+
+export interface PlatformFeedbackFacets { facets: FeedbackFacets; openToSend: number }
+
+/** Picker choices across workspaces + how many open reports "Send all open to AI" would send. */
+export function usePlatformFeedbackFacets(enabled: boolean) {
+  return useQuery({
+    queryKey: ["feedback", "platform", "facets"],
+    enabled,
+    queryFn: async (): Promise<PlatformFeedbackFacets> => {
+      const json = await platformGet<Partial<PlatformFeedbackFacets>>("facets=1");
+      return { facets: json.facets ?? { reporters: [], pages: [], workspaces: [] }, openToSend: json.openToSend ?? 0 };
+    },
+    staleTime: 60_000,
   });
 }
