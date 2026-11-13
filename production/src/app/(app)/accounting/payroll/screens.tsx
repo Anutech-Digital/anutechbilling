@@ -590,6 +590,8 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
     /* R-2722 review: only an EXISTING employee keeps a saved Basic (or "Basic not set"); a new
        employee's gross typed before the CTC is split by the policy Basic %. */
     keepSavedBasic: !basicPctTouched && Boolean(employee),
+    /* R-2722 review: a Basic typed by hand is what Save writes — the tab uses it. */
+    basicByHand,
     calc: {
       isMetro,
       basicPct,
@@ -902,14 +904,15 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                           if (applyBlocked) return;
                           setGross(String(ctcBreakdown.grossMonthly));
                           /* R-2722: no Basic set → leave it not set (PF / gratuity stay on the whole gross). */
-                          if (!ctcBreakdown.basicAssumed) setBasicMonthly(String(ctcBreakdown.basicMonthly));
+                          const keepBasic = ctcBreakdown.basicAssumed || Boolean(ctcBreakdown.basicUnchanged);
+                          if (!keepBasic) setBasicMonthly(String(ctcBreakdown.basicMonthly));
                           setGrossByHand(false);
                           /* R-2722 review: what was applied is the salary a later cleared CTC goes back to. */
-                          setCtcBase({ gross: String(ctcBreakdown.grossMonthly), basic: ctcBreakdown.basicAssumed ? basicMonthly : String(ctcBreakdown.basicMonthly), da: daMonthly });
+                          setCtcBase({ gross: String(ctcBreakdown.grossMonthly), basic: keepBasic ? basicMonthly : String(ctcBreakdown.basicMonthly), da: daMonthly });
                           /* R-2698: this used to switch PF (and ESI) back ON — an owner who had just
                              turned them off in Statutory & Access got them back. The switches live
                              only there now. */
-                          toast.success(`Applied monthly gross ${rupee(ctcBreakdown.grossMonthly)}${ctcBreakdown.basicAssumed ? " (Basic not set)" : ` and Basic ${rupee(ctcBreakdown.basicMonthly)}`}. PF / ESI stay as set in Statutory & Access.`);
+                          toast.success(`Applied monthly gross ${rupee(ctcBreakdown.grossMonthly)}${ctcBreakdown.basicAssumed ? " (Basic not set)" : keepBasic ? " (Basic unchanged)" : ` and Basic ${rupee(ctcBreakdown.basicMonthly)}`}. PF / ESI stay as set in Statutory & Access.`);
                         }}
                         className="text-xs font-extrabold"
                       >

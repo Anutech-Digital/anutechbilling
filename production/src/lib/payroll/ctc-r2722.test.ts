@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
-  applyStructureBlockedReason, calculateCtcBreakdown, ctcFormFill, ctcFormulaText, ctcTabBreakdown, type CtcTabInput,
+  applyStructureBlockedReason, calculateCtcBreakdown, ctcFormFill, ctcFormulaText, ctcFromEmployee, ctcTabBreakdown, MAX_ANNUAL_CTC, type CtcTabInput,
 } from "./ctc";
 import { revisionBookedNote } from "./salary-revision";
 import { periodLabel } from "./period-label";
@@ -162,5 +162,66 @@ describe("R-2722 item 4 — Revise salary: booked months wording", () => {
     ], periodLabel);
     expect(n.booked).toMatch(/^August 2026, September 2026, October 2026 are already booked at the old salary — they stay as booked\.$/);
     expect(n.legacy).toBe("August 2026, September 2026 were booked before salary revisions — check the old salary used for them.");
+  });
+});
+
+describe("R-2722 independent-review fixes", () => {
+  const noBasic: CtcTabInput = { ...form, gross: 30_000, basic: null, esiApplicable: false, saved: { gross: 30_000, basic: null, da: 0 } };
+  it("1: a CTC of 1e17 / 1e20 / Infinity-like paste does not hang and fills nothing", () => {
+    for (const annualCtc of [1e17, 1e20, MAX_ANNUAL_CTC + 1]) {
+      const t0 = Date.now();
+      const b = ctcTabBreakdown({ ...noBasic, ctcTyped: true, annualCtc });
+      expect(Date.now() - t0).toBeLessThan(1_000);
+      expect(b.ctcTooLarge).toBe(true);
+      expect(b.overBudget).toBe(true);
+      expect(fill(b, { base: { gross: "30000", basic: "", da: "0" } })).toEqual({ gross: "30000", basic: "" });
+      expect(applyStructureBlockedReason(b, false)).toMatch(/too large/);
+      expect(ctcFormulaText(b)).toMatch(/check the figure/);
+    }
+    // the largest allowed CTC still works and ends
+    const max = ctcTabBreakdown({ ...noBasic, ctcTyped: true, annualCtc: MAX_ANNUAL_CTC });
+    expect(max.ctcTooLarge).toBeFalsy();
+    expect(max.costToCompanyMonthly * 12).toBeLessThanOrEqual(MAX_ANNUAL_CTC);
+  });
+  it("2: saved Basic ₹0 is not 'Basic not set' — the gross is costed as payroll will (PF on DA only = 0)", () => {
+    const zero: CtcTabInput = { ...form, gross: 30_000, basic: 0, esiApplicable: false, saved: { gross: 30_000, basic: 0, da: 0 } };
+    const b = ctcTabBreakdown({ ...zero, ctcTyped: true, annualCtc: 360_001 });
+    expect(b.employerPfMonthly).toBe(0);
+    expect(b.gratuityMonthly).toBe(0);
+    expect(b.basicMonthly).toBe(0);
+    expect(b.grossMonthly).toBe(30_000); // was 25,761 (PF + gratuity assumed on the whole gross)
+    expect(b.basicUnchanged).toBe(true);
+    expect(fill(b, { base: { gross: "30000", basic: "0", da: "0" } })).toEqual({ gross: "30000", basic: "0" });
+    // what payroll then says about that salary is within the typed CTC
+    const back = ctcFromEmployee({ monthly_gross: b.grossMonthly, basic_monthly: 0, da_monthly: 0, pf_applicable: true, esi_applicable: false }, { asOf: NOV });
+    expect(back.annualCtc).toBeLessThanOrEqual(360_001);
+  });
+  it("3: no-Basic search never gives a yearly cost above the typed CTC (4,80,006 rounded up to 4,80,012 before)", () => {
+    for (const annualCtc of [480_006, 480_011, 300_005, 250_001]) {
+      const b = ctcTabBreakdown({ ...noBasic, ctcTyped: true, annualCtc });
+      expect(b.costToCompanyMonthly * 12).toBeLessThanOrEqual(annualCtc);
+      expect(annualCtc - b.costToCompanyMonthly * 12).toBeLessThan(12 * 3);
+    }
+  });
+  it("4: the tab follows what Save writes — Basic / DA typed by hand, then the CTC cleared", () => {
+    const cleared = ctcTabBreakdown({ ...form, ctcTyped: true, annualCtc: 0, gross: 23_319, basic: 12_000, da: 1_000, basicByHand: true });
+    expect(cleared.grossMonthly).toBe(17_850); // the gross the form goes back to
+    expect(cleared.basicMonthly).toBe(12_000);
+    expect(cleared.daMonthly).toBe(1_000);
+    // DA changed by hand (Basic not touched) — the card uses the form's DA, the saved Basic
+    const daOnly = ctcTabBreakdown({ ...form, ctcTyped: true, annualCtc: 0, gross: 23_319, basic: 10_000, da: 500 });
+    expect(daOnly.basicMonthly).toBe(10_000);
+    expect(daOnly.daMonthly).toBe(500);
+  });
+  it("4: a no-Basic employee who types a Basic while the shown CTC is typed — the split uses that Basic", () => {
+    const shown = ctcTabBreakdown(noBasic);
+    const b = ctcTabBreakdown({ ...noBasic, ctcTyped: true, annualCtc: shown.annualCtc, basic: 15_000, basicByHand: true, calc: { ...noBasic.calc, customBasicMonthly: 15_000 } });
+    expect(b.basicMonthly).toBe(15_000);
+    expect(b.basicAssumed).toBe(false);
+    expect(b.source).toBe("ctc");
+    // Basic typed as ₹0 (no custom Basic) → costed with Basic 0, not as "not set"
+    const z = ctcTabBreakdown({ ...noBasic, ctcTyped: true, annualCtc: shown.annualCtc + 1, basic: 0, basicByHand: true });
+    expect(z.basicMonthly).toBe(0);
+    expect(z.employerPfMonthly).toBe(0);
   });
 });
