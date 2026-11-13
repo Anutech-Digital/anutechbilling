@@ -24,7 +24,8 @@ describe("R-2735 renewed-without-payment report — read-only", () => {
     expect(code).toMatch(/^\s*begin;\s*set transaction read only;/m);
     expect(code.trim().endsWith("rollback;")).toBe(true);
     expect(WRITE_OR_DDL.filter((w) => new RegExp(`\\b${w}\\b`).test(code))).toEqual([]);
-    for (const m of code.match(/\\[a-z!]+/g) ?? []) expect(["\\echo", "\\pset"]).toContain(m);
+    /* R-2761: \gset + \if / \else / \endif only set and test a psql variable (section 3 skip) — no write. */
+    for (const m of code.match(/\\[a-z!]+/g) ?? []) expect(["\\echo", "\\pset", "\\gset", "\\if", "\\else", "\\endif"]).toContain(m);
   });
   it("selects no contact field", () => {
     expect(codeOnly(sql).toLowerCase()).not.toMatch(/\b(email|phone|contact_email|contact_phone)\b/);
@@ -51,5 +52,19 @@ describe("R-2749 report fixes", () => {
   it("lists every forward / back move of renewal_date (subscription_renewal_moves)", () => {
     expect(code).toMatch(/from public\.subscription_renewal_moves m/);
     expect(code).toMatch(/m\.direction, m\.from_date, m\.to_date/);
+  });
+});
+
+/* R-2761 (rev-r2749 LOW 4): section 3 errored on a database without the R-2749 table; it now skips there,
+   and shows each hold's kind / resolved time without needing the R-2761 columns. */
+describe("R-2761 report section 3", () => {
+  const raw = readFileSync(FILE, "utf8");
+  it("skips section 3 when subscription_renewal_moves is missing (psql \\if on to_regclass)", () => {
+    expect(raw).toMatch(/to_regclass\('public\.subscription_renewal_moves'\) is not null as r2761_has_moves \\gset/);
+    expect(raw).toMatch(/\\if :r2761_has_moves[\s\S]*from public\.subscription_renewal_moves m[\s\S]*\\else[\s\S]*\\endif/);
+  });
+  it("reads hold_kind / resolved_at through to_jsonb (runs before R-2761 too)", () => {
+    expect(raw).toContain("to_jsonb(m)->>'hold_kind'");
+    expect(raw).toContain("to_jsonb(m)->>'resolved_at'");
   });
 });

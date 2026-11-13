@@ -61,3 +61,24 @@ describe("R-2764 page wiring (the freeze must not come back)", () => {
     expect(src.match(/viewer=\{viewer\}/g)?.length).toBe(2);
   });
 });
+
+/* R-2761: an open 'held' renewal undo (held-data.ts) reaches the row's stage as the "Renewal held" flag, and the
+   page rebuilds the rows when the holds load (holds in the useMemo deps). */
+describe("R-2761 buildQueueItems — Renewal held flag", () => {
+  const held = sub("h", "2027-09-30", { status: "expired", billing_cycle: "quarterly", renewal_state: "renewed" } as Partial<Subscription>);
+  it("an open hold on the row's renewal date → renewalHeld flag on its stage", () => {
+    const holds = new Map([["h", { kind: "not_active" as const, from: "2027-09-30", to: "2026-09-30" }]]);
+    const row = buildQueueItems({ ...base, subs: [held], holds }).allItems[0];
+    expect(row.stage?.flags.map((x) => x.key)).toContain("renewalHeld");
+    expect(row.stage?.flags.find((x) => x.key === "renewalHeld")?.reason).toMatch(/^Renewal held — subscription expired/);
+  });
+  it("no holds read yet → no flag", () => {
+    const row = buildQueueItems({ ...base, subs: [held] }).allItems[0];
+    expect(row.stage?.flags.map((x) => x.key)).not.toContain("renewalHeld");
+  });
+  it("page passes holds into buildQueueItems and its useMemo deps", () => {
+    const src = fs.readFileSync(path.join(__dirname, "page.tsx"), "utf8");
+    expect(src).toMatch(/useRenewalHolds\(listed\.map\(\(s\) => s\.id\)\)/);
+    expect(src).toMatch(/todayIst: todayIst, holds,\n\s*\}\) : null\), \[[^\]]*\bholds\]\);/);
+  });
+});

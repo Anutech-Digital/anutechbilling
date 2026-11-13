@@ -11,7 +11,7 @@
  */
 import type { Subscription } from "@/lib/supabase/database.types";
 import { daysUntilRenewal, onRenewalsPage } from "@/lib/renewals/buckets";
-import { renewalStage, type RenewalStage } from "@/lib/renewals/stage";
+import { renewalStage, type RenewalStage, type RenewalHeld } from "@/lib/renewals/stage";
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { canOpenQuotes } from "@/lib/quotes/access";
 import { renewalRisk, riskChased } from "./risk";
@@ -64,6 +64,8 @@ export interface QueueBuildInput {
   graceDays: number;
   today: Date;
   todayIst: string;
+  /** R-2761: open 'held' renewal undos per subscription (held-data.ts) → the row's "Renewal held" flag; undefined = not read yet. */
+  holds?: Map<string, RenewalHeld> | undefined;
 }
 
 export interface QueueBuild {
@@ -109,6 +111,7 @@ export function buildQueueItems(f: QueueBuildInput): QueueBuild {
         priorTermUnpaid: priorTermDueText(r.sub),
         promiseBroken: followup.promiseBroken ? { promisedOn: followup.promisedOn } : null,
         followUpDue: followup.followUpDue ? { nextFollowUpOn: followup.nextFollowUpOn } : null,
+        renewalHeld: f.holds?.get(r.sub.id) ?? null,
       },
     });
     const stage = input ? renewalStage(input) : null;

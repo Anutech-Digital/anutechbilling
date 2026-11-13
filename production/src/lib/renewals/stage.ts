@@ -106,6 +106,16 @@ export interface StageFlagInput {
   priorTermUnpaid?: string | null;
   promiseBroken?: { promisedOn: string | null } | null;
   followUpDue?: { nextFollowUpOn: string | null } | null;
+  /** R-2761: an OPEN 'held' move (subscription_renewal_moves, R-2749) — a renewal part's payment was undone but
+      renewal_date was kept. Shown only while `from` is still the row's renewal_date. */
+  renewalHeld?: RenewalHeld | null;
+}
+
+/** R-2761: why the undo was held (hold_kind) + the dates: from = the kept renewal_date, to = where it would go back. */
+export interface RenewalHeld {
+  kind: "not_active" | "quote_linked" | "seat_cut" | null;
+  from: string;
+  to: string;
 }
 
 export interface StageInput {
@@ -126,7 +136,7 @@ export interface StageInput {
 export type StageKey = "stopped" | "ending" | "renewed" | "invoiced" | "draft" | "sent" | "quote-closed" | "part-due" | "due";
 export type StageTone = "danger" | "warning" | "info" | "success" | "muted";
 
-export type FlagKey = "atRisk" | "vendorHold" | "priorTermUnpaid" | "promiseBroken" | "followUpDue";
+export type FlagKey = "atRisk" | "vendorHold" | "priorTermUnpaid" | "promiseBroken" | "followUpDue" | "renewalHeld";
 export interface StageFlag { key: FlagKey; reason: string }
 
 export interface RenewalStage {
@@ -191,9 +201,32 @@ const isSplit = (sub: StageSub) => isSplitBilled((sub.billing_cycle ?? null) as 
 /** A noon-IST Date for helpers that take a Date (isSettledRenewed). */
 const istNoon = (todayIst: string) => new Date(`${todayIst.slice(0, 10)}T06:30:00Z`);
 
-function stageFlags(f: StageFlagInput | undefined): StageFlag[] {
+/**
+ * R-2761: "Renewal held — <reason>. <what to do>." A paid renewal part's payment was undone (credit note /
+ * un-reconcile) but the database kept renewal_date on the new term (R-2749 hold), so the row can read
+ * Renewed while that term has no money. Null when there is no hold or it is stale (renewal_date moved since).
+ */
+export function renewalHeldReason(held: RenewalHeld | null | undefined, sub: Pick<StageSub, "status" | "renewal_date">): string | null {
+  if (!held || !sub.renewal_date || held.from !== sub.renewal_date) return null;
+  const back = formatDate(held.to);
+  const kept = `The renewal part's payment was undone; the renewal date stays ${formatDate(held.from)}.`;
+  switch (held.kind) {
+    case "not_active":
+      return `Renewal held — subscription ${sub.status && sub.status !== "active" ? sub.status : "not active"}. ${kept} Make it active again to move it back to ${back}, or bill the part again.`;
+    case "quote_linked":
+      return `Renewal held — renewal quote linked. ${kept} Cancel or unlink that quote to move it back to ${back}, or bill the part again.`;
+    case "seat_cut":
+      return `Renewal held — seat cut scheduled. ${kept} Bill the part again, or correct the renewal date to ${back}.`;
+    default:
+      return `Renewal held. ${kept} Bill the part again, or correct the renewal date to ${back}.`;
+  }
+}
+
+function stageFlags(f: StageFlagInput | undefined, sub: StageSub): StageFlag[] {
   if (!f) return [];
   const out: StageFlag[] = [];
+  const held = renewalHeldReason(f.renewalHeld, sub);
+  if (held) out.push({ key: "renewalHeld", reason: held });
   if (f.atRisk) out.push({ key: "atRisk", reason: f.atRisk.reasons.length ? `At risk: ${f.atRisk.reasons.join(", ")}` : "At risk" });
   if (f.vendorHold === "hold") out.push({ key: "vendorHold", reason: "Payment due — do not renew at the vendor yet" });
   if (f.priorTermUnpaid) out.push({ key: "priorTermUnpaid", reason: f.priorTermUnpaid });
@@ -216,7 +249,7 @@ export function renewalStage(input: StageInput): RenewalStage {
   const partDays = split && sub.renewal_date
     ? istDays(todayIst, followingTermStart({ term_months: sub.term_months ?? 12, start_date: sub.start_date ?? null, renewal_date: sub.renewal_date }))
     : null;
-  const flags = stageFlags(input.flags);
+  const flags = stageFlags(input.flags, sub);
   const invoice = input.invoice && input.invoice.amountDue > 0 ? input.invoice : null;
   const d = input.doc ?? null;
   const doc = d && (OPEN_DOC.has(d.status) || d.status === "draft") && d.paymentStatus !== "received" ? d : null;
@@ -253,7 +286,8 @@ export function renewalStage(input: StageInput): RenewalStage {
   }
 
   /* rev-r2738 HIGH 1: a paid renewal (or a later part paid) never hides an earlier document still unpaid. */
-  const renewedFlags = flags.filter((f) => f.key === "priorTermUnpaid");   // LOW 8: the previous term's money stays visible
+  /* LOW 8: the previous term's money stays visible; R-2761: so does a held undo (that term may have no money). */
+  const renewedFlags = flags.filter((f) => f.key === "priorTermUnpaid" || f.key === "renewalHeld");
   if ((input.renewalPaid || d?.paymentStatus === "received") && !doc && !invoice) {
     return { ...base, key: "renewed", label: "Renewed", tone: "success", days: renewalDays, flags: renewedFlags };
   }
