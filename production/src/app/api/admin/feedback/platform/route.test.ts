@@ -75,10 +75,10 @@ beforeEach(() => {
   db.email = "owner@platform.test";
   db.adminCreated = 0;
   db.queries = [];
-  db.tenants = [{ id: "tenant-own", name: "Anutech" }, { id: OTHER, name: "Excel" }];
+  db.tenants = [{ id: "tenant-own", name: "Anutech" }, { id: OTHER, name: "Realco" }];
   db.feedback = [
     row({ id: "r1" }),
-    row({ id: "r2", tenant_id: OTHER, reporter_name: "Hitesh", reporter_email: "hitesh@excel.invalid", title: "Scorecards total is wrong", route_pattern: "/reports/scorecards" }),
+    row({ id: "r2", tenant_id: OTHER, reporter_name: "Hitesh", reporter_email: "hitesh@realco.invalid", title: "Scorecards total is wrong", route_pattern: "/reports/scorecards" }),
     row({ id: "r3", tenant_id: OTHER, status: "agent_queued", agent_claimed_at: "2026-11-12T06:00:00Z", dispatched_at: "2026-11-12T05:30:00Z" }),
   ];
 });
@@ -125,7 +125,7 @@ describe("platform owner — filters, sort and paging happen in the query", () =
     expect(json.pageSize).toBe(50);
     expect(json.counts).toEqual({ all: 3, open: 2, queued: 0, ai_working: 1, fixed: 0, wont_fix: 0, duplicate: 0 });
     expect(json.rows.map((r: { id: string }) => r.id)).toEqual(["r1", "r2", "r3"]);
-    expect(json.rows[1].tenantName).toBe("Excel");
+    expect(json.rows[1].tenantName).toBe("Realco");
     expect(json.rows[1].isOwnWorkspace).toBe(false);
     expect(json.rows[0].isOwnWorkspace).toBe(true);
 
@@ -149,7 +149,7 @@ describe("platform owner — filters, sort and paging happen in the query", () =
     expect(has(counts, "eq", "status", "open")).toBe(false);
     expect(has(page, "order", "created_at", { ascending: true })).toBe(true);
     expect(has(page, "range", 50, 99)).toBe(true);
-    /* counts are for the filters without the status: both of Excel's rows. */
+    /* counts are for the filters without the status: both of Realco's rows. */
     expect(json.counts.all).toBe(2);
     expect(json.total).toBe(1);
   });
@@ -174,10 +174,10 @@ describe("platform owner — filters, sort and paging happen in the query", () =
     const json = await res.json();
     expect(json.rows).toBeUndefined();
     expect(json.facets.workspaces).toEqual([
-      { value: OTHER, label: "Excel", count: 2 },
+      { value: OTHER, label: "Realco", count: 2 },
       { value: "tenant-own", label: "Anutech", count: 1 },
     ]);
-    expect(json.facets.reporters.map((r: { value: string }) => r.value)).toEqual(["pardeep@anutech.in", "hitesh@excel.invalid"]);
+    expect(json.facets.reporters.map((r: { value: string }) => r.value)).toEqual(["pardeep@anutech.in", "hitesh@realco.invalid"]);
     expect(json.openToSend).toBe(2);
   });
 });

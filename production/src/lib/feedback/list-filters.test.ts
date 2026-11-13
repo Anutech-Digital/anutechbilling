@@ -69,7 +69,7 @@ describe("URL ↔ filters", () => {
 
   it("a reload keeps the filters — params round-trip", () => {
     const f = F({
-      q: "scorecard total", status: "open", type: "bug", severity: "high", reporter: "hitesh@exceltechnologies.in",
+      q: "scorecard total", status: "open", type: "bug", severity: "high", reporter: "hitesh@realco.in",
       workspace: OTHER_TENANT, page: "/reports/scorecards", from: "2026-11-01", to: "2026-11-12", card: "none",
       real: true, fresh: true, sort: "oldest", pageNo: 3,
     });
@@ -187,10 +187,10 @@ describe("filters", () => {
   });
 
   it("reporter = hitesh + status open → both steps", () => {
-    const ops = feedbackFilterOps(F({ reporter: "hitesh@exceltechnologies.in", status: "open" }), { scope: "all" });
+    const ops = feedbackFilterOps(F({ reporter: "hitesh@realco.in", status: "open" }), { scope: "all" });
     expect(ops[0]).toEqual({ k: "eq", col: "status", v: "open" });
     expect(ors(ops)[0]).toBe(
-      `reporter_email.ilike."hitesh@exceltechnologies.in",and(or(reporter_email.is.null,reporter_email.eq.""),reporter_name.imatch.${quoteLogicValue(reporterNameRegex("hitesh@exceltechnologies.in"))})`,
+      `reporter_email.ilike."hitesh@realco.in",and(or(reporter_email.is.null,reporter_email.eq.""),reporter_name.imatch.${quoteLogicValue(reporterNameRegex("hitesh@realco.in"))})`,
     );
   });
 
@@ -294,7 +294,7 @@ describe("'Real users'", () => {
     expect(isRealReporter("pardeep@anutech.in")).toBe(false);
     expect(isRealReporter("Owner@Example.Test")).toBe(false);
     expect(isRealReporter("someone@example.com")).toBe(false);
-    expect(isRealReporter("hitesh@exceltechnologies.in")).toBe(true);
+    expect(isRealReporter("hitesh@realco.in")).toBe(true);
     expect(isRealReporter("a@contest.in")).toBe(true);
     expect(isRealReporter("x@notanutech.in")).toBe(true);
     expect(isRealReporter(null)).toBe(true);
@@ -336,23 +336,23 @@ describe("counts, facets, chips", () => {
 
   it("facets: reporters by email (name when none), pages by route, workspaces only when names are given", () => {
     const rows = [
-      { tenant_id: "t1", reporter_name: "Hitesh", reporter_email: "Hitesh@Excel.in", route_pattern: "/reports/scorecards", page_path: "/reports/scorecards" },
-      { tenant_id: "t1", reporter_name: "Hitesh", reporter_email: "hitesh@excel.in", route_pattern: null, page_path: "/quotes/12" },
+      { tenant_id: "t1", reporter_name: "Hitesh", reporter_email: "Hitesh@Realco.in", route_pattern: "/reports/scorecards", page_path: "/reports/scorecards" },
+      { tenant_id: "t1", reporter_name: "Hitesh", reporter_email: "hitesh@realco.in", route_pattern: null, page_path: "/quotes/12" },
       { tenant_id: "t2", reporter_name: "Walk-in", reporter_email: null, route_pattern: null, page_path: null },
     ];
     const mine = buildFacets(rows);
     expect(mine.reporters).toEqual([
-      { value: "hitesh@excel.in", label: "Hitesh · hitesh@excel.in", count: 2 },
+      { value: "hitesh@realco.in", label: "Hitesh · hitesh@realco.in", count: 2 },
       { value: "walk-in", label: "Walk-in", count: 1 },
     ]);
     expect(mine.pages.map((p) => p.value)).toEqual(["/quotes/12", "/reports/scorecards"]);
     expect(mine.workspaces).toEqual([]);
-    const all = buildFacets(rows, new Map([["t1", "Excel"]]));
-    expect(all.workspaces).toEqual([{ value: "t1", label: "Excel", count: 2 }, { value: "t2", label: "(unknown workspace)", count: 1 }]);
+    const all = buildFacets(rows, new Map([["t1", "Realco"]]));
+    expect(all.workspaces).toEqual([{ value: "t1", label: "Realco", count: 2 }, { value: "t2", label: "(unknown workspace)", count: 1 }]);
   });
 
   it("chips name the active filters and removing one goes back to page 1", () => {
-    const f = F({ q: "scorecard", reporter: "hitesh@excel.in", from: "2026-11-01", pageNo: 4 });
+    const f = F({ q: "scorecard", reporter: "hitesh@realco.in", from: "2026-11-01", pageNo: 4 });
     expect(activeFilterChips(f).map((c) => c.key)).toEqual(["q", "reporter", "date"]);
     const next = removeFilter(f, "reporter");
     expect(next.reporter).toBe("");
