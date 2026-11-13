@@ -86,6 +86,9 @@ import { renewalFrequency, renewalCommitment, type Commitment } from "./frequenc
 import { useRenewalLastPaid } from "./last-paid-data";
 import { LastPaidLine } from "./last-paid-cell";
 import type { LastPaid } from "./last-paid";
+import { useRenewalLastDocs } from "./last-docs-data";
+import { LastDocsLines, SentDueLines } from "./last-docs-cell";
+import type { LastDocs } from "./last-docs";
 import { canOpenInvoices } from "@/lib/invoices/access";
 import {
   renewalFollowup, renewalDecision, showDecision, filterByFollowup, bulkAssignRequests, bulkAssignReport,
@@ -203,11 +206,13 @@ function AtRiskMark({ reason }: { reason: string }) {
  * R-2404: where the customer's decision stands, who works the renewal and when they follow up
  * next, the promise to pay. Under the ONE status chip; "Paid" / "Won't renew" are that chip already.
  */
-function FollowupLine({ followup, decision, names }: { followup: RenewalFollowup; decision: RenewalDecision; names: Map<string, UserName> | undefined }) {
+function FollowupLine({ followup, decision, names, statusKey }: { followup: RenewalFollowup; decision: RenewalDecision; names: Map<string, UserName> | undefined; statusKey: RowStatusKey }) {
   const owner = followup.ownerId ? names?.get(followup.ownerId)?.label ?? "a colleague" : null;
+  /* R-2728: the "Renewal quote sent" chip already says "Quote sent" — one fact, one place. */
+  const decisionShown = showDecision(decision) && !(decision === "quote-sent" && statusKey === "quote-sent");
   return (
     <div className="mt-1.5 space-y-0.5 text-2xs">
-      {showDecision(decision) && <Badge kind={DECISION_TONE[decision]} size="sm">{DECISION_LABEL[decision]}</Badge>}
+      {decisionShown && <Badge kind={DECISION_TONE[decision]} size="sm">{DECISION_LABEL[decision]}</Badge>}
       <p className={cn("truncate", owner ? "text-ink-2" : "text-ink-3")} title={owner ? `Owner: ${owner}` : "No owner yet"}>
         <Icon name="user" size={10} className="mr-0.5 inline shrink-0" />{owner ?? "No owner"}
       </p>
@@ -282,6 +287,8 @@ interface QueueItem {
   /** R-2422: worked out once per row (frequency.ts) — the amount cell's words and the Commitment filter. */
   frequency: string | null;
   commitment: Commitment;
+  /** R-2728: last quote sent / last invoice / the renewal quote with the customer (last-docs.ts). */
+  docs: LastDocs | undefined;
 }
 
 interface RenewalQueueProps {
@@ -296,9 +303,11 @@ interface RenewalQueueProps {
   names: Map<string, UserName> | undefined;
   /** R-2422: Last paid per subscription (one read for the whole list — last-paid-data.ts). */
   lastPaid: { data: Map<string, LastPaid> | undefined; loading: boolean; failed: boolean };
+  /** R-2728: the last-docs read's state (the rows carry their own `docs`). */
+  docsState: { loading: boolean; failed: boolean };
 }
 
-function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, onFollowup, names, lastPaid }: RenewalQueueProps) {
+function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, onFollowup, names, lastPaid, docsState }: RenewalQueueProps) {
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
      home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
@@ -321,12 +330,35 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
   const lastPaidFor = (sub: Subscription, className?: string) => (
     <LastPaidLine paid={lastPaid.data?.get(sub.id)} loading={lastPaid.loading} failed={lastPaid.failed} canInvoices={canInvoices} canQuotes={canQuotes} className={className} />
   );
+  /* R-2728: the last quote sent + last invoice, clickable. A draft renewal quote keeps R-2232's
+     "Renewal quote Q-x not sent yet" line; otherwise these lines replace "Renewal sent Q-x · due …". */
+  const todayIst = istToday();
+  const docsFor = (item: QueueItem, action: RowAction, className: string) => {
+    /* R-2232's line stays when it says something the docs lines do not: a draft ("not sent yet"),
+       the docs still loading / unread, or a linked renewal quote that is not the newest quote sent. */
+    const keepActionLine = action.kind === "send" || docsState.loading || docsState.failed
+      || (!!action.quoteId && item.docs?.quote?.id !== action.quoteId);
+    return (
+      <>
+        {keepActionLine && <RowActionLine action={action} canQuotes={canQuotes} className={className} />}
+        <LastDocsLines docs={item.docs} loading={docsState.loading} failed={docsState.failed} canQuotes={canQuotes} canInvoices={canInvoices} todayIst={todayIst} className={className} />
+      </>
+    );
+  };
+  const sentDue = (item: QueueItem, className?: string) => (
+    item.status.key === "quote-sent" && item.docs?.sent
+      ? <SentDueLines sent={item.docs.sent} daysUntil={item.daysUntil} todayIst={todayIst} className={className} />
+      : null
+  );
+  /* R-2728: a sent renewal quote / part bill → ⋯ Record payment (the quote's own dialog, ?pay=1). */
+  const payQuoteOf = (item: QueueItem) => (item.status.key === "quote-sent" ? item.docs?.sent?.quoteId : undefined);
 
   return (
     <>
       {/* Cards — viewports < 1280px (phones and small laptops), two per row from md. */}
       <ul className="xl:hidden p-3 space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
-        {rows.map(({ sub, daysUntil: days, status, amount, frequency, contact, atRisk, riskReason, followup, decision }) => {
+        {rows.map((item) => {
+          const { sub, daysUntil: days, status, amount, frequency, contact, atRisk, riskReason, followup, decision } = item;
           const priorDue = priorTermDueText(sub);  // R-1703
           const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
           return (
@@ -353,10 +385,11 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
               <div className="flex items-start justify-between gap-2 mb-2">
                 <div className="min-w-0">
                   <StatusChip status={status} size="sm" />
-                  <FollowupLine followup={followup} decision={decision} names={names} />
+                  <FollowupLine followup={followup} decision={decision} names={names} statusKey={status.key} />
                 </div>
                 <div className="shrink-0 text-right">
                   <p className="text-xs text-ink-2">{sub.renewal_date ? formatDate(sub.renewal_date) : "—"}</p>
+                  {sentDue(item)}
                   {atRisk && <AtRiskMark reason={riskReason} />}
                 </div>
               </div>
@@ -376,11 +409,11 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                 </p>
               )}
 
-              {/* R-2232: "Renewal sent Q-x · due …" — never a second Generate. */}
-              <RowActionLine action={action} canQuotes={canQuotes} className="mb-2 text-xs" />
+              {/* R-2232: "Renewal quote Q-x not sent yet" — never a second Generate. R-2728: last quote / invoice. */}
+              {docsFor(item, action, "mb-2 text-xs")}
 
               <div className="pt-2 border-t border-hairline/60">
-                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging />
+                <RenewalActions sub={sub} daysUntil={days} layout="card" strong={strong} onFollowup={followupFor(sub)} messaging recordPaymentQuoteId={payQuoteOf(item)} />
               </div>
             </li>
           );
@@ -417,7 +450,8 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
             </tr>
           </thead>
           <tbody>
-            {rows.map(({ sub, daysUntil: days, status, amount, frequency, contact, atRisk, riskReason, followup, decision }) => {
+            {rows.map((item) => {
+              const { sub, daysUntil: days, status, amount, frequency, contact, atRisk, riskReason, followup, decision } = item;
               const priorDue = priorTermDueText(sub);  // R-1703
               const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
               return (
@@ -458,6 +492,7 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                   {/* Renewal date + reminders sent */}
                   <td className="px-3 py-3">
                     <p className="text-ink">{sub.renewal_date ? formatDate(sub.renewal_date) : "—"}</p>
+                    {sentDue(item, "mt-0.5")}
                     {sub.reminder_count > 0 && (
                       <p className="mt-1 text-2xs text-ink-3 tabular-nums">
                         {sub.reminder_count} email{sub.reminder_count === 1 ? "" : "s"} sent
@@ -478,19 +513,19 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
                   {/* ONE status */}
                   <td className="px-3 py-3">
                     <StatusChip status={status} />
-                    <FollowupLine followup={followup} decision={decision} names={names} />
+                    <FollowupLine followup={followup} decision={decision} names={names} statusKey={status.key} />
                   </td>
 
                   {/* Actions */}
                   <td className="px-3 py-3">
                     <div className="flex flex-col items-start gap-1.5">
-                      <RowActionLine action={action} canQuotes={canQuotes} className="text-2xs" />
+                      {docsFor(item, action, "text-2xs")}
                       {!isGraceOver(sub, days, graceDays) && (
                         <div className="empty:hidden">
                           <VendorHoldBadge sub={sub} />
                         </div>
                       )}
-                      <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging />
+                      <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging recordPaymentQuoteId={payQuoteOf(item)} />
                     </div>
                   </td>
                 </tr>
@@ -559,6 +594,9 @@ export default function RenewalsPage() {
   /* R-2422: Last paid for every listed renewal — one batched, paged read (last-paid-data.ts). */
   const lastPaidQ = useRenewalLastPaid(listed);
   const lastPaid = { data: lastPaidQ.data, loading: lastPaidQ.isLoading, failed: lastPaidQ.isError };
+  /* R-2728: last quote sent / last invoice / "Renewal quote sent" for every listed renewal — one batched read. */
+  const lastDocsQ = useRenewalLastDocs(listed);
+  const docsState = { loading: lastDocsQ.isLoading, failed: lastDocsQ.isError && !lastDocsQ.data };
   const [fuFilters, setFuFilters] = React.useState<FollowupFilters>(NO_FOLLOWUP_FILTERS);
   const [followupFor, setFollowupFor] = React.useState<QueueItem | null>(null);
   const [assignOpen, setAssignOpen] = React.useState(false);
@@ -664,7 +702,9 @@ export default function RenewalsPage() {
   const todayIst = istToday(today);
   const toItem = (r: { sub: Subscription; daysUntil: number }): QueueItem => {
     const risk = renewalRisk(r.sub);
-    const status = renewalRowStatus(r.sub, r.daysUntil, { tenantGraceDays: graceDays, today, renewalPaid: paid(r) });
+    const docs = lastDocsQ.data?.get(r.sub.id);
+    /* R-2728: a renewal quote / part bill with the customer, unpaid → "Renewal quote sent" (stays listed). */
+    const status = renewalRowStatus(r.sub, r.daysUntil, { tenantGraceDays: graceDays, today, renewalPaid: paid(r), quoteSent: docs?.sent ?? null });
     /* R-2404: the renewal's follow-up state + where the decision stands. */
     const customerOwnerId = r.sub.customer_id ? fuData?.ownerByCustomer.get(r.sub.customer_id) ?? null : null;
     const followup = renewalFollowup(r.sub.id, fuData?.rows ?? [], { customerOwnerId, today: todayIst, paid: status.key === "renewed" });
@@ -686,6 +726,7 @@ export default function RenewalsPage() {
       amount: renewalAmount(r.sub, quoteOf(r.sub)),
       frequency: renewalFrequency(r.sub),
       commitment: renewalCommitment(r.sub),
+      docs,
       contact: r.sub.customer_id ? contacts?.get(r.sub.customer_id) : undefined,
       atRisk: atRiskIds.has(r.sub.id),
       riskReason: [
@@ -734,7 +775,8 @@ export default function RenewalsPage() {
 
   const productOptions = filterOptions(allItems.map((i) => i.sub.plan));
   const vendorOptions  = filterOptions(allItems.map((i) => i.sub.vendor));
-  const statusOptions  = (Object.keys(STATUS_FILTER_LABEL) as RowStatusKey[]).filter((k) => allItems.some((i) => i.status.key === k));
+  const statusCount    = (k: RowStatusKey) => allItems.filter((i) => i.status.key === k).length;
+  const statusOptions  = (Object.keys(STATUS_FILTER_LABEL) as RowStatusKey[]).filter((k) => statusCount(k) > 0 || filters.status === k);
   const fuOn = fuFilters.mine || fuFilters.followUpDue || fuFilters.promiseBroken;
   const filtered = !!(filters.product || filters.status || filters.vendor || filters.commitment !== "all" || atRiskOn || fuOn);
   /* R-2404: chip counts — whole queue, so a person sees "Mine (12)" before pressing it. */
@@ -1057,7 +1099,8 @@ export default function RenewalsPage() {
             </select>
             <select value={filters.status} onChange={(e) => setFilters((f) => ({ ...f, status: e.target.value as RowStatusKey | "" }))} aria-label="Filter by status" className={SELECT_CLS}>
               <option value="">All statuses</option>
-              {statusOptions.map((k) => <option key={k} value={k}>{STATUS_FILTER_LABEL[k]}</option>)}
+              {/* R-2728: each status with its count across the queue (e.g. "Renewal quote sent (3)"). */}
+              {statusOptions.map((k) => <option key={k} value={k}>{STATUS_FILTER_LABEL[k]} ({statusCount(k)})</option>)}
             </select>
             <select value={filters.vendor} onChange={(e) => setFilters((f) => ({ ...f, vendor: e.target.value }))} aria-label="Filter by vendor" className={SELECT_CLS}>
               <option value="">All vendors</option>
@@ -1126,6 +1169,7 @@ export default function RenewalsPage() {
             onFollowup={setFollowupFor}
             names={names}
             lastPaid={lastPaid}
+            docsState={docsState}
           />
         </div>
       </Card>
