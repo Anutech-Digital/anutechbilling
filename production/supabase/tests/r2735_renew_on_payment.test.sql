@@ -190,6 +190,30 @@ begin
   raise notice 'PASS 9: roll_paid_renewal_terms is service_role only';
 end $$;
 
+-- ── 11. Monthly commitment billed monthly (flex, 1-month term): Bill next part makes the quote for THAT part
+--        only, the period it covers is readable through subscription_billing_id (one join), pressing it again
+--        returns the same quote (no second one); paid → renewal date moves ONE month ────────────────────
+do $$
+declare v_s uuid; v_b uuid; r1 jsonb; r2 jsonb; v_p text; v_n int;
+begin
+  v_s := pg_temp.sub(8, 'monthly', 1, '2026-11-01', '2026-11-30');
+  v_b := pg_temp.part(v_s, 9, '2026-12-01', 1, '2026-12-01', 1, '2026-11-30', '2026-12-31');
+  r1 := public.bill_subscription_instalment(v_b, false);
+  r2 := public.bill_subscription_instalment(v_b, false);
+  if r1->>'action' <> 'request' or r2->>'action' <> 'request_open' or r2->>'quote_id' <> r1->>'quote_id' then
+    raise exception 'FAIL 11: second press made another quote: % / %', r1, r2; end if;
+  select count(*) into v_n from public.quotes q where q.subscription_billing_id = v_b;
+  select b.subscription_id::text || ' ' || b.period_start || '..' || (b.period_end - 1) into v_p
+    from public.quotes q join public.subscription_billings b on b.id = q.subscription_billing_id where q.id = r1->>'quote_id';
+  if v_n <> 1 or v_p <> v_s::text || ' 2026-12-01..2026-12-31' then
+    raise exception 'FAIL 11: quotes % / period read %', v_n, v_p; end if;
+  if pg_temp.st(v_s) <> '2026-11-30 grace_period 3' then raise exception 'FAIL 11: billing moved it: %', pg_temp.st(v_s); end if;
+  perform pg_temp.pay(r1->>'quote_id', 1180, 'R2735-11');
+  if pg_temp.st(v_s) <> '2026-12-31 renewed 0' then
+    raise exception 'FAIL 11: paid → % (want 2026-12-31 renewed 0)', pg_temp.st(v_s); end if;
+  raise notice 'PASS 11: monthly flex — one quote per part (idempotent), period 1–31 Dec readable, paid → +1 month';
+end $$;
+
 -- ── 10. An open quote on renewal_quote_id holds the roll (R-808: paying it would move the date again);
 --        the link cleared (quote cancelled / unlinked) → the paid part renews then ────────────────────
 do $$

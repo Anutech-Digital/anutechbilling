@@ -113,6 +113,8 @@ const SQL_NOT_SALE: Record<string, string> = {
   unreconcile_bank_receipt: "money in",
   project_receipt_undo_preview: "R-1999: one invoice status by id per kist, before / after a rolled-back dry run of un-reconciling a project line — not GST or revenue",
   waive_late_charges: "late fee",
+  roll_paid_renewal_terms: "R-2735: is a renewal part's own tax invoice paid — moves renewal_date, not GST or revenue",
+  tg_r2735_invoice_paid_renews: "R-2735: invoice turned paid → renew its marked part's subscription — not GST or revenue",
   // R-1739's own functions
   _opening_invoice_settle: "keeps an opening invoice's paid amount",
   _record_opening_invoice_payment: "payment on an opening invoice",
