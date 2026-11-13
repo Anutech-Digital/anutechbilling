@@ -2594,15 +2594,18 @@ function QuoteBuilderBody() {
                  card shows Starts outside "More" when the date matters. */
               const lineStart = renewalLineStart(line, editedQuotePeriod);
               const startsUp = startsOnCard(line, editedQuotePeriod, customerLive);
+              /* A div, not a <label>: on a renewal line LineStartsField renders read-only text, so the
+                 date input (when there is one) carries its own aria-label (a11y guard label-no-for). */
               const startsField = (
-                <label className="block">
+                <div className="block">
                   <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Starts</span>
                   <LineStartsField
+                    ariaLabel="Starts"
                     start={lineStart} value={line.start_date ?? ""} onChange={(v) => updateStartDate(line.id, v)}
                     inputClassName="mt-0.5 w-full px-2 py-1.5 text-sm border border-hairline rounded bg-paper text-ink focus:outline-none focus:ring-2 focus:ring-amber focus:border-amber"
                     textClassName="mt-0.5 block px-2 py-1.5 text-sm tabular-nums text-ink border border-hairline rounded bg-paper-2/40"
                   />
-                </label>
+                </div>
               );
               return (
                 <div key={line.id} className="p-3 space-y-2.5">
