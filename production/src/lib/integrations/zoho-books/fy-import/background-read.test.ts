@@ -4,10 +4,11 @@
  * not connected, empty year, DB hiccup, tenant isolation. Zoho is a fake fetch (never the real one);
  * the stores are memory. Names and numbers are made up.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { runBackgroundRead, LEASE_EXTRA_MS, RECONNECT_MESSAGE, STUCK_MS, type BgState, type BgStore, type ZohoAccess } from "./background-read";
 import type { ScanRun, ScanStore, ListedRow, ScanFacts } from "./scan";
 import { zohoReceiptFacts } from "../receipts-import/normalise";
+import { createDayMeter, forgetDayMeters, registerDayMeter, type DayCallsRow } from "../zoho-day-budget";
 
 type Facts = ScanFacts;
 
@@ -274,5 +275,92 @@ describe("R-2607 review fixes", () => {
     await runBackgroundRead({ ...x.d, budgetMs: 1_500 });
     const saved = (x.b.s.pace ?? []).reduce((s, p) => s + p.calls, 0);
     expect(saved).toBeGreaterThan(0);
+  });
+});
+
+/* R-2661 — the company's Zoho DAY budget: stop before Zoho's daily limit, carry on next day. */
+describe("R-2661 day budget in the background read", () => {
+  afterEach(() => { forgetDayMeters(); vi.useRealTimers(); });
+
+  /** A memory day-row sink for one company. */
+  function daySink(seed: DayCallsRow[] = []) {
+    const rows = new Map(seed.map((r) => [r.day, { ...r }]));
+    return {
+      rows,
+      sink: {
+        async read(day: string) { const r = rows.get(day); return r ? { ...r } : null; },
+        async add(day: string, calls: number, refusal: string | null) {
+          const r = rows.get(day) ?? { day, calls: 0, limitHitAt: null };
+          r.calls += calls; if (refusal && !r.limitHitAt) r.limitHitAt = new Date().toISOString();
+          rows.set(day, r); return { ...r };
+        },
+      },
+    };
+  }
+  /* 13 Nov 2026 10:00Z (15:30 IST); the next IST day begins 18:30Z. */
+  const DAY1 = Date.parse("2026-11-13T10:00:00Z");
+  const DAY2 = Date.parse("2026-11-13T19:00:00Z");
+
+  it("stops BEFORE the call past the budget: no Zoho call for it, cursor kept, request stays, bg_error says the budget line; next IST day carries on from the same page and each document is read once", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(DAY1);
+    const scan = memoryScan(); const b = memoryBg(); const c = clock(DAY1); const z = fakeZoho(7);  /* 3 list pages + 7 details = 10 calls */
+    const ds = daySink();
+    const meter = createDayMeter("t1", ds.sink, { budget: 5, log: () => {} });
+    registerDayMeter("tok-1", meter);   /* api.ts booksGet counts and refuses through the token */
+    const d = { store: scan.store, bg: b.bg, kind: "customerpayments" as const, toFacts: zohoReceiptFacts, fy: "2025-26",
+      access: access().a, budgetMs: 600_000, now: c.now, sleep: c.sleep, fetch: z.f, log: () => {}, dayBudget: meter };
+    const r1 = await runBackgroundRead(d);
+    expect(r1.outcome).toBe("day-limit");
+    expect(z.calls()).toBe(5);                                   /* 3 list + 2 details; the 6th was never made */
+    expect(ds.rows.get("2026-11-13")).toMatchObject({ calls: 5 });
+    expect(await scan.store.counts("2025-26")).toEqual({ listed: 7, detailed: 2 });
+    expect(scan.runs.get("2025-26")).toMatchObject({ listDone: true });
+    expect(b.s.requestedAt).not.toBeNull();                      /* the request STAYS */
+    expect(b.s.leaseUntil).toBeNull();
+    expect(b.s.error).toContain("Zoho calls today: 5 of 5");
+    expect(b.s.error).toContain("carries on after 12:00 am IST on 14 Nov 2026");
+    /* A cron tick later the same day: nothing is called, nothing new is written. */
+    const errBefore = b.s.error;
+    const r2 = await runBackgroundRead(d);
+    expect(r2.outcome).toBe("day-limit");
+    expect(z.calls()).toBe(5);
+    expect(b.s.error).toBe(errBefore);
+    /* The next IST day: the pass carries on from the saved state — no list page again, the 5 details left read once each. */
+    vi.setSystemTime(DAY2); c.set(DAY2);
+    const r3 = await runBackgroundRead(d);
+    expect(r3).toMatchObject({ outcome: "complete", listed: 7, detailed: 7 });
+    expect(z.calls()).toBe(10);
+    expect(ds.rows.get("2026-11-14")).toMatchObject({ calls: 5 });
+    expect(b.s.requestedAt).toBeNull();
+    expect(b.s.error).toBeNull();
+  });
+
+  it("the cron while the day is spent: no Zoho call, no lease, the request stays with the budget line", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] }); vi.setSystemTime(DAY1);
+    const scan = memoryScan(); const b = memoryBg(); const c = clock(DAY1); const z = fakeZoho(7);
+    const ds = daySink([{ day: "2026-11-13", calls: 900, limitHitAt: null }]);
+    const meter = createDayMeter("t1", ds.sink, { budget: 900, log: () => {} });
+    registerDayMeter("tok-1", meter);
+    const d = { store: scan.store, bg: b.bg, kind: "customerpayments" as const, toFacts: zohoReceiptFacts, fy: "2025-26",
+      access: access().a, budgetMs: 600_000, now: c.now, sleep: c.sleep, fetch: z.f, log: () => {}, dayBudget: meter, requireRequest: true };
+    const r = await runBackgroundRead(d);
+    expect(r).toMatchObject({ outcome: "day-limit", calls: 0, listed: 0, detailed: 0 });
+    expect(z.calls()).toBe(0);
+    expect(b.s.requestedAt).not.toBeNull();
+    expect(b.s.leaseUntil).toBeNull();
+    expect(b.s.error).toContain("Zoho calls today: 900 of 900");
+    /* Zoho itself refused for the day (another app shares the organization): spent even at a low count. */
+    const ds2 = daySink([{ day: "2026-11-13", calls: 12, limitHitAt: "2026-11-13T04:24:00Z" }]);
+    const meter2 = createDayMeter("t1", ds2.sink, { budget: 900, log: () => {} });
+    const b2 = memoryBg();
+    const r2 = await runBackgroundRead({ ...d, bg: b2.bg, dayBudget: meter2 });
+    expect(r2.outcome).toBe("day-limit");
+    expect(z.calls()).toBe(0);
+    expect(b2.s.error).toContain("Zoho calls today: 12 of 900");
+  });
+
+  it("without a day budget (older callers / tests) nothing changes: the year reads to the end", async () => {
+    const { d } = deps();
+    expect((await runBackgroundRead(d)).outcome).toBe("complete");
   });
 });

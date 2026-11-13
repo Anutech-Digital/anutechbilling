@@ -48,6 +48,7 @@ vi.mock("@/lib/supabase/server", () => ({
 }));
 
 import { POST } from "./route";
+import { createDayMeter, forgetDayMeters, istDayOf, registerDayMeter } from "@/lib/integrations/zoho-books/zoho-day-budget";
 
 const fact = (over: Partial<ZohoSaleFacts>): ZohoSaleFacts => ({
   zohoId: "z1", number: "INV/25-26/0001", date: "2025-05-10", dueDate: null, status: "paid", zohoCustomerId: "c", customerName: "Test Buyer",
@@ -65,6 +66,29 @@ beforeEach(() => {
   st.role = "owner"; st.run = { nextPage: 3, listDone: true }; st.counts = { listed: 2, detailed: 2 }; st.rpc = []; st.resets = 0; st.refreshes = 0;
   st.facts = [fact({}), fact({ zohoId: "z2", number: "INV/25-26/0002", status: "void", problems: ["Void in Zoho — not a sale, not in revenue or GST."] })];
   st.rpcResult = { data: { dry_run: true, imported: 1 }, error: null };
+});
+
+describe("R-2661 sales-import route — day budget", () => {
+  it("read with the day's budget used: no Zoho call, 200 with dayLimit (calls / budget / retryAt) and the counts as saved", async () => {
+    vi.stubEnv("ZOHO_BOOKS_CLIENT_ID", "id"); vi.stubEnv("ZOHO_BOOKS_CLIENT_SECRET", "secret");
+    const zoho = vi.fn(async () => new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", zoho);
+    const day = istDayOf(Date.now());
+    registerDayMeter("access", createDayMeter("t1", {
+      async read() { return { day, calls: 900, limitHitAt: null }; },
+      async add() { throw new Error("never"); },
+    }, { budget: 900, log: () => {} }));
+    st.run = { nextPage: 4, listDone: false }; st.counts = { listed: 600, detailed: 0 };
+    try {
+      const res = await POST(req({ action: "read", fy: "2025-26" }));
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ ok: true, busy: true, complete: false, listed: 600, detailed: 0, dayLimit: { calls: 900, budget: 900, day: istDayOf(Date.now()) } });
+      expect(typeof body.dayLimit.retryAt).toBe("number");
+      expect(zoho).not.toHaveBeenCalled();
+      expect(st.resets).toBe(0); expect(st.refreshes).toBe(0);
+    } finally { forgetDayMeters(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); }
+  });
 });
 
 describe("R-2499 sales-import route", () => {

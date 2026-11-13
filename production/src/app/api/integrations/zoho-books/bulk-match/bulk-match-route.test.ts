@@ -80,6 +80,7 @@ vi.mock("@/lib/integrations/zoho-books/store", () => ({
 }));
 
 import { POST } from "./route";
+import { createDayMeter, forgetDayMeters, istDayOf, registerDayMeter } from "@/lib/integrations/zoho-books/zoho-day-budget";
 import { clearZohoBatchCache } from "@/lib/integrations/zoho-books/payment-batch";
 
 const zohoCalls: string[] = [];
@@ -142,6 +143,25 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
 const tenantFilters = (table: string) => st.filters.filter(([t, op, k]) => t === table && op === "eq" && k === "tenant_id").map((f) => f[3]);
+
+describe("R-2661 bulk-match route — day budget", () => {
+  it("a page with the day's budget used: no Zoho call, stopped day_limit + dayLimit, rows empty (the sheet keeps its cursor)", async () => {
+    const day = istDayOf(Date.now());
+    registerDayMeter("access", createDayMeter(TENANT, {
+      async read() { return { day, calls: 900, limitHitAt: null }; },
+      async add() { throw new Error("never"); },
+    }, { budget: 900, log: () => {} }));
+    try {
+      const res = await POST(req({ accountId: ACCOUNT, txnIds: [L1, L2] }));
+      const body = await res.json();
+      expect(res.status).toBe(200);
+      expect(body).toMatchObject({ ok: true, rows: [], zohoCalls: 0, stopped: { code: "day_limit" }, dayLimit: { calls: 900, budget: 900 } });
+      expect(body.stopped.message).toContain("Zoho calls today: 900 of 900");
+      expect(zohoCalls).toEqual([]);
+      expect(st.writes).toBe(0);
+    } finally { forgetDayMeters(); }
+  });
+});
 
 describe("R-2402 bulk-match route", () => {
   it("first call: the account's unmatched money-in line ids, own tenant only; no Zoho call", async () => {

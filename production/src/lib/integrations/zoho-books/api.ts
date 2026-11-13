@@ -32,12 +32,13 @@ export class ZohoApiError extends Error {
 
 /**
  * R-2661 — the call was NOT made: this company's Zoho calls for the IST day are at the budget (or Zoho
- * itself refused for the day). Status 429 so every reader treats it as "busy" (cursor kept, retried
- * later); `day` says how many of the budget and when it carries on (the next midnight IST).
+ * itself refused for the day). Code `day_limit`, NO status: it is not Zoho's "busy" (fy-fetch's
+ * runPaced lets it through instead of retrying in a minute), so every reader stops at once with its
+ * cursor where the last saved call left it; `day` says how many of the budget and when it carries on.
  */
 export class ZohoDayLimitError extends ZohoApiError {
   constructor(readonly day: DayBudgetState) {
-    super(zohoDayLimitMessage({ calls: day.calls, budget: day.budget, retryAt: day.retryAt, day: day.day }), "day_limit", 429);
+    super(zohoDayLimitMessage({ calls: day.calls, budget: day.budget, retryAt: day.retryAt, day: day.day }), "day_limit");
     this.name = "ZohoDayLimitError";
   }
 }

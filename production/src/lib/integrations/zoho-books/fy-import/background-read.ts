@@ -30,7 +30,7 @@
  * Zoho is only READ. Nothing is imported here — Check + Import stay the owner's buttons (R-2501).
  * The store (bg-store.ts) filters every read / write by tenant + kind + FY (CLAUDE.md §17c).
  */
-import { ZohoApiError } from "../api";
+import { isZohoDayLimit, ZohoApiError } from "../api";
 import { FY_CALLS_PER_REQUEST } from "../config";
 import type { FyReadKind, ZohoFyDocDetail } from "../fy-fetch";
 import type { DayMeter } from "../zoho-day-budget";
@@ -177,16 +177,15 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
         if (!(await d.bg.touch(d.fy, { nowMs: t, pace: recentPace(history, t), fromMs: lease, toMs: next }))) { lost = true; outcome = "lost"; break; }
         lease = next;
         if (r.complete) { outcome = "complete"; finished = true; break; }
-        if (r.busy) {
-          /* R-2661: "busy" from the meter's own refusal (api.ts, no call made) = the day is spent. */
-          const spentAfter = d.dayBudget ? await d.dayBudget.check(now()) : null;
-          if (spentAfter) { outcome = "day-limit"; error = zohoDayLimitMessage(spentAfter, now()); break; }
-          outcome = "busy"; break;
-        }
+        if (r.busy) { outcome = "busy"; break; }
       }
     }
   } catch (e) {
-    if (e instanceof ZohoApiError && !isTransientZoho(e)) {
+    if (isZohoDayLimit(e)) {
+      /* R-2661: the meter refused the next call (none was made): the request stays; the next IST day's
+         first pass carries on from the saved page / pending details. */
+      outcome = "day-limit"; error = e.message;
+    } else if (e instanceof ZohoApiError && !isTransientZoho(e)) {
       /* The owner must act (reconnect, scope, Zoho refused): stop the read with the reason. */
       outcome = "stopped"; finished = true;
       error = e.status === 401 || e.code === "reconnect" ? RECONNECT_MESSAGE : (e.message || "Zoho Books refused the read.").slice(0, 400);

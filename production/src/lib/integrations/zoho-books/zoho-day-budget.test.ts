@@ -9,6 +9,8 @@ import {
   createDayMeter, dayMeterOf, forgetDayMeters, isZohoDayLimitRefusal, istDayOf, registerDayMeter,
   zohoDayBudget, zohoDayCallsLabel, ZOHO_DAY_BUDGET_DEFAULT, type DayCallsRow, type DayCallsSink,
 } from "./zoho-day-budget";
+import { isZohoDayLimit, listPage, ZohoApiError, ZohoDayLimitError } from "./api";
+import { isZohoBusy, runPaced } from "./fy-fetch";
 
 /** A memory sink for ONE tenant, with a hook to fail writes. */
 function memorySink(seed: DayCallsRow[] = []) {
@@ -140,6 +142,42 @@ describe("R-2661 Zoho day budget — meter", () => {
     expect(dayMeterOf("tok-599")).toBe(a);
     registerDayMeter("", a);
     expect(dayMeterOf("")).toBeNull();
+  });
+
+  it("api.ts booksGet: a registered token's calls are counted; past the budget the call is refused BEFORE fetch; Zoho's per-day 429 marks the day; an unregistered token is untouched", async () => {
+    const urls: string[] = [];
+    let answer: () => Response = () => new Response(JSON.stringify({ code: 0, invoices: [], page_context: { has_more_page: false } }), { status: 200 });
+    const f = (async (input: string) => { urls.push(String(input)); return answer(); }) as unknown as typeof fetch;
+    const m = memorySink();
+    const meter = createDayMeter("t1", m.sink, { budget: 2, log: () => {} });
+    registerDayMeter("tok-metered", meter);
+    await listPage("/invoices", "invoices", "600", "tok-metered", 1, f);
+    await listPage("/invoices", "invoices", "600", "tok-metered", 2, f);
+    expect(urls).toHaveLength(2);
+    expect(m.rows.get(istDayOf(Date.now()))).toMatchObject({ calls: 2 });
+    let err: unknown;
+    try { await listPage("/invoices", "invoices", "600", "tok-metered", 3, f); } catch (e) { err = e; }
+    expect(err).toBeInstanceOf(ZohoDayLimitError);
+    expect(isZohoDayLimit(err)).toBe(true);
+    expect((err as ZohoApiError).code).toBe("day_limit");
+    expect((err as ZohoApiError).message).toContain("Zoho calls today: 2 of 2");
+    expect(urls).toHaveLength(2);                       /* the third was never made */
+    /* Not Zoho's "busy": the paced loop lets it through (stop at once), never a minute's retry. */
+    expect(isZohoBusy(err)).toBe(false);
+    await expect(runPaced({ step: async () => { await listPage("/invoices", "invoices", "600", "tok-metered", 3, f); return true; }, sleep: async () => {} })).rejects.toBeInstanceOf(ZohoDayLimitError);
+    expect(urls).toHaveLength(2);
+    /* An unregistered token: no count, no check. */
+    await listPage("/invoices", "invoices", "600", "tok-other", 1, f);
+    expect(urls).toHaveLength(3);
+    expect(m.rows.get(istDayOf(Date.now()))).toMatchObject({ calls: 2 });
+    /* Zoho's own per-day 429 (counted, and the day is marked) — even on a fresh meter with a big budget. */
+    const m2 = memorySink();
+    registerDayMeter("tok-big", createDayMeter("t2", m2.sink, { budget: 900, log: () => {} }));
+    answer = () => new Response(JSON.stringify({ code: 44, message: "You have exceeded the API request limit for the day" }), { status: 429 });
+    await expect(listPage("/invoices", "invoices", "600", "tok-big", 1, f)).rejects.toMatchObject({ status: 429 });
+    expect(m2.rows.get(istDayOf(Date.now()))).toMatchObject({ calls: 1 });
+    expect(m2.rows.get(istDayOf(Date.now()))!.limitHitAt).toBeTruthy();
+    await expect(listPage("/invoices", "invoices", "600", "tok-big", 1, f)).rejects.toBeInstanceOf(ZohoDayLimitError);
   });
 
   it("budget from env: whole number ≥ 1 wins; unset / garbage / 0 / negative → the default 900", () => {

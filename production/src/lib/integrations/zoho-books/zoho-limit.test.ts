@@ -2,7 +2,7 @@
    Zoho is never called: `step` is a fake, sleep resolves at once, the clock is fixed. */
 import { describe, it, expect } from "vitest";
 import {
-  busyStreak, nextIstMidnight, readUntilDone, zohoBusyText, zohoLimitHit, zohoLimitText,
+  busyStreak, nextIstMidnight, readUntilDone, zohoBusyText, zohoDayLimitMessage, zohoLimitHit, zohoLimitText,
   ZOHO_BUSY_RETRY_MS, ZOHO_LIMIT_STREAK,
 } from "./zoho-limit";
 
@@ -85,6 +85,27 @@ describe("R-2652 read loop", () => {
       { complete: true, listed: 200, detailed: 200 } as { complete: boolean; busy?: boolean },
     ]);
     expect((await r.p).end).toBe("complete");
+  });
+
+  it("R-2661: a dayLimit answer (the app's own day budget is used) ends at once — no 3 tries, no wait — with the budget words", async () => {
+    const r = run([{ complete: false, busy: true, dayLimit: { calls: 900, budget: 900, retryAt: nextIstMidnight(NOW) } } as never]);
+    const end = await r.p;
+    expect(end.end).toBe("limit");
+    if (end.end !== "limit") throw new Error("no hit");
+    expect(end.hit).toMatchObject({ reason: "budget", calls: 900, budget: 900, retryLabel: "12:00 am IST on 11 Nov 2026" });
+    expect(r.calls()).toBe(1);
+    expect(r.slept).toEqual([]);
+    expect(r.busy).toEqual([0]);
+    const t = zohoLimitText(end.hit);
+    expect(t.title).toBe("Zoho's daily limit is reached");
+    expect(t.body).toContain("Zoho calls today: 900 of 900");
+    expect(t.body).toContain("carries on after 12:00 am IST on 11 Nov 2026");
+    expect(t.body).toContain("Nothing was changed");
+    expect(t.body).not.toContain("refused 3 reads");
+    /* The server's own line (bg_error) is the same words. */
+    expect(zohoDayLimitMessage({ calls: 900, budget: 900, retryAt: nextIstMidnight(NOW) }, NOW)).toBe(t.body);
+    /* A dayLimit without a usable retryAt falls back to the next midnight IST. */
+    expect(zohoLimitHit(NOW, { calls: 1, budget: 2, retryAt: NaN }).retryLabel).toBe("12:00 am IST on 11 Nov 2026");
   });
 
   it("closing the dialog stops the loop", async () => {
