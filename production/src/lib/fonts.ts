@@ -57,3 +57,18 @@ export const hostingSerif = localFont({ src: [{ path: "../../node_modules/@fonts
 export const hostingMono = localFont({ src: [{ path: "../../node_modules/@fontsource-variable/jetbrains-mono/files/jetbrains-mono-latin-wght-normal.woff2", weight: "100 800", style: "normal" }], variable: "--hf-mono", display: "swap" });
 
 export const trialSans = localFont({ src: [{ path: "../../node_modules/@fontsource-variable/manrope/files/manrope-latin-wght-normal.woff2", weight: "200 800", style: "normal" }], variable: "--htf-sans", display: "swap" });
+
+// ── Public website, "Warm & approachable" theme (docs/WEBSITE-THEME.md) ─────
+// Used only when the owner switches the website to the warm theme (Settings → Branding);
+// the classic theme keeps Archivo + IBM Plex Mono above. Their own variable names, so the
+// classic `--font-sans` on the same wrapper is untouched.
+export const siteWarmBody = localFont({
+  src: [{ path: "../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2", weight: "100 900", style: "normal" }],
+  variable: "--font-site-body",
+  display: "swap",
+});
+export const siteWarmHeading = localFont({
+  src: [{ path: "../../node_modules/@fontsource-variable/plus-jakarta-sans/files/plus-jakarta-sans-latin-wght-normal.woff2", weight: "200 800", style: "normal" }],
+  variable: "--font-site-heading",
+  display: "swap",
+});

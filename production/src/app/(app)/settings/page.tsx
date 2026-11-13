@@ -34,6 +34,7 @@ import { NotificationsCard } from "@/components/features/settings/notifications-
 import { ComplianceProfileCard } from "@/components/features/compliance/compliance-profile-card";
 import { SellModeCard } from "@/components/features/settings/sell-mode-card";
 import { OnlineFeeCard } from "@/components/features/settings/online-fee-card";
+import WebsiteThemeCard from "@/components/features/settings/website-theme-card";
 import { BusinessTypePrompt } from "@/components/features/compliance/business-type-prompt";
 import { PartnersRegisterCard } from "@/components/features/partners/partners-register-card";
 import { DirectorsRegisterCard } from "@/components/features/company/directors-register-card";
@@ -1140,6 +1141,7 @@ function BrandingTab() {
   };
 
   return (
+    <>
     <Card className="p-5 md:p-6 max-w-2xl">
       <h2 className="font-serif text-xl text-ink">Company logo</h2>
       <p className="text-sm text-ink-3 mt-1 mb-5">
@@ -1179,6 +1181,11 @@ function BrandingTab() {
         </div>
       </div>
     </Card>
+
+    {/* Public website theme, Classic ↔ Warm (docs/WEBSITE-THEME.md). Renders only for the
+        owner of the workspace that owns the website. */}
+    <WebsiteThemeCard />
+    </>
   );
 }
 

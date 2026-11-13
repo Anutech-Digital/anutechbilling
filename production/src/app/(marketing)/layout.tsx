@@ -14,8 +14,9 @@
  * deliberately NOT ported yet — which page wins there is its own decision.
  */
 import type { Metadata } from "next";
-import { archivoSans as archivo, plexMono } from "@/lib/fonts";
+import { archivoSans as archivo, plexMono, siteWarmBody, siteWarmHeading } from "@/lib/fonts";
 import "@/site/site.css";
+import "@/site/site-warm.css";
 import { SITE_URL } from "@/site/lib/config";
 
 /**
@@ -54,18 +55,24 @@ import { domainTeaser } from "@/site/lib/data/domain-teaser";
 import { domainRenewals } from "@/site/lib/renewal-line";
 import { MetaPixel } from "@/site/lib/meta-pixel";
 import { websitePixelId } from "@/lib/meta/pixel-id.server";
+import { getWebsiteTheme } from "@/lib/website-theme.server";
 
 
 export default async function MarketingLayout({ children }: { children: React.ReactNode }) {
   /* R-076: the header's "Mailboxes from ₹…" teaser reads the live catalogue (10-min cache,
      typed fallback if the app is unreachable) — the same figure the home page shows. */
   /* R-1797: the Anutech Mail mailbox in that teaser from the price book (60 s cache). */
-  const [workspace, tlds, book, pixelId] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices(), getPriceBook(websiteTenantId()), websitePixelId()]);
+  /* Website theme (Settings → Branding, owner only): "classic" draws exactly as before; "warm"
+     turns on site-warm.css. Theme only — nothing below changes with it. */
+  const [workspace, tlds, book, pixelId, theme] = await Promise.all([fetchLiveWorkspace(), getSiteTldPrices(), getPriceBook(websiteTenantId()), websitePixelId(), getWebsiteTheme(websiteTenantId())]);
   const emailFrom = emailFromRate(mergeEditions(workspace), bookMailboxMonthly(book));
   /* R-1599: the Domains menu teaser is the live .in price (same 10-min cache), never TLDS. */
   const domains = domainTeaser(tlds);
   return (
-    <div className={`anutech-site ${archivo.variable} ${plexMono.variable}`}>
+    <div
+      className={`anutech-site ${archivo.variable} ${plexMono.variable}${theme === "warm" ? ` ${siteWarmBody.variable} ${siteWarmHeading.variable}` : ""}`}
+      data-site-theme={theme}
+    >
       {/* R-1628: what each domain renews at, for the cart page and checkout — the same live rate card. */}
       <CartProvider domainRenewals={domainRenewals(tlds)}>
         <a href="#main" className="skip-link">Skip to content</a>

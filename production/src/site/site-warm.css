@@ -1,0 +1,81 @@
+/**
+ * "Warm & approachable" — the public website's second theme (docs/WEBSITE-THEME.md).
+ *
+ * Applies ONLY when the website wrapper carries data-site-theme="warm", which the (marketing)
+ * layout sets from tenants.website_theme (Settings → Branding, owner only). With the default
+ * "classic" not one rule here matches, so the website looks exactly as site.css draws it.
+ *
+ * Theme only: colours, fonts, corner radii and button styling. No text, link or layout change.
+ *
+ * Mapping onto site.css's own tokens:
+ *   --primary  Anutech blue        → teal #0E6B5C (links, highlights, focus, chips)
+ *   --accent   ResellerOS orange   → teal as well: the design draws the ResellerOS page in the
+ *                                    same teal/marigold palette, with no orange
+ *   .btn-primary / .btn-os         → marigold #F4B740 with dark text — the design's main CTA
+ *   .btn-outline                   → outlined teal — the design's secondary button
+ *   --dark                         → forest #12312A (table heads, dark bands)
+ *
+ * Not themed, on purpose: sections drawn in Google's own Workspace blue (WorkspacePricing's
+ * .wp-root, WorkspaceAdLanding's .gw) — that is Google's brand look, not the website's.
+ */
+.anutech-site[data-site-theme="warm"] {
+  --text: #17241F;
+  --text-secondary: #4B5A53;
+  --text-muted: #5E6B65;          /* 5.2:1 on the page background */
+  --text-disabled: #A9B4AE;
+  --border-strong: #C9D3CD;
+  --border: #E2E7E2;
+  --border-light: #E8ECE8;
+  --border-hairline: #EEF2EE;
+  --tint: #F2F9F6;
+  --tint-2: #F8FAF8;
+  --primary: #0E6B5C;             /* 6.4:1 with white text */
+  --primary-hover: #0A4F44;
+  --primary-on-dark: #5ED0B3;
+  --accent: #0E6B5C;
+  --accent-hover: #0A4F44;
+  --dark: #12312A;
+  --dark-body: #B5CBC2;           /* 8.2:1 on forest */
+  --shadow-highlight: 0 16px 38px -22px rgba(14, 107, 92, 0.45);
+  --shadow-highlight-os: 0 16px 38px -22px rgba(14, 107, 92, 0.45);
+  --shadow-panel: 0 16px 40px -26px rgba(18, 49, 42, 0.3);
+  --shadow-menu: 0 20px 48px -24px rgba(18, 49, 42, 0.3);
+  --shadow-drawer: -24px 0 50px -30px rgba(18, 49, 42, 0.5);
+
+  /* Inter for body text; the site's mono (IBM Plex) stays for its small labels. */
+  --font-sans: var(--font-site-body), "Inter", system-ui, sans-serif;
+
+  background: #F5F7F4;
+}
+
+/* Headings: Plus Jakarta Sans 700–800. */
+.anutech-site[data-site-theme="warm"] :is(h1, h2, h3, h4, .h1-hero, .h1-page, .h1-narrow, .h2-section, .h2-sub) {
+  font-family: var(--font-site-heading), "Plus Jakarta Sans", system-ui, sans-serif;
+}
+.anutech-site[data-site-theme="warm"] :is(.h1-hero, .h1-page, .h1-narrow) { font-weight: 800; letter-spacing: -0.03em; }
+
+/* Buttons: 12px radius; marigold main CTA, outlined-teal secondary. */
+.anutech-site[data-site-theme="warm"] .btn { border-radius: 12px; }
+.anutech-site[data-site-theme="warm"] :is(.btn-primary, .btn-os) { background: #F4B740; color: #17241F; } /* 8.9:1 */
+.anutech-site[data-site-theme="warm"] :is(.btn-primary, .btn-os):hover { background: #E9A92C; }
+.anutech-site[data-site-theme="warm"] .btn-primary:disabled:hover { background: #F4B740; }
+.anutech-site[data-site-theme="warm"] .btn-outline { background: transparent; color: #0E6B5C; border: 1.5px solid #0E6B5C; }
+.anutech-site[data-site-theme="warm"] .btn-outline:hover { background: #0E6B5C; color: #FFFFFF; border-color: #0E6B5C; }
+
+/* Hover lift on buttons and cards — hover-capable devices only. */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .anutech-site[data-site-theme="warm"] .btn { transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.2s ease, box-shadow 0.2s ease; }
+  .anutech-site[data-site-theme="warm"] .btn:not(:disabled):hover { transform: translateY(-2px); }
+  .anutech-site[data-site-theme="warm"] .card { transition: transform 0.2s ease, box-shadow 0.2s ease; }
+  .anutech-site[data-site-theme="warm"] .card:hover { transform: translateY(-2px); box-shadow: 0 14px 30px -20px rgba(18, 49, 42, 0.35); }
+}
+
+/* Cards 20px, tables 14px, pills stay round. */
+.anutech-site[data-site-theme="warm"] .card { border-radius: 20px; }
+.anutech-site[data-site-theme="warm"] .tablewrap { border-radius: 14px; }
+
+/* Chosen chip: teal. */
+.anutech-site[data-site-theme="warm"] .chip[aria-pressed="true"] { background: #0E6B5C; border-color: #0E6B5C; }
+
+/* Focus: the design's 3px marigold ring. */
+.anutech-site[data-site-theme="warm"] :focus-visible { outline: 3px solid #F4B740; outline-offset: 3px; }
