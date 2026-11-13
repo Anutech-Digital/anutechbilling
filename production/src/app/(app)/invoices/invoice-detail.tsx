@@ -88,7 +88,7 @@ export function InvoiceDetail({ invoice }: { invoice: Invoice }) {
   const { data: quote, isLoading: quoteLoading } = useQuoteByInvoiceId(invoice.id);
   /* R-1764: the printed invoice says each subscription line's domain and period in the
      quote's own words (the lines below are the quote's whenever a quote exists). */
-  const periodContext = useQuotePeriodContext(quote ?? null);
+  const periodContext = useQuotePeriodContext(quote ?? null, invoice);   // R-2727: same period as the PDF
   const { data: payments } = usePaymentsByQuote(quote?.id);
   /* R-1564: a subscription instalment has no quote of its own — Record payment goes through
      its subscription's quote (record_instalment_payment), so the button shows for it too. */

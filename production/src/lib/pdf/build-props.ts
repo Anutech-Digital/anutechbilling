@@ -21,7 +21,7 @@ import { payMethods } from "./pay-methods";
 import { includedSupportLine } from "./quote-support-line";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
-import { extensionTitle, isOneTimeQuote, quoteLinePeriodContext } from "@/lib/quotes/service-period";
+import { extensionTitle, isOneTimeQuote, quoteLinePeriodContext, invoicePeriodSubscription, type RenewedSubscriptionFacts } from "@/lib/quotes/service-period";
 import { invoiceBuyer } from "@/lib/invoices/invoice-buyer";
 
 /**
@@ -138,8 +138,11 @@ export function buildInvoicePdfProps(args: {
    * seller may not have, so the safe default is to say nothing (AGENTS.md §2).
    */
   razorpayConfigured?: boolean;
-  /** R-1764: the renewed subscription's domain, for a renewal quote that stores none. */
-  subscriptionDomain?: string | null;
+  /** R-1764: the renewed subscription's domain (or, R-2727, its domain + start + term — where the next term starts). */
+  subscriptionDomain?: string | RenewedSubscriptionFacts | null;
+  /** R-2727 review: when the new period rule went live on this database (app_rule_dates.from_at,
+   *  loadInvoicePeriodRuleFrom). Omitted / null → every invoice prints its period as before R-2727. */
+  periodRuleFrom?: string | null;
 }): InvoicePDFProps {
   const { invoice, quote, customer, tenant } = args;
   // Quote-backed invoice → derive from the quote; quote-less (project-milestone)
@@ -190,7 +193,8 @@ export function buildInvoicePdfProps(args: {
       : (invoice.line_items ?? quote?.line_items ?? []),
     /* R-1764: the quote's own "Domain:" / "Subscription period:" — only while the lines ARE the
        quote's. An instalment or quote-less invoice covers a part, so it says no period. */
-    periodContext: useQuote && quote ? quoteLinePeriodContext(quote, args.subscriptionDomain) : null,
+    /* R-2727 review: an invoice created before the rule went live here prints its period exactly as before. */
+    periodContext: useQuote && quote ? quoteLinePeriodContext(quote, invoicePeriodSubscription(invoice, args.periodRuleFrom, quote, args.subscriptionDomain)) : null,
     subtotal,
     discountPct: a.discountPct,
     discount:    a.discount,
@@ -260,8 +264,8 @@ export function buildQuotePdfProps(args: {
   logoDataUri?: string | null;
   /** R-376 (f): the lead a customer-less quote was raised on — its state is the place of supply. */
   lead?: { state_code?: string | null; gstin?: string | null; country?: string | null } | null;
-  /** R-1764: the renewed subscription's domain, for a renewal quote that stores none. */
-  subscriptionDomain?: string | null;
+  /** R-1764: the renewed subscription's domain (or, R-2727, its domain + start + term — where the next term starts). */
+  subscriptionDomain?: string | RenewedSubscriptionFacts | null;
   /** R-1532: tenants.gst_registration (readTenantGstRegistration) — a Bill of Supply business's
    *  0% quote prints "No GST — Bill of Supply" instead of CGST/SGST/IGST rows. */
   gstRegistration?: string | null;
