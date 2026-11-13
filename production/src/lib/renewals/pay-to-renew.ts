@@ -43,8 +43,10 @@ export function firstPartIndex(periodIndexes: readonly number[]): number | null 
 }
 
 /**
- * Marks a term's first part with its roll (only where it has none — a mark is never rewritten). The
- * database renews at once if that part is already paid (trigger subscription_billings_r2735_paid_part_renews).
+ * Marks a term's first part with its roll. A part with no mark gets it; a part not invoiced yet whose
+ * mark names another date (renewal_date corrected by hand since) gets the new one — an invoiced part's
+ * mark is never rewritten. The database renews at once if that part is already paid (trigger
+ * subscription_billings_r2735_paid_part_renews).
  */
 export async function markTermRoll(
   db: SupabaseClient,
@@ -55,7 +57,7 @@ export async function markTermRoll(
     .eq("subscription_id", args.subscriptionId)
     .eq("term_start", args.termStart)
     .eq("period_index", args.periodIndex)
-    .is("renews_from", null);
+    .or(`renews_from.is.null,and(invoice_id.is.null,renews_from.neq.${args.roll.from})`);
   if (error) throw new Error(`Could not mark the renewal part: ${error.message}`);
 }
 

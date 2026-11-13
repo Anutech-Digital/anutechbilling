@@ -14,6 +14,7 @@ import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { addMonthsClamped, CYCLE_MONTHS } from "@/lib/billing/schedule";
 import { defaultSeatRate, nextPeriods, partAmounts, partTaxRate, type BillNextPreview } from "@/lib/billing/proforma";
 import { unbilledPartPrice } from "@/lib/billing/sync-instalments.server";
+import { nextTermRenewalDate } from "./split-billed-renewal";
 export type { BillNextPreview, PreviewPeriod } from "@/lib/billing/proforma";
 
 export interface BillNextSub {
@@ -56,7 +57,17 @@ export async function firstUnbilledPeriod(db: SupabaseClient, sub: BillNextSub):
   }
   const free = open.find((r) => !requested.has(r.id));
   if (free) return { start: free.period_start, row: free, rows, freed: cancelledOn.has(free.id) };
-  const following = sub.renewal_date ? followingTermStart({ ...sub, term_months: sub.term_months ?? 12 }) : (sub.start_date ?? "");
+  /* R-2735: a term billed before the subscription renewed (unpaid) keeps renewal_date where it was — the
+     next term to bill is the one after the newest term already laid and asked for. */
+  let at = { ...sub, term_months: sub.term_months ?? 12 };
+  for (let i = 0; i < 24 && at.renewal_date; i++) {
+    const nextStart = followingTermStart(at);
+    if (!rows.some((r) => r.period_start >= nextStart)) break;
+    const nextEnd = nextTermRenewalDate(at);
+    if (!nextEnd) break;
+    at = { ...at, renewal_date: nextEnd };
+  }
+  const following = at.renewal_date ? followingTermStart(at) : (sub.start_date ?? "");
   /* The current term was never laid (and not billed elsewhere) → it starts there, not after it. */
   const termStart = addMonthsClamped(following, -Math.max(1, sub.term_months ?? 12));
   const laidInTerm = rows.some((r) => r.period_start >= termStart);

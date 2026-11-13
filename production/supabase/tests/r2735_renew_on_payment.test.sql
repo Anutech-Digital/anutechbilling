@@ -190,4 +190,26 @@ begin
   raise notice 'PASS 9: roll_paid_renewal_terms is service_role only';
 end $$;
 
+-- ── 10. An open quote on renewal_quote_id holds the roll (R-808: paying it would move the date again);
+--        the link cleared (quote cancelled / unlinked) → the paid part renews then ────────────────────
+do $$
+declare v_s uuid; v_b uuid; r jsonb;
+begin
+  v_s := pg_temp.sub(7, 'quarterly', 12, '2025-10-01', '2026-09-30');
+  v_b := pg_temp.part(v_s, 8, '2026-10-01', 1, '2026-10-01', 3, '2026-09-30', '2027-09-30');
+  r := public.bill_subscription_instalment(v_b, false);
+  insert into public.quotes (id, tenant_id, customer_id, customer_name, status, payment_status, amount, subtotal, tax_rate, line_items,
+                             is_renewal, renewal_subscription_id)
+  values ('Q-R2735-REN', 'b2735000-0000-0000-0000-0000000000f1', 'b2735000-0000-0000-0000-000000000107', 'R2735 C7', 'sent', 'none',
+          4720, 4000, 18, '[]'::jsonb, true, v_s);
+  update public.subscriptions set renewal_quote_id = 'Q-R2735-REN' where id = v_s;
+  perform pg_temp.pay(r->>'quote_id', 1180, 'R2735-10');
+  if pg_temp.st(v_s) <> '2026-09-30 grace_period 3' then
+    raise exception 'FAIL 10: paid part rolled while a renewal quote is linked: %', pg_temp.st(v_s); end if;
+  update public.subscriptions set renewal_quote_id = null where id = v_s;
+  if pg_temp.st(v_s) <> '2027-09-30 renewed 0' then
+    raise exception 'FAIL 10: link cleared → % (want 2027-09-30 renewed 0)', pg_temp.st(v_s); end if;
+  raise notice 'PASS 10: a linked quote holds the roll; clearing the link renews';
+end $$;
+
 rollback;

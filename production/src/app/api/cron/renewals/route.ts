@@ -336,7 +336,7 @@ async function handle(req: Request): Promise<NextResponse<CronResult | DryRunRes
         if (split.kind === "held_open_quote") {
           result.errors.push({
             subscription_id: sub.id,
-            message: `Billed in parts, and renewal quote ${split.quoteId} is still open. Paying it would bill the new term twice, so the term was not rolled. Cancel or unlink that quote; the next run rolls the term.`,
+            message: `Billed in parts, and renewal quote ${split.quoteId} is still open. Paying it would bill the new term twice, so its new term is not billed. Cancel or unlink that quote; the billing job then bills the new term's first part, and paying it renews the subscription.`,
           });
         } else if (split.kind === "roll") {
           /* R-2735 (Pardeep, 13 Nov — "jab tak payment na aaye renew to karna hi nahi"): the term is NOT

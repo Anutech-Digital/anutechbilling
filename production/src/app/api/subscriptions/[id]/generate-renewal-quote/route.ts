@@ -139,7 +139,9 @@ export const POST = withRoute({
         bill: { raised: tally.raised, requests: tally.requests, requestsOpen: tally.requestsOpen, skip: null } };
     }
     let virtualRenewal: string | null = sub.renewal_date;
-    let realRenewal: string | null = sub.renewal_date;
+    /* The renewal dates this run may find: the one read, and each term end this run marked or rolled —
+       a part raised already paid renews at once in the database (roll_paid_renewal_terms). */
+    const expectedDates = new Set<string | null>([sub.renewal_date]);
     let termRoll: TermRoll | null = null;
     let firstRoll: TermRoll | null = null;
     const runTermsRaw = await billDueTermsOldestFirst({
@@ -158,18 +160,18 @@ export const POST = withRoute({
       billCurrentTerm: async () => {
         const { data: fresh, error: fErr } = await supabase.from("subscriptions").select(INSTALMENT_SUB_SELECT).eq("id", sub.id).single();
         if (fErr || !fresh) throw new Error(fErr?.message ?? "subscription not found");
-        if (fresh.renewal_date !== realRenewal) throw new Error("The subscription changed while billing — reload and Generate again.");
+        if (!expectedDates.has(fresh.renewal_date)) throw new Error("The subscription changed while billing — reload and Generate again.");
         const facts = fresh.quote_id ? await readQuotePaymentFacts(supabase, fresh.quote_id) : undefined;
         const roll = termRoll;
         const r = await syncSubscriptionInstalments({
           supabase, sub: { ...(fresh as InstalmentSub), renewal_date: virtualRenewal }, quote: facts, todayISO: today,
           rebillCredited: true, ...(roll ? { termRoll: roll } : {}),
         });
+        if (roll) expectedDates.add(roll.to);
         if (roll && r.raised.length + r.requests.length + r.requestsOpen.length > 0) firstRoll ??= roll;
         /* A term Zoho already billed (R-1763) is not collected here — it rolls as before (guarded). */
-        if (roll && r.skip?.code === "billed_elsewhere"
-            && await rollBilledElsewhere(supabase as unknown as SupabaseClient, sub.id, roll)) {
-          realRenewal = roll.to;
+        if (roll && r.skip?.code === "billed_elsewhere") {
+          await rollBilledElsewhere(supabase as unknown as SupabaseClient, sub.id, roll);
         }
         /* R-2519c: a part the customer's money already covers waits for its date — say so. */
         const ahead = paidAheadReason(r.waiting, formatDate);

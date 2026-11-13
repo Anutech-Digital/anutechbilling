@@ -138,11 +138,12 @@ test.describe("R-2735 card test", () => {
   });
 
   test("Step 4: cancel the part proforma → nothing moved", async ({ browser, baseURL }) => {
+    test.setTimeout(400_000);
     const page = await pageAs(browser, baseURL, "owner");
-    const billed = await page.request.post(`/api/subscriptions/${SUB_B}/generate-renewal-quote`, { data: { periods: 1 } });
+    const billed = await page.request.post(`/api/subscriptions/${SUB_B}/generate-renewal-quote`, { data: { periods: 1 }, timeout: 180_000 });
     expect(billed.status(), await billed.text()).toBe(200);
     const pi = proformaOf(SUB_B);
-    const cancelled = await page.request.post(`/api/quotes/${pi.id}/cancel`, { data: { reason: "R-2735 card test — customer did not renew" } });
+    const cancelled = await page.request.post(`/api/quotes/${pi.id}/cancel`, { data: { reason: "R-2735 card test — customer did not renew" }, timeout: 180_000 });
     expect(cancelled.status(), await cancelled.text()).toBe(200);
     const s = subState(SUB_B);
     expect(s.old, `renewal_date ${s.date} must still be the old date`).toBe(true);

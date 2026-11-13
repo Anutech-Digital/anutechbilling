@@ -308,11 +308,12 @@ export interface PartPrice { from: number; to: number; kept?: "earlier_term" | "
 export async function unbilledPartPrice(supabase: Admin, billingId: string): Promise<PartPrice | null> {
   const db = supabase as unknown as SupabaseClient;
   const { data: row, error } = await db.from("subscription_billings")
-    .select("id, tenant_id, subscription_id, term_start, period_index, period_start, period_end, taxable_amount, invoice_id")
+    .select("id, tenant_id, subscription_id, term_start, period_index, period_start, period_end, taxable_amount, invoice_id, renews_from, renews_to")
     .eq("id", billingId).maybeSingle();
   if (error) throw new Error(error.message);
   const b = row as { id: string; tenant_id: string; subscription_id: string; term_start: string; period_index: number;
-    period_start: string; period_end: string; taxable_amount: number; invoice_id: string | null } | null;
+    period_start: string; period_end: string; taxable_amount: number; invoice_id: string | null;
+    renews_from?: string | null; renews_to?: string | null } | null;
   if (!b || b.invoice_id != null) return null;
   const was = b.taxable_amount;
   const { data: reqs, error: rErr } = await db.from("quotes").select("id").eq("subscription_billing_id", b.id).limit(1);
@@ -321,7 +322,11 @@ export async function unbilledPartPrice(supabase: Admin, billingId: string): Pro
   const { data: subRow, error: sErr } = await db.from("subscriptions")
     .select(`${INSTALMENT_SUB_SELECT}, status`).eq("id", b.subscription_id).eq("tenant_id", b.tenant_id).maybeSingle();
   if (sErr) throw new Error(sErr.message);
-  const sub = subRow as (InstalmentSub & { status: string }) | null;
+  const subRead = subRow as (InstalmentSub & { status: string }) | null;
+  /* R-2735: a part of the renewal term billed before the subscription renewed (its mark names the
+     current renewal_date) — that term is the one being billed, priced as if renewed. */
+  const sub = subRead && b.renews_from && b.renews_to && subRead.renewal_date?.slice(0, 10) === b.renews_from.slice(0, 10)
+    ? { ...subRead, renewal_date: b.renews_to } : subRead;
   if (!sub || sub.status !== "active" || !isSplitBilled(sub.billing_cycle) || billedElsewhere(sub, b.period_start)) return null;
   const kept = (why: NonNullable<PartPrice["kept"]>): PartPrice => {
     console.info(`[billing/freed-part] part ${b.id} (subscription ${sub.id}, ${b.period_start}): kept its stored ₹${was} — ${why}`);
