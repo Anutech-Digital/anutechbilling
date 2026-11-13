@@ -39,29 +39,70 @@ export function dedupeDomains(rows: Array<{ domain: string; seats: number }>): D
   return order.map((d) => ({ domain: d, seats: byDomain.get(d) ?? 0 }));
 }
 
+/** R-2712: what the Bulk dialog may add to the line — the registration term and when it starts. */
+export interface BulkLineTerm {
+  /** "Register for N years": a whole number 1–10 (anything else is brought into that range). */
+  years?: number;
+  /** YYYY-MM-DD the subscriptions start on (a past date is fine). Blank / not a real date → left out. */
+  startDate?: string | null;
+}
+
+const clampYears = (y: number | undefined) =>
+  Math.max(1, Math.min(10, Math.trunc(typeof y === "number" && Number.isFinite(y) ? y : 1)));
+
+function realIsoDate(v: string | null | undefined): string | null {
+  const s = (v ?? "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const [y, m, d] = s.split("-").map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d ? s : null;
+}
+
+/**
+ * R-2712: does this plan get "Register for N years" in the Bulk dialog? The normal line's rule
+ * (R-1445, domain-term.ts isTermLine): a catalogue item of the Domain vendor, or a name that
+ * says domain / registration.
+ */
+export function isDomainPlan(plan: { vendor?: string | null; name?: string | null } | null | undefined): boolean {
+  if (!plan) return false;
+  return plan.vendor === "domain" || /\b(domain|registration)\b/i.test(plan.name ?? "");
+}
+
 /**
  * Build ONE bulk quote line covering many domains. qty = sum of all seats so the
  * builder's existing `qty × rate` totals math needs no change.
+ *
+ * `rate` and `plan.cost` are the figures for ONE year. R-2712: with `term.years` 2–10 on an
+ * annual line the line is shaped like a normal multi-year domain line (R-156 / R-1445) — its
+ * rate and cost are the price of the WHOLE term and it carries `years`, so the quote and its one
+ * invoice bill the N years once and each domain's subscription renews after N years (trigger
+ * subscription_term_follows_line). `term.startDate` becomes the line's `start_date`.
  */
 export function buildBulkLine(
   plan: { id: string; item_id?: string; name: string; cost: number },
   rate: number,
   rawDomains: Array<{ domain: string; seats: number }>,
   commitment: LineCommitment = "annual_yearly",
+  term: BulkLineTerm = {},
 ): QuoteLineItem {
   const domains = dedupeDomains(rawDomains);
   const qty = domains.reduce((s, d) => s + d.seats, 0);
-  return {
+  const years = commitment === "monthly" ? 1 : clampYears(term.years);
+  const startDate = realIsoDate(term.startDate);
+  const line: QuoteLineItem = {
     id: plan.id,
     item_id: plan.item_id,
     name: plan.name,
     qty,
-    rate,
-    cost: plan.cost,
+    rate: rate * years,
+    cost: plan.cost * years,
     commitment,
     bulk: true,
     domains,
   };
+  if (years > 1) line.years = years;
+  if (startDate) line.start_date = startDate;
+  return line;
 }
 
 /**
