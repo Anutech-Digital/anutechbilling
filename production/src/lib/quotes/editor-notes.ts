@@ -18,13 +18,14 @@
  */
 import {
   STAFF_NOTE_MARKER,
+  STAFF_PHRASE,
   customerQuoteNotes,
   staffDisplayNotes,
   systemNoteLead,
   type CustomerNoteContext,
 } from "@/lib/quotes/customer-notes";
 
-const SUB_REF = /subscription(?:\s+id)?[:\s]+([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/gi;
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
 
 export interface EditorNotes {
   /** What the "Notes for customer" box starts with — what the customer reads. */
@@ -51,16 +52,17 @@ export function splitNotesForEditor(
   const staff = at >= 0 ? original.slice(at + STAFF_NOTE_MARKER.length).trim() : "";
   const lead = systemNoteLead(visible);
 
-  const hiddenParts = [lead, staff].filter((p): p is string => !!p);
-  /* Any other "subscription <id>" in the customer part (a hand-typed one, an unusual system
-     form) — keep the reference so the Renewals link never depends on what the box shows. */
-  for (const m of visible.matchAll(SUB_REF)) {
-    const id = m[1].toLowerCase();
-    if (!hiddenParts.some((p) => p.toLowerCase().includes(id))) {
-      hiddenParts.push(`Linked to subscription ${id}.`);
-    }
-  }
-  const hidden = hiddenParts.join("\n");
+  /* Every sentence after the system lead that the customer never sees (customerQuoteNotes
+     scrubs it: an internal id, "backdated by …", "factor …%") is held back VERBATIM — so an
+     edit of the box never deletes staff text, and a hand-typed "subscription <id>" keeps
+     exactly the form it had (no new link is invented). */
+  const rest = lead ? visible.slice(visible.indexOf(lead) + lead.length) : visible;
+  const scrubbed = rest
+    .split("\n")
+    .flatMap((line) => line.split(/(?<=[.!?])\s+/))
+    .map((s) => s.trim())
+    .filter((s) => s && (UUID.test(s) || STAFF_PHRASE.test(s)));
+  const hidden = [lead, ...scrubbed, staff].filter((p): p is string => !!p).join("\n");
 
   if (!hidden) return { customer: original, hidden: "", original };
   return { customer: customerQuoteNotes(original, lineItems, ctx) ?? "", hidden, original };

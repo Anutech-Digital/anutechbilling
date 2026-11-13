@@ -893,7 +893,9 @@ function QuoteBuilderBody() {
         Array.isArray(sourceQuote.line_items) ? (sourceQuote.line_items as QuoteLineItem[]) : [],
         { plan: sourceQuote.plan ?? null, extensionMonths: sourceQuote.extension_months ?? null },
       );
-      setNotesParts(parts);
+      /* Only an in-place Edit keeps the held-back part: a Duplicate is a new quote, not this
+         subscription's renewal quote, so it starts from the customer line alone. */
+      if (editOf) setNotesParts(parts);
       setNotes(parts.customer);
     }
 
@@ -1871,10 +1873,14 @@ function QuoteBuilderBody() {
       const suffix = afterAction === "email" || afterAction === "whatsapp" ? `?send=${afterAction}` : "";
       /* R-2754: opened from Renewals → back to the same Renewals tab (the quote stays one click away). */
       if (!suffix && backToRenewals) {
-        toast.success(`${quote.id} saved`, {
-          action: { label: "Open quote", onClick: () => router.push(`/quotes/${quote.id}` as never) },
-        });
-        router.push(backToRenewals as never);
+        /* mark-sent / needs-approval already said what happened (above) — no second, green toast. */
+        if (plan !== "mark-sent" && plan !== "needs-approval") {
+          toast.success(`${quote.id} saved`, {
+            action: { label: "Open quote", onClick: () => router.push(`/quotes/${quote.id}` as never) },
+          });
+        }
+        /* replace: browser Back from Renewals must not reopen the editor of a quote just saved. */
+        router.replace(backToRenewals as never);
         return;
       }
       router.push(`/quotes/${quote.id}${suffix}` as any);
@@ -1926,7 +1932,8 @@ function QuoteBuilderBody() {
       {/* Page head */}
       <div className="flex items-end justify-between gap-3 flex-wrap">
         <div className="flex items-start gap-3">
-          <IconButton icon="arrow_left" aria-label="Back" onClick={() => router.back()} />
+          {/* R-2754: opened from Renewals → the "Back to Renewals" link above is the one way back. */}
+          {!backToRenewals && <IconButton icon="arrow_left" aria-label="Back" onClick={() => router.back()} />}
           <div>
             <p className="text-xs uppercase tracking-wider text-ink-3 font-semibold mb-1">
               {isInvoiceMode ? (bosStatus ? "Direct invoice · Bill of Supply" : "Direct invoice · GST tax invoice") : "Quotation · Auto-generated"}

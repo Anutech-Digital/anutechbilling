@@ -209,6 +209,7 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
      and open it in the editor: check seats, rate and term, then "Save & send to customer" there.
      Nothing is emailed here. A linked quote that was already sent goes through Change (Revise). */
   async function onReview() {
+    const from = hereUrl();   // R-2754: the tab clicked on, before the await (the owner may switch tabs meanwhile)
     setBusy("review");
     try {
       const res = await fetch(`/api/subscriptions/${sub.id}/generate-renewal-quote`, {
@@ -226,10 +227,10 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
       refresh();
       /* Not a draft (or its status unread) → Change: it opens a draft itself, revises a sent one, or says why not. */
       if (json.quoteStatus !== "draft") {
-        await onChange(json.quoteId);
+        await onChange(json.quoteId, from);
         return;
       }
-      router.push(quoteEditHrefFromRenewals(json.quoteId, hereUrl()) as never);
+      router.push(quoteEditHrefFromRenewals(json.quoteId, from) as never);
     } catch (err) {
       toastError(err, { fallback: "Could not open the renewal quote", action: { label: "Retry", onClick: () => void onReview() } });
     } finally {
@@ -240,7 +241,7 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   /* R-2710: "Change renewal quote" — the customer already has it: Revise it (R-448; the
      subscription link moves to the revision when it is sent, R-2368) and open that draft. A second
      click re-opens the same unsent revision. */
-  async function onChange(quoteId = sub.renewal_quote_id) {
+  async function onChange(quoteId = sub.renewal_quote_id, from: string | null = hereUrl()) {
     if (!quoteId) return;
     setBusy("change");
     try {
@@ -253,7 +254,7 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
       }
       refresh();
       if (r.created) toast.success(`Revision ${r.quoteId} created as a draft`, { description: "The customer's old quote is replaced when you send this one." });
-      router.push(quoteEditHrefFromRenewals(r.quoteId, hereUrl()) as never);
+      router.push(quoteEditHrefFromRenewals(r.quoteId, from) as never);
     } catch (err) {
       toastError(err, { fallback: "Couldn't start the revision." });
     } finally {
