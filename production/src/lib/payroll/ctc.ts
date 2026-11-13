@@ -22,7 +22,7 @@
  *    use this; they used to feed `monthly_gross × 12` to the calculator as if it were the CTC.
  */
 import { computePf, pfEpsCap, pfWage, PF_EPS_RATE } from "./pf";
-import { computeEsi, ESI_EMPLOYER_RATE } from "./esi";
+import { computeEsi, ESI_EMPLOYER_RATE, ESI_WAGE_CEILING } from "./esi";
 import { computePt } from "./pt";
 import { rupee } from "@/lib/utils";
 
@@ -382,7 +382,43 @@ export interface CtcTabInput {
 export type CtcTabBreakdown = CtcBreakdown & {
   /** "saved" = the employee's own gross (nothing typed); "ctc" = worked out from the typed CTC. */
   source: "saved" | "ctc";
+  /** R-2722: true = no Basic is set — PF / gratuity are on the whole gross (pf.ts pfWage), and
+   *  the form must leave Basic empty rather than write the gross into it. */
+  basicAssumed: boolean;
 };
+
+/**
+ * R-2722 (R-2700 G2): an employee with NO Basic set and a typed CTC. The CTC-first calculator
+ * would split it 50% Basic again (30,000 saved → CTC ±₹1 → ~31,547). Keep the employee's own
+ * rule instead — Basic not set, PF / gratuity on the whole gross — and take the largest gross
+ * whose cost (ctcFromEmployee, the CTC the tab shows for a saved gross) fits in CTC/12.
+ */
+function grossForCtcBasicNotSet(
+  i: CtcTabInput,
+  da: number,
+  asSaved: (g: number, basic: number | null, da: number) => CtcTabBreakdown,
+): CtcTabBreakdown {
+  const annualCtc = Math.max(0, Math.round(i.annualCtc));
+  const monthlyCtc = Math.round(annualCtc / 12);
+  const costOf = (g: number) => asSaved(g, null, da).monthlyCtc;
+  /* The cost rises with the gross on each side of the ESI ceiling but drops just above it
+     (employer ESI stops) — search each piece and take the larger gross that fits. */
+  const largestFitting = (lo: number, hi: number): number | null => {
+    if (lo > hi || costOf(lo) > monthlyCtc) return null;
+    while (lo < hi) {
+      const mid = Math.ceil((lo + hi) / 2);
+      if (costOf(mid) <= monthlyCtc) lo = mid; else hi = mid - 1;
+    }
+    return lo;
+  };
+  const top = monthlyCtc;
+  const g = i.esiApplicable && top > ESI_WAGE_CEILING
+    ? largestFitting(ESI_WAGE_CEILING + 1, top) ?? largestFitting(0, ESI_WAGE_CEILING) ?? 0
+    : largestFitting(0, top) ?? 0;
+  const b = asSaved(g, null, da);
+  const unallocatedMonthly = b.employerOnTop ? 0 : monthlyCtc - b.costToCompanyMonthly;
+  return { ...b, annualCtc, monthlyCtc, unallocatedMonthly, maxGrossMonthly: g, source: "ctc" };
+}
 
 /**
  * R-2700: ONE rule for the tab. Until a CTC is typed, an employee with a gross shows THEIR
@@ -400,15 +436,24 @@ export function ctcTabBreakdown(i: CtcTabInput): CtcTabBreakdown {
     ),
     source: "saved",
   });
-  if (!i.ctcTyped && gross > 0) return asSaved(gross, i.basic, i.da);
   const saved = i.saved && i.saved.gross > 0 ? i.saved : null;
+  /* R-2722: a CTC typed and then cleared is no CTC — the tab goes back to the salary the form
+     started from (the card showed CTC ₹0 / gross = Basic ₹10,000 while the field said 17,850). */
+  const typed = i.ctcTyped && Math.round(Number.isFinite(i.annualCtc) ? i.annualCtc : 0) > 0;
+  if (i.ctcTyped && !typed && saved) return asSaved(Math.round(saved.gross), saved.basic, saved.da);
+  if (!typed && gross > 0) return asSaved(gross, i.basic, i.da);
   if (saved) {
     // The CTC typed is the one the saved salary already gives → nothing to re-split.
     const shown = asSaved(Math.round(saved.gross), saved.basic, saved.da);
     if (Math.round(i.annualCtc) === shown.annualCtc) return shown;
   }
+  const basicTyped = Boolean(i.calc?.customBasicMonthly && i.calc.customBasicMonthly > 0);
+  // R-2722 (G2): no Basic saved, none typed, no Basic % picked → keep "Basic not set".
+  if (typed && saved && !(saved.basic && saved.basic > 0) && (i.keepSavedBasic ?? true) && !basicTyped) {
+    return grossForCtcBasicNotSet(i, Math.max(0, Math.round(i.da || 0)), asSaved);
+  }
   // A typed CTC keeps the employee's saved Basic (PF / gratuity are on it) unless one was typed.
-  const keepBasic = (i.keepSavedBasic ?? true) && saved?.basic && saved.basic > 0 && !(i.calc?.customBasicMonthly && i.calc.customBasicMonthly > 0)
+  const keepBasic = (i.keepSavedBasic ?? true) && saved?.basic && saved.basic > 0 && !basicTyped
     ? Math.round(saved.basic) : undefined;
   return {
     ...calculateCtcBreakdown(i.ctcTyped ? i.annualCtc : 0, {
@@ -422,6 +467,7 @@ export function ctcTabBreakdown(i: CtcTabInput): CtcTabBreakdown {
       ctcIncludesEmployer: i.ctcIncludesEmployer,
     }),
     source: "ctc",
+    basicAssumed: false,
   };
 }
 
@@ -455,6 +501,7 @@ export function ctcFormulaText(b: CtcTabBreakdown, grossInForm?: number): string
     return `Basic ${rupee(b.basicMonthly)} is more than this CTC allows (monthly gross can be at most ${rupee(b.maxGrossMonthly ?? 0)}) — lower the Basic % or raise the CTC. Monthly gross is not filled from it.`;
   }
   if (b.fittedToCtc) line += " HRA / allowances lowered to fit the CTC.";
+  if (b.source === "ctc" && b.basicAssumed) line += " Basic is not set, so PF / gratuity are on the whole gross.";
   if (b.source === "ctc" && !b.employerOnTop && b.unallocatedMonthly < 0) {
     line += ` The typed components cost ${rupee(-b.unallocatedMonthly)}/mo more than the CTC.`;
   }
@@ -462,4 +509,40 @@ export function ctcFormulaText(b: CtcTabBreakdown, grossInForm?: number): string
     line += ` Monthly gross ${rupee(Math.round(grossInForm))} is entered by hand.`;
   }
   return line;
+}
+
+/** The salary the Edit / Add employee form held when a CTC started being typed (strings, as in the form). */
+export interface CtcFormBase { gross: string; basic: string }
+
+/**
+ * R-2722: what the form's Monthly Gross / Basic boxes hold while a CTC is being typed. ONE rule,
+ * used by the dialog's effect (and tested here):
+ *   • a CTC that gives a gross (not over budget) → that gross; Basic from the split, or left as
+ *     it started when no Basic is set (basicAssumed);
+ *   • anything else — CTC cleared, over budget, the CTC the salary already gives → back to the
+ *     salary the form started from (`base`). An empty CTC never leaves the gross empty or 0
+ *     (R-2700 G3: a new employee's hand-typed gross used to be emptied).
+ * null = leave the form alone (no CTC typed, gross typed by hand after it, or salary by revisions).
+ * `basic` undefined = do not touch the Basic box (a Basic typed by hand).
+ */
+export function ctcFormFill(i: {
+  ctcTyped: boolean; grossByHand: boolean; salaryByRevision: boolean; basicByHand: boolean;
+  breakdown: CtcTabBreakdown; base: CtcFormBase;
+}): { gross: string; basic?: string } | null {
+  if (!i.ctcTyped || i.grossByHand || i.salaryByRevision) return null;
+  const b = i.breakdown;
+  const withBasic = (gross: string, basic: string) => (i.basicByHand ? { gross } : { gross, basic });
+  if (!(b.source === "ctc" && b.annualCtc > 0 && !b.overBudget)) return withBasic(i.base.gross, i.base.basic);
+  return withBasic(
+    b.grossMonthly > 0 ? String(b.grossMonthly) : "",
+    b.basicAssumed ? i.base.basic : b.basicMonthly > 0 ? String(b.basicMonthly) : "",
+  );
+}
+
+/** R-2722 (R-2700 G1): why "Apply Salary Structure" is off — null = it may apply. */
+export function applyStructureBlockedReason(b: CtcTabBreakdown, salaryByRevision: boolean): string | null {
+  if (salaryByRevision) return "This salary is set by salary revisions — change it with Revise salary in the employee profile.";
+  if (b.overBudget) return "Basic is more than this CTC allows — lower the Basic % or raise the CTC first.";
+  if (!(b.grossMonthly > 0)) return "Type the annual CTC first — there is no gross to apply.";
+  return null;
 }
