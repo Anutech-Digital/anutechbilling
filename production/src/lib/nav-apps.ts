@@ -184,46 +184,46 @@ export function withoutDistributorOnly(
 
 export const SALARIED_PRO_CHILDREN: NavItem[] = [
   {
+    id: "sp-income",
+    href: "/employee-hub?tab=income",
+    label: "Income & Cash Flow",
+    icon: "wallet",
+    hint: "Salary CTC breakdown, other incomes & monthly in-hand cockpit",
+  },
+  {
     id: "sp-expenses",
     href: "/employee-hub?tab=expenses",
     label: "Personal Expenses & Budget",
     icon: "tag",
-    hint: "Daily Indian expenses, UPI spends & monthly savings rate",
+    hint: "Daily Indian expenses, UPI spends & living expense categorization",
   },
   {
     id: "sp-bank-import",
     href: "/employee-hub?tab=bank-import",
     label: "Bank Statement Importer",
     icon: "upload_cloud",
-    hint: "Upload HDFC, SBI, ICICI, Axis or Kotak savings bank CSV",
-  },
-  {
-    id: "sp-tax",
-    href: "/employee-hub?tab=tax",
-    label: "Tax Regime (FY 2025–26)",
-    icon: "rupee",
-    hint: "Compare Old vs New Tax Regime with ₹75k standard deduction",
-  },
-  {
-    id: "sp-claims",
-    href: "/employee-hub?tab=claims",
-    label: "Company Claims & Bills",
-    icon: "wallet",
-    hint: "Monthly WiFi, mobile, cab & book reimbursements for HR",
-  },
-  {
-    id: "sp-receipts",
-    href: "/employee-hub?tab=receipts",
-    label: "HRA Rent Receipts",
-    icon: "receipt",
-    hint: "Instant 12-month printable rent receipts with landlord PAN",
+    hint: "Upload HDFC, SBI, ICICI, Axis or Kotak statement CSV",
   },
   {
     id: "sp-vault",
     href: "/employee-hub?tab=vault",
-    label: "Career & Tax Vault",
+    label: "Digital Document Vault",
     icon: "file",
-    hint: "Form 16, payslips, UAN passbook, offer letters checklist",
+    hint: "Form 16, Payslips, AIS/26AS, Rent Agreements & Tax Proofs",
+  },
+  {
+    id: "sp-tax",
+    href: "/employee-hub?tab=tax",
+    label: "ITR-1 Filing & Tax Regime",
+    icon: "rupee",
+    hint: "Old vs New Regime comparison, 87A rebate & ITR-1 Sahaj JSON",
+  },
+  {
+    id: "sp-receipts",
+    href: "/employee-hub?tab=receipts",
+    label: "HRA Receipts & Claims",
+    icon: "receipt",
+    hint: "Instant 12-month printable rent receipts & company reimbursements",
   },
 ];
 
@@ -232,7 +232,7 @@ export const EMPLOYEE_HUB_ITEM: NavItem = {
   href: "/employee-hub",
   label: "Salaried Pro Hub",
   icon: "award",
-  hint: "Personal expenses, bank statement import, FY 2025–26 tax comparator, claims & HRA receipts",
+  hint: "Income & cash flow, expenses, bank import, digital vault, ITR-1 filing & HRA receipts",
   children: SALARIED_PRO_CHILDREN,
 };
 

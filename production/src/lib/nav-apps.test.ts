@@ -208,12 +208,12 @@ describe("filterSidebarModelForModules (Dynamic menu & layout adjustment)", () =
     // Children for personal finance tools exist
     const childIds = hubItem?.children?.map((c) => c.id);
     expect(childIds).toEqual([
+      "sp-income",
       "sp-expenses",
       "sp-bank-import",
-      "sp-tax",
-      "sp-claims",
-      "sp-receipts",
       "sp-vault",
+      "sp-tax",
+      "sp-receipts",
     ]);
 
     // appForPath correctly resolves base and parameterized URLs
