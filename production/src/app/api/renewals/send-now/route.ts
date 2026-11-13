@@ -26,18 +26,14 @@ import { createClient, createAdminClientFor } from "@/lib/supabase/server";
 import { mayOpenPage, ROLE_GATE_ERROR } from "@/lib/api/with-route";
 import { primaryContactEmail } from "@/lib/contacts/primary";
 import {
-  triggersForTerm,
-  decideCadence,
   renewalIsSettled,
   firstReminderDaysOut,
-  effectiveGraceDays,
   serviceStopDate,
-  type CadenceTone,
 } from "@/lib/renewals/cadence";
-import { readGraceOverrides } from "@/lib/renewals/grace-overrides";
 import { formatIstDate } from "@/lib/dates/ist";
 import { renderTemplate } from "@/lib/renewals/templates";
-import { createOrGetRenewalQuote, isRenewalQuoteHold } from "@/lib/renewals/create-renewal-quote";
+import { manualRenewalStep } from "@/lib/renewals/manual-send-step";
+import { createOrGetRenewalQuote, isRenewalQuoteHold, draftRenewalQuoteBlock, markRenewalQuoteSent } from "@/lib/renewals/create-renewal-quote";
 import { flagsForQuoteKind } from "@/lib/pdf/quote-document-kind";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { isEmailConfigured } from "@/lib/email/send";
@@ -161,43 +157,9 @@ export async function POST(req: Request) {
         .single()
     : { data: null };
 
-  /* R-1621: the same grace the nightly run uses — trusted customer, company, "+N days". */
-  const overrides = await readGraceOverrides(supabase, [sub.id], [sub.customer_id]);
-  const graceDays = effectiveGraceDays({
-    tenantGraceDays:  tenant.grace_period_days,
-    trustedGraceDays: sub.customer_id ? overrides.trustedByCustomer.get(sub.customer_id) ?? null : null,
-    renewalDate:      sub.renewal_date,
-    graceUntil:       overrides.bySubscription.get(sub.id)?.graceUntil ?? null,
-  });
-
-  // ── Decide cadence; if off-trigger, pick closest tone ───────────
-  const decision = decideCadence({
-    renewalDate:  sub.renewal_date,
-    graceDays,
-    currentState: (sub.renewal_state ?? "pending") as never,
-    /* The cron passes this and this route did not, so a monthly subscription force-sent
-       from the screen was judged against the ANNUAL ladder while the same subscription in
-       the nightly run was judged against the monthly one — one decision, two answers,
-       depending on which button reached it. */
-    termMonths:   sub.term_months,
-  });
-
-  // Pick effective tone for the manual send:
-  //   - On a trigger / past-renewal: use decision.tone directly
-  //   - Otherwise: pick the most-imminent upcoming trigger (smallest daysOut >= today's daysUntil)
-  let tone: CadenceTone | null = decision.tone;
-  if (!tone) {
-    const daysUntil = decision.daysUntilRenewal;
-    if (daysUntil < 0) {
-      tone = "grace";
-    } else {
-      // Find the next trigger whose daysOut <= current daysUntil (sorted desc by daysOut)
-      const candidates = [...triggersForTerm(sub.term_months)].sort((a, b) => b.daysOut - a.daysOut);
-      const match = candidates.find((t) => t.daysOut <= daysUntil) ?? candidates[candidates.length - 1];
-      tone = match?.tone ?? "soft";
-    }
-  }
-  const step = decision.targetState === "pending" ? "notice_sent" : decision.targetState;
+  /* R-2710: one rule with the quote editor's Save & send (lib/renewals/manual-send-step.ts) — the
+     nightly run's grace (R-1621) and term-aware ladder; off-trigger → the most imminent tone. */
+  const { graceDays, decision, tone, step } = await manualRenewalStep(supabase, sub, tenant.grace_period_days);
 
   // ── Ensure renewal quote exists (shared helper — idempotent) ─────
   const quoteResult = await createOrGetRenewalQuote({
@@ -229,6 +191,12 @@ export async function POST(req: Request) {
     );
   }
   const renewalQuoteId = quoteResult.quoteId;
+  /* R-2710: a draft from "Review renewal quote" (maybe edited since) passes the quote's own approval
+     gate (R-1669) before it is emailed as is. */
+  const draftBlock = await draftRenewalQuoteBlock(supabase, sub.tenant_id, renewalQuoteId);
+  if (draftBlock) {
+    return NextResponse.json({ error: draftBlock }, { status: 409 });
+  }
   const renewalQuote = {
     amount:       quoteResult.amount,
     subtotal:     quoteResult.subtotal,
@@ -373,6 +341,7 @@ export async function POST(req: Request) {
         last_reminder_sent_at_v2: new Date().toISOString(),
       })
       .eq("id", sub.id);
+    await markRenewalQuoteSent(supabase, sub.tenant_id, renewalQuoteId);   // R-2710: emailed → no longer a draft
   }
 
   return NextResponse.json({

@@ -4,6 +4,10 @@
  * R-2401 — the renewal buttons, ONE component for the Renewals cards/table and the Payment
  * Follow-up renewal rows (rules + labels: ./renewal-actions-rules.ts).
  *
+ *   Review renewal quote       → R-2710: generate-renewal-quote {review:true} makes / reuses it as a
+ *                                DRAFT and opens /quotes/<id>/edit (Save & send to customer there).
+ *   Change renewal quote       → R-2710: the sent quote is revised (R-448 / R-2368) and the new draft
+ *                                opens in the editor. Send as is / Resend stay in the ⋯ menu.
  *   Send renewal quote         → /api/renewals/send-now (creates the quote if missing, emails it
  *                                with the accept / pay link) — after the same confirm as before.
  *   Create quote (don't send)  → /api/subscriptions/[id]/generate-renewal-quote (opens the quote
@@ -29,6 +33,7 @@ import { cn } from "@/lib/utils";
 import { useConfirm } from "@/components/providers/confirm-provider";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { canOpenQuotes } from "@/lib/quotes/access";
+import { MONEY_RECORD_ROLES, type UserRole } from "@/lib/auth/roles";
 import { toastError } from "@/lib/errors/toast-error";
 import { useOpenRenewalQuotes } from "@/lib/queries/subscriptions";
 import { queryKeys } from "@/lib/queries/keys";
@@ -40,6 +45,8 @@ import { CancelSubscriptionDialog } from "@/components/features/subscriptions/ca
 import { VendorHoldBadge } from "@/components/features/subscriptions/vendor-hold-badge";
 import { BillNextPartDialog, type BillNextChoice } from "./bill-next-part-dialog";
 import { isSplitBilled } from "@/lib/billing/instalments";
+import { createClient } from "@/lib/supabase/client";
+import { openRenewalRevision } from "@/lib/quotes/start-revision";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger,
@@ -89,7 +96,11 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   const canQuotes = canOpenQuotes(me?.role);
   const graceDays = me?.tenantGracePeriodDays ?? 0;
   /* R-453 / R-2232: an open renewal quote whose link-back is missing still counts; draft vs sent. */
-  const { data: openRenewals } = useOpenRenewalQuotes();
+  const { data: openRenewals, isLoading: openRenewalsLoading } = useOpenRenewalQuotes();
+  /* R-2710: until the user and the open renewal quotes are read, the row cannot know whether its
+     button is Review, Change or (for a role without the editor) Send — no click that could email
+     the customer before it is known. */
+  const factsLoading = !me || !!openRenewalsLoading;
   const sub = React.useMemo(() => {
     if (raw.renewal_quote_id) return raw;
     const q = openRenewalQuoteMap(openRenewals ?? []).get(raw.id.toLowerCase());
@@ -101,10 +112,12 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
   );
   const set = renewalActionSet(sub, quoteStatus, {
     daysUntil, tenantGraceDays: graceDays, canEndSubscription: mayMarkNonRenewing(me?.role),
+    /* R-2710: the editor (canOpenQuotes) AND the generate route (MONEY_RECORD_ROLES) — else the old buttons. */
+    canReview: canQuotes && !!me?.role && MONEY_RECORD_ROLES.includes(me.role as UserRole),
   });
   const name = sub.customer_name ?? "this customer";
 
-  const [busy, setBusy] = React.useState<"send-now" | "generate" | null>(null);
+  const [busy, setBusy] = React.useState<RenewalButtonKind | null>(null);
   const [dialog, setDialog] = React.useState<"non-renewing" | "cancel" | "nudge" | "bill-next" | null>(null);
   /* R-2519: billed in parts → "Bill next part" opens the proforma preview first (seats, rate, periods). */
   const splitBilled = isSplitBilled((sub.billing_cycle ?? null) as BillingCycle | null);
@@ -157,6 +170,62 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
     }
   }
 
+  /* R-2710 (Pratik, 12 Nov): "Review renewal quote" — make (or reuse) the renewal quote as a DRAFT
+     and open it in the editor: check seats, rate and term, then "Save & send to customer" there.
+     Nothing is emailed here. A linked quote that was already sent goes through Change (Revise). */
+  async function onReview() {
+    setBusy("review");
+    try {
+      const res = await fetch(`/api/subscriptions/${sub.id}/generate-renewal-quote`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ review: true }),
+      });
+      const json = (await readJsonSafe(res)) as { error?: string; quoteId?: string; quoteStatus?: string | null };
+      if (!res.ok || !json.quoteId) {
+        toastError(new Error(json.error ?? "Could not open the renewal quote"), {
+          action: { label: "Retry", onClick: () => void onReview() },
+        });
+        return;
+      }
+      refresh();
+      /* Not a draft (or its status unread) → Change: it opens a draft itself, revises a sent one, or says why not. */
+      if (json.quoteStatus !== "draft") {
+        await onChange(json.quoteId);
+        return;
+      }
+      router.push(`/quotes/${encodeURIComponent(json.quoteId)}/edit` as never);
+    } catch (err) {
+      toastError(err, { fallback: "Could not open the renewal quote", action: { label: "Retry", onClick: () => void onReview() } });
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  /* R-2710: "Change renewal quote" — the customer already has it: Revise it (R-448; the
+     subscription link moves to the revision when it is sent, R-2368) and open that draft. A second
+     click re-opens the same unsent revision. */
+  async function onChange(quoteId = sub.renewal_quote_id) {
+    if (!quoteId) return;
+    setBusy("change");
+    try {
+      const r = await openRenewalRevision(createClient(), quoteId);
+      if (!r.ok) {
+        toastError(new Error(r.reason), {
+          action: { label: "Open quote", onClick: () => router.push(`/quotes/${encodeURIComponent(quoteId)}` as never) },
+        });
+        return;
+      }
+      refresh();
+      if (r.created) toast.success(`Revision ${r.quoteId} created as a draft`, { description: "The customer's old quote is replaced when you send this one." });
+      router.push(`/quotes/${encodeURIComponent(r.quoteId)}/edit` as never);
+    } catch (err) {
+      toastError(err, { fallback: "Couldn't start the revision." });
+    } finally {
+      setBusy(null);
+    }
+  }
+
   /* R-239: an email to a customer is never one stray click — say who and which email. */
   async function onSendNow() {
     const s = { ...sub, customer_name: name };
@@ -190,7 +259,9 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
     }
   }
 
-  const run = (kind: "send-now" | "generate") => (kind === "send-now" ? onSendNow() : onGenerate());
+  const run = (kind: RenewalButtonKind) => (
+    kind === "send-now" ? onSendNow() : kind === "review" ? onReview() : kind === "change" ? onChange() : onGenerate()
+  );
   const grow = layout === "card" ? "flex-1" : undefined;
   /* R-2422: ONE next-step button + ⋯ (Payment Follow-up's R-2408 pattern) instead of six stacked buttons. */
   const step = renewalNextStep(set, { followup: !!onFollowup, messaging: !!messaging && !!sub.customer_id });
@@ -223,10 +294,13 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
         <Icon name="plus" size={15} /> Bill next part…
       </DropdownMenuItem>
     ),
-    "create-quote": (
-      <DropdownMenuItem key="create-quote" className={ITEM} disabled={busy !== null} onClick={() => void onGenerate()}
-        title="Create the renewal quote and open it — nothing is emailed until you send it">
-        <Icon name="plus" size={15} /> {set.secondary?.label}
+    secondary: (
+      <DropdownMenuItem key="secondary" className={ITEM} disabled={busy !== null}
+        onClick={() => void run(set.secondary?.kind ?? "generate")}
+        title={set.secondary?.kind === "send-now"
+          ? "Email the customer the renewal quote as it is, with its accept / pay link (asks first)"
+          : "Create the renewal quote and open it — nothing is emailed until you send it"}>
+        <Icon name={set.secondary?.kind === "send-now" ? "mail" : "plus"} size={15} /> {set.secondary?.label}
       </DropdownMenuItem>
     ),
     followup: (
@@ -277,15 +351,19 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
             size="sm"
             className={grow}
             loading={busy === button.kind}
-            disabled={busy !== null}
+            disabled={busy !== null || factsLoading}
             onClick={() => void run(button.kind as RenewalButtonKind)}
-            title={button.kind === "send-now"
+            title={button.kind === "review"
+              ? "Open the renewal quote to check seats, rate and term, then send it from there (nothing is emailed yet)"
+              : button.kind === "change"
+              ? "The customer already has this quote — make a revision to edit and send; the old one stops accepting once it is sent"
+              : button.kind === "send-now"
               ? "Email the customer the renewal quote with its accept / pay link (creates it first if needed)"
               : set.renewal
                 ? "Bill part 1 of the next term — the renewal, at today's seats × rate (you check them first; proforma, then the tax invoice when paid)"
                 : "Bill the next part of this subscription (payment request, or the tax invoice when paid)"}
           >
-            <Icon name={button.kind === "send-now" ? "mail" : "plus"} size={12} />
+            <Icon name={button.kind === "send-now" ? "mail" : button.kind === "review" || button.kind === "change" ? "edit" : "plus"} size={12} />
             {button.label}
           </Button>
         )}

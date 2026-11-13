@@ -27,6 +27,7 @@ import { grossAmount } from "@/lib/quotes/amounts";
 import { isZeroRatedSupply } from "@/lib/gst/place-of-supply";
 import { rcConfigured, rcTldPricing } from "@/lib/resellerclub";
 import { splitDomain } from "@/lib/domains/live-lookup";
+import { domainRenewalDescription } from "@/lib/domains/renewal-text";
 import { domainLineYears, isDomainPurchaseLine } from "@/lib/provisioning/products";
 import { istToday, toIstDate, utcDateISO } from "@/lib/dates/ist";
 import { readTenantGstRegistration } from "@/lib/compliance/gst-registration-server";
@@ -44,6 +45,21 @@ export const DOMAIN_RENEWAL_PLAN = "domain-renewal";
 /** The paying side's own switch. Only the exact string "1" opens it (AGENTS.md L41). */
 export function domainRenewalEnabled(env: Record<string, string | undefined> = process.env): boolean {
   return env.DOMAIN_RENEWAL_LIVE === "1";
+}
+
+/**
+ * R-2710: how many years the registrar renews, from the PAID renewal quote's extension_months —
+ * the same field record_payment rolled the subscription's renewal date by. Whole years 1–10 only;
+ * anything else (18 months, 0, missing) is never guessed: the row is held for a person.
+ */
+export function renewalYearsFromQuote(extensionMonths: number | null | undefined):
+  { ok: true; years: number } | { ok: false; reason: string } {
+  const m = Number(extensionMonths);
+  if (extensionMonths != null && Number.isInteger(m) && m > 0 && m % 12 === 0 && m / 12 <= 10) return { ok: true, years: m / 12 };
+  return {
+    ok: false,
+    reason: `the paid renewal quote covers ${extensionMonths ?? "an unknown number of"} months, which is not a whole number of years (1–10), so the registrar term cannot be chosen safely`,
+  };
 }
 
 /** One engine command id per request per IST day, so a re-run the same day replays. */
@@ -158,6 +174,8 @@ export interface DomainRenewalQuoteInput {
   renewalDate: string;
   graceDays: number;
   existingQuoteId?: string | null;
+  /** R-2710: "draft" = a NEW quote for Review renewal quote to open in the editor; else 'sent' (the cron). */
+  status?: "draft";
   /** Injected in tests; the live read otherwise. */
   price?: (domain: string) => Promise<RenewalPrice>;
 }
@@ -221,7 +239,7 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
     // The same name the subscription was created with: record_payment copies a paid
     // renewal line's name onto the subscription, so a different one would rename it.
     name: `Domain ${input.domain}`,
-    description: "Renewal, 1 year",
+    description: domainRenewalDescription(1),   // R-2710: lineForYears rewrites it when the term changes
     qty: 1,
     rate: subtotal,
     // Our cost is not known here (the registrar's is read by the engine at renewal).
@@ -258,6 +276,7 @@ export async function createDomainRenewalQuote(input: DomainRenewalQuoteInput): 
       total_cost: 0,
       tax_rate: taxRate,
       extension_months: 12,
+      ...(input.status === "draft" ? { status: "draft" } : {}),   // R-2710
       notes: `Domain renewal for ${input.domain} (subscription ${input.subscriptionId}), at ResellerClub's live renewal price of ₹${subtotal} + GST.`,
     } as unknown as Json,
   });

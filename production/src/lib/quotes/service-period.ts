@@ -18,6 +18,7 @@
  * caller drops the claim instead of guessing.
  */
 import { utcDateISO } from "@/lib/dates/ist";
+import { domainLineYears } from "@/lib/provisioning/products";
 
 export type QuoteServicePeriod =
   | { kind: "range"; from: string; to: string }
@@ -26,7 +27,10 @@ export type QuoteServicePeriod =
 export interface QuotePeriodLine {
   name?: string | null;
   commitment?: string | null;
+  /** R-2712: a line registered for several years (R-156) — its rate covers them all. */
+  years?: number | null;
 }
+
 
 export interface QuotePeriodInput {
   lines: QuotePeriodLine[];
@@ -97,7 +101,12 @@ export function quoteServicePeriod(input: QuotePeriodInput): QuoteServicePeriod 
 
   // 4. New quote: the commitment.
   if (allMonthly) return { kind: "months", months: 1 };
-  if (allAnnual) return { kind: "months", months: 12 };
+  if (allAnnual) {
+    /* R-2712: multi-year lines (`years`) are paid for the whole term now. Lines of different
+       lengths on one quote have no single period — say nothing rather than "12 months". */
+    const years = new Set(termLines.map(domainLineYears));
+    return years.size === 1 ? { kind: "months", months: 12 * [...years][0] } : null;
+  }
   return null;
 }
 
@@ -207,6 +216,8 @@ export interface LinePeriodLine {
   start_date?: string | null;
   domain?: string | null;
   bulk?: boolean | null;
+  /** R-2712: years paid for on a multi-year line (R-156); a new sale's period runs that long. */
+  years?: number | null;
   domains?: Array<{ domain: string; seats: number }> | null;
 }
 
@@ -228,7 +239,8 @@ export interface LinePeriod { from: string; to: string; months: number | null }
 
 const ISO_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-function isoOf(v: string | null | undefined): string | null {
+/** A real calendar date as YYYY-MM-DD (the first 10 characters of a timestamp too), else null. */
+export function isoDateOf(v: string | null | undefined): string | null {
   const s = String(v ?? "").trim().slice(0, 10);
   return ISO_RE.test(s) && validIso(s) ? s : null;
 }
@@ -282,7 +294,7 @@ export function lineServicePeriod(line: LinePeriodLine, ctx: LinePeriodContext):
 
   // 2. Renewal / extension: the next term after the one the quote was made for.
   if (ctx.isRenewal === true || ctx.isExtension === true) {
-    const rtd = isoOf(ctx.renewalTermDate);
+    const rtd = isoDateOf(ctx.renewalTermDate);
     const m = ctx.extensionMonths;
     if (!rtd || !validMonths(m)) return null;
     if (termMonths === 1 && m !== 1) return null; // monthly line, longer field: conflict
@@ -291,9 +303,12 @@ export function lineServicePeriod(line: LinePeriodLine, ctx: LinePeriodContext):
 
   // 3. New sale: start_date (else the quote's date) + one term.
   if (termMonths == null) return null;
-  const from = isoOf(line.start_date) ?? isoOf(ctx.startFallback);
+  const from = isoDateOf(line.start_date) ?? isoDateOf(ctx.startFallback);
   if (!from) return null;
-  return { from, to: addDaysIso(addMonthsIso(from, termMonths), -1), months: termMonths };
+  /* R-2712: a yearly line registered for several years (`years`) is paid for all of them now —
+     it printed "1 Year" under a 3-year price. Its subscription renews on from + years. */
+  const months = termMonths === 12 ? 12 * domainLineYears(line) : termMonths;
+  return { from, to: addDaysIso(addMonthsIso(from, months), -1), months };
 }
 
 /** "2026-10-27" → "27/10/2026". A calendar date — no timezone shift. */

@@ -84,9 +84,9 @@ describe("paise → rupees (R-2498 finding 8)", () => {
     expect(f.problems).toEqual([]);
   });
 
-  it("an adjustment above ₹1 is not guessed", () => {
+  it("R-2702: an adjustment that Zoho's lines do not bear out is not guessed", () => {
     const f = zohoSaleFacts(detail({ rawOver: { adjustment: -250 } }), SELLER);
-    expect(f.problems.join(" ")).toMatch(/adjustment of ₹-250\.00/);
+    expect(f.problems.join(" ")).toMatch(/adjustment ₹-250: the taxable ₹100250 .* lines' ₹100000/);
   });
 
   it("a foreign-currency invoice is booked in rupees at Zoho's exchange rate", () => {

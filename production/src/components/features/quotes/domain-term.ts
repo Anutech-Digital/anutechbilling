@@ -12,6 +12,7 @@
 import type { QuoteLineItem } from "@/lib/supabase/database.types";
 import { domainLineYears } from "@/lib/provisioning/products";
 import { isDomainRegistrationLine } from "@/lib/quotes/seat-lines";
+import { domainRenewalDescription, isDomainRenewalDescription } from "@/lib/domains/renewal-text";
 
 const clampYears = (y: number) => Math.max(1, Math.min(10, Math.trunc(Number.isFinite(y) ? y : 1)));
 
@@ -27,6 +28,9 @@ export function lineForYears(line: QuoteLineItem, years: number): QuoteLineItem 
     years: to > 1 ? to : undefined,
   };
   if (line.list_rate !== undefined) out.list_rate = scale(line.list_rate);
+  /* R-2710: a domain renewal line says its term ("Renewal, 1 year") — the text follows the years,
+     so the PDF never reads "1 year" next to a 3-year price. Any other text is the operator's. */
+  if (isDomainRenewalDescription(line.description)) out.description = domainRenewalDescription(to);
   return out;
 }
 
@@ -34,9 +38,13 @@ export function lineForYears(line: QuoteLineItem, years: number): QuoteLineItem 
  * Does this line get the "Register for N years" picker? The existing rule (a domain purchase,
  * or a name saying domain / registration) OR a catalogue item from the Domain vendor — the
  * catalogue names its domain items ".in", ".com", and those had no picker.
+ *
+ * R-2712: a BULK line of a domain item gets it too (it was refused outright, so "Bulk / many
+ * domains" could never be more than 1 year) — by the same two rules. A bulk Workspace line still
+ * does not, nor a Flexible (monthly) bulk line: years are whole-year terms.
  */
 export function isTermLine(line: QuoteLineItem, domainItemIds: ReadonlySet<string>): boolean {
-  if (line.bulk) return false;
-  if (isDomainRegistrationLine(line)) return true;
+  if (line.bulk && line.commitment === "monthly") return false;
+  if (isDomainRegistrationLine(line.bulk ? { ...line, bulk: false } : line)) return true;
   return !!line.item_id && domainItemIds.has(line.item_id);
 }

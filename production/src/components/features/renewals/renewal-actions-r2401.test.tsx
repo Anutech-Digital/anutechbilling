@@ -42,13 +42,13 @@ function openMenu() {
 }
 
 describe("R-2401 RenewalActions", () => {
-  it("expired in grace: Send renewal quote; ⋯ has Create quote (don't send) / Customer not renewing", () => {
+  it("expired in grace (R-2710): Review renewal quote; ⋯ has Send as is (no changes) / Customer not renewing", () => {
     render(<RenewalActions sub={SUB} daysUntil={-6} layout="card" />);
-    expect(screen.getByRole("button", { name: /Send renewal quote/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /Review renewal quote/ })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Generate/ })).toBeNull();
     expect(screen.queryByRole("button", { name: /Send now/ })).toBeNull();
     openMenu();
-    expect(screen.getByRole("menuitem", { name: /Create quote \(don't send\)/ })).toBeTruthy();
+    expect(screen.getByRole("menuitem", { name: /Send as is \(no changes\)/ })).toBeTruthy();
     expect(screen.getByRole("menuitem", { name: /Customer not renewing/ })).toBeTruthy();
   });
 
@@ -81,11 +81,11 @@ describe("R-2401 RenewalActions", () => {
     render(<RenewalActions sub={{ ...SUB, customer_id: "c-1" }} daysUntil={-6} layout="table" onFollowup={onFollowup} messaging />);
     const buttons = screen.getAllByRole("button").map((b) => b.getAttribute("aria-label") ?? b.textContent ?? "");
     expect(buttons).toHaveLength(2);
-    expect(buttons[0]).toMatch(/Send renewal quote/);
+    expect(buttons[0]).toMatch(/Review renewal quote/);
     expect(buttons[1]).toMatch(/More renewal actions for REDOQ — Workspace Business/);
     openMenu();
     const items = screen.getAllByRole("menuitem").map((i) => i.textContent?.trim());
-    expect(items).toEqual(["Create quote (don't send)", "Follow-up", "Nudge", "Voice note", "Customer not renewing"]);
+    expect(items).toEqual(["Send as is (no changes)", "Follow-up", "Nudge", "Voice note", "Customer not renewing"]);
     fireEvent.click(screen.getByRole("menuitem", { name: /Follow-up/ }));
     expect(onFollowup).toHaveBeenCalledTimes(1);
   });

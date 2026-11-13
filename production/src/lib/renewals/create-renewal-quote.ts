@@ -20,6 +20,7 @@
  * across customers/quotes/subscriptions inside one tenant's data.
  */
 
+import { customerCopyBlock, type CustomerCopyQuote } from "@/lib/quotes/customer-copy-gate";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { catalogPlanName } from "@/lib/subscriptions/plan-match";
 import { quoteDocumentKind, type QuoteDocumentKind } from "@/lib/pdf/quote-document-kind";
@@ -85,6 +86,12 @@ export interface CreateRenewalQuoteInput {
   existingQuoteId?: string | null;
   /** Optional override — defaults to false (auto-created note). */
   notes?:          string;
+  /**
+   * R-2710: "draft" = a NEW quote is stored as a draft, for "Review renewal quote" to open in the
+   * editor (nothing is emailed). Absent (the cron, Send now) → 'sent' as before. An existing /
+   * re-linked quote keeps its own status.
+   */
+  status?:         "draft";
 }
 
 export interface RenewalQuoteResult {
@@ -306,6 +313,13 @@ export async function createOrGetRenewalQuote(
   const lineItems: QuoteLineItem[] = [{
     id:         "renewal-1",
     name:       catalogPlanName(input.plan),   // R-2095
+    /* R-2710: the subscription's catalogue item, so the editor knows the line (a Domain-vendor
+       item gets "Register for N years", R-1445). Not read by record_payment for a renewal. */
+    ...(input.itemId ? { item_id: input.itemId } : {}),
+    /* R-2710: a whole multi-year term (24 / 36 months) says its years, so the editor's picker shows
+       "2 yrs" (not 1) and a change scales from the right yearly price; the database keeps
+       extension_months = months / years × new years (quotes_r2710_renewal_term_follows_years). */
+    ...(term.termMonths > 12 && term.termMonths % 12 === 0 && term.termMonths <= 120 ? { years: term.termMonths / 12 } : {}),
     qty:        quoteSeats,   // R-2583: the scheduled cut's seats
     rate:       perSeatRate,
     cost:       perSeatCost,
@@ -354,6 +368,8 @@ export async function createOrGetRenewalQuote(
          went to 25 Oct 2027 instead of 25 Nov 2026 and the MRR fell 250 → 21.
          `createExtensionQuote` keeps its own 24/36 and is deliberately untouched. */
       extension_months: term.termMonths,
+      /* R-2710: only a draft is ever asked for; the RPC stores anything else as 'sent'. */
+      ...(input.status === "draft" ? { status: "draft" } : {}),
       /* R-2583: the cut note is for the owner — after the staff-only marker, never on the customer's PDF. */
       notes: cut.kind === "none"
         ? input.notes ?? `Renewal quote for subscription ${input.subscriptionId}`
@@ -419,4 +435,50 @@ function planChangePending(quoteId: string): RenewalQuoteHold {
     message: `Plan change quote ${quoteId} is pending on this subscription, so no renewal quote was made and no renewal reminder was sent. ` +
              "The renewal quote is made after it is paid or expires (or cancel that quote to make it now).",
   };
+}
+
+/**
+ * R-2710: a renewal reminder (the cron, Send now / "Send as is") just emailed the customer this
+ * quote's accept link — a DRAFT made by "Review renewal quote" becomes 'sent' now: the public accept
+ * page refuses drafts, and a quote the customer holds must not stay editable in place (Revise
+ * instead). Only a draft moves; any other status is left as it is. Call it only after the email went.
+ */
+export async function markRenewalQuoteSent(
+  supabase: CreateRenewalQuoteInput["supabase"],
+  tenantId: string,
+  quoteId: string | null | undefined,
+): Promise<void> {
+  if (!quoteId) return;
+  const { error } = await supabase
+    .from("quotes")
+    .update({ status: "sent" })
+    .eq("id", quoteId)
+    .eq("tenant_id", tenantId)
+    .eq("status", "draft");
+  if (error) console.error(`[renewals] quote ${quoteId}: emailed but not marked sent — ${error.message}`);
+}
+
+/**
+ * R-2710: before a renewal reminder emails a DRAFT renewal quote (made by "Review renewal quote",
+ * maybe edited since): the same approval gate the quote's own Send uses (R-1669,
+ * customerCopyBlock) — a discount / margin waiting for approval is never emailed by the cron or
+ * "Send as is". Returns the refusal in one line, or null (not a draft, or nothing blocks it).
+ * A failed read blocks (never email on an unknown).
+ */
+export async function draftRenewalQuoteBlock(
+  supabase: CreateRenewalQuoteInput["supabase"],
+  tenantId: string,
+  quoteId: string | null | undefined,
+): Promise<string | null> {
+  if (!quoteId) return null;
+  const { data: q, error } = await supabase
+    .from("quotes")
+    .select("status, line_items, approval_status, approval_tier, approval_requested_by, approved_by, approved_discount_bps, approved_margin_bps, approval_rejection_reason")
+    .eq("id", quoteId)
+    .eq("tenant_id", tenantId)
+    .maybeSingle();
+  if (error || !q) return `Renewal quote ${quoteId} could not be read (${error?.message ?? "not found"}), so it was not emailed.`;
+  if (q.status !== "draft") return null;
+  const block = customerCopyBlock(q as CustomerCopyQuote);
+  return block ? `Renewal quote ${quoteId} is not emailed: ${block.message}.` : null;
 }

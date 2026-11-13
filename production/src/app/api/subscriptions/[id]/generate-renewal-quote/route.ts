@@ -29,6 +29,7 @@ import { createAdminClientFor } from "@/lib/supabase/server";
 import { withRoute } from "@/lib/api/with-route";
 import { MONEY_RECORD_ROLES } from "@/lib/auth/roles";
 import { createOrGetRenewalQuote, isRenewalQuoteHold } from "@/lib/renewals/create-renewal-quote";
+import { createDomainRenewalQuote } from "@/lib/domains/renewal";
 import { renewalQuoteBlockedReason } from "@/lib/renewals/split-billed-renewal";
 import { renewalIsSettled, firstReminderDaysOut } from "@/lib/renewals/cadence";
 import { billDueTermsOldestFirst, termsMessage, withFreedPart, rolledRenewalDate, type TermsBilled } from "@/lib/renewals/split-billed-next-part";
@@ -62,13 +63,16 @@ export const POST = withRoute({
   }
   const choice = parseBillNextBody(bodyJson);
   if ("error" in choice) return NextResponse.json({ error: choice.error }, { status: 400 });
+  /* R-2710: "Review renewal quote" — make (or reuse) the renewal quote as a DRAFT to open in the
+     editor. Never the split-billed path below (that BILLS the next part). */
+  const review = reviewRequested(bodyJson);
   // ── 2. Load subscription + verify tenant scope ──────────────────
   const supabase = createAdminClientFor(user.id);
   const { data: sub, error: subErr } = await supabase
     .from("subscriptions")
     .select(
       `id, tenant_id, customer_id, customer_name, plan, item_id, seats, mrr,
-       renewal_date, status, renewal_state, renewal_quote_id, term_months, term_amount, billing_cycle, start_date, billed_externally_until, auto_renew`
+       renewal_date, status, renewal_state, renewal_quote_id, term_months, term_amount, billing_cycle, start_date, billed_externally_until, vendor, domain, auto_renew`
     )
     .eq("id", params.id)
     .single();
@@ -89,6 +93,9 @@ export const POST = withRoute({
   /* R-808: billed in parts → no whole-term renewal quote (it was proven to bill the renewed
      year twice). The renewals cron rolls the term and the instalments keep coming. */
   const splitReason = renewalQuoteBlockedReason(sub.billing_cycle);
+  if (splitReason && review) {
+    return NextResponse.json({ error: `${splitReason} Use "Bill next part" on the Renewals row instead.`, code: "split_billed" }, { status: 400 });
+  }
   if (splitReason) {
     /* R-2095 (staging, 30 Oct): a monthly sub whose month ended had NO part bill and Generate only
        refused — month 2 could not be billed. Generate now bills the NEXT PART: the term rolls on
@@ -209,7 +216,22 @@ export const POST = withRoute({
   }
 
   // ── 4. Create or return existing quote ──────────────────────────
-  const result = await createOrGetRenewalQuote({
+  /* R-2710: Review of a DOMAIN prices it as the renewals cron does — ResellerClub's live renewal
+     price (createDomainRenewalQuote), never the stored mrr (0 for a domain that came with hosting). */
+  const result = review && sub.vendor === "domain" && sub.domain
+    ? await createDomainRenewalQuote({
+        supabase,
+        subscriptionId:  sub.id,
+        tenantId:        sub.tenant_id,
+        customerId:      sub.customer_id,
+        customerName:    sub.customer_name,
+        domain:          sub.domain,
+        renewalDate:     sub.renewal_date,
+        graceDays:       tenant.grace_period_days ?? 0,
+        existingQuoteId: sub.renewal_quote_id,
+        status:          "draft",
+      })
+    : await createOrGetRenewalQuote({
     supabase,
     subscriptionId:  sub.id,
     tenantId:        sub.tenant_id,
@@ -227,6 +249,7 @@ export const POST = withRoute({
     notes:           sub.renewal_quote_id
       ? undefined
       : `Renewal quote (operator-generated) for subscription ${sub.id}`,
+    ...(review ? { status: "draft" as const } : {}),
   });
 
   /* R-2618: a Change-plan quote on the link is not a renewal quote — say so, make nothing. */
@@ -243,11 +266,21 @@ export const POST = withRoute({
   // ── 5. Advance renewal_state so cron skips re-creation ──────────
   // Only bump if currently in 'pending' — we don't want to regress
   // a sub that's already past T-15 in the cadence.
-  if (result.created && sub.renewal_state === "pending") {
+  /* R-2710: not for a draft made for Review — nothing went to the customer, so the T-15 notice
+     must still go (the cron sends the linked quote then, marking it sent). */
+  if (result.created && sub.renewal_state === "pending" && !review) {
     await supabase
       .from("subscriptions")
       .update({ renewal_state: "notice_sent" })
       .eq("id", sub.id);
+  }
+
+  /* R-2710: the quote's own status — the row opens a draft in the editor, and a sent one through
+     Revise (a linked quote made earlier by the cron / Send now is 'sent'). */
+  let quoteStatus: string | null = null;
+  if (review) {
+    const { data: q } = await supabase.from("quotes").select("status").eq("id", result.quoteId).eq("tenant_id", tenantId).maybeSingle();
+    quoteStatus = (q?.status as string | undefined) ?? null;
   }
 
   return NextResponse.json({
@@ -256,8 +289,14 @@ export const POST = withRoute({
     alreadyExisted:  !result.created,
     amount:          result.amount,
     subscriptionId:  sub.id,
+    ...(review ? { quoteStatus } : {}),
   });
 });
+
+/** R-2710: the body asks for a draft to review ({ review: true }). */
+function reviewRequested(body: unknown): boolean {
+  return !!body && typeof body === "object" && (body as { review?: unknown }).review === true;
+}
 
 /**
  * GET /api/subscriptions/[id]/generate-renewal-quote?periods=N — R-2519: the Bill-next-part

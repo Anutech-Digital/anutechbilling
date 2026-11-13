@@ -8,6 +8,11 @@
  *
  * Domains come from: a CSV (domain,seats) OR the customer's saved domains
  * (customer_domains). Pricing = one negotiated rate/seat across all domains.
+ *
+ * R-2712 (Pratik, 16 Oct): "Start date" for every plan and, for a domain plan, "Register for
+ * 1–10 years" — a client had paid 3 years of registration and this dialog could only make a
+ * 1-year line starting today. The line then carries `start_date` and `years`; its rate is the
+ * whole term's price (lib/quotes/bulk.ts buildBulkLine), billed once.
  */
 "use client";
 
@@ -22,7 +27,10 @@ import { Icon } from "@/components/ui/icon";
 import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { rupee, cn } from "@/lib/utils";
-import { buildBulkLine, dedupeDomains, bulkDomainProblems, type DomainSeat } from "@/lib/quotes/bulk";
+import { buildBulkLine, dedupeDomains, bulkDomainProblems, isDomainPlan, type DomainSeat } from "@/lib/quotes/bulk";
+import { addMonthsIso, isoDateOf, periodDate } from "@/lib/quotes/service-period";
+import { catalogYearlyPrice } from "@/lib/quotes/catalog-line";
+import { istToday } from "@/lib/dates/ist";
 import type { Item, QuoteLineItem } from "@/lib/supabase/database.types";
 
 interface Props {
@@ -47,6 +55,8 @@ function parseLine(line: string): string[] {
 export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onAdd }: Props) {
   const [itemId, setItemId] = React.useState("");
   const [rate, setRate] = React.useState(0);          // ₹/seat/year
+  const [years, setYears] = React.useState(1);        // R-2712: "Register for" — domain plans only
+  const [startDate, setStartDate] = React.useState(() => istToday());   // R-2712
   const [tab, setTab] = React.useState<"manual" | "csv" | "pick">("manual");
   const [manual, setManual] = React.useState<DomainSeat[]>([{ domain: "", seats: 1 }]);
   const [csvName, setCsvName] = React.useState<string | null>(null);
@@ -56,6 +66,7 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
   React.useEffect(() => {
     if (!open) {
       setItemId(""); setRate(0); setTab("manual"); setManual([{ domain: "", seats: 1 }]);
+      setYears(1); setStartDate(istToday());
       setCsvName(null); setSaved([]);
       if (fileRef.current) fileRef.current.value = "";
       return;
@@ -69,14 +80,18 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
   }, [open, customerId]);
 
   const item = catalog?.find((i) => i.id === itemId);
+  /* R-2712: years only for a domain plan (the normal line's rule, R-1445) — a Workspace plan
+     chosen after picking 3 years is a 1-year line, whatever the hidden picker still holds. */
+  const domainPlan = isDomainPlan(item);
+  const termYears = domainPlan ? years : 1;
 
   function pickItem(id: string) {
     setItemId(id);
     const it = catalog?.find((i) => i.id === id);
-    if (it) {
-      const msrpPerMo = it.prices?.annual?.msrp ?? it.prices?.monthly?.msrp ?? it.msrp;
-      setRate(Math.round(msrpPerMo * 12)); // ₹/seat/year (annual list)
-    }
+    /* R-2712: the catalogue row's own billing unit decides the yearly figure (R-526,
+       catalogYearlyPrice — the one way every adder prices). This dialog multiplied every price by
+       12, so a per-YEAR domain item at ₹800 came in at ₹9,600 a year. */
+    if (it) setRate(Math.round(catalogYearlyPrice(it).rate)); // ₹/seat/year (annual list)
   }
 
   async function handleCsv(e: React.ChangeEvent<HTMLInputElement>) {
@@ -156,7 +171,13 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
   }, [tab, manual, saved]);
 
   const totalSeats = domains.reduce((s, d) => s + d.seats, 0);
-  const lineNet = rate * totalSeats; // ex-GST annual; GST added at quote level
+  const lineNet = rate * totalSeats * termYears; // ex-GST, the whole term (R-2712); GST added at quote level
+  /* R-2712: the day each subscription comes up for renewal — start + the years paid for. A
+     start date that cannot be read is refused (never quietly "today"). A past start is a real
+     back-dated sale and stays allowed; a renewal date that is ALREADY past gets a warning. */
+  const startIso = isoDateOf(startDate);
+  const renewsOn = startIso ? addMonthsIso(startIso, 12 * termYears) : null;
+  const renewalPast = renewsOn != null && renewsOn < istToday();
 
   function handleAdd() {
     if (!item) {
@@ -192,13 +213,21 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
       });
       return;
     }
+    if (!startIso) {
+      toast.error("Pick a start date.", {
+        description: "Choose the day these subscriptions start in the Start date box — a past date is fine.",
+      });
+      return;
+    }
     const line = buildBulkLine(
-      { id: crypto.randomUUID(), item_id: item.id, name: item.name, cost: Math.round((item.prices?.annual?.wholesale ?? item.wholesale) * 12) },
+      { id: crypto.randomUUID(), item_id: item.id, name: item.name, cost: Math.round(catalogYearlyPrice(item).cost) },
       rate,
       domains,
+      "annual_yearly",
+      { years: termYears, startDate: startIso },
     );
     onAdd(line);
-    toast.success(`Added bulk line — ${domains.length} domains, ${totalSeats} seats`);
+    toast.success(`Added bulk line — ${domains.length} domains, ${totalSeats} seats${termYears > 1 ? `, ${termYears} years` : ""}`);
     onOpenChange(false);
   }
 
@@ -229,6 +258,20 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
               <label htmlFor="bulk-rate" className="block text-xs font-medium text-ink-2 mb-1">Rate (₹/seat/year)</label>
               <Input id="bulk-rate" type="number" prefix="₹" value={rate || ""} onChange={(e) => setRate(Math.max(0, Number(e.target.value) || 0))} />
             </div>
+            {/* R-2712: when the subscriptions start, and (domain plans) how many years are paid now. */}
+            <div>
+              <label htmlFor="bulk-start" className="block text-xs font-medium text-ink-2 mb-1">Start date</label>
+              <Input id="bulk-start" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+            </div>
+            {domainPlan && (
+              <div>
+                <label htmlFor="bulk-years" className="block text-xs font-medium text-ink-2 mb-1">Register for</label>
+                <select id="bulk-years" value={years} onChange={(e) => setYears(Number(e.target.value))}
+                  className="w-full rounded-md border border-hairline bg-paper px-3 py-2 text-sm text-ink focus:outline-none focus:ring-2 focus:ring-amber">
+                  {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((y) => <option key={y} value={y}>{y} year{y === 1 ? "" : "s"}</option>)}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Tabs */}
@@ -311,15 +354,28 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
           )}
 
           {/* Summary */}
-          <div className="rounded-md border border-hairline bg-paper-2/40 px-3 py-2 flex items-center justify-between text-sm">
-            <span className="text-ink-2"><b>{domains.length}</b> domains · <b>{totalSeats}</b> seats</span>
-            <span className="font-semibold tabular-nums">{rupee(lineNet)} <span className="text-ink-3 font-normal text-xs">/yr (ex-GST)</span></span>
+          <div className="rounded-md border border-hairline bg-paper-2/40 px-3 py-2 text-sm" data-testid="bulk-summary">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-ink-2"><b>{domains.length}</b> domains · <b>{totalSeats}</b> seats</span>
+              <span className="font-semibold tabular-nums">{rupee(lineNet)} <span className="text-ink-3 font-normal text-xs">{termYears > 1 ? `for ${termYears} years, billed once (ex-GST)` : "/yr (ex-GST)"}</span></span>
+            </div>
+            {/* R-2712: one fact, said once — when each subscription starts and comes up for renewal. */}
+            <p className="mt-0.5 text-2xs text-ink-3">
+              {startIso && renewsOn
+                ? <>Each subscription starts {periodDate(startIso)} and renews {periodDate(renewsOn)}.</>
+                : <span role="alert" className="text-rose">Pick a start date.</span>}
+            </p>
+            {renewalPast && renewsOn && (
+              <p role="status" className="mt-0.5 text-2xs text-amber-ink" data-testid="bulk-renewal-past">
+                Renewal date {periodDate(renewsOn)} is already past — each subscription will be due for renewal as soon as it is created.
+              </p>
+            )}
           </div>
         </div>
 
         <DialogFooter>
           <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button type="button" variant="primary" disabled={!item || rate <= 0 || totalSeats <= 0} onClick={handleAdd}>
+          <Button type="button" variant="primary" disabled={!item || rate <= 0 || totalSeats <= 0 || !startIso} onClick={handleAdd}>
             Add bulk line ({domains.length})
           </Button>
         </DialogFooter>

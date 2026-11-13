@@ -39,7 +39,8 @@ function detail(over: Partial<ZohoFyDocDetail> & { rawOver?: Record<string, unkn
 
 /** The SQL import's rule (import_zoho_fy_sales, R-2650): what it accepts, mirrored for the test. */
 function sqlAccepts(f: ZohoSaleFacts): boolean {
-  const gap = f.amount - f.taxable - f.tax;
+  /* R-2702: Zoho's adjustment is its own no-GST line — the round-off rule is on what is left after it. */
+  const gap = f.amount - f.taxable - f.tax - (f.adjustment ?? 0);
   const limit = roundOffLimit(f.currency, f.fxRate);
   return f.taxable >= 0 && f.tax >= 0 && f.amount > 0 && Math.abs(gap) <= limit;
 }
@@ -104,7 +105,7 @@ describe("R-2650 foreign-currency round-off — imported as Zoho filed it", () =
     expect(sqlAccepts(f)).toBe(true);
   });
 
-  it("a round-off above one unit of the invoice's currency is still refused", () => {
+  it("R-2702: an adjustment above one unit of the invoice's currency that the lines do not bear out is still refused", () => {
     const f = zohoSaleFacts(usd({ roundoff_value: 0, adjustment: 1.5 }), SELLER);
     expect(f.problems.join(" ")).toMatch(/adjustment/);
   });
@@ -178,9 +179,9 @@ describe("R-2650 genuinely broken data is still refused", () => {
     expect(f.problems.join(" ")).toMatch(/TCS/);
   });
 
-  it("adjustment above ₹1, TDS, discount after tax, mixed rates — unchanged reasons", () => {
-    expect(zohoSaleFacts(detail({ totalPaise: 1_18_500_00, rawOver: { adjustment: 500 } }), SELLER).problems.join(" ")).toMatch(/adjustment of ₹500/);
-    expect(zohoSaleFacts(detail({ tdsPaise: 10_000_00 }), SELLER).problems.join(" ")).toMatch(/TDS/);
+  it("discount after tax, mixed rates whose GST is not the lines' rates — unchanged (R-2702 imports a true adjustment and TDS)", () => {
+    expect(zohoSaleFacts(detail({ totalPaise: 1_18_500_00, rawOver: { adjustment: 500 } }), SELLER).problems).toEqual([]);
+    expect(zohoSaleFacts(detail({ tdsPaise: 10_000_00 }), SELLER).problems).toEqual([]);
     expect(zohoSaleFacts(detail({ rawOver: { discount_amount: 100, is_discount_before_tax: false } }), SELLER).problems.join(" ")).toMatch(/Discount after tax/);
     const mixed = zohoSaleFacts(detail({ lines: [
       { accountId: "a", accountName: "S", description: "", hsnOrSac: "", quantity: 1, amountPaise: 50_000_00, taxId: "", taxName: "IGST18", taxPercent: 18 },
