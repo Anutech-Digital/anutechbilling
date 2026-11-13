@@ -30,3 +30,26 @@ describe("R-2735 renewed-without-payment report — read-only", () => {
     expect(codeOnly(sql).toLowerCase()).not.toMatch(/\b(email|phone|contact_email|contact_phone)\b/);
   });
 });
+
+/* R-2749 (14 Nov 2026): the review of R-2735 found the report skipped monthly flex (1-month term billed
+   monthly) and could list an anniversary-shaped sub whose next term is billed ahead but correctly NOT renewed.
+   Proved on the local DB with planted rows (rolled back): before, A (anniversary) listed + B (flex) missing;
+   after, only B. These pin the three SQL changes and the moves section. */
+describe("R-2749 report fixes", () => {
+  const code = codeOnly(readFileSync(FILE, "utf8")).toLowerCase().replace(/\s+/g, " ");
+  it("keeps monthly flex (cycle = term) — not only cycle < term", () => {
+    expect(code).toContain("sp.cycle_months <= sp.term_months");
+    expect(code).not.toContain("sp.cycle_months < sp.term_months");
+  });
+  it("current term starts strictly before renewal_date (anniversary date = next term, billed ahead)", () => {
+    expect(code).toContain("b.term_start < sp.renewal_date");
+    expect(code).not.toContain("b.term_start <= sp.renewal_date");
+  });
+  it("never lists a first part that renews FROM the current renewal_date (waiting for its payment)", () => {
+    expect(code).toContain("f.renews_from is distinct from f.renewal_date");
+  });
+  it("lists every forward / back move of renewal_date (subscription_renewal_moves)", () => {
+    expect(code).toMatch(/from public\.subscription_renewal_moves m/);
+    expect(code).toMatch(/m\.direction, m\.from_date, m\.to_date/);
+  });
+});

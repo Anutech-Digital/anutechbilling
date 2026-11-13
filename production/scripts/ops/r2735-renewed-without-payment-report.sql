@@ -20,6 +20,13 @@
 --   0. Login check (tenants_visible must equal the number of companies).
 --   1. COUNT per company.
 --   2. ROWS: one per subscription, with why (proforma unpaid / invoice unpaid / not billed / no part laid).
+--   3. MOVES (R-2749): every automatic move of renewal_date by a renewal part since R-2735 — 'forward' when the
+--      part was paid, 'back' when that payment was undone (full credit note / un-reconcile) — newest first.
+--
+-- R-2749 (14 Nov 2026) fixes: monthly flex subscriptions (1-month term billed monthly, every month a term) are
+-- included; the CURRENT term is the newest laid term that starts BEFORE renewal_date (on an anniversary-shaped
+-- date the term starting ON renewal_date is the next one, billed ahead), and a first part whose renews_from
+-- equals renewal_date (billed, waiting for its payment, correctly not renewed) is never listed.
 --
 -- WHO RUNS IT: the manager or Pardeep. Claude does not run it on staging or live.
 -- HOW (same instances as production/supabase/cloudsql/{staging,live}/deploy-db-*.sh):
@@ -57,15 +64,16 @@ with split as (
      and s.billing_cycle::text in ('monthly', 'quarterly', 'half_yearly')
 ), terms as (
   select sp.*,
+         /* R-2749: strictly before renewal_date — see the header */
          (select max(b.term_start) from public.subscription_billings b
-           where b.subscription_id = sp.id and b.tenant_id = sp.tenant_id and b.term_start <= sp.renewal_date) as cur_term,
+           where b.subscription_id = sp.id and b.tenant_id = sp.tenant_id and b.term_start < sp.renewal_date) as cur_term,
          (select min(b.term_start) from public.subscription_billings b
            where b.subscription_id = sp.id and b.tenant_id = sp.tenant_id) as first_term
     from split sp
-   where sp.cycle_months < sp.term_months
+   where sp.cycle_months <= sp.term_months   -- R-2749: '=' keeps monthly flex (each month is a term)
 ), firstpart as (
   select t.*,
-         b.id as part_id, b.period_index, b.period_start, b.invoice_id,
+         b.id as part_id, b.period_index, b.period_start, b.invoice_id, b.renews_from,
          i.status::text as invoice_status,
          rq.id as request_id, rq.status::text as request_status, rq.amount as request_amount,
          (select coalesce(sum(p.amount), 0) from public.payments p
@@ -92,6 +100,8 @@ with split as (
               else 'first part not billed' end as why
     from firstpart f
    where (f.no_part_laid or (f.cur_term > f.first_term and coalesce(f.invoice_status, '') <> 'paid'))
+     /* R-2749: a part that renews FROM the current renewal_date is waiting for its payment — not renewed */
+     and f.renews_from is distinct from f.renewal_date
      and (f.billed_externally_until is null
           or f.billed_externally_until < greatest(f.cur_term, (f.renewal_date - make_interval(months => f.term_months))::date))
 )
@@ -103,5 +113,14 @@ select o.tenant_id, count(*) over (partition by o.tenant_id) as rows_in_company,
        o.request_received as proforma_received, o.invoice_id, o.invoice_status, o.why
   from off o
  order by o.tenant_id, o.renewal_date, o.id;
+
+\echo
+\echo '=== 3. Moves of renewal_date by a renewal part (R-2749): forward = part paid, back = payment undone ==='
+select m.tenant_id, m.subscription_id, s.customer_name, s.plan, m.direction, m.from_date, m.to_date,
+       m.invoice_id, m.why, m.created_at at time zone 'Asia/Kolkata' as moved_at_ist,
+       s.renewal_date as renewal_date_now, s.renewal_state::text as renewal_state_now
+  from public.subscription_renewal_moves m
+  join public.subscriptions s on s.id = m.subscription_id and s.tenant_id = m.tenant_id
+ order by m.tenant_id, m.created_at desc, m.id desc;
 
 rollback;
