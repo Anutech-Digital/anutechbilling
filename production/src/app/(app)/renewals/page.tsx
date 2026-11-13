@@ -329,9 +329,10 @@ function RenewalQueue({ rows, graceDays, strong, selected, onSelect, emptyText, 
   const followupFor = (sub: Subscription) => (sub.customer_id ? () => { const it = byId.get(sub.id); if (it) onFollowup(it); } : undefined);
   /* R-2752: paid facts agree — an invoice the row shows as Paid is never next to "never paid" (wait
      for the docs too before saying "never paid") */
-  const lastPaidFor = (item: QueueItem, className?: string, paid = lastPaid.data?.get(item.sub.id)) => (
-    <LastPaidLine paid={paid} paidInvoiceId={paidInvoiceOf(item.docs, todayIst)?.id ?? null} loading={lastPaid.loading || (!paid && docsState.loading)} failed={lastPaid.failed} canInvoices={canInvoices} canQuotes={canQuotes} className={className} />
-  );
+  const lastPaidFor = (item: QueueItem, className?: string) => {
+    const paid = lastPaid.data?.get(item.sub.id);   // no receipt → it waits for (or says it lost) the docs, never a false "never paid"
+    return <LastPaidLine paid={paid} paidInvoice={paidInvoiceOf(item.docs, todayIst)} loading={lastPaid.loading || (!paid && docsState.loading)} failed={lastPaid.failed || (!paid && docsState.failed)} canInvoices={canInvoices} canQuotes={canQuotes} className={className} />;
+  };
   /* R-2728: the last quote sent + last invoice, clickable. A draft renewal quote keeps R-2232's
      "Renewal quote Q-x not sent yet" line; otherwise these lines replace "Renewal sent Q-x · due …". */
   const todayIst = istToday();

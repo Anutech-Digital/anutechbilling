@@ -26,8 +26,8 @@ import { rupee, formatDate } from "@/lib/utils";
 import { paymentMethodLabel } from "@/lib/payments/method-label";
 
 export const NEVER_PAID = "— never paid in the app";
-/** R-2752: the invoice is marked Paid but no receipt is linked in the app. */
-export const PAID_NO_RECEIPT = "— Paid, no receipt in the app";
+/** R-2752: the invoice is settled (its own words: "Paid" / "Covered by advance") but no receipt is linked. */
+export const paidNoReceipt = (words: string) => `— ${words}, no receipt in the app`;
 export const HISTORY_SIZE = 3;
 
 export interface LastPaidInput {

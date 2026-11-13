@@ -491,17 +491,23 @@ export function priorDueInvoiceGap(docs: LastDocs | undefined, priorDue: number,
   const owed = docs?.owedInvoiceId ?? null;
   if (owed && shown.some((i) => i.id === owed)) return null;
   if (owed) return `Older invoice ${owed} still has money due`;
-  /* R-2752: the balance is only subscriptions.outstanding_amount — the customer's statement (the
-     ledger: invoices − payments) does not carry it, which is why the customer page can say "All clear" */
-  return "Balance on the subscription, no invoice — not in the customer's statement";
+  /* R-2752: the balance is subscriptions.outstanding_amount and no unpaid invoice LINKED to the
+     subscription carries it (a hand-raised / imported invoice for the customer may) — true whether the
+     row shows a Paid / Cancelled invoice or none */
+  return "Balance on the subscription — no unpaid invoice linked to it";
 }
 
 /**
- * R-2752 — the newest shown invoice that reads "Paid" (same words as its own line), for the Last
- * paid line when no receipt is linked: an invoice marked Paid is never next to "never paid".
+ * R-2752 — the newest shown invoice that is settled ("Paid" / "Covered by advance" — tone ok, the
+ * same words as its own line), for the Last paid line when no receipt is linked: an invoice the row
+ * shows as settled is never next to "never paid".
  */
-export function paidInvoiceOf(docs: LastDocs | undefined, todayIst: string): LastInvoice | null {
-  return (docs?.invoices ?? []).find((i) => invoiceStatusWords(i, todayIst).text === "Paid") ?? null;
+export function paidInvoiceOf(docs: LastDocs | undefined, todayIst: string): { id: string; words: string } | null {
+  for (const i of docs?.invoices ?? []) {
+    const s = invoiceStatusWords(i, todayIst);
+    if (s.tone === "ok") return { id: i.id, words: s.text };
+  }
+  return null;
 }
 
 /* "Nov 2026" = periodDate("2026-11-01") without its day — the paper's own formatter (service-period.ts). */

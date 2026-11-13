@@ -122,13 +122,13 @@ test.describe("R-2752 card test", () => {
     await expect(r.getByText(/never paid in the app/)).toHaveCount(0);
   });
 
-  test("Step 2: ₹98 on the subscription next to a Paid invoice says where it is ('no invoice — not in the customer's statement')", async ({ browser, baseURL }) => {
+  test("Step 2: ₹98 on the subscription next to a Paid invoice says where it is ('no unpaid invoice linked to it')", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await page.setViewportSize({ width: 1280, height: 900 });
     const r = await rowOf(page, "CT R2752 Balance Plan");
     await expect(r.getByText("Previous term ₹98 still unpaid")).toBeVisible({ timeout: 60_000 });
     const docs = await onlyOne(r.getByTestId("renewal-last-docs"), "last docs");
-    await expect(docs.getByTestId("renewal-prior-due-no-invoice")).toHaveText("Balance on the subscription, no invoice — not in the customer's statement");
+    await expect(docs.getByTestId("renewal-prior-due-no-invoice")).toHaveText("Balance on the subscription — no unpaid invoice linked to it");
     await expect(docs.locator("[data-invoice-id='INV-CT2752-B']").getByTestId("renewal-last-invoice-status")).toHaveText("Paid");
   });
 });

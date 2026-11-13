@@ -31,14 +31,14 @@ describe("R-2747 (b) previous term unpaid — the invoice line, or why there is 
     expect(priorDueInvoiceGap(docs({ invoice: li({ dueDate: "2026-11-20", paidAmount: 5000 }) }), 25488, TODAY)).toBeNull();
   });
   it("no quote, no invoice (SCN Kochi / SCN Delhi: balance only on the subscription) → says so; a renewal quote changes nothing", () => {
-    const text = "Balance on the subscription, no invoice — not in the customer's statement";
+    const text = "Balance on the subscription — no unpaid invoice linked to it";
     expect(priorDueInvoiceGap(undefined, 25488, TODAY)).toBe(text);
     expect(priorDueInvoiceGap(docs({}), 19258, TODAY)).toBe(text);
     /* a renewal quote covers only the new term — never implied to bill the old balance */
     expect(priorDueInvoiceGap(docs({ quote: lq }), 25488, TODAY)).toBe(text);
   });
   it("the last invoice is paid / cancelled and nothing older is owed → no unpaid invoice linked (never pretend one)", () => {
-    const text = "Balance on the subscription, no invoice — not in the customer's statement";
+    const text = "Balance on the subscription — no unpaid invoice linked to it";
     expect(priorDueInvoiceGap(docs({ invoice: li({ status: "paid", paidAmount: 11800 }) }), 25488, TODAY)).toBe(text);
     expect(priorDueInvoiceGap(docs({ invoice: li({ status: "void" }) }), 25488, TODAY)).toBe(text);
   });
