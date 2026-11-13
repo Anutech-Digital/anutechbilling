@@ -65,7 +65,7 @@ async function row(page: Page) {
 /** Renewals → 8–30 → the row's "Review renewal quote" → the editor, loaded. */
 async function reviewFromRenewals(page: Page) {
   const r = await row(page);
-  await clickWhenReady(r.getByRole("button", { name: /Review renewal quote|Change renewal quote/ }));
+  await clickWhenReady(r.getByRole("button", { name: /^(Send renewal|Continue|Review renewal quote|Change renewal quote)$/ }));
   await expect(page).toHaveURL(/\/quotes\/[^/]+\/edit\?returnTo=%2Frenewals%3Fbucket%3Dd30$/, { timeout: 120_000 });
   const box = page.locator("#qb-notes").filter({ visible: true });
   await waitForHydrated(page, box);
@@ -80,7 +80,7 @@ test.describe("R-2754 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: Renewals → 8–30 tab → 'Review renewal quote' opens the editor (with the way back to that tab)", async ({ browser, baseURL }) => {
+  test("Step 1: Renewals → 8–30 tab → the row's renewal button (Send renewal) opens the editor (with the way back to that tab)", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     await reviewFromRenewals(page);
     const id = linked();
@@ -116,6 +116,6 @@ test.describe("R-2754 card test", () => {
     expect(notesOf(id)).toContain(`subscription ${SUB}`);       // open-renewal-quotes still finds it
     expect(notesOf(id)).toContain("Staff only (not shown to the customer):");
     const r = await row(page);
-    await expect(r.getByRole("button", { name: /Review renewal quote/ })).toBeVisible({ timeout: 60_000 });
+    await expect(r.getByRole("button", { name: /^(Send renewal|Continue|Review renewal quote)$/ })).toBeVisible({ timeout: 60_000 });
   });
 });
