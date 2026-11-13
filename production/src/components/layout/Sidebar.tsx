@@ -88,6 +88,15 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
       setCurrentSearch(`?${query}`);
     }
     if (href && href.startsWith("/") && !href.startsWith("//")) {
+      const currentFull = typeof window !== "undefined"
+        ? window.location.pathname + window.location.search
+        : "";
+
+      // If user is clicking the exact current page/tab, skip dispatching start
+      if (href === currentFull) {
+        return;
+      }
+
       setPendingHref(href);
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("app:navigation-start"));
@@ -100,6 +109,9 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
         router.push(href as any);
         if (typeof window !== "undefined") {
           window.dispatchEvent(new Event("app:tab-change"));
+          setTimeout(() => {
+            window.dispatchEvent(new Event("app:navigation-end"));
+          }, 100);
         }
       }
     }

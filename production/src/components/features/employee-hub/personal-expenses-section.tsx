@@ -259,7 +259,7 @@ export function PersonalExpensesSection({ onNavigateToBankImport }: Props) {
             }}
             className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white"
           >
-            + Record Entry
+            Record Entry
           </Button>
         </div>
       </div>

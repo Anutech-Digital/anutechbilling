@@ -11,41 +11,73 @@ export function TopProgressBar() {
   const [progress, setProgress] = React.useState(0);
   const timerRef = React.useRef<NodeJS.Timeout | null>(null);
   const finishTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const safetyTimeoutRef = React.useRef<NodeJS.Timeout | null>(null);
+  const lastTriggerTimeRef = React.useRef<number>(0);
+  const lastTriggerHrefRef = React.useRef<string>("");
 
-  const startProgress = React.useCallback(() => {
-    if (finishTimeoutRef.current) clearTimeout(finishTimeoutRef.current);
-    if (timerRef.current) clearInterval(timerRef.current);
+  const currentFullUrl = React.useMemo(() => {
+    const search = searchParams?.toString();
+    return search ? `${pathname}?${search}` : pathname;
+  }, [pathname, searchParams]);
 
-    setLoading(true);
-    setProgress(12);
-
-    timerRef.current = setInterval(() => {
-      setProgress((prev) => {
-        if (prev < 30) return prev + Math.floor(Math.random() * 8 + 5);
-        if (prev < 60) return prev + Math.floor(Math.random() * 6 + 3);
-        if (prev < 85) return prev + Math.floor(Math.random() * 3 + 1);
-        if (prev < 95) return prev + 0.5;
-        return prev;
-      });
-    }, 120);
-  }, []);
+  const prevFullUrlRef = React.useRef(currentFullUrl);
 
   const finishProgress = React.useCallback(() => {
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+    if (safetyTimeoutRef.current) {
+      clearTimeout(safetyTimeoutRef.current);
+      safetyTimeoutRef.current = null;
+    }
+
     setProgress(100);
 
+    if (finishTimeoutRef.current) clearTimeout(finishTimeoutRef.current);
     finishTimeoutRef.current = setTimeout(() => {
       setLoading(false);
-      setTimeout(() => setProgress(0), 300);
+      setTimeout(() => {
+        setProgress(0);
+        lastTriggerHrefRef.current = "";
+      }, 300);
     }, 350);
   }, []);
 
-  // When pathname or searchParams change, complete the progress bar
-  React.useEffect(() => {
-    if (loading) {
+  const startProgress = React.useCallback(() => {
+    if (finishTimeoutRef.current) clearTimeout(finishTimeoutRef.current);
+    if (safetyTimeoutRef.current) clearTimeout(safetyTimeoutRef.current);
+    if (timerRef.current) clearInterval(timerRef.current);
+
+    setLoading(true);
+    setProgress(15);
+
+    timerRef.current = setInterval(() => {
+      setProgress((prev) => {
+        if (prev < 30) return prev + Math.floor(Math.random() * 8 + 6);
+        if (prev < 60) return prev + Math.floor(Math.random() * 6 + 4);
+        if (prev < 85) return prev + Math.floor(Math.random() * 3 + 2);
+        if (prev < 95) return Math.min(95, prev + 0.5);
+        return prev;
+      });
+    }, 100);
+
+    // FAIL-SAFE: If any navigation, shallow routing or event is slow or drops,
+    // auto-complete after 1.8s so the UI NEVER stays permanently stuck at 95%.
+    safetyTimeoutRef.current = setTimeout(() => {
       finishProgress();
+    }, 1800);
+  }, [finishProgress]);
+
+  // When pathname or searchParams change to a new URL, complete the progress bar
+  React.useEffect(() => {
+    if (prevFullUrlRef.current !== currentFullUrl) {
+      prevFullUrlRef.current = currentFullUrl;
+      if (loading) {
+        finishProgress();
+      }
     }
-  }, [pathname, searchParams, finishProgress, loading]);
+  }, [currentFullUrl, loading, finishProgress]);
 
   // Intercept pointerdown and click on internal links to start progress immediately (0ms)
   React.useEffect(() => {
@@ -63,30 +95,53 @@ export function TopProgressBar() {
       const isModified = e.metaKey || e.ctrlKey || e.shiftKey || e.altKey;
       const isNewTab = target.target === "_blank";
 
-      if (isInternal && !isModified && !isNewTab) {
-        const urlWithoutHash = href.split("#")[0];
-        if (urlWithoutHash !== pathname) {
-          startProgress();
-        }
+      if (!isInternal || isModified || isNewTab) return;
+
+      const now = Date.now();
+      // Debounce pointerdown + click on the same link within 450ms
+      if (lastTriggerHrefRef.current === href && now - lastTriggerTimeRef.current < 450) {
+        return;
       }
+
+      const urlWithoutHash = href.split("#")[0];
+      const windowFullUrl = typeof window !== "undefined"
+        ? window.location.pathname + window.location.search
+        : "";
+
+      // If user is already on this exact full destination, don't trigger progress bar
+      if (urlWithoutHash === windowFullUrl || urlWithoutHash === currentFullUrl) {
+        return;
+      }
+
+      lastTriggerTimeRef.current = now;
+      lastTriggerHrefRef.current = href;
+      startProgress();
     };
 
-    // Also support global window events if triggered manually
+    // Global navigation & tab events
     const handleStart = () => startProgress();
     const handleDone = () => finishProgress();
 
     window.addEventListener("app:navigation-start", handleStart);
     window.addEventListener("app:navigation-end", handleDone);
+    window.addEventListener("app:tab-change", handleDone);
+    window.addEventListener("popstate", handleDone);
+
     document.addEventListener("pointerdown", handleTrigger, { capture: true, passive: true });
     document.addEventListener("click", handleTrigger, { capture: true });
 
     return () => {
       window.removeEventListener("app:navigation-start", handleStart);
       window.removeEventListener("app:navigation-end", handleDone);
+      window.removeEventListener("app:tab-change", handleDone);
+      window.removeEventListener("popstate", handleDone);
       document.removeEventListener("pointerdown", handleTrigger, { capture: true });
       document.removeEventListener("click", handleTrigger, { capture: true });
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (finishTimeoutRef.current) clearTimeout(finishTimeoutRef.current);
+      if (safetyTimeoutRef.current) clearTimeout(safetyTimeoutRef.current);
     };
-  }, [pathname, startProgress, finishProgress]);
+  }, [currentFullUrl, startProgress, finishProgress]);
 
   if (!loading && progress === 0) return null;
 
