@@ -4,7 +4,7 @@
  * The preview now lists earlier parts still unpaid (same "with the customer, unpaid" rule as the row).
  */
 import { describe, it, expect } from "vitest";
-import { billMonthsWord, earlierUnpaidParts, periodsToBillLabel, type EarlierPartQuote, type EarlierPartRow } from "@/lib/billing/proforma";
+import { billAnywayLabel, earlierUnpaidParts, periodsToBillLabel, type EarlierPartQuote, type EarlierPartRow } from "@/lib/billing/proforma";
 
 const TODAY = "2026-11-14";
 const row = (over: Partial<EarlierPartRow> & { id: string; period_start: string; period_end: string }): EarlierPartRow =>
@@ -21,7 +21,7 @@ describe("R-2757 earlierUnpaidParts", () => {
       rows: [SEP, OCT], quotes: [quote({ id: "Q-F588-27-0059", subscription_billing_id: "b-oct" })],
       invoices: [{ id: "INV-9", status: "paid", amount: 3835, paid_amount: 3835 }], firstStart: "2026-11-01", todayISO: TODAY,
     });
-    expect(r).toEqual([{ kind: "proforma", id: "Q-F588-27-0059", start: "2026-10-01", end: "2026-10-31", due: 3835, dueDate: "2026-10-01", daysOverdue: 44 }]);
+    expect(r).toEqual([{ kind: "proforma", id: "Q-F588-27-0059", start: "2026-10-01", end: "2026-10-31", due: 3835, currency: "INR", dueDate: "2026-10-01", daysOverdue: 44 }]);
   });
 
   it("nothing unpaid (paid, received, cancelled, draft, revised away) → []", () => {
@@ -51,7 +51,7 @@ describe("R-2757 earlierUnpaidParts", () => {
       invoices: [{ id: "INV-9", status: "sent", amount: 3835, paid_amount: 835, due_date: "2026-09-10" }],
       firstStart: "2026-11-01", todayISO: TODAY,
     });
-    expect(r).toEqual([{ kind: "invoice", id: "INV-9", start: "2026-09-01", end: "2026-09-30", due: 3000, dueDate: "2026-09-10", daysOverdue: 65 }]);
+    expect(r).toEqual([{ kind: "invoice", id: "INV-9", start: "2026-09-01", end: "2026-09-30", due: 3000, currency: "INR", dueDate: "2026-09-10", daysOverdue: 65 }]);
   });
 
   it("the part being billed now (or later) is never 'earlier'; one proforma over two rows is listed once, oldest first", () => {
@@ -70,6 +70,39 @@ describe("R-2757 earlierUnpaidParts", () => {
     expect(r.map((p) => p.id)).toEqual(["PI-AUG", "PI-OCT"]);
   });
 
+  it("one proforma over two months' parts shows both months (period widened, listed once)", () => {
+    const sep = row({ id: "b-sep2", period_start: "2026-09-01", period_end: "2026-10-01", due_on: "2026-09-01" });
+    const r = earlierUnpaidParts({
+      rows: [OCT, sep],
+      quotes: [quote({ id: "PI-2M", subscription_billing_id: "b-sep2", amount: 7670 }), quote({ id: "PI-2M", subscription_billing_id: "b-oct", amount: 7670 })],
+      invoices: [], firstStart: "2026-11-01", todayISO: TODAY,
+    });
+    expect(r).toHaveLength(1);
+    expect(r[0]).toMatchObject({ id: "PI-2M", start: "2026-09-01", end: "2026-10-31", due: 7670, dueDate: "2026-09-01" });
+  });
+
+  it("a DRAFT invoice on the part never hides its unpaid proforma", () => {
+    const r = earlierUnpaidParts({
+      rows: [row({ id: "b-oct", period_start: "2026-10-01", period_end: "2026-11-01", due_on: "2026-10-01", invoice_id: "INV-D" })],
+      quotes: [quote({ id: "PI-OCT", subscription_billing_id: "b-oct" })],
+      invoices: [{ id: "INV-D", status: "draft", amount: 3835 }], firstStart: "2026-11-01", todayISO: TODAY,
+    });
+    expect(r.map((p) => [p.kind, p.id])).toEqual([["proforma", "PI-OCT"]]);
+  });
+
+  it("foreign money stays in its currency: a USD proforma is $ (never ₹); a USD invoice is ₹ ÷ its rate", () => {
+    const q = earlierUnpaidParts({
+      rows: [OCT], quotes: [quote({ id: "PI-USD", subscription_billing_id: "b-oct", amount: 500, currency: "usd" })],
+      invoices: [], firstStart: "2026-11-01", todayISO: TODAY,
+    });
+    expect(q[0]).toMatchObject({ due: 500, currency: "USD" });
+    const i = earlierUnpaidParts({
+      rows: [SEP], quotes: [], invoices: [{ id: "INV-9", status: "sent", amount: 42500, currency: "USD", fx_rate: 85 }],
+      firstStart: "2026-11-01", todayISO: TODAY,
+    });
+    expect(i[0]).toMatchObject({ due: 500, currency: "USD" });
+  });
+
   it("void / written-off invoice → not owed", () => {
     for (const inv of [
       { id: "INV-9", status: "void", amount: 3835 },
@@ -86,8 +119,8 @@ describe("R-2757 labels", () => {
     expect(periodsToBillLabel("quarterly")).toBe("Quarters to bill");
     expect(periodsToBillLabel("yearly")).toBe("Years to bill");
   });
-  it("button month word: Nov, Nov–Jan", () => {
-    expect(billMonthsWord([{ start: "2026-11-01", end: "2026-11-30" }])).toBe("Nov");
-    expect(billMonthsWord([{ start: "2026-11-01", end: "2026-11-30" }, { start: "2027-01-01", end: "2027-01-31" }])).toBe("Nov–Jan");
+  it("button: 'Bill Nov anyway' for one period, 'Create N proformas anyway' for more", () => {
+    expect(billAnywayLabel([{ start: "2026-11-01", end: "2026-11-30" }])).toBe("Bill Nov anyway");
+    expect(billAnywayLabel([{ start: "2026-11-01", end: "2026-11-30" }, { start: "2026-12-01", end: "2026-12-31" }])).toBe("Create 2 proformas anyway");
   });
 });

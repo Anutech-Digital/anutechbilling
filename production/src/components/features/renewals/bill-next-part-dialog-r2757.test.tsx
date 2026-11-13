@@ -13,7 +13,7 @@ const PREVIEW: BillNextPreview = {
   amounts: { taxable: 3250, tax: 585, gross: 3835 },
   periods: [{ start: "2026-11-01", end: "2026-11-30", existing: null }],
   firstStart: "2026-11-01",
-  unpaidEarlier: [{ kind: "proforma", id: "Q-F588-27-0059", start: "2026-10-01", end: "2026-10-31", due: 3835, dueDate: "2026-10-01", daysOverdue: 44 }],
+  unpaidEarlier: [{ kind: "proforma", id: "Q-F588-27-0059", start: "2026-10-01", end: "2026-10-31", due: 3835, currency: "INR", dueDate: "2026-10-01", daysOverdue: 44 }],
 };
 
 const fetchMock = vi.fn();
@@ -54,11 +54,11 @@ describe("R-2757 BillNextPartDialog", () => {
   it("an unpaid earlier invoice → 'Open it' to the invoice; quarterly says 'Quarters to bill'", async () => {
     show({
       ...PREVIEW, cycle: "quarterly",
-      unpaidEarlier: [{ kind: "invoice", id: "INV-ET-2026-27-0099", start: "2026-07-12", end: "2026-10-11", due: 3000, dueDate: null, daysOverdue: 0 }],
+      unpaidEarlier: [{ kind: "invoice", id: "INV-ET-2026-27-0099", start: "2026-07-12", end: "2026-10-11", due: 3000, currency: "INR", dueDate: null, daysOverdue: 0 }],
     });
     const link = await screen.findByRole("link", { name: "Open it" });
     expect(link.getAttribute("href")).toContain("INV-ET-2026-27-0099");
-    expect(screen.getByTestId("bill-next-unpaid-earlier").textContent).toContain("12 Jul–11 Oct 2026 · Invoice INV-ET-2026-27-0099 · ₹3,000 unpaid · not yet due");
+    expect(screen.getByTestId("bill-next-unpaid-earlier").textContent).toContain("12 Jul 2026 – 11 Oct 2026 · Invoice INV-ET-2026-27-0099 · ₹3,000 unpaid · not yet due");
     expect(screen.getByLabelText(/Quarters to bill/)).toBeTruthy();
   });
 });
