@@ -37,7 +37,6 @@ test.describe("R-2725 — Score on the Employees table, Scorecards off the menu"
     const pick = () => db.one(
       `select e.name || '|' || u.id from public.users u join public.employees e on e.id = u.employee_id
         where u.tenant_id = ${E2E_TENANT_SQL} and u.is_active is not false and e.is_active
-          and u.role in ('owner','manager','sales','accountant','billing','support')
         order by e.name limit 1`);
     let row = pick();
     if (!row) {
@@ -69,6 +68,9 @@ test.describe("R-2725 — Score on the Employees table, Scorecards off the menu"
       // The Employees & Users accordion is open on its own page — its other children show.
       await expect(nav.getByRole("link", { name: "Team Performance" })).toBeVisible({ timeout: 60_000 });
       await expect(page.getByRole("navigation").getByRole("link", { name: /^Scorecards?$/ })).toHaveCount(0);
+      // Everyone's scorecards stay one click away, on the page itself (next to Add employee).
+      const all = await onlyOne(page.locator("main").getByRole("link", { name: "Scorecards", exact: true }), "the Scorecards button");
+      await expect(all).toHaveAttribute("href", "/scorecard");
     } finally {
       await page.context().close();
     }

@@ -280,8 +280,8 @@ export function usePerformance(period: string, scope: PerfScope = "month", opts:
      members yet". Both states are carried here; Try again re-reads whichever failed. */
   return {
     data: q.data,
-    isLoading: membersQ.isLoading || q.isLoading,
-    isError: membersQ.isError || q.isError,
+    isLoading: enabled && (membersQ.isLoading || q.isLoading),
+    isError: enabled && (membersQ.isError || q.isError),
     error: membersQ.isError ? membersQ.error : q.error,
     refetch: () => {
       if (membersQ.isError) void membersQ.refetch();

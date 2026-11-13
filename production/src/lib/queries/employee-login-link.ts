@@ -83,6 +83,8 @@ export function useLinkLogin() {
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: TENANT_LOGINS_KEY });
       void qc.invalidateQueries({ queryKey: ["team"] });
+      /* R-2725: the Employees table's Score follows the linked login. */
+      void qc.invalidateQueries({ queryKey: ["performance"] });
     },
   });
 }

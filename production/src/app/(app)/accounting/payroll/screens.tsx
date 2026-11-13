@@ -46,7 +46,7 @@ import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { DeviceApprovals, RequireDeviceRow } from "@/components/features/attendance/device-approvals";
-import { canWriteMoney } from "@/lib/nav";
+import { canOpenRoute, canWriteMoney } from "@/lib/nav";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { downloadPayslipPDF } from "@/lib/pdf";
 import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
@@ -224,7 +224,7 @@ export function EmployeesTab() {
   /* R-2725 (Hitesh): the Score lives here, not on a menu row. Same rows as the Scorecards page
      (usePerformance, this IST month) — one read for the whole table, and only for the roles
      that may open a scorecard (owner / manager; the accountant gets no column). */
-  const canSeeScores = myRole === "owner" || myRole === "manager";
+  const canSeeScores = !!myRole && canOpenRoute(myRole, "/scorecard"); // one rule: nav.ts OFF_MENU_ROLES
   const perf = usePerformance(scorePeriodNow(), "month", { enabled: canSeeScores });
   const scores = React.useMemo(() => scoresByEmployee(perf.data), [perf.data]);
   const [scoreSort, setScoreSort] = React.useState<ScoreSort>(null);
@@ -256,13 +256,14 @@ export function EmployeesTab() {
 
   return (
     <>
-      {canWrite ? (
-        <div className="flex justify-end mb-3">
-          <Button variant="primary" icon="plus" onClick={() => setEdit("new")}>Add employee</Button>
+      {(canWrite || canSeeScores) && (
+        <div className="flex justify-end gap-2 mb-3">
+          {/* R-2725: everyone's scorecards (also logins not linked to an employee) — was a menu row. */}
+          {canSeeScores && <Button asChild variant="outline" icon="award"><Link href="/scorecard">Scorecards</Link></Button>}
+          {canWrite && <Button variant="primary" icon="plus" onClick={() => setEdit("new")}>Add employee</Button>}
         </div>
-      ) : (
-        <ViewOnlyNote what="add or edit employees" />
       )}
+      {!canWrite && <ViewOnlyNote what="add or edit employees" />}
       {q.isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
       ) : rows.length === 0 ? (
@@ -338,7 +339,7 @@ export function EmployeesTab() {
                         {prorated && <span className="ml-1 text-3xs uppercase tracking-wide text-ink-3 font-sans not-italic" title={leaveTitle}>pro-rata</span>}
                       </td>
                       {canSeeScores && (
-                        <td className="px-4 py-3 text-right" onClick={(ev) => ev.stopPropagation()} onKeyDown={(ev) => ev.stopPropagation()}>{scoreCell(e)}</td>
+                        <td className="px-4 py-3 text-right">{scoreCell(e)}</td>
                       )}
                       <td className="px-4 py-3"><EmployeeStatusBadge e={e} /></td>
                       <td className="px-4 py-3 text-right" onClick={(ev) => ev.stopPropagation()}>
@@ -387,9 +388,9 @@ export function EmployeesTab() {
                     <div className="text-xs text-ink-3 mb-2">
                       {e.joining_date ? `Joined ${formatDate(e.joining_date)}` : "Not joined yet"} · Paid leave {left}/{allowance}{prorated ? " (pro-rata)" : ""}
                     </div>
-                    <div className="flex items-center justify-between gap-2" onClick={(ev) => ev.stopPropagation()} onKeyDown={(ev) => ev.stopPropagation()}>
+                    <div className="flex items-center justify-between gap-2" onClick={(ev) => ev.stopPropagation()}>
                       <EmployeeStatusBadge e={e} />
-                      {canSeeScores && <span className="ml-auto text-xs text-ink-3">Score {scoreCell(e)}</span>}
+                      {canSeeScores && <span className="ml-auto text-sm text-ink-3">Score {scoreCell(e)}</span>}
                       <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} onMerge={rows.length > 1 ? setMergeEmp : undefined} />
                     </div>
                   </Card>
@@ -420,7 +421,9 @@ export function EmployeesTab() {
         focusSalary={viewSalary}
         onOpenChange={(o) => { if (!o) { setViewEmp(null); setViewSalary(false); } }}
         onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); setViewSalary(false); } } : undefined}
-        scorecard={canSeeScores && viewEmp && perf.data ? { href: scores.has(viewEmp.id) ? scorecardHref(scores.get(viewEmp.id)!.userId) : null } : undefined}
+        /* R-2725: scores failed to load → the button opens Scorecards itself (it shows the error + Try again). */
+        scorecard={!canSeeScores || !viewEmp || perf.isLoading ? undefined
+          : { href: perf.isError ? "/scorecard" : scores.has(viewEmp.id) ? scorecardHref(scores.get(viewEmp.id)!.userId) : null }}
       />
     </>
   );
@@ -432,10 +435,17 @@ export function EmployeesTab() {
 function EmployeeScoreCell({ name, score, loading, failed, onRetry }: {
   name: string; score: EmployeeScore | undefined; loading: boolean; failed: boolean; onRetry: () => void;
 }) {
+  /* Only the link / button keeps the row's "open profile" click away — the rest of the cell opens it.
+     On a phone the target is 44 px tall (the desktop table keeps its row height). */
+  const own = {
+    onClick: (ev: React.MouseEvent) => ev.stopPropagation(),
+    onKeyDown: (ev: React.KeyboardEvent) => ev.stopPropagation(),
+  };
+  const touch = "inline-flex items-center justify-end min-h-11 min-w-11 md:min-h-0 md:min-w-0";
   if (loading) return <Skeleton className="inline-block h-4 w-8 align-middle" />;
   if (failed) {
     return (
-      <button type="button" onClick={onRetry} title="Scores did not load. Click to try again." className="text-xs text-amber-ink underline">
+      <button type="button" {...own} onClick={(ev) => { ev.stopPropagation(); onRetry(); }} title="Scores did not load. Click to try again." className={cn(touch, "text-xs text-amber-ink underline")}>
         Try again
       </button>
     );
@@ -448,7 +458,8 @@ function EmployeeScoreCell({ name, score, loading, failed, onRetry }: {
       href={scorecardHref(score.userId) as Route}
       title="Open scorecard (this month)"
       aria-label={`${name}: score ${score.score} — open scorecard`}
-      className="font-mono font-semibold tabular-nums text-amber-ink underline-offset-2 hover:underline"
+      className={cn(touch, "font-mono font-semibold tabular-nums text-amber-ink underline-offset-2 hover:underline")}
+      {...own}
     >
       {score.score}
     </Link>
