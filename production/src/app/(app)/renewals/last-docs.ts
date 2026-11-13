@@ -240,7 +240,7 @@ export function lastDocsBySubscription(input: LastDocsInput): Map<string, LastDo
     seenInv.add(i.id);
     const owed = !VOID_INVOICE.has(i.status) && invoiceAmountDue({
       status: i.status, amount: Number(i.amount) || 0, net_payable: i.net_payable, paid_amount: Number(i.paid_amount) || 0,
-      written_off_at: i.written_off_at, adjusted_advances: i.adjusted_advances,
+      written_off_at: i.written_off_at,
     }) > 0;
     for (const sid of invoiceSubs.get(i.id) ?? []) {
       const cur = bestInvoice.get(sid);
