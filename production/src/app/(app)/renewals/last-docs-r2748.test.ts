@@ -11,7 +11,6 @@ import {
 } from "./last-docs";
 
 const SUB = "c2748000-0000-4000-8000-0000000000a1";
-const TODAY = "2026-11-13";
 
 const q = (over: Partial<DocQuote> & { id: string }): DocQuote => ({
   status: "accepted", payment_status: "invoiced", created_at: "2025-10-01T05:00:00Z", created_date: "2025-10-01",
