@@ -2,6 +2,7 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -28,42 +29,48 @@ import {
 export type HubTab = "budget" | "expenses" | "banks" | "vault" | "tax";
 
 export default function EmployeeHubPage() {
-  const [activeTab, setActiveTab] = React.useState<HubTab>("budget");
+  return (
+    <React.Suspense fallback={<div className="p-6 max-w-7xl mx-auto text-ink-3">Loading Salaried Pro Hub...</div>}>
+      <EmployeeHubContent />
+    </React.Suspense>
+  );
+}
+
+function EmployeeHubContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const tabParam = searchParams.get("tab");
+
+  const resolveTab = (param: string | null): HubTab => {
+    if (param && ["budget", "expenses", "banks", "vault", "tax"].includes(param)) {
+      return param as HubTab;
+    }
+    if (param === "bank-import") return "banks";
+    if (param === "income") return "expenses";
+    return "budget";
+  };
+
+  const activeTab: HubTab = React.useMemo(() => resolveTab(tabParam), [tabParam]);
 
   // Financial States
   const [bankAccounts, setBankAccounts] = React.useState<SalariedBankAccount[]>(loadBankAccounts);
   const [budget, setBudget] = React.useState<SalariedBudget>(loadBudget);
   const [transactions, setTransactions] = React.useState<PersonalTransaction[]>(loadTransactions);
 
-  // Sync state from URL and storage events
+  // Sync state from storage events
   React.useEffect(() => {
     if (typeof window !== "undefined") {
-      const syncTabFromUrl = () => {
-        const params = new URLSearchParams(window.location.search);
-        const tabParam = params.get("tab");
-        if (tabParam && ["budget", "expenses", "banks", "vault", "tax"].includes(tabParam)) {
-          setActiveTab(tabParam as HubTab);
-        } else if (tabParam === "bank-import") {
-          setActiveTab("banks");
-        } else if (tabParam === "income") {
-          setActiveTab("expenses");
-        }
-      };
-
       const syncData = () => {
         setBankAccounts(loadBankAccounts());
         setBudget(loadBudget());
         setTransactions(loadTransactions());
       };
 
-      syncTabFromUrl();
-      window.addEventListener("popstate", syncTabFromUrl);
       window.addEventListener("salaried_pro_expenses_updated", syncData);
       window.addEventListener("salaried_pro_banks_updated", syncData);
       window.addEventListener("salaried_pro_budget_updated", syncData);
 
       return () => {
-        window.removeEventListener("popstate", syncTabFromUrl);
         window.removeEventListener("salaried_pro_expenses_updated", syncData);
         window.removeEventListener("salaried_pro_banks_updated", syncData);
         window.removeEventListener("salaried_pro_budget_updated", syncData);
@@ -72,11 +79,8 @@ export default function EmployeeHubPage() {
   }, []);
 
   const handleTabChange = (tab: HubTab) => {
-    setActiveTab(tab);
+    router.push(`/employee-hub?tab=${tab}`, { scroll: false });
     if (typeof window !== "undefined") {
-      const url = new URL(window.location.href);
-      url.searchParams.set("tab", tab);
-      window.history.replaceState(null, "", url.toString());
       window.dispatchEvent(new Event("app:tab-change"));
     }
   };

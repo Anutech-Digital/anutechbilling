@@ -64,10 +64,10 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
     }
   }, [pathname]);
 
-  // Clear pending state whenever route transition completes
+  // Clear pending state whenever route transition completes or search params change
   React.useEffect(() => {
     setPendingHref(null);
-  }, [pathname]);
+  }, [pathname, currentSearch]);
 
   // Eager prefetching on mouse hover or focus
   const handlePrefetch = React.useCallback((href?: string) => {
@@ -95,8 +95,15 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
       try {
         router.prefetch(path);
       } catch {}
+      // If clicking a sub-tab link on the current page, push to router and notify tabs
+      if (path === pathname) {
+        router.push(href as any);
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new Event("app:tab-change"));
+        }
+      }
     }
-  }, [router]);
+  }, [router, pathname]);
 
   // Which accordion parents (items with children) are expanded. Defaults to
   // open when the current route is the parent or one of its children.
@@ -155,7 +162,13 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
   const renderLink = (it: NavItem, child = false) => {
     const [itemPath, itemQuery] = it.href.split("?");
     const isTargetActive = itemQuery
-      ? (pendingHref ? pendingHref === it.href : pathname === itemPath && (currentSearch === `?${itemQuery}` || currentSearch.includes(itemQuery)))
+      ? (pendingHref
+          ? pendingHref === it.href
+          : pathname === itemPath && (
+              currentSearch === `?${itemQuery}` ||
+              currentSearch.includes(itemQuery) ||
+              (itemQuery === "tab=budget" && (!currentSearch || currentSearch === "?"))
+            ))
       : (pendingHref ?? pathname) === it.href;
     const isPending = pendingHref === it.href && (pathname !== itemPath || (itemQuery ? !currentSearch.includes(itemQuery) : false));
     const b = it.badge ?? navBadges[it.id as keyof typeof navBadges];
