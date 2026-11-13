@@ -39,6 +39,9 @@ const config: Config = {
           DEFAULT: "hsl(var(--hairline) / <alpha-value>)",
           strong: "hsl(var(--hairline-strong) / <alpha-value>)",
         },
+        // Public website CTA colour (docs/WEBSITE-THEME.md). Used only by the
+        // Button `cta` variant on the marketing pages.
+        marigold: "hsl(var(--marigold) / <alpha-value>)",
         // Brand accent (amber/orange — Google authorized partner vibe)
         amber: {
           DEFAULT: "hsl(var(--amber) / <alpha-value>)",
