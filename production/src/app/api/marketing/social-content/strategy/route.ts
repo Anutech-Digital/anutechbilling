@@ -8,7 +8,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getTenantSession } from "@/server/auth/session";
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAdminClientFor } from "@/lib/supabase/server";
+import { resolvePage } from "@/lib/marketing/social-pages.server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { resolveGeminiConfig } from "@/lib/ai/gemini";
 import { canReviewSocial, socialRole } from "@/lib/marketing/social-content";
 import { decideProposal, editStrategy, ensureStrategies } from "@/lib/marketing/social-strategy.server";
@@ -20,6 +22,7 @@ export const runtime = "nodejs";
 export const maxDuration = 60;
 
 const Platform = z.enum(STRATEGY_PLATFORMS);
+const PageId = z.string().regex(/^\d{1,30}$/).optional();
 
 async function lead() {
   const session = await getTenantSession();
@@ -28,15 +31,23 @@ async function lead() {
   return { session } as const;
 }
 
-export async function POST() {
+/** R-2729: strategies belong to one Page (the asked Page if switched on, else the main Page). */
+async function pageFor(session: NonNullable<Awaited<ReturnType<typeof getTenantSession>>>, requested?: string) {
+  return resolvePage(createAdminClientFor(session.userId) as unknown as SupabaseClient, session.tenantId, requested ?? null);
+}
+
+export async function POST(req: Request) {
   const r = await lead();
   if ("error" in r) return r.error;
+  const body = z.object({ pageId: PageId }).safeParse(await req.json().catch(() => ({})));
   try {
+    const page = await pageFor(r.session, body.success ? body.data.pageId : undefined);
+    if (!page) return NextResponse.json({ error: "Connect a Facebook Page first." }, { status: 409 });
     const ai = await resolveGeminiConfig(createClient(), r.session.tenantId);
     if (!ai.apiKey) return NextResponse.json({ error: "AI is not set up yet.", description: "Add a Gemini key in Settings → Integrations, then try again." }, { status: 409 });
-    const settings = await readAutopilotSettings(r.session);
+    const settings = await readAutopilotSettings(r.session, page.page_id);
     if (settings.ai_paused) return NextResponse.json({ error: "The AI is stopped (Stop all AI).", description: "Press Resume AI first." }, { status: 409 });
-    await ensureStrategies(r.session, ai, settings.brief);
+    await ensureStrategies(r.session, page.page_id, ai, settings.brief);
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("[social-strategy] start failed", e instanceof Error ? e.message : "unknown");
@@ -47,10 +58,12 @@ export async function POST() {
 export async function PUT(req: Request) {
   const r = await lead();
   if ("error" in r) return r.error;
-  const parsed = z.object({ platform: Platform, plan: z.record(z.string(), z.unknown()) }).safeParse(await req.json().catch(() => null));
+  const parsed = z.object({ platform: Platform, plan: z.record(z.string(), z.unknown()), pageId: PageId }).safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Choose a platform and fill in the strategy." }, { status: 400 });
   try {
-    const row = await editStrategy(r.session, parsed.data.platform, parsed.data.plan);
+    const page = await pageFor(r.session, parsed.data.pageId);
+    if (!page) return NextResponse.json({ error: "Connect a Facebook Page first." }, { status: 409 });
+    const row = await editStrategy(r.session, page.page_id, parsed.data.platform, parsed.data.plan);
     return NextResponse.json({ ok: true, version: row.version });
   } catch (e) {
     console.error("[social-strategy] edit failed", e instanceof Error ? e.message : "unknown");
@@ -61,10 +74,12 @@ export async function PUT(req: Request) {
 export async function PATCH(req: Request) {
   const r = await lead();
   if ("error" in r) return r.error;
-  const parsed = z.object({ platform: Platform, accept: z.boolean() }).safeParse(await req.json().catch(() => null));
+  const parsed = z.object({ platform: Platform, accept: z.boolean(), pageId: PageId }).safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Choose Use it or Keep old." }, { status: 400 });
   try {
-    const done = await decideProposal(r.session, parsed.data.platform, parsed.data.accept);
+    const page = await pageFor(r.session, parsed.data.pageId);
+    if (!page) return NextResponse.json({ error: "Connect a Facebook Page first." }, { status: 409 });
+    const done = await decideProposal(r.session, page.page_id, parsed.data.platform, parsed.data.accept);
     if (!done) return NextResponse.json({ error: "There is no suggested change waiting.", description: "Refresh the page." }, { status: 404 });
     return NextResponse.json({ ok: true });
   } catch (e) {

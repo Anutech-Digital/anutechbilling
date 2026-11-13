@@ -26,10 +26,11 @@ interface AiConfig { apiKey: string | null; model: string }
 const name = (p: StrategyPlatform) => (p === "facebook" ? "Facebook" : p === "instagram" ? "Instagram" : "LinkedIn");
 const PLAN_SHAPE = `{"summary":"one line","audience":"…","tone":"…","mix":[{"type":"one of: ${POST_TYPES.join(" | ")}","share":40}],"length":"short|medium|long","hashtags":3,"bestHourIst":10,"avoid":"…"}`;
 
-export async function readStrategies(session: TenantSession): Promise<Strategies> {
+/** R-2729: strategies belong to one Page (its Facebook, Instagram and LinkedIn plans). */
+export async function readStrategies(session: TenantSession, pageId: string): Promise<Strategies> {
   const rows = await withTenant(session, (tx) => tx.$queryRaw<StrategyRow[]>`
     select platform, version, plan, reason, status, created_by, created_at from public.social_strategy
-    where tenant_id = ${session.tenantId}::uuid and status in ('active', 'proposed')`);
+    where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} and status in ('active', 'proposed')`);
   const out = Object.fromEntries(STRATEGY_PLATFORMS.map((p) => [p, { active: null, proposed: null }])) as Strategies;
   for (const r of rows) {
     const fixed = { ...r, plan: normalisePlan(r.plan, DEFAULT_PLANS[r.platform]) };
@@ -44,27 +45,27 @@ export function planFor(s: Strategies, p: StrategyPlatform): { plan: StrategyPla
 }
 
 /** Save a new version. 'active' replaces the active one; 'proposed' replaces a waiting proposal. */
-async function saveVersion(session: TenantSession, platform: StrategyPlatform, plan: StrategyPlan, reason: string, status: "active" | "proposed", byPerson: boolean): Promise<number> {
+async function saveVersion(session: TenantSession, pageId: string, platform: StrategyPlatform, plan: StrategyPlan, reason: string, status: "active" | "proposed", byPerson: boolean): Promise<number> {
   return withTenant(session, async (tx) => {
     const next = await tx.$queryRaw<{ v: number }[]>`
-      select coalesce(max(version), 0) + 1 as v from public.social_strategy where tenant_id = ${session.tenantId}::uuid and platform = ${platform}`;
+      select coalesce(max(version), 0) + 1 as v from public.social_strategy where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} and platform = ${platform}`;
     const version = Number(next[0].v);
     if (status === "active") {
-      await tx.$executeRaw`update public.social_strategy set status = 'replaced' where tenant_id = ${session.tenantId}::uuid and platform = ${platform} and status = 'active'`;
-      await tx.$executeRaw`update public.social_strategy set status = 'rejected' where tenant_id = ${session.tenantId}::uuid and platform = ${platform} and status = 'proposed'`;
+      await tx.$executeRaw`update public.social_strategy set status = 'replaced' where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} and platform = ${platform} and status = 'active'`;
+      await tx.$executeRaw`update public.social_strategy set status = 'rejected' where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} and platform = ${platform} and status = 'proposed'`;
     } else {
-      await tx.$executeRaw`update public.social_strategy set status = 'rejected' where tenant_id = ${session.tenantId}::uuid and platform = ${platform} and status = 'proposed'`;
+      await tx.$executeRaw`update public.social_strategy set status = 'rejected' where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} and platform = ${platform} and status = 'proposed'`;
     }
     await tx.$executeRaw`
-      insert into public.social_strategy (tenant_id, platform, version, plan, reason, status, created_by)
-      values (${session.tenantId}::uuid, ${platform}, ${version}, ${JSON.stringify(plan)}::jsonb, ${reason.slice(0, 1500)}, ${status}, ${byPerson ? session.userId : null}::uuid)`;
+      insert into public.social_strategy (tenant_id, page_id, platform, version, plan, reason, status, created_by)
+      values (${session.tenantId}::uuid, ${pageId}, ${platform}, ${version}, ${JSON.stringify(plan)}::jsonb, ${reason.slice(0, 1500)}, ${status}, ${byPerson ? session.userId : null}::uuid)`;
     return version;
   });
 }
 
 /** R-2705: the first strategy for every platform that has none (one AI call). */
-export async function ensureStrategies(session: TenantSession, ai: AiConfig, brief: string, current?: Strategies): Promise<Strategies> {
-  const s = current ?? await readStrategies(session);
+export async function ensureStrategies(session: TenantSession, pageId: string, ai: AiConfig, brief: string, current?: Strategies): Promise<Strategies> {
+  const s = current ?? await readStrategies(session, pageId);
   const missing = STRATEGY_PLATFORMS.filter((p) => !s[p].active);
   if (!missing.length) return s;
   let fromAi: Record<string, unknown> = {};
@@ -79,32 +80,32 @@ export async function ensureStrategies(session: TenantSession, ai: AiConfig, bri
   for (const p of missing) {
     const used = Boolean(fromAi[p]);
     const plan = normalisePlan(fromAi[p], DEFAULT_PLANS[p]);
-    await saveVersion(session, p, plan, used ? `First strategy, written by the AI from your business brief and what usually works on ${name(p)}.` : `First strategy: what usually works on ${name(p)}. The AI will improve it from your results.`, "active", false);
-    await logPersonActivity(session, { actor: "ai", platform: p, action: "Wrote a strategy", detail: plan.summary });
+    await saveVersion(session, pageId, p, plan, used ? `First strategy, written by the AI from your business brief and what usually works on ${name(p)}.` : `First strategy: what usually works on ${name(p)}. The AI will improve it from your results.`, "active", false);
+    await logPersonActivity(session, { pageId, actor: "ai", platform: p, action: "Wrote a strategy", detail: plan.summary });
   }
-  return readStrategies(session);
+  return readStrategies(session, pageId);
 }
 
 /** R-2705: owner / manager edits a strategy → a new active version. */
-export async function editStrategy(session: TenantSession, platform: StrategyPlatform, raw: unknown): Promise<StrategyRow> {
-  const s = await readStrategies(session);
+export async function editStrategy(session: TenantSession, pageId: string, platform: StrategyPlatform, raw: unknown): Promise<StrategyRow> {
+  const s = await readStrategies(session, pageId);
   const plan = normalisePlan(raw, planFor(s, platform).plan);
-  await saveVersion(session, platform, plan, "Changed by a person.", "active", true);
-  await logPersonActivity(session, { platform, action: "Changed the strategy", detail: plan.summary });
-  return (await readStrategies(session))[platform].active!;
+  await saveVersion(session, pageId, platform, plan, "Changed by a person.", "active", true);
+  await logPersonActivity(session, { pageId, platform, action: "Changed the strategy", detail: plan.summary });
+  return (await readStrategies(session, pageId))[platform].active!;
 }
 
 /** R-2707: Use it / Keep old on a proposed change. */
-export async function decideProposal(session: TenantSession, platform: StrategyPlatform, accept: boolean): Promise<boolean> {
+export async function decideProposal(session: TenantSession, pageId: string, platform: StrategyPlatform, accept: boolean): Promise<boolean> {
   const done = await withTenant(session, async (tx) => {
     const rows = await tx.$queryRaw<{ id: string }[]>`
-      select id from public.social_strategy where tenant_id = ${session.tenantId}::uuid and platform = ${platform} and status = 'proposed' limit 1 for update`;
+      select id from public.social_strategy where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} and platform = ${platform} and status = 'proposed' limit 1 for update`;
     if (!rows[0]) return false;
-    if (accept) await tx.$executeRaw`update public.social_strategy set status = 'replaced' where tenant_id = ${session.tenantId}::uuid and platform = ${platform} and status = 'active'`;
+    if (accept) await tx.$executeRaw`update public.social_strategy set status = 'replaced' where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} and platform = ${platform} and status = 'active'`;
     await tx.$executeRaw`update public.social_strategy set status = ${accept ? "active" : "rejected"} where id = ${rows[0].id}::uuid`;
     return true;
   });
-  if (done) await logPersonActivity(session, { platform, action: accept ? "Used the AI's new strategy" : "Kept the old strategy" });
+  if (done) await logPersonActivity(session, { pageId, platform, action: accept ? "Used the AI's new strategy" : "Kept the old strategy" });
   return done;
 }
 
@@ -112,12 +113,13 @@ export async function decideProposal(session: TenantSession, platform: StrategyP
  * R-2707: the weekly learning. For each platform with enough results, the AI writes the next
  * version from the current plan + what each kind of post and hour scored.
  */
-export async function learnStrategies(session: TenantSession, ai: AiConfig, opts: { autopilot: boolean; now?: Date }): Promise<{ platform: StrategyPlatform; outcome: "changed" | "proposed" | "kept" | "need-more"; have: number }[]> {
+export async function learnStrategies(session: TenantSession, ai: AiConfig, opts: { autopilot: boolean; now?: Date; pageId: string }): Promise<{ platform: StrategyPlatform; outcome: "changed" | "proposed" | "kept" | "need-more"; have: number }[]> {
   const now = opts.now ?? new Date();
-  const s = await readStrategies(session);
+  const pageId = opts.pageId;
+  const s = await readStrategies(session, pageId);
   const rows = await withTenant(session, (tx) => tx.$queryRaw<{ platform: StrategyPlatform; post_type: string | null; published_at: Date; stats: PostStats }[]>`
     select platform, post_type, published_at, stats from public.social_content
-    where tenant_id = ${session.tenantId}::uuid and status = 'published' and stats is not null
+    where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} and status = 'published' and stats is not null
       and published_at > ${new Date(now.getTime() - 42 * 86_400_000)}::timestamptz`);
   const out: { platform: StrategyPlatform; outcome: "changed" | "proposed" | "kept" | "need-more"; have: number }[] = [];
   for (const platform of STRATEGY_PLATFORMS) {
@@ -141,12 +143,12 @@ export async function learnStrategies(session: TenantSession, ai: AiConfig, opts
     const same = JSON.stringify(plan) === JSON.stringify(current.plan);
     if (!result || result.changed === false || same) {
       out.push({ platform, outcome: "kept", have: mine.length });
-      await logPersonActivity(session, { actor: "ai", platform, action: "Kept the strategy", detail: (result?.reason ?? "What is working stays the same this week.").slice(0, 300) });
+      await logPersonActivity(session, { pageId, actor: "ai", platform, action: "Kept the strategy", detail: (result?.reason ?? "What is working stays the same this week.").slice(0, 300) });
       continue;
     }
     const reason = (result.reason ?? "Changed from this week's results.").trim();
-    await saveVersion(session, platform, plan, reason, opts.autopilot ? "active" : "proposed", false);
-    await logPersonActivity(session, { actor: "ai", platform, action: opts.autopilot ? "Improved the strategy" : "Suggested a better strategy", detail: reason.slice(0, 300), result: opts.autopilot ? "ok" : "waiting" });
+    await saveVersion(session, pageId, platform, plan, reason, opts.autopilot ? "active" : "proposed", false);
+    await logPersonActivity(session, { pageId, actor: "ai", platform, action: opts.autopilot ? "Improved the strategy" : "Suggested a better strategy", detail: reason.slice(0, 300), result: opts.autopilot ? "ok" : "waiting" });
     out.push({ platform, outcome: opts.autopilot ? "changed" : "proposed", have: mine.length });
   }
   return out;

@@ -3,6 +3,7 @@
  * weekly AI posts on (R-2672). Autopilot companies get approved posts that go out at their time;
  * the others get posts waiting for approval. The plan itself: lib/marketing/social-autopilot.server.ts.
  */
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { planWeek } from "@/lib/marketing/social-autopilot.server";
@@ -26,8 +27,12 @@ async function handle(_req: Request) {
       const { data: owner } = await admin.from("users").select("id").eq("tenant_id", tenant.id).eq("role", "owner").eq("is_active", true).limit(1).maybeSingle();
       if (!owner) { skipped++; continue; }
       const session = { tenantId: tenant.id, userId: owner.id, aal: "aal2" as const };
-      const result = await planWeek(admin, session);
-      if (result.ok) created += result.created; else skipped++;
+      /* R-2730: every switched-on Page with weekly AI posts, each with its own brief and mode. */
+      const { data: pages } = await (admin as unknown as SupabaseClient).from("social_pages").select("page_id").eq("tenant_id", tenant.id).eq("active", true).eq("auto_drafts", true);
+      for (const p of (pages ?? []) as { page_id: string }[]) {
+        const result = await planWeek(admin, session, { pageId: p.page_id });
+        if (result.ok) created += result.created; else skipped++;
+      }
     } catch (e) {
       console.error("[social-drafts] company failed", tenant.id, e instanceof Error ? e.message : "unknown"); failed++;
     }

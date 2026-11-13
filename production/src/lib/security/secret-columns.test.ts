@@ -85,6 +85,7 @@ const REVIEWED_NOT_SECRET: Record<string, string> = {
   "tenant_secrets.zoho_books_access_token": "R-1757: short-lived Zoho access token cache on the same owner-only tenant_secrets row; stored sealed (SECRET_COLUMNS); server routes only",
   "tenant_secrets.facebook_page_pending_token": "Temporary Meta user token on owner-only tenant_secrets; sealed in SECRET_COLUMNS; server routes only",
   "tenant_secrets.facebook_page_access_token": "Meta Page token on owner-only tenant_secrets; sealed in SECRET_COLUMNS; server routes only",
+  "social_page_tokens.page_token": "R-2729: Meta Page token per Page, sealed with lib/crypto/vault encryptSecret; RLS on with a service_role-only policy and NO grant to authenticated/anon (revoked in 20261113110000) — only server code (lib/marketing/social-pages.server) opens it",
   "tenant_secrets.linkedin_access_token": "LinkedIn Company Page token on owner-only tenant_secrets; sealed in SECRET_COLUMNS (lib/crypto/tenant-secrets.ts); server routes only (lib/integrations/linkedin)",
   "tenant_secrets.linkedin_ads_client_secret": "LinkedIn Ads app secret on owner-only tenant_secrets; sealed in SECRET_COLUMNS (lib/crypto/tenant-secrets.ts); server routes only",
   "tenant_secrets.sandbox_api_key": "tenant_secrets is owner-only by RLS; the owner enters these keys",

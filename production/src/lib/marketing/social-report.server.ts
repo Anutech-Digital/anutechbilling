@@ -27,25 +27,27 @@ export interface WeeklyReport {
   comments: { received: number; answered: number };
 }
 
-export async function followerRows(session: TenantSession, days = 60): Promise<FollowerRow[]> {
-  const rows = await withTenant(session, (tx) => tx.$queryRaw<{ platform: FollowerPlatform; day: Date; followers: number }[]>`
-    select platform, day, followers from public.social_followers
-    where tenant_id = ${session.tenantId}::uuid and day > (current_date - ${days}::int) order by day`);
-  return rows.map((r) => ({ platform: r.platform, day: utcDateISO(new Date(r.day)) /* a Postgres date is UTC midnight */, followers: Number(r.followers) }));
+/** R-2729: one Page's counts (pageId), or every Page's with their page_id (null). */
+export async function followerRows(session: TenantSession, days = 60, pageId: string | null = null): Promise<(FollowerRow & { page_id: string })[]> {
+  const rows = await withTenant(session, (tx) => tx.$queryRaw<{ platform: FollowerPlatform; day: Date; followers: number; page_id: string }[]>`
+    select platform, day, followers, page_id from public.social_followers
+    where tenant_id = ${session.tenantId}::uuid and day > (current_date - ${days}::int)
+      and (${pageId}::text is null or page_id = ${pageId}) order by day`);
+  return rows.map((r) => ({ page_id: r.page_id, platform: r.platform, day: utcDateISO(new Date(r.day)) /* a Postgres date is UTC midnight */, followers: Number(r.followers) }));
 }
 
 /** The numbers of the last 7 days (no AI). */
-export async function reportNumbers(session: TenantSession, now: Date = new Date()): Promise<WeeklyReport> {
+export async function reportNumbers(session: TenantSession, now: Date = new Date(), pageId: string): Promise<WeeklyReport> {
   const today = istToday(now);
-  const rows = await followerRows(session);
+  const rows = await followerRows(session, 60, pageId);
   const since = new Date(now.getTime() - 7 * 86_400_000);
   const [posts, comments] = await Promise.all([
     withTenant(session, (tx) => tx.$queryRaw<{ platform: string; caption: string; stats: PostStats | null }[]>`
       select platform, caption, stats from public.social_content
-      where tenant_id = ${session.tenantId}::uuid and status = 'published' and published_at >= ${since}::timestamptz`),
+      where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} and status = 'published' and published_at >= ${since}::timestamptz`),
     withTenant(session, (tx) => tx.$queryRaw<{ received: bigint; answered: bigint }[]>`
       select count(*) as received, count(*) filter (where status = 'replied') as answered from public.social_comments
-      where tenant_id = ${session.tenantId}::uuid and coalesce(commented_at, created_at) >= ${since}::timestamptz`),
+      where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} and coalesce(commented_at, created_at) >= ${since}::timestamptz`),
   ]);
   const scored = posts.filter((p) => p.stats).map((p) => ({ platform: p.platform, caption: p.caption.slice(0, 160), stats: p.stats!, score: engagementScore(p.stats!) })).sort((a, b) => b.score - a.score);
   return {
@@ -58,8 +60,8 @@ export async function reportNumbers(session: TenantSession, now: Date = new Date
 }
 
 /** Make (or remake) this week's report with the AI's advice and save it. */
-export async function makeWeeklyReport(session: TenantSession, ai: AiConfig, brief: string, now: Date = new Date()): Promise<{ report: WeeklyReport; summary: string }> {
-  const report = await reportNumbers(session, now);
+export async function makeWeeklyReport(session: TenantSession, ai: AiConfig, brief: string, now: Date = new Date(), pageId: string): Promise<{ report: WeeklyReport; summary: string }> {
+  const report = await reportNumbers(session, now, pageId);
   let summary = "";
   if (ai.apiKey) {
     const r = await geminiJson<{ summary?: string }>({
@@ -70,16 +72,16 @@ export async function makeWeeklyReport(session: TenantSession, ai: AiConfig, bri
     summary = (r?.summary ?? "").trim().slice(0, 2000);
   }
   await withTenant(session, (tx) => tx.$executeRaw`
-    insert into public.social_reports (tenant_id, week_start, report, summary)
-    values (${session.tenantId}::uuid, ${report.weekStart}::date, ${JSON.stringify(report)}::jsonb, ${summary})
-    on conflict (tenant_id, week_start) do update set report = excluded.report, summary = excluded.summary, created_at = now()`);
-  await logPersonActivity(session, { actor: "ai", action: "Wrote the weekly report", detail: summary.slice(0, 200) || "Numbers only (no AI key)." });
+    insert into public.social_reports (tenant_id, page_id, week_start, report, summary)
+    values (${session.tenantId}::uuid, ${pageId}, ${report.weekStart}::date, ${JSON.stringify(report)}::jsonb, ${summary})
+    on conflict (tenant_id, page_id, week_start) do update set report = excluded.report, summary = excluded.summary, created_at = now()`);
+  await logPersonActivity(session, { pageId, actor: "ai", action: "Wrote the weekly report", detail: summary.slice(0, 200) || "Numbers only (no AI key)." });
   return { report, summary };
 }
 
-export async function latestReport(session: TenantSession): Promise<{ report: WeeklyReport; summary: string; created_at: Date } | null> {
+export async function latestReport(session: TenantSession, pageId: string): Promise<{ report: WeeklyReport; summary: string; created_at: Date } | null> {
   const rows = await withTenant(session, (tx) => tx.$queryRaw<{ report: WeeklyReport; summary: string; created_at: Date }[]>`
-    select report, summary, created_at from public.social_reports where tenant_id = ${session.tenantId}::uuid order by week_start desc limit 1`);
+    select report, summary, created_at from public.social_reports where tenant_id = ${session.tenantId}::uuid and page_id = ${pageId} order by week_start desc limit 1`);
   return rows[0] ?? null;
 }
 

@@ -12,6 +12,8 @@ export type SocialItem = {
   topic: string; origin: string; status: SocialStatus; created_by: string | null; reviewed_by: string | null;
   reviewed_at: Date | null; published_at: Date | null; external_id: string | null; error: string | null; created_at: Date;
   /** R-2705 / R-2706 (only in listSocial). */
+  /** R-2729: the Facebook Page (and its Instagram) this post belongs to. */
+  page_id?: string | null;
   post_type?: string | null; stats?: { reach: number | null; likes: number | null; comments: number | null; shares: number | null; saves: number | null } | null;
   scheduled_at: Date | null;
 };
@@ -34,12 +36,14 @@ export function canReviewSocial(role: string | null): boolean {
   return role === "owner" || role === "manager" || role === "marketing";
 }
 
-export async function listSocial(session: TenantSession): Promise<SocialItem[]> {
+/** R-2729: one Page's posts, or every Page's (pageId null). */
+export async function listSocial(session: TenantSession, pageId: string | null = null): Promise<SocialItem[]> {
   return withTenant(session, tx => tx.$queryRaw<SocialItem[]>`
     select id, platform, format, caption, media_url, topic, origin, status, created_by,
-      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at, post_type, stats
+      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at, post_type, stats, page_id
     from public.social_content where tenant_id = ${session.tenantId}::uuid
-    order by created_at desc limit 100`);
+      and (${pageId}::text is null or page_id = ${pageId})
+    order by created_at desc limit ${pageId ? 100 : 200}`);
 }
 
 export async function createSocial(session: TenantSession, input: {
@@ -50,10 +54,12 @@ export async function createSocial(session: TenantSession, input: {
   status?: "draft" | "review" | "approved";
   /** R-2705: the kind of post and the strategy version it followed (for the weekly learning). */
   postType?: string | null; strategyVersion?: number | null;
+  /** R-2729: the Page it goes out on. */
+  pageId: string | null;
 }): Promise<string> {
   const rows = await withTenant(session, tx => tx.$queryRaw<{ id: string }[]>`
-    insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by, scheduled_at, status, post_type, strategy_version)
-    values (${session.tenantId}::uuid, ${input.platform}, ${input.format}, ${input.caption}, ${input.mediaUrl}, ${input.topic}, ${input.origin}, ${session.userId}::uuid, ${input.scheduledAt ?? null}::timestamptz, ${input.status ?? "draft"}, ${input.postType ?? null}, ${input.strategyVersion ?? null}::int)
+    insert into public.social_content (tenant_id, platform, format, caption, media_url, topic, origin, created_by, scheduled_at, status, post_type, strategy_version, page_id)
+    values (${session.tenantId}::uuid, ${input.platform}, ${input.format}, ${input.caption}, ${input.mediaUrl}, ${input.topic}, ${input.origin}, ${session.userId}::uuid, ${input.scheduledAt ?? null}::timestamptz, ${input.status ?? "draft"}, ${input.postType ?? null}, ${input.strategyVersion ?? null}::int, ${input.pageId})
     returning id`);
   return rows[0].id;
 }
@@ -77,7 +83,7 @@ export async function updateSocial(session: TenantSession, id: string, patch: {
     where id = ${id}::uuid and tenant_id = ${session.tenantId}::uuid
       and status = ${expectedStatus}
     returning id, platform, format, caption, media_url, topic, origin, status, created_by,
-      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at`);
+      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at, page_id`);
   return rows[0] ?? null;
 }
 
@@ -86,7 +92,7 @@ export async function claimApproved(session: TenantSession, id: string): Promise
     update public.social_content set status = 'publishing', updated_at = now()
     where id = ${id}::uuid and tenant_id = ${session.tenantId}::uuid and status = 'approved'
     returning id, platform, format, caption, media_url, topic, origin, status, created_by,
-      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at`);
+      reviewed_by, reviewed_at, published_at, external_id, error, created_at, scheduled_at, page_id`);
   return rows[0] ?? null;
 }
 
@@ -176,7 +182,14 @@ export async function publishSocial(session: TenantSession, item: SocialItem): P
   const { data: { user } } = await admin.auth.getUser();
   if (!user || user.id !== session.userId) throw new Error("Sign in again.");
   const { createAdminClientFor } = await import("@/lib/supabase/server");
-  const connection = await readFacebookPage(createAdminClientFor(session.userId), session.tenantId);
+  /* R-2729: post with the token of the Page this post belongs to. */
+  const { pageConnection } = await import("./social-pages.server");
+  const connection = await pageConnection(createAdminClientFor(session.userId) as unknown as import("@supabase/supabase-js").SupabaseClient, session.tenantId, item.page_id ?? null);
+  if (!connection.pageToken) {
+    const main = await readFacebookPage(createAdminClientFor(session.userId), session.tenantId);
+    if (!item.page_id || item.page_id === main.pageId) return publishWithPage(item, main);
+    throw new Error("This Page is no longer connected. Reconnect Facebook (Marketing Hub → Facebook Page).");
+  }
   return publishWithPage(item, connection);
 }
 

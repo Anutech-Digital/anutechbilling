@@ -15,7 +15,7 @@ import { LENGTHS, POST_TYPES, type StrategyPlan, type StrategyPlatform } from "@
 type Platform = "facebook" | "instagram";
 type Item = { id: string; platform: Platform; format: "post" | "story"; caption: string; media_url: string | null;
   topic: string; origin: string; status: string; created_at: string; published_at: string | null; error: string | null;
-  scheduled_at: string | null; media_preview?: string | null; post_type?: string | null;
+  scheduled_at: string | null; media_preview?: string | null; post_type?: string | null; page_id?: string | null;
   stats?: { reach: number | null; likes: number | null; comments: number | null; shares: number | null; saves: number | null } | null };
 type StrategyRow = { platform: StrategyPlatform; version: number; plan: StrategyPlan; reason: string; created_by: string | null; created_at: string };
 type Strategies = Record<StrategyPlatform, { active: StrategyRow | null; proposed: StrategyRow | null }>;
@@ -31,6 +31,7 @@ function statsLine(st: NonNullable<Item["stats"]>): string {
 type Activity = { id: string; at: string; actor: "ai" | "person" | "system"; user_name: string | null; platform: string | null;
   action: string; detail: string; content_id: string | null; result: "ok" | "failed" | "waiting" };
 type State = { items: Item[]; canReview: boolean; canManage: boolean; aiReady: boolean;
+  pages: PageRow[]; view: string | null; overview: Overview[] | null; ai_paused: boolean;
   facebook: { name: string; id?: string } | null; instagram: { name: string; type: string | null } | null; linkedin: { name: string } | null;
   followers: { facebook: number | null; instagram: number | null }; activity: Activity[]; strategies: Strategies | null;
   trends: Record<StrategyPlatform, Trend> | null; report: { report: Report; summary: string; created_at: string } | null;
@@ -42,7 +43,10 @@ type Trend = { now: number | null; change7: number | null; change30: number | nu
 type Report = { weekStart: string; followers: Record<StrategyPlatform, { now: number | null; change7: number | null }>; posts: { facebook: number; instagram: number };
   best: { platform: string; caption: string; score: number } | null; comments: { received: number; answered: number } };
 type Comment = { id: string; platform: Platform; author: string; message: string; commented_at: string | null; kind: string | null; status: "new" | "draft" | "replied" | "failed";
-  ai_reply: string | null; reply: string | null; replied_by: "ai" | "person" | null; replied_at: string | null; error: string | null; content_id: string | null };
+  ai_reply: string | null; reply: string | null; replied_by: "ai" | "person" | null; replied_at: string | null; error: string | null; content_id: string | null; page_id?: string | null };
+/* R-2729 / R-2731: the company's Pages and the All Pages view. */
+type PageRow = { page_id: string; name: string; instagram_username: string | null; active: boolean; is_main: boolean };
+type Overview = PageRow & { trends: Record<StrategyPlatform, Trend>; waiting: number; scheduled: number; comments: number; autopilot: boolean; auto_drafts: boolean; comment_mode: string };
 type TodoItem = { id: string; text: string; why: string; done: boolean; doneBy?: string | null };
 const signed = (n: number) => (n > 0 ? `+${n.toLocaleString("en-IN")}` : n.toLocaleString("en-IN"));
 /** R-2690: a tiny line of the last 30 days' followers. */
@@ -108,6 +112,13 @@ export default function SocialContentPage() {
   /* R-2689: the reply being written per comment (starts as the AI's draft). */
   const [replyText, setReplyText] = React.useState<Record<string, string>>({});
   const [todoBusy, setTodoBusy] = React.useState(false);
+  /* R-2729: which Page the screen shows ("all" = every Page); remembered in the URL and this browser. */
+  const viewRef = React.useRef<string | null>(null);
+  const [showPages, setShowPages] = React.useState(false);
+  /* R-2731: Post it yourself on several Pages at once (All Pages view). */
+  const [postPages, setPostPages] = React.useState<string[]>([]);
+  const [adaptText, setAdaptText] = React.useState(true);
+  const [mediaPage, setMediaPage] = React.useState<string | null>(null);
   const [showPostSettings, setShowPostSettings] = React.useState(false);
   /* R-2687: one control per AI action — Off / Ask me first / Autopilot (stored as auto_drafts + autopilot). */
   const postsMode: "off" | "ask" | "auto" = !autoDrafts ? "off" : autopilot ? "auto" : "ask";
@@ -115,15 +126,27 @@ export default function SocialContentPage() {
   const settingsDirty = Boolean(state) && (autoDrafts !== state!.settings.auto_drafts || autopilot !== Boolean(state!.settings.autopilot) || postsPerWeek !== (state!.settings.posts_per_week || 3) || brief !== state!.settings.brief || pictures !== (state!.settings.picture_urls ?? []).join("\n"));
   const times = React.useMemo(() => quickTimes(), []);
 
-  const load = React.useCallback(async () => {
-    const response = await fetch("/api/marketing/social-content", { cache: "no-store" });
+  const load = React.useCallback(async (view?: string | null) => {
+    if (view !== undefined) viewRef.current = view;
+    const v = viewRef.current;
+    const response = await fetch(`/api/marketing/social-content${v ? `?page=${encodeURIComponent(v)}` : ""}`, { cache: "no-store" });
     const data = await response.json() as State & { error?: string };
     if (!response.ok) throw new Error(data.error ?? "Could not load content.");
+    viewRef.current = data.view;
+    try {
+      if (data.view) localStorage.setItem("social-growth-page", data.view);
+      const url = new URL(window.location.href);
+      if (data.view) url.searchParams.set("page", data.view); else url.searchParams.delete("page");
+      window.history.replaceState(null, "", url.toString());
+    } catch { /* storage or history blocked: the choice is just not remembered */ }
+    setPostPages((cur) => cur.length ? cur.filter((id) => data.pages.some((p) => p.active && p.page_id === id)) : data.pages.filter((p) => p.active).map((p) => p.page_id).slice(0, 1));
+    setStrategyEdit(null); setEditing(null);
     setState(data); setBrief(data.settings.brief); setAutoDrafts(data.settings.auto_drafts); setError(null);
     setAutopilot(Boolean(data.settings.autopilot)); setPostsPerWeek(data.settings.posts_per_week || 3); setPictures((data.settings.picture_urls ?? []).join("\n"));
     return data;
   }, []);
   React.useEffect(() => {
+    try { viewRef.current = new URLSearchParams(window.location.search).get("page") ?? localStorage.getItem("social-growth-page"); } catch { viewRef.current = null; }
     void load().then((data) => {
       // Open on the tab that has work in it, so nobody lands on an empty list.
       // R-2687: open on waiting work first; otherwise on the activity list.
@@ -132,6 +155,11 @@ export default function SocialContentPage() {
     }).catch(e => setError(e.message));
   }, [load]);
 
+  const isAll = state?.view === "all";
+  /** R-2729: add the shown Page to a request body (nothing in the All Pages view). */
+  const pg = <T extends Record<string, unknown>>(body: T): T & { pageId?: string } => (state?.view && !isAll ? { ...body, pageId: state.view } : body);
+  const pageName = (id: string | null | undefined) => state?.pages.find((p) => p.page_id === id)?.name ?? "";
+  const activePages = state?.pages.filter((p) => p.active) ?? [];
   const hasInstagram = platforms.includes("instagram");
   const caption = texts[platforms[0]];
   const postAt = when === "morning" ? times.tomorrowMorning : when === "evening" ? times.tomorrowEvening : when === "custom" ? customAt : "";
@@ -148,7 +176,7 @@ export default function SocialContentPage() {
     setBusy(true); setAiProblem(null); setAiWriting(true);
     try {
       const response = await fetch("/api/marketing/social-content", { method: "POST", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ platform: platforms[0], platforms, format: story ? "story" : "post", topic, caption: "", mediaUrl: null, ai: true, previewOnly: true }) });
+        body: JSON.stringify({ platform: platforms[0], platforms, format: story ? "story" : "post", topic, caption: "", mediaUrl: null, ai: true, previewOnly: true, ...(isAll ? { pageId: postPages[0] } : pg({})) }) });
       const data = await response.json() as { caption?: string; captions?: Partial<Record<Platform, string>>; error?: string; description?: string };
       // R-2672: the reason stays on screen under the button (a toast vanished before anyone read it).
       if (!response.ok || !data.caption) { setAiProblem([data.error ?? "AI could not write the post.", data.description].filter(Boolean).join(" ")); return; }
@@ -163,11 +191,11 @@ export default function SocialContentPage() {
     if (!about.trim() && !text.trim()) { setPictureProblem({ target, text: "Write the post (or what it is about) first, then make the picture." }); return; }
     setBusy(true); setPicturing(target); setPictureProblem(null);
     try {
-      const response = await fetch("/api/marketing/social-content/picture", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ topic: about, caption: text }) });
+      const response = await fetch("/api/marketing/social-content/picture", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ topic: about, caption: text, ...(target === "new" && isAll ? { pageId: postPages[0] } : target === "new" ? pg({}) : { pageId: state?.items.find((i) => i.id === target)?.page_id ?? undefined }) }) });
       const data = await response.json() as { mediaUrl?: string; previewUrl?: string | null; error?: string; description?: string };
       if (!response.ok || !data.mediaUrl) { setPictureProblem({ target, text: [data.error ?? "Could not make the picture.", data.description].filter(Boolean).join(" ") }); return; }
       if (data.previewUrl) setPreviews((cur) => ({ ...cur, [data.mediaUrl!]: data.previewUrl! }));
-      if (target === "new") setMediaUrl(data.mediaUrl); else setEditMediaUrl(data.mediaUrl);
+      if (target === "new") { setMediaUrl(data.mediaUrl); setMediaPage(isAll ? postPages[0] ?? null : state?.view ?? null); } else setEditMediaUrl(data.mediaUrl);
       toast.success("Picture made.", { description: "It is kept hidden in your Facebook Page's photos until the post goes out." });
     } catch (e) { toastError(e, { fallback: "Could not make the picture.", description: "Nothing was posted. Try again in a minute." }); }
     finally { setBusy(false); setPicturing(null); }
@@ -197,7 +225,7 @@ export default function SocialContentPage() {
   async function strategyCall(method: "POST" | "PUT" | "PATCH", body: Record<string, unknown>, done: string) {
     setBusy(true);
     try {
-      const response = await fetch("/api/marketing/social-content/strategy", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+      const response = await fetch("/api/marketing/social-content/strategy", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(pg(body)) });
       const data = await response.json() as { error?: string; description?: string };
       if (!response.ok) throw Object.assign(new Error(data.error ?? "Could not save the strategy."), { description: data.description });
       toast.success(done); setStrategyEdit(null); await load();
@@ -260,7 +288,7 @@ export default function SocialContentPage() {
   async function call(url: string, method: string, body: Record<string, unknown> | null, done: string | null, fallback: string) {
     setBusy(true);
     try {
-      const response = await fetch(url, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined });
+      const response = await fetch(url, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(pg(body)) : undefined });
       const data = await response.json() as { error?: string; description?: string; added?: number; drafted?: number; sent?: number };
       if (!response.ok) throw Object.assign(new Error(data.error ?? fallback), { description: data.description });
       if (done) toast.success(done, data.added !== undefined ? { description: `${data.added} new comment${data.added === 1 ? "" : "s"}${data.drafted ? `, ${data.drafted} repl${data.drafted === 1 ? "y" : "ies"} written by the AI` : ""}${data.sent ? `, ${data.sent} sent by the AI` : ""}.` } : undefined);
@@ -276,7 +304,7 @@ export default function SocialContentPage() {
   async function openTodo(fresh: boolean) {
     setTodoBusy(true);
     try {
-      const response = await fetch("/api/marketing/social-content/today", fresh ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ make: "todo" }) } : { cache: "no-store" });
+      const response = await fetch("/api/marketing/social-content/today", fresh ? { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ make: "todo" }) } : { cache: "no-store" }); // one list for every Page
       const data = await response.json() as { items?: TodoItem[]; error?: string; description?: string };
       if (!response.ok || !data.items) throw Object.assign(new Error(data.error ?? "Could not make today's list."), { description: data.description });
       setState((cur) => cur ? { ...cur, todo: data.items! } : cur);
@@ -294,13 +322,19 @@ export default function SocialContentPage() {
     if (hasInstagram && !mediaUrl) { toast.error("Instagram needs a picture.", { description: "Press Make picture with AI, paste a public image link, or untick Instagram." }); return; }
     const empty = platforms.find((p) => !(p === "instagram" && story) && !texts[p].trim());
     if (empty) { toast.error(`Write the ${empty === "facebook" ? "Facebook" : "Instagram"} text first.`, { description: "Type it in the box, or press Write with AI." }); return; }
+    /* R-2731: one Page, or every Page ticked in the All Pages view (the AI adjusts the text for the others). */
+    const targets = isAll ? postPages : state?.view ? [state.view] : [];
+    if (isAll && !targets.length) { toast.error("Choose at least one Page.", { description: "Tick the Pages this post is for." }); return; }
     setBusy(true);
     try {
-      for (const platform of platforms) {
-        const response = await fetch("/api/marketing/social-content", { method: "POST", headers: { "content-type": "application/json" },
-          body: JSON.stringify({ platform, format: platform === "instagram" && story ? "story" : "post", topic, caption: texts[platform], mediaUrl: mediaUrl || null, scheduledAt: postAt || null, submit }) });
-        const data = await response.json() as { error?: string };
-        if (!response.ok) throw new Error(`${platform === "facebook" ? "Facebook" : "Instagram"}: ${data.error ?? "Could not save."}`);
+      for (const [i, pageId] of (targets.length ? targets : [undefined]).entries()) {
+        for (const platform of platforms) {
+          const response = await fetch("/api/marketing/social-content", { method: "POST", headers: { "content-type": "application/json" },
+            body: JSON.stringify({ platform, format: platform === "instagram" && story ? "story" : "post", topic, caption: texts[platform], mediaUrl: mediaUrl || null, scheduledAt: postAt || null, submit,
+              pageId, adapt: i > 0 && adaptText, mediaPageId: mediaUrl && pagePhotoId(mediaUrl) && mediaPage ? mediaPage : undefined }) });
+          const data = await response.json() as { error?: string };
+          if (!response.ok) throw new Error(`${pageId && targets.length > 1 ? `${pageName(pageId)} · ` : ""}${platform === "facebook" ? "Facebook" : "Instagram"}: ${data.error ?? "Could not save."}`);
+        }
       }
       toast.success(submit ? (postAt ? "Post scheduled." : "Saved. Publish it when you are ready.") : "Saved as a draft.", { description: submit ? (postAt ? `It posts by itself on ${formatIst(postAt + ":00+05:30")}.` : "Press Publish now on it in Scheduled.") : undefined });
       setTopic(""); setTexts({ facebook: "", instagram: "" }); setMediaUrl(""); setCustomAt("");
@@ -333,7 +367,7 @@ export default function SocialContentPage() {
     setBusy(true);
     try {
       const response = await fetch("/api/marketing/social-content/settings", { method: "PUT", headers: { "content-type": "application/json" },
-        body: JSON.stringify({ autoDrafts, brief, autopilot, postsPerWeek, pictures }) });
+        body: JSON.stringify(pg({ autoDrafts, brief, autopilot, postsPerWeek, pictures })) });
       const data = await response.json() as { error?: string; description?: string };
       if (!response.ok) { setPlanNote({ text: [data.error ?? "Could not save.", data.description].filter(Boolean).join(" "), warn: true }); return; }
       setPlanNote({ text: autoDrafts ? `Saved. Every Monday the AI plans ${postsPerWeek} post${postsPerWeek === 1 ? "" : "s"}${autopilot ? ` and posts ${postsPerWeek === 1 ? "it" : "them"} by itself` : " for you to approve"}.` : "Saved. The Monday plan is off — press Plan this week now whenever you want posts.", warn: false });
@@ -371,7 +405,7 @@ export default function SocialContentPage() {
   async function planNow() {
     setBusy(true); setPlanNote({ text: "The AI is writing this week's posts and making their pictures… this takes up to a minute. Keep this page open.", warn: false });
     try {
-      const response = await fetch("/api/marketing/social-content/settings", { method: "POST" });
+      const response = await fetch("/api/marketing/social-content/settings", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(pg({})) });
       const data = await response.json() as { error?: string; description?: string; created?: number; autopilot?: boolean; instagramSkipped?: boolean; aiPictures?: number; pictureProblem?: string | null;
         resultsRead?: number; needsReconnect?: boolean; learned?: { platform: StrategyPlatform; outcome: "changed" | "proposed" | "kept" | "need-more"; have: number }[] };
       const learnedText = (data.learned ?? []).map((l) => `${PLATFORM_NAME[l.platform]}: ${l.outcome === "changed" ? "strategy improved from results" : l.outcome === "proposed" ? "the AI suggests a better strategy (see Strategy)" : l.outcome === "kept" ? "strategy kept, it is working" : `needs ${3 - l.have} more post${3 - l.have === 1 ? "" : "s"} with results before it can learn`}.`).join(" ");
@@ -393,7 +427,52 @@ export default function SocialContentPage() {
     {error && <Card><div role="alert" className="flex items-center justify-between gap-3"><p className="text-sm text-rose-ink">{error}</p><Button onClick={() => void load()}>Try again</Button></div></Card>}
     {!state && !error && <Card><p className="p-6 text-sm text-ink-3">Loading…</p></Card>}
     {state && <>
-      <section aria-label="Your accounts" className="grid gap-3 sm:grid-cols-3">
+      {/* R-2729: choose the Page (or every Page); Manage Pages switches the company's Pages on or off. */}
+      <section aria-label="Pages" className="flex flex-wrap items-end justify-between gap-3 rounded-xl border border-hairline bg-paper p-3">
+        <label className="block min-w-[240px] text-xs font-medium text-ink-2">Page
+          <select className={`${inputClass} mt-1`} value={state.view ?? ""} disabled={busy || activePages.length === 0} onChange={(e) => { const v = e.target.value; setState(null); void load(v).catch((err) => setError(err.message)); }}>
+            {activePages.length > 1 && <option value="all">All Pages ({activePages.length})</option>}
+            {activePages.map((p) => <option key={p.page_id} value={p.page_id}>{p.name}{p.instagram_username ? ` + @${p.instagram_username}` : ""}{p.is_main ? " (main)" : ""}</option>)}
+          </select>
+        </label>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-ink-3">{activePages.length} of {state.pages.length} Page{state.pages.length === 1 ? "" : "s"} switched on</span>
+          {state.canReview && <Button size="sm" variant="outline" aria-expanded={showPages} onClick={() => setShowPages((v) => !v)}>{showPages ? "Close" : "Manage Pages"}</Button>}
+        </div>
+        {showPages && <div className="w-full space-y-2 border-t border-hairline pt-3">
+          <p className="text-xs text-ink-3">Every Page your Facebook login manages — across all business portfolios — is listed here. Switch on the ones to grow. Each has its own brief and AI settings. A Page missing? <a className="font-medium underline" href="/marketing/facebook">Connect Facebook again</a> and allow it.</p>
+          {state.pages.length === 0 ? <p className="text-sm text-ink-3">No Pages yet. <a className="font-medium underline" href="/marketing/facebook">Connect Facebook</a>.</p>
+            : <ul className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">{state.pages.map((p) => <li key={p.page_id}>
+              <label className="flex cursor-pointer items-center gap-3 rounded-lg border border-hairline p-2">
+                <input type="checkbox" className="size-4" checked={p.active} disabled={busy} onChange={(e) => void call("/api/marketing/social-content/pages", "PATCH", { pageId: p.page_id, active: e.target.checked }, e.target.checked ? `${p.name} switched on.` : `${p.name} switched off.`, "Could not change the Page.")} />
+                <span className="min-w-0"><span className="block truncate text-sm font-medium text-ink">{p.name}{p.is_main && <span className="ml-1 text-xs font-normal text-ink-3">(main)</span>}</span><span className="block truncate text-xs text-ink-3">{p.instagram_username ? `Instagram @${p.instagram_username}` : "No Instagram linked"}</span></span>
+              </label>
+            </li>)}</ul>}
+        </div>}
+      </section>
+
+      {isAll && state.overview && <Card><div className="space-y-3 p-1 md:p-2">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h2 className="text-lg font-semibold">All Pages</h2><p className="mt-0.5 text-xs text-ink-3">Every Page at a glance. Open one to change its AI, strategy and brief.</p></div>
+          {state.canReview && (state.ai_paused
+            ? <Button variant="primary" disabled={busy || !state.canManage} title={state.canManage ? undefined : "Only the owner can resume the AI"} onClick={() => void setAiPaused(false)}>Resume AI</Button>
+            : <Button variant="danger" disabled={busy} onClick={() => void setAiPaused(true)}>Stop all AI</Button>)}
+        </div>
+        {state.ai_paused && <p className="rounded-lg bg-rose-soft px-3 py-2 text-sm text-rose-ink">The AI is stopped on every Page until the owner presses Resume AI.</p>}
+        <div className="overflow-x-auto"><table className="w-full min-w-[720px] text-sm">
+          <thead><tr className="border-b border-hairline text-left text-xs text-ink-3"><th className="py-2 pr-3 font-medium">Page</th><th className="py-2 pr-3 font-medium">Facebook followers</th><th className="py-2 pr-3 font-medium">Instagram followers</th><th className="py-2 pr-3 font-medium">Waiting approval</th><th className="py-2 pr-3 font-medium">Comments to answer</th><th className="py-2 pr-3 font-medium">AI posts</th><th className="py-2 font-medium"><span className="sr-only">Open</span></th></tr></thead>
+          <tbody>{state.overview.map((o) => <tr key={o.page_id} className="border-b border-hairline last:border-0">
+            <td className="py-2 pr-3"><span className="font-medium text-ink">{o.name}</span>{o.instagram_username && <span className="block text-xs text-ink-3">@{o.instagram_username}</span>}</td>
+            {(["facebook", "instagram"] as const).map((pl) => { const t = o.trends[pl]; return <td key={pl} className="py-2 pr-3 tabular-nums">{t.now ?? "—"}{t.change7 !== null && <span className={`ml-1 text-xs ${t.change7 > 0 ? "text-emerald-ink" : t.change7 < 0 ? "text-rose-ink" : "text-ink-3"}`}>({signed(t.change7)})</span>}</td>; })}
+            <td className="py-2 pr-3 tabular-nums">{o.waiting > 0 ? <Badge kind="warning" size="sm">{o.waiting}</Badge> : "0"}</td>
+            <td className="py-2 pr-3 tabular-nums">{o.comments > 0 ? <Badge kind="warning" size="sm">{o.comments}</Badge> : "0"}</td>
+            <td className="py-2 pr-3 text-xs text-ink-2">{!o.auto_drafts ? "Off" : o.autopilot ? "Autopilot" : "Ask me first"}</td>
+            <td className="py-2 text-right"><Button size="sm" variant="outline" disabled={busy} onClick={() => { setState(null); void load(o.page_id).catch((err) => setError(err.message)); }}>Open</Button></td>
+          </tr>)}</tbody>
+        </table></div>
+      </div></Card>}
+
+      {!isAll && <section aria-label="Your accounts" className="grid gap-3 sm:grid-cols-3">
         {[
           { key: "facebook", label: "Facebook", icon: <Facebook size={18} className="text-[#1877f2]" aria-hidden="true" />, name: state.facebook?.name ?? null, count: state.followers.facebook, href: "/marketing/facebook", connect: "Connect Facebook Page",
             open: state.facebook?.id ? `https://www.facebook.com/${encodeURIComponent(state.facebook.id)}` : null, openLabel: "Open Page" },
@@ -415,7 +494,7 @@ export default function SocialContentPage() {
             </>; })()}
           </> : <a href={a.href} className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-ink underline">{a.connect} <ArrowUpRight size={13} aria-hidden="true" /></a>}
         </div>)}
-      </section>
+      </section>}
 
       <section aria-label="Today and this week" className="grid items-start gap-5 lg:grid-cols-2">
         <Card><div className="space-y-3 p-1 md:p-2">
@@ -436,7 +515,7 @@ export default function SocialContentPage() {
           {state.todo && <p className="text-xs text-ink-3">{state.todo.filter((t) => t.done).length} of {state.todo.length} done today.</p>}
         </div></Card>
 
-        <Card><div className="space-y-3 p-1 md:p-2">
+        {!isAll && <Card><div className="space-y-3 p-1 md:p-2">
           <div className="flex flex-wrap items-start justify-between gap-2">
             <div><h2 className="text-lg font-semibold">This week</h2><p className="mt-0.5 text-xs text-ink-3">{state.report ? `Report of the week from ${formatIst(state.report.report.weekStart + "T00:00:00+05:30").split(",")[0]} · made ${formatIst(state.report.created_at)}` : "The AI writes a report every week with the plan."}</p></div>
             {state.canReview && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void call("/api/marketing/social-content/today", "POST", { make: "report" }, "Report made.", "Could not make the report.")}>Make report now</Button>}
@@ -450,10 +529,10 @@ export default function SocialContentPage() {
             {state.report.report.best && <p className="text-xs text-ink-2"><span className="font-semibold">Best post</span> ({PLATFORM_NAME[state.report.report.best.platform as StrategyPlatform] ?? state.report.report.best.platform}, score {state.report.report.best.score}): {state.report.report.best.caption}</p>}
             {state.report.summary && <p className="rounded-lg bg-amber-soft/50 p-3 text-sm text-ink-2"><span className="font-semibold text-ink">AI: </span>{state.report.summary}</p>}
           </>}
-        </div></Card>
+        </div></Card>}
       </section>
 
-      <Card><div className="space-y-4 p-1 md:p-2">
+      {!isAll && <Card><div className="space-y-4 p-1 md:p-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3"><Bot size={22} className="mt-0.5 shrink-0 text-amber-ink" aria-hidden="true" /><div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2"><h2 className="text-lg font-semibold">AI agent</h2>{state.settings.ai_paused ? <Badge kind="danger" dot>Stopped</Badge> : <Badge kind="success" dot>Running</Badge>}</div>
@@ -508,12 +587,17 @@ export default function SocialContentPage() {
         </div>}
         {!state.canManage && <p className="text-xs text-ink-3">Only the owner can change these settings.</p>}
         {planNote && <p role="status" className={planNote.warn ? "rounded-lg bg-amber-soft px-3 py-2 text-sm text-amber-ink" : "rounded-lg bg-paper-2 px-3 py-2 text-sm text-ink-2"}>{planNote.text}</p>}
-      </div></Card>
+      </div></Card>}
 
       <div className="grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.15fr)]">
         <Card><div className="space-y-5 p-1 md:p-2">
           <div><h2 className="text-lg font-semibold">Post it yourself</h2><p className="mt-0.5 text-xs text-ink-3">Write a post by hand (or with one AI press). It is scheduled straight away — no approval needed.</p></div>
 
+          {isAll && <fieldset><legend className="text-xs font-medium text-ink-2">Pages</legend>
+            <div className="mt-2 flex flex-wrap gap-2">{activePages.map((p) => { const on = postPages.includes(p.page_id); return <button key={p.page_id} type="button" aria-pressed={on} className={chip(on)} onClick={() => setPostPages((cur) => on ? cur.filter((x) => x !== p.page_id) : [...cur, p.page_id])}>{p.name}</button>; })}</div>
+            {postPages.length > 1 && <label className="mt-2 flex items-center gap-2 text-xs text-ink-2"><input type="checkbox" checked={adaptText} onChange={(e) => setAdaptText(e.target.checked)} /> Let the AI adjust the text for each Page (same idea, its own words)</label>}
+            {postPages.length > 1 && <p className="mt-1 text-xs text-ink-3">The text below is for {pageName(postPages[0])}; the picture is copied to the other Pages.</p>}
+          </fieldset>}
           <fieldset><legend className="text-xs font-medium text-ink-2">Where</legend>
             <div className="mt-2 flex flex-wrap gap-2">
               <button type="button" aria-pressed={platforms.includes("facebook")} className={chip(platforms.includes("facebook"))} onClick={() => togglePlatform("facebook")}><Facebook size={15} /> Facebook{state.facebook ? "" : " (not connected)"}</button>
@@ -583,7 +667,7 @@ export default function SocialContentPage() {
               const text = replyText[c.id] ?? c.ai_reply ?? "";
               return <li key={c.id} className="rounded-xl border border-hairline bg-paper p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <span className="flex items-center gap-2 text-sm font-medium text-ink">{c.platform === "facebook" ? <Facebook size={16} className="text-[#1877f2]" aria-hidden="true" /> : <Instagram size={16} className="text-[#c13584]" aria-hidden="true" />}{c.author}</span>
+                  <span className="flex items-center gap-2 text-sm font-medium text-ink">{c.platform === "facebook" ? <Facebook size={16} className="text-[#1877f2]" aria-hidden="true" /> : <Instagram size={16} className="text-[#c13584]" aria-hidden="true" />}{c.author}{isAll && c.page_id && <Badge kind="info" size="sm">{pageName(c.page_id)}</Badge>}</span>
                   <span className="flex items-center gap-2 text-xs text-ink-3">{c.kind === "complaint" && <Badge kind="warning" size="sm">Complaint — answer yourself</Badge>}{c.kind === "spam" && <Badge kind="muted" size="sm">Looks like spam</Badge>}{c.commented_at ? formatIst(c.commented_at) : ""}</span>
                 </div>
                 <p className="mt-2 whitespace-pre-wrap text-sm text-ink-2">{c.message}</p>
@@ -599,7 +683,7 @@ export default function SocialContentPage() {
             })}</ul>)}
           {tab !== "activity" && tab !== "comments" && items.length === 0 && <div className="rounded-lg border border-dashed border-hairline p-8 text-center text-sm text-ink-3">{tab === "review" ? "Nothing is waiting for approval." : tab === "scheduled" ? "No approved posts waiting to go out." : "Nothing here yet."}</div>}
           {tab !== "activity" && tab !== "comments" && <div className="max-h-[850px] space-y-3 overflow-y-auto pr-1">{items.map(item => <div key={item.id} className="rounded-xl border border-hairline bg-paper p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2">{item.platform === "facebook" ? <Facebook size={17} className="text-[#1877f2]" /> : <Instagram size={17} className="text-[#c13584]" />}<span className="text-sm font-medium">{item.platform === "facebook" ? "Facebook" : "Instagram"} {item.format === "story" ? "Story" : "post"}</span>{item.origin !== "manual" && <Badge kind="muted">AI</Badge>}{item.post_type && <Badge kind="muted">{item.post_type}</Badge>}</div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><div className="flex items-center gap-2">{item.platform === "facebook" ? <Facebook size={17} className="text-[#1877f2]" /> : <Instagram size={17} className="text-[#c13584]" />}<span className="text-sm font-medium">{item.platform === "facebook" ? "Facebook" : "Instagram"} {item.format === "story" ? "Story" : "post"}</span>{isAll && item.page_id && <Badge kind="info">{pageName(item.page_id)}</Badge>}{item.origin !== "manual" && <Badge kind="muted">AI</Badge>}{item.post_type && <Badge kind="muted">{item.post_type}</Badge>}</div>
               <span className="text-xs text-ink-2">{item.status === "published" && item.published_at ? `Posted ${formatIst(item.published_at)}`
                 : item.scheduled_at ? (item.status === "approved" && new Date(item.scheduled_at).getTime() <= Date.now() ? "Posting in a few minutes" : `${item.status === "approved" ? "Posts" : "To post"} ${formatIst(item.scheduled_at)}`)
                 : item.status === "approved" ? "Approved — post by hand" : "No post time"}</span></div>

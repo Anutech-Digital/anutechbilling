@@ -70,11 +70,12 @@ export async function instagramPostStats(mediaId: string, token: string): Promis
  * Read results for this company's posts out RESULTS_AFTER_DAYS+ days (last 45 days), not read in
  * the last 2 days. At most 40 a run. Returns how many were read and whether permission is missing.
  */
-export async function refreshPostStats(session: TenantSession, pageToken: string, now: Date = new Date()): Promise<{ read: number; noPermission: boolean }> {
+export async function refreshPostStats(session: TenantSession, pageToken: string, now: Date = new Date(), pageId: string | null = null): Promise<{ read: number; noPermission: boolean }> {
   const before = new Date(now.getTime() - RESULTS_AFTER_DAYS * 86_400_000);
   const rows = await withTenant(session, (tx) => tx.$queryRaw<{ id: string; platform: string; external_id: string }[]>`
     select id, platform, external_id from public.social_content
     where tenant_id = ${session.tenantId}::uuid and status = 'published' and external_id is not null
+      and (${pageId}::text is null or page_id = ${pageId})
       and published_at < ${before}::timestamptz and published_at > ${new Date(now.getTime() - 45 * 86_400_000)}::timestamptz
       and (stats_at is null or stats_at < ${new Date(now.getTime() - 2 * 86_400_000)}::timestamptz)
     order by published_at desc limit 40`);

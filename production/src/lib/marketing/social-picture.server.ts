@@ -30,9 +30,10 @@ export type PictureResult =
   | { ok: true; mediaUrl: string; previewUrl: string | null }
   | { ok: false; message: string; status: number };
 
-export async function makePostPicture(admin: Admin, tenantId: string, post: { topic: string; caption: string }): Promise<PictureResult> {
+/** R-2729: `page` = the Page the post goes out on (its photos keep the picture); the main Page when omitted. */
+export async function makePostPicture(admin: Admin, tenantId: string, post: { topic: string; caption: string }, page?: { pageId: string | null; pageToken: string | null }): Promise<PictureResult> {
   if (!post.topic.trim() && !post.caption.trim()) return { ok: false, message: "Write the post (or its topic) first, then make the picture.", status: 400 };
-  const connection = await readFacebookPage(admin, tenantId);
+  const connection = page?.pageToken ? page : await readFacebookPage(admin, tenantId);
   if (!connection.pageId || !connection.pageToken) return { ok: false, message: "Connect your Facebook Page first (Marketing Hub → Facebook Page). The picture is kept in its photos.", status: 409 };
   const ai = await resolveGeminiConfig(admin, tenantId);
   const image = await geminiImagenImage({

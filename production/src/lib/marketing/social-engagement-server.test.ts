@@ -60,13 +60,15 @@ describe("R-2689 reading comments", () => {
     expect(saved.every((s) => s.tenant_id === T)).toBe(true);
     expect(saved[1].author).toBe("@asha");
     expect(calls.find((c) => c.table === "social_content")!.filters).toContainEqual(["tenant_id", T]);
+    expect(calls.find((c) => c.table === "social_content")!.filters).toContainEqual(["page_id", "999"]); // R-2729: only this Page's posts
+    expect((saved as unknown as { page_id: string }[]).every((s) => s.page_id === "999")).toBe(true);
   });
 
   it("missing permission is saved as the plain help text, not a silent empty list", async () => {
     const { db, calls } = fakeDb({ "social_content:select": [{ id: "c1", platform: "facebook", external_id: "999_1" }] });
     fetchMock.mockResolvedValue(err(10, "(#10) This endpoint requires the 'pages_read_user_content' permission"));
     expect(await fetchComments(db, T, CONN)).toEqual({ added: 0, noPermission: true });
-    const settings = calls.find((c) => c.table === "social_content_settings")!.payload as { comments_problem: string };
+    const settings = calls.find((c) => c.table === "social_pages")!.payload as { comments_problem: string }; // R-2729: saved on the Page
     expect(settings.comments_problem).toBe(COMMENT_PERMISSION_HELP);
   });
 });

@@ -1,4 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import { syncPagesFromLogin } from "@/lib/marketing/social-pages.server";
 import {
   disconnectFacebookPage, facebookPageCaller, listFacebookPages, metaAppCreds, pendingIsFresh,
   readFacebookPage, selectFacebookPage,
@@ -40,9 +42,14 @@ export async function POST(request: NextRequest) {
   try {
     const connection = await readFacebookPage(caller.admin, caller.tenantId);
     if (!connection.pendingToken || !pendingIsFresh(connection.pendingAt)) return NextResponse.json({ error: "Page selection expired. Connect Facebook again." }, { status: 409 });
-    const page = (await listFacebookPages(connection.pendingToken)).find((item) => item.id === pageId);
+    const pages = await listFacebookPages(connection.pendingToken);
+    const page = pages.find((item) => item.id === pageId);
     if (!page) return NextResponse.json({ error: "This Page is not available to your Facebook account." }, { status: 403 });
     await selectFacebookPage(caller.admin, caller.tenantId, caller.userId, page);
+    /* R-2729: Social growth may run every Page this login manages — save them all (sealed); the
+       chosen Page is the main one and is on, the others wait in "Manage Pages". Never blocks the connect. */
+    await syncPagesFromLogin(caller.admin as unknown as SupabaseClient, caller.tenantId, pages, page.id)
+      .catch((e) => console.error("[facebook-page] pages for Social growth not saved", e instanceof Error ? e.message : "unknown"));
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[facebook-page] select failed", error instanceof Error ? error.message : "unknown");

@@ -13,6 +13,8 @@ import { createAdminClientFor } from "@/lib/supabase/server";
 import { canWriteSocial, socialRole } from "@/lib/marketing/social-content";
 import { makePostPicture } from "@/lib/marketing/social-picture.server";
 import { logPersonActivity } from "@/lib/marketing/social-activity";
+import { pageConnection, resolvePage } from "@/lib/marketing/social-pages.server";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -21,6 +23,8 @@ export const maxDuration = 120;
 const Body = z.object({
   topic: z.string().trim().max(500).default(""),
   caption: z.string().trim().max(2200).default(""),
+  /* R-2729: the Page whose photos keep the picture (the main Page when left out). */
+  pageId: z.string().regex(/^\d{1,30}$/).optional(),
 });
 
 export async function POST(req: Request) {
@@ -30,9 +34,13 @@ export async function POST(req: Request) {
   const parsed = Body.safeParse(await req.json().catch(() => null));
   if (!parsed.success) return NextResponse.json({ error: "Write the post first, then make the picture." }, { status: 400 });
   try {
-    const result = await makePostPicture(createAdminClientFor(session.userId), session.tenantId, parsed.data);
+    const typed = createAdminClientFor(session.userId);
+    const page = await resolvePage(typed as unknown as SupabaseClient, session.tenantId, parsed.data.pageId ?? null);
+    const connection = page ? await pageConnection(typed as unknown as SupabaseClient, session.tenantId, page.page_id) : undefined;
+    const result = await makePostPicture(typed, session.tenantId, { topic: parsed.data.topic, caption: parsed.data.caption }, connection?.pageToken ? connection : undefined);
     if (!result.ok) return NextResponse.json({ error: result.message }, { status: result.status });
-    await logPersonActivity(session, { platform: "facebook", action: "Made a picture with AI", detail: (parsed.data.topic || parsed.data.caption).slice(0, 120) });
+    if (result.ok) Object.assign(result, { pageId: page?.page_id ?? null });
+    await logPersonActivity(session, { pageId: page?.page_id ?? null, platform: "facebook", action: "Made a picture with AI", detail: (parsed.data.topic || parsed.data.caption).slice(0, 120) });
     return NextResponse.json(result);
   } catch (e) {
     console.error("[social-picture] failed", e instanceof Error ? e.message : "unknown");

@@ -10,10 +10,9 @@ import { z } from "zod";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getTenantSession } from "@/server/auth/session";
 import { createAdminClientFor } from "@/lib/supabase/server";
-import { readFacebookPage } from "@/lib/integrations/facebook-page";
+import { listPages, pageConnection } from "@/lib/marketing/social-pages.server";
 import { canReviewSocial, socialRole } from "@/lib/marketing/social-content";
 import { draftReplies, fetchComments, sendReply, COMMENT_PERMISSION_HELP } from "@/lib/marketing/social-engagement.server";
-import { readAutopilotSettings } from "@/lib/marketing/social-autopilot.server";
 import { logPersonActivity } from "@/lib/marketing/social-activity";
 
 export const dynamic = "force-dynamic";
@@ -22,7 +21,8 @@ export const maxDuration = 120;
 
 const UUID = z.string().uuid();
 const Body = z.discriminatedUnion("action", [
-  z.object({ action: z.literal("check") }),
+  /* R-2729: one Page, or every switched-on Page when pageId is left out. */
+  z.object({ action: z.literal("check"), pageId: z.string().regex(/^\d{1,30}$/).optional() }),
   z.object({ action: z.literal("send"), id: UUID, text: z.string().trim().min(1, "Write the reply first.").max(800) }),
   z.object({ action: z.literal("ignore"), id: UUID }),
 ]);
@@ -45,18 +45,25 @@ export async function POST(req: Request) {
       await logPersonActivity(session, { platform: row.platform, action: "Ignored a comment", detail: row.message.slice(0, 120) });
       return NextResponse.json({ ok: true });
     }
-    const connection = await readFacebookPage(typed, session.tenantId);
-    if (!connection.pageId || !connection.pageToken) return NextResponse.json({ error: "Connect your Facebook Page first.", description: "Marketing Hub → Facebook Page." }, { status: 409 });
     if (input.action === "check") {
-      const s = await readAutopilotSettings(session);
-      const { data: settings } = await admin.from("social_content_settings").select("comment_mode").eq("tenant_id", session.tenantId).maybeSingle();
-      const mode = ((settings as { comment_mode?: "off" | "ask" | "auto" } | null)?.comment_mode ?? "ask");
-      const got = await fetchComments(admin, session.tenantId, connection);
-      if (got.noPermission) return NextResponse.json({ error: "Meta did not let the app read comments.", description: COMMENT_PERMISSION_HELP }, { status: 409 });
-      const drafts = mode === "off" ? { drafted: 0, sent: 0 } : await draftReplies(admin, session.tenantId, connection, { mode, aiPaused: s.ai_paused, brief: s.brief });
-      return NextResponse.json({ ok: true, added: got.added, ...drafts });
+      const pages = (await listPages(admin, session.tenantId, { activeOnly: true })).filter((p) => !input.pageId || p.page_id === input.pageId);
+      if (!pages.length) return NextResponse.json({ error: "Connect your Facebook Page first.", description: "Marketing Hub → Facebook Page." }, { status: 409 });
+      const { data: paused } = await admin.from("social_content_settings").select("ai_paused").eq("tenant_id", session.tenantId).maybeSingle();
+      const aiPaused = Boolean((paused as { ai_paused?: boolean } | null)?.ai_paused);
+      let added = 0, drafted = 0, sent = 0, noPermission = false;
+      for (const page of pages) {
+        const c = await pageConnection(admin, session.tenantId, page.page_id);
+        if (!c.pageId || !c.pageToken) continue;
+        const connection = { pageId: c.pageId, pageToken: c.pageToken };
+        const got = await fetchComments(admin, session.tenantId, connection);
+        noPermission ||= got.noPermission;
+        added += got.added;
+        if (page.comment_mode !== "off") { const d = await draftReplies(admin, session.tenantId, connection, { mode: page.comment_mode, aiPaused, brief: page.brief }); drafted += d.drafted; sent += d.sent; }
+      }
+      if (noPermission && added === 0) return NextResponse.json({ error: "Meta did not let the app read comments.", description: COMMENT_PERMISSION_HELP }, { status: 409 });
+      return NextResponse.json({ ok: true, added, drafted, sent });
     }
-    const sent = await sendReply(admin, session.tenantId, connection, input.id, input.text, { actor: "person", userId: session.userId, name: "" });
+    const sent = await sendReply(admin, session.tenantId, { pageId: null, pageToken: null }, input.id, input.text, { actor: "person", userId: session.userId, name: "" });
     if (!sent.ok) return NextResponse.json({ error: sent.error, description: sent.noPermission ? COMMENT_PERMISSION_HELP : "Nothing was posted. Try again." }, { status: sent.noPermission ? 409 : 502 });
     return NextResponse.json({ ok: true });
   } catch (e) {

@@ -13,6 +13,7 @@ import { runScheduledPublish, type DueRow } from "@/lib/marketing/social-publish
 import { gatedCron, cronTenantAllowed } from "@/lib/automation/cron-gate";
 import { logSystemActivity } from "@/lib/marketing/social-activity";
 import { engagementSweep } from "@/lib/marketing/social-engagement.server";
+import { pageConnection } from "@/lib/marketing/social-pages.server";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -30,7 +31,7 @@ async function handle(_req: Request) {
     const result = await runScheduledPublish({
       async listDue(now, limit) {
         const { data, error } = await admin.from("social_content")
-          .select("id, tenant_id, platform, format, caption, media_url, status, scheduled_at, origin")
+          .select("id, tenant_id, platform, format, caption, media_url, status, scheduled_at, origin, page_id")
           .eq("status", "approved").not("scheduled_at", "is", null).lte("scheduled_at", now.toISOString())
           .order("scheduled_at", { ascending: true }).limit(limit);
         if (error) throw error;
@@ -43,7 +44,11 @@ async function handle(_req: Request) {
         if (error) throw error;
         return (data ?? []).length === 1;
       },
-      connection: (tenantId) => readFacebookPage(typed, tenantId),
+      /* R-2729: each post goes out with its own Page's token (main Page for older rows). */
+      async connection(tenantId, pageId) {
+        if (pageId) { const c = await pageConnection(admin, tenantId, pageId); if (c.pageToken) return c; }
+        return readFacebookPage(typed, tenantId);
+      },
       publish: (row, connection) => publishWithPage(row, connection),
       async complete(id, externalId, error) {
         const { error: dbError } = await admin.from("social_content").update({

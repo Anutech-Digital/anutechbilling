@@ -64,6 +64,12 @@ the app, comments get an answer within a day, and the page shows the follower ch
   best post, comments answered) with the AI's advice from real numbers only; "Make report now" too.
 - **Daily to-do (R-2691):** 5 things only a person may do (invites, commenting on others' posts,
   sharing to groups, real photos, reviews), made once a day; ticks are saved and logged in Activity.
+- **Many Pages (R-2729..R-2731):** connecting Facebook saves every Page the login manages (token sealed
+  in `social_page_tokens`, service role only); the chosen Page is the main one and is on, others are
+  switched on in "Manage Pages". Every post, comment, strategy, follower count and report carries its
+  `page_id`; each Page posts with its own token. "All Pages" shows each Page's followers, waiting
+  approvals and comments; a post can go to several Pages (the AI adjusts the text per Page; an AI
+  picture is copied to each Page's photos). The to-do list is one list for all Pages.
 - **AI pictures (R-2697):** one picture per post, no words/logos/prices/real people, kept as an
   unpublished photo on the Page; the fresh image link is read just before posting.
 
@@ -100,6 +106,8 @@ the app, comments get an answer within a day, and the page shows the follower ch
 | Posts a week | 3 default, 1–7 setting | decided in session, 11 Nov 2026 |
 | Same text on every platform? | No — same topic + picture, text per platform from its strategy | Abhishek, 12 Nov 2026 |
 | Strategy should update from data | Yes — weekly; keep what works, change what does not | Abhishek, 12 Nov 2026 |
+| One company, many Pages? | Yes — one person runs the Pages of several business portfolios (each with its Instagram) from one screen: Page picker + All Pages; each Page has its own brief and AI mode; Stop all AI stays company-wide (R-2729..R-2731) | Abhishek, 13 Nov 2026 |
+| Which Pages does the marketing team see? | All Pages | Abhishek, 13 Nov 2026 |
 | Score of a post | likes + 2×comments + 3×shares + 3×saves; 3 results minimum to learn | decided in session, 12 Nov 2026 |
 
 ## 8. Cards graph
