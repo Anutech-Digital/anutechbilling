@@ -52,6 +52,16 @@ export type RenewalCatalogPick<T extends RenewalCatalogRow> = { row: T; how: "it
 
 const norm = (s: string | null | undefined) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
 
+/** Words that say WHICH tier of a product (the quote matchers' list). */
+const TIER_WORDS = new Set(["enterprise", "plus", "standard", "starter", "basic", "premium", "premier", "professional"]);
+/** Words that make a row a different product from the plain licence (rev-r2736 F1). */
+const QUALIFIER_WORDS = new Set(["archived", "archive", "flexible", "flex", "voice", "support"]);
+
+function wordSet(s: string | null | undefined, from: ReadonlySet<string>): Set<string> {
+  return new Set((s ?? "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => from.has(w)).map((w) => (w === "flex" ? "flexible" : w === "archive" ? "archived" : w)));
+}
+const sameSet = (a: ReadonlySet<string>, b: ReadonlySet<string>) => a.size === b.size && [...a].every((x) => b.has(x));
+
 /**
  * Which catalogue row a renewal of `plan` is. `rows` = the tenant's items (any order). The item_id row
  * counts even when inactive (the subscription was sold from it); a name / match pick is from active rows
@@ -76,11 +86,18 @@ export function pickRenewalCatalogItem<T extends RenewalCatalogRow>(
   if (named.length === 1) return { row: named[0], how: "name" };
   if (named.length > 1) return null;   // two rows with one name: which cost is ours is not knowable
 
-  /* A support plan row ("… Business Standard Support") contains the licence's name; it is never the
-     licence's cost unless the plan itself is a support plan. */
-  const isSupport = (r: T) => r.vendor === "support" || /\bsupport\b/i.test(r.name ?? "");
-  const planIsSupport = /\bsupport\b/i.test(plan);
-  const pool = active.filter((r) => isSupport(r) === planIsSupport);
+  /* rev-r2736 F1: a match is the SAME product line — its tier words (standard, plus, enterprise …) are
+     exactly the plan's, and it carries a qualifier (archived, flexible, voice, support …) only when the
+     plan says the same. "Business Standard" is never "Enterprise Standard", "Business Starter" never
+     "… Starter Archived User", a plan with no tier never a Starter row. A support plan row is never a
+     licence's cost (vendor support counts as the "support" qualifier). */
+  const planTiers = wordSet(plan, TIER_WORDS);
+  const planQualifiers = wordSet(plan, QUALIFIER_WORDS);
+  const pool = active.filter((r) => {
+    const q = wordSet(r.name, QUALIFIER_WORDS);
+    if (r.vendor === "support") q.add("support");
+    return sameSet(wordSet(r.name, TIER_WORDS), planTiers) && sameSet(q, planQualifiers);
+  });
   const offered = suggestCatalogMatches(pool, plan, 10);
   /* matchCatalogItemForPlan takes the FIRST row containing the plan name; two such rows (a Flexible and
      an Annual copy) → which one's cost is ours is not knowable → no pick. */
@@ -149,9 +166,16 @@ export function pickDomainCatalogItem<T extends RenewalCatalogRow>(
   }
   if (!sub.tld.replace(/^\.+/, "")) return null;
   const tld = `.${sub.tld.replace(/^\.+/, "").toLowerCase()}`;
+  /* rev-r2736 F4: a Transfer row is never a renewal's cost; with several rows for the extension the
+     Renewal row wins, then the Registration row; anything still ambiguous → no pick. */
   const hits = rows.filter((r) =>
-    r.vendor === "domain" && r.is_active !== false &&
+    r.vendor === "domain" && r.is_active !== false && !/\btransfer/i.test(r.name ?? "") &&
     (norm(r.name).split(" ").includes(tld) || norm(r.name) === tld.slice(1)));
+  for (const pick of [/\brenew/i, /\bregist/i]) {
+    const preferred = hits.filter((r) => pick.test(r.name ?? ""));
+    if (preferred.length === 1) return { row: preferred[0], how: "name" };
+    if (preferred.length > 1) return null;
+  }
   return hits.length === 1 ? { row: hits[0], how: "name" } : null;
 }
 
