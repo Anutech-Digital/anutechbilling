@@ -38,7 +38,7 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
 }) {
   if (loading) return null;
   if (failed) return <p className={cn("text-2xs text-ink-3", className)}>Last quote / invoice: couldn&apos;t load — reload the page</p>;
-  const invoices = docs?.invoices?.length ? docs.invoices : docs?.invoice ? [docs.invoice] : [];
+  const invoices = docs?.invoices ?? [];
   /* R-2748: one fact one place — the newest quote sent is not repeated when it is an invoice's own quote */
   const quote = docs?.quote && !invoices.some((i) => i.sourceQuoteId === docs.quote?.id) ? docs.quote : null;
   const gap = priorDueInvoiceGap(docs, priorDue, todayIst);
@@ -65,7 +65,12 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
         </div>
       )}
       {invoices.map((inv, n) => (
-        <InvoiceLine key={inv.id} invoice={inv} label={n === 0 ? "Last invoice" : "Invoice before it"} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} />
+        <InvoiceLine
+          key={inv.id} invoice={inv} label={n === 0 ? "Last invoice" : "Earlier invoice"} canInvoices={canInvoices} canQuotes={canQuotes}
+          /* one fact one place: two parts billed from one quote name it once */
+          showQuote={!invoices.slice(0, n).some((x) => x.sourceQuoteId === inv.sourceQuoteId)}
+          todayIst={todayIst}
+        />
       ))}
       {gap && <p className="break-words text-ink-3" data-testid="renewal-prior-due-no-invoice">{gap}</p>}
     </div>
@@ -74,17 +79,18 @@ export function LastDocsLines({ docs, loading, failed, canQuotes, canInvoices, t
 
 /** One invoice: "Invoice <no.> · ₹total · <state>" (state coloured by TONE) + "for <period>" (else its
  *  date) "· from Q-… · <state>". Fed by a list in LastDocsLines (R-2748: the last two). */
-function InvoiceLine({ invoice, label, canInvoices, canQuotes, todayIst }: {
+function InvoiceLine({ invoice, label, canInvoices, canQuotes, showQuote, todayIst }: {
   invoice: LastInvoice;
   label: string;
   canInvoices: boolean;
   canQuotes: boolean;
+  showQuote: boolean;
   todayIst: string;
 }) {
   const state = invoiceStatusWords(invoice, todayIst);
   const total = invoiceTotalWords(invoice);
-  const src = invoice.sourceQuote ?? null;
-  const srcState = src ? sourceQuoteState(src, todayIst) : "";
+  const src = showQuote ? invoice.sourceQuote ?? null : null;
+  const srcState = src ? sourceQuoteState(src) : "";
   return (
     <div
       data-doc-line="invoice"

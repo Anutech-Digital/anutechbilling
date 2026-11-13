@@ -46,6 +46,22 @@ describe("R-2748 the last two invoices, newest first", () => {
     expect(out.invoice?.id).toBe("INV-3");
   });
 
+  it("review: an older invoice still OWED is never pushed off by two newer paid ones", () => {
+    const out = lastDocsBySubscription(input({
+      quotes: [
+        q({ id: "Q-A", invoice_id: "INV-OWED" }),
+        q({ id: "Q-B", renewal_subscription_id: SUB, invoice_id: "INV-P1", created_at: "2026-01-01T05:00:00Z" }),
+        q({ id: "Q-C", renewal_subscription_id: SUB, invoice_id: "INV-P2", created_at: "2026-10-01T05:00:00Z" }),
+      ],
+      invoices: [
+        inv({ id: "INV-OWED", quote_id: "Q-A", due_date: "2025-10-15" }),
+        inv({ id: "INV-P1", quote_id: "Q-B", invoice_date: "2026-01-01", status: "paid", paid_amount: 11800 }),
+        inv({ id: "INV-P2", quote_id: "Q-C", invoice_date: "2026-10-01", status: "paid", paid_amount: 11800 }),
+      ],
+    })).get(SUB)!;
+    expect(ids(out.invoices)).toEqual(["INV-P2", "INV-OWED"]);
+  });
+
   it("one invoice → a list of one; none → []", () => {
     const one = lastDocsBySubscription(input({ quotes: [q({ id: "Q-A", invoice_id: "INV-1" })], invoices: [inv({ id: "INV-1", quote_id: "Q-A" })] })).get(SUB)!;
     expect(ids(one.invoices)).toEqual(["INV-1"]);
@@ -87,8 +103,9 @@ describe("R-2748 the last two invoices, newest first", () => {
     const [n, o] = out.invoices;
     expect(n.sourceQuote?.id).toBe("Q-B");
     expect(o.sourceQuote?.id).toBe("Q-A");
-    expect(sourceQuoteState(o.sourceQuote!, TODAY)).toBe("Accepted");   // "Invoiced" says nothing next to its invoice
-    expect(sourceQuoteState(n.sourceQuote!, TODAY)).toBe("Paid");
+    expect(sourceQuoteState(o.sourceQuote!)).toBe("Accepted");   // "Invoiced" says nothing next to its invoice
+    /* review: never a payment word — the quote says "received" but the invoice line owns Paid / Overdue */
+    expect(sourceQuoteState(n.sourceQuote!)).toBe("Sent");
   });
 
   it("the invoice's whole value in its own currency", () => {
@@ -107,6 +124,8 @@ describe("R-2748 the last two invoices, newest first", () => {
     const withNotes = attachDocDetails(docs, { quotes: [], notes: new Map([["INV-1", { credit: 11800, debit: 0 }]]) }).get(SUB)!;
     expect(withNotes.invoices.find((i) => i.id === "INV-1")?.notes).toEqual({ credit: 11800, debit: 0 });
     expect(withNotes.invoices.find((i) => i.id === "INV-2")?.notes).toEqual({ credit: 0, debit: 0 });
+    /* review: `invoice` is the same object as its entry in `invoices` — one copy of each fact */
+    expect(withNotes.invoices).toContain(withNotes.invoice);
   });
 });
 

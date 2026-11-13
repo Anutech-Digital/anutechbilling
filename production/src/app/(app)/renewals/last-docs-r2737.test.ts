@@ -272,9 +272,9 @@ describe("R-2737 (d) the cell never widens the table; one batched read", () => {
     expect(paras.length).toBe(5);
     for (const p of paras) expect(p).toMatch(/break-words/);
     /* the full words live in a title on each document */
-    /* R-2748: an invoice's title starts with its label ("Last invoice" / "Invoice before it") */
+    /* R-2748: an invoice's title starts with its label ("Last invoice" / "Earlier invoice") */
     expect((block.match(/title=\{`(Last quote sent|\$\{label\}):/g) ?? []).length).toBe(2);
-    expect(block).toContain('"Last invoice" : "Invoice before it"');
+    expect(block).toContain('"Last invoice" : "Earlier invoice"');
     expect(cell).not.toContain("invoicePaidText");
   });
   it("details come in ONE extra round of batched reads (no per-row read)", () => {
