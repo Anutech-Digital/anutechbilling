@@ -79,3 +79,42 @@
 
 /* Focus: the design's 3px marigold ring. */
 .anutech-site[data-site-theme="warm"] :focus-visible { outline: 3px solid #F4B740; outline-offset: 3px; }
+
+/* ── Home + Business Email pages (HomeV2's C palette, HomeCompany, ProductPeek) ──────────────
+   Those components draw from --hv-* variables whose fallbacks are the classic values, so only
+   this block changes them. */
+.anutech-site[data-site-theme="warm"] {
+  --hv-ink: #17241F;
+  --hv-ink2: #2C3B35;
+  --hv-body: #4B5A53;
+  --hv-sec: #5E6B65;
+  --hv-faint: #7C8A84;            /* 3.6:1 — the classic #8A939E is 3.1:1; small print only */
+  --hv-blue: #0E6B5C;
+  --hv-blue-dk: #0A4F44;
+  --hv-blue-tint: #DCEFE8;
+  --hv-surf-t: #FAFBFA;
+  --hv-sect-t: #F2F9F6;
+  --hv-strip: #F5F7F4;
+  --hv-strip-bd: #E2E7E2;
+  --hv-border: #C9D3CD;
+  --hv-border-l: #E2E7E2;
+  --hv-hair: #EEF2EE;
+  --hv-strong: #C9D3CD;
+  --hv-table-head: #EEF2EE;
+  --hv-chip: #EEF5F1;
+  --hv-chip-bd: #DCE6E0;
+  --hv-card-img: linear-gradient(135deg, #EEF5F1, #DCEFE8);
+  --hv-btn-primary: #F4B740;
+  --hv-btn-primary-text: #17241F;
+  --hv-btn-shadow: 0 12px 26px -16px rgba(201, 138, 18, 0.65);
+  --hv-btn-shadow-hover: 0 16px 30px -16px rgba(201, 138, 18, 0.75);
+  --hv-final-band: linear-gradient(135deg, #12312A, #0E6B5C);
+}
+
+/* CatScene illustrations draw with SVG fill/stroke ATTRIBUTES, which cannot take a CSS variable;
+   a CSS rule outranks a presentation attribute, so the classic blues are swapped here instead. */
+.anutech-site[data-site-theme="warm"] svg [stroke="#1668E3"] { stroke: #0E6B5C; }
+.anutech-site[data-site-theme="warm"] svg [fill="#1668E3"] { fill: #0E6B5C; }
+.anutech-site[data-site-theme="warm"] svg [fill="#DCE8FB"] { fill: #DCEFE8; }
+.anutech-site[data-site-theme="warm"] svg [fill="#B9D0F5"] { fill: #9ED3C3; }
+.anutech-site[data-site-theme="warm"] svg [stroke="#B9D0F5"] { stroke: #9ED3C3; }

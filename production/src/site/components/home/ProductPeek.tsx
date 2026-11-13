@@ -76,7 +76,7 @@ const CSS = `
 .pk-body{display:grid;grid-template-columns:150px minmax(0,1fr);min-height:220px}
 .pk-menu{list-style:none;margin:0;padding:12px 8px;border-right:1px solid ${C.hair};background:${C.surfT};display:flex;flex-direction:column;gap:2px;border-radius:0 0 0 14px}
 .pk-menu li{font-size:12px;color:${C.body};padding:6px 10px;border-radius:7px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.pk-menu li.on{background:#E8F0FD;color:${C.blueDk};font-weight:600}
+.pk-menu li.on{background:var(--hv-blue-tint,#E8F0FD);color:${C.blueDk};font-weight:600}
 .pk-main{padding:14px 16px;min-width:0}
 .pk-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px}
 .pk-head b{font-size:15px;color:${C.ink}}
@@ -85,7 +85,7 @@ const CSS = `
 .pk-rows{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px}
 .pk-rows li{display:grid;grid-template-columns:64px minmax(0,auto) minmax(24px,1fr);align-items:center;gap:10px;padding:8px 10px;border:1px solid ${C.hair};border-radius:9px;background:#fff}
 .pk-tag{font-family:${MONO};font-size:9.5px;letter-spacing:.06em;text-transform:uppercase;text-align:center;border-radius:5px;padding:3px 0;font-weight:500}
-.pk-blue{background:#E8F0FD;color:${C.blueDk}}
+.pk-blue{background:var(--hv-blue-tint,#E8F0FD);color:${C.blueDk}}
 .pk-green{background:${C.greenT2};color:${C.green}}
 .pk-text{font-size:12.5px;color:${C.ink2};white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .pk-skel{display:block;height:7px;border-radius:4px;background:${C.hair}}

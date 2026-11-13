@@ -344,7 +344,7 @@ const CSS = `
 .hc-ticks li::before{content:"✓ "}
 .hc-actions{display:flex;flex-wrap:wrap;gap:12px;align-items:center}
 .hc-btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;border-radius:9px;padding:13px 20px;font-size:15px;font-weight:600;text-decoration:none;border:1px solid transparent;cursor:pointer;font-family:inherit}
-.hc .hc-btn-primary{background:linear-gradient(180deg,#1668E3,#0A47A0);color:#fff;box-shadow:0 12px 26px -16px rgba(22,104,227,.7)}
+.hc .hc-btn-primary{background:var(--hv-btn-primary,linear-gradient(180deg,#1668E3,#0A47A0));color:var(--hv-btn-primary-text,#fff);box-shadow:var(--hv-btn-shadow,0 12px 26px -16px rgba(22,104,227,.7))}
 .hc-btn-primary:disabled{opacity:.6;cursor:wait}
 .hc .hc-btn-wa{background:#fff;color:${C.green};border-color:${C.green}}
 .hc .hc-btn-ghost{background:#fff;color:${C.blue};border-color:${C.border}}
@@ -374,7 +374,7 @@ const CSS = `
 .hc-tile{display:flex;flex-direction:column;gap:6px;background:#fff;border:1px solid ${C.borderL};border-radius:12px;padding:20px;box-shadow:0 12px 30px -26px rgba(12,17,22,.3)}
 .hc-tile b{font-size:16.5px;color:${C.ink};letter-spacing:-.01em}
 .hc-tile span:last-child{font-size:14px;line-height:1.55}
-.hc-ico{display:inline-flex;width:40px;height:40px;align-items:center;justify-content:center;border-radius:10px;background:#E8F0FD;color:${C.blue};margin-bottom:6px}
+.hc-ico{display:inline-flex;width:40px;height:40px;align-items:center;justify-content:center;border-radius:10px;background:var(--hv-blue-tint,#E8F0FD);color:${C.blue};margin-bottom:6px}
 .hc-grid3 li:nth-child(even) .hc-ico{background:${C.greenT2};color:${C.green}}
 
 .hc-proof{display:grid;grid-template-columns:1.2fr 1fr;gap:40px;align-items:center;padding-block:56px}
@@ -391,12 +391,12 @@ const CSS = `
 .hc-step-body span{font-size:14px;line-height:1.5}
 .hc-step-who{font-family:${MONO};font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;flex:none;align-self:flex-start;margin-top:2px;padding:3px 8px;border-radius:999px}
 .hc-who-you{background:${C.greenT2};color:${C.green}}
-.hc-who-we{background:#E8F0FD;color:${C.blueDk}}
+.hc-who-we{background:var(--hv-blue-tint,#E8F0FD);color:${C.blueDk}}
 
 .hc-it{padding-block:56px}
 .hc-grid4{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:16px}
 .hc .hc-card{display:flex;flex-direction:column;background:#fff;border:1px solid ${C.borderL};border-radius:11px;padding:0 17px 14px;box-shadow:0 12px 30px -26px rgba(12,17,22,.3);text-decoration:none;color:inherit;overflow:hidden}
-.hc-card-img{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:16/9;margin:0 -17px 12px;background:linear-gradient(135deg,#F2F6FB,#E8ECF1);border-bottom:1px solid ${C.hair};overflow:hidden}
+.hc-card-img{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:16/9;margin:0 -17px 12px;background:var(--hv-card-img,linear-gradient(135deg,#F2F6FB,#E8ECF1));border-bottom:1px solid ${C.hair};overflow:hidden}
 .hc-card-img img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
 .hc-card-name{font-size:15px;color:${C.ink}}
 .hc-card-price{display:flex;align-items:baseline;gap:6px;margin-top:8px}
@@ -420,7 +420,7 @@ const CSS = `
 .hc-faq-row button span:last-child{font-family:${MONO};font-size:19px;color:${C.blue}}
 .hc-faq-row p{font-size:15px;line-height:1.6;margin:0 0 20px}
 
-.hc-final{background:linear-gradient(135deg,#0A47A0,#1668E3);padding-block:44px}
+.hc-final{background:var(--hv-final-band,linear-gradient(135deg,#0A47A0,#1668E3));padding-block:44px}
 .hc-final-in{display:flex;align-items:center;justify-content:space-between;gap:24px;flex-wrap:wrap}
 .hc-on-dark{color:#fff}
 .hc-on-dark-sub{color:#DCE8FB;font-size:15.5px;line-height:1.55;margin:0;max-width:640px}
@@ -432,7 +432,7 @@ const CSS = `
   .hc-tile,.hc .hc-card{transition:opacity .55s ease,transform .25s ease,box-shadow .25s ease}
   .hc-tile:hover,.hc .hc-card:hover{transform:translateY(-3px);box-shadow:0 22px 40px -28px rgba(12,17,22,.45)}
   .hc .hc-btn-primary{transition:transform .2s ease,box-shadow .2s ease}
-  .hc .hc-btn-primary:hover{transform:translateY(-1px);box-shadow:0 16px 30px -16px rgba(22,104,227,.8)}
+  .hc .hc-btn-primary:hover{transform:translateY(-1px);box-shadow:var(--hv-btn-shadow-hover,0 16px 30px -16px rgba(22,104,227,.8))}
 }
 
 @media (max-width:980px){

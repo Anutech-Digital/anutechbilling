@@ -43,17 +43,22 @@ import { MAIL_RATES } from "@/site/lib/data/catalog";
 import { CONTACT_FOR_PRICING, PLUS_EDITION } from "@/lib/catalog/public-price-policy";
 
 /* Design tokens — the handoff's exact palette. */
+/* Website theme (Settings → Branding, docs/WEBSITE-THEME.md): each colour is a CSS variable whose
+   fallback is the classic value, so the Classic site renders exactly as before; site-warm.css sets
+   the --hv-* variables only under data-site-theme="warm". Guarded by site-warm-scope.test.ts. */
 export const C = {
-  ink: "#0C1116", ink2: "#2A333D", body: "#4A5560", sec: "#5C6672", faint: "#8A939E",
-  blue: "#1668E3", blueDk: "#0A47A0", green: "#0F7B4F", greenT: "#EEF7F0", greenT2: "#E7F4ED",
-  surf: "#fff", surfT: "#FBFCFE", sectT: "#F7FAFD", strip: "#F5F7FB", stripBd: "#E6EAF0",
-  border: "#D6DCE4", borderL: "#E0E5EC", hair: "#EEF1F5", strong: "#C6CED8", tableHead: "#EEF2F8",
+  ink: "var(--hv-ink, #0C1116)", ink2: "var(--hv-ink2, #2A333D)", body: "var(--hv-body, #4A5560)", sec: "var(--hv-sec, #5C6672)", faint: "var(--hv-faint, #8A939E)",
+  blue: "var(--hv-blue, #1668E3)", blueDk: "var(--hv-blue-dk, #0A47A0)", green: "#0F7B4F", greenT: "#EEF7F0", greenT2: "#E7F4ED",
+  surf: "#fff", surfT: "var(--hv-surf-t, #FBFCFE)", sectT: "var(--hv-sect-t, #F7FAFD)", strip: "var(--hv-strip, #F5F7FB)", stripBd: "var(--hv-strip-bd, #E6EAF0)",
+  border: "var(--hv-border, #D6DCE4)", borderL: "var(--hv-border-l, #E0E5EC)", hair: "var(--hv-hair, #EEF1F5)", strong: "var(--hv-strong, #C6CED8)", tableHead: "var(--hv-table-head, #EEF2F8)",
 };
 export const MONO = "var(--font-mono), 'IBM Plex Mono', monospace";
-const BTN_PRIMARY = "linear-gradient(180deg, #1668E3, #0A47A0)";
+const BTN_PRIMARY = "var(--hv-btn-primary, linear-gradient(180deg, #1668E3, #0A47A0))";
+/** Text on BTN_PRIMARY: white on the classic blue, dark ink on the warm theme's marigold. */
+const BTN_PRIMARY_TEXT = "var(--hv-btn-primary-text, #fff)";
 const SH_CARD = "0 12px 30px -26px rgba(12,17,22,.3)";
 const SH_GREEN = "0 20px 46px -30px rgba(15,123,79,.55)";
-const SH_BTN = "0 12px 26px -16px rgba(22,104,227,.7)";
+const SH_BTN = "var(--hv-btn-shadow, 0 12px 26px -16px rgba(22,104,227,.7))";
 
 const inr = (n: number) => "₹" + Math.round(n).toLocaleString("en-IN");
 const WA = (text: string) => `${WHATSAPP_URL}?text=${encodeURIComponent(text)}`;
@@ -340,7 +345,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                   <div style={{ fontSize: 12.5, color: C.ink2, marginTop: 8, padding: "7px 10px", background: pop ? "#fff" : C.sectT, borderRadius: 8 }}>
                     <b style={{ fontWeight: 600 }}>{total}</b> for {seats} user{seats > 1 ? "s" : ""} + GST
                   </div>
-                  <a href={buyHref} {...(payHref || onlinePay ? {} : { target: "_blank", rel: "noopener" })} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 14, fontWeight: 600, padding: "11px 8px", borderRadius: 8, background: BTN_PRIMARY, color: "#fff", border: "none", marginTop: 14, boxShadow: SH_BTN, textDecoration: "none" }}>
+                  <a href={buyHref} {...(payHref || onlinePay ? {} : { target: "_blank", rel: "noopener" })} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 14, fontWeight: 600, padding: "11px 8px", borderRadius: 8, background: BTN_PRIMARY, color: BTN_PRIMARY_TEXT, border: "none", marginTop: 14, boxShadow: SH_BTN, textDecoration: "none" }}>
                     {payHref || !onlinePay ? <><CartIcon /> Buy now</> : "Get a monthly quote"}
                   </a>
                   <p style={{ fontSize: 11, color: C.sec, textAlign: "center", margin: "6px 0 0" }}>
@@ -353,7 +358,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
                     {(expanded[e.name] ? shown : shown.slice(0, 5)).map((f) => (
                       <span key={f} style={{ display: "flex", gap: 9, fontSize: 12.5, lineHeight: 1.4, color: C.ink2 }}>
-                        <svg aria-hidden viewBox="0 0 24 24" width="15" height="15" fill="none" stroke={C.blue} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><path d="M20 6 9 17l-5-5" /></svg>
+                        <svg aria-hidden viewBox="0 0 24 24" width="15" height="15" fill="none" style={{ stroke: C.blue }} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><path d="M20 6 9 17l-5-5" /></svg>
                         <span>{f}</span>
                       </span>
                     ))}
@@ -383,7 +388,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                   <p style={{ fontSize: 12.5, lineHeight: 1.45, color: C.sec, margin: "4px 0 14px", minHeight: 36 }}>{DESC[PLUS_EDITION]}</p>
                   <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.02em", color: C.ink, lineHeight: 1.2 }}>{CONTACT_FOR_PRICING}</div>
                   <div style={{ fontSize: 12, color: C.sec, marginTop: 4 }}>We send the price for {seats} user{seats > 1 ? "s" : ""} {SLA.quote}</div>
-                  <Link href={quoteHref as never} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 14, fontWeight: 600, padding: "11px 8px", borderRadius: 8, background: BTN_PRIMARY, color: "#fff", border: "none", marginTop: 14, boxShadow: SH_BTN, textDecoration: "none" }}>
+                  <Link href={quoteHref as never} style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 14, fontWeight: 600, padding: "11px 8px", borderRadius: 8, background: BTN_PRIMARY, color: BTN_PRIMARY_TEXT, border: "none", marginTop: 14, boxShadow: SH_BTN, textDecoration: "none" }}>
                     Get a quote
                   </Link>
                   <a href={WA(`Hi Anutech — please send the Google Workspace Business Plus price for ${seats} user${seats > 1 ? "s" : ""} (${annual ? "annual" : "monthly"}).`)} target="_blank" rel="noopener" style={{ fontSize: 12.5, fontWeight: 600, color: C.green, textAlign: "center", margin: "8px 0 0", textDecoration: "none" }}>
@@ -394,7 +399,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
                     {plusDelta.slice(0, 5).map((f) => (
                       <span key={f} style={{ display: "flex", gap: 9, fontSize: 12.5, lineHeight: 1.4, color: C.ink2 }}>
-                        <svg aria-hidden viewBox="0 0 24 24" width="15" height="15" fill="none" stroke={C.blue} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><path d="M20 6 9 17l-5-5" /></svg>
+                        <svg aria-hidden viewBox="0 0 24 24" width="15" height="15" fill="none" style={{ stroke: C.blue }} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><path d="M20 6 9 17l-5-5" /></svg>
                         <span>{f}</span>
                       </span>
                     ))}
@@ -504,7 +509,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                       <td style={{ padding: "14px 16px", fontSize: 13.5, fontWeight: 600, color: C.ink }}>Made your choice?</td>
                       {head.map((v) => (
                         <td key={v.k} style={{ padding: "12px 16px", borderLeft: `1px solid ${C.hair}` }}>
-                          <a href={buy(v.name)} target="_blank" rel="noopener" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 12.5, fontWeight: 600, padding: "9px 12px", borderRadius: 8, background: BTN_PRIMARY, color: "#fff", boxShadow: SH_BTN, textDecoration: "none", whiteSpace: "nowrap" }}><CartIcon /> Buy {v.name.split(" ")[0]}</a>
+                          <a href={buy(v.name)} target="_blank" rel="noopener" style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", gap: 6, fontSize: 12.5, fontWeight: 600, padding: "9px 12px", borderRadius: 8, background: BTN_PRIMARY, color: BTN_PRIMARY_TEXT, boxShadow: SH_BTN, textDecoration: "none", whiteSpace: "nowrap" }}><CartIcon /> Buy {v.name.split(" ")[0]}</a>
                         </td>
                       ))}
                     </tr>
@@ -570,7 +575,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                 <ul style={{ listStyle: "none", margin: "10px 0 14px", padding: 0, display: "grid", gap: 5 }}>
                   {am.lines.map((l) => <li key={l} style={{ fontSize: 13.5, color: C.ink2 }}><span style={{ color: C.green, fontWeight: 700 }}>✓</span> {l}</li>)}
                 </ul>
-                <Link href="/quote" style={{ display: "inline-block", background: BTN_PRIMARY, color: "#fff", borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 600, textDecoration: "none", boxShadow: SH_BTN }}>Get a mailbox quote →</Link>
+                <Link href="/quote" style={{ display: "inline-block", background: BTN_PRIMARY, color: BTN_PRIMARY_TEXT, borderRadius: 8, padding: "10px 18px", fontSize: 14, fontWeight: 600, textDecoration: "none", boxShadow: SH_BTN }}>Get a mailbox quote →</Link>
               </div>
             </div>
           </section>
@@ -588,7 +593,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
             {CATALOGUE_V2.map((c) => (
               <Link key={c.name} href={c.href as never} style={{ display: "flex", flexDirection: "column", background: C.surf, border: `1px solid ${C.borderL}`, borderRadius: 11, padding: "16px 17px 14px", boxShadow: SH_CARD, textDecoration: "none", color: "inherit" }}>
                 {/* 16:9 icon band */}
-                <span style={{ display: "flex", alignItems: "center", justifyContent: "center", position: "relative", aspectRatio: "16/9", margin: "-16px -17px 12px", overflow: "hidden", background: "linear-gradient(135deg, #F2F6FB, #E8ECF1)", borderBottom: `1px solid ${C.hair}`, borderRadius: "11px 11px 0 0" }}>
+                <span style={{ display: "flex", alignItems: "center", justifyContent: "center", position: "relative", aspectRatio: "16/9", margin: "-16px -17px 12px", overflow: "hidden", background: "var(--hv-card-img, linear-gradient(135deg, #F2F6FB, #E8ECF1))", borderBottom: `1px solid ${C.hair}`, borderRadius: "11px 11px 0 0" }}>
                   {c.img
                     ? <img src={c.img} alt="" loading="lazy" style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} />
                     : <CatScene kind={c.icon} />}
@@ -602,7 +607,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                 <span style={{ fontSize: 12.5, lineHeight: 1.45, color: C.sec, marginTop: 10, minHeight: 54 }}>{c.body}</span>
                 <span style={{ display: "flex", flexWrap: "wrap", gap: 5, marginTop: 2, minHeight: 44, alignContent: "flex-start" }}>
                   {c.tags.map((t) => (
-                    <span key={t} style={{ fontFamily: MONO, fontSize: 8.5, fontWeight: 500, letterSpacing: "0.09em", textTransform: "uppercase", color: C.body, background: "#F2F6FB", border: "1px solid #E4EAF2", padding: "3px 7px", borderRadius: 999, whiteSpace: "nowrap" }}>{t}</span>
+                    <span key={t} style={{ fontFamily: MONO, fontSize: 8.5, fontWeight: 500, letterSpacing: "0.09em", textTransform: "uppercase", color: C.body, background: "var(--hv-chip, #F2F6FB)", border: "1px solid var(--hv-chip-bd, #E4EAF2)", padding: "3px 7px", borderRadius: 999, whiteSpace: "nowrap" }}>{t}</span>
                   ))}
                 </span>
                 <span style={{ display: "flex", alignItems: "center", gap: 6, marginTop: "auto", paddingTop: 12, borderTop: `1px solid ${C.hair}`, fontSize: 12.5, fontWeight: 600, color: C.blue }}>{c.cta} <span aria-hidden>→</span></span>

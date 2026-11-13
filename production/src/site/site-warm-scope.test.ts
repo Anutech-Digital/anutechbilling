@@ -57,3 +57,30 @@ describe("the (marketing) layout applies the stored theme", () => {
     expect(layout).toMatch(/data-site-theme=\{theme\}/);
   });
 });
+
+/**
+ * Page components (HomeV2's C palette, HomeCompany, ProductPeek) take their colours from
+ * `var(--hv-…, <classic value>)`. Two ways that silently breaks:
+ *   - a var with NO fallback → on the Classic site the colour resolves to nothing;
+ *   - a var site-warm.css never sets → the Warm site keeps the classic colour there.
+ */
+describe("--hv-* page colours: classic fallback always, warm value always", () => {
+  const files = ["src/site/components/home/HomeV2.tsx", "src/site/components/home/HomeCompany.tsx", "src/site/components/home/ProductPeek.tsx"];
+  const sources = files.map((f) => readFileSync(path.join(root, f), "utf8")).join("\n");
+  const uses = [...sources.matchAll(/var\(--hv-([a-z0-9-]+)(\s*,)?/g)];
+  const warmDefined = new Set([...css.matchAll(/--hv-([a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+
+  it("finds the variables (the scan is reading the right files)", () => {
+    expect(uses.length).toBeGreaterThan(20);
+  });
+
+  it("every use carries the classic value as its fallback", () => {
+    const bare = uses.filter((m) => !m[2]).map((m) => m[1]);
+    expect(bare).toEqual([]);
+  });
+
+  it("every variable a page uses is set by the warm theme", () => {
+    const missing = [...new Set(uses.map((m) => m[1]))].filter((v) => !warmDefined.has(v));
+    expect(missing).toEqual([]);
+  });
+});
