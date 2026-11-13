@@ -537,7 +537,11 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [ctcBase, setCtcBase] = React.useState<CtcFormBase>({
     gross: employee?.monthly_gross ? String(employee.monthly_gross) : "",
     basic: employee?.basic_monthly != null ? String(employee.basic_monthly) : "",
+    da: String(employee?.da_monthly ?? 0),
   });
+  /* R-2722 review: a CTC typed and then cleared is no CTC — editing the gross / Basic / DA after
+     that works on the form's own figures again (not the pre-CTC ones). */
+  const ctcCleared = ctcTyped && annualCtc.trim() === "";
   const policyQ = usePayrollPolicy();
   const policy = policyQ.data ?? DEFAULT_PAYROLL_POLICY;
   const [isMetro, setIsMetro] = React.useState(false);
@@ -581,9 +585,11 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
     /* Review M1: typing back the CTC shown gives the same gross; a typed CTC keeps the saved Basic.
        R-2722: "saved" = the salary the form held when the CTC was started (ctcBase). */
     saved: Number(ctcBase.gross) > 0
-      ? { gross: Math.round(Number(ctcBase.gross)), basic: ctcBase.basic.trim() !== "" ? Math.round(Number(ctcBase.basic) || 0) : null, da: Number(daMonthly) || 0 }
+      ? { gross: Math.round(Number(ctcBase.gross)), basic: ctcBase.basic.trim() !== "" ? Math.round(Number(ctcBase.basic) || 0) : null, da: Number(ctcBase.da) || 0 }
       : null,
-    keepSavedBasic: !basicPctTouched,
+    /* R-2722 review: only an EXISTING employee keeps a saved Basic (or "Basic not set"); a new
+       employee's gross typed before the CTC is split by the policy Basic %. */
+    keepSavedBasic: !basicPctTouched && Boolean(employee),
     calc: {
       isMetro,
       basicPct,
@@ -594,7 +600,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
       customSpecialMonthly: Number(customSpecial) || undefined,
       customPtMonthly: customPt !== "" ? Number(customPt) : undefined,
     },
-  }), [ctcBase, ctcTyped, annualCtc, gross, basicMonthly, basicByHand, basicPctTouched, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt]);
+  }), [employee, ctcBase, ctcTyped, annualCtc, gross, basicMonthly, basicByHand, basicPctTouched, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt]);
   /* R-2700: a typed CTC fills Monthly Gross + Basic at once (no Apply press) unless the gross was
      typed by hand afterwards, or the salary is set by revisions (R-2699 — gross locked). */
   /* Review M2 + code review: a split that is over budget, an empty CTC, or the CTC the saved salary
@@ -737,7 +743,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     value={ctcTyped || ctcBreakdown.source !== "saved" ? annualCtc : String(ctcBreakdown.annualCtc)}
                     onChange={(e) => {
                       /* R-2722: remember the salary the form held before this CTC (the saved one, or a gross typed by hand). */
-                      if (!ctcTyped || grossByHand) setCtcBase({ gross, basic: basicMonthly });
+                      if (!ctcTyped || grossByHand) setCtcBase({ gross, basic: basicMonthly, da: daMonthly });
                       setCtcTyped(true); setGrossByHand(false); setAnnualCtc(e.target.value);
                     }}
                   />
@@ -755,7 +761,7 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
               </div>
 
               <Field htmlFor="payroll-monthly-gross-salary-base" label="Monthly Gross Salary (₹, Base for Pay Slip)">
-                <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} disabled={salaryByRevision} onChange={(e) => { if (ctcTyped) setGrossByHand(true); setGross(e.target.value); }} placeholder="e.g. 46997" />
+                <Input id="payroll-monthly-gross-salary-base" type="number" min={0} value={gross} disabled={salaryByRevision} onChange={(e) => { if (ctcCleared) setCtcTyped(false); else if (ctcTyped) setGrossByHand(true); setGross(e.target.value); }} placeholder="e.g. 46997" />
                 {/* R-2700: one line — how this gross comes from the CTC (or that it is the saved / hand-typed one). */}
                 <p data-testid="ctc-formula" className="mt-1 text-xs text-ink-2">{ctcFormulaText(ctcBreakdown, salaryByRevision ? undefined : Number(gross) || 0)}{salaryByRevision && ctcTyped ? " This employee's gross is set by salary revisions — use Revise salary to change it." : ""}</p>
                 {/* R-2699: an increment from a month goes through Revise salary (history + old salary for earlier months). */}
@@ -898,6 +904,8 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                           /* R-2722: no Basic set → leave it not set (PF / gratuity stay on the whole gross). */
                           if (!ctcBreakdown.basicAssumed) setBasicMonthly(String(ctcBreakdown.basicMonthly));
                           setGrossByHand(false);
+                          /* R-2722 review: what was applied is the salary a later cleared CTC goes back to. */
+                          setCtcBase({ gross: String(ctcBreakdown.grossMonthly), basic: ctcBreakdown.basicAssumed ? basicMonthly : String(ctcBreakdown.basicMonthly), da: daMonthly });
                           /* R-2698: this used to switch PF (and ESI) back ON — an owner who had just
                              turned them off in Statutory & Access got them back. The switches live
                              only there now. */
@@ -1074,11 +1082,11 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     <div className="grid grid-cols-2 gap-2">
                       <div>
                         <label htmlFor="payroll-basic-month" className="block text-xs font-medium text-ink-2 mb-1">Basic (₹/month)</label>
-                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => { setBasicByHand(e.target.value.trim() !== ""); setBasicMonthly(e.target.value); }} placeholder={gross ? String(Math.round((Number(gross) || 0) * 0.5)) : "e.g. 15000"} />
+                        <Input id="payroll-basic-month" type="number" min={0} value={basicMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setBasicByHand(e.target.value.trim() !== ""); setBasicMonthly(e.target.value); }} placeholder={gross ? String(Math.round((Number(gross) || 0) * 0.5)) : "e.g. 15000"} />
                       </div>
                       <div>
                         <label htmlFor="payroll-da-month" className="block text-xs font-medium text-ink-2 mb-1">DA (₹/month)</label>
-                        <Input id="payroll-da-month" type="number" min={0} value={daMonthly} onChange={(e) => setDaMonthly(e.target.value)} />
+                        <Input id="payroll-da-month" type="number" min={0} value={daMonthly} onChange={(e) => { if (ctcCleared) setCtcTyped(false); setDaMonthly(e.target.value); }} />
                       </div>
                     </div>
                     {basicMonthly.trim() !== "" && (Number(basicMonthly) || 0) + (Number(daMonthly) || 0) > (Number(gross) || 0) && (

@@ -21,7 +21,7 @@ const form: CtcTabInput = {
   pfApplicable: true, esiApplicable: true, pfFullWage: false, includeGratuity: true, ctcIncludesEmployer: true,
   saved: prashant, calc: { asOf: NOV, customConveyanceMonthly: 1_600, customMedicalMonthly: 1_250 },
 };
-const base = { gross: "17850", basic: "10000" };
+const base = { gross: "17850", basic: "10000", da: "0" };
 const fill = (b: ReturnType<typeof ctcTabBreakdown>, over: Partial<Parameters<typeof ctcFormFill>[0]> = {}) =>
   ctcFormFill({ ctcTyped: true, grossByHand: false, salaryByRevision: false, basicByHand: false, breakdown: b, base, ...over });
 
@@ -48,6 +48,15 @@ describe("R-2722 item 1 — CTC typed then cleared", () => {
     const f = fill(cleared);
     expect(f).toEqual({ gross: "17850", basic: "10000" });
     expect(Math.round(Number(f?.gross) || 0)).toBe(17_850); // what submit() saves as monthly_gross
+  });
+  it("a CTC too small to give a gross (typing '5' on the way to 5,00,000) keeps the saved gross", () => {
+    for (const keepSavedBasic of [true, false]) {
+      for (const saved of [prashant, { gross: 30_000, basic: null, da: 0 }]) {
+        const b = ctcTabBreakdown({ ...form, saved, keepSavedBasic, ctcTyped: true, annualCtc: 5 });
+        expect(b.grossMonthly === 0 || b.overBudget).toBe(true);
+        expect(fill(b)).toEqual({ gross: "17850", basic: "10000" });
+      }
+    }
   });
   it("leaves the form alone when nothing was typed, the gross was typed by hand, or salary is by revisions", () => {
     const b = ctcTabBreakdown(form);
@@ -83,7 +92,7 @@ describe("R-2722 item 2 — Apply Salary Structure guard + G2 / G3", () => {
       expect(b.overBudget).toBe(false);
       expect(b.costToCompanyMonthly).toBeLessThanOrEqual(b.monthlyCtc);
       // the form fills the gross but leaves Basic empty (not set)
-      expect(fill(b, { base: { gross: "30000", basic: "" } })?.basic).toBe("");
+      expect(fill(b, { base: { gross: "30000", basic: "", da: "0" } })?.basic).toBe("");
     }
     // a bigger raise still fills the most gross that fits, and says Basic is not set
     const raise = ctcTabBreakdown({ ...noBasic, ctcTyped: true, annualCtc: 480_000 });
@@ -104,10 +113,14 @@ describe("R-2722 item 2 — Apply Salary Structure guard + G2 / G3", () => {
     expect(big.grossMonthly).toBeGreaterThan(21_000); // no employer ESI above the ceiling
   });
   it("G3: new employee — gross typed by hand, a CTC typed then cleared → the hand-typed gross comes back", () => {
-    const newEmp: CtcTabInput = { ...form, saved: { gross: 15_000, basic: null, da: 0 }, gross: 15_000, basic: null };
-    const newBase = { gross: "15000", basic: "" };
+    // a new employee does not keep "Basic not set" (the dialog passes keepSavedBasic false) — the policy % splits
+    const newEmp: CtcTabInput = { ...form, saved: { gross: 15_000, basic: null, da: 0 }, gross: 15_000, basic: null, keepSavedBasic: false };
+    const newBase = { gross: "15000", basic: "", da: "0" };
     const typed = ctcTabBreakdown({ ...newEmp, ctcTyped: true, annualCtc: 240_000 });
-    expect(fill(typed, { base: newBase })?.gross).not.toBe("15000");
+    expect(typed.basicAssumed).toBe(false);
+    expect(typed.basicMonthly).toBe(10_000); // 50% of CTC/12
+    expect(fill(typed, { base: newBase })).toEqual({ gross: String(typed.grossMonthly), basic: "10000" });
+    expect(typed.grossMonthly).not.toBe(15_000);
     const cleared = ctcTabBreakdown({ ...newEmp, ctcTyped: true, annualCtc: 0 });
     expect(cleared.grossMonthly).toBe(15_000);
     expect(fill(cleared, { base: newBase })).toEqual({ gross: "15000", basic: "" });

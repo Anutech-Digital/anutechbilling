@@ -181,9 +181,10 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
             <div className="rounded-md border border-amber/40 bg-amber-soft/40 px-3 py-2 text-xs text-amber-ink">
               {bookedNote.booked}
               {" "}The difference, about <b>{rupee(arrearsEstimate)}</b>, is offered as <b>arrears</b> in the next Pay salary.
-              {bookedNote.legacy && <span data-testid="revise-legacy-months" className="block mt-1 font-medium">{bookedNote.legacy}</span>}
             </div>
           ) : null}
+          {/* Shown whatever the arrears are — a guessed old salary matters most when it gives none. */}
+          {bookedNote.legacy && <p data-testid="revise-legacy-months" className="text-xs font-medium text-amber-ink">{bookedNote.legacy}</p>}
 
           <div>
             <label htmlFor="revise-note" className={label}>Note (optional)</label>
