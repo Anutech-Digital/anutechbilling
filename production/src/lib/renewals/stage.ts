@@ -11,14 +11,15 @@
  * invoice, follow-up / risk facts). Tested in stage-r2738.test.ts.
  *
  * Stage, first match wins:
- *   stopped   Service stopped / Cancelled             (status / renewal_state suspended; status cancelled)
- *   ending    Won't renew · ends <date>               (auto_renew = false)
+ *   stopped   Service stopped / Cancelled / Paused / Expired   (no renewal to send; money still owed is carried)
+ *   ending    Won't renew · ends <date> / Ended <date> (auto_renew = false; money still owed is carried)
  *   renewed   Renewed                                 (the renewal is PAID — never on raise: R-2735 / money rule N7)
  *   invoiced  Invoiced · ₹x due | ₹x overdue Nd       (the renewal's tax invoice is raised and something is still due)
  *   draft     Draft part quote · <period>             (ownerRule2: the part's quote editor was closed unsaved;
  *                                                     a whole-term draft stays "due" — userAudit14Nov)
  *   sent      Renewal quote sent · <period>           (renewal quote / the part's quote with the customer, unpaid;
  *                                                     a linked renewal quote not loaded or closed counts as sent, R-2232)
+ *   quote-closed  Renewal quote expired / rejected / cancelled · <period>   (the linked quote is closed)
  *   part-due  Part not billed (<Mon>) / N parts not billed        (billed in parts, the next term's part started, nothing raised)
  *   due       Due in Nd / Due today / Overdue Nd      (nothing sent yet)
  *
@@ -122,7 +123,7 @@ export interface StageInput {
 
 // ─── Stage ──────────────────────────────────────────────────────────────────
 
-export type StageKey = "stopped" | "ending" | "renewed" | "invoiced" | "draft" | "sent" | "part-due" | "due";
+export type StageKey = "stopped" | "ending" | "renewed" | "invoiced" | "draft" | "sent" | "quote-closed" | "part-due" | "due";
 export type StageTone = "danger" | "warning" | "info" | "success" | "muted";
 
 export type FlagKey = "atRisk" | "vendorHold" | "priorTermUnpaid" | "promiseBroken" | "followUpDue";
@@ -154,6 +155,10 @@ export interface RenewalStage {
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 const OPEN_DOC = new Set(["sent", "viewed", "accepted"]);
+/** rev-r2738 MED 3 (coordinator, 13 Nov): statuses with no renewal to send — the chip names them. */
+const STOPPED_LABEL: Record<string, string> = { suspended: "Service stopped", cancelled: "Cancelled", paused: "Paused", expired: "Expired" };
+/** rev-r2738 MED 5: a linked renewal quote that is closed — its own word on the chip. */
+const CLOSED_QUOTE_WORD: Record<string, string> = { rejected: "rejected", cancelled: "cancelled", expired: "expired", void: "cancelled" };
 
 /** Whole IST calendar days from today to a date (last-docs.ts daysBetweenIst — one copy). */
 export const istDays = daysBetweenIst;
@@ -171,7 +176,8 @@ export function daysTone(days: number | null): StageTone {
 /** ₹ for INR (no currency = INR), the invoice's own currency otherwise; paise kept below ₹1 so a balance never reads "₹0". */
 export function stageMoney(amount: number, currency: string | null | undefined): string {
   const code = (currency ?? "INR").toUpperCase();
-  const decimals = Math.abs(amount) < 1 ? 2 : 0;
+  /* rev-r2738 LOW 7: the chip never rounds what Record payment will ask for. */
+  const decimals = Number.isInteger(Math.round(amount * 100) / 100) ? 0 : 2;
   if (code === "INR") return rupee(amount, { decimals });
   try {
     return new Intl.NumberFormat("en-US", { style: "currency", currency: code, maximumFractionDigits: decimals, minimumFractionDigits: decimals }).format(amount);
@@ -197,10 +203,11 @@ function stageFlags(f: StageFlagInput | undefined): StageFlag[] {
 }
 
 /**
- * The row's ONE stage. First match wins (see the file header). `doc` / `invoice` that are paid,
- * closed or zero are ignored here, so a page that passes a stale one cannot make a row "owe".
- * A linked renewal quote the page did not pass as open (not loaded / closed) counts as sent —
- * R-2232's rule (renewalRowAction): a second renewal quote is never offered.
+ * The row's ONE stage. First match wins (see the file header). `doc` / `invoice` that are paid
+ * or zero are ignored here, so a page that passes a stale one cannot make a row "owe".
+ * A linked renewal quote the page did not pass (not loaded) counts as sent — R-2232's rule
+ * (renewalRowAction): a second renewal quote is never offered. A closed one (rejected / cancelled /
+ * expired / void) says so and is never chased for payment.
  */
 export function renewalStage(input: StageInput): RenewalStage {
   const { sub, todayIst } = input;
@@ -211,27 +218,48 @@ export function renewalStage(input: StageInput): RenewalStage {
     : null;
   const flags = stageFlags(input.flags);
   const invoice = input.invoice && input.invoice.amountDue > 0 ? input.invoice : null;
-  const base = { split, renewalDays, partDays, quoteId: null, quoteStatus: null, invoiceId: invoice?.id ?? null, partsBehind: 0, note: null };
-
-  /* Stopped / Won't renew keep their chip, but money still owed on the renewal stays visible (flags + Record payment). */
-  if (sub.status === "suspended" || sub.renewal_state === "suspended" || sub.status === "cancelled") {
-    const label = sub.status === "cancelled" ? "Cancelled" : "Service stopped";
-    return { ...base, key: "stopped", label, tone: "danger", days: renewalDays, flags };
-  }
-  if (sub.auto_renew === false) {
-    const label = sub.renewal_date ? `Won't renew · ends ${formatDate(sub.renewal_date)}` : "Won't renew";
-    return { ...base, key: "ending", label, tone: "warning", days: renewalDays, flags };
-  }
-
   const d = input.doc ?? null;
   const doc = d && (OPEN_DOC.has(d.status) || d.status === "draft") && d.paymentStatus !== "received" ? d : null;
+  /* With the customer and unpaid (a draft is not owed). */
+  const owedDoc = doc && doc.status !== "draft" ? doc : null;
+  const base = { split, renewalDays, partDays, quoteId: null, quoteStatus: null, invoiceId: invoice?.id ?? null, partsBehind: 0, note: null };
 
-  if (input.renewalPaid || d?.paymentStatus === "received") {
-    return { ...base, invoiceId: null, key: "renewed", label: "Renewed", tone: "success", days: renewalDays, flags: [] };
+  /* The day count of a document: the part's own due date, else renewal_date; a part names its date (userAudit14Nov). */
+  const docWhen = (x: { kind: "renewal" | "part"; dueDate?: string | null }) => {
+    const ref = x.kind === "part" && x.dueDate ? x.dueDate : sub.renewal_date;
+    const days = ref ? istDays(todayIst, ref) : null;
+    const when = days == null ? null : x.kind === "part" && ref !== sub.renewal_date ? `${dueWords(days)} · part due ${formatDate(ref)}` : dueWords(days);
+    return { days, when };
+  };
+  const sentWords = (x: StageDoc) => {
+    const period = x.period?.trim() || null;
+    return period ? `Renewal quote sent · ${period}` : "Renewal quote sent";
+  };
+  /* rev-r2738 HIGH 2: an ended row still shows (and collects) the renewal money it is owed. */
+  const owedOnEnded = owedDoc
+    ? { quoteId: owedDoc.quoteId, quoteStatus: owedDoc.status, note: [sentWords(owedDoc), docWhen(owedDoc).when].filter(Boolean).join(" · ") }
+    : invoice ? { note: `Invoiced · ${stageMoney(invoice.amountDue, invoice.currency)} due` } : {};
+
+  /* Stopped-like (rev-r2738 MED 3, coordinator): suspended, cancelled, paused, expired — no renewal to send. */
+  const stoppedLabel = sub.renewal_state === "suspended" ? "Service stopped" : STOPPED_LABEL[sub.status ?? ""];
+  if (stoppedLabel) {
+    return { ...base, ...owedOnEnded, key: "stopped", label: stoppedLabel, tone: "danger", days: renewalDays, flags };
+  }
+  if (sub.auto_renew === false) {
+    /* rev-r2738 LOW 10: past its date it has ended — the chip says so. */
+    const label = !sub.renewal_date ? "Won't renew"
+      : renewalDays != null && renewalDays < 0 ? `Ended ${formatDate(sub.renewal_date)}` : `Won't renew · ends ${formatDate(sub.renewal_date)}`;
+    return { ...base, ...owedOnEnded, key: "ending", label, tone: "warning", days: renewalDays, flags };
+  }
+
+  /* rev-r2738 HIGH 1: a paid renewal (or a later part paid) never hides an earlier document still unpaid. */
+  const renewedFlags = flags.filter((f) => f.key === "priorTermUnpaid");   // LOW 8: the previous term's money stays visible
+  if ((input.renewalPaid || d?.paymentStatus === "received") && !doc && !invoice) {
+    return { ...base, key: "renewed", label: "Renewed", tone: "success", days: renewalDays, flags: renewedFlags };
   }
   /* A settled 'renewed' state counts only when no renewal document is still unpaid (pre-R-2735 rows rolled on raise). */
   if (!doc && !invoice && isSettledRenewed(sub, istNoon(todayIst))) {
-    return { ...base, key: "renewed", label: "Renewed", tone: "success", days: renewalDays, flags: [] };
+    return { ...base, key: "renewed", label: "Renewed", tone: "success", days: renewalDays, flags: renewedFlags };
   }
 
   if (invoice) {
@@ -242,18 +270,20 @@ export function renewalStage(input: StageInput): RenewalStage {
     return { ...base, key: "invoiced", label, tone: daysTone(days), days, note: invoice.period ?? null, flags };
   }
 
-  /* R-2232: a linked renewal quote that is not open here (not loaded / closed) is treated as sent. */
+  /* R-2232: a linked renewal quote not passed as open is never a reason to make another one. */
   const linked: StageDoc | null = sub.renewal_quote_id
-    ? { kind: "renewal", quoteId: sub.renewal_quote_id, status: d && d.quoteId === sub.renewal_quote_id ? d.status : "unknown" }
+    ? d && d.quoteId === sub.renewal_quote_id ? d : { kind: "renewal", quoteId: sub.renewal_quote_id, status: "unknown" }
     : null;
   const sentDoc = doc ?? linked;
   if (sentDoc) {
-    const ref = sentDoc.kind === "part" && sentDoc.dueDate ? sentDoc.dueDate : sub.renewal_date;
-    const days = ref ? istDays(todayIst, ref) : null;
+    const { days, when } = docWhen(sentDoc);
     const period = sentDoc.period?.trim() || null;
-    /* userAudit14Nov: a part's day count says which date it counts from ("Overdue 44d · part due 1 Oct 2026"). */
-    const when = days == null ? null : sentDoc.kind === "part" && ref !== sub.renewal_date ? `${dueWords(days)} · part due ${formatDate(ref)}` : dueWords(days);
     const common = { ...base, tone: daysTone(days), days, quoteId: sentDoc.quoteId, quoteStatus: sentDoc.status, note: when, flags };
+    const closed = CLOSED_QUOTE_WORD[sentDoc.status];
+    if (closed) {
+      /* rev-r2738 MED 5: rejected / cancelled / expired — its own words; not chased for payment, not resent. */
+      return { ...common, key: "quote-closed", label: period ? `Renewal quote ${closed} · ${period}` : `Renewal quote ${closed}` };
+    }
     if (sentDoc.status === "draft" && sentDoc.kind === "renewal") {
       /* userAudit14Nov: opening the editor makes a draft — nothing went to the customer, so the row stays "due"
          (its Send renewal reopens THAT draft, R-2232). */
@@ -263,7 +293,7 @@ export function renewalStage(input: StageInput): RenewalStage {
       return { ...common, key: "draft", label: period ? `Draft part quote · ${period}` : "Draft part quote" };
     }
     /* ownerRule (13 Nov): "renewal quote sent with this period" — the period on the chip, the day count under it. */
-    return { ...common, key: "sent", label: period ? `Renewal quote sent · ${period}` : "Renewal quote sent" };
+    return { ...common, key: "sent", label: sentWords(sentDoc) };
   }
 
   if (split && sub.renewal_date) {
@@ -321,10 +351,10 @@ export const MENU_LABEL: Record<MenuItem, string> = {
   "resend-invoice": "Resend invoice / link",
   "follow-up": FOLLOW_UP,
   nudge: "Nudge",
-  voice: "Voice",
+  voice: "Voice note",
   "renew-anyway": "Renew anyway",
   "not-renewing": "Customer not renewing",
-  "undo-wont-renew": "Undo won't renew",
+  "undo-wont-renew": "Undo Won't renew",
   "view-subscription": "View subscription",
 };
 
@@ -361,11 +391,16 @@ export function renewalPrimary(stage: RenewalStage, sub: StageSub, ctx: PrimaryC
   const followUp = ctx.offers.followup ? btn("follow-up", FOLLOW_UP, false, stage) : null;
   const pay = () => btn("record-payment", RECORD_PAYMENT, false, stage);
 
-  /* Ended rows: no next step, except money still owed on the renewal (a stopped row unpaid, R-1621). */
+  /* Ended rows: no next step, except money still owed on the renewal — its tax invoice OR the unpaid renewal
+     quote / part proforma it carries (rev-r2738 HIGH 2; a stopped row unpaid, R-1621). */
+  const owed = stage.quoteId || stage.invoiceId ? pay() : null;
   if (stage.key === "renewed") return { primary: null, menu: ["view-subscription"], graceOver: false };
-  if (stage.key === "stopped") return { primary: stage.invoiceId ? pay() : null, menu: ["view-subscription"], graceOver: false };
+  if (stage.key === "stopped") return { primary: owed, menu: ["view-subscription"], graceOver: false };
   if (stage.key === "ending") {
-    return { primary: stage.invoiceId ? pay() : null, menu: ctx.canEndSubscription ? ["undo-wont-renew"] : [], graceOver: false };
+    /* rev-r2738 LOW 10: past its date the cancel path (Customer not renewing → Cancel dialog) joins Undo. */
+    const ended = stage.renewalDays != null && stage.renewalDays < 0;
+    const menu: MenuItem[] = !ctx.canEndSubscription ? [] : ended ? ["undo-wont-renew", "not-renewing"] : ["undo-wont-renew"];
+    return { primary: owed, menu, graceOver: false };
   }
 
   /* Grace is judged on renewal_date (+ grace_until), never on a part's own due date. */
@@ -402,10 +437,15 @@ export function renewalPrimary(stage: RenewalStage, sub: StageSub, ctx: PrimaryC
       primary = pay();
       menu.push("resend-invoice");
       break;
+    case "quote-closed":
+      /* rev-r2738 MED 5: a closed quote is not chased for payment nor resent; never a second Send renewal (R-2232). */
+      primary = followUp;
+      break;
   }
 
   /* ownerRule (3): Bill next part stays in ⋯ on a live split row (early billing) whenever it is not the button. */
-  if (stage.split && primary?.kind !== "bill-part") menu.push("bill-part");
+  /* rev-r2738 MED 4: never next to Continue — a second quote for the same part (ownerRule2 / R-2232). */
+  if (stage.split && stage.key !== "draft" && primary?.kind !== "bill-part") menu.push("bill-part");
   if (ctx.offers.followup && primary?.kind !== "follow-up") menu.push("follow-up");
   if (ctx.offers.messaging) menu.push("nudge", "voice");
   if (graceOver && canRenewAnyway(ctx.role) && ctx.vendorHold === "hold") menu.push("renew-anyway");
@@ -430,11 +470,11 @@ export const BULK_LATER_REASON = "renews in 91+ days — too early to send";
  * Otherwise the reason names the row's own state / button.
  */
 export function bulkSendDecision(stage: RenewalStage): { send: true } | { send: false; reason: string } {
-  /* due, or a whole-term draft (the send-now path sends THAT draft, R-2232) — the same rows for every role. */
-  if (!stage.split && stage.renewalDays != null && (stage.key === "due" || stage.key === "draft")) {
+  /* "due" only (a whole-term draft is "due" and send-now sends THAT draft, R-2232) — the same rows for every role. */
+  if (!stage.split && stage.renewalDays != null && stage.key === "due") {
     return stage.renewalDays > RENEWAL_FUTURE_DAYS ? { send: false, reason: BULK_LATER_REASON } : { send: true };
   }
-  if (stage.split && stage.key !== "renewed" && stage.key !== "ending" && stage.key !== "stopped") {
+  if (stage.split && (stage.key === "due" || stage.key === "part-due")) {
     return { send: false, reason: `billed in parts — use ${BILL_NEXT_PART}` };
   }
   return { send: false, reason: stage.label };

@@ -4,6 +4,7 @@
  */
 import { describe, it, expect } from "vitest";
 import {
+  MENU_LABEL,
   renewalStage, renewalPrimary, bulkSendDecision, notRenewingDialog, dueWords, daysTone,
   type StageSub, type StageInput, type PrimaryContext, type RenewalStage,
   SEND_RENEWAL, BILL_NEXT_PART, CONTINUE, FOLLOW_UP, RECORD_PAYMENT, BULK_LATER_REASON,
@@ -260,7 +261,7 @@ describe("R-2738 bulk Send renewal", () => {
 });
 
 describe("R-2738 review fixes", () => {
-  it("R-2232: a linked renewal quote not passed as open (not loaded / closed) is 'sent' — never a fresh Send renewal", () => {
+  it("R-2232: a linked renewal quote not loaded is 'sent', a closed one 'quote-closed' — never a fresh Send renewal", () => {
     const sub = annual({ renewal_quote_id: "Q-1" });
     const notLoaded = stage(sub);
     expect(notLoaded).toMatchObject({ key: "sent", quoteId: "Q-1", quoteStatus: "unknown" });
@@ -268,7 +269,7 @@ describe("R-2738 review fixes", () => {
     expect(act(notLoaded, sub).menu).not.toContain("change-renewal");
     expect(bulkSendDecision(notLoaded).send).toBe(false);
     const closed = stage(sub, { doc: { kind: "renewal", quoteId: "Q-1", status: "expired" } });
-    expect(closed).toMatchObject({ key: "sent", quoteStatus: "expired" });
+    expect(closed).toMatchObject({ key: "quote-closed", quoteStatus: "expired" });   // rev-r2738 MED 5
   });
 
   it("R-2710: Change renewal only on sent / viewed, not on accepted", () => {
@@ -316,7 +317,8 @@ describe("R-2738 review fixes", () => {
     const q = quarterly({ renewal_date: "2026-11-21" });
     const s = stage(q);
     expect(s.partDays).not.toBeNull();
-    expect(act(s, q).primary?.kind).toBe(s.partDays! <= 7 ? "bill-part" : "follow-up");
+    expect(s.partDays).toBe(8);   // renewal 21 Nov → the part starts 22 Nov
+    expect(act(s, q).primary?.kind).toBe("follow-up");
     const w = annual({ renewal_quote_id: "Q-W" });
     expect(bulkSendDecision(stage(w, { doc: { kind: "renewal", quoteId: "Q-W", status: "draft" } }))).toEqual({ send: true });
   });
@@ -340,5 +342,101 @@ describe("R-2738 userAudit14Nov notes", () => {
     const a = act(stage(f), f);
     expect(a.menu).toContain("not-renewing");
     expect(a.menu as string[]).not.toContain("cancel");
+  });
+});
+
+describe("R-2738 independent review rev-r2738 (UNSAFE d57880c37) fixes", () => {
+  it("HIGH 1: later part paid, earlier part unpaid → 'Renewal quote sent', never Renewed", () => {
+    const sub = flex({ renewal_date: "2026-11-10" });
+    const s = stage(sub, { renewalPaid: true, doc: { kind: "part", quoteId: "Q-OLD", status: "sent", dueDate: "2026-11-10", period: "Nov 2026" } });
+    expect(s).toMatchObject({ key: "sent", quoteId: "Q-OLD", label: "Renewal quote sent · Nov 2026" });
+    const i = stage(sub, { renewalPaid: true, invoice: { id: "INV-OLD", kind: "part", amountDue: 500 } });
+    expect(i.key).toBe("invoiced");
+  });
+
+  it("HIGH 2: stopped / cancelled carry the open unpaid renewal quote → Record payment", () => {
+    const st = annual({ status: "suspended", renewal_date: "2026-11-01" });
+    const s = stage(st, { doc: { kind: "renewal", quoteId: "Q-1", status: "sent", period: "1 Nov 2026 – 31 Oct 2027" } });
+    expect(s).toMatchObject({ key: "stopped", label: "Service stopped", quoteId: "Q-1", quoteStatus: "sent" });
+    expect(s.note).toMatch(/^Renewal quote sent · 1 Nov 2026/);
+    expect(act(s, st).primary).toMatchObject({ kind: "record-payment", quoteId: "Q-1" });
+    const c = annual({ status: "cancelled" });
+    expect(act(stage(c, { doc: { kind: "part", quoteId: "Q-P", status: "viewed" } }), c).primary?.kind).toBe("record-payment");
+    /* a draft is not owed */
+    expect(act(stage(st, { doc: { kind: "renewal", quoteId: "Q-D", status: "draft" } }), st).primary).toBeNull();
+  });
+
+  it("HIGH 2: Won't renew carries a sent unpaid part proforma → Record payment", () => {
+    const e = quarterly({ auto_renew: false });
+    const s = stage(e, { doc: { kind: "part", quoteId: "Q-P", status: "sent", dueDate: "2026-11-01" } });
+    expect(s).toMatchObject({ key: "ending", quoteId: "Q-P" });
+    expect(act(s, e).primary).toMatchObject({ kind: "record-payment", quoteId: "Q-P" });
+  });
+
+  it("MED 3: paused and expired are stopped-like — no Send renewal, not in bulk; money owed still shows", () => {
+    for (const [status, label] of [["paused", "Paused"], ["expired", "Expired"]] as const) {
+      const sub = annual({ status });
+      const s = stage(sub);
+      expect(s).toMatchObject({ key: "stopped", label });
+      expect(act(s, sub).primary).toBeNull();
+      expect(bulkSendDecision(s).send).toBe(false);
+      const owed = stage(sub, { invoice: { id: "INV-1", kind: "renewal", amountDue: 100 } });
+      expect(act(owed, sub).primary?.kind).toBe("record-payment");
+    }
+  });
+
+  it("MED 4: a draft part quote offers Continue only — no Bill next part in ⋯", () => {
+    const sub = flex();
+    const s = stage(sub, { doc: { kind: "part", quoteId: "Q-D", status: "draft" } });
+    expect(act(s, sub).menu).not.toContain("bill-part");
+    expect(act(s, sub, { ...billing, offers: { followup: false, messaging: false } }).menu).not.toContain("bill-part");
+  });
+
+  it("MED 5: a linked renewal quote rejected / cancelled / expired has its own label, no Record payment / Resend, never Send renewal", () => {
+    const sub = annual({ renewal_quote_id: "Q-1" });
+    for (const [st, word] of [["expired", "expired"], ["rejected", "rejected"], ["cancelled", "cancelled"]] as const) {
+      const s = stage(sub, { doc: { kind: "renewal", quoteId: "Q-1", status: st, period: "1 Dec 2026 – 30 Nov 2027" } });
+      expect(s).toMatchObject({ key: "quote-closed", label: `Renewal quote ${word} · 1 Dec 2026 – 30 Nov 2027` });
+      const a = act(s, sub);
+      expect(a.primary?.kind).toBe("follow-up");
+      expect(a.menu).not.toContain("record-payment");
+      expect(a.menu).not.toContain("resend");
+      expect(a.menu).not.toContain("send-as-is");
+      expect(act(s, sub, followupPage).primary).toBeNull();
+      expect(bulkSendDecision(s).send).toBe(false);
+    }
+  });
+
+  it("LOW 6: bulk never takes a draft key", () => {
+    const s = stage(flex(), { doc: { kind: "part", quoteId: "Q-D", status: "draft" } });
+    expect(bulkSendDecision({ ...s, split: false }).send).toBe(false);
+  });
+
+  it("LOW 7: fractional amounts keep 2 decimals", () => {
+    expect(stage(annual(), { invoice: { id: "I", kind: "renewal", amountDue: 1234.56 } }).label).toBe("Invoiced · ₹1,234.56 due");
+    expect(stage(annual(), { invoice: { id: "I", kind: "renewal", amountDue: 40.5, currency: "USD" } }).label).toBe("Invoiced · $40.50 due");
+    expect(stage(annual(), { invoice: { id: "I", kind: "renewal", amountDue: 1200 } }).label).toBe("Invoiced · ₹1,200 due");
+  });
+
+  it("LOW 8: Renewed keeps the previous-term-unpaid flag only", () => {
+    const s = stage(annual(), { renewalPaid: true, flags: { priorTermUnpaid: "Previous term ₹5,000 still unpaid", atRisk: { reasons: [] }, vendorHold: "hold" } });
+    expect(s.flags).toEqual([{ key: "priorTermUnpaid", reason: "Previous term ₹5,000 still unpaid" }]);
+  });
+
+  it("LOW 9: the app's own labels", () => {
+    expect(MENU_LABEL.voice).toBe("Voice note");
+    expect(MENU_LABEL["undo-wont-renew"]).toBe("Undo Won't renew");
+  });
+
+  it("LOW 10: Won't renew past its date → 'Ended <date>' + the cancel path in ⋯", () => {
+    const e = annual({ auto_renew: false, renewal_date: "2026-11-01" });
+    const s = stage(e);
+    expect(s.key).toBe("ending");
+    expect(s.label).toMatch(/^Ended /);
+    const a = act(s, e);
+    expect(a.primary).toBeNull();
+    expect(a.menu).toEqual(["undo-wont-renew", "not-renewing"]);
+    expect(notRenewingDialog(s)).toBe("cancel");
+    expect(act(s, e, billing).menu).toEqual([]);
   });
 });
