@@ -62,7 +62,7 @@ describe("R-2749 seat add while a renewal part is unpaid", () => {
       plan: "Google Workspace Business Starter", vendor: "google", domain: "test.in",
       currentSeats: 1, currentMrr: 333, additionalSeats: 1,
       renewalDate: OLD_TERM.renewal_date, termEnd: seatTermEnd(OLD_TERM), graceDays: 7,
-      taxRatePct: 0, termDays: resolveTermDays(OLD_TERM), chargeWindow: w,
+      taxRatePct: 0, termDays: resolveTermDays(OLD_TERM), chargeWindow: { ...w, parts: null },
       todayISO: "2026-10-10",
     });
     expect(r.ok).toBe(false);
