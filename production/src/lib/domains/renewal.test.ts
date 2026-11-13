@@ -64,6 +64,8 @@ function fakeDb(opts: {
   country?: string | null;
   /** What create_renewal_quote answers instead of "made it" (another run first / an error). */
   made?: { data: unknown; error: { message: string } | null };
+  /** R-2736: the tenant catalogue the cost is read from. */
+  items?: Record<string, unknown>[];
 } = {}) {
   const calls = { rpc: 0, made: [] as MadeArgs[], inserts: [] as Record<string, unknown>[], updates: [] as Record<string, unknown>[] };
   const q = (table: string) => {
@@ -71,6 +73,7 @@ function fakeDb(opts: {
     const self = () => chain;
     Object.assign(chain, {
       select: self, eq: self,
+      then: (ok: (v: unknown) => unknown) => ok({ data: table === "items" ? opts.items ?? [] : [], error: null }),
       maybeSingle: async () => ({ data: table === "quotes" ? opts.existingQuote ?? null : table === "customers" ? { country: opts.country ?? "IN" } : null, error: null }),
       insert: async (row: Record<string, unknown>) => { calls.inserts.push(row); return { error: null }; },
       update: (row: Record<string, unknown>) => { calls.updates.push(row); return { eq: () => ({ eq: () => ({ select: async () => ({ data: [{ id: "S1" }], error: null }) }) }) }; },
@@ -175,5 +178,36 @@ describe("R-1574: made and linked in ONE call — never a quote insert + a separ
     expect(r).toBeNull();
     expect(err.mock.calls.flat().join(" ")).toContain("belongs to another company");
     err.mockRestore();
+  });
+});
+
+/* R-2736: our cost from the catalogue, not 0 — a domain renewal quote no longer needs approval by default. */
+describe("R-2736 the domain renewal line's cost comes from the catalogue", () => {
+  const IN = { id: "SCN-R2712-DOMAIN-IN", name: "SCN R2712 Domain .in", vendor: "domain", msrp: 800, wholesale: 600, prices: { billing_unit: "unit_year" }, is_active: true };
+  const COIN = { id: "CO", name: "Domain .co.in", vendor: "domain", msrp: 700, wholesale: 500, prices: { billing_unit: "unit_year" }, is_active: true };
+
+  it("domain renewal cost: the one Domain row for .in → cost ₹600, item_id, total_cost; price stays live", async () => {
+    const { db, calls } = fakeDb({ items: [IN, COIN] });
+    await createDomainRenewalQuote({ ...base(db), price: async () => ({ ok: true, rupees: 899 }) });
+    const q = calls.made[0].p_quote;
+    const [line] = q.line_items as { rate: number; cost: number; item_id?: string }[];
+    expect(line).toMatchObject({ rate: 899, cost: 600, item_id: "SCN-R2712-DOMAIN-IN" });
+    expect(q.total_cost).toBe(600);
+    expect(q.subtotal).toBe(899);
+  });
+
+  it("the subscription's item_id wins", async () => {
+    const { db, calls } = fakeDb({ items: [IN, COIN] });
+    await createDomainRenewalQuote({ ...base(db), itemId: "CO", price: async () => ({ ok: true, rupees: 899 }) });
+    expect((calls.made[0].p_quote.line_items as { cost: number }[])[0].cost).toBe(500);
+  });
+
+  it("domain renewal unknown: no row for the extension → cost 0, no item_id (approval stays)", async () => {
+    const { db, calls } = fakeDb({ items: [COIN] });
+    await createDomainRenewalQuote({ ...base(db), price: async () => ({ ok: true, rupees: 899 }) });
+    const q = calls.made[0].p_quote;
+    expect((q.line_items as { cost: number; item_id?: string }[])[0]).toMatchObject({ cost: 0 });
+    expect((q.line_items as { item_id?: string }[])[0].item_id).toBeUndefined();
+    expect(q.total_cost).toBe(0);
   });
 });
