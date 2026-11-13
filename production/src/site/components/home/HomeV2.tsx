@@ -358,7 +358,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
                     {(expanded[e.name] ? shown : shown.slice(0, 5)).map((f) => (
                       <span key={f} style={{ display: "flex", gap: 9, fontSize: 12.5, lineHeight: 1.4, color: C.ink2 }}>
-                        <svg aria-hidden viewBox="0 0 24 24" width="15" height="15" fill="none" style={{ stroke: C.blue }} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><path d="M20 6 9 17l-5-5" /></svg>
+                        <svg aria-hidden viewBox="0 0 24 24" width="15" height="15" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ stroke: C.blue, flex: "none", marginTop: 1 }}><path d="M20 6 9 17l-5-5" /></svg>
                         <span>{f}</span>
                       </span>
                     ))}
@@ -399,7 +399,7 @@ export function HomeV2({ editions, page = "email", mailboxMonthly }: {
                   <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
                     {plusDelta.slice(0, 5).map((f) => (
                       <span key={f} style={{ display: "flex", gap: 9, fontSize: 12.5, lineHeight: 1.4, color: C.ink2 }}>
-                        <svg aria-hidden viewBox="0 0 24 24" width="15" height="15" fill="none" style={{ stroke: C.blue }} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flex: "none", marginTop: 1 }}><path d="M20 6 9 17l-5-5" /></svg>
+                        <svg aria-hidden viewBox="0 0 24 24" width="15" height="15" fill="none" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ stroke: C.blue, flex: "none", marginTop: 1 }}><path d="M20 6 9 17l-5-5" /></svg>
                         <span>{f}</span>
                       </span>
                     ))}
