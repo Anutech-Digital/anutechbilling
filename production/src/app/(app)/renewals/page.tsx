@@ -466,7 +466,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                     <p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>
                     <p className="mt-0.5 truncate text-2xs text-ink-3" title={amount.gst}>{amount.gst}</p>
                   </td>
-                  <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} compact /></td>
+                  <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} size="sm" compact /></td>
                   <td className="min-w-0 px-2 py-2.5">
                     <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} />
                   </td>

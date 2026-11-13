@@ -95,7 +95,9 @@ test.describe("R-2758 card test", () => {
   test("Step 2: sent renewal quote → 'Renewal quote sent' + Follow up; no second 'Quote sent' chip", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await rowOf(page, "CT R2758 Sent Plan");
-    await expect(r.getByTestId("stage-chip")).toContainText("Renewal quote sent");
+    /* R-2759: the table chip is short ("Quote sent"); the full words are its tooltip */
+    await expect(r.getByTestId("stage-chip")).toContainText("Quote sent");
+    await expect(r.getByTestId("stage-chip")).toHaveAttribute("title", /^Renewal quote sent/);
     await expect(r.getByTestId("stage-primary")).toHaveText(/Follow up/);
     await expect(r.getByText("Quote sent", { exact: true })).toHaveCount(0);
   });
@@ -103,7 +105,8 @@ test.describe("R-2758 card test", () => {
   test("Step 3: invoiced, unpaid → 'Invoiced · ₹1,180 due' + Record payment (opens the quote's own dialog)", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await rowOf(page, "CT R2758 Invoiced Plan");
-    await expect(r.getByTestId("stage-chip")).toContainText("Invoiced · ₹1,180 due");
+    await expect(r.getByTestId("stage-chip")).toHaveAttribute("title", /^Invoiced · ₹1,180 due/);
+    await expect(r.getByTestId("stage-line2")).toHaveText("₹1,180 due");
     await r.getByTestId("stage-primary").click();
     await expect(page).toHaveURL(/\/quotes\/Q-CT2758-C\?pay=1/, { timeout: 60_000 });
   });
@@ -111,7 +114,7 @@ test.describe("R-2758 card test", () => {
   test("Step 4: Won't renew → no button; ⋯ has 'Undo Won't renew'", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const r = await rowOf(page, "CT R2758 Ending Plan");
-    await expect(r.getByTestId("stage-chip")).toContainText("Won't renew · ends");
+    await expect(r.getByTestId("stage-chip")).toHaveAttribute("title", /^Won't renew · ends/);
     await expect(r.getByTestId("stage-primary")).toHaveCount(0);
     /* the ⋯ items need the signed-in role (Undo Won't renew is for owner / manager / accountant) — wait for it on a slow dev server */
     const more = r.getByRole("button", { name: /More renewal actions/ });

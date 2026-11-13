@@ -50,7 +50,7 @@ describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", 
     /* the stage chip may wrap in the table (Badge is whitespace-nowrap by default); its period is in
        Product & period and its day count / amount is line 2 (compactStage) */
     expect(page).toContain('className={compact ? "max-w-full whitespace-normal text-left" : undefined}');
-    expect(page).toContain("<StageChip stage={stage} compact />");
+    expect(page).toContain("<StageChip stage={stage} size=\"sm\" compact />");
     expect(page).toContain("const c = compact ? compactStage(stage)");
     /* the amount is never cut (it may wrap) */
     expect(page).toContain('<p className="break-words font-medium tabular-nums text-ink">{amount.text}</p>');

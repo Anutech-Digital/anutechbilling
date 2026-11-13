@@ -66,7 +66,11 @@ export function nextTermShort(sub: TermSub): string | null {
 export function compactStage(stage: Pick<RenewalStage, "key" | "label" | "note">): { chip: string; line2: string | null } {
   const at = stage.label.indexOf(" · ");
   if ((stage.key === "invoiced" || stage.key === "ending") && at > 0) return { chip: stage.label.slice(0, at), line2: stage.label.slice(at + 3) };
-  if ((stage.key === "sent" || stage.key === "draft" || stage.key === "quote-closed") && at > 0) return { chip: stage.label.slice(0, at), line2: stage.note };
+  /* "Renewal quote sent" wrapped to two lines in the 152px column (measured) — "Quote sent"; the full words are the tooltip */
+  if (stage.key === "sent" || stage.key === "draft" || stage.key === "quote-closed") {
+    const head = (at > 0 ? stage.label.slice(0, at) : stage.label).replace(/^Renewal quote /, "Quote ").replace(/^Draft part quote/, "Draft quote");
+    return { chip: head, line2: stage.note };
+  }
   return { chip: stage.label, line2: stage.key === "invoiced" ? null : stage.note };
 }
 
@@ -142,7 +146,8 @@ export function DueCell({ date, days }: { date: string | null; days: number | nu
   const sub = dueSubWords(days);
   return (
     <div className="min-w-0 tabular-nums" data-cell="due">
-      <p className="whitespace-nowrap text-ink">{date ? formatDate(date) : "—"}</p>
+      {/* "26 Nov 26" — the 88px column (measured: "26 Nov 2026" spilled at 1280); the full date is the tooltip */}
+      <p className="whitespace-nowrap text-ink" title={date ? formatDate(date) : undefined}>{date ? shortDate(date.slice(0, 10)) : "—"}</p>
       {sub && <p className="mt-0.5 whitespace-nowrap text-2xs text-ink-3">{sub}</p>}
     </div>
   );
