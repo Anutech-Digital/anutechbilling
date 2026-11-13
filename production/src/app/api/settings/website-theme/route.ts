@@ -11,10 +11,12 @@
  * tenants (tenants_self_update) is enforced as well as the check here; `.select("id")` tells
  * "saved" from "matched no row" (AGENTS.md L84).
  */
-import { NextResponse, type NextRequest } from "next/server";
+import { NextResponse } from "next/server";
+import { z } from "zod";
 import { revalidatePath } from "next/cache";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { RouteError, dbFail, withRoute } from "@/lib/api/with-route";
 import { websiteTenantId } from "@/lib/website-tenant";
 import {
   DEFAULT_WEBSITE_THEME,
@@ -67,40 +69,37 @@ export async function GET() {
   return NextResponse.json({ visible: true, ready: true, theme });
 }
 
-export async function PATCH(req: NextRequest) {
-  const c = await caller();
-  const site = websiteTenantId();
-  const access = websiteThemeAccess({ signedIn: Boolean(c.user), role: c.role, tenantId: c.tenantId, websiteTenantId: site });
-  if (!access.ok) return NextResponse.json({ ok: false, error: access.error }, { status: access.status });
+/** PATCH: owner only (withRoute's role gate, R-732), and only in the website's own workspace. */
+export const PATCH = withRoute(
+  {
+    route: "api/settings/website-theme",
+    roles: ["owner"],
+    roleHint: "Only the workspace owner can change the website theme. Ask the owner to switch it in Settings → Branding.",
+    input: z.object({ theme: z.unknown() }),
+  },
+  async ({ supabase, role, tenantId, input }) => {
+    const site = websiteTenantId();
+    const access = websiteThemeAccess({ signedIn: true, role, tenantId, websiteTenantId: site });
+    if (!access.ok) throw new RouteError(access.status, access.error);
 
-  let body: unknown;
-  try { body = await req.json(); }
-  catch { return NextResponse.json({ ok: false, error: "The request was not valid JSON. Reload Settings and try again." }, { status: 400 }); }
-  const theme = parseWebsiteTheme((body as { theme?: unknown } | null)?.theme);
-  if (!theme) {
-    return NextResponse.json({ ok: false, error: "Choose Classic or Warm — that theme is not one this app knows." }, { status: 400 });
-  }
+    const theme = parseWebsiteTheme(input.theme);
+    if (!theme) throw new RouteError(400, "Choose Classic or Warm — that theme is not one this app knows.");
 
-  const db = c.supabase as unknown as SupabaseClient;
-  const { data, error } = await db.from("tenants").update({ website_theme: theme }).eq("id", site as string).select("id");
-  if (isWebsiteThemeColumnMissing(error)) {
-    // Ours to fix (a deploy step), not the owner's — 503, and the message says what happens next.
-    console.warn("[website-theme] switch refused: migration 20261113102122 not applied on this database");
-    return NextResponse.json({ ok: false, error: WEBSITE_THEME_NEEDS_DB }, { status: 503 });
-  }
-  if (error) {
-    console.error(`[website-theme] switch failed: ${error.message}`);
-    return NextResponse.json({ ok: false, error: `The theme was not saved: ${error.message}. Try again; if it repeats, report it.` }, { status: 500 });
-  }
-  if (!data || data.length === 0) {
-    return NextResponse.json(
-      { ok: false, error: "The theme was not saved: the database allows only the workspace owner to change it. Ask the owner." },
-      { status: 403 },
-    );
-  }
+    const db = supabase as unknown as SupabaseClient;
+    const { data, error } = await db.from("tenants").update({ website_theme: theme }).eq("id", site as string).select("id");
+    if (isWebsiteThemeColumnMissing(error)) {
+      // Ours to fix (a deploy step), not the owner's — 503, and the message says what happens next.
+      console.warn("[website-theme] switch refused: migration 20261113102122 not applied on this database");
+      throw new RouteError(503, WEBSITE_THEME_NEEDS_DB);
+    }
+    dbFail(error, "The theme was not saved. Try again; if it repeats, report it.");
+    if (!data || data.length === 0) {
+      throw new RouteError(403, "The theme was not saved: the database allows only the workspace owner to change it. Ask the owner.");
+    }
 
-  rememberWebsiteTheme(site as string, theme);
-  // Every (marketing) page is built ahead of time (revalidate 60–600 s); rebuild them now.
-  revalidatePath("/", "layout");
-  return NextResponse.json({ ok: true, theme });
-}
+    rememberWebsiteTheme(site as string, theme);
+    // Every (marketing) page is built ahead of time (revalidate 60–600 s); rebuild them now.
+    revalidatePath("/", "layout");
+    return { theme };
+  },
+);
