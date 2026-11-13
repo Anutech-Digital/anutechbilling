@@ -19,7 +19,7 @@ import { rupee } from "@/lib/utils";
 import { ctcFromEmployee } from "@/lib/payroll/ctc";
 import { periodLabel } from "@/lib/payroll/period-label";
 import {
-  arrearsForMonth, defaultEffectiveMonth, grossForAnnualCtc, nextPeriod, revisionMonth, salaryInForce, scaledStructure,
+  arrearsForMonth, defaultEffectiveMonth, grossForAnnualCtc, nextPeriod, revisionBookedNote, revisionMonth, salaryInForce, scaledStructure,
 } from "@/lib/payroll/salary-revision";
 import { useEmployeeSalaryHistory, useReviseSalary, useSalaryRevisions, type Employee } from "@/lib/queries/payroll";
 import { istToday } from "@/lib/dates/ist";
@@ -98,6 +98,9 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
     const old = p.salary_in_force ?? salaryInForce(current, revisions, p.period).monthly_gross;
     return s + arrearsForMonth(Math.max(0, p.gross - (p.lop_amount ?? 0)), old, grossN);
   }, 0);
+  /* R-2722: "booked", not "paid" (a booked month is paid only when a bank line is linked); months
+     booked before salary revisions are named — their old salary is inferred, check it. */
+  const bookedNote = revisionBookedNote(bookedFrom, periodLabel);
 
   const valid = Boolean(month) && grossN > 0 && !same && !splitTooBig && !tooEarly && !cutIntoPaid;
 
@@ -172,12 +175,13 @@ export function ReviseSalaryDialog({ employee, onClose }: { employee: Employee; 
 
           {cutIntoPaid ? (
             <p className="text-xs text-rose">
-              A lower salary can&apos;t start in a month that is already paid ({periodLabel(bookedFrom[bookedFrom.length - 1].period)}). Pick a month after the last paid one.
+              A lower salary can&apos;t start in a month that is already booked ({periodLabel(bookedFrom[bookedFrom.length - 1].period)}). Pick a month after the last booked one.
             </p>
           ) : bookedFrom.length > 0 && arrearsEstimate > 0 ? (
             <div className="rounded-md border border-amber/40 bg-amber-soft/40 px-3 py-2 text-xs text-amber-ink">
-              {bookedFrom.map((p) => periodLabel(p.period)).join(", ")} {bookedFrom.length === 1 ? "is" : "are"} already paid at the old salary — {bookedFrom.length === 1 ? "it stays" : "they stay"} as booked.
-              The difference, about <b>{rupee(arrearsEstimate)}</b>, is offered as <b>arrears</b> in the next Pay salary.
+              {bookedNote.booked}
+              {" "}The difference, about <b>{rupee(arrearsEstimate)}</b>, is offered as <b>arrears</b> in the next Pay salary.
+              {bookedNote.legacy && <span data-testid="revise-legacy-months" className="block mt-1 font-medium">{bookedNote.legacy}</span>}
             </div>
           ) : null}
 

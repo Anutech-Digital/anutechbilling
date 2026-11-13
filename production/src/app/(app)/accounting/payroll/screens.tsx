@@ -35,7 +35,7 @@ import { nationalHolidaysForYear, FIXED_NATIONAL_HOLIDAYS, indiaPublicHolidaysFo
 import { computeEsi, isEsiEligible, esiStickyCovered, ESI_WAGE_CEILING } from "@/lib/payroll/esi";
 import { computePf, pfWage, pfWageCeiling, PF_EMPLOYER_RATE } from "@/lib/payroll/pf";
 import { estimateMonthlyTds } from "@/lib/payroll/income-tax";
-import { ctcTabBreakdown, ctcFormulaText } from "@/lib/payroll/ctc";
+import { ctcTabBreakdown, ctcFormulaText, ctcFormFill, applyStructureBlockedReason, type CtcFormBase } from "@/lib/payroll/ctc";
 import { DEFAULT_PAYROLL_POLICY, newEmployeeDefaults } from "@/lib/payroll/policy";
 import { usePayrollPolicy } from "@/lib/queries/payroll-policy";
 import { computePt } from "@/lib/payroll/pt";
@@ -532,6 +532,12 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
   const [annualCtc, setAnnualCtc] = React.useState<string>("");
   const [ctcTyped, setCtcTyped] = React.useState(false);
   const [grossByHand, setGrossByHand] = React.useState(false);
+  /* R-2722: the gross / Basic the form held when a CTC started being typed — an empty or
+     over-budget CTC goes back to it (a new employee's hand-typed gross is not emptied, G3). */
+  const [ctcBase, setCtcBase] = React.useState<CtcFormBase>({
+    gross: employee?.monthly_gross ? String(employee.monthly_gross) : "",
+    basic: employee?.basic_monthly != null ? String(employee.basic_monthly) : "",
+  });
   const policyQ = usePayrollPolicy();
   const policy = policyQ.data ?? DEFAULT_PAYROLL_POLICY;
   const [isMetro, setIsMetro] = React.useState(false);
@@ -572,8 +578,11 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
     da: Number(daMonthly) || 0,
     pfApplicable, esiApplicable, pfFullWage, includeGratuity,
     ctcIncludesEmployer: policy.ctcIncludesEmployer,
-    /* Review M1: typing back the CTC shown gives the same gross; a typed CTC keeps the saved Basic. */
-    saved: employee?.monthly_gross ? { gross: employee.monthly_gross, basic: employee.basic_monthly, da: employee.da_monthly ?? 0 } : null,
+    /* Review M1: typing back the CTC shown gives the same gross; a typed CTC keeps the saved Basic.
+       R-2722: "saved" = the salary the form held when the CTC was started (ctcBase). */
+    saved: Number(ctcBase.gross) > 0
+      ? { gross: Math.round(Number(ctcBase.gross)), basic: ctcBase.basic.trim() !== "" ? Math.round(Number(ctcBase.basic) || 0) : null, da: Number(daMonthly) || 0 }
+      : null,
     keepSavedBasic: !basicPctTouched,
     calc: {
       isMetro,
@@ -585,26 +594,27 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
       customSpecialMonthly: Number(customSpecial) || undefined,
       customPtMonthly: customPt !== "" ? Number(customPt) : undefined,
     },
-  }), [employee, ctcTyped, annualCtc, gross, basicMonthly, basicByHand, basicPctTouched, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt]);
+  }), [ctcBase, ctcTyped, annualCtc, gross, basicMonthly, basicByHand, basicPctTouched, daMonthly, pfApplicable, esiApplicable, pfFullWage, includeGratuity, policy.ctcIncludesEmployer, isMetro, basicPct, customBasic, customHra, customConveyance, customMedical, customSpecial, customPt]);
   /* R-2700: a typed CTC fills Monthly Gross + Basic at once (no Apply press) unless the gross was
      typed by hand afterwards, or the salary is set by revisions (R-2699 — gross locked). */
   /* Review M2 + code review: a split that is over budget, an empty CTC, or the CTC the saved salary
      already gives never leaves a half-typed figure behind — the form goes back to the SAVED
      gross / Basic (empty for a new employee). Runs on the figures, not the object, so typing a
      Basic by hand is not overwritten. */
-  const fillGross = ctcBreakdown.grossMonthly;
-  const fillBasic = ctcBreakdown.basicMonthly;
-  const fillFromCtc = ctcTyped && ctcBreakdown.source === "ctc" && ctcBreakdown.annualCtc > 0 && !ctcBreakdown.overBudget;
+  /* R-2722: the rule lives in lib/payroll/ctc.ts ctcFormFill (tested) — back to ctcBase, never
+     to an empty gross. */
+  const formFill = ctcFormFill({ ctcTyped, grossByHand, salaryByRevision, basicByHand, breakdown: ctcBreakdown, base: ctcBase });
+  const fillGross = formFill?.gross;
+  const fillBasic = formFill?.basic;
   React.useEffect(() => {
-    if (!ctcTyped || grossByHand || salaryByRevision) return;
-    if (!fillFromCtc) {
-      setGross(employee?.monthly_gross ? String(employee.monthly_gross) : "");
-      if (!basicByHand) setBasicMonthly(employee?.basic_monthly != null ? String(employee.basic_monthly) : "");
-      return;
-    }
-    setGross(fillGross > 0 ? String(fillGross) : "");
-    if (!basicByHand) setBasicMonthly(fillBasic > 0 ? String(fillBasic) : "");
-  }, [ctcTyped, grossByHand, salaryByRevision, fillFromCtc, fillGross, fillBasic, basicByHand, employee]);
+    if (fillGross === undefined) return;
+    setGross(fillGross);
+    if (fillBasic !== undefined) setBasicMonthly(fillBasic);
+    // grossByHand / ctcTyped: retyping the same CTC after a hand-typed gross fills it again.
+  }, [fillGross, fillBasic, grossByHand, ctcTyped]);
+  /* R-2722 (R-2700 G1): Apply is off — with the reason — when it would write an over-budget split
+     or a salary that only Revise salary may change. */
+  const applyBlocked = applyStructureBlockedReason(ctcBreakdown, salaryByRevision);
   // For a NEW employee, suggest ESI coverage from the wage ceiling until the
   // user decides for themselves — only when the company is ESI-registered (R-2700 policy).
   // Existing employees keep their saved value.
@@ -725,7 +735,11 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                     min={0}
                     placeholder="e.g. 600000"
                     value={ctcTyped || ctcBreakdown.source !== "saved" ? annualCtc : String(ctcBreakdown.annualCtc)}
-                    onChange={(e) => { setCtcTyped(true); setGrossByHand(false); setAnnualCtc(e.target.value); }}
+                    onChange={(e) => {
+                      /* R-2722: remember the salary the form held before this CTC (the saved one, or a gross typed by hand). */
+                      if (!ctcTyped || grossByHand) setCtcBase({ gross, basic: basicMonthly });
+                      setCtcTyped(true); setGrossByHand(false); setAnnualCtc(e.target.value);
+                    }}
                   />
                 </Field>
                 <Field htmlFor="payroll-city-hra-standard" label="City HRA Standard">
@@ -871,23 +885,30 @@ function EmployeeDialog({ employee, onClose }: { employee: Employee | null; onCl
                         {" · "}<button type="button" className="text-primary font-medium hover:underline" onClick={() => setEmpTab("statutory")}>Change in Statutory &amp; Access</button>
                       </span>
                     </div>
-                    <Button
-                      type="button"
-                      variant="primary"
-                      size="sm"
-                      onClick={() => {
-                        setGross(String(ctcBreakdown.grossMonthly));
-                        setBasicMonthly(String(ctcBreakdown.basicMonthly));
-                        setGrossByHand(false);
-                        /* R-2698: this used to switch PF (and ESI) back ON — an owner who had just
-                           turned them off in Statutory & Access got them back. The switches live
-                           only there now. */
-                        toast.success(`Applied monthly gross ${rupee(ctcBreakdown.grossMonthly)} and Basic ${rupee(ctcBreakdown.basicMonthly)}. PF / ESI stay as set in Statutory & Access.`);
-                      }}
-                      className="text-xs font-extrabold"
-                    >
-                      ⚡ Apply Salary Structure
-                    </Button>
+                    <div className="flex flex-col items-end gap-1">
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        disabled={applyBlocked !== null}
+                        aria-describedby={applyBlocked ? "apply-structure-blocked" : undefined}
+                        onClick={() => {
+                          if (applyBlocked) return;
+                          setGross(String(ctcBreakdown.grossMonthly));
+                          /* R-2722: no Basic set → leave it not set (PF / gratuity stay on the whole gross). */
+                          if (!ctcBreakdown.basicAssumed) setBasicMonthly(String(ctcBreakdown.basicMonthly));
+                          setGrossByHand(false);
+                          /* R-2698: this used to switch PF (and ESI) back ON — an owner who had just
+                             turned them off in Statutory & Access got them back. The switches live
+                             only there now. */
+                          toast.success(`Applied monthly gross ${rupee(ctcBreakdown.grossMonthly)}${ctcBreakdown.basicAssumed ? " (Basic not set)" : ` and Basic ${rupee(ctcBreakdown.basicMonthly)}`}. PF / ESI stay as set in Statutory & Access.`);
+                        }}
+                        className="text-xs font-extrabold"
+                      >
+                        ⚡ Apply Salary Structure
+                      </Button>
+                      {applyBlocked && <span id="apply-structure-blocked" data-testid="apply-structure-blocked" className="text-xs text-ink-3 max-w-[16rem] text-right">{applyBlocked}</span>}
+                    </div>
                   </div>
 
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5 text-xs">
@@ -1945,7 +1966,7 @@ function PaySalaryDialog({ employee, period, onClose, revisions }: { employee: E
                 </div>
                 {arrearsTooMuch && <p className="text-xs text-rose">Max {rupee(arrearsInfo.outstanding)}.</p>}
                 <p className="text-xs text-amber-ink">
-                  Those months were paid at the old salary and stay as booked; the difference is added to this salary and booked in {periodLabel(period)}. PF / ESI on arrears are not added automatically — add them below if due.
+                  Those months were booked at the old salary and stay as booked; the difference is added to this salary and booked in {periodLabel(period)}. PF / ESI on arrears are not added automatically — add them below if due.
                 </p>
               </div>
             )}

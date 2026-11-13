@@ -120,7 +120,9 @@ test.describe("R-2699 — salary revision from a month; earlier months keep the 
     try {
       await revise(page, PAID, "2026-09", "36000");
       const rdlg = page.getByRole("dialog", { name: `Revise salary — ${PAID}` });
-      await expect(rdlg).toContainText("September 2026 is already paid at the old salary");
+      // R-2722: booked (not paid — no bank line linked); this planted row has no salary_in_force (booked before revisions).
+      await expect(rdlg).toContainText("September 2026 is already booked at the old salary");
+      await expect(rdlg.getByTestId("revise-legacy-months")).toHaveText("September 2026 was booked before salary revisions — check the old salary used for it.");
       await expect(rdlg).toContainText("₹6,000");
       await rdlg.getByRole("button", { name: "Save revision from September 2026" }).click();
       await expect(page.getByRole("dialog").getByTestId("salary-revisions")).toContainText("From September 2026", { timeout: 60_000 });

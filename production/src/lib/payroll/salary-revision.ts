@@ -176,3 +176,24 @@ export function defaultEffectiveMonth(todayIso: string, lastBookedPeriod: string
   if (!lastBookedPeriod || lastBookedPeriod < thisMonth) return thisMonth;
   return nextPeriod(lastBookedPeriod);
 }
+
+/**
+ * R-2722 (R-2699 staging note): the line under Revise salary for months already booked from the
+ * chosen month on. "Booked" — Pay salary books a month; it is paid only when a bank line is
+ * linked (salary-status.ts), so "already paid" was wrong for a booked-but-unpaid month. Months
+ * booked before salary revisions existed (salary_in_force null) are named apart: their old
+ * salary is inferred from today's salary / the revision history, so the owner should check it.
+ */
+export function revisionBookedNote(
+  bookedFrom: readonly { period: string; salary_in_force: number | null }[],
+  label: (period: string) => string,
+): { booked: string; legacy: string | null } {
+  const one = bookedFrom.length === 1;
+  const booked = `${bookedFrom.map((p) => label(p.period)).join(", ")} ${one ? "is" : "are"} already booked at the old salary — ${one ? "it stays" : "they stay"} as booked.`;
+  const legacy = bookedFrom.filter((p) => p.salary_in_force == null);
+  return {
+    booked,
+    legacy: legacy.length === 0 ? null
+      : `${legacy.map((p) => label(p.period)).join(", ")} ${legacy.length === 1 ? "was" : "were"} booked before salary revisions — check the old salary used for ${legacy.length === 1 ? "it" : "them"}.`,
+  };
+}
