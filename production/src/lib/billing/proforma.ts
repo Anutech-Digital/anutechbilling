@@ -159,11 +159,13 @@ export interface BillNextPreview {
 export interface UnpaidEarlierPart {
   kind: "proforma" | "invoice";
   id: string;
-  /** The part's period, end inclusive. */
+  /** The period(s) it covers, end inclusive (a document over several parts: first start → last end). */
   start: string;
   end: string;
-  /** ₹ still to collect on that document (gross). */
+  /** Still to collect on that document (gross), in `currency` (a foreign invoice: ₹ ÷ its fx_rate). */
   due: number;
+  /** "INR" unless the document is billed in another currency. */
+  currency: string;
   /** When it fell due (proforma: the part's due_on, else its start; invoice: due_date); null = none set. */
   dueDate: string | null;
   /** Whole days past dueDate as of today (IST); 0 = not yet due. */
@@ -174,22 +176,25 @@ export interface UnpaidEarlierPart {
 export interface EarlierPartRow { id: string; period_start: string; period_end: string; invoice_id: string | null; due_on?: string | null }
 export interface EarlierPartQuote {
   id: string; status: string; amount: number | null; payment_amount?: number | null; payment_status?: string | null;
-  superseded_by?: string | null; subscription_billing_id: string | null;
+  superseded_by?: string | null; subscription_billing_id: string | null; currency?: string | null;
 }
 export interface EarlierPartInvoice {
   id: string; status: string; amount: number; net_payable?: number | null; paid_amount?: number | null;
-  written_off_at?: string | null; due_date?: string | null;
+  written_off_at?: string | null; due_date?: string | null; currency?: string | null; fx_rate?: number | null;
 }
 
 /* Same "with the customer, unpaid" rule as the Renewals row (renewals/last-docs.ts isOpenUnpaid). */
 const PART_OPEN = new Set(["sent", "viewed", "accepted"]);
 const PART_UNPAID = new Set(["none", "awaiting", "partial"]);
-const INVOICE_NOT_OWED = new Set(["draft", "void", "cancelled"]);
+/* An invoice that never asked (draft) leaves the part's proforma as the ask; void / cancelled asks nothing. */
+const INVOICE_GONE = new Set(["void", "cancelled"]);
 
 function daysPast(dueDate: string | null, todayISO: string): number {
-  if (!dueDate || dueDate >= todayISO) return 0;
+  if (!dueDate || dueDate.slice(0, 10) >= todayISO) return 0;
   return Math.round((Date.parse(`${todayISO}T00:00:00Z`) - Date.parse(`${dueDate.slice(0, 10)}T00:00:00Z`)) / 86_400_000);
 }
+
+const cur = (c: string | null | undefined) => (c ?? "INR").trim().toUpperCase() || "INR";
 
 export function earlierUnpaidParts(a: {
   rows: readonly EarlierPartRow[];
@@ -200,31 +205,40 @@ export function earlierUnpaidParts(a: {
   todayISO: string;
 }): UnpaidEarlierPart[] {
   const invById = new Map(a.invoices.map((i) => [i.id, i]));
-  const seen = new Set<string>();
+  const byId = new Map<string, UnpaidEarlierPart>();
   const out: UnpaidEarlierPart[] = [];
+  const add = (p: UnpaidEarlierPart) => {
+    const had = byId.get(p.id);
+    if (had) { if (p.end > had.end) had.end = p.end; return; }   // one document over several parts: widen its period
+    byId.set(p.id, p);
+    out.push(p);
+  };
   const rows = a.rows.filter((r) => r.period_start < a.firstStart).sort((x, y) => x.period_start.localeCompare(y.period_start));
   for (const r of rows) {
     const last = addDaysISO(r.period_end, -1);
     const end = last >= r.period_start ? last : r.period_start;
-    if (r.invoice_id) {
+    const inv = r.invoice_id ? invById.get(r.invoice_id) : undefined;
+    if (inv && inv.status !== "draft") {
       /* Invoiced: the invoice is the payable document (its proforma no longer asks). */
-      const inv = invById.get(r.invoice_id);
-      if (!inv || seen.has(inv.id) || INVOICE_NOT_OWED.has(inv.status)) continue;
-      const due = invoiceAmountDue(inv);
-      if (due <= 0) continue;
-      seen.add(inv.id);
+      if (INVOICE_GONE.has(inv.status)) continue;
+      const dueInr = invoiceAmountDue(inv);
+      if (dueInr <= 0) continue;
+      /* The books hold ₹; a foreign invoice with its rate is shown in its own currency (as the Renewals row). */
+      const rate = inv.fx_rate ?? 0;
+      const foreign = cur(inv.currency) !== "INR" && rate > 0;
+      const due = foreign ? Math.round((dueInr / rate) * 100) / 100 : dueInr;
       const dueDate = inv.due_date ?? null;
-      out.push({ kind: "invoice", id: inv.id, start: r.period_start, end, due, dueDate, daysOverdue: daysPast(dueDate, a.todayISO) });
+      add({ kind: "invoice", id: inv.id, start: r.period_start, end, due, currency: foreign ? cur(inv.currency) : "INR", dueDate, daysOverdue: daysPast(dueDate, a.todayISO) });
       continue;
     }
+    if (r.invoice_id && !inv) continue;   // invoiced and settled (paid / not read) — nothing asks
     for (const q of a.quotes) {
-      if (q.subscription_billing_id !== r.id || seen.has(q.id) || q.superseded_by) continue;
+      if (q.subscription_billing_id !== r.id || q.superseded_by) continue;
       if (!PART_OPEN.has(q.status) || !PART_UNPAID.has(q.payment_status ?? "none")) continue;
       const due = Math.max(0, (q.amount ?? 0) - (q.payment_amount ?? 0));
       if (due <= 0) continue;
-      seen.add(q.id);
       const dueDate = r.due_on ?? r.period_start;
-      out.push({ kind: "proforma", id: q.id, start: r.period_start, end, due, dueDate, daysOverdue: daysPast(dueDate, a.todayISO) });
+      add({ kind: "proforma", id: q.id, start: r.period_start, end, due, currency: cur(q.currency), dueDate, daysOverdue: daysPast(dueDate, a.todayISO) });
     }
   }
   return out;
@@ -238,12 +252,10 @@ export function periodsToBillLabel(cycle: BillingCycle): string {
   return words[cycle] ?? "Periods to bill";
 }
 
-/** The month(s) the bill starts in, for its button — "Nov", "Nov–Jan" (R-2757 "Bill Nov anyway"). */
-export function billMonthsWord(periods: readonly Period[]): string {
-  if (periods.length === 0) return "";
-  const a = MON[Number(periods[0].start.slice(5, 7)) - 1];
-  const b = MON[Number(periods[periods.length - 1].start.slice(5, 7)) - 1];
-  return a === b ? a : `${a}–${b}`;
+/** R-2757: the Create button when an earlier part is unpaid — "Bill Nov anyway" (one period), "Create 3 proformas anyway". */
+export function billAnywayLabel(periods: readonly Period[]): string {
+  if (periods.length !== 1) return `Create ${periods.length} proformas anyway`;
+  return `Bill ${MON[Number(periods[0].start.slice(5, 7)) - 1]} anyway`;
 }
 
 

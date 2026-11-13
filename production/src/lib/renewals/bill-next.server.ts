@@ -112,24 +112,24 @@ export async function billNextPreview(db: SupabaseClient, sub: BillNextSub, coun
   /* R-2757: earlier parts still unpaid — their open proforma (on the same subscription_billings rows read
      above) or their tax invoice with money to collect. Named in the dialog; billing ahead stays allowed. */
   const earlier = rows.filter((r) => r.period_start < start);
-  const earlierOpen = earlier.filter((r) => r.invoice_id == null).map((r) => r.id);
+  const earlierIds = earlier.map((r) => r.id);
   const earlierInvoiceIds = [...new Set(earlier.map((r) => r.invoice_id).filter((x): x is string => !!x))];
-  let earlierQuotes: EarlierPartQuote[] = [];
-  let earlierInvoices: EarlierPartInvoice[] = [];
-  if (earlierOpen.length > 0) {
-    const { data, error } = await db.from("quotes")
-      .select("id, status, amount, payment_amount, payment_status, superseded_by, subscription_billing_id")
-      .in("subscription_billing_id", earlierOpen).in("status", ["sent", "viewed", "accepted"]);
-    if (error) throw new Error(error.message);
-    earlierQuotes = (data ?? []) as EarlierPartQuote[];
-  }
-  if (earlierInvoiceIds.length > 0) {
-    const { data, error } = await db.from("invoices")
-      .select("id, status, amount, net_payable, paid_amount, written_off_at, due_date")
-      .in("id", earlierInvoiceIds).not("status", "in", "(paid,void,cancelled,draft)");
-    if (error) throw new Error(error.message);
-    earlierInvoices = (data ?? []) as EarlierPartInvoice[];
-  }
+  const [qRes, iRes] = await Promise.all([
+    earlierIds.length > 0
+      ? db.from("quotes")
+        .select("id, status, amount, payment_amount, payment_status, superseded_by, subscription_billing_id, currency")
+        .in("subscription_billing_id", earlierIds).in("status", ["sent", "viewed", "accepted"])
+      : null,
+    earlierInvoiceIds.length > 0
+      ? db.from("invoices")
+        .select("id, status, amount, net_payable, paid_amount, written_off_at, due_date, currency, fx_rate")
+        .in("id", earlierInvoiceIds)
+      : null,
+  ]);
+  if (qRes?.error) throw new Error(qRes.error.message);
+  if (iRes?.error) throw new Error(iRes.error.message);
+  const earlierQuotes = (qRes?.data ?? []) as EarlierPartQuote[];
+  const earlierInvoices = (iRes?.data ?? []) as EarlierPartInvoice[];
   const unpaidEarlier = earlierUnpaidParts({ rows: earlier, quotes: earlierQuotes, invoices: earlierInvoices, firstStart: start, todayISO: istToday() });
 
   return {

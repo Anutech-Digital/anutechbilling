@@ -22,9 +22,11 @@ import { FormField } from "@/components/ui/label";
 import { formatDate, rupee } from "@/lib/utils";
 import { readJsonSafe } from "@/app/(app)/renewals/reminders";
 import { LoadErrorInline } from "@/components/shared/load-error";
-import { MAX_BILL_PERIODS, billMonthsWord, partAmounts, periodText, periodsToBillLabel } from "@/lib/billing/proforma";
+import { MAX_BILL_PERIODS, billAnywayLabel, partAmounts, periodText, periodsToBillLabel } from "@/lib/billing/proforma";
 import type { BillNextPreview, UnpaidEarlierPart } from "@/lib/billing/proforma";
 import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
+import { periodWords } from "@/app/(app)/renewals/last-docs";
+import { formatForeign, isForeignCurrency } from "@/lib/currency";
 import { istToday } from "@/lib/dates/ist";
 
 export interface BillNextChoice { periods: number; seats: number | null; seatRate: number | null }
@@ -74,7 +76,7 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, t
 
   const unpaid = preview?.unpaidEarlier ?? [];
   const createLabel = unpaid.length > 0 && preview
-    ? `Bill ${billMonthsWord(preview.periods)} anyway`
+    ? billAnywayLabel(preview.periods)
     : periods > 1 ? `Create ${periods} proformas` : "Create proforma";
 
   const confirm = () => {
@@ -151,16 +153,6 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, t
   );
 }
 
-/** "Oct 2026" for a whole calendar month, else "12 Oct–11 Nov 2026". */
-function partWords(p: Pick<UnpaidEarlierPart, "start" | "end">): string {
-  const y = Number(p.start.slice(0, 4));
-  const m = Number(p.start.slice(5, 7));
-  const lastDay = String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0");
-  const wholeMonth = p.start.slice(8, 10) === "01" && p.end === `${p.start.slice(0, 8)}${lastDay}`;
-  return wholeMonth ? `${MONTHS[m - 1]} ${y}` : periodText(p.start, p.end);
-}
-const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
 function dueWords(p: UnpaidEarlierPart): string {
   if (p.daysOverdue > 0) return `overdue ${p.daysOverdue} day${p.daysOverdue === 1 ? "" : "s"}${p.dueDate ? ` (due ${formatDate(p.dueDate)})` : ""}`;
   return p.dueDate ? `due ${formatDate(p.dueDate)}` : "not yet due";
@@ -177,7 +169,7 @@ function UnpaidEarlierNote({ parts }: { parts: UnpaidEarlierPart[] }) {
         {parts.map((p) => (
           <li key={p.id} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-ink-2">
             <span className="tabular-nums">
-              {partWords(p)} · {p.kind === "invoice" ? "Invoice " : ""}{p.id} · {rupee(p.due)} unpaid · {dueWords(p)}
+              {periodWords(p.start, p.end)} · {p.kind === "invoice" ? "Invoice " : ""}{p.id} · {isForeignCurrency(p.currency) ? formatForeign(p.due, p.currency) : rupee(p.due)} unpaid · {dueWords(p)}
             </span>
             <Link
               className="font-medium text-ink underline underline-offset-2 hover:text-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
