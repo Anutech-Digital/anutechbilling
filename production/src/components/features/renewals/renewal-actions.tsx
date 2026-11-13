@@ -427,7 +427,7 @@ export function RenewalActions({ sub: raw, daysUntil, layout, strong = false, on
         /* code-review: send-now refuses split-billed subs — a part proforma is resent from its own page. */
         case "resend": return stage.split && stage.quoteId ? router.push(`/quotes/${encodeURIComponent(stage.quoteId)}` as never) : void onSendNow();
         case "bill-part": return setDialog("bill-next");
-        case "continue": return stage.quoteId ? router.push(`/quotes/${encodeURIComponent(stage.quoteId)}/edit` as never) : undefined;
+        case "continue": return stage.quoteId ? router.push(quoteEditHrefFromRenewals(stage.quoteId, hereUrl()) as never) : undefined;   // R-2754: back to this tab
         case "follow-up": return onFollowup?.();
         case "record-payment": return payHref ? router.push(payHref as never) : undefined;
         case "change-renewal": return void onChange(stage.quoteId ?? undefined);
