@@ -21,17 +21,29 @@
 --      R-2369's exact term_amount skips bulk lines (their qty is the sum of all domains).
 --   2. The same plan sold as a normal line AND a bulk line on one quote: the row took the first
 --      line with that name, so a bulk row could take the normal line's term (or the reverse).
+--   3. vendor_cost_per_seat_month: the filers write round(line cost / 12), and a multi-year
+--      line's cost is the whole term's (like its rate) — so the stored monthly cost was N times
+--      too high (₹600 a year for 3 years → 150 a month instead of 50), for a normal multi-year
+--      domain line (R-1445) as much as for a bulk one.
 --
 -- ─── WHAT THIS DOES ─────────────────────────────────────────────────────────
 --   Only subscription_term_follows_line changes (body: 20261106162400, R-2543, the latest):
---   a. Line pick: after "same domain", a bulk line that LISTS the row's domain comes first and a
---      bulk line that does not list it comes last. Nothing else about the pick changes.
+--   a. Line pick, among the lines with the row's plan name — after "same domain" (unchanged):
+--        1. a line that CAN be this row's: a bulk line only when it lists the row's domain; a
+--           normal line unless it names a different domain of its own;
+--        2. then a line whose seats agree with the row (a normal line's qty, a bulk line's
+--           seats for that domain);
+--        3. then the bulk line that lists the domain; then line order, as before.
+--      A quote with one line of that name picks it exactly as before.
 --   b. A row of a bulk line with years 2..10 (its domain is listed, seats > 0, a usable rate):
 --        renewal_date = start + years                       (as R-1445)
 --        term_amount  = seats × net rate ÷ years            (the exact price of ONE year)
 --        mrr          = round(term_amount ÷ 12)             (one rounding, from the exact figure)
 --      Net rate = the line's renewal_rate, else rate × (1 − discount_pct) — the same figure the
 --      filers' pool is built from (R-329). Anything unusable → the R-1445 rule (mrr ÷ years).
+--   c. Any row of a line with years 2..10 (bulk or normal): vendor_cost_per_seat_month ÷ years.
+--   The "lists the domain" test is one jsonb containment (@>) per row — the Bulk dialog stores
+--   domains lower-case, as the filers file them; a list typed any other way is scanned.
 --   term_months stays 12: after the paid years a domain renews yearly (R-1445). A bulk line
 --   without `years` (every bulk line made before this card) is filed exactly as before.
 --   record_payment and every renewal function are not touched. No data is changed.
@@ -84,17 +96,27 @@ begin
       exit from_line;
     end if;
 
-    /* R-2712: a bulk line (one row per domain) is this row's line only when it lists the row's
-       domain — so it is preferred then, and comes last otherwise. */
+    /* R-2712: which line is this row's, when several carry its plan name — see the header (a). */
     select t.e into v_line
       from jsonb_array_elements(v_lines) with ordinality as t(e, i)
      where jsonb_typeof(t.e) = 'object'
        and lower(btrim(coalesce(t.e->>'name', ''))) = lower(btrim(coalesce(new.plan, '')))
      order by (nullif(lower(btrim(coalesce(t.e->>'domain', ''))), '')
                  is not distinct from nullif(lower(btrim(coalesce(new.domain, ''))), '')) desc,
-              (case when coalesce(t.e->>'bulk', '') <> 'true' then 1
-                    when public.r2712_bulk_line_lists_domain(t.e, v_dom) then 2
-                    else 0 end) desc,
+              -- R-2712 (1): can this line be the row's?
+              (case when coalesce(t.e->>'bulk', '') = 'true'
+                      then public.r2712_bulk_line_lists_domain(t.e, v_dom, null)
+                    else v_dom is null
+                         or nullif(lower(btrim(coalesce(t.e->>'domain', ''))), '') is null
+                         or nullif(lower(btrim(coalesce(t.e->>'domain', ''))), '') = v_dom
+               end) desc,
+              -- R-2712 (2): do its seats agree with the row's?
+              (case when coalesce(t.e->>'bulk', '') = 'true'
+                      then public.r2712_bulk_line_lists_domain(t.e, v_dom, new.seats)
+                    else coalesce(t.e->>'qty', '') ~ '^\d+(\.0+)?$' and (t.e->>'qty')::numeric = new.seats
+               end) desc,
+              -- R-2712 (3): the bulk line that lists the domain.
+              (coalesce(t.e->>'bulk', '') = 'true') desc,
               t.i
      limit 1;
     if v_line is null then
@@ -126,13 +148,18 @@ begin
       v_years := (v_line->>'years')::int;
       if v_years between 2 and 10 then
         new.renewal_date := (new.start_date + make_interval(years => v_years))::date;
+        /* R-2712: the line's cost covers the whole term like its rate, and the filers write
+           round(cost / 12) — bring the monthly cost back to one year's. */
+        if new.vendor_cost_per_seat_month is not null then
+          new.vendor_cost_per_seat_month := round(new.vendor_cost_per_seat_month::numeric / v_years)::int;
+        end if;
 
         /* R-2712: a bulk line's row is priced from the line itself — seats × net rate ÷ years is
            the exact price of one year for THIS domain. The filer's mrr is a share of a rounded
            pool; dividing that by the years again drifted (₹800 a year → ₹804). */
         v_year_amount := null;
         if coalesce(v_line->>'bulk', '') = 'true' and coalesce(new.seats, 0) > 0
-           and public.r2712_bulk_line_lists_domain(v_line, v_dom) then
+           and public.r2712_bulk_line_lists_domain(v_line, v_dom, null) then
           begin
             v_rate := case
               when nullif(v_line->>'renewal_rate', '') is not null then (v_line->>'renewal_rate')::numeric
@@ -176,9 +203,12 @@ begin
 end;
 $function$;
 
-/* R-2712: does this bulk quote line list the domain? False for anything that is not a bulk line
-   with a domains array, and for an empty domain — never an error (it runs inside a payment). */
-create or replace function public.r2712_bulk_line_lists_domain(p_line jsonb, p_domain text)
+/* R-2712: does this bulk quote line list the domain — with p_seats given, list it with exactly
+   those seats? False for anything that is not a bulk line with a domains array, and for an empty
+   domain — never an error (it runs inside a payment). One jsonb containment when the list holds
+   the domain as filed (lower-case, trimmed — what the Bulk dialog stores); only a list typed some
+   other way is scanned element by element. */
+create or replace function public.r2712_bulk_line_lists_domain(p_line jsonb, p_domain text, p_seats integer)
 returns boolean
 language sql
 immutable
@@ -189,20 +219,29 @@ as $function$
     when coalesce(p_line->>'bulk', '') <> 'true' then false
     when jsonb_typeof(p_line->'domains') <> 'array' then false
     when nullif(lower(btrim(coalesce(p_domain, ''))), '') is null then false
+    when p_line->'domains' @> jsonb_build_array(
+           case when p_seats is null then jsonb_build_object('domain', lower(btrim(p_domain)))
+                else jsonb_build_object('domain', lower(btrim(p_domain)), 'seats', p_seats) end) then true
     else exists (
       select 1 from jsonb_array_elements(p_line->'domains') d
        where jsonb_typeof(d) = 'object'
-         and lower(btrim(coalesce(d->>'domain', ''))) = lower(btrim(p_domain)))
+         and lower(btrim(coalesce(d->>'domain', ''))) = lower(btrim(p_domain))
+         and (p_seats is null
+              or (coalesce(d->>'seats', '') ~ '^\d+(\.0+)?$' and (d->>'seats')::numeric = p_seats)))
   end;
 $function$;
 
 comment on function public.subscription_term_follows_line() is
-  'R-1445: a subscription filed from a quote with the default term (start + 1 year / + 1 month) takes its line''s renewal_date (Onboard dialog), or start + years for a multi-year domain line (mrr spread over the years). Any caller-chosen date is kept. R-2533: on a split-billed row a line date shorter than one term is not copied. R-2543: on a split-billed row a default shorter than the term becomes start + term_months - 1 day. R-2712: a row of a multi-year BULK line is priced from the line (seats x net rate / years = term_amount, mrr = that / 12); a bulk line is picked only for a domain it lists.';
-comment on function public.r2712_bulk_line_lists_domain(jsonb, text) is
-  'R-2712: true when the quote line is a bulk line whose domains array lists this domain. Used by subscription_term_follows_line.';
+  'R-1445: a subscription filed from a quote with the default term (start + 1 year / + 1 month) takes its line''s renewal_date (Onboard dialog), or start + years for a multi-year domain line (mrr spread over the years). Any caller-chosen date is kept. R-2533: on a split-billed row a line date shorter than one term is not copied. R-2543: on a split-billed row a default shorter than the term becomes start + term_months - 1 day. R-2712: a row of a multi-year BULK line is priced from the line (seats x net rate / years = term_amount, mrr = that / 12); a bulk line is picked only for a domain it lists; a multi-year line''s vendor_cost_per_seat_month is divided by its years.';
+comment on function public.r2712_bulk_line_lists_domain(jsonb, text, integer) is
+  'R-2712: true when the quote line is a bulk line whose domains array lists this domain (with exactly p_seats seats when given). Used by subscription_term_follows_line.';
 
--- Trigger function and its helper: nobody calls them directly.
+-- The trigger function: nobody calls it directly.
 revoke all on function public.subscription_term_follows_line() from public, anon, authenticated;
-revoke all on function public.r2712_bulk_line_lists_domain(jsonb, text) from public, anon, authenticated;
+-- The helper is a pure function of its arguments (it reads no table). The trigger above is
+-- SECURITY DEFINER, so it calls it as the owner — the explicit grant is the R-401 rule (Cloud SQL
+-- gives a new function no default EXECUTE), so a later invoker caller can never hit a 403.
+revoke all on function public.r2712_bulk_line_lists_domain(jsonb, text, integer) from public, anon;
+grant execute on function public.r2712_bulk_line_lists_domain(jsonb, text, integer) to authenticated, service_role;
 
 commit;

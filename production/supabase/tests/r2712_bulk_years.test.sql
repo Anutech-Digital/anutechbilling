@@ -23,6 +23,10 @@
 --   I. A caller-chosen renewal date, and a row with no quote → untouched.
 --   J. A quarterly (split-billed) quote with a 3-year bulk line → filed, renewal = start + 3 years.
 --   K. The helper never errors on a malformed line.
+--   L. vendor_cost_per_seat_month: cost ₹600 a year × 3 (line cost 1,800) → 50 a month, not 150 —
+--      on a bulk row and on a normal multi-year row; a 1-year row keeps round(cost / 12).
+--   M. A normal 1-year line (5 seats, no domain of its own) whose row borrowed the customer's
+--      domain, next to a bulk 3-year line that also lists that domain → the row keeps ITS line.
 
 begin;
 
@@ -51,6 +55,7 @@ declare
   v_c uuid := 'cccccccc-0000-4000-8000-000000271201';
   v_line jsonb; v_start date; v_amount int; v_renew int; v_pool int; v_running int := 0;
   v_total int; v_n int; v_i int := 0; v_d jsonb; v_dom text; v_seats int; v_mrr int; v_made int := 0; v_id uuid;
+  v_cost_pm int;
 begin
   select line_items->p_idx into v_line from public.quotes where id = p_quote and tenant_id = v_t;
   v_start := coalesce(nullif(v_line->>'start_date', '')::date, public.ist_today());
@@ -59,6 +64,8 @@ begin
   v_renew := case when nullif(v_line->>'renewal_rate', '') is not null
                   then round(coalesce((v_line->>'qty')::numeric, 0) * (v_line->>'renewal_rate')::numeric)::int
                   else v_amount end;
+  v_cost_pm := case when jsonb_typeof(v_line->'cost') = 'number' and (v_line->>'cost')::numeric > 0
+                    then round((v_line->>'cost')::numeric / 12.0)::int else null end;
   if coalesce((v_line->>'bulk')::boolean, false) then
     select coalesce(sum((e->>'seats')::int), 0) into v_total from jsonb_array_elements(v_line->'domains') e;
     v_pool := greatest(0, round(v_renew / 12.0))::int;
@@ -71,9 +78,9 @@ begin
       else v_mrr := v_pool - v_running; end if;
       v_running := v_running + v_mrr;
       insert into public.subscriptions (tenant_id, customer_id, customer_name, plan, vendor, seats, mrr,
-        start_date, renewal_date, status, outstanding_amount, domain, quote_id, term_months)
+        start_date, renewal_date, status, outstanding_amount, domain, quote_id, term_months, vendor_cost_per_seat_month)
       values (v_t, v_c, 'Bulk Customer', v_line->>'name', 'other', v_seats, v_mrr, v_start,
-        (v_start + interval '1 year')::date, 'active', 0, v_dom, p_quote, 12)
+        (v_start + interval '1 year')::date, 'active', 0, v_dom, p_quote, 12, v_cost_pm)
       on conflict (tenant_id, quote_id, lower(domain), lower(plan)) where quote_id is not null and domain is not null
         do nothing
       returning id into v_id;
@@ -82,10 +89,11 @@ begin
     end loop;
   else
     insert into public.subscriptions (tenant_id, customer_id, customer_name, plan, vendor, seats, mrr,
-      start_date, renewal_date, status, outstanding_amount, domain, quote_id, term_months)
+      start_date, renewal_date, status, outstanding_amount, domain, quote_id, term_months, vendor_cost_per_seat_month)
     values (v_t, v_c, 'Bulk Customer', v_line->>'name', 'other', (v_line->>'qty')::int,
       greatest(0, round(v_renew / 12.0))::int, v_start, (v_start + interval '1 year')::date, 'active', 0,
-      nullif(lower(trim(v_line->>'domain')), ''), p_quote, 12);
+      coalesce(nullif(lower(trim(v_line->>'domain')), ''), nullif(current_setting('r2712.borrowed_domain', true), '')),
+      p_quote, 12, v_cost_pm);
     v_made := 1;
   end if;
   return v_made;
@@ -254,20 +262,60 @@ begin
   perform pg_temp.r2712_want('J', 'TESTQ-R2712-J', 'j1.in', '2029-09-01|12|67|800.00');
 end $$;
 
+-- ── L. vendor cost per seat per month ───────────────────────────────────────────────────────
+select pg_temp.r2712_q('TESTQ-R2712-L', '[
+  {"name":"Domain .in","qty":1,"rate":2400,"cost":1800,"commitment":"annual_yearly","bulk":true,"years":3,"start_date":"2026-09-01",
+   "domains":[{"domain":"l1.in","seats":1}]},
+  {"name":"Domain l2.in","qty":1,"rate":2400,"cost":1800,"commitment":"annual_yearly","years":3,"start_date":"2026-09-01","domain":"l2.in"},
+  {"name":"Domain l3.in","qty":1,"rate":800,"cost":600,"commitment":"annual_yearly","start_date":"2026-09-01","domain":"l3.in"}]');
+do $$
+declare v text;
+begin
+  perform pg_temp.r2712_file('TESTQ-R2712-L', 0);
+  perform pg_temp.r2712_file('TESTQ-R2712-L', 1);
+  perform pg_temp.r2712_file('TESTQ-R2712-L', 2);
+  select string_agg(domain || '=' || coalesce(vendor_cost_per_seat_month::text, 'null') || '/' || renewal_date, ' ' order by domain) into v
+    from public.subscriptions where quote_id = 'TESTQ-R2712-L';
+  if v is distinct from 'l1.in=50/2029-09-01 l2.in=50/2029-09-01 l3.in=50/2027-09-01' then
+    raise exception 'FAIL L: monthly vendor cost per seat = % (want 50 on all three)', v;
+  end if;
+end $$;
+
+-- ── M. a normal row that borrowed a domain the bulk line also lists ─────────────────────────
+select pg_temp.r2712_q('TESTQ-R2712-M', '[
+  {"name":"Plan X","qty":5,"rate":1000,"commitment":"annual_yearly","start_date":"2026-09-01"},
+  {"name":"Plan X","qty":2,"rate":2400,"commitment":"annual_yearly","bulk":true,"years":3,"start_date":"2026-09-01",
+   "domains":[{"domain":"cust.com","seats":1},{"domain":"m2.com","seats":1}]}]');
+do $$
+begin
+  perform set_config('r2712.borrowed_domain', 'cust.com', true);   -- record_payment: the customer's domain
+  perform pg_temp.r2712_file('TESTQ-R2712-M', 0);
+  perform set_config('r2712.borrowed_domain', '', true);
+  perform pg_temp.r2712_file('TESTQ-R2712-M', 1);   -- cust.com is taken (R-829): only m2.com is filed
+  perform pg_temp.r2712_want('M normal row, borrowed domain', 'TESTQ-R2712-M', 'cust.com', '2027-09-01|12|417|5000.00');
+  perform pg_temp.r2712_want('M bulk row', 'TESTQ-R2712-M', 'm2.com', '2029-09-01|12|67|800.00');
+end $$;
+
 -- ── K. the helper on malformed lines ────────────────────────────────────────────────────────
 do $$
 begin
-  if public.r2712_bulk_line_lists_domain(null, 'a.in')
-     or public.r2712_bulk_line_lists_domain('"text"'::jsonb, 'a.in')
-     or public.r2712_bulk_line_lists_domain('{"bulk":true}'::jsonb, 'a.in')
-     or public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":"a.in"}'::jsonb, 'a.in')
-     or public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":["a.in", 5]}'::jsonb, 'a.in')
-     or public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":[{"domain":"a.in"}]}'::jsonb, '  ')
-     or public.r2712_bulk_line_lists_domain('{"bulk":false,"domains":[{"domain":"a.in"}]}'::jsonb, 'a.in') then
+  if public.r2712_bulk_line_lists_domain(null, 'a.in', null)
+     or public.r2712_bulk_line_lists_domain('"text"'::jsonb, 'a.in', null)
+     or public.r2712_bulk_line_lists_domain('{"bulk":true}'::jsonb, 'a.in', null)
+     or public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":"a.in"}'::jsonb, 'a.in', null)
+     or public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":["a.in", 5]}'::jsonb, 'a.in', null)
+     or public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":[{"domain":"a.in"}]}'::jsonb, '  ', null)
+     or public.r2712_bulk_line_lists_domain('{"bulk":false,"domains":[{"domain":"a.in"}]}'::jsonb, 'a.in', null) then
     raise exception 'FAIL K: a malformed / non-bulk line must never list a domain';
   end if;
-  if not public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":[{"domain":" A.in "}]}'::jsonb, 'a.IN') then
+  if not public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":[{"domain":" A.in "}]}'::jsonb, 'a.IN', null) then
     raise exception 'FAIL K: the listed domain must match, whatever its case or spaces';
+  end if;
+  if not public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":[{"domain":"a.in","seats":2}]}'::jsonb, 'a.in', 2)
+     or public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":[{"domain":"a.in","seats":2}]}'::jsonb, 'a.in', 1)
+     or not public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":[{"domain":"A.in","seats":2}]}'::jsonb, 'a.in', 2)
+     or public.r2712_bulk_line_lists_domain('{"bulk":true,"domains":[{"domain":"A.in","seats":"x"}]}'::jsonb, 'a.in', 2) then
+    raise exception 'FAIL K: seats must agree exactly when asked';
   end if;
 end $$;
 

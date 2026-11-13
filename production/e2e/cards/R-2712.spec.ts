@@ -16,7 +16,7 @@ const CUSTOMER = "SCN Bulk Domains";
 const ITEM_ID = "SCN-R2712-DOMAIN-IN";
 const ITEM = "SCN R2712 Domain .in";
 
-/** A customer + a Domain-vendor catalogue item at ₹100 a month (₹1,200 a year list). */
+/** A customer + a Domain-vendor catalogue item priced per YEAR: ₹800 list, ₹600 cost. */
 function plant(): void {
   if (!/^[a-z0-9@._-]+$/i.test(E2E_TENANT_EMAIL)) throw new Error("unexpected tenant email");
   const sql = `
@@ -26,8 +26,8 @@ select '${CUSTOMER_ID}', t.id, '${CUSTOMER}', 'Delhi', '07', 'India', 'business'
   from public.tenants t where t.email = '${E2E_TENANT_EMAIL}'
 on conflict (id) do nothing;
 insert into public.items (id, tenant_id, name, vendor, msrp, wholesale, prices, item_type, is_active)
-select '${ITEM_ID}', t.id, '${ITEM}', 'domain', 100, 50,
-       '{"annual":{"msrp":100,"wholesale":50}}'::jsonb, 'subscription', true
+select '${ITEM_ID}', t.id, '${ITEM}', 'domain', 800, 600,
+       '{"billing_unit":"unit_year"}'::jsonb, 'subscription', true
   from public.tenants t where t.email = '${E2E_TENANT_EMAIL}'
 on conflict (id) do nothing;
 `;
@@ -56,7 +56,7 @@ test.describe("R-2712 — Bulk / many domains: Register for N years + Start date
     await expect(dialog.getByLabel("Register for")).toHaveCount(0);   // no plan yet → no years picker
     await dialog.getByLabel("Plan").selectOption({ label: ITEM });
     await expect(dialog.getByLabel("Register for")).toHaveValue("1");
-    await dialog.getByLabel("Rate (₹/seat/year)").fill("800");
+    await expect(dialog.getByLabel("Rate (₹/seat/year)")).toHaveValue("800");   // per-year item: not × 12
     await dialog.getByLabel("Start date").fill("2026-09-01");
     await dialog.getByLabel("Register for").selectOption("3");
     await dialog.getByLabel("Domain 1").fill("r2712-a.in");

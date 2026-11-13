@@ -28,7 +28,8 @@ import { Input } from "@/components/ui/input";
 import { createClient } from "@/lib/supabase/client";
 import { rupee, cn } from "@/lib/utils";
 import { buildBulkLine, dedupeDomains, bulkDomainProblems, isDomainPlan, type DomainSeat } from "@/lib/quotes/bulk";
-import { addMonthsIso, periodDate } from "@/lib/quotes/service-period";
+import { addMonthsIso, isoDateOf, periodDate } from "@/lib/quotes/service-period";
+import { catalogYearlyPrice } from "@/lib/quotes/catalog-line";
 import { istToday } from "@/lib/dates/ist";
 import type { Item, QuoteLineItem } from "@/lib/supabase/database.types";
 
@@ -87,10 +88,10 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
   function pickItem(id: string) {
     setItemId(id);
     const it = catalog?.find((i) => i.id === id);
-    if (it) {
-      const msrpPerMo = it.prices?.annual?.msrp ?? it.prices?.monthly?.msrp ?? it.msrp;
-      setRate(Math.round(msrpPerMo * 12)); // ₹/seat/year (annual list)
-    }
+    /* R-2712: the catalogue row's own billing unit decides the yearly figure (R-526,
+       catalogYearlyPrice — the one way every adder prices). This dialog multiplied every price by
+       12, so a per-YEAR domain item at ₹800 came in at ₹9,600 a year. */
+    if (it) setRate(Math.round(catalogYearlyPrice(it).rate)); // ₹/seat/year (annual list)
   }
 
   async function handleCsv(e: React.ChangeEvent<HTMLInputElement>) {
@@ -173,7 +174,7 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
   const lineNet = rate * totalSeats * termYears; // ex-GST, the whole term (R-2712); GST added at quote level
   /* R-2712: the day each subscription comes up for renewal — start + the years paid for. A
      cleared date means today: the builder dates a line with no start today when it is added. */
-  const startIso = /^\d{4}-\d{2}-\d{2}$/.test(startDate) ? startDate : istToday();
+  const startIso = isoDateOf(startDate) ?? istToday();
   const renewsOn = addMonthsIso(startIso, 12 * termYears);
 
   function handleAdd() {
@@ -211,7 +212,7 @@ export function BulkDomainsDialog({ open, onOpenChange, catalog, customerId, onA
       return;
     }
     const line = buildBulkLine(
-      { id: crypto.randomUUID(), item_id: item.id, name: item.name, cost: Math.round((item.prices?.annual?.wholesale ?? item.wholesale) * 12) },
+      { id: crypto.randomUUID(), item_id: item.id, name: item.name, cost: Math.round(catalogYearlyPrice(item).cost) },
       rate,
       domains,
       "annual_yearly",

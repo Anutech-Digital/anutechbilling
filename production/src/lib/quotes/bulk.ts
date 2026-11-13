@@ -9,6 +9,8 @@
  * (no rounding leak). Keep the two implementations textually identical.
  */
 import type { QuoteLineItem, LineCommitment } from "@/lib/supabase/database.types";
+import { isDomainRegistrationLine } from "./seat-lines";
+import { isoDateOf } from "./service-period";
 
 export interface DomainSeat {
   domain: string;
@@ -50,14 +52,6 @@ export interface BulkLineTerm {
 const clampYears = (y: number | undefined) =>
   Math.max(1, Math.min(10, Math.trunc(typeof y === "number" && Number.isFinite(y) ? y : 1)));
 
-function realIsoDate(v: string | null | undefined): string | null {
-  const s = (v ?? "").trim();
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
-  const [y, m, d] = s.split("-").map(Number);
-  const dt = new Date(Date.UTC(y, m - 1, d));
-  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d ? s : null;
-}
-
 /**
  * R-2712: does this plan get "Register for N years" in the Bulk dialog? The normal line's rule
  * (R-1445, domain-term.ts isTermLine): a catalogue item of the Domain vendor, or a name that
@@ -65,7 +59,7 @@ function realIsoDate(v: string | null | undefined): string | null {
  */
 export function isDomainPlan(plan: { vendor?: string | null; name?: string | null } | null | undefined): boolean {
   if (!plan) return false;
-  return plan.vendor === "domain" || /\b(domain|registration)\b/i.test(plan.name ?? "");
+  return plan.vendor === "domain" || isDomainRegistrationLine({ name: plan.name });
 }
 
 /**
@@ -88,7 +82,7 @@ export function buildBulkLine(
   const domains = dedupeDomains(rawDomains);
   const qty = domains.reduce((s, d) => s + d.seats, 0);
   const years = commitment === "monthly" ? 1 : clampYears(term.years);
-  const startDate = realIsoDate(term.startDate);
+  const startDate = isoDateOf(term.startDate);
   const line: QuoteLineItem = {
     id: plan.id,
     item_id: plan.item_id,
