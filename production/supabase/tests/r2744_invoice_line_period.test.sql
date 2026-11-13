@@ -18,7 +18,7 @@
 --   DATESTYLE stored dates are YYYY-MM-DD whatever the session DateStyle
 --   NOQUOTE  an invoice with no quote (instalment / milestone / direct) is not stamped
 --   SAFE     a broken quote row never blocks the invoice (unstamped, old computed path)
---   GRANTS   helpers not executable by anon / authenticated
+--   GRANTS   pure helpers: authenticated + service_role, never anon (R-401); trigger fn: no grants
 
 begin;
 
@@ -264,11 +264,20 @@ end $$;
 -- ── GRANTS ─────────────────────────────────────────────────────────────────────
 do $$
 begin
-  if has_function_privilege('anon', 'public.invoice_line_service_period(jsonb, jsonb, jsonb, timestamptz, timestamptz)', 'execute')
-     or has_function_privilege('authenticated', 'public.invoice_line_service_period(jsonb, jsonb, jsonb, timestamptz, timestamptz)', 'execute')
-     or has_function_privilege('anon', 'public.invoice_lines_with_periods(jsonb, jsonb, jsonb, timestamptz, timestamptz)', 'execute')
-     or has_function_privilege('authenticated', 'public.invoice_lines_with_periods(jsonb, jsonb, jsonb, timestamptz, timestamptz)', 'execute') then
-    raise exception 'FAIL GRANTS: R-2744 helpers executable by anon / authenticated';
+  -- R-401 / R-2389: pure SECURITY INVOKER helpers -> authenticated may execute, anon never.
+  if has_function_privilege('anon', 'public.invoice_line_iso_date(text)', 'execute')
+     or has_function_privilege('anon', 'public.invoice_line_service_period(jsonb, jsonb, jsonb, timestamptz, timestamptz)', 'execute')
+     or has_function_privilege('anon', 'public.invoice_lines_with_periods(jsonb, jsonb, jsonb, timestamptz, timestamptz)', 'execute') then
+    raise exception 'FAIL GRANTS: R-2744 helpers executable by anon';
+  end if;
+  if not has_function_privilege('authenticated', 'public.invoice_line_iso_date(text)', 'execute')
+     or not has_function_privilege('authenticated', 'public.invoice_line_service_period(jsonb, jsonb, jsonb, timestamptz, timestamptz)', 'execute')
+     or not has_function_privilege('authenticated', 'public.invoice_lines_with_periods(jsonb, jsonb, jsonb, timestamptz, timestamptz)', 'execute') then
+    raise exception 'FAIL GRANTS: R-2744 helpers not granted to authenticated (Cloud SQL, R-401)';
+  end if;
+  if has_function_privilege('anon', 'public.tg_invoice_stamp_line_periods()', 'execute')
+     or has_function_privilege('authenticated', 'public.tg_invoice_stamp_line_periods()', 'execute') then
+    raise exception 'FAIL GRANTS: the SECURITY DEFINER trigger function must have no grants';
   end if;
   if not has_function_privilege('service_role', 'public.invoice_line_service_period(jsonb, jsonb, jsonb, timestamptz, timestamptz)', 'execute') then
     raise exception 'FAIL GRANTS: service_role cannot run the period helper (the backfill report)';

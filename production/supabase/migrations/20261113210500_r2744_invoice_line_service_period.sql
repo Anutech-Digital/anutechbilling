@@ -27,7 +27,8 @@
 -- WHAT THIS DOES NOT DO
 --   Existing invoices are NOT changed (a backfill is a data repair = owner's decision).
 --   scripts/ops/r2744-invoice-line-period-backfill-report.sql lists, read-only, what one would store.
---   No new table / column, so RLS is unchanged. Helpers: execute for service_role only (R-2322).
+--   No new table / column, so RLS is unchanged. Pure helpers: execute for authenticated + service_role,
+--   never anon (R-401 / R-2389: Cloud SQL has no PUBLIC default); the trigger function has no grants.
 
 begin;
 
@@ -175,9 +176,12 @@ $$;
 revoke all on function public.invoice_line_iso_date(text) from public, anon, authenticated;
 revoke all on function public.invoice_line_service_period(jsonb, jsonb, jsonb, timestamptz, timestamptz) from public, anon, authenticated;
 revoke all on function public.invoice_lines_with_periods(jsonb, jsonb, jsonb, timestamptz, timestamptz) from public, anon, authenticated;
-grant execute on function public.invoice_line_iso_date(text) to service_role;
-grant execute on function public.invoice_line_service_period(jsonb, jsonb, jsonb, timestamptz, timestamptz) to service_role;
-grant execute on function public.invoice_lines_with_periods(jsonb, jsonb, jsonb, timestamptz, timestamptz) to service_role;
+/* R-401 / R-2389: SECURITY INVOKER functions are granted to authenticated explicitly (Cloud SQL has no
+   PUBLIC default). They are pure — they read no table, only their arguments — so this exposes nothing.
+   Never anon. */
+grant execute on function public.invoice_line_iso_date(text) to authenticated, service_role;
+grant execute on function public.invoice_line_service_period(jsonb, jsonb, jsonb, timestamptz, timestamptz) to authenticated, service_role;
+grant execute on function public.invoice_lines_with_periods(jsonb, jsonb, jsonb, timestamptz, timestamptz) to authenticated, service_role;
 
 -- ── 4. stamp at issue ─────────────────────────────────────────────────────────
 create or replace function public.tg_invoice_stamp_line_periods()
