@@ -14,7 +14,8 @@
 --   CUTOFF   R-2727 rule: no app_rule_dates row / invoice made before from_at -> the day-after rule
 --   FROZEN   quote + subscription edited after issue -> the stored period does not move; editing the
 --            stored period is refused (issued-invoice freeze)
---   KEEP     a caller that wrote service_period itself keeps it
+--   KEEP     a caller that wrote service_period itself keeps it; PART  own lines (not the quote's) -> not stamped
+--   DATESTYLE stored dates are YYYY-MM-DD whatever the session DateStyle
 --   NOQUOTE  an invoice with no quote (instalment / milestone / direct) is not stamped
 --   SAFE     a broken quote row never blocks the invoice (unstamped, old computed path)
 --   GRANTS   helpers not executable by anon / authenticated
@@ -190,10 +191,19 @@ begin
   raise notice 'PASS frozen';
 end $$;
 
--- ── KEEP + NOQUOTE ─────────────────────────────────────────────────────────────
+-- ── KEEP + PART + NOQUOTE ──────────────────────────────────────────────────────
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status, created_date, line_items)
   values ('Q-R2744-4','aaaaaaaa-2744-0000-0000-000000000001','cccccccc-2744-0000-0000-000000000001','Cust 2744',
-          5900, 5000, 18, 'accepted', 'awaiting', '2026-11-01', '[{"id":"a","name":"Business Starter","qty":1,"rate":5000,"commitment":"annual_yearly"}]');
+          5900, 5000, 18, 'accepted', 'awaiting', '2026-11-01',
+          '[{"id":"a","name":"Business Starter","qty":1,"rate":5000,"commitment":"annual_yearly"},
+            {"id":"b","name":"Business Starter","qty":1,"rate":0,"commitment":"annual_yearly"}]'),
+         ('Q-R2744-7','aaaaaaaa-2744-0000-0000-000000000001','cccccccc-2744-0000-0000-000000000001','Cust 2744',
+          23600, 20000, 18, 'accepted', 'awaiting', '2026-11-01', '[{"id":"a","name":"Business Starter","qty":4,"rate":5000,"commitment":"annual_yearly"}]');
+-- PART: a part invoice writes its own line (qty 1 of the quote's 4) -> not stamped, prints as today.
+insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, taxable_value, tax_amount, tax_rate, inter_state, quote_id, line_items)
+  values ('INV-R2744-7','aaaaaaaa-2744-0000-0000-000000000001','cccccccc-2744-0000-0000-000000000001','Cust 2744',
+          5900,'pending', public.ist_today(), 5000, 900, 18, false, 'Q-R2744-7',
+          '[{"id":"a","name":"Business Starter","qty":1,"rate":5000,"commitment":"annual_yearly"}]');
 insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, taxable_value, tax_amount, tax_rate, inter_state, quote_id, line_items)
   values ('INV-R2744-4','aaaaaaaa-2744-0000-0000-000000000001','cccccccc-2744-0000-0000-000000000001','Cust 2744',
           5900,'pending', public.ist_today(), 5000, 900, 18, false, 'Q-R2744-4',
@@ -215,7 +225,25 @@ begin
   if (select line_items->0 ? 'service_period' from public.invoices where id = 'INV-R2744-5') then
     raise exception 'FAIL NOQUOTE: a quote-less invoice was stamped';
   end if;
-  raise notice 'PASS keep + noquote';
+  if (select line_items->0 ? 'service_period' from public.invoices where id = 'INV-R2744-7') then
+    raise exception 'FAIL PART: a part invoice with its own lines was stamped';
+  end if;
+  raise notice 'PASS keep + part + noquote';
+end $$;
+
+-- ── DATESTYLE: stored dates are YYYY-MM-DD whatever the session's DateStyle ─────
+set local datestyle = 'SQL, DMY';
+do $$
+declare v jsonb := public.invoice_line_service_period(
+  '{"name":"X (pro-rata from 2026-11-14 to 2027-03-31)","commitment":"annual_yearly"}', '{"is_add_seats":true}', null, null, now());
+declare w jsonb := public.invoice_line_service_period(
+  '{"commitment":"annual_yearly","start_date":"2026-12-01"}', '{"created_date":"2026-11-14"}', null, null, now());
+begin
+  if v is distinct from '{"from":"2026-11-14","to":"2027-03-31","months":null}'::jsonb
+     or w is distinct from '{"from":"2026-12-01","to":"2027-11-30","months":12}'::jsonb then
+    raise exception 'FAIL DATESTYLE: % / %', v, w;
+  end if;
+  raise notice 'PASS datestyle';
 end $$;
 
 -- ── SAFE: a quote whose line_items is not an array of objects never blocks the invoice ──

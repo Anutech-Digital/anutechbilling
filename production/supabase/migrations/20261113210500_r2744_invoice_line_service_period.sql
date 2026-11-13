@@ -88,8 +88,7 @@ begin
   if v_range is not null then
     v_rfrom := public.invoice_line_iso_date(v_range[1]);
     v_rto   := public.invoice_line_iso_date(v_range[2]);
-    if v_rfrom is null or v_rto is null or v_rto < v_rfrom
-       or v_range[1] <> v_rfrom::text or v_range[2] <> v_rto::text then
+    if v_rfrom is null or v_rto is null or v_rto < v_rfrom then
       v_rfrom := null; v_rto := null;
     end if;
   end if;
@@ -98,7 +97,7 @@ begin
 
   -- 1. Add-seats: the window the line names.
   if v_rfrom is not null then
-    return jsonb_build_object('from', v_rfrom::text, 'to', v_rto::text, 'months', null);
+    return jsonb_build_object('from', to_char(v_rfrom, 'YYYY-MM-DD'), 'to', to_char(v_rto, 'YYYY-MM-DD'), 'months', null);
   end if;
   if (p_quote->'is_add_seats') = 'true'::jsonb then return null; end if;
 
@@ -125,11 +124,11 @@ begin
       end if;
     end if;
     if v_anniv then
-      return jsonb_build_object('from', v_rtd::text,
-        'to', ((v_rtd + make_interval(months => v_m::int))::date - 1)::text, 'months', v_m::int);
+      return jsonb_build_object('from', to_char(v_rtd, 'YYYY-MM-DD'),
+        'to', to_char((v_rtd + make_interval(months => v_m::int))::date - 1, 'YYYY-MM-DD'), 'months', v_m::int);
     end if;
-    return jsonb_build_object('from', (v_rtd + 1)::text,
-      'to', (v_rtd + make_interval(months => v_m::int))::date::text, 'months', v_m::int);
+    return jsonb_build_object('from', to_char(v_rtd + 1, 'YYYY-MM-DD'),
+      'to', to_char((v_rtd + make_interval(months => v_m::int))::date, 'YYYY-MM-DD'), 'months', v_m::int);
   end if;
 
   -- 3. New sale: start_date (else the quote's date) + one term (x years on a multi-year line).
@@ -147,8 +146,8 @@ begin
     v_months := 12 * case when v_years is not null and v_years = trunc(v_years) and v_years between 1 and 10
                           then v_years::int else 1 end;
   end if;
-  return jsonb_build_object('from', v_from::text,
-    'to', ((v_from + make_interval(months => v_months))::date - 1)::text, 'months', v_months);
+  return jsonb_build_object('from', to_char(v_from, 'YYYY-MM-DD'),
+    'to', to_char((v_from + make_interval(months => v_months))::date - 1, 'YYYY-MM-DD'), 'months', v_months);
 end;
 $$;
 
@@ -197,6 +196,24 @@ begin
     select to_jsonb(q) into v_q from public.quotes q
      where q.id = new.quote_id and q.tenant_id = new.tenant_id;
     if v_q is null then return new; end if;
+
+    -- Only an invoice whose lines ARE its quote's lines (the copy trigger, or a caller writing the
+    -- same lines): same count, and line by line the same name / qty / rate. A part / instalment /
+    -- re-priced invoice that writes its own lines prints no period today (build-props R-375) — it is
+    -- left unstamped so it keeps printing exactly that. A line that already carries service_period
+    -- (a caller that knows each line's own period) is kept either way.
+    if jsonb_typeof(v_q->'line_items') is distinct from 'array'
+       or jsonb_array_length(v_q->'line_items') <> jsonb_array_length(new.line_items)
+       or exists (
+         select 1 from jsonb_array_elements(new.line_items) with ordinality as il(l, i)
+          where jsonb_typeof(il.l) = 'object'
+            and not (il.l ? 'service_period')
+            and ((il.l->'name') is distinct from (v_q->'line_items'->(il.i::int - 1)->'name')
+                 or (il.l->'qty') is distinct from (v_q->'line_items'->(il.i::int - 1)->'qty')
+                 or (il.l->'rate') is distinct from (v_q->'line_items'->(il.i::int - 1)->'rate'))
+       ) then
+      return new;
+    end if;
 
     -- loadRenewedSubscription: renewal_subscription_id, else the row whose renewal_quote_id is this quote.
     if (v_q->'is_renewal') = 'true'::jsonb or (v_q->'is_extension') = 'true'::jsonb then

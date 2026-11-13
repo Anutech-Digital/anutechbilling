@@ -181,8 +181,11 @@ export function buildInvoicePdfProps(args: {
      Only a legacy row with no snapshot reads the live customer. Same rule as the invoice page. */
   const buyer = invoiceBuyer(invoice, customer);
 
-  /* R-2744: an invoice issued with stored line periods prints THOSE (withStoredLinePeriods), never a
-     period worked out again from today's quote / subscription. Not stamped → the same objects as before. */
+  /* R-2727 review: an invoice created before the rule went live here prints its period exactly as before. */
+  const quoteCtx = quote ? quoteLinePeriodContext(quote, invoicePeriodSubscription(invoice, args.periodRuleFrom, quote, args.subscriptionDomain)) : null;
+  /* R-2744: an invoice issued with stored line periods prints its own frozen lines + THOSE periods
+     (withStoredLinePeriods), never anything worked out again from today's quote / subscription.
+     Not stamped → the same objects as before. */
   const printed = withStoredLinePeriods(
     /* A quote-less invoice carries its OWN lines (migration 20260817110000).
        Subscription instalments cannot link to their quote — build-props prefers the
@@ -196,8 +199,8 @@ export function buildInvoicePdfProps(args: {
     invoice,
     /* R-1764: the quote's own "Domain:" / "Subscription period:" — only while the lines ARE the
        quote's. An instalment or quote-less invoice covers a part, so it says no period. */
-    /* R-2727 review: an invoice created before the rule went live here prints its period exactly as before. */
-    useQuote && quote ? quoteLinePeriodContext(quote, invoicePeriodSubscription(invoice, args.periodRuleFrom, quote, args.subscriptionDomain)) : null,
+    useQuote ? quoteCtx : null,
+    quoteCtx,
   );
 
   return {
