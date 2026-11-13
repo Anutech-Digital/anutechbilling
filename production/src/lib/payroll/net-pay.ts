@@ -15,6 +15,7 @@ import { computePf, pfWage, type PfContribution, type PfWage } from "./pf";
 import { computeEsi, esiStickyCovered, type EsiContribution } from "./esi";
 import { estimateMonthlyTds, fyStartOfPeriod, type TdsEstimate } from "./income-tax";
 import { salaryInForce, type SalaryRevision, type SalaryStructure } from "./salary-revision";
+import { rupee } from "@/lib/utils";
 
 /** The payslip fields the auto deductions read (salary_payments rows of this employee). */
 export interface PayslipFacts {
@@ -122,7 +123,7 @@ export function monthNetPay(
   });
   const pf = a.pf.employee, esi = a.esi.employee, tds = a.tds.thisMonth;
   const net = Math.max(0, gross - pf - esi - tds);
-  const inr = (n: number) => "₹" + n.toLocaleString("en-IN");
+  const inr = rupee; // R-1138: rupee() formats every amount
   const parts = [pf > 0 ? `PF ${inr(pf)}` : null, esi > 0 ? `ESI ${inr(esi)}` : null, tds > 0 ? `TDS ${inr(tds)}` : null].filter(Boolean);
   const explain = `Full month: ${inr(net)} = gross ${inr(gross)}${parts.length ? " − " + parts.join(" − ") : ""}, as Pay salary works it out for a full month (LOP / advances / bonus change it).`;
   return { period, gross, pf, esi, tds, net, explain };
