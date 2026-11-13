@@ -401,15 +401,22 @@ export function bulkQuoteConfirm(
  * R-2422: Actions is ONE next-step button + ⋯ now (was up to six stacked buttons), so it gives
  * 24px back to Customer, which also carries the "Last paid" line.
  */
-export const QUEUE_TABLE_BUDGET_PX = 944;
-export const QUEUE_FLEX_MIN_PX = 140;
-export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: "select" | "customer" | "product" | "date" | "amount" | "status" | "actions"; width: number | null }> = [
-  { key: "select", width: 36 },
-  { key: "customer", width: null },
-  { key: "product", width: null },
-  /* R-2728: +16px — a "Renewal quote sent" row's date also carries its due words and "Expired 12 days ago". */
-  { key: "date", width: 120 },
-  { key: "amount", width: 128 },
-  { key: "status", width: 140 },
-  { key: "actions", width: 224 },
+/* R-2759 (R-2739b, 14 Nov): the table now shows from a 1260px window (QUEUE_TABLE_MIN_VIEWPORT_PX) — a
+   1280 laptop has a 1264–1276px inner width, so the old xl (1280px) switch showed it the card list.
+   At 1260 with the sidebar open the card is ~924px. Eight columns, every cell at most two lines:
+   ☐ · Customer · Product & period · Due · Amount · Status · Last invoice · Action. */
+export const QUEUE_TABLE_MIN_VIEWPORT_PX = 1260;
+export const QUEUE_TABLE_BUDGET_PX = 924;
+export const QUEUE_FLEX_MIN_PX = 104;
+export type QueueColKey = "select" | "customer" | "product" | "due" | "amount" | "status" | "invoice" | "actions";
+export const QUEUE_TABLE_COLS: ReadonlyArray<{ key: QueueColKey; label: string; width: number | null; align?: "right" }> = [
+  { key: "select", label: "", width: 32 },
+  { key: "customer", label: "Customer", width: null },
+  { key: "product", label: "Product & period", width: null },
+  { key: "due", label: "Due", width: 96 },
+  { key: "amount", label: "Amount", width: 108, align: "right" },
+  { key: "status", label: "Status", width: 152 },
+  { key: "invoice", label: "Last invoice", width: 152 },
+  /* "Record payment" + ⋯ on one line */
+  { key: "actions", label: "Action", width: 176 },
 ];

@@ -109,6 +109,7 @@ import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/c
 import { renewalStage, type RenewalStage, type StageFlag, type FlagKey } from "@/lib/renewals/stage";
 import { vendorHoldState } from "@/lib/renewals/vendor-hold";
 import { stageInputFor, payHref as stagePayHref } from "./stage-input";
+import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords } from "./row-cells";
 
 // ─── Vendor logo pill ─────────────────────────────────────────────────────────
 
@@ -162,15 +163,16 @@ const FLAG_ICON: Record<FlagKey, React.ComponentProps<typeof Icon>["name"]> = {
   atRisk: "alert", vendorHold: "lock", priorTermUnpaid: "rupee", promiseBroken: "x_circle", followUpDue: "phone",
 };
 
-function StageChip({ stage, size }: { stage: RenewalStage | null; size?: "sm" }) {
+function StageChip({ stage, size, compact = false }: { stage: RenewalStage | null; size?: "sm"; compact?: boolean }) {
   if (!stage) return <Skeleton className="h-5 w-24" aria-label="Loading status" data-testid="stage-chip-loading" />;
+  /* R-2759: in the table the chip may wrap (a status is never cut) and its note is the tooltip — two lines at most. */
   return (
-    <div className="min-w-0" data-testid="stage-chip" data-stage={stage.key}>
+    <div className="min-w-0" data-testid="stage-chip" data-stage={stage.key} title={compact && stage.note ? `${stage.label} · ${stage.note}` : undefined}>
       <div className="flex min-w-0 flex-wrap items-center gap-1">
-        <Badge kind={stage.tone} size={size} dot>{stage.label}</Badge>
+        <Badge kind={stage.tone} size={size} dot className={compact ? "h-auto whitespace-normal text-left" : undefined}>{stage.label}</Badge>
         {stage.flags.map((f) => <StageFlagIcon key={f.key} flag={f} />)}
       </div>
-      {stage.note && <p className="mt-1 text-2xs text-ink-3 tabular-nums">{stage.note}</p>}
+      {stage.note && !compact && <p className="mt-1 text-2xs text-ink-3 tabular-nums">{stage.note}</p>}
     </div>
   );
 }
@@ -371,8 +373,8 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
 
   return (
     <>
-      {/* Cards — viewports < 1280px (phones and small laptops), two per row from md. */}
-      <ul className="xl:hidden p-3 space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
+      {/* Cards — viewports < 1260px (phones and small laptops), two per row from md. */}
+      <ul className="min-[1260px]:hidden p-3 space-y-2 md:grid md:grid-cols-2 md:gap-2 md:space-y-0">
         {rows.map((item) => {
           const { sub, daysUntil: days, amount, frequency, contact, followup, stage } = item;
           const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
@@ -421,9 +423,9 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
         })}
       </ul>
 
-      {/* Desktop table — viewports >= 1280px. Column budget in queue.ts (QUEUE_TABLE_COLS) keeps it
-          inside the ~944px card with the sidebar open, Actions always on screen (R-2403). */}
-      <div className="hidden xl:block">
+      {/* Desktop table — R-2759: from a 1260px window (QUEUE_TABLE_MIN_VIEWPORT_PX; a 1280 laptop's inner width
+          is 1264–1276), eight columns on the queue.ts budget, every cell at most two lines (row-cells.tsx). */}
+      <div className="hidden min-[1260px]:block" data-testid="renewals-table">
         <table className="w-full table-fixed text-sm">
           <colgroup>
             {QUEUE_TABLE_COLS.map((c) => (
@@ -432,31 +434,28 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
           </colgroup>
           <thead>
             <tr className="border-b border-hairline bg-muted/30">
-              <th className="px-2 py-2.5">
-                <input
-                  type="checkbox"
-                  aria-label="Select all renewals on screen"
-                  className="cursor-pointer accent-amber"
-                  checked={allOn}
-                  ref={(el) => { if (el) el.indeterminate = someOn && !allOn; }}
-                  onChange={(e) => onSelect(rows.map((r) => r.sub.id), e.target.checked)}
-                />
-              </th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-ink-3">Customer</th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-ink-3">Product</th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-ink-3">Renewal date</th>
-              <th className="px-3 py-2.5 text-right text-xs font-medium text-ink-3">Renewal amount</th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-ink-3">Status</th>
-              <th className="px-3 py-2.5 text-left text-xs font-medium text-ink-3">Actions</th>
+              {QUEUE_TABLE_COLS.map((c) => c.key === "select" ? (
+                <th key={c.key} className="px-2 py-2.5">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all renewals on screen"
+                    className="cursor-pointer accent-amber"
+                    checked={allOn}
+                    ref={(el) => { if (el) el.indeterminate = someOn && !allOn; }}
+                    onChange={(e) => onSelect(rows.map((r) => r.sub.id), e.target.checked)}
+                  />
+                </th>
+              ) : (
+                <th key={c.key} className={cn("px-2 py-2.5 text-xs font-medium text-ink-3", c.align === "right" ? "text-right" : "text-left")}>{c.label}</th>
+              ))}
             </tr>
           </thead>
           <tbody>
             {rows.map((item) => {
-              const { sub, daysUntil: days, amount, frequency, contact, followup, stage } = item;
-              const action = renewalRowAction(sub, quoteStatus.get(sub.renewal_quote_id ?? "") ?? null);  // R-2232
+              const { sub, daysUntil: days, amount, frequency, contact, stage } = item;
               return (
-                <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20">
-                  <td className="px-2 py-3">
+                <tr key={sub.id} className="border-b border-hairline last:border-0 align-top hover:bg-muted/20" data-testid="renewal-row">
+                  <td className="px-2 py-2.5">
                     <input
                       type="checkbox"
                       aria-label={`Select ${sub.customer_name} — ${sub.plan}`}
@@ -465,57 +464,21 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, onFollowup,
                       onChange={(e) => onSelect([sub.id], e.target.checked)}
                     />
                   </td>
-
-                  {/* Customer + contact */}
-                  <td className="px-3 py-3 min-w-0">
-                    {sub.customer_id ? (
-                      <Link href={`/customers/${sub.customer_id}` as never} className="block truncate font-semibold text-ink hover:underline" title={sub.customer_name}>
-                        {sub.customer_name}
-                      </Link>
-                    ) : (
-                      <p className="truncate font-semibold text-ink" title={sub.customer_name}>{sub.customer_name}</p>
-                    )}
-                    <ContactLine contact={contact} />
-                    {lastPaidFor(item, "mt-0.5")}
+                  <td className="min-w-0 px-2 py-2.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} /></td>
+                  <td className="min-w-0 px-2 py-2.5">
+                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} frequency={frequency} />
                   </td>
-
-                  {/* Product · seats · vendor */}
-                  <td className="px-3 py-3 min-w-0">
-                    <p className="truncate text-ink" title={sub.plan ?? undefined}>{sub.plan}</p>
-                    <p className="mt-0.5 flex flex-wrap items-center gap-1.5 text-2xs text-ink-3">
-                      <span className="tabular-nums">{sub.seats} seats</span>
-                      <VendorPill vendor={sub.vendor} />
-                    </p>
+                  <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} /></td>
+                  <td className="px-2 py-2.5 text-right">
+                    <p className="whitespace-nowrap font-medium tabular-nums text-ink">{amount.text}</p>
+                    <p className="mt-0.5 whitespace-nowrap text-2xs text-ink-3">{amount.gst}</p>
                   </td>
-
-                  {/* Renewal date + reminders sent */}
-                  <td className="px-3 py-3">
-                    <p className="text-ink">{sub.renewal_date ? formatDate(sub.renewal_date) : "—"}</p>
-                    {sentDue(item, "mt-0.5")}
-                    {sub.reminder_count > 0 && (
-                      <p className="mt-1 text-2xs text-ink-3 tabular-nums">
-                        {sub.reminder_count} email{sub.reminder_count === 1 ? "" : "s"} sent
-                      </p>
-                    )}
+                  <td className="min-w-0 px-2 py-2.5"><StageChip stage={stage} compact /></td>
+                  <td className="min-w-0 px-2 py-2.5">
+                    <LastInvoiceCell docs={item.docs} loading={docsState.loading} failed={docsState.failed} canInvoices={canInvoices} canQuotes={canQuotes} todayIst={todayIst} />
                   </td>
-
-                  {/* Renewal amount for the term */}
-                  <td className="px-3 py-3 text-right">
-                    <AmountCell amount={amount} frequency={frequency} />
-                  </td>
-
-                  {/* ONE status */}
-                  <td className="px-3 py-3">
-                    <StageChip stage={stage} />
-                    <FollowupLine followup={followup} names={names} />
-                  </td>
-
-                  {/* Actions */}
-                  <td className="px-3 py-3">
-                    <div className="flex flex-col items-start gap-1.5">
-                      {docsFor(item, action, "text-2xs")}
-                      <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} />
-                    </div>
+                  <td className="min-w-0 px-2 py-2.5">
+                    <RenewalActions sub={sub} daysUntil={days} layout="table" strong={strong} onFollowup={followupFor(sub)} messaging stage={stage} payHref={item.payHref} />
                   </td>
                 </tr>
               );

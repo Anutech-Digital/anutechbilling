@@ -10,7 +10,7 @@ import {
   lastDocsBySubscription, quoteExpiryText, renewalDueText, quoteStateLabel, invoiceStatusWords, daysBetweenIst,
   type LastDocsInput, type DocQuote, type DocBilling, type DocInvoice,
 } from "./last-docs";
-import { renewalRowStatus, STATUS_FILTER_LABEL, filterQueue, NO_FILTERS, QUEUE_TABLE_COLS, QUEUE_TABLE_BUDGET_PX } from "./queue";
+import { renewalRowStatus, STATUS_FILTER_LABEL, filterQueue, NO_FILTERS, QUEUE_TABLE_COLS, QUEUE_TABLE_BUDGET_PX, QUEUE_FLEX_MIN_PX } from "./queue";
 import { tileMatches, monthOf } from "./tiles";
 import { istToday } from "@/lib/dates/ist";
 
@@ -225,8 +225,8 @@ describe("R-2728 wiring — one batched read, table still fits 1280", () => {
     expect(data).toContain("fetchAllRowsIn");
     expect(data).not.toMatch(/\.single\(\)|\.maybeSingle\(\)/);
   });
-  it("column budget still ≤ 944px", () => {
+  it("column budget still fits (R-2759: the ~924px card at 1260)", () => {
     const fixed = QUEUE_TABLE_COLS.reduce((s, c) => s + (c.width ?? 0), 0);
-    expect(fixed + 2 * 140).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
+    expect(fixed + 2 * QUEUE_FLEX_MIN_PX).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
   });
 });
