@@ -2783,6 +2783,9 @@ function QuoteBuilderBody() {
                 // ("monthly") line stores ₹/seat/MONTH, which already IS one invoice.
                 const commitment  = line.commitment ?? "annual_yearly";
                 const unitLabel   = lineRateUnitSuffix(line, billingN, billingUnit);   // quote-level frequency (0161); R-1673: one-time line says so
+                /* R-2746: the fixed Starts of a renewal line — shown only when it is not the label's start. */
+                const rowStart    = renewalLineStart(line, editedQuotePeriod);
+                const rowShowStarts = lineStartsAddsInfo(rowStart, renewalLabel);
                 const lineDiv     = perInvoiceDivisor(billingN, commitment);
                 const displayRate = Math.round(line.rate / lineDiv);
                 const displayCost = Math.round(line.cost / lineDiv);
@@ -2857,12 +2860,12 @@ function QuoteBuilderBody() {
                         </div>
                         <OneTimeLicenceNote line={line} className="basis-full order-last" />
                         {/* R-2746: hidden when it only repeats the "Renewal · …" label's start. */}
-                        {lineStartsAddsInfo(renewalLineStart(line, editedQuotePeriod), renewalLabel) && (
+                        {rowShowStarts && (
                         <div className="flex items-center gap-1">
                           <span className="text-3xs uppercase tracking-wider text-ink-3 font-semibold">Starts</span>
                           {/* R-2727: a renewal line shows the renewal period's start (fixed). */}
                           <LineStartsField
-                            start={renewalLineStart(line, editedQuotePeriod)} value={line.start_date ?? ""} onChange={(v) => updateStartDate(line.id, v)}
+                            start={rowStart} value={line.start_date ?? ""} onChange={(v) => updateStartDate(line.id, v)}
                             ariaLabel={`Start date for ${line.name}`}
                             inputTitle="Service start date — leave blank to start on the payment date"
                             inputClassName="text-2xs px-1.5 py-0.5 border border-hairline rounded bg-paper text-ink focus:outline-none focus:ring-1 focus:ring-amber focus:border-amber"

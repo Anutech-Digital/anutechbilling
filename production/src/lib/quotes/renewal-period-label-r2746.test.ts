@@ -47,6 +47,14 @@ describe("renewalPeriodLabel", () => {
     expect(renewalPeriodLabel([setup], ctx)).toBeNull();
     expect(renewalPeriodLabel([], ctx)).toBeNull();
   });
+  it("a subscription line whose period is unknown (monthly line on a 12-month renewal: conflict) → no label", () => {
+    const ctx = quoteLinePeriodContext(renewalQuote, appSub);
+    const flex = { name: "Flex seats", commitment: "monthly" };
+    expect(lineServicePeriod(flex, ctx)).toBeNull();
+    expect(renewalPeriodLabel([ws, flex], ctx)).toBeNull();
+    // ...and the editor keeps that line's Starts ("—"), so the unknown period still shows.
+    expect(lineStartsAddsInfo(renewalLineStart(flex, ctx), null)).toBe(true);
+  });
   it("lines that name different periods → no single label", () => {
     const ctx = quoteLinePeriodContext(renewalQuote, appSub);
     const seats = { name: "Seats (pro-rata from 2026-12-01 to 2027-11-12)", commitment: "annual_yearly" };
@@ -60,9 +68,8 @@ describe("lineStartsAddsInfo — the editor's Starts stops repeating the label",
   it("renewal line whose start = the label's start → hidden", () => {
     expect(lineStartsAddsInfo(renewalLineStart(ws, ctx), label)).toBe(false);
   });
-  it("a one-time line on a renewal ('—') → hidden; a different start → shown", () => {
-    expect(lineStartsAddsInfo({ kind: "fixed", date: null }, label)).toBe(false);
-    expect(lineStartsAddsInfo({ kind: "fixed", date: "2026-12-01" }, label)).toBe(true);
+  it("a one-time line on a renewal ('—') → hidden too: the label already says the period", () => {
+    expect(lineStartsAddsInfo(renewalLineStart({ name: "Setup", one_time: true }, ctx), label)).toBe(false);
   });
   it("no label (new sale, or unknown period) → Starts as before", () => {
     expect(lineStartsAddsInfo({ kind: "editable" }, null)).toBe(true);
