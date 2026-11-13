@@ -346,6 +346,7 @@ export const OFF_MENU_ROLES: Readonly<Record<string, UserRole[]>> = {
   "/attendance/kiosk": OM_ONLY,         // the office tablet runs signed in as the owner
   "/platform": OM_ONLY,                 // founder-only; the API refuses anyone else anyway
   "/products": OM_ONLY,                 // redirects to /items (Products row: owner + manager)
+  "/scorecard": OM_ONLY,                // R-2725: no menu row; opened from Employees & Users (same roles as its old row)
   /* Mock bank-consent screen of the Banking statement pull — Banking's own roles. */
   "/aa": ["owner", "manager", "billing", "accountant"],
   /* GP-07a (R-2115): the personal login's Account page — in the avatar menu, not a sidebar row. */
@@ -536,6 +537,7 @@ export const NOT_IN_NAV: Readonly<Record<string, string>> = {
   "/products": "Redirects to Products (/items) for people who type the menu name as a URL (R-490)",
   "/settings/company": "redirect to /settings (Company tab), R-1670",
   "/account": "Personal login's account page; opened from the avatar menu (GP-07a)",
+  /* R-2725 */ "/scorecard": "Opened from the Score column and the profile's Scorecard button on Employees & Users",
 };
 
 export const APP_NAV: NavSection[] = [
@@ -799,8 +801,6 @@ export const APP_NAV: NavSection[] = [
         /* R-384 (7 Oct 2026, owner decision): label was "Employees & Team". */
         id: "employees",         href: "/accounting/employees",       label: "Employees & Users",      icon: "users", roles: PAYROLL_ROLES,
         children: [
-          /* Was reachable only by URL. */
-          { id: "scorecard",       href: "/scorecard",                  label: "Scorecards",             icon: "award", roles: OM },
           { id: "performance",     href: "/performance",                label: "Team Performance",       icon: "trending_up", roles: OM },
           { id: "assessments",     href: "/assessments",                label: "Assessments",            icon: "check", roles: OM },
           /* Apprentice Academy (R-149). Owner / manager in phase 1 (they are the mentors); the
@@ -962,6 +962,7 @@ const EXTRA_SCREENS: Record<string, { tail: string[]; under?: string }> = {
   "/compliance/roc":         { tail: ["ROC / MCA"] },
   "/compliance/gst":         { tail: ["GST Returns"] },
   "/compliance/income-tax":  { tail: ["Income Tax & TDS"] },
+  /* R-2725 */ "/scorecard": { tail: ["Scorecards"], under: "/accounting/employees" },
   "/performance":            { tail: ["Team Performance"], under: "Team" },
   "/assessments":            { tail: ["Reasoning Tests"], under: "Team" },
   "/attendance/kiosk":       { tail: ["Attendance Kiosk"], under: "Team" },
