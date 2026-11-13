@@ -70,20 +70,62 @@ export async function syncPagesFromLogin(admin: SupabaseClient, tenantId: string
     valid.map((p) => ({ tenant_id: tenantId, page_id: p.id, page_token: encryptSecret(p.access_token), updated_at: new Date().toISOString() })),
     { onConflict: "tenant_id,page_id" });
   if (tokErr) throw tokErr;
-  const known = new Set((await listPages(admin, tenantId)).map((p) => p.page_id));
+  /* Bulk upsert needs the same fields on every row: known Pages keep their own on/off value. */
+  const known = new Map((await listPages(admin, tenantId)).map((p) => [p.page_id, p.active] as const));
   const instagram = await Promise.all(valid.map((p) => instagramForPage(p.id, p.access_token).catch(() => null)));
   const rows = valid.map((p, i) => ({
     tenant_id: tenantId, page_id: p.id, name: p.name.slice(0, 200),
     instagram_id: instagram[i]?.id && PAGE_ID.test(instagram[i]!.id) ? instagram[i]!.id : null,
-    instagram_username: instagram[i]?.username?.slice(0, 100) ?? null,
+    instagram_username: instagram[i]?.username?.slice(0, 100) ?? (instagram[i] ? null : ""),
     updated_at: new Date().toISOString(),
-    ...(known.has(p.id) ? {} : { active: p.id === mainPageId }),
+    active: known.has(p.id) ? known.get(p.id)! : p.id === mainPageId,
   }));
   const { error } = await admin.from("social_pages").upsert(rows, { onConflict: "tenant_id,page_id" });
   if (error) throw error;
   await admin.from("social_pages").update({ is_main: false }).eq("tenant_id", tenantId).neq("page_id", mainPageId);
   await admin.from("social_pages").update({ is_main: true, active: true }).eq("tenant_id", tenantId).eq("page_id", mainPageId);
   return valid.length;
+}
+
+const GRAPH = `https://graph.facebook.com/${process.env.META_GRAPH_VERSION?.trim() || "v21.0"}`;
+
+/**
+ * Pages whose token is saved but which are missing from the list (or whose Instagram was never
+ * looked up — instagram_username null; "" means "looked, none"): fill them from Meta with their own
+ * token. New ones start switched off. Safe to call on every page load — it does nothing when all is
+ * filled. Never throws.
+ */
+export async function fillPagesFromTokens(admin: SupabaseClient, tenantId: string): Promise<number> {
+  try {
+    const [{ data: toks }, pages] = await Promise.all([
+      admin.from("social_page_tokens").select("page_id, page_token").eq("tenant_id", tenantId),
+      listPages(admin, tenantId),
+    ]);
+    const byId = new Map(pages.map((p) => [p.page_id, p]));
+    const todo = ((toks ?? []) as { page_id: string; page_token: string }[]).filter((t) => !byId.has(t.page_id) || byId.get(t.page_id)!.instagram_username === null).slice(0, 25);
+    let filled = 0;
+    for (const t of todo) {
+      const token = decryptSecret(t.page_token);
+      if (!token) continue;
+      const known = byId.get(t.page_id);
+      let name = known?.name ?? "";
+      if (!known) {
+        const r = await fetch(`${GRAPH}/${t.page_id}?${new URLSearchParams({ fields: "name", access_token: token })}`, { cache: "no-store", signal: AbortSignal.timeout(10_000) }).catch(() => null);
+        name = r?.ok ? String(((await r.json().catch(() => ({}))) as { name?: string }).name ?? "") : "";
+        if (!name) continue;
+      }
+      const ig = await instagramForPage(t.page_id, token).catch(() => null);
+      const row = { tenant_id: tenantId, page_id: t.page_id, name: name.slice(0, 200),
+        instagram_id: ig?.id && PAGE_ID.test(ig.id) ? ig.id : null, instagram_username: ig?.username?.slice(0, 100) ?? "",
+        active: known ? known.active : false, updated_at: new Date().toISOString() };
+      const { error } = await admin.from("social_pages").upsert(row, { onConflict: "tenant_id,page_id" });
+      if (!error) filled++;
+    }
+    return filled;
+  } catch (e) {
+    console.error("[social-pages] fill failed", e instanceof Error ? e.message : (e as { message?: string })?.message ?? "unknown");
+    return 0;
+  }
 }
 
 /** The AI settings of one Page that a person may change. */

@@ -157,7 +157,8 @@ export default function SocialContentPage() {
 
   const isAll = state?.view === "all";
   /** R-2729: add the shown Page to a request body (nothing in the All Pages view). */
-  const pg = <T extends Record<string, unknown>>(body: T): T & { pageId?: string } => (state?.view && !isAll ? { ...body, pageId: state.view } : body);
+  /* A body that names its own Page (e.g. Manage Pages) keeps it. */
+  const pg = <T extends Record<string, unknown>>(body: T): T & { pageId?: string } => (state?.view && !isAll && body.pageId === undefined ? { ...body, pageId: state.view } : body);
   const pageName = (id: string | null | undefined) => state?.pages.find((p) => p.page_id === id)?.name ?? "";
   const activePages = state?.pages.filter((p) => p.active) ?? [];
   const hasInstagram = platforms.includes("instagram");

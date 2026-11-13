@@ -49,7 +49,7 @@ export async function POST(request: NextRequest) {
     /* R-2729: Social growth may run every Page this login manages — save them all (sealed); the
        chosen Page is the main one and is on, the others wait in "Manage Pages". Never blocks the connect. */
     await syncPagesFromLogin(caller.admin as unknown as SupabaseClient, caller.tenantId, pages, page.id)
-      .catch((e) => console.error("[facebook-page] pages for Social growth not saved", e instanceof Error ? e.message : "unknown"));
+      .catch((e) => console.error("[facebook-page] pages for Social growth not saved", e instanceof Error ? e.message : (e as { message?: string })?.message ?? "unknown"));
     return NextResponse.json({ ok: true });
   } catch (error) {
     console.error("[facebook-page] select failed", error instanceof Error ? error.message : "unknown");

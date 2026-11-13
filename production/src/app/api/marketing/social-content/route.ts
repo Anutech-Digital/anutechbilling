@@ -20,7 +20,7 @@ import { planFor, readStrategies } from "@/lib/marketing/social-strategy.server"
 import { describePlan } from "@/lib/marketing/social-strategy";
 import { followerRows, latestReport, readTodo } from "@/lib/marketing/social-report.server";
 import { followerTrend } from "@/lib/marketing/social-engagement";
-import { listPages, pageConnection, resolvePage, type SocialPage } from "@/lib/marketing/social-pages.server";
+import { fillPagesFromTokens, listPages, pageConnection, resolvePage, type SocialPage } from "@/lib/marketing/social-pages.server";
 import { pagePhotoId } from "@/lib/marketing/social-autopilot";
 import { istToday } from "@/lib/dates/ist";
 
@@ -62,6 +62,8 @@ export async function GET(req: Request) {
   const admin = typed as unknown as SupabaseClient;
   const requested = new URL(req.url).searchParams.get("page");
   try {
+    /* R-2729: Pages whose token was saved but not listed yet (or never checked for Instagram) are filled in. */
+    await fillPagesFromTokens(admin, session.tenantId);
     const [allPages, paused, linkedin, todo] = await Promise.all([
       listPages(admin, session.tenantId),
       withTenant(session, tx => tx.$queryRaw<{ ai_paused: boolean }[]>`select ai_paused from public.social_content_settings where tenant_id = ${session.tenantId}::uuid`),

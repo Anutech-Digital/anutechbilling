@@ -42,8 +42,9 @@ describe("R-2729 saving the Pages of a Facebook login", () => {
     expect(tokens.every((t) => t.tenant_id === T)).toBe(true);
     const pages = writes.find((w) => w.table === "social_pages" && w.op === "upsert")!.payload as { page_id: string; active?: boolean; instagram_id: string | null; instagram_username: string | null }[];
     expect(pages.find((p) => p.page_id === "111")).toMatchObject({ active: true, instagram_id: "9001", instagram_username: "anutech" });
-    expect(pages.find((p) => p.page_id === "222")).toMatchObject({ active: false, instagram_id: null });
-    expect(pages.find((p) => p.page_id === "333")).not.toHaveProperty("active"); // seen before: its on/off stays
+    expect(pages.find((p) => p.page_id === "222")).toMatchObject({ active: false, instagram_id: null, instagram_username: "" });
+    expect(pages.find((p) => p.page_id === "333")).toMatchObject({ active: true }); // seen before: its own on/off stays
+    expect(new Set(pages.map((p) => Object.keys(p).sort().join(",")))).toHaveProperty("size", 1); // same fields on every row (bulk upsert)
     const main = writes.filter((w) => w.table === "social_pages" && w.op === "update");
     expect(main.at(-1)!.payload).toEqual({ is_main: true, active: true });
     expect(main.at(-1)!.filters).toContainEqual(["eq", "page_id", "111"]);
