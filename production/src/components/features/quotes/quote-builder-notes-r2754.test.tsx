@@ -123,6 +123,8 @@ describe("R-2754: renewal quote editor — Notes for customer", () => {
     const back = c.querySelector<HTMLAnchorElement>("[data-back-to-renewals]");
     expect(back?.textContent).toContain("Back to Renewals");
     expect(back?.getAttribute("href")).toBe("/renewals?bucket=d30");
+    /* one way back: the page head's plain Back arrow gives way to it */
+    expect(c.querySelector('button[aria-label="Back"]')).toBeNull();
   });
 
   it("no back link without returnTo, and never to another site", async () => {

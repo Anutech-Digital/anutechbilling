@@ -82,6 +82,25 @@ describe("R-2754 editor Notes box — no internal id, link kept", () => {
     expect(linked(joinEditorNotes(p, "Please renew."))).toBe("Q-1");
   });
 
+  it("a staff sentence the customer never sees (backdated by …) survives an edit of the box", () => {
+    const s = `Renewal quote for subscription ${SUB}. Backdated by Pardeep Sharma on 2026-11-01, confirm with Hitesh. Includes support.`;
+    const p = splitNotesForEditor(s, lines, ctx);
+    expect(p.customer).toContain("Includes support.");
+    expect(p.customer).not.toMatch(/backdated/i);
+    const saved = joinEditorNotes(p, "Thank you.")!;
+    expect(saved).toContain("Backdated by Pardeep Sharma on 2026-11-01, confirm with Hitesh.");
+    expect(customerQuoteNotes(saved, lines, ctx)).toBe("Thank you.");
+    expect(linked(saved)).toBe("Q-1");
+  });
+
+  it("a 'subscription id: <uuid>' typed by hand is kept as typed — no new Renewals link is made", () => {
+    const s = `See subscription id: ${SUB}`;
+    const saved = joinEditorNotes(splitNotesForEditor(s, lines, ctx), "See notes.")!;
+    expect(saved).toContain(`See subscription id: ${SUB}`);
+    expect(saved).not.toContain("Linked to");
+    expect(linked(saved)).toBeUndefined();
+  });
+
   it("a normal note is untouched (box = stored text, saved as typed)", () => {
     const p = splitNotesForEditor("Prices valid for 15 days.", lines, ctx);
     expect(p).toEqual({ customer: "Prices valid for 15 days.", hidden: "", original: "Prices valid for 15 days." });

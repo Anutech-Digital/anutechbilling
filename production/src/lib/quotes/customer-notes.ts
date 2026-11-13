@@ -76,7 +76,7 @@ const SYS_DOMAIN = new RegExp(
   `^\\s*Domain renewal for (\\S+?) \\(subscription ${UUID_SRC}\\)(?:,\\s*at .*?\\+\\s*GST)?\\.?`, "i");
 const HAS_UUID = new RegExp(UUID_SRC, "i");
 /** Sentences that are staff arithmetic or a staff member's action, never customer copy. */
-const STAFF_PHRASE = /backdated by|\bfactor\s+[\d.]+%?|\bsubscription id\b/i;
+export const STAFF_PHRASE = /backdated by|\bfactor\s+[\d.]+%?|\bsubscription id\b/i;
 
 export interface CustomerNoteContext {
   /** quotes.plan — what a renewal renews. */
