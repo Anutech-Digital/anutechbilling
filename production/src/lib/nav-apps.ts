@@ -184,25 +184,32 @@ export function withoutDistributorOnly(
 
 export const SALARIED_PRO_CHILDREN: NavItem[] = [
   {
-    id: "sp-income",
-    href: "/employee-hub?tab=income",
-    label: "Income & Cash Flow",
-    icon: "wallet",
-    hint: "Salary CTC breakdown, other incomes & monthly in-hand cockpit",
+    id: "sp-budget",
+    href: "/employee-hub?tab=budget",
+    label: "Budget & Overview",
+    icon: "pie_chart",
+    hint: "Monthly spending limit, 50-30-20 rule & category caps",
   },
   {
     id: "sp-expenses",
     href: "/employee-hub?tab=expenses",
-    label: "Personal Expenses & Budget",
+    label: "Daily Expenses & Spends",
     icon: "tag",
-    hint: "Daily Indian expenses, UPI spends & living expense categorization",
+    hint: "Record UPI spends, cash flow & daily living expenses",
   },
   {
-    id: "sp-bank-import",
-    href: "/employee-hub?tab=bank-import",
-    label: "Bank Statement Importer",
-    icon: "upload_cloud",
-    hint: "Upload HDFC, SBI, ICICI, Axis or Kotak statement CSV",
+    id: "sp-banks",
+    href: "/employee-hub?tab=banks",
+    label: "Bank Accounts & Statement Import",
+    icon: "building",
+    hint: "HDFC, SBI, ICICI accounts with 1-click statement CSV parser",
+  },
+  {
+    id: "sp-income",
+    href: "/employee-hub?tab=income",
+    label: "Salary & Income Setup",
+    icon: "wallet",
+    hint: "Monthly in-hand salary, credit day & employer profile",
   },
   {
     id: "sp-vault",
@@ -214,16 +221,9 @@ export const SALARIED_PRO_CHILDREN: NavItem[] = [
   {
     id: "sp-tax",
     href: "/employee-hub?tab=tax",
-    label: "ITR-1 Filing & Tax Regime",
+    label: "ITR-1 Tax Assistant",
     icon: "rupee",
     hint: "Old vs New Regime comparison, 87A rebate & ITR-1 Sahaj JSON",
-  },
-  {
-    id: "sp-receipts",
-    href: "/employee-hub?tab=receipts",
-    label: "HRA Receipts & Claims",
-    icon: "receipt",
-    hint: "Instant 12-month printable rent receipts & company reimbursements",
   },
 ];
 
@@ -232,7 +232,7 @@ export const EMPLOYEE_HUB_ITEM: NavItem = {
   href: "/employee-hub",
   label: "Salaried Pro Hub",
   icon: "award",
-  hint: "Income & cash flow, expenses, bank import, digital vault, ITR-1 filing & HRA receipts",
+  hint: "Budget & spending limit, daily expenses, bank accounts, statement import, income & ITR assistant",
   children: SALARIED_PRO_CHILDREN,
 };
 

@@ -152,12 +152,39 @@ export function PersonalExpensesSection({
   const [amountRupees, setAmountRupees] = React.useState<number>(500);
   const [paymentMode, setPaymentMode] = React.useState<PersonalExpense["paymentMode"]>("UPI");
 
+  // Sync when expenses are updated from bank statement or other sections
+  React.useEffect(() => {
+    const handleUpdate = () => {
+      try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          if (Array.isArray(parsed)) setExpenses(parsed);
+        }
+      } catch {
+        // ignore
+      }
+    };
+
+    const handleOpenAdd = () => {
+      setDialogOpen(true);
+    };
+
+    window.addEventListener("salaried_pro_expenses_updated", handleUpdate);
+    window.addEventListener("salaried_pro_open_add_expense", handleOpenAdd);
+    return () => {
+      window.removeEventListener("salaried_pro_expenses_updated", handleUpdate);
+      window.removeEventListener("salaried_pro_open_add_expense", handleOpenAdd);
+    };
+  }, []);
+
   // Save to localStorage
   const saveExpenses = React.useCallback((items: PersonalExpense[]) => {
     setExpenses(items);
     if (typeof window !== "undefined") {
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+        window.dispatchEvent(new Event("salaried_pro_expenses_updated"));
       } catch {
         // ignore
       }
