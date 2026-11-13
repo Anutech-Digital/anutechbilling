@@ -61,15 +61,15 @@ import {
 import { AiDraftButton } from "@/components/shared/ai-draft-button";
 import { useVoiceNoteSend } from "@/components/shared/voice-note-button";
 import {
+  renewalActionSet, renewalNextStep, billPartDialogTitle, FOLLOW_UP, BILL_NEXT_PART, RECORD_PAYMENT,
+  type RenewalActionSub, type RenewalButtonKind, type RenewalMenuItem,
+} from "./renewal-actions-rules";
 import { quoteEditHrefFromRenewals } from "@/lib/renewals/back-to-renewals";
 
 /** R-2754: the Renewals URL this button was clicked on (keeps the tab) — the editor links back to it. */
 function hereUrl(): string | null {
   return typeof window === "undefined" ? null : `${window.location.pathname}${window.location.search}`;
 }
-  renewalActionSet, renewalNextStep, billPartDialogTitle, FOLLOW_UP, BILL_NEXT_PART, RECORD_PAYMENT,
-  type RenewalActionSub, type RenewalButtonKind, type RenewalMenuItem,
-} from "./renewal-actions-rules";
 
 const NOT_RENEWING_TITLE = {
   "non-renewing": "Mark Won't renew: it runs till the renewal date, then ends — no renewal quote or reminder",
