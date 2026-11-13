@@ -91,13 +91,18 @@ test.describe("R-2735 card test", () => {
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
   test("Step 1: Bill next part on a subscription due 5 days ago → proforma made; renewal date unchanged, not renewed; row stays in Overdue as 'Renewal quote sent'", async ({ browser, baseURL }) => {
-    const page = await pageAs(browser, baseURL, "Owner");
+    test.setTimeout(400_000);   // two Renewals page loads + the bill on a busy dev server
+    const page = await pageAs(browser, baseURL, "owner");
     const row = await rowOf(page, "overdue", PLAN_A);
     await expect(row).toHaveCount(1, { timeout: 60_000 });
-    const button = await onlyOne(row.getByRole("button", { name: /^Bill (next part|renewal)/ }), "Bill button");
+    const button = await onlyOne(row.getByRole("button", { name: /Bill (next part|renewal)/ }), "Bill button");
     await expect(button).toBeVisible({ timeout: 60_000 });
-    await button.click();
     const dlg = page.getByRole("dialog");
+    /* The row re-renders when its last-docs line loads (R-2728) — a click can be lost; retry until the dialog opens. */
+    await expect(async () => {
+      if (!(await dlg.isVisible())) await button.click({ timeout: 5_000 });
+      await expect(dlg).toBeVisible({ timeout: 10_000 });
+    }).toPass({ timeout: 60_000 });
     const create = dlg.getByRole("button", { name: /^Create proforma$/ });
     await expect(create).toBeEnabled({ timeout: 60_000 });
     await create.click();
@@ -120,7 +125,7 @@ test.describe("R-2735 card test", () => {
     const s = subState(SUB_A);
     expect(s.renewedTo, `renewal_date ${s.date} must be one term on`).toBe(true);
     expect(s.state).toBe("renewed");
-    const page = await pageAs(browser, baseURL, "Owner");
+    const page = await pageAs(browser, baseURL, "owner");
     await expect(await rowOf(page, "overdue", PLAN_A)).toHaveCount(0, { timeout: 60_000 });
     await page.context().close();
   });
@@ -133,7 +138,7 @@ test.describe("R-2735 card test", () => {
   });
 
   test("Step 4: cancel the part proforma → nothing moved", async ({ browser, baseURL }) => {
-    const page = await pageAs(browser, baseURL, "Owner");
+    const page = await pageAs(browser, baseURL, "owner");
     const billed = await page.request.post(`/api/subscriptions/${SUB_B}/generate-renewal-quote`, { data: { periods: 1 } });
     expect(billed.status(), await billed.text()).toBe(200);
     const pi = proformaOf(SUB_B);

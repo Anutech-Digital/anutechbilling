@@ -44,6 +44,8 @@ export interface InstalmentSub {
   external_source?: string | null;
   external_ref?: string | null;
   billed_externally_until?: string | null;
+  /** R-2735: set only on a subscription billed AS IF renewed (termToBill) — the roll its new term's first part carries. */
+  term_roll?: TermRoll;
 }
 
 export const INSTALMENT_SUB_SELECT =
@@ -200,10 +202,11 @@ export async function syncSubscriptionInstalments(args: {
     }
   }
   /* R-2735: the renewal term's first part carries the roll its payment makes. */
-  if (args.termRoll && !dryRun) {
+  const termRoll = args.termRoll ?? sub.term_roll;
+  if (termRoll && !dryRun) {
     const first = firstPartIndex(planned.map((p) => p.periodIndex));
     if (first != null) {
-      await markTermRoll(supabase as unknown as SupabaseClient, { subscriptionId: sub.id, termStart, periodIndex: first, roll: args.termRoll });
+      await markTermRoll(supabase as unknown as SupabaseClient, { subscriptionId: sub.id, termStart, periodIndex: first, roll: termRoll });
     }
   }
   out.created  = toInsert.length;
@@ -519,15 +522,12 @@ export async function layInstalments(
   quoteOf: (sub: InstalmentSub) => QuotePaymentFacts | undefined,
   todayISO: string,
   dryRun: boolean,
-  /** R-2735: the roll a renewal term's first part carries (the billing cron's termToBill). */
-  rollOf?: (sub: InstalmentSub) => TermRoll | undefined,
 ): Promise<{ created: number; resynced: number; errors: { subscription_id: string; message: string }[] }> {
   const out = { created: 0, resynced: 0, errors: [] as { subscription_id: string; message: string }[] };
   if (dryRun) return out;
   for (const sub of subs) {
     try {
-      const termRoll = rollOf?.(sub);
-      const r = await syncSubscriptionInstalments({ supabase, sub, quote: quoteOf(sub), todayISO, layOnly: true, ...(termRoll ? { termRoll } : {}) });
+      const r = await syncSubscriptionInstalments({ supabase, sub, quote: quoteOf(sub), todayISO, layOnly: true });
       out.created += r.created;
       out.resynced += r.resynced;
     } catch (e) {

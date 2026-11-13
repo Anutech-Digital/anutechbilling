@@ -153,13 +153,7 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
      parts whose new term has begun is NOT rolled (the renewals cron no longer does it). Its new term is
      billed as if renewed (one term a run — the oldest unpaid one) and that term's first part carries the
      roll; paying it renews, in the database (roll_paid_renewal_terms). */
-  const rollOf = new Map<string, TermRoll>();
-  subs = subs.map((s) => {
-    const t = termToBill(s, today);
-    if (!t) return s;
-    rollOf.set(s.id, t.roll);
-    return t.billAs;
-  });
+  subs = subs.map((s) => termToBill(s, today)?.billAs ?? s);
 
   /* Quote payment state, fetched separately rather than as an embedded join. This
      schema has two paths between quotes and subscriptions and PostgREST answers an
@@ -205,7 +199,6 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
     (s) => (s.quote_id ? quoteById.get(s.quote_id) : undefined),
     today,
     dryRun,
-    (s) => rollOf.get(s.id),
   );
   result.errors.push(...laid.errors);
   result.instalments_created  += laid.created;
@@ -228,9 +221,10 @@ async function handle(req: Request): Promise<NextResponse<BillingCronResult | { 
       const quote = sub.quote_id ? quoteById.get(sub.quote_id) : undefined;
       /* R-527: the per-subscription work lives in lib/billing/sync-instalments.server.ts so a
          recorded payment raises its instalment invoice at once, through this same code. */
-      const termRoll = rollOf.get(sub.id);
-      const r = await syncSubscriptionInstalments({ supabase, sub, quote, todayISO: today, dryRun, ...(termRoll ? { termRoll } : {}) });
+      /* R-2735: a renewal term (termToBill) carries its roll on sub.term_roll — sync marks its first part. */
+      const r = await syncSubscriptionInstalments({ supabase, sub, quote, todayISO: today, dryRun });
       /* A term Zoho already billed (R-1763) is not collected here — it rolls as before (guarded). */
+      const termRoll = (sub as { term_roll?: TermRoll }).term_roll;
       if (termRoll && !dryRun && r.skip?.code === "billed_elsewhere") {
         await rollBilledElsewhere(supabase as unknown as SupabaseClient, sub.id, termRoll);
       }

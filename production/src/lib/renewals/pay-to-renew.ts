@@ -29,14 +29,12 @@ type RollableSub = SplitRenewalFields & { renewal_quote_id?: string | null; auto
  * term still running, an open renewal quote holds it (R-808), or the customer said Won't renew
  * (auto_renew false — the renewals cron lets it lapse).
  */
-export function termToBill<T extends RollableSub>(sub: T, todayISO: string): { billAs: T; roll: TermRoll } | null {
+export function termToBill<T extends RollableSub>(sub: T, todayISO: string): { billAs: T & { term_roll: TermRoll }; roll: TermRoll } | null {
   if (sub.auto_renew === false) return null;
   const step = splitBilledRenewalStep({ ...sub, renewal_quote_id: sub.renewal_quote_id ?? null }, todayISO);
   if (step.kind !== "roll" || !sub.renewal_date) return null;
-  return {
-    billAs: { ...sub, renewal_date: step.newRenewalDate },
-    roll: { from: sub.renewal_date.slice(0, 10), to: step.newRenewalDate },
-  };
+  const roll = { from: sub.renewal_date.slice(0, 10), to: step.newRenewalDate };
+  return { billAs: { ...sub, renewal_date: step.newRenewalDate, term_roll: roll }, roll };
 }
 
 /** The first part of a laid term — the one whose payment renews (lowest period index). */
