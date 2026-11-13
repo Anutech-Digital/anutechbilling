@@ -56,6 +56,12 @@ describe("pickRenewalCatalogItem", () => {
     expect(pickRenewalCatalogItem([sup], { plan: "Google Workspace Business Standard" })).toBeNull();
   });
 
+  it("vendor known → only that vendor rows are matched", () => {
+    expect(pickRenewalCatalogItem(CATALOG, { plan: "Google Workspace Business Standard", vendor: "microsoft" })).toBeNull();
+    expect(pickRenewalCatalogItem(CATALOG, { plan: "Google Workspace Business Standard", vendor: "google" })?.row).toBe(GW_STD);
+    expect(pickRenewalCatalogItem(CATALOG, { plan: "Google Workspace Business Standard", vendor: "other" })?.row).toBe(GW_STD);
+  });
+
   it("an inactive row is not picked by name", () => {
     expect(pickRenewalCatalogItem([{ ...GW_STD, is_active: false }], { plan: "Google Workspace Business Standard" })).toBeNull();
   });
@@ -74,6 +80,22 @@ describe("renewalCatalogCost", () => {
     const tiered = row({ id: "T", name: "T", msrp: 300, wholesale: 264, prices: { annual: { msrp: 300, wholesale: 264 }, monthly: { msrp: 360, wholesale: 318 } } });
     expect(renewalCatalogCost(tiered, { termMonths: 12, seats: 1 }).perSeat).toBe(264 * 12);
     expect(renewalCatalogCost(tiered, { termMonths: 1, seats: 1 }).perSeat).toBe(318);
+  });
+
+  it("volume slab for these seats (as the editor fill reads it) on an annual term", () => {
+    const slabbed = row({ id: "S", name: "S", msrp: 700, wholesale: 620, prices: { slabs: [{ minSeats: 1, maxSeats: 9, msrp: 700, wholesale: 620 }, { minSeats: 10, maxSeats: null, msrp: 650, wholesale: 560 }] } });
+    expect(renewalCatalogCost(slabbed, { termMonths: 12, seats: 20 }).perSeat).toBe(560 * 12);
+    expect(renewalCatalogCost(slabbed, { termMonths: 12, seats: 5 }).perSeat).toBe(620 * 12);
+  });
+
+  it("a 6-month annual-commitment term = annual tier per month × 6 (not the Flexible tier)", () => {
+    const tiered = row({ id: "T", name: "T", msrp: 300, wholesale: 264, prices: { annual: { msrp: 300, wholesale: 264 }, monthly: { msrp: 360, wholesale: 318 } } });
+    expect(renewalCatalogCost(tiered, { termMonths: 6, seats: 1 }).perSeat).toBe(264 * 6);
+  });
+
+  it("a yearly-total support row: its year, × years", () => {
+    const sup = row({ id: "SUP", name: "Std Support (Yearly)", vendor: "support", msrp: 0, wholesale: 0, prices: { annual_total: { msrp: 9996, wholesale: 6000 } } });
+    expect(renewalCatalogCost(sup, { termMonths: 12, seats: 1 }).perSeat).toBe(6000);
   });
 
   it("r2736 multi-year: 24 / 36 months = yearly cost × years", () => {

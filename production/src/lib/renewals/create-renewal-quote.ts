@@ -70,6 +70,8 @@ export interface CreateRenewalQuoteInput {
    * Optional so no caller breaks; when absent the name lookup still runs.
    */
   itemId?:         string | null;
+  /** R-2736: `subscriptions.vendor` — a catalogue name match stays inside it. */
+  vendor?:         string | null;
   seats:           number;
   mrr:             number;          // monthly run rate (₹)
   /**
@@ -268,7 +270,9 @@ export async function createOrGetRenewalQuote(
       .select(RENEWAL_CATALOG_COLUMNS)
       .eq("tenant_id", input.tenantId);
     if (rowsErr || !Array.isArray(rows)) return null;   // unread → cost unknown, the approval stays
-    return pickRenewalCatalogItem(rows as RenewalCatalogRow[], { itemId: null, plan: input.plan });
+    const pick = pickRenewalCatalogItem(rows as RenewalCatalogRow[], { itemId: null, plan: input.plan, vendor: input.vendor ?? null });
+    /* Found only by a loose name read: trusted for the COST, never for the price sanity check below. */
+    return pick ? { row: pick.row, how: "match" } : null;
   })();
   const catalogItem = catalogPick?.row ?? null;
 
@@ -331,8 +335,9 @@ export async function createOrGetRenewalQuote(
     name:       catalogPlanName(input.plan),   // R-2095
     /* R-2710: the subscription's catalogue item, so the editor knows the line (a Domain-vendor
        item gets "Register for N years", R-1445). Not read by record_payment for a renewal. */
-    /* R-2736: or the row the catalogue pick found, so the editor and the margin read the same row. */
-    ...(input.itemId ? { item_id: input.itemId } : catalogPick?.row.id ? { item_id: catalogPick.row.id } : {}),
+    /* R-2736: NOT the row a name match found — an item_id makes the editor re-price the line from the
+       catalogue on Duplicate / Revise, and the agreed price must stay. The cost is on the line already. */
+    ...(input.itemId ? { item_id: input.itemId } : {}),
     /* R-2710: a whole multi-year term (24 / 36 months) says its years, so the editor's picker shows
        "2 yrs" (not 1) and a change scales from the right yearly price; the database keeps
        extension_months = months / years × new years (quotes_r2710_renewal_term_follows_years). */

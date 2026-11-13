@@ -5,8 +5,8 @@
  * Run: `node scripts/ops/card-tests.mjs R-2736`.
  *
  * Data (local docker DB only, fixed ids, removed before and after):
- *   · CT R2736 Workspace Pvt Ltd: 20 seats of "Google Workspace Business Standard", ₹14,720 a month
- *     (₹736/seat/month = ₹8,832 a seat a year), renewing in 18 days, NO item_id — the shape of
+ *   · CT R2736 Workspace Pvt Ltd: 20 seats of "Google Workspace Business Standard", ₹16,000 a month
+ *     (₹800/seat/month = ₹9,600 a seat a year — above the catalogue list ₹736, so the test also shows the price is NOT taken from the catalogue), renewing in 18 days, NO item_id — the shape of
  *     Q-F588-27-0156 (SCN Kochi). E2E Test Co's catalogue calls the row "E2E Google Workspace Business
  *     Standard" (wholesale ₹620/seat/month), so the old exact-name lookup found nothing and the line
  *     went out at cost 0 → "Margin unknown" → owner approval.
@@ -45,7 +45,7 @@ function seed(): void {
     insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, term_months,
                                       billing_cycle, start_date, renewal_date, status, renewal_state, auto_renew, item_id) values
       ('${SUB_GW}', ${E2E_TENANT_SQL}, '${CUST_GW}', 'CT R2736 Workspace Pvt Ltd', 'Google Workspace Business Standard', 'google',
-       20, 14720, 12, 'yearly', (public.ist_today() + 18 - interval '12 months')::date, public.ist_today() + 18, 'active', 'pending', true, null),
+       20, 16000, 12, 'yearly', (public.ist_today() + 18 - interval '12 months')::date, public.ist_today() + 18, 'active', 'pending', true, null),
       ('${SUB_BESPOKE}', ${E2E_TENANT_SQL}, '${CUST_BESPOKE}', 'CT R2736 Bespoke Pvt Ltd', 'CT R2736 Bespoke Plan', 'other',
        2, 1000, 12, 'yearly', (public.ist_today() + 18 - interval '12 months')::date, public.ist_today() + 18, 'active', 'pending', true, null);
     commit;`);
@@ -80,10 +80,10 @@ test.describe("R-2736 card test", () => {
   test.beforeAll(() => { if (!CARD_TESTS_ON) return; clean(); seed(); });
   test.afterAll(() => { if (CARD_TESTS_ON) clean(); });
 
-  test("Step 1: Review renewal quote for the Workspace customer → line cost = catalogue ₹7,440 a seat (₹620 × 12), price stays the customer's ₹8,832, item linked", async ({ browser, baseURL }) => {
+  test("Step 1: Review renewal quote for the Workspace customer → line cost = catalogue ₹7,440 a seat (₹620 × 12), price stays the customer's ₹9,600 (not the catalogue ₹8,832), no item_id", async ({ browser, baseURL }) => {
     const page = await pageAs(browser, baseURL, "owner");
     const id = await reviewQuote(page, SUB_GW);
-    expect(lineOf(id)).toBe(`8832,7440,E2E-GW-STD,${7440 * 20}`);
+    expect(lineOf(id)).toBe(`9600,7440,,${7440 * 20}`);
   });
 
   test("Step 2: in the editor the margin is shown (no 'Margin unknown') and the owner gets the plain send button — no approval step", async ({ browser, baseURL }) => {

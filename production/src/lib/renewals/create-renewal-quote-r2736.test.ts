@@ -55,11 +55,12 @@ const input = (db: CreateRenewalQuoteInput["supabase"], over: Partial<CreateRene
 const quoteOf = (rpc: ReturnType<typeof fakeDb>["rpc"]) => rpc.mock.calls[0][1].p_quote as { line_items: Row[]; total_cost: number; subtotal: number };
 
 describe("R-2736 renewal line cost from the catalogue", () => {
-  it("r2736 confident match: no item_id + non-exact name → cost ₹7,440/seat, item_id set, total_cost known", async () => {
+  it("r2736 confident match: no item_id + non-exact name → cost ₹7,440/seat, total_cost known; NO item_id (the agreed price must not be re-priced by the editor)", async () => {
     const { db, rpc } = fakeDb([GW_STR, GW_STD]);
-    await createOrGetRenewalQuote(input(db));
+    await createOrGetRenewalQuote(input(db, { vendor: "google" }));
     const q = quoteOf(rpc);
-    expect(q.line_items[0]).toMatchObject({ cost: 7440, item_id: "E2E-GW-STD", qty: 20 });
+    expect(q.line_items[0]).toMatchObject({ cost: 7440, qty: 20 });
+    expect(q.line_items[0].item_id).toBeUndefined();
     expect(q.total_cost).toBe(7440 * 20);
   });
 
@@ -96,6 +97,12 @@ describe("R-2736 renewal line cost from the catalogue", () => {
     const { db, rpc } = fakeDb([GW_STD]);
     await createOrGetRenewalQuote(input(db, { termMonths: 24, termAmount: 43200 }));
     expect(quoteOf(rpc).line_items[0]).toMatchObject({ cost: 14880, years: 2 });
+  });
+
+  it("a match stays inside the subscription vendor: a Microsoft sub never takes a Google row cost", async () => {
+    const { db, rpc } = fakeDb([GW_STD]);
+    await createOrGetRenewalQuote(input(db, { vendor: "microsoft" }));
+    expect(quoteOf(rpc).line_items[0].cost).toBe(0);
   });
 
   it("every items read is tenant-scoped", async () => {

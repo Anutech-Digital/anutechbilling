@@ -259,6 +259,7 @@ export const POST = withRoute({
     customerName:    sub.customer_name,
     plan:            sub.plan,
     itemId:            sub.item_id ?? null,
+    vendor:          sub.vendor ?? null,   // R-2736: the catalogue cost match stays in this vendor
     seats:           sub.seats,
     mrr:             sub.mrr ?? 0,
     termMonths:      sub.term_months ?? null,
