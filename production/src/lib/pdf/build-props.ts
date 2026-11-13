@@ -22,6 +22,7 @@ import { includedSupportLine } from "./quote-support-line";
 import { quoteDisplayTax } from "@/lib/quotes/quote-tax";
 import { quoteDocBillOfSupply } from "@/lib/quotes/bill-of-supply";
 import { extensionTitle, isOneTimeQuote, quoteLinePeriodContext, invoicePeriodSubscription, type RenewedSubscriptionFacts } from "@/lib/quotes/service-period";
+import { withStoredLinePeriods } from "@/lib/quotes/stored-line-period";
 import { invoiceBuyer } from "@/lib/invoices/invoice-buyer";
 
 /**
@@ -180,21 +181,29 @@ export function buildInvoicePdfProps(args: {
      Only a legacy row with no snapshot reads the live customer. Same rule as the invoice page. */
   const buyer = invoiceBuyer(invoice, customer);
 
-  return {
-    invoice,
+  /* R-2744: an invoice issued with stored line periods prints THOSE (withStoredLinePeriods), never a
+     period worked out again from today's quote / subscription. Not stamped → the same objects as before. */
+  const printed = withStoredLinePeriods(
     /* A quote-less invoice carries its OWN lines (migration 20260817110000).
        Subscription instalments cannot link to their quote — build-props prefers the
        quote for every amount above, so a ₹2,360 instalment linked to its ₹28,320
        quote would print ₹28,320 — and an invoice with no description, HSN or
        quantity does not satisfy CGST Rule 46. This also fills in the project
        milestone invoices that used to print "No line items recorded". */
-    lineItems:   useQuote
+    useQuote
       ? (quote?.line_items ?? invoice.line_items ?? [])
       : (invoice.line_items ?? quote?.line_items ?? []),
+    invoice,
     /* R-1764: the quote's own "Domain:" / "Subscription period:" — only while the lines ARE the
        quote's. An instalment or quote-less invoice covers a part, so it says no period. */
     /* R-2727 review: an invoice created before the rule went live here prints its period exactly as before. */
-    periodContext: useQuote && quote ? quoteLinePeriodContext(quote, invoicePeriodSubscription(invoice, args.periodRuleFrom, quote, args.subscriptionDomain)) : null,
+    useQuote && quote ? quoteLinePeriodContext(quote, invoicePeriodSubscription(invoice, args.periodRuleFrom, quote, args.subscriptionDomain)) : null,
+  );
+
+  return {
+    invoice,
+    lineItems:     printed.lines,
+    periodContext: printed.ctx,
     subtotal,
     discountPct: a.discountPct,
     discount:    a.discount,

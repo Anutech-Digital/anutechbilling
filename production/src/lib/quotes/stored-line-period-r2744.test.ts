@@ -149,7 +149,7 @@ describe("invoice PDF (buildInvoicePdfProps) — stored periods win, old invoice
   const issued = { from: "2026-12-01", to: "2027-11-30", months: 12 };
   const invoice = (lineItems: unknown) => ({
     id: "INV-1", tenant_id: "t1", customer_name: "X", amount: 12980, invoice_date: "2026-11-14",
-    created_at: "2026-11-14T10:00:00Z", status: "unpaid", line_items: lineItems,
+    created_at: "2026-11-14T10:00:00Z", status: "pending", line_items: lineItems,
   }) as unknown as Invoice;
   const stampedInvoice = invoice(lines.map((l) => ({ ...l, service_period: issued })));
 
