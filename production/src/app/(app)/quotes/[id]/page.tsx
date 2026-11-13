@@ -974,6 +974,12 @@ export default function QuoteDetailPage() {
   const items: QuoteLineItem[] = Array.isArray(quote.line_items) ? quote.line_items : [];
   /* R-2746: "Renewal · <from> – <to>" over the lines — the same dates as each line's Subscription period. */
   const renewalLabel = renewalPeriodLabel(items, periodCtx);
+  const lineItemsSub = (
+    <>
+      {`${items.length} item${items.length === 1 ? "" : "s"}`}
+      {renewalLabel && <span className="text-ink-2 tabular-nums" data-testid="renewal-period-label"> · {renewalLabel.text}</span>}
+    </>
+  );
   /* R-2423: WHAT this quote is (quote-kind.ts — stored facts only, no stamp when they do not say)
      and which subscription it is for. */
   const leadPart = leadBillingId ? partFacts?.get(leadBillingId) ?? null : null;
@@ -2189,15 +2195,7 @@ export default function QuoteDetailPage() {
       </Card>
 
       {/* Line items */}
-      {/* R-2746: the period a renewal / extension quote buys, above its lines (the lines' own dates). */}
-      <Card
-        title="Line items"
-        sub={<>
-          {`${items.length} item${items.length === 1 ? "" : "s"}`}
-          {renewalLabel && <span className="text-ink-2 tabular-nums" data-testid="renewal-period-label"> · {renewalLabel.text}</span>}
-        </>}
-        flush
-      >
+      <Card title="Line items" sub={lineItemsSub} flush>
         {/* Phone (S32, 1 Oct 2026): this page opens from the WhatsApp link, so it is
             read on a phone first. Five columns squeezed the item name to one word
             per line; under md each line is a row of name + amount, qty × rate below. */}

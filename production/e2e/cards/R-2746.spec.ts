@@ -39,7 +39,7 @@ function seed(): void {
     insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, term_months,
                                       billing_cycle, start_date, renewal_date, status, renewal_state, auto_renew, domain)
       values ('${SUB}', ${E2E_TENANT_SQL}, '${CUST}', '${NAME}', '${PLAN}', 'domain', 1, 100, 12, 'yearly',
-              (public.ist_today() + 20 - interval '12 months')::date, public.ist_today() + 20, 'active', 'pending', true, 'r2746-check.in');
+              (public.ist_today() + 20 - interval '12 months')::date, public.ist_today() + 20, 'active', 'pending', true, null);
     commit;`);
 }
 
