@@ -77,7 +77,7 @@ export async function GET() {
       followers, activity, strategies, trends, report, comments, todo,
       linkedin: linkedin?.organizationUrn ? { name: linkedin.organizationName ?? "LinkedIn Page" } : null,
       canReview: canReviewSocial(role), canManage: role === "owner", aiReady,
-      facebook: connection.pageId ? { name: connection.pageName, connected: true } : null,
+      facebook: connection.pageId ? { name: connection.pageName, connected: true, id: connection.pageId } : null,
       instagram: instagram ? { name: instagram.username ?? "Instagram", type: null } : null });
   } catch (error) {
     console.error("[social-content] load failed", error instanceof Error ? error.message : "unknown");

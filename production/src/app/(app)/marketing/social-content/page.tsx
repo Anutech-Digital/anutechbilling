@@ -31,7 +31,7 @@ function statsLine(st: NonNullable<Item["stats"]>): string {
 type Activity = { id: string; at: string; actor: "ai" | "person" | "system"; user_name: string | null; platform: string | null;
   action: string; detail: string; content_id: string | null; result: "ok" | "failed" | "waiting" };
 type State = { items: Item[]; canReview: boolean; canManage: boolean; aiReady: boolean;
-  facebook: { name: string } | null; instagram: { name: string; type: string | null } | null; linkedin: { name: string } | null;
+  facebook: { name: string; id?: string } | null; instagram: { name: string; type: string | null } | null; linkedin: { name: string } | null;
   followers: { facebook: number | null; instagram: number | null }; activity: Activity[]; strategies: Strategies | null;
   trends: Record<StrategyPlatform, Trend> | null; report: { report: Report; summary: string; created_at: string } | null;
   comments: Comment[]; todo: TodoItem[] | null;
@@ -395,13 +395,19 @@ export default function SocialContentPage() {
     {state && <>
       <section aria-label="Your accounts" className="grid gap-3 sm:grid-cols-3">
         {[
-          { key: "facebook", label: "Facebook", icon: <Facebook size={18} className="text-[#1877f2]" aria-hidden="true" />, name: state.facebook?.name ?? null, count: state.followers.facebook, href: "/marketing/facebook", connect: "Connect Facebook Page" },
-          { key: "instagram", label: "Instagram", icon: <Instagram size={18} className="text-[#c13584]" aria-hidden="true" />, name: state.instagram ? `@${state.instagram.name}` : null, count: state.followers.instagram, href: "/marketing/facebook", connect: "Link Instagram to your Page" },
-          { key: "linkedin", label: "LinkedIn", icon: <Linkedin size={18} className="text-[#0a66c2]" aria-hidden="true" />, name: state.linkedin?.name ?? null, count: null, href: "/marketing/linkedin", connect: "Connect LinkedIn Page" },
+          { key: "facebook", label: "Facebook", icon: <Facebook size={18} className="text-[#1877f2]" aria-hidden="true" />, name: state.facebook?.name ?? null, count: state.followers.facebook, href: "/marketing/facebook", connect: "Connect Facebook Page",
+            open: state.facebook?.id ? `https://www.facebook.com/${encodeURIComponent(state.facebook.id)}` : null, openLabel: "Open Page" },
+          { key: "instagram", label: "Instagram", icon: <Instagram size={18} className="text-[#c13584]" aria-hidden="true" />, name: state.instagram ? `@${state.instagram.name}` : null, count: state.followers.instagram, href: "/marketing/facebook", connect: "Link Instagram to your Page",
+            open: state.instagram ? `https://www.instagram.com/${encodeURIComponent(state.instagram.name)}/` : null, openLabel: "Open profile" },
+          { key: "linkedin", label: "LinkedIn", icon: <Linkedin size={18} className="text-[#0a66c2]" aria-hidden="true" />, name: state.linkedin?.name ?? null, count: null, href: "/marketing/linkedin", connect: "Connect LinkedIn Page", open: null as string | null, openLabel: "Open Page" },
         ].map((a) => <div key={a.key} className="rounded-xl border border-hairline bg-paper p-4">
           <div className="flex items-center justify-between gap-2"><span className="flex min-w-0 items-center gap-2 text-sm font-semibold text-ink">{a.icon}{a.label}</span>{a.name ? <Badge kind="success" dot>Connected</Badge> : <Badge kind="muted">Not connected</Badge>}</div>
           {a.name ? <>
-            <p className="mt-2 truncate text-xs text-ink-3" title={a.name}>{a.name}</p>
+            {/* Open the connected Page / profile on Facebook or Instagram, in a new tab. */}
+            <div className="mt-2 flex items-center justify-between gap-2">
+              <p className="min-w-0 truncate text-xs text-ink-3" title={a.name}>{a.name}</p>
+              {a.open && <a href={a.open} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-ink underline hover:text-amber-ink" aria-label={`${a.openLabel} on ${a.label} (opens in a new tab)`}>{a.openLabel} <ArrowUpRight size={12} aria-hidden="true" /></a>}
+            </div>
             <p className="mt-1 font-serif text-2xl tabular-nums text-ink">{a.count !== null ? a.count.toLocaleString("en-IN") : "—"}<span className="ml-1.5 font-sans text-xs text-ink-3">{a.count !== null ? "followers" : a.key === "linkedin" ? "followers shown soon" : "followers not shared by Meta"}</span></p>
             {(() => { const t = state.trends?.[a.key as StrategyPlatform]; if (!t || t.now === null) return null; return <>
               <p className="mt-1 text-xs text-ink-3">{t.change7 !== null ? <><span className={t.change7 > 0 ? "font-semibold text-emerald-ink" : t.change7 < 0 ? "font-semibold text-rose-ink" : "text-ink-2"}>{signed(t.change7)}</span> this week{t.change30 !== null ? ` · ${signed(t.change30)} in 30 days` : ""}</> : "Counting from today — the change shows after a week."}</p>
