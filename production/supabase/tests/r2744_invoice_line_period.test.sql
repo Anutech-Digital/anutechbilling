@@ -120,7 +120,7 @@ insert into public.app_rule_dates (key, from_at) values ('r2727_invoice_period_r
 -- ── STAMP ──────────────────────────────────────────────────────────────────────
 insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, taxable_value, tax_amount, tax_rate, inter_state, quote_id)
   values ('INV-R2744-1','aaaaaaaa-2744-0000-0000-000000000001','cccccccc-2744-0000-0000-000000000001','Cust 2744',
-          14160,'unpaid', public.ist_today(), 12000, 2160, 18, false, 'Q-R2744-1');
+          14160,'pending', public.ist_today(), 12000, 2160, 18, false, 'Q-R2744-1');
 
 do $$
 declare v jsonb := (select line_items from public.invoices where id = 'INV-R2744-1');
@@ -138,19 +138,24 @@ begin
 end $$;
 
 -- ── CUTOFF ─────────────────────────────────────────────────────────────────────
+-- Two more app-made subscriptions like the first (one renewal quote per subscription term).
+insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, start_date, renewal_date, term_months)
+  select ('dddddddd-2744-0000-0000-00000000000' || n)::uuid, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr,
+         start_date, renewal_date, term_months
+    from public.subscriptions, generate_series(2, 3) n where id = 'dddddddd-2744-0000-0000-000000000001';
 insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
                            is_renewal, extension_months, renewal_term_date, renewal_subscription_id, created_date, line_items)
   select 'Q-R2744-' || n, tenant_id, customer_id, customer_name, amount, subtotal, tax_rate, status, payment_status,
-         is_renewal, extension_months, renewal_term_date, renewal_subscription_id, created_date, line_items
+         is_renewal, extension_months, renewal_term_date, ('dddddddd-2744-0000-0000-00000000000' || n)::uuid, created_date, line_items
     from public.quotes, generate_series(2, 3) n where id = 'Q-R2744-1';
 update public.app_rule_dates set from_at = now() + interval '1 day' where key = 'r2727_invoice_period_rule';
 insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, taxable_value, tax_amount, tax_rate, inter_state, quote_id)
   values ('INV-R2744-2','aaaaaaaa-2744-0000-0000-000000000001','cccccccc-2744-0000-0000-000000000001','Cust 2744',
-          14160,'unpaid', public.ist_today(), 12000, 2160, 18, false, 'Q-R2744-2');
+          14160,'pending', public.ist_today(), 12000, 2160, 18, false, 'Q-R2744-2');
 delete from public.app_rule_dates where key = 'r2727_invoice_period_rule';
 insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, taxable_value, tax_amount, tax_rate, inter_state, quote_id)
   values ('INV-R2744-3','aaaaaaaa-2744-0000-0000-000000000001','cccccccc-2744-0000-0000-000000000001','Cust 2744',
-          14160,'unpaid', public.ist_today(), 12000, 2160, 18, false, 'Q-R2744-3');
+          14160,'pending', public.ist_today(), 12000, 2160, 18, false, 'Q-R2744-3');
 do $$
 begin
   if (select line_items->0->'service_period' from public.invoices where id = 'INV-R2744-2')
@@ -191,12 +196,12 @@ insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, su
           5900, 5000, 18, 'accepted', 'awaiting', '2026-11-01', '[{"id":"a","name":"Business Starter","qty":1,"rate":5000,"commitment":"annual_yearly"}]');
 insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, taxable_value, tax_amount, tax_rate, inter_state, quote_id, line_items)
   values ('INV-R2744-4','aaaaaaaa-2744-0000-0000-000000000001','cccccccc-2744-0000-0000-000000000001','Cust 2744',
-          5900,'unpaid', public.ist_today(), 5000, 900, 18, false, 'Q-R2744-4',
+          5900,'pending', public.ist_today(), 5000, 900, 18, false, 'Q-R2744-4',
           '[{"id":"a","name":"Business Starter","qty":1,"rate":5000,"commitment":"annual_yearly","service_period":{"from":"2026-12-15","to":"2027-12-14","months":12}},
             {"id":"b","name":"Business Starter","qty":1,"rate":0,"commitment":"annual_yearly"}]');
 insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, taxable_value, tax_amount, tax_rate, inter_state, line_items)
   values ('INV-R2744-5','aaaaaaaa-2744-0000-0000-000000000001','cccccccc-2744-0000-0000-000000000001','Cust 2744',
-          5900,'unpaid', public.ist_today(), 5000, 900, 18, false,
+          5900,'pending', public.ist_today(), 5000, 900, 18, false,
           '[{"id":"a","name":"Instalment 1 of 4","qty":1,"rate":5000,"commitment":"annual_yearly"}]');
 do $$
 declare v jsonb := (select line_items from public.invoices where id = 'INV-R2744-4');
@@ -219,7 +224,7 @@ insert into public.quotes (id, tenant_id, customer_id, customer_name, amount, su
           5900, 5000, 18, 'accepted', 'awaiting', '2026-11-01', '[]');
 insert into public.invoices (id, tenant_id, customer_id, customer_name, amount, status, invoice_date, taxable_value, tax_amount, tax_rate, inter_state, quote_id, line_items)
   values ('INV-R2744-6','aaaaaaaa-2744-0000-0000-000000000001','cccccccc-2744-0000-0000-000000000001','Cust 2744',
-          5900,'unpaid', public.ist_today(), 5000, 900, 18, false, 'Q-R2744-6', '["not an object", 7]');
+          5900,'pending', public.ist_today(), 5000, 900, 18, false, 'Q-R2744-6', '["not an object", 7]');
 do $$
 begin
   if (select line_items from public.invoices where id = 'INV-R2744-6') is distinct from '["not an object", 7]'::jsonb then
