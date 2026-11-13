@@ -177,7 +177,7 @@ function TierCard({ tier, index }: { tier: (typeof TIERS)[number]; index: number
       {isPopular && (
         <>
           <div className="absolute inset-0 rounded-2xl border-2 border-transparent bg-[linear-gradient(135deg,var(--amber-soft),transparent,var(--amber-soft))] [mask-image:linear-gradient(white,white)] [-webkit-mask-composite:destination-out] opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" style={{ maskComposite: "exclude" }} />
-          <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-amber to-orange-500 px-4 py-1 font-mono text-[10px] uppercase tracking-wider text-paper shadow-md">
+          <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-marigold px-4 py-1 font-mono text-[10px] font-semibold uppercase tracking-wider text-[#17241F] shadow-md">
             {tier.badge}
           </span>
         </>
@@ -214,7 +214,7 @@ function TierCard({ tier, index }: { tier: (typeof TIERS)[number]; index: number
       </ul>
 
       <div className="mt-auto relative z-10">
-        <Button asChild variant={isPopular ? "primary" : "default"} className={`w-full ${isPopular ? "shadow-lg shadow-amber/20 group-hover:shadow-amber/40 transition-shadow" : "group-hover:bg-paper-2"}`} iconRight={isPopular ? "arrow_right" : undefined}>
+        <Button asChild variant={isPopular ? "cta" : "default"} className={`w-full ${isPopular ? "shadow-lg shadow-marigold/30 group-hover:shadow-marigold/50 transition-shadow" : "group-hover:bg-paper-2"}`} iconRight={isPopular ? "arrow_right" : undefined}>
           {tier.href.startsWith("mailto:") ? (
             <a href={tier.href}>{tier.cta}</a>
           ) : (
@@ -420,7 +420,7 @@ export function PricingCTA() {
           a GST-compliant invoice in under 10 minutes.
         </p>
         <div className="flex flex-wrap justify-center gap-3">
-          <Button asChild variant="primary" iconRight="arrow_right" size="lg" className="shadow-lg shadow-amber/20 hover:shadow-amber/40 transition-shadow">
+          <Button asChild variant="cta" iconRight="arrow_right" size="lg" className="shadow-lg shadow-marigold/30 hover:shadow-marigold/50 transition-shadow">
             <Link href="/signup">Start free trial</Link>
           </Button>
           <Button asChild variant="default" size="lg" className="hover:bg-paper-2">

@@ -35,6 +35,11 @@ const buttonVariants = cva(
         // Primary — brand amber
         primary:
           "bg-amber text-white hover:bg-amber/90 active:bg-amber/80 shadow-sm",
+        // CTA — marigold with dark text, the public website's main call to
+        // action (docs/WEBSITE-THEME.md). `site-lift` only does anything inside
+        // the public site's `.site-theme` wrapper. Not for the logged-in app.
+        cta:
+          "bg-marigold text-[#17241F] font-semibold hover:bg-marigold/90 active:bg-marigold/80 shadow-sm site-lift",
         // Destructive — for delete, cancel-subscription, etc.
         danger:
           "bg-rose text-white hover:bg-rose/90 active:bg-rose/80 shadow-sm",

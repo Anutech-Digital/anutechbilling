@@ -46,6 +46,11 @@
 
     /* Radii */
     --radius: 8px;
+
+    /* Marigold — the public website's main call-to-action colour
+       (docs/WEBSITE-THEME.md). Defined app-wide so the Button `cta` variant
+       resolves anywhere, but only the public pages use it. */
+    --marigold:        40 89% 60%;       /* #F4B740 */
   }
 
   .dark {
@@ -192,3 +197,186 @@
     transform: translate(calc(-50% + var(--dlg-x, 0px)), calc(-50% + var(--dlg-y, 0px))) !important;
   }
 }
+
+/* ============================================================
+   Public website theme — "Warm & approachable" (docs/WEBSITE-THEME.md)
+
+   Scoped to `.site-theme`, the wrapper the public marketing pages render
+   inside (see app/(public)/_components/site-theme.tsx). It redefines the
+   same tokens the rest of the app uses, so every existing `bg-paper`,
+   `text-ink-2`, `text-amber` on those pages picks up the new palette while
+   the logged-in app keeps its own.
+
+   Dark mode here is driven by `data-theme` on <html>, which the site's
+   header switch sets — NOT by next-themes' `.dark` class, which belongs to
+   the app. The two never interfere.
+
+   `--amber` maps to TEAL on these pages: it is the accent used for links,
+   focus rings and text highlights, and marigold text would fail contrast.
+   Marigold is reserved for the main calls to action (Button variant `cta`).
+   ============================================================ */
+.site-theme {
+  --paper:           100 16% 96%;      /* #F5F7F4 page background */
+  --paper-2:         140 19% 94%;      /* #ECF2EE quiet panels */
+  --site-surface:    0 0% 100%;        /* #FFFFFF cards, header */
+  --ink:             157 22% 12%;      /* #17241F */
+  --ink-2:           152 9% 32%;       /* #4B5A53 muted text (6.7:1) */
+  --ink-3:           152 6% 39%;       /* #5E6B65 secondary text (5.2:1) */
+  --ink-4:           152 6% 57%;       /* #8A9791 placeholders only */
+  --hairline:        120 9% 90%;       /* #E2E7E2 */
+  --hairline-strong: 144 10% 81%;      /* #C9D3CD */
+  --amber:           170 77% 24%;      /* #0E6B5C primary teal */
+  --amber-soft:      158 37% 90%;      /* #DCEFE8 mint */
+  --amber-ink:       170 78% 17%;      /* #0A4F44 */
+  --site-forest:     166 46% 13%;      /* #12312A dark panels */
+  /* The app's indigo "info" chips become teal/mint, so these pages stay in
+     one palette. */
+  --indigo:          170 77% 24%;
+  --indigo-soft:     158 37% 90%;
+  --indigo-ink:      170 78% 17%;
+  --background:      100 16% 96%;
+  --foreground:      157 22% 12%;
+
+  /* Inter for body, Plus Jakarta Sans for headings. The variables are set by
+     next/font on this same element (site-theme.tsx). */
+  --font-sans:  var(--font-site-body), system-ui, sans-serif;
+  --font-serif: var(--font-site-heading), system-ui, sans-serif;
+
+  font-family: var(--font-sans);
+  background-color: hsl(var(--paper));
+  color: hsl(var(--ink));
+}
+
+:root[data-theme="dark"] .site-theme {
+  --paper:           160 11% 15%;      /* #232C29 */
+  --paper-2:         156 11% 18%;      /* #2A3430 */
+  --site-surface:    153 10% 21%;      /* #2F3A35 */
+  --ink:             146 19% 93%;      /* #E9F0EC */
+  --ink-2:           152 12% 72%;      /* #AFC0B8 */
+  --ink-3:           153 9% 61%;       /* #93A59D (5.5:1) */
+  --ink-4:           159 7% 47%;       /* #6F807A */
+  --hairline:        154 9% 30%;       /* #45534D */
+  --hairline-strong: 154 8% 38%;       /* #5A6A63 */
+  --amber:           165 55% 59%;      /* #5ED0B3 */
+  --amber-soft:      163 25% 25%;      /* #2F4F46 */
+  --amber-ink:       162 60% 73%;      /* #8FE3CA */
+  --site-forest:     164 34% 21%;      /* #24493F */
+  --indigo:          165 55% 59%;
+  --indigo-soft:     163 25% 25%;
+  --indigo-ink:      162 60% 73%;
+  --background:      160 11% 15%;
+  --foreground:      146 19% 93%;
+  color-scheme: dark;
+}
+
+/* The overscroll area behind the page should match it, not the app's cream. */
+body:has(.site-theme) { background-color: #F5F7F4; }
+:root[data-theme="dark"] body:has(.site-theme) { background-color: #232C29; }
+
+/* Headings: Plus Jakarta Sans at 700–800 instead of the app's display serif. */
+.site-theme .font-serif { font-weight: 750; letter-spacing: -0.02em; }
+
+/* Radii: buttons 12px, large cards 20–24px. */
+.site-theme .rounded-md  { border-radius: 12px; }
+.site-theme .rounded-2xl { border-radius: 20px; }
+.site-theme .rounded-3xl { border-radius: 24px; }
+
+/* In dark mode the teal is light, so white text on it fails contrast. */
+:root[data-theme="dark"] .site-theme .bg-amber.text-white { color: #17241F; }
+
+/* Hover lift on buttons and cards — hover-capable devices only. */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .site-theme .site-lift { transition: translate .2s ease, box-shadow .2s ease, background-color .15s ease; }
+  .site-theme .site-lift:hover { translate: 0 -2px; }
+}
+
+/* Smooth colour change when the visitor flips the theme switch (only then —
+   site-theme-toggle.tsx adds the class for 500ms). */
+:root.theme-anim .site-theme,
+:root.theme-anim .site-theme * {
+  transition: background-color .4s ease, border-color .4s ease, color .4s ease !important;
+}
+
+/* ── Header ─────────────────────────────────────────────────── */
+.site-header { background: hsl(var(--site-surface)); border-bottom: 1px solid hsl(var(--hairline)); }
+.site-header .site-navlink {
+  display: inline-flex; align-items: center; min-height: 44px; padding: 0 12px;
+  border-radius: 10px; font-size: 15px; font-weight: 500; color: hsl(var(--ink-2));
+  transition: background-color .15s ease, color .15s ease;
+}
+.site-header .site-navlink:hover { background: #F2F9F6; color: #0E6B5C; }
+.site-header .site-navlink[aria-current="page"] { background: hsl(var(--amber-soft)); color: hsl(var(--amber-ink)); }
+:root[data-theme="dark"] .site-header .site-navlink:hover { background: #12302A; color: #8FE3CA; }
+/* No `display` here: the markup sets it (`hidden sm:inline-flex`), and an
+   unlayered display rule would beat Tailwind's `hidden` and push the menu
+   button off a phone screen. */
+.site-btn-outline {
+  align-items: center; justify-content: center; min-height: 44px; padding: 0 18px;
+  border-radius: 12px; border: 1.5px solid hsl(var(--amber)); color: hsl(var(--amber));
+  font-weight: 600; font-size: 15px; white-space: nowrap;
+  transition: background-color .15s ease, color .15s ease;
+}
+.site-btn-outline:hover { background: #0E6B5C; color: #FFFFFF; }
+:root[data-theme="dark"] .site-btn-outline:hover { background: #12806B; color: #FFFFFF; }
+.site-menu-btn {
+  flex: none; width: 44px; height: 44px; border-radius: 12px; display: inline-flex; align-items: center;
+  justify-content: center; border: 1px solid hsl(var(--hairline)); background: hsl(var(--site-surface)); color: hsl(var(--ink));
+}
+.site-menu-btn[aria-expanded="true"] { border: 1.5px solid hsl(var(--amber)); background: hsl(var(--amber-soft)); color: hsl(var(--amber-ink)); }
+@keyframes site-menu-in { from { opacity: 0; translate: 0 -6px; scale: .98; } to { opacity: 1; translate: 0 0; scale: 1; } }
+.site-drawer {
+  background: hsl(var(--site-surface)); border-bottom: 1px solid hsl(var(--hairline));
+  box-shadow: 0 24px 48px rgba(18,49,42,0.14);
+  animation: site-menu-in .26s cubic-bezier(.2,.8,.2,1) both; transform-origin: top center;
+}
+.site-drawer .site-drawer-link {
+  display: flex; align-items: center; min-height: 56px; padding: 0 4px; border-bottom: 1px solid hsl(var(--hairline));
+  font-family: var(--font-serif); font-size: 18px; font-weight: 700; color: hsl(var(--ink));
+}
+.site-drawer .site-drawer-link[aria-current="page"] { color: hsl(var(--amber)); }
+@media (prefers-reduced-motion: reduce) { .site-drawer { animation: none; } }
+
+/* ── Theme switch (ported from the design's site header) ───── */
+.tt { position: relative; flex: none; height: 44px; padding: 0 2px; border: 0; background: none; cursor: pointer; display: inline-flex; align-items: center; -webkit-tap-highlight-color: transparent; }
+.tt-track { position: relative; display: block; width: 64px; height: 34px; border-radius: 999px; background: linear-gradient(135deg,#FDF1D6,#DCEFE8); box-shadow: inset 0 0 0 1px #E2E7E2, inset 0 2px 4px rgba(18,49,42,0.08); transition: background .4s ease, box-shadow .4s ease; }
+.tt-ico { position: absolute; top: 50%; translate: 0 -50%; display: flex; transition: opacity .3s ease; }
+.tt-sun { left: 10px; color: #C98A12; opacity: 0; }
+.tt-moon { right: 10px; color: #5E6B65; opacity: .75; }
+.tt-knob { position: absolute; top: 3px; left: 3px; width: 28px; height: 28px; border-radius: 50%; background: #FFFFFF; box-shadow: 0 2px 6px rgba(18,49,42,0.25); display: flex; align-items: center; justify-content: center; transition: transform .45s cubic-bezier(.3,1.4,.5,1), background .4s ease, width .15s ease; }
+.tt-k { position: absolute; display: flex; transition: opacity .25s ease, transform .45s cubic-bezier(.3,1.4,.5,1); }
+.tt-ksun { color: #E5A11F; opacity: 1; transform: rotate(0); }
+.tt-kmoon { color: #F4B740; opacity: 0; transform: rotate(-90deg); }
+.tt:hover .tt-track { box-shadow: inset 0 0 0 1px #9ED3C3, inset 0 2px 4px rgba(18,49,42,0.08); }
+.tt:active .tt-knob { width: 32px; }
+.tt:focus-visible { outline: none; box-shadow: none; }
+.tt:focus-visible .tt-track { outline: 3px solid #F4B740; outline-offset: 2px; }
+:root[data-theme="dark"] .tt-track { background: linear-gradient(135deg,#0B2721,#163D34); box-shadow: inset 0 0 0 1px #3A4A44, inset 0 2px 4px rgba(0,0,0,0.3); }
+:root[data-theme="dark"] .tt-knob { transform: translateX(30px); background: #24302B; box-shadow: 0 2px 8px rgba(0,0,0,0.5); }
+:root[data-theme="dark"] .tt-sun { opacity: .7; }
+:root[data-theme="dark"] .tt-moon { opacity: 0; }
+:root[data-theme="dark"] .tt-ksun { opacity: 0; transform: rotate(90deg); }
+:root[data-theme="dark"] .tt-kmoon { opacity: 1; transform: rotate(0); }
+:root[data-theme="dark"] .tt:hover .tt-track { box-shadow: inset 0 0 0 1px #5ED0B3; }
+/* Anchored to the switch's right edge, not centred: the switch sits at the
+   right of the header and a centred tip hangs off a narrow screen. */
+.tt-tip { position: absolute; top: calc(100% + 8px); right: 0; translate: 0 -4px; white-space: nowrap; background: #17241F; color: #FFFFFF; font: 600 12.5px/1 var(--font-sans); padding: 8px 11px; border-radius: 9px; box-shadow: 0 10px 24px rgba(18,49,42,0.22); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .18s ease, translate .18s ease, visibility .18s; z-index: 70; }
+.tt-tip::before { content: ""; position: absolute; top: -4px; right: 30px; width: 8px; height: 8px; background: inherit; rotate: 45deg; border-radius: 2px; }
+.tt:hover .tt-tip, .tt:focus-visible .tt-tip { opacity: 1; visibility: visible; translate: 0 0; transition-delay: .25s; }
+:root[data-theme="dark"] .tt-tip { background: #E9F0EC; color: #17241F; }
+@media (hover: none) { .tt-tip { display: none; } }
+@media (prefers-reduced-motion: reduce) { .tt-knob, .tt-k { transition: none; } }
+
+/* ── Back to top, with scroll-progress ring ─────────────────── */
+.to-top {
+  position: fixed; right: clamp(16px, 3vw, 32px); z-index: 40; width: 56px; height: 56px; padding: 0; border: 0;
+  border-radius: 50%; background: #0E6B5C; color: #FFFFFF; display: flex; align-items: center; justify-content: center;
+  cursor: pointer; box-shadow: 0 12px 28px rgba(18,49,42,0.28);
+  transition: opacity .3s ease, transform .35s cubic-bezier(.2,.8,.2,1), visibility .3s, background-color .2s ease, translate .2s ease, scale .15s ease;
+}
+.to-top[data-shown="false"] { opacity: 0; visibility: hidden; pointer-events: none; transform: translateY(16px) scale(0.9); }
+.to-top:hover { background-color: #0A4F44; translate: 0 -3px; }
+.to-top:active { translate: 0 0; scale: .94; }
+.to-top:focus-visible { outline: 3px solid #F4B740; outline-offset: 3px; }
+:root[data-theme="dark"] .to-top { background-color: #12806B; box-shadow: 0 12px 28px rgba(0,0,0,0.45); }
+:root[data-theme="dark"] .to-top:hover { background-color: #159479; }
+@media print { .to-top { display: none !important; } }

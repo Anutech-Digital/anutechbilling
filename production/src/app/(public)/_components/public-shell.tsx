@@ -6,7 +6,10 @@
  * these here keeps the public legal/about pages consistent + avoids
  * cross-page imports that confuse the dev compiler.
  */
-import Link from "next/link";
+
+import { SiteTheme } from "./site-theme";
+import { SiteHeader } from "./site-header";
+import { SiteFooter } from "./site-footer";
 
 export function PublicShell({
   title, subtitle, children,
@@ -16,7 +19,7 @@ export function PublicShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className="min-h-screen bg-paper">
+    <SiteTheme>
       <PublicTopBar />
       <main className="max-w-3xl mx-auto px-5 py-12 md:py-16">
         <h1 className="font-serif text-4xl md:text-5xl leading-tight mb-2">{title}</h1>
@@ -26,42 +29,23 @@ export function PublicShell({
         </div>
       </main>
       <PublicFooter />
-    </div>
+    </SiteTheme>
   );
 }
 
+/** The public website header (site-header.tsx). Kept under this name so the
+ *  pages that import it did not have to change. */
 export function PublicTopBar() {
-  return (
-    <header className="border-b border-hairline">
-      <div className="max-w-5xl mx-auto px-5 py-4 flex items-center justify-between">
-        <Link href="/" className="font-serif text-xl text-ink hover:text-amber transition-colors">
-          ResellerOS
-        </Link>
-        <nav className="flex gap-5 text-sm text-ink-3">
-          <Link href={"/pricing" as never} className="hover:text-ink">Pricing</Link>
-          <Link href={"/about" as never}   className="hover:text-ink">About</Link>
-          <Link href="/login" className="hover:text-ink">Sign in</Link>
-        </nav>
-      </div>
-    </header>
-  );
+  return <SiteHeader />;
 }
 
+/** The public website footer (site-footer.tsx). The `mt-16` keeps the gap the
+ *  old footer had above it. */
 export function PublicFooter() {
   return (
-    <footer className="border-t border-hairline mt-16">
-      <div className="max-w-5xl mx-auto px-5 py-8 flex flex-col md:flex-row gap-4 md:items-center md:justify-between text-[12px] text-ink-3">
-        <div>
-          © {new Date().getFullYear()} Excel Technologies Pvt Ltd · Mumbai, India
-        </div>
-        <nav className="flex gap-4">
-          <Link href={"/privacy" as never} className="hover:text-ink">Privacy</Link>
-          <Link href={"/terms" as never}   className="hover:text-ink">Terms</Link>
-          <Link href={"/about" as never}   className="hover:text-ink">About</Link>
-          <a href="mailto:hello@resellersos.in" className="hover:text-ink">Contact</a>
-        </nav>
-      </div>
-    </footer>
+    <div className="mt-16">
+      <SiteFooter />
+    </div>
   );
 }
 
@@ -126,8 +110,8 @@ export function FooterMeta() {
   return (
     <p className="text-[12px] text-ink-3 italic border-t border-hairline pt-6 mt-8">
       This document is provided for transparency and compliance with the DPDP
-      Act 2023. It is not a substitute for legal advice. Excel Technologies Pvt
-      Ltd reserves the right to update this policy as our practices or
+      Act 2023. It is not a substitute for legal advice. ANUTECH DIGITAL PVT
+      LTD reserves the right to update this policy as our practices or
       applicable law evolves.
     </p>
   );

@@ -40,7 +40,7 @@ export const metadata: Metadata = {
     "Razorpay billing",
     "Premier Partner",
   ],
-  authors: [{ name: "Excel Technologies Pvt Ltd" }],
+  authors: [{ name: "ANUTECH DIGITAL PVT LTD" }],
   metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"),
   openGraph: {
     type: "website",

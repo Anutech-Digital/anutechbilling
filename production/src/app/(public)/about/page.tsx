@@ -134,7 +134,7 @@ export default function AboutPage() {
             14-day free trial. No credit card required.
           </p>
           <div className="flex gap-3 justify-center flex-wrap">
-            <Button asChild variant="primary" iconRight="arrow_right">
+            <Button asChild variant="cta" iconRight="arrow_right">
               <Link href="/signup">Start free trial</Link>
             </Button>
             <Button asChild variant="default">

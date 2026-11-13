@@ -12,6 +12,7 @@
  */
 import type { Metadata } from "next";
 import { PublicTopBar, PublicFooter } from "../_components/public-shell";
+import { SiteTheme } from "../_components/site-theme";
 import {
   PricingHero,
   BetaBanner,
@@ -29,7 +30,7 @@ export const metadata: Metadata = {
 
 export default function PricingPage() {
   return (
-    <div className="min-h-screen bg-paper">
+    <SiteTheme>
       <PublicTopBar />
       <main>
         <PricingHero />
@@ -40,7 +41,7 @@ export default function PricingPage() {
         <PricingCTA />
       </main>
       <PublicFooter />
-    </div>
+    </SiteTheme>
   );
 }
 

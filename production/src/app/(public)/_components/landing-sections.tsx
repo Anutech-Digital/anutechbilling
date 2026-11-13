@@ -66,7 +66,7 @@ export function Hero() {
             transition={{ duration: 0.5, delay: 0.3 }}
             className="mt-7 flex flex-wrap justify-center gap-3"
           >
-            <Button asChild variant="primary" iconRight="arrow_right" size="lg" className="shadow-lg shadow-amber/20 hover:shadow-amber/40 transition-shadow">
+            <Button asChild variant="cta" iconRight="arrow_right" size="lg" className="shadow-lg shadow-marigold/30 hover:shadow-marigold/50 transition-shadow">
               <Link href="/signup">Start free trial</Link>
             </Button>
             <Button asChild variant="ghost" size="lg" icon="rocket" className="border border-hairline bg-paper hover:bg-paper-2 transition-colors">
@@ -592,7 +592,7 @@ export function FinalCta() {
           your first GST-compliant invoice in under 10 minutes.
         </p>
         <div className="flex flex-wrap justify-center gap-3 relative z-10">
-          <Button asChild variant="primary" iconRight="arrow_right" size="lg" className="shadow-lg shadow-amber/20 hover:shadow-amber/40 transition-shadow">
+          <Button asChild variant="cta" iconRight="arrow_right" size="lg" className="shadow-lg shadow-marigold/30 hover:shadow-marigold/50 transition-shadow">
             <Link href="/signup">Start free trial</Link>
           </Button>
           <Button asChild variant="default" size="lg" className="hover:bg-paper-2 transition-colors">
