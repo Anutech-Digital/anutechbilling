@@ -1,72 +1,80 @@
 /**
- * R-1720 — on a ~1280px laptop the Renewals desktop table (9 columns + a row of 4 action
- * buttons) was wider than its card, so the Action column sat behind a horizontal scroll
- * ("Send re…" cut off). The action buttons wrap instead of forcing the row wider.
+ * R-1720 — on a ~1280px laptop the Renewals desktop table was wider than its card, so the Action
+ * column sat behind a horizontal scroll. R-2403 — a fixed-layout table with a column budget
+ * (queue.ts QUEUE_TABLE_COLS).
  *
- * R-2403 (changed expectation): the queue table now shows from xl (1280px) — the card asked for
- * a table on desktop, phones keep cards. It fits because it is 7 columns on a fixed layout with a
- * column budget (queue.ts QUEUE_TABLE_COLS) inside the ~944px card a 1280 laptop gives it with
- * the sidebar open (measured for /subscriptions, R-2263), Actions always in it. jsdom has no
- * layout, so this proves the structure (same pattern as subscriptions/table-fit-r2263.test.ts).
+ * R-2759 (R-2739b, changed expectation): user audit 14 Nov measured the table needing 1,634px in a
+ * 1,599px box at 1920, and at 1280 the page showed the CARD list (a 1280 laptop's inner width is
+ * 1264–1276, under the xl switch). Now: the table from a 1260px window, eight columns
+ * (☐ · Customer · Product & period · Due · Amount · Status · Last invoice · Action), every cell at
+ * most two lines (row-cells.tsx). jsdom has no layout, so this proves the structure; the real width
+ * check is the card spec e2e/cards/R-2759.spec.ts (1280 and 1568, scrollWidth ≤ innerWidth).
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { QUEUE_TABLE_COLS, QUEUE_TABLE_BUDGET_PX, QUEUE_FLEX_MIN_PX } from "./queue";
+import { QUEUE_TABLE_COLS, QUEUE_TABLE_BUDGET_PX, QUEUE_FLEX_MIN_PX, QUEUE_TABLE_MIN_VIEWPORT_PX } from "./queue";
 
 const page = readFileSync("src/app/(app)/renewals/page.tsx", "utf8");
+const cells = readFileSync("src/app/(app)/renewals/row-cells.tsx", "utf8");
 
-describe("R-1720 / R-2403 — Renewals table fits its card at 1280", () => {
-  it("the desktop table shows from xl (1280px); the card list covers everything below", () => {
-    expect(page).toContain('<div className="hidden xl:block">');
-    expect(page).not.toContain('<div className="hidden 2xl:block">');
-    expect(page).toMatch(/<ul className="xl:hidden[^"]*md:grid-cols-2/);
+describe("R-1720 / R-2403 / R-2759 — Renewals table fits its card from 1260", () => {
+  it("the desktop table shows from a 1260px window; the card list covers everything below", () => {
+    expect(QUEUE_TABLE_MIN_VIEWPORT_PX).toBe(1260);
+    expect(page).toContain('<div className="hidden min-[1260px]:block" data-testid="renewals-table">');
+    expect(page).toMatch(/<ul className="min-\[1260px\]:hidden[^"]*md:grid-cols-2/);
+    expect(page).not.toMatch(/"hidden xl:block"|"xl:hidden/);
   });
 
-  it("column budget: fixed columns + flexible minimums ≤ 944px, Actions inside it", () => {
+  it("column budget: fixed columns + flexible minimums ≤ the ~924px card, Action inside it", () => {
     const fixed = QUEUE_TABLE_COLS.reduce((s, c) => s + (c.width ?? 0), 0);
     const flex = QUEUE_TABLE_COLS.filter((c) => c.width == null);
     expect(flex.map((c) => c.key)).toEqual(["customer", "product"]);
-    expect(QUEUE_TABLE_BUDGET_PX).toBeLessThanOrEqual(944);
+    expect(QUEUE_TABLE_BUDGET_PX).toBeLessThanOrEqual(924);
     expect(fixed + flex.length * QUEUE_FLEX_MIN_PX).toBeLessThanOrEqual(QUEUE_TABLE_BUDGET_PX);
-    expect(QUEUE_TABLE_COLS.map((c) => c.key)).toEqual(["select", "customer", "product", "date", "amount", "status", "actions"]);
+    expect(QUEUE_TABLE_COLS.map((c) => c.key)).toEqual(["select", "customer", "product", "due", "amount", "status", "invoice", "actions"]);
+    expect(QUEUE_TABLE_COLS.map((c) => c.label)).toEqual(["", "Customer", "Product & period", "Due", "Amount", "Status", "Last invoice", "Action"]);
   });
 
-  it("the table is fixed-layout, driven by that budget, with one <th> per column and no min-width", () => {
+  it("the table is fixed-layout, driven by that budget; the header row comes from the same list; no min-width", () => {
     expect(page).toMatch(/<table className="w-full table-fixed text-sm">\s*<colgroup>\s*\{QUEUE_TABLE_COLS\.map/);
     expect(page).not.toMatch(/<table className="[^"]*min-w-/);
     const head = page.slice(page.indexOf("<thead>"), page.indexOf("</thead>"));
-    expect((head.match(/<th\b/g) ?? []).length).toBe(QUEUE_TABLE_COLS.length);
-    for (const h of [">Customer<", ">Product<", ">Renewal date<", ">Renewal amount<", ">Status<", ">Actions<"]) expect(head).toContain(h);
-    expect(head).not.toContain(">Monthly<");
+    expect(head).toMatch(/QUEUE_TABLE_COLS\.map\(\(c\) => c\.key === "select"/);
   });
 
-  it("action buttons wrap rather than widen the row (table and card)", () => {
-    /* R-2401: the buttons are the shared RenewalActions (page + component are checked). */
-    const shared = readFileSync("src/components/features/renewals/renewal-actions.tsx", "utf8");
-    const actionRows = (page + shared).match(/className=(?:"|\{cn\(")flex (?:flex-wrap )?items-center gap-1\.5[^"]*"/g) ?? [];
-    expect(actionRows.length).toBeGreaterThanOrEqual(1);
-    for (const r of actionRows) expect(r).toContain("flex-wrap");
-    expect(page).toMatch(/className="pt-2 border-t[^"]*">\s*<RenewalActions/);
+  it("two lines per cell: names / ids / periods truncate with a tooltip; money and status never truncate", () => {
+    expect(cells).toMatch(/className="block truncate font-semibold text-ink hover:underline" title=\{name\}/);
+    expect(cells).toMatch(/truncate text-ink" title=\{line1\}/);
+    /* the invoice state (money + status) wraps, never cut */
+    expect(cells).toMatch(/className=\{cn\("break-words tabular-nums", TONE\[state\.tone\]\)\} data-testid="renewal-last-invoice-status"/);
+    /* the stage chip wraps inside the table (Badge is whitespace-nowrap by default) */
+    expect(page).toContain('className={compact ? "h-auto whitespace-normal text-left" : undefined}');
+    expect(page).toContain("<StageChip stage={stage} compact />");
+    /* the amount never wraps or cuts */
+    expect(page).toContain('<p className="whitespace-nowrap font-medium tabular-nums text-ink">{amount.text}</p>');
   });
 
-  it("R-2422: Actions is one next-step button + ⋯ (no stacked extras), so the column is narrower", () => {
+  it("the table row carries no Last paid / emails sent / follow-up / vendor-hold / prior-due lines (flags + drawer)", () => {
+    const table = page.slice(page.indexOf('data-testid="renewals-table"'), page.indexOf("</table>"));
+    for (const gone of ["lastPaidFor(", "reminder_count", "<FollowupLine", "<VendorHoldBadge", "priorDue", "docsFor(", "sentDue("]) {
+      expect(table).not.toContain(gone);
+    }
+    expect(table).toContain("<LastInvoiceCell ");
+  });
+
+  it("R-2422: Action is ONE button + ⋯ on one line", () => {
     const actions = QUEUE_TABLE_COLS.find((c) => c.key === "actions")!;
-    expect(actions.width).toBeLessThanOrEqual(224);
+    expect(actions.width).toBeLessThanOrEqual(176);
     expect(page).not.toContain("extra={");
     expect(page).not.toMatch(/<AiDraftButton|<VoiceNoteButton/);
     const uses = page.match(/<RenewalActions [^>]*\/>/g) ?? [];
     expect(uses).toHaveLength(2);
     for (const u of uses) expect(u).toMatch(/onFollowup=\{followupFor\(sub\)\} messaging/);
-    const shared = readFileSync("src/components/features/renewals/renewal-actions.tsx", "utf8");
-    expect(shared).toContain("const menuLabel = `More renewal actions for ${name}");
-    expect(shared).toContain("aria-label={menuLabel}");
   });
 
-  it("R-2422: every row (table and card) shows its payment frequency and Last paid", () => {
-    expect((page.match(/<AmountCell amount=\{amount\} frequency=\{frequency\}/g) ?? []).length).toBe(2);
-    /* Last paid sits under the customer (contact line) on both layouts. */
-    expect((page.match(/<ContactLine contact=\{contact\} \/>\s*\{lastPaidFor\(item, "mt-0\.5"\)\}/g) ?? []).length).toBe(2);
-    /* One batched read for the whole listed queue (tab / tile switches do not read again), never one per row. */
+  it("the card layout keeps payment frequency + Last paid; one batched Last paid read", () => {
+    expect((page.match(/<AmountCell amount=\{amount\} frequency=\{frequency\}/g) ?? []).length).toBe(1);
+    expect(page).toContain("term={nextTermWords(sub)} frequency={frequency}");
     expect((page.match(/useRenewalLastPaid\(/g) ?? []).length).toBe(1);
     expect(page).toContain("useRenewalLastPaid(listed)");
   });
