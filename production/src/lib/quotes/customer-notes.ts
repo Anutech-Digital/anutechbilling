@@ -144,6 +144,23 @@ export function scrubCustomerText(text: string): string {
   return lines.join("\n").replace(/\n{3,}/g, "\n\n").trim();
 }
 
+/**
+ * R-2754 — the system-written lead sentence that names a subscription by its id
+ * ("Renewal quote (operator-generated) for subscription <uuid>", the extension and domain
+ * forms, or a whole pre-R-813 add-seats audit text), exactly as stored; null when the
+ * customer part of the note does not start with one. The quote editor keeps it out of the
+ * "Notes for customer" box (it is never customer copy) and stores it back as staff-only.
+ */
+export function systemNoteLead(visible: string | null | undefined): string | null {
+  if (!visible) return null;
+  if (LEGACY_ADD_SEATS.test(visible)) return visible.trim();
+  for (const re of [SYS_EXTENSION, SYS_DOMAIN, SYS_RENEWAL]) {
+    const m = re.exec(visible);
+    if (m) return m[0].trim();
+  }
+  return null;
+}
+
 /** The plain line for a system-written renewal / extension note, plus what follows it. */
 function renewalOrExtensionNote(
   visible: string,
