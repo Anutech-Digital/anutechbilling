@@ -117,10 +117,20 @@ export function sidebarHrefs(model: SidebarModel): string[] {
  * and pages outside the nav; the sidebar then keeps whatever app was showing.
  */
 export function appForPath(model: SidebarModel, pathname: string): string | null {
+  const cleanPath = pathname.split("?")[0];
   const byHref = new Map<string, string>();
-  for (const a of model.apps) for (const it of a.items) for (const d of itemWithDescendants(it)) byHref.set(d.href, a.id);
-  if (byHref.has(pathname)) return byHref.get(pathname)!;
-  const segs = pathname.split("/").filter(Boolean);
+  for (const a of model.apps) {
+    for (const it of a.items) {
+      for (const d of itemWithDescendants(it)) {
+        const cleanHref = d.href.split("?")[0];
+        if (!byHref.has(cleanHref)) {
+          byHref.set(cleanHref, a.id);
+        }
+      }
+    }
+  }
+  if (byHref.has(cleanPath)) return byHref.get(cleanPath)!;
+  const segs = cleanPath.split("/").filter(Boolean);
   for (let i = segs.length - 1; i >= 1; i--) {
     const hit = byHref.get("/" + segs.slice(0, i).join("/"));
     if (hit) return hit;
@@ -172,12 +182,58 @@ export function withoutDistributorOnly(
   return { pinned: model.pinned.filter(keep), apps, flat: apps.length <= 1 || rows <= FLAT_MENU_MAX_ROWS };
 }
 
+export const SALARIED_PRO_CHILDREN: NavItem[] = [
+  {
+    id: "sp-expenses",
+    href: "/employee-hub?tab=expenses",
+    label: "Personal Expenses & Budget",
+    icon: "tag",
+    hint: "Daily Indian expenses, UPI spends & monthly savings rate",
+  },
+  {
+    id: "sp-bank-import",
+    href: "/employee-hub?tab=bank-import",
+    label: "Bank Statement Importer",
+    icon: "upload_cloud",
+    hint: "Upload HDFC, SBI, ICICI, Axis or Kotak savings bank CSV",
+  },
+  {
+    id: "sp-tax",
+    href: "/employee-hub?tab=tax",
+    label: "Tax Regime (FY 2025–26)",
+    icon: "rupee",
+    hint: "Compare Old vs New Tax Regime with ₹75k standard deduction",
+  },
+  {
+    id: "sp-claims",
+    href: "/employee-hub?tab=claims",
+    label: "Company Claims & Bills",
+    icon: "wallet",
+    hint: "Monthly WiFi, mobile, cab & book reimbursements for HR",
+  },
+  {
+    id: "sp-receipts",
+    href: "/employee-hub?tab=receipts",
+    label: "HRA Rent Receipts",
+    icon: "receipt",
+    hint: "Instant 12-month printable rent receipts with landlord PAN",
+  },
+  {
+    id: "sp-vault",
+    href: "/employee-hub?tab=vault",
+    label: "Career & Tax Vault",
+    icon: "file",
+    hint: "Form 16, payslips, UAN passbook, offer letters checklist",
+  },
+];
+
 export const EMPLOYEE_HUB_ITEM: NavItem = {
   id: "employee-hub",
   href: "/employee-hub",
-  label: "Employee Hub",
+  label: "Salaried Pro Hub",
   icon: "award",
-  hint: "FY 2025–26 tax comparator, corporate expense claims, HRA receipts & career vault",
+  hint: "Personal expenses, bank statement import, FY 2025–26 tax comparator, claims & HRA receipts",
+  children: SALARIED_PRO_CHILDREN,
 };
 
 /**
@@ -188,7 +244,8 @@ export const EMPLOYEE_HUB_ITEM: NavItem = {
  * 1. Routes with 0 matching modules in registry (e.g. /dashboard, /today, /settings) are core platform routes and always allowed.
  * 2. Routes with matching modules require at least one of those modules to be in activeModuleIds.
  * 3. Items with children are pruned: children are filtered, and parent is kept if parent is allowed OR has active children.
- * 4. If salaried_pro is active, injects "Employee Hub" (/employee-hub) into the "Team" app.
+ * 4. If salaried_pro is active, injects "Salaried Pro Hub" (/employee-hub) with rich sub-tools.
+ *    If teamops is not active (individual mode), re-labels the app from "Team" to "Salaried Pro" with icon "award" and places it first.
  * 5. Apps with 0 remaining items are removed.
  * 6. Flat menu layout (model.flat = true) is automatically enabled when remaining apps <= 1 or total rows <= FLAT_MENU_MAX_ROWS.
  */
@@ -199,7 +256,9 @@ export function filterSidebarModelForModules(
   if (!activeModuleIds) return model;
 
   const isRouteAllowed = (href: string) => {
-    const modules = getModulesForRoute(href);
+    // Match base route before query params
+    const baseHref = href.split("?")[0];
+    const modules = getModulesForRoute(baseHref);
     if (modules.length === 0) return true;
     return modules.some((m) => activeModuleIds.includes(m.id));
   };
@@ -234,11 +293,21 @@ export function filterSidebarModelForModules(
       .map(filterItem)
       .filter((i): i is NavItem => i !== null);
 
-    // If salaried_pro is active, ensure Employee Hub is in Team app
+    // If salaried_pro is active, ensure Employee Hub is in Team / Salaried Pro app
     if (app.id === "team" && activeModuleIds.includes("salaried_pro")) {
-      const alreadyHas = items.some((i) => i.id === "employee-hub" || i.href === "/employee-hub");
+      const alreadyHas = items.some((i) => i.id === "employee-hub" || i.href.startsWith("/employee-hub"));
       if (!alreadyHas) {
         items = [EMPLOYEE_HUB_ITEM, ...items];
+      }
+
+      // If user is an individual without corporate TeamOps, rebrand Team -> Salaried Pro
+      if (!activeModuleIds.includes("teamops")) {
+        return {
+          id: "salaried-pro",
+          label: "Salaried Pro",
+          icon: "award",
+          items,
+        };
       }
     }
 
@@ -248,16 +317,23 @@ export function filterSidebarModelForModules(
     };
   });
 
-  // If Team app was completely pruned or wasn't present, but salaried_pro is active:
+  // If Salaried Pro / Team app was completely pruned or wasn't present, but salaried_pro is active:
   if (activeModuleIds.includes("salaried_pro")) {
-    const hasTeamApp = apps.some((a) => a.id === "team" && a.items.length > 0);
-    if (!hasTeamApp) {
-      apps.push({
-        id: "team",
-        label: "Team",
-        icon: "users",
+    const hasSalariedOrTeam = apps.some((a) => (a.id === "salaried-pro" || a.id === "team") && a.items.length > 0);
+    if (!hasSalariedOrTeam) {
+      apps.unshift({
+        id: "salaried-pro",
+        label: "Salaried Pro",
+        icon: "award",
         items: [EMPLOYEE_HUB_ITEM],
       });
+    } else if (!activeModuleIds.includes("teamops")) {
+      // Bring Salaried Pro to the top position so the individual user sees it first
+      const spIndex = apps.findIndex((a) => a.id === "salaried-pro");
+      if (spIndex > 0) {
+        const [spApp] = apps.splice(spIndex, 1);
+        apps.unshift(spApp);
+      }
     }
   }
 

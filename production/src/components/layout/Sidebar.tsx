@@ -48,6 +48,21 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
 
   // Optimistic pending navigation state for instant 0ms button click feedback
   const [pendingHref, setPendingHref] = React.useState<string | null>(null);
+  // Current URL search string (read safely from window after mount to avoid static prerender de-opt)
+  const [currentSearch, setCurrentSearch] = React.useState<string>("");
+
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      setCurrentSearch(window.location.search);
+      const updateSearch = () => setCurrentSearch(window.location.search);
+      window.addEventListener("popstate", updateSearch);
+      window.addEventListener("app:tab-change", updateSearch);
+      return () => {
+        window.removeEventListener("popstate", updateSearch);
+        window.removeEventListener("app:tab-change", updateSearch);
+      };
+    }
+  }, [pathname]);
 
   // Clear pending state whenever route transition completes
   React.useEffect(() => {
@@ -56,25 +71,32 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
 
   // Eager prefetching on mouse hover or focus
   const handlePrefetch = React.useCallback((href?: string) => {
-    if (href && href.startsWith("/") && !href.startsWith("//") && href !== pathname) {
-      try {
-        router.prefetch(href);
-      } catch {}
+    if (href && href.startsWith("/") && !href.startsWith("//")) {
+      const [path] = href.split("?");
+      if (path !== pathname) {
+        try {
+          router.prefetch(path);
+        } catch {}
+      }
     }
   }, [router, pathname]);
 
   // Instant tactile feedback on link click / pointer-down
   const handleLinkAction = React.useCallback((href: string) => {
-    if (href && href.startsWith("/") && !href.startsWith("//") && href !== pathname) {
+    const [path, query] = href.split("?");
+    if (query !== undefined) {
+      setCurrentSearch(`?${query}`);
+    }
+    if (href && href.startsWith("/") && !href.startsWith("//")) {
       setPendingHref(href);
       if (typeof window !== "undefined") {
         window.dispatchEvent(new Event("app:navigation-start"));
       }
       try {
-        router.prefetch(href);
+        router.prefetch(path);
       } catch {}
     }
-  }, [router, pathname]);
+  }, [router]);
 
   // Which accordion parents (items with children) are expanded. Defaults to
   // open when the current route is the parent or one of its children.
@@ -131,8 +153,11 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
 
   // Reusable link (plain item + accordion children).
   const renderLink = (it: NavItem, child = false) => {
-    const isTargetActive = (pendingHref ?? pathname) === it.href;
-    const isPending = pendingHref === it.href && pathname !== it.href;
+    const [itemPath, itemQuery] = it.href.split("?");
+    const isTargetActive = itemQuery
+      ? (pendingHref ? pendingHref === it.href : pathname === itemPath && (currentSearch === `?${itemQuery}` || currentSearch.includes(itemQuery)))
+      : (pendingHref ?? pathname) === it.href;
+    const isPending = pendingHref === it.href && (pathname !== itemPath || (itemQuery ? !currentSearch.includes(itemQuery) : false));
     const b = it.badge ?? navBadges[it.id as keyof typeof navBadges];
     return (
       <Link
@@ -151,7 +176,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
         title={collapsed ? (it.hint ? `${it.label} — ${it.hint}` : it.label) : it.hint}
         className={cn(
           "group relative flex items-center rounded-md text-sm transition-all duration-100 select-none",
-          collapsed ? "justify-center px-0 py-2" : child ? "gap-2 pl-8 pr-3 py-1.5 text-[13px]" : "gap-2.5 px-3 py-1.5",
+          collapsed ? "justify-center px-0 py-2" : child ? "gap-2 pl-7 pr-3 py-1.5 text-[13px]" : "gap-2.5 px-3 py-1.5",
           isTargetActive
             ? "bg-amber-soft text-amber-ink font-medium shadow-2xs"
             : "text-ink-2 hover:bg-paper-2 hover:text-ink active:scale-[0.98]"
@@ -159,7 +184,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
         aria-current={isTargetActive ? "page" : undefined}
       >
         {child && !collapsed
-          ? <span className={cn("w-1.5 h-1.5 rounded-full flex-shrink-0 transition-colors", isTargetActive ? "bg-amber" : "bg-ink-3/40")} />
+          ? <Icon name={it.icon ?? "circle"} size={13} className={cn("flex-shrink-0 transition-colors mr-0.5", isTargetActive ? "text-amber" : "text-ink-3/80 group-hover:text-ink-2")} />
           : <Icon name={it.icon} size={15} className={cn("flex-shrink-0 transition-colors", isTargetActive ? "text-amber" : "text-ink-3 group-hover:text-ink-2")} />}
         {!collapsed && <span className="flex-1 truncate" title={it.label}>{it.label}</span>}
         {isPending && (
@@ -179,8 +204,11 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
 
   // A group item — accordion parent (has children, e.g. Reports) or plain link.
   const renderItem = (item: NavItem) => {
-    const active = (pendingHref ?? pathname) === item.href;
-    const isPending = pendingHref === item.href && pathname !== item.href;
+    const [itemPath, itemQuery] = item.href.split("?");
+    const active = itemQuery
+      ? (pendingHref ? pendingHref === item.href : pathname === itemPath && (currentSearch === `?${itemQuery}` || currentSearch.includes(itemQuery)))
+      : (pendingHref ?? pathname) === itemPath;
+    const isPending = pendingHref === item.href && pathname !== itemPath;
     /* R-497: a heading-only row (the role may open some children, not the row itself — a
        sales user's Customers → Contacts). Expanded: a toggle button, open by default.
        Collapsed: just the children it holds, as icon rows. Never a link to the parent. */
@@ -208,7 +236,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
       );
     }
     if (item.children?.length && !collapsed) {
-      const isOpen = openMenus[item.id] ?? (active || item.children.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")));
+      const isOpen = openMenus[item.id] ?? (active || (pathname === itemPath) || item.children.some((c) => pathname === c.href.split("?")[0]));
       return (
         <div key={item.id}>
           <div className="flex items-center">
@@ -255,7 +283,7 @@ function SidebarContent({ onNavigate, collapsed = false, onToggle }: { onNavigat
     /* R-497: the collapsed rail has no accordion, so its children (Customers → Contacts) were
        unreachable there. Show them as icon rows under the parent while you are inside it —
        click Customers, and Parent Accounts + Contacts appear below it. */
-    if (item.children?.length && collapsed && (active || item.children.some((c) => pathname === c.href || pathname.startsWith(c.href + "/")))) {
+    if (item.children?.length && collapsed && (active || pathname === itemPath || item.children.some((c) => pathname === c.href.split("?")[0]))) {
       return (
         <div key={item.id} className="space-y-0.5">
           {renderLink(item)}

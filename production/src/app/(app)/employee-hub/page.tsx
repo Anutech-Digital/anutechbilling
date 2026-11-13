@@ -74,8 +74,40 @@ const VAULT_CHECKLIST = [
   { id: "ais", label: "Form 26AS & AIS / TIS Download from Income Tax Portal", category: "Annual ITR Filing", mandatory: true },
 ];
 
+type HubTab = "tax" | "expenses" | "bank-import" | "claims" | "receipts" | "vault";
+
 export default function EmployeeHubPage() {
-  const [activeTab, setActiveTab] = React.useState<"tax" | "expenses" | "bank-import" | "claims" | "receipts" | "vault">("tax");
+  const [activeTab, setActiveTab] = React.useState<HubTab>("expenses");
+
+  // Sync activeTab with URL search parameter (?tab=expenses, ?tab=bank-import, etc.)
+  React.useEffect(() => {
+    if (typeof window !== "undefined") {
+      const syncTabFromUrl = () => {
+        const params = new URLSearchParams(window.location.search);
+        const tabParam = params.get("tab");
+        if (
+          tabParam &&
+          ["tax", "expenses", "bank-import", "claims", "receipts", "vault"].includes(tabParam)
+        ) {
+          setActiveTab(tabParam as HubTab);
+        }
+      };
+
+      syncTabFromUrl();
+      window.addEventListener("popstate", syncTabFromUrl);
+      return () => window.removeEventListener("popstate", syncTabFromUrl);
+    }
+  }, []);
+
+  const handleTabChange = (tab: HubTab) => {
+    setActiveTab(tab);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("tab", tab);
+      window.history.replaceState(null, "", url.toString());
+      window.dispatchEvent(new Event("app:tab-change"));
+    }
+  };
 
   // --------------------------------------------------------------------------
   // Tab 1: Tax Regime State & Calculations
@@ -341,19 +373,7 @@ export default function EmployeeHubPage() {
       {/* Navigation Tabs */}
       <div className="flex items-center gap-2 border-b border-hairline pb-2 overflow-x-auto">
         <button
-          onClick={() => setActiveTab("tax")}
-          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
-            activeTab === "tax"
-              ? "bg-indigo-50 text-indigo-700 font-semibold"
-              : "text-ink-2 hover:text-ink hover:bg-paper-2"
-          }`}
-        >
-          <Icon name="rupee" size={16} />
-          Tax Regime (FY 2025–26)
-        </button>
-
-        <button
-          onClick={() => setActiveTab("expenses")}
+          onClick={() => handleTabChange("expenses")}
           className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
             activeTab === "expenses"
               ? "bg-indigo-50 text-indigo-700 font-semibold"
@@ -365,7 +385,7 @@ export default function EmployeeHubPage() {
         </button>
 
         <button
-          onClick={() => setActiveTab("bank-import")}
+          onClick={() => handleTabChange("bank-import")}
           className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
             activeTab === "bank-import"
               ? "bg-indigo-50 text-indigo-700 font-semibold"
@@ -377,7 +397,19 @@ export default function EmployeeHubPage() {
         </button>
 
         <button
-          onClick={() => setActiveTab("claims")}
+          onClick={() => handleTabChange("tax")}
+          className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
+            activeTab === "tax"
+              ? "bg-indigo-50 text-indigo-700 font-semibold"
+              : "text-ink-2 hover:text-ink hover:bg-paper-2"
+          }`}
+        >
+          <Icon name="rupee" size={16} />
+          Tax Regime (FY 2025–26)
+        </button>
+
+        <button
+          onClick={() => handleTabChange("claims")}
           className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
             activeTab === "claims"
               ? "bg-indigo-50 text-indigo-700 font-semibold"
@@ -389,7 +421,7 @@ export default function EmployeeHubPage() {
         </button>
 
         <button
-          onClick={() => setActiveTab("receipts")}
+          onClick={() => handleTabChange("receipts")}
           className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
             activeTab === "receipts"
               ? "bg-indigo-50 text-indigo-700 font-semibold"
@@ -401,7 +433,7 @@ export default function EmployeeHubPage() {
         </button>
 
         <button
-          onClick={() => setActiveTab("vault")}
+          onClick={() => handleTabChange("vault")}
           className={`px-4 py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2 whitespace-nowrap ${
             activeTab === "vault"
               ? "bg-indigo-50 text-indigo-700 font-semibold"

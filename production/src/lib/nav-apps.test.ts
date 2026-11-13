@@ -190,19 +190,42 @@ describe("filterSidebarModelForModules (Dynamic menu & layout adjustment)", () =
     expect(res.flat).toBe(true);
   });
 
-  it("injects Employee Hub when salaried_pro is active and activates flat layout for salaried individual", () => {
+  it("rebrands Team to dedicated Salaried Pro app with personal finance children when salaried_pro is active and activates flat layout", () => {
     const res = filterSidebarModelForModules(base, ["salaried_pro"]);
     const itemIds = getAppItemIds(res);
 
-    // Employee Hub present
+    // Salaried Pro is the primary app at position 0
+    expect(res.apps[0].id).toBe("salaried-pro");
+    expect(res.apps[0].label).toBe("Salaried Pro");
+    expect(res.apps[0].icon).toBe("award");
+
+    // Employee Hub present as first item
     expect(itemIds).toContain("employee-hub");
+    const hubItem = res.apps[0].items.find((i) => i.id === "employee-hub");
+    expect(hubItem).toBeDefined();
+    expect(hubItem?.label).toBe("Salaried Pro Hub");
+
+    // Children for personal finance tools exist
+    const childIds = hubItem?.children?.map((c) => c.id);
+    expect(childIds).toEqual([
+      "sp-expenses",
+      "sp-bank-import",
+      "sp-tax",
+      "sp-claims",
+      "sp-receipts",
+      "sp-vault",
+    ]);
+
+    // appForPath correctly resolves base and parameterized URLs
+    expect(appForPath(res, "/employee-hub")).toBe("salaried-pro");
+    expect(appForPath(res, "/employee-hub?tab=expenses")).toBe("salaried-pro");
 
     // CRM, Invoicing, Provisioning hidden
     expect(itemIds).not.toContain("leads");
     expect(itemIds).not.toContain("invoices");
     expect(itemIds).not.toContain("hosting-domains");
 
-    // Salaried individual sees clean flat menu
+    // Salaried individual sees clean flat menu (no corporate 6-app switcher)
     expect(res.flat).toBe(true);
   });
 

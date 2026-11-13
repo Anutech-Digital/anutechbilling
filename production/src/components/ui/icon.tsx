@@ -22,7 +22,7 @@ import {
   Smartphone, Sun, Moon, Building2, Briefcase, SlidersHorizontal,
   List, Grid3x3, Send, ArrowUpDown, Bookmark,
   Eye, Bug, Wallet, Printer, Laptop, Camera, Menu, Circle, Image as ImageIcon,
-  Mic, MicOff, Square, MapPin,
+  Mic, MicOff, Square, MapPin, Tag, UploadCloud,
   type LucideIcon,
 } from "lucide-react";
 
@@ -77,6 +77,9 @@ const ICON_MAP: Record<string, LucideIcon> = {
   more_v: MoreVertical,
   download: Download,
   upload: Upload,
+  upload_cloud: UploadCloud,
+  "upload-cloud": UploadCloud,
+  tag: Tag,
   send: Send,
 
   // Communication
