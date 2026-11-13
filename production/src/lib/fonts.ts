@@ -61,14 +61,18 @@ export const trialSans = localFont({ src: [{ path: "../../node_modules/@fontsour
 // ── Public website, "Warm & approachable" theme (docs/WEBSITE-THEME.md) ─────
 // Used only when the owner switches the website to the warm theme (Settings → Branding);
 // the classic theme keeps Archivo + IBM Plex Mono above. Their own variable names, so the
-// classic `--font-sans` on the same wrapper is untouched.
+// classic `--font-sans` on the same wrapper is untouched. `preload: false`: the variables sit
+// on the wrapper in both themes, and a browser only fetches a font a rule actually uses — so a
+// classic visitor downloads neither file.
 export const siteWarmBody = localFont({
   src: [{ path: "../../node_modules/@fontsource-variable/inter/files/inter-latin-wght-normal.woff2", weight: "100 900", style: "normal" }],
   variable: "--font-site-body",
   display: "swap",
+  preload: false,
 });
 export const siteWarmHeading = localFont({
   src: [{ path: "../../node_modules/@fontsource-variable/plus-jakarta-sans/files/plus-jakarta-sans-latin-wght-normal.woff2", weight: "200 800", style: "normal" }],
   variable: "--font-site-heading",
   display: "swap",
+  preload: false,
 });

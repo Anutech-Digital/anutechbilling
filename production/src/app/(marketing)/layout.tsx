@@ -70,7 +70,7 @@ export default async function MarketingLayout({ children }: { children: React.Re
   const domains = domainTeaser(tlds);
   return (
     <div
-      className={`anutech-site ${archivo.variable} ${plexMono.variable}${theme === "warm" ? ` ${siteWarmBody.variable} ${siteWarmHeading.variable}` : ""}`}
+      className={`anutech-site ${archivo.variable} ${plexMono.variable} ${siteWarmBody.variable} ${siteWarmHeading.variable}`}
       data-site-theme={theme}
     >
       {/* R-1628: what each domain renews at, for the cart page and checkout — the same live rate card. */}
