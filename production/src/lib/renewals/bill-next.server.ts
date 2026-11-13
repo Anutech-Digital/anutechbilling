@@ -12,7 +12,8 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { BillingCycle } from "@/lib/supabase/database.types";
 import { followingTermStart } from "@/lib/billing/subscription-schedule";
 import { addMonthsClamped, CYCLE_MONTHS } from "@/lib/billing/schedule";
-import { defaultSeatRate, nextPeriods, partAmounts, partTaxRate, type BillNextPreview } from "@/lib/billing/proforma";
+import { defaultSeatRate, earlierUnpaidParts, nextPeriods, partAmounts, partTaxRate, type BillNextPreview, type EarlierPartInvoice, type EarlierPartQuote } from "@/lib/billing/proforma";
+import { istToday } from "@/lib/dates/ist";
 import { unbilledPartPrice } from "@/lib/billing/sync-instalments.server";
 import { nextTermRenewalDate } from "./split-billed-renewal";
 export type { BillNextPreview, PreviewPeriod } from "@/lib/billing/proforma";
@@ -33,14 +34,14 @@ export interface BillNextSub {
 
 interface BillingRow {
   id: string; period_start: string; period_end: string; taxable_amount: number; tax_rate: number | null; invoice_id: string | null;
-  period_index: number;
+  period_index: number; due_on?: string | null;
 }
 
 /** The earliest period of this subscription with no tax invoice and no request — where billing goes on. */
 /** `freed` (R-2519b): the row's proforma was cancelled — Bill next part bills that row itself. */
 export async function firstUnbilledPeriod(db: SupabaseClient, sub: BillNextSub): Promise<{ start: string; row: BillingRow | null; rows: BillingRow[]; freed: boolean }> {
   const { data, error } = await db.from("subscription_billings")
-    .select("id, period_start, period_end, taxable_amount, tax_rate, invoice_id, period_index")
+    .select("id, period_start, period_end, taxable_amount, tax_rate, invoice_id, period_index, due_on")
     .eq("subscription_id", sub.id).order("period_start", { ascending: true });
   if (error) throw new Error(error.message);
   const rows = (data ?? []) as BillingRow[];
@@ -108,8 +109,31 @@ export async function billNextPreview(db: SupabaseClient, sub: BillNextSub, coun
       reqOf.set(q.subscription_billing_id, { id: q.id, status: q.status, amount: q.amount });
     }
   }
+  /* R-2757: earlier parts still unpaid — their open proforma (on the same subscription_billings rows read
+     above) or their tax invoice with money to collect. Named in the dialog; billing ahead stays allowed. */
+  const earlier = rows.filter((r) => r.period_start < start);
+  const earlierOpen = earlier.filter((r) => r.invoice_id == null).map((r) => r.id);
+  const earlierInvoiceIds = [...new Set(earlier.map((r) => r.invoice_id).filter((x): x is string => !!x))];
+  let earlierQuotes: EarlierPartQuote[] = [];
+  let earlierInvoices: EarlierPartInvoice[] = [];
+  if (earlierOpen.length > 0) {
+    const { data, error } = await db.from("quotes")
+      .select("id, status, amount, payment_amount, payment_status, superseded_by, subscription_billing_id")
+      .in("subscription_billing_id", earlierOpen).in("status", ["sent", "viewed", "accepted"]);
+    if (error) throw new Error(error.message);
+    earlierQuotes = (data ?? []) as EarlierPartQuote[];
+  }
+  if (earlierInvoiceIds.length > 0) {
+    const { data, error } = await db.from("invoices")
+      .select("id, status, amount, net_payable, paid_amount, written_off_at, due_date")
+      .in("id", earlierInvoiceIds).not("status", "in", "(paid,void,cancelled,draft)");
+    if (error) throw new Error(error.message);
+    earlierInvoices = (data ?? []) as EarlierPartInvoice[];
+  }
+  const unpaidEarlier = earlierUnpaidParts({ rows: earlier, quotes: earlierQuotes, invoices: earlierInvoices, firstStart: start, todayISO: istToday() });
+
   return {
-    cycle, seats, seatRate, partTaxable, taxRate,
+    cycle, seats, seatRate, partTaxable, taxRate, unpaidEarlier,
     amounts: seatRate != null ? partAmounts({ seats, seatRate, taxRate }) : { taxable: partTaxable, tax: Math.round(partTaxable * taxRate / 100), gross: partTaxable + Math.round(partTaxable * taxRate / 100) },
     firstStart: start,
     periods: periods.map((p) => {
