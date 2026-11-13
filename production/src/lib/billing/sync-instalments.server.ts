@@ -23,6 +23,7 @@ import { addDaysISO } from "@/lib/dates/ist";
 import { billedElsewhere, billedElsewhereLabel } from "@/lib/subscriptions/billed-elsewhere";
 import { applyBillOutcome, type BillOutcome } from "./part-requests";
 import { partRequestOf } from "./part-request-of.server";
+import { firstPartIndex, markTermRoll, type TermRoll } from "@/lib/renewals/pay-to-renew";
 import { partName, type PartInvoice } from "@/lib/invoices/split-sale-pending";
 export { partRequestOf };
 
@@ -97,6 +98,9 @@ export async function syncSubscriptionInstalments(args: {
   /** R-2095 (Sept reconcile): the run right after a sale's payment — invoice what the money covers,
    *  never make a next-period payment request (that is the billing job's, on the part's own date). */
   noNewRequests?: boolean;
+  /** R-2735: `sub` is the subscription as if renewed (termToBill's billAs) — its renewal_date was NOT
+   *  moved; the term's first part is marked with this roll, and paying it renews (in the database). */
+  termRoll?: TermRoll;
 }): Promise<InstalmentSyncResult> {
   const { supabase, sub, quote, todayISO } = args;
   const dryRun = args.dryRun ?? false;
@@ -193,6 +197,13 @@ export async function syncSubscriptionInstalments(args: {
         .eq("id", row.id)
         .is("invoice_id", null);   // re-checked at write time, not just at read time
       if (error) throw new Error(error.message);
+    }
+  }
+  /* R-2735: the renewal term's first part carries the roll its payment makes. */
+  if (args.termRoll && !dryRun) {
+    const first = firstPartIndex(planned.map((p) => p.periodIndex));
+    if (first != null) {
+      await markTermRoll(supabase as unknown as SupabaseClient, { subscriptionId: sub.id, termStart, periodIndex: first, roll: args.termRoll });
     }
   }
   out.created  = toInsert.length;
@@ -508,12 +519,15 @@ export async function layInstalments(
   quoteOf: (sub: InstalmentSub) => QuotePaymentFacts | undefined,
   todayISO: string,
   dryRun: boolean,
+  /** R-2735: the roll a renewal term's first part carries (the billing cron's termToBill). */
+  rollOf?: (sub: InstalmentSub) => TermRoll | undefined,
 ): Promise<{ created: number; resynced: number; errors: { subscription_id: string; message: string }[] }> {
   const out = { created: 0, resynced: 0, errors: [] as { subscription_id: string; message: string }[] };
   if (dryRun) return out;
   for (const sub of subs) {
     try {
-      const r = await syncSubscriptionInstalments({ supabase, sub, quote: quoteOf(sub), todayISO, layOnly: true });
+      const termRoll = rollOf?.(sub);
+      const r = await syncSubscriptionInstalments({ supabase, sub, quote: quoteOf(sub), todayISO, layOnly: true, ...(termRoll ? { termRoll } : {}) });
       out.created += r.created;
       out.resynced += r.resynced;
     } catch (e) {
