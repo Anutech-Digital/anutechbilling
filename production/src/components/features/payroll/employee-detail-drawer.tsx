@@ -10,6 +10,8 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import type { Route } from "next";
 
 import {
   Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter,
@@ -45,8 +47,11 @@ function Field({ label, value }: { label: string; value: React.ReactNode }) {
 }
 
 export function EmployeeDetailDrawer({
-  employee, open, onOpenChange, onEdit, focusSalary = false,
+  employee, open, onOpenChange, onEdit, focusSalary = false, scorecard,
 }: {
+  /** R-2725: the Scorecard button. Left out for a viewer who may not open scorecards;
+   *  `href: null` = this employee has no linked login, so there is no scorecard to open. */
+  scorecard?: { href: string | null };
   employee: Employee | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -101,7 +106,16 @@ export function EmployeeDetailDrawer({
             <div>
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-semibold text-ink-2">Profile</p>
-                {onEdit && <Button size="sm" variant="ghost" icon="edit" onClick={onEdit}>Edit</Button>}
+                <div className="flex items-center gap-1">
+                  {scorecard?.href ? (
+                    <Button asChild size="sm" variant="ghost" icon="award">
+                      <Link href={scorecard.href as Route}>Scorecard</Link>
+                    </Button>
+                  ) : scorecard ? (
+                    <span className="text-xs text-ink-3">No scorecard — no active login linked</span>
+                  ) : null}
+                  {onEdit && <Button size="sm" variant="ghost" icon="edit" onClick={onEdit}>Edit</Button>}
+                </div>
               </div>
               <div className="grid grid-cols-2 gap-x-3 gap-y-3 rounded-md border border-hairline bg-paper-2/30 p-3">
                 <Field label="Mobile" value={employee.phone} />

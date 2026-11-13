@@ -9,6 +9,8 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
+import type { Route } from "next";
 import { useRouter, useSearchParams } from "next/navigation";
 
 import { Card } from "@/components/ui/card";
@@ -44,7 +46,7 @@ import { useBankAccounts } from "@/lib/queries/bank";
 import { useEmployeeLoans } from "@/lib/queries/employee-loans";
 import { useCurrentUser } from "@/lib/hooks/useCurrentUser";
 import { DeviceApprovals, RequireDeviceRow } from "@/components/features/attendance/device-approvals";
-import { canWriteMoney } from "@/lib/nav";
+import { canOpenRoute, canWriteMoney } from "@/lib/nav";
 import { ViewOnlyNote } from "@/components/shared/view-only-note";
 import { downloadPayslipPDF } from "@/lib/pdf";
 import { asPdfError, PDF_FAILED_DESCRIPTION } from "@/lib/pdf/pdf-timeout";
@@ -67,6 +69,11 @@ import {
 } from "@/lib/queries/payroll";
 import { useOwnerSetConsent, useMarkAttendanceReviewed } from "@/lib/queries/my-attendance";
 import { useTeamMembers, memberLabel } from "@/lib/queries/team";
+import { usePerformance } from "@/lib/queries/performance";
+import {
+  nextScoreSort, scorePeriodNow, scorecardHref, scoresByEmployee, sortEmployeesByScore,
+  type EmployeeScore, type ScoreSort,
+} from "@/lib/performance/employee-score";
 import { useComplianceProfile } from "@/lib/compliance/profile";
 import { useFirmPartners } from "@/lib/queries/partners";
 import { showsPartnersRegister } from "@/lib/accounting/partners";
@@ -214,7 +221,17 @@ export function EmployeesTab() {
   const [mergeEmp, setMergeEmp] = React.useState<Employee | null>(null);
   const [deleteEmp, setDeleteEmp] = React.useState<Employee | null>(null);
   const [viewSalary, setViewSalary] = React.useState(false);
-  const rows = q.data ?? [];
+  /* R-2725 (Hitesh): the Score lives here, not on a menu row. Same rows as the Scorecards page
+     (usePerformance, this IST month) — one read for the whole table, and only for the roles
+     that may open a scorecard (owner / manager; the accountant gets no column). */
+  const canSeeScores = !!myRole && canOpenRoute(myRole, "/scorecard"); // one rule: nav.ts OFF_MENU_ROLES
+  const perf = usePerformance(scorePeriodNow(), "month", { enabled: canSeeScores });
+  const scores = React.useMemo(() => scoresByEmployee(perf.data), [perf.data]);
+  const [scoreSort, setScoreSort] = React.useState<ScoreSort>(null);
+  const rows = React.useMemo(() => sortEmployeesByScore(q.data ?? [], scores, scoreSort), [q.data, scores, scoreSort]);
+  const scoreCell = (e: Employee) => (
+    <EmployeeScoreCell name={toTitleCase(e.name)} score={scores.get(e.id)} loading={perf.isLoading} failed={perf.isError} onRetry={perf.refetch} />
+  );
 
   const confirmCancelExit = async (e: Employee) => {
     if (await confirm({
@@ -239,13 +256,14 @@ export function EmployeesTab() {
 
   return (
     <>
-      {canWrite ? (
-        <div className="flex justify-end mb-3">
-          <Button variant="primary" icon="plus" onClick={() => setEdit("new")}>Add employee</Button>
+      {(canWrite || canSeeScores) && (
+        <div className="flex justify-end gap-2 mb-3">
+          {/* R-2725: everyone's scorecards (also logins not linked to an employee) — was a menu row. */}
+          {canSeeScores && <Button asChild variant="outline" icon="award"><Link href="/scorecard">Scorecards</Link></Button>}
+          {canWrite && <Button variant="primary" icon="plus" onClick={() => setEdit("new")}>Add employee</Button>}
         </div>
-      ) : (
-        <ViewOnlyNote what="add or edit employees" />
       )}
+      {!canWrite && <ViewOnlyNote what="add or edit employees" />}
       {q.isLoading ? (
         <div className="space-y-3">{[1, 2, 3].map((i) => <Skeleton key={i} className="h-14 w-full" />)}</div>
       ) : rows.length === 0 ? (
@@ -261,6 +279,19 @@ export function EmployeesTab() {
                   <th className="text-right px-4 py-3 whitespace-nowrap">Monthly salary</th>
                   <th className="text-left px-4 py-3 whitespace-nowrap">Joined</th>
                   <th className="text-right px-4 py-3 whitespace-nowrap">Paid leave left (FY)</th>
+                  {canSeeScores && (
+                    <th className="text-right px-4 py-3 whitespace-nowrap" aria-sort={scoreSort === "desc" ? "descending" : scoreSort === "asc" ? "ascending" : "none"}>
+                      <button
+                        type="button"
+                        onClick={() => setScoreSort(nextScoreSort(scoreSort))}
+                        title="This month's score, from each person's scorecard. Click to sort."
+                        className="inline-flex items-center gap-1 uppercase tracking-wider font-semibold hover:text-ink focus:outline-none focus-visible:ring-2 focus-visible:ring-amber rounded"
+                      >
+                        Score
+                        <Icon name={scoreSort === "desc" ? "arrow_down" : scoreSort === "asc" ? "arrow_up" : "sort"} size={12} />
+                      </button>
+                    </th>
+                  )}
                   <th className="text-left px-4 py-3 whitespace-nowrap">Status</th>
                   <th className="text-right px-4 py-3 whitespace-nowrap">Actions</th>
                 </tr>
@@ -307,6 +338,9 @@ export function EmployeesTab() {
                         <span className="text-ink-3"> / {allowance}</span>
                         {prorated && <span className="ml-1 text-3xs uppercase tracking-wide text-ink-3 font-sans not-italic" title={leaveTitle}>pro-rata</span>}
                       </td>
+                      {canSeeScores && (
+                        <td className="px-4 py-3 text-right">{scoreCell(e)}</td>
+                      )}
                       <td className="px-4 py-3"><EmployeeStatusBadge e={e} /></td>
                       <td className="px-4 py-3 text-right" onClick={(ev) => ev.stopPropagation()}>
                         <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} onMerge={rows.length > 1 ? setMergeEmp : undefined} />
@@ -356,6 +390,7 @@ export function EmployeesTab() {
                     </div>
                     <div className="flex items-center justify-between gap-2" onClick={(ev) => ev.stopPropagation()}>
                       <EmployeeStatusBadge e={e} />
+                      {canSeeScores && <span className="ml-auto text-sm text-ink-3">Score {scoreCell(e)}</span>}
                       <EmployeeRowMenu e={e} canWrite={canWrite} isOwner={isOwner} onView={setViewEmp} onOffer={setOfferEmp} onEdit={setEdit} onDelete={confirmDelete} onStartExit={setExitEmp} onCancelExit={confirmCancelExit} onMerge={rows.length > 1 ? setMergeEmp : undefined} />
                     </div>
                   </Card>
@@ -386,8 +421,48 @@ export function EmployeesTab() {
         focusSalary={viewSalary}
         onOpenChange={(o) => { if (!o) { setViewEmp(null); setViewSalary(false); } }}
         onEdit={canWrite ? () => { if (viewEmp) { setEdit(viewEmp); setViewEmp(null); setViewSalary(false); } } : undefined}
+        /* R-2725: scores failed to load → the button opens Scorecards itself (it shows the error + Try again). */
+        scorecard={!canSeeScores || !viewEmp || perf.isLoading ? undefined
+          : { href: perf.isError ? "/scorecard" : scores.has(viewEmp.id) ? scorecardHref(scores.get(viewEmp.id)!.userId) : null }}
       />
     </>
+  );
+}
+
+/** R-2725: one employee's score — a link to that person's scorecard. "—" when no login is
+ *  linked to the employee (a score counts work done in the app, so there is none to show).
+ *  A failed read is never shown as a number or as "no score". */
+function EmployeeScoreCell({ name, score, loading, failed, onRetry }: {
+  name: string; score: EmployeeScore | undefined; loading: boolean; failed: boolean; onRetry: () => void;
+}) {
+  /* Only the link / button keeps the row's "open profile" click away — the rest of the cell opens it.
+     On a phone the target is 44 px tall (the desktop table keeps its row height). */
+  const own = {
+    onClick: (ev: React.MouseEvent) => ev.stopPropagation(),
+    onKeyDown: (ev: React.KeyboardEvent) => ev.stopPropagation(),
+  };
+  const touch = "inline-flex items-center justify-end min-h-11 min-w-11 md:min-h-0 md:min-w-0";
+  if (loading) return <Skeleton className="inline-block h-4 w-8 align-middle" />;
+  if (failed) {
+    return (
+      <button type="button" {...own} onClick={(ev) => { ev.stopPropagation(); onRetry(); }} title="Scores did not load. Click to try again." className={cn(touch, "text-xs text-amber-ink underline")}>
+        Try again
+      </button>
+    );
+  }
+  if (!score) {
+    return <span className="text-ink-3" title="No score — this employee has no active login linked." aria-label={`${name}: no score, no active login linked`}>—</span>;
+  }
+  return (
+    <Link
+      href={scorecardHref(score.userId) as Route}
+      title="Open scorecard (this month)"
+      aria-label={`${name}: score ${score.score} — open scorecard`}
+      className={cn(touch, "font-mono font-semibold tabular-nums text-amber-ink underline-offset-2 hover:underline")}
+      {...own}
+    >
+      {score.score}
+    </Link>
   );
 }
 
