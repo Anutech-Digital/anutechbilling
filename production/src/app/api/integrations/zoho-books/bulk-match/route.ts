@@ -19,7 +19,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { NOT_CONFIGURED_MESSAGE, SETTINGS_RETURN, ZOHO_FIND_ROLES, zohoBooksCreds } from "@/lib/integrations/zoho-books/config";
 import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
-import { getContact, ZohoApiError } from "@/lib/integrations/zoho-books/api";
+import { getContact, isZohoDayLimit, ZohoApiError, type ZohoDayLimitError } from "@/lib/integrations/zoho-books/api";
 import {
   findZohoPayment, FX_DATE_WINDOW_DAYS, readZohoPaymentMatch, type RivalLine, type ZohoReadDeps,
 } from "@/lib/integrations/zoho-books/payment-match";
@@ -184,10 +184,13 @@ export async function POST(req: NextRequest) {
 
   /* R-2419: each row carries what the app already has for its customer (open quotes, opening
      invoices, recent receipts, billed periods) — the plan's double-booking checks need it. */
-  const answer = async (stopped: boolean) => {
+  const answer = async (stopped: boolean, dayLimit?: ZohoDayLimitError) => {
     try {
       const rows = await attachCustomerFacts(out, caller, createClient() as unknown as Parameters<typeof attachCustomerFacts>[2], appCustomers);
-      return NextResponse.json({ ok: true, rows, skipped, zohoCalls, ...(stopped ? { stopped: { code: "busy", message: "Zoho is busy — waiting a minute, then it carries on." } } : {}) });
+      /* R-2661: dayLimit = the app's own day budget is used (no call was made) — the sheet stops at once. */
+      const day = dayLimit ? { dayLimit: { calls: dayLimit.day.calls, budget: dayLimit.day.budget, retryAt: dayLimit.day.retryAt, day: dayLimit.day.day } } : {};
+      const stop = dayLimit ? { stopped: { code: "day_limit", message: dayLimit.message } } : stopped ? { stopped: { code: "busy", message: "Zoho is busy — waiting a minute, then it carries on." } } : {};
+      return NextResponse.json({ ok: true, rows, skipped, zohoCalls, ...stop, ...day });
     } catch (e) {
       const what = e instanceof FactsReadError ? e.message : "the app's records";
       return fail(500, "read_failed", `Could not read ${what} for these customers.`,
@@ -201,12 +204,14 @@ export async function POST(req: NextRequest) {
       try {
         out.push(await withRetry(() => planOne(line, payments)));
       } catch (e) {
+        if (isZohoDayLimit(e)) return answer(true, e);
         if (e instanceof ZohoApiError && (e.code === "busy" || e.status === 429)) return answer(true);
         throw e;
       }
     }
     return answer(false);
   } catch (e) {
+    if (isZohoDayLimit(e)) return answer(true, e);
     if (e instanceof ZohoApiError) {
       if (e.status === 401 || e.code === "reconnect") {
         return fail(502, "reconnect", "Zoho Books did not let ResellerOS read payments.",

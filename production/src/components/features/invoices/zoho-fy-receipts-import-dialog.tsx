@@ -30,6 +30,7 @@ import { formatDate, rupee } from "@/lib/utils";
 import { formatForeign, isForeignCurrency } from "@/lib/currency";
 import { LEAVE_OUT, skipReasonKey, type ZohoDeposit } from "@/lib/integrations/zoho-books/receipts-import/plan";
 import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store";
+import { ZohoDayCallsLine } from "@/components/features/integrations/zoho-day-calls-line";
 
 const API = "/api/integrations/zoho-books/receipts-import";
 const FY = "2025-26";
@@ -366,6 +367,7 @@ export function ZohoFyReceiptsImportDialog({ open, onOpenChange }: { open: boole
 
           {partError && <p role="alert" data-testid="fy-receipts-part-error" className="text-xs text-rose-ink">{partError}</p>}
           {error && <p role="alert" className="text-xs text-rose-ink">{error}</p>}
+          <ZohoDayCallsLine refreshKey={read?.running ? 0 : 1} />
 
           {preview && (
             <>

@@ -32,7 +32,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { NOT_CONFIGURED_MESSAGE, FY_CALLS_PER_REQUEST, zohoBooksCreds } from "@/lib/integrations/zoho-books/config";
 import { dropZohoAccessToken, readConnection, resolveZohoCaller, zohoAccessToken } from "@/lib/integrations/zoho-books/store";
-import { ZohoApiError } from "@/lib/integrations/zoho-books/api";
+import { isZohoDayLimit, ZohoApiError } from "@/lib/integrations/zoho-books/api";
 import { fyDateRange, type ZohoFyDocDetail } from "@/lib/integrations/zoho-books/fy-fetch";
 import type { PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
 import { scanStep, type ScanFacts } from "@/lib/integrations/zoho-books/fy-import/scan";
@@ -112,6 +112,12 @@ export async function POST(req: NextRequest) {
       }
       return NextResponse.json({ ok: true, fy, kind, ...result, calls: used() });
     } catch (e) {
+      if (isZohoDayLimit(e)) {
+        /* R-2661: no call was made — the dialog shows the budget notice at once; the scan stays as saved. */
+        const c = await storeOf(kind).counts(fy).catch(() => ({ listed: 0, detailed: 0 }));
+        return NextResponse.json({ ok: true, fy, kind, ...c, listDone: false, complete: false, busy: true, calls: used(),
+          dayLimit: { calls: e.day.calls, budget: e.day.budget, retryAt: e.day.retryAt, day: e.day.day } });
+      }
       if (e instanceof ZohoApiError) {
         if (e.status === 401 || e.code === "reconnect" || e.code === "books_57") return fail(502, "Zoho Books did not let ResellerOS read — Settings → Integrations → Zoho Books → Reconnect, then Allow.");
         return fail(502, e.message);

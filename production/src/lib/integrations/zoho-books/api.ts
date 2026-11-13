@@ -15,6 +15,8 @@
 import {
   ZOHO_BOOKS_API_BASE, ZOHO_REVOKE_URL, ZOHO_TOKEN_URL, type ZohoCreds,
 } from "./config";
+import { dayMeterOf, type DayBudgetState } from "./zoho-day-budget";
+import { zohoDayLimitMessage } from "./zoho-limit";
 
 const TIMEOUT_MS = 15_000;
 /** 200 per page × 50 pages = 10,000 records counted before we say "10,000+". */
@@ -26,6 +28,23 @@ export class ZohoApiError extends Error {
     super(message);
     this.name = "ZohoApiError";
   }
+}
+
+/**
+ * R-2661 — the call was NOT made: this company's Zoho calls for the IST day are at the budget (or Zoho
+ * itself refused for the day). Status 429 so every reader treats it as "busy" (cursor kept, retried
+ * later); `day` says how many of the budget and when it carries on (the next midnight IST).
+ */
+export class ZohoDayLimitError extends ZohoApiError {
+  constructor(readonly day: DayBudgetState) {
+    super(zohoDayLimitMessage({ calls: day.calls, budget: day.budget, retryAt: day.retryAt, day: day.day }), "day_limit", 429);
+    this.name = "ZohoDayLimitError";
+  }
+}
+
+/** R-2661: a day-budget refusal (no Zoho call was made). */
+export function isZohoDayLimit(e: unknown): e is ZohoDayLimitError {
+  return e instanceof ZohoDayLimitError || (e instanceof ZohoApiError && e.code === "day_limit");
 }
 
 type Fetch = typeof fetch;
@@ -149,6 +168,14 @@ export async function revokeToken(refreshToken: string, f: Fetch = fetch): Promi
 }
 
 async function booksGet(path: string, token: string, f: Fetch): Promise<Record<string, unknown>> {
+  /* R-2661: the ONE place every Zoho Books call passes — count it on the company's day, and refuse it
+     BEFORE it is made when the day's budget is used (the token was registered to its tenant's meter by
+     store.ts; a token from elsewhere — tests, a fake — has none: no count, no check). */
+  const meter = dayMeterOf(token);
+  if (meter) {
+    const spent = await meter.check(Date.now());
+    if (spent) throw new ZohoDayLimitError(spent);
+  }
   let res: Response;
   try {
     res = await f(`${ZOHO_BOOKS_API_BASE}${path}`, {
@@ -159,6 +186,7 @@ async function booksGet(path: string, token: string, f: Fetch): Promise<Record<s
     throw new ZohoApiError("Could not reach Zoho Books. Try again in a minute.", "network");
   }
   const body = await readJson(res);
+  if (meter) await meter.note(Date.now(), res.status === 429 ? { status: 429, message: String(body.message ?? "") } : null);
   if (!res.ok || (typeof body.code === "number" && body.code !== 0)) {
     const message = res.status === 429
       ? "Zoho Books is limiting requests right now. Try again in a few minutes."

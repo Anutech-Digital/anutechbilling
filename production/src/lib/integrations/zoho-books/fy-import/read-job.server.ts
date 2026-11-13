@@ -10,6 +10,7 @@ import { dropZohoAccessToken, readConnection, zohoAccessToken, type ZohoCaller }
 import { zohoReceiptFacts } from "../receipts-import/normalise";
 import { runBackgroundRead, type PassResult, type ZohoAccess } from "./background-read";
 import { supabaseBgStore } from "./bg-store";
+import { tenantDayMeter } from "../day-calls-store";
 import { supabaseScanStore, type FyImportDb } from "./store";
 import type { ScanFacts } from "./scan";
 
@@ -44,5 +45,7 @@ export async function companyReadPass(
     access: zohoAccessFor(admin, tenantId),
     budgetMs: opts.budgetMs,
     requireRequest: opts.requireRequest,
+    /* R-2661: stop before Zoho's daily limit; the cron makes no call while the day is spent. */
+    dayBudget: tenantDayMeter(admin, tenantId),
   });
 }

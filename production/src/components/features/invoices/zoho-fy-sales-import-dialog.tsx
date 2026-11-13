@@ -30,6 +30,7 @@ import type { ImportBatch } from "@/lib/integrations/zoho-books/fy-import/store"
 import type { StaleAddress } from "@/lib/integrations/zoho-books/sales-import/stale-address";
 import { readUntilDone, type ZohoLimitHit } from "@/lib/integrations/zoho-books/zoho-limit";
 import { ZohoBusyLine, ZohoLimitNotice } from "@/components/features/integrations/zoho-limit-notice";
+import { ZohoDayCallsLine } from "@/components/features/integrations/zoho-day-calls-line";
 
 const API = "/api/integrations/zoho-books/sales-import";
 const FY = "2025-26";
@@ -172,6 +173,7 @@ export function ZohoFySalesImportDialog({ open, onOpenChange }: { open: boolean;
 
           {busy === "read" && <ZohoBusyLine streak={busyStreak} />}
           {limit && <ZohoLimitNotice hit={limit} disabled={!!busy} onTryAgain={() => void readZoho(true)} />}
+          <ZohoDayCallsLine refreshKey={busy === "read" ? 0 : 1} />
           {error && <p role="alert" className="text-xs text-rose-ink">{error}</p>}
 
           {preview && (

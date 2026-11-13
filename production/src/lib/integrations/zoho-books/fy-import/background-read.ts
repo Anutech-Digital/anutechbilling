@@ -16,6 +16,11 @@
  *     run (bg_pace) and the next pass — cron or dialog — starts from them;
  *   - Zoho busy / rate limit (429) → the pass stops, a full minute is marked as used (the next pass
  *     waits it out), the request stays;
+ *   - R-2661: the company's Zoho DAY budget (zoho-day-budget.ts) is checked before every step and
+ *     bounds each step's calls; used up → outcome "day-limit": no Zoho call is made, the saved page /
+ *     pending details stay exactly where they are, bg_error says "Zoho calls today: N of N … carries
+ *     on after 12:00 am IST on <date>", and the REQUEST STAYS — the next day's first pass (cron) carries
+ *     on from there (no re-list, no detail read twice); a cron tick while spent writes nothing new;
  *   - access token (R-1757 cache) asked for before every step, so one that expires mid-run is
  *     re-minted; a 401 drops it and retries once; a second 401 in a row stops with "reconnect";
  *   - Zoho down / slow / network / token endpoint busy (5xx, network, token_error) → kept, retried;
@@ -28,6 +33,8 @@
 import { ZohoApiError } from "../api";
 import { FY_CALLS_PER_REQUEST } from "../config";
 import type { FyReadKind, ZohoFyDocDetail } from "../fy-fetch";
+import type { DayMeter } from "../zoho-day-budget";
+import { zohoDayLimitMessage } from "../zoho-limit";
 import { PACE_WINDOW_MS, ZOHO_CALLS_PER_MIN, type PaceEntry } from "../zoho-pace";
 import { scanStep, type ScanFacts, type ScanStore } from "./scan";
 
@@ -68,7 +75,7 @@ export type ZohoAccess =
   | { orgId: string; token: () => Promise<string>; dropToken: () => Promise<void> }
   | { error: string };
 
-export type PassOutcome = "complete" | "busy" | "time" | "stopped" | "retry" | "locked" | "lost" | "not-requested";
+export type PassOutcome = "complete" | "busy" | "time" | "stopped" | "retry" | "locked" | "lost" | "not-requested" | "day-limit";
 
 export interface PassResult { outcome: PassOutcome; listed: number; detailed: number; calls: number; error: string | null }
 
@@ -87,6 +94,8 @@ export interface PassDeps<F extends ScanFacts> {
   /** Only run a pass when the read was asked for (cron). The dialog's own pass asks first. */
   requireRequest?: boolean;
   log?: (msg: string) => void;
+  /** R-2661: the company's Zoho day budget — checked before every step; absent = no day limit (tests). */
+  dayBudget?: Pick<DayMeter, "check" | "remaining">;
 }
 
 /** Zoho trouble that passes by itself (down, slow, network, token endpoint busy): retry, keep the request. */
@@ -112,6 +121,17 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
   const before = await d.bg.readBg(d.fy);
   if (d.requireRequest !== false && !before?.requestedAt) return counted("not-requested", 0, before?.error ?? null);
   const start = now();
+  /* R-2661: the day's budget is used — no Zoho call, no lease churn: say so once (bg_error) and keep the
+     request, so the next IST day's first pass carries on from the saved page / pending details. */
+  const spentNow = d.dayBudget ? await d.dayBudget.check(start) : null;
+  if (spentNow) {
+    const msg = zohoDayLimitMessage(spentNow, start);
+    if (before?.error === msg && !before.leaseUntil) return counted("day-limit", 0, msg);
+    const until = start + 1_000;
+    if (!(await d.bg.takeLease(d.fy, until, start))) return counted("locked", 0, null);
+    await d.bg.release(d.fy, { finished: false, error: msg, nowMs: now(), leaseUntilMs: until, pace: recentPace(before?.pace, start) });
+    return counted("day-limit", 0, msg);
+  }
   const deadline = start + Math.max(1_000, d.budgetMs);
   let lease = start + Math.max(1_000, d.budgetMs) + LEASE_EXTRA_MS;
   if (!(await d.bg.takeLease(d.fy, lease, start))) return counted("locked", 0, null);
@@ -129,11 +149,15 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
     } else {
       let retried401 = false;
       while (now() < deadline) {
+        /* R-2661: never a step the day budget cannot pay for — and never more calls than are left today. */
+        const spent = d.dayBudget ? await d.dayBudget.check(now()) : null;
+        if (spent) { outcome = "day-limit"; error = zohoDayLimitMessage(spent, now()); break; }
+        const leftToday = d.dayBudget ? await d.dayBudget.remaining(now()) : Number.MAX_SAFE_INTEGER;
         let r;
         try {
           const token = await z.token();
           /* Fewer calls near the deadline, so the last step ends close to it. */
-          const maxCalls = Math.max(1, Math.min(FY_CALLS_PER_REQUEST, Math.floor((deadline - now()) / 1_000)));
+          const maxCalls = Math.max(1, Math.min(FY_CALLS_PER_REQUEST, Math.floor((deadline - now()) / 1_000), leftToday));
           r = await scanStep(d.store, d.kind, d.toFacts, z.orgId, token, d.fy,
             { history, maxCalls, now: d.now, sleep: d.sleep }, d.fetch ?? fetch);
         } catch (e) {
@@ -153,7 +177,12 @@ export async function runBackgroundRead<F extends ScanFacts>(d: PassDeps<F>): Pr
         if (!(await d.bg.touch(d.fy, { nowMs: t, pace: recentPace(history, t), fromMs: lease, toMs: next }))) { lost = true; outcome = "lost"; break; }
         lease = next;
         if (r.complete) { outcome = "complete"; finished = true; break; }
-        if (r.busy) { outcome = "busy"; break; }
+        if (r.busy) {
+          /* R-2661: "busy" from the meter's own refusal (api.ts, no call made) = the day is spent. */
+          const spentAfter = d.dayBudget ? await d.dayBudget.check(now()) : null;
+          if (spentAfter) { outcome = "day-limit"; error = zohoDayLimitMessage(spentAfter, now()); break; }
+          outcome = "busy"; break;
+        }
       }
     }
   } catch (e) {

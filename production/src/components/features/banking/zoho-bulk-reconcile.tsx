@@ -42,8 +42,9 @@ import {
 import { bookOnServer, isCleanPair, previewCounts, screenRows, type RefusedRow, type ScreenRow } from "@/lib/integrations/zoho-books/bulk-book-run";
 import { planAllWithZohoSales, type PlanMemo } from "@/lib/integrations/zoho-books/bulk-zoho-sales";
 import { expectedPageCost, paceWaitMs, ZOHO_BUSY_WAIT_MS, type PaceEntry } from "@/lib/integrations/zoho-books/zoho-pace";
-import { busyStreak, zohoBusyText, type ZohoLimitHit } from "@/lib/integrations/zoho-books/zoho-limit";
+import { busyStreak, zohoBusyText, zohoLimitHit, type DayLimitAnswer, type ZohoLimitHit } from "@/lib/integrations/zoho-books/zoho-limit";
 import { ZohoLimitNotice } from "@/components/features/integrations/zoho-limit-notice";
+import { ZohoDayCallsLine } from "@/components/features/integrations/zoho-day-calls-line";
 import { newCustomerPayload, type BookedRow, type BookRun } from "./zoho-bulk-book";
 import { ZohoBulkTable } from "./zoho-bulk-table";
 import { ZohoBulkRunBar, ZohoRefusedList, type BookMode } from "./zoho-bulk-run-bar";
@@ -237,6 +238,12 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
       at += advance;
       setMatches(found); setCursor(at);
       saveProgress(accountId, { ids: list, cursor: at, matches: found, booked: [...booked.keys()] });
+      /* R-2661: the server refused before calling Zoho — the day's budget is used: stop at once (Continue
+         carries on from this line tomorrow). */
+      if (r.dayLimit) {
+        streakCounter.reset(); setBusyStreak(0);
+        setLimit(zohoLimitHit(Date.now(), r.dayLimit as DayLimitAnswer)); setPhase("paused"); return;
+      }
       /* R-2652: Zoho busy with NOTHING read, 3 times in a row → its daily limit; stop and say so
          (what was read is kept above; Try again carries on from this line). */
       const hit = streakCounter.note(Boolean(r.stopped) && advance === 0, Date.now());
@@ -408,6 +415,7 @@ export function ZohoBulkReconcile({ accountId, accountName, open, onOpenChange }
           )}
 
           {limit && <ZohoLimitNotice hit={limit} disabled={reading || loopBusy || phase === "booking"} onTryAgain={() => void read(false)} />}
+          <ZohoDayCallsLine refreshKey={cursor} />
 
           {failure && (
             <div role="alert" className="rounded-md border border-rose/30 bg-rose-soft/40 px-3 py-2 text-xs">

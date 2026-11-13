@@ -32,7 +32,15 @@ export interface ZohoLimitHit {
   retryAt: number;
   /** "12:00 am IST on 11 Nov 2026" */
   retryLabel: string;
+  /** R-2661: why — Zoho refused ZOHO_LIMIT_STREAK reads in a row (default), or the app's own day budget
+   *  is used ("budget": the server refused before calling Zoho; `calls` of `budget` made today). */
+  reason?: "refused" | "budget";
+  calls?: number;
+  budget?: number;
 }
+
+/** R-2661: what a read route answers when the day's budget is used (the dialog stops at once). */
+export interface DayLimitAnswer { calls: number; budget: number; retryAt: number; day?: string }
 
 /** The next 00:00 in India after `now` (ms since epoch). */
 export function nextIstMidnight(now: number): number {
@@ -40,19 +48,35 @@ export function nextIstMidnight(now: number): number {
   return Date.UTC(y, m - 1, d + 1) - IST_OFFSET_MS;
 }
 
-export function zohoLimitHit(now: number): ZohoLimitHit {
-  const retryAt = nextIstMidnight(now);
+export function zohoLimitHit(now: number, budget?: DayLimitAnswer): ZohoLimitHit {
+  const retryAt = budget?.retryAt && Number.isFinite(budget.retryAt) ? budget.retryAt : nextIstMidnight(now);
   const day = istToday(new Date(retryAt));
-  return { at: now, retryAt, retryLabel: `12:00 am IST on ${formatDate(day)}` };
+  const hit: ZohoLimitHit = { at: now, retryAt, retryLabel: `12:00 am IST on ${formatDate(day)}` };
+  if (budget) { hit.reason = "budget"; hit.calls = budget.calls; hit.budget = budget.budget; }
+  return hit;
 }
 
 /** The words every dialog shows (one place, so the three dialogs never say it differently). */
 export function zohoLimitText(hit: ZohoLimitHit): { title: string; body: string } {
+  if (hit.reason === "budget") {
+    /* R-2661: the app stopped BEFORE Zoho's limit — the per-day budget (zoho-day-budget.ts) is used. */
+    const n = (x: number | undefined) => (x ?? 0).toLocaleString("en-IN");
+    return {
+      title: "Zoho's daily limit is reached",
+      body: `Zoho calls today: ${n(hit.calls)} of ${n(hit.budget)} — the day's budget is used, so reading has stopped before Zoho refuses. ` +
+        `It carries on after ${hit.retryLabel}. Nothing was changed — what was read so far is kept, and Try again carries on from there.`,
+    };
+  }
   return {
     title: "Zoho's daily limit is reached",
     body: `Zoho refused ${ZOHO_LIMIT_STREAK} reads in a row, so reading has stopped. Try again after ${hit.retryLabel}. ` +
       "Nothing was changed — what was read so far is kept, and Try again carries on from there.",
   };
+}
+
+/** R-2661: the server's own words for a read stopped by the day budget (bg_error, route messages). */
+export function zohoDayLimitMessage(d: DayLimitAnswer, now: number = Date.now()): string {
+  return zohoLimitText(zohoLimitHit(now, d)).body;
 }
 
 /** While retrying: "Zoho is busy — trying again in a minute (2 of 3)." */
@@ -81,11 +105,12 @@ export type ReadLoopEnd =
 /**
  * The FY dialogs' read loop: call `step` until the read is complete; wait `gapMs` between good
  * answers and ZOHO_BUSY_RETRY_MS after a busy one; stop after ZOHO_LIMIT_STREAK busy answers in
- * a row that read nothing (`listed` / `detailed` did not move). `onBusy(streak)` is called with 0
+ * a row that read nothing (`listed` / `detailed` did not move), or at once on a `dayLimit` answer
+ * (R-2661: the app's own day budget is used). `onBusy(streak)` is called with 0
  * after a good answer (clear the "busy" line) and n after the nth such busy answer. Errors from
  * `step` are thrown to the caller as before.
  */
-export async function readUntilDone<R extends { complete: boolean; busy?: boolean; listed?: number; detailed?: number }>(opts: {
+export async function readUntilDone<R extends { complete: boolean; busy?: boolean; listed?: number; detailed?: number; dayLimit?: DayLimitAnswer | null }>(opts: {
   step: () => Promise<R>;
   onAnswer?: (r: R) => void;
   onBusy?: (streak: number) => void;
@@ -101,6 +126,8 @@ export async function readUntilDone<R extends { complete: boolean; busy?: boolea
     const r = await opts.step();
     opts.onAnswer?.(r);
     if (r.complete) { opts.onBusy?.(0); return { end: "complete" }; }
+    /* R-2661: the server refused before calling Zoho — the day's budget is used: stop at once, say so. */
+    if (r.dayLimit) { opts.onBusy?.(0); return { end: "limit", hit: zohoLimitHit(now(), r.dayLimit) }; }
     if (opts.shouldStop?.()) return { end: "stopped" };
     /* Busy part-way (something was read) is not the daily limit — the count starts again. */
     const mark = `${r.listed ?? ""}/${r.detailed ?? ""}`;
