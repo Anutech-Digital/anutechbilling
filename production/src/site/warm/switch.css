@@ -31,3 +31,12 @@
 @media (prefers-reduced-motion: reduce) {
   .anutech-site[data-site-theme="warm"] .w-tt-knob { transition: none; }
 }
+
+/* On a phone the header row also holds the logo, Cart and the menu button: the switch must not
+   squeeze the menu button below its 44px touch size (it measured 18px wide at 390px). */
+.anutech-site[data-site-theme="warm"] > header .hdr-row > button.only-mobile { flex: none; min-width: 44px; min-height: 44px; }
+@media (max-width: 640px) {
+  .anutech-site[data-site-theme="warm"] .w-tt-track { width: 54px; height: 30px; }
+  .anutech-site[data-site-theme="warm"] .w-tt-knob { width: 24px; height: 24px; }
+  .anutech-site[data-site-theme="warm"] .w-tt[aria-checked="true"] .w-tt-knob { transform: translateX(24px); }
+}

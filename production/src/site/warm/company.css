@@ -742,6 +742,8 @@
 
 /* Table and list hairlines (/why-us, /rates, /status). */
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates :is(th, td) { border-bottom-color: var(--w-line); }
+/* /quote — unticked line boxes: the component paints them white. */
+:root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main #quote-lines [role="checkbox"]:not([aria-checked="true"]) { background: var(--w-surface-2) !important; }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody tr { border-bottom-color: var(--w-line) !important; }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) { border-top-color: var(--w-line) !important; }
 :root[data-theme="dark"] .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap:has(> table.rates) { box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3); }
@@ -761,6 +763,8 @@
 @media (prefers-color-scheme: dark) {
 /* Table and list hairlines (/why-us, /rates, /status). */
 :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap > table.rates :is(th, td) { border-bottom-color: var(--w-line); }
+/* /quote — unticked line boxes: the component paints them white. */
+:root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main #quote-lines [role="checkbox"]:not([aria-checked="true"]) { background: var(--w-surface-2) !important; }
 :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > nav[aria-label="Jump to"]) > section.section[id] table tbody tr { border-bottom-color: var(--w-line) !important; }
 :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main:has(> section > .wrap > .mono-label[role="status"]) > section > .wrap > div:not(.mono-label) { border-top-color: var(--w-line) !important; }
 :root:not([data-theme="light"]) .anutech-site[data-site-theme="warm"] #main > section.section > .wrap > .tablewrap:has(> table.rates) { box-shadow: 0 24px 60px rgba(0, 0, 0, 0.3); }
