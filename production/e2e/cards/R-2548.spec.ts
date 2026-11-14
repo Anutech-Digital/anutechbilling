@@ -48,9 +48,7 @@ const renewA = addDays(today, 30);           // A + C renew in 30 days (Renewals
 const startA = addMonths(renewA, -12);
 const renewB = addDays(today, 3);            // B renews in 3 days (Payment Follow-up horizon ≤ 7)
 const startB = addMonths(renewB, -12);
-const termEndA = addDays(addMonths(renewA, 12), -1);
 const part1EndA = addDays(addMonths(renewA, 6), -1);
-const expectedLineA = `Renewal for ${shown(renewA)}–${shown(termEndA)} · part 1 (${shown(renewA)}–${shown(part1EndA)}): 10 × ₹3,000`;
 
 /**
  * Reload the scenario ONCE per run. After a failed step Playwright starts a new worker and runs
