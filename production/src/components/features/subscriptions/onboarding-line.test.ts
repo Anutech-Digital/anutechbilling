@@ -38,3 +38,71 @@ describe("R-1442 onboarding quote line keeps the chosen start date", () => {
     expect(onboardingQuoteLine({ id: "l", plan: "X", seats: 1, pricePerSeat: 100, terms, startDate: "2026-09-01", renewalDate: "2026-09-01" }).renewal_date).toBeUndefined();
   });
 });
+
+/* R-2734 (Pratik, 16 Oct): "client ne 3 saal ki payment ki hai toh 1 yr se zyada ka option hi nahi
+   raha". A domain item in the Onboard dialog can be "Register for N years". The price box stays
+   PER YEAR (as R-2712's Bulk dialog); the line carries the whole term like a quote's multi-year
+   domain line (R-156 / R-1445), and NO renewal_date — trigger subscription_term_follows_line then
+   sets renewal = start + N years AND spreads the mrr over the years (a line renewal_date would skip
+   that and leave mrr at the whole term ÷ 12). */
+import { onboardingYears } from "./onboarding-line";
+
+describe("R-2734 onboarding line for a domain registered for N years", () => {
+  const terms = billingTerms("annual_yearly");
+  const base = { id: "l", plan: "Domain .in", seats: 1, pricePerSeat: 800, terms, startDate: "2025-04-01", renewalDate: "2026-04-01" };
+
+  it("3 years: rate and cost are the whole term, years on the line, start kept, no renewal_date", () => {
+    const line = onboardingQuoteLine({ ...base, years: 3, terms: { ...terms, costPerSeat: 600 } });
+    expect(line.rate).toBe(2400);
+    expect(line.cost).toBe(1800);
+    expect(line.qty).toBe(1);
+    expect(line.years).toBe(3);
+    expect(line.start_date).toBe("2025-04-01");
+    expect(line.renewal_date).toBeUndefined();
+    expect(line.commitment).toBe("annual_yearly");
+    /* Registrar: no domain on the line, so provisioning queues no registration (as before). */
+    expect((line as { domain?: string }).domain).toBeUndefined();
+  });
+
+  it("1 year (or no years): exactly the line it always was — rate = price, the typed renewal date rides", () => {
+    for (const years of [undefined, 1]) {
+      const line = onboardingQuoteLine({ ...base, years });
+      expect(line.rate).toBe(800);
+      expect(line.years).toBeUndefined();
+      expect(line.renewal_date).toBe("2026-04-01");
+    }
+  });
+
+  it("years outside 1-10 or not whole → 1 year (the domainLineYears / trigger rule)", () => {
+    for (const years of [0, 11, 2.5, Number.NaN, -3]) {
+      const line = onboardingQuoteLine({ ...base, years });
+      expect(line.rate).toBe(800);
+      expect(line.years).toBeUndefined();
+    }
+  });
+
+  it("years never apply to a split-billed or flex line (whole-year terms, billed once)", () => {
+    for (const choice of ["annual_monthly", "annual_quarterly", "annual_half_yearly", "monthly_flex"] as const) {
+      const t = billingTerms(choice);
+      const line = onboardingQuoteLine({ ...base, terms: t, pricePerSeat: 70, years: 3 });
+      expect(line.years).toBeUndefined();
+      expect(line.rate).toBe(70 * t.periods);
+    }
+  });
+
+  it("onboardingYears: only a domain plan on Annual · Yearly gets N years", () => {
+    expect(onboardingYears(3, { domainPlan: true, billingChoice: "annual_yearly" })).toBe(3);
+    expect(onboardingYears(3, { domainPlan: false, billingChoice: "annual_yearly" })).toBe(1);
+    expect(onboardingYears(3, { domainPlan: true, billingChoice: "annual_monthly" })).toBe(1);
+    expect(onboardingYears(3, { domainPlan: true, billingChoice: "monthly_flex" })).toBe(1);
+    expect(onboardingYears(12, { domainPlan: true, billingChoice: "annual_yearly" })).toBe(1);
+  });
+
+  it("onboardingRenewal: start + N years (29 Feb 2028 + 3 → 28 Feb 2031, as Postgres); 1 year keeps the typed date", async () => {
+    const { onboardingRenewal } = await import("./onboarding-line");
+    expect(onboardingRenewal("2025-04-01", 3, "2026-05-05")).toBe("2028-04-01");
+    expect(onboardingRenewal("2028-02-29", 3, "")).toBe("2031-02-28");
+    expect(onboardingRenewal("2025-04-01", 1, "2026-05-05")).toBe("2026-05-05");
+    expect(onboardingRenewal("", 3, "2026-05-05")).toBe("2026-05-05");
+  });
+});
