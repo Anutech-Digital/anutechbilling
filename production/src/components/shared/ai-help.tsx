@@ -32,7 +32,7 @@ import { Icon } from "@/components/ui/icon";
 import { maskPII } from "@/lib/ux/signals";
 import { loadLastPageTestRun, lastTestedLine, summarizeRun, type PageTestRun } from "@/lib/ai/page-test-runs";
 import { bugReportText, cleanSteps, AI_FILED_TAG, askAboutSelection, buildTestRunPrompt, type BugDraft, type HelpMessage, type HelpMode, type HelpAction } from "@/lib/ai/app-help";
-import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, isInPageUrl, trailForPrompt, looksLikeSameBug, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
+import { pushTrail, isProblem, classifyToast, NEEDS_INPUT_CLASS, apiFailureWorthNoting, apiFailText, isInPageUrl, trailForPrompt, looksLikeSameBug, problemWhereWhen, type TrailEvent, type TrailKind } from "@/lib/ai/test-trail";
 import { scanPage } from "@/components/shared/page-scan";
 import { IconButton } from "@/components/ui/button";
 import { CropOverlay, HELP_SELF, captureViewport, toShot, type Shot } from "@/components/shared/help-shot";
@@ -80,7 +80,7 @@ export function AiHelpButton() {
       <IconButton
         icon={alert ? "alert" : "message"}
         aria-label={alert ? "Help — an error was caught, open to report it" : "Help — ask AI or report a problem"}
-        title={alert ? `Error caught: ${alert}` : "Help & AI — ask AI or report a problem (Ctrl+Shift+B to report)"}
+        title={alert ?? "Help & AI — ask AI or report a problem (Ctrl+Shift+B to report)"}
         aria-pressed={showing}
         data-topbar="help"
         onClick={() => setHelpUi(showing ? { open: false, minimized: false } : { open: true, minimized: false, tab: alert ? "report" : helpUi.tab })}
@@ -393,7 +393,8 @@ export function AiHelp() {
   /* R-827: help stays usable over an open dialog (shared guard — see ui/help-panel-guard). */
   const rootRef = React.useRef<HTMLDivElement>(null);
   React.useEffect(() => (rootRef.current ? installHelpPanelGuard(rootRef.current) : undefined), []);
-  React.useEffect(() => { setHelpUi({ alert: unseen?.text ?? null }); }, [unseen]);
+  /* R-2713: the tooltip says where and when — "Error on /quotes at 02:30 pm: …". */
+  React.useEffect(() => { setHelpUi({ alert: unseen ? `${problemWhereWhen(unseen)}: ${unseen.text}` : null }); }, [unseen]);
   /* R-223: panel size (desktop). Read after mount so the server render never touches storage. */
   const [size, setSize] = React.useState<PanelSize>(PANEL_NORMAL);
   const [, setVpTick] = React.useState(0);
@@ -858,7 +859,7 @@ export function AiHelp() {
             <div className="px-3 py-2 border-b border-hairline bg-red-50 text-red-900 text-xs flex items-start gap-2">
               <Icon name="alert" size={14} className="mt-0.5 shrink-0" />
               <div className="flex-1 min-w-0">
-                <div className="font-semibold">Error caught</div>
+                <div className="font-semibold">{problemWhereWhen(unseen)}</div>
                 <div className="break-words">{unseen.text}</div>
               </div>
               <Button size="sm" variant="primary" disabled={!!busy} onClick={() => void ask("error")}>Report it</Button>
@@ -1070,7 +1071,7 @@ export function AiHelp() {
           </div>
           ) : (
             <div role="tabpanel" id="help-panel-report" aria-labelledby="help-tab-report" className="flex-1 min-h-0 flex flex-col">
-              <HelpReportTab pathname={pathname} getTrail={() => trail.current} caughtError={unseen?.text ?? null} onCaughtErrorUsed={clearUnseen} onFiled={() => setOpen(false)} />
+              <HelpReportTab pathname={pathname} getTrail={() => trail.current} caughtError={unseen ? `${unseen.text} (${problemWhereWhen(unseen, "on")})` : null} onCaughtErrorUsed={clearUnseen} onFiled={() => setOpen(false)} />
             </div>
           )}
         </section>

@@ -4,7 +4,7 @@
 import { describe, it, expect } from "vitest";
 import {
   pushTrail, isProblem, classifyToast, apiFailureWorthNoting, apiFailText, trailForPrompt, isInPageUrl,
-  badTextFindings, findingsForPrompt, titleOverlap, looksLikeSameBug, TRAIL_MAX, type TrailEvent,
+  badTextFindings, findingsForPrompt, titleOverlap, looksLikeSameBug, TRAIL_MAX, problemWhereWhen, type TrailEvent,
 } from "./test-trail";
 import { parseHelpAnswer, helpUserTurn, helpSystemPrompt, bugReportText } from "./app-help";
 
@@ -170,5 +170,17 @@ describe("classifyToast — fill-this vs real failure", () => {
   it("input_needed is not a problem — AI Help does not turn red for it", () => {
     expect(isProblem({ kind: "input_needed", at: 0, text: "x", path: "/" })).toBe(false);
     expect(isProblem({ kind: "toast_error", at: 0, text: "x", path: "/" })).toBe(true);
+  });
+});
+
+/* R-2713 (Pratik): the caught-error alert names the page and the time, so an error from an
+   earlier page is not taken for this page's. */
+describe("problemWhereWhen", () => {
+  it("says which page and what IST time the error came from", () => {
+    const at = Date.UTC(2026, 10, 14, 9, 0); // 14 Nov 2026 09:00 UTC = 02:30 pm IST
+    expect(problemWhereWhen(ev("api_fail", "POST /api/x → 500", at, "/quotes/new"))).toBe("Error on /quotes/new at 02:30 pm");
+  });
+  it("leaves the time out when it is unknown", () => {
+    expect(problemWhereWhen(ev("error", "boom", Number.NaN, "/deals"))).toBe("Error on /deals");
   });
 });
