@@ -110,7 +110,8 @@ test.describe("R-2728 card test", () => {
     await expect(r.getByTestId("stage-chip")).toContainText("Quote sent", { timeout: 60_000 });
     await expect(r.getByTestId("stage-primary")).toBeEnabled({ timeout: 60_000 });
     await expect(r.getByText("Renewed", { exact: true })).toHaveCount(0);
-    await expect(r.getByTestId("due-quote-expiry")).toHaveText("no expiry");
+    /* R-2760: a part proforma has no validity — the Due column keeps its own day words (no expiry line) */
+    await expect(r.getByTestId("due-quote-expiry")).toHaveCount(0);
     /* due on the part's own date (5 days ago), not the renewal date a year out */
     await expect(r.getByTestId("stage-line2")).toContainText("Overdue 5d");
     await expect(r.getByTestId("stage-chip-quote")).toHaveAttribute("href", "/quotes/PI-CT2728-1");
