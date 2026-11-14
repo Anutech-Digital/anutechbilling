@@ -47,16 +47,15 @@ function seed(): void {
     insert into public.subscriptions (id, tenant_id, customer_id, customer_name, plan, vendor, seats, mrr, term_months, billing_cycle,
                                       start_date, renewal_date, status, renewal_state, auto_renew)
       values ('${SUB}', ${T}, '${CUST}', '${NAME}', '${PLAN}', 'microsoft', 2, 200, 12, 'quarterly',
-              (${OLD} - interval '12 months' + interval '1 day')::date, ${OLD}, 'active', 'upcoming', true);
+              (${OLD} - interval '12 months' + interval '1 day')::date, ${OLD}, 'active', 'grace_period', true);
     insert into public.subscription_billings (id, tenant_id, subscription_id, term_start, period_index, bill_on, period_start,
                                               period_end, taxable_amount, tax_rate, renews_from, renews_to)
       values ('${PART}', ${T}, '${SUB}', ${OLD} + 1, 1, ${OLD} + 1, ${OLD} + 1, (${OLD} + 1 + interval '3 months')::date,
               600, 18, ${OLD}, ${NEW});
     commit;`);
   const q = db().one(`select public.bill_subscription_instalment('${PART}'::uuid, false)->>'quote_id'`);
-  const amount = db().one(`select amount from public.quotes where id = '${q}'`);
-  db().psql(`insert into public.payments (tenant_id, quote_id, amount, method, reference, status, received_at)
-             values (${T}, '${q}', ${amount}, 'bank_transfer', 'CT-R2749-1', 'received', now());`);
+  /* record_payment — what Record payment / bank reconcile call (marks the proforma received, raises the paid invoice). */
+  db().psql(`select public.record_payment('${q}', (select round(amount)::int from public.quotes where id = '${q}'), 'bank_transfer', 'CT-R2749-1', null);`);
   const renewed = db().one(`select (renewal_date = ${NEW})::text from public.subscriptions where id = '${SUB}'`);
   if (renewed !== "true") throw new Error("R-2749 seed: the paid part did not renew the subscription");
 }
