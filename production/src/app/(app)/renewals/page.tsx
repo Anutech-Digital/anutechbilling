@@ -110,6 +110,10 @@ import { CollapsibleKpiStrip, StripFact, StripLink } from "@/components/shared/c
 import { type RenewalStage, type StageFlag, type FlagKey, type StageKey } from "@/lib/renewals/stage";
 import { CustomerCell, ProductCell, DueCell, LastInvoiceCell, nextTermWords, nextTermShort, compactStage, quoteExpiryShort, subscriptionDomain } from "./row-cells";
 import { RenewalDrawer, useRenewalDrawerSub } from "./renewal-drawer";
+import { BillTogetherGroups, tickedOf, useBillTogether } from "@/components/features/renewals/bill-together";
+import { BILL_TOGETHER, useBillTogetherAvailable } from "@/components/features/renewals/bill-together-dialog";
+import { canOfferBillTogether } from "@/lib/renewals/bill-together";
+import { groupsShown, togetherIndex, togetherRowOf } from "./bill-together-rows";
 
 // ─── R-2232: the row's renewal-quote line ("Renewal sent Q-x · due …") ─────────
 
@@ -332,9 +336,11 @@ interface RenewalQueueProps {
   docsState: { loading: boolean; failed: boolean };
   /** R-2740: open the row drawer — from the product name, a real button (no mouse-only row click, R-1658). */
   onOpen: (subId: string) => void;
+  /** R-2808: billed together last cycle → the row's "Bills with <other plan>" (opens Bill together); null = none. */
+  togetherOf?: (subId: string) => { text: string; onClick: () => void } | null;
 }
 
-function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, onOpenTab, onFollowup, names, lastPaid, docsState, onOpen }: RenewalQueueProps) {
+function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, onOpenTab, onFollowup, names, lastPaid, docsState, onOpen, togetherOf }: RenewalQueueProps) {
   /* R-237: billing + support see Renewals but cannot open /quotes (middleware sends them
      home) — no "Open quote" link for them. */
   const { data: me } = useCurrentUser();
@@ -441,6 +447,16 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   {subscriptionDomain(sub) && (
                     <p className="mt-0.5 truncate text-2xs text-ink-2" title={subscriptionDomain(sub) ?? undefined} data-testid="renewal-card-domain">{subscriptionDomain(sub)}</p>
                   )}
+                  {/* R-2808: billed together last cycle — opens Bill together */}
+                  {(() => {
+                    const t = togetherOf?.(sub.id);
+                    return t ? (
+                      <button type="button" onClick={t.onClick} data-testid="renewal-bills-with"
+                        className="mt-0.5 block max-w-full truncate rounded-sm text-left text-2xs font-medium text-amber-ink underline underline-offset-2 hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber">
+                        {t.text}
+                      </button>
+                    ) : null;
+                  })()}
                   <ContactLine contact={contact} />
                   {lastPaidFor(item, "mt-0.5")}
                 </div>
@@ -516,7 +532,7 @@ function RenewalQueue({ rows, strong, selected, onSelect, emptyText, elsewhere, 
                   </td>
                   <td className="min-w-0 px-2 py-2.5"><CustomerCell name={sub.customer_name} customerId={sub.customer_id} contact={contact} more={followupWords(item.followup, names)} /></td>
                   <td className="min-w-0 px-2 py-2.5">
-                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} />
+                    <ProductCell plan={sub.plan} seats={sub.seats} vendor={sub.vendor} term={nextTermWords(sub)} termShort={nextTermShort(sub)} frequency={frequency} domain={subscriptionDomain(sub)} onOpen={() => onOpen(sub.id)} together={togetherOf?.(sub.id) ?? null} />
                   </td>
                   <td className="px-2 py-2.5"><DueCell date={sub.renewal_date} days={days} note={showsExpiry(item) ? quoteExpiryShort(item.docs?.sent?.expiresDate, todayIst) : null} /></td>
                   <td className="px-2 py-2.5 text-right">
@@ -662,6 +678,18 @@ export default function RenewalsPage() {
     const c = (f: Partial<FollowupFilters>) => filterByFollowup(built.allItems, { ...NO_FOLLOWUP_FILTERS, ...f }, me?.userId).length;
     return { mine: c({ mine: true }), due: c({ followUpDue: true }), broken: c({ promiseBroken: true }) };
   }, [built, me?.userId]);
+  /* R-2808 Bill together: only once R-2807's route answers (404 before it lands → nothing shows). */
+  const togetherOn = useBillTogetherAvailable(!!built?.allItems.some((i) => i.stage?.split));
+  const billTogether = useBillTogether({ canQuotes: canOpenQuotes(me?.role) });
+  /* the groups + hints, once per data change (R-2764) — not on every tick / keystroke */
+  const togetherIdx = React.useMemo(() => (togetherOn && built ? togetherIndex(built.allItems) : null), [togetherOn, built]);
+  /* the group subscriptions the user unticked (every group starts all ticked — Pardeep 14 Nov) */
+  const [togetherOff, setTogetherOff] = React.useState<Set<string>>(() => new Set());
+  const toggleTogether = (id: string, on: boolean) => setTogetherOff((o) => {
+    const n = new Set(o);
+    if (on) n.delete(id); else n.add(id);
+    return n;
+  });
 
   if (isLoading) {
     return (
@@ -847,6 +875,18 @@ export default function RenewalsPage() {
   const queueStrong = tile ? tile === "overdue" || tile === "due30" : bucketTab === "overdue" || bucketTab === "due7";
   /* only ticked rows still on screen — a tick hidden by a later search / filter is not reminded */
   const tickedShown = visibleRows.filter((i) => selected.has(i.sub.id));
+  /* R-2808: subscriptions billed together last cycle — a group per customer, ticked by default (Pardeep
+     14 Nov), and each row's "Bills with <other plan>"; ticked rows of one customer → "Bill together". */
+  const togetherGroups = togetherIdx ? groupsShown(togetherIdx, new Set(visibleRows.map((i) => i.sub.id))) : [];
+  /* the hint opens the group as the box above shows it (an unticked one stays out) */
+  const togetherOf = togetherIdx
+    ? (id: string) => {
+        const h = togetherIdx.hintOf.get(id);
+        return h ? { text: h.text, onClick: () => billTogether.open(tickedOf(h.group, togetherOff), h.group.customerName) } : null;
+      }
+    : undefined;
+  /* only ticked rows still on screen (as the reminder) — a tick hidden by a search is never billed */
+  const offerTicked = togetherOn && canOfferBillTogether(tickedShown.map(togetherRowOf));
   const scope = reminderScope(tickedShown.length, tile ? TILE_LABEL[tile] : QUEUE_TAB_LABEL[bucketTab], visibleRows.length);
   /* undefined = contacts not read yet (the send route still checks); null = no email on file. */
   const emailOf = (i: QueueItem): string | null | undefined =>
@@ -1146,6 +1186,10 @@ export default function RenewalsPage() {
           )}
         </div>
         <div className="border-t border-hairline">
+          {togetherIdx && (
+            <BillTogetherGroups groups={togetherGroups} onBill={billTogether.open} subOf={(id) => togetherIdx.subOf.get(id)}
+              off={togetherOff} onToggle={toggleTogether} />
+          )}
           <RenewalQueue
             key={tile ?? bucketTab}   /* R-2764: a new tab / tile starts at 50 rows again */
             rows={tile ? tileShown : shown[bucketTab]}
@@ -1160,9 +1204,11 @@ export default function RenewalsPage() {
             lastPaid={lastPaid}
             docsState={docsState}
             onOpen={openDrawer}
+            togetherOf={togetherOf}
           />
         </div>
       </Card>
+      {billTogether.dialog}
 
       {/* R-2740: the row drawer — every quote + invoice, payments, follow-ups, flags explained (read-only). */}
       {(() => {
@@ -1207,6 +1253,12 @@ export default function RenewalsPage() {
       {/* R-2403: tick rows → the existing send-now route, after the existing kind of confirm.
           R-2753: the reminder for ticked rows is the header's one button ("Remind N selected"). */}
       <BulkActionBar count={selectedRows.length} noun="renewal" onClear={() => setSelected(new Set())}>
+        {/* R-2808: 2+ ticked rows of ONE customer, billed in parts → one proforma for all of them */}
+        {offerTicked && (
+          <BulkBarButton icon="plus" onClick={() => billTogether.open(tickedShown.map((i) => i.sub.id), tickedShown[0].sub.customer_name ?? "")}>
+            {BILL_TOGETHER}
+          </BulkBarButton>
+        )}
         <BulkBarButton icon="mail" onClick={() => void handleSelectedQuote()} disabled={bulkSending}>
           Send renewal
         </BulkBarButton>

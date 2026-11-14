@@ -28,6 +28,8 @@ import { invoiceHref } from "@/app/(app)/invoices/invoice-href";
 import { periodWords } from "@/app/(app)/renewals/last-docs";
 import { formatForeign, isForeignCurrency } from "@/lib/currency";
 import { istToday } from "@/lib/dates/ist";
+import { useBillTogetherProbe, useBillTogetherPreview } from "./bill-together-dialog";
+import type { TogetherBillRef } from "@/lib/renewals/bill-together";
 
 export interface BillNextChoice { periods: number; seats: number | null; seatRate: number | null }
 
@@ -74,6 +76,14 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, t
   const seatsNeedRate = !!preview && noRate && seats !== "" && seatsN !== preview.seats;
   const canCreate = !!preview && !seatsNeedRate && (valid || noRate);
 
+  /* R-2808: this part is already on a together proforma (Bill together) → say so and link it; no second bill. */
+  /* Create waits for that answer (no click before it is known); if the read fails the server still refuses a
+     second bill for a part on a live together proforma (R-2806 edge H — request_open with that proforma). */
+  const probe = useBillTogetherProbe(open);
+  const togetherQ = useBillTogetherPreview([sub.id], open && probe === "on");
+  const onTogether = togetherQ.data?.subs.find((s) => s.subscriptionId === sub.id)?.onTogetherBill ?? null;
+  const togetherChecking = probe === "pending" || (probe === "on" && togetherQ.isPending);
+
   const unpaid = preview?.unpaidEarlier ?? [];
   const createLabel = unpaid.length > 0 && preview
     ? billAnywayLabel(preview.periods)
@@ -98,6 +108,7 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, t
 
         {preview && (
           <div className="mt-4 space-y-3">
+            {onTogether && <OnTogetherNote bill={onTogether} />}
             {unpaid.length > 0 && <UnpaidEarlierNote parts={unpaid} />}
             <div className="grid grid-cols-3 gap-3">
               <FormField label="Seats" htmlFor="bnp-seats" required>
@@ -144,7 +155,7 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, t
 
         <DialogFooter className="mt-4">
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
-          <Button variant="primary" onClick={confirm} disabled={!canCreate} loading={busy}>
+          <Button variant="primary" onClick={confirm} disabled={!canCreate || !!onTogether || togetherChecking} loading={busy}>
             {createLabel}
           </Button>
         </DialogFooter>
@@ -156,6 +167,22 @@ export function BillNextPartDialog({ sub, open, onOpenChange, onConfirm, busy, t
 function dueWords(p: UnpaidEarlierPart): string {
   if (p.daysOverdue > 0) return `overdue ${p.daysOverdue} day${p.daysOverdue === 1 ? "" : "s"}${p.dueDate ? ` (due ${formatDate(p.dueDate)})` : ""}`;
   return p.dueDate ? `due ${formatDate(p.dueDate)}` : "not yet due";
+}
+
+/** R-2808: the next part is already billed with other subscriptions on one proforma — open that one. */
+function OnTogetherNote({ bill }: { bill: TogetherBillRef }) {
+  return (
+    <div role="status" data-testid="bill-next-on-together" className="rounded-lg border border-amber/40 bg-amber/10 px-3 py-2 text-sm">
+      <p className="font-medium text-ink">
+        Already billed together on {bill.quoteId}{bill.withPlans.length > 0 ? ` with ${bill.withPlans.join(" and ")}` : ""} ({bill.status})
+      </p>
+      <p className="mt-0.5 text-2xs text-ink-3">
+        This part is on that proforma — no second bill.{" "}
+        <Link className="font-medium text-ink underline underline-offset-2 hover:text-amber focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber"
+          href={`/quotes/${encodeURIComponent(bill.quoteId)}`}>Open it</Link>
+      </p>
+    </div>
+  );
 }
 
 /** R-2757: the earlier part(s) still unpaid — named, with the one next step (record its payment). */
